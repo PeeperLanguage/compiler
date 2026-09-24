@@ -45,9 +45,9 @@ func TestSemanticExportFingerprintChangesWithInferredTypeAndValue(t *testing.T) 
 		return SemanticExportFingerprint(nil, fingerprintModule(t, sym, nil, constValues))
 	}
 
-	i32One := makeConst(&typeinfo.IntegerType{Signed: true, Bits: 32}, "1")
-	i64One := makeConst(&typeinfo.IntegerType{Signed: true, Bits: 64}, "1")
-	i32Two := makeConst(&typeinfo.IntegerType{Signed: true, Bits: 32}, "2")
+	i32One := makeConst(&typeinfo.IntegerType{IsSigned: true, Bits: 32}, "1")
+	i64One := makeConst(&typeinfo.IntegerType{IsSigned: true, Bits: 64}, "1")
+	i32Two := makeConst(&typeinfo.IntegerType{IsSigned: true, Bits: 32}, "2")
 	if i32One == i64One {
 		t.Fatal("inferred export width did not change semantic fingerprint")
 	}
@@ -61,7 +61,7 @@ func TestSemanticExportFingerprintIncludesConstValueWithoutBindings(t *testing.T
 		decl := &ast.ConstDecl{Name: &ast.Ident{Name: "Value"}}
 		decl.SetDeclSurface("const:Value::number")
 		sym := symbols.New("Value", symbols.SymbolConst, decl, nil)
-		sym.Type = &typeinfo.IntegerType{Signed: true, Bits: 32}
+		sym.Type = &typeinfo.IntegerType{IsSigned: true, Bits: 32}
 		scope := symbols.NewScope(nil)
 		if err := scope.Declare(sym); err != nil {
 			t.Fatalf("declare export: %v", err)
@@ -81,7 +81,7 @@ func TestSemanticExportFingerprintIgnoresQueryCache(t *testing.T) {
 		decl := &ast.ConstDecl{Name: &ast.Ident{Name: "Value"}}
 		decl.SetDeclSurface("const:Value::number")
 		sym := symbols.New("Value", symbols.SymbolConst, decl, nil)
-		sym.Type = &typeinfo.IntegerType{Signed: true, Bits: 32}
+		sym.Type = &typeinfo.IntegerType{IsSigned: true, Bits: 32}
 		scope := symbols.NewScope(nil)
 		if err := scope.Declare(sym); err != nil {
 			t.Fatalf("declare export: %v", err)
@@ -101,7 +101,7 @@ func TestSemanticExportFingerprintIgnoresFunctionBodyChanges(t *testing.T) {
 		decl := &ast.FnDecl{Name: &ast.Ident{Name: "Read"}, Body: body}
 		decl.SetDeclSurface("fn::Read:::")
 		sym := symbols.New("Read", symbols.SymbolFunc, decl, nil)
-		sym.Type = &typeinfo.FuncType{Return: &typeinfo.IntegerType{Signed: true, Bits: 32}}
+		sym.Type = &typeinfo.FuncType{Return: &typeinfo.IntegerType{IsSigned: true, Bits: 32}}
 		return SemanticExportFingerprint(nil, fingerprintModule(t, sym, nil, nil))
 	}
 	first := makeFunction(&ast.BlockStmt{})
@@ -120,7 +120,7 @@ func TestSemanticExportFingerprintIncludesPrivateFactsUsedByPublicDefault(t *tes
 		}
 		decl.SetDeclSurface("fn::Read::value:i32=limit:")
 		fn := symbols.New("Read", symbols.SymbolFunc, decl, nil)
-		i32 := &typeinfo.IntegerType{Signed: true, Bits: 32}
+		i32 := &typeinfo.IntegerType{IsSigned: true, Bits: 32}
 		fn.Type = &typeinfo.FuncType{Params: []typeinfo.Type{i32}, ParamNames: []string{"value"}}
 		private := symbols.New("limit", symbols.SymbolConst, nil, nil)
 		private.Type = i32
@@ -141,7 +141,7 @@ func TestSemanticExportFingerprintTracksImportedConstantInDefault(t *testing.T) 
 	// fingerprint has to resolve them through the defining identity.
 	makeFingerprint := func(value string) string {
 		ctx := New(".", ".peep", nil)
-		i32 := &typeinfo.IntegerType{Signed: true, Bits: 32}
+		i32 := &typeinfo.IntegerType{IsSigned: true, Bits: 32}
 		ownerID := moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "lib"}
 		imported := symbols.New("K", symbols.SymbolConst, nil, nil)
 		imported.Type = i32
@@ -183,8 +183,8 @@ func TestSemanticExportFingerprintChangesWithPublicMethodSignature(t *testing.T)
 		typeSymbol.Type = receiver
 		return SemanticExportFingerprint(nil, fingerprintModule(t, typeSymbol, bindings, nil))
 	}
-	i32 := &typeinfo.IntegerType{Signed: true, Bits: 32}
-	i64 := &typeinfo.IntegerType{Signed: true, Bits: 64}
+	i32 := &typeinfo.IntegerType{IsSigned: true, Bits: 32}
+	i64 := &typeinfo.IntegerType{IsSigned: true, Bits: 64}
 	if makeMethod(i32) == makeMethod(i64) {
 		t.Fatal("public method signature did not change semantic fingerprint")
 	}

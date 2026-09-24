@@ -92,7 +92,7 @@ func emitPrint(b *llvmBuilder, printInstr *mir.Print) {
 		promotedType := b.emitter.mod.Types.Intern(ir.Type{Kind: ir.TypeInteger, Bits: 64})
 		formatName = "unsigned"
 		if signed {
-			promotedType = b.emitter.mod.Types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 64})
+			promotedType = b.emitter.mod.Types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 64})
 			formatName = "signed"
 		}
 		value = emitCast(b, &mir.Cast{Arg: printInstr.Value, Type: promotedType})
@@ -101,7 +101,7 @@ func emitPrint(b *llvmBuilder, printInstr *mir.Print) {
 	formatText := fmt.Sprintf("getelementptr inbounds ([%d x i8], [%d x i8]* @.print.%s, i32 0, i32 0)", formatSize, formatSize, formatName)
 	printf := b.value("@"+runtimePrintfSymbol, llvmFunctionLayout(llvmScalarLayout("i32"), []*llvmLayout{i8Pointer}))
 	b.variadicCall(printf, []llvmValue{b.value(formatText, i8Pointer)}, arguments)
-	if printInstr.Newline {
+	if printInstr.AppendsNewline {
 		newline := b.value("getelementptr inbounds ([2 x i8], [2 x i8]* @.print.newline, i32 0, i32 0)", i8Pointer)
 		b.variadicCall(printf, []llvmValue{newline}, nil)
 	}

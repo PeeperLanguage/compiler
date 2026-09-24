@@ -550,7 +550,7 @@ func (c *checker) checkDeclAttributes(decl ast.Decl) {
 		}
 		requiredArgs := 0
 		for _, spec := range def.Args {
-			if !spec.Optional {
+			if !spec.IsOptional {
 				requiredArgs++
 			}
 		}

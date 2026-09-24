@@ -30,7 +30,7 @@ func analyzeFunction(fn *ControlFlowGraph, diag *diagnostics.DiagnosticBag, cons
 					reportConstantCondition(branch, value, diag)
 				}
 			}
-			if block.Reachable {
+			if block.IsReachable {
 				continue
 			}
 			for _, site := range block.Sites {
@@ -40,7 +40,7 @@ func analyzeFunction(fn *ControlFlowGraph, diag *diagnostics.DiagnosticBag, cons
 			}
 		}
 	}
-	if fn.Exit != nil && fn.Exit.Reachable && fn.ReturnsValue {
+	if fn.Exit != nil && fn.Exit.IsReachable && fn.HasReturnValue {
 		reportMissingReturn(fn, diag)
 	}
 }

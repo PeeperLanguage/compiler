@@ -767,7 +767,7 @@ func llvmFunctionReturnType(types *ir.TypeTable, fn *mir.Function) ir.TypeID {
 		return ir.InvalidType
 	}
 	if fn.Name == "main" && isVoidType(types, fn.ReturnType) {
-		return types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+		return types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
 	}
 	return fn.ReturnType
 }

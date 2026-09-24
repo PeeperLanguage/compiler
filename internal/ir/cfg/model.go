@@ -29,7 +29,7 @@ type ControlFlowGraph struct {
 	Name           string
 	Location       *source.Location
 	ReturnTypeText string
-	ReturnsValue   bool
+	HasReturnValue bool
 	Entry          *Block
 	Exit           *Block
 	Blocks         []*Block
@@ -119,13 +119,13 @@ const (
 )
 
 type Block struct {
-	ID         int
-	NodeID     ir.NodeID
-	Origin     BlockOrigin
-	Location   *source.Location
-	Sites      []*Site
-	Terminator Terminator
-	Reachable  bool
+	ID          int
+	NodeID      ir.NodeID
+	Origin      BlockOrigin
+	Location    *source.Location
+	Sites       []*Site
+	Terminator  Terminator
+	IsReachable bool
 }
 
 type Terminator interface {

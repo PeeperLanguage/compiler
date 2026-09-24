@@ -23,8 +23,8 @@ type InvalidType struct{}
 type UnknownType struct{}
 
 type IntegerType struct {
-	Signed bool
-	Bits   int
+	IsSigned bool
+	Bits     int
 }
 
 type ByteType struct{}
@@ -81,8 +81,8 @@ type OwnedPtrType struct {
 type RawPtrType struct{}
 
 type RefType struct {
-	Mutable bool
-	Target  Type
+	IsMutable bool
+	Target    Type
 }
 
 type OptionalType struct {
@@ -201,7 +201,7 @@ func (r MethodReceiver) typeFor(owner Type) Type {
 	case MethodReceiverShared:
 		return &RefType{Target: owner}
 	case MethodReceiverMutable:
-		return &RefType{Mutable: true, Target: owner}
+		return &RefType{IsMutable: true, Target: owner}
 	default:
 		return &InvalidType{}
 	}
@@ -222,7 +222,7 @@ func (t *IntegerType) Text() string {
 	if t == nil {
 		return ""
 	}
-	if t.Signed {
+	if t.IsSigned {
 		return "i" + strconv.Itoa(t.Bits)
 	}
 	return "u" + strconv.Itoa(t.Bits)
@@ -430,7 +430,7 @@ func (t *RefType) Text() string {
 		return ""
 	}
 	prefix := "&"
-	if t.Mutable {
+	if t.IsMutable {
 		prefix = "&mut "
 	}
 	return prefix + TypeText(t.Target)

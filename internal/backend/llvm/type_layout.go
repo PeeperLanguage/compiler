@@ -418,7 +418,7 @@ func integerInfoID(types *ir.TypeTable, id ir.TypeID) (signed bool, bits int, ok
 	if typ.Kind != ir.TypeInteger {
 		return false, 0, false
 	}
-	return typ.Signed, typ.Bits, true
+	return typ.IsSigned, typ.Bits, true
 }
 
 func isUnsignedTypeID(types *ir.TypeTable, id ir.TypeID) bool {

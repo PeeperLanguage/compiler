@@ -11,7 +11,7 @@ func DefaultNumberType(value string) Type {
 	}
 	for bits := 32; ; bits *= 2 {
 		if numeric.FitsIntegerLiteral(value, bits, true) {
-			return &IntegerType{Signed: true, Bits: bits}
+			return &IntegerType{IsSigned: true, Bits: bits}
 		}
 		if bits == numeric.MaxIntegerBits {
 			break
@@ -21,7 +21,7 @@ func DefaultNumberType(value string) Type {
 }
 
 func DefaultIntegerType() Type {
-	return &IntegerType{Signed: true, Bits: 32}
+	return &IntegerType{IsSigned: true, Bits: 32}
 }
 
 func LiteralFitsType(value string, typ Type) bool {

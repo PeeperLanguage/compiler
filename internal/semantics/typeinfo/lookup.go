@@ -29,7 +29,7 @@ func ReferenceTarget(t Type) (target Type, mutable bool, ok bool) {
 	if !ok || ref == nil || ref.Target == nil {
 		return nil, false, false
 	}
-	return ref.Target, ref.Mutable, true
+	return ref.Target, ref.IsMutable, true
 }
 
 // ReferenceValueTarget recognizes direct references and reference values made

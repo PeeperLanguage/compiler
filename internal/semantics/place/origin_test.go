@@ -97,7 +97,7 @@ func TestPlaceAddressabilityPointerAndReferenceBoundaries(t *testing.T) {
 		})
 	}
 
-	mutableReference := &typeinfo.RefType{Mutable: true, Target: typeinfo.DefaultIntegerType()}
+	mutableReference := &typeinfo.RefType{IsMutable: true, Target: typeinfo.DefaultIntegerType()}
 	sharedReference := &typeinfo.RefType{Target: typeinfo.DefaultIntegerType()}
 	for _, test := range []struct {
 		name   string
@@ -152,7 +152,7 @@ func TestPlaceLocalRootPreservesBindingLocalAndPointerCutoff(t *testing.T) {
 	resolved := symbols.New("value", symbols.SymbolConst, nil, nil)
 	for _, localBinding := range []bool{false, true} {
 		root, ok := LocalRoot(scope, moduleScope, base, nil, func(*ast.Ident) (Binding, bool) {
-			return Binding{Symbol: resolved, Local: localBinding}, true
+			return Binding{Symbol: resolved, IsLocal: localBinding}, true
 		})
 		if localBinding {
 			if !ok || root != resolved {
@@ -179,7 +179,7 @@ func TestResolvePreferResolvedBindingOverShadowingScope(t *testing.T) {
 		},
 	})
 	want := []Origin{{Root: declarationValue}}
-	if !SameOrigins(resolved.StorageOrigins, want) || !SameOrigins(resolved.ValueOrigins, want) || !resolved.Stable {
+	if !SameOrigins(resolved.StorageOrigins, want) || !SameOrigins(resolved.ValueOrigins, want) || !resolved.IsStable {
 		t.Fatalf("resolution = %#v, want stable declaration binding", resolved)
 	}
 }
@@ -218,7 +218,7 @@ func TestResolveSeparatesReferenceStorageAndValueProjections(t *testing.T) {
 		{Kind: OriginField, Field: "items"},
 		{Kind: OriginIndex, Index: "1"},
 	}}}
-	if !SameOrigins(resolved.ValueOrigins, want) || !resolved.Stable {
+	if !SameOrigins(resolved.ValueOrigins, want) || !resolved.IsStable {
 		t.Fatalf("resolution = %#v, want stable value origins %#v", resolved, want)
 	}
 	if !SameOrigins(Resolve(scope, base, ResolveOptions{
@@ -255,7 +255,7 @@ func TestResolveReferenceOriginsByProjectedStoragePlace(t *testing.T) {
 		},
 	})
 	if !SameOrigins(resolved.StorageOrigins, wantStorage) ||
-		!SameOrigins(resolved.ValueOrigins, []Origin{{Root: value}}) || !resolved.Stable {
+		!SameOrigins(resolved.ValueOrigins, []Origin{{Root: value}}) || !resolved.IsStable {
 		t.Fatalf("projected reference resolution = %#v", resolved)
 	}
 }
@@ -292,7 +292,7 @@ func TestResolveOrdersOptionalPayloadBeforePointeeAndSkipsNormalizedReferences(t
 	referent := symbols.New("referent", symbols.SymbolVar, nil, nil)
 	referent.BindType(valueType)
 	reference := symbols.New("reference", symbols.SymbolVar, nil, nil)
-	reference.BindType(&typeinfo.OptionalType{Inner: &typeinfo.RefType{Mutable: true, Target: valueType}})
+	reference.BindType(&typeinfo.OptionalType{Inner: &typeinfo.RefType{IsMutable: true, Target: valueType}})
 	for _, sym := range []*symbols.Symbol{owner, referent, reference} {
 		if err := scope.Declare(sym); err != nil {
 			t.Fatal(err)
@@ -324,7 +324,7 @@ func TestResolveOrdersOptionalPayloadBeforePointeeAndSkipsNormalizedReferences(t
 	referenceResolution := Resolve(scope, referenceField, ResolveOptions{
 		ExprType: func(expr ast.Expr) typeinfo.Type {
 			if expr == referenceBase {
-				return &typeinfo.RefType{Mutable: true, Target: valueType}
+				return &typeinfo.RefType{IsMutable: true, Target: valueType}
 			}
 			return typeinfo.DefaultIntegerType()
 		},
@@ -378,7 +378,7 @@ func TestResolvePreserveOwningPointeeAndCollapseUnknownDescendants(t *testing.T)
 		{Kind: OriginPointee},
 		{Kind: OriginWildcard},
 	}}}
-	if !SameOrigins(resolved.ValueOrigins, want) || resolved.Stable {
+	if !SameOrigins(resolved.ValueOrigins, want) || resolved.IsStable {
 		t.Fatalf("resolution = %#v, want unstable origins %#v", resolved, want)
 	}
 }
@@ -400,7 +400,7 @@ func TestResolveUsesBindingIndexIdentityAfterConstantEvaluation(t *testing.T) {
 		ConstantIndex: func(ast.Expr) (string, bool) { return "", false },
 	})
 	want := []Origin{{Root: values, Projections: []OriginProjection{{Kind: OriginBindingIndex, Binding: index}}}}
-	if !resolved.Stable || !SameOrigins(resolved.StorageOrigins, want) ||
+	if !resolved.IsStable || !SameOrigins(resolved.StorageOrigins, want) ||
 		len(resolved.Dependencies) != 1 || resolved.Dependencies[0] != index {
 		t.Fatalf("resolution = %#v, want binding-dependent stable index", resolved)
 	}

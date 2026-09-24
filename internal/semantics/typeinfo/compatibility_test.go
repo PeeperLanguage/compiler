@@ -12,36 +12,36 @@ func TestNumericConversionClassification(t *testing.T) {
 		want Compatibility
 	}{
 		// === BYTE CLASS ===
-		{"byte to i32", &IntegerType{Signed: true, Bits: 32}, &ByteType{}, ExplicitCastable},
-		{"i32 to byte", &ByteType{}, &IntegerType{Signed: true, Bits: 32}, ExplicitCastable},
+		{"byte to i32", &IntegerType{IsSigned: true, Bits: 32}, &ByteType{}, ExplicitCastable},
+		{"i32 to byte", &ByteType{}, &IntegerType{IsSigned: true, Bits: 32}, ExplicitCastable},
 		{"byte to f64", &FloatType{Bits: 64}, &ByteType{}, ExplicitCastable},
-		{"u8 to byte", &ByteType{}, &IntegerType{Signed: false, Bits: 8}, ExplicitCastable},
+		{"u8 to byte", &ByteType{}, &IntegerType{IsSigned: false, Bits: 8}, ExplicitCastable},
 
 		// === INTEGER WIDENING (same signedness) ===
-		{"i8 to i16", &IntegerType{Signed: true, Bits: 16}, &IntegerType{Signed: true, Bits: 8}, Compatible},
-		{"i8 to i32", &IntegerType{Signed: true, Bits: 32}, &IntegerType{Signed: true, Bits: 8}, Compatible},
-		{"i16 to i32", &IntegerType{Signed: true, Bits: 32}, &IntegerType{Signed: true, Bits: 16}, Compatible},
-		{"i32 to i64", &IntegerType{Signed: true, Bits: 64}, &IntegerType{Signed: true, Bits: 32}, Compatible},
+		{"i8 to i16", &IntegerType{IsSigned: true, Bits: 16}, &IntegerType{IsSigned: true, Bits: 8}, Compatible},
+		{"i8 to i32", &IntegerType{IsSigned: true, Bits: 32}, &IntegerType{IsSigned: true, Bits: 8}, Compatible},
+		{"i16 to i32", &IntegerType{IsSigned: true, Bits: 32}, &IntegerType{IsSigned: true, Bits: 16}, Compatible},
+		{"i32 to i64", &IntegerType{IsSigned: true, Bits: 64}, &IntegerType{IsSigned: true, Bits: 32}, Compatible},
 
 		// === INTEGER NARROWING (same signedness) ===
-		{"i16 to i8", &IntegerType{Signed: true, Bits: 8}, &IntegerType{Signed: true, Bits: 16}, ExplicitCastable},
-		{"i32 to i16", &IntegerType{Signed: true, Bits: 16}, &IntegerType{Signed: true, Bits: 32}, ExplicitCastable},
-		{"i64 to i32", &IntegerType{Signed: true, Bits: 32}, &IntegerType{Signed: true, Bits: 64}, ExplicitCastable},
+		{"i16 to i8", &IntegerType{IsSigned: true, Bits: 8}, &IntegerType{IsSigned: true, Bits: 16}, ExplicitCastable},
+		{"i32 to i16", &IntegerType{IsSigned: true, Bits: 16}, &IntegerType{IsSigned: true, Bits: 32}, ExplicitCastable},
+		{"i64 to i32", &IntegerType{IsSigned: true, Bits: 32}, &IntegerType{IsSigned: true, Bits: 64}, ExplicitCastable},
 
 		// === UNSIGNED WIDENING ===
-		{"u8 to u16", &IntegerType{Signed: false, Bits: 16}, &IntegerType{Signed: false, Bits: 8}, Compatible},
-		{"u16 to u32", &IntegerType{Signed: false, Bits: 32}, &IntegerType{Signed: false, Bits: 16}, Compatible},
-		{"u32 to u64", &IntegerType{Signed: false, Bits: 64}, &IntegerType{Signed: false, Bits: 32}, Compatible},
+		{"u8 to u16", &IntegerType{IsSigned: false, Bits: 16}, &IntegerType{IsSigned: false, Bits: 8}, Compatible},
+		{"u16 to u32", &IntegerType{IsSigned: false, Bits: 32}, &IntegerType{IsSigned: false, Bits: 16}, Compatible},
+		{"u32 to u64", &IntegerType{IsSigned: false, Bits: 64}, &IntegerType{IsSigned: false, Bits: 32}, Compatible},
 
 		// === UNSIGNED NARROWING ===
-		{"u16 to u8", &IntegerType{Signed: false, Bits: 8}, &IntegerType{Signed: false, Bits: 16}, ExplicitCastable},
-		{"u32 to u16", &IntegerType{Signed: false, Bits: 16}, &IntegerType{Signed: false, Bits: 32}, ExplicitCastable},
+		{"u16 to u8", &IntegerType{IsSigned: false, Bits: 8}, &IntegerType{IsSigned: false, Bits: 16}, ExplicitCastable},
+		{"u32 to u16", &IntegerType{IsSigned: false, Bits: 16}, &IntegerType{IsSigned: false, Bits: 32}, ExplicitCastable},
 
 		// === SIGNED <-> UNSIGNED ===
-		{"i32 to u32", &IntegerType{Signed: false, Bits: 32}, &IntegerType{Signed: true, Bits: 32}, ExplicitCastable},
-		{"u32 to i32", &IntegerType{Signed: true, Bits: 32}, &IntegerType{Signed: false, Bits: 32}, ExplicitCastable},
-		{"i8 to u16", &IntegerType{Signed: false, Bits: 16}, &IntegerType{Signed: true, Bits: 8}, Compatible},
-		{"u8 to i16", &IntegerType{Signed: true, Bits: 16}, &IntegerType{Signed: false, Bits: 8}, Compatible},
+		{"i32 to u32", &IntegerType{IsSigned: false, Bits: 32}, &IntegerType{IsSigned: true, Bits: 32}, ExplicitCastable},
+		{"u32 to i32", &IntegerType{IsSigned: true, Bits: 32}, &IntegerType{IsSigned: false, Bits: 32}, ExplicitCastable},
+		{"i8 to u16", &IntegerType{IsSigned: false, Bits: 16}, &IntegerType{IsSigned: true, Bits: 8}, Compatible},
+		{"u8 to i16", &IntegerType{IsSigned: true, Bits: 16}, &IntegerType{IsSigned: false, Bits: 8}, Compatible},
 
 		// === FLOAT WIDENING ===
 		{"f32 to f64", &FloatType{Bits: 64}, &FloatType{Bits: 32}, Compatible},
@@ -50,22 +50,22 @@ func TestNumericConversionClassification(t *testing.T) {
 		{"f64 to f32", &FloatType{Bits: 32}, &FloatType{Bits: 64}, ExplicitCastable},
 
 		// === INTEGER TO FLOAT: CROSS-CLASS ===
-		{"i8 to f64", &FloatType{Bits: 64}, &IntegerType{Signed: true, Bits: 8}, ExplicitCastable},
-		{"i16 to f64", &FloatType{Bits: 64}, &IntegerType{Signed: true, Bits: 16}, ExplicitCastable},
-		{"i32 to f64", &FloatType{Bits: 64}, &IntegerType{Signed: true, Bits: 32}, ExplicitCastable},
-		{"u16 to f64", &FloatType{Bits: 64}, &IntegerType{Signed: false, Bits: 16}, ExplicitCastable},
-		{"u32 to f64", &FloatType{Bits: 64}, &IntegerType{Signed: false, Bits: 32}, ExplicitCastable},
-		{"i32 to f32", &FloatType{Bits: 32}, &IntegerType{Signed: true, Bits: 32}, ExplicitCastable},
-		{"u32 to f32", &FloatType{Bits: 32}, &IntegerType{Signed: false, Bits: 32}, ExplicitCastable},
-		{"i8 to f32", &FloatType{Bits: 32}, &IntegerType{Signed: true, Bits: 8}, ExplicitCastable},
-		{"i16 to f32", &FloatType{Bits: 32}, &IntegerType{Signed: true, Bits: 16}, ExplicitCastable},
-		{"u16 to f32", &FloatType{Bits: 32}, &IntegerType{Signed: false, Bits: 16}, ExplicitCastable},
+		{"i8 to f64", &FloatType{Bits: 64}, &IntegerType{IsSigned: true, Bits: 8}, ExplicitCastable},
+		{"i16 to f64", &FloatType{Bits: 64}, &IntegerType{IsSigned: true, Bits: 16}, ExplicitCastable},
+		{"i32 to f64", &FloatType{Bits: 64}, &IntegerType{IsSigned: true, Bits: 32}, ExplicitCastable},
+		{"u16 to f64", &FloatType{Bits: 64}, &IntegerType{IsSigned: false, Bits: 16}, ExplicitCastable},
+		{"u32 to f64", &FloatType{Bits: 64}, &IntegerType{IsSigned: false, Bits: 32}, ExplicitCastable},
+		{"i32 to f32", &FloatType{Bits: 32}, &IntegerType{IsSigned: true, Bits: 32}, ExplicitCastable},
+		{"u32 to f32", &FloatType{Bits: 32}, &IntegerType{IsSigned: false, Bits: 32}, ExplicitCastable},
+		{"i8 to f32", &FloatType{Bits: 32}, &IntegerType{IsSigned: true, Bits: 8}, ExplicitCastable},
+		{"i16 to f32", &FloatType{Bits: 32}, &IntegerType{IsSigned: true, Bits: 16}, ExplicitCastable},
+		{"u16 to f32", &FloatType{Bits: 32}, &IntegerType{IsSigned: false, Bits: 16}, ExplicitCastable},
 
 		// === FLOAT TO INTEGER ===
 		// Always explicit (fractional part loss)
-		{"f32 to i32", &IntegerType{Signed: true, Bits: 32}, &FloatType{Bits: 32}, ExplicitCastable},
-		{"f64 to i32", &IntegerType{Signed: true, Bits: 32}, &FloatType{Bits: 64}, ExplicitCastable},
-		{"f32 to u32", &IntegerType{Signed: false, Bits: 32}, &FloatType{Bits: 32}, ExplicitCastable},
+		{"f32 to i32", &IntegerType{IsSigned: true, Bits: 32}, &FloatType{Bits: 32}, ExplicitCastable},
+		{"f64 to i32", &IntegerType{IsSigned: true, Bits: 32}, &FloatType{Bits: 64}, ExplicitCastable},
+		{"f32 to u32", &IntegerType{IsSigned: false, Bits: 32}, &FloatType{Bits: 32}, ExplicitCastable},
 	}
 
 	for _, tt := range tests {
@@ -84,10 +84,10 @@ func TestIdentityConversionClassification(t *testing.T) {
 		name string
 		typ  Type
 	}{
-		{"i32", &IntegerType{Signed: true, Bits: 32}},
+		{"i32", &IntegerType{IsSigned: true, Bits: 32}},
 		{"f64", &FloatType{Bits: 64}},
 		{"byte", &ByteType{}},
-		{"struct", &StructType{Fields: []Field{{Name: "value", Type: &IntegerType{Signed: true, Bits: 32}}}}},
+		{"struct", &StructType{Fields: []Field{{Name: "value", Type: &IntegerType{IsSigned: true, Bits: 32}}}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -100,24 +100,24 @@ func TestIdentityConversionClassification(t *testing.T) {
 }
 
 func TestBoolConversionClassification(t *testing.T) {
-	got := CheckCompatibility(&BoolType{}, &IntegerType{Signed: true, Bits: 32})
+	got := CheckCompatibility(&BoolType{}, &IntegerType{IsSigned: true, Bits: 32})
 	if got.Kind != ConversionBool || got.Compatibility != ExplicitCastable {
 		t.Fatalf("bool conversion = %#v, want explicit bool conversion", got)
 	}
-	got = CheckCompatibility(&IntegerType{Signed: true, Bits: 32}, &BoolType{})
+	got = CheckCompatibility(&IntegerType{IsSigned: true, Bits: 32}, &BoolType{})
 	if got.Kind != ConversionNone || got.Compatibility != Incompatible {
 		t.Fatalf("numeric conversion from bool = %#v, want incompatible", got)
 	}
 }
 
 func TestOptionalArrayAndReferenceCompatibility(t *testing.T) {
-	if got := CheckCompatibility(&OptionalType{Inner: &IntegerType{Signed: true, Bits: 32}}, &NoneType{}); got.Kind != ConversionOptional || got.Compatibility != Compatible {
+	if got := CheckCompatibility(&OptionalType{Inner: &IntegerType{IsSigned: true, Bits: 32}}, &NoneType{}); got.Kind != ConversionOptional || got.Compatibility != Compatible {
 		t.Fatalf("optional none compat = %v, want compatible", got)
 	}
-	if got := CheckCompatibility(&OptionalType{Inner: &IntegerType{Signed: true, Bits: 32}}, &IntegerType{Signed: true, Bits: 32}); got.Kind != ConversionOptional || got.Compatibility != Compatible {
+	if got := CheckCompatibility(&OptionalType{Inner: &IntegerType{IsSigned: true, Bits: 32}}, &IntegerType{IsSigned: true, Bits: 32}); got.Kind != ConversionOptional || got.Compatibility != Compatible {
 		t.Fatalf("optional inner compat = %v, want compatible", got)
 	}
-	if got := CheckCompatibility(&ArrayType{Len: "4", Elem: &IntegerType{Signed: true, Bits: 32}}, &ArrayType{Len: "4", Elem: &IntegerType{Signed: true, Bits: 32}}); got.Compatibility != Compatible {
+	if got := CheckCompatibility(&ArrayType{Len: "4", Elem: &IntegerType{IsSigned: true, Bits: 32}}, &ArrayType{Len: "4", Elem: &IntegerType{IsSigned: true, Bits: 32}}); got.Compatibility != Compatible {
 		t.Fatalf("array compat = %v, want compatible", got)
 	}
 	if got := CheckCompatibility(&ArrayType{Shape: ArrayOwner, Elem: &StringType{}}, &ArrayType{Shape: ArrayOwner, Elem: &StringType{}}); got.Compatibility != Compatible {
@@ -129,8 +129,8 @@ func TestOptionalArrayAndReferenceCompatibility(t *testing.T) {
 	); got.Compatibility != Compatible {
 		t.Fatalf("slice-view ref compat = %v, want compatible", got)
 	}
-	shared := &RefType{Target: &IntegerType{Signed: true, Bits: 32}}
-	mutable := &RefType{Mutable: true, Target: &IntegerType{Signed: true, Bits: 32}}
+	shared := &RefType{Target: &IntegerType{IsSigned: true, Bits: 32}}
+	mutable := &RefType{IsMutable: true, Target: &IntegerType{IsSigned: true, Bits: 32}}
 	if got := CheckCompatibility(shared, mutable); got.Kind != ConversionReference || got.Compatibility != Compatible {
 		t.Fatalf("mutable-to-shared ref compat = %v, want compatible", got)
 	}
@@ -140,7 +140,7 @@ func TestOptionalArrayAndReferenceCompatibility(t *testing.T) {
 }
 
 func TestOptionalCompatibilityAllowsOneLayerPromotion(t *testing.T) {
-	i32 := &IntegerType{Signed: true, Bits: 32}
+	i32 := &IntegerType{IsSigned: true, Bits: 32}
 	inner := &OptionalType{Inner: i32}
 	outer := &OptionalType{Inner: inner}
 	if conversion := CheckCompatibility(outer, inner); conversion.Kind != ConversionOptional || conversion.Compatibility != Compatible {
@@ -152,8 +152,8 @@ func TestOptionalCompatibilityAllowsOneLayerPromotion(t *testing.T) {
 }
 
 func TestStructCompatibilityUsesExactFieldNamesIgnoringOrder(t *testing.T) {
-	i32 := &IntegerType{Signed: true, Bits: 32}
-	u32 := &IntegerType{Signed: false, Bits: 32}
+	i32 := &IntegerType{IsSigned: true, Bits: 32}
+	u32 := &IntegerType{IsSigned: false, Bits: 32}
 	left := &StructType{Fields: []Field{{Name: "x", Type: i32}, {Name: "y", Type: u32}}}
 	reordered := &StructType{Fields: []Field{{Name: "y", Type: u32}, {Name: "x", Type: i32}}}
 	renamed := &StructType{Fields: []Field{{Name: "width", Type: i32}, {Name: "height", Type: u32}}}

@@ -3,8 +3,8 @@ package typeinfo
 import "testing"
 
 func TestSemanticKeyUsesCanonicalStructure(t *testing.T) {
-	i32 := &IntegerType{Signed: true, Bits: 32}
-	i64 := &IntegerType{Signed: true, Bits: 64}
+	i32 := &IntegerType{IsSigned: true, Bits: 32}
+	i64 := &IntegerType{IsSigned: true, Bits: 64}
 
 	left := &StructType{Fields: []Field{{Name: "value", Type: i32}}}
 	rename := &StructType{Fields: []Field{{Name: "code", Type: i32}}}
@@ -20,7 +20,7 @@ func TestSemanticKeyUsesCanonicalStructure(t *testing.T) {
 }
 
 func TestSemanticKeyIncludesCallableAndGenericMetadata(t *testing.T) {
-	i32 := &IntegerType{Signed: true, Bits: 32}
+	i32 := &IntegerType{IsSigned: true, Bits: 32}
 	left := &FuncType{
 		Params:        []Type{i32},
 		ParamNames:    []string{"left"},
@@ -49,7 +49,7 @@ func TestSemanticKeyIncludesCallableAndGenericMetadata(t *testing.T) {
 	}
 	box64 := &DefinedType{
 		Name: "Box", Identity: "pkg::Box", Kind: DefinedKindStruct,
-		TypeParameters: []*TypeParameterType{parameter}, TypeArguments: []Type{&IntegerType{Signed: true, Bits: 64}},
+		TypeParameters: []*TypeParameterType{parameter}, TypeArguments: []Type{&IntegerType{IsSigned: true, Bits: 64}},
 		Underlying: box32.Underlying,
 	}
 	if SemanticKey(box32) == SemanticKey(box64) {
@@ -77,7 +77,7 @@ func TestSemanticKeyPreservesAbsentChildSlots(t *testing.T) {
 	if SemanticKey(nilPayload) != SemanticKey(typedNilPayload) {
 		t.Fatal("nil and typed-nil payload slots have different semantic keys")
 	}
-	if SemanticKey(nilPayload) == SemanticKey(&OptionalType{Inner: &IntegerType{Signed: true, Bits: 32}}) {
+	if SemanticKey(nilPayload) == SemanticKey(&OptionalType{Inner: &IntegerType{IsSigned: true, Bits: 32}}) {
 		t.Fatal("absent and present payload slots have same semantic key")
 	}
 }
@@ -86,7 +86,7 @@ func TestGenericMetadataDoesNotChangeSizedStorageTraversal(t *testing.T) {
 	defined := &DefinedType{
 		TypeParameters: []*TypeParameterType{{Name: "T", OwnerIdentity: "Box", Index: 0}},
 		TypeArguments:  []Type{&UnknownType{}},
-		Underlying:     &IntegerType{Signed: true, Bits: 32},
+		Underlying:     &IntegerType{IsSigned: true, Bits: 32},
 	}
 	if !IsSizedType(defined) {
 		t.Fatal("generic metadata should not replace the underlying storage edge")
@@ -94,8 +94,8 @@ func TestGenericMetadataDoesNotChangeSizedStorageTraversal(t *testing.T) {
 }
 
 func TestSemanticKeyIncludesEnumSchemaAndNominalIdentity(t *testing.T) {
-	i32 := &IntegerType{Signed: true, Bits: 32}
-	i64 := &IntegerType{Signed: true, Bits: 64}
+	i32 := &IntegerType{IsSigned: true, Bits: 32}
+	i64 := &IntegerType{IsSigned: true, Bits: 64}
 	makeEnum := func(fieldName string, fieldType Type) *EnumType {
 		return &EnumType{Cases: []VariantCase{
 			{Name: "Ready", Payload: &StructType{Fields: []Field{{Name: fieldName, Type: fieldType}}}},

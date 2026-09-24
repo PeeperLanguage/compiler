@@ -644,7 +644,7 @@ func (v *livenessEffectVisitor) recordUse(sym *symbols.Symbol, at ir.SourceInfo)
 func (v *livenessEffectVisitor) VisitDefine(op effect.Define) {
 	// A binding that merely arrives at this site was established by the edge
 	// into it, so killing liveness here would end a borrow one site too early.
-	if !op.OnEntry && trackedLiveSymbol(op.Symbol) {
+	if !op.IsOnEntry && trackedLiveSymbol(op.Symbol) {
 		v.definitions[op.Symbol] = struct{}{}
 	}
 }
@@ -658,7 +658,7 @@ func (v *livenessEffectVisitor) VisitWrite(op effect.Write) {
 		return
 	}
 	v.definitions[op.Place.Root] = struct{}{}
-	if typ, typed := symbols.GetSymbolType(op.Place.Root); typed && typeinfo.OwnershipCapabilityOf(typ).Drop {
+	if typ, typed := symbols.GetSymbolType(op.Place.Root); typed && typeinfo.OwnershipCapabilityOf(typ).NeedsDrop {
 		v.recordUse(op.Place.Root, ir.SourceInfo{NodeID: ir.NodeID(op.Node), Location: op.Location})
 	}
 }

@@ -43,7 +43,7 @@ func TestTypeFromSyntaxUsesExplicitTargetForSizeIntegers(t *testing.T) {
 		{target: target64, bits: 64},
 	} {
 		typ, ok := TypeFromSyntax(&ast.NamedType{Name: "usize"}, SyntaxContext{Target: tt.target}).(*IntegerType)
-		if !ok || typ.Signed || typ.Bits != tt.bits {
+		if !ok || typ.IsSigned || typ.Bits != tt.bits {
 			t.Fatalf("usize type = %#v, want u%d", typ, tt.bits)
 		}
 	}
@@ -52,7 +52,7 @@ func TestTypeFromSyntaxUsesExplicitTargetForSizeIntegers(t *testing.T) {
 func TestNumericInfoUsesNarrowTypeCapability(t *testing.T) {
 	alias := &DefinedType{
 		Kind:       DefinedKindAlias,
-		Underlying: &IntegerType{Signed: false, Bits: 16},
+		Underlying: &IntegerType{IsSigned: false, Bits: 16},
 	}
 	tests := []struct {
 		name       string
@@ -61,7 +61,7 @@ func TestNumericInfoUsesNarrowTypeCapability(t *testing.T) {
 		wantBits   int
 		wantOK     bool
 	}{
-		{name: "signed integer", typ: &IntegerType{Signed: true, Bits: 32}, wantFamily: NumericSigned, wantBits: 32, wantOK: true},
+		{name: "signed integer", typ: &IntegerType{IsSigned: true, Bits: 32}, wantFamily: NumericSigned, wantBits: 32, wantOK: true},
 		{name: "unsigned alias", typ: alias, wantFamily: NumericUnsigned, wantBits: 16, wantOK: true},
 		{name: "byte", typ: &ByteType{}, wantFamily: NumericByte, wantBits: 8, wantOK: true},
 		{name: "float", typ: &FloatType{Bits: 64}, wantFamily: NumericFloat, wantBits: 64, wantOK: true},
@@ -81,8 +81,8 @@ func TestNumericInfoUsesNarrowTypeCapability(t *testing.T) {
 }
 
 func TestSameTypeDelegatesIntrinsicEqualityToTypes(t *testing.T) {
-	i32 := &IntegerType{Signed: true, Bits: 32}
-	u32 := &IntegerType{Signed: false, Bits: 32}
+	i32 := &IntegerType{IsSigned: true, Bits: 32}
+	u32 := &IntegerType{IsSigned: false, Bits: 32}
 
 	leftStruct := &StructType{Fields: []Field{{Name: "x", Type: i32}, {Name: "y", Type: u32}}}
 	rightStruct := &StructType{Fields: []Field{{Name: "y", Type: u32}, {Name: "x", Type: i32}}}
@@ -96,8 +96,8 @@ func TestSameTypeDelegatesIntrinsicEqualityToTypes(t *testing.T) {
 		ReturnOrigins: &ReturnOriginContract{Sources: []int{0, 1}},
 	}
 	rightFunction := &FuncType{
-		Params:        []Type{&IntegerType{Signed: true, Bits: 32}},
-		Return:        &RefType{Target: &IntegerType{Signed: true, Bits: 32}},
+		Params:        []Type{&IntegerType{IsSigned: true, Bits: 32}},
+		Return:        &RefType{Target: &IntegerType{IsSigned: true, Bits: 32}},
 		ReturnOrigins: &ReturnOriginContract{Sources: []int{1, 0}},
 	}
 	if !SameType(leftFunction, rightFunction) {
@@ -112,12 +112,12 @@ func TestSameTypeDelegatesIntrinsicEqualityToTypes(t *testing.T) {
 }
 
 func TestPointerTypeTextAndEquality(t *testing.T) {
-	ownedA := &OwnedPtrType{Target: &IntegerType{Signed: true, Bits: 32}}
-	ownedB := &OwnedPtrType{Target: &IntegerType{Signed: true, Bits: 32}}
+	ownedA := &OwnedPtrType{Target: &IntegerType{IsSigned: true, Bits: 32}}
+	ownedB := &OwnedPtrType{Target: &IntegerType{IsSigned: true, Bits: 32}}
 	rawPtr := &RawPtrType{}
 	ref := &RefType{Target: &ArrayType{Shape: ArraySlice, Elem: &StringType{}}}
-	opt := &OptionalType{Inner: &IntegerType{Signed: true, Bits: 32}}
-	array := &ArrayType{Len: "4", Elem: &IntegerType{Signed: true, Bits: 32}}
+	opt := &OptionalType{Inner: &IntegerType{IsSigned: true, Bits: 32}}
+	array := &ArrayType{Len: "4", Elem: &IntegerType{IsSigned: true, Bits: 32}}
 	dynArray := &ArrayType{Shape: ArrayOwner, Elem: &StringType{}}
 
 	if got := ownedA.Text(); got != "*i32" {
@@ -144,7 +144,7 @@ func TestPointerTypeTextAndEquality(t *testing.T) {
 }
 
 func TestSliceIsUnsizedButSliceReferenceIsSized(t *testing.T) {
-	slice := &ArrayType{Shape: ArraySlice, Elem: &IntegerType{Signed: true, Bits: 32}}
+	slice := &ArrayType{Shape: ArraySlice, Elem: &IntegerType{IsSigned: true, Bits: 32}}
 	if IsSizedType(slice) {
 		t.Fatal("bare slice must be unsized")
 	}
@@ -154,7 +154,7 @@ func TestSliceIsUnsizedButSliceReferenceIsSized(t *testing.T) {
 }
 
 func TestCopyCapabilitiesFollowStructuralModel(t *testing.T) {
-	i32 := &IntegerType{Signed: true, Bits: 32}
+	i32 := &IntegerType{IsSigned: true, Bits: 32}
 	if OwnershipCapabilityOf(i32).Copy != CopyImplicit || OwnershipCapabilityOf(&RawPtrType{}).Copy != CopyImplicit || OwnershipCapabilityOf(&RefType{Target: i32}).Copy != CopyImplicit {
 		t.Fatalf("scalar, raw pointer, and shared reference should copy implicitly")
 	}
@@ -167,10 +167,10 @@ func TestCopyCapabilitiesFollowStructuralModel(t *testing.T) {
 	if got := OwnershipCapabilityOf(&StructType{Fields: []Field{{Name: "value", Type: i32}}}); got.Copy != CopyExplicit {
 		t.Fatalf("scalar-only struct should support structural copy, got %v", got.Copy)
 	}
-	if got := OwnershipCapabilityOf(&StructType{Fields: []Field{{Name: "owner", Type: &OwnedPtrType{Target: i32}}}}); got.Copy != CopyNever || !got.Drop {
+	if got := OwnershipCapabilityOf(&StructType{Fields: []Field{{Name: "owner", Type: &OwnedPtrType{Target: i32}}}}); got.Copy != CopyNever || !got.NeedsDrop {
 		t.Fatalf("owned pointer should propagate nocopy and drop through struct, got %v", got)
 	}
-	if got := OwnershipCapabilityOf(&ArrayType{Shape: ArrayOwner, Elem: i32}); got.Copy != CopyNever || !got.Drop {
+	if got := OwnershipCapabilityOf(&ArrayType{Shape: ArrayOwner, Elem: i32}); got.Copy != CopyNever || !got.NeedsDrop {
 		t.Fatalf("dynamic array should be intrinsically nocopy, got %v", got)
 	}
 	if got := OwnershipCapabilityOf(&NoneType{}); got.Copy != CopyImplicit {
@@ -192,7 +192,7 @@ func TestAllocatorCapabilities(t *testing.T) {
 }
 
 func TestComparisonCapabilities(t *testing.T) {
-	if !IsOrderable(&IntegerType{Signed: true, Bits: 32}) ||
+	if !IsOrderable(&IntegerType{IsSigned: true, Bits: 32}) ||
 		!IsOrderable(&ByteType{}) ||
 		!IsOrderable(&CharType{}) ||
 		!IsOrderable(&FloatType{Bits: 64}) {
@@ -207,8 +207,8 @@ func TestComparisonCapabilities(t *testing.T) {
 }
 
 func TestReferenceTargetPreservesMutability(t *testing.T) {
-	target := &IntegerType{Signed: true, Bits: 32}
-	got, mutable, ok := ReferenceTarget(&RefType{Mutable: true, Target: target})
+	target := &IntegerType{IsSigned: true, Bits: 32}
+	got, mutable, ok := ReferenceTarget(&RefType{IsMutable: true, Target: target})
 	if !ok || got != target || !mutable {
 		t.Fatalf("reference target = (%v, %v, %v), want (%v, true, true)", got, mutable, ok, target)
 	}
@@ -218,12 +218,12 @@ func TestReferenceTargetPreservesMutability(t *testing.T) {
 }
 
 func TestReferenceValueTargetUnwrapsOptionalAliases(t *testing.T) {
-	target := &IntegerType{Signed: true, Bits: 32}
+	target := &IntegerType{IsSigned: true, Bits: 32}
 	valueType := &DefinedType{
 		Name: "MaybeReference",
 		Underlying: &OptionalType{Inner: &OptionalType{Inner: &DefinedType{
 			Name:       "MutableReference",
-			Underlying: &RefType{Mutable: true, Target: target},
+			Underlying: &RefType{IsMutable: true, Target: target},
 		}}},
 	}
 	got, mutable, ok := ReferenceValueTarget(valueType)
@@ -245,7 +245,7 @@ func TestSizedTypesDistinguishInterfaceCarriers(t *testing.T) {
 	}
 	for _, carrier := range []Type{
 		&RefType{Target: iface},
-		&RefType{Mutable: true, Target: iface},
+		&RefType{IsMutable: true, Target: iface},
 		&OwnedPtrType{Target: iface},
 	} {
 		if !IsSizedType(carrier) {
@@ -269,13 +269,13 @@ func TestSizedTypesDistinguishInterfaceCarriers(t *testing.T) {
 
 func TestInterfaceTypeOfRecognizesReferencedInterface(t *testing.T) {
 	iface := &InterfaceType{Methods: []Method{{Name: "read"}}}
-	for _, typ := range []Type{iface, &RefType{Target: iface}, &RefType{Mutable: true, Target: iface}, &OwnedPtrType{Target: iface}} {
+	for _, typ := range []Type{iface, &RefType{Target: iface}, &RefType{IsMutable: true, Target: iface}, &OwnedPtrType{Target: iface}} {
 		got, ok := InterfaceTypeOf(typ)
 		if !ok || got != iface {
 			t.Fatalf("interface type = (%v, %v), want (%v, true)", got, ok, iface)
 		}
 	}
-	if _, ok := InterfaceTypeOf(&RefType{Target: &IntegerType{Signed: true, Bits: 32}}); ok {
+	if _, ok := InterfaceTypeOf(&RefType{Target: &IntegerType{IsSigned: true, Bits: 32}}); ok {
 		t.Fatalf("reference to concrete type must not classify as interface")
 	}
 	if _, ok := InterfaceTypeOf(&RawPtrType{}); ok {
@@ -286,7 +286,7 @@ func TestInterfaceTypeOfRecognizesReferencedInterface(t *testing.T) {
 func TestContainsReferenceTraversesAliasesAndStopsAtCycles(t *testing.T) {
 	referenceAlias := &DefinedType{
 		Name:       "Shared",
-		Underlying: &RefType{Target: &IntegerType{Signed: true, Bits: 32}},
+		Underlying: &RefType{Target: &IntegerType{IsSigned: true, Bits: 32}},
 	}
 	if !ContainsReference(&ArrayType{Len: "2", Elem: referenceAlias}) {
 		t.Fatalf("reference hidden by alias and array should be found")
@@ -303,8 +303,8 @@ func TestContainsReferenceTraversesAliasesAndStopsAtCycles(t *testing.T) {
 }
 
 func TestReferenceStorageTraversalIgnoresCallableMetadata(t *testing.T) {
-	reference := &RefType{Target: &IntegerType{Signed: true, Bits: 32}}
-	callback := &FuncType{Params: []Type{reference}, Return: &IntegerType{Signed: true, Bits: 32}}
+	reference := &RefType{Target: &IntegerType{IsSigned: true, Bits: 32}}
+	callback := &FuncType{Params: []Type{reference}, Return: &IntegerType{IsSigned: true, Bits: 32}}
 	holder := &StructType{Fields: []Field{{Name: "callback", Type: callback}}}
 
 	if ContainsReference(callback) || ContainsReference(holder) {
@@ -343,7 +343,7 @@ func TestStoredReferenceTraversalStopsAtDirectReferent(t *testing.T) {
 
 func TestMethodCallableTypeMaterializesReceiverEvidence(t *testing.T) {
 	owner := &DefinedType{Name: "Buffer", Identity: "test::Buffer"}
-	value := &IntegerType{Signed: true, Bits: 32}
+	value := &IntegerType{IsSigned: true, Bits: 32}
 	origins := &ReturnOriginContract{Sources: []int{0, 1}}
 	for _, test := range []struct {
 		name     string
@@ -421,8 +421,8 @@ func TestTypeFromSyntaxPublishesInterfaceReceiverEvidence(t *testing.T) {
 	ifaceSyntax := &ast.InterfaceType{Methods: []ast.TypeMethod{{
 		Name: &ast.Ident{Name: "write"},
 		Receiver: &ast.Param{Type: &ast.RefType{
-			Mutable: true,
-			Target:  &ast.NamedType{Name: "Self"},
+			IsMutable: true,
+			Target:    &ast.NamedType{Name: "Self"},
 		}},
 		Params: []ast.Param{{Name: &ast.Ident{Name: "value"}, Type: &ast.NamedType{Name: "i32"}}},
 	}}}
@@ -561,7 +561,7 @@ func TestTypeFromSyntaxRequiresArrayLengthToFitTargetIndex(t *testing.T) {
 }
 
 func TestNeedsDropSeparatesOwnershipFromMoveOnlyTypes(t *testing.T) {
-	owner := &OwnedPtrType{Target: &IntegerType{Signed: true, Bits: 32}}
+	owner := &OwnedPtrType{Target: &IntegerType{IsSigned: true, Bits: 32}}
 	cases := []struct {
 		name string
 		typ  Type
@@ -569,17 +569,17 @@ func TestNeedsDropSeparatesOwnershipFromMoveOnlyTypes(t *testing.T) {
 	}{
 		{name: "owned pointer", typ: owner, want: true},
 		{name: "string", typ: &StringType{}, want: true},
-		{name: "dynamic array", typ: &ArrayType{Shape: ArrayOwner, Elem: &IntegerType{Signed: true, Bits: 32}}, want: true},
+		{name: "dynamic array", typ: &ArrayType{Shape: ArrayOwner, Elem: &IntegerType{IsSigned: true, Bits: 32}}, want: true},
 		{name: "fixed owner array", typ: &ArrayType{Len: "2", Elem: owner}, want: true},
 		{name: "optional owner", typ: &OptionalType{Inner: owner}, want: true},
 		{name: "nested owner", typ: &StructType{Fields: []Field{{Name: "value", Type: owner}}}, want: true},
-		{name: "plain composite", typ: &StructType{Fields: []Field{{Name: "value", Type: &IntegerType{Signed: true, Bits: 32}}}}, want: false},
-		{name: "mutable borrow", typ: &RefType{Mutable: true, Target: &IntegerType{Signed: true, Bits: 32}}, want: false},
+		{name: "plain composite", typ: &StructType{Fields: []Field{{Name: "value", Type: &IntegerType{IsSigned: true, Bits: 32}}}}, want: false},
+		{name: "mutable borrow", typ: &RefType{IsMutable: true, Target: &IntegerType{IsSigned: true, Bits: 32}}, want: false},
 		{name: "function", typ: &FuncType{}, want: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := OwnershipCapabilityOf(tc.typ).Drop; got != tc.want {
+			if got := OwnershipCapabilityOf(tc.typ).NeedsDrop; got != tc.want {
 				t.Fatalf("drop obligation for %s = %v, want %v", TypeText(tc.typ), got, tc.want)
 			}
 		})
@@ -595,7 +595,7 @@ func TestDynamicArrayRequiresRecursivelySizedElement(t *testing.T) {
 }
 
 func TestVariantDescriptorUnifiesOptionalAndNamedEnumCases(t *testing.T) {
-	i32 := &IntegerType{Signed: true, Bits: 32}
+	i32 := &IntegerType{IsSigned: true, Bits: 32}
 	optional, ok := VariantDescriptorOf(&OptionalType{Inner: i32})
 	if !ok || optional.Family != VariantFamilyOptional || optional.Identity != "" || len(optional.Cases) != 2 ||
 		optional.Cases[0].Name != "Absent" || optional.Cases[0].Payload != nil ||
@@ -616,7 +616,7 @@ func TestVariantDescriptorUnifiesOptionalAndNamedEnumCases(t *testing.T) {
 }
 
 func TestNamedEnumPayloadCapabilitiesFollowEveryCaseField(t *testing.T) {
-	i32 := &IntegerType{Signed: true, Bits: 32}
+	i32 := &IntegerType{IsSigned: true, Bits: 32}
 	owner := &OwnedPtrType{Target: i32}
 	copyable := &EnumType{Cases: []VariantCase{
 		{Name: "Ready", Payload: &StructType{Fields: []Field{{Name: "value", Type: i32}}}},
@@ -641,10 +641,10 @@ func TestNamedEnumPayloadCapabilitiesFollowEveryCaseField(t *testing.T) {
 		}}},
 	}}}
 
-	if got := OwnershipCapabilityOf(copyable); got.Copy != CopyImplicit || got.Drop {
+	if got := OwnershipCapabilityOf(copyable); got.Copy != CopyImplicit || got.NeedsDrop {
 		t.Fatalf("scalar enum payload should remain copyable and require no drop, got %v", got)
 	}
-	if got := OwnershipCapabilityOf(owned); got.Copy != CopyNever || !got.Drop {
+	if got := OwnershipCapabilityOf(owned); got.Copy != CopyNever || !got.NeedsDrop {
 		t.Fatalf("owned enum payload should be move-only and require drop, got %v", got)
 	}
 	if IsSizedType(unsized) || IsLowerableType(unsized) {
@@ -723,7 +723,7 @@ func TestVariantDescriptorUsesEnumIdentityThroughTransparentAlias(t *testing.T) 
 }
 
 func TestAliasCanonicalizationPreservesNominalTypesAndRejectsCycles(t *testing.T) {
-	integer := &IntegerType{Signed: true, Bits: 32}
+	integer := &IntegerType{IsSigned: true, Bits: 32}
 	inner := &DefinedType{Name: "Inner", Kind: DefinedKindAlias, Underlying: integer}
 	outer := &DefinedType{Name: "Outer", Kind: DefinedKindAlias, Underlying: inner}
 	if got := Unalias(outer); got != integer {
@@ -793,7 +793,7 @@ func TestReceiverIdentityCanonicalizesReceiverCarriers(t *testing.T) {
 		target,
 		&OwnedPtrType{Target: target},
 		&RefType{Target: target},
-		&RefType{Mutable: true, Target: target},
+		&RefType{IsMutable: true, Target: target},
 		alias,
 	} {
 		got, ok := ReceiverIdentity(typ)
@@ -805,7 +805,7 @@ func TestReceiverIdentityCanonicalizesReceiverCarriers(t *testing.T) {
 		}
 	}
 
-	if _, ok := ReceiverIdentity(&IntegerType{Signed: true, Bits: 32}); ok {
+	if _, ok := ReceiverIdentity(&IntegerType{IsSigned: true, Bits: 32}); ok {
 		t.Fatal("non-nominal receiver must not have a method-set identity")
 	}
 }

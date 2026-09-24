@@ -27,8 +27,8 @@ const (
 //   - TypeParameterType is conservatively move-on-use until instantiation-
 //     aware capability queries arrive with generic support.
 type OwnershipCapability struct {
-	Copy CopyClass
-	Drop bool
+	Copy      CopyClass
+	NeedsDrop bool
 }
 
 // UseKind is the ownership classification of one value use: what happens to
@@ -70,7 +70,7 @@ func mergeOwnership(base, child OwnershipCapability) OwnershipCapability {
 	if child.Copy > base.Copy {
 		base.Copy = child.Copy
 	}
-	base.Drop = base.Drop || child.Drop
+	base.NeedsDrop = base.NeedsDrop || child.NeedsDrop
 	return base
 }
 
@@ -99,7 +99,7 @@ func (*CStrType) ownership(*ownershipQuery, bool) OwnershipCapability {
 	return OwnershipCapability{Copy: CopyImplicit}
 }
 func (*StringType) ownership(*ownershipQuery, bool) OwnershipCapability {
-	return OwnershipCapability{Copy: CopyNever, Drop: true}
+	return OwnershipCapability{Copy: CopyNever, NeedsDrop: true}
 }
 func (*NoneType) ownership(*ownershipQuery, bool) OwnershipCapability {
 	return OwnershipCapability{Copy: CopyImplicit}
@@ -127,11 +127,11 @@ func (t *DefinedType) ownership(q *ownershipQuery, enumPayload bool) OwnershipCa
 // An owned pointer owns its allocation as one value. Its pointee remains a
 // structural child, but destroying the pointer is already the ownership act.
 func (*OwnedPtrType) ownership(*ownershipQuery, bool) OwnershipCapability {
-	return OwnershipCapability{Copy: CopyNever, Drop: true}
+	return OwnershipCapability{Copy: CopyNever, NeedsDrop: true}
 }
 
 func (t *RefType) ownership(*ownershipQuery, bool) OwnershipCapability {
-	if t.Mutable {
+	if t.IsMutable {
 		return OwnershipCapability{Copy: CopyNever}
 	}
 	return OwnershipCapability{Copy: CopyImplicit}
@@ -145,7 +145,7 @@ func (t *OptionalType) ownership(q *ownershipQuery, _ bool) OwnershipCapability 
 
 func (t *ArrayType) ownership(q *ownershipQuery, _ bool) OwnershipCapability {
 	if t.Shape == ArrayOwner {
-		return OwnershipCapability{Copy: CopyNever, Drop: true}
+		return OwnershipCapability{Copy: CopyNever, NeedsDrop: true}
 	}
 	// Fixed and slice arrays remain bulk storage, but never-copy and drop
 	// obligations still propagate from their element.

@@ -76,7 +76,7 @@ func publishedOps(t *testing.T, result effect.Result, module *module.Module, nam
 	}
 	published := make([]string, 0)
 	for _, block := range graph.Blocks {
-		if block == nil || !block.Reachable {
+		if block == nil || !block.IsReachable {
 			continue
 		}
 		for _, site := range block.Sites {
@@ -94,7 +94,7 @@ func publishedOps(t *testing.T, result effect.Result, module *module.Module, nam
 func describe(op effect.Op) string {
 	switch op := op.(type) {
 	case effect.Define:
-		if op.Initialized {
+		if op.IsInitialized {
 			return "define " + op.Symbol.Name
 		}
 		return "declare " + op.Symbol.Name
@@ -482,7 +482,7 @@ fn choose(point: Point) -> i32 {
 	}
 	// The receiver parameter is `&Point`, so the call borrows the receiver
 	// rather than reading it, and it borrows the whole binding.
-	if receiver == nil || len(receiver.Place.Projections) != 0 || receiver.Mutable {
+	if receiver == nil || len(receiver.Place.Projections) != 0 || receiver.IsMutable {
 		t.Fatalf("receiver borrow = %+v, want a shared borrow of a whole binding", receiver)
 	}
 	if field == nil || len(field.Place.Projections) != 1 {

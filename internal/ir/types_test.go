@@ -7,7 +7,7 @@ import (
 
 func TestTypeTableConcurrentInterningAndReads(t *testing.T) {
 	types := NewTypeTable()
-	i32 := types.Intern(Type{Kind: TypeInteger, Signed: true, Bits: 32})
+	i32 := types.Intern(Type{Kind: TypeInteger, IsSigned: true, Bits: 32})
 	usize := types.Intern(Type{Kind: TypeInteger, Bits: 64})
 	types.SetIndexType(usize)
 
@@ -128,7 +128,7 @@ func TestTypeTableReservesAndCompletesRecursiveNamedComposite(t *testing.T) {
 
 func TestTypeTableInternsTaggedVariantIdentityAndCases(t *testing.T) {
 	types := NewTypeTable()
-	i32 := types.Intern(Type{Kind: TypeInteger, Signed: true, Bits: 32})
+	i32 := types.Intern(Type{Kind: TypeInteger, IsSigned: true, Bits: 32})
 	str := types.Intern(Type{Kind: TypeString})
 
 	optionalID := types.Intern(OptionalVariant(i32))

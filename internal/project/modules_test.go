@@ -181,7 +181,7 @@ func moduleWithArtifacts() *module.Module {
 	module.ResetSemanticData()
 	module.Typechecking = typecheckresult.New()
 	module.Typechecking.RecordExprType(1, typeinfo.DefaultIntegerType())
-	module.Flow.RecordExprType(1, &typeinfo.IntegerType{Signed: true, Bits: 64})
+	module.Flow.RecordExprType(1, &typeinfo.IntegerType{IsSigned: true, Bits: 64})
 	return module
 }
 

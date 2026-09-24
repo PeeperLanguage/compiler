@@ -152,14 +152,14 @@ func (a *analyzer) applyDefineEffect(node *site, op effect.Define, st state, ref
 		reference := references[op.Value]
 		a.updatePointerSymbol(op.Symbol, node.scope, value, st)
 		a.updateReferenceSymbol(op.Symbol, reference.loans, reference.present, st)
-	} else if !op.OnEntry {
+	} else if !op.IsOnEntry {
 		// An ordinary declaration without an initializer establishes empty
 		// storage. Entry bindings already carry state seeded by the edge/function
 		// entry and must not have that provenance erased here.
 		a.updatePointerSymbol(op.Symbol, node.scope, nil, st)
 		a.updateReferenceSymbol(op.Symbol, nil, false, st)
 	}
-	if ownershipTrackedSymbol(op.Symbol) && (op.Initialized || op.OnEntry) {
+	if ownershipTrackedSymbol(op.Symbol) && (op.IsInitialized || op.IsOnEntry) {
 		delete(st.moved, op.Symbol)
 		st.live[op.Symbol] = struct{}{}
 	}
@@ -192,7 +192,7 @@ func (a *analyzer) applyWriteEffect(
 			return
 		}
 		a.checkStorageAccess(target, loans, storageMutate)
-		if op.Owner != 0 && typeinfo.OwnershipCapabilityOf(a.exprType(target)).Drop {
+		if op.Owner != 0 && typeinfo.OwnershipCapabilityOf(a.exprType(target)).NeedsDrop {
 			a.cleanup.BeforeAssign[ir.NodeID(op.Owner)] = struct{}{}
 		}
 		if op.Value != 0 {
@@ -205,7 +205,7 @@ func (a *analyzer) applyWriteEffect(
 	if _, referenceTarget := referenceMutability(sym); !referenceTarget {
 		a.checkStorageAccess(target, loans, storageMutate)
 	}
-	if typ, ok := symbols.GetSymbolType(sym); ok && typeinfo.OwnershipCapabilityOf(typ).Drop {
+	if typ, ok := symbols.GetSymbolType(sym); ok && typeinfo.OwnershipCapabilityOf(typ).NeedsDrop {
 		if _, live := st.live[sym]; live && op.Owner != 0 {
 			a.cleanup.BeforeAssign[ir.NodeID(op.Owner)] = struct{}{}
 		}
@@ -330,15 +330,15 @@ func (a *analyzer) applyBorrow(op effect.Borrow, st state, loans *loanContext) {
 		return
 	}
 	access := storageSharedBorrow
-	if op.Mutable {
+	if op.IsMutable {
 		access = storageMutableBorrow
-		if op.Argument {
+		if op.IsCallArgument {
 			// A mutable borrow handed to a call does not take effect until the
 			// call starts, so it is reserved here and activated there.
 			access = storageMutableReservation
 		}
 	}
-	if op.Raw {
+	if op.IsRaw {
 		// A raw pointer is not a tracked reference: it neither conflicts with a
 		// live borrow nor becomes one.
 		return
@@ -353,7 +353,7 @@ func (a *analyzer) applyBorrow(op effect.Borrow, st state, loans *loanContext) {
 		return
 	}
 	a.checkStorageAccess(borrowed, loans, access)
-	if op.Argument {
+	if op.IsCallArgument {
 		a.installArgumentLoan(borrowed, op, loans)
 	}
 }
@@ -369,10 +369,10 @@ func (a *analyzer) installArgumentLoan(borrowed thir.Expr, op effect.Borrow, loa
 	loan := referenceLoan{
 		id:      loanID{node: borrowed.SourceInfo().NodeID},
 		origins: origins,
-		mutable: op.Mutable,
+		mutable: op.IsMutable,
 		site:    op.OperandExpr.SourceInfo(),
 	}
-	if op.Mutable {
+	if op.IsMutable {
 		loans.reserved = append(loans.reserved, loanFact{
 			loan:   loan,
 			holder: referenceHolder(borrowed),

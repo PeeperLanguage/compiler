@@ -19,7 +19,7 @@ func (*unhandledFoldExpr) setOrigin(SourceInfo)    {}
 
 func TestFoldExprConstantArithmetic(t *testing.T) {
 	types := NewTypeTable()
-	i32 := types.Intern(Type{Kind: TypeInteger, Signed: true, Bits: 32})
+	i32 := types.Intern(Type{Kind: TypeInteger, IsSigned: true, Bits: 32})
 	expr := &Binary{
 		Op:   "+",
 		Left: &IntLit{Value: "2", Type: i32},
@@ -40,7 +40,7 @@ func TestFoldExprConstantArithmetic(t *testing.T) {
 
 func TestFoldExprPreservesExpressionOrigin(t *testing.T) {
 	types := NewTypeTable()
-	i32 := types.Intern(Type{Kind: TypeInteger, Signed: true, Bits: 32})
+	i32 := types.Intern(Type{Kind: TypeInteger, IsSigned: true, Bits: 32})
 	expr := &Binary{
 		Op:         "+",
 		Left:       &IntLit{Value: "2", Type: i32},
@@ -56,7 +56,7 @@ func TestFoldExprPreservesExpressionOrigin(t *testing.T) {
 
 func TestFoldExprConstantCondition(t *testing.T) {
 	types := NewTypeTable()
-	i32 := types.Intern(Type{Kind: TypeInteger, Signed: true, Bits: 32})
+	i32 := types.Intern(Type{Kind: TypeInteger, IsSigned: true, Bits: 32})
 	boolType := types.Intern(Type{Kind: TypeBool})
 	expr := &Binary{
 		Op:    "<",
@@ -73,7 +73,7 @@ func TestFoldExprConstantCondition(t *testing.T) {
 
 func TestFoldExprConstEnv(t *testing.T) {
 	types := NewTypeTable()
-	i32 := types.Intern(Type{Kind: TypeInteger, Signed: true, Bits: 32})
+	i32 := types.Intern(Type{Kind: TypeInteger, IsSigned: true, Bits: 32})
 	expr := &Binary{
 		Op:    "+",
 		Left:  &Ident{Name: "a$1", Type: i32},
@@ -95,7 +95,7 @@ func TestFoldExprConstEnv(t *testing.T) {
 
 func TestFoldExprPreservesLoadIdentity(t *testing.T) {
 	types := NewTypeTable()
-	i32 := types.Intern(Type{Kind: TypeInteger, Signed: true, Bits: 32})
+	i32 := types.Intern(Type{Kind: TypeInteger, IsSigned: true, Bits: 32})
 	arrayI32 := types.Intern(Type{Kind: TypeArray, Elem: i32, Length: "3"})
 	loc := &source.Location{}
 	root := &Ident{Name: "values", Type: arrayI32}
@@ -114,7 +114,7 @@ func TestFoldExprPreservesLoadIdentity(t *testing.T) {
 			}},
 			Type: i32,
 		},
-		DropRoot:   true,
+		DropsRoot:  true,
 		SourceInfo: SourceInfo{NodeID: 42, Location: loc},
 	}
 
@@ -122,7 +122,7 @@ func TestFoldExprPreservesLoadIdentity(t *testing.T) {
 	if !ok {
 		t.Fatalf("folded expression = %#v, want load", folded)
 	}
-	if folded.NodeID != expr.NodeID || !folded.DropRoot || folded.Location != loc || folded.Place.Root != root {
+	if folded.NodeID != expr.NodeID || !folded.DropsRoot || folded.Location != loc || folded.Place.Root != root {
 		t.Fatalf("folded load identity = %#v, want NodeID, drop root, location, and place root preserved", folded)
 	}
 	index, ok := folded.Place.Projections[0].Index.(*IntLit)
@@ -133,7 +133,7 @@ func TestFoldExprPreservesLoadIdentity(t *testing.T) {
 
 func TestFoldExprFoldsEveryCompositeExpression(t *testing.T) {
 	types := NewTypeTable()
-	i32 := types.Intern(Type{Kind: TypeInteger, Signed: true, Bits: 32})
+	i32 := types.Intern(Type{Kind: TypeInteger, IsSigned: true, Bits: 32})
 	loc := &source.Location{}
 	foldable := func() Expr {
 		return &Binary{
@@ -164,21 +164,21 @@ func TestFoldExprFoldsEveryCompositeExpression(t *testing.T) {
 		{name: "unary", expr: &Unary{Op: "opaque", Arg: foldable(), Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
 		{name: "binary", expr: &Binary{Op: "opaque", Left: foldable(), Right: foldable(), Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
 		{name: "call", expr: &Call{Callee: foldable(), Args: []Expr{foldable()}, Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
-		{name: "load", expr: &Load{Place: place(), DropRoot: true, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
+		{name: "load", expr: &Load{Place: place(), DropsRoot: true, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
 		{name: "address", expr: &AddrOf{Place: place(), Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
-		{name: "temporary borrow", expr: &TempBorrow{Value: foldable(), Slice: true, Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
+		{name: "temporary borrow", expr: &TempBorrow{Value: foldable(), IsSlice: true, Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
 		{name: "length", expr: &Len{Value: foldable(), Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
 		{name: "string chars", expr: &StringChars{Value: foldable(), Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
-		{name: "slice", expr: &SliceView{Place: place(), Start: foldable(), End: foldable(), EndExclusive: true, Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
+		{name: "slice", expr: &SliceView{Place: place(), Start: foldable(), End: foldable(), IsEndExclusive: true, Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
 		{name: "interface make", expr: &InterfaceMake{Value: foldable(), Slots: []InterfaceSlot{{MethodName: "method"}}, Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
-		{name: "interface call", expr: &InterfaceCall{Base: foldable(), Slot: 2, Args: []Expr{foldable()}, Consumes: true, Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
-		{name: "field", expr: &Field{Base: foldable(), Index: 3, DropBase: true, Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
+		{name: "interface call", expr: &InterfaceCall{Base: foldable(), Slot: 2, Args: []Expr{foldable()}, ConsumesBase: true, Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
+		{name: "field", expr: &Field{Base: foldable(), Index: 3, DropsBase: true, Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
 		{name: "struct", expr: &StructLit{Fields: []Expr{foldable()}, Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
-		{name: "array", expr: &ArrayLit{Values: []Expr{foldable()}, Dynamic: true, Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
+		{name: "array", expr: &ArrayLit{Values: []Expr{foldable()}, IsDynamic: true, Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
 		{name: "dynamic array operation", expr: &DynamicArrayOp{Array: foldable(), Length: foldable(), Value: foldable(), ArrayType: i32, Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
 		{name: "allocation", expr: &AllocExpr{Value: foldable(), Allocator: foldable(), Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
 		{name: "cast", expr: &Cast{Expr: foldable(), Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
-		{name: "print", expr: &Print{Value: foldable(), Newline: true, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
+		{name: "print", expr: &Print{Value: foldable(), AppendsNewline: true, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
 		{name: "drop", expr: &Drop{Value: foldable(), SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
 	}
 	for _, test := range tests {
@@ -211,7 +211,7 @@ func TestFoldExprFoldsEveryCompositeExpression(t *testing.T) {
 
 func TestFoldExprPreservesCompositeMetadata(t *testing.T) {
 	types := NewTypeTable()
-	i32 := types.Intern(Type{Kind: TypeInteger, Signed: true, Bits: 32})
+	i32 := types.Intern(Type{Kind: TypeInteger, IsSigned: true, Bits: 32})
 	value := &IntLit{Value: "1", Type: i32}
 	slots := []InterfaceSlot{{MethodName: "method"}}
 	tests := []struct {
@@ -219,15 +219,15 @@ func TestFoldExprPreservesCompositeMetadata(t *testing.T) {
 		expr  Expr
 		check func(Expr) bool
 	}{
-		{name: "temporary borrow", expr: &TempBorrow{Value: value, Slice: true}, check: func(expr Expr) bool { return expr.(*TempBorrow).Slice }},
+		{name: "temporary borrow", expr: &TempBorrow{Value: value, IsSlice: true}, check: func(expr Expr) bool { return expr.(*TempBorrow).IsSlice }},
 		{name: "interface make", expr: &InterfaceMake{Value: value, Slots: slots}, check: func(expr Expr) bool { return len(expr.(*InterfaceMake).Slots) == 1 }},
-		{name: "interface call", expr: &InterfaceCall{Base: value, Slot: 3, SlotType: i32, Consumes: true}, check: func(expr Expr) bool {
+		{name: "interface call", expr: &InterfaceCall{Base: value, Slot: 3, SlotType: i32, ConsumesBase: true}, check: func(expr Expr) bool {
 			node := expr.(*InterfaceCall)
-			return node.Slot == 3 && node.SlotType == i32 && node.Consumes
+			return node.Slot == 3 && node.SlotType == i32 && node.ConsumesBase
 		}},
-		{name: "field", expr: &Field{Base: value, Index: 4, DropBase: true}, check: func(expr Expr) bool { node := expr.(*Field); return node.Index == 4 && node.DropBase }},
-		{name: "array", expr: &ArrayLit{Values: []Expr{value}, Dynamic: true}, check: func(expr Expr) bool { return expr.(*ArrayLit).Dynamic }},
-		{name: "print", expr: &Print{Value: value, Newline: true}, check: func(expr Expr) bool { return expr.(*Print).Newline }},
+		{name: "field", expr: &Field{Base: value, Index: 4, DropsBase: true}, check: func(expr Expr) bool { node := expr.(*Field); return node.Index == 4 && node.DropsBase }},
+		{name: "array", expr: &ArrayLit{Values: []Expr{value}, IsDynamic: true}, check: func(expr Expr) bool { return expr.(*ArrayLit).IsDynamic }},
+		{name: "print", expr: &Print{Value: value, AppendsNewline: true}, check: func(expr Expr) bool { return expr.(*Print).AppendsNewline }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

@@ -46,7 +46,7 @@ type Resolution struct {
 	StorageOrigins []Origin
 	ValueOrigins   []Origin
 	Dependencies   []*symbols.Symbol
-	Stable         bool
+	IsStable       bool
 }
 
 // Resolve is the canonical place walk. Value origins preserve the previous
@@ -72,10 +72,10 @@ func Resolve(scope *symbols.Scope, expr ast.Expr, opts ResolveOptions) Resolutio
 		storage := []Origin{{Root: sym}}
 		if typ, ok := symbols.GetSymbolType(sym); ok {
 			return resolveStoredValueOrigins(typ, Resolution{
-				StorageOrigins: storage, ValueOrigins: CloneOrigins(storage), Stable: true,
+				StorageOrigins: storage, ValueOrigins: CloneOrigins(storage), IsStable: true,
 			}, opts)
 		}
-		return Resolution{StorageOrigins: storage, ValueOrigins: CloneOrigins(storage), Stable: true}
+		return Resolution{StorageOrigins: storage, ValueOrigins: CloneOrigins(storage), IsStable: true}
 	case *ast.SelectorExpr:
 		if node.Name == nil {
 			return Resolution{}
@@ -88,7 +88,7 @@ func Resolve(scope *symbols.Scope, expr ast.Expr, opts ResolveOptions) Resolutio
 			StorageOrigins: origins,
 			ValueOrigins:   CloneOrigins(origins),
 			Dependencies:   append([]*symbols.Symbol(nil), base.Dependencies...),
-			Stable:         base.Stable && len(origins) > 0,
+			IsStable:       base.IsStable && len(origins) > 0,
 		}
 		return resolveStoredExpressionOrigins(node, resolved, opts)
 	case *ast.IndexExpr:
@@ -107,7 +107,7 @@ func Resolve(scope *symbols.Scope, expr ast.Expr, opts ResolveOptions) Resolutio
 					StorageOrigins: origins,
 					ValueOrigins:   CloneOrigins(origins),
 					Dependencies:   dependencies,
-					Stable:         base.Stable && len(origins) > 0,
+					IsStable:       base.IsStable && len(origins) > 0,
 				}
 				return resolveStoredExpressionOrigins(node, resolved, opts)
 			}
@@ -121,7 +121,7 @@ func Resolve(scope *symbols.Scope, expr ast.Expr, opts ResolveOptions) Resolutio
 						StorageOrigins: origins,
 						ValueOrigins:   CloneOrigins(origins),
 						Dependencies:   dependencies,
-						Stable:         base.Stable && len(origins) > 0,
+						IsStable:       base.IsStable && len(origins) > 0,
 					}
 					return resolveStoredExpressionOrigins(node, resolved, opts)
 				}

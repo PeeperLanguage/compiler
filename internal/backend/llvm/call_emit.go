@@ -150,7 +150,7 @@ func emitDiscardedInterfaceCall(b *llvmBuilder, call *mir.InterfaceCall) {
 }
 
 func consumesOwnedInterfaceStorage(types *ir.TypeTable, call *mir.InterfaceCall) bool {
-	if call == nil || !call.Consumes {
+	if call == nil || !call.ConsumesBase {
 		return false
 	}
 	return isOwnedInterfaceType(types, call.Base.TypeID())

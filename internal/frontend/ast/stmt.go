@@ -120,21 +120,21 @@ func (s *ContinueStmt) forEachChild(func(Node)) {}
 func (s *ContinueStmt) loc() *source.Location   { return s.Location }
 
 type MatchPatternField struct {
-	Name     *Ident
-	Binding  *Ident
-	Discard  bool
-	Location *source.Location
+	Name      *Ident
+	Binding   *Ident
+	IsDiscard bool
+	Location  *source.Location
 }
 
 type MatchArm struct {
 	NodeIDHolder
-	Case     *ScopeResolution
-	Binding  *Ident
-	Discard  bool
-	Fields   []MatchPatternField
-	HasData  bool
-	Body     *BlockStmt
-	Location *source.Location
+	Case      *ScopeResolution
+	Binding   *Ident
+	IsDiscard bool
+	Fields    []MatchPatternField
+	HasData   bool
+	Body      *BlockStmt
+	Location  *source.Location
 }
 
 func (a *MatchArm) forEachChild(visit func(Node)) {

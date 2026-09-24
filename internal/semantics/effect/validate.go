@@ -99,7 +99,7 @@ func (v *validationVisitor) VisitDefine(op Define) {
 	if op.Symbol == nil {
 		v.problems = append(v.problems, where+" is a define with no symbol")
 	}
-	if op.OnEntry && op.Source == nil {
+	if op.IsOnEntry && op.Source == nil {
 		matched := false
 		if function := v.source.Function(v.fn); function != nil {
 			for _, parameter := range function.Params {

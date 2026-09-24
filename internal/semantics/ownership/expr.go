@@ -22,10 +22,10 @@ func (a *analyzer) planProjectionBaseDrop(projection, base thir.Expr) bool {
 	if storage := base.ExprPlace(); storage != nil && storage.Root != nil {
 		return false
 	}
-	if !typeinfo.OwnershipCapabilityOf(a.exprType(base)).Drop {
+	if !typeinfo.OwnershipCapabilityOf(a.exprType(base)).NeedsDrop {
 		return false
 	}
-	if typeinfo.OwnershipCapabilityOf(a.exprType(projection)).Drop {
+	if typeinfo.OwnershipCapabilityOf(a.exprType(projection)).NeedsDrop {
 		a.diagnostics.AddError(diagnostics.ErrInvalidCopy,
 			"ownership-bearing projection from temporary must be bound before use", projection.SourceInfo().Location, "")
 		return true
@@ -46,7 +46,7 @@ func (a *analyzer) partialVariantPayloadMove(id ast.NodeID) bool {
 		return false
 	}
 	payload, ok := a.module.Flow.Payload(id)
-	return ok && len(payload.Cases) > 0 && !payload.Direct
+	return ok && len(payload.Cases) > 0 && !payload.IsDirect
 }
 
 func (a *analyzer) updatePointerSymbol(sym *symbols.Symbol, scope *symbols.Scope, value thir.Expr, st state) {

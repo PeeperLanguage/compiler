@@ -22,16 +22,16 @@ import (
 // LoweringInput is the complete phase handoff from typed source semantics to
 // MIR. Keeping module state outside this package prevents a module/MIR cycle.
 type LoweringInput struct {
-	Types       *ir.TypeTable
-	Diagnostics *diagnostics.DiagnosticBag
-	Source      *thir.Module
-	CFG         *cfg.Module
-	Flow        *flowresult.Result
-	Ownership   ownershipresult.Result
-	Scope       *symbols.Scope
-	Constants   *constantresult.Result
-	ModuleID    moduleid.ID
-	Entry       bool
+	Types         *ir.TypeTable
+	Diagnostics   *diagnostics.DiagnosticBag
+	Source        *thir.Module
+	CFG           *cfg.Module
+	Flow          *flowresult.Result
+	Ownership     ownershipresult.Result
+	Scope         *symbols.Scope
+	Constants     *constantresult.Result
+	ModuleID      moduleid.ID
+	IsEntryModule bool
 }
 
 type lowerer struct {
@@ -120,14 +120,14 @@ func functionSignature(input LoweringInput, sourceFn *thir.Function, blocks []*B
 		name := ""
 		var symbolID symbols.SymbolID
 		if parameter.Symbol != nil {
-			name = exprlower.SymbolName(input.ModuleID, input.Entry, parameter.Symbol)
+			name = exprlower.SymbolName(input.ModuleID, input.IsEntryModule, parameter.Symbol)
 			symbolID = parameter.Symbol.ID
 		}
 		params = append(params, ir.Param{
 			Name: name, Type: typelower.Type(input.Types, input.Diagnostics, parameter.Type), SymbolID: symbolID,
 		})
 	}
-	name, _ := exprlower.CallableName(input.ModuleID, input.Entry, sourceFn.Symbol)
+	name, _ := exprlower.CallableName(input.ModuleID, input.IsEntryModule, sourceFn.Symbol)
 	return &Function{
 		Name:       name,
 		Params:     params,
@@ -159,7 +159,7 @@ func lowerCFGFunction(mod *Module, input LoweringInput, sourceFn *thir.Function,
 
 	blocks := make(map[*cfg.Block]*Block, len(graph.Blocks))
 	for _, sourceBlock := range graph.Blocks {
-		if sourceBlock == nil || sourceBlock == graph.Exit || !sourceBlock.Reachable {
+		if sourceBlock == nil || sourceBlock == graph.Exit || !sourceBlock.IsReachable {
 			continue
 		}
 		block := &Block{ID: sourceBlock.ID, Instrs: make([]Instr, 0)}
@@ -229,7 +229,7 @@ func lowerCFGFunction(mod *Module, input LoweringInput, sourceFn *thir.Function,
 func (l *lowerer) expressionContext() exprlower.Context {
 	return exprlower.Context{
 		Types: l.input.Types, Diagnostics: l.input.Diagnostics, Source: l.input.Source,
-		Flow: l.input.Flow, ModuleID: l.input.ModuleID, Entry: l.input.Entry,
+		Flow: l.input.Flow, ModuleID: l.input.ModuleID, IsEntryModule: l.input.IsEntryModule,
 	}
 }
 
@@ -246,7 +246,7 @@ func (l *lowerer) symbolRef(symbol *symbols.Symbol) *ir.Ident {
 		return nil
 	}
 	return &ir.Ident{
-		Name:     exprlower.SymbolName(l.input.ModuleID, l.input.Entry, symbol),
+		Name:     exprlower.SymbolName(l.input.ModuleID, l.input.IsEntryModule, symbol),
 		Type:     typelower.Type(l.input.Types, l.input.Diagnostics, symbol.Type),
 		SymbolID: symbol.ID, SourceInfo: ir.SourceInfo{Location: l.location},
 	}
@@ -331,7 +331,7 @@ func (l *lowerer) assignSymbol(symbol *symbols.Symbol, value ir.Expr) {
 	if symbol == nil || value == nil {
 		return
 	}
-	name := exprlower.SymbolName(l.input.ModuleID, l.input.Entry, symbol)
+	name := exprlower.SymbolName(l.input.ModuleID, l.input.IsEntryModule, symbol)
 	typ := typelower.Type(l.input.Types, l.input.Diagnostics, symbol.Type)
 	l.symbolValues[symbol.ID] = &RefName{Name: name, Type: typ, Location: l.location}
 	ref := l.lowerExpr(value, &l.current.Instrs)
@@ -380,7 +380,7 @@ func (l *lowerer) lowerVariantBindings(entry variantEntry) bool {
 		return false
 	}
 	for _, binding := range arm.Bindings {
-		if binding.Symbol == nil || binding.Discard {
+		if binding.Symbol == nil || binding.IsDiscard {
 			continue
 		}
 		bindingType := typelower.Type(l.input.Types, l.input.Diagnostics, binding.Type)
@@ -388,7 +388,7 @@ func (l *lowerer) lowerVariantBindings(entry variantEntry) bool {
 		if binding.Projection == thir.MatchPayloadField {
 			place = variantFieldPlace(subject, arm.Case, payloadType, binding.Field, bindingType, arm.Body.Source.Location)
 		}
-		name := exprlower.SymbolName(l.input.ModuleID, l.input.Entry, binding.Symbol)
+		name := exprlower.SymbolName(l.input.ModuleID, l.input.IsEntryModule, binding.Symbol)
 		l.symbolValues[binding.Symbol.ID] = &RefName{Name: name, Type: bindingType, Location: arm.Body.Source.Location}
 		value := l.load(&l.current.Instrs, place, bindingType, arm.Body.Source.Location)
 		l.appendInstr(&l.current.Instrs, &Assign{Name: name, Value: asValueExpr(value)})
@@ -485,8 +485,8 @@ func (l *lowerer) lowerCFGStmt(node thir.Node) bool {
 		temporaryMark := len(l.temporaryDrops)
 		value := l.sourceExpr(statement.Value, statement.Symbol.Type)
 		l.assignSymbol(statement.Symbol, value)
-		if statement.Constant {
-			name := exprlower.SymbolName(l.input.ModuleID, l.input.Entry, statement.Symbol)
+		if statement.IsConstant {
+			name := exprlower.SymbolName(l.input.ModuleID, l.input.IsEntryModule, statement.Symbol)
 			if folded, ok := ir.ConstValueOf(l.input.Types, value); ok {
 				l.constantEnv[name] = folded
 			}
@@ -540,7 +540,7 @@ func discardBinding(binding *thir.Binding) bool {
 	if binding == nil || binding.Symbol == nil || binding.Symbol.IsUsed() || binding.Value == nil {
 		return false
 	}
-	if typ, ok := symbols.GetSymbolType(binding.Symbol); ok && typeinfo.OwnershipCapabilityOf(typ).Drop {
+	if typ, ok := symbols.GetSymbolType(binding.Symbol); ok && typeinfo.OwnershipCapabilityOf(typ).NeedsDrop {
 		return false
 	}
 	_, call := binding.Value.(*thir.Call)

@@ -80,10 +80,10 @@ func TestSubstituteExprClonesOpenEndedRanges(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			rangeExpr := &RangeExpr{
-				NodeIDHolder: NodeIDHolder{NodeID: 1},
-				Start:        test.start,
-				End:          test.end,
-				EndExclusive: true,
+				NodeIDHolder:   NodeIDHolder{NodeID: 1},
+				Start:          test.start,
+				End:            test.end,
+				IsEndExclusive: true,
 			}
 			cloned, defaultClones, argumentClones := SubstituteExpr(rangeExpr, nil)
 			out, ok := cloned.(*RangeExpr)

@@ -553,7 +553,7 @@ fn Read(result: Result) -> i32 {
 		evidence.Arms[0].Bindings[0].Field != 0 || evidence.Arms[0].Bindings[0].Binding == nil {
 		t.Fatalf("Ok arm evidence = %#v", evidence.Arms[0])
 	}
-	if evidence.Arms[1].Case != 1 || !evidence.Arms[1].Bindings[0].Discard || evidence.Arms[2].Case != 2 {
+	if evidence.Arms[1].Case != 1 || !evidence.Arms[1].Bindings[0].IsDiscard || evidence.Arms[2].Case != 2 {
 		t.Fatalf("remaining arm evidence = %#v", evidence.Arms[1:])
 	}
 }
@@ -1158,7 +1158,7 @@ func TestRawPointerFieldStructSupportsExplicitCopy(t *testing.T) {
 	if !ok || typ == nil {
 		t.Fatalf("missing View type")
 	}
-	if got := typeinfo.OwnershipCapabilityOf(typ); got.Copy != typeinfo.CopyExplicit || got.Drop {
+	if got := typeinfo.OwnershipCapabilityOf(typ); got.Copy != typeinfo.CopyExplicit || got.NeedsDrop {
 		t.Fatalf("View should support explicit copy without drop, got %v", got)
 	}
 }
@@ -3048,7 +3048,7 @@ func TestIntrinsicFunctionResolutionStoredForLaterPhases(t *testing.T) {
 	for _, stmt := range module.AST.Stmts {
 		ast.Inspect(stmt, func(node ast.Node) bool {
 			candidate, ok := node.(*ast.CallExpr)
-			if ok && candidate.Piped {
+			if ok && candidate.IsPiped {
 				call = candidate
 				callee, _ = candidate.Callee.(*ast.Ident)
 			}
@@ -3206,7 +3206,7 @@ func TestCanAdaptFirstCallArgumentUsesCallConversionRules(t *testing.T) {
 		t.Fatal("missing i32 type")
 	}
 	owner := &typeinfo.ArrayType{Shape: typeinfo.ArrayOwner, Elem: element}
-	mutableOwner := &typeinfo.RefType{Target: owner, Mutable: true}
+	mutableOwner := &typeinfo.RefType{Target: owner, IsMutable: true}
 	if !CanAdaptFirstCallArgument(ctx, module, mutableOwner, owner) {
 		t.Fatal("owner should adapt to mutable owner reference")
 	}

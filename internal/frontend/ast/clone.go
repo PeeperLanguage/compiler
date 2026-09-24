@@ -70,7 +70,7 @@ func cloneTypeExpr(typ TypeExpr, newID func(NodeID, bool) NodeID, fromArgument b
 	case *RawPtrType:
 		return &RawPtrType{NodeIDHolder: id, Location: typ.Location}
 	case *RefType:
-		return &RefType{NodeIDHolder: id, Mutable: typ.Mutable, Target: cloneTypeExpr(typ.Target, newID, fromArgument), Location: typ.Location}
+		return &RefType{NodeIDHolder: id, IsMutable: typ.IsMutable, Target: cloneTypeExpr(typ.Target, newID, fromArgument), Location: typ.Location}
 	case *OptionalType:
 		return &OptionalType{NodeIDHolder: id, Inner: cloneTypeExpr(typ.Inner, newID, fromArgument), Location: typ.Location}
 	case *ArrayType:

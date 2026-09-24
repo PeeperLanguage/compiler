@@ -13,7 +13,7 @@ func leafTypes() []Type {
 		&StringType{}, &InterfaceType{},
 		&OwnedPtrType{Target: &IntegerType{}},
 		&RefType{Target: &IntegerType{}},
-		&RefType{Target: &IntegerType{}, Mutable: true},
+		&RefType{Target: &IntegerType{}, IsMutable: true},
 		&TypeParameterType{Name: "T"},
 		&InvalidType{},
 		&UnknownType{},
@@ -84,7 +84,7 @@ func TestOwnershipCapabilityMatchesGolden(t *testing.T) {
 		case CopyNever:
 			b.WriteByte('n')
 		}
-		if got.Drop {
+		if got.NeedsDrop {
 			b.WriteByte('+')
 		} else {
 			b.WriteByte('-')
@@ -127,7 +127,7 @@ func TestOwnershipCapabilityWalkVisitsRepeatedTypeTwice(t *testing.T) {
 	pair := &StructType{Fields: []Field{{Name: "a", Type: owned}, {Name: "b", Type: owned}}}
 
 	got := OwnershipCapabilityOf(pair)
-	if !got.Drop {
+	if !got.NeedsDrop {
 		t.Fatalf("repeated owned field: walk = %+v, want a drop obligation", got)
 	}
 	if got.Copy != CopyNever {

@@ -14,7 +14,7 @@ import (
 )
 
 func TestDiscardedCallDropsTemporariesBeforeResult(t *testing.T) {
-	integer := &typeinfo.IntegerType{Signed: true, Bits: 32}
+	integer := &typeinfo.IntegerType{IsSigned: true, Bits: 32}
 	borrow := &typeinfo.RefType{Target: integer}
 	result := &typeinfo.OwnedPtrType{Target: integer}
 	callable := &typeinfo.FuncType{Params: []typeinfo.Type{borrow, borrow}, Return: result}
@@ -106,7 +106,7 @@ func TestExternalFunctionSignatureUsesPublishedLinkName(t *testing.T) {
 
 func TestFunctionSignatureMatchesCallableReferences(t *testing.T) {
 	module := moduleid.ID{Origin: "local", ImportPath: "main"}
-	input := LoweringInput{ModuleID: module, Entry: true, Types: ir.NewTypeTable()}
+	input := LoweringInput{ModuleID: module, IsEntryModule: true, Types: ir.NewTypeTable()}
 	for _, test := range []struct {
 		name string
 		kind symbols.Kind

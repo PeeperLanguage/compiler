@@ -15,8 +15,8 @@ type ExprTypeFunc func(ast.Expr) typeinfo.Type
 // module" because the same pointer appears in both the declaration
 // and caller module's ExpandedDefaultBindings.
 type Binding struct {
-	Symbol *symbols.Symbol
-	Local  bool
+	Symbol  *symbols.Symbol
+	IsLocal bool
 }
 
 // BindingResolver supplies symbols for idents that were injected
@@ -195,7 +195,7 @@ func LocalRoot(scope, moduleScope *symbols.Scope, expr ast.Expr, exprType ExprTy
 				// Expanded defaults have Local=false: the symbol
 				// lives in the declaration module, not the caller,
 				// so it is not a pointer-escape source.
-				if binding.Local && addressableSymbol(binding.Symbol) {
+				if binding.IsLocal && addressableSymbol(binding.Symbol) {
 					return binding.Symbol, true
 				}
 				return nil, false

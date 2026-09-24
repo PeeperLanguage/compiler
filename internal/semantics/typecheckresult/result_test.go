@@ -12,11 +12,11 @@ func TestCloneReusableExpressionEvidenceCopiesOnlyStableFacts(t *testing.T) {
 	const srcID = 10
 	const dstID = 20
 
-	src.RecordExprType(srcID, &typeinfo.IntegerType{Signed: true, Bits: 32})
+	src.RecordExprType(srcID, &typeinfo.IntegerType{IsSigned: true, Bits: 32})
 	src.MarkExpandedDefaultBinding(srcID)
 	src.RecordInterfaceImplementations(srcID, []InterfaceImplementation{{}})
 	src.RecordImplicitConversion(srcID, typeinfo.Conversion{Kind: typeinfo.ConversionNumeric, Compatibility: typeinfo.Compatible})
-	src.RecordStructField(srcID, StructFieldAccess{Field: 2, Type: &typeinfo.IntegerType{Signed: true, Bits: 32}})
+	src.RecordStructField(srcID, StructFieldAccess{Field: 2, Type: &typeinfo.IntegerType{IsSigned: true, Bits: 32}})
 
 	// These depend on the cloned expression's new context and must be recomputed.
 	src.RecordValueUse(srcID, typeinfo.UseMove)

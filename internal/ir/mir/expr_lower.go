@@ -101,13 +101,13 @@ func (l *lowerer) lowerInterfaceCall(expr *ir.InterfaceCall, out *[]Instr) *Inte
 		args = append(args, l.lowerExpr(arg, out))
 	}
 	return &InterfaceCall{
-		Base:     base,
-		Slot:     expr.Slot,
-		SlotType: expr.SlotType,
-		Args:     args,
-		Consumes: expr.Consumes,
-		Type:     expr.TypeID(),
-		Location: expr.Origin().Location,
+		Base:         base,
+		Slot:         expr.Slot,
+		SlotType:     expr.SlotType,
+		Args:         args,
+		ConsumesBase: expr.ConsumesBase,
+		Type:         expr.TypeID(),
+		Location:     expr.Origin().Location,
 	}
 }
 
@@ -185,7 +185,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.Print:
 		value := l.lowerExpr(e.Value, out)
-		l.appendInstr(out, &Print{Value: value, Newline: e.Newline, Location: e.Origin().Location})
+		l.appendInstr(out, &Print{Value: value, AppendsNewline: e.AppendsNewline, Location: e.Origin().Location})
 		return nil
 	case *ir.Drop:
 		value := l.lowerExpr(e.Value, out)
@@ -194,7 +194,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 	case *ir.Load:
 		place := l.lowerPlace(e.Place, out)
 		value := l.load(out, place, e.TypeID(), e.Origin().Location)
-		dropRoot := e.DropRoot
+		dropRoot := e.DropsRoot
 		if l.cleanup != nil {
 			if _, planned := l.cleanup.ProjectionBase[e.NodeID]; planned {
 				dropRoot = true
@@ -242,7 +242,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		place := &Place{Root: value, Type: e.Value.TypeID(), Location: e.Value.Origin().Location}
 		l.temporaryDrops = append(l.temporaryDrops, value)
 		name := l.nextTemp()
-		if e.Slice {
+		if e.IsSlice {
 			l.appendInstr(out, &Assign{Name: name, Value: &SliceView{
 				Source: place,
 				Type:   e.TypeID(),
@@ -265,19 +265,19 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		}
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: &SliceView{
-			Source:       source,
-			Start:        start,
-			End:          end,
-			EndExclusive: e.EndExclusive,
-			Type:         e.TypeID(),
-			Location:     e.Origin().Location,
+			Source:         source,
+			Start:          start,
+			End:            end,
+			IsEndExclusive: e.IsEndExclusive,
+			Type:           e.TypeID(),
+			Location:       e.Origin().Location,
 		}})
 		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.Field:
 		base := l.lowerExpr(e.Base, out)
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: &Field{Base: base, Index: e.Index, Type: e.TypeID(), Location: e.Origin().Location}})
-		dropBase := e.DropBase
+		dropBase := e.DropsBase
 		if l.cleanup != nil {
 			if _, planned := l.cleanup.ProjectionBase[e.NodeID]; planned {
 				dropBase = true
@@ -296,7 +296,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		l.appendInstr(out, &Assign{Name: name, Value: &StructLit{Fields: fields, Type: e.TypeID(), Location: e.Origin().Location}})
 		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.ArrayLit:
-		if e.Dynamic {
+		if e.IsDynamic {
 			name := l.nextTemp()
 			l.appendInstr(out, &Assign{Name: name, Value: &DynamicArrayAlloc{
 				Length:   len(e.Values),

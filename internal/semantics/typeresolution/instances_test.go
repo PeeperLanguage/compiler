@@ -86,7 +86,7 @@ func TestQueryTypeDoesNotCreateOrDiagnoseGenericInstance(t *testing.T) {
 
 func TestQueryTypeDoesNotReturnIncompleteCachedGenericInstance(t *testing.T) {
 	resolver, _, mod, base := genericQueryContext(t)
-	argument := &typeinfo.IntegerType{Signed: true, Bits: 32}
+	argument := &typeinfo.IntegerType{IsSigned: true, Bits: 32}
 	identity := typeInstanceIdentity(base, []typeinfo.Type{argument})
 	resolver.instances[identity] = namedTypeInstance{
 		base: base,
@@ -113,7 +113,7 @@ func TestQueryTypeDoesNotReturnIncompleteCachedGenericInstance(t *testing.T) {
 
 func TestQueryTypeReturnsCompleteCachedGenericInstance(t *testing.T) {
 	resolver, diag, mod, base := genericQueryContext(t)
-	argument := &typeinfo.IntegerType{Signed: true, Bits: 32}
+	argument := &typeinfo.IntegerType{IsSigned: true, Bits: 32}
 	identity := typeInstanceIdentity(base, []typeinfo.Type{argument})
 	cached := &typeinfo.DefinedType{
 		Name:           base.Name,

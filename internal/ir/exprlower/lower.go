@@ -23,12 +23,12 @@ import (
 // Context owns source facts required to lower THIR expressions without retaining
 // AST or importing module compilation state.
 type Context struct {
-	Types       *ir.TypeTable
-	Diagnostics *diagnostics.DiagnosticBag
-	Source      *thir.Module
-	Flow        *flowresult.Result
-	ModuleID    moduleid.ID
-	Entry       bool
+	Types         *ir.TypeTable
+	Diagnostics   *diagnostics.DiagnosticBag
+	Source        *thir.Module
+	Flow          *flowresult.Result
+	ModuleID      moduleid.ID
+	IsEntryModule bool
 }
 
 type lowerer struct {
@@ -75,7 +75,7 @@ func (l *lowerer) lower(expr thir.Expr, expected typeinfo.Type, conversions bool
 		if test, ok := l.ctx.Flow.CaseTest(ast.NodeID(origin.NodeID)); ok {
 			subject, _ := l.ctx.Source.Node(ir.NodeID(test.SubjectID)).(thir.Expr)
 			membership := &ir.VariantIs{Value: l.lower(subject, nil, true), Case: test.Case, Type: l.typeID(&typeinfo.BoolType{})}
-			if test.CaseWhenTrue {
+			if test.MatchesWhenTrue {
 				return ir.WithOrigin(membership, origin)
 			}
 			return ir.WithOrigin(&ir.Unary{Op: "!", Arg: membership, Type: membership.Type}, origin)
@@ -195,13 +195,13 @@ func (l *lowerer) ident(sym *symbols.Symbol, name string, typ typeinfo.Type) ir.
 	if sym == nil {
 		return &ir.InvalidExpr{Message: "unresolved identifier: " + name, Type: ir.InvalidType}
 	}
-	return &ir.Ident{Name: SymbolName(l.ctx.ModuleID, l.ctx.Entry, sym), Type: l.typeID(typ), SymbolID: sym.ID}
+	return &ir.Ident{Name: SymbolName(l.ctx.ModuleID, l.ctx.IsEntryModule, sym), Type: l.typeID(typ), SymbolID: sym.ID}
 }
 func (l *lowerer) LowerUnary(e *thir.Unary) ir.Expr {
 	return &ir.Unary{Op: e.Op, Arg: l.lower(e.Value, l.expected, true), Type: l.typeID(l.effectiveType(e))}
 }
 func (l *lowerer) LowerBinary(e *thir.Binary) ir.Expr {
-	if e.StringConcat {
+	if e.IsStringConcatenation {
 		return &ir.StringConcat{Left: l.lower(e.Left, &typeinfo.StringType{}, true), Right: l.lower(e.Right, &typeinfo.RefType{Target: &typeinfo.StringType{}}, true), Type: l.typeID(l.effectiveType(e))}
 	}
 	leftType := l.effectiveType(e.Left)
@@ -251,7 +251,7 @@ func (l *lowerer) LowerArrayLiteral(e *thir.ArrayLiteral) ir.Expr {
 	for _, value := range e.Values {
 		values = append(values, l.lower(value, array.Elem, true))
 	}
-	return &ir.ArrayLit{Values: values, Dynamic: array.Shape == typeinfo.ArrayOwner, Type: l.typeID(l.effectiveType(e))}
+	return &ir.ArrayLit{Values: values, IsDynamic: array.Shape == typeinfo.ArrayOwner, Type: l.typeID(l.effectiveType(e))}
 }
 func (l *lowerer) LowerField(e *thir.Field) ir.Expr {
 	if e.ExprPlace() != nil {
@@ -284,7 +284,7 @@ func (l *lowerer) LowerFree(e *thir.Free) ir.Expr {
 	return &ir.Drop{Value: l.lower(e.Value, nil, true)}
 }
 func (l *lowerer) LowerPrint(e *thir.Print) ir.Expr {
-	return &ir.Print{Value: l.lower(e.Value, nil, true), Newline: e.Newline}
+	return &ir.Print{Value: l.lower(e.Value, nil, true), AppendsNewline: e.AppendsNewline}
 }
 func (l *lowerer) LowerCast(e *thir.Cast) ir.Expr {
 	return &ir.Cast{Expr: l.lower(e.Value, l.expected, true), Type: l.typeID(l.effectiveType(e))}
@@ -330,7 +330,7 @@ func (l *lowerer) methodCall(call *thir.Call, field *thir.Field) ir.Expr {
 			}
 			args = append(args, l.argument(arg, expected))
 		}
-		return &ir.InterfaceCall{Base: l.lower(field.Base, nil, true), Slot: slot, SlotType: method.SlotType, Args: args, Consumes: iface.Receiver == typeinfo.MethodReceiverValue, Type: method.Return}
+		return &ir.InterfaceCall{Base: l.lower(field.Base, nil, true), Slot: slot, SlotType: method.SlotType, Args: args, ConsumesBase: iface.Receiver == typeinfo.MethodReceiverValue, Type: method.Return}
 	}
 	fn, _ := typeinfo.Underlying(field.ExprType()).(*typeinfo.FuncType)
 	if field.Symbol == nil || fn == nil || len(fn.Params) == 0 {
@@ -440,7 +440,7 @@ func (l *lowerer) referenceValue(expr thir.Expr, result typeinfo.Type) ir.Expr {
 		slice = t.Shape == typeinfo.ArraySlice
 	}
 	if expr.ExprPlace() == nil {
-		return &ir.TempBorrow{Value: l.lower(expr, target, true), Slice: slice, Type: id}
+		return &ir.TempBorrow{Value: l.lower(expr, target, true), IsSlice: slice, Type: id}
 	}
 	place := l.place(expr)
 	if slice {
@@ -464,7 +464,7 @@ func (l *lowerer) slice(index *thir.Index, r *thir.Range) ir.Expr {
 			source = &ir.Place{Root: root, Type: root.TypeID(), Location: index.Base.SourceInfo().Location}
 		}
 	}
-	return &ir.SliceView{Place: source, Start: start, End: end, EndExclusive: r.EndExclusive, Type: l.typeID(resultType)}
+	return &ir.SliceView{Place: source, Start: start, End: end, IsEndExclusive: r.IsEndExclusive, Type: l.typeID(resultType)}
 }
 func (l *lowerer) place(expr thir.Expr) *ir.Place {
 	p := expr.ExprPlace()
@@ -586,7 +586,7 @@ func (l *lowerer) interfaceValue(expr thir.Expr, expected typeinfo.Type) ir.Expr
 			InterfaceType: interfaceID,
 			MethodName:    method.Name,
 			SlotType:      lowered.SlotType,
-			FuncName:      SymbolName(l.ctx.ModuleID, l.ctx.Entry, implementation.Symbol),
+			FuncName:      SymbolName(l.ctx.ModuleID, l.ctx.IsEntryModule, implementation.Symbol),
 			FuncType:      l.typeID(implementation.CallableType),
 			DataType:      l.typeID(data),
 		})

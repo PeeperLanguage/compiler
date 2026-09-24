@@ -282,7 +282,7 @@ func TestPipelineLowersExactLoopExitCleanupToMIR(t *testing.T) {
 		var continueExit, breakExit, fallthroughExit cfg.SiteID
 		var continueFound, breakFound, fallthroughFound bool
 		for _, block := range graph.Blocks {
-			if block == nil || !block.Reachable {
+			if block == nil || !block.IsReachable {
 				continue
 			}
 			var exit *cfg.Site

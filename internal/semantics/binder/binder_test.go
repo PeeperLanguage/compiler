@@ -201,7 +201,7 @@ fn Use(value: Local) {}`
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 	local, ok := consumer.ModuleScope.LookupLocal("Local")
-	if !ok || local == nil || !typeinfo.SameType(typeinfo.Unalias(local.Type), &typeinfo.IntegerType{Signed: true, Bits: 32}) {
+	if !ok || local == nil || !typeinfo.SameType(typeinfo.Unalias(local.Type), &typeinfo.IntegerType{IsSigned: true, Bits: 32}) {
 		t.Fatalf("imported alias resolved as %#v, want i32", local)
 	}
 }
@@ -269,11 +269,11 @@ fn Use(box: Box<i32>, again: Box<i32>, other: Box<i64>, nested: Box<Box<i32>>, n
 		t.Fatalf("recursive Node<i32> target = %#v, want provisional instance", nodeStruct.Fields[0].Type)
 	}
 	maybe, ok := typeinfo.Underlying(fn.Params[5]).(*typeinfo.OptionalType)
-	if !ok || !typeinfo.SameType(maybe.Inner, &typeinfo.IntegerType{Signed: true, Bits: 32}) {
+	if !ok || !typeinfo.SameType(maybe.Inner, &typeinfo.IntegerType{IsSigned: true, Bits: 32}) {
 		t.Fatalf("Maybe<i32> payload = %#v", fn.Params[5])
 	}
 	reader, ok := typeinfo.Underlying(fn.Params[6]).(*typeinfo.InterfaceType)
-	if !ok || len(reader.Methods) != 1 || !typeinfo.SameType(reader.Methods[0].Return, &typeinfo.IntegerType{Signed: true, Bits: 32}) {
+	if !ok || len(reader.Methods) != 1 || !typeinfo.SameType(reader.Methods[0].Return, &typeinfo.IntegerType{IsSigned: true, Bits: 32}) {
 		t.Fatalf("Reader<i32> payload = %#v", fn.Params[6])
 	}
 	choice, ok := fn.Params[7].(*typeinfo.DefinedType)
@@ -286,7 +286,7 @@ fn Use(box: Box<i32>, again: Box<i32>, other: Box<i64>, nested: Box<Box<i32>>, n
 	}
 	payload, ok := choiceDescriptor.Cases[0].Payload.(*typeinfo.StructType)
 	if !ok || len(payload.Fields) != 1 || payload.Fields[0].Name != "value" ||
-		!typeinfo.SameType(payload.Fields[0].Type, &typeinfo.IntegerType{Signed: true, Bits: 32}) {
+		!typeinfo.SameType(payload.Fields[0].Type, &typeinfo.IntegerType{IsSigned: true, Bits: 32}) {
 		t.Fatalf("Choice<i32>::Left payload = %#v, want value: i32", choiceDescriptor.Cases[0].Payload)
 	}
 }

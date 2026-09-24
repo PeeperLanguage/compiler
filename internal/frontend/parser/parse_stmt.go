@@ -337,13 +337,13 @@ func (p *Parser) parseMatchStmt() ast.Stmt {
 			endPos = ast.EndOf(body)
 		}
 		arms = append(arms, reg(p, &ast.MatchArm{
-			Case:     casePath,
-			Binding:  binding,
-			Discard:  discard,
-			Fields:   fields,
-			HasData:  hasData,
-			Body:     body,
-			Location: source.NewLocation(p.filePath, ast.StartOf(casePath), endPos),
+			Case:      casePath,
+			Binding:   binding,
+			IsDiscard: discard,
+			Fields:    fields,
+			HasData:   hasData,
+			Body:      body,
+			Location:  source.NewLocation(p.filePath, ast.StartOf(casePath), endPos),
 		}))
 		if p.match(token.COMMA) {
 			comma := p.prev()
@@ -382,9 +382,9 @@ func (p *Parser) parseMatchPatternFields() ([]ast.MatchPatternField, *token.Toke
 			if p.current().Kind == token.IDENT && p.current().Literal == "_" {
 				discard := p.advance()
 				return ast.MatchPatternField{
-					Name:     name,
-					Discard:  true,
-					Location: source.NewLocation(p.filePath, ast.StartOf(name), discard.End),
+					Name:      name,
+					IsDiscard: true,
+					Location:  source.NewLocation(p.filePath, ast.StartOf(name), discard.End),
 				}, true
 			}
 			binding := p.parseIdent()

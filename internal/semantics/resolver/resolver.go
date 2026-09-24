@@ -193,11 +193,11 @@ func (r *resolver) resolveStmt(scope *symbols.Scope, stmt ast.Stmt) {
 				r.resolveScopeResolution(arm.Case, false)
 			}
 			armScope := symbols.NewScope(scope)
-			if arm.Binding != nil && !arm.Discard {
+			if arm.Binding != nil && !arm.IsDiscard {
 				r.resolveLocalBinding(armScope, arm.Binding, symbols.SymbolVar, nil, arm.Binding, arm.Location)
 			}
 			for _, field := range arm.Fields {
-				if field.Discard {
+				if field.IsDiscard {
 					continue
 				}
 				r.resolveLocalBinding(armScope, field.Binding, symbols.SymbolVar, nil, field.Binding, field.Location)

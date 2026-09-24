@@ -81,7 +81,7 @@ func emitSliceBounds(b *llvmBuilder, view *mir.SliceView, lengthI64 llvmValue) (
 		}
 		endI64 = normalized
 		predicate := "ugt"
-		if !view.EndExclusive {
+		if !view.IsEndExclusive {
 			predicate = "uge"
 		}
 		endInvalid := b.compare("icmp", predicate, end, compareLength)
@@ -105,7 +105,7 @@ func emitSliceBounds(b *llvmBuilder, view *mir.SliceView, lengthI64 llvmValue) (
 		b.namedLabel(normalizedLabel)
 		failEmitted = true
 	}
-	if view.End != nil && !view.EndExclusive {
+	if view.End != nil && !view.IsEndExclusive {
 		endI64 = b.arithmetic("add", endI64, b.value("1", i64))
 	}
 	reversed := b.compare("icmp", "ugt", startI64, endI64)

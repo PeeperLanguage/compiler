@@ -57,7 +57,7 @@ func (b *builder) function(source *ast.FnDecl) *Function {
 		Source:            sourceInfo(source),
 		IsEntrypointShape: source.Receiver == nil && source.Body != nil && len(source.TypeParams) == 0,
 		ReturnTypeText:    ast.TypeText(source.ReturnType),
-		ReturnsValue:      source.ReturnType != nil,
+		HasReturnValue:    source.ReturnType != nil,
 	}
 	if source.ReturnOrigins != nil {
 		function.ReturnOriginsLocation = source.ReturnOrigins.Location
@@ -107,9 +107,9 @@ func (b *builder) statement(statement ast.Stmt) Stmt {
 	case *ast.BlockStmt:
 		return b.block(node)
 	case *ast.LetDecl:
-		return &Binding{StmtInfo: stmtInfo(node), Symbol: b.symbol(node.Name), Inferred: node.Type == nil, Value: b.expression(node.Value)}
+		return &Binding{StmtInfo: stmtInfo(node), Symbol: b.symbol(node.Name), IsInferred: node.Type == nil, Value: b.expression(node.Value)}
 	case *ast.ConstDecl:
-		return &Binding{StmtInfo: stmtInfo(node), Symbol: b.symbol(node.Name), Constant: true, Inferred: node.Type == nil, Value: b.expression(node.Value)}
+		return &Binding{StmtInfo: stmtInfo(node), Symbol: b.symbol(node.Name), IsConstant: true, IsInferred: node.Type == nil, Value: b.expression(node.Value)}
 	case *ast.ExprStmt:
 		return &ExprStmt{StmtInfo: stmtInfo(node), Value: b.expression(node.Expr)}
 	case *ast.AssignStmt:
@@ -165,13 +165,13 @@ func (b *builder) forStatement(source *ast.ForStmt) *For {
 	case *typecheckresult.RangeIteration:
 		loop.Iteration = &RangeIteration{
 			ElementType: evidence.ElementType, Cursor: evidence.Cursor, Limit: plan.Limit,
-			Ordinal: plan.Ordinal, GuaranteedEntry: evidence.GuaranteedEntry,
+			Ordinal: plan.Ordinal, HasGuaranteedEntry: evidence.HasGuaranteedEntry,
 		}
 	case *typecheckresult.SequenceIteration:
 		loop.Iteration = &SequenceIteration{
 			ElementType: evidence.ElementType, Cursor: evidence.Cursor, Value: evidence.Value,
 			Index: evidence.Index, Carrier: plan.Carrier, CarrierType: plan.CarrierType,
-			GuaranteedEntry: evidence.GuaranteedEntry,
+			HasGuaranteedEntry: evidence.HasGuaranteedEntry,
 		}
 	}
 	return loop
@@ -208,7 +208,7 @@ func (b *builder) matchStatement(source *ast.MatchStmt) Stmt {
 			}
 			lowered.Bindings = append(lowered.Bindings, MatchBinding{
 				Source: bindingSource, Projection: projection, Field: binding.Field, Type: binding.Type,
-				Symbol: binding.Binding, Discard: binding.Discard,
+				Symbol: binding.Binding, IsDiscard: binding.IsDiscard,
 			})
 		}
 		match.Arms = append(match.Arms, lowered)
@@ -238,7 +238,7 @@ func (b *builder) expression(expression ast.Expr) Expr {
 	case *ast.NumberLit:
 		result = &NumberLiteral{ExprInfo: info, Value: node.Value, ExplicitType: node.ExplicitType}
 	case *ast.StringLit:
-		result = &StringLiteral{ExprInfo: info, Value: node.Value, CString: node.CString}
+		result = &StringLiteral{ExprInfo: info, Value: node.Value, IsCString: node.IsCString}
 	case *ast.ByteLit:
 		result = &ByteLiteral{ExprInfo: info, Value: node.Value}
 	case *ast.CharLit:
@@ -270,7 +270,7 @@ func (b *builder) expression(expression ast.Expr) Expr {
 	case *ast.IndexExpr:
 		result = b.indexExpression(node, info)
 	case *ast.RangeExpr:
-		result = &Range{ExprInfo: info, Start: b.expression(node.Start), End: b.expression(node.End), EndExclusive: node.EndExclusive}
+		result = &Range{ExprInfo: info, Start: b.expression(node.Start), End: b.expression(node.End), IsEndExclusive: node.IsEndExclusive}
 	case *ast.StructLit:
 		result = b.structLiteral(node, info)
 	case *ast.VariantLit:
@@ -296,7 +296,7 @@ func (b *builder) expression(expression ast.Expr) Expr {
 		concat := b.typing != nil && b.typing.StringConcatenation(node.ID())
 		result = &Binary{
 			ExprInfo: info, Left: b.expression(node.Left), Op: node.Op,
-			Right: b.expression(node.Right), StringConcat: concat, Test: b.caseTest(node.ID()),
+			Right: b.expression(node.Right), IsStringConcatenation: concat, Test: b.caseTest(node.ID()),
 		}
 	case *ast.IsExpr:
 		result = &Is{ExprInfo: info, Value: b.expression(node.Value), Test: b.caseTest(node.ID())}
@@ -305,7 +305,7 @@ func (b *builder) expression(expression ast.Expr) Expr {
 	case *ast.FreeExpr:
 		result = &Free{ExprInfo: info, Value: b.expression(node.Expr)}
 	case *ast.PrintExpr:
-		result = &Print{ExprInfo: info, Value: b.expression(node.Expr), Newline: node.Newline}
+		result = &Print{ExprInfo: info, Value: b.expression(node.Expr), AppendsNewline: node.AppendsNewline}
 	case *ast.AsExpr:
 		result = &Cast{ExprInfo: info, Value: b.expression(node.Expr), TargetType: info.Type}
 	case *ast.BadExpr:
@@ -393,7 +393,7 @@ func (b *builder) structLiteral(source *ast.StructLit, info ExprInfo) Expr {
 }
 
 func (b *builder) callExpression(source *ast.CallExpr, info ExprInfo) Expr {
-	call := &Call{ExprInfo: info, Callee: b.expression(source.Callee), Piped: source.Piped}
+	call := &Call{ExprInfo: info, Callee: b.expression(source.Callee), IsPiped: source.IsPiped}
 	arguments := source.Args
 	if b.typing != nil {
 		arguments = b.typing.CallArgumentsOrSource(source)
@@ -422,8 +422,8 @@ func (b *builder) expressionInfo(expression ast.Expr) ExprInfo {
 		info.HasUse = true
 	}
 	if mutable, found := b.typing.ReferenceArgument(expression.ID()); found {
-		info.ReferenceArgument = true
-		info.ReferenceArgumentMutable = mutable
+		info.HasReferenceArgument = true
+		info.IsReferenceArgumentMutable = mutable
 	}
 	info.ImplicitReference = b.typing.ImplicitCallArgument(expression.ID())
 	for _, implementation := range b.typing.InterfaceImplementations(expression.ID()) {
@@ -443,7 +443,7 @@ func (b *builder) caseTest(id ast.NodeID) *CaseTest {
 		return nil
 	}
 	return &CaseTest{
-		SubjectID: ir.NodeID(test.SubjectID), Case: test.Case, CaseWhenTrue: test.CaseWhenTrue,
+		SubjectID: ir.NodeID(test.SubjectID), Case: test.Case, MatchesWhenTrue: test.MatchesWhenTrue,
 		CaseCount: test.CaseCount, Family: test.Family,
 	}
 }

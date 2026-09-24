@@ -71,11 +71,11 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 			SourceInfo: node.SourceInfo,
 		}
 	case *Load:
-		return &Load{Place: FoldPlace(types, node.Place, env), DropRoot: node.DropRoot, SourceInfo: node.SourceInfo}
+		return &Load{Place: FoldPlace(types, node.Place, env), DropsRoot: node.DropsRoot, SourceInfo: node.SourceInfo}
 	case *AddrOf:
 		return &AddrOf{Place: FoldPlace(types, node.Place, env), Type: node.Type, SourceInfo: node.SourceInfo}
 	case *TempBorrow:
-		return &TempBorrow{Value: FoldExpr(types, node.Value, env), Slice: node.Slice, Type: node.Type, SourceInfo: node.SourceInfo}
+		return &TempBorrow{Value: FoldExpr(types, node.Value, env), IsSlice: node.IsSlice, Type: node.Type, SourceInfo: node.SourceInfo}
 	case *Len:
 		return &Len{Value: FoldExpr(types, node.Value, env), Type: node.Type, SourceInfo: node.SourceInfo}
 	case *StringChars:
@@ -89,12 +89,12 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 		}
 	case *SliceView:
 		return &SliceView{
-			Place:        FoldPlace(types, node.Place, env),
-			Start:        FoldExpr(types, node.Start, env),
-			End:          FoldExpr(types, node.End, env),
-			EndExclusive: node.EndExclusive,
-			Type:         node.Type,
-			SourceInfo:   node.SourceInfo,
+			Place:          FoldPlace(types, node.Place, env),
+			Start:          FoldExpr(types, node.Start, env),
+			End:            FoldExpr(types, node.End, env),
+			IsEndExclusive: node.IsEndExclusive,
+			Type:           node.Type,
+			SourceInfo:     node.SourceInfo,
 		}
 	case *InterfaceMake:
 		return &InterfaceMake{
@@ -105,26 +105,26 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 		}
 	case *InterfaceCall:
 		return &InterfaceCall{
-			Base:       FoldExpr(types, node.Base, env),
-			Slot:       node.Slot,
-			SlotType:   node.SlotType,
-			Args:       foldExprs(types, node.Args, env),
-			Consumes:   node.Consumes,
-			Type:       node.Type,
-			SourceInfo: node.SourceInfo,
+			Base:         FoldExpr(types, node.Base, env),
+			Slot:         node.Slot,
+			SlotType:     node.SlotType,
+			Args:         foldExprs(types, node.Args, env),
+			ConsumesBase: node.ConsumesBase,
+			Type:         node.Type,
+			SourceInfo:   node.SourceInfo,
 		}
 	case *Field:
 		return &Field{
 			Base:       FoldExpr(types, node.Base, env),
 			Index:      node.Index,
-			DropBase:   node.DropBase,
+			DropsBase:  node.DropsBase,
 			Type:       node.Type,
 			SourceInfo: node.SourceInfo,
 		}
 	case *StructLit:
 		return &StructLit{Fields: foldExprs(types, node.Fields, env), Type: node.Type, SourceInfo: node.SourceInfo}
 	case *ArrayLit:
-		return &ArrayLit{Values: foldExprs(types, node.Values, env), Dynamic: node.Dynamic, Type: node.Type, SourceInfo: node.SourceInfo}
+		return &ArrayLit{Values: foldExprs(types, node.Values, env), IsDynamic: node.IsDynamic, Type: node.Type, SourceInfo: node.SourceInfo}
 	case *DynamicArrayOp:
 		return &DynamicArrayOp{
 			Op:         node.Op,
@@ -145,7 +145,7 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 	case *Cast:
 		return &Cast{Expr: FoldExpr(types, node.Expr, env), Type: node.Type, SourceInfo: node.SourceInfo}
 	case *Print:
-		return &Print{Value: FoldExpr(types, node.Value, env), Newline: node.Newline, SourceInfo: node.SourceInfo}
+		return &Print{Value: FoldExpr(types, node.Value, env), AppendsNewline: node.AppendsNewline, SourceInfo: node.SourceInfo}
 	case *Drop:
 		return &Drop{Value: FoldExpr(types, node.Value, env), SourceInfo: node.SourceInfo}
 	default:

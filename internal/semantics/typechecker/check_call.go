@@ -152,7 +152,7 @@ func (c *checker) typeCollectionCall(scope *symbols.Scope, node *ast.CallExpr, d
 		}
 		displayArgs := len(node.Args)
 		displayWant := 1
-		if node.Piped {
+		if node.IsPiped {
 			displayArgs--
 			displayWant--
 		}
@@ -184,7 +184,7 @@ func (c *checker) typeDynamicArrayOwnerCall(scope *symbols.Scope, node *ast.Call
 			c.typeExpr(scope, arg, nil)
 		}
 		displayArgs, displayWant := len(node.Args), wantArgs
-		if node.Piped {
+		if node.IsPiped {
 			displayArgs--
 			displayWant--
 		}
@@ -307,7 +307,7 @@ func (c *checker) checkOptionalAllocatorArity(scope *symbols.Scope, node *ast.Ca
 	if argCount < minArgs {
 		wantArgs = minArgs
 	}
-	if node.Piped {
+	if node.IsPiped {
 		argCount--
 		wantArgs--
 	}
@@ -388,7 +388,7 @@ func (c *checker) checkCall(scope *symbols.Scope, receiverExpr ast.Expr, callExp
 		callArgOffset = 1
 	}
 	displayOffset := callArgOffset
-	if callExpr.Piped {
+	if callExpr.IsPiped {
 		displayOffset = 1
 	}
 	if len(args) != len(fnType.Params) {
@@ -413,7 +413,7 @@ func (c *checker) checkCall(scope *symbols.Scope, receiverExpr ast.Expr, callExp
 		if i == 0 {
 			if receiverExpr != nil {
 				implicitExpr = receiverExpr
-			} else if callExpr.Piped && len(argExprs) > 0 {
+			} else if callExpr.IsPiped && len(argExprs) > 0 {
 				implicitExpr = argExprs[0]
 			}
 		}

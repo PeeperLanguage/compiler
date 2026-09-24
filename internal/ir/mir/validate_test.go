@@ -98,7 +98,7 @@ func TestValidateReportsDefects(t *testing.T) {
 		{
 			name: "branch on non-bool value",
 			damage: func(m *Module) {
-				i32 := m.Types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+				i32 := m.Types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
 				m.Funcs[0].Blocks[0].Term = &Branch{Cond: &RefConst{Value: "1", Type: i32}, ThenID: 1, ElseID: 2}
 			},
 			want: "branches on non-bool",
@@ -106,7 +106,7 @@ func TestValidateReportsDefects(t *testing.T) {
 		{
 			name: "store type mismatch",
 			damage: func(m *Module) {
-				i32 := m.Types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+				i32 := m.Types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
 				boolean := m.Types.Intern(ir.Type{Kind: ir.TypeBool})
 				m.Funcs[0].Blocks[0].Instrs = []Instr{&Store{
 					Place: &Place{Root: &RefName{Name: "slot", Type: i32}, Type: i32},
@@ -118,7 +118,7 @@ func TestValidateReportsDefects(t *testing.T) {
 		{
 			name: "call argument type mismatch",
 			damage: func(m *Module) {
-				i32 := m.Types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+				i32 := m.Types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
 				boolean := m.Types.Intern(ir.Type{Kind: ir.TypeBool})
 				voidType := m.Funcs[0].ReturnType
 				fnType := m.Types.Intern(ir.Type{Kind: ir.TypeFunction, Params: []ir.TypeID{i32}, Return: voidType})
@@ -133,7 +133,7 @@ func TestValidateReportsDefects(t *testing.T) {
 		{
 			name: "dynamic array operation without reference carrier",
 			damage: func(m *Module) {
-				i32 := m.Types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+				i32 := m.Types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
 				array := m.Types.Intern(ir.Type{Kind: ir.TypeArray, Elem: i32})
 				m.Funcs[0].Blocks[0].Instrs = []Instr{&DynamicArrayOp{
 					Array: &RefName{Name: "values", Type: array}, ArrayType: array,
@@ -144,7 +144,7 @@ func TestValidateReportsDefects(t *testing.T) {
 		{
 			name: "index projection element mismatch",
 			damage: func(m *Module) {
-				i32 := m.Types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+				i32 := m.Types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
 				boolean := m.Types.Intern(ir.Type{Kind: ir.TypeBool})
 				array := m.Types.Intern(ir.Type{Kind: ir.TypeArray, Elem: i32, Length: "1"})
 				m.Funcs[0].Blocks[0].Instrs = []Instr{&Assign{Name: "value", Value: &Load{
@@ -192,7 +192,7 @@ func TestValidateReportsDefectsDeterministically(t *testing.T) {
 
 func TestValidateChecksModuleArtifactsWithoutFunctions(t *testing.T) {
 	types := ir.NewTypeTable()
-	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
 	module := &Module{Types: types, InterfaceThunks: []*InterfaceThunk{{
 		Name: "broken", SlotType: ir.TypeID(999), FuncType: i32, DataType: i32,
 	}}}
@@ -227,7 +227,7 @@ func TestValidateAcceptsEmptyModule(t *testing.T) {
 func interfaceValidationFixture() (*Module, ir.TypeID, ir.TypeID, ir.TypeID) {
 	types := ir.NewTypeTable()
 	voidType := types.Intern(ir.Type{Kind: ir.TypeVoid})
-	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
 	rawptr := types.Intern(ir.Type{Kind: ir.TypeRawPtr})
 	slotType := types.Intern(ir.Type{Kind: ir.TypeFunction, Params: []ir.TypeID{rawptr}, Return: voidType})
 	wrongSlotType := types.Intern(ir.Type{Kind: ir.TypeFunction, Params: []ir.TypeID{rawptr}, Return: i32})

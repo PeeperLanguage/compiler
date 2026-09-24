@@ -39,7 +39,7 @@ func analyzeFunction(graph *cfg.ControlFlowGraph, ops effect.SiteOps, diag *diag
 	}
 	order := make([]cfg.SiteID, 0)
 	for _, block := range graph.Blocks {
-		if block == nil || !block.Reachable {
+		if block == nil || !block.IsReachable {
 			continue
 		}
 		for _, site := range block.Sites {
@@ -61,12 +61,12 @@ func analyzeFunction(graph *cfg.ControlFlowGraph, ops effect.SiteOps, diag *diag
 			break
 		}
 		site := graph.Site(id)
-		if site == nil || !graph.Blocks[id.Block].Reachable {
+		if site == nil || !graph.Blocks[id.Block].IsReachable {
 			continue
 		}
 		out := transfer(ops[id], result.In[id])
 		for _, edge := range graph.SiteEdges.OutEdges(site.ID) {
-			if graph.Site(edge.To) == nil || !graph.Blocks[edge.To.Block].Reachable {
+			if graph.Site(edge.To) == nil || !graph.Blocks[edge.To.Block].IsReachable {
 				continue
 			}
 			edgeState := copyState(out)
@@ -149,7 +149,7 @@ func (v *initializationVisitor) VisitDefine(op effect.Define) {
 	if op.Symbol != nil && v.tracked != nil {
 		v.tracked[op.Symbol.ID] = op.Symbol.Name
 	}
-	if v.applyState && op.Initialized && op.Symbol != nil {
+	if v.applyState && op.IsInitialized && op.Symbol != nil {
 		v.current[op.Symbol.ID] = struct{}{}
 	}
 }

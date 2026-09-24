@@ -116,7 +116,7 @@ func TypeFromSyntax(node ast.TypeExpr, context SyntaxContext) Type {
 		if typ == nil {
 			return nil
 		}
-		return &RefType{Mutable: typ.Mutable, Target: TypeFromSyntax(typ.Target, context)}
+		return &RefType{IsMutable: typ.IsMutable, Target: TypeFromSyntax(typ.Target, context)}
 	case *ast.OptionalType:
 		if typ == nil {
 			return nil
@@ -261,7 +261,7 @@ func methodReceiverOf(typ Type) MethodReceiver {
 	receiver := MethodReceiverValue
 	if ref, ok := typ.(*RefType); ok && ref != nil {
 		receiver = MethodReceiverShared
-		if ref.Mutable {
+		if ref.IsMutable {
 			receiver = MethodReceiverMutable
 		}
 		typ = Underlying(ref.Target)
@@ -302,7 +302,7 @@ func resolveTypeName(node ast.TypeExpr, context SyntaxContext) Type {
 		return &AllocatorType{}
 	}
 	if signed, bits, ok := token.ParseIntegerBuiltin(name, context.Target); ok {
-		return &IntegerType{Signed: signed, Bits: bits}
+		return &IntegerType{IsSigned: signed, Bits: bits}
 	}
 	return &NamedType{Name: name}
 }

@@ -54,7 +54,7 @@ func buildFunction(source *thir.Function) *ControlFlowGraph {
 		Name:           source.Name,
 		Location:       source.Source.Location,
 		ReturnTypeText: source.ReturnTypeText,
-		ReturnsValue:   source.ReturnsValue,
+		HasReturnValue: source.HasReturnValue,
 		Blocks:         make([]*Block, 0),
 	}
 	b := &builder{fn: fn}
@@ -332,7 +332,7 @@ func finalizeGraph(fn *ControlFlowGraph) {
 	}
 	for _, block := range fn.Blocks {
 		if block != nil {
-			block.Reachable = false
+			block.IsReachable = false
 		}
 	}
 	markReachable(fn.Entry, make(map[int]bool))
@@ -418,7 +418,7 @@ func markReachable(block *Block, seen map[int]bool) {
 		return
 	}
 	seen[block.ID] = true
-	block.Reachable = true
+	block.IsReachable = true
 	if block.Terminator == nil {
 		return
 	}

@@ -51,7 +51,7 @@ var llvmTypes = newLLVMTypeFixture(target.Bits64)
 func newLLVMTypeFixture(indexBits int) llvmTypeFixture {
 	table := ir.NewTypeTable()
 	void := table.Intern(ir.Type{Kind: ir.TypeVoid})
-	i32 := table.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+	i32 := table.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
 	usize := table.Intern(ir.Type{Kind: ir.TypeInteger, Bits: indexBits})
 	table.SetIndexType(usize)
 	boolType := table.Intern(ir.Type{Kind: ir.TypeBool})
@@ -67,7 +67,7 @@ func newLLVMTypeFixture(indexBits int) llvmTypeFixture {
 		stringType:        table.Intern(ir.Type{Kind: ir.TypeString}),
 		rawptr:            rawptr,
 		i32:               i32,
-		i8:                table.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 8}),
+		i8:                table.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 8}),
 		u8:                table.Intern(ir.Type{Kind: ir.TypeInteger, Bits: 8}),
 		u128:              table.Intern(ir.Type{Kind: ir.TypeInteger, Bits: 128}),
 		usize:             usize,
@@ -79,12 +79,12 @@ func newLLVMTypeFixture(indexBits int) llvmTypeFixture {
 		fixed3I32:         table.Intern(ir.Type{Kind: ir.TypeArray, Elem: i32, Length: "3"}),
 		fixed4I32:         table.Intern(ir.Type{Kind: ir.TypeArray, Elem: i32, Length: "4"}),
 		refI32:            table.Intern(ir.Type{Kind: ir.TypeReference, Elem: i32}),
-		mutRefI32:         table.Intern(ir.Type{Kind: ir.TypeReference, Mutable: true, Elem: i32}),
+		mutRefI32:         table.Intern(ir.Type{Kind: ir.TypeReference, IsMutable: true, Elem: i32}),
 		refDynamicI32:     table.Intern(ir.Type{Kind: ir.TypeReference, Elem: dynamicI32}),
-		mutRefDynamicI32:  table.Intern(ir.Type{Kind: ir.TypeReference, Mutable: true, Elem: dynamicI32}),
+		mutRefDynamicI32:  table.Intern(ir.Type{Kind: ir.TypeReference, IsMutable: true, Elem: dynamicI32}),
 		refSliceI32:       table.Intern(ir.Type{Kind: ir.TypeReference, Elem: sliceI32}),
-		mutRefSliceI32:    table.Intern(ir.Type{Kind: ir.TypeReference, Mutable: true, Elem: sliceI32}),
-		mutRefFixed4I32:   table.Intern(ir.Type{Kind: ir.TypeReference, Mutable: true, Elem: table.Intern(ir.Type{Kind: ir.TypeArray, Elem: i32, Length: "4"})}),
+		mutRefSliceI32:    table.Intern(ir.Type{Kind: ir.TypeReference, IsMutable: true, Elem: sliceI32}),
+		mutRefFixed4I32:   table.Intern(ir.Type{Kind: ir.TypeReference, IsMutable: true, Elem: table.Intern(ir.Type{Kind: ir.TypeArray, Elem: i32, Length: "4"})}),
 		valueStruct:       valueStruct,
 		refValueStruct:    table.Intern(ir.Type{Kind: ir.TypeReference, Elem: valueStruct}),
 		ownedValueStruct:  table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: valueStruct}),
@@ -114,7 +114,7 @@ func TestLLVMLayoutModelTypes(t *testing.T) {
 		want string
 	}{
 		{byteType, "i8"},
-		{types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 24}), "i24"},
+		{types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 24}), "i24"},
 		{types.Intern(ir.Type{Kind: ir.TypeInteger, Bits: 8388608}), "i8388608"},
 		{llvmTypes.stringType, "{ i8*, i64, i8* }"},
 		{llvmTypes.optionalI32, "{ i1, i32 }"},
@@ -147,7 +147,7 @@ func TestLLVMLayoutModelTypes(t *testing.T) {
 
 func TestLLVMLayoutUsesTypedVariantCaseSlots(t *testing.T) {
 	types := ir.NewTypeTable()
-	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
 	str := types.Intern(ir.Type{Kind: ir.TypeString})
 	index := types.Intern(ir.Type{Kind: ir.TypeInteger, Bits: 64})
 	types.SetIndexType(index)
@@ -172,7 +172,7 @@ func TestLLVMLayoutUsesTypedVariantCaseSlots(t *testing.T) {
 
 func TestGenerateLLVMIRRendersTypedVariantStaticWithInactiveSlotsZeroed(t *testing.T) {
 	types := ir.NewTypeTable()
-	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
 	boolType := types.Intern(ir.Type{Kind: ir.TypeBool})
 	result := types.Intern(ir.Type{
 		Kind: ir.TypeVariant, Family: ir.VariantFamilyNamed, Name: "Result", Identity: "test::Result",
@@ -1020,7 +1020,7 @@ func TestGenerateLLVMIRLowersDynamicArrayShrinkFor32BitTarget(t *testing.T) {
 }
 
 func dynamicArrayOperationModule(types llvmTypeFixture, name string, arrayType ir.TypeID, op symbols.CompilerOp, length, value mir.ValueRef) *mir.Module {
-	ownerRefType := types.table.Intern(ir.Type{Kind: ir.TypeReference, Mutable: true, Elem: arrayType})
+	ownerRefType := types.table.Intern(ir.Type{Kind: ir.TypeReference, IsMutable: true, Elem: arrayType})
 	params := []ir.Param{{Name: "values", Type: ownerRefType}}
 	if length != nil {
 		params = append(params, ir.Param{Name: "size", Type: types.usize})
@@ -1257,7 +1257,7 @@ func TestGenerateLLVMIRLowersRecursiveNamedTypesAndDrop(t *testing.T) {
 	for _, compilerTarget := range []target.Info{testLinux386, testLinuxAMD64} {
 		types := ir.NewTypeTable()
 		void := types.Intern(ir.Type{Kind: ir.TypeVoid})
-		i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+		i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
 		usize := types.Intern(ir.Type{Kind: ir.TypeInteger, Bits: compilerTarget.IndexBits})
 		types.SetIndexType(usize)
 
@@ -1812,11 +1812,11 @@ func TestGenerateLLVMIRReturnsStringSliceViewByValue(t *testing.T) {
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{&mir.Assign{Name: "view", Value: &mir.SliceView{
-					Source:       &mir.Place{Root: &mir.RefName{Name: "text", Type: refString}, Type: refString},
-					Start:        &mir.RefConst{Value: "0", Type: llvmTypes.i32},
-					End:          &mir.RefConst{Value: "1", Type: llvmTypes.i32},
-					EndExclusive: true,
-					Type:         refString,
+					Source:         &mir.Place{Root: &mir.RefName{Name: "text", Type: refString}, Type: refString},
+					Start:          &mir.RefConst{Value: "0", Type: llvmTypes.i32},
+					End:            &mir.RefConst{Value: "1", Type: llvmTypes.i32},
+					IsEndExclusive: true,
+					Type:           refString,
 				}}},
 				Term: &mir.Ret{Value: &mir.RefName{Name: "view", Type: refString}},
 			}},
@@ -1854,11 +1854,11 @@ func TestGenerateLLVMIRLowersBoundedStringSliceViewFor32BitTarget(t *testing.T) 
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{&mir.Assign{Name: "view", Value: &mir.SliceView{
-					Source:       &mir.Place{Root: &mir.RefName{Name: "text", Type: refString}, Type: refString},
-					Start:        &mir.RefConst{Value: "0", Type: types.i32},
-					End:          &mir.RefConst{Value: "2", Type: types.i32},
-					EndExclusive: true,
-					Type:         refString,
+					Source:         &mir.Place{Root: &mir.RefName{Name: "text", Type: refString}, Type: refString},
+					Start:          &mir.RefConst{Value: "0", Type: types.i32},
+					End:            &mir.RefConst{Value: "2", Type: types.i32},
+					IsEndExclusive: true,
+					Type:           refString,
 				}}},
 				Term: &mir.Ret{Value: &mir.RefName{Name: "view", Type: refString}},
 			}},
@@ -2034,10 +2034,10 @@ func TestGenerateLLVMIRReslicesSharedViewWithoutCapacity(t *testing.T) {
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{&mir.Assign{Name: "view", Value: &mir.SliceView{
-					Source:       &mir.Place{Root: &mir.RefName{Name: "xs", Type: llvmTypes.refSliceI32}, Type: llvmTypes.refSliceI32},
-					End:          &mir.RefConst{Value: "2", Type: llvmTypes.u8},
-					EndExclusive: true,
-					Type:         llvmTypes.refSliceI32,
+					Source:         &mir.Place{Root: &mir.RefName{Name: "xs", Type: llvmTypes.refSliceI32}, Type: llvmTypes.refSliceI32},
+					End:            &mir.RefConst{Value: "2", Type: llvmTypes.u8},
+					IsEndExclusive: true,
+					Type:           llvmTypes.refSliceI32,
 				}}},
 				Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: llvmTypes.i32}},
 			}},
@@ -2533,7 +2533,7 @@ func TestGenerateLLVMIRLowersIndirectFieldPlaceWithoutTempAlloca(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
 	owned := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: llvmTypes.valueStruct})
 	shared := llvmTypes.refValueStruct
-	mutable := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeReference, Mutable: true, Elem: llvmTypes.valueStruct})
+	mutable := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeReference, IsMutable: true, Elem: llvmTypes.valueStruct})
 	for _, tt := range []struct {
 		name   string
 		typeID ir.TypeID
@@ -2597,7 +2597,7 @@ func TestGenerateLLVMIRLowersIndirectFieldPlaceWithoutTempAlloca(t *testing.T) {
 
 func TestGenerateLLVMIRLowersProjectedFieldRawAddressDirectly(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
-	mutableStruct := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeReference, Mutable: true, Elem: llvmTypes.valueStruct})
+	mutableStruct := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeReference, IsMutable: true, Elem: llvmTypes.valueStruct})
 	mod := &mir.Module{
 		Name:     "test",
 		Types:    llvmTypes.table,
@@ -2994,7 +2994,7 @@ func TestGenerateLLVMIRLowersDeepMixedPlace(t *testing.T) {
 	tokenType := llvmTypes.valueStruct
 	itemsType := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeArray, Elem: tokenType})
 	bucketType := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeStruct, Fields: []ir.TypeField{{Name: "items", Type: itemsType}}})
-	borrowedBucket := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeReference, Mutable: true, Elem: bucketType})
+	borrowedBucket := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeReference, IsMutable: true, Elem: bucketType})
 	place := &mir.Place{
 		Root: &mir.RefName{Name: "bucket", Type: borrowedBucket},
 		Projections: []mir.PlaceProjection{
@@ -3063,11 +3063,11 @@ func TestGenerateLLVMIRConsumingInterfaceCallReleasesStorage(t *testing.T) {
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{&mir.InterfaceCall{
-					Base:     &mir.RefName{Name: "value", Type: interfaceType},
-					Slot:     0,
-					SlotType: llvmTypes.fnRawptrVoid,
-					Consumes: true,
-					Type:     llvmTypes.void,
+					Base:         &mir.RefName{Name: "value", Type: interfaceType},
+					Slot:         0,
+					SlotType:     llvmTypes.fnRawptrVoid,
+					ConsumesBase: true,
+					Type:         llvmTypes.void,
 				}},
 				Term: &mir.Ret{},
 			}},

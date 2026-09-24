@@ -194,7 +194,7 @@ func TestValidateRejectsTopologyDefects(t *testing.T) {
 		{
 			name: "reachability disagrees with entry traversal",
 			damage: func(fn *ControlFlowGraph) {
-				fn.Blocks[len(fn.Blocks)-1].Reachable = !fn.Blocks[len(fn.Blocks)-1].Reachable
+				fn.Blocks[len(fn.Blocks)-1].IsReachable = !fn.Blocks[len(fn.Blocks)-1].IsReachable
 			},
 			want: "entry traversal says",
 		},
@@ -224,7 +224,7 @@ func TestValidateReportsDefectsDeterministically(t *testing.T) {
 		fn := module.Functions[0]
 		fn.BlockEdges = graphcore.NewDirected(func(edge BlockEdge) (int, int) { return edge.From, edge.To })
 		for _, block := range fn.Blocks {
-			block.Reachable = !block.Reachable
+			block.IsReachable = !block.IsReachable
 		}
 		err := module.Validate()
 		if err == nil {

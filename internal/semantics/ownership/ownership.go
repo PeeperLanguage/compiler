@@ -119,7 +119,7 @@ func indexSites(module *module.Module, cfgFn *cfg.ControlFlowGraph, scope *symbo
 		return sites, order
 	}
 	for _, block := range cfgFn.Blocks {
-		if block == nil || !block.Reachable {
+		if block == nil || !block.IsReachable {
 			continue
 		}
 		for _, flowSite := range block.Sites {
@@ -395,7 +395,7 @@ func (a *analyzer) applyBlockExit(node *site, st state, loans *loanContext) {
 	if carrier := a.deadMatchCarrierAtExit[node.cfgSite.ID]; carrier != nil {
 		if _, live := st.live[carrier]; live {
 			a.reportLoanConflict([]place.Origin{{Root: carrier}}, nil, storageDestroy, node.block.SourceInfo(), loans)
-			if typ, ok := symbols.GetSymbolType(carrier); ok && typeinfo.OwnershipCapabilityOf(typ).Drop {
+			if typ, ok := symbols.GetSymbolType(carrier); ok && typeinfo.OwnershipCapabilityOf(typ).NeedsDrop {
 				cleanup = append(cleanup, carrier)
 			}
 			st.moved[carrier] = node.block.SourceInfo()
@@ -435,7 +435,7 @@ func cleanupSymbols(scope *symbols.Scope, st state) []*symbols.Symbol {
 			continue
 		}
 		typ, ok := symbols.GetSymbolType(sym)
-		if ok && typeinfo.OwnershipCapabilityOf(typ).Drop {
+		if ok && typeinfo.OwnershipCapabilityOf(typ).NeedsDrop {
 			cleanup = append(cleanup, sym)
 		}
 	}
@@ -489,7 +489,7 @@ func (a *analyzer) planDiscardedDrops(node *site) {
 		if !isDiscard || discard.Place.Root != nil {
 			continue
 		}
-		if typeinfo.OwnershipCapabilityOf(a.module.EffectiveExprType(discard.Node)).Drop {
+		if typeinfo.OwnershipCapabilityOf(a.module.EffectiveExprType(discard.Node)).NeedsDrop {
 			a.cleanup.DiscardedValue[ir.NodeID(discard.Node)] = struct{}{}
 		}
 	}
@@ -551,7 +551,7 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 	for _, field := range arm.Bindings {
 		switch field.Projection {
 		case thir.MatchPayloadField:
-			listed[field.Field] = field.Discard
+			listed[field.Field] = field.IsDiscard
 		case thir.MatchWholePayload:
 		default:
 			panic("ownership: invalid match binding projection")
@@ -568,7 +568,7 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 		delete(st.live, carrier)
 		delete(st.references, carrier)
 		if len(arm.Bindings) == 1 && arm.Bindings[0].Projection == thir.MatchWholePayload {
-			if arm.Bindings[0].Discard && typeinfo.OwnershipCapabilityOf(arm.Bindings[0].Type).Drop {
+			if arm.Bindings[0].IsDiscard && typeinfo.OwnershipCapabilityOf(arm.Bindings[0].Type).NeedsDrop {
 				a.cleanup.MatchWholePayloadDrops[ir.NodeID(arm.Body.SourceInfo().NodeID)] = struct{}{}
 			}
 		} else if payload, payloadFound := typeinfo.Underlying(arm.Payload).(*typeinfo.StructType); payloadFound && payload != nil {
@@ -576,7 +576,7 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 			for fieldIndex := len(payload.Fields) - 1; fieldIndex >= 0; fieldIndex-- {
 				field := payload.Fields[fieldIndex]
 				discarded, selected := listed[fieldIndex]
-				if typeinfo.OwnershipCapabilityOf(field.Type).Drop && (!selected || discarded) {
+				if typeinfo.OwnershipCapabilityOf(field.Type).NeedsDrop && (!selected || discarded) {
 					drops = append(drops, fieldIndex)
 				}
 			}

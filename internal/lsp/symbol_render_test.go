@@ -9,7 +9,7 @@ import (
 )
 
 func TestRenderSymbolKinds(t *testing.T) {
-	i32 := &typeinfo.IntegerType{Bits: 32, Signed: true}
+	i32 := &typeinfo.IntegerType{Bits: 32, IsSigned: true}
 	point := &typeinfo.NamedType{Name: "Point"}
 	function := &typeinfo.FuncType{Params: []typeinfo.Type{i32}, ParamNames: []string{"value"}, Return: i32}
 	method := &typeinfo.FuncType{Params: []typeinfo.Type{point}, ParamNames: []string{"self"}, Return: i32}
@@ -42,7 +42,7 @@ func TestRenderSymbolKinds(t *testing.T) {
 }
 
 func TestRenderSymbolUsesSemanticTypesAndASTDecorations(t *testing.T) {
-	i32 := &typeinfo.IntegerType{Bits: 32, Signed: true}
+	i32 := &typeinfo.IntegerType{Bits: 32, IsSigned: true}
 	typ := &typeinfo.NamedType{Name: "Resolved"}
 	decl := &ast.FnDecl{
 		TypeParams: []ast.TypeParam{{Name: &ast.Ident{Name: "T"}}},

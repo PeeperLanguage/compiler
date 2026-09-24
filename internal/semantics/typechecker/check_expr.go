@@ -68,7 +68,7 @@ func (c *checker) recordCaseTest(node ast.Expr, subject ast.Expr, caseIndex, cas
 		return
 	}
 	c.module.Typechecking.RecordCaseTest(node.ID(), typecheckresult.CaseTest{
-		SubjectID: subject.ID(), Case: caseIndex, CaseWhenTrue: caseWhenTrue,
+		SubjectID: subject.ID(), Case: caseIndex, MatchesWhenTrue: caseWhenTrue,
 		CaseCount: caseCount, Family: family,
 	})
 }
@@ -82,7 +82,7 @@ func (c *checker) typeExprBase(scope *symbols.Scope, expr ast.Expr, expected typ
 		return c.typeNumber(node, expected)
 
 	case *ast.StringLit:
-		if node.CString {
+		if node.IsCString {
 			return &typeinfo.CStrType{}
 		}
 		return &typeinfo.StringType{}
@@ -268,7 +268,7 @@ func (c *checker) typeAddressExpr(scope *symbols.Scope, node *ast.AddressExpr, e
 		if mutableBinding != nil {
 			mutableBinding.RequireMutable()
 		}
-		return &typeinfo.RefType{Mutable: true, Target: valueType}
+		return &typeinfo.RefType{IsMutable: true, Target: valueType}
 	}
 	if node.Mode == ast.AddressRaw && !addressable {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
@@ -709,8 +709,8 @@ func (c *checker) typeRangeIndexExpr(scope *symbols.Scope, node *ast.IndexExpr, 
 		mutableBinding.RequireMutable()
 	}
 	return &typeinfo.RefType{
-		Mutable: mutable,
-		Target:  &typeinfo.ArrayType{Shape: typeinfo.ArraySlice, Elem: elem},
+		IsMutable: mutable,
+		Target:    &typeinfo.ArrayType{Shape: typeinfo.ArraySlice, Elem: elem},
 	}
 }
 
@@ -759,7 +759,7 @@ func indexableSequence(t typeinfo.Type) (typeinfo.Type, indexableSequenceShape, 
 		if !ok || target == nil || (target.Shape != typeinfo.ArrayOwner && target.Shape != typeinfo.ArraySlice) || target.Elem == nil {
 			return nil, 0, false
 		}
-		if base.Mutable {
+		if base.IsMutable {
 			return target.Elem, indexableMutableSliceView, true
 		}
 		return target.Elem, indexableSharedSliceView, true
@@ -972,7 +972,7 @@ func (c *checker) typeArrayLit(scope *symbols.Scope, node *ast.ArrayLit) typeinf
 			return &typeinfo.InvalidType{}
 		}
 	}
-	if !node.InferredLen {
+	if !node.HasInferredLength {
 		if nodeLen, err := strconv.Atoi(array.Len); err == nil && nodeLen != len(node.Values) {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
 				fmt.Sprintf("array literal has %d values but length is %d", len(node.Values), nodeLen), ast.LocOf(node), "")
@@ -1076,7 +1076,7 @@ func (c *checker) typeNumber(node *ast.NumberLit, expected typeinfo.Type) typein
 }
 
 func integerRangeHint(t *typeinfo.IntegerType) string {
-	if t.Signed {
+	if t.IsSigned {
 		bits := t.Bits - 1
 		return fmt.Sprintf("%s range: -2^%d to 2^%d-1", typeinfo.TypeText(t), bits, bits)
 	}

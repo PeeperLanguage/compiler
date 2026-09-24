@@ -125,7 +125,7 @@ func TestValidateRejectsDamagedTHIREvidence(t *testing.T) {
 	}{
 		{"define source", []effect.Op{effect.Define{Symbol: binding.Symbol, Source: binding, Node: assignID}}, "does not match node"},
 		{"define value", []effect.Op{effect.Define{Symbol: binding.Symbol, Source: binding, Node: bindingID, Value: assignID, ValueExpr: binding.Value}}, "unexpected node type"},
-		{"parameter identity", []effect.Op{effect.Define{Symbol: binding.Symbol, Node: ast.NodeID(function.Params[0].Source.NodeID), OnEntry: true}}, "not in typed THIR"},
+		{"parameter identity", []effect.Op{effect.Define{Symbol: binding.Symbol, Node: ast.NodeID(function.Params[0].Source.NodeID), IsOnEntry: true}}, "not in typed THIR"},
 		{"write target", []effect.Op{effect.Write{Place: root, Node: assignID, Target: target, Owner: assignID}}, "unexpected node type"},
 		{"write owner", []effect.Op{effect.Write{Place: root, Node: targetID, Target: target, Owner: bindingID}}, "unexpected node type"},
 		{"write value", []effect.Op{effect.Write{Place: root, Node: targetID, Target: target, Owner: assignID, Value: assignID, ValueExpr: assignment.Value}}, "unexpected node type"},

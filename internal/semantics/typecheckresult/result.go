@@ -15,11 +15,11 @@ type InterfaceImplementation struct {
 }
 
 type CaseTest struct {
-	SubjectID    ast.NodeID
-	Case         int
-	CaseWhenTrue bool
-	CaseCount    int
-	Family       typeinfo.VariantFamily
+	SubjectID       ast.NodeID
+	Case            int
+	MatchesWhenTrue bool
+	CaseCount       int
+	Family          typeinfo.VariantFamily
 }
 
 // Match records typechecker-owned case and binding evidence consumed by CFG
@@ -56,7 +56,7 @@ type MatchBinding struct {
 	Field      int
 	Type       typeinfo.Type
 	Binding    *symbols.Symbol
-	Discard    bool
+	IsDiscard  bool
 }
 
 func (m Match) Arm(caseIndex int) (MatchArm, bool) {
@@ -77,7 +77,7 @@ func (m Match) Arm(caseIndex int) (MatchArm, bool) {
 // fields; they must not re-check them, because a nil there would be a compiler
 // bug rather than a shape the source can produce.
 type ForIteration struct {
-	GuaranteedEntry bool
+	HasGuaranteedEntry bool
 
 	ElementType typeinfo.Type
 	Cursor      *symbols.Symbol

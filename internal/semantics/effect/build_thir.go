@@ -52,11 +52,11 @@ func (b *thirBuilder) buildFunction(function *thir.Function) {
 	b.site = b.graph.Entry.Sites[0].ID
 	for _, parameter := range function.Params {
 		if parameter.Symbol != nil {
-			b.emit(Define{Symbol: parameter.Symbol, Node: nodeID(parameter.Source.NodeID), Initialized: true, OnEntry: true})
+			b.emit(Define{Symbol: parameter.Symbol, Node: nodeID(parameter.Source.NodeID), IsInitialized: true, IsOnEntry: true})
 		}
 	}
 	for _, block := range b.graph.Blocks {
-		if block == nil || !block.Reachable {
+		if block == nil || !block.IsReachable {
 			continue
 		}
 		for _, site := range block.Sites {
@@ -107,7 +107,7 @@ func (b *thirBuilder) buildMatchBindings(terminator *cfg.SwitchVariant) {
 			for _, binding := range arm.Bindings {
 				if binding.Symbol != nil {
 					b.ops[edge.To] = append(b.ops[edge.To], Define{
-						Symbol: binding.Symbol, Source: match, Node: nodeID(terminator.NodeID), Initialized: true, OnEntry: true,
+						Symbol: binding.Symbol, Source: match, Node: nodeID(terminator.NodeID), IsInitialized: true, IsOnEntry: true,
 					})
 				}
 			}
@@ -124,7 +124,7 @@ func (b *thirBuilder) BuildBindingEffects(statement *thir.Binding) {
 	b.expression(statement.Value, typeinfo.UseMove)
 	if statement.Symbol != nil {
 		value := astNodeID(statement.Value)
-		b.emit(Define{Symbol: statement.Symbol, Source: statement, Node: nodeID(statement.Source.NodeID), Value: value, ValueExpr: statement.Value, Initialized: statement.Value != nil})
+		b.emit(Define{Symbol: statement.Symbol, Source: statement, Node: nodeID(statement.Source.NodeID), Value: value, ValueExpr: statement.Value, IsInitialized: statement.Value != nil})
 	}
 }
 
@@ -217,7 +217,7 @@ func (b *thirBuilder) BuildAddressEffects(expr *thir.Address) {
 
 func (b *thirBuilder) BuildUnaryEffects(expr *thir.Unary) { b.expression(expr.Value, typeinfo.UseRead) }
 func (b *thirBuilder) BuildBinaryEffects(expr *thir.Binary) {
-	b.expression(expr.Left, ternaryUse(expr.StringConcat, typeinfo.UseMove, typeinfo.UseRead))
+	b.expression(expr.Left, ternaryUse(expr.IsStringConcatenation, typeinfo.UseMove, typeinfo.UseRead))
 	b.expression(expr.Right, typeinfo.UseRead)
 }
 func (b *thirBuilder) BuildIsEffects(expr *thir.Is) { b.expression(expr.Value, typeinfo.UseRead) }
@@ -261,7 +261,7 @@ func (b *thirBuilder) argument(expr thir.Expr) {
 			operand = address.Value
 		}
 		b.placeOperands(operand)
-		b.emit(Borrow{Place: b.place(operand), Source: expr, Node: nodeID(expr.SourceInfo().NodeID), Operand: nodeID(operand.SourceInfo().NodeID), OperandExpr: operand, Location: expr.SourceInfo().Location, Mutable: mutable, Argument: true})
+		b.emit(Borrow{Place: b.place(operand), Source: expr, Node: nodeID(expr.SourceInfo().NodeID), Operand: nodeID(operand.SourceInfo().NodeID), OperandExpr: operand, Location: expr.SourceInfo().Location, IsMutable: mutable, IsCallArgument: true})
 		return
 	}
 	use, _ := expr.UseKind()
@@ -319,7 +319,7 @@ func (b *thirBuilder) borrow(expr thir.Expr, operand, bounds thir.Expr, mutable,
 	if bounds != nil {
 		b.expression(bounds, typeinfo.UseRead)
 	}
-	b.emit(Borrow{Place: b.place(operand), Source: expr, Node: nodeID(expr.SourceInfo().NodeID), Operand: nodeID(operand.SourceInfo().NodeID), OperandExpr: operand, Location: expr.SourceInfo().Location, Mutable: mutable, Raw: raw})
+	b.emit(Borrow{Place: b.place(operand), Source: expr, Node: nodeID(expr.SourceInfo().NodeID), Operand: nodeID(operand.SourceInfo().NodeID), OperandExpr: operand, Location: expr.SourceInfo().Location, IsMutable: mutable, IsRaw: raw})
 }
 
 func (b *thirBuilder) mutableReference(expr thir.Expr) bool {

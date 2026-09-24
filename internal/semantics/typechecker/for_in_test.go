@@ -344,7 +344,7 @@ func TestCheckForInRangeTypeIsBoundOrderIndependent(t *testing.T) {
 					t.Fatalf("%s type = %s, want i64", name, got)
 				}
 			}
-			if !evidence.GuaranteedEntry {
+			if !evidence.HasGuaranteedEntry {
 				t.Fatal("ascending constant range lost guaranteed-entry proof")
 			}
 		})
@@ -399,8 +399,8 @@ func TestCheckForInRecordsGuaranteedRangeEntry(t *testing.T) {
 			if !found {
 				t.Fatal("missing range iteration evidence")
 			}
-			if evidence.GuaranteedEntry != test.guaranteed {
-				t.Fatalf("guaranteed entry = %v, want %v", evidence.GuaranteedEntry, test.guaranteed)
+			if evidence.HasGuaranteedEntry != test.guaranteed {
+				t.Fatalf("guaranteed entry = %v, want %v", evidence.HasGuaranteedEntry, test.guaranteed)
 			}
 		})
 	}

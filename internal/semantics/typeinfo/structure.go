@@ -80,7 +80,7 @@ func (*AllocatorType) structure() typeStructure { return newTypeStructure("alloc
 func (*RawPtrType) structure() typeStructure    { return newTypeStructure("rawptr") }
 
 func (t *IntegerType) structure() typeStructure {
-	return newTypeStructure("integer", strconv.FormatBool(t.Signed), strconv.Itoa(t.Bits))
+	return newTypeStructure("integer", strconv.FormatBool(t.IsSigned), strconv.Itoa(t.Bits))
 }
 
 func (t *FloatType) structure() typeStructure {
@@ -115,7 +115,7 @@ func (t *OwnedPtrType) structure() typeStructure {
 func (t *RefType) structure() typeStructure {
 	return typeStructure{
 		kind:       "ref",
-		attributes: []string{strconv.FormatBool(t.Mutable)},
+		attributes: []string{strconv.FormatBool(t.IsMutable)},
 		children:   []TypeChild{{Type: t.Target, Relation: TypeChildBorrowedTarget}},
 	}
 }

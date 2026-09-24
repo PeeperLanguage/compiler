@@ -201,7 +201,7 @@ func TestFinalizeValuesRecomputesLazyConstantsWithFinalSymbolTypes(t *testing.T)
 	if module.Constants.Published(sym.ID) != nil {
 		t.Fatal("lazy query published authoritative module value before finalization")
 	}
-	sym.BindType(&typeinfo.IntegerType{Signed: true, Bits: 64})
+	sym.BindType(&typeinfo.IntegerType{IsSigned: true, Bits: 64})
 	FinalizeValues(ctx, module)
 	assertIntConst(t, module, "Value", "1", "i64")
 	if _, found := module.Constants.Cached(sym.ID); found {

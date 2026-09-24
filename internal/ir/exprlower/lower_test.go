@@ -50,7 +50,7 @@ func buildTypedExprModule(t *testing.T, source string) (*module.Module, *diagnos
 }
 
 func TestLowerImplicitReferenceRetainsTemporaryOnlyForValues(t *testing.T) {
-	integer := &typeinfo.IntegerType{Signed: true, Bits: 32}
+	integer := &typeinfo.IntegerType{IsSigned: true, Bits: 32}
 	borrow := &typeinfo.RefType{Target: integer}
 	ctx := exprlower.Context{Types: ir.NewTypeTable()}
 	literal := &thir.NumberLiteral{ExprInfo: thir.ExprInfo{Source: ir.SourceInfo{NodeID: 1}, Type: integer}, Value: "3"}
@@ -151,7 +151,7 @@ fn main() -> i32 {
 	if lowered.Slots[0].MethodName != "sum" || lowered.Slots[0].FuncName == "" || lowered.Slots[0].SlotType == ir.InvalidType {
 		t.Fatalf("published interface slot = %#v", lowered.Slots[0])
 	}
-	missing := &thir.NumberLiteral{ExprInfo: thir.ExprInfo{Source: ir.SourceInfo{NodeID: 10}, Type: &typeinfo.IntegerType{Signed: true, Bits: 32}}, Value: "1"}
+	missing := &thir.NumberLiteral{ExprInfo: thir.ExprInfo{Source: ir.SourceInfo{NodeID: 10}, Type: &typeinfo.IntegerType{IsSigned: true, Bits: 32}}, Value: "1"}
 	invalid, ok := exprlower.Lower(ctx, missing, fn.Params[0]).(*ir.InvalidExpr)
 	if !ok || invalid.Message != "missing interface implementation evidence" {
 		t.Fatalf("conversion without evidence = %#v, want missing evidence", invalid)

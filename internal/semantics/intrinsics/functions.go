@@ -110,7 +110,7 @@ func dynamicArraySignature(op symbols.CompilerOp, baseType typeinfo.Type, compil
 	if !ok {
 		panic("missing builtin usize type")
 	}
-	params := []typeinfo.Type{&typeinfo.RefType{Target: arrayType, Mutable: true}, sizeType}
+	params := []typeinfo.Type{&typeinfo.RefType{Target: arrayType, IsMutable: true}, sizeType}
 	paramNames := []string{"values", "size"}
 	switch op {
 	case symbols.CompilerOpAppend:

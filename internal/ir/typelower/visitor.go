@@ -72,7 +72,7 @@ func (v *runtimeTypeVisitor) VisitEnum(t *typeinfo.EnumType) {
 
 func (v *runtimeTypeVisitor) VisitInteger(t *typeinfo.IntegerType) {
 	if t != nil {
-		v.result = v.lowerer.ctx.types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: t.Signed, Bits: t.Bits})
+		v.result = v.lowerer.ctx.types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: t.IsSigned, Bits: t.Bits})
 	}
 }
 func (v *runtimeTypeVisitor) VisitFloat(t *typeinfo.FloatType) {
@@ -96,7 +96,7 @@ func (v *runtimeTypeVisitor) VisitOwnedPointer(t *typeinfo.OwnedPtrType) {
 }
 func (v *runtimeTypeVisitor) VisitReference(t *typeinfo.RefType) {
 	if t != nil {
-		v.result = v.lowerer.ctx.types.Intern(ir.Type{Kind: ir.TypeReference, Mutable: t.Mutable, Elem: v.lowerer.intern(t.Target)})
+		v.result = v.lowerer.ctx.types.Intern(ir.Type{Kind: ir.TypeReference, IsMutable: t.IsMutable, Elem: v.lowerer.intern(t.Target)})
 	}
 }
 func (v *runtimeTypeVisitor) VisitOptional(t *typeinfo.OptionalType) {

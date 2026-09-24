@@ -42,7 +42,7 @@ func TestDefinitionsAreUniqueFreeFunctions(t *testing.T) {
 }
 
 func TestApplicableFunctionSymbolsUseOperandShape(t *testing.T) {
-	i32 := &typeinfo.IntegerType{Signed: true, Bits: 32}
+	i32 := &typeinfo.IntegerType{IsSigned: true, Bits: 32}
 	owner := &typeinfo.ArrayType{Shape: typeinfo.ArrayOwner, Elem: i32}
 	byteSlice := &typeinfo.RefType{Target: &typeinfo.ArrayType{Shape: typeinfo.ArraySlice, Elem: &typeinfo.ByteType{}}}
 	tests := []struct {
@@ -82,7 +82,7 @@ func TestFromBytesSignature(t *testing.T) {
 }
 
 func TestFunctionSignatureInstantiatesDynamicArrayOwner(t *testing.T) {
-	elementType := &typeinfo.IntegerType{Signed: true, Bits: 32}
+	elementType := &typeinfo.IntegerType{IsSigned: true, Bits: 32}
 	ownerType := &typeinfo.DefinedType{
 		Name:       "Numbers",
 		Underlying: &typeinfo.ArrayType{Shape: typeinfo.ArrayOwner, Elem: elementType},
@@ -116,7 +116,7 @@ func TestFunctionSignatureInstantiatesDynamicArrayOwner(t *testing.T) {
 					want = sizeType
 				}
 				if i == 0 {
-					want = &typeinfo.RefType{Target: want, Mutable: true}
+					want = &typeinfo.RefType{Target: want, IsMutable: true}
 				}
 				if !typeinfo.SameType(fnType.Params[i], want) {
 					t.Fatalf("%s parameter %d = %s, want %s", test.op, i, typeinfo.TypeText(fnType.Params[i]), typeinfo.TypeText(want))
@@ -148,7 +148,7 @@ func TestCollectionFunctionSignatures(t *testing.T) {
 		t.Fatalf("as_chars signature = %#v", charType)
 	}
 
-	i32 := &typeinfo.IntegerType{Signed: true, Bits: 32}
+	i32 := &typeinfo.IntegerType{IsSigned: true, Bits: 32}
 	for _, arrayType := range []typeinfo.Type{
 		&typeinfo.ArrayType{Len: "4", Shape: typeinfo.ArrayFixed, Elem: i32},
 		&typeinfo.ArrayType{Shape: typeinfo.ArrayOwner, Elem: i32},

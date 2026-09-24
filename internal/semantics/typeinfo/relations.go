@@ -83,7 +83,7 @@ func (t *IntegerType) numericInfo() (NumericFamily, int, bool) {
 	if t == nil {
 		return NumericInvalid, 0, false
 	}
-	if t.Signed {
+	if t.IsSigned {
 		return NumericSigned, t.Bits, true
 	}
 	return NumericUnsigned, t.Bits, true
@@ -131,7 +131,7 @@ func NumericTypeFromName(name string, targetInfo target.Info) (Type, bool) {
 		targetInfo = target.Host()
 	}
 	if signed, bits, ok := token.ParseIntegerBuiltin(name, targetInfo); ok {
-		return &IntegerType{Signed: signed, Bits: bits}, true
+		return &IntegerType{IsSigned: signed, Bits: bits}, true
 	}
 	switch name {
 	case "f32":

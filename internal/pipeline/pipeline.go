@@ -199,7 +199,7 @@ func validateProgramEntrypoint(entry *module.Module, diag *diagnostics.Diagnosti
 	validReturn := typeOK && fnType.Return == nil
 	if typeOK && fnType.Return != nil {
 		integer, ok := fnType.Return.(*typeinfo.IntegerType)
-		validReturn = ok && integer.Signed && integer.Bits == 32
+		validReturn = ok && integer.IsSigned && integer.Bits == 32
 	}
 	if function == nil || !function.IsEntrypointShape || !typeOK || len(fnType.Params) != 0 || !validReturn {
 		diag.AddError(diagnostics.ErrInvalidEntrypoint, message, sym.Location, "invalid program entrypoint")
@@ -535,7 +535,7 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 			Types: ctx.Types, Diagnostics: phaseDiag, Source: module.THIR,
 			CFG: module.CFG, Flow: module.Flow, Ownership: module.Ownership,
 			Scope: module.ModuleScope, Constants: module.Constants,
-			ModuleID: module.ID, Entry: module.IsEntry,
+			ModuleID: module.ID, IsEntryModule: module.IsEntry,
 		})
 		if module.MIR == nil {
 			return false

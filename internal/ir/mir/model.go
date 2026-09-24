@@ -128,9 +128,9 @@ type Store struct {
 }
 
 type Print struct {
-	Value    ValueRef
-	Newline  bool
-	Location *source.Location
+	Value          ValueRef
+	AppendsNewline bool
+	Location       *source.Location
 }
 
 type Drop struct {
@@ -236,12 +236,12 @@ type AddrOf struct {
 }
 
 type SliceView struct {
-	Source       *Place
-	Start        ValueRef
-	End          ValueRef
-	EndExclusive bool
-	Type         ir.TypeID
-	Location     *source.Location
+	Source         *Place
+	Start          ValueRef
+	End            ValueRef
+	IsEndExclusive bool
+	Type           ir.TypeID
+	Location       *source.Location
 }
 
 type Load struct {
@@ -339,13 +339,13 @@ type InterfaceMake struct {
 }
 
 type InterfaceCall struct {
-	Base     ValueRef
-	Slot     int
-	SlotType ir.TypeID
-	Args     []ValueRef
-	Consumes bool
-	Type     ir.TypeID
-	Location *source.Location
+	Base         ValueRef
+	Slot         int
+	SlotType     ir.TypeID
+	Args         []ValueRef
+	ConsumesBase bool
+	Type         ir.TypeID
+	Location     *source.Location
 }
 
 func (i *Assign) Text() string {

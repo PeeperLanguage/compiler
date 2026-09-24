@@ -140,9 +140,9 @@ func (p *Parser) parseRefTypeExpr() ast.TypeExpr {
 		return nil
 	}
 	return reg(p, &ast.RefType{
-		Mutable:  mutable,
-		Target:   target,
-		Location: source.NewLocation(p.filePath, start.Start, ast.EndOf(target)),
+		IsMutable: mutable,
+		Target:    target,
+		Location:  source.NewLocation(p.filePath, start.Start, ast.EndOf(target)),
 	})
 }
 

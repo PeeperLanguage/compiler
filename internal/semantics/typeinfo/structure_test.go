@@ -6,7 +6,7 @@ import (
 )
 
 func TestForEachChildOwnsCompositeTypeStructure(t *testing.T) {
-	i32 := &IntegerType{Signed: true, Bits: 32}
+	i32 := &IntegerType{IsSigned: true, Bits: 32}
 	text := &StringType{}
 	parameter := &TypeParameterType{Name: "T", OwnerIdentity: "Box", Index: 0}
 
@@ -90,7 +90,7 @@ func TestForEachChildOwnsCompositeTypeStructure(t *testing.T) {
 }
 
 func TestTypeStructureDrivesRecursiveContainment(t *testing.T) {
-	stored := &StructType{Fields: []Field{{Name: "borrow", Type: &RefType{Target: &IntegerType{Signed: true, Bits: 32}}}}}
+	stored := &StructType{Fields: []Field{{Name: "borrow", Type: &RefType{Target: &IntegerType{IsSigned: true, Bits: 32}}}}}
 	wrapped := &OptionalType{Inner: &ArrayType{Len: "2", Elem: stored}}
 
 	if !ContainsReference(wrapped) {

@@ -14,7 +14,7 @@ func (*UnknownType) isSameType(other Type) bool {
 
 func (t *IntegerType) isSameType(other Type) bool {
 	right, ok := other.(*IntegerType)
-	return ok && t != nil && right != nil && t.Signed == right.Signed && t.Bits == right.Bits
+	return ok && t != nil && right != nil && t.IsSigned == right.IsSigned && t.Bits == right.Bits
 }
 
 func (*ByteType) isSameType(other Type) bool {
@@ -87,7 +87,7 @@ func (*RawPtrType) isSameType(other Type) bool {
 func (t *RefType) isSameType(other Type) bool {
 	right, ok := other.(*RefType)
 	return ok && t != nil && right != nil &&
-		t.Mutable == right.Mutable && SameType(t.Target, right.Target)
+		t.IsMutable == right.IsMutable && SameType(t.Target, right.Target)
 }
 
 func (t *OptionalType) isSameType(other Type) bool {

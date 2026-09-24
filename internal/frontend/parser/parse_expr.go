@@ -68,7 +68,7 @@ func init() {
 	})
 	nud(token.CSTRING, func(p *Parser) ast.Expr {
 		tok := p.advance()
-		return reg(p, &ast.StringLit{Value: tok.Literal, CString: true, Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
+		return reg(p, &ast.StringLit{Value: tok.Literal, IsCString: true, Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
 	})
 	nud(token.BYTE_CHAR, func(p *Parser) ast.Expr {
 		tok := p.advance()
@@ -172,7 +172,7 @@ func parsePipeExpr(p *Parser, left ast.Expr, _ uint8) ast.Expr {
 	op := p.advance()
 	right := p.parseExpr(precPrefix)
 	call, ok := right.(*ast.CallExpr)
-	if !ok || call == nil || call.Piped {
+	if !ok || call == nil || call.IsPiped {
 		loc := source.NewLocation(p.filePath, op.Start, ast.EndOf(right))
 		p.diag.Add(diagnostics.NewError("pipe target must be a free-function call").
 			WithCode(diagnostics.ErrInvalidExpression).
@@ -187,7 +187,7 @@ func parsePipeExpr(p *Parser, left ast.Expr, _ uint8) ast.Expr {
 		return reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, ast.StartOf(left), ast.EndOf(right))})
 	}
 	call.Args = append([]ast.Expr{left}, call.Args...)
-	call.Piped = true
+	call.IsPiped = true
 	call.Location = source.NewLocation(p.filePath, ast.StartOf(left), ast.EndOf(call))
 	return call
 }
@@ -313,7 +313,7 @@ func (p *Parser) parsePrintExpr() ast.Expr {
 	if end != nil {
 		endPos = end.End
 	}
-	return reg(p, &ast.PrintExpr{Expr: expr, Newline: start.Kind == token.PRINTLN, Location: source.NewLocation(p.filePath, start.Start, endPos)})
+	return reg(p, &ast.PrintExpr{Expr: expr, AppendsNewline: start.Kind == token.PRINTLN, Location: source.NewLocation(p.filePath, start.Start, endPos)})
 }
 
 func parseBinaryExpr(p *Parser, left ast.Expr, prec uint8) ast.Expr {
@@ -437,10 +437,10 @@ func (p *Parser) parseRangeExpr(start ast.Expr) ast.Expr {
 		startPos = ast.StartOf(start)
 	}
 	return reg(p, &ast.RangeExpr{
-		Start:        start,
-		End:          end,
-		EndExclusive: exclusive,
-		Location:     source.NewLocation(p.filePath, startPos, endPos),
+		Start:          start,
+		End:            end,
+		IsEndExclusive: exclusive,
+		Location:       source.NewLocation(p.filePath, startPos, endPos),
 	})
 }
 
@@ -502,10 +502,10 @@ func (p *Parser) parseArrayLiteral() ast.Expr {
 		Location: source.NewLocation(p.filePath, start.Start, ast.EndOf(elem)),
 	})
 	return reg(p, &ast.ArrayLit{
-		Type:        typ,
-		Values:      values,
-		InferredLen: inferred,
-		Location:    source.NewLocation(p.filePath, start.Start, end.End),
+		Type:              typ,
+		Values:            values,
+		HasInferredLength: inferred,
+		Location:          source.NewLocation(p.filePath, start.Start, end.End),
 	})
 }
 

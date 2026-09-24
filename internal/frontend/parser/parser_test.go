@@ -826,7 +826,7 @@ const f: &mut [..]string = value;`
 	}
 	sharedRefDecl := mod.Stmts[4].(*ast.ConstDecl)
 	sharedRef, ok := sharedRefDecl.Type.(*ast.RefType)
-	if !ok || sharedRef.Mutable {
+	if !ok || sharedRef.IsMutable {
 		t.Fatalf("expected shared reference type, got %#v", sharedRefDecl.Type)
 	}
 	if target, ok := sharedRef.Target.(*ast.ArrayType); !ok || target.Shape != ast.ArraySlice {
@@ -834,7 +834,7 @@ const f: &mut [..]string = value;`
 	}
 	mutRefDecl := mod.Stmts[5].(*ast.ConstDecl)
 	mutRef, ok := mutRefDecl.Type.(*ast.RefType)
-	if !ok || !mutRef.Mutable {
+	if !ok || !mutRef.IsMutable {
 		t.Fatalf("expected mutable reference type, got %#v", mutRefDecl.Type)
 	}
 }
@@ -859,11 +859,11 @@ func TestParsePipeCallPrependsValueAndChainsLeft(t *testing.T) {
 	}
 	stmt := mod.Stmts[0].(*ast.FnDecl).Body.Stmts[0].(*ast.ExprStmt)
 	outer, ok := stmt.Expr.(*ast.CallExpr)
-	if !ok || !outer.Piped || len(outer.Args) != 1 {
+	if !ok || !outer.IsPiped || len(outer.Args) != 1 {
 		t.Fatalf("unexpected outer pipe: %#v", stmt.Expr)
 	}
 	inner, ok := outer.Args[0].(*ast.CallExpr)
-	if !ok || !inner.Piped || len(inner.Args) != 2 {
+	if !ok || !inner.IsPiped || len(inner.Args) != 2 {
 		t.Fatalf("unexpected inner pipe: %#v", outer.Args[0])
 	}
 	if got := ast.ExprText(outer); got != "value |> first(1) |> second()" {
@@ -882,7 +882,7 @@ func TestParsePipeCompletesBeforeSurroundingBinaryExpression(t *testing.T) {
 		t.Fatalf("expression = %#v, want comparison", stmt.Expr)
 	}
 	call, ok := binary.Left.(*ast.CallExpr)
-	if !ok || !call.Piped || len(call.Args) != 1 {
+	if !ok || !call.IsPiped || len(call.Args) != 1 {
 		t.Fatalf("comparison left = %#v, want completed pipe call", binary.Left)
 	}
 }
@@ -1294,8 +1294,8 @@ func TestParseRangeIndexExprForms(t *testing.T) {
 			if (rng.End != nil) != tt.hasEnd {
 				t.Fatalf("end presence = %v, want %v", rng.End != nil, tt.hasEnd)
 			}
-			if rng.EndExclusive != tt.endExclusive {
-				t.Fatalf("exclusive = %v, want %v", rng.EndExclusive, tt.endExclusive)
+			if rng.IsEndExclusive != tt.endExclusive {
+				t.Fatalf("exclusive = %v, want %v", rng.IsEndExclusive, tt.endExclusive)
 			}
 		})
 	}
@@ -1386,8 +1386,8 @@ func TestParseArrayLiteral(t *testing.T) {
 	if !ok || arrayType.Len == nil || arrayType.Len.Value != "3" {
 		t.Fatalf("unexpected array literal type: %#v", lit.Type)
 	}
-	if lit.InferredLen || len(lit.Values) != 3 {
-		t.Fatalf("unexpected array literal metadata: inferred=%v values=%d", lit.InferredLen, len(lit.Values))
+	if lit.HasInferredLength || len(lit.Values) != 3 {
+		t.Fatalf("unexpected array literal metadata: inferred=%v values=%d", lit.HasInferredLength, len(lit.Values))
 	}
 }
 
@@ -1409,8 +1409,8 @@ func TestParseInferredArrayLiteral(t *testing.T) {
 	if !ok || arrayType.Len == nil || arrayType.Len.Value != "3" {
 		t.Fatalf("unexpected inferred array literal type: %#v", lit.Type)
 	}
-	if !lit.InferredLen || len(lit.Values) != 3 {
-		t.Fatalf("unexpected inferred literal metadata: inferred=%v values=%d", lit.InferredLen, len(lit.Values))
+	if !lit.HasInferredLength || len(lit.Values) != 3 {
+		t.Fatalf("unexpected inferred literal metadata: inferred=%v values=%d", lit.HasInferredLength, len(lit.Values))
 	}
 }
 

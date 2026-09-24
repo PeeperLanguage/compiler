@@ -183,14 +183,14 @@ func (e *evaluator) evalExpr(scope *symbols.Scope, expr ast.Expr, expected typei
 			return nil, false
 		}
 		matched := variant.CaseIndex() == test.Case
-		if !test.CaseWhenTrue {
+		if !test.MatchesWhenTrue {
 			matched = !matched
 		}
 		return constvalue.NewBool(matched), true
 	}
 	if node, ok := expr.(*ast.StringLit); ok {
 		typText := "str"
-		if node.CString {
+		if node.IsCString {
 			typText = "cstr"
 		}
 		switch typeinfo.Underlying(expected).(type) {

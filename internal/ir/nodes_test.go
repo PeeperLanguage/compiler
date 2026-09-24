@@ -36,7 +36,7 @@ func TestWithOriginPreservesTypedNilExpression(t *testing.T) {
 
 func TestSignatureText(t *testing.T) {
 	types := NewTypeTable()
-	i32 := types.Intern(Type{Kind: TypeInteger, Signed: true, Bits: 32})
+	i32 := types.Intern(Type{Kind: TypeInteger, IsSigned: true, Bits: 32})
 	u64 := types.Intern(Type{Kind: TypeInteger, Bits: 64})
 	callback := types.Intern(Type{Kind: TypeFunction, Params: []TypeID{i32}, Return: i32})
 	got := SignatureText(types, []Param{
@@ -50,7 +50,7 @@ func TestSignatureText(t *testing.T) {
 
 func TestPlaceText(t *testing.T) {
 	types := NewTypeTable()
-	i32 := types.Intern(Type{Kind: TypeInteger, Signed: true, Bits: 32})
+	i32 := types.Intern(Type{Kind: TypeInteger, IsSigned: true, Bits: 32})
 	array := types.Intern(Type{Kind: TypeArray, Elem: i32, Length: "4"})
 	place := &Place{
 		Root: &Ident{Name: "xs", Type: array},

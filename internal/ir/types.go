@@ -79,20 +79,20 @@ type VariantCase struct {
 // Type is a backend-independent runtime descriptor. Source-only aliases are
 // resolved before interning, so every child directly describes its ABI shape.
 type Type struct {
-	Kind     TypeKind
-	Signed   bool
-	Bits     int
-	Mutable  bool
-	Length   string
-	Elem     TypeID
-	Fields   []TypeField
-	Methods  []TypeMethod
-	Params   []TypeID
-	Return   TypeID
-	Name     string
-	Family   VariantFamily
-	Identity string
-	Cases    []VariantCase
+	Kind      TypeKind
+	IsSigned  bool
+	Bits      int
+	IsMutable bool
+	Length    string
+	Elem      TypeID
+	Fields    []TypeField
+	Methods   []TypeMethod
+	Params    []TypeID
+	Return    TypeID
+	Name      string
+	Family    VariantFamily
+	Identity  string
+	Cases     []VariantCase
 }
 
 // OptionalVariant owns optional's fixed case order. Flow facts, lowering, and
@@ -330,7 +330,7 @@ func (t *TypeTable) textLocked(id TypeID) string {
 	case TypeVoid:
 		return "void"
 	case TypeInteger:
-		if typ.Signed {
+		if typ.IsSigned {
 			return "i" + strconv.Itoa(typ.Bits)
 		}
 		return "u" + strconv.Itoa(typ.Bits)
@@ -354,7 +354,7 @@ func (t *TypeTable) textLocked(id TypeID) string {
 		return "*" + t.textLocked(typ.Elem)
 	case TypeReference:
 		prefix := "&"
-		if typ.Mutable {
+		if typ.IsMutable {
 			prefix = "&mut "
 		}
 		return prefix + t.textLocked(typ.Elem)
@@ -461,7 +461,7 @@ func identifiedTypeKey(typ Type) (string, bool) {
 
 func descriptorKey(typ Type) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%d|%t|%d|%t|%q|%d|%d|%q|%d|%q", typ.Kind, typ.Signed, typ.Bits, typ.Mutable, typ.Length, typ.Elem, typ.Return, typ.Name, typ.Family, typ.Identity)
+	fmt.Fprintf(&b, "%d|%t|%d|%t|%q|%d|%d|%q|%d|%q", typ.Kind, typ.IsSigned, typ.Bits, typ.IsMutable, typ.Length, typ.Elem, typ.Return, typ.Name, typ.Family, typ.Identity)
 	for _, variant := range typ.Cases {
 		fmt.Fprintf(&b, "|v:%q:%d", variant.Name, variant.Payload)
 	}

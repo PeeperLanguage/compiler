@@ -630,7 +630,7 @@ func operationCompletionItems(ctx *project.CompilerContext, module *module.Modul
 			selector = candidate
 			break
 		}
-		if call, ok := node.(*ast.CallExpr); ok && call.Piped {
+		if call, ok := node.(*ast.CallExpr); ok && call.IsPiped {
 			callee, identifier := call.Callee.(*ast.Ident)
 			if identifier && callee.Name == completionSentinel {
 				piped = call

@@ -129,7 +129,7 @@ func checkRefCompatibility(dst, src Type) Compatibility {
 	if !SameType(left.Target, right.Target) {
 		return Incompatible
 	}
-	if left.Mutable && !right.Mutable {
+	if left.IsMutable && !right.IsMutable {
 		return Incompatible
 	}
 	return Compatible

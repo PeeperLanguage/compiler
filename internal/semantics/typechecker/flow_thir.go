@@ -93,7 +93,7 @@ func (a *flowAnalyzer) run() {
 		for _, site := range block.Sites {
 			if site != nil {
 				order = append(order, site.ID)
-				disconnected[site.ID] = !block.Reachable
+				disconnected[site.ID] = !block.IsReachable
 			}
 		}
 	}
@@ -244,7 +244,7 @@ func (a *flowAnalyzer) finish(expr thir.Expr, base typeinfo.Type) typeinfo.Type 
 	}
 	a.recordResolution(expr, resolution)
 	if a.demand != flowOptionalTest && required > applied {
-		if expr.ExprPlace() != nil && !resolution.Stable {
+		if expr.ExprPlace() != nil && !resolution.IsStable {
 			a.ctx.Diagnostics.Add(unstableOptionalNarrowingAt(expr.SourceInfo().Location))
 		} else {
 			a.ctx.Diagnostics.Add(optionalPayloadProofAt(expr.SourceInfo().Location))
@@ -277,11 +277,11 @@ func (a *flowAnalyzer) AnalyzeInvalidStmt(*thir.InvalidStmt) {}
 func (a *flowAnalyzer) AnalyzeBinding(statement *thir.Binding) {
 	typ, _ := symbols.GetSymbolType(statement.Symbol)
 	expected := typ
-	if statement.Inferred {
+	if statement.IsInferred {
 		expected = nil
 	}
 	valueType := a.analyze(statement.Value, expected, flowDefault)
-	if statement.Inferred && valueType != nil {
+	if statement.IsInferred && valueType != nil {
 		typ = valueType
 		a.bindingTypes[statement.Symbol] = valueType
 	}
@@ -526,7 +526,7 @@ func (a *flowAnalyzer) recordCaseTest(expr thir.Expr, test *thir.CaseTest) {
 		return
 	}
 	refined := flowresult.CaseTest{
-		SubjectID: ast.NodeID(test.SubjectID), Case: test.Case, CaseWhenTrue: test.CaseWhenTrue,
+		SubjectID: ast.NodeID(test.SubjectID), Case: test.Case, MatchesWhenTrue: test.MatchesWhenTrue,
 		CaseCount: test.CaseCount, Family: test.Family,
 	}
 	if payload, ok := a.result.Payload(ast.NodeID(test.SubjectID)); ok {
@@ -549,7 +549,7 @@ func (a *flowAnalyzer) recordPayload(expr thir.Expr, resolution place.Resolution
 	}
 	direct := len(resolution.StorageOrigins) == 1 && resolution.StorageOrigins[0].Root != nil && len(resolution.StorageOrigins[0].Projections) == 0
 	a.result.RecordPayload(ast.NodeID(expr.SourceInfo().NodeID), flowresult.PayloadAccess{
-		CarrierOrigins: place.CloneOrigins(resolution.StorageOrigins), Cases: append([]int(nil), cases...), Direct: direct,
+		CarrierOrigins: place.CloneOrigins(resolution.StorageOrigins), Cases: append([]int(nil), cases...), IsDirect: direct,
 	})
 }
 
@@ -589,13 +589,13 @@ func (a *flowAnalyzer) resolve(expr thir.Expr, state flowState) place.Resolution
 		origins = place.FieldOrigins(origins, node.Name)
 		return a.resolveStored(node.ExprType(), place.Resolution{
 			StorageOrigins: origins, ValueOrigins: place.CloneOrigins(origins),
-			Dependencies: append([]*symbols.Symbol(nil), base.Dependencies...), Stable: base.Stable && len(origins) > 0,
+			Dependencies: append([]*symbols.Symbol(nil), base.Dependencies...), IsStable: base.IsStable && len(origins) > 0,
 		}, state)
 	case *thir.Index:
 		base := a.resolve(node.Base, state)
 		origins := appendIndirectOrigins(a.projectedBaseOrigins(base, node.Base), a.expressionType(node.Base))
 		dependencies := append([]*symbols.Symbol(nil), base.Dependencies...)
-		stable := base.Stable
+		stable := base.IsStable
 		switch {
 		case node.Constant != nil:
 			origins = appendOrigin(origins, place.OriginProjection{Kind: place.OriginIndex, Index: node.Constant.Text})
@@ -616,7 +616,7 @@ func (a *flowAnalyzer) resolve(expr thir.Expr, state flowState) place.Resolution
 		}
 		return a.resolveStored(node.ExprType(), place.Resolution{
 			StorageOrigins: origins, ValueOrigins: place.CloneOrigins(origins),
-			Dependencies: dependencies, Stable: stable && len(origins) > 0,
+			Dependencies: dependencies, IsStable: stable && len(origins) > 0,
 		}, state)
 	case *thir.Call:
 		return place.Resolution{ValueOrigins: a.callOrigins(node, state)}
@@ -633,7 +633,7 @@ func (a *flowAnalyzer) resolveSymbol(symbol *symbols.Symbol, typ typeinfo.Type, 
 		typ = inferred
 	}
 	origins := []place.Origin{{Root: symbol}}
-	return a.resolveStored(typ, place.Resolution{StorageOrigins: origins, ValueOrigins: place.CloneOrigins(origins), Stable: true}, state)
+	return a.resolveStored(typ, place.Resolution{StorageOrigins: origins, ValueOrigins: place.CloneOrigins(origins), IsStable: true}, state)
 }
 
 func (a *flowAnalyzer) resolveStored(typ typeinfo.Type, resolution place.Resolution, state flowState) place.Resolution {
@@ -863,7 +863,7 @@ func (a *flowAnalyzer) applyVariantCaseEdge(site *cfg.Site, edge cfg.Edge, state
 		return
 	}
 	resolution := a.resolve(match.Subject, *state)
-	if resolution.Stable && len(resolution.StorageOrigins) > 0 {
+	if resolution.IsStable && len(resolution.StorageOrigins) > 0 {
 		restrictVariantFact(state, variantStateFact{
 			origins: resolution.StorageOrigins, cases: []int{edge.Case}, caseCount: match.CaseCount,
 			dependencies: append([]*symbols.Symbol(nil), resolution.Dependencies...),
@@ -957,14 +957,14 @@ func (a *flowAnalyzer) impliedVariants(expr thir.Expr, truth bool, state flowSta
 	if test, found := a.result.CaseTest(ast.NodeID(expr.SourceInfo().NodeID)); found {
 		subject, _ := a.source.Node(ir.NodeID(test.SubjectID)).(thir.Expr)
 		resolution := a.resolve(subject, state)
-		if !resolution.Stable || len(resolution.StorageOrigins) == 0 {
+		if !resolution.IsStable || len(resolution.StorageOrigins) == 0 {
 			if test.Family == typeinfo.VariantFamilyOptional {
 				a.ctx.Diagnostics.Add(unstableOptionalNarrowingAt(subject.SourceInfo().Location))
 			}
 			return nil
 		}
 		cases := []int{test.Case}
-		if truth != test.CaseWhenTrue {
+		if truth != test.MatchesWhenTrue {
 			cases = variantCasesExcept(test.CaseCount, test.Case)
 		}
 		order := 0

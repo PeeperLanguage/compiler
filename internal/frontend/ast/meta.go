@@ -70,8 +70,8 @@ type AttributeDefinition struct {
 }
 
 type AttributeArgSpec struct {
-	Type     TypeExpr
-	Optional bool
+	Type       TypeExpr
+	IsOptional bool
 }
 
 type AttributeConflictGroup uint8
@@ -89,7 +89,7 @@ const (
 
 var AttributeDefinitions = map[string]AttributeDefinition{
 	AttributeExtern: {
-		Args:    []AttributeArgSpec{{Type: &NamedType{Name: "cstr"}, Optional: true}},
+		Args:    []AttributeArgSpec{{Type: &NamedType{Name: "cstr"}, IsOptional: true}},
 		Targets: AttributeTargetFunc,
 		Doc:     "Declare an external function. Optional string argument overrides the linked symbol name.",
 	},

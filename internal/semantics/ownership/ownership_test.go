@@ -235,7 +235,7 @@ func scopeExitSiteID(t *testing.T, graph *cfg.ControlFlowGraph, blockID ast.Node
 	var id cfg.SiteID
 	found := false
 	for _, block := range graph.Blocks {
-		if block == nil || !block.Reachable {
+		if block == nil || !block.IsReachable {
 			continue
 		}
 		for _, site := range block.Sites {
@@ -539,7 +539,7 @@ fn main() {
 	breakFound := false
 	fallthroughFound := false
 	for _, block := range graph.Blocks {
-		if block == nil || !block.Reachable {
+		if block == nil || !block.IsReachable {
 			continue
 		}
 		hasContinue := false

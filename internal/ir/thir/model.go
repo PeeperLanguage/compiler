@@ -51,7 +51,7 @@ type Function struct {
 	ReturnType            typeinfo.Type
 	ReturnOriginsLocation *source.Location
 	ReturnTypeText        string
-	ReturnsValue          bool
+	HasReturnValue        bool
 	Body                  *Block
 	Source                ir.SourceInfo
 }
@@ -199,16 +199,16 @@ func (s StmtInfo) stmtNode()                 {}
 func (s StmtInfo) SourceInfo() ir.SourceInfo { return s.Source }
 
 type ExprInfo struct {
-	Source                   ir.SourceInfo
-	Type                     typeinfo.Type
-	conversion               *typeinfo.Conversion
-	Use                      typeinfo.UseKind
-	HasUse                   bool
-	ReferenceArgument        bool
-	ReferenceArgumentMutable bool
-	ImplicitReference        typeinfo.Type
-	interfaceImplementations []InterfaceImplementation
-	Place                    *Place
+	Source                     ir.SourceInfo
+	Type                       typeinfo.Type
+	conversion                 *typeinfo.Conversion
+	Use                        typeinfo.UseKind
+	HasUse                     bool
+	HasReferenceArgument       bool
+	IsReferenceArgumentMutable bool
+	ImplicitReference          typeinfo.Type
+	interfaceImplementations   []InterfaceImplementation
+	Place                      *Place
 }
 
 func (e ExprInfo) thirNode()                            {}
@@ -225,7 +225,7 @@ func (e ExprInfo) UseKind() (typeinfo.UseKind, bool) {
 	return e.Use, e.HasUse
 }
 func (e ExprInfo) ReferenceArgInfo() (bool, bool) {
-	return e.ReferenceArgumentMutable, e.ReferenceArgument
+	return e.IsReferenceArgumentMutable, e.HasReferenceArgument
 }
 
 type InterfaceImplementation struct {
@@ -274,10 +274,10 @@ type Block struct {
 
 type Binding struct {
 	StmtInfo
-	Symbol   *symbols.Symbol
-	Constant bool
-	Inferred bool
-	Value    Expr
+	Symbol     *symbols.Symbol
+	IsConstant bool
+	IsInferred bool
+	Value      Expr
 }
 
 type ExprStmt struct {
@@ -349,7 +349,7 @@ type MatchBinding struct {
 	Field      int
 	Type       typeinfo.Type
 	Symbol     *symbols.Symbol
-	Discard    bool
+	IsDiscard  bool
 }
 
 type InvalidStmt struct {
@@ -365,31 +365,31 @@ type IterationPlan interface {
 }
 
 type RangeIteration struct {
-	ElementType     typeinfo.Type
-	Cursor          *symbols.Symbol
-	Limit           *symbols.Symbol
-	Ordinal         *symbols.Symbol
-	GuaranteedEntry bool
+	ElementType        typeinfo.Type
+	Cursor             *symbols.Symbol
+	Limit              *symbols.Symbol
+	Ordinal            *symbols.Symbol
+	HasGuaranteedEntry bool
 }
 
 func (*RangeIteration) iterationPlan() {}
 func (p *RangeIteration) IsGuaranteedEntry() bool {
-	return p != nil && p.GuaranteedEntry
+	return p != nil && p.HasGuaranteedEntry
 }
 
 type SequenceIteration struct {
-	ElementType     typeinfo.Type
-	Cursor          *symbols.Symbol
-	Value           *symbols.Symbol
-	Index           *symbols.Symbol
-	Carrier         *symbols.Symbol
-	CarrierType     typeinfo.Type
-	GuaranteedEntry bool
+	ElementType        typeinfo.Type
+	Cursor             *symbols.Symbol
+	Value              *symbols.Symbol
+	Index              *symbols.Symbol
+	Carrier            *symbols.Symbol
+	CarrierType        typeinfo.Type
+	HasGuaranteedEntry bool
 }
 
 func (*SequenceIteration) iterationPlan() {}
 func (p *SequenceIteration) IsGuaranteedEntry() bool {
-	return p != nil && p.GuaranteedEntry
+	return p != nil && p.HasGuaranteedEntry
 }
 
 type InvalidExpr struct {
@@ -405,8 +405,8 @@ type NumberLiteral struct {
 
 type StringLiteral struct {
 	ExprInfo
-	Value   string
-	CString bool
+	Value     string
+	IsCString bool
 }
 
 type ByteLiteral struct {
@@ -461,9 +461,9 @@ type Index struct {
 
 type Range struct {
 	ExprInfo
-	Start        Expr
-	End          Expr
-	EndExclusive bool
+	Start          Expr
+	End            Expr
+	IsEndExclusive bool
 }
 
 type StructLiteral struct {
@@ -511,11 +511,11 @@ type Unary struct {
 
 type Binary struct {
 	ExprInfo
-	Left         Expr
-	Op           string
-	Right        Expr
-	StringConcat bool
-	Test         *CaseTest
+	Left                  Expr
+	Op                    string
+	Right                 Expr
+	IsStringConcatenation bool
+	Test                  *CaseTest
 }
 
 type Is struct {
@@ -525,18 +525,18 @@ type Is struct {
 }
 
 type CaseTest struct {
-	SubjectID    ir.NodeID
-	Case         int
-	CaseWhenTrue bool
-	CaseCount    int
-	Family       typeinfo.VariantFamily
+	SubjectID       ir.NodeID
+	Case            int
+	MatchesWhenTrue bool
+	CaseCount       int
+	Family          typeinfo.VariantFamily
 }
 
 type Call struct {
 	ExprInfo
 	Callee       Expr
 	Args         []Expr
-	Piped        bool
+	IsPiped      bool
 	CompilerCall *CompilerCall
 }
 
@@ -552,8 +552,8 @@ type Free struct {
 
 type Print struct {
 	ExprInfo
-	Value   Expr
-	Newline bool
+	Value          Expr
+	AppendsNewline bool
 }
 
 type Cast struct {

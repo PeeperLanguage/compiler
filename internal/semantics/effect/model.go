@@ -43,10 +43,10 @@ type Define struct {
 	// declaration without an initializer and for OnEntry bindings. Consumers
 	// that track reference/pointer provenance can therefore update the binding
 	// from this operation without rediscovering declaration syntax.
-	Value       ast.NodeID
-	ValueExpr   thir.Expr
-	Initialized bool
-	// OnEntry marks a binding that already exists when the site begins rather
+	Value         ast.NodeID
+	ValueExpr     thir.Expr
+	IsInitialized bool
+	// IsOnEntry marks a binding that already exists when the site begins rather
 	// than being established by it: a function parameter, or a match payload
 	// binding, which the case edge creates before the arm body runs.
 	//
@@ -54,7 +54,7 @@ type Define struct {
 	// replays them needs no distinction. One that treats a site as a set does:
 	// liveness must not conclude a binding is dead before a site that merely
 	// receives it.
-	OnEntry bool
+	IsOnEntry bool
 }
 
 // Write stores to storage that already exists. It names a place for the same
@@ -132,14 +132,14 @@ type Borrow struct {
 	Operand     ast.NodeID
 	OperandExpr thir.Expr
 	Location    *source.Location
-	Mutable     bool
-	// Argument marks a borrow handed to a call. It outlives the expression that
+	IsMutable   bool
+	// IsCallArgument marks a borrow handed to a call. It outlives the expression that
 	// wrote it, because the callee holds it for as long as the call runs, so a
 	// consumer tracking loans records one rather than only checking an access.
-	Argument bool
-	// Raw marks taking a raw pointer. It reads the place but takes no tracked
+	IsCallArgument bool
+	// IsRaw marks taking a raw pointer. It reads the place but takes no tracked
 	// reference to it, so it neither conflicts with a borrow nor creates one.
-	Raw bool
+	IsRaw bool
 }
 
 // Iterate records the long-lived shared access a sequence loop holds on its

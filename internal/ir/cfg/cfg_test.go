@@ -207,7 +207,7 @@ func TestBuildModulePreservesDisconnectedStatementsAfterReturn(t *testing.T) {
 	found := false
 	for _, block := range graph.Blocks {
 		for _, site := range block.Sites {
-			if !block.Reachable && site.Kind == SiteStatement && site.NodeID == 41 {
+			if !block.IsReachable && site.Kind == SiteStatement && site.NodeID == 41 {
 				found = true
 			}
 		}
@@ -272,7 +272,7 @@ func TestBuildModuleUsesGuaranteedLoopEntryEvidence(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			module := testModule(body, nil)
 			semanticLoop := module.Functions[0].Body.Stmts[0].(*thir.For)
-			semanticLoop.Iteration = &thir.RangeIteration{GuaranteedEntry: test.guaranteed}
+			semanticLoop.Iteration = &thir.RangeIteration{HasGuaranteedEntry: test.guaranteed}
 			graph := BuildModule(module).Functions[0]
 			init := loopBlock(t, graph, 30, BlockLoopInit)
 			header := loopBlock(t, graph, 30, BlockLoop)
@@ -318,7 +318,7 @@ func TestBuildModuleContinueTargetsLatchAndPreservesUnreachableBody(t *testing.T
 				}
 				foundContinue = true
 			case 41:
-				foundUnreachable = !block.Reachable
+				foundUnreachable = !block.IsReachable
 			}
 		}
 	}
@@ -451,7 +451,7 @@ func TestBuildModuleInfiniteLoopBreakMakesExitReachable(t *testing.T) {
 	if !initOK || initJump.Target != loopBody || !latchOK || latchJump.Target != loopBody {
 		t.Fatalf("infinite loop topology: init=%#v latch=%#v, want body", init.Terminator, latch.Terminator)
 	}
-	if !exit.Reachable {
+	if !exit.IsReachable {
 		t.Fatal("infinite-loop exit unreachable despite break")
 	}
 	foundAfter := false
@@ -482,8 +482,8 @@ func TestAnalyzeReportsMissingReturn(t *testing.T) {
 	returnType := &ast.NamedType{NodeIDHolder: ast.NodeIDHolder{NodeID: 11}, Name: "i32"}
 	diag := diagnostics.NewDiagnosticBag()
 	module := BuildModule(testModule(body, returnType))
-	if graph := module.Functions[0]; !graph.ReturnsValue || graph.ReturnTypeText != "i32" {
-		t.Fatalf("return metadata = (%t, %q), want (true, %q)", graph.ReturnsValue, graph.ReturnTypeText, "i32")
+	if graph := module.Functions[0]; !graph.HasReturnValue || graph.ReturnTypeText != "i32" {
+		t.Fatalf("return metadata = (%t, %q), want (true, %q)", graph.HasReturnValue, graph.ReturnTypeText, "i32")
 	}
 	Analyze(module, diag, nil)
 	if !hasDiagnosticCode(diag, diagnostics.ErrMissingReturn) {

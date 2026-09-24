@@ -106,7 +106,7 @@ func validateTermination(fn *ControlFlowGraph) []string {
 		if block.Terminator == nil {
 			// An unreachable block may legitimately have been abandoned mid
 			// construction; a reachable one leaves control nowhere.
-			if block.Reachable {
+			if block.IsReachable {
 				problems = append(problems, fmt.Sprintf("function %d reachable block b%d has no terminator", fn.NodeID, block.ID))
 			}
 			continue
@@ -283,8 +283,8 @@ func validateReachability(fn *ControlFlowGraph) []string {
 
 	problems := make([]string, 0)
 	for _, block := range fn.Blocks {
-		if block.Reachable != seen[block.ID] {
-			problems = append(problems, fmt.Sprintf("function %d block b%d is marked reachable=%t but entry traversal says %t", fn.NodeID, block.ID, block.Reachable, seen[block.ID]))
+		if block.IsReachable != seen[block.ID] {
+			problems = append(problems, fmt.Sprintf("function %d block b%d is marked reachable=%t but entry traversal says %t", fn.NodeID, block.ID, block.IsReachable, seen[block.ID]))
 		}
 	}
 	return problems

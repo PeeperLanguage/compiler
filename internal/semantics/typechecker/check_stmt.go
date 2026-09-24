@@ -136,7 +136,7 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, retu
 		return
 	}
 	evidenceComplete := true
-	if typeinfo.OwnershipCapabilityOf(subjectType).Drop && !place.IsPlaceExpr(node.Subject) {
+	if typeinfo.OwnershipCapabilityOf(subjectType).NeedsDrop && !place.IsPlaceExpr(node.Subject) {
 		c.ctx.Diagnostics.Add(invalidOperationError(node.Subject,
 			"ownership-bearing match subject must be a named place").
 			WithHelp("bind subject to a local before matching it"))
@@ -194,8 +194,8 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, retu
 			if !arm.HasData {
 				c.ctx.Diagnostics.AddError(diagnostics.ErrMissingInitializer,
 					"data match case `"+resolved.CaseName.Name+"` requires a payload pattern", ast.LocOf(arm), "add `with <binding>` or `with _`")
-			} else if arm.Binding != nil || arm.Discard {
-				fieldEvidence := typecheckresult.MatchBinding{Projection: typecheckresult.MatchWholePayload, Type: resolved.Case.Payload, Discard: arm.Discard}
+			} else if arm.Binding != nil || arm.IsDiscard {
+				fieldEvidence := typecheckresult.MatchBinding{Projection: typecheckresult.MatchWholePayload, Type: resolved.Case.Payload, IsDiscard: arm.IsDiscard}
 				if arm.Binding != nil {
 					fieldEvidence.Binding = c.module.Bindings.Symbol(arm.Binding)
 					if fieldEvidence.Binding != nil {
@@ -229,8 +229,8 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, retu
 								"unknown match pattern field `"+name+"`", ast.LocOf(pattern.Name), "")
 							continue
 						}
-						fieldEvidence := typecheckresult.MatchBinding{Projection: typecheckresult.MatchPayloadField, Field: fieldIndex, Type: field.Type, Discard: pattern.Discard}
-						if !pattern.Discard && pattern.Binding != nil {
+						fieldEvidence := typecheckresult.MatchBinding{Projection: typecheckresult.MatchPayloadField, Field: fieldIndex, Type: field.Type, IsDiscard: pattern.IsDiscard}
+						if !pattern.IsDiscard && pattern.Binding != nil {
 							fieldEvidence.Binding = c.module.Bindings.Symbol(pattern.Binding)
 							if fieldEvidence.Binding != nil {
 								fieldEvidence.Binding.BindType(field.Type)
@@ -537,7 +537,7 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 	var carrierType typeinfo.Type
 	rangeExpr, isRange := node.Iterable.(*ast.RangeExpr)
 	if isRange {
-		if !rangeExpr.EndExclusive {
+		if !rangeExpr.IsEndExclusive {
 			valid = false
 			c.ctx.Diagnostics.Add(invalidExpressionError(rangeExpr, "for range requires an exclusive end; use `..` instead of `..=`"))
 		}
@@ -590,7 +590,7 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 			start, startIntegral := startValue.(*constvalue.IntConst)
 			end, endIntegral := endValue.(*constvalue.IntConst)
 			if startFound && endFound && startIntegral && endIntegral && start.Int().Cmp(end.Int()) < 0 {
-				evidence.GuaranteedEntry = true
+				evidence.HasGuaranteedEntry = true
 			}
 		}
 		evidence.ElementType = elemType

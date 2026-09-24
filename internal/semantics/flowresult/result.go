@@ -12,7 +12,7 @@ import (
 type PayloadAccess struct {
 	CarrierOrigins []place.Origin
 	Cases          []int
-	Direct         bool
+	IsDirect       bool
 }
 
 // AppliesTo distinguishes payload layers of an expression from projections
@@ -22,12 +22,12 @@ func (p PayloadAccess) AppliesTo(storage []place.Origin) bool {
 }
 
 type CaseTest struct {
-	SubjectID    ast.NodeID
-	Case         int
-	CaseWhenTrue bool
-	CaseCount    int
-	Family       typeinfo.VariantFamily
-	PayloadPath  []int
+	SubjectID       ast.NodeID
+	Case            int
+	MatchesWhenTrue bool
+	CaseCount       int
+	Family          typeinfo.VariantFamily
+	PayloadPath     []int
 }
 
 type VariantFieldAccess struct {
