@@ -13,6 +13,7 @@ import (
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
+	"compiler/internal/semantics/bindingresult"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/resolver"
@@ -283,6 +284,27 @@ func checkTypeSourceWithExternalImport(t *testing.T, src string) (*module.Module
 	resolver.Resolve(ctx, module)
 	Check(ctx, module)
 	return module, diag
+}
+
+func TestDefaultCallDeclarationUsesResolvedImportedBinding(t *testing.T) {
+	ctx := project.New(".", peeper.SourceExt, diagnostics.NewDiagnosticBag())
+	owner := &module.Module{ID: moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "external"}}
+	ctx.AddModule(owner)
+	caller := &module.Module{
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "caller"},
+		Bindings: bindingresult.New(),
+	}
+	path := &ast.ScopeResolution{
+		NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
+		Segments:     []ast.PathSegment{{Name: &ast.Ident{Name: "external"}}, {Name: &ast.Ident{Name: "GetValue"}}},
+	}
+	bound := symbols.New("GetValue", symbols.SymbolFunc, nil, nil)
+	bound.DefiningModule = owner.ID
+	caller.Bindings.Bind(path, bound)
+	checker := &checker{ctx: ctx, module: caller}
+	if sym, declModule := checker.defaultCallDeclaration(path); sym != bound || declModule != owner {
+		t.Fatalf("resolved callable = (%p, %p), want (%p, %p)", sym, declModule, bound, owner)
+	}
 }
 
 func TestDefaultRangeWithOmittedBoundsClones(t *testing.T) {

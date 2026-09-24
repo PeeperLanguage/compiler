@@ -503,20 +503,19 @@ func (c *checker) matchesImplicitCallTarget(target, arg typeinfo.Type) bool {
 }
 
 func (c *checker) defaultCallDeclaration(callee ast.Expr) (*symbols.Symbol, *module.Module) {
-	if c == nil || c.module == nil || callee == nil {
+	if c == nil || c.module == nil || c.module.Bindings == nil || callee == nil {
 		return nil, nil
 	}
-	switch node := callee.(type) {
+	sym := c.module.Bindings.Symbol(callee)
+	if sym == nil {
+		return nil, nil
+	}
+	switch callee.(type) {
 	case *ast.Ident:
-		if c.module.Bindings != nil {
-			return c.module.Bindings.Symbol(node), c.module
-		}
+		return sym, c.module
 	case *ast.ScopeResolution:
-		qualifier, member, imported := node.ImportValueMember()
-		if imported {
-			if resolved, ok := c.ctx.TypeResolver.LookupImportedSymbol(c.module, qualifier.Name, member.Name); ok {
-				return resolved.Symbol, resolved.Module
-			}
+		if owner, ok := c.ctx.ModuleByID(sym.DefiningModule); ok {
+			return sym, owner
 		}
 	}
 	return nil, nil
