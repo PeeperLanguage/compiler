@@ -13,7 +13,6 @@ import (
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
-	"compiler/internal/semantics/bindingresult"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/resolver"
@@ -292,7 +291,7 @@ func TestDefaultCallDeclarationUsesResolvedImportedBinding(t *testing.T) {
 	ctx.AddModule(owner)
 	caller := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "caller"},
-		Bindings: bindingresult.New(),
+		Bindings: symbols.NewBindings(),
 	}
 	path := &ast.ScopeResolution{
 		NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},

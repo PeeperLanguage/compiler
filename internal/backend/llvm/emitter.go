@@ -123,7 +123,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 					refName, ok := slot.(*mir.RefName)
 					slotName := ""
 					if ok && refName != nil {
-						slotName = "@" + ir.SanitizeSymbolName(ir.StripSymbolInstance(refName.Name))
+						slotName = "@" + ir.SanitizeSymbolName(refName.Name)
 					} else {
 						slotName = "null"
 					}

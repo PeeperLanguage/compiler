@@ -977,13 +977,6 @@ func SanitizeSymbolName(text string) string {
 	return b.String()
 }
 
-func StripSymbolInstance(text string) string {
-	if before, _, ok := strings.Cut(text, "$"); ok {
-		return before
-	}
-	return text
-}
-
 func InterfaceThunkName(interfaceTypeText, dataType, methodName string, index int) string {
 	return fmt.Sprintf("__ifacethunk__%s__%s__%s__%d",
 		SanitizeSymbolName(interfaceTypeText),

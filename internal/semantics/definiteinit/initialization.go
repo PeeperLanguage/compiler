@@ -3,7 +3,6 @@ package definiteinit
 import (
 	"compiler/internal/diagnostics"
 	graphcore "compiler/internal/graph"
-	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/semantics/effect"
 	"compiler/internal/semantics/symbols"
@@ -203,7 +202,6 @@ func reportUninitializedAccess(at effect.Place, location *source.Location, curre
 	if name == "" {
 		name = at.Root.Name
 	}
-	name = ir.StripSymbolInstance(name)
 	msg := "symbol `" + name + "` used before it's initialized"
 	diag.Add(diagnostics.NewError(msg).
 		WithCode(diagnostics.ErrUninitializedVariable).

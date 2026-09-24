@@ -9,7 +9,6 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
-	"compiler/internal/semantics/bindingresult"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
@@ -31,7 +30,7 @@ const maxReportedProblems = 10
 // that is the analysis ownership already performs, and repeating it here would
 // make the validator a second implementation of the thing it checks rather than
 // a check on published shape.
-func (r Result) Validate(types *typecheckresult.Result, bindings *bindingresult.Result, graphs *cfg.Module) error {
+func (r Result) Validate(types *typecheckresult.Result, bindings *symbols.Bindings, graphs *cfg.Module) error {
 	if len(r) == 0 && graphs == nil {
 		return nil
 	}
@@ -96,7 +95,7 @@ func validateValueUses(types *typecheckresult.Result) []string {
 
 // validatePlan checks one function's cleanup plan against its CFG and the
 // program points each map is keyed by.
-func validatePlan(fnID ir.NodeID, plan *CleanupPlan, types *typecheckresult.Result, bindings *bindingresult.Result, graphs *cfg.Module) []string {
+func validatePlan(fnID ir.NodeID, plan *CleanupPlan, types *typecheckresult.Result, bindings *symbols.Bindings, graphs *cfg.Module) []string {
 	if plan == nil {
 		return []string{fmt.Sprintf("function %d has a nil cleanup plan", fnID)}
 	}
@@ -180,7 +179,7 @@ func validateTypedNode(types *typecheckresult.Result, fnID ir.NodeID, where stri
 	return []string{fmt.Sprintf("function %d plans a %s at node %d with no expression type", fnID, where, nodeID)}
 }
 
-func validateArmBody(bindings *bindingresult.Result, fnID ir.NodeID, where string, nodeID ir.NodeID) []string {
+func validateArmBody(bindings *symbols.Bindings, fnID ir.NodeID, where string, nodeID ir.NodeID) []string {
 	if bindings.ScopeID(ast.NodeID(nodeID)) != nil {
 		return nil
 	}

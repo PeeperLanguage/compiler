@@ -10,8 +10,8 @@ import (
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/thir"
-	"compiler/internal/module"
 	"compiler/internal/semantics/effect"
+	"compiler/internal/semantics/flowresult"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
@@ -26,9 +26,19 @@ type site struct {
 	scope    *symbols.Scope
 }
 
+// Input contains published artifacts ownership reads for one module generation.
+type Input struct {
+	Source   *thir.Module
+	CFG      *cfg.Module
+	Flow     *flowresult.Result
+	Effects  effect.Result
+	Scope    *symbols.Scope
+	Bindings *symbols.Bindings
+}
+
 type analyzer struct {
 	diagnostics            *diagnostics.DiagnosticBag
-	module                 *module.Module
+	input                  Input
 	graph                  *cfg.ControlFlowGraph
 	sites                  map[cfg.SiteID]*site
 	order                  []cfg.SiteID
@@ -53,12 +63,12 @@ type state struct {
 // Check runs flow-sensitive ownership checks after typechecking has populated
 // expression types and scopes. Keeping this phase outside the checker prevents
 // value-flow rules from becoming ad hoc type rules.
-func Check(diag *diagnostics.DiagnosticBag, module *module.Module) ownershipresult.Result {
+func Check(diag *diagnostics.DiagnosticBag, input Input) ownershipresult.Result {
 	result := make(ownershipresult.Result)
-	if diag == nil || module == nil || module.THIR == nil || module.ModuleScope == nil || module.Bindings == nil || module.Effects == nil || module.CFG == nil {
+	if diag == nil || input.Source == nil || input.Scope == nil || input.Bindings == nil || input.Effects == nil || input.CFG == nil {
 		return result
 	}
-	for _, graph := range module.CFG.Functions {
+	for _, graph := range input.CFG.Functions {
 		if graph == nil {
 			continue
 		}
@@ -72,7 +82,7 @@ func Check(diag *diagnostics.DiagnosticBag, module *module.Module) ownershipresu
 			MatchWholePayloadDrops: make(map[ir.NodeID]struct{}),
 		}
 	}
-	for _, sym := range module.ModuleScope.Symbols() {
+	for _, sym := range input.Scope.Symbols() {
 		if sym == nil || (sym.Kind != symbols.SymbolVar && sym.Kind != symbols.SymbolConst) {
 			continue
 		}
@@ -81,30 +91,30 @@ func Check(diag *diagnostics.DiagnosticBag, module *module.Module) ownershipresu
 				"ownership-tracked module bindings are not supported", sym.Location, "")
 		}
 	}
-	for _, fn := range module.THIR.Functions {
+	for _, fn := range input.Source.Functions {
 		if fn == nil || fn.Symbol == nil || fn.Body == nil {
 			continue
 		}
-		graph := module.CFG.Function(fn.Source.NodeID)
+		graph := input.CFG.Function(fn.Source.NodeID)
 		if graph != nil {
-			checkFunction(diag, module, fn, fn.Symbol.Scope, graph, result[graph.NodeID])
+			checkFunction(diag, input, fn, fn.Symbol.Scope, graph, result[graph.NodeID])
 		}
 	}
 	return result
 }
 
-func checkFunction(diag *diagnostics.DiagnosticBag, module *module.Module, fn *thir.Function, scope *symbols.Scope, cfgFn *cfg.ControlFlowGraph, cleanup *ownershipresult.CleanupPlan) {
-	if diag == nil || module == nil || module.Bindings == nil || fn == nil || fn.Body == nil || scope == nil || cfgFn == nil || cleanup == nil {
+func checkFunction(diag *diagnostics.DiagnosticBag, input Input, fn *thir.Function, scope *symbols.Scope, cfgFn *cfg.ControlFlowGraph, cleanup *ownershipresult.CleanupPlan) {
+	if diag == nil || input.Bindings == nil || fn == nil || fn.Body == nil || scope == nil || cfgFn == nil || cleanup == nil {
 		return
 	}
-	sites, order := indexSites(module, cfgFn, scope)
+	sites, order := indexSites(input, cfgFn, scope)
 	(&analyzer{
 		diagnostics:   diag,
-		module:        module,
+		input:         input,
 		graph:         cfgFn,
 		sites:         sites,
 		order:         order,
-		effects:       module.Effects[cfgFn.NodeID],
+		effects:       input.Effects[cfgFn.NodeID],
 		cleanup:       cleanup,
 		function:      fn,
 		functionScope: scope,
@@ -112,10 +122,10 @@ func checkFunction(diag *diagnostics.DiagnosticBag, module *module.Module, fn *t
 	}).run()
 }
 
-func indexSites(module *module.Module, cfgFn *cfg.ControlFlowGraph, scope *symbols.Scope) (map[cfg.SiteID]*site, []cfg.SiteID) {
+func indexSites(input Input, cfgFn *cfg.ControlFlowGraph, scope *symbols.Scope) (map[cfg.SiteID]*site, []cfg.SiteID) {
 	sites := make(map[cfg.SiteID]*site)
 	order := make([]cfg.SiteID, 0)
-	if module == nil || module.Bindings == nil || cfgFn == nil || scope == nil {
+	if input.Bindings == nil || cfgFn == nil || scope == nil {
 		return sites, order
 	}
 	for _, block := range cfgFn.Blocks {
@@ -126,18 +136,18 @@ func indexSites(module *module.Module, cfgFn *cfg.ControlFlowGraph, scope *symbo
 			if flowSite == nil {
 				continue
 			}
-			resolvedScope := module.Bindings.ScopeID(ast.NodeID(flowSite.ScopeID))
+			resolvedScope := input.Bindings.ScopeID(ast.NodeID(flowSite.ScopeID))
 			if resolvedScope == nil {
 				resolvedScope = scope
 			}
 			indexed := &site{cfgSite: flowSite, cfgBlock: block, scope: resolvedScope}
 			switch flowSite.Kind {
 			case cfg.SiteStatement, cfg.SiteTerminator:
-				if stmt, ok := module.THIR.Node(flowSite.NodeID).(thir.Stmt); ok && stmt != nil {
+				if stmt, ok := input.Source.Node(flowSite.NodeID).(thir.Stmt); ok && stmt != nil {
 					indexed.stmt = stmt
 				}
 			case cfg.SiteScopeExit:
-				if blockStmt, ok := module.THIR.Node(flowSite.NodeID).(*thir.Block); ok && blockStmt != nil {
+				if blockStmt, ok := input.Source.Node(flowSite.NodeID).(*thir.Block); ok && blockStmt != nil {
 					indexed.block = blockStmt
 				}
 			}
@@ -231,7 +241,7 @@ func (a *analyzer) planDeadMatchCarrierCleanup() {
 		if node == nil || node.cfgSite == nil || node.cfgSite.Kind != cfg.SiteTerminator {
 			continue
 		}
-		match, _ := a.module.THIR.Node(node.cfgSite.NodeID).(*thir.Match)
+		match, _ := a.input.Source.Node(node.cfgSite.NodeID).(*thir.Match)
 		if match == nil {
 			continue
 		}
@@ -448,7 +458,7 @@ func (a *analyzer) cleanupBeforeReturn(scope *symbols.Scope, stmt *thir.Return, 
 	}
 	delete(a.cleanup.BeforeReturn, stmt.SourceInfo().NodeID)
 	cleanup := make([]*symbols.Symbol, 0)
-	for current := scope; current != nil && current != a.module.ModuleScope; current = current.Parent() {
+	for current := scope; current != nil && current != a.input.Scope; current = current.Parent() {
 		a.checkScopeDestruction(current, stmt.SourceInfo(), loans)
 		cleanup = append(cleanup, cleanupSymbols(current, st)...)
 		clearScopeOwnership(current, st)
@@ -528,7 +538,7 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 	if a == nil || node == nil || node.cfgSite == nil || edge.Kind != cfg.EdgeVariantCase {
 		return
 	}
-	match, _ := a.module.THIR.Node(node.cfgSite.NodeID).(*thir.Match)
+	match, _ := a.input.Source.Node(node.cfgSite.NodeID).(*thir.Match)
 	if match == nil {
 		return
 	}
@@ -594,10 +604,10 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 			delete(st.moved, binding)
 			st.live[binding] = struct{}{}
 		}
-		if field.Source.NodeID == 0 || a.module.Flow == nil {
+		if field.Source.NodeID == 0 || a.input.Flow == nil {
 			continue
 		}
-		origins := place.CloneOrigins(a.module.Flow.ValueOrigins(field.Source.NodeID))
+		origins := place.CloneOrigins(a.input.Flow.ValueOrigins(field.Source.NodeID))
 		if isMutable, isReference := referenceMutability(binding); isReference && len(origins) > 0 {
 			st.references[binding] = []referenceLoan{{
 				id: loanID{node: field.Source.NodeID}, origins: origins, isMutable: isMutable, site: field.Source,

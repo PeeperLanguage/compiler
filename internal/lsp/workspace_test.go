@@ -376,6 +376,43 @@ func TestServerStateReusesDependentWhenExportShapeUnchanged(t *testing.T) {
 	}
 }
 
+func TestServerStateRebuildsLaterFunctionAfterEarlierBodyEdit(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	entry := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	writeWorkspaceFile(t, entry, "fn Prep() {}\nfn main() -> i32 { return 7; }\n")
+
+	state := NewServerState()
+	state.RootDir = root
+	ctx, before := state.recompile(entry)
+	if before == nil || ctx == nil || ctx.Diagnostics.HasErrors() || before.THIR == nil || len(before.THIR.Functions) != 2 {
+		t.Fatalf("initial compile failed: %v", ctx)
+	}
+	previousFunction := before.THIR.Functions[1]
+	previousID := previousFunction.Source.NodeID
+	previousSurface := before.ExportFingerprint
+
+	updated := "fn Prep() { let x = 1; let y = 2; }\nfn main() -> i32 { return 7; }\n"
+	state.applyDocumentSnapshot(entry, &updated, nil)
+	ctx, after := state.recompile(entry)
+	if after == nil || ctx == nil || ctx.Diagnostics.HasErrors() || after.THIR == nil || len(after.THIR.Functions) != 2 {
+		t.Fatalf("incremental compile failed: %v", ctx)
+	}
+	if after.ExportFingerprint != previousSurface {
+		t.Fatal("body-only edit changed declaration surface")
+	}
+	if after == before || after.THIR.Functions[1] == previousFunction {
+		t.Fatal("changed module reused prior-generation function")
+	}
+	currentID := after.THIR.Functions[1].Source.NodeID
+	if currentID == previousID {
+		t.Fatalf("later function ID stayed %d despite earlier body adding nodes", currentID)
+	}
+	if after.THIR.Function(currentID) != after.THIR.Functions[1] {
+		t.Fatal("rebuilt function is not indexed under current-generation ID")
+	}
+}
+
 func TestServerStateInvalidatesDependentWhenExportShapeChanges(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceProjectConfig(t, root, "app")

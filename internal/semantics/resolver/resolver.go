@@ -8,7 +8,6 @@ import (
 	"compiler/internal/module"
 	"compiler/internal/problems"
 	"compiler/internal/project"
-	"compiler/internal/semantics/bindingresult"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/source"
 )
@@ -24,7 +23,7 @@ func (r *resolver) resolveModule() {
 		return
 	}
 	if r.module.Bindings == nil {
-		r.module.Bindings = bindingresult.New()
+		r.module.Bindings = symbols.NewBindings()
 	}
 	r.markPendingTopLevelBindings()
 	ast.ForEachDecl(r.module.AST, func(decl ast.Decl) bool {

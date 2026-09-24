@@ -121,8 +121,13 @@ func TestFunctionSignatureMatchesCallableReferences(t *testing.T) {
 			sym.DefiningModule = module
 			fn := functionSignature(input, &thir.Function{Symbol: sym}, nil)
 			reference := exprlower.SymbolName(module, true, sym)
-			if got := ir.StripSymbolInstance(reference); fn.Name != got {
-				t.Fatalf("definition %q does not match reference %q", fn.Name, got)
+			if fn.Name != reference {
+				t.Fatalf("definition %q does not match reference %q", fn.Name, reference)
+			}
+			other := symbols.New(test.name, test.kind, nil, nil)
+			other.DefiningModule = module
+			if other.ID == sym.ID || exprlower.SymbolName(module, true, other) != reference {
+				t.Fatalf("callable reference depends on process-local symbol ID: %q", reference)
 			}
 			if test.want != "" && fn.Name != test.want {
 				t.Fatalf("definition = %q, want %q", fn.Name, test.want)

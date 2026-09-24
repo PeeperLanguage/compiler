@@ -27,6 +27,15 @@ import (
 	"compiler/pkg/peeper"
 )
 
+// ownershipInput keeps test reruns and manually constructed analyzers on the
+// same published artifacts as the pipeline.
+func ownershipInput(mod *module.Module) Input {
+	return Input{
+		Source: mod.THIR, CFG: mod.CFG, Flow: mod.Flow,
+		Effects: mod.Effects, Scope: mod.ModuleScope, Bindings: mod.Bindings,
+	}
+}
+
 type ownershipResult struct {
 	*diagnostics.DiagnosticBag
 	module *module.Module
@@ -53,9 +62,9 @@ func checkOwnershipSource(t *testing.T, src string) *ownershipResult {
 	typechecker.Check(ctx, module)
 	module.THIR = thir.Build(module.ID.ImportPath, module.FilePath, module.AST, module.Bindings, module.Typechecking, nil)
 	module.CFG = cfg.BuildModule(module.THIR)
-	module.Flow = typechecker.CheckFlow(ctx, module)
+	module.Flow = typechecker.CheckFlow(diag, module.THIR, module.CFG, module.ModuleScope)
 	module.Effects = effect.BuildTHIR(module.THIR, module.CFG)
-	module.Ownership = Check(diag, module)
+	module.Ownership = Check(diag, ownershipInput(module))
 	return &ownershipResult{DiagnosticBag: diag, module: module}
 }
 
@@ -70,10 +79,10 @@ fn main() { let value = make(); let other = value; }`,
 	} {
 		result := checkOwnershipSource(t, src)
 		withASTDiagnostics := diagnostics.NewDiagnosticBag()
-		withAST := Check(withASTDiagnostics, result.module)
+		withAST := Check(withASTDiagnostics, ownershipInput(result.module))
 		result.module.AST = nil
 		withoutASTDiagnostics := diagnostics.NewDiagnosticBag()
-		withoutAST := Check(withoutASTDiagnostics, result.module)
+		withoutAST := Check(withoutASTDiagnostics, ownershipInput(result.module))
 		if !reflect.DeepEqual(withoutASTDiagnostics.Diagnostics(), withASTDiagnostics.Diagnostics()) {
 			t.Errorf("diagnostics changed without AST: want %#v, got %#v", withASTDiagnostics.Diagnostics(), withoutASTDiagnostics.Diagnostics())
 		}
@@ -180,10 +189,10 @@ func inspectFunctionAnalysis(t *testing.T, result *ownershipResult, name string)
 		t.Fatalf("function %q cleanup plan missing", name)
 	}
 	cleanup := cleanupPlanForFunction(t, result, fn)
-	sites, order := indexSites(result.module, cfgFn, scope)
+	sites, order := indexSites(ownershipInput(result.module), cfgFn, scope)
 	analysis := &analyzer{
 		diagnostics:   result.DiagnosticBag,
-		module:        result.module,
+		input:         ownershipInput(result.module),
 		graph:         cfgFn,
 		sites:         sites,
 		order:         order,
@@ -374,7 +383,7 @@ func TestOwnershipCheckClearsAllDerivedPlans(t *testing.T) {
 	plan.MatchFieldDrops[staleID] = []int{0}
 	plan.MatchWholePayloadDrops[staleID] = struct{}{}
 
-	result.module.Ownership = Check(result.DiagnosticBag, result.module)
+	result.module.Ownership = Check(result.DiagnosticBag, ownershipInput(result.module))
 	plan = cleanupPlanForFunction(t, result, fn)
 	if len(plan.AfterScope) != 0 || len(plan.BeforeReturn) != 0 || len(plan.BeforeAssign) != 0 ||
 		len(plan.DiscardedValue) != 0 || len(plan.ProjectionBase) != 0 ||
@@ -394,7 +403,7 @@ fn ReadTemporaryField() -> i32 { return MakeBox().value; }`)
 	projection := fn.Body.Stmts[0].(*thir.Return).Value.(*thir.Field)
 	result.module.AST = nil
 	cleanup := &ownershipresult.CleanupPlan{ProjectionBase: make(map[ir.NodeID]struct{})}
-	analysis := &analyzer{diagnostics: result.DiagnosticBag, module: result.module, cleanup: cleanup}
+	analysis := &analyzer{diagnostics: result.DiagnosticBag, input: ownershipInput(result.module), cleanup: cleanup}
 	if analysis.planProjectionBaseDrop(projection, projection.Base) {
 		t.Fatal("scalar projection wrongly rejected")
 	}
@@ -412,7 +421,7 @@ func TestStoredReferenceUsesTHIRValueWithoutAST(t *testing.T) {
 	binding := fn.Body.Stmts[0].(*thir.Binding)
 	valueID := binding.Value.SourceInfo().NodeID
 	result.module.AST = nil
-	analysis := &analyzer{module: result.module}
+	analysis := &analyzer{input: ownershipInput(result.module)}
 	captured := analysis.captureStoredReferences([]effect.Op{effect.Define{Value: valueID, ValueExpr: binding.Value}}, newState())
 	value := captured[valueID]
 	if !value.isPresent || len(value.loans) != 1 || value.loans[0].id.node != valueID ||
@@ -2563,7 +2572,7 @@ func TestReferenceReturnOriginsUseTHIRFunction(t *testing.T) {
 	result.module.AST = nil
 	diag := diagnostics.NewDiagnosticBag()
 	diag.AddSourceContent(result.module.FilePath, result.module.Content)
-	Check(diag, result.module)
+	Check(diag, ownershipInput(result.module))
 	if text := diag.EmitAllToString(); !strings.Contains(text, "outside declared `from` sources") {
 		t.Fatalf("THIR return-origin diagnostic missing:\n%s", text)
 	}

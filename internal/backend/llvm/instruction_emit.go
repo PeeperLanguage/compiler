@@ -795,7 +795,7 @@ func emitRef(b *llvmBuilder, ref mir.ValueRef) llvmValue {
 				return reg
 			}
 			if isFunc {
-				return b.value("@"+ir.SanitizeSymbolName(ir.StripSymbolInstance(v.Name)), layout)
+				return b.value("@"+ir.SanitizeSymbolName(v.Name), layout)
 			}
 
 			isLocalStatic := false

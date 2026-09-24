@@ -8,7 +8,6 @@ import (
 	"compiler/internal/ir/thir"
 	"compiler/internal/moduleid"
 	"compiler/internal/phase"
-	"compiler/internal/semantics/bindingresult"
 	"compiler/internal/semantics/constantresult"
 	"compiler/internal/semantics/effect"
 	"compiler/internal/semantics/flowresult"
@@ -74,7 +73,7 @@ type Module struct {
 	// Generic declaration syntax and semantic shells produced by collection.
 	typeDeclarations map[string]TypeDeclaration
 	// Staged symbol/scope graph for current semantic generation.
-	Bindings *bindingresult.Result
+	Bindings *symbols.Bindings
 	// Constant-evaluation artifacts for current semantic generation.
 	Constants *constantresult.Result
 	// Base typechecker result for current semantic generation.
@@ -158,7 +157,7 @@ func (m *Module) ResetSemanticData() {
 	if m == nil {
 		return
 	}
-	m.Bindings = bindingresult.New()
+	m.Bindings = symbols.NewBindings()
 	m.Constants = constantresult.New()
 	m.Typechecking = nil
 }

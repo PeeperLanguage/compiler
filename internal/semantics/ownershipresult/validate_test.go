@@ -11,7 +11,6 @@ import (
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/thir"
-	"compiler/internal/semantics/bindingresult"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
@@ -48,7 +47,7 @@ func emptyPlan() *CleanupPlan {
 func TestValidateAcceptsConsistentEvidence(t *testing.T) {
 	graphs, fnID := buildGraph(t, validationGraphSource)
 	result := Result{fnID: emptyPlan()}
-	if err := result.Validate(typecheckresult.New(), bindingresult.New(), graphs); err != nil {
+	if err := result.Validate(typecheckresult.New(), symbols.NewBindings(), graphs); err != nil {
 		t.Fatalf("consistent evidence rejected: %v", err)
 	}
 }
@@ -125,7 +124,7 @@ func TestValidateRejectsEvidenceGaps(t *testing.T) {
 			types := typecheckresult.New()
 			plan := emptyPlan()
 			tt.build(types, plan)
-			err := Result{fnID: plan}.Validate(types, bindingresult.New(), graphs)
+			err := Result{fnID: plan}.Validate(types, symbols.NewBindings(), graphs)
 			if err == nil {
 				t.Fatal("inconsistent evidence accepted")
 			}
@@ -138,7 +137,7 @@ func TestValidateRejectsEvidenceGaps(t *testing.T) {
 
 func TestValidateRejectsPlanWithoutCFG(t *testing.T) {
 	graphs, fnID := buildGraph(t, validationGraphSource)
-	err := Result{fnID + 1000: emptyPlan()}.Validate(typecheckresult.New(), bindingresult.New(), graphs)
+	err := Result{fnID + 1000: emptyPlan()}.Validate(typecheckresult.New(), symbols.NewBindings(), graphs)
 	if err == nil || !strings.Contains(err.Error(), "no CFG") {
 		t.Fatalf("error = %v, want a missing-CFG report", err)
 	}
@@ -150,14 +149,14 @@ fn second() {}`)
 	if len(graphs.Functions) != 2 {
 		t.Fatalf("CFG functions = %d, want 2", len(graphs.Functions))
 	}
-	if err := (Result{firstID: emptyPlan()}).Validate(typecheckresult.New(), bindingresult.New(), graphs); err == nil || !strings.Contains(err.Error(), "no published cleanup plan") {
+	if err := (Result{firstID: emptyPlan()}).Validate(typecheckresult.New(), symbols.NewBindings(), graphs); err == nil || !strings.Contains(err.Error(), "no published cleanup plan") {
 		t.Fatalf("error = %v, want missing-function evidence error", err)
 	}
 }
 
 func TestValidateRejectsNilPlan(t *testing.T) {
 	graphs, fnID := buildGraph(t, validationGraphSource)
-	err := Result{fnID: nil}.Validate(typecheckresult.New(), bindingresult.New(), graphs)
+	err := Result{fnID: nil}.Validate(typecheckresult.New(), symbols.NewBindings(), graphs)
 	if err == nil || !strings.Contains(err.Error(), "nil cleanup plan") {
 		t.Fatalf("error = %v, want a nil-plan report", err)
 	}
@@ -175,7 +174,7 @@ func TestValidateReportsProblemsDeterministically(t *testing.T) {
 			types.RecordValueUse(id, typeinfo.UseMove)
 			plan.ProjectionBase[ir.NodeID(id)] = struct{}{}
 		}
-		err := Result{fnID: plan}.Validate(types, bindingresult.New(), graphs)
+		err := Result{fnID: plan}.Validate(types, symbols.NewBindings(), graphs)
 		if err == nil {
 			t.Fatal("inconsistent evidence accepted")
 		}

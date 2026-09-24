@@ -6,8 +6,6 @@ import (
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/thir"
-	"compiler/internal/module"
-	"compiler/internal/project"
 	"compiler/internal/semantics/flowresult"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
@@ -40,8 +38,8 @@ type flowEvents struct {
 // Base typing has already resolved names, types, calls, places, and control
 // evidence; this phase only refines those facts along control-flow edges.
 type flowAnalyzer struct {
-	ctx           *project.CompilerContext
-	module        *module.Module
+	diagnostics   *diagnostics.DiagnosticBag
+	moduleScope   *symbols.Scope
 	source        *thir.Module
 	function      *thir.Function
 	functionScope *symbols.Scope
@@ -56,21 +54,21 @@ type flowAnalyzer struct {
 	demand   flowDemand
 }
 
-func CheckFlow(ctx *project.CompilerContext, mod *module.Module) *flowresult.Result {
+func CheckFlow(diag *diagnostics.DiagnosticBag, source *thir.Module, graphs *cfg.Module, moduleScope *symbols.Scope) *flowresult.Result {
 	result := flowresult.New()
-	if ctx == nil || mod == nil || mod.THIR == nil || mod.CFG == nil {
+	if diag == nil || source == nil || graphs == nil {
 		return result
 	}
-	for _, graph := range mod.CFG.Functions {
+	for _, graph := range graphs.Functions {
 		if graph == nil {
 			continue
 		}
-		function := mod.THIR.Function(graph.NodeID)
+		function := source.Function(graph.NodeID)
 		if function == nil || function.Symbol == nil || function.Symbol.Scope == nil {
 			continue
 		}
 		analyzer := &flowAnalyzer{
-			ctx: ctx, module: mod, source: mod.THIR, function: function,
+			diagnostics: diag, moduleScope: moduleScope, source: source, function: function,
 			functionScope: function.Symbol.Scope, graph: graph, result: result,
 			inStates: make(map[cfg.SiteID]flowState), bindingTypes: make(map[*symbols.Symbol]typeinfo.Type),
 		}
@@ -244,9 +242,9 @@ func (a *flowAnalyzer) finish(expr thir.Expr, base typeinfo.Type) typeinfo.Type 
 	a.recordResolution(expr, resolution)
 	if a.demand != flowOptionalTest && required > applied {
 		if expr.ExprPlace() != nil && !resolution.IsStable {
-			a.ctx.Diagnostics.Add(unstableOptionalNarrowingAt(expr.SourceInfo().Location))
+			a.diagnostics.Add(unstableOptionalNarrowingAt(expr.SourceInfo().Location))
 		} else {
-			a.ctx.Diagnostics.Add(optionalPayloadProofAt(expr.SourceInfo().Location))
+			a.diagnostics.Add(optionalPayloadProofAt(expr.SourceInfo().Location))
 		}
 		resolved = unwrapOptionalLayers(base, required)
 	}
@@ -392,7 +390,7 @@ func (a *flowAnalyzer) AnalyzeField(expr *thir.Field) typeinfo.Type {
 			return a.finish(expr, field.Type)
 		}
 	}
-	a.ctx.Diagnostics.AddError(diagnostics.ErrFieldNotFound,
+	a.diagnostics.AddError(diagnostics.ErrFieldNotFound,
 		"unknown member `"+expr.Name+"`", expr.Source.Location, "")
 	return a.finish(expr, &typeinfo.InvalidType{})
 }
@@ -844,8 +842,8 @@ func (a *flowAnalyzer) invalidateCall(call *thir.Call, state *flowState) {
 			}
 		}
 	}
-	if a.module.ModuleScope != nil {
-		for _, symbol := range a.module.ModuleScope.Symbols() {
+	if a.moduleScope != nil {
+		for _, symbol := range a.moduleScope.Symbols() {
 			if symbol != nil && symbol.IsMutable() {
 				invalidateVariantOrigins(state, []place.Origin{{Root: symbol}})
 			}
@@ -958,7 +956,7 @@ func (a *flowAnalyzer) impliedVariants(expr thir.Expr, truth bool, state flowSta
 		resolution := a.resolve(subject, state)
 		if !resolution.IsStable || len(resolution.StorageOrigins) == 0 {
 			if test.Family == typeinfo.VariantFamilyOptional {
-				a.ctx.Diagnostics.Add(unstableOptionalNarrowingAt(subject.SourceInfo().Location))
+				a.diagnostics.Add(unstableOptionalNarrowingAt(subject.SourceInfo().Location))
 			}
 			return nil
 		}

@@ -6,7 +6,6 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
-	"compiler/internal/semantics/bindingresult"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typecheckresult"
@@ -17,7 +16,7 @@ import (
 // Build materializes base-typechecked syntax into one self-contained semantic
 // tree. It does not resolve names or infer types: missing published evidence is
 // represented explicitly and rejected by Validate for otherwise-clean source.
-func Build(name, filePath string, source *ast.Module, bindings *bindingresult.Result, typing *typecheckresult.Result, constantCondition func(ast.Expr, *symbols.Scope) (*bool, []*diagnostics.Diagnostic)) *Module {
+func Build(name, filePath string, source *ast.Module, bindings *symbols.Bindings, typing *typecheckresult.Result, constantCondition func(ast.Expr, *symbols.Scope) (*bool, []*diagnostics.Diagnostic)) *Module {
 	if source == nil {
 		return nil
 	}
@@ -46,7 +45,7 @@ func Build(name, filePath string, source *ast.Module, bindings *bindingresult.Re
 }
 
 type builder struct {
-	bindings          *bindingresult.Result
+	bindings          *symbols.Bindings
 	typing            *typecheckresult.Result
 	currentScope      *symbols.Scope
 	constantCondition func(ast.Expr, *symbols.Scope) (*bool, []*diagnostics.Diagnostic)

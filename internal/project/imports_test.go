@@ -9,7 +9,6 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/module"
 	"compiler/internal/moduleid"
-	"compiler/internal/semantics/bindingresult"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/semantics/typeresolution"
@@ -31,7 +30,7 @@ func TestQualifiedTypeQueryIsObservationalAndSourceResolutionPublishesUse(t *tes
 	module := &module.Module{
 		ID:          moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "main"},
 		ModuleScope: symbols.NewScope(nil),
-		Bindings:    bindingresult.New(),
+		Bindings:    symbols.NewBindings(),
 		Imports: map[string]module.ResolvedImport{
 			"dep": {ID: dependencyID},
 		},

@@ -43,7 +43,7 @@ func checkFlowSource(t *testing.T, src string) (*module.Module, *diagnostics.Dia
 	Check(ctx, module)
 	module.THIR = thir.Build(module.ID.ImportPath, module.FilePath, module.AST, module.Bindings, module.Typechecking, nil)
 	module.CFG = cfg.BuildModule(module.THIR)
-	module.Flow = CheckFlow(ctx, module)
+	module.Flow = CheckFlow(diag, module.THIR, module.CFG, module.ModuleScope)
 	return module, diag
 }
 
@@ -408,8 +408,8 @@ func TestInvalidateCallClearsMutableModuleVariableFacts(t *testing.T) {
 	}
 	state := flowState{variants: []variantStateFact{{origins: []place.Origin{{Root: global}}, cases: []int{1}, caseCount: 2}}}
 	analyzer := flowAnalyzer{
-		module: &module.Module{ModuleScope: moduleScope},
-		result: flowresult.New(),
+		moduleScope: moduleScope,
+		result:      flowresult.New(),
 	}
 
 	analyzer.invalidateCall(&thir.Call{Callee: &thir.Ident{}}, &state)

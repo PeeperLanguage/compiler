@@ -16,7 +16,7 @@ func storageAccessForUse(typ typeinfo.Type, use typeinfo.UseKind) storageAccess 
 }
 
 func (a *analyzer) planProjectionBaseDrop(projection, base thir.Expr) bool {
-	if a == nil || a.cleanup == nil || a.module == nil || projection == nil || base == nil {
+	if a == nil || a.cleanup == nil || a.input.Source == nil || projection == nil || base == nil {
 		return false
 	}
 	if storage := base.ExprPlace(); storage != nil && storage.Root != nil {
@@ -35,11 +35,11 @@ func (a *analyzer) planProjectionBaseDrop(projection, base thir.Expr) bool {
 }
 
 func (a *analyzer) exprType(expr thir.Expr) typeinfo.Type {
-	if a == nil || a.module == nil || expr == nil {
+	if a == nil || a.input.Source == nil || expr == nil {
 		return nil
 	}
-	if a.module.Flow != nil {
-		if typ := a.module.Flow.ExprType(expr.SourceInfo().NodeID); typ != nil {
+	if a.input.Flow != nil {
+		if typ := a.input.Flow.ExprType(expr.SourceInfo().NodeID); typ != nil {
 			return typ
 		}
 	}
@@ -47,10 +47,10 @@ func (a *analyzer) exprType(expr thir.Expr) typeinfo.Type {
 }
 
 func (a *analyzer) partialVariantPayloadMove(id ir.NodeID) bool {
-	if a == nil || a.module == nil || a.module.Flow == nil || id == 0 {
+	if a == nil || a.input.Source == nil || a.input.Flow == nil || id == 0 {
 		return false
 	}
-	payload, ok := a.module.Flow.Payload(id)
+	payload, ok := a.input.Flow.Payload(id)
 	return ok && len(payload.Cases) > 0 && !payload.IsDirect
 }
 
@@ -106,13 +106,13 @@ func (a *analyzer) pointerOrigin(scope *symbols.Scope, expr thir.Expr, st state)
 		if _, isRaw := typeinfo.Underlying(a.exprType(e)).(*typeinfo.RawPtrType); !isRaw {
 			return nil
 		}
-		if a.module != nil && a.module.Flow != nil {
-			if resolution, resolved := a.module.Flow.Origins(e.SourceInfo().NodeID); resolved {
+		if a.input.Source != nil && a.input.Flow != nil {
+			if resolution, resolved := a.input.Flow.Origins(e.SourceInfo().NodeID); resolved {
 				for _, origin := range resolution.Value {
 					if origin.Root == nil {
 						continue
 					}
-					for current := scope; current != nil && current != a.module.ModuleScope; current = current.Parent() {
+					for current := scope; current != nil && current != a.input.Scope; current = current.Parent() {
 						local, found := current.LookupLocal(origin.Root.Name)
 						if found && local == origin.Root {
 							return origin.Root
@@ -135,7 +135,7 @@ func (a *analyzer) pointerOrigin(scope *symbols.Scope, expr thir.Expr, st state)
 // localPointerRoot retains declaration-module locality for expanded defaults
 // and stops at pointer projections, as place.LocalRoot does for source syntax.
 func (a *analyzer) localPointerRoot(scope *symbols.Scope, expr thir.Expr) *symbols.Symbol {
-	if a == nil || a.module == nil || scope == nil || expr == nil {
+	if a == nil || a.input.Source == nil || scope == nil || expr == nil {
 		return nil
 	}
 	switch e := expr.(type) {
@@ -144,14 +144,14 @@ func (a *analyzer) localPointerRoot(scope *symbols.Scope, expr thir.Expr) *symbo
 			return nil
 		}
 		if e.Symbol != nil {
-			for current := scope; current != nil && current != a.module.ModuleScope; current = current.Parent() {
+			for current := scope; current != nil && current != a.input.Scope; current = current.Parent() {
 				if local, found := current.LookupLocal(e.Name); found && local == e.Symbol {
 					return local
 				}
 			}
 			return nil
 		}
-		for current := scope; current != nil && current != a.module.ModuleScope; current = current.Parent() {
+		for current := scope; current != nil && current != a.input.Scope; current = current.Parent() {
 			if local, found := current.LookupLocal(e.Name); found {
 				return local
 			}

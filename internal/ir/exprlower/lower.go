@@ -611,11 +611,8 @@ func SymbolName(module moduleid.ID, isEntryModule bool, sym *symbols.Symbol) str
 		return ""
 	}
 	if sym.CompilerOp == "" && (sym.Kind == symbols.SymbolFunc || sym.Kind == symbols.SymbolMethod) {
-		name, isExternal := CallableName(module, isEntryModule, sym)
-		if isExternal {
-			return name
-		}
-		return fmt.Sprintf("%s$%d", name, sym.ID)
+		name, _ := CallableName(module, isEntryModule, sym)
+		return name
 	}
 	return fmt.Sprintf("%s$%d", sym.Name, sym.ID)
 }

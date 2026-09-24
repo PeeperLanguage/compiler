@@ -64,7 +64,7 @@ func emitInterfaceThunk(out *strings.Builder, emitter *llvmEmitter, thunk *mir.I
 		}
 		callArgs = append(callArgs, builder.value("%p"+strconv.Itoa(i), actualLayout.Parameters[i]))
 	}
-	callee := builder.value("@"+ir.SanitizeSymbolName(ir.StripSymbolInstance(thunk.FuncName)), actualLayout)
+	callee := builder.value("@"+ir.SanitizeSymbolName(thunk.FuncName), actualLayout)
 	result := builder.call(callee, callArgs)
 	if actualLayout.Return.Kind == llvmLayoutVoid {
 		builder.retVoid(actualLayout.Return)

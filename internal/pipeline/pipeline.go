@@ -484,7 +484,7 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 		return false
 	}
 	if module.Phase < phase.FlowTyped {
-		module.Flow = typechecker.CheckFlow(phaseCtx, module)
+		module.Flow = typechecker.CheckFlow(phaseDiag, module.THIR, module.CFG, module.ModuleScope)
 		module.Phase = phase.FlowTyped
 		ctx.Metrics.AddPhaseAdvance()
 		return true
@@ -510,7 +510,10 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 		return true
 	}
 	if module.Phase < phase.Ownership {
-		module.Ownership = ownership.Check(phaseDiag, module)
+		module.Ownership = ownership.Check(phaseDiag, ownership.Input{
+			Source: module.THIR, CFG: module.CFG, Flow: module.Flow,
+			Effects: module.Effects, Scope: module.ModuleScope, Bindings: module.Bindings,
+		})
 		// Published evidence is only checkable once the module is otherwise
 		// error-free: broken source legitimately leaves evidence incomplete,
 		// and reporting that as a compiler bug would bury the real diagnostic.
