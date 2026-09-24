@@ -284,6 +284,17 @@ func validateValueExpr(types *ir.TypeTable, expr ValueExpr, where string) []stri
 	case *Binary:
 		problems = append(problems, validateValueRef(types, node.Left, where+" left operand")...)
 		problems = append(problems, validateValueRef(types, node.Right, where+" right operand")...)
+		if types != nil && !typednil.IsNil(node.Left) && !typednil.IsNil(node.Right) {
+			switch node.Op {
+			case "+", "-", "*", "/", "%", "&", "|", "^", "==", "!=", "<", "<=", ">", ">=":
+				left, right := node.Left.TypeID(), node.Right.TypeID()
+				_, leftOK := types.Type(left)
+				_, rightOK := types.Type(right)
+				if leftOK && rightOK && left != right {
+					problems = append(problems, fmt.Sprintf("%s binary operands have mismatched types type#%d and type#%d", where, left, right))
+				}
+			}
+		}
 	case *StringConcat:
 		problems = append(problems, validateValueRef(types, node.Left, where+" left string")...)
 		problems = append(problems, validateValueRef(types, node.Right, where+" right string")...)

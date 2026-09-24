@@ -116,6 +116,17 @@ func TestValidateReportsDefects(t *testing.T) {
 			want: "stores type#",
 		},
 		{
+			name: "binary operand type mismatch",
+			damage: func(m *Module) {
+				i32 := m.Types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
+				boolean := m.Types.Intern(ir.Type{Kind: ir.TypeBool})
+				m.Funcs[0].Blocks[0].Instrs = []Instr{&Assign{Name: "bad", Value: &Binary{
+					Op: "+", Left: &RefConst{Value: "1", Type: i32}, Right: &RefConst{Value: "true", Type: boolean}, Type: i32,
+				}}}
+			},
+			want: "binary operands have mismatched types",
+		},
+		{
 			name: "call argument type mismatch",
 			damage: func(m *Module) {
 				i32 := m.Types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
@@ -173,6 +184,18 @@ func TestValidateReportsDefects(t *testing.T) {
 				t.Fatalf("Validate() = %v, want a report containing %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestValidateAcceptsMixedWidthShiftCount(t *testing.T) {
+	module := wellFormed()
+	i32 := module.Types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
+	i64 := module.Types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 64})
+	module.Funcs[0].Blocks[0].Instrs = []Instr{&Assign{Name: "shifted", Value: &Binary{
+		Op: "<<", Left: &RefConst{Value: "1", Type: i32}, Right: &RefConst{Value: "2", Type: i64}, Type: i32,
+	}}}
+	if err := module.Validate(); err != nil {
+		t.Fatalf("Validate() = %v, want mixed-width shift count accepted", err)
 	}
 }
 
