@@ -34,5 +34,5 @@ type CleanupPlan struct {
 	MatchWholePayloadDrops map[ir.NodeID]struct{}
 }
 
-// Result stores ownership output by stable THIR function identity.
+// Result stores ownership output by current-generation THIR function NodeID.
 type Result map[ir.NodeID]*CleanupPlan

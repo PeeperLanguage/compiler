@@ -68,20 +68,6 @@ func Check(diag *diagnostics.DiagnosticBag, input Input) ownershipresult.Result 
 	if diag == nil || input.Source == nil || input.Scope == nil || input.Bindings == nil || input.Effects == nil || input.CFG == nil {
 		return result
 	}
-	for _, graph := range input.CFG.Functions {
-		if graph == nil {
-			continue
-		}
-		result[graph.NodeID] = &ownershipresult.CleanupPlan{
-			AfterScope:             make(map[cfg.SiteID][]symbols.SymbolID),
-			BeforeReturn:           make(map[ir.NodeID][]symbols.SymbolID),
-			BeforeAssign:           make(map[ir.NodeID]struct{}),
-			DiscardedValue:         make(map[ir.NodeID]struct{}),
-			ProjectionBase:         make(map[ir.NodeID]struct{}),
-			MatchFieldDrops:        make(map[ir.NodeID][]int),
-			MatchWholePayloadDrops: make(map[ir.NodeID]struct{}),
-		}
-	}
 	for _, sym := range input.Scope.Symbols() {
 		if sym == nil || (sym.Kind != symbols.SymbolVar && sym.Kind != symbols.SymbolConst) {
 			continue
@@ -91,14 +77,24 @@ func Check(diag *diagnostics.DiagnosticBag, input Input) ownershipresult.Result 
 				"ownership-tracked module bindings are not supported", sym.Location, "")
 		}
 	}
-	for _, fn := range input.Source.Functions {
-		if fn == nil || fn.Symbol == nil || fn.Body == nil {
+	for _, graph := range input.CFG.Functions {
+		if graph == nil {
 			continue
 		}
-		graph := input.CFG.Function(fn.Source.NodeID)
-		if graph != nil {
-			checkFunction(diag, input, fn, fn.Symbol.Scope, graph, result[graph.NodeID])
+		plan := &ownershipresult.CleanupPlan{
+			AfterScope:             make(map[cfg.SiteID][]symbols.SymbolID),
+			BeforeReturn:           make(map[ir.NodeID][]symbols.SymbolID),
+			BeforeAssign:           make(map[ir.NodeID]struct{}),
+			DiscardedValue:         make(map[ir.NodeID]struct{}),
+			ProjectionBase:         make(map[ir.NodeID]struct{}),
+			MatchFieldDrops:        make(map[ir.NodeID][]int),
+			MatchWholePayloadDrops: make(map[ir.NodeID]struct{}),
 		}
+		fn := input.Source.Function(graph.NodeID)
+		if fn != nil && fn.Symbol != nil && fn.Body != nil {
+			checkFunction(diag, input, fn, fn.Symbol.Scope, graph, plan)
+		}
+		result[graph.NodeID] = plan
 	}
 	return result
 }

@@ -455,6 +455,22 @@ fn second() { let two = make(); }`)
 	}
 }
 
+func TestOwnershipPublishesEmptyPlanForUnmatchedGraph(t *testing.T) {
+	graph := &cfg.ControlFlowGraph{NodeID: 42}
+	result := Check(diagnostics.NewDiagnosticBag(), Input{
+		Source:   &thir.Module{},
+		CFG:      &cfg.Module{Functions: []*cfg.ControlFlowGraph{graph}},
+		Effects:  make(effect.Result),
+		Scope:    symbols.NewScope(nil),
+		Bindings: symbols.NewBindings(),
+	})
+	plan := result[graph.NodeID]
+	if plan == nil || plan.AfterScope == nil || plan.BeforeReturn == nil || plan.BeforeAssign == nil ||
+		plan.DiscardedValue == nil || plan.ProjectionBase == nil || plan.MatchFieldDrops == nil || plan.MatchWholePayloadDrops == nil {
+		t.Fatalf("unmatched CFG function plan = %#v, want initialized empty plan", plan)
+	}
+}
+
 func TestLiveOwnerFieldOverwritePlansDrop(t *testing.T) {
 	result := checkOwnershipSource(t, `struct Holder { value: *i32 }
 fn make() -> *i32;
