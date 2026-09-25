@@ -113,7 +113,7 @@ func (l *lowerer) conversion(expr thir.Expr, expected, resolved typeinfo.Type) i
 		return nil
 	}
 	switch conversion.Kind {
-	case typeinfo.ConversionNumeric, typeinfo.ConversionReference, typeinfo.ConversionStruct:
+	case typeinfo.ConversionNumeric, typeinfo.ConversionReference:
 		if target, source := l.typeID(expected), l.typeID(resolved); target != source {
 			return &ir.Cast{Expr: l.lower(expr, nil, false), Type: target}
 		}

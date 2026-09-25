@@ -1,0 +1,9 @@
+struct Source {
+    x: i32,
+    y: i32
+}
+
+fn main() {
+    let source: Source = .{ y = 20, x = 10 };
+    let target: struct { x: i32, y: i32 } = source;
+}

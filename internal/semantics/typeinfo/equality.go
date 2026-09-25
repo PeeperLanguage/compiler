@@ -114,31 +114,24 @@ func (t *FuncType) isSameType(other Type) bool {
 	return IsSameType(t.Return, right.Return) && returnOriginContractsEqual(t.ReturnOrigins, right.ReturnOrigins)
 }
 
-// isSameType compares structural fields by name because source struct identity is
-// independent of declaration order. Nominal identity is handled by SameType.
+// Nominal identity is handled by SameType.
 func (t *StructType) isSameType(other Type) bool {
 	right, ok := other.(*StructType)
 	if !ok || t == nil || right == nil || len(t.Fields) != len(right.Fields) {
 		return false
 	}
-	rightFields := make(map[string]Type, len(right.Fields))
-	for _, field := range right.Fields {
-		if field.Name == "" {
+	seen := make(map[string]struct{}, len(t.Fields))
+	for index, field := range t.Fields {
+		otherField := right.Fields[index]
+		if field.Name == "" || field.Name != otherField.Name || !IsSameType(field.Type, otherField.Type) {
 			return false
 		}
-		if _, exists := rightFields[field.Name]; exists {
+		if _, exists := seen[field.Name]; exists {
 			return false
 		}
-		rightFields[field.Name] = field.Type
+		seen[field.Name] = struct{}{}
 	}
-	for _, field := range t.Fields {
-		rightType, found := rightFields[field.Name]
-		if !found || !IsSameType(field.Type, rightType) {
-			return false
-		}
-		delete(rightFields, field.Name)
-	}
-	return len(rightFields) == 0
+	return true
 }
 
 func (t *InterfaceType) isSameType(other Type) bool {

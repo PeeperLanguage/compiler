@@ -151,7 +151,7 @@ func TestOptionalCompatibilityAllowsOneLayerPromotion(t *testing.T) {
 	}
 }
 
-func TestStructCompatibilityUsesExactFieldNamesIgnoringOrder(t *testing.T) {
+func TestStructCompatibilityRequiresTypeIdentity(t *testing.T) {
 	i32 := &IntegerType{IsSigned: true, Bits: 32}
 	u32 := &IntegerType{IsSigned: false, Bits: 32}
 	left := &StructType{Fields: []Field{{Name: "x", Type: i32}, {Name: "y", Type: u32}}}
@@ -161,6 +161,7 @@ func TestStructCompatibilityUsesExactFieldNamesIgnoringOrder(t *testing.T) {
 	extra := &StructType{Fields: []Field{{Name: "x", Type: i32}, {Name: "y", Type: u32}, {Name: "z", Type: i32}}}
 	namedLeft := &DefinedType{Name: "Left", Identity: "test::Left", Kind: DefinedKindStruct, Underlying: left}
 	namedRight := &DefinedType{Name: "Right", Identity: "test::Right", Kind: DefinedKindStruct, Underlying: reordered}
+	namedSameShape := &DefinedType{Name: "SameShape", Identity: "test::SameShape", Kind: DefinedKindStruct, Underlying: left}
 
 	tests := []struct {
 		name     string
@@ -169,14 +170,17 @@ func TestStructCompatibilityUsesExactFieldNamesIgnoringOrder(t *testing.T) {
 		wantKind ConversionKind
 		want     Compatibility
 	}{
-		{"anonymous reorder", reordered, left, ConversionIdentity, Compatible},
-		{"named to anonymous", reordered, namedLeft, ConversionStruct, Compatible},
-		{"anonymous to named", namedLeft, reordered, ConversionStruct, ExplicitCastable},
-		{"named to different named", namedRight, namedLeft, ConversionStruct, ExplicitCastable},
-		{"renamed fields", renamed, left, ConversionStruct, Incompatible},
-		{"different field types", differentType, left, ConversionStruct, Incompatible},
-		{"extra source field", left, extra, ConversionStruct, Incompatible},
-		{"missing source field", extra, left, ConversionStruct, Incompatible},
+		{"same anonymous shape", left, &StructType{Fields: []Field{{Name: "x", Type: i32}, {Name: "y", Type: u32}}}, ConversionIdentity, Compatible},
+		{"same named declaration", namedLeft, namedLeft, ConversionIdentity, Compatible},
+		{"anonymous reorder", reordered, left, ConversionNone, Incompatible},
+		{"named to anonymous", left, namedLeft, ConversionNone, Incompatible},
+		{"anonymous to named", namedLeft, left, ConversionNone, Incompatible},
+		{"different named declarations", namedRight, namedLeft, ConversionNone, Incompatible},
+		{"different named declarations with same shape", namedSameShape, namedLeft, ConversionNone, Incompatible},
+		{"renamed fields", renamed, left, ConversionNone, Incompatible},
+		{"different field types", differentType, left, ConversionNone, Incompatible},
+		{"extra source field", left, extra, ConversionNone, Incompatible},
+		{"missing source field", extra, left, ConversionNone, Incompatible},
 	}
 
 	for _, tt := range tests {
@@ -186,5 +190,8 @@ func TestStructCompatibilityUsesExactFieldNamesIgnoringOrder(t *testing.T) {
 				t.Fatalf("CheckCompatibility() = %#v, want kind %v compatibility %v", got, tt.wantKind, tt.want)
 			}
 		})
+	}
+	if conversion := CheckCompatibility(&RefType{Target: reordered}, &RefType{Target: left}); conversion.Compatibility != Incompatible {
+		t.Fatalf("reordered struct reference conversion = %#v, want incompatible", conversion)
 	}
 }

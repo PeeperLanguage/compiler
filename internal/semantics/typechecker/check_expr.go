@@ -1016,7 +1016,7 @@ func (c *checker) typeAsExpr(scope *symbols.Scope, node *ast.AsExpr) typeinfo.Ty
 	conversion := typeinfo.CheckCompatibility(targetType, exprType)
 	if conversion.Compatibility != typeinfo.Incompatible &&
 		(conversion.Kind == typeinfo.ConversionIdentity || conversion.Kind == typeinfo.ConversionBool ||
-			conversion.Kind == typeinfo.ConversionNumeric || conversion.Kind == typeinfo.ConversionStruct) {
+			conversion.Kind == typeinfo.ConversionNumeric) {
 		return targetType
 	}
 	c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCast,

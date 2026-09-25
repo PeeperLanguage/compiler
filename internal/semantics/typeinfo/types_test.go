@@ -86,8 +86,11 @@ func TestSameTypeDelegatesIntrinsicEqualityToTypes(t *testing.T) {
 
 	leftStruct := &StructType{Fields: []Field{{Name: "x", Type: i32}, {Name: "y", Type: u32}}}
 	rightStruct := &StructType{Fields: []Field{{Name: "y", Type: u32}, {Name: "x", Type: i32}}}
-	if !IsSameType(leftStruct, rightStruct) {
-		t.Fatal("struct equality must remain field-name based and order independent")
+	if IsSameType(leftStruct, rightStruct) {
+		t.Fatal("struct field order must be part of type identity")
+	}
+	if !IsSameType(leftStruct, &StructType{Fields: []Field{{Name: "x", Type: i32}, {Name: "y", Type: u32}}}) {
+		t.Fatal("matching struct fields in the same order must have the same type")
 	}
 
 	leftFunction := &FuncType{

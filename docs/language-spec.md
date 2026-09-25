@@ -263,6 +263,11 @@ struct, function, or callable constructor. `.Ok`,
 are invalid. Named struct literals use `Point.{...}`; anonymous literals use `.{...}`;
 `Point{...}` is not struct syntax.
 
+Struct literal fields may appear in any order. The resulting value uses the
+target struct's declaration order. Named structs have declaration identity;
+anonymous struct types have ordered field identity. Distinct struct types do
+not implicitly convert or cast with `as`, even when their fields match.
+
 `value is Result<i32>::Ok` is a nonconsuming nominal case-membership test.
 Named-enum equality and ordering are not supported; use `is` or `match` to
 inspect cases.

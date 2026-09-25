@@ -23,7 +23,6 @@ const (
 	ConversionNumeric
 	ConversionReference
 	ConversionOptional
-	ConversionStruct
 )
 
 // Conversion is canonical compatibility result shared by semantic analysis and lowering.
@@ -50,11 +49,6 @@ func CheckCompatibility(dst, src Type) Conversion {
 	if _, _, dstNumeric := NumericInfo(dst); dstNumeric {
 		if _, _, srcNumeric := NumericInfo(src); srcNumeric {
 			return Conversion{Kind: ConversionNumeric, Compatibility: checkNumericCompatibility(dst, src)}
-		}
-	}
-	if _, dstStruct := Underlying(dst).(*StructType); dstStruct {
-		if _, srcStruct := Underlying(src).(*StructType); srcStruct {
-			return Conversion{Kind: ConversionStruct, Compatibility: checkStructCompatibility(dst, src)}
 		}
 	}
 	if compat := checkRefCompatibility(dst, src); compat != Incompatible {
@@ -154,29 +148,6 @@ func checkOptionalCompatibility(dst, src Type) Compatibility {
 		return Incompatible
 	}
 	return Incompatible
-}
-
-func checkStructCompatibility(dst, src Type) Compatibility {
-	dstStruct, dstNominal := nominalStructType(dst)
-	srcStruct, srcNominal := nominalStructType(src)
-	left, ok := Underlying(dst).(*StructType)
-	if !ok || left == nil {
-		return Incompatible
-	}
-	right, ok := Underlying(src).(*StructType)
-	if !ok || right == nil || len(left.Fields) != len(right.Fields) {
-		return Incompatible
-	}
-	if !left.isSameType(right) {
-		return Incompatible
-	}
-	if dstNominal {
-		if srcNominal && dstStruct.Identity == srcStruct.Identity {
-			return Compatible
-		}
-		return ExplicitCastable
-	}
-	return Compatible
 }
 
 // isIntegerFamily returns true for signed and unsigned integer families
