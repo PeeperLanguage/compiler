@@ -1,6 +1,7 @@
 package lsp
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -926,6 +927,61 @@ func TestWorkspaceIndexRebuildParsesOnlyChangedFiles(t *testing.T) {
 	}
 	if got := index.modules[utilPath].resolvedLocalImportFiles; !slices.Equal(got, beforeUtilTargets) {
 		t.Fatalf("body-only edit changed import targets: got %v want %v", got, beforeUtilTargets)
+	}
+}
+
+func TestWorkspaceIndexKeepsProjectImportContextsSeparate(t *testing.T) {
+	root := t.TempDir()
+	for _, projectName := range []string{"first", "second"} {
+		projectRoot := filepath.Join(root, projectName)
+		writeWorkspaceProjectConfig(t, projectRoot, projectName)
+		writeWorkspaceFile(t, filepath.Join(projectRoot, peeper.SourceDirName, peeper.MainFileName),
+			"import \""+projectName+"/util\";\nfn main() {}\n")
+		writeWorkspaceFile(t, filepath.Join(projectRoot, peeper.SourceDirName, "util"+peeper.SourceExt),
+			"fn helper() {}\n")
+	}
+
+	index := newWorkspaceIndex(root)
+	if _, err := index.rebuild(nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, projectName := range []string{"first", "second"} {
+		projectRoot := filepath.Join(root, projectName)
+		mainPath := project.CanonicalPath(filepath.Join(projectRoot, peeper.SourceDirName, peeper.MainFileName))
+		utilPath := project.CanonicalPath(filepath.Join(projectRoot, peeper.SourceDirName, "util"+peeper.SourceExt))
+		main := index.modules[mainPath]
+		if main == nil || main.importPath != projectName+"/main" ||
+			!slices.Equal(main.resolvedLocalImportFiles, []string{utilPath}) {
+			t.Fatalf("%s project imports = %#v, want %s/util -> %s", projectName, main, projectName, utilPath)
+		}
+	}
+}
+
+func BenchmarkWorkspaceIndexRebuildUnchanged(b *testing.B) {
+	root := b.TempDir()
+	sourceDir := filepath.Join(root, peeper.SourceDirName)
+	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+		b.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, manifest.FileName), []byte("name = \"app\"\nbuild = \"program\"\n"), 0o644); err != nil {
+		b.Fatal(err)
+	}
+	for i := range 64 {
+		path := filepath.Join(sourceDir, fmt.Sprintf("module%d%s", i, peeper.SourceExt))
+		if err := os.WriteFile(path, []byte("fn helper() {}\n"), 0o644); err != nil {
+			b.Fatal(err)
+		}
+	}
+	index := newWorkspaceIndex(root)
+	if _, err := index.rebuild(nil); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		if _, err := index.rebuild(nil); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 

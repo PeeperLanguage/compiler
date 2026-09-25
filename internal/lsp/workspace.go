@@ -77,9 +77,9 @@ func (w *workspaceIndex) rebuild(cache map[string]string) (map[string]workspaceP
 		projectName string
 		importPath  string
 	}
-
 	fileSet := make(map[string]struct{}, len(files))
 	contexts := make(map[string]workspaceFileContext, len(files))
+	projectContexts := make(map[[2]string]*project.CompilerContext)
 	w.parsedFiles = 0
 	parsedModules := make(map[string]workspaceParse)
 	for _, filePath := range files {
@@ -92,11 +92,16 @@ func (w *workspaceIndex) rebuild(cache map[string]string) (map[string]workspaceP
 			rootDir = loadedProject.RootDir
 			projectName = loadedProject.File.Package.Name
 		}
-		ctx := project.NewWithConfig(project.Config{
-			RootDir:     rootDir,
-			ProjectName: projectName,
-			Extension:   peeper.SourceExt,
-		}, diagnostics.NewDiagnosticBag())
+		key := [2]string{rootDir, projectName}
+		ctx := projectContexts[key]
+		if ctx == nil {
+			ctx = project.NewWithConfig(project.Config{
+				RootDir:     rootDir,
+				ProjectName: projectName,
+				Extension:   peeper.SourceExt,
+			}, diagnostics.NewDiagnosticBag())
+			projectContexts[key] = ctx
+		}
 		importPath, err := ctx.ImportPathForFile(project.ModuleOriginLocal, "", filePath)
 		if err != nil {
 			importPath = ""
@@ -162,11 +167,7 @@ func (w *workspaceIndex) rebuild(cache map[string]string) (map[string]workspaceP
 		}
 
 		module.resolvedLocalImportFiles = module.resolvedLocalImportFiles[:0]
-		ctx := project.NewWithConfig(project.Config{
-			RootDir:     module.rootDir,
-			ProjectName: module.projectName,
-			Extension:   peeper.SourceExt,
-		}, diagnostics.NewDiagnosticBag())
+		ctx := projectContexts[[2]string{fileCtx.rootDir, fileCtx.projectName}]
 		seen := make(map[string]struct{})
 		for _, rawPath := range module.sourceImportPaths {
 			resolved, err := ctx.ResolveImportPath(rawPath)
