@@ -174,7 +174,7 @@ identity conflict cannot be hidden by scheduling deduplication.
 1. An existing AST keeps its fingerprints, resets only if below `Parsed`, then
    resolves imports.
 2. A file-backed module reads content if needed, adds source content to diagnostics,
-   hashes text with `ast.HashText`, lexes, parses, releases source text, records AST
+   hashes text with `fingerprint.Text`, lexes, parses, releases source text, records AST
    fingerprints, resets to `Parsed`, and resolves imports.
 
 `resolveImports` converts declarations to raw paths, calls

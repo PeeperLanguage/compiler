@@ -8,7 +8,7 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/driver"
-	"compiler/internal/frontend/ast"
+	"compiler/internal/fingerprint"
 	"compiler/internal/module"
 	"compiler/internal/phase"
 	"compiler/internal/project"
@@ -77,11 +77,11 @@ func (s *ServerState) diagnosticSnapshot(entryFile string, files []string) *diag
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.diagnosticSnapshotLocked(entryFile, files)
+	return s.diagnosticSnapshotLocked(entryFile, files, nil)
 }
 
-func (s *ServerState) diagnosticSnapshotLocked(entryFile string, files []string) *diagnosticSnapshot {
-	ctx, _ := s.recompileLocked(entryFile)
+func (s *ServerState) diagnosticSnapshotLocked(entryFile string, files []string, parsedModules map[string]workspaceParse) *diagnosticSnapshot {
+	ctx, _ := s.recompileLocked(entryFile, parsedModules)
 	if len(files) == 0 {
 		files = []string{project.CanonicalPath(entryFile)}
 		if s.workspace != nil {
@@ -113,7 +113,8 @@ func (s *ServerState) workspaceDiagnosticSnapshots() []*diagnosticSnapshot {
 	if s.workspace == nil {
 		s.workspace = newWorkspaceIndex(s.RootDir)
 	}
-	if err := s.workspace.rebuild(s.Cache); err != nil {
+	parsedModules, err := s.workspace.rebuild(s.Cache)
+	if err != nil {
 		return nil
 	}
 	components := append([]workspaceComponent(nil), s.workspace.components...)
@@ -126,7 +127,7 @@ func (s *ServerState) workspaceDiagnosticSnapshots() []*diagnosticSnapshot {
 		if len(component.roots) > 0 {
 			entry = component.roots[0]
 		}
-		snapshots = append(snapshots, s.diagnosticSnapshotLocked(entry, component.files))
+		snapshots = append(snapshots, s.diagnosticSnapshotLocked(entry, component.files, parsedModules))
 	}
 	return snapshots
 }
@@ -137,10 +138,10 @@ func (s *ServerState) recompile(entryFile string) (*project.CompilerContext, *mo
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.recompileLocked(entryFile)
+	return s.recompileLocked(entryFile, nil)
 }
 
-func (s *ServerState) recompileLocked(entryFile string) (*project.CompilerContext, *module.Module) {
+func (s *ServerState) recompileLocked(entryFile string, pendingParses map[string]workspaceParse) (*project.CompilerContext, *module.Module) {
 	canonicalEntry := project.CanonicalPath(entryFile)
 	diagBag := diagnostics.NewDiagnosticBag()
 	sourceProject, err := manifest.ResolveSourceFileProject(entryFile)
@@ -169,7 +170,12 @@ func (s *ServerState) recompileLocked(entryFile string) (*project.CompilerContex
 		if s.workspace == nil || s.workspace.rootDir != rootDir {
 			s.workspace = newWorkspaceIndex(rootDir)
 		}
-		if err := s.workspace.rebuild(s.Cache); err == nil {
+		if parsedModules, err := s.workspace.rebuild(s.Cache); err == nil {
+			for filePath, parsed := range pendingParses {
+				if _, current := parsedModules[filePath]; !current {
+					parsedModules[filePath] = parsed
+				}
+			}
 			dirtyFiles := s.workspace.dirtyFiles(entryFile, s.modules)
 			ctx.Metrics.AddDirtyFiles(len(dirtyFiles))
 			deferredDiagnostics = s.seedReusableModules(ctx, dirtyFiles)
@@ -177,6 +183,34 @@ func (s *ServerState) recompileLocked(entryFile string) (*project.CompilerContex
 				compiler.AddSource(ctx, cachedPath, cachedContent)
 			}
 			if virtualPath, content, ok := s.workspace.syntheticEntry(entryFile); ok {
+				for filePath := range s.workspace.componentFiles(entryFile) {
+					parsed, found := parsedModules[filePath]
+					if !found {
+						continue
+					}
+					current, err := workspaceContent(filePath, s.Cache)
+					if err != nil || current != parsed.content {
+						continue
+					}
+					prepared := ctx.NewModuleForFile(filePath, parsed.content)
+					indexed := s.workspace.modules[filePath]
+					if prepared == nil || indexed == nil || prepared.ID.ImportPath != indexed.importPath ||
+						prepared.ID.Origin != string(project.ModuleOriginLocal) {
+						continue
+					}
+					prepared.AST = parsed.syntax
+					prepared.ContentHash = fingerprint.Text(parsed.content)
+					prepared.Phase = phase.Parsed
+					prepared.Content = ""
+					if ctx.AddModule(prepared) != nil {
+						continue
+					}
+					ctx.Diagnostics.AddSourceContent(filePath, parsed.content)
+					parseDiag := ctx.Diagnostics.BeginPhase(phase.Parsed, prepared.ID.String())
+					for _, diagnostic := range parsed.diagnostics {
+						parseDiag.Add(diagnostic)
+					}
+				}
 				if compiler.CompileFile(ctx, virtualPath, &content) != nil {
 					if mod, ok := ctx.ModuleByFile(entryFile); ok {
 						activateReusableDiagnostics(ctx, deferredDiagnostics)
@@ -227,18 +261,18 @@ func (s *ServerState) currentCompiledModule(filePath string) (*project.CompilerC
 				// context before they are parsed. Hover/definition/rename must not
 				// reuse those stubs even if their content hash matches the buffer.
 				if mod.AST == nil || mod.Phase < phase.Parsed {
-					return s.recompileLocked(filePath)
+					return s.recompileLocked(filePath, nil)
 				}
 				// Reuse the last compiled snapshot only when the current buffer text
 				// still matches it. Otherwise hover/definition/rename would keep
 				// reading a frozen AST after edits until some later path recompiles.
-				if content, err := workspaceContent(canonical, s.Cache); err == nil && mod.ContentHash == ast.HashText(content) {
+				if content, err := workspaceContent(canonical, s.Cache); err == nil && mod.ContentHash == fingerprint.Text(content) {
 					return s.LastCtx, mod
 				}
 			}
 		}
 	}
-	return s.recompileLocked(filePath)
+	return s.recompileLocked(filePath, nil)
 }
 
 func (s *ServerState) scheduleDiagnosticRefresh(filePath string, delay time.Duration, publish func() error) {
@@ -318,17 +352,15 @@ func (s *ServerState) seedReusableModules(ctx *project.CompilerContext, dirtyFil
 		if strings.Contains(filePath, "/.peeper-lsp/") {
 			continue
 		}
-		reused := module
+		reused := *module
 		if retainedPhase != module.Phase || retainedPhase == phase.Parsed {
-			cloned := *module
-			ctx.ResetModule(&cloned, retainedPhase)
-			reused = &cloned
+			ctx.ResetModule(&reused, retainedPhase)
 			if retainedPhase < module.Phase {
 				ctx.Metrics.AddDowngradedModule()
 			}
 		}
 		ctx.Metrics.AddReusedModule()
-		ctx.AddModule(reused)
+		ctx.AddModule(&reused)
 		if content, err := workspaceContent(filePath, s.Cache); err == nil {
 			ctx.Diagnostics.AddSourceContent(reused.FilePath, content)
 		}
@@ -373,11 +405,6 @@ func (s *ServerState) captureModules(ctx *project.CompilerContext) {
 		}
 		if strings.Contains(module.FilePath, "/.peeper-lsp/") {
 			continue
-		}
-		if s.workspace != nil {
-			if current := s.workspace.modules[module.FilePath]; current != nil {
-				module.ContentHash = current.contentHash
-			}
 		}
 		if existing := s.modules[module.FilePath]; existing != nil &&
 			existing.ID.Origin == string(project.ModuleOriginStdlib) &&

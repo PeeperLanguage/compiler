@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"strings"
 
+	"compiler/internal/fingerprint"
 	"compiler/internal/frontend/ast"
 )
 
@@ -52,8 +53,8 @@ func (s *moduleSurface) finish(mod *ast.Module) {
 	if s == nil || mod == nil {
 		return
 	}
-	mod.ImportFingerprint = ast.FingerprintParts(s.imports)
-	mod.ExportFingerprint = ast.FingerprintParts(s.exports)
+	mod.ImportFingerprint = fingerprint.Parts(s.imports)
+	mod.ExportFingerprint = fingerprint.Parts(s.exports)
 }
 
 func setDeclSurface[T ast.Decl](decl T, surface string) T {

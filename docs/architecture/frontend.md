@@ -402,7 +402,7 @@ types. It panics on an unhandled type expression so adding a type cannot silentl
 skip clone behavior. `copyExpr` is implemented by each expression type, making
 new expression kinds explicit at compile time.
 
-### Text and fingerprints: `ast/fingerprint.go` and `parser/surface.go`
+### Text and fingerprints: `fingerprint/fingerprint.go` and `parser/surface.go`
 
 `ExprText` and each expression's `exprText` provide stable source-like text.
 Type nodes provide `TypeText`. These forms are used when building declaration
@@ -413,8 +413,8 @@ surfaces, not for reparsing source.
 parameters, parameter/return types, fields, enum payloads, and default
 expressions. Function bodies are excluded from declaration surfaces.
 
-`ast.FingerprintParts` sorts surface parts, joins them with newlines, and hashes
-them with FNV-1a through `HashText`. `Module.ImportFingerprint` and
+`fingerprint.Parts` sorts surface parts, length-prefixes each part, and hashes
+them with SHA-256. `Module.ImportFingerprint` and
 `ExportFingerprint` therefore represent syntax-level change inputs for
 incremental compilation. Semantic phases may add later semantic evidence; the
 syntax fingerprint does not replace that work.
@@ -432,8 +432,9 @@ Every non-test frontend file participates:
 - `ast/node.go`: node interfaces and module contracts; `ast/{location,meta,decl,
   expr,stmt}.go`: locations, metadata, declarations, types, expressions,
   statements, and child traversal.
-- `ast/{inspect,clone,fingerprint}.go`: traversal/indexing, synthetic cloning,
-  syntax hashing, and import-path extraction.
+- `ast/{inspect,clone,import}.go`: traversal/indexing, synthetic cloning,
+  and import-path extraction.
+- `fingerprint/fingerprint.go`: shared content and unordered-part hashing.
 
 ## Cross-package invariants
 

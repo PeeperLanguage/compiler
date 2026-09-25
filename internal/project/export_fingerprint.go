@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"compiler/internal/constvalue"
+	"compiler/internal/fingerprint"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/module"
 	"compiler/internal/semantics/symbols"
@@ -16,7 +17,7 @@ import (
 // references an imported constant still changes when that constant changes.
 func SemanticExportFingerprint(ctx *CompilerContext, module *module.Module) string {
 	if module == nil || module.ModuleScope == nil {
-		return ast.FingerprintParts(nil)
+		return fingerprint.Parts(nil)
 	}
 	parts := make([]string, 0)
 	for _, sym := range module.ModuleScope.Symbols() {
@@ -42,7 +43,7 @@ func SemanticExportFingerprint(ctx *CompilerContext, module *module.Module) stri
 				typeinfo.SemanticKey(method.Type)+semanticExportMetadata(ctx, module, method))
 		})
 	}
-	return ast.FingerprintParts(parts)
+	return fingerprint.Parts(parts)
 }
 
 func semanticExportMetadata(ctx *CompilerContext, module *module.Module, sym *symbols.Symbol) string {
@@ -60,7 +61,7 @@ func semanticExportMetadata(ctx *CompilerContext, module *module.Module, sym *sy
 			}
 			attributes = append(attributes, attribute.Name+"("+strings.Join(args, ",")+")")
 		}
-		metadata += ":attributes=" + ast.FingerprintParts(attributes)
+		metadata += ":attributes=" + fingerprint.Parts(attributes)
 	}
 	fn, ok := decl.(*ast.FnDecl)
 	if !ok || fn == nil {
@@ -91,7 +92,7 @@ func semanticExportMetadata(ctx *CompilerContext, module *module.Module, sym *sy
 			facts = append(facts, fact)
 			return true
 		})
-		metadata += ":facts=" + ast.FingerprintParts(facts)
+		metadata += ":facts=" + fingerprint.Parts(facts)
 	}
 	return metadata
 }

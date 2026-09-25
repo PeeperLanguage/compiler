@@ -92,12 +92,7 @@ func (s *ServerState) HandleRename(params RenameParams) (*WorkspaceEdit, error) 
 	}
 
 	changes := make(map[DocumentURI][]TextEdit)
-
-	if s.LastCtx == nil {
-		return nil, nil
-	}
-
-	for _, mod := range s.LastCtx.Modules() {
+	for _, mod := range ctx.Modules() {
 		if mod.AST == nil {
 			continue
 		}
@@ -105,7 +100,7 @@ func (s *ServerState) HandleRename(params RenameParams) (*WorkspaceEdit, error) 
 		if mod != cc.module {
 			parents = make(map[ast.NodeID]ast.Node)
 		}
-		moduleText, hasModuleText := sourceTextForFile(s.LastCtx, mod.FilePath)
+		moduleText, hasModuleText := sourceTextForFile(ctx, mod.FilePath)
 		walkModuleAST(mod, func(n ast.Node, parent ast.Node) bool {
 			if parent != nil {
 				parents[n.ID()] = parent
@@ -117,7 +112,7 @@ func (s *ServerState) HandleRename(params RenameParams) (*WorkspaceEdit, error) 
 			if isFixedReceiverReturnOrigin(ident, parents[ident.ID()]) {
 				return true
 			}
-			resolved := resolveIdentSymbol(ident, parents, mod, s.LastCtx)
+			resolved := resolveIdentSymbol(ident, parents, mod, ctx)
 			loc := ast.LocOf(ident)
 			if resolved == nil {
 				if !symLocationsMatch(loc, targetSym.Location) {

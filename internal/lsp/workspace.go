@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"compiler/internal/diagnostics"
+	"compiler/internal/fingerprint"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
@@ -40,6 +41,12 @@ type workspaceComponent struct {
 	roots []string
 }
 
+type workspaceParse struct {
+	content     string
+	syntax      *ast.Module
+	diagnostics []*diagnostics.Diagnostic
+}
+
 type workspaceIndex struct {
 	rootDir     string
 	modules     map[string]*workspaceModule
@@ -55,14 +62,14 @@ func newWorkspaceIndex(rootDir string) *workspaceIndex {
 	}
 }
 
-func (w *workspaceIndex) rebuild(cache map[string]string) error {
+func (w *workspaceIndex) rebuild(cache map[string]string) (map[string]workspaceParse, error) {
 	if w == nil || w.rootDir == "" {
-		return nil
+		return nil, nil
 	}
 
 	files, err := workspaceFiles(w.rootDir, cache)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	type workspaceFileContext struct {
@@ -74,6 +81,7 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 	fileSet := make(map[string]struct{}, len(files))
 	contexts := make(map[string]workspaceFileContext, len(files))
 	w.parsedFiles = 0
+	parsedModules := make(map[string]workspaceParse)
 	for _, filePath := range files {
 		rootDir := filepath.Dir(filePath)
 		projectName := ""
@@ -119,7 +127,7 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 		if err != nil {
 			continue
 		}
-		contentHash := ast.HashText(content)
+		contentHash := fingerprint.Text(content)
 
 		module := w.modules[filePath]
 		if module == nil {
@@ -138,6 +146,7 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 			module.contentHash = contentHash
 			diag := diagnostics.NewDiagnosticBag()
 			parsed := parser.New(filePath, lexer.New(filePath, content, diag).Tokenize(), diag).ParseModule()
+			parsedModules[filePath] = workspaceParse{content: content, syntax: parsed, diagnostics: diag.Diagnostics()}
 			module.exportFingerprint = parsed.ExportFingerprint
 			module.importFingerprint = parsed.ImportFingerprint
 			module.sourceImportPaths = module.sourceImportPaths[:0]
@@ -195,7 +204,7 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 
 	w.components = buildWorkspaceComponents(w.modules, g)
 	w.imports = g
-	return nil
+	return parsedModules, nil
 }
 
 func (w *workspaceIndex) syntheticEntry(filePath string) (string, string, bool) {

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"compiler/internal/diagnostics"
+	"compiler/internal/fingerprint"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/source"
@@ -332,7 +333,7 @@ fn helper() -> i32 { let x = 1; return x; }`)
 	if secondDiag.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %s", secondDiag.EmitAllToString())
 	}
-	if first.ImportFingerprint != ast.FingerprintParts([]string{"util"}) {
+	if first.ImportFingerprint != fingerprint.Parts([]string{"util"}) {
 		t.Fatalf("import fingerprint mismatch: %q", first.ImportFingerprint)
 	}
 	if first.ExportFingerprint == "" {

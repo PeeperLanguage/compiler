@@ -332,6 +332,47 @@ func TestLSPServerLifecycleAndHandlers(t *testing.T) {
 	}
 }
 
+func TestHandleRenameUsesOneSnapshotDuringRecompile(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	filePath := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	source, position := markerPosition(t, "fn main() -> i32 {\n\tlet value: i32 = 1;\n\treturn __CURSOR__value;\n}\n")
+	writeWorkspaceFile(t, filePath, source)
+
+	state := NewServerState()
+	state.RootDir = root
+	if _, mod := state.recompile(filePath); mod == nil {
+		t.Fatal("expected compiled module")
+	}
+	params := RenameParams{
+		TextDocument: TextDocumentIdentifier{URI: DocumentURI(pathToURI(filePath))},
+		Position:     position,
+		NewName:      "renamed",
+	}
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	defer wg.Wait()
+	go func() {
+		defer wg.Done()
+		<-start
+		for range 30 {
+			state.recompile(filePath)
+		}
+	}()
+	close(start)
+	for range 30 {
+		edit, err := state.HandleRename(params)
+		if err != nil {
+			t.Fatalf("HandleRename failed: %v", err)
+		}
+		if edit == nil || len(edit.Changes[params.TextDocument.URI]) != 2 {
+			t.Fatalf("rename edits = %#v, want declaration and reference", edit)
+		}
+	}
+}
+
 func TestParseBundledPreludeFileKeepsStdlibIdentity(t *testing.T) {
 	root := t.TempDir()
 	libraryBase := filepath.Join(root, "libs")

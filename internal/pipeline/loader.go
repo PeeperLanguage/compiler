@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"compiler/internal/diagnostics"
+	"compiler/internal/fingerprint"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
@@ -95,7 +96,7 @@ func (l *moduleLoader) loadModule(module *module.Module) {
 	if l.ctx != nil && l.ctx.Diagnostics != nil && module.FilePath != "" {
 		l.ctx.Diagnostics.AddSourceContent(module.FilePath, module.Content)
 	}
-	module.ContentHash = ast.HashText(module.Content)
+	module.ContentHash = fingerprint.Text(module.Content)
 	parseDiag := l.ctx.Diagnostics.BeginPhase(phase.Parsed, module.ID.String())
 	toks := lexer.New(module.FilePath, module.Content, parseDiag).Tokenize()
 	// Content is no longer needed after lexing; free the string.
