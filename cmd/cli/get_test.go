@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -202,6 +203,59 @@ child = "github.com/acme/child"
 		if !ok || entry.Checksum == "" {
 			t.Fatalf("package %s entry = %#v", packageID, entry)
 		}
+	}
+	parent, _ := lock.GetDependency("github.com/acme/parent@v1.0.0")
+	if !slices.Equal(parent.Dependencies, []string{"github.com/acme/child@v1.0.0"}) {
+		t.Fatalf("new transitive child edge = %v", parent.Dependencies)
+	}
+}
+
+func TestInstallPackageRecursiveRecordsResolvedTransitiveVersion(t *testing.T) {
+	root := t.TempDir()
+	mockRoot := filepath.Join(root, "mock")
+	parentRepo := "github.com/acme/parent"
+	childRepo := "github.com/acme/child"
+	parentID := manifest.PackageID(parentRepo, "v1.0.0")
+	childV1 := manifest.PackageID(childRepo, "v1.0.0")
+	childV2 := manifest.PackageID(childRepo, "v2.0.0")
+	mustWriteGetTest(t, filepath.Join(mockRoot, "acme", "parent-v1.0.0", manifest.FileName), `name = "parent"
+build = "lib"
+
+[dependencies]
+child = "github.com/acme/child@>=1.0.0"
+`)
+	mustWriteGetTest(t, filepath.Join(mockRoot, "acme", "child-v1.0.0", manifest.FileName), "name = \"child\"\nbuild = \"lib\"\n")
+	lock := manifest.NewLockfile()
+	lock.SetDependency(childV1, manifest.LockfileEntry{Version: "v1.0.0", ResolvedURL: childRepo})
+	lock.SetDependency(childV2, manifest.LockfileEntry{Version: "v2.0.0", ResolvedURL: childRepo})
+	constraints := map[string][]string{childRepo: {"^1.0.0"}}
+	devConfig := manifest.DevConfig{UsesMockRemote: true, MockPath: mockRoot}
+
+	if _, err := installPackageRecursive(nil, manifest.CacheModulesDir(root), parentRepo, "v1.0.0", &devConfig, lock, constraints, "parent", "", map[string]bool{}); err != nil {
+		t.Fatal(err)
+	}
+	parent, ok := lock.GetDependency(parentID)
+	if !ok || !slices.Equal(parent.Dependencies, []string{childV1}) {
+		t.Fatalf("parent dependencies = %v, want [%s]", parent.Dependencies, childV1)
+	}
+	selected, ok := lock.GetDependency(childV1)
+	if !ok || !slices.Contains(selected.UsedBy, parentID) {
+		t.Fatalf("selected child used by = %v, want %s", selected.UsedBy, parentID)
+	}
+	other, _ := lock.GetDependency(childV2)
+	if slices.Contains(other.UsedBy, parentID) {
+		t.Fatalf("unselected child used by = %v, must exclude %s", other.UsedBy, parentID)
+	}
+	if err := manifest.SaveLockfile(root, lock); err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := manifest.LoadLockfile(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, _ = persisted.GetDependency(parentID)
+	if !slices.Equal(parent.Dependencies, []string{childV1}) {
+		t.Fatalf("persisted parent dependencies = %v, want [%s]", parent.Dependencies, childV1)
 	}
 }
 

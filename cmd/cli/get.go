@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 
 	"compiler/pkg/manifest"
@@ -119,7 +118,7 @@ func installManifestDependencies(ctx *installContext) error {
 			printDim(fmt.Sprintf("  Local: %s", dep.Path))
 			continue
 		}
-		if err := installPackageRecursive(http.DefaultClient, ctx.cachePath, dep.Path, dep.Version, &ctx.devConfig, ctx.lockfile, constraints, name, "", map[string]bool{}); err != nil {
+		if _, err := installPackageRecursive(http.DefaultClient, ctx.cachePath, dep.Path, dep.Version, &ctx.devConfig, ctx.lockfile, constraints, name, "", map[string]bool{}); err != nil {
 			return err
 		}
 		if resolved, ok := resolvedDirectVersion(ctx.lockfile, name); ok {
@@ -141,23 +140,23 @@ func installManifestDependencies(ctx *installContext) error {
 	return nil
 }
 
-func installPackageRecursive(httpClient *http.Client, cachePath, repoPath, versionConstraint string, devConfig *manifest.DevConfig, lockfile *manifest.Lockfile, constraints map[string][]string, directAlias, parentPackageID string, processed map[string]bool) error {
+func installPackageRecursive(httpClient *http.Client, cachePath, repoPath, versionConstraint string, devConfig *manifest.DevConfig, lockfile *manifest.Lockfile, constraints map[string][]string, directAlias, parentPackageID string, processed map[string]bool) (string, error) {
 	if !slices.Contains(constraints[repoPath], versionConstraint) {
 		constraints[repoPath] = append(constraints[repoPath], versionConstraint)
 	}
 
 	packageID, version, found, err := findBestLockedPackageID(lockfile, repoPath, constraints[repoPath])
 	if err != nil {
-		return err
+		return "", err
 	}
 	if !found {
 		availableVersions, listErr := registry.ListAvailableVersions(httpClient, repoPath, devConfig)
 		if listErr != nil {
-			return fmt.Errorf("list versions for %s: %w", repoPath, listErr)
+			return "", fmt.Errorf("list versions for %s: %w", repoPath, listErr)
 		}
 		version, err = semver.BestMatchAll(availableVersions, constraints[repoPath])
 		if err != nil {
-			return err
+			return "", err
 		}
 		packageID = manifest.PackageID(repoPath, version)
 	}
@@ -165,13 +164,13 @@ func installPackageRecursive(httpClient *http.Client, cachePath, repoPath, versi
 	entry, exists := lockfile.GetDependency(packageID)
 	modulePath, checksum, err := ensurePackageContent(httpClient, cachePath, repoPath, version, devConfig, entry, exists)
 	if err != nil {
-		return err
+		return "", err
 	}
 	printCached()
 
 	packageManifest, err := manifest.Load(filepath.Join(modulePath, manifest.FileName))
 	if err != nil {
-		return fmt.Errorf("load package manifest for %s: %w", repoPath, err)
+		return "", fmt.Errorf("load package manifest for %s: %w", repoPath, err)
 	}
 
 	usedBy := []string{}
@@ -197,7 +196,7 @@ func installPackageRecursive(httpClient *http.Client, cachePath, repoPath, versi
 		lockfile.AddUsedBy(packageID, parentPackageID)
 	}
 	if processed[packageID] {
-		return nil
+		return packageID, nil
 	}
 	processed[packageID] = true
 
@@ -207,30 +206,14 @@ func installPackageRecursive(httpClient *http.Client, cachePath, repoPath, versi
 			continue
 		}
 		printTransitive(dep.Path, dep.Version)
-		childIDBefore, _, _, err := findBestLockedPackageID(lockfile, dep.Path, []string{dep.Version})
+		childID, err := installPackageRecursive(httpClient, cachePath, dep.Path, dep.Version, devConfig, lockfile, constraints, "", packageID, processed)
 		if err != nil {
-			return err
+			return "", err
 		}
-		if err := installPackageRecursive(httpClient, cachePath, dep.Path, dep.Version, devConfig, lockfile, constraints, "", packageID, processed); err != nil {
-			return err
-		}
-		childID := childIDBefore
-		if childID == "" {
-			resolved, _, ok, findErr := findBestLockedPackageID(lockfile, dep.Path, []string{dep.Version})
-			if findErr != nil {
-				return findErr
-			}
-			if ok {
-				childID = resolved
-			}
-		}
-		if childID != "" && !slices.Contains(resolvedTransitive, childID) {
-			resolvedTransitive = append(resolvedTransitive, childID)
-		}
+		resolvedTransitive = append(resolvedTransitive, childID)
 	}
-	sort.Strings(resolvedTransitive)
 	lockfile.UpdateDependencyEdges(packageID, resolvedTransitive)
-	return nil
+	return packageID, nil
 }
 
 func ensurePackageContent(httpClient *http.Client, cachePath, repoPath, version string, devConfig *manifest.DevConfig, entry manifest.LockfileEntry, isLocked bool) (string, string, error) {
@@ -278,7 +261,7 @@ func installPackage(ctx *installContext, packageSpec string) (string, error) {
 
 	if dep.Type == manifest.DependencyRemote {
 		constraints := map[string][]string{}
-		if err := installPackageRecursive(http.DefaultClient, ctx.cachePath, dep.Path, dep.Version, &ctx.devConfig, ctx.lockfile, constraints, depName, "", map[string]bool{}); err != nil {
+		if _, err := installPackageRecursive(http.DefaultClient, ctx.cachePath, dep.Path, dep.Version, &ctx.devConfig, ctx.lockfile, constraints, depName, "", map[string]bool{}); err != nil {
 			return "", err
 		}
 		if resolved, ok := resolvedDirectVersion(ctx.lockfile, depName); ok {
