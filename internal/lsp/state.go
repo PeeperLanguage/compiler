@@ -141,7 +141,7 @@ func (s *ServerState) recompile(entryFile string) (*project.CompilerContext, *mo
 	return s.recompileLocked(entryFile, nil)
 }
 
-func (s *ServerState) recompileLocked(entryFile string, pendingParses map[string]workspaceParse) (*project.CompilerContext, *module.Module) {
+func (s *ServerState) recompileLocked(entryFile string, parsedModules map[string]workspaceParse) (*project.CompilerContext, *module.Module) {
 	canonicalEntry := project.CanonicalPath(entryFile)
 	diagBag := diagnostics.NewDiagnosticBag()
 	sourceProject, err := manifest.ResolveSourceFileProject(entryFile)
@@ -169,13 +169,13 @@ func (s *ServerState) recompileLocked(entryFile string, pendingParses map[string
 	if rootDir != "" {
 		if s.workspace == nil || s.workspace.rootDir != rootDir {
 			s.workspace = newWorkspaceIndex(rootDir)
+			parsedModules = nil
 		}
-		if parsedModules, err := s.workspace.rebuild(s.Cache); err == nil {
-			for filePath, parsed := range pendingParses {
-				if _, current := parsedModules[filePath]; !current {
-					parsedModules[filePath] = parsed
-				}
-			}
+		// A non-nil map came from a rebuild under this same state lock.
+		if parsedModules == nil {
+			parsedModules, err = s.workspace.rebuild(s.Cache)
+		}
+		if err == nil {
 			dirtyFiles := s.workspace.dirtyFiles(entryFile, s.modules)
 			ctx.Metrics.AddDirtyFiles(len(dirtyFiles))
 			deferredDiagnostics = s.seedReusableModules(ctx, dirtyFiles)

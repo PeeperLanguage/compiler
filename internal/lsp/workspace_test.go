@@ -627,6 +627,47 @@ func TestWorkspaceParseRetainsDiagnosticsDuringWorkspaceRefresh(t *testing.T) {
 	}
 }
 
+func TestWorkspaceDiagnosticSnapshotsReuseIndexAcrossComponents(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	mainFile := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	otherFile := filepath.Join(root, peeper.SourceDirName, "other"+peeper.SourceExt)
+	writeWorkspaceFile(t, mainFile, "fn main() -> i32 { return 1; }\n")
+	writeWorkspaceFile(t, otherFile, "fn main() -> i32 { return 3; }\n")
+
+	state := NewServerState()
+	state.RootDir = root
+	if snapshots := state.workspaceDiagnosticSnapshots(); len(snapshots) != 2 {
+		t.Fatalf("initial snapshots = %d, want 2", len(snapshots))
+	}
+	updated := "fn main() -> i32 { return 2; }\n"
+	state.applyDocumentSnapshot(mainFile, &updated, nil)
+	snapshots := state.workspaceDiagnosticSnapshots()
+	if len(snapshots) != 2 || state.workspace.parsedFiles != 1 {
+		t.Fatalf("snapshots = %d, workspace parses = %d; want 2 snapshots and 1 parse", len(snapshots), state.workspace.parsedFiles)
+	}
+
+	clean := NewServerState()
+	clean.RootDir = root
+	clean.applyDocumentSnapshot(mainFile, &updated, nil)
+	want := clean.workspaceDiagnosticSnapshots()
+	if len(want) != len(snapshots) {
+		t.Fatalf("clean snapshots = %d, want %d", len(want), len(snapshots))
+	}
+	for i, snapshot := range snapshots {
+		if !slices.Equal(snapshot.files, want[i].files) ||
+			snapshot.ctx.Diagnostics.EmitAllToString() != want[i].ctx.Diagnostics.EmitAllToString() {
+			t.Fatalf("snapshot %d files or diagnostics differ from clean build: files %v vs %v, diagnostics %q vs %q", i, snapshot.files, want[i].files, snapshot.ctx.Diagnostics.EmitAllToString(), want[i].ctx.Diagnostics.EmitAllToString())
+		}
+		filePath := snapshot.files[0]
+		mod, ok := snapshot.ctx.ModuleByFile(filePath)
+		cleanMod, cleanOK := want[i].ctx.ModuleByFile(filePath)
+		if !ok || !cleanOK || mod.ContentHash != cleanMod.ContentHash || mod.LLVMIR != cleanMod.LLVMIR {
+			t.Fatalf("snapshot %d module differs from clean build", i)
+		}
+	}
+}
+
 func TestServerStateInvalidatesDependentWhenExportShapeChanges(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceProjectConfig(t, root, "app")
@@ -981,6 +1022,35 @@ func BenchmarkWorkspaceIndexRebuildUnchanged(b *testing.B) {
 	for range b.N {
 		if _, err := index.rebuild(nil); err != nil {
 			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkWorkspaceDiagnosticSnapshotsUnchanged(b *testing.B) {
+	root := b.TempDir()
+	sourceDir := filepath.Join(root, peeper.SourceDirName)
+	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+		b.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, manifest.FileName), []byte("name = \"app\"\nbuild = \"program\"\n"), 0o644); err != nil {
+		b.Fatal(err)
+	}
+	for i := range 8 {
+		path := filepath.Join(sourceDir, fmt.Sprintf("module%d%s", i, peeper.SourceExt))
+		if err := os.WriteFile(path, []byte(fmt.Sprintf("fn helper%d() {}\n", i)), 0o644); err != nil {
+			b.Fatal(err)
+		}
+	}
+	state := NewServerState()
+	state.RootDir = root
+	if snapshots := state.workspaceDiagnosticSnapshots(); len(snapshots) != 8 {
+		b.Fatalf("workspace snapshots = %d, want 8", len(snapshots))
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		if snapshots := state.workspaceDiagnosticSnapshots(); len(snapshots) != 8 {
+			b.Fatalf("workspace snapshots = %d, want 8", len(snapshots))
 		}
 	}
 }
