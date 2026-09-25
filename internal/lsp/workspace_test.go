@@ -9,6 +9,7 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/module"
 	"compiler/internal/phase"
 	"compiler/internal/project"
 	"compiler/pkg/manifest"
@@ -145,6 +146,65 @@ func TestServerStateReusesUnchangedWorkspaceComponent(t *testing.T) {
 	}
 	if before != after {
 		t.Fatalf("expected unrelated component module reuse")
+	}
+}
+
+func TestServerStateDoesNotReuseModulesAcrossCompilerInputs(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	entry := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	writeWorkspaceFile(t, entry, "fn main() {}\n")
+
+	state := NewServerState()
+	state.RootDir = root
+	previous, mod := state.recompile(entry)
+	if previous == nil || mod == nil || previous.Diagnostics.HasErrors() {
+		t.Fatal("initial compile failed")
+	}
+	entryPath := project.CanonicalPath(entry)
+	dirty := map[string]struct{}{entryPath: {}}
+	for _, test := range []struct {
+		name      string
+		change    func(*project.Config)
+		wantReuse bool
+	}{
+		{name: "unchanged", wantReuse: true},
+		{name: "target", change: func(config *project.Config) {
+			if config.TargetArch == "386" {
+				config.TargetArch = "amd64"
+			} else {
+				config.TargetArch = "386"
+			}
+		}},
+		{name: "project name", change: func(config *project.Config) {
+			config.ProjectName = "different"
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			config := previous.Config
+			if test.change != nil {
+				test.change(&config)
+			}
+			ctx := project.NewWithConfig(config, diagnostics.NewDiagnosticBag())
+			ctx.Metrics = &project.CompileMetrics{}
+			state.seedReusableModules(ctx, dirty)
+			reused, found := ctx.ModuleByID(mod.ID)
+			if found != test.wantReuse || found && reused != mod || (ctx.Metrics.ModulesReused != 0) != test.wantReuse {
+				t.Fatalf("module reuse = %t, cached = %t, metric = %d; want reuse %t", found, reused == mod, ctx.Metrics.ModulesReused, test.wantReuse)
+			}
+		})
+	}
+
+	writeWorkspaceProjectConfig(t, root, "different")
+	current, rebuilt := state.recompile(entry)
+	if current == nil || rebuilt == nil || current.Diagnostics.HasErrors() {
+		t.Fatal("compile after project rename failed")
+	}
+	if rebuilt == mod || rebuilt.ID == mod.ID || state.LastMetrics.ModulesReused != 0 {
+		t.Fatalf("project rename reused old module: old ID %s, new ID %s, reused %d", mod.ID, rebuilt.ID, state.LastMetrics.ModulesReused)
+	}
+	if state.modules[entryPath] != rebuilt {
+		t.Fatal("new compiler generation did not replace cached module")
 	}
 }
 
@@ -376,6 +436,57 @@ func TestServerStateReusesDependentWhenExportShapeUnchanged(t *testing.T) {
 	}
 }
 
+func TestWorkspaceReuseReadsPublishedASTSurface(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	fileMain := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	fileUtil := filepath.Join(root, peeper.SourceDirName, "util"+peeper.SourceExt)
+	writeWorkspaceFile(t, fileMain, "import \"app/util\";\nfn main() { helper(); }\n")
+	writeWorkspaceFile(t, fileUtil, "fn helper() {}\n")
+
+	state := NewServerState()
+	state.RootDir = root
+	if _, mod := state.recompile(fileMain); mod == nil {
+		t.Fatal("initial compile returned nil module")
+	}
+	mainPath := project.CanonicalPath(fileMain)
+	utilPath := project.CanonicalPath(fileUtil)
+	cached := make(map[string]*module.Module)
+	for _, path := range []string{mainPath, utilPath} {
+		compiled := state.modules[path]
+		if compiled == nil || compiled.AST == nil {
+			t.Fatalf("missing parsed module %s", path)
+		}
+		cached[path] = &module.Module{
+			FilePath:    compiled.FilePath,
+			ContentHash: compiled.ContentHash,
+			Phase:       compiled.Phase,
+			AST:         compiled.AST,
+			Imports:     compiled.Imports,
+		}
+	}
+
+	updated := "fn helper() { let x = 1; }\n"
+	state.applyDocumentSnapshot(fileUtil, &updated, nil)
+	index := newWorkspaceIndex(root)
+	if err := index.rebuild(state.Cache); err != nil {
+		t.Fatalf("rebuild workspace index: %v", err)
+	}
+	if dirty := index.dirtyFiles(fileUtil, cached); len(dirty) != 1 {
+		t.Fatalf("dirty files = %v, want only changed function module", dirty)
+	}
+	if got := index.reusePhases(fileUtil, cached)[mainPath]; got != cached[mainPath].Phase {
+		t.Fatalf("dependent reuse phase = %v, want %v", got, cached[mainPath].Phase)
+	}
+	cached[utilPath].AST = nil
+	if dirty := index.dirtyFiles(fileUtil, cached); len(dirty) != 2 {
+		t.Fatalf("dirty files with missing syntax = %v, want changed module and importer", dirty)
+	}
+	if got := index.reusePhases(fileUtil, cached)[mainPath]; got != phase.Parsed {
+		t.Fatalf("dependent reuse with missing syntax = %v, want %v", got, phase.Parsed)
+	}
+}
+
 func TestServerStateRebuildsLaterFunctionAfterEarlierBodyEdit(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceProjectConfig(t, root, "app")
@@ -390,7 +501,7 @@ func TestServerStateRebuildsLaterFunctionAfterEarlierBodyEdit(t *testing.T) {
 	}
 	previousFunction := before.THIR.Functions[1]
 	previousID := previousFunction.Source.NodeID
-	previousSurface := before.ExportFingerprint
+	previousSurface := before.AST.ExportFingerprint
 
 	updated := "fn Prep() { let x = 1; let y = 2; }\nfn main() -> i32 { return 7; }\n"
 	state.applyDocumentSnapshot(entry, &updated, nil)
@@ -398,7 +509,7 @@ func TestServerStateRebuildsLaterFunctionAfterEarlierBodyEdit(t *testing.T) {
 	if after == nil || ctx == nil || ctx.Diagnostics.HasErrors() || after.THIR == nil || len(after.THIR.Functions) != 2 {
 		t.Fatalf("incremental compile failed: %v", ctx)
 	}
-	if after.ExportFingerprint != previousSurface {
+	if after.AST.ExportFingerprint != previousSurface {
 		t.Fatal("body-only edit changed declaration surface")
 	}
 	if after == before || after.THIR.Functions[1] == previousFunction {
@@ -466,7 +577,7 @@ func TestServerStateInvalidatesDependentWhenInferredExportTypeChanges(t *testing
 	if beforeUtil == nil || beforeUtil.ModuleScope == nil {
 		t.Fatal("missing cached export module")
 	}
-	beforeSyntaxFingerprint := beforeUtil.ExportFingerprint
+	beforeSyntaxFingerprint := beforeUtil.AST.ExportFingerprint
 	beforeFingerprint := beforeUtil.SemanticExportFingerprint
 	beforeType, found := beforeUtil.ModuleScope.Lookup("Value")
 	if !found || beforeType == nil || beforeType.Type == nil {
@@ -482,9 +593,9 @@ func TestServerStateInvalidatesDependentWhenInferredExportTypeChanges(t *testing
 	if afterUtil == nil || afterUtil.ModuleScope == nil {
 		t.Fatal("missing recompiled export module")
 	}
-	if afterUtil.ExportFingerprint != beforeSyntaxFingerprint {
+	if afterUtil.AST.ExportFingerprint != beforeSyntaxFingerprint {
 		t.Fatalf("syntax fingerprint changed across inferred type edit: %q -> %q",
-			beforeSyntaxFingerprint, afterUtil.ExportFingerprint)
+			beforeSyntaxFingerprint, afterUtil.AST.ExportFingerprint)
 	}
 	afterType, found := afterUtil.ModuleScope.Lookup("Value")
 	if !found || afterType == nil || afterType.Type == nil {
@@ -697,7 +808,7 @@ func TestWorkspaceIndexRebuildParsesOnlyChangedFiles(t *testing.T) {
 	mainPath := project.CanonicalPath(fileMain)
 	utilPath := project.CanonicalPath(fileUtil)
 	beforeMain := index.modules[mainPath]
-	beforeUtilTargets := append([]string(nil), index.modules[utilPath].importTargets...)
+	beforeUtilTargets := append([]string(nil), index.modules[utilPath].resolvedLocalImportFiles...)
 
 	state := NewServerState()
 	updated := "fn helper() { let body_only = 1; }\n"
@@ -711,7 +822,7 @@ func TestWorkspaceIndexRebuildParsesOnlyChangedFiles(t *testing.T) {
 	if afterMain := index.modules[mainPath]; afterMain != beforeMain {
 		t.Fatalf("unchanged importer should reuse cached workspace surface")
 	}
-	if got := index.modules[utilPath].importTargets; !slices.Equal(got, beforeUtilTargets) {
+	if got := index.modules[utilPath].resolvedLocalImportFiles; !slices.Equal(got, beforeUtilTargets) {
 		t.Fatalf("body-only edit changed import targets: got %v want %v", got, beforeUtilTargets)
 	}
 }
@@ -741,12 +852,12 @@ func TestWorkspaceIndexRebuildRefreshesImportTargetsWhenNewFileAppears(t *testin
 	if err := index.rebuild(nil); err != nil {
 		t.Fatalf("rebuild after adding util: %v", err)
 	}
-	if got := index.parsedFiles; got != 2 {
-		t.Fatalf("parsed files after file membership change = %d, want 2", got)
+	if got := index.parsedFiles; got != 1 {
+		t.Fatalf("parsed files after adding util = %d, want 1", got)
 	}
 
 	utilPath := project.CanonicalPath(fileUtil)
-	if got := index.modules[mainPath].importTargets; !slices.Equal(got, []string{utilPath}) {
+	if got := index.modules[mainPath].resolvedLocalImportFiles; !slices.Equal(got, []string{utilPath}) {
 		t.Fatalf("main import targets = %v, want [%s]", got, utilPath)
 	}
 	component, ok = index.componentForFile(mainPath)
@@ -775,7 +886,7 @@ func TestWorkspaceIndexRebuildRefreshesImportTargetsWhenFileLeavesSourceDir(t *t
 	if !ok || len(component.files) != 2 {
 		t.Fatalf("expected importer and util in same component, got %#v", component)
 	}
-	if got := index.modules[mainPath].importTargets; !slices.Equal(got, []string{utilPath}) {
+	if got := index.modules[mainPath].resolvedLocalImportFiles; !slices.Equal(got, []string{utilPath}) {
 		t.Fatalf("initial import targets = %v, want [%s]", got, utilPath)
 	}
 
@@ -785,10 +896,10 @@ func TestWorkspaceIndexRebuildRefreshesImportTargetsWhenFileLeavesSourceDir(t *t
 	if err := index.rebuild(nil); err != nil {
 		t.Fatalf("rebuild after moving util: %v", err)
 	}
-	if got := index.parsedFiles; got != 1 {
-		t.Fatalf("parsed files after util leaves src = %d, want 1", got)
+	if got := index.parsedFiles; got != 0 {
+		t.Fatalf("parsed files after util leaves src = %d, want 0", got)
 	}
-	if got := index.modules[mainPath].importTargets; len(got) != 0 {
+	if got := index.modules[mainPath].resolvedLocalImportFiles; len(got) != 0 {
 		t.Fatalf("main import targets after util leaves src = %v, want empty", got)
 	}
 	component, ok = index.componentForFile(mainPath)
@@ -797,6 +908,55 @@ func TestWorkspaceIndexRebuildRefreshesImportTargetsWhenFileLeavesSourceDir(t *t
 	}
 	if _, ok := index.modules[utilPath]; ok {
 		t.Fatalf("util should be removed from workspace modules after leaving src")
+	}
+
+	writeWorkspaceFile(t, fileUtil, "fn helper() {}\n")
+	if err := index.rebuild(nil); err != nil {
+		t.Fatalf("rebuild after restoring util: %v", err)
+	}
+	if got := index.parsedFiles; got != 1 {
+		t.Fatalf("parsed files after restoring util = %d, want 1", got)
+	}
+	if got := index.modules[mainPath].resolvedLocalImportFiles; !slices.Equal(got, []string{utilPath}) {
+		t.Fatalf("restored import targets = %v, want [%s]", got, utilPath)
+	}
+}
+
+func TestServerStateRechecksImporterWhenTargetMembershipChanges(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	mainFile := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	utilFile := filepath.Join(root, peeper.SourceDirName, "util"+peeper.SourceExt)
+	writeWorkspaceFile(t, mainFile, "import \"app/util\";\nfn main() {}\n")
+
+	state := NewServerState()
+	state.RootDir = root
+	missing, importer := state.recompile(mainFile)
+	if missing == nil || importer == nil || !missing.Diagnostics.HasErrors() {
+		t.Fatal("missing target should produce import diagnostics")
+	}
+
+	writeWorkspaceFile(t, utilFile, "fn helper() {}\n")
+	added, rebuilt := state.recompile(mainFile)
+	if added == nil || rebuilt == nil || added.Diagnostics.HasErrors() {
+		t.Fatalf("added target should resolve import, diagnostics: %v", added.Diagnostics.Diagnostics())
+	}
+	if rebuilt == importer || rebuilt.AST != importer.AST || state.workspace.parsedFiles != 1 {
+		t.Fatalf("importer after addition: same module %t, reused syntax %t, workspace parses %d; want rebuilt semantics with retained syntax", rebuilt == importer, rebuilt.AST == importer.AST, state.workspace.parsedFiles)
+	}
+	if len(rebuilt.Imports) != 1 {
+		t.Fatalf("resolved imports after addition = %d, want 1", len(rebuilt.Imports))
+	}
+
+	if err := os.Remove(utilFile); err != nil {
+		t.Fatalf("remove target: %v", err)
+	}
+	removed, rebuiltAgain := state.recompile(mainFile)
+	if removed == nil || rebuiltAgain == nil || !removed.Diagnostics.HasErrors() {
+		t.Fatal("removed target should restore import diagnostics")
+	}
+	if rebuiltAgain == rebuilt || len(rebuiltAgain.Imports) != 0 {
+		t.Fatalf("importer after removal: same module %t, resolved imports %d; want rebuilt unresolved importer", rebuiltAgain == rebuilt, len(rebuiltAgain.Imports))
 	}
 }
 

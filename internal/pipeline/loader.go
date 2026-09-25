@@ -77,12 +77,6 @@ func (l *moduleLoader) loadModule(module *module.Module) {
 	}
 	loadDiag := l.ctx.Diagnostics.BeginPhase(phase.Load, module.ID.String())
 	if module.AST != nil {
-		if module.ImportFingerprint == "" {
-			module.ImportFingerprint = module.AST.ImportFingerprint
-		}
-		if module.ExportFingerprint == "" {
-			module.ExportFingerprint = module.AST.ExportFingerprint
-		}
 		if module.Phase < phase.Parsed {
 			l.ctx.ResetModule(module, phase.Parsed)
 		}
@@ -108,8 +102,6 @@ func (l *moduleLoader) loadModule(module *module.Module) {
 	module.Content = ""
 	module.AST = parser.New(module.FilePath, toks, parseDiag).ParseModule()
 	l.ctx.Metrics.AddParsedModule()
-	module.ImportFingerprint = module.AST.ImportFingerprint
-	module.ExportFingerprint = module.AST.ExportFingerprint
 	l.ctx.ResetModule(module, phase.Parsed)
 	l.resolveImports(module, loadDiag)
 }
@@ -118,9 +110,7 @@ func (l *moduleLoader) resolveImports(mod *module.Module, diag *diagnostics.Diag
 	if mod == nil || mod.AST == nil {
 		return
 	}
-	if mod.Imports == nil {
-		mod.Imports = make(map[string]module.ResolvedImport)
-	}
+	mod.Imports = make(map[string]module.ResolvedImport)
 	for _, imp := range mod.AST.Imports {
 		rawPath, ok := ast.ImportPathFromDecl(imp)
 		if !ok {

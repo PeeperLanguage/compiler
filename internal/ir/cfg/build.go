@@ -31,7 +31,6 @@ func BuildModule(source *thir.Module) *Module {
 	}
 	module := &Module{
 		Functions: make([]*ControlFlowGraph, 0, len(source.Functions)),
-		byNodeID:  make(map[ir.NodeID]*ControlFlowGraph, len(source.Functions)),
 	}
 	for _, function := range source.Functions {
 		if function == nil || function.Body == nil {
@@ -39,11 +38,10 @@ func BuildModule(source *thir.Module) *Module {
 		}
 		graph := buildFunction(function)
 		finalizeGraph(graph)
-		if module.byNodeID[graph.NodeID] != nil {
+		if module.Function(graph.NodeID) != nil {
 			panic(fmt.Sprintf("CFG construction: duplicate function NodeID %d", graph.NodeID))
 		}
 		module.Functions = append(module.Functions, graph)
-		module.byNodeID[graph.NodeID] = graph
 	}
 	return module
 }

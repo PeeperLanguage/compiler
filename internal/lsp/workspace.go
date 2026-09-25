@@ -28,7 +28,11 @@ type workspaceModule struct {
 	contentHash       string
 	importFingerprint string
 	exportFingerprint string
-	importTargets     []string
+	// Source import paths survive unresolved imports, so membership changes can
+	// be re-resolved without reparsing unchanged files.
+	sourceImportPaths []string
+	// Resolved file paths currently inside this workspace; these form graph edges.
+	resolvedLocalImportFiles []string
 }
 
 type workspaceComponent struct {
@@ -126,30 +130,36 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 		contextChanged := module.rootDir != fileCtx.rootDir ||
 			module.projectName != fileCtx.projectName ||
 			module.importPath != fileCtx.importPath
-		if !fileMembershipChanged && !contextChanged && module.contentHash == contentHash {
+		parseChanged := contextChanged || module.contentHash != contentHash
+		if parseChanged {
+			module.rootDir = fileCtx.rootDir
+			module.projectName = fileCtx.projectName
+			module.importPath = fileCtx.importPath
+			module.contentHash = contentHash
+			diag := diagnostics.NewDiagnosticBag()
+			parsed := parser.New(filePath, lexer.New(filePath, content, diag).Tokenize(), diag).ParseModule()
+			module.exportFingerprint = parsed.ExportFingerprint
+			module.importFingerprint = parsed.ImportFingerprint
+			module.sourceImportPaths = module.sourceImportPaths[:0]
+			for _, imp := range parsed.Imports {
+				if rawPath, ok := ast.ImportPathFromDecl(imp); ok {
+					module.sourceImportPaths = append(module.sourceImportPaths, rawPath)
+				}
+			}
+			w.parsedFiles++
+		}
+		if !fileMembershipChanged && !parseChanged {
 			continue
 		}
 
-		module.rootDir = fileCtx.rootDir
-		module.projectName = fileCtx.projectName
-		module.importPath = fileCtx.importPath
-		module.contentHash = contentHash
-		diag := diagnostics.NewDiagnosticBag()
-		parsed := parser.New(filePath, lexer.New(filePath, content, diag).Tokenize(), diag).ParseModule()
-		module.exportFingerprint = parsed.ExportFingerprint
-		module.importFingerprint = parsed.ImportFingerprint
-		module.importTargets = module.importTargets[:0]
+		module.resolvedLocalImportFiles = module.resolvedLocalImportFiles[:0]
 		ctx := project.NewWithConfig(project.Config{
 			RootDir:     module.rootDir,
 			ProjectName: module.projectName,
 			Extension:   peeper.SourceExt,
 		}, diagnostics.NewDiagnosticBag())
 		seen := make(map[string]struct{})
-		for _, imp := range parsed.Imports {
-			rawPath, ok := ast.ImportPathFromDecl(imp)
-			if !ok {
-				continue
-			}
+		for _, rawPath := range module.sourceImportPaths {
 			resolved, err := ctx.ResolveImportPath(rawPath)
 			if err != nil || resolved == nil || resolved.ID.Origin != string(project.ModuleOriginLocal) {
 				continue
@@ -162,9 +172,8 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 				continue
 			}
 			seen[target] = struct{}{}
-			module.importTargets = append(module.importTargets, target)
+			module.resolvedLocalImportFiles = append(module.resolvedLocalImportFiles, target)
 		}
-		w.parsedFiles++
 	}
 
 	for filePath := range w.modules {
@@ -176,7 +185,7 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 
 	g := graph.NewDependencyGraph(project.GraphEdgeImport)
 	for _, module := range w.modules {
-		for _, target := range module.importTargets {
+		for _, target := range module.resolvedLocalImportFiles {
 			if _, ok := w.modules[target]; !ok {
 				continue
 			}
@@ -266,16 +275,17 @@ func (w *workspaceIndex) dirtyFiles(filePath string, cached map[string]*module.M
 			continue
 		}
 		cachedModule := cached[member]
-		if cachedModule == nil {
+		if cachedModule == nil || cachedModule.AST == nil {
 			dirty[member] = struct{}{}
 			changedSurfaces = append(changedSurfaces, graph.NodeID(member))
 			continue
 		}
-		if cachedModule.ContentHash == current.contentHash {
+		importsChanged := w.resolvedLocalImportsChanged(current, cachedModule)
+		if cachedModule.ContentHash == current.contentHash && !importsChanged {
 			continue
 		}
 		dirty[member] = struct{}{}
-		if cachedModule.ImportFingerprint != current.importFingerprint || cachedModule.ExportFingerprint != current.exportFingerprint {
+		if importsChanged || cachedModule.AST.ImportFingerprint != current.importFingerprint || cachedModule.AST.ExportFingerprint != current.exportFingerprint {
 			changedSurfaces = append(changedSurfaces, graph.NodeID(member))
 		}
 	}
@@ -317,15 +327,25 @@ func (w *workspaceIndex) reusePhases(filePath string, cached map[string]*module.
 		if _, inComponent := component[cachedPath]; !inComponent {
 			continue
 		}
-		// Byte-identical files can keep whatever completed phase they already had.
+		if cachedModule.AST == nil {
+			changedSurfaces = append(changedSurfaces, graph.NodeID(cachedPath))
+			continue
+		}
+		importsChanged := w.resolvedLocalImportsChanged(current, cachedModule)
+		// Syntax survives a resolution change; semantic artifacts must be rebuilt.
 		if cachedModule.ContentHash == current.contentHash {
-			phases[cachedPath] = cachedModule.Phase
+			if importsChanged {
+				phases[cachedPath] = phase.Parsed
+				changedSurfaces = append(changedSurfaces, graph.NodeID(cachedPath))
+			} else {
+				phases[cachedPath] = cachedModule.Phase
+			}
 			continue
 		}
 		// Import/export surface changes force dependents back to parse-only reuse.
 		// Body-only edits stay local to changed modules and do not downgrade
 		// importers inside same component.
-		if cachedModule.ImportFingerprint != current.importFingerprint || cachedModule.ExportFingerprint != current.exportFingerprint {
+		if importsChanged || cachedModule.AST.ImportFingerprint != current.importFingerprint || cachedModule.AST.ExportFingerprint != current.exportFingerprint {
 			changedSurfaces = append(changedSurfaces, graph.NodeID(cachedPath))
 		}
 	}
@@ -349,6 +369,29 @@ func (w *workspaceIndex) reusePhases(filePath string, cached map[string]*module.
 	}
 
 	return phases
+}
+
+// resolvedLocalImportsChanged compares the workspace's current import targets
+// with the compiler's last published resolution, including targets that vanished.
+func (w *workspaceIndex) resolvedLocalImportsChanged(current *workspaceModule, cached *module.Module) bool {
+	if w == nil || current == nil || cached == nil {
+		return false
+	}
+	previous := make(map[string]struct{})
+	for _, imp := range cached.Imports {
+		if imp.ID.Origin == string(project.ModuleOriginLocal) && project.IsPathWithinRoot(w.rootDir, imp.FilePath) {
+			previous[project.CanonicalPath(imp.FilePath)] = struct{}{}
+		}
+	}
+	if len(previous) != len(current.resolvedLocalImportFiles) {
+		return true
+	}
+	for _, target := range current.resolvedLocalImportFiles {
+		if _, found := previous[target]; !found {
+			return true
+		}
+	}
+	return false
 }
 
 func (w *workspaceIndex) hasDiskBackedFiles() bool {

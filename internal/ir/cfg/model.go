@@ -9,7 +9,6 @@ import (
 // Module owns canonical function CFG identity for one source module.
 type Module struct {
 	Functions []*ControlFlowGraph
-	byNodeID  map[ir.NodeID]*ControlFlowGraph
 }
 
 // Function returns one graph by source function identity.
@@ -17,7 +16,12 @@ func (m *Module) Function(id ir.NodeID) *ControlFlowGraph {
 	if m == nil {
 		return nil
 	}
-	return m.byNodeID[id]
+	for _, graph := range m.Functions {
+		if graph != nil && graph.NodeID == id {
+			return graph
+		}
+	}
+	return nil
 }
 
 // ControlFlowGraph is finalized by BuildModule. Terminators and ordered block sites define

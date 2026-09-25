@@ -46,12 +46,8 @@ type Module struct {
 	// HasProvidedContent distinguishes an explicit empty source from a module that
 	// still needs to load its source from FilePath.
 	HasProvidedContent bool
-	// Reserved for incremental builds.
+	// Source content identity for incremental module reuse.
 	ContentHash string
-	// Stable syntax-derived import surface for invalidation.
-	ImportFingerprint string
-	// Stable syntax-derived export surface for invalidation.
-	ExportFingerprint string
 	// Stable compiler-visible export surface finalized after semantic typing.
 	SemanticExportFingerprint string
 	// Last completed compiler phase for this module snapshot.

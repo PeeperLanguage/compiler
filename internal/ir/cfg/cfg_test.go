@@ -24,15 +24,42 @@ func testModule(body *ast.BlockStmt, returnType ast.TypeExpr) *thir.Module {
 	return thir.Build("test", "cfg_test.peep", &ast.Module{Stmts: []ast.Stmt{fn}}, nil, nil, nil)
 }
 
-func TestModuleIndexesFunctionBySourceIdentity(t *testing.T) {
+func TestModuleFindsFunctionBySourceIdentity(t *testing.T) {
 	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}}
 	module := BuildModule(testModule(body, nil))
 	if len(module.Functions) != 1 || module.Function(ir.NodeID(1)) != module.Functions[0] {
-		t.Fatalf("CFG function index = %#v, want source NodeID lookup", module)
+		t.Fatalf("CFG functions = %#v, want source NodeID lookup", module)
 	}
-	if _, found := reflect.TypeOf(ControlFlowGraph{}).FieldByName("Cleanup"); found {
+	if _, found := reflect.TypeFor[ControlFlowGraph]().FieldByName("Cleanup"); found {
 		t.Fatal("CFG graph retains ownership cleanup output")
 	}
+}
+
+func TestModuleFunctionLookupUsesPublishedFunctions(t *testing.T) {
+	graph := &ControlFlowGraph{NodeID: 7}
+	module := &Module{Functions: []*ControlFlowGraph{nil, graph}}
+	if got := module.Function(7); got != graph {
+		t.Fatalf("function lookup = %#v, want published graph", got)
+	}
+	if got := module.Function(8); got != nil {
+		t.Fatalf("missing function lookup = %#v, want nil", got)
+	}
+	var missing *Module
+	if got := missing.Function(7); got != nil {
+		t.Fatalf("nil module lookup = %#v, want nil", got)
+	}
+}
+
+func TestBuildModuleRejectsDuplicateFunctionIdentity(t *testing.T) {
+	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}}
+	source := testModule(body, nil)
+	source.Functions = append(source.Functions, source.Functions[0])
+	defer func() {
+		if got := recover(); got != "CFG construction: duplicate function NodeID 1" {
+			t.Fatalf("duplicate function panic = %v", got)
+		}
+	}()
+	BuildModule(source)
 }
 
 func TestGraphSiteResolvesPositionSafely(t *testing.T) {

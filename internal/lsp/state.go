@@ -1,6 +1,7 @@
 package lsp
 
 import (
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -151,6 +152,9 @@ func (s *ServerState) recompileLocked(entryFile string) (*project.CompilerContex
 	}
 	ctx := compiler.NewCompilerContext(cfg, diagBag)
 	ctx.Metrics = &project.CompileMetrics{}
+	if !s.reuseCompilerInputs(ctx) {
+		clear(s.modules)
+	}
 	if err != nil {
 		diagnostic := diagnostics.NewError(err.Error())
 		diagnostic.FilePath = canonicalEntry
@@ -279,8 +283,14 @@ func (s *ServerState) waitForScheduledDiagnostics() error {
 	return s.diagErr
 }
 
+// reuseCompilerInputs keeps the retained module set in one compiler-input generation.
+func (s *ServerState) reuseCompilerInputs(ctx *project.CompilerContext) bool {
+	return s != nil && ctx != nil && s.LastCtx != nil &&
+		ctx.Target == s.LastCtx.Target && reflect.DeepEqual(ctx.Config, s.LastCtx.Config)
+}
+
 func (s *ServerState) seedReusableModules(ctx *project.CompilerContext, dirtyFiles map[string]struct{}) map[string]phase.Phase {
-	if s == nil || ctx == nil || len(s.modules) == 0 {
+	if !s.reuseCompilerInputs(ctx) || len(s.modules) == 0 {
 		return nil
 	}
 	for _, module := range s.modules {
@@ -309,7 +319,7 @@ func (s *ServerState) seedReusableModules(ctx *project.CompilerContext, dirtyFil
 			continue
 		}
 		reused := module
-		if retainedPhase != module.Phase {
+		if retainedPhase != module.Phase || retainedPhase == phase.Parsed {
 			cloned := *module
 			ctx.ResetModule(&cloned, retainedPhase)
 			reused = &cloned
@@ -367,8 +377,6 @@ func (s *ServerState) captureModules(ctx *project.CompilerContext) {
 		if s.workspace != nil {
 			if current := s.workspace.modules[module.FilePath]; current != nil {
 				module.ContentHash = current.contentHash
-				module.ImportFingerprint = current.importFingerprint
-				module.ExportFingerprint = current.exportFingerprint
 			}
 		}
 		if existing := s.modules[module.FilePath]; existing != nil &&
