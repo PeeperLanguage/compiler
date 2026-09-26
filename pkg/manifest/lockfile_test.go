@@ -248,6 +248,37 @@ func TestSetDirectDependencyDemotesPreviousVersion(t *testing.T) {
 	}
 }
 
+func TestSetDirectDependencyPreservesPackageUsedByAnotherAlias(t *testing.T) {
+	lock := NewLockfile()
+	lock.SetDependency("github.com/acme/json@v1.0.0", LockfileEntry{
+		Version:     "v1.0.0",
+		ResolvedURL: "github.com/acme/json",
+	})
+	lock.SetDependency("github.com/acme/json@v1.1.0", LockfileEntry{
+		Version:     "v1.1.0",
+		ResolvedURL: "github.com/acme/json",
+	})
+
+	lock.SetDirectDependency("json", "github.com/acme/json@v1.0.0")
+	lock.SetDirectDependency("json-compat", "github.com/acme/json@v1.0.0")
+	lock.SetDirectDependency("json", "github.com/acme/json@v1.1.0")
+
+	oldEntry, ok := lock.GetDependency("github.com/acme/json@v1.0.0")
+	if !ok {
+		t.Fatal("expected shared old package entry")
+	}
+	if !oldEntry.IsDirect {
+		t.Fatal("expected package used by json-compat to remain direct")
+	}
+	newEntry, ok := lock.GetDependency("github.com/acme/json@v1.1.0")
+	if !ok {
+		t.Fatal("expected replacement package entry")
+	}
+	if !newEntry.IsDirect {
+		t.Fatal("expected replacement package to be direct")
+	}
+}
+
 func TestLoadLockfileReconcilesDirectFlagsFromDirectDeps(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, LockfileName)

@@ -633,7 +633,7 @@ func TestWorkspaceDiagnosticSnapshotsReuseIndexAcrossComponents(t *testing.T) {
 	mainFile := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
 	otherFile := filepath.Join(root, peeper.SourceDirName, "other"+peeper.SourceExt)
 	writeWorkspaceFile(t, mainFile, "fn main() -> i32 { return 1; }\n")
-	writeWorkspaceFile(t, otherFile, "fn main() -> i32 { return 3; }\n")
+	writeWorkspaceFile(t, otherFile, "fn main() -> i32 { return 3; }\nfn unused() {}\n")
 
 	state := NewServerState()
 	state.RootDir = root
@@ -998,6 +998,39 @@ func TestWorkspaceIndexKeepsProjectImportContextsSeparate(t *testing.T) {
 	}
 }
 
+func TestWorkspaceIndexUsesNearestNestedProjectAndRefreshesManifest(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "parent")
+	parentFile := filepath.Join(root, peeper.SourceDirName, "parent"+peeper.SourceExt)
+	nestedRoot := filepath.Join(root, peeper.SourceDirName, "nested")
+	writeWorkspaceProjectConfig(t, nestedRoot, "child")
+	childFile := filepath.Join(nestedRoot, peeper.SourceDirName, "child"+peeper.SourceExt)
+	writeWorkspaceFile(t, parentFile, "fn parent() {}\n")
+	writeWorkspaceFile(t, childFile, "fn child() {}\n")
+
+	index := newWorkspaceIndex(root)
+	if _, err := index.rebuild(nil); err != nil {
+		t.Fatalf("initial rebuild: %v", err)
+	}
+	parent := index.modules[project.CanonicalPath(parentFile)]
+	child := index.modules[project.CanonicalPath(childFile)]
+	if parent == nil || parent.rootDir != project.CanonicalPath(root) || parent.projectName != "parent" {
+		t.Fatalf("parent project classification = %#v", parent)
+	}
+	if child == nil || child.rootDir != project.CanonicalPath(nestedRoot) || child.projectName != "child" {
+		t.Fatalf("nested project classification = %#v", child)
+	}
+
+	writeWorkspaceProjectConfig(t, nestedRoot, "child_renamed")
+	if _, err := index.rebuild(nil); err != nil {
+		t.Fatalf("rebuild after nested manifest edit: %v", err)
+	}
+	child = index.modules[project.CanonicalPath(childFile)]
+	if child == nil || child.projectName != "child_renamed" || child.importPath != "child_renamed/child" {
+		t.Fatalf("nested project after manifest edit = %#v", child)
+	}
+}
+
 func BenchmarkWorkspaceIndexRebuildUnchanged(b *testing.B) {
 	root := b.TempDir()
 	sourceDir := filepath.Join(root, peeper.SourceDirName)
@@ -1009,6 +1042,38 @@ func BenchmarkWorkspaceIndexRebuildUnchanged(b *testing.B) {
 	}
 	for i := range 64 {
 		path := filepath.Join(sourceDir, fmt.Sprintf("module%d%s", i, peeper.SourceExt))
+		if err := os.WriteFile(path, []byte("fn helper() {}\n"), 0o644); err != nil {
+			b.Fatal(err)
+		}
+	}
+	index := newWorkspaceIndex(root)
+	if _, err := index.rebuild(nil); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		if _, err := index.rebuild(nil); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkWorkspaceIndexRebuildNestedUnchanged(b *testing.B) {
+	root := b.TempDir()
+	sourceDir := filepath.Join(root, peeper.SourceDirName)
+	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+		b.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, manifest.FileName), []byte("name = \"app\"\nbuild = \"program\"\n"), 0o644); err != nil {
+		b.Fatal(err)
+	}
+	for i := range 32 {
+		dir := filepath.Join(sourceDir, fmt.Sprintf("group%d", i))
+		path := filepath.Join(dir, "module"+peeper.SourceExt)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			b.Fatal(err)
+		}
 		if err := os.WriteFile(path, []byte("fn helper() {}\n"), 0o644); err != nil {
 			b.Fatal(err)
 		}

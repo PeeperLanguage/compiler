@@ -144,6 +144,12 @@ func LoadProject(startPath string) (*Project, error) {
 	if err != nil {
 		return nil, err
 	}
+	return LoadProjectFromManifest(manifestPath)
+}
+
+// LoadProjectFromManifest loads a project from an already-resolved manifest path.
+// Callers that need nearest-manifest discovery should use LoadProject.
+func LoadProjectFromManifest(manifestPath string) (*Project, error) {
 	file, err := Load(manifestPath)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", manifestPath, err)

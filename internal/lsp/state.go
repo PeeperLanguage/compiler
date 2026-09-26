@@ -352,6 +352,15 @@ func (s *ServerState) seedReusableModules(ctx *project.CompilerContext, dirtyFil
 		if strings.Contains(filePath, "/.peeper-lsp/") {
 			continue
 		}
+		// LastCtx owns reusable diagnostics only for modules compiled in that
+		// context. Independent workspace components can leave a cached module
+		// without a diagnostic source; retain semantic artifacts but rerun the
+		// project Usage barrier instead of publishing an incomplete warning set.
+		if retainedPhase > phase.Ownership && s.LastCtx != nil {
+			if _, found := s.LastCtx.ModuleByID(module.ID); !found {
+				retainedPhase = phase.Ownership
+			}
+		}
 		reused := *module
 		if retainedPhase != module.Phase || retainedPhase == phase.Parsed {
 			ctx.ResetModule(&reused, retainedPhase)

@@ -1,11 +1,12 @@
 # Infrastructure: modules, pipeline, diagnostics, graphs
 
-This map records infrastructure implementation observed in `internal/project`, `internal/pipeline`, `internal/driver`, `internal/diagnostics`, `internal/graph`, `internal/problems`, `internal/phase`, `internal/moduleid`, `internal/source`, and `internal/toolchain`. Verify mutable details against linked symbols. It describes current state carriers, scheduling, invalidation, diagnostics, and native toolchain behavior without prescribing future boundaries; see [`compiler-architecture.md`](../compiler-architecture.md) for broader context.
+This map records infrastructure implementation observed in `internal/module`, `internal/project`, `internal/pipeline`, `internal/driver`, `internal/diagnostics`, `internal/graph`, `internal/problems`, `internal/phase`, `internal/moduleid`, `internal/source`, and `internal/toolchain`. Verify mutable details against linked symbols. It describes current state carriers, scheduling, invalidation, diagnostics, and native toolchain behavior without prescribing future boundaries; see [`compiler-architecture.md`](../compiler-architecture.md) for broader context.
 
 ## Package map
 
 | Package | Responsibility |
 | --- | --- |
+| `module` | Per-source artifact container, phase reset, and published semantic/IR handoff state. |
 | `project` | Compilation context, module registry, paths, imports, snapshots, fingerprints, semantic lookup, metrics. |
 | `pipeline` | Concurrent module loading, import graph construction, phase barriers, phase advancement, invalidation. |
 | `driver` | Public compile entrypoints and source/overlay selection. |
@@ -19,6 +20,7 @@ This map records infrastructure implementation observed in `internal/project`, `
 
 Non-test files in requested packages:
 
+- `module/module.go`.
 - `project/context.go`, `export_fingerprint.go`, `generic_types.go`, `imports.go`,
   `metrics.go`, `modules.go`, `sources.go`, `type_lookup.go`, `type_syntax.go`.
 - `pipeline/loader.go`, `pipeline/pipeline.go`.
@@ -92,14 +94,18 @@ slice snapshot of module pointers; it does not deep-copy modules or impose order
 
 ## Module snapshot
 
-`project.Module` is the per-source snapshot shared by all phases. Its input and
+`module.Module` is the per-source snapshot shared by all phases. Its input and
 identity fields are:
 
 - `ID`, canonical semantic/import/graph identity;
 - `FilePath`, absolute slash-separated path;
 - `IsEntry`;
-- `Content` and `ContentProvided`;
-- `ContentHash`, syntax import/export fingerprints, and semantic export fingerprint.
+- `Content` and `HasProvidedContent`;
+- `ContentHash` and `SemanticExportFingerprint`.
+
+Parser-owned AST surfaces carry syntax import/export fingerprints. The workspace
+index keeps current-file fingerprints for invalidation comparisons; they are not
+duplicate fields on `module.Module`.
 
 Its phase artifacts are:
 

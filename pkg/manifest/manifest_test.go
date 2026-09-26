@@ -299,6 +299,13 @@ func TestLoadProjectAcceptsSourceFilePath(t *testing.T) {
 	if project.RootDir != root {
 		t.Fatalf("project root = %q, want %q", project.RootDir, root)
 	}
+	loaded, err := LoadProjectFromManifest(filepath.Join(root, FileName))
+	if err != nil {
+		t.Fatalf("load project from manifest path: %v", err)
+	}
+	if loaded.RootDir != root || loaded.File.Package.Name != "app" {
+		t.Fatalf("loaded project from manifest = %#v", loaded)
+	}
 }
 
 func TestResolveSourceFileProjectWithoutManifestUsesFileDir(t *testing.T) {

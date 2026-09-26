@@ -310,13 +310,14 @@ func (l *Lockfile) SetDirectDependency(alias, packageID string) {
 		return
 	}
 	ensureDirectDepsMap(l)
-	if previous, ok := l.DirectDeps[alias]; ok && previous != packageID {
+	previous, hadPrevious := l.DirectDeps[alias]
+	l.DirectDeps[alias] = packageID
+	if hadPrevious && previous != packageID && !l.isStillDirect(previous) {
 		if entry, found := l.GetDependency(previous); found {
 			entry.IsDirect = false
 			l.SetDependency(previous, entry)
 		}
 	}
-	l.DirectDeps[alias] = packageID
 	if entry, found := l.GetDependency(packageID); found {
 		entry.IsDirect = true
 		l.SetDependency(packageID, entry)

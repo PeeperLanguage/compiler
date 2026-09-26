@@ -80,12 +80,32 @@ func (w *workspaceIndex) rebuild(cache map[string]string) (map[string]workspaceP
 	fileSet := make(map[string]struct{}, len(files))
 	contexts := make(map[string]workspaceFileContext, len(files))
 	projectContexts := make(map[[2]string]*project.CompilerContext)
+	type workspaceProjectLookup struct {
+		project *manifest.Project
+	}
+	projectsByDir := make(map[string]workspaceProjectLookup)
+	projectsByManifest := make(map[string]workspaceProjectLookup)
 	w.parsedFiles = 0
 	parsedModules := make(map[string]workspaceParse)
 	for _, filePath := range files {
 		rootDir := filepath.Dir(filePath)
 		projectName := ""
-		if loadedProject, err := manifest.LoadProject(filePath); err == nil {
+		fileDir := filepath.Dir(filePath)
+		projectLookup, checked := projectsByDir[fileDir]
+		if !checked {
+			if manifestPath, err := manifest.FindManifestPath(filePath); err == nil {
+				manifestKey := project.CanonicalPath(manifestPath)
+				projectLookup, checked = projectsByManifest[manifestKey]
+				if !checked {
+					if loadedProject, loadErr := manifest.LoadProjectFromManifest(manifestPath); loadErr == nil {
+						projectLookup.project = loadedProject
+					}
+					projectsByManifest[manifestKey] = projectLookup
+				}
+			}
+			projectsByDir[fileDir] = projectLookup
+		}
+		if loadedProject := projectLookup.project; loadedProject != nil {
 			if !manifest.IsPathWithinSourceDir(loadedProject.RootDir, filePath) {
 				continue
 			}
