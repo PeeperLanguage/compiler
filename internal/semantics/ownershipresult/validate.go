@@ -9,6 +9,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
+	"compiler/internal/moduleid"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
@@ -43,8 +44,8 @@ func (r Result) Validate(types *typecheckresult.Result, bindings *symbols.Bindin
 		if graph == nil {
 			continue
 		}
-		if _, found := r[graph.NodeID]; !found {
-			problems = append(problems, fmt.Sprintf("function %d has a control-flow graph but no published cleanup plan", graph.NodeID))
+		if _, found := r[graph.FunctionID]; !found {
+			problems = append(problems, fmt.Sprintf("function %s has a control-flow graph but no published cleanup plan", graph.FunctionID))
 		}
 	}
 	problems = append(problems, validateValueUses(types)...)
@@ -95,13 +96,13 @@ func validateValueUses(types *typecheckresult.Result) []string {
 
 // validatePlan checks one function's cleanup plan against its CFG and the
 // program points each map is keyed by.
-func validatePlan(fnID ir.NodeID, plan *CleanupPlan, types *typecheckresult.Result, bindings *symbols.Bindings, graphs *cfg.Module) []string {
+func validatePlan(fnID moduleid.FunctionID, plan *CleanupPlan, types *typecheckresult.Result, bindings *symbols.Bindings, graphs *cfg.Module) []string {
 	if plan == nil {
-		return []string{fmt.Sprintf("function %d has a nil cleanup plan", fnID)}
+		return []string{fmt.Sprintf("function %s has a nil cleanup plan", fnID)}
 	}
-	graph := graphs.Function(fnID)
+	graph := graphs.FunctionByID(fnID)
 	if graph == nil {
-		return []string{fmt.Sprintf("function %d has a cleanup plan but no CFG", fnID)}
+		return []string{fmt.Sprintf("function %s has a cleanup plan but no CFG", fnID)}
 	}
 
 	scopeExits := make(map[cfg.SiteID]struct{})
@@ -124,19 +125,19 @@ func validatePlan(fnID ir.NodeID, plan *CleanupPlan, types *typecheckresult.Resu
 	problems := make([]string, 0)
 	for siteID, ids := range plan.AfterScope {
 		if _, exists := scopeExits[siteID]; !exists {
-			problems = append(problems, fmt.Sprintf("function %d drops at site %v, which is not a scope exit in its CFG", fnID, siteID))
+			problems = append(problems, fmt.Sprintf("function %s drops at site %v, which is not a scope exit in its CFG", fnID, siteID))
 		}
 		problems = append(problems, validateSymbols(fnID, "scope exit", ids)...)
 	}
 	for nodeID, ids := range plan.BeforeReturn {
 		if _, exists := siteNodes[nodeID]; !exists {
-			problems = append(problems, fmt.Sprintf("function %d drops before return %d, which is not a site in its CFG", fnID, nodeID))
+			problems = append(problems, fmt.Sprintf("function %s drops before return %d, which is not a site in its CFG", fnID, nodeID))
 		}
 		problems = append(problems, validateSymbols(fnID, "return", ids)...)
 	}
 	for nodeID := range plan.BeforeAssign {
 		if _, exists := siteNodes[nodeID]; !exists {
-			problems = append(problems, fmt.Sprintf("function %d drops before assignment %d, which is not a site in its CFG", fnID, nodeID))
+			problems = append(problems, fmt.Sprintf("function %s drops before assignment %d, which is not a site in its CFG", fnID, nodeID))
 		}
 	}
 	for nodeID := range plan.DiscardedValue {
@@ -152,7 +153,7 @@ func validatePlan(fnID ir.NodeID, plan *CleanupPlan, types *typecheckresult.Resu
 		problems = append(problems, validateArmBody(bindings, fnID, "match field drop", nodeID)...)
 		for _, field := range fields {
 			if field < 0 {
-				problems = append(problems, fmt.Sprintf("function %d drops match field %d at %d", fnID, field, nodeID))
+				problems = append(problems, fmt.Sprintf("function %s drops match field %d at %d", fnID, field, nodeID))
 			}
 		}
 	}
@@ -162,26 +163,26 @@ func validatePlan(fnID ir.NodeID, plan *CleanupPlan, types *typecheckresult.Resu
 // validateSymbols rejects unidentified cleanup targets. Full symbol-identity
 // checking waits for a canonical symbol registry; a zero id is already proof the
 // plan lost the symbol it meant to drop.
-func validateSymbols(fnID ir.NodeID, where string, ids []symbols.SymbolID) []string {
+func validateSymbols(fnID moduleid.FunctionID, where string, ids []symbols.SymbolID) []string {
 	problems := make([]string, 0)
 	for _, id := range ids {
 		if id == 0 {
-			problems = append(problems, fmt.Sprintf("function %d plans an unidentified %s drop", fnID, where))
+			problems = append(problems, fmt.Sprintf("function %s plans an unidentified %s drop", fnID, where))
 		}
 	}
 	return problems
 }
 
-func validateTypedNode(types *typecheckresult.Result, fnID ir.NodeID, where string, nodeID ir.NodeID) []string {
+func validateTypedNode(types *typecheckresult.Result, fnID moduleid.FunctionID, where string, nodeID ir.NodeID) []string {
 	if types.ExprType(ast.NodeID(nodeID)) != nil {
 		return nil
 	}
-	return []string{fmt.Sprintf("function %d plans a %s at node %d with no expression type", fnID, where, nodeID)}
+	return []string{fmt.Sprintf("function %s plans a %s at node %d with no expression type", fnID, where, nodeID)}
 }
 
-func validateArmBody(bindings *symbols.Bindings, fnID ir.NodeID, where string, nodeID ir.NodeID) []string {
+func validateArmBody(bindings *symbols.Bindings, fnID moduleid.FunctionID, where string, nodeID ir.NodeID) []string {
 	if bindings.ScopeID(ast.NodeID(nodeID)) != nil {
 		return nil
 	}
-	return []string{fmt.Sprintf("function %d plans a %s at node %d, which is not a block", fnID, where, nodeID)}
+	return []string{fmt.Sprintf("function %s plans a %s at node %d, which is not a block", fnID, where, nodeID)}
 }

@@ -11,6 +11,7 @@ import (
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/thir"
+	"compiler/internal/moduleid"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
@@ -20,16 +21,16 @@ const validationGraphSource = "fn main() -> i32 {\n\treturn 0;\n}\n"
 
 // buildGraph produces real CFG topology so the validator is checked against the
 // artifact it actually receives, not a hand-shaped stand-in.
-func buildGraph(t *testing.T, sourceText string) (*cfg.Module, ir.NodeID) {
+func buildGraph(t *testing.T, sourceText string) (*cfg.Module, moduleid.FunctionID) {
 	t.Helper()
 	const file = "validate_test" + ".peep"
 	diag := diagnostics.NewDiagnosticBag()
 	source := parser.New(file, lexer.New(file, sourceText, diag).Tokenize(), diag).ParseModule()
-	graphs := cfg.BuildModule(thir.Build("test", file, source, nil, nil, nil))
+	graphs := cfg.BuildModule(thir.Build(moduleid.ID{Origin: "local", ImportPath: "test"}, file, source, nil, nil, nil))
 	if graphs == nil || len(graphs.Functions) == 0 {
 		t.Fatalf("no CFG built: %s", diag.EmitAllToString())
 	}
-	return graphs, graphs.Functions[0].NodeID
+	return graphs, graphs.Functions[0].FunctionID
 }
 
 func emptyPlan() *CleanupPlan {
@@ -136,8 +137,8 @@ func TestValidateRejectsEvidenceGaps(t *testing.T) {
 }
 
 func TestValidateRejectsPlanWithoutCFG(t *testing.T) {
-	graphs, fnID := buildGraph(t, validationGraphSource)
-	err := Result{fnID + 1000: emptyPlan()}.Validate(typecheckresult.New(), symbols.NewBindings(), graphs)
+	graphs, _ := buildGraph(t, validationGraphSource)
+	err := Result{moduleid.FunctionID("missing-function"): emptyPlan()}.Validate(typecheckresult.New(), symbols.NewBindings(), graphs)
 	if err == nil || !strings.Contains(err.Error(), "no CFG") {
 		t.Fatalf("error = %v, want a missing-CFG report", err)
 	}

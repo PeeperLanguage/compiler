@@ -6,6 +6,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
+	"compiler/internal/moduleid"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typecheckresult"
@@ -16,18 +17,29 @@ import (
 // Build materializes base-typechecked syntax into one self-contained semantic
 // tree. It does not resolve names or infer types: missing published evidence is
 // represented explicitly and rejected by Validate for otherwise-clean source.
-func Build(name, filePath string, source *ast.Module, bindings *symbols.Bindings, typing *typecheckresult.Result, constantCondition func(ast.Expr, *symbols.Scope) (*bool, []*diagnostics.Diagnostic)) *Module {
+func Build(owner moduleid.ID, filePath string, source *ast.Module, bindings *symbols.Bindings, typing *typecheckresult.Result, constantCondition func(ast.Expr, *symbols.Scope) (*bool, []*diagnostics.Diagnostic)) *Module {
 	if source == nil {
 		return nil
 	}
-	builder := &builder{bindings: bindings, typing: typing, constantCondition: constantCondition}
-	module := &Module{Name: name, FilePath: filePath, Functions: make([]*Function, 0), byNodeID: make(map[ir.NodeID]Node)}
+	builder := &builder{
+		owner: owner, bindings: bindings, typing: typing, constantCondition: constantCondition,
+		functionOccurrences: make(map[string]int),
+	}
+	module := &Module{
+		Name:          owner.ImportPath,
+		FilePath:      filePath,
+		Functions:     make([]*Function, 0),
+		byNodeID:      make(map[ir.NodeID]Node),
+		functionIndex: make(map[moduleid.FunctionID]int),
+	}
 	ast.ForEachDecl(source, func(declaration ast.Decl) bool {
 		function, ok := declaration.(*ast.FnDecl)
 		if !ok || function == nil {
 			return true
 		}
-		module.Functions = append(module.Functions, builder.function(function))
+		typedFunction := builder.function(function)
+		module.functionIndex[typedFunction.Identity] = len(module.Functions)
+		module.Functions = append(module.Functions, typedFunction)
 		return true
 	})
 	for _, function := range module.Functions {
@@ -45,14 +57,20 @@ func Build(name, filePath string, source *ast.Module, bindings *symbols.Bindings
 }
 
 type builder struct {
-	bindings          *symbols.Bindings
-	typing            *typecheckresult.Result
-	currentScope      *symbols.Scope
-	constantCondition func(ast.Expr, *symbols.Scope) (*bool, []*diagnostics.Diagnostic)
+	owner               moduleid.ID
+	bindings            *symbols.Bindings
+	typing              *typecheckresult.Result
+	currentScope        *symbols.Scope
+	constantCondition   func(ast.Expr, *symbols.Scope) (*bool, []*diagnostics.Diagnostic)
+	functionOccurrences map[string]int
 }
 
 func (b *builder) function(source *ast.FnDecl) *Function {
+	declarationSurface := source.GetDeclSurface()
+	occurrence := b.functionOccurrences[declarationSurface]
+	b.functionOccurrences[declarationSurface] = occurrence + 1
 	function := &Function{
+		Identity:          moduleid.FunctionIdentity(b.owner, declarationSurface, occurrence),
 		Source:            sourceInfo(source),
 		IsEntrypointShape: source.Receiver == nil && source.Body != nil && len(source.TypeParams) == 0,
 		ReturnTypeText:    ast.TypeText(source.ReturnType),

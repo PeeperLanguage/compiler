@@ -38,8 +38,11 @@ func BuildModule(source *thir.Module) *Module {
 		}
 		graph := buildFunction(function)
 		finalizeGraph(graph)
-		if module.Function(graph.NodeID) != nil {
-			panic(fmt.Sprintf("CFG construction: duplicate function NodeID %d", graph.NodeID))
+		if graph.FunctionID == "" {
+			panic(fmt.Sprintf("CFG construction: function %q has no stable identity", graph.Name))
+		}
+		if module.FunctionByID(graph.FunctionID) != nil {
+			panic("CFG construction: duplicate stable function identity")
 		}
 		module.Functions = append(module.Functions, graph)
 	}
@@ -48,7 +51,7 @@ func BuildModule(source *thir.Module) *Module {
 
 func buildFunction(source *thir.Function) *ControlFlowGraph {
 	fn := &ControlFlowGraph{
-		NodeID:         source.Source.NodeID,
+		FunctionID:     source.Identity,
 		Name:           source.Name,
 		Location:       source.Source.Location,
 		ReturnTypeText: source.ReturnTypeText,

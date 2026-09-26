@@ -40,7 +40,7 @@ func analyzeInitializationSource(t *testing.T, source string) (*functionResult, 
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
-	module.THIR = thir.Build(module.ID.ImportPath, module.FilePath, module.AST, module.Bindings, module.Typechecking, nil)
+	module.THIR = thir.Build(module.ID, module.FilePath, module.AST, module.Bindings, module.Typechecking, nil)
 	module.CFG = cfg.BuildModule(module.THIR)
 	symbol, found := module.ModuleScope.Lookup("choose")
 	if !found || symbol == nil {
@@ -50,13 +50,13 @@ func analyzeInitializationSource(t *testing.T, source string) (*functionResult, 
 	if !ok || fn == nil {
 		t.Fatal("choose function AST missing")
 	}
-	graph := module.CFG.Function(ir.NodeID(fn.ID()))
+	graph := module.CFG.FunctionByID(module.THIR.Function(ir.NodeID(fn.ID())).Identity)
 	if graph == nil {
 		t.Fatal("choose function CFG missing")
 	}
 	effects := effect.BuildTHIR(module.THIR, module.CFG)
 	module.Effects = effects
-	result := analyzeFunction(graph, effects[graph.NodeID], diag)
+	result := analyzeFunction(graph, effects[graph.FunctionID], diag)
 	return result, diag, module
 }
 
@@ -253,7 +253,7 @@ fn choose(result: Result) -> i32 {
 	match := fn.Body.Stmts[0].(*ast.MatchStmt)
 	binding := module.Bindings.Symbol(match.Arms[0].Fields[0].Binding)
 	returnID := ir.NodeID(match.Arms[0].Body.Stmts[0].ID())
-	for _, block := range module.CFG.Function(ir.NodeID(fn.ID())).Blocks {
+	for _, block := range module.CFG.FunctionByID(module.THIR.Function(ir.NodeID(fn.ID())).Identity).Blocks {
 		for _, cfgSite := range block.Sites {
 			if cfgSite.NodeID != returnID {
 				continue
@@ -264,7 +264,7 @@ fn choose(result: Result) -> i32 {
 			if _, initialized := in[binding.ID]; initialized {
 				t.Fatalf("pattern binding unexpectedly initialized before arm return: state=%#v", in)
 			}
-			out := transfer(module.Effects[ir.NodeID(fn.ID())][cfgSite.ID], in)
+			out := transfer(module.Effects[module.THIR.Function(ir.NodeID(fn.ID())).Identity][cfgSite.ID], in)
 			if _, initialized := out[binding.ID]; !initialized {
 				t.Fatalf("pattern binding absent after arm return transfer: state=%#v", out)
 			}

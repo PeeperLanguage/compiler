@@ -3,6 +3,7 @@ package cfg
 import (
 	graphcore "compiler/internal/graph"
 	"compiler/internal/ir"
+	"compiler/internal/moduleid"
 	"compiler/internal/source"
 )
 
@@ -11,13 +12,13 @@ type Module struct {
 	Functions []*ControlFlowGraph
 }
 
-// Function returns one graph by source function identity.
-func (m *Module) Function(id ir.NodeID) *ControlFlowGraph {
-	if m == nil {
+// FunctionByID returns one graph by stable module/function identity.
+func (m *Module) FunctionByID(id moduleid.FunctionID) *ControlFlowGraph {
+	if m == nil || id == "" {
 		return nil
 	}
 	for _, graph := range m.Functions {
-		if graph != nil && graph.NodeID == id {
+		if graph != nil && graph.FunctionID == id {
 			return graph
 		}
 	}
@@ -29,7 +30,7 @@ func (m *Module) Function(id ir.NodeID) *ControlFlowGraph {
 // must not mutate topology after publication: rebuild the CFG before publishing
 // a new generation, since site IDs and downstream evidence depend on it.
 type ControlFlowGraph struct {
-	NodeID         ir.NodeID
+	FunctionID     moduleid.FunctionID
 	Name           string
 	Location       *source.Location
 	ReturnTypeText string

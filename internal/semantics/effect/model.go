@@ -13,6 +13,7 @@ import (
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/thir"
+	"compiler/internal/moduleid"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -197,12 +198,12 @@ func (CallEnd) effectOp()   {}
 // A cfg.SiteID is only meaningful relative to one graph, so function identity
 // is the outer key. Slice order is evaluation order; consumers must not reorder
 // it.
-type Result map[ir.NodeID]SiteOps
+type Result map[moduleid.FunctionID]SiteOps
 
 // SiteOps holds one function's effects, keyed by the site they happen at.
 type SiteOps map[cfg.SiteID][]Op
 
 // At returns the effects published for one site, in evaluation order.
-func (r Result) At(fn ir.NodeID, site cfg.SiteID) []Op {
+func (r Result) At(fn moduleid.FunctionID, site cfg.SiteID) []Op {
 	return r[fn][site]
 }

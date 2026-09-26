@@ -40,7 +40,7 @@ func buildEffects(t *testing.T, source string) (effect.Result, *module.Module) {
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
-	module.THIR = thir.Build(module.ID.ImportPath, module.FilePath, module.AST, module.Bindings, module.Typechecking, nil)
+	module.THIR = thir.Build(module.ID, module.FilePath, module.AST, module.Bindings, module.Typechecking, nil)
 	module.CFG = cfg.BuildModule(module.THIR)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
@@ -70,7 +70,7 @@ func publishedOps(t *testing.T, result effect.Result, module *module.Module, nam
 	if !ok || fn == nil {
 		t.Fatalf("function %q has no declaration", name)
 	}
-	graph := module.CFG.Function(ir.NodeID(fn.ID()))
+	graph := module.CFG.FunctionByID(module.THIR.Function(ir.NodeID(fn.ID())).Identity)
 	if graph == nil {
 		t.Fatalf("function %q has no CFG", name)
 	}
@@ -83,7 +83,7 @@ func publishedOps(t *testing.T, result effect.Result, module *module.Module, nam
 			if site == nil {
 				continue
 			}
-			for _, op := range result.At(graph.NodeID, site.ID) {
+			for _, op := range result.At(graph.FunctionID, site.ID) {
 				published = append(published, describe(op))
 			}
 		}
@@ -404,7 +404,7 @@ fn read(values: [3]i32, pair: Pair, index: i32) -> i32 {
 		t.Fatal("function read missing")
 	}
 	fn := symbol.ASTNode.(*ast.FnDecl)
-	graph := module.CFG.Function(ir.NodeID(fn.ID()))
+	graph := module.CFG.FunctionByID(module.THIR.Function(ir.NodeID(fn.ID())).Identity)
 	if graph == nil {
 		t.Fatal("function read has no CFG")
 	}
@@ -412,7 +412,7 @@ fn read(values: [3]i32, pair: Pair, index: i32) -> i32 {
 	projected := make([]string, 0)
 	for _, block := range graph.Blocks {
 		for _, site := range block.Sites {
-			for _, op := range result.At(graph.NodeID, site.ID) {
+			for _, op := range result.At(graph.FunctionID, site.ID) {
 				use, ok := op.(effect.Use)
 				if !ok || len(use.Place.Projections) == 0 {
 					continue
@@ -458,13 +458,13 @@ fn choose(point: Point) -> i32 {
 		t.Fatal("function choose missing")
 	}
 	fn := symbol.ASTNode.(*ast.FnDecl)
-	graph := module.CFG.Function(ir.NodeID(fn.ID()))
+	graph := module.CFG.FunctionByID(module.THIR.Function(ir.NodeID(fn.ID())).Identity)
 
 	var receiver *effect.Borrow
 	var field *effect.Use
 	for _, block := range graph.Blocks {
 		for _, site := range block.Sites {
-			for _, op := range result.At(graph.NodeID, site.ID) {
+			for _, op := range result.At(graph.FunctionID, site.ID) {
 				switch op := op.(type) {
 				case effect.Borrow:
 					if op.Place.Root != nil && op.Place.Root.Name == "point" {

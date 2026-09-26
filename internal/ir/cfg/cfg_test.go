@@ -8,6 +8,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
 	"compiler/internal/ir/thir"
+	"compiler/internal/moduleid"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
 )
@@ -16,19 +17,21 @@ func testModule(body *ast.BlockStmt, returnType ast.TypeExpr) *thir.Module {
 	location := source.NewLocation("cfg_test.peep", source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 10})
 	fn := &ast.FnDecl{
 		NodeIDHolder: ast.NodeIDHolder{NodeID: 1},
+		Documented:   ast.Documented{DeclSurface: "fn:main:"},
 		Name:         &ast.Ident{NodeIDHolder: ast.NodeIDHolder{NodeID: 2}, Name: "main", Location: location},
 		ReturnType:   returnType,
 		Body:         body,
 		Location:     location,
 	}
-	return thir.Build("test", "cfg_test.peep", &ast.Module{Stmts: []ast.Stmt{fn}}, nil, nil, nil)
+	return thir.Build(moduleid.ID{Origin: "local", ImportPath: "test"}, "cfg_test.peep", &ast.Module{Stmts: []ast.Stmt{fn}}, nil, nil, nil)
 }
 
-func TestModuleFindsFunctionBySourceIdentity(t *testing.T) {
+func TestModuleFindsFunctionByStableIdentity(t *testing.T) {
 	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}}
-	module := BuildModule(testModule(body, nil))
-	if len(module.Functions) != 1 || module.Function(ir.NodeID(1)) != module.Functions[0] {
-		t.Fatalf("CFG functions = %#v, want source NodeID lookup", module)
+	source := testModule(body, nil)
+	module := BuildModule(source)
+	if len(module.Functions) != 1 || module.Functions[0].FunctionID == "" || module.FunctionByID(source.Functions[0].Identity) != module.Functions[0] {
+		t.Fatalf("CFG function identity = %q, want THIR identity %q", module.Functions[0].FunctionID, source.Functions[0].Identity)
 	}
 	if _, found := reflect.TypeFor[ControlFlowGraph]().FieldByName("Cleanup"); found {
 		t.Fatal("CFG graph retains ownership cleanup output")
@@ -36,27 +39,39 @@ func TestModuleFindsFunctionBySourceIdentity(t *testing.T) {
 }
 
 func TestModuleFunctionLookupUsesPublishedFunctions(t *testing.T) {
-	graph := &ControlFlowGraph{NodeID: 7}
+	graph := &ControlFlowGraph{FunctionID: "test"}
 	module := &Module{Functions: []*ControlFlowGraph{nil, graph}}
-	if got := module.Function(7); got != graph {
+	if got := module.FunctionByID("test"); got != graph {
 		t.Fatalf("function lookup = %#v, want published graph", got)
 	}
-	if got := module.Function(8); got != nil {
+	if got := module.FunctionByID("missing"); got != nil {
 		t.Fatalf("missing function lookup = %#v, want nil", got)
 	}
 	var missing *Module
-	if got := missing.Function(7); got != nil {
+	if got := missing.FunctionByID("test"); got != nil {
 		t.Fatalf("nil module lookup = %#v, want nil", got)
 	}
 }
 
-func TestBuildModuleRejectsDuplicateFunctionIdentity(t *testing.T) {
-	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}}
-	source := testModule(body, nil)
-	source.Functions = append(source.Functions, source.Functions[0])
+func TestBuildModuleRejectsMissingFunctionID(t *testing.T) {
+	source := testModule(&ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}}, nil)
+	source.Functions[0].Identity = ""
 	defer func() {
-		if got := recover(); got != "CFG construction: duplicate function NodeID 1" {
-			t.Fatalf("duplicate function panic = %v", got)
+		if got := recover(); got != `CFG construction: function "main" has no stable identity` {
+			t.Fatalf("missing function identity panic = %v", got)
+		}
+	}()
+	BuildModule(source)
+}
+
+func TestBuildModuleRejectsDuplicateFunctionID(t *testing.T) {
+	source := testModule(&ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}}, nil)
+	duplicate := *source.Functions[0]
+	duplicate.Source.NodeID = 2
+	source.Functions = append(source.Functions, &duplicate)
+	defer func() {
+		if got := recover(); got != "CFG construction: duplicate stable function identity" {
+			t.Fatalf("duplicate function identity panic = %v", got)
 		}
 	}()
 	BuildModule(source)

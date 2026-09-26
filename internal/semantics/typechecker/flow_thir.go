@@ -63,7 +63,7 @@ func CheckFlow(diag *diagnostics.DiagnosticBag, source *thir.Module, graphs *cfg
 		if graph == nil {
 			continue
 		}
-		function := source.Function(graph.NodeID)
+		function := source.FunctionByID(graph.FunctionID)
 		if function == nil || function.Symbol == nil || function.Symbol.Scope == nil {
 			continue
 		}

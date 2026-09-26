@@ -173,8 +173,8 @@ func moduleWithArtifacts() *module.Module {
 		THIR:                      &thir.Module{},
 		CFG:                       &cfg.Module{Functions: []*cfg.ControlFlowGraph{{}}},
 		Flow:                      flowresult.New(),
-		Effects:                   effect.Result{1: {cfg.SiteID{}: {effect.Use{}}}},
-		Ownership:                 ownershipresult.Result{1: &ownershipresult.CleanupPlan{}},
+		Effects:                   effect.Result{moduleid.FunctionID("test"): {cfg.SiteID{}: {effect.Use{}}}},
+		Ownership:                 ownershipresult.Result{moduleid.FunctionID("test"): &ownershipresult.CleanupPlan{}},
 		MIR:                       &mir.Module{},
 		LLVMIR:                    "stale IR",
 	}

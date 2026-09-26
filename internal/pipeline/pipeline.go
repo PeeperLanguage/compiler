@@ -430,7 +430,7 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 	if module.Phase < phase.Typechecked {
 		typechecker.Check(phaseCtx, module)
 		consteval.FinalizeValues(phaseCtx, module)
-		module.THIR = thir.Build(module.ID.ImportPath, module.FilePath, module.AST, module.Bindings, module.Typechecking,
+		module.THIR = thir.Build(module.ID, module.FilePath, module.AST, module.Bindings, module.Typechecking,
 			func(expr ast.Expr, scope *symbols.Scope) (*bool, []*diagnostics.Diagnostic) {
 				// Constant evaluation may cache local constants and diagnose cycles.
 				// Keep diagnostics at their original CFG boundary, not Typechecked.

@@ -41,7 +41,7 @@ func checkFlowSource(t *testing.T, src string) (*module.Module, *diagnostics.Dia
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
 	Check(ctx, module)
-	module.THIR = thir.Build(module.ID.ImportPath, module.FilePath, module.AST, module.Bindings, module.Typechecking, nil)
+	module.THIR = thir.Build(module.ID, module.FilePath, module.AST, module.Bindings, module.Typechecking, nil)
 	module.CFG = cfg.BuildModule(module.THIR)
 	module.Flow = CheckFlow(diag, module.THIR, module.CFG, module.ModuleScope)
 	return module, diag

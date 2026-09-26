@@ -274,7 +274,7 @@ func TestPipelineLowersExactLoopExitCleanupToMIR(t *testing.T) {
 		loop := fn.Body.Stmts[0].(*ast.ForStmt)
 		continueStmt := loop.Body.Stmts[1].(*ast.IfStmt).Then.Stmts[0].(*ast.ContinueStmt)
 		breakStmt := loop.Body.Stmts[3].(*ast.IfStmt).Then.Stmts[0].(*ast.BreakStmt)
-		graph := entry.CFG.Function(ir.NodeID(fn.ID()))
+		graph := entry.CFG.FunctionByID(entry.THIR.Function(ir.NodeID(fn.ID())).Identity)
 		if graph == nil || entry.MIR == nil {
 			t.Fatalf("pipeline artifacts missing: CFG=%v MIR=%v", graph != nil, entry.MIR != nil)
 		}
@@ -788,6 +788,22 @@ func TestPipelineSkipsIncompleteEffectValidationDuringRecovery(t *testing.T) {
 	}
 	if hasDiagnosticCode(diag, diagnostics.ErrInvalidEvidence) {
 		t.Fatalf("source-error recovery reported invalid evidence:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelinePreservesDiagnosticsForIdenticalRedeclarations(t *testing.T) {
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, "", `
+fn same() -> i32 {
+	let mut value: i32;
+	return value;
+}
+fn same() -> i32 { return 2; }
+`)
+	out := diag.EmitAllToString()
+	for _, code := range []string{diagnostics.ErrRedeclaredSymbol, diagnostics.ErrUninitializedVariable} {
+		if !strings.Contains(out, code) {
+			t.Fatalf("identical redeclarations lost %s diagnostic:\n%s", code, out)
+		}
 	}
 }
 

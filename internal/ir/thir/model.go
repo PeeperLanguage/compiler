@@ -6,6 +6,7 @@ package thir
 import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/ir"
+	"compiler/internal/moduleid"
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -14,10 +15,11 @@ import (
 
 // Module contains every callable declaration in one typed source module.
 type Module struct {
-	Name      string
-	FilePath  string
-	Functions []*Function
-	byNodeID  map[ir.NodeID]Node
+	Name          string
+	FilePath      string
+	Functions     []*Function
+	byNodeID      map[ir.NodeID]Node
+	functionIndex map[moduleid.FunctionID]int
 }
 
 // Node returns typed source node with source identity id.
@@ -41,9 +43,26 @@ func (m *Module) Function(id ir.NodeID) *Function {
 	return nil
 }
 
+// FunctionByID returns one declaration by stable module/function identity.
+func (m *Module) FunctionByID(id moduleid.FunctionID) *Function {
+	if m == nil || id == "" {
+		return nil
+	}
+	index, found := m.functionIndex[id]
+	if !found || index < 0 || index >= len(m.Functions) {
+		return nil
+	}
+	function := m.Functions[index]
+	if function == nil || function.Identity != id {
+		return nil
+	}
+	return function
+}
+
 // Function retains semantic signature and lexical body. A nil Body denotes an
 // external declaration, not an incomplete function.
 type Function struct {
+	Identity              moduleid.FunctionID
 	Name                  string
 	Symbol                *symbols.Symbol
 	IsEntrypointShape     bool

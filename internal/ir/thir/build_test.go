@@ -42,11 +42,72 @@ func buildTypedModule(t *testing.T, source string) *module.Module {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
-	mod.THIR = thir.Build(mod.ID.ImportPath, mod.FilePath, mod.AST, mod.Bindings, mod.Typechecking, nil)
+	mod.THIR = thir.Build(mod.ID, mod.FilePath, mod.AST, mod.Bindings, mod.Typechecking, nil)
 	if err := mod.THIR.Validate(); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 	return mod
+}
+
+func TestBuildPublishesStableFunctionIdentityAcrossEarlierBodyEdit(t *testing.T) {
+	first := buildTypedModule(t, "fn Prep() {}\nfn main() -> i32 { return 7; }\n")
+	second := buildTypedModule(t, "fn Prep() { let x = 1; let y = 2; }\nfn main() -> i32 { return 7; }\n")
+	if len(first.THIR.Functions) != 2 || len(second.THIR.Functions) != 2 {
+		t.Fatalf("function counts = %d and %d, want two", len(first.THIR.Functions), len(second.THIR.Functions))
+	}
+	firstID := first.THIR.Functions[1].Identity
+	secondID := second.THIR.Functions[1].Identity
+	if first.THIR.Functions[1].Source.NodeID == second.THIR.Functions[1].Source.NodeID {
+		t.Fatal("earlier body edit did not shift later function NodeID")
+	}
+	if firstID == "" || firstID != secondID {
+		t.Fatalf("later function identities = %q and %q, want stable non-empty identity", firstID, secondID)
+	}
+}
+
+func TestFunctionByIDFindsPublishedFunction(t *testing.T) {
+	mod := buildTypedModule(t, "fn first() {}\nfn second() {}")
+	function := mod.THIR.Functions[1]
+	if got := mod.THIR.FunctionByID(function.Identity); got != function {
+		t.Fatalf("FunctionByID(%q) = %p, want %p", function.Identity, got, function)
+	}
+}
+
+func TestValidateRejectsStaleFunctionIdentityIndex(t *testing.T) {
+	mod := buildTypedModule(t, "fn first() {}\nfn second() {}")
+	function := mod.THIR.Functions[1]
+	identity := function.Identity
+	function.Identity = "changed"
+	if got := mod.THIR.FunctionByID(identity); got != nil {
+		t.Fatalf("FunctionByID(%q) = %p after identity changed, want nil", identity, got)
+	}
+	if err := mod.THIR.Validate(); err == nil {
+		t.Fatal("stale function identity index accepted")
+	}
+}
+
+func TestValidateRejectsMissingFunctionIdentity(t *testing.T) {
+	mod := buildTypedModule(t, "fn main() -> i32 { return 0; }")
+	mod.THIR.Functions[0].Identity = ""
+	if err := mod.THIR.Validate(); err == nil {
+		t.Fatal("missing function identity accepted")
+	}
+}
+
+func TestValidateRejectsDuplicateFunctionIdentity(t *testing.T) {
+	mod := buildTypedModule(t, "fn first() {}\nfn second() {}")
+	mod.THIR.Functions[1].Identity = mod.THIR.Functions[0].Identity
+	if err := mod.THIR.Validate(); err == nil {
+		t.Fatal("duplicate function identity accepted")
+	}
+}
+
+func TestValidateRejectsDuplicateFunctionSourceIdentity(t *testing.T) {
+	mod := buildTypedModule(t, "fn first() {}\nfn second() {}")
+	mod.THIR.Functions[1].Source.NodeID = mod.THIR.Functions[0].Source.NodeID
+	if err := mod.THIR.Validate(); err == nil {
+		t.Fatal("duplicate function source identity accepted")
+	}
 }
 
 func TestBuildPublishesEffectiveCallsAndPlaces(t *testing.T) {

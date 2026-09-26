@@ -101,11 +101,11 @@ func GenerateMIR(input LoweringInput) *Module {
 			out.Funcs = append(out.Funcs, functionSignature(input, sourceFn, nil))
 			continue
 		}
-		graph := input.CFG.Function(sourceFn.Source.NodeID)
+		graph := input.CFG.FunctionByID(sourceFn.Identity)
 		if graph == nil {
 			return nil
 		}
-		fn, ok := lowerCFGFunction(out, input, sourceFn, graph, input.Ownership[sourceFn.Source.NodeID])
+		fn, ok := lowerCFGFunction(out, input, sourceFn, graph, input.Ownership[graph.FunctionID])
 		if !ok {
 			return nil
 		}

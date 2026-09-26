@@ -60,7 +60,7 @@ func checkOwnershipSource(t *testing.T, src string) *ownershipResult {
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
-	module.THIR = thir.Build(module.ID.ImportPath, module.FilePath, module.AST, module.Bindings, module.Typechecking, nil)
+	module.THIR = thir.Build(module.ID, module.FilePath, module.AST, module.Bindings, module.Typechecking, nil)
 	module.CFG = cfg.BuildModule(module.THIR)
 	module.Flow = typechecker.CheckFlow(diag, module.THIR, module.CFG, module.ModuleScope)
 	module.Effects = effect.BuildTHIR(module.THIR, module.CFG)
@@ -184,7 +184,7 @@ func inspectFunctionAnalysis(t *testing.T, result *ownershipResult, name string)
 	if scope == nil {
 		t.Fatalf("function %q scope missing", name)
 	}
-	cfgFn := result.module.CFG.Function(ir.NodeID(fn.ID()))
+	cfgFn := result.module.CFG.FunctionByID(result.module.THIR.Function(ir.NodeID(fn.ID())).Identity)
 	if cfgFn == nil {
 		t.Fatalf("function %q cleanup plan missing", name)
 	}
@@ -196,7 +196,7 @@ func inspectFunctionAnalysis(t *testing.T, result *ownershipResult, name string)
 		graph:         cfgFn,
 		sites:         sites,
 		order:         order,
-		effects:       result.module.Effects[cfgFn.NodeID],
+		effects:       result.module.Effects[cfgFn.FunctionID],
 		cleanup:       cleanup,
 		function:      result.module.THIR.Function(ir.NodeID(fn.ID())),
 		functionScope: scope,
@@ -232,7 +232,7 @@ func hasOwnershipCode(result *ownershipResult, code string) bool {
 
 func cleanupPlanForFunction(t *testing.T, result *ownershipResult, fn *ast.FnDecl) *ownershipresult.CleanupPlan {
 	t.Helper()
-	plan := result.module.Ownership[ir.NodeID(fn.ID())]
+	plan := result.module.Ownership[result.module.THIR.Function(ir.NodeID(fn.ID())).Identity]
 	if plan == nil {
 		t.Fatalf("cleanup plan for %q missing", fn.Name.Name)
 	}
@@ -445,8 +445,8 @@ fn second() { let two = make(); }`)
 	if len(firstPlan.AfterScope) != 1 || len(secondPlan.AfterScope) != 1 {
 		t.Fatalf("unexpected function cleanup plans: first=%#v second=%#v", firstPlan, secondPlan)
 	}
-	firstGraph := result.module.CFG.Function(ir.NodeID(first.ID()))
-	secondGraph := result.module.CFG.Function(ir.NodeID(second.ID()))
+	firstGraph := result.module.CFG.FunctionByID(result.module.THIR.Function(ir.NodeID(first.ID())).Identity)
+	secondGraph := result.module.CFG.FunctionByID(result.module.THIR.Function(ir.NodeID(second.ID())).Identity)
 	if got := cleanupSymbolNames(result.module, firstPlan.AfterScope[scopeExitSiteID(t, firstGraph, first.Body.ID())]); !slices.Equal(got, []string{"one"}) {
 		t.Fatalf("first function cleanup = %v, want [one]", got)
 	}
@@ -456,7 +456,7 @@ fn second() { let two = make(); }`)
 }
 
 func TestOwnershipPublishesEmptyPlanForUnmatchedGraph(t *testing.T) {
-	graph := &cfg.ControlFlowGraph{NodeID: 42}
+	graph := &cfg.ControlFlowGraph{FunctionID: "missing"}
 	result := Check(diagnostics.NewDiagnosticBag(), Input{
 		Source:   &thir.Module{},
 		CFG:      &cfg.Module{Functions: []*cfg.ControlFlowGraph{graph}},
@@ -464,7 +464,7 @@ func TestOwnershipPublishesEmptyPlanForUnmatchedGraph(t *testing.T) {
 		Scope:    symbols.NewScope(nil),
 		Bindings: symbols.NewBindings(),
 	})
-	plan := result[graph.NodeID]
+	plan := result[graph.FunctionID]
 	if plan == nil || plan.AfterScope == nil || plan.BeforeReturn == nil || plan.BeforeAssign == nil ||
 		plan.DiscardedValue == nil || plan.ProjectionBase == nil || plan.MatchFieldDrops == nil || plan.MatchWholePayloadDrops == nil {
 		t.Fatalf("unmatched CFG function plan = %#v, want initialized empty plan", plan)
@@ -528,7 +528,7 @@ fn main() {
 	}
 	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
 	nested := fn.Body.Stmts[1].(*ast.BlockStmt)
-	graph := result.module.CFG.Function(ir.NodeID(fn.ID()))
+	graph := result.module.CFG.FunctionByID(result.module.THIR.Function(ir.NodeID(fn.ID())).Identity)
 	plan := cleanupPlanForFunction(t, result, fn)
 	if got := cleanupSymbolNames(result.module, plan.AfterScope[scopeExitSiteID(t, graph, nested.ID())]); !slices.Equal(got, []string{"nested"}) {
 		t.Fatalf("nested cleanup = %v, want [nested]", got)
@@ -556,7 +556,7 @@ fn main() {
 	loop := fn.Body.Stmts[0].(*ast.ForStmt)
 	continueStmt := loop.Body.Stmts[1].(*ast.IfStmt).Then.Stmts[0].(*ast.ContinueStmt)
 	breakStmt := loop.Body.Stmts[3].(*ast.IfStmt).Then.Stmts[0].(*ast.BreakStmt)
-	graph := result.module.CFG.Function(ir.NodeID(fn.ID()))
+	graph := result.module.CFG.FunctionByID(result.module.THIR.Function(ir.NodeID(fn.ID())).Identity)
 	plan := cleanupPlanForFunction(t, result, fn)
 
 	var continueExit, breakExit, fallthroughExit cfg.SiteID
@@ -958,7 +958,7 @@ fn valid(resource: Resource) {
 	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
 	match := fn.Body.Stmts[0].(*ast.MatchStmt)
 	plan := cleanupPlanForFunction(t, result, fn)
-	graph := result.module.CFG.Function(ir.NodeID(fn.ID()))
+	graph := result.module.CFG.FunctionByID(result.module.THIR.Function(ir.NodeID(fn.ID())).Identity)
 	// The owned arm consumes the carrier, so leaving it must not drop the
 	// carrier again; the pending arm never consumes it, so leaving there must.
 	if got := cleanupSymbolNames(result.module, plan.AfterScope[scopeExitSiteID(t, graph, match.Arms[0].Body.ID())]); slices.Contains(got, "resource") {
@@ -1065,7 +1065,7 @@ fn valid() {
 			loop := fn.Body.Stmts[0].(*ast.ForStmt)
 			match := loop.Body.Stmts[1].(*ast.MatchStmt)
 			plan := cleanupPlanForFunction(t, result, fn)
-			graph := result.module.CFG.Function(ir.NodeID(fn.ID()))
+			graph := result.module.CFG.FunctionByID(result.module.THIR.Function(ir.NodeID(fn.ID())).Identity)
 			if got := cleanupSymbolNames(result.module, plan.AfterScope[scopeExitSiteID(t, graph, match.Arms[0].Body.ID())]); slices.Contains(got, "resource") {
 				t.Fatalf("consuming arm received duplicate carrier cleanup: %v", got)
 			}
@@ -1233,7 +1233,7 @@ fn valid(resource: Resource) {
 	match := fn.Body.Stmts[0].(*ast.MatchStmt)
 	plan := cleanupPlanForFunction(t, result, fn)
 	ownedBodyID := ir.NodeID(match.Arms[0].Body.ID())
-	graph := result.module.CFG.Function(ir.NodeID(fn.ID()))
+	graph := result.module.CFG.FunctionByID(result.module.THIR.Function(ir.NodeID(fn.ID())).Identity)
 	if got := plan.MatchFieldDrops[ownedBodyID]; !slices.Equal(got, []int{0}) {
 		t.Fatalf("owned discard drops = %v, want [0]", got)
 	}
@@ -1425,7 +1425,7 @@ fn consume(resource: Resource) {
 	if got := plan.MatchFieldDrops[bodyID]; !slices.Equal(got, []int{2, 1}) {
 		t.Fatalf("match field drops = %v, want [2 1]", got)
 	}
-	graph := result.module.CFG.Function(ir.NodeID(fn.ID()))
+	graph := result.module.CFG.FunctionByID(result.module.THIR.Function(ir.NodeID(fn.ID())).Identity)
 	if got := cleanupSymbolNames(result.module, plan.AfterScope[scopeExitSiteID(t, graph, match.Arms[0].Body.ID())]); !slices.Equal(got, []string{"selected"}) {
 		t.Fatalf("arm binding cleanup = %v, want [selected]", got)
 	}

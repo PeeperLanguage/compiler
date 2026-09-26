@@ -90,11 +90,11 @@ func Check(diag *diagnostics.DiagnosticBag, input Input) ownershipresult.Result 
 			MatchFieldDrops:        make(map[ir.NodeID][]int),
 			MatchWholePayloadDrops: make(map[ir.NodeID]struct{}),
 		}
-		fn := input.Source.Function(graph.NodeID)
+		fn := input.Source.FunctionByID(graph.FunctionID)
 		if fn != nil && fn.Symbol != nil && fn.Body != nil {
 			checkFunction(diag, input, fn, fn.Symbol.Scope, graph, plan)
 		}
-		result[graph.NodeID] = plan
+		result[graph.FunctionID] = plan
 	}
 	return result
 }
@@ -110,7 +110,7 @@ func checkFunction(diag *diagnostics.DiagnosticBag, input Input, fn *thir.Functi
 		graph:         cfgFn,
 		sites:         sites,
 		order:         order,
-		effects:       input.Effects[cfgFn.NodeID],
+		effects:       input.Effects[cfgFn.FunctionID],
 		cleanup:       cleanup,
 		function:      fn,
 		functionScope: scope,

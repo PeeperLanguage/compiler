@@ -3,6 +3,7 @@ package ownershipresult
 import (
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
+	"compiler/internal/moduleid"
 	"compiler/internal/semantics/symbols"
 )
 
@@ -34,5 +35,5 @@ type CleanupPlan struct {
 	MatchWholePayloadDrops map[ir.NodeID]struct{}
 }
 
-// Result stores ownership output by current-generation THIR function NodeID.
-type Result map[ir.NodeID]*CleanupPlan
+// Result stores ownership output by stable THIR function identity.
+type Result map[moduleid.FunctionID]*CleanupPlan

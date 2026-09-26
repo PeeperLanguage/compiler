@@ -22,13 +22,13 @@ func BuildTHIR(source *thir.Module, graphs *cfg.Module) Result {
 		if graph == nil {
 			continue
 		}
-		function := source.Function(graph.NodeID)
+		function := source.FunctionByID(graph.FunctionID)
 		if function == nil {
 			continue
 		}
 		builder := &thirBuilder{source: source, graph: graph, ops: make(SiteOps)}
 		builder.buildFunction(function)
-		result[graph.NodeID] = builder.ops
+		result[graph.FunctionID] = builder.ops
 	}
 	return result
 }

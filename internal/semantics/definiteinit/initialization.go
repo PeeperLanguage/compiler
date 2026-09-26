@@ -27,7 +27,7 @@ func Check(graphs *cfg.Module, effects effect.Result, diag *diagnostics.Diagnost
 		if graph == nil {
 			continue
 		}
-		analyzeFunction(graph, effects[graph.NodeID], diag)
+		analyzeFunction(graph, effects[graph.FunctionID], diag)
 	}
 }
 

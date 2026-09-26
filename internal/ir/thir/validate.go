@@ -13,12 +13,23 @@ func (m *Module) Validate() error {
 		return fmt.Errorf("nil THIR module")
 	}
 	seen := make(map[ir.NodeID]Node)
+	seenFunctionNodes := make(map[ir.NodeID]struct{})
 	for index, function := range m.Functions {
 		if function == nil {
 			return fmt.Errorf("function %d is nil", index)
 		}
 		if function.Source.NodeID == 0 {
 			return fmt.Errorf("function %d has no source identity", index)
+		}
+		if _, found := seenFunctionNodes[function.Source.NodeID]; found {
+			return fmt.Errorf("function %d has duplicate source identity", function.Source.NodeID)
+		}
+		seenFunctionNodes[function.Source.NodeID] = struct{}{}
+		if function.Identity == "" {
+			return fmt.Errorf("function %d has no stable identity", function.Source.NodeID)
+		}
+		if indexedPosition, found := m.functionIndex[function.Identity]; !found || indexedPosition != index {
+			return fmt.Errorf("function %d has inconsistent stable identity index", function.Source.NodeID)
 		}
 		if function.Symbol == nil {
 			return fmt.Errorf("function %d has no symbol", function.Source.NodeID)
@@ -52,6 +63,9 @@ func (m *Module) Validate() error {
 		if validationError != nil {
 			return validationError
 		}
+	}
+	if len(m.functionIndex) != len(m.Functions) {
+		return fmt.Errorf("stable function index has %d entries for %d functions", len(m.functionIndex), len(m.Functions))
 	}
 	return nil
 }

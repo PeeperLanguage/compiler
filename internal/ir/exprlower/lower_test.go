@@ -42,7 +42,7 @@ func buildTypedExprModule(t *testing.T, source string) (*module.Module, *diagnos
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
-	mod.THIR = thir.Build(mod.ID.ImportPath, mod.FilePath, mod.AST, mod.Bindings, mod.Typechecking, nil)
+	mod.THIR = thir.Build(mod.ID, mod.FilePath, mod.AST, mod.Bindings, mod.Typechecking, nil)
 	if err := mod.THIR.Validate(); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}

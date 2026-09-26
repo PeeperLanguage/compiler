@@ -9,6 +9,7 @@ import (
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/thir"
+	"compiler/internal/moduleid"
 	"compiler/pkg/typednil"
 )
 
@@ -30,27 +31,27 @@ func (r Result) Validate(graphs *cfg.Module, source *thir.Module) error {
 		return errors.New("typed THIR is missing for effect validation")
 	}
 	problems := make([]string, 0)
-	sitesByFunction := make(map[ir.NodeID]map[cfg.SiteID]struct{})
+	sitesByFunction := make(map[moduleid.FunctionID]map[cfg.SiteID]struct{})
 	if graphs != nil {
 		for _, graph := range graphs.Functions {
 			if graph == nil {
 				continue
 			}
-			sitesByFunction[graph.NodeID] = graphSites(graph)
-			if _, found := r[graph.NodeID]; !found {
-				problems = append(problems, fmt.Sprintf("function %d has a control-flow graph but no published effects", graph.NodeID))
+			sitesByFunction[graph.FunctionID] = graphSites(graph)
+			if _, found := r[graph.FunctionID]; !found {
+				problems = append(problems, fmt.Sprintf("function %s has a control-flow graph but no published effects", graph.FunctionID))
 			}
 		}
 	}
 	for fn, siteOps := range r {
 		known, found := sitesByFunction[fn]
 		if !found {
-			problems = append(problems, fmt.Sprintf("function %d has published effects but no control-flow graph", fn))
+			problems = append(problems, fmt.Sprintf("function %s has published effects but no control-flow graph", fn))
 			continue
 		}
 		for site, ops := range siteOps {
 			if _, exists := known[site]; !exists {
-				problems = append(problems, fmt.Sprintf("function %d publishes effects at site %v, which the graph does not contain", fn, site))
+				problems = append(problems, fmt.Sprintf("function %s publishes effects at site %v, which the graph does not contain", fn, site))
 				continue
 			}
 			problems = append(problems, validateOps(fn, site, ops, source)...)
@@ -68,20 +69,20 @@ func (r Result) Validate(graphs *cfg.Module, source *thir.Module) error {
 	return errors.New(strings.Join(problems, "; "))
 }
 
-func validateOps(fn ir.NodeID, site cfg.SiteID, ops []Op, source *thir.Module) []string {
+func validateOps(fn moduleid.FunctionID, site cfg.SiteID, ops []Op, source *thir.Module) []string {
 	visitor := &validationVisitor{fn: fn, site: site, source: source}
 	for index, op := range ops {
 		visitor.index = index
 		Visit(op, visitor)
 	}
 	for _, unclosed := range visitor.open {
-		visitor.problems = append(visitor.problems, fmt.Sprintf("function %d site %v leaves call %d open", fn, site, unclosed))
+		visitor.problems = append(visitor.problems, fmt.Sprintf("function %s site %v leaves call %d open", fn, site, unclosed))
 	}
 	return visitor.problems
 }
 
 type validationVisitor struct {
-	fn       ir.NodeID
+	fn       moduleid.FunctionID
 	site     cfg.SiteID
 	index    int
 	source   *thir.Module
@@ -90,7 +91,7 @@ type validationVisitor struct {
 }
 
 func (v *validationVisitor) where() string {
-	return fmt.Sprintf("function %d site %v operation %d", v.fn, v.site, v.index)
+	return fmt.Sprintf("function %s site %v operation %d", v.fn, v.site, v.index)
 }
 
 func (v *validationVisitor) VisitDefine(op Define) {
@@ -100,7 +101,7 @@ func (v *validationVisitor) VisitDefine(op Define) {
 	}
 	if op.IsOnEntry && op.Source == nil {
 		matched := false
-		if function := v.source.Function(v.fn); function != nil {
+		if function := v.source.FunctionByID(v.fn); function != nil {
 			for _, parameter := range function.Params {
 				if parameter.Source.NodeID == op.Node && parameter.Symbol == op.Symbol {
 					matched = true
