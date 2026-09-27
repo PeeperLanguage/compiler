@@ -28,9 +28,13 @@ This map records binding, type, place, intrinsic, and constant implementation ob
 - Default-binding provenance, call expansion, conversions, interface proofs,
   intrinsic dispatch, and selector decisions are likewise published and queried
   through methods; their backing NodeID indexes are private.
-- Generated AST nodes use a separate synthetic identity domain.
-- Default-expression cloning assigns fresh IDs while preserving whether an
-  occurrence came from the default declaration or caller argument.
+- Generated AST nodes use a deterministic generated identity domain owned by a
+  function-local source site and generation kind.
+- Default-expression cloning derives IDs from call site, omitted parameter slot,
+  and clone preorder while preserving whether an occurrence came from the
+  default declaration or caller argument.
+- Checked call-iteration syntax derives IDs from the source `for` node and its
+  generated preorder.
 - Evidence keyed by `NodeID` lets CFG, flow, effects, ownership, and lowering
   consume one decision without repeating syntax resolution.
 

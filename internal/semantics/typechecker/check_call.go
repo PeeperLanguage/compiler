@@ -584,7 +584,7 @@ func (c *checker) expandCallDefaults(call *ast.CallExpr, args []ast.Expr, sym *s
 			}
 			return true
 		})
-		expanded, defaultClones, argumentClones := ast.SubstituteExpr(params[i].Default, substitutions)
+		expanded, defaultClones, argumentClones := ast.SubstituteExpr(call.ID(), uint64(i), params[i].Default, substitutions)
 		if declModule != nil && declModule.Bindings != nil {
 			for clonedID, originalID := range defaultClones {
 				if resolved := declModule.Bindings.SymbolID(originalID); resolved != nil {

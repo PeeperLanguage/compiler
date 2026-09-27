@@ -1,13 +1,14 @@
 package typechecker
 
 import (
-	"compiler/internal/source"
+	"slices"
 	"strings"
 	"testing"
 
 	"compiler/internal/frontend/ast"
 	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/source"
 	"compiler/internal/target"
 )
 
@@ -55,6 +56,58 @@ func TestCallIterationRecognition(t *testing.T) {
 				t.Fatalf("missing actionable hint %q:\n%s", test.hint, diag.EmitAllToString())
 			}
 		})
+	}
+}
+
+func TestCheckedIterationGeneratedNodeIDsAreStable(t *testing.T) {
+	compile := func(prepBody string) ([]source.NodeID, source.NodeID) {
+		t.Helper()
+		module, diag := checkTypeModule(t, `fn Produce() -> ?i32 { return none; }
+fn Prep() { `+prepBody+` }
+fn main() { for item in Produce() {} }`)
+		if diag.HasErrors() {
+			t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+		}
+		main := module.AST.Stmts[2].(*ast.FnDecl)
+		loop := main.Body.Stmts[0].(*ast.ForStmt)
+		expansion := module.Typechecking.CheckedIteration(loop.ID())
+		if expansion == nil {
+			t.Fatal("missing checked iteration")
+		}
+		ids := make([]source.NodeID, 0)
+		ast.Inspect(expansion, func(node ast.Node) bool {
+			if node != nil && node.ID().IsGenerated() {
+				if node.ID().Function() != main.ID().Function() {
+					t.Fatalf("generated node %v has wrong function owner", node.ID())
+				}
+				ids = append(ids, node.ID())
+			}
+			return true
+		})
+		return ids, expansion.ID()
+	}
+
+	baseline, baselineRoot := compile("")
+	repeated, repeatedRoot := compile("let unrelated = 1;")
+	if len(baseline) == 0 || !slices.Equal(baseline, repeated) || baselineRoot != repeatedRoot {
+		t.Fatalf("checked iteration identities changed: %v/%v and %v/%v", baselineRoot, baseline, repeatedRoot, repeated)
+	}
+}
+
+func TestCheckedIterationsUseDistinctGeneratedContexts(t *testing.T) {
+	module, diag := checkTypeModule(t, `fn Produce() -> ?i32 { return none; }
+fn main() {
+	for first in Produce() {}
+	for second in Produce() {}
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	main := module.AST.Stmts[1].(*ast.FnDecl)
+	first := module.Typechecking.CheckedIteration(main.Body.Stmts[0].ID())
+	second := module.Typechecking.CheckedIteration(main.Body.Stmts[1].ID())
+	if first == nil || second == nil || first.ID() == second.ID() {
+		t.Fatalf("checked iteration roots = %v and %v", first, second)
 	}
 }
 

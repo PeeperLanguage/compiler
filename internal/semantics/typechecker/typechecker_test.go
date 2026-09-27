@@ -2,6 +2,7 @@ package typechecker
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -19,6 +20,7 @@ import (
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/source"
 	"compiler/internal/target"
 	"compiler/pkg/peeper"
 )
@@ -294,7 +296,7 @@ func TestDefaultCallDeclarationUsesResolvedImportedBinding(t *testing.T) {
 		Bindings: symbols.NewBindings(),
 	}
 	path := &ast.ScopeResolution{
-		NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
+		NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(1)},
 		Segments:     []ast.PathSegment{{Name: &ast.Ident{Name: "external"}}, {Name: &ast.Ident{Name: "GetValue"}}},
 	}
 	bound := symbols.New("GetValue", symbols.SymbolFunc, nil, nil)
@@ -303,6 +305,41 @@ func TestDefaultCallDeclarationUsesResolvedImportedBinding(t *testing.T) {
 	checker := &checker{ctx: ctx, module: caller}
 	if sym, declModule := checker.defaultCallDeclaration(path); sym != bound || declModule != owner {
 		t.Fatalf("resolved callable = (%p, %p), want (%p, %p)", sym, declModule, bound, owner)
+	}
+}
+
+func TestDefaultExpansionGeneratedNodeIDsAreStable(t *testing.T) {
+	compile := func(prepBody string) []source.NodeID {
+		t.Helper()
+		module, diag := checkTypeModule(t, `fn WithDefault(value: i32 = 7) -> i32 { return value; }
+fn Prep() { `+prepBody+` }
+fn main() -> i32 { return WithDefault(); }`)
+		if diag.HasErrors() {
+			t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+		}
+		main := module.AST.Stmts[2].(*ast.FnDecl)
+		call := main.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.CallExpr)
+		arguments := module.Typechecking.CallArgumentsOrSource(call)
+		if len(arguments) != 1 {
+			t.Fatalf("effective arguments = %d, want 1", len(arguments))
+		}
+		ids := make([]source.NodeID, 0)
+		ast.Inspect(arguments[0], func(node ast.Node) bool {
+			if node != nil {
+				if !node.ID().IsGenerated() || node.ID().Function() != main.ID().Function() {
+					t.Fatalf("default node %v is not generated for main", node.ID())
+				}
+				ids = append(ids, node.ID())
+			}
+			return true
+		})
+		return ids
+	}
+
+	baseline := compile("")
+	repeated := compile("let unrelated = 1;")
+	if len(baseline) == 0 || !slices.Equal(baseline, repeated) {
+		t.Fatalf("default expansion identities changed: %v and %v", baseline, repeated)
 	}
 }
 

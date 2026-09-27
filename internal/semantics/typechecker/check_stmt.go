@@ -12,6 +12,7 @@ import (
 	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/semantics/typeresolution"
+	"compiler/internal/source"
 )
 
 func (c *checker) checkBlock(parentScope *symbols.Scope, block *ast.BlockStmt, returnType typeinfo.Type) {
@@ -701,15 +702,24 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 // and arguments on every attempt, including the terminating attempt.
 func (c *checker) expandCallIteration(scope *symbols.Scope, node *ast.ForStmt) {
 	location := ast.LocOf(node)
+	var generatedOrdinal uint64
+	nextGeneratedID := func() source.NodeID {
+		generatedOrdinal++
+		id := source.GeneratedNodeID(node.ID(), source.GeneratedCheckedIteration, 0, generatedOrdinal)
+		if !id.IsValid() {
+			panic("checked iteration produced invalid generated identity")
+		}
+		return id
+	}
 	expansion := &ast.BlockStmt{
-		NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
+		NodeIDHolder: ast.NodeIDHolder{NodeID: nextGeneratedID()},
 		Location:     location,
 	}
 	resultName := fmt.Sprintf("$for.result.%v", node.ID())
 	result := &ast.LetDecl{
-		NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
+		NodeIDHolder: ast.NodeIDHolder{NodeID: nextGeneratedID()},
 		Name: &ast.Ident{
-			NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
+			NodeIDHolder: ast.NodeIDHolder{NodeID: nextGeneratedID()},
 			Name:         resultName,
 			Location:     location,
 		},
@@ -717,25 +727,25 @@ func (c *checker) expandCallIteration(scope *symbols.Scope, node *ast.ForStmt) {
 		Location: location,
 	}
 	stop := &ast.IfStmt{
-		NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
+		NodeIDHolder: ast.NodeIDHolder{NodeID: nextGeneratedID()},
 		Cond: &ast.BinaryExpr{
-			NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
+			NodeIDHolder: ast.NodeIDHolder{NodeID: nextGeneratedID()},
 			Left: &ast.Ident{
-				NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
+				NodeIDHolder: ast.NodeIDHolder{NodeID: nextGeneratedID()},
 				Name:         resultName,
 				Location:     location,
 			},
 			Op: "==",
 			Right: &ast.NoneLit{
-				NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
+				NodeIDHolder: ast.NodeIDHolder{NodeID: nextGeneratedID()},
 				Location:     location,
 			},
 			Location: location,
 		},
 		Then: &ast.BlockStmt{
-			NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
+			NodeIDHolder: ast.NodeIDHolder{NodeID: nextGeneratedID()},
 			Stmts: []ast.Stmt{&ast.BreakStmt{
-				NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
+				NodeIDHolder: ast.NodeIDHolder{NodeID: nextGeneratedID()},
 				Location:     location,
 			}},
 			Location: location,
@@ -743,23 +753,23 @@ func (c *checker) expandCallIteration(scope *symbols.Scope, node *ast.ForStmt) {
 		Location: location,
 	}
 	item := &ast.LetDecl{
-		NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
+		NodeIDHolder: ast.NodeIDHolder{NodeID: nextGeneratedID()},
 		Name: &ast.Ident{
-			NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
+			NodeIDHolder: ast.NodeIDHolder{NodeID: nextGeneratedID()},
 			Name:         node.Value.Name,
 			Location:     location,
 		},
 		Value: &ast.Ident{
-			NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
+			NodeIDHolder: ast.NodeIDHolder{NodeID: nextGeneratedID()},
 			Name:         resultName,
 			Location:     location,
 		},
 		Location: location,
 	}
 	checked := &ast.ForStmt{
-		NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
+		NodeIDHolder: ast.NodeIDHolder{NodeID: nextGeneratedID()},
 		Body: &ast.BlockStmt{
-			NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
+			NodeIDHolder: ast.NodeIDHolder{NodeID: nextGeneratedID()},
 			Stmts:        []ast.Stmt{result, stop, item, node.Body},
 			Location:     location,
 		},

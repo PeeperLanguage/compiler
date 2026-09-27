@@ -1,9 +1,27 @@
 package ast
 
 import (
-	"compiler/internal/source"
+	"slices"
 	"testing"
+
+	"compiler/internal/moduleid"
+	"compiler/internal/source"
 )
+
+func testGeneratedOwner() source.NodeID {
+	return source.FunctionNodeID(moduleid.FunctionID("test-function"), 1)
+}
+
+func nodeIDs(node Node) []source.NodeID {
+	ids := make([]source.NodeID, 0)
+	Inspect(node, func(node Node) bool {
+		if node != nil {
+			ids = append(ids, node.ID())
+		}
+		return true
+	})
+	return ids
+}
 
 func TestSubstituteExprClonesEachArgumentOccurrenceWithFreshIDs(t *testing.T) {
 	argument := &AsExpr{
@@ -22,7 +40,15 @@ func TestSubstituteExprClonesEachArgumentOccurrenceWithFreshIDs(t *testing.T) {
 		Right:        &Ident{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(3)}, Name: "input"},
 	}
 
-	expanded, defaultClones, argumentClones := SubstituteExpr(defaultExpr, map[string]Expr{"input": argument})
+	expanded, defaultClones, argumentClones := SubstituteExpr(testGeneratedOwner(), 1, defaultExpr, map[string]Expr{"input": argument})
+	repeated, _, _ := SubstituteExpr(testGeneratedOwner(), 1, defaultExpr, map[string]Expr{"input": argument})
+	if !slices.Equal(nodeIDs(expanded), nodeIDs(repeated)) {
+		t.Fatalf("repeated clone identities differ: %v and %v", nodeIDs(expanded), nodeIDs(repeated))
+	}
+	differentSlot, _, _ := SubstituteExpr(testGeneratedOwner(), 2, defaultExpr, map[string]Expr{"input": argument})
+	if slices.Equal(nodeIDs(expanded), nodeIDs(differentSlot)) {
+		t.Fatalf("different parameter slots share clone identities: %v", nodeIDs(expanded))
+	}
 	binary := expanded.(*BinaryExpr)
 	if binary.Left == binary.Right || binary.Left == argument || binary.Right == argument {
 		t.Fatal("substituted occurrences must be separate trees")
@@ -36,8 +62,8 @@ func TestSubstituteExprClonesEachArgumentOccurrenceWithFreshIDs(t *testing.T) {
 		if node == nil {
 			return true
 		}
-		if !node.ID().IsSynthetic() {
-			t.Fatalf("node %T kept non-synthetic ID %v", node, node.ID())
+		if !node.ID().IsGenerated() {
+			t.Fatalf("node %T kept non-generated ID %v", node, node.ID())
 		}
 		if _, duplicate := seen[node.ID()]; duplicate {
 			t.Fatalf("duplicate cloned source.NodeID %v", node.ID())
@@ -55,7 +81,7 @@ func TestSubstituteExprSeparatesDefaultAndArgumentProvenance(t *testing.T) {
 	}
 	argument := &Ident{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(7)}, Name: "caller"}
 
-	_, defaultClones, argumentClones := SubstituteExpr(defaultExpr, map[string]Expr{"input": argument})
+	_, defaultClones, argumentClones := SubstituteExpr(testGeneratedOwner(), 1, defaultExpr, map[string]Expr{"input": argument})
 	for _, original := range defaultClones {
 		if original != source.ParsedNodeID(1) {
 			t.Fatalf("default provenance contains caller/default placeholder ID %v", original)
@@ -88,7 +114,7 @@ func TestSubstituteExprClonesOpenEndedRanges(t *testing.T) {
 				End:            test.end,
 				IsEndExclusive: true,
 			}
-			cloned, defaultClones, argumentClones := SubstituteExpr(rangeExpr, nil)
+			cloned, defaultClones, argumentClones := SubstituteExpr(testGeneratedOwner(), 1, rangeExpr, nil)
 			out, ok := cloned.(*RangeExpr)
 			if !ok {
 				t.Fatalf("clone = %T, want *RangeExpr", cloned)

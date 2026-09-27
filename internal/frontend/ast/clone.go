@@ -1,35 +1,31 @@
 package ast
 
-import (
-	"sync/atomic"
-
-	"compiler/internal/source"
-)
-
-var nextSyntheticNodeID atomic.Uint64
-
-// NewSyntheticNodeID shares one identity space across checked expansions and
-// default-argument clones, disjoint from parser-assigned nodes.
-func NewSyntheticNodeID() source.NodeID {
-	return source.SyntheticNodeID(nextSyntheticNodeID.Add(1))
-}
+import "compiler/internal/source"
 
 // SubstituteExpr clones an expression for call-site expansion. Parameter
 // identifiers are replaced with their already-evaluated argument expressions;
-// every cloned node gets a separate synthetic-domain ID so semantic caches
-// cannot collide with parsed or function-owned nodes.
+// every cloned node gets a deterministic generated ID owned by the call site
+// and omitted parameter slot.
 //
 // Clone logic lives on each expression type via the Expr.copyExpr interface
 // method. Adding a new Expr type that is missing copyExpr produces a compile
 // error, so there is no silent default fallthrough.
-func SubstituteExpr(expr Expr, substitutions map[string]Expr) (cloned Expr, defaultClones map[source.NodeID]source.NodeID, argumentClones map[source.NodeID]source.NodeID) {
+func SubstituteExpr(owner source.NodeID, parameterSlot uint64, expr Expr, substitutions map[string]Expr) (cloned Expr, defaultClones map[source.NodeID]source.NodeID, argumentClones map[source.NodeID]source.NodeID) {
 	if expr == nil {
 		return nil, nil, nil
 	}
+	if owner.Function() == "" {
+		panic("default-argument clone requires function-owned call identity")
+	}
 	defaultClones = make(map[source.NodeID]source.NodeID)
 	argumentClones = make(map[source.NodeID]source.NodeID)
+	var ordinal uint64
 	newID := func(original source.NodeID, fromArgument bool) source.NodeID {
-		id := NewSyntheticNodeID()
+		ordinal++
+		id := source.GeneratedNodeID(owner, source.GeneratedDefaultArgument, parameterSlot, ordinal)
+		if !id.IsValid() {
+			panic("default-argument clone produced invalid generated identity")
+		}
 		if fromArgument {
 			argumentClones[id] = original
 		} else {

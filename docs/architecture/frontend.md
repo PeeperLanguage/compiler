@@ -393,10 +393,11 @@ Identifier nodes whose names occur in the substitutions map are replaced by a
 clone of the corresponding argument expression. All other expression and
 embedded type nodes are recursively cloned.
 
-Each clone receives a fresh synthetic-domain `source.NodeID` from
-`NewSyntheticNodeID`. Domain separation prevents collisions with parsed and
-function-owned IDs; synthetic allocation is still process-global and is not yet a
-cross-generation reuse identity.
+Each clone receives a deterministic generated `source.NodeID` derived from the
+function-owned call site, omitted parameter slot, and clone preorder. Repeating
+that expansion in a fresh generation produces the same IDs; different call sites
+and parameter slots remain distinct. Clone provenance still records whether each
+occurrence came from declaration-default or caller-argument syntax.
 
 `SubstituteExpr` returns the cloned expression plus maps from each new ID to its
 original ID for default-derived and argument-derived clones.
