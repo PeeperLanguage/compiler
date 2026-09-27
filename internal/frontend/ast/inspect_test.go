@@ -1,6 +1,7 @@
 package ast
 
 import (
+	"compiler/internal/source"
 	"strings"
 	"testing"
 )
@@ -50,16 +51,16 @@ func TestInspectPreservesExitAndPruningSemantics(t *testing.T) {
 }
 
 func TestIndexIncludesNestedNodes(t *testing.T) {
-	name := &Ident{NodeIDHolder: NodeIDHolder{NodeID: 2}, Name: "main"}
-	result := &NumberLit{NodeIDHolder: NodeIDHolder{NodeID: 5}, Value: "0"}
-	ret := &ReturnStmt{NodeIDHolder: NodeIDHolder{NodeID: 4}, Value: result}
-	body := &BlockStmt{NodeIDHolder: NodeIDHolder{NodeID: 3}, Stmts: []Stmt{ret}}
-	fn := &FnDecl{NodeIDHolder: NodeIDHolder{NodeID: 1}, Name: name, Body: body}
+	name := &Ident{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(2)}, Name: "main"}
+	result := &NumberLit{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(5)}, Value: "0"}
+	ret := &ReturnStmt{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(4)}, Value: result}
+	body := &BlockStmt{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(3)}, Stmts: []Stmt{ret}}
+	fn := &FnDecl{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(1)}, Name: name, Body: body}
 
 	nodes := Index(&Module{Stmts: []Stmt{fn}})
-	for id, want := range map[NodeID]Node{1: fn, 2: name, 3: body, 4: ret, 5: result} {
+	for id, want := range map[source.NodeID]Node{source.ParsedNodeID(1): fn, source.ParsedNodeID(2): name, source.ParsedNodeID(3): body, source.ParsedNodeID(4): ret, source.ParsedNodeID(5): result} {
 		if nodes[id] != want {
-			t.Fatalf("node %d = %#v, want %#v", id, nodes[id], want)
+			t.Fatalf("node %v = %#v, want %#v", id, nodes[id], want)
 		}
 	}
 }

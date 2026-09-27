@@ -1,6 +1,7 @@
 package exprlower_test
 
 import (
+	"compiler/internal/source"
 	"testing"
 
 	"compiler/internal/diagnostics"
@@ -35,6 +36,7 @@ func buildTypedExprModule(t *testing.T, source string) (*module.Module, *diagnos
 		Imports:            make(map[string]module.ResolvedImport),
 	}
 	ctx.AddModule(mod)
+
 	collector.Collect(ctx, mod)
 	binder.Bind(ctx, mod)
 	resolver.Resolve(ctx, mod)
@@ -53,18 +55,18 @@ func TestLowerImplicitReferenceRetainsTemporaryOnlyForValues(t *testing.T) {
 	integer := &typeinfo.IntegerType{IsSigned: true, Bits: 32}
 	borrow := &typeinfo.RefType{Target: integer}
 	ctx := exprlower.Context{Types: ir.NewTypeTable()}
-	literal := &thir.NumberLiteral{ExprInfo: thir.ExprInfo{Source: ir.SourceInfo{NodeID: 1}, Type: integer}, Value: "3"}
+	literal := &thir.NumberLiteral{ExprInfo: thir.ExprInfo{Source: ir.SourceInfo{NodeID: source.ParsedNodeID(1)}, Type: integer}, Value: "3"}
 	temporary, ok := exprlower.LowerImplicitReference(ctx, literal, borrow).(*ir.TempBorrow)
-	if !ok || temporary.Value.TypeID() == ir.InvalidType || temporary.Origin().NodeID != 1 {
+	if !ok || temporary.Value.TypeID() == ir.InvalidType || temporary.Origin().NodeID != source.ParsedNodeID(1) {
 		t.Fatalf("borrowed literal = %#v, want temporary owner with source identity", temporary)
 	}
 	symbol := symbols.New("value", symbols.SymbolVar, nil, nil)
 	symbol.Type = integer
 	ident := &thir.Ident{ExprInfo: thir.ExprInfo{
-		Source: ir.SourceInfo{NodeID: 2}, Type: integer, Place: &thir.Place{Root: symbol, Type: integer},
+		Source: ir.SourceInfo{NodeID: source.ParsedNodeID(2)}, Type: integer, Place: &thir.Place{Root: symbol, Type: integer},
 	}, Symbol: symbol, Name: symbol.Name}
 	address, ok := exprlower.LowerImplicitReference(ctx, ident, borrow).(*ir.AddrOf)
-	if !ok || address.Place == nil || address.Origin().NodeID != 2 {
+	if !ok || address.Place == nil || address.Origin().NodeID != source.ParsedNodeID(2) {
 		t.Fatalf("borrowed place = %#v, want addressable storage", address)
 	}
 	root, ok := address.Place.Root.(*ir.Ident)
@@ -151,7 +153,7 @@ fn main() -> i32 {
 	if lowered.Slots[0].MethodName != "sum" || lowered.Slots[0].FuncName == "" || lowered.Slots[0].SlotType == ir.InvalidType {
 		t.Fatalf("published interface slot = %#v", lowered.Slots[0])
 	}
-	missing := &thir.NumberLiteral{ExprInfo: thir.ExprInfo{Source: ir.SourceInfo{NodeID: 10}, Type: &typeinfo.IntegerType{IsSigned: true, Bits: 32}}, Value: "1"}
+	missing := &thir.NumberLiteral{ExprInfo: thir.ExprInfo{Source: ir.SourceInfo{NodeID: source.ParsedNodeID(10)}, Type: &typeinfo.IntegerType{IsSigned: true, Bits: 32}}, Value: "1"}
 	invalid, ok := exprlower.Lower(ctx, missing, fn.Params[0]).(*ir.InvalidExpr)
 	if !ok || invalid.Message != "missing interface implementation evidence" {
 		t.Fatalf("conversion without evidence = %#v, want missing evidence", invalid)

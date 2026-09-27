@@ -196,7 +196,7 @@ func validateSites(fn *ControlFlowGraph) []string {
 			if site.ID != want {
 				problems = append(problems, fmt.Sprintf("function %q site at b%d[%d] identifies as b%d[%d]", fn.FunctionID, block.ID, index, site.ID.Block, site.ID.Index))
 			}
-			if site.Kind == SiteScopeExit && site.ScopeID == 0 {
+			if site.Kind == SiteScopeExit && !site.ScopeID.IsValid() {
 				problems = append(problems, fmt.Sprintf("function %q scope exit at b%d[%d] names no scope", fn.FunctionID, block.ID, index))
 			}
 		}

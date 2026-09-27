@@ -146,7 +146,7 @@ func TestCheckAllocPublishesConsumingUse(t *testing.T) {
 		})
 	}
 	if published != 1 {
-		t.Fatalf("alloc operand published uses = %d, want 1", published)
+		t.Fatalf("alloc operand published uses = %v, want 1", published)
 	}
 }
 
@@ -180,7 +180,7 @@ fn main() -> i32 {
 		})
 	}
 	if published != 1 {
-		t.Fatalf("alloc operand published uses = %d, want 1", published)
+		t.Fatalf("alloc operand published uses = %v, want 1", published)
 	}
 }
 
@@ -972,7 +972,7 @@ fn disabled() -> i32 {
 		}
 	}
 	if count != 3 {
-		t.Fatalf("expected 3 target_os warnings, got %d:\n%s", count, out)
+		t.Fatalf("expected 3 target_os warnings, got %v:\n%s", count, out)
 	}
 }
 
@@ -1815,25 +1815,25 @@ func TestDynamicArrayOwnerOperationsTypecheck(t *testing.T) {
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	wantParams := [][]string{
 		{"&mut []i32", "i32"},
-		{"&mut []i32", fmt.Sprintf("u%d", target.Host().IndexBits)},
-		{"&mut []i32", fmt.Sprintf("u%d", target.Host().IndexBits), "i32"},
-		{"&mut []i32", fmt.Sprintf("u%d", target.Host().IndexBits)},
+		{"&mut []i32", fmt.Sprintf("u%v", target.Host().IndexBits)},
+		{"&mut []i32", fmt.Sprintf("u%v", target.Host().IndexBits), "i32"},
+		{"&mut []i32", fmt.Sprintf("u%v", target.Host().IndexBits)},
 	}
 	for i, stmt := range fn.Body.Stmts[1:] {
 		call := stmt.(*ast.ExprStmt).Expr.(*ast.CallExpr)
 		fnType, ok := module.Typechecking.ExprType(call.Callee.ID()).(*typeinfo.FuncType)
 		if !ok {
-			t.Fatalf("operation %d callee type = %#v, want function", i, module.Typechecking.ExprType(call.Callee.ID()))
+			t.Fatalf("operation %v callee type = %#v, want function", i, module.Typechecking.ExprType(call.Callee.ID()))
 		}
 		if fnType.Return != nil {
-			t.Fatalf("operation %d return = %s, want void", i, typeinfo.TypeText(fnType.Return))
+			t.Fatalf("operation %v return = %s, want void", i, typeinfo.TypeText(fnType.Return))
 		}
 		if len(fnType.Params) != len(wantParams[i]) {
-			t.Fatalf("operation %d parameter count = %d, want %d", i, len(fnType.Params), len(wantParams[i]))
+			t.Fatalf("operation %v parameter count = %v, want %v", i, len(fnType.Params), len(wantParams[i]))
 		}
 		for paramIndex, want := range wantParams[i] {
 			if got := typeinfo.TypeText(fnType.Params[paramIndex]); got != want {
-				t.Fatalf("operation %d parameter %d = %s, want %s", i, paramIndex, got, want)
+				t.Fatalf("operation %v parameter %v = %s, want %s", i, paramIndex, got, want)
 			}
 		}
 	}
@@ -2306,7 +2306,7 @@ fn release_interface(reader: *Reader) { free(reader); }`)
 	}
 	invalid := checkTypeSource(t, `fn bad(raw: rawptr, value: i32) { free(raw); free(value); }`)
 	if count := strings.Count(invalid.EmitAllToString(), "free requires an owned pointer"); count != 2 {
-		t.Fatalf("expected two invalid free diagnostics, got %d:\n%s", count, invalid.EmitAllToString())
+		t.Fatalf("expected two invalid free diagnostics, got %v:\n%s", count, invalid.EmitAllToString())
 	}
 }
 
@@ -2587,7 +2587,7 @@ fn nested(value: ?Envelope, values: [2]Status, pointer: *Status, reference: &Sta
 `)
 	out := diag.EmitAllToString()
 	if count := strings.Count(out, "named enums cannot cross extern boundaries"); count != 6 {
-		t.Fatalf("extern enum diagnostic count = %d, want 6:\n%s", count, out)
+		t.Fatalf("extern enum diagnostic count = %v, want 6:\n%s", count, out)
 	}
 	if !strings.Contains(out, "define a foreign representation after enum FFI rules are specified") {
 		t.Fatalf("missing enum FFI help:\n%s", out)
@@ -2689,7 +2689,7 @@ fn Heap(source: &i32) {
 }`)
 	emitted := rejected.EmitAllToString()
 	if count := strings.Count(emitted, "references cannot be stored"); count < 3 {
-		t.Fatalf("expected module, parameter, and heap reference-storage diagnostics, got %d:\n%s", count, emitted)
+		t.Fatalf("expected module, parameter, and heap reference-storage diagnostics, got %v:\n%s", count, emitted)
 	}
 	if !strings.Contains(emitted, "reference return must be a direct reference or optional reference value") {
 		t.Fatalf("expected aggregate reference-return diagnostic, got:\n%s", emitted)
@@ -2867,7 +2867,7 @@ func TestAssignmentRequiresMutableBinding(t *testing.T) {
 		t.Fatalf("expected title 'modification to immutable symbol', got %q", targetDiag.Message)
 	}
 	if len(targetDiag.Labels) != 2 {
-		t.Fatalf("expected 2 labels, got %d", len(targetDiag.Labels))
+		t.Fatalf("expected 2 labels, got %v", len(targetDiag.Labels))
 	}
 	// Verify primary label
 	if targetDiag.Labels[0].Style != diagnostics.Primary {
@@ -3172,16 +3172,16 @@ fn main() -> i32 {
 		t.Fatal("use call not found")
 	}
 	if len(call.Args) != 1 {
-		t.Fatalf("source argument count = %d, want 1", len(call.Args))
+		t.Fatalf("source argument count = %v, want 1", len(call.Args))
 	}
 	effectiveArgs := module.Typechecking.CallArgumentsOrSource(call)
 	if len(effectiveArgs) != 3 {
-		t.Fatalf("effective argument count = %d, want 3", len(effectiveArgs))
+		t.Fatalf("effective argument count = %v, want 3", len(effectiveArgs))
 	}
 	first := module.Typechecking.InterfaceImplementations(effectiveArgs[1].ID())
 	second := module.Typechecking.InterfaceImplementations(effectiveArgs[2].ID())
 	if effectiveArgs[1].ID() == effectiveArgs[2].ID() || len(first) != 1 || len(second) != 1 {
-		t.Fatalf("default evidence IDs/evidence = %d:%#v %d:%#v", effectiveArgs[1].ID(), first, effectiveArgs[2].ID(), second)
+		t.Fatalf("default evidence IDs/evidence = %v:%#v %v:%#v", effectiveArgs[1].ID(), first, effectiveArgs[2].ID(), second)
 	}
 	if first[0].Symbol == nil || second[0].Symbol == nil ||
 		first[0].Symbol.Name != "read_a" || second[0].Symbol.Name != "read_b" {

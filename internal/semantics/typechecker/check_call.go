@@ -1,6 +1,7 @@
 package typechecker
 
 import (
+	"compiler/internal/source"
 	"fmt"
 	"strings"
 
@@ -611,7 +612,7 @@ func (c *checker) expandCallDefaults(call *ast.CallExpr, args []ast.Expr, sym *s
 	return effectiveArgs
 }
 
-func copyExpressionEvidence(dst, src *module.Module, dstID, srcID ast.NodeID) {
+func copyExpressionEvidence(dst, src *module.Module, dstID, srcID source.NodeID) {
 	if dst == nil || dst.Typechecking == nil || src == nil || src.Typechecking == nil {
 		return
 	}

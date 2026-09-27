@@ -46,11 +46,11 @@ func TestFoldExprPreservesExpressionOrigin(t *testing.T) {
 		Left:       &IntLit{Value: "2", Type: i32},
 		Right:      &IntLit{Value: "3", Type: i32},
 		Type:       i32,
-		SourceInfo: SourceInfo{NodeID: 73},
+		SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(73)},
 	}
 	folded, ok := FoldExpr(types, expr, nil).(*IntLit)
 	if !ok || folded.NodeID != expr.NodeID {
-		t.Fatalf("folded origin = %#v, want NodeID %d", folded, expr.NodeID)
+		t.Fatalf("folded origin = %#v, want NodeID %v", folded, expr.NodeID)
 	}
 }
 
@@ -115,7 +115,7 @@ func TestFoldExprPreservesLoadIdentity(t *testing.T) {
 			Type: i32,
 		},
 		DropsRoot:  true,
-		SourceInfo: SourceInfo{NodeID: 42, Location: loc},
+		SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(42), Location: loc},
 	}
 
 	folded, ok := FoldExpr(types, expr, nil).(*Load)
@@ -141,7 +141,7 @@ func TestFoldExprFoldsEveryCompositeExpression(t *testing.T) {
 			Left:       &IntLit{Value: "1", Type: i32},
 			Right:      &IntLit{Value: "2", Type: i32},
 			Type:       i32,
-			SourceInfo: SourceInfo{NodeID: 5, Location: loc},
+			SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(5), Location: loc},
 		}
 	}
 	place := func() *Place {
@@ -160,26 +160,26 @@ func TestFoldExprFoldsEveryCompositeExpression(t *testing.T) {
 		name string
 		expr Expr
 	}{
-		{name: "variant", expr: &VariantMake{Case: OptionalPresentCase, Payload: foldable(), Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
-		{name: "unary", expr: &Unary{Op: "opaque", Arg: foldable(), Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
-		{name: "binary", expr: &Binary{Op: "opaque", Left: foldable(), Right: foldable(), Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
-		{name: "call", expr: &Call{Callee: foldable(), Args: []Expr{foldable()}, Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
-		{name: "load", expr: &Load{Place: place(), DropsRoot: true, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
-		{name: "address", expr: &AddrOf{Place: place(), Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
-		{name: "temporary borrow", expr: &TempBorrow{Value: foldable(), IsSlice: true, Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
-		{name: "length", expr: &Len{Value: foldable(), Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
-		{name: "string chars", expr: &StringChars{Value: foldable(), Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
-		{name: "slice", expr: &SliceView{Place: place(), Start: foldable(), End: foldable(), IsEndExclusive: true, Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
-		{name: "interface make", expr: &InterfaceMake{Value: foldable(), Slots: []InterfaceSlot{{MethodName: "method"}}, Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
-		{name: "interface call", expr: &InterfaceCall{Base: foldable(), Slot: 2, Args: []Expr{foldable()}, ConsumesBase: true, Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
-		{name: "field", expr: &Field{Base: foldable(), Index: 3, DropsBase: true, Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
-		{name: "struct", expr: &StructLit{Fields: []Expr{foldable()}, Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
-		{name: "array", expr: &ArrayLit{Values: []Expr{foldable()}, IsDynamic: true, Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
-		{name: "dynamic array operation", expr: &DynamicArrayOp{Array: foldable(), Length: foldable(), Value: foldable(), ArrayType: i32, Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
-		{name: "allocation", expr: &AllocExpr{Value: foldable(), Allocator: foldable(), Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
-		{name: "cast", expr: &Cast{Expr: foldable(), Type: i32, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
-		{name: "print", expr: &Print{Value: foldable(), AppendsNewline: true, SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
-		{name: "drop", expr: &Drop{Value: foldable(), SourceInfo: SourceInfo{NodeID: 9, Location: loc}}},
+		{name: "variant", expr: &VariantMake{Case: OptionalPresentCase, Payload: foldable(), Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
+		{name: "unary", expr: &Unary{Op: "opaque", Arg: foldable(), Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
+		{name: "binary", expr: &Binary{Op: "opaque", Left: foldable(), Right: foldable(), Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
+		{name: "call", expr: &Call{Callee: foldable(), Args: []Expr{foldable()}, Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
+		{name: "load", expr: &Load{Place: place(), DropsRoot: true, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
+		{name: "address", expr: &AddrOf{Place: place(), Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
+		{name: "temporary borrow", expr: &TempBorrow{Value: foldable(), IsSlice: true, Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
+		{name: "length", expr: &Len{Value: foldable(), Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
+		{name: "string chars", expr: &StringChars{Value: foldable(), Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
+		{name: "slice", expr: &SliceView{Place: place(), Start: foldable(), End: foldable(), IsEndExclusive: true, Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
+		{name: "interface make", expr: &InterfaceMake{Value: foldable(), Slots: []InterfaceSlot{{MethodName: "method"}}, Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
+		{name: "interface call", expr: &InterfaceCall{Base: foldable(), Slot: 2, Args: []Expr{foldable()}, ConsumesBase: true, Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
+		{name: "field", expr: &Field{Base: foldable(), Index: 3, DropsBase: true, Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
+		{name: "struct", expr: &StructLit{Fields: []Expr{foldable()}, Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
+		{name: "array", expr: &ArrayLit{Values: []Expr{foldable()}, IsDynamic: true, Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
+		{name: "dynamic array operation", expr: &DynamicArrayOp{Array: foldable(), Length: foldable(), Value: foldable(), ArrayType: i32, Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
+		{name: "allocation", expr: &AllocExpr{Value: foldable(), Allocator: foldable(), Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
+		{name: "cast", expr: &Cast{Expr: foldable(), Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
+		{name: "print", expr: &Print{Value: foldable(), AppendsNewline: true, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
+		{name: "drop", expr: &Drop{Value: foldable(), SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -202,7 +202,7 @@ func TestFoldExprFoldsEveryCompositeExpression(t *testing.T) {
 			if unfolded || threes == 0 {
 				t.Fatalf("folded expression = %#v, unfolded=%t threes=%d", folded, unfolded, threes)
 			}
-			if origin := folded.Origin(); origin.NodeID != 9 || origin.Location != loc {
+			if origin := folded.Origin(); origin.NodeID != source.ParsedNodeID(9) || origin.Location != loc {
 				t.Fatalf("folded origin = %#v, want NodeID 9 and original location", origin)
 			}
 		})

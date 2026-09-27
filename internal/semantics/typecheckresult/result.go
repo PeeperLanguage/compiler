@@ -6,6 +6,7 @@ import (
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/source"
 )
 
 // InterfaceImplementation proves that one declared method materializes an interface slot.
@@ -15,7 +16,7 @@ type InterfaceImplementation struct {
 }
 
 type CaseTest struct {
-	SubjectID       ast.NodeID
+	SubjectID       source.NodeID
 	Case            int
 	MatchesWhenTrue bool
 	CaseCount       int
@@ -25,7 +26,7 @@ type CaseTest struct {
 // Match records typechecker-owned case and binding evidence consumed by CFG
 // and later semantic phases without resolving source paths again.
 type Match struct {
-	SubjectID ast.NodeID
+	SubjectID source.NodeID
 	EnumType  typeinfo.Type
 	CaseCount int
 	Arms      []MatchArm
@@ -40,8 +41,8 @@ const (
 )
 
 type MatchArm struct {
-	ArmID    ast.NodeID
-	BodyID   ast.NodeID
+	ArmID    source.NodeID
+	BodyID   source.NodeID
 	Case     int
 	Payload  typeinfo.Type
 	Bindings []MatchBinding
@@ -157,193 +158,193 @@ type Result struct {
 }
 
 type expressionEvidence struct {
-	types                    map[ast.NodeID]typeinfo.Type
-	expandedDefaultBindings  map[ast.NodeID]struct{}
-	interfaceImplementations map[ast.NodeID][]InterfaceImplementation
-	implicitConversions      map[ast.NodeID]typeinfo.Conversion
-	stringConcatenations     map[ast.NodeID]struct{}
-	structFields             map[ast.NodeID]StructFieldAccess
-	constantIndexes          map[ast.NodeID]ConstantIndex
-	structLiteralFields      map[ast.NodeID][]ast.Expr
-	variantConstructions     map[ast.NodeID]VariantConstruction
-	valueUses                map[ast.NodeID]typeinfo.UseKind
-	referenceArguments       map[ast.NodeID]bool
+	types                    map[source.NodeID]typeinfo.Type
+	expandedDefaultBindings  map[source.NodeID]struct{}
+	interfaceImplementations map[source.NodeID][]InterfaceImplementation
+	implicitConversions      map[source.NodeID]typeinfo.Conversion
+	stringConcatenations     map[source.NodeID]struct{}
+	structFields             map[source.NodeID]StructFieldAccess
+	constantIndexes          map[source.NodeID]ConstantIndex
+	structLiteralFields      map[source.NodeID][]ast.Expr
+	variantConstructions     map[source.NodeID]VariantConstruction
+	valueUses                map[source.NodeID]typeinfo.UseKind
+	referenceArguments       map[source.NodeID]bool
 }
 
 type callEvidence struct {
-	effectiveArguments map[ast.NodeID][]ast.Expr
-	implicitArguments  map[ast.NodeID]typeinfo.Type
-	compilerCalls      map[ast.NodeID]CompilerCall
+	effectiveArguments map[source.NodeID][]ast.Expr
+	implicitArguments  map[source.NodeID]typeinfo.Type
+	compilerCalls      map[source.NodeID]CompilerCall
 }
 
 type controlEvidence struct {
-	caseTests         map[ast.NodeID]CaseTest
-	matches           map[ast.NodeID]Match
-	forIterations     map[ast.NodeID]ForIteration
-	checkedIterations map[ast.NodeID]*ast.BlockStmt
+	caseTests         map[source.NodeID]CaseTest
+	matches           map[source.NodeID]Match
+	forIterations     map[source.NodeID]ForIteration
+	checkedIterations map[source.NodeID]*ast.BlockStmt
 }
 
 func New() *Result {
 	return &Result{
 		expressions: expressionEvidence{
-			types:                    make(map[ast.NodeID]typeinfo.Type),
-			expandedDefaultBindings:  make(map[ast.NodeID]struct{}),
-			interfaceImplementations: make(map[ast.NodeID][]InterfaceImplementation),
-			implicitConversions:      make(map[ast.NodeID]typeinfo.Conversion),
-			stringConcatenations:     make(map[ast.NodeID]struct{}),
-			structFields:             make(map[ast.NodeID]StructFieldAccess),
-			constantIndexes:          make(map[ast.NodeID]ConstantIndex),
-			structLiteralFields:      make(map[ast.NodeID][]ast.Expr),
-			variantConstructions:     make(map[ast.NodeID]VariantConstruction),
-			valueUses:                make(map[ast.NodeID]typeinfo.UseKind),
-			referenceArguments:       make(map[ast.NodeID]bool),
+			types:                    make(map[source.NodeID]typeinfo.Type),
+			expandedDefaultBindings:  make(map[source.NodeID]struct{}),
+			interfaceImplementations: make(map[source.NodeID][]InterfaceImplementation),
+			implicitConversions:      make(map[source.NodeID]typeinfo.Conversion),
+			stringConcatenations:     make(map[source.NodeID]struct{}),
+			structFields:             make(map[source.NodeID]StructFieldAccess),
+			constantIndexes:          make(map[source.NodeID]ConstantIndex),
+			structLiteralFields:      make(map[source.NodeID][]ast.Expr),
+			variantConstructions:     make(map[source.NodeID]VariantConstruction),
+			valueUses:                make(map[source.NodeID]typeinfo.UseKind),
+			referenceArguments:       make(map[source.NodeID]bool),
 		},
 		calls: callEvidence{
-			effectiveArguments: make(map[ast.NodeID][]ast.Expr),
-			implicitArguments:  make(map[ast.NodeID]typeinfo.Type),
-			compilerCalls:      make(map[ast.NodeID]CompilerCall),
+			effectiveArguments: make(map[source.NodeID][]ast.Expr),
+			implicitArguments:  make(map[source.NodeID]typeinfo.Type),
+			compilerCalls:      make(map[source.NodeID]CompilerCall),
 		},
 		control: controlEvidence{
-			caseTests:         make(map[ast.NodeID]CaseTest),
-			matches:           make(map[ast.NodeID]Match),
-			forIterations:     make(map[ast.NodeID]ForIteration),
-			checkedIterations: make(map[ast.NodeID]*ast.BlockStmt),
+			caseTests:         make(map[source.NodeID]CaseTest),
+			matches:           make(map[source.NodeID]Match),
+			forIterations:     make(map[source.NodeID]ForIteration),
+			checkedIterations: make(map[source.NodeID]*ast.BlockStmt),
 		},
 	}
 }
 
-func (r *Result) RecordExprType(id ast.NodeID, typ typeinfo.Type) {
-	if r == nil || id == 0 || typ == nil {
+func (r *Result) RecordExprType(id source.NodeID, typ typeinfo.Type) {
+	if r == nil || !id.IsValid() || typ == nil {
 		return
 	}
 	r.expressions.types[id] = typ
 }
 
-func (r *Result) ExprType(id ast.NodeID) typeinfo.Type {
-	if r == nil || id == 0 {
+func (r *Result) ExprType(id source.NodeID) typeinfo.Type {
+	if r == nil || !id.IsValid() {
 		return nil
 	}
 	return r.expressions.types[id]
 }
 
-func (r *Result) MarkExpandedDefaultBinding(id ast.NodeID) {
-	if r != nil && id != 0 {
+func (r *Result) MarkExpandedDefaultBinding(id source.NodeID) {
+	if r != nil && id.IsValid() {
 		r.expressions.expandedDefaultBindings[id] = struct{}{}
 	}
 }
 
-func (r *Result) ExpandedDefaultBinding(id ast.NodeID) bool {
-	if r == nil || id == 0 {
+func (r *Result) ExpandedDefaultBinding(id source.NodeID) bool {
+	if r == nil || !id.IsValid() {
 		return false
 	}
 	_, ok := r.expressions.expandedDefaultBindings[id]
 	return ok
 }
 
-func (r *Result) RecordInterfaceImplementations(id ast.NodeID, implementations []InterfaceImplementation) {
-	if r == nil || id == 0 || len(implementations) == 0 {
+func (r *Result) RecordInterfaceImplementations(id source.NodeID, implementations []InterfaceImplementation) {
+	if r == nil || !id.IsValid() || len(implementations) == 0 {
 		return
 	}
 	r.expressions.interfaceImplementations[id] = implementations
 }
 
-func (r *Result) InterfaceImplementations(id ast.NodeID) []InterfaceImplementation {
-	if r == nil || id == 0 {
+func (r *Result) InterfaceImplementations(id source.NodeID) []InterfaceImplementation {
+	if r == nil || !id.IsValid() {
 		return nil
 	}
 	return r.expressions.interfaceImplementations[id]
 }
 
-func (r *Result) RecordImplicitConversion(id ast.NodeID, conversion typeinfo.Conversion) {
-	if r != nil && id != 0 {
+func (r *Result) RecordImplicitConversion(id source.NodeID, conversion typeinfo.Conversion) {
+	if r != nil && id.IsValid() {
 		r.expressions.implicitConversions[id] = conversion
 	}
 }
 
-func (r *Result) ImplicitConversion(id ast.NodeID) (typeinfo.Conversion, bool) {
-	if r == nil || id == 0 {
+func (r *Result) ImplicitConversion(id source.NodeID) (typeinfo.Conversion, bool) {
+	if r == nil || !id.IsValid() {
 		return typeinfo.Conversion{}, false
 	}
 	conversion, ok := r.expressions.implicitConversions[id]
 	return conversion, ok
 }
 
-func (r *Result) MarkStringConcatenation(id ast.NodeID) {
-	if r != nil && id != 0 {
+func (r *Result) MarkStringConcatenation(id source.NodeID) {
+	if r != nil && id.IsValid() {
 		r.expressions.stringConcatenations[id] = struct{}{}
 	}
 }
 
 // StringConcatenation reports whether a binary expression was resolved as a
 // string concatenation, which consumes its left operand.
-func (r *Result) StringConcatenation(id ast.NodeID) bool {
-	if r == nil || id == 0 {
+func (r *Result) StringConcatenation(id source.NodeID) bool {
+	if r == nil || !id.IsValid() {
 		return false
 	}
 	_, found := r.expressions.stringConcatenations[id]
 	return found
 }
 
-func (r *Result) RecordStructField(id ast.NodeID, access StructFieldAccess) {
-	if r != nil && id != 0 {
+func (r *Result) RecordStructField(id source.NodeID, access StructFieldAccess) {
+	if r != nil && id.IsValid() {
 		r.expressions.structFields[id] = access
 	}
 }
 
-func (r *Result) StructField(id ast.NodeID) (StructFieldAccess, bool) {
-	if r == nil || id == 0 {
+func (r *Result) StructField(id source.NodeID) (StructFieldAccess, bool) {
+	if r == nil || !id.IsValid() {
 		return StructFieldAccess{}, false
 	}
 	access, ok := r.expressions.structFields[id]
 	return access, ok
 }
 
-func (r *Result) RecordConstantIndex(id ast.NodeID, value ConstantIndex) {
-	if r == nil || id == 0 || value.Text == "" || value.Type == nil {
+func (r *Result) RecordConstantIndex(id source.NodeID, value ConstantIndex) {
+	if r == nil || !id.IsValid() || value.Text == "" || value.Type == nil {
 		return
 	}
 	r.expressions.constantIndexes[id] = value
 }
 
-func (r *Result) ConstantIndex(id ast.NodeID) (ConstantIndex, bool) {
-	if r == nil || id == 0 {
+func (r *Result) ConstantIndex(id source.NodeID) (ConstantIndex, bool) {
+	if r == nil || !id.IsValid() {
 		return ConstantIndex{}, false
 	}
 	value, ok := r.expressions.constantIndexes[id]
 	return value, ok
 }
 
-func (r *Result) RecordStructLiteralFields(id ast.NodeID, fields []ast.Expr) {
-	if r == nil || id == 0 || fields == nil {
+func (r *Result) RecordStructLiteralFields(id source.NodeID, fields []ast.Expr) {
+	if r == nil || !id.IsValid() || fields == nil {
 		return
 	}
 	r.expressions.structLiteralFields[id] = append([]ast.Expr(nil), fields...)
 }
 
-func (r *Result) StructLiteralFields(id ast.NodeID) ([]ast.Expr, bool) {
-	if r == nil || id == 0 {
+func (r *Result) StructLiteralFields(id source.NodeID) ([]ast.Expr, bool) {
+	if r == nil || !id.IsValid() {
 		return nil, false
 	}
 	fields, ok := r.expressions.structLiteralFields[id]
 	return append([]ast.Expr(nil), fields...), ok
 }
 
-func (r *Result) RecordVariantConstruction(id ast.NodeID, construction VariantConstruction) {
-	if r != nil && id != 0 {
+func (r *Result) RecordVariantConstruction(id source.NodeID, construction VariantConstruction) {
+	if r != nil && id.IsValid() {
 		r.expressions.variantConstructions[id] = construction
 	}
 }
 
-func (r *Result) VariantConstruction(id ast.NodeID) (VariantConstruction, bool) {
-	if r == nil || id == 0 {
+func (r *Result) VariantConstruction(id source.NodeID) (VariantConstruction, bool) {
+	if r == nil || !id.IsValid() {
 		return VariantConstruction{}, false
 	}
 	construction, ok := r.expressions.variantConstructions[id]
 	return construction, ok
 }
 
-func (r *Result) RecordValueUse(id ast.NodeID, use typeinfo.UseKind) {
-	if r != nil && id != 0 {
+func (r *Result) RecordValueUse(id source.NodeID, use typeinfo.UseKind) {
+	if r != nil && id.IsValid() {
 		r.expressions.valueUses[id] = use
 	}
 }
@@ -351,15 +352,15 @@ func (r *Result) RecordValueUse(id ast.NodeID, use typeinfo.UseKind) {
 // ValueUse exposes the use kind the typechecker decided for one expression.
 // Coverage is call arguments today, so an absent answer is normal rather than
 // a missing decision.
-func (r *Result) ValueUse(id ast.NodeID) (typeinfo.UseKind, bool) {
-	if r == nil || id == 0 {
+func (r *Result) ValueUse(id source.NodeID) (typeinfo.UseKind, bool) {
+	if r == nil || !id.IsValid() {
 		return typeinfo.UseRead, false
 	}
 	kind, found := r.expressions.valueUses[id]
 	return kind, found
 }
 
-func (r *Result) ForEachValueUse(fn func(ast.NodeID, typeinfo.UseKind)) {
+func (r *Result) ForEachValueUse(fn func(source.NodeID, typeinfo.UseKind)) {
 	if r == nil || fn == nil {
 		return
 	}
@@ -368,38 +369,38 @@ func (r *Result) ForEachValueUse(fn func(ast.NodeID, typeinfo.UseKind)) {
 	}
 }
 
-func (r *Result) RecordReferenceArgument(id ast.NodeID, isMutable bool) {
-	if r != nil && id != 0 {
+func (r *Result) RecordReferenceArgument(id source.NodeID, isMutable bool) {
+	if r != nil && id.IsValid() {
 		r.expressions.referenceArguments[id] = isMutable
 	}
 }
 
 // ReferenceArgument reports whether an argument's parameter is a reference and,
 // when it is, whether that reference is mutable.
-func (r *Result) ReferenceArgument(id ast.NodeID) (isMutable bool, found bool) {
-	if r == nil || id == 0 {
+func (r *Result) ReferenceArgument(id source.NodeID) (isMutable bool, found bool) {
+	if r == nil || !id.IsValid() {
 		return false, false
 	}
 	isMutable, found = r.expressions.referenceArguments[id]
 	return isMutable, found
 }
 
-func (r *Result) RecordCallArguments(id ast.NodeID, args []ast.Expr) {
-	if r == nil || id == 0 {
+func (r *Result) RecordCallArguments(id source.NodeID, args []ast.Expr) {
+	if r == nil || !id.IsValid() {
 		return
 	}
 	r.calls.effectiveArguments[id] = args
 }
 
-func (r *Result) CallArguments(id ast.NodeID) ([]ast.Expr, bool) {
-	if r == nil || id == 0 {
+func (r *Result) CallArguments(id source.NodeID) ([]ast.Expr, bool) {
+	if r == nil || !id.IsValid() {
 		return nil, false
 	}
 	args, ok := r.calls.effectiveArguments[id]
 	return args, ok
 }
 
-func (r *Result) ForEachCallArguments(fn func(ast.NodeID, []ast.Expr)) {
+func (r *Result) ForEachCallArguments(fn func(source.NodeID, []ast.Expr)) {
 	if r == nil || fn == nil {
 		return
 	}
@@ -421,55 +422,55 @@ func (r *Result) CallArgumentsOrSource(call *ast.CallExpr) []ast.Expr {
 	return call.Args
 }
 
-func (r *Result) RecordImplicitCallArgument(id ast.NodeID, typ typeinfo.Type) {
-	if r != nil && id != 0 && typ != nil {
+func (r *Result) RecordImplicitCallArgument(id source.NodeID, typ typeinfo.Type) {
+	if r != nil && id.IsValid() && typ != nil {
 		r.calls.implicitArguments[id] = typ
 	}
 }
 
-func (r *Result) ImplicitCallArgument(id ast.NodeID) typeinfo.Type {
-	if r == nil || id == 0 {
+func (r *Result) ImplicitCallArgument(id source.NodeID) typeinfo.Type {
+	if r == nil || !id.IsValid() {
 		return nil
 	}
 	return r.calls.implicitArguments[id]
 }
 
-func (r *Result) RecordCompilerCall(id ast.NodeID, call CompilerCall) {
-	if r != nil && id != 0 {
+func (r *Result) RecordCompilerCall(id source.NodeID, call CompilerCall) {
+	if r != nil && id.IsValid() {
 		r.calls.compilerCalls[id] = call
 	}
 }
 
-func (r *Result) CompilerCall(id ast.NodeID) (CompilerCall, bool) {
-	if r == nil || id == 0 {
+func (r *Result) CompilerCall(id source.NodeID) (CompilerCall, bool) {
+	if r == nil || !id.IsValid() {
 		return CompilerCall{}, false
 	}
 	call, ok := r.calls.compilerCalls[id]
 	return call, ok
 }
 
-func (r *Result) RecordCaseTest(id ast.NodeID, test CaseTest) {
-	if r != nil && id != 0 {
+func (r *Result) RecordCaseTest(id source.NodeID, test CaseTest) {
+	if r != nil && id.IsValid() {
 		r.control.caseTests[id] = test
 	}
 }
 
-func (r *Result) CaseTest(id ast.NodeID) (CaseTest, bool) {
-	if r == nil || id == 0 {
+func (r *Result) CaseTest(id source.NodeID) (CaseTest, bool) {
+	if r == nil || !id.IsValid() {
 		return CaseTest{}, false
 	}
 	test, ok := r.control.caseTests[id]
 	return test, ok
 }
 
-func (r *Result) RecordMatch(id ast.NodeID, match Match) {
-	if r != nil && id != 0 {
+func (r *Result) RecordMatch(id source.NodeID, match Match) {
+	if r != nil && id.IsValid() {
 		r.control.matches[id] = match
 	}
 }
 
-func (r *Result) Match(id ast.NodeID) (Match, bool) {
-	if r == nil || id == 0 {
+func (r *Result) Match(id source.NodeID) (Match, bool) {
+	if r == nil || !id.IsValid() {
 		return Match{}, false
 	}
 	match, ok := r.control.matches[id]
@@ -479,7 +480,7 @@ func (r *Result) Match(id ast.NodeID) (Match, bool) {
 // ArmBindings exposes the payload symbols one match arm binds, without leaking
 // match artifacts into the effect producer. A discarded binding still binds
 // storage, so it is reported like any other.
-func (r *Result) ArmBindings(matchID ast.NodeID, caseIndex int) []*symbols.Symbol {
+func (r *Result) ArmBindings(matchID source.NodeID, caseIndex int) []*symbols.Symbol {
 	evidence, found := r.Match(matchID)
 	if !found {
 		return nil
@@ -497,20 +498,20 @@ func (r *Result) ArmBindings(matchID ast.NodeID, caseIndex int) []*symbols.Symbo
 	return bound
 }
 
-func (r *Result) RecordForIteration(id ast.NodeID, iteration ForIteration) {
-	if r != nil && id != 0 {
+func (r *Result) RecordForIteration(id source.NodeID, iteration ForIteration) {
+	if r != nil && id.IsValid() {
 		r.control.forIterations[id] = iteration
 	}
 }
 
-func (r *Result) ForgetForIteration(id ast.NodeID) {
+func (r *Result) ForgetForIteration(id source.NodeID) {
 	if r != nil {
 		delete(r.control.forIterations, id)
 	}
 }
 
-func (r *Result) ForIteration(id ast.NodeID) (ForIteration, bool) {
-	if r == nil || id == 0 {
+func (r *Result) ForIteration(id source.NodeID) (ForIteration, bool) {
+	if r == nil || !id.IsValid() {
 		return ForIteration{}, false
 	}
 	iteration, ok := r.control.forIterations[id]
@@ -520,7 +521,7 @@ func (r *Result) ForIteration(id ast.NodeID) (ForIteration, bool) {
 // SequenceCarrier exposes the hidden carrier a typed sequence loop keeps for
 // the loop lifetime. Range loops have no carrier. Consumers ask this query
 // instead of inspecting the concrete iteration plan themselves.
-func (r *Result) SequenceCarrier(id ast.NodeID) (*symbols.Symbol, bool) {
+func (r *Result) SequenceCarrier(id source.NodeID) (*symbols.Symbol, bool) {
 	iteration, found := r.ForIteration(id)
 	if !found {
 		return nil, false
@@ -532,20 +533,20 @@ func (r *Result) SequenceCarrier(id ast.NodeID) (*symbols.Symbol, bool) {
 	return sequence.Carrier, true
 }
 
-func (r *Result) RecordCheckedIteration(id ast.NodeID, expansion *ast.BlockStmt) {
-	if r != nil && id != 0 && expansion != nil {
+func (r *Result) RecordCheckedIteration(id source.NodeID, expansion *ast.BlockStmt) {
+	if r != nil && id.IsValid() && expansion != nil {
 		r.control.checkedIterations[id] = expansion
 	}
 }
 
-func (r *Result) CheckedIteration(id ast.NodeID) *ast.BlockStmt {
-	if r == nil || id == 0 {
+func (r *Result) CheckedIteration(id source.NodeID) *ast.BlockStmt {
+	if r == nil || !id.IsValid() {
 		return nil
 	}
 	return r.control.checkedIterations[id]
 }
 
-func (r *Result) ForEachCheckedIteration(fn func(ast.NodeID, *ast.BlockStmt)) {
+func (r *Result) ForEachCheckedIteration(fn func(source.NodeID, *ast.BlockStmt)) {
 	if r == nil || fn == nil {
 		return
 	}
@@ -558,8 +559,8 @@ func (r *Result) ForEachCheckedIteration(fn func(ast.NodeID, *ast.BlockStmt)) {
 // remain valid when syntax is cloned during default substitution. Contextual
 // facts such as call-argument use, case subjects, and payload AST references
 // are intentionally recomputed for the cloned expression.
-func (r *Result) CloneReusableExpressionEvidenceFrom(dstID ast.NodeID, src *Result, srcID ast.NodeID) {
-	if r == nil || src == nil || dstID == 0 || srcID == 0 {
+func (r *Result) CloneReusableExpressionEvidenceFrom(dstID source.NodeID, src *Result, srcID source.NodeID) {
+	if r == nil || src == nil || !dstID.IsValid() || !srcID.IsValid() {
 		return
 	}
 	if typ := src.ExprType(srcID); typ != nil {

@@ -32,6 +32,7 @@ func checkResolveSource(t *testing.T, src string) (*module.Module, *diagnostics.
 		Imports:  make(map[string]module.ResolvedImport),
 	}
 	ctx.AddModule(module)
+
 	collector.Collect(ctx, module)
 	binder.Bind(ctx, module)
 	Resolve(ctx, module)

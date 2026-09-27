@@ -3,7 +3,8 @@
 package flowresult
 
 import (
-	"compiler/internal/ir"
+	"compiler/internal/source"
+
 	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/typeinfo"
@@ -22,7 +23,7 @@ func (p PayloadAccess) AppliesTo(storage []place.Origin) bool {
 }
 
 type CaseTest struct {
-	SubjectID       ir.NodeID
+	SubjectID       source.NodeID
 	Case            int
 	MatchesWhenTrue bool
 	CaseCount       int
@@ -31,7 +32,7 @@ type CaseTest struct {
 }
 
 type VariantFieldAccess struct {
-	Carrier ir.NodeID
+	Carrier source.NodeID
 	Case    int
 	Payload *typeinfo.StructType
 	Field   int
@@ -55,12 +56,12 @@ type AggregateSlot struct {
 }
 
 type expressionEvidence struct {
-	types         map[ir.NodeID]typeinfo.Type
-	payloads      map[ir.NodeID]PayloadAccess
-	caseTests     map[ir.NodeID]CaseTest
-	variantFields map[ir.NodeID]VariantFieldAccess
-	origins       map[ir.NodeID]OriginResolution
-	aggregates    map[ir.NodeID][]AggregateSlot
+	types         map[source.NodeID]typeinfo.Type
+	payloads      map[source.NodeID]PayloadAccess
+	caseTests     map[source.NodeID]CaseTest
+	variantFields map[source.NodeID]VariantFieldAccess
+	origins       map[source.NodeID]OriginResolution
+	aggregates    map[source.NodeID][]AggregateSlot
 }
 
 // Result owns path-sensitive evidence for one flow generation. Backing maps
@@ -71,78 +72,78 @@ type Result struct {
 
 func New() *Result {
 	return &Result{expressions: expressionEvidence{
-		types:         make(map[ir.NodeID]typeinfo.Type),
-		payloads:      make(map[ir.NodeID]PayloadAccess),
-		caseTests:     make(map[ir.NodeID]CaseTest),
-		variantFields: make(map[ir.NodeID]VariantFieldAccess),
-		origins:       make(map[ir.NodeID]OriginResolution),
-		aggregates:    make(map[ir.NodeID][]AggregateSlot),
+		types:         make(map[source.NodeID]typeinfo.Type),
+		payloads:      make(map[source.NodeID]PayloadAccess),
+		caseTests:     make(map[source.NodeID]CaseTest),
+		variantFields: make(map[source.NodeID]VariantFieldAccess),
+		origins:       make(map[source.NodeID]OriginResolution),
+		aggregates:    make(map[source.NodeID][]AggregateSlot),
 	}}
 }
 
-func (r *Result) RecordExprType(id ir.NodeID, typ typeinfo.Type) {
-	if r != nil && id != 0 && typ != nil {
+func (r *Result) RecordExprType(id source.NodeID, typ typeinfo.Type) {
+	if r != nil && id.IsValid() && typ != nil {
 		r.expressions.types[id] = typ
 	}
 }
 
-func (r *Result) ExprType(id ir.NodeID) typeinfo.Type {
-	if r == nil || id == 0 {
+func (r *Result) ExprType(id source.NodeID) typeinfo.Type {
+	if r == nil || !id.IsValid() {
 		return nil
 	}
 	return r.expressions.types[id]
 }
 
-func (r *Result) RecordPayload(id ir.NodeID, payload PayloadAccess) {
-	if r != nil && id != 0 {
+func (r *Result) RecordPayload(id source.NodeID, payload PayloadAccess) {
+	if r != nil && id.IsValid() {
 		r.expressions.payloads[id] = payload
 	}
 }
 
-func (r *Result) Payload(id ir.NodeID) (PayloadAccess, bool) {
-	if r == nil || id == 0 {
+func (r *Result) Payload(id source.NodeID) (PayloadAccess, bool) {
+	if r == nil || !id.IsValid() {
 		return PayloadAccess{}, false
 	}
 	payload, ok := r.expressions.payloads[id]
 	return payload, ok
 }
 
-func (r *Result) ForgetPayload(id ir.NodeID) {
+func (r *Result) ForgetPayload(id source.NodeID) {
 	if r != nil {
 		delete(r.expressions.payloads, id)
 	}
 }
 
-func (r *Result) RecordCaseTest(id ir.NodeID, test CaseTest) {
-	if r != nil && id != 0 {
+func (r *Result) RecordCaseTest(id source.NodeID, test CaseTest) {
+	if r != nil && id.IsValid() {
 		r.expressions.caseTests[id] = test
 	}
 }
 
-func (r *Result) CaseTest(id ir.NodeID) (CaseTest, bool) {
-	if r == nil || id == 0 {
+func (r *Result) CaseTest(id source.NodeID) (CaseTest, bool) {
+	if r == nil || !id.IsValid() {
 		return CaseTest{}, false
 	}
 	test, ok := r.expressions.caseTests[id]
 	return test, ok
 }
 
-func (r *Result) RecordVariantField(id ir.NodeID, field VariantFieldAccess) {
-	if r != nil && id != 0 {
+func (r *Result) RecordVariantField(id source.NodeID, field VariantFieldAccess) {
+	if r != nil && id.IsValid() {
 		r.expressions.variantFields[id] = field
 	}
 }
 
-func (r *Result) VariantField(id ir.NodeID) (VariantFieldAccess, bool) {
-	if r == nil || id == 0 {
+func (r *Result) VariantField(id source.NodeID) (VariantFieldAccess, bool) {
+	if r == nil || !id.IsValid() {
 		return VariantFieldAccess{}, false
 	}
 	field, ok := r.expressions.variantFields[id]
 	return field, ok
 }
 
-func (r *Result) RecordOrigins(id ir.NodeID, storage, value []place.Origin) {
-	if r == nil || id == 0 {
+func (r *Result) RecordOrigins(id source.NodeID, storage, value []place.Origin) {
+	if r == nil || !id.IsValid() {
 		return
 	}
 	r.expressions.origins[id] = OriginResolution{
@@ -151,8 +152,8 @@ func (r *Result) RecordOrigins(id ir.NodeID, storage, value []place.Origin) {
 	}
 }
 
-func (r *Result) MergeOrigins(id ir.NodeID, storage, value []place.Origin) {
-	if r == nil || id == 0 {
+func (r *Result) MergeOrigins(id source.NodeID, storage, value []place.Origin) {
+	if r == nil || !id.IsValid() {
 		return
 	}
 	current := r.expressions.origins[id]
@@ -161,8 +162,8 @@ func (r *Result) MergeOrigins(id ir.NodeID, storage, value []place.Origin) {
 	r.expressions.origins[id] = current
 }
 
-func (r *Result) Origins(id ir.NodeID) (OriginResolution, bool) {
-	if r == nil || id == 0 {
+func (r *Result) Origins(id source.NodeID) (OriginResolution, bool) {
+	if r == nil || !id.IsValid() {
 		return OriginResolution{}, false
 	}
 	origins, ok := r.expressions.origins[id]
@@ -175,12 +176,12 @@ func (r *Result) Origins(id ir.NodeID) (OriginResolution, bool) {
 	}, true
 }
 
-func (r *Result) StorageOrigins(id ir.NodeID) []place.Origin {
+func (r *Result) StorageOrigins(id source.NodeID) []place.Origin {
 	origins, _ := r.Origins(id)
 	return origins.Storage
 }
 
-func (r *Result) ValueOrigins(id ir.NodeID) []place.Origin {
+func (r *Result) ValueOrigins(id source.NodeID) []place.Origin {
 	origins, _ := r.Origins(id)
 	return origins.Value
 }
@@ -188,8 +189,8 @@ func (r *Result) ValueOrigins(id ir.NodeID) []place.Origin {
 // RecordAggregateSlots publishes the direct slot decomposition Flow used when
 // storing an aggregate value. Recording an empty slice is meaningful: the
 // expression is an aggregate with no direct child slots.
-func (r *Result) RecordAggregateSlots(id ir.NodeID, slots []AggregateSlot) {
-	if r == nil || id == 0 {
+func (r *Result) RecordAggregateSlots(id source.NodeID, slots []AggregateSlot) {
+	if r == nil || !id.IsValid() {
 		return
 	}
 	r.expressions.aggregates[id] = append([]AggregateSlot(nil), slots...)
@@ -198,8 +199,8 @@ func (r *Result) RecordAggregateSlots(id ir.NodeID, slots []AggregateSlot) {
 // AggregateSlots returns the direct slot decomposition published for an
 // aggregate expression. The bool distinguishes a known empty aggregate from
 // an expression that has no aggregate evidence.
-func (r *Result) AggregateSlots(id ir.NodeID) ([]AggregateSlot, bool) {
-	if r == nil || id == 0 {
+func (r *Result) AggregateSlots(id source.NodeID) ([]AggregateSlot, bool) {
+	if r == nil || !id.IsValid() {
 		return nil, false
 	}
 	slots, ok := r.expressions.aggregates[id]

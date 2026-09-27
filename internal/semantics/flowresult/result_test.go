@@ -1,9 +1,9 @@
 package flowresult
 
 import (
+	"compiler/internal/source"
 	"testing"
 
-	"compiler/internal/ir"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 )
@@ -13,7 +13,7 @@ func TestOriginsArePublishedAndMergedAtomically(t *testing.T) {
 	first := symbols.New("first", symbols.SymbolVar, nil, nil)
 	second := symbols.New("second", symbols.SymbolVar, nil, nil)
 	third := symbols.New("third", symbols.SymbolVar, nil, nil)
-	const id ir.NodeID = 7
+	id := source.ParsedNodeID(7)
 
 	storage := []place.Origin{{Root: first}}
 	value := []place.Origin{{Root: second}}
@@ -43,7 +43,7 @@ func TestOriginsArePublishedAndMergedAtomically(t *testing.T) {
 
 func TestAggregateSlotsOwnSnapshotsAndDistinguishEmptyAggregate(t *testing.T) {
 	result := New()
-	const id ir.NodeID = 11
+	id := source.ParsedNodeID(11)
 	slots := []AggregateSlot{{
 		Projection: place.OriginProjection{
 			Kind:  place.OriginField,
@@ -65,12 +65,12 @@ func TestAggregateSlotsOwnSnapshotsAndDistinguishEmptyAggregate(t *testing.T) {
 		t.Fatal("aggregate slot query leaked mutable backing storage")
 	}
 
-	const empty ir.NodeID = 14
+	empty := source.ParsedNodeID(14)
 	result.RecordAggregateSlots(empty, nil)
 	if got, ok := result.AggregateSlots(empty); !ok || len(got) != 0 {
 		t.Fatalf("empty aggregate = %#v, %v", got, ok)
 	}
-	if _, ok := result.AggregateSlots(15); ok {
+	if _, ok := result.AggregateSlots(source.ParsedNodeID(15)); ok {
 		t.Fatal("missing aggregate evidence reported as present")
 	}
 }

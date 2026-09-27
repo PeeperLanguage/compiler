@@ -7,7 +7,6 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/ir"
 	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/place"
 )
@@ -50,7 +49,7 @@ fn probe(mut first: i32, mut second: i32) {
 		want := first
 		if loan.path[1].Field == "value" {
 			want = second
-			if loan.id.node != ir.NodeID(assign.Value.ID()) {
+			if loan.id.node != assign.Value.ID() {
 				t.Fatal("field self-assignment changed loan identity")
 			}
 		} else if loan.path[1].Field != "sibling" {
@@ -60,18 +59,18 @@ fn probe(mut first: i32, mut second: i32) {
 			t.Fatalf("%s loan origins = %#v, want %s", loan.path[1].Field, loan.origins, want.Name)
 		}
 	}
-	storage := result.module.Flow.StorageOrigins(ir.NodeID(assign.Target.ID()))
+	storage := result.module.Flow.StorageOrigins(assign.Target.ID())
 	if len(storage) != 1 || storage[0].Root != resource || !slices.Equal(storage[0].Projections, []place.OriginProjection{
 		{Kind: place.OriginVariantPayload, Case: 0}, {Kind: place.OriginField, Field: "value"},
 	}) {
 		t.Fatalf("assignment storage = %#v", storage)
 	}
 	binding := match.Arms[0].Fields[0].Binding
-	typedMatch := result.module.THIR.Node(ir.NodeID(match.ID())).(*thir.Match)
-	if source := typedMatch.Arms[0].Bindings[0].Source; source.NodeID != ir.NodeID(binding.ID()) || source.Location != ast.LocOf(binding) {
+	typedMatch := result.module.THIR.Node(match.ID()).(*thir.Match)
+	if source := typedMatch.Arms[0].Bindings[0].Source; source.NodeID != binding.ID() || source.Location != ast.LocOf(binding) {
 		t.Fatalf("match binding THIR source = %#v, want binding identity and location", source)
 	}
-	if got := result.module.Flow.ValueOrigins(ir.NodeID(binding.ID())); !place.AreSameOrigins(got, []place.Origin{{Root: second}}) {
+	if got := result.module.Flow.ValueOrigins(binding.ID()); !place.AreSameOrigins(got, []place.Origin{{Root: second}}) {
 		t.Fatalf("match value origins = %#v, want second", got)
 	}
 }

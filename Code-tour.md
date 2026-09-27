@@ -202,7 +202,7 @@ that does not parse cleanly.
 
 AST nodes carry:
 
-- a **`NodeID`** — stable identity used as the key for every later fact about that node;
+- a **`source.NodeID`** — provisional after parsing, then function-owned and stable for callable syntax before semantic collection;
 - a **`Location`** — for diagnostics;
 - `forEachChild` — the one canonical child walk.
 
@@ -291,8 +291,8 @@ type SiteID struct{ Block, Index int }   // dense and positional
 type Site struct {
     ID       SiteID
     Kind     SiteKind          // statement | scope exit | terminator | join
-    NodeID   ir.NodeID         // the AST node this point stands for
-    ScopeID  ir.NodeID
+    NodeID   source.NodeID     // the AST node this point stands for
+    ScopeID  source.NodeID
     Successors, Predecessors []Edge
 }
 ```
@@ -306,8 +306,8 @@ function types, which the typechecker result happens to satisfy:
 ```go
 // internal/ir/cfg/build.go
 type BuildQueries struct {
-    MatchCases          func(ast.NodeID) ([]int, bool)
-    LoopGuaranteedEntry func(ast.NodeID) bool
+    MatchCases          func(source.NodeID) ([]int, bool)
+    LoopGuaranteedEntry func(source.NodeID) bool
 }
 ```
 
@@ -333,7 +333,7 @@ type Op interface{ effectOp() }   // sealed set
 
 type Place struct {
     Root        *symbols.Symbol           // the binding …
-    Temporary   ast.NodeID                // … or the expression, for a value owning nothing
+    Temporary   source.NodeID             // … or the expression, for a value owning nothing
     Projections []place.OriginProjection  // .field, [index]
 }
 
@@ -342,8 +342,8 @@ type Write   struct{ Place Place }
 type Use     struct{ Place Place; Kind typeinfo.UseKind }
 type Borrow  struct{ Place Place; Mutable, Argument, Raw bool }
 type Discard struct{ Place Place }
-type CallBegin struct{ Node ast.NodeID }
-type CallEnd   struct{ Node ast.NodeID }
+type CallBegin struct{ Node source.NodeID }
+type CallEnd   struct{ Node source.NodeID }
 ```
 
 The producer is the only code that reads syntax to decide meaning:
@@ -418,7 +418,7 @@ func apply(current state, op effect.Op) {
 }
 ```
 
-It contains **no AST switch at all** and does not import `ast` beyond `NodeID`.
+It contains **no AST switch at all**; source identity comes from `source.NodeID`.
 
 **Ownership** tracks moves, loans and liveness, then writes the drop plan:
 
@@ -450,9 +450,9 @@ values:
 // internal/semantics/ownershipresult/result.go
 type CleanupPlan struct {
     AfterScope     map[cfg.SiteID][]symbols.SymbolID  // scope exit
-    BeforeReturn   map[ir.NodeID][]symbols.SymbolID   // after the value is computed
-    BeforeAssign   map[ir.NodeID]struct{}             // replacing a value drops the old
-    DiscardedValue map[ir.NodeID]struct{}             // a temporary nobody owns
+    BeforeReturn   map[source.NodeID][]symbols.SymbolID // after the value is computed
+    BeforeAssign   map[source.NodeID]struct{}           // replacing a value drops the old
+    DiscardedValue map[source.NodeID]struct{}           // a temporary nobody owns
     // …
 }
 ```
@@ -467,7 +467,7 @@ Lowering *reads* this plan. It never decides a drop for itself.
 arguments, match arms, and iteration plans published by semantic analysis.
 
 **CFG** owns execution topology. **MIR** lowering joins CFG sites to THIR nodes by
-`ir.NodeID`, lowers expressions through `internal/ir/exprlower`, and reads ownership
+`source.NodeID`, lowers expressions through `internal/ir/exprlower`, and reads ownership
 cleanup plans. It does not re-read AST or reconstruct control flow.
 
 **MIR** is flat: basic blocks, instructions, terminators — close to what a backend wants.
@@ -590,7 +590,7 @@ at each true extension point.
 
 | Term | Meaning |
 | --- | --- |
-| **NodeID** | Stable identity of one AST node; the key for every fact about it |
+| **NodeID** | Canonical source identity; function syntax is owned by `FunctionID` plus local preorder |
 | **SymbolID** | Stable identity of one declaration |
 | **SiteID** | `{Block, Index}` — one ordered program point in a CFG |
 | **Place** | Storage: a root binding (or a temporary) plus projections |

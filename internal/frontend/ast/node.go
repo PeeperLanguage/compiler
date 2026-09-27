@@ -2,20 +2,18 @@ package ast
 
 import "compiler/internal/source"
 
-type NodeID uint32
-
 type NodeIDHolder struct {
-	NodeID NodeID
+	NodeID source.NodeID
 }
 
-func (h *NodeIDHolder) ID() NodeID      { return h.NodeID }
-func (h *NodeIDHolder) SetID(id NodeID) { h.NodeID = id }
+func (h *NodeIDHolder) ID() source.NodeID      { return h.NodeID }
+func (h *NodeIDHolder) SetID(id source.NodeID) { h.NodeID = id }
 
 type Node interface {
 	loc() *source.Location
 	forEachChild(func(Node))
-	ID() NodeID
-	SetID(NodeID)
+	ID() source.NodeID
+	SetID(source.NodeID)
 }
 
 type DocumentedNode interface {
@@ -64,10 +62,10 @@ type Expr interface {
 	exprNode()
 	// copyExpr clones the expression for call-site expansion.
 	// substitutions map parameter names to caller-side argument expressions.
-	// newID assigns a fresh NodeID and records whether its source belongs to
+	// newID assigns a fresh source.NodeID and records whether its source belongs to
 	// the default declaration or caller argument. Ident deep-clones a matching
 	// replacement so each expanded occurrence remains a tree.
-	copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, wasFromArgument bool) Expr
+	copyExpr(substitutions map[string]Expr, newID func(source.NodeID, bool) source.NodeID, wasFromArgument bool) Expr
 	// exprText returns a stable, source-like text representation.
 	// Payloads such as literal values, operator text, and type
 	// annotations are included so the output is suitable for

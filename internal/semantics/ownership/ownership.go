@@ -1,11 +1,11 @@
 package ownership
 
 import (
+	"compiler/internal/source"
 	"maps"
 	"slices"
 
 	"compiler/internal/diagnostics"
-	"compiler/internal/frontend/ast"
 	graphcore "compiler/internal/graph"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
@@ -83,12 +83,12 @@ func Check(diag *diagnostics.DiagnosticBag, input Input) ownershipresult.Result 
 		}
 		plan := &ownershipresult.CleanupPlan{
 			AfterScope:             make(map[cfg.SiteID][]symbols.SymbolID),
-			BeforeReturn:           make(map[ir.NodeID][]symbols.SymbolID),
-			BeforeAssign:           make(map[ir.NodeID]struct{}),
-			DiscardedValue:         make(map[ir.NodeID]struct{}),
-			ProjectionBase:         make(map[ir.NodeID]struct{}),
-			MatchFieldDrops:        make(map[ir.NodeID][]int),
-			MatchWholePayloadDrops: make(map[ir.NodeID]struct{}),
+			BeforeReturn:           make(map[source.NodeID][]symbols.SymbolID),
+			BeforeAssign:           make(map[source.NodeID]struct{}),
+			DiscardedValue:         make(map[source.NodeID]struct{}),
+			ProjectionBase:         make(map[source.NodeID]struct{}),
+			MatchFieldDrops:        make(map[source.NodeID][]int),
+			MatchWholePayloadDrops: make(map[source.NodeID]struct{}),
 		}
 		fn := input.Source.FunctionByID(graph.FunctionID)
 		if fn != nil && fn.Symbol != nil && fn.Body != nil {
@@ -132,7 +132,7 @@ func indexSites(input Input, cfgFn *cfg.ControlFlowGraph, scope *symbols.Scope) 
 			if flowSite == nil {
 				continue
 			}
-			resolvedScope := input.Bindings.ScopeID(ast.NodeID(flowSite.ScopeID))
+			resolvedScope := input.Bindings.ScopeID(flowSite.ScopeID)
 			if resolvedScope == nil {
 				resolvedScope = scope
 			}
@@ -226,7 +226,7 @@ func (a *analyzer) run() {
 
 func (a *analyzer) planDeadMatchCarrierCleanup() {
 	a.deadMatchCarrierAtExit = make(map[cfg.SiteID]*symbols.Symbol)
-	scopeExits := make(map[ir.NodeID][]*site)
+	scopeExits := make(map[source.NodeID][]*site)
 	for _, node := range a.sites {
 		if node != nil && node.cfgSite != nil && node.cfgSite.Kind == cfg.SiteScopeExit && node.block != nil {
 			scopeExits[node.block.SourceInfo().NodeID] = append(scopeExits[node.block.SourceInfo().NodeID], node)
@@ -248,7 +248,7 @@ func (a *analyzer) planDeadMatchCarrierCleanup() {
 
 		exitsByJoin := make(map[cfg.SiteID][]*site)
 		movesByJoin := make(map[cfg.SiteID]bool)
-		armsByJoin := make(map[cfg.SiteID]map[ir.NodeID]struct{})
+		armsByJoin := make(map[cfg.SiteID]map[source.NodeID]struct{})
 		for _, arm := range match.Arms {
 			bodyID := arm.Body.SourceInfo().NodeID
 			for _, exit := range scopeExits[bodyID] {
@@ -268,7 +268,7 @@ func (a *analyzer) planDeadMatchCarrierCleanup() {
 					if joinNode.cfgSite.Kind != cfg.SiteScopeExit {
 						exitsByJoin[join] = append(exitsByJoin[join], exit)
 						if armsByJoin[join] == nil {
-							armsByJoin[join] = make(map[ir.NodeID]struct{})
+							armsByJoin[join] = make(map[source.NodeID]struct{})
 						}
 						armsByJoin[join][bodyID] = struct{}{}
 						movesByJoin[join] = movesByJoin[join] || arm.CarrierUse == typeinfo.UseMove
@@ -310,9 +310,9 @@ func copyState(src state) state {
 
 // releaseIterationLoans ends synthetic carrier borrows when control leaves
 // their loop. A zero loop ID releases all active loops, as required by return.
-func releaseIterationLoans(st state, loans *loanContext, loopID ir.NodeID) {
+func releaseIterationLoans(st state, loans *loanContext, loopID source.NodeID) {
 	matches := func(loan referenceLoan) bool {
-		return loan.loop != 0 && (loopID == 0 || loan.loop == loopID)
+		return loan.loop.IsValid() && (!loopID.IsValid() || loan.loop == loopID)
 	}
 	for holder, active := range st.references {
 		remaining := slices.DeleteFunc(active, matches)
@@ -525,7 +525,7 @@ func (a *analyzer) applyStmt(node *site, st state) {
 	// evaluation: provenance is validated above before the value can move, while
 	// cleanup happens after its effects have executed.
 	if s, ok := node.stmt.(*thir.Return); ok {
-		releaseIterationLoans(st, loans, 0)
+		releaseIterationLoans(st, loans, source.NodeID{})
 		a.cleanupBeforeReturn(scope, s, st, loans)
 	}
 }
@@ -575,7 +575,7 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 		delete(st.references, carrier)
 		if len(arm.Bindings) == 1 && arm.Bindings[0].Projection == thir.MatchWholePayload {
 			if arm.Bindings[0].IsDiscard && typeinfo.OwnershipCapabilityOf(arm.Bindings[0].Type).NeedsDrop {
-				a.cleanup.MatchWholePayloadDrops[ir.NodeID(arm.Body.SourceInfo().NodeID)] = struct{}{}
+				a.cleanup.MatchWholePayloadDrops[arm.Body.SourceInfo().NodeID] = struct{}{}
 			}
 		} else if payload, payloadFound := typeinfo.Underlying(arm.Payload).(*typeinfo.StructType); payloadFound && payload != nil {
 			drops := make([]int, 0)
@@ -587,7 +587,7 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 				}
 			}
 			if len(drops) > 0 {
-				a.cleanup.MatchFieldDrops[ir.NodeID(arm.Body.SourceInfo().NodeID)] = drops
+				a.cleanup.MatchFieldDrops[arm.Body.SourceInfo().NodeID] = drops
 			}
 		}
 	}
@@ -600,7 +600,7 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 			delete(st.moved, binding)
 			st.live[binding] = struct{}{}
 		}
-		if field.Source.NodeID == 0 || a.input.Flow == nil {
+		if !field.Source.NodeID.IsValid() || a.input.Flow == nil {
 			continue
 		}
 		origins := place.CloneOrigins(a.input.Flow.ValueOrigins(field.Source.NodeID))

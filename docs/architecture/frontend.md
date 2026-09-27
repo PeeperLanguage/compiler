@@ -367,10 +367,15 @@ used only to keep diagnostics and recovery nodes located.
 
 ### IDs, traversal, and index: `ast/inspect.go`
 
-`Parser.nextID` increments a parser-local `NodeID`; `reg` assigns that ID to
-new non-nil nodes. IDs are assigned in construction order, beginning from the
-parser's zero value. Parser-assigned IDs are the identity used by source AST
-consumers.
+`Parser.nextID` increments a parser-local ordinal; `reg` wraps it in a provisional
+parsed-domain `source.NodeID` and assigns it to each new non-nil node. IDs are
+assigned in construction order, beginning after zero. At the Parsed-to-Collected
+boundary, `ast.PublishFunctionIdentities` replaces IDs in each function subtree
+with `(FunctionID, preorder ordinal)` identities. The function declaration's
+root ID is the canonical source of its FunctionID; callers derive it through
+`function.ID().Function()` rather than synchronizing a second field. Unchanged
+function syntax therefore keeps identity when unrelated functions change;
+module-level syntax remains parser-generation-local.
 
 `ast.Inspect` performs depth-first traversal. It calls the visitor on a node,
 recurses through that node's `forEachChild` children when the visitor returns
@@ -378,7 +383,7 @@ true, then calls the visitor with nil after the children. Each AST type owns its
 immediate child enumeration once; generic consumers should use `Inspect`.
 
 `ast.Index` walks every module statement with `Inspect` and returns a
-`map[NodeID]Node`. It indexes source nodes by their IDs, including recovery nodes
+`map[source.NodeID]Node`. It indexes source nodes by their IDs, including recovery nodes
 that implement `Node`; it does not index module-level fields outside statements.
 
 ### Clone and substitution: `ast/clone.go`
@@ -388,8 +393,10 @@ Identifier nodes whose names occur in the substitutions map are replaced by a
 clone of the corresponding argument expression. All other expression and
 embedded type nodes are recursively cloned.
 
-Each clone receives a fresh synthetic ID from `NewSyntheticNodeID`. Synthetic IDs
-share one identity space and set the high bit, separating them from parser IDs.
+Each clone receives a fresh synthetic-domain `source.NodeID` from
+`NewSyntheticNodeID`. Domain separation prevents collisions with parsed and
+function-owned IDs; synthetic allocation is still process-global and is not yet a
+cross-generation reuse identity.
 
 `SubstituteExpr` returns the cloned expression plus maps from each new ID to its
 original ID for default-derived and argument-derived clones.

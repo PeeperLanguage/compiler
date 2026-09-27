@@ -1,6 +1,7 @@
 package ownershipresult
 
 import (
+	"compiler/internal/source"
 	"strings"
 	"testing"
 
@@ -8,7 +9,6 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
-	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/thir"
 	"compiler/internal/moduleid"
@@ -25,8 +25,10 @@ func buildGraph(t *testing.T, sourceText string) (*cfg.Module, moduleid.Function
 	t.Helper()
 	const file = "validate_test" + ".peep"
 	diag := diagnostics.NewDiagnosticBag()
-	source := parser.New(file, lexer.New(file, sourceText, diag).Tokenize(), diag).ParseModule()
-	graphs := cfg.BuildModule(thir.Build(moduleid.ID{Origin: "local", ImportPath: "test"}, file, source, nil, nil, nil))
+	syntax := parser.New(file, lexer.New(file, sourceText, diag).Tokenize(), diag).ParseModule()
+	owner := moduleid.ID{Origin: "local", ImportPath: "test"}
+	ast.PublishFunctionIdentities(owner, syntax)
+	graphs := cfg.BuildModule(thir.Build(owner, file, syntax, nil, nil, nil))
 	if graphs == nil || len(graphs.Functions) == 0 {
 		t.Fatalf("no CFG built: %s", diag.EmitAllToString())
 	}
@@ -36,12 +38,12 @@ func buildGraph(t *testing.T, sourceText string) (*cfg.Module, moduleid.Function
 func emptyPlan() *CleanupPlan {
 	return &CleanupPlan{
 		AfterScope:             make(map[cfg.SiteID][]symbols.SymbolID),
-		BeforeReturn:           make(map[ir.NodeID][]symbols.SymbolID),
-		BeforeAssign:           make(map[ir.NodeID]struct{}),
-		DiscardedValue:         make(map[ir.NodeID]struct{}),
-		ProjectionBase:         make(map[ir.NodeID]struct{}),
-		MatchFieldDrops:        make(map[ir.NodeID][]int),
-		MatchWholePayloadDrops: make(map[ir.NodeID]struct{}),
+		BeforeReturn:           make(map[source.NodeID][]symbols.SymbolID),
+		BeforeAssign:           make(map[source.NodeID]struct{}),
+		DiscardedValue:         make(map[source.NodeID]struct{}),
+		ProjectionBase:         make(map[source.NodeID]struct{}),
+		MatchFieldDrops:        make(map[source.NodeID][]int),
+		MatchWholePayloadDrops: make(map[source.NodeID]struct{}),
 	}
 }
 
@@ -56,7 +58,7 @@ func TestValidateAcceptsConsistentEvidence(t *testing.T) {
 func TestValidateRejectsEvidenceGaps(t *testing.T) {
 	graphs, fnID := buildGraph(t, validationGraphSource)
 	argument := &ast.Ident{Name: "value"}
-	argument.SetID(41)
+	argument.SetID(source.ParsedNodeID(41))
 
 	for _, tt := range []struct {
 		name  string
@@ -67,22 +69,22 @@ func TestValidateRejectsEvidenceGaps(t *testing.T) {
 			name: "use kind without a type",
 			want: "no expression type",
 			build: func(types *typecheckresult.Result, _ *CleanupPlan) {
-				types.RecordValueUse(7, typeinfo.UseMove)
+				types.RecordValueUse(source.ParsedNodeID(7), typeinfo.UseMove)
 			},
 		},
 		{
 			name: "copy of a type with no copy operation",
 			want: "no copy operation",
 			build: func(types *typecheckresult.Result, _ *CleanupPlan) {
-				types.RecordExprType(7, &typeinfo.StringType{})
-				types.RecordValueUse(7, typeinfo.UseCopy)
+				types.RecordExprType(source.ParsedNodeID(7), &typeinfo.StringType{})
+				types.RecordValueUse(source.ParsedNodeID(7), typeinfo.UseCopy)
 			},
 		},
 		{
 			name: "call argument with no use kind",
 			want: "no published use kind",
 			build: func(types *typecheckresult.Result, _ *CleanupPlan) {
-				types.RecordCallArguments(5, []ast.Expr{argument})
+				types.RecordCallArguments(source.ParsedNodeID(5), []ast.Expr{argument})
 			},
 		},
 		{
@@ -96,28 +98,28 @@ func TestValidateRejectsEvidenceGaps(t *testing.T) {
 			name: "return drop at an unknown node",
 			want: "not a site in its CFG",
 			build: func(_ *typecheckresult.Result, plan *CleanupPlan) {
-				plan.BeforeReturn[9999] = []symbols.SymbolID{1}
+				plan.BeforeReturn[source.ParsedNodeID(9999)] = []symbols.SymbolID{1}
 			},
 		},
 		{
 			name: "unidentified drop target",
 			want: "unidentified",
 			build: func(_ *typecheckresult.Result, plan *CleanupPlan) {
-				plan.BeforeReturn[9999] = []symbols.SymbolID{0}
+				plan.BeforeReturn[source.ParsedNodeID(9999)] = []symbols.SymbolID{0}
 			},
 		},
 		{
 			name: "projection base with no type",
 			want: "no expression type",
 			build: func(_ *typecheckresult.Result, plan *CleanupPlan) {
-				plan.ProjectionBase[8888] = struct{}{}
+				plan.ProjectionBase[source.ParsedNodeID(8888)] = struct{}{}
 			},
 		},
 		{
 			name: "match drop outside a block",
 			want: "not a block",
 			build: func(_ *typecheckresult.Result, plan *CleanupPlan) {
-				plan.MatchWholePayloadDrops[7777] = struct{}{}
+				plan.MatchWholePayloadDrops[source.ParsedNodeID(7777)] = struct{}{}
 			},
 		},
 	} {
@@ -171,9 +173,10 @@ func TestValidateReportsProblemsDeterministically(t *testing.T) {
 	for attempt := 0; attempt < 8; attempt++ {
 		types := typecheckresult.New()
 		plan := emptyPlan()
-		for id := ast.NodeID(1); id <= 40; id++ {
+		for ordinal := uint64(1); ordinal <= 40; ordinal++ {
+			id := source.ParsedNodeID(ordinal)
 			types.RecordValueUse(id, typeinfo.UseMove)
-			plan.ProjectionBase[ir.NodeID(id)] = struct{}{}
+			plan.ProjectionBase[id] = struct{}{}
 		}
 		err := Result{fnID: plan}.Validate(types, symbols.NewBindings(), graphs)
 		if err == nil {

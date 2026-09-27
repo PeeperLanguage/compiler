@@ -146,7 +146,7 @@ func resolveTypeHoverSubject(cc *cursorContext) *hoverSubject {
 	}
 }
 
-func hoverTypeNode(node ast.Node, parents map[ast.NodeID]ast.Node) (ast.TypeExpr, bool) {
+func hoverTypeNode(node ast.Node, parents map[source.NodeID]ast.Node) (ast.TypeExpr, bool) {
 	if node == nil {
 		return nil, false
 	}
@@ -184,7 +184,7 @@ func hoverTypeNode(node ast.Node, parents map[ast.NodeID]ast.Node) (ast.TypeExpr
 	return nil, false
 }
 
-func hoverTypeSyntaxContext(typeNode ast.TypeExpr, parents map[ast.NodeID]ast.Node) typeresolution.Context {
+func hoverTypeSyntaxContext(typeNode ast.TypeExpr, parents map[source.NodeID]ast.Node) typeresolution.Context {
 	for curr := ast.Node(typeNode); curr != nil; curr = parents[curr.ID()] {
 		if decl, ok := curr.(*ast.InterfaceDecl); ok {
 			return typeresolution.Context{
@@ -409,7 +409,7 @@ func resolveSymbolHoverSubject(cc *cursorContext) *hoverSubject {
 	return subject
 }
 
-func documentedDeclAncestor(node ast.Node, parents map[ast.NodeID]ast.Node) ast.Node {
+func documentedDeclAncestor(node ast.Node, parents map[source.NodeID]ast.Node) ast.Node {
 	for current := node; current != nil; current = parents[current.ID()] {
 		if decl, ok := current.(ast.Decl); ok {
 			return decl
@@ -418,7 +418,7 @@ func documentedDeclAncestor(node ast.Node, parents map[ast.NodeID]ast.Node) ast.
 	return nil
 }
 
-func resolveDeclNameSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, module *module.Module) *symbols.Symbol {
+func resolveDeclNameSymbol(ident *ast.Ident, parents map[source.NodeID]ast.Node, module *module.Module) *symbols.Symbol {
 	if ident == nil || module == nil || module.Bindings == nil {
 		return nil
 	}
@@ -429,7 +429,7 @@ func resolveDeclNameSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, mo
 	return nil
 }
 
-func resolveInterfaceMethodNameSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, module *module.Module) *symbols.Symbol {
+func resolveInterfaceMethodNameSymbol(ident *ast.Ident, parents map[source.NodeID]ast.Node, module *module.Module) *symbols.Symbol {
 	if ident == nil || module == nil || module.Bindings == nil {
 		return nil
 	}

@@ -2,7 +2,7 @@ package cfg
 
 import (
 	graphcore "compiler/internal/graph"
-	"compiler/internal/ir"
+
 	"compiler/internal/moduleid"
 	"compiler/internal/source"
 )
@@ -100,8 +100,8 @@ const (
 type Site struct {
 	ID       SiteID
 	Kind     SiteKind
-	NodeID   ir.NodeID
-	ScopeID  ir.NodeID
+	NodeID   source.NodeID
+	ScopeID  source.NodeID
 	Location *source.Location
 }
 
@@ -125,7 +125,7 @@ const (
 
 type Block struct {
 	ID          int
-	NodeID      ir.NodeID
+	NodeID      source.NodeID
 	Origin      BlockOrigin
 	Location    *source.Location
 	Sites       []*Site
@@ -143,16 +143,16 @@ type Jump struct {
 }
 
 type Branch struct {
-	NodeID      ir.NodeID
-	ConditionID ir.NodeID
-	ScopeID     ir.NodeID
+	NodeID      source.NodeID
+	ConditionID source.NodeID
+	ScopeID     source.NodeID
 	Location    *source.Location
 	TrueTarget  *Block
 	FalseTarget *Block
 }
 
 type Return struct {
-	NodeID ir.NodeID
+	NodeID source.NodeID
 }
 
 type VariantTarget struct {
@@ -161,8 +161,8 @@ type VariantTarget struct {
 }
 
 type SwitchVariant struct {
-	NodeID   ir.NodeID
-	ScopeID  ir.NodeID
+	NodeID   source.NodeID
+	ScopeID  source.NodeID
 	Location *source.Location
 	Targets  []VariantTarget
 }

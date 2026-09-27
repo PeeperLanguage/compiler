@@ -2,6 +2,7 @@ package symbols
 
 import (
 	"cmp"
+	"compiler/internal/source"
 	"slices"
 
 	"compiler/internal/frontend/ast"
@@ -9,16 +10,16 @@ import (
 )
 
 type Bindings struct {
-	blockScopes        map[ast.NodeID]*Scope
-	nodeSymbols        map[ast.NodeID]*Symbol
+	blockScopes        map[source.NodeID]*Scope
+	nodeSymbols        map[source.NodeID]*Symbol
 	methodsByReceiver  map[string][]*Symbol
 	operationFunctions []*Symbol
 }
 
 func NewBindings() *Bindings {
 	return &Bindings{
-		blockScopes:        make(map[ast.NodeID]*Scope),
-		nodeSymbols:        make(map[ast.NodeID]*Symbol),
+		blockScopes:        make(map[source.NodeID]*Scope),
+		nodeSymbols:        make(map[source.NodeID]*Symbol),
 		methodsByReceiver:  make(map[string][]*Symbol),
 		operationFunctions: make([]*Symbol, 0),
 	}
@@ -35,8 +36,8 @@ func (r *Bindings) Bind(node ast.Node, sym *Symbol) {
 
 // BindID is used for generated syntax whose stable node identity is already in
 // hand. Source code should prefer Bind so the key choice stays local here.
-func (r *Bindings) BindID(id ast.NodeID, sym *Symbol) {
-	if r == nil || id == 0 || sym == nil {
+func (r *Bindings) BindID(id source.NodeID, sym *Symbol) {
+	if r == nil || !id.IsValid() || sym == nil {
 		return
 	}
 	r.nodeSymbols[id] = sym
@@ -49,8 +50,8 @@ func (r *Bindings) Symbol(node ast.Node) *Symbol {
 	return r.nodeSymbols[node.ID()]
 }
 
-func (r *Bindings) SymbolID(id ast.NodeID) *Symbol {
-	if r == nil || id == 0 {
+func (r *Bindings) SymbolID(id source.NodeID) *Symbol {
+	if r == nil || !id.IsValid() {
 		return nil
 	}
 	return r.nodeSymbols[id]
@@ -70,8 +71,8 @@ func (r *Bindings) Scope(node ast.Node) *Scope {
 	return r.blockScopes[node.ID()]
 }
 
-func (r *Bindings) ScopeID(id ast.NodeID) *Scope {
-	if r == nil || id == 0 {
+func (r *Bindings) ScopeID(id source.NodeID) *Scope {
+	if r == nil || !id.IsValid() {
 		return nil
 	}
 	return r.blockScopes[id]

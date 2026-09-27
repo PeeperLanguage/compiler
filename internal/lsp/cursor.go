@@ -18,7 +18,7 @@ type cursorContext struct {
 	node    ast.Node
 	line    int
 	col     int
-	parents map[ast.NodeID]ast.Node
+	parents map[source.NodeID]ast.Node
 }
 
 func locContains(loc *source.Location, line, col int) bool {
@@ -73,7 +73,7 @@ func buildCursorContext(ctx *project.CompilerContext, module *module.Module, pos
 		module:  module,
 		line:    position.Line,
 		col:     position.Column,
-		parents: make(map[ast.NodeID]ast.Node),
+		parents: make(map[source.NodeID]ast.Node),
 	}
 	walkModuleAST(module, func(n ast.Node, parent ast.Node) bool {
 		if parent != nil {
@@ -88,7 +88,7 @@ func buildCursorContext(ctx *project.CompilerContext, module *module.Module, pos
 	return cc
 }
 
-func resolveIdentSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, module *module.Module, ctx *project.CompilerContext) *symbols.Symbol {
+func resolveIdentSymbol(ident *ast.Ident, parents map[source.NodeID]ast.Node, module *module.Module, ctx *project.CompilerContext) *symbols.Symbol {
 	if ident == nil || module == nil {
 		return nil
 	}
@@ -183,7 +183,7 @@ func resolveIdentSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, modul
 	return nil
 }
 
-func resolveSelectorMemberSymbol(sel *ast.SelectorExpr, ident *ast.Ident, parents map[ast.NodeID]ast.Node, module *module.Module, ctx *project.CompilerContext) *symbols.Symbol {
+func resolveSelectorMemberSymbol(sel *ast.SelectorExpr, ident *ast.Ident, parents map[source.NodeID]ast.Node, module *module.Module, ctx *project.CompilerContext) *symbols.Symbol {
 	if sel == nil || ident == nil || module == nil || ctx == nil {
 		return nil
 	}
@@ -205,7 +205,7 @@ func resolveSelectorMemberSymbol(sel *ast.SelectorExpr, ident *ast.Ident, parent
 	return nil
 }
 
-func selectorBaseType(expr ast.Expr, parents map[ast.NodeID]ast.Node, module *module.Module, ctx *project.CompilerContext) (typeinfo.Type, bool) {
+func selectorBaseType(expr ast.Expr, parents map[source.NodeID]ast.Node, module *module.Module, ctx *project.CompilerContext) (typeinfo.Type, bool) {
 	if expr == nil || module == nil {
 		return nil, false
 	}

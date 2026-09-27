@@ -1,9 +1,9 @@
 package thir
 
 import (
+	"compiler/internal/source"
 	"fmt"
 
-	"compiler/internal/ir"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/pkg/typednil"
 )
@@ -12,31 +12,31 @@ func (m *Module) Validate() error {
 	if m == nil {
 		return fmt.Errorf("nil THIR module")
 	}
-	seen := make(map[ir.NodeID]Node)
-	seenFunctionNodes := make(map[ir.NodeID]struct{})
+	seen := make(map[source.NodeID]Node)
+	seenFunctionNodes := make(map[source.NodeID]struct{})
 	for index, function := range m.Functions {
 		if function == nil {
-			return fmt.Errorf("function %d is nil", index)
+			return fmt.Errorf("function %v is nil", index)
 		}
-		if function.Source.NodeID == 0 {
-			return fmt.Errorf("function %d has no source identity", index)
+		if !function.Source.NodeID.IsValid() {
+			return fmt.Errorf("function %v has no source identity", index)
 		}
 		if _, found := seenFunctionNodes[function.Source.NodeID]; found {
-			return fmt.Errorf("function %d has duplicate source identity", function.Source.NodeID)
+			return fmt.Errorf("function %v has duplicate source identity", function.Source.NodeID)
 		}
 		seenFunctionNodes[function.Source.NodeID] = struct{}{}
 		if function.Identity == "" {
-			return fmt.Errorf("function %d has no stable identity", function.Source.NodeID)
+			return fmt.Errorf("function %v has no stable identity", function.Source.NodeID)
 		}
 		if indexedPosition, found := m.functionIndex[function.Identity]; !found || indexedPosition != index {
-			return fmt.Errorf("function %d has inconsistent stable identity index", function.Source.NodeID)
+			return fmt.Errorf("function %v has inconsistent stable identity index", function.Source.NodeID)
 		}
 		if function.Symbol == nil {
-			return fmt.Errorf("function %d has no symbol", function.Source.NodeID)
+			return fmt.Errorf("function %v has no symbol", function.Source.NodeID)
 		}
 		for paramIndex, parameter := range function.Params {
 			if parameter.Symbol == nil || parameter.Type == nil {
-				return fmt.Errorf("function %d parameter %d is incomplete", function.Source.NodeID, paramIndex)
+				return fmt.Errorf("function %v parameter %v is incomplete", function.Source.NodeID, paramIndex)
 			}
 		}
 		if function.Body == nil {
@@ -45,17 +45,17 @@ func (m *Module) Validate() error {
 		var validationError error
 		Inspect(function.Body, func(node Node) bool {
 			if err := node.validateSelf(); err != nil {
-				validationError = fmt.Errorf("%T at node %d: %w", node, node.SourceInfo().NodeID, err)
+				validationError = fmt.Errorf("%T at node %v: %w", node, node.SourceInfo().NodeID, err)
 				return false
 			}
 			id := node.SourceInfo().NodeID
 			if previous := seen[id]; previous != nil && previous != node {
-				validationError = fmt.Errorf("source node %d appears more than once in executable THIR", id)
+				validationError = fmt.Errorf("source node %v appears more than once in executable THIR", id)
 				return false
 			}
 			seen[id] = node
 			if m.byNodeID[id] != node {
-				validationError = fmt.Errorf("source node %d is missing from module index", id)
+				validationError = fmt.Errorf("source node %v is missing from module index", id)
 				return false
 			}
 			return true
@@ -71,7 +71,7 @@ func (m *Module) Validate() error {
 }
 
 func (s StmtInfo) validateSelf() error {
-	if s.Source.NodeID == 0 {
+	if !s.Source.NodeID.IsValid() {
 		return fmt.Errorf("missing source identity")
 	}
 	return nil
@@ -80,7 +80,7 @@ func (s StmtInfo) validateSelf() error {
 func (e ExprInfo) validateSelf() error { return e.validate(true) }
 
 func (e ExprInfo) validate(requireType bool) error {
-	if e.Source.NodeID == 0 {
+	if !e.Source.NodeID.IsValid() {
 		return fmt.Errorf("missing source identity")
 	}
 	if requireType && e.Type == nil {
@@ -229,7 +229,7 @@ func (s *Match) validateSelf() error {
 }
 
 func (e InvalidExpr) validateSelf() error {
-	if e.Source.NodeID == 0 {
+	if !e.Source.NodeID.IsValid() {
 		return fmt.Errorf("missing source identity")
 	}
 	return fmt.Errorf("invalid expression reached validated THIR: %s", e.Message)

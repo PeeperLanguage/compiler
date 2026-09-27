@@ -1,10 +1,10 @@
 package ownershipresult
 
 import (
-	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/moduleid"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/source"
 )
 
 // CleanupPlan records ownership effects at CFG and stable THIR source sites.
@@ -27,12 +27,12 @@ type CleanupPlan struct {
 	AfterScope map[cfg.SiteID][]symbols.SymbolID
 	// BeforeReturn drops every scope a return unwinds, after its value is
 	// computed. Keyed by the return statement, which is the event, not a site.
-	BeforeReturn           map[ir.NodeID][]symbols.SymbolID
-	BeforeAssign           map[ir.NodeID]struct{}
-	DiscardedValue         map[ir.NodeID]struct{}
-	ProjectionBase         map[ir.NodeID]struct{}
-	MatchFieldDrops        map[ir.NodeID][]int
-	MatchWholePayloadDrops map[ir.NodeID]struct{}
+	BeforeReturn           map[source.NodeID][]symbols.SymbolID
+	BeforeAssign           map[source.NodeID]struct{}
+	DiscardedValue         map[source.NodeID]struct{}
+	ProjectionBase         map[source.NodeID]struct{}
+	MatchFieldDrops        map[source.NodeID][]int
+	MatchWholePayloadDrops map[source.NodeID]struct{}
 }
 
 // Result stores ownership output by stable THIR function identity.

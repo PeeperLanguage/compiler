@@ -1,6 +1,7 @@
 package typechecker
 
 import (
+	"compiler/internal/source"
 	"strings"
 	"testing"
 
@@ -172,7 +173,7 @@ fn main() { let mut cursor = Cursor.{ value = 1 }; __LOOP__ }`,
 					t.Fatalf("implicit=%v unexpected diagnostics:\n%s", implicit, diag.EmitAllToString())
 				}
 				checkedCount := 0
-				module.Typechecking.ForEachCheckedIteration(func(ast.NodeID, *ast.BlockStmt) {
+				module.Typechecking.ForEachCheckedIteration(func(source.NodeID, *ast.BlockStmt) {
 					checkedCount++
 				})
 				expectedCount := 0

@@ -1,13 +1,13 @@
 package ownershipresult
 
 import (
+	"compiler/internal/source"
 	"errors"
 	"fmt"
 	"sort"
 	"strings"
 
 	"compiler/internal/frontend/ast"
-	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/moduleid"
 	"compiler/internal/semantics/symbols"
@@ -60,7 +60,7 @@ func (r Result) Validate(types *typecheckresult.Result, bindings *symbols.Bindin
 	total := len(problems)
 	if len(problems) > maxReportedProblems {
 		problems = problems[:maxReportedProblems]
-		return fmt.Errorf("%s (%d more)", strings.Join(problems, "; "), total-maxReportedProblems)
+		return fmt.Errorf("%s (%v more)", strings.Join(problems, "; "), total-maxReportedProblems)
 	}
 	return errors.New(strings.Join(problems, "; "))
 }
@@ -71,23 +71,23 @@ func (r Result) Validate(types *typecheckresult.Result, bindings *symbols.Bindin
 // with no kind is the gap the ownership fallback used to hide.
 func validateValueUses(types *typecheckresult.Result) []string {
 	problems := make([]string, 0)
-	types.ForEachValueUse(func(id ast.NodeID, use typeinfo.UseKind) {
+	types.ForEachValueUse(func(id source.NodeID, use typeinfo.UseKind) {
 		valueType := types.ExprType(id)
 		if valueType == nil {
-			problems = append(problems, fmt.Sprintf("use kind published for node %d with no expression type", id))
+			problems = append(problems, fmt.Sprintf("use kind published for node %v with no expression type", id))
 			return
 		}
 		if use == typeinfo.UseCopy && typeinfo.OwnershipCapabilityOf(valueType).Copy == typeinfo.CopyNever {
-			problems = append(problems, fmt.Sprintf("node %d copies %s, which has no copy operation", id, typeinfo.TypeText(valueType)))
+			problems = append(problems, fmt.Sprintf("node %v copies %s, which has no copy operation", id, typeinfo.TypeText(valueType)))
 		}
 	})
-	types.ForEachCallArguments(func(callID ast.NodeID, args []ast.Expr) {
+	types.ForEachCallArguments(func(callID source.NodeID, args []ast.Expr) {
 		for index, arg := range args {
 			if arg == nil {
 				continue
 			}
 			if _, published := types.ValueUse(arg.ID()); !published {
-				problems = append(problems, fmt.Sprintf("call %d argument %d has no published use kind", callID, index))
+				problems = append(problems, fmt.Sprintf("call %v argument %v has no published use kind", callID, index))
 			}
 		}
 	})
@@ -106,7 +106,7 @@ func validatePlan(fnID moduleid.FunctionID, plan *CleanupPlan, types *typecheckr
 	}
 
 	scopeExits := make(map[cfg.SiteID]struct{})
-	siteNodes := make(map[ir.NodeID]struct{})
+	siteNodes := make(map[source.NodeID]struct{})
 	for _, block := range graph.Blocks {
 		if block == nil {
 			continue
@@ -131,13 +131,13 @@ func validatePlan(fnID moduleid.FunctionID, plan *CleanupPlan, types *typecheckr
 	}
 	for nodeID, ids := range plan.BeforeReturn {
 		if _, exists := siteNodes[nodeID]; !exists {
-			problems = append(problems, fmt.Sprintf("function %s drops before return %d, which is not a site in its CFG", fnID, nodeID))
+			problems = append(problems, fmt.Sprintf("function %s drops before return %v, which is not a site in its CFG", fnID, nodeID))
 		}
 		problems = append(problems, validateSymbols(fnID, "return", ids)...)
 	}
 	for nodeID := range plan.BeforeAssign {
 		if _, exists := siteNodes[nodeID]; !exists {
-			problems = append(problems, fmt.Sprintf("function %s drops before assignment %d, which is not a site in its CFG", fnID, nodeID))
+			problems = append(problems, fmt.Sprintf("function %s drops before assignment %v, which is not a site in its CFG", fnID, nodeID))
 		}
 	}
 	for nodeID := range plan.DiscardedValue {
@@ -153,7 +153,7 @@ func validatePlan(fnID moduleid.FunctionID, plan *CleanupPlan, types *typecheckr
 		problems = append(problems, validateArmBody(bindings, fnID, "match field drop", nodeID)...)
 		for _, field := range fields {
 			if field < 0 {
-				problems = append(problems, fmt.Sprintf("function %s drops match field %d at %d", fnID, field, nodeID))
+				problems = append(problems, fmt.Sprintf("function %s drops match field %v at %v", fnID, field, nodeID))
 			}
 		}
 	}
@@ -173,16 +173,16 @@ func validateSymbols(fnID moduleid.FunctionID, where string, ids []symbols.Symbo
 	return problems
 }
 
-func validateTypedNode(types *typecheckresult.Result, fnID moduleid.FunctionID, where string, nodeID ir.NodeID) []string {
-	if types.ExprType(ast.NodeID(nodeID)) != nil {
+func validateTypedNode(types *typecheckresult.Result, fnID moduleid.FunctionID, where string, nodeID source.NodeID) []string {
+	if types.ExprType(nodeID) != nil {
 		return nil
 	}
-	return []string{fmt.Sprintf("function %s plans a %s at node %d with no expression type", fnID, where, nodeID)}
+	return []string{fmt.Sprintf("function %s plans a %s at node %v with no expression type", fnID, where, nodeID)}
 }
 
-func validateArmBody(bindings *symbols.Bindings, fnID moduleid.FunctionID, where string, nodeID ir.NodeID) []string {
-	if bindings.ScopeID(ast.NodeID(nodeID)) != nil {
+func validateArmBody(bindings *symbols.Bindings, fnID moduleid.FunctionID, where string, nodeID source.NodeID) []string {
+	if bindings.ScopeID(nodeID) != nil {
 		return nil
 	}
-	return []string{fmt.Sprintf("function %s plans a %s at node %d, which is not a block", fnID, where, nodeID)}
+	return []string{fmt.Sprintf("function %s plans a %s at node %v, which is not a block", fnID, where, nodeID)}
 }

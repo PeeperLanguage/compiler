@@ -3,14 +3,16 @@ package typecheckresult
 import (
 	"testing"
 
+	"compiler/internal/source"
+
 	"compiler/internal/semantics/typeinfo"
 )
 
 func TestCloneReusableExpressionEvidenceCopiesOnlyStableFacts(t *testing.T) {
 	src := New()
 	dst := New()
-	const srcID = 10
-	const dstID = 20
+	srcID := source.ParsedNodeID(10)
+	dstID := source.ParsedNodeID(20)
 
 	src.RecordExprType(srcID, &typeinfo.IntegerType{IsSigned: true, Bits: 32})
 	src.MarkExpandedDefaultBinding(srcID)
@@ -21,7 +23,7 @@ func TestCloneReusableExpressionEvidenceCopiesOnlyStableFacts(t *testing.T) {
 	// These depend on the cloned expression's new context and must be recomputed.
 	src.RecordValueUse(srcID, typeinfo.UseMove)
 	src.RecordReferenceArgument(srcID, true)
-	src.RecordCaseTest(srcID, CaseTest{SubjectID: 99, Case: 1, CaseCount: 2})
+	src.RecordCaseTest(srcID, CaseTest{SubjectID: source.ParsedNodeID(99), Case: 1, CaseCount: 2})
 
 	dst.CloneReusableExpressionEvidenceFrom(dstID, src, srcID)
 

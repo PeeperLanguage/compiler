@@ -14,11 +14,13 @@ This map records binding, type, place, intrinsic, and constant implementation ob
 
 ## AST identity and NodeID evidence
 
-`internal/frontend/ast/node.go` defines `ast.NodeID` as `uint32`.
+`internal/source/node_id.go` defines canonical comparable `source.NodeID` values.
 
-- Every AST `Node` exposes `ID()` and `SetID()`.
-- Semantic side tables use `NodeID`, not AST pointer identity, as their key.
-- `bindingresult.Result` owns syntax-occurrence-to-symbol identity behind `Bind` / `Symbol`.
+- Every AST `Node` exposes `ID()` and `SetID()` using that source-owned type.
+- Parser IDs are provisional; before collection, function subtrees are republished
+  under stable `moduleid.FunctionID` plus function-local preorder ordinal.
+- Semantic side tables use `source.NodeID`, not AST pointer identity, as their key.
+- `symbols.Bindings` owns syntax-occurrence-to-symbol identity behind `Bind` / `Symbol`.
 - The same result owns block-to-scope identity behind `SetScope` / `Scope`.
 - `typecheckresult.Result` owns base expression, call, and control evidence behind
   semantic operations such as `RecordExprType` / `ExprType`, `RecordMatch` /
@@ -26,7 +28,7 @@ This map records binding, type, place, intrinsic, and constant implementation ob
 - Default-binding provenance, call expansion, conversions, interface proofs,
   intrinsic dispatch, and selector decisions are likewise published and queried
   through methods; their backing NodeID indexes are private.
-- Generated AST nodes are reindexed by `Module.RebuildTypedASTIndex`.
+- Generated AST nodes use a separate synthetic identity domain.
 - Default-expression cloning assigns fresh IDs while preserving whether an
   occurrence came from the default declaration or caller argument.
 - Evidence keyed by `NodeID` lets CFG, flow, effects, ownership, and lowering

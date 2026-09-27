@@ -98,7 +98,7 @@ func (s *ServerState) HandleRename(params RenameParams) (*WorkspaceEdit, error) 
 		}
 		parents := cc.parents
 		if mod != cc.module {
-			parents = make(map[ast.NodeID]ast.Node)
+			parents = make(map[source.NodeID]ast.Node)
 		}
 		moduleText, hasModuleText := sourceTextForFile(ctx, mod.FilePath)
 		walkModuleAST(mod, func(n ast.Node, parent ast.Node) bool {

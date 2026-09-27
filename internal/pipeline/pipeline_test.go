@@ -14,7 +14,6 @@ import (
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/graph"
-	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/mir"
 	"compiler/internal/module"
@@ -274,7 +273,7 @@ func TestPipelineLowersExactLoopExitCleanupToMIR(t *testing.T) {
 		loop := fn.Body.Stmts[0].(*ast.ForStmt)
 		continueStmt := loop.Body.Stmts[1].(*ast.IfStmt).Then.Stmts[0].(*ast.ContinueStmt)
 		breakStmt := loop.Body.Stmts[3].(*ast.IfStmt).Then.Stmts[0].(*ast.BreakStmt)
-		graph := entry.CFG.FunctionByID(entry.THIR.Function(ir.NodeID(fn.ID())).Identity)
+		graph := entry.CFG.FunctionByID(entry.THIR.Function(fn.ID()).Identity)
 		if graph == nil || entry.MIR == nil {
 			t.Fatalf("pipeline artifacts missing: CFG=%v MIR=%v", graph != nil, entry.MIR != nil)
 		}
@@ -292,9 +291,9 @@ func TestPipelineLowersExactLoopExitCleanupToMIR(t *testing.T) {
 				if site == nil {
 					continue
 				}
-				hasContinue = hasContinue || site.NodeID == ir.NodeID(continueStmt.ID())
-				hasBreak = hasBreak || site.NodeID == ir.NodeID(breakStmt.ID())
-				if site.Kind == cfg.SiteScopeExit && site.NodeID == ir.NodeID(loop.Body.ID()) {
+				hasContinue = hasContinue || site.NodeID == continueStmt.ID()
+				hasBreak = hasBreak || site.NodeID == breakStmt.ID()
+				if site.Kind == cfg.SiteScopeExit && site.NodeID == loop.Body.ID() {
 					exit = site
 				}
 			}

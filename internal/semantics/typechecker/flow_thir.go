@@ -30,7 +30,7 @@ type flowCallEvent struct {
 
 type flowEvents struct {
 	next  int
-	tests map[ir.NodeID]int
+	tests map[source.NodeID]int
 	calls []flowCallEvent
 }
 
@@ -173,7 +173,7 @@ func (a *flowAnalyzer) run() {
 }
 
 func (a *flowAnalyzer) applySite(site *cfg.Site, state *flowState) *flowEvents {
-	events := &flowEvents{tests: make(map[ir.NodeID]int)}
+	events := &flowEvents{tests: make(map[source.NodeID]int)}
 	if site == nil || state == nil {
 		return events
 	}
@@ -909,7 +909,7 @@ func (a *flowAnalyzer) applyVariantCaseEdge(site *cfg.Site, edge cfg.Edge, state
 			}
 			state.rawPointers = setOriginFact(state.rawPointers, storage, valueOrigins)
 		}
-		if binding.Source.NodeID != 0 {
+		if binding.Source.NodeID.IsValid() {
 			a.result.MergeOrigins(binding.Source.NodeID, storage, valueOrigins)
 		}
 	}
@@ -921,7 +921,7 @@ func (a *flowAnalyzer) applyConditionEdge(site *cfg.Site, edge cfg.EdgeKind, sta
 	}
 	block := a.graph.Blocks[site.ID.Block]
 	branch, ok := block.Terminator.(*cfg.Branch)
-	if !ok || branch == nil || branch.ConditionID == 0 {
+	if !ok || branch == nil || !branch.ConditionID.IsValid() {
 		return
 	}
 	condition, _ := a.source.Node(branch.ConditionID).(thir.Expr)

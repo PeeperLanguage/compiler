@@ -17,7 +17,7 @@ import (
 )
 
 type loanID struct {
-	node      ir.NodeID
+	node      source.NodeID
 	parameter *symbols.Symbol
 }
 
@@ -29,7 +29,7 @@ type referenceLoan struct {
 	origins   []place.Origin
 	isMutable bool
 	site      ir.SourceInfo
-	loop      ir.NodeID
+	loop      source.NodeID
 }
 
 type loanFact struct {
@@ -82,7 +82,7 @@ func (a *analyzer) newLoanContext(node *site, st state) *loanContext {
 		keepingAlive, live := a.symbolLiveIn[node.cfgSite.ID][sym]
 		if !live {
 			for _, loan := range value {
-				if loan.loop != 0 {
+				if loan.loop.IsValid() {
 					live = true
 					break
 				}
@@ -275,7 +275,7 @@ func addLoanConflictLabels(
 	if conflict.loan.site.Location != nil {
 		diag.WithSecondaryLabel(conflict.loan.site.Location, borrowKind)
 	}
-	if conflict.keepingAlive.NodeID == 0 || conflict.keepingAlive.NodeID == conflict.loan.site.NodeID ||
+	if !conflict.keepingAlive.NodeID.IsValid() || conflict.keepingAlive.NodeID == conflict.loan.site.NodeID ||
 		conflict.keepingAlive.Location == nil {
 		return
 	}
@@ -630,7 +630,7 @@ type livenessEffectVisitor struct {
 }
 
 func (v *livenessEffectVisitor) recordUse(sym *symbols.Symbol, at ir.SourceInfo) {
-	if sym == nil || at.NodeID == 0 {
+	if sym == nil || !at.NodeID.IsValid() {
 		return
 	}
 	if previous, seen := v.uses[sym]; seen {
@@ -731,10 +731,10 @@ func trackedLiveSymbol(sym *symbols.Symbol) bool {
 }
 
 func earlierSource(left, right ir.SourceInfo) ir.SourceInfo {
-	if left.NodeID == 0 {
+	if !left.NodeID.IsValid() {
 		return right
 	}
-	if right.NodeID == 0 {
+	if !right.NodeID.IsValid() {
 		return left
 	}
 	if left.Location == nil || left.Location.Start == nil {

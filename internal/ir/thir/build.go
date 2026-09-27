@@ -1,6 +1,7 @@
 package thir
 
 import (
+	sourceid "compiler/internal/source"
 	"fmt"
 
 	"compiler/internal/diagnostics"
@@ -22,14 +23,13 @@ func Build(owner moduleid.ID, filePath string, source *ast.Module, bindings *sym
 		return nil
 	}
 	builder := &builder{
-		owner: owner, bindings: bindings, typing: typing, constantCondition: constantCondition,
-		functionOccurrences: make(map[string]int),
+		bindings: bindings, typing: typing, constantCondition: constantCondition,
 	}
 	module := &Module{
 		Name:          owner.ImportPath,
 		FilePath:      filePath,
 		Functions:     make([]*Function, 0),
-		byNodeID:      make(map[ir.NodeID]Node),
+		byNodeID:      make(map[sourceid.NodeID]Node),
 		functionIndex: make(map[moduleid.FunctionID]int),
 	}
 	ast.ForEachDecl(source, func(declaration ast.Decl) bool {
@@ -47,7 +47,7 @@ func Build(owner moduleid.ID, filePath string, source *ast.Module, bindings *sym
 			continue
 		}
 		Inspect(function.Body, func(node Node) bool {
-			if id := node.SourceInfo().NodeID; id != 0 {
+			if id := node.SourceInfo().NodeID; id.IsValid() {
 				module.byNodeID[id] = node
 			}
 			return true
@@ -57,20 +57,15 @@ func Build(owner moduleid.ID, filePath string, source *ast.Module, bindings *sym
 }
 
 type builder struct {
-	owner               moduleid.ID
-	bindings            *symbols.Bindings
-	typing              *typecheckresult.Result
-	currentScope        *symbols.Scope
-	constantCondition   func(ast.Expr, *symbols.Scope) (*bool, []*diagnostics.Diagnostic)
-	functionOccurrences map[string]int
+	bindings          *symbols.Bindings
+	typing            *typecheckresult.Result
+	currentScope      *symbols.Scope
+	constantCondition func(ast.Expr, *symbols.Scope) (*bool, []*diagnostics.Diagnostic)
 }
 
 func (b *builder) function(source *ast.FnDecl) *Function {
-	declarationSurface := source.GetDeclSurface()
-	occurrence := b.functionOccurrences[declarationSurface]
-	b.functionOccurrences[declarationSurface] = occurrence + 1
 	function := &Function{
-		Identity:          moduleid.FunctionIdentity(b.owner, declarationSurface, occurrence),
+		Identity:          source.ID().Function(),
 		Source:            sourceInfo(source),
 		IsEntrypointShape: source.Receiver == nil && source.Body != nil && len(source.TypeParams) == 0,
 		ReturnTypeText:    ast.TypeText(source.ReturnType),
@@ -451,7 +446,7 @@ func (b *builder) expressionInfo(expression ast.Expr) ExprInfo {
 	return info
 }
 
-func (b *builder) caseTest(id ast.NodeID) *CaseTest {
+func (b *builder) caseTest(id sourceid.NodeID) *CaseTest {
 	if b.typing == nil {
 		return nil
 	}
@@ -460,7 +455,7 @@ func (b *builder) caseTest(id ast.NodeID) *CaseTest {
 		return nil
 	}
 	return &CaseTest{
-		SubjectID: ir.NodeID(test.SubjectID), Case: test.Case, MatchesWhenTrue: test.MatchesWhenTrue,
+		SubjectID: test.SubjectID, Case: test.Case, MatchesWhenTrue: test.MatchesWhenTrue,
 		CaseCount: test.CaseCount, Family: test.Family,
 	}
 }
@@ -498,7 +493,7 @@ func sourceInfo(node ast.Node) ir.SourceInfo {
 	if typednil.IsNil(node) {
 		return ir.SourceInfo{}
 	}
-	return ir.SourceInfo{NodeID: ir.NodeID(node.ID()), Location: ast.LocOf(node)}
+	return ir.SourceInfo{NodeID: node.ID(), Location: ast.LocOf(node)}
 }
 
 func stmtInfo(node ast.Node) StmtInfo { return StmtInfo{Source: sourceInfo(node)} }

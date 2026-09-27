@@ -528,7 +528,7 @@ func (l *lowerer) place(expr thir.Expr) *ir.Place {
 }
 
 func (l *lowerer) appendPayloadProjections(place *ir.Place, source ir.SourceInfo) {
-	if l.ctx.Flow == nil || place == nil || source.NodeID == 0 {
+	if l.ctx.Flow == nil || place == nil || !source.NodeID.IsValid() {
 		return
 	}
 	id := source.NodeID

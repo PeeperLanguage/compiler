@@ -166,6 +166,7 @@ func Collect(ctx *project.CompilerContext, module *module.Module) {
 	if ctx == nil || module == nil || module.AST == nil {
 		return
 	}
+	ast.PublishFunctionIdentities(module.ID, module.AST)
 	c := &collector{ctx: ctx, module: module}
 	c.collectModule(module.AST)
 }

@@ -1,6 +1,7 @@
 package project
 
 import (
+	"compiler/internal/source"
 	"path/filepath"
 	"testing"
 
@@ -180,8 +181,8 @@ func moduleWithArtifacts() *module.Module {
 	}
 	module.ResetSemanticData()
 	module.Typechecking = typecheckresult.New()
-	module.Typechecking.RecordExprType(1, typeinfo.DefaultIntegerType())
-	module.Flow.RecordExprType(1, &typeinfo.IntegerType{IsSigned: true, Bits: 64})
+	module.Typechecking.RecordExprType(source.ParsedNodeID(1), typeinfo.DefaultIntegerType())
+	module.Flow.RecordExprType(source.ParsedNodeID(1), &typeinfo.IntegerType{IsSigned: true, Bits: 64})
 	return module
 }
 
@@ -246,35 +247,35 @@ func TestModuleResetSemanticDataInitializesCurrentResults(t *testing.T) {
 
 func TestModuleExprTypeEvidenceFollowsPhaseLifecycle(t *testing.T) {
 	module := moduleWithArtifacts()
-	base := module.BaseExprType(1)
+	base := module.BaseExprType(source.ParsedNodeID(1))
 	if base == nil {
 		t.Fatal("typechecked module has no base expression type")
 	}
-	if got := module.EffectiveExprType(1); got != module.Flow.ExprType(1) {
+	if got := module.EffectiveExprType(source.ParsedNodeID(1)); got != module.Flow.ExprType(source.ParsedNodeID(1)) {
 		t.Fatalf("effective type = %#v, want flow refinement", got)
 	}
 
 	module.Flow = nil
-	if got := module.EffectiveExprType(1); got != base {
+	if got := module.EffectiveExprType(source.ParsedNodeID(1)); got != base {
 		t.Fatalf("effective type without flow = %#v, want base type %#v", got, base)
 	}
 	module.ResetToPhase(phase.Typechecked)
-	if module.BaseExprType(1) != base {
+	if module.BaseExprType(source.ParsedNodeID(1)) != base {
 		t.Fatal("typechecked reset discarded base expression type")
 	}
 	module.ResetToPhase(phase.Parsed)
-	if module.BaseExprType(1) != nil || module.EffectiveExprType(1) != nil {
+	if module.BaseExprType(source.ParsedNodeID(1)) != nil || module.EffectiveExprType(source.ParsedNodeID(1)) != nil {
 		t.Fatal("parsed reset retained expression type evidence")
 	}
 }
 
 func TestModuleExprTypeEvidenceHandlesMissingTypecheckResult(t *testing.T) {
 	var mod *module.Module
-	if mod.BaseExprType(1) != nil || mod.EffectiveExprType(1) != nil {
+	if mod.BaseExprType(source.ParsedNodeID(1)) != nil || mod.EffectiveExprType(source.ParsedNodeID(1)) != nil {
 		t.Fatal("nil module returned expression type evidence")
 	}
 	mod = &module.Module{}
-	if mod.BaseExprType(1) != nil || mod.EffectiveExprType(1) != nil {
+	if mod.BaseExprType(source.ParsedNodeID(1)) != nil || mod.EffectiveExprType(source.ParsedNodeID(1)) != nil {
 		t.Fatal("module without typecheck result returned expression type evidence")
 	}
 }

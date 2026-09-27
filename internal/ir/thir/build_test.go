@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"compiler/internal/diagnostics"
+
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/ir/thir"
@@ -34,6 +35,7 @@ func buildTypedModule(t *testing.T, source string) *module.Module {
 		Imports:            make(map[string]module.ResolvedImport),
 	}
 	ctx.AddModule(mod)
+
 	collector.Collect(ctx, mod)
 	binder.Bind(ctx, mod)
 	resolver.Resolve(ctx, mod)
@@ -57,8 +59,8 @@ func TestBuildPublishesStableFunctionIdentityAcrossEarlierBodyEdit(t *testing.T)
 	}
 	firstID := first.THIR.Functions[1].Identity
 	secondID := second.THIR.Functions[1].Identity
-	if first.THIR.Functions[1].Source.NodeID == second.THIR.Functions[1].Source.NodeID {
-		t.Fatal("earlier body edit did not shift later function NodeID")
+	if first.THIR.Functions[1].Source.NodeID != second.THIR.Functions[1].Source.NodeID {
+		t.Fatalf("later function source identity changed from %v to %v", first.THIR.Functions[1].Source.NodeID, second.THIR.Functions[1].Source.NodeID)
 	}
 	if firstID == "" || firstID != secondID {
 		t.Fatalf("later function identities = %q and %q, want stable non-empty identity", firstID, secondID)

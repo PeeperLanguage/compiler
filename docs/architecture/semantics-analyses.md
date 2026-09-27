@@ -39,13 +39,16 @@ listed; they assert contracts described below.
 
 ## Identity and evidence model
 
-### AST `NodeID`
+### Source `NodeID`
 
-AST nodes have stable `ast.NodeID` values. Typechecking results use them as keys for
-expression types, calls, conversions, match evidence, iteration evidence, variant
-construction, value-use classification, and reference-argument classification.
-Flow results use them for expression resolutions, payload access, case tests, variant
-fields, and per-function site-fact containers. Cleanup entries keyed by a source program event use `ir.NodeID`, whose source identities are derived from AST IDs.
+AST and IR use one canonical comparable `source.NodeID` type. Parser IDs are
+provisional; before collection, every function subtree receives identities owned by
+its stable `moduleid.FunctionID` and function-local preorder. Typechecking results use
+them as keys for expression types, calls, conversions, match evidence, iteration
+evidence, variant construction, value-use classification, and reference-argument
+classification. Flow results use them for expression resolutions, payload access,
+case tests, variant fields, and per-function site-fact containers. Cleanup entries
+keyed by a source program event use the same source identity.
 `NodeID` identifies source meaning or a source event. It does not identify an ordered
 execution point. A return statement, assignment statement, match body, or discarded
 expression can therefore be a `NodeID` key in a cleanup plan.
@@ -67,9 +70,9 @@ terminators, and join sites are ordered within blocks. Site edges connect adjace
 sites and then connect the final site to successor blocks. Edge kinds preserve normal,
 true, false, return, and variant-case meaning. Consumers must use the immutable
 published topology; a new topology generation must rebuild the CFG.
-Analysis artifacts key function-local data by function `ir.NodeID` first, then by
-`cfg.SiteID`. This outer function key is required because a site ID has no module-wide
-meaning.
+Analysis artifacts key outer function data by `moduleid.FunctionID`, then use
+`cfg.SiteID` where ordered program points are needed. This outer function key is
+required because a site ID has no module-wide meaning.
 
 ### Places and origins
 
@@ -182,7 +185,7 @@ Important types:
   type, and any type crossed by implicit pointer/reference dereference. Physical
   field type remains distinct from flow-refined per-use expression type.
 - `CompilerCall` records intrinsic operation and function kind.
-`Result` maps `ast.NodeID` to:
+`Result` maps `source.NodeID` to:
 - expanded default bindings and effective call arguments;
 - interface implementations, implicit conversions, and implicit call argument types;
 - compiler calls, string-concatenation decisions, ordinary struct fields, variant
@@ -295,7 +298,7 @@ an input lattice for flow or ownership.
 - `Iterate`: a sequence iterable receives a loop-lifetime shared access and carrier.
 - `Discard`: a produced value is thrown away.
 - `CallBegin` and `CallEnd`: bracket nested call evaluation and temporary lifetime.
-`effect.Result` maps function `ir.NodeID` to `SiteOps`; `SiteOps` maps `cfg.SiteID` to
+`effect.Result` maps `moduleid.FunctionID` to `SiteOps`; `SiteOps` maps `cfg.SiteID` to
 an ordered `[]Op`. Slice order is evaluation order and is semantic. `effect.Visitor`
 is exhaustive. Adding an operation requires every consumer to implement its visitor
 method.
@@ -430,13 +433,13 @@ value effects alone.
 `ownershipresult.CleanupPlan` is the only source-level drop obligation consumed by
 lowering. Its channels are:
 - `AfterScope map[cfg.SiteID][]SymbolID`: symbols dropped when one lexical scope exits;
-- `BeforeReturn map[ir.NodeID][]SymbolID`: symbols from all unwound scopes, after return
+- `BeforeReturn map[source.NodeID][]SymbolID`: symbols from all unwound scopes, after return
   value evaluation;
-- `BeforeAssign map[ir.NodeID]struct{}`: old dropping value before replacement;
-- `DiscardedValue map[ir.NodeID]struct{}`: dropping temporary expression statements;
-- `ProjectionBase map[ir.NodeID]struct{}`: dropping temporary projection bases;
-- `MatchFieldDrops map[ir.NodeID][]int`: dropped unselected/discarded payload fields;
-- `MatchWholePayloadDrops map[ir.NodeID]struct{}`: dropped discarded whole payload.
+- `BeforeAssign map[source.NodeID]struct{}`: old dropping value before replacement;
+- `DiscardedValue map[source.NodeID]struct{}`: dropping temporary expression statements;
+- `ProjectionBase map[source.NodeID]struct{}`: dropping temporary projection bases;
+- `MatchFieldDrops map[source.NodeID][]int`: dropped unselected/discarded payload fields;
+- `MatchWholePayloadDrops map[source.NodeID]struct{}`: dropped discarded whole payload.
 `applyBlockExit` checks destruction against live loans, computes reverse declaration-order
 scope drops, records them by `SiteID`, and clears scope ownership. `cleanupBeforeReturn`
 walks every enclosing scope and records drops by return `NodeID`. Scope exit and return
@@ -496,7 +499,7 @@ AST + bindings + symbols
         v
  effect.Build
         |
-        +--> effect.Result[function NodeID][SiteID][]Op
+        +--> effect.Result[FunctionID][SiteID][]Op
         |
         +--> definiteinit.Check: initialized-symbol lattice + diagnostics
         |

@@ -2,10 +2,10 @@ package ownership
 
 import (
 	"compiler/internal/diagnostics"
-	"compiler/internal/ir"
 	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/source"
 )
 
 func storageAccessForUse(typ typeinfo.Type, use typeinfo.UseKind) storageAccess {
@@ -46,8 +46,8 @@ func (a *analyzer) exprType(expr thir.Expr) typeinfo.Type {
 	return expr.ExprType()
 }
 
-func (a *analyzer) partialVariantPayloadMove(id ir.NodeID) bool {
-	if a == nil || a.input.Source == nil || a.input.Flow == nil || id == 0 {
+func (a *analyzer) partialVariantPayloadMove(id source.NodeID) bool {
+	if a == nil || a.input.Source == nil || a.input.Flow == nil || !id.IsValid() {
 		return false
 	}
 	payload, ok := a.input.Flow.Payload(id)

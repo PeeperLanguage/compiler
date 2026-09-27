@@ -2,7 +2,6 @@ package module
 
 import (
 	"compiler/internal/frontend/ast"
-	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/mir"
 	"compiler/internal/ir/thir"
@@ -16,6 +15,7 @@ import (
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/source"
 )
 
 // ResolvedImport identifies one file-backed import after project resolution.
@@ -159,12 +159,12 @@ func (m *Module) ResetSemanticData() {
 }
 
 // BaseExprType returns canonical base typechecker evidence when available.
-func (m *Module) BaseExprType(id ast.NodeID) typeinfo.Type {
-	if m == nil || id == 0 {
+func (m *Module) BaseExprType(id source.NodeID) typeinfo.Type {
+	if m == nil || !id.IsValid() {
 		return nil
 	}
 	if m.THIR != nil {
-		if expr, ok := m.THIR.Node(ir.NodeID(id)).(thir.Expr); ok && expr != nil {
+		if expr, ok := m.THIR.Node(id).(thir.Expr); ok && expr != nil {
 			return expr.ExprType()
 		}
 	}
@@ -176,12 +176,12 @@ func (m *Module) BaseExprType(id ast.NodeID) typeinfo.Type {
 
 // EffectiveExprType returns per-use flow refinement when available and falls
 // back to the canonical base typechecker result.
-func (m *Module) EffectiveExprType(id ast.NodeID) typeinfo.Type {
+func (m *Module) EffectiveExprType(id source.NodeID) typeinfo.Type {
 	if m == nil {
 		return nil
 	}
 	if m.Flow != nil {
-		if typ := m.Flow.ExprType(ir.NodeID(id)); typ != nil {
+		if typ := m.Flow.ExprType(id); typ != nil {
 			return typ
 		}
 	}

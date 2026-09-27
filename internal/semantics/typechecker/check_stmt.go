@@ -705,7 +705,7 @@ func (c *checker) expandCallIteration(scope *symbols.Scope, node *ast.ForStmt) {
 		NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
 		Location:     location,
 	}
-	resultName := fmt.Sprintf("$for.result.%d", node.ID())
+	resultName := fmt.Sprintf("$for.result.%v", node.ID())
 	result := &ast.LetDecl{
 		NodeIDHolder: ast.NodeIDHolder{NodeID: ast.NewSyntheticNodeID()},
 		Name: &ast.Ident{

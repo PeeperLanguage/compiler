@@ -1,12 +1,12 @@
 package effect
 
 import (
+	"compiler/internal/source"
 	"errors"
 	"fmt"
 	"sort"
 	"strings"
 
-	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/thir"
 	"compiler/internal/moduleid"
@@ -76,7 +76,7 @@ func validateOps(fn moduleid.FunctionID, site cfg.SiteID, ops []Op, source *thir
 		Visit(op, visitor)
 	}
 	for _, unclosed := range visitor.open {
-		visitor.problems = append(visitor.problems, fmt.Sprintf("function %s site %v leaves call %d open", fn, site, unclosed))
+		visitor.problems = append(visitor.problems, fmt.Sprintf("function %s site %v leaves call %v open", fn, site, unclosed))
 	}
 	return visitor.problems
 }
@@ -87,7 +87,7 @@ type validationVisitor struct {
 	index    int
 	source   *thir.Module
 	problems []string
-	open     []ir.NodeID
+	open     []source.NodeID
 }
 
 func (v *validationVisitor) where() string {
@@ -110,12 +110,12 @@ func (v *validationVisitor) VisitDefine(op Define) {
 			}
 		}
 		if !matched {
-			v.problems = append(v.problems, fmt.Sprintf("%s is a define naming parameter %d not in typed THIR", where, op.Node))
+			v.problems = append(v.problems, fmt.Sprintf("%s is a define naming parameter %v not in typed THIR", where, op.Node))
 		}
 	} else {
 		v.problems = append(v.problems, validateNode[thir.Node](where, "define", op.Node, op.Source, v.source)...)
 	}
-	if op.Value != 0 || op.ValueExpr != nil {
+	if op.Value.IsValid() || op.ValueExpr != nil {
 		v.problems = append(v.problems, validateNode[thir.Expr](where, "define value", op.Value, op.ValueExpr, v.source)...)
 	}
 }
@@ -125,7 +125,7 @@ func (v *validationVisitor) VisitWrite(op Write) {
 	v.problems = append(v.problems, validatePlace(where, "write", op.Place, v.source)...)
 	v.problems = append(v.problems, validateNode[thir.Expr](where, "write", op.Node, op.Target, v.source)...)
 	v.problems = append(v.problems, validateNode[*thir.Assign](where, "write owner", op.Owner, v.source.Node(op.Owner), v.source)...)
-	if op.Value != 0 || op.ValueExpr != nil {
+	if op.Value.IsValid() || op.ValueExpr != nil {
 		v.problems = append(v.problems, validateNode[thir.Expr](where, "write value", op.Value, op.ValueExpr, v.source)...)
 	}
 }
@@ -184,7 +184,7 @@ func (v *validationVisitor) VisitCallEnd(op CallEnd) {
 		return
 	}
 	if last := v.open[len(v.open)-1]; last != op.Node {
-		v.problems = append(v.problems, fmt.Sprintf("%s ends call %d while call %d is still open", where, op.Node, last))
+		v.problems = append(v.problems, fmt.Sprintf("%s ends call %v while call %v is still open", where, op.Node, last))
 	}
 	v.open = v.open[:len(v.open)-1]
 }
@@ -194,27 +194,27 @@ func (v *validationVisitor) VisitCallEnd(op CallEnd) {
 // answers depending on which field it read.
 func validatePlace(where, kind string, at Place, source *thir.Module) []string {
 	switch {
-	case at.Root == nil && at.Temporary == 0:
+	case at.Root == nil && !at.Temporary.IsValid():
 		return []string{fmt.Sprintf("%s is a %s whose place names neither a binding nor a temporary", where, kind)}
-	case at.Root != nil && at.Temporary != 0:
-		return []string{fmt.Sprintf("%s is a %s whose place names both binding %s and temporary %d",
+	case at.Root != nil && at.Temporary.IsValid():
+		return []string{fmt.Sprintf("%s is a %s whose place names both binding %s and temporary %v",
 			where, kind, at.Root.Name, at.Temporary)}
-	case at.Temporary != 0:
+	case at.Temporary.IsValid():
 		return validateNode[thir.Expr](where, kind+" temporary", at.Temporary, at.TemporaryExpr, source)
 	}
 	return nil
 }
 
-func validateNode[T thir.Node](where, kind string, node ir.NodeID, carried thir.Node, source *thir.Module) []string {
+func validateNode[T thir.Node](where, kind string, node source.NodeID, carried thir.Node, source *thir.Module) []string {
 	indexed := source.Node(node)
 	if indexed == nil {
-		return []string{fmt.Sprintf("%s is a %s naming node %d, which is not in the typed THIR", where, kind, node)}
+		return []string{fmt.Sprintf("%s is a %s naming node %v, which is not in the typed THIR", where, kind, node)}
 	}
 	if _, ok := indexed.(T); !ok {
-		return []string{fmt.Sprintf("%s is a %s naming node %d with unexpected node type %T", where, kind, node, indexed)}
+		return []string{fmt.Sprintf("%s is a %s naming node %v with unexpected node type %T", where, kind, node, indexed)}
 	}
 	if typednil.IsNil(carried) || carried != indexed {
-		return []string{fmt.Sprintf("%s is a %s whose THIR source does not match node %d", where, kind, node)}
+		return []string{fmt.Sprintf("%s is a %s whose THIR source does not match node %v", where, kind, node)}
 	}
 	return nil
 }

@@ -1,6 +1,7 @@
 package mir
 
 import (
+	"compiler/internal/source"
 	"testing"
 
 	"compiler/internal/frontend/ast"
@@ -21,18 +22,18 @@ func TestDiscardedCallDropsTemporariesBeforeResult(t *testing.T) {
 	symbol := symbols.New("consume", symbols.SymbolFunc, nil, nil)
 	symbol.Type = callable
 	call := &thir.Call{
-		ExprInfo: thir.ExprInfo{Source: ir.SourceInfo{NodeID: 3}, Type: result},
-		Callee:   &thir.Ident{ExprInfo: thir.ExprInfo{Source: ir.SourceInfo{NodeID: 4}, Type: callable}, Symbol: symbol, Name: symbol.Name},
+		ExprInfo: thir.ExprInfo{Source: ir.SourceInfo{NodeID: source.ParsedNodeID(3)}, Type: result},
+		Callee:   &thir.Ident{ExprInfo: thir.ExprInfo{Source: ir.SourceInfo{NodeID: source.ParsedNodeID(4)}, Type: callable}, Symbol: symbol, Name: symbol.Name},
 		Args: []thir.Expr{
-			&thir.NumberLiteral{ExprInfo: thir.ExprInfo{Source: ir.SourceInfo{NodeID: 5}, Type: integer, ImplicitReference: borrow}, Value: "1"},
-			&thir.NumberLiteral{ExprInfo: thir.ExprInfo{Source: ir.SourceInfo{NodeID: 6}, Type: integer, ImplicitReference: borrow}, Value: "2"},
+			&thir.NumberLiteral{ExprInfo: thir.ExprInfo{Source: ir.SourceInfo{NodeID: source.ParsedNodeID(5)}, Type: integer, ImplicitReference: borrow}, Value: "1"},
+			&thir.NumberLiteral{ExprInfo: thir.ExprInfo{Source: ir.SourceInfo{NodeID: source.ParsedNodeID(6)}, Type: integer, ImplicitReference: borrow}, Value: "2"},
 		},
 	}
 	types := ir.NewTypeTable()
 	block := &Block{}
 	l := &lowerer{
 		input: LoweringInput{Types: types}, module: &Module{Types: types}, current: block,
-		cleanup: &ownershipresult.CleanupPlan{DiscardedValue: map[ir.NodeID]struct{}{3: {}}},
+		cleanup: &ownershipresult.CleanupPlan{DiscardedValue: map[source.NodeID]struct{}{source.ParsedNodeID(3): {}}},
 	}
 	if !l.lowerExprStatement(call) {
 		t.Fatal("discarded call failed to lower")

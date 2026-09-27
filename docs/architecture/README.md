@@ -41,14 +41,14 @@ flowchart TD
 
 | Identity | Created by | Used for |
 |---|---|---|
-| `ast.NodeID` | parser or AST synthetic-node allocator | Source and generated AST lookup, semantic evidence maps |
+| `source.NodeID` | parser, Parsed-to-Collected function publication, or AST synthetic-node allocator | Source/generated syntax lookup, semantic evidence maps, and IR provenance |
+| `moduleid.FunctionID` | Parsed-to-Collected function publication | Stable callable declaration identity across semantic and IR phases |
 | `symbols.SymbolID` | symbol creation | Binding, ownership roots, cleanup plans, semantic references |
 | module ID | `internal/moduleid` | Cross-module identity, imports, caches, invalidation |
 | `cfg.SiteID` | CFG construction | Per-statement and terminator analysis sites |
-| `ir.NodeID` | derived from source AST identity | IR statement, block, and expression provenance |
 | `ir.TypeID` | shared IR type interning | Runtime type identity consumed by MIR and backend layout |
 
-Identity changes require checking every producer and consumer. Source AST identity and generated identity currently have different tooling and semantic requirements; see frontend and semantics maps for observed behavior.
+Identity changes require checking every producer and consumer. Parser IDs are provisional. Before collection, function declarations and their syntax subtrees receive `FunctionID`-owned preorder identities; module-level syntax remains parser-generation-local. Generated syntax uses a distinct synthetic domain. See frontend and semantics maps for observed behavior.
 
 ## Folder map
 

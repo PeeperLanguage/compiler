@@ -2,7 +2,6 @@ package ownership
 
 import (
 	"compiler/internal/diagnostics"
-	"compiler/internal/ir"
 	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/effect"
 	"compiler/internal/semantics/symbols"
@@ -53,7 +52,7 @@ type ownershipEffectVisitor struct {
 	node             *site
 	st               state
 	loans            *loanContext
-	storedReferences map[ir.NodeID]storedReference
+	storedReferences map[source.NodeID]storedReference
 	calls            []callFrame
 }
 
@@ -104,8 +103,8 @@ func (v *ownershipEffectVisitor) VisitCallEnd(effect.CallEnd) {
 // that a Define or Write will store. This runs before any operation at the site
 // so a move performed while evaluating the source cannot erase the value that
 // is about to enter the destination.
-func (a *analyzer) captureStoredReferences(ops []effect.Op, st state) map[ir.NodeID]storedReference {
-	visitor := &storedReferenceVisitor{a: a, st: st, values: make(map[ir.NodeID]storedReference)}
+func (a *analyzer) captureStoredReferences(ops []effect.Op, st state) map[source.NodeID]storedReference {
+	visitor := &storedReferenceVisitor{a: a, st: st, values: make(map[source.NodeID]storedReference)}
 	for _, op := range ops {
 		effect.Visit(op, visitor)
 	}
@@ -115,7 +114,7 @@ func (a *analyzer) captureStoredReferences(ops []effect.Op, st state) map[ir.Nod
 type storedReferenceVisitor struct {
 	a      *analyzer
 	st     state
-	values map[ir.NodeID]storedReference
+	values map[source.NodeID]storedReference
 }
 
 func (v *storedReferenceVisitor) capture(value thir.Expr) {
@@ -142,11 +141,11 @@ func (*storedReferenceVisitor) VisitCallEnd(effect.CallEnd)     {}
 // applyDefineEffect makes a newly defined binding own the value published by
 // the semantic producer. The declaration syntax is irrelevant here: any future
 // construct that publishes Define inherits the same ownership transition.
-func (a *analyzer) applyDefineEffect(node *site, op effect.Define, st state, references map[ir.NodeID]storedReference) {
+func (a *analyzer) applyDefineEffect(node *site, op effect.Define, st state, references map[source.NodeID]storedReference) {
 	if op.Symbol == nil {
 		return
 	}
-	if op.Value != 0 {
+	if op.Value.IsValid() {
 		value := op.ValueExpr
 		reference := references[op.Value]
 		a.updatePointerSymbol(op.Symbol, node.scope, value, st)
@@ -172,9 +171,9 @@ func (a *analyzer) applyWriteEffect(
 	op effect.Write,
 	st state,
 	loans *loanContext,
-	references map[ir.NodeID]storedReference,
+	references map[source.NodeID]storedReference,
 ) {
-	if op.Owner != 0 {
+	if op.Owner.IsValid() {
 		delete(a.cleanup.BeforeAssign, op.Owner)
 	}
 	target := op.Target
@@ -191,10 +190,10 @@ func (a *analyzer) applyWriteEffect(
 			return
 		}
 		a.checkStorageAccess(target, loans, storageMutate)
-		if op.Owner != 0 && typeinfo.OwnershipCapabilityOf(a.exprType(target)).NeedsDrop {
+		if op.Owner.IsValid() && typeinfo.OwnershipCapabilityOf(a.exprType(target)).NeedsDrop {
 			a.cleanup.BeforeAssign[op.Owner] = struct{}{}
 		}
-		if op.Value != 0 {
+		if op.Value.IsValid() {
 			a.replaceReferenceField(target, references[op.Value], st)
 		}
 		return
@@ -205,7 +204,7 @@ func (a *analyzer) applyWriteEffect(
 		a.checkStorageAccess(target, loans, storageMutate)
 	}
 	if typ, ok := symbols.GetSymbolType(sym); ok && typeinfo.OwnershipCapabilityOf(typ).NeedsDrop {
-		if _, live := st.live[sym]; live && op.Owner != 0 {
+		if _, live := st.live[sym]; live && op.Owner.IsValid() {
 			a.cleanup.BeforeAssign[op.Owner] = struct{}{}
 		}
 	}
@@ -213,7 +212,7 @@ func (a *analyzer) applyWriteEffect(
 		delete(st.moved, sym)
 		st.live[sym] = struct{}{}
 	}
-	if op.Value == 0 {
+	if !op.Value.IsValid() {
 		return
 	}
 	value := op.ValueExpr
@@ -227,7 +226,7 @@ func (a *analyzer) applyWriteEffect(
 // typechecking and published by effects; ownership does not inspect ForStmt or
 // the iteration plan.
 func (a *analyzer) applyIterateEffect(op effect.Iterate, st state, loans *loanContext) {
-	if op.Carrier == nil || op.Node == 0 {
+	if op.Carrier == nil || !op.Node.IsValid() {
 		return
 	}
 	iterable := op.Source

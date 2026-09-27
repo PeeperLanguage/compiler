@@ -1,9 +1,9 @@
 package effect
 
 import (
+	"compiler/internal/source"
 	"fmt"
 
-	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/place"
@@ -334,9 +334,9 @@ func ternaryUse(isConditionTrue bool, yes, no typeinfo.UseKind) typeinfo.UseKind
 	}
 	return no
 }
-func exprNodeID(expr thir.Expr) ir.NodeID {
+func exprNodeID(expr thir.Expr) source.NodeID {
 	if expr == nil {
-		return 0
+		return source.NodeID{}
 	}
 	return expr.SourceInfo().NodeID
 }

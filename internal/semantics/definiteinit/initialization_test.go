@@ -8,7 +8,6 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
-	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/thir"
 	"compiler/internal/module"
@@ -36,6 +35,7 @@ func analyzeInitializationSource(t *testing.T, source string) (*functionResult, 
 		Imports:  make(map[string]module.ResolvedImport),
 	}
 	ctx.AddModule(module)
+
 	collector.Collect(ctx, module)
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
@@ -50,7 +50,7 @@ func analyzeInitializationSource(t *testing.T, source string) (*functionResult, 
 	if !ok || fn == nil {
 		t.Fatal("choose function AST missing")
 	}
-	graph := module.CFG.FunctionByID(module.THIR.Function(ir.NodeID(fn.ID())).Identity)
+	graph := module.CFG.FunctionByID(module.THIR.Function(fn.ID()).Identity)
 	if graph == nil {
 		t.Fatal("choose function CFG missing")
 	}
@@ -252,8 +252,8 @@ fn choose(result: Result) -> i32 {
 	fn := module.AST.Stmts[1].(*ast.FnDecl)
 	match := fn.Body.Stmts[0].(*ast.MatchStmt)
 	binding := module.Bindings.Symbol(match.Arms[0].Fields[0].Binding)
-	returnID := ir.NodeID(match.Arms[0].Body.Stmts[0].ID())
-	for _, block := range module.CFG.FunctionByID(module.THIR.Function(ir.NodeID(fn.ID())).Identity).Blocks {
+	returnID := match.Arms[0].Body.Stmts[0].ID()
+	for _, block := range module.CFG.FunctionByID(module.THIR.Function(fn.ID()).Identity).Blocks {
 		for _, cfgSite := range block.Sites {
 			if cfgSite.NodeID != returnID {
 				continue
@@ -264,7 +264,7 @@ fn choose(result: Result) -> i32 {
 			if _, initialized := in[binding.ID]; initialized {
 				t.Fatalf("pattern binding unexpectedly initialized before arm return: state=%#v", in)
 			}
-			out := transfer(module.Effects[module.THIR.Function(ir.NodeID(fn.ID())).Identity][cfgSite.ID], in)
+			out := transfer(module.Effects[module.THIR.Function(fn.ID()).Identity][cfgSite.ID], in)
 			if _, initialized := out[binding.ID]; !initialized {
 				t.Fatalf("pattern binding absent after arm return transfer: state=%#v", out)
 			}

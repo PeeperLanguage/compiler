@@ -1,6 +1,7 @@
 package lsp
 
 import (
+	"compiler/internal/source"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -69,9 +70,9 @@ func TestTypeHoverShowsInvalidInsteadOfDeclarationType(t *testing.T) {
 		t.Fatalf("declare generic type: %v", err)
 	}
 
-	typeNode := &ast.NamedType{NodeIDHolder: ast.NodeIDHolder{NodeID: 1}, Name: "Box"}
-	name := &ast.Ident{NodeIDHolder: ast.NodeIDHolder{NodeID: 2}, Name: "Alias"}
-	declaration := &ast.TypeAliasDecl{NodeIDHolder: ast.NodeIDHolder{NodeID: 3}, Name: name, Type: typeNode}
+	typeNode := &ast.NamedType{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(1)}, Name: "Box"}
+	name := &ast.Ident{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(2)}, Name: "Alias"}
+	declaration := &ast.TypeAliasDecl{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(3)}, Name: name, Type: typeNode}
 	aliasSymbol := symbols.New("Alias", symbols.SymbolType, declaration, nil)
 	aliasSymbol.BindType(&typeinfo.DefinedType{Name: "Alias", Identity: "main::Alias"})
 	module.Bindings.Bind(name, aliasSymbol)
@@ -80,7 +81,7 @@ func TestTypeHoverShowsInvalidInsteadOfDeclarationType(t *testing.T) {
 		ctx:     ctx,
 		module:  module,
 		node:    typeNode,
-		parents: map[ast.NodeID]ast.Node{typeNode.ID(): declaration},
+		parents: map[source.NodeID]ast.Node{typeNode.ID(): declaration},
 	})
 	if subject == nil || subject.TypeQueryStatus != typeresolution.QueryInvalid {
 		t.Fatalf("invalid declaration hover subject = %#v", subject)
@@ -103,18 +104,18 @@ func TestTypeHoverShowsLoadingForUnavailableGenericInstance(t *testing.T) {
 		t.Fatalf("declare generic type: %v", err)
 	}
 	typeNode := &ast.AppliedType{
-		NodeIDHolder: ast.NodeIDHolder{NodeID: 1},
-		Name:         &ast.Ident{NodeIDHolder: ast.NodeIDHolder{NodeID: 2}, Name: "Box"},
+		NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(1)},
+		Name:         &ast.Ident{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(2)}, Name: "Box"},
 		TypeArgs: []ast.TypeExpr{
-			&ast.NamedType{NodeIDHolder: ast.NodeIDHolder{NodeID: 3}, Name: "i32"},
+			&ast.NamedType{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(3)}, Name: "i32"},
 		},
 	}
-	declaration := &ast.LetDecl{NodeIDHolder: ast.NodeIDHolder{NodeID: 4}, Type: typeNode}
+	declaration := &ast.LetDecl{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(4)}, Type: typeNode}
 	context := &cursorContext{
 		ctx:     ctx,
 		module:  module,
 		node:    typeNode,
-		parents: map[ast.NodeID]ast.Node{typeNode.ID(): declaration},
+		parents: map[source.NodeID]ast.Node{typeNode.ID(): declaration},
 	}
 
 	subject := resolveTypeHoverSubject(context)

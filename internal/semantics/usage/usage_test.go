@@ -65,6 +65,7 @@ fn GetValue() -> i32 { return 42; }`
 	}
 
 	ctx.AddModule(mod)
+
 	collector.Collect(ctx, mod)
 	binder.Bind(ctx, mod)
 	resolver.Resolve(ctx, mod)

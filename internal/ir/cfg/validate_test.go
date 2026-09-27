@@ -15,16 +15,16 @@ func branchingModule(t *testing.T) *Module {
 	t.Helper()
 	location := source.NewLocation("validate_test.peep", source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 10})
 	branch := &ast.IfStmt{
-		NodeIDHolder: ast.NodeIDHolder{NodeID: 30},
-		Cond:         &ast.BoolLit{NodeIDHolder: ast.NodeIDHolder{NodeID: 31}, Value: true, Location: location},
+		NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(30)},
+		Cond:         &ast.BoolLit{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(31)}, Value: true, Location: location},
 		Then: &ast.BlockStmt{
-			NodeIDHolder: ast.NodeIDHolder{NodeID: 32},
-			Stmts:        []ast.Stmt{&ast.ReturnStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 33}, Location: location}},
+			NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(32)},
+			Stmts:        []ast.Stmt{&ast.ReturnStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(33)}, Location: location}},
 		},
-		Else:     &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 34}},
+		Else:     &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(34)}},
 		Location: location,
 	}
-	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}, Stmts: []ast.Stmt{branch}}
+	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(10)}, Stmts: []ast.Stmt{branch}}
 	module := BuildModule(testModule(body, nil))
 	if module == nil || len(module.Functions) != 1 {
 		t.Fatalf("test fixture built %#v, want one function graph", module)
@@ -162,7 +162,7 @@ func TestValidateRejectsTopologyDefects(t *testing.T) {
 				for _, block := range fn.Blocks {
 					for _, site := range block.Sites {
 						if site.Kind == SiteScopeExit {
-							site.ScopeID = 0
+							site.ScopeID = source.NodeID{}
 							return
 						}
 					}

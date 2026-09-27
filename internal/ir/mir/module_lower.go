@@ -47,11 +47,11 @@ type lowerer struct {
 	symbolValues    map[symbols.SymbolID]*RefName
 	constantEnv     map[string]constvalue.Value
 	variantEntries  map[*cfg.Block]variantEntry
-	variantSubjects map[ir.NodeID]ValueRef
+	variantSubjects map[source.NodeID]ValueRef
 }
 
 type variantEntry struct {
-	switchID ir.NodeID
+	switchID source.NodeID
 	arm      *thir.MatchArm
 }
 
@@ -149,7 +149,7 @@ func lowerCFGFunction(mod *Module, input LoweringInput, sourceFn *thir.Function,
 		symbolValues:    make(map[symbols.SymbolID]*RefName),
 		constantEnv:     make(map[string]constvalue.Value),
 		variantEntries:  make(map[*cfg.Block]variantEntry),
-		variantSubjects: make(map[ir.NodeID]ValueRef),
+		variantSubjects: make(map[source.NodeID]ValueRef),
 	}
 	for _, parameter := range fn.Params {
 		if parameter.SymbolID != 0 {

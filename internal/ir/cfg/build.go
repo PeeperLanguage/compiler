@@ -6,7 +6,7 @@ import (
 	graphcore "compiler/internal/graph"
 	"compiler/internal/ir"
 	"compiler/internal/ir/thir"
-	"compiler/internal/source"
+	sourceid "compiler/internal/source"
 	"compiler/pkg/typednil"
 )
 
@@ -69,7 +69,7 @@ func buildFunction(source *thir.Function) *ControlFlowGraph {
 	return fn
 }
 
-func (b *builder) newBlock(origin BlockOrigin, location *source.Location) *Block {
+func (b *builder) newBlock(origin BlockOrigin, location *sourceid.Location) *Block {
 	block := &Block{ID: b.nextID, Origin: origin, Location: location, Sites: make([]*Site, 0)}
 	b.nextID++
 	b.fn.Blocks = append(b.fn.Blocks, block)
@@ -91,7 +91,7 @@ func (b *builder) buildBlockBody(block *thir.Block) {
 		}
 		statement.BuildControlFlow(b)
 	}
-	if b.current != nil && block.Source.NodeID != 0 {
+	if b.current != nil && block.Source.NodeID.IsValid() {
 		b.current.Sites = append(b.current.Sites, &Site{
 			Kind:     SiteScopeExit,
 			NodeID:   block.Source.NodeID,
@@ -162,7 +162,7 @@ func (b *builder) BuildIf(statement *thir.If) {
 	thenBlock := b.newBlock(BlockThen, source.Location)
 	elseBlock := b.newBlock(BlockElse, source.Location)
 	join := b.newBlock(BlockNormal, source.Location)
-	conditionID := ir.NodeID(0)
+	conditionID := sourceid.NodeID{}
 	if !typednil.IsNil(statement.Condition) {
 		conditionID = statement.Condition.SourceInfo().NodeID
 	}
@@ -219,7 +219,7 @@ func (b *builder) BuildFor(statement *thir.For) {
 	if !typednil.IsNil(statement.Condition) || !typednil.IsNil(statement.Iterable) {
 		header := b.newBlock(BlockLoop, source.Location)
 		header.NodeID = source.NodeID
-		conditionID := ir.NodeID(0)
+		conditionID := sourceid.NodeID{}
 		if !typednil.IsNil(statement.Condition) {
 			conditionID = statement.Condition.SourceInfo().NodeID
 		}
@@ -305,9 +305,9 @@ func (b *builder) appendStatement(source ir.SourceInfo) {
 	})
 }
 
-func (b *builder) currentScopeID() ir.NodeID {
+func (b *builder) currentScopeID() sourceid.NodeID {
 	if len(b.scopes) == 0 {
-		return 0
+		return sourceid.NodeID{}
 	}
 	return b.scopes[len(b.scopes)-1].Source.NodeID
 }
@@ -315,7 +315,7 @@ func (b *builder) currentScopeID() ir.NodeID {
 func (b *builder) appendLoopScopeExits(current *Block, scopeDepth int) {
 	for index := len(b.scopes) - 1; index >= scopeDepth; index-- {
 		scope := b.scopes[index]
-		if scope.Source.NodeID == 0 {
+		if !scope.Source.NodeID.IsValid() {
 			continue
 		}
 		current.Sites = append(current.Sites, &Site{

@@ -7,7 +7,6 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
-	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/thir"
 	"compiler/internal/module"
@@ -36,6 +35,7 @@ func buildEffects(t *testing.T, source string) (effect.Result, *module.Module) {
 		Imports:  make(map[string]module.ResolvedImport),
 	}
 	ctx.AddModule(module)
+
 	collector.Collect(ctx, module)
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
@@ -70,7 +70,7 @@ func publishedOps(t *testing.T, result effect.Result, module *module.Module, nam
 	if !ok || fn == nil {
 		t.Fatalf("function %q has no declaration", name)
 	}
-	graph := module.CFG.FunctionByID(module.THIR.Function(ir.NodeID(fn.ID())).Identity)
+	graph := module.CFG.FunctionByID(module.THIR.Function(fn.ID()).Identity)
 	if graph == nil {
 		t.Fatalf("function %q has no CFG", name)
 	}
@@ -146,7 +146,7 @@ fn probe() {
 		}
 	}
 	if calls != 1 || ends != 1 || borrows != 1 {
-		t.Fatalf("advancement effects: calls=%d ends=%d borrows=%d", calls, ends, borrows)
+		t.Fatalf("advancement effects: calls=%v ends=%v borrows=%v", calls, ends, borrows)
 	}
 }
 
@@ -230,13 +230,13 @@ fn probe(i: i32) -> i32 { return make()[i]; }`,
 						if !ok {
 							continue
 						}
-						if use.Source == nil || use.Source.SourceInfo().NodeID != ir.NodeID(use.Node) ||
-							use.Source.SourceInfo().Location != use.Location || module.THIR.Node(ir.NodeID(use.Node)) != use.Source {
-							t.Fatalf("use %d lost canonical THIR source: %#v", use.Node, use)
+						if use.Source == nil || use.Source.SourceInfo().NodeID != use.Node ||
+							use.Source.SourceInfo().Location != use.Location || module.THIR.Node(use.Node) != use.Source {
+							t.Fatalf("use %v lost canonical THIR source: %#v", use.Node, use)
 						}
-						if use.Place.Temporary != 0 && (use.Place.TemporaryExpr == nil ||
-							use.Place.TemporaryExpr.SourceInfo().NodeID != ir.NodeID(use.Place.Temporary)) {
-							t.Fatalf("use %d lost temporary expression: %#v", use.Node, use.Place)
+						if use.Place.Temporary.IsValid() && (use.Place.TemporaryExpr == nil ||
+							use.Place.TemporaryExpr.SourceInfo().NodeID != use.Place.Temporary) {
+							t.Fatalf("use %v lost temporary expression: %#v", use.Node, use.Place)
 						}
 						switch use.Source.(type) {
 						case *thir.Field, *thir.Index:
@@ -404,7 +404,7 @@ fn read(values: [3]i32, pair: Pair, index: i32) -> i32 {
 		t.Fatal("function read missing")
 	}
 	fn := symbol.ASTNode.(*ast.FnDecl)
-	graph := module.CFG.FunctionByID(module.THIR.Function(ir.NodeID(fn.ID())).Identity)
+	graph := module.CFG.FunctionByID(module.THIR.Function(fn.ID()).Identity)
 	if graph == nil {
 		t.Fatal("function read has no CFG")
 	}
@@ -458,7 +458,7 @@ fn choose(point: Point) -> i32 {
 		t.Fatal("function choose missing")
 	}
 	fn := symbol.ASTNode.(*ast.FnDecl)
-	graph := module.CFG.FunctionByID(module.THIR.Function(ir.NodeID(fn.ID())).Identity)
+	graph := module.CFG.FunctionByID(module.THIR.Function(fn.ID()).Identity)
 
 	var receiver *effect.Borrow
 	var field *effect.Use

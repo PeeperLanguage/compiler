@@ -18,21 +18,21 @@ type Module struct {
 	Name          string
 	FilePath      string
 	Functions     []*Function
-	byNodeID      map[ir.NodeID]Node
+	byNodeID      map[source.NodeID]Node
 	functionIndex map[moduleid.FunctionID]int
 }
 
 // Node returns typed source node with source identity id.
-func (m *Module) Node(id ir.NodeID) Node {
-	if m == nil || id == 0 {
+func (m *Module) Node(id source.NodeID) Node {
+	if m == nil || !id.IsValid() {
 		return nil
 	}
 	return m.byNodeID[id]
 }
 
 // Function returns function declaration with source identity id.
-func (m *Module) Function(id ir.NodeID) *Function {
-	if m == nil || id == 0 {
+func (m *Module) Function(id source.NodeID) *Function {
+	if m == nil || !id.IsValid() {
 		return nil
 	}
 	for _, function := range m.Functions {
@@ -544,7 +544,7 @@ type Is struct {
 }
 
 type CaseTest struct {
-	SubjectID       ir.NodeID
+	SubjectID       source.NodeID
 	Case            int
 	MatchesWhenTrue bool
 	CaseCount       int

@@ -1,10 +1,10 @@
 package effect_test
 
 import (
+	"compiler/internal/source"
 	"strings"
 	"testing"
 
-	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/thir"
 	"compiler/internal/moduleid"
@@ -48,7 +48,7 @@ func TestValidateReportsDefects(t *testing.T) {
 		{
 			name: "place naming no root at all",
 			damage: func(result effect.Result, fn moduleid.FunctionID, site cfg.SiteID) {
-				result[fn][site] = []effect.Op{effect.Use{Node: 1}}
+				result[fn][site] = []effect.Op{effect.Use{Node: source.ParsedNodeID(1)}}
 			},
 			want: "names neither a binding nor a temporary",
 		},
@@ -56,8 +56,8 @@ func TestValidateReportsDefects(t *testing.T) {
 			name: "place naming two roots",
 			damage: func(result effect.Result, fn moduleid.FunctionID, site cfg.SiteID) {
 				result[fn][site] = []effect.Op{effect.Use{
-					Place: effect.Place{Root: &symbols.Symbol{Name: "x"}, Temporary: 1},
-					Node:  1,
+					Place: effect.Place{Root: &symbols.Symbol{Name: "x"}, Temporary: source.ParsedNodeID(1)},
+					Node:  source.ParsedNodeID(1),
 				}}
 			},
 			want: "names both binding x and temporary",
@@ -65,14 +65,14 @@ func TestValidateReportsDefects(t *testing.T) {
 		{
 			name: "use with no source location",
 			damage: func(result effect.Result, fn moduleid.FunctionID, site cfg.SiteID) {
-				result[fn][site] = []effect.Op{effect.Use{Place: effect.Place{Root: &symbols.Symbol{Name: "x"}}, Node: 1}}
+				result[fn][site] = []effect.Op{effect.Use{Place: effect.Place{Root: &symbols.Symbol{Name: "x"}}, Node: source.ParsedNodeID(1)}}
 			},
 			want: "is a use with no source location to report against",
 		},
 		{
 			name: "operation naming an unknown node",
 			damage: func(result effect.Result, fn moduleid.FunctionID, site cfg.SiteID) {
-				result[fn][site] = []effect.Op{effect.Write{Place: effect.Place{Root: &symbols.Symbol{Name: "x"}}, Node: 999999}}
+				result[fn][site] = []effect.Op{effect.Write{Place: effect.Place{Root: &symbols.Symbol{Name: "x"}}, Node: source.ParsedNodeID(999999)}}
 			},
 			want: "which is not in the typed THIR",
 		},
@@ -115,9 +115,9 @@ func TestValidateRejectsDamagedTHIREvidence(t *testing.T) {
 	assignment := function.Body.Stmts[1].(*thir.Assign)
 	target := assignment.Target
 	root := effect.Place{Root: binding.Symbol}
-	bindingID := ir.NodeID(binding.Source.NodeID)
-	assignID := ir.NodeID(assignment.Source.NodeID)
-	targetID := ir.NodeID(target.SourceInfo().NodeID)
+	bindingID := binding.Source.NodeID
+	assignID := assignment.Source.NodeID
+	targetID := target.SourceInfo().NodeID
 	for _, test := range []struct {
 		name string
 		ops  []effect.Op
@@ -125,7 +125,7 @@ func TestValidateRejectsDamagedTHIREvidence(t *testing.T) {
 	}{
 		{"define source", []effect.Op{effect.Define{Symbol: binding.Symbol, Source: binding, Node: assignID}}, "does not match node"},
 		{"define value", []effect.Op{effect.Define{Symbol: binding.Symbol, Source: binding, Node: bindingID, Value: assignID, ValueExpr: binding.Value}}, "unexpected node type"},
-		{"parameter identity", []effect.Op{effect.Define{Symbol: binding.Symbol, Node: ir.NodeID(function.Params[0].Source.NodeID), IsOnEntry: true}}, "not in typed THIR"},
+		{"parameter identity", []effect.Op{effect.Define{Symbol: binding.Symbol, Node: function.Params[0].Source.NodeID, IsOnEntry: true}}, "not in typed THIR"},
 		{"write target", []effect.Op{effect.Write{Place: root, Node: assignID, Target: target, Owner: assignID}}, "unexpected node type"},
 		{"write owner", []effect.Op{effect.Write{Place: root, Node: targetID, Target: target, Owner: bindingID}}, "unexpected node type"},
 		{"write value", []effect.Op{effect.Write{Place: root, Node: targetID, Target: target, Owner: assignID, Value: assignID, ValueExpr: assignment.Value}}, "unexpected node type"},

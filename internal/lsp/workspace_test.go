@@ -32,7 +32,7 @@ func TestWorkspaceIndexBuildsIndependentComponents(t *testing.T) {
 	}
 
 	if len(index.components) != 2 {
-		t.Fatalf("components = %d, want 2", len(index.components))
+		t.Fatalf("components = %v, want 2", len(index.components))
 	}
 	for _, component := range index.components {
 		if len(component.files) != 1 {
@@ -82,7 +82,7 @@ func TestWorkspaceIndexGroupsImportedFiles(t *testing.T) {
 	}
 
 	if len(index.components) != 2 {
-		t.Fatalf("components = %d, want 2", len(index.components))
+		t.Fatalf("components = %v, want 2", len(index.components))
 	}
 
 	var foundGrouped, foundSingleton bool
@@ -195,7 +195,7 @@ func TestServerStateDoesNotReuseModulesAcrossCompilerInputs(t *testing.T) {
 			state.seedReusableModules(ctx, dirty)
 			reused, found := ctx.ModuleByID(mod.ID)
 			if found != test.wantReuse || found && (reused == mod || reused.AST != mod.AST) || (ctx.Metrics.ModulesReused != 0) != test.wantReuse {
-				t.Fatalf("module reuse = %t, shell copied = %t, AST retained = %t, metric = %d; want reuse %t", found, reused != mod, found && reused.AST == mod.AST, ctx.Metrics.ModulesReused, test.wantReuse)
+				t.Fatalf("module reuse = %t, shell copied = %t, AST retained = %t, metric = %v; want reuse %t", found, reused != mod, found && reused.AST == mod.AST, ctx.Metrics.ModulesReused, test.wantReuse)
 			}
 		})
 	}
@@ -206,7 +206,7 @@ func TestServerStateDoesNotReuseModulesAcrossCompilerInputs(t *testing.T) {
 		t.Fatal("compile after project rename failed")
 	}
 	if rebuilt == mod || rebuilt.ID == mod.ID || state.LastMetrics.ModulesReused != 0 {
-		t.Fatalf("project rename reused old module: old ID %s, new ID %s, reused %d", mod.ID, rebuilt.ID, state.LastMetrics.ModulesReused)
+		t.Fatalf("project rename reused old module: old ID %s, new ID %s, reused %v", mod.ID, rebuilt.ID, state.LastMetrics.ModulesReused)
 	}
 	if state.modules[entryPath] != rebuilt {
 		t.Fatal("new compiler generation did not replace cached module")
@@ -377,7 +377,7 @@ func TestWorkspaceSyntheticEntryUsesRequestedComponentRoots(t *testing.T) {
 		t.Fatalf("expected synthetic entry")
 	}
 	if got, want := strings.Count(content, "import "), 1; got != want {
-		t.Fatalf("synthetic import count = %d, want %d\ncontent:\n%s", got, want, content)
+		t.Fatalf("synthetic import count = %v, want %v\ncontent:\n%s", got, want, content)
 	}
 	if !strings.Contains(content, "\"a\"") {
 		t.Fatalf("synthetic entry missing requested component root import: %s", content)
@@ -521,8 +521,8 @@ func TestServerStateRebuildsLaterFunctionAfterEarlierBodyEdit(t *testing.T) {
 		t.Fatal("changed module reused prior-generation function")
 	}
 	currentID := after.THIR.Functions[1].Source.NodeID
-	if currentID == previousID {
-		t.Fatalf("later function ID stayed %d despite earlier body adding nodes", currentID)
+	if currentID != previousID {
+		t.Fatalf("later function ID changed from %v to %v after unrelated body edit", previousID, currentID)
 	}
 	if after.THIR.Function(currentID) != after.THIR.Functions[1] {
 		t.Fatal("rebuilt function is not indexed under current-generation ID")
@@ -547,7 +547,7 @@ func TestWorkspaceParseFeedsChangedModuleCompilation(t *testing.T) {
 		t.Fatal("updated compile failed")
 	}
 	if state.workspace.parsedFiles != 1 || ctx.Metrics.ModulesParsed != 1 {
-		t.Fatalf("workspace parses = %d, compiler parses = %d; want one workspace parse and only synthetic entry parse", state.workspace.parsedFiles, ctx.Metrics.ModulesParsed)
+		t.Fatalf("workspace parses = %v, compiler parses = %v; want one workspace parse and only synthetic entry parse", state.workspace.parsedFiles, ctx.Metrics.ModulesParsed)
 	}
 	if mod.THIR == nil || mod.CFG == nil || mod.THIR.Validate() != nil || mod.CFG.Validate() != nil {
 		t.Fatal("changed module lost typed or control-flow artifacts")
@@ -611,11 +611,11 @@ func TestWorkspaceParseRetainsDiagnosticsDuringWorkspaceRefresh(t *testing.T) {
 	state.RootDir = root
 	snapshots := state.workspaceDiagnosticSnapshots()
 	if len(snapshots) != 1 || snapshots[0].ctx == nil {
-		t.Fatalf("workspace diagnostic snapshots = %d, want one compiled snapshot", len(snapshots))
+		t.Fatalf("workspace diagnostic snapshots = %v, want one compiled snapshot", len(snapshots))
 	}
 	ctx := snapshots[0].ctx
 	if ctx.Metrics.ModulesParsed != 1 {
-		t.Fatalf("compiler parses = %d, want synthetic entry only", ctx.Metrics.ModulesParsed)
+		t.Fatalf("compiler parses = %v, want synthetic entry only", ctx.Metrics.ModulesParsed)
 	}
 	got := ctx.Diagnostics.Diagnostics()
 	for _, expected := range want {
@@ -638,13 +638,13 @@ func TestWorkspaceDiagnosticSnapshotsReuseIndexAcrossComponents(t *testing.T) {
 	state := NewServerState()
 	state.RootDir = root
 	if snapshots := state.workspaceDiagnosticSnapshots(); len(snapshots) != 2 {
-		t.Fatalf("initial snapshots = %d, want 2", len(snapshots))
+		t.Fatalf("initial snapshots = %v, want 2", len(snapshots))
 	}
 	updated := "fn main() -> i32 { return 2; }\n"
 	state.applyDocumentSnapshot(mainFile, &updated, nil)
 	snapshots := state.workspaceDiagnosticSnapshots()
 	if len(snapshots) != 2 || state.workspace.parsedFiles != 1 {
-		t.Fatalf("snapshots = %d, workspace parses = %d; want 2 snapshots and 1 parse", len(snapshots), state.workspace.parsedFiles)
+		t.Fatalf("snapshots = %v, workspace parses = %v; want 2 snapshots and 1 parse", len(snapshots), state.workspace.parsedFiles)
 	}
 
 	clean := NewServerState()
@@ -652,18 +652,18 @@ func TestWorkspaceDiagnosticSnapshotsReuseIndexAcrossComponents(t *testing.T) {
 	clean.applyDocumentSnapshot(mainFile, &updated, nil)
 	want := clean.workspaceDiagnosticSnapshots()
 	if len(want) != len(snapshots) {
-		t.Fatalf("clean snapshots = %d, want %d", len(want), len(snapshots))
+		t.Fatalf("clean snapshots = %v, want %v", len(want), len(snapshots))
 	}
 	for i, snapshot := range snapshots {
 		if !slices.Equal(snapshot.files, want[i].files) ||
 			snapshot.ctx.Diagnostics.EmitAllToString() != want[i].ctx.Diagnostics.EmitAllToString() {
-			t.Fatalf("snapshot %d files or diagnostics differ from clean build: files %v vs %v, diagnostics %q vs %q", i, snapshot.files, want[i].files, snapshot.ctx.Diagnostics.EmitAllToString(), want[i].ctx.Diagnostics.EmitAllToString())
+			t.Fatalf("snapshot %v files or diagnostics differ from clean build: files %v vs %v, diagnostics %q vs %q", i, snapshot.files, want[i].files, snapshot.ctx.Diagnostics.EmitAllToString(), want[i].ctx.Diagnostics.EmitAllToString())
 		}
 		filePath := snapshot.files[0]
 		mod, ok := snapshot.ctx.ModuleByFile(filePath)
 		cleanMod, cleanOK := want[i].ctx.ModuleByFile(filePath)
 		if !ok || !cleanOK || mod.ContentHash != cleanMod.ContentHash || mod.LLVMIR != cleanMod.LLVMIR {
-			t.Fatalf("snapshot %d module differs from clean build", i)
+			t.Fatalf("snapshot %v module differs from clean build", i)
 		}
 	}
 }
@@ -777,7 +777,7 @@ func TestServerStateRecompileReturnsRequestedWorkspaceModule(t *testing.T) {
 		t.Fatalf("module path = %s, want %s", mod.FilePath, want)
 	}
 	if len(mod.AST.Stmts) != 1 {
-		t.Fatalf("util module stmts = %d, want 1", len(mod.AST.Stmts))
+		t.Fatalf("util module stmts = %v, want 1", len(mod.AST.Stmts))
 	}
 	if fn, ok := mod.AST.Stmts[0].(*ast.FnDecl); !ok || fn.Name == nil || fn.Name.Name != "helper" {
 		t.Fatalf("expected helper function module, got %T", mod.AST.Stmts[0])
@@ -890,7 +890,7 @@ fn Read(input: i32 = value) -> i32 {
 		t.Fatal("incremental compile returned nil context or module")
 	}
 	if got := state.LastMetrics.ModulesDowngraded; got != 1 {
-		t.Fatalf("modules downgraded = %d, want 1 dependent reset to Parsed", got)
+		t.Fatalf("modules downgraded = %v, want 1 dependent reset to Parsed", got)
 	}
 	if ctx.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics after dependent Parsed reset:\n%s", ctx.Diagnostics.EmitAllToString())
@@ -929,7 +929,7 @@ fn Read(input: i32 = value) -> i32 {
 		t.Fatalf("rebuilt default = %#v, want resolved imported identifier", effectiveArgs[0])
 	}
 	if !mainModule.Typechecking.ExpandedDefaultBinding(ident.ID()) {
-		t.Fatalf("rebuilt default identifier %d missing declaration-binding provenance", ident.ID())
+		t.Fatalf("rebuilt default identifier %v missing declaration-binding provenance", ident.ID())
 	}
 }
 
@@ -946,7 +946,7 @@ func TestWorkspaceIndexRebuildParsesOnlyChangedFiles(t *testing.T) {
 		t.Fatalf("initial rebuild: %v", err)
 	}
 	if got := index.parsedFiles; got != 2 {
-		t.Fatalf("initial parsed files = %d, want 2", got)
+		t.Fatalf("initial parsed files = %v, want 2", got)
 	}
 
 	mainPath := project.CanonicalPath(fileMain)
@@ -961,7 +961,7 @@ func TestWorkspaceIndexRebuildParsesOnlyChangedFiles(t *testing.T) {
 		t.Fatalf("incremental rebuild: %v", err)
 	}
 	if got := index.parsedFiles; got != 1 {
-		t.Fatalf("incremental parsed files = %d, want 1", got)
+		t.Fatalf("incremental parsed files = %v, want 1", got)
 	}
 	if afterMain := index.modules[mainPath]; afterMain != beforeMain {
 		t.Fatalf("unchanged importer should reuse cached workspace surface")
@@ -1041,7 +1041,7 @@ func BenchmarkWorkspaceIndexRebuildUnchanged(b *testing.B) {
 		b.Fatal(err)
 	}
 	for i := range 64 {
-		path := filepath.Join(sourceDir, fmt.Sprintf("module%d%s", i, peeper.SourceExt))
+		path := filepath.Join(sourceDir, fmt.Sprintf("module%v%s", i, peeper.SourceExt))
 		if err := os.WriteFile(path, []byte("fn helper() {}\n"), 0o644); err != nil {
 			b.Fatal(err)
 		}
@@ -1069,7 +1069,7 @@ func BenchmarkWorkspaceIndexRebuildNestedUnchanged(b *testing.B) {
 		b.Fatal(err)
 	}
 	for i := range 32 {
-		dir := filepath.Join(sourceDir, fmt.Sprintf("group%d", i))
+		dir := filepath.Join(sourceDir, fmt.Sprintf("group%v", i))
 		path := filepath.Join(dir, "module"+peeper.SourceExt)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			b.Fatal(err)
@@ -1101,21 +1101,21 @@ func BenchmarkWorkspaceDiagnosticSnapshotsUnchanged(b *testing.B) {
 		b.Fatal(err)
 	}
 	for i := range 8 {
-		path := filepath.Join(sourceDir, fmt.Sprintf("module%d%s", i, peeper.SourceExt))
-		if err := os.WriteFile(path, []byte(fmt.Sprintf("fn helper%d() {}\n", i)), 0o644); err != nil {
+		path := filepath.Join(sourceDir, fmt.Sprintf("module%v%s", i, peeper.SourceExt))
+		if err := os.WriteFile(path, []byte(fmt.Sprintf("fn helper%v() {}\n", i)), 0o644); err != nil {
 			b.Fatal(err)
 		}
 	}
 	state := NewServerState()
 	state.RootDir = root
 	if snapshots := state.workspaceDiagnosticSnapshots(); len(snapshots) != 8 {
-		b.Fatalf("workspace snapshots = %d, want 8", len(snapshots))
+		b.Fatalf("workspace snapshots = %v, want 8", len(snapshots))
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
 		if snapshots := state.workspaceDiagnosticSnapshots(); len(snapshots) != 8 {
-			b.Fatalf("workspace snapshots = %d, want 8", len(snapshots))
+			b.Fatalf("workspace snapshots = %v, want 8", len(snapshots))
 		}
 	}
 }
@@ -1132,7 +1132,7 @@ func TestWorkspaceIndexRebuildRefreshesImportTargetsWhenNewFileAppears(t *testin
 		t.Fatalf("initial rebuild: %v", err)
 	}
 	if got := index.parsedFiles; got != 1 {
-		t.Fatalf("initial parsed files = %d, want 1", got)
+		t.Fatalf("initial parsed files = %v, want 1", got)
 	}
 
 	mainPath := project.CanonicalPath(fileMain)
@@ -1146,7 +1146,7 @@ func TestWorkspaceIndexRebuildRefreshesImportTargetsWhenNewFileAppears(t *testin
 		t.Fatalf("rebuild after adding util: %v", err)
 	}
 	if got := index.parsedFiles; got != 1 {
-		t.Fatalf("parsed files after adding util = %d, want 1", got)
+		t.Fatalf("parsed files after adding util = %v, want 1", got)
 	}
 
 	utilPath := project.CanonicalPath(fileUtil)
@@ -1190,7 +1190,7 @@ func TestWorkspaceIndexRebuildRefreshesImportTargetsWhenFileLeavesSourceDir(t *t
 		t.Fatalf("rebuild after moving util: %v", err)
 	}
 	if got := index.parsedFiles; got != 0 {
-		t.Fatalf("parsed files after util leaves src = %d, want 0", got)
+		t.Fatalf("parsed files after util leaves src = %v, want 0", got)
 	}
 	if got := index.modules[mainPath].resolvedLocalImportFiles; len(got) != 0 {
 		t.Fatalf("main import targets after util leaves src = %v, want empty", got)
@@ -1208,7 +1208,7 @@ func TestWorkspaceIndexRebuildRefreshesImportTargetsWhenFileLeavesSourceDir(t *t
 		t.Fatalf("rebuild after restoring util: %v", err)
 	}
 	if got := index.parsedFiles; got != 1 {
-		t.Fatalf("parsed files after restoring util = %d, want 1", got)
+		t.Fatalf("parsed files after restoring util = %v, want 1", got)
 	}
 	if got := index.modules[mainPath].resolvedLocalImportFiles; !slices.Equal(got, []string{utilPath}) {
 		t.Fatalf("restored import targets = %v, want [%s]", got, utilPath)
@@ -1235,10 +1235,10 @@ func TestServerStateRechecksImporterWhenTargetMembershipChanges(t *testing.T) {
 		t.Fatalf("added target should resolve import, diagnostics: %v", added.Diagnostics.Diagnostics())
 	}
 	if rebuilt == importer || rebuilt.AST != importer.AST || state.workspace.parsedFiles != 1 {
-		t.Fatalf("importer after addition: same module %t, reused syntax %t, workspace parses %d; want rebuilt semantics with retained syntax", rebuilt == importer, rebuilt.AST == importer.AST, state.workspace.parsedFiles)
+		t.Fatalf("importer after addition: same module %t, reused syntax %t, workspace parses %v; want rebuilt semantics with retained syntax", rebuilt == importer, rebuilt.AST == importer.AST, state.workspace.parsedFiles)
 	}
 	if len(rebuilt.Imports) != 1 {
-		t.Fatalf("resolved imports after addition = %d, want 1", len(rebuilt.Imports))
+		t.Fatalf("resolved imports after addition = %v, want 1", len(rebuilt.Imports))
 	}
 
 	if err := os.Remove(utilFile); err != nil {
@@ -1249,7 +1249,7 @@ func TestServerStateRechecksImporterWhenTargetMembershipChanges(t *testing.T) {
 		t.Fatal("removed target should restore import diagnostics")
 	}
 	if rebuiltAgain == rebuilt || len(rebuiltAgain.Imports) != 0 {
-		t.Fatalf("importer after removal: same module %t, resolved imports %d; want rebuilt unresolved importer", rebuiltAgain == rebuilt, len(rebuiltAgain.Imports))
+		t.Fatalf("importer after removal: same module %t, resolved imports %v; want rebuilt unresolved importer", rebuiltAgain == rebuilt, len(rebuiltAgain.Imports))
 	}
 }
 

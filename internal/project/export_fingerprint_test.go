@@ -1,6 +1,7 @@
 package project
 
 import (
+	"compiler/internal/source"
 	"testing"
 
 	"compiler/internal/constvalue"
@@ -112,7 +113,7 @@ func TestSemanticExportFingerprintIgnoresFunctionBodyChanges(t *testing.T) {
 
 func TestSemanticExportFingerprintIncludesPrivateFactsUsedByPublicDefault(t *testing.T) {
 	makeFunction := func(value string) string {
-		defaultIdent := &ast.Ident{NodeIDHolder: ast.NodeIDHolder{NodeID: 20}, Name: "limit"}
+		defaultIdent := &ast.Ident{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(20)}, Name: "limit"}
 		decl := &ast.FnDecl{
 			Name:   &ast.Ident{Name: "Read"},
 			Params: []ast.Param{{Name: &ast.Ident{Name: "value"}, Default: defaultIdent}},
