@@ -152,7 +152,7 @@ func lowerCFGFunction(mod *Module, input LoweringInput, sourceFn *thir.Function,
 		variantSubjects: make(map[source.NodeID]ValueRef),
 	}
 	for _, parameter := range fn.Params {
-		if parameter.SymbolID != 0 {
+		if parameter.SymbolID.IsValid() {
 			l.symbolValues[parameter.SymbolID] = &RefName{Name: parameter.Name, Type: parameter.Type}
 		}
 	}
@@ -445,7 +445,7 @@ func staticEntryForConst(types *ir.TypeTable, symbol *symbols.Symbol, value cons
 	if !ok {
 		return nil, false
 	}
-	return &StaticEntry{Name: fmt.Sprintf("@%s$%d", symbol.Name, symbol.ID), Type: typ, Constant: value}, true
+	return &StaticEntry{Name: fmt.Sprintf("@%s$%s", symbol.Name, symbol.ID.String()), Type: typ, Constant: value}, true
 }
 
 func internConstantStrings(module *Module, value constvalue.Value) {

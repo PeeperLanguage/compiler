@@ -91,21 +91,21 @@ func TestValidateRejectsEvidenceGaps(t *testing.T) {
 			name: "drop at a site that is not a scope exit",
 			want: "not a scope exit",
 			build: func(_ *typecheckresult.Result, plan *CleanupPlan) {
-				plan.AfterScope[cfg.SiteID{}] = []symbols.SymbolID{1}
+				plan.AfterScope[cfg.SiteID{}] = []symbols.SymbolID{symbols.ProjectedSymbolID(symbols.SymbolVar, "value")}
 			},
 		},
 		{
 			name: "return drop at an unknown node",
 			want: "not a site in its CFG",
 			build: func(_ *typecheckresult.Result, plan *CleanupPlan) {
-				plan.BeforeReturn[source.ParsedNodeID(9999)] = []symbols.SymbolID{1}
+				plan.BeforeReturn[source.ParsedNodeID(9999)] = []symbols.SymbolID{symbols.ProjectedSymbolID(symbols.SymbolVar, "value")}
 			},
 		},
 		{
 			name: "unidentified drop target",
 			want: "unidentified",
 			build: func(_ *typecheckresult.Result, plan *CleanupPlan) {
-				plan.BeforeReturn[source.ParsedNodeID(9999)] = []symbols.SymbolID{0}
+				plan.BeforeReturn[source.ParsedNodeID(9999)] = []symbols.SymbolID{{}}
 			},
 		},
 		{

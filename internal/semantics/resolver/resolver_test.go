@@ -43,7 +43,7 @@ func TestRejectedPrivateImportDoesNotPublishUsage(t *testing.T) {
 	diag := diagnostics.NewDiagnosticBag()
 	ctx := project.New(".", peeper.SourceExt, diag)
 	dependencyID := moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "dep"}
-	private := symbols.New("hidden", symbols.SymbolFunc, nil, nil)
+	private := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolFunc, "hidden"), "hidden", symbols.SymbolFunc, nil, nil)
 	dependency := &module.Module{ID: dependencyID, ModuleScope: symbols.NewScope(nil)}
 	if err := dependency.ModuleScope.Declare(private); err != nil {
 		t.Fatalf("declare private imported symbol: %v", err)
@@ -53,7 +53,7 @@ func TestRejectedPrivateImportDoesNotPublishUsage(t *testing.T) {
 		ModuleScope: symbols.NewScope(nil),
 		Imports:     map[string]module.ResolvedImport{"dep": {ID: dependencyID}},
 	}
-	alias := symbols.New("dep", symbols.SymbolImport, nil, nil)
+	alias := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolImport, "dep"), "dep", symbols.SymbolImport, nil, nil)
 	if err := module.ModuleScope.Declare(alias); err != nil {
 		t.Fatalf("declare import alias: %v", err)
 	}

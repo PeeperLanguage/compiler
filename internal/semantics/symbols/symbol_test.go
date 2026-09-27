@@ -9,7 +9,7 @@ import (
 func TestNewHandlesTypedNilNode(t *testing.T) {
 	var importDecl *ast.ImportDecl
 
-	sym := New("external", SymbolImport, importDecl, ast.LocOf(importDecl))
+	sym := New(ProjectedSymbolID(SymbolImport, "external"), "external", SymbolImport, importDecl, ast.LocOf(importDecl))
 	if sym == nil {
 		t.Fatalf("expected symbol")
 	}
@@ -21,7 +21,7 @@ func TestNewHandlesTypedNilNode(t *testing.T) {
 func TestNewPublishesLetMutability(t *testing.T) {
 	location := ast.LocOf(&ast.Ident{})
 	declaration := &ast.LetDecl{IsMutable: true, MutableLocation: location}
-	sym := New("value", SymbolVar, declaration, nil)
+	sym := New(ProjectedSymbolID(SymbolVar, "value"), "value", SymbolVar, declaration, nil)
 	if !sym.IsMutable() || sym.MutableLocation != location {
 		t.Fatalf("let mutability = (%v, %#v), want (true, %#v)", sym.IsMutable(), sym.MutableLocation, location)
 	}
@@ -40,7 +40,7 @@ func TestNewPublishesExternalLinkNameWithoutRetainingSyntaxLookup(t *testing.T) 
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			declaration := &ast.FnDecl{Attributed: ast.Attributed{Attributes: test.attributes}, Body: test.body}
-			sym := New("main", SymbolFunc, declaration, nil)
+			sym := New(ProjectedSymbolID(SymbolFunc, "main"), "main", SymbolFunc, declaration, nil)
 			sym.ASTNode = nil
 			want, external := ast.FunctionLinkName(declaration, "main")
 			if external != (sym.ExternalLinkName != nil) || external && *sym.ExternalLinkName != want {
@@ -51,7 +51,7 @@ func TestNewPublishesExternalLinkNameWithoutRetainingSyntaxLookup(t *testing.T) 
 }
 
 func TestFunctionScopeHasConcreteType(t *testing.T) {
-	sym := New("main", SymbolFunc, nil, nil)
+	sym := New(ProjectedSymbolID(SymbolFunc, "main"), "main", SymbolFunc, nil, nil)
 	var scope *Scope = sym.Scope
 	if scope != nil {
 		t.Fatalf("new function scope = %v, want nil", scope)

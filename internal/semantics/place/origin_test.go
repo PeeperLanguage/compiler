@@ -50,11 +50,11 @@ func TestPlaceExpressionProjectionGrammar(t *testing.T) {
 
 func TestPlaceAddressabilityUsesResolvedBindingBeforeScope(t *testing.T) {
 	scope := symbols.NewScope(nil)
-	scopeValue := symbols.New("value", symbols.SymbolVar, &ast.LetDecl{IsMutable: true}, nil)
+	scopeValue := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "value"), "value", symbols.SymbolVar, &ast.LetDecl{IsMutable: true}, nil)
 	if err := scope.Declare(scopeValue); err != nil {
 		t.Fatal(err)
 	}
-	resolvedValue := symbols.New("value", symbols.SymbolConst, nil, nil)
+	resolvedValue := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolConst, "value"), "value", symbols.SymbolConst, nil, nil)
 	projection := &ast.SelectorExpr{Expr: &ast.Ident{Name: "value"}, Name: &ast.Ident{Name: "field"}}
 	resolve := func(*ast.Ident) (Binding, bool) {
 		return Binding{Symbol: resolvedValue}, true
@@ -64,7 +64,7 @@ func TestPlaceAddressabilityUsesResolvedBindingBeforeScope(t *testing.T) {
 	}
 
 	resolve = func(*ast.Ident) (Binding, bool) {
-		return Binding{Symbol: symbols.New("value", symbols.SymbolFunc, nil, nil)}, true
+		return Binding{Symbol: symbols.New(symbols.ProjectedSymbolID(symbols.SymbolFunc, "value"), "value", symbols.SymbolFunc, nil, nil)}, true
 	}
 	if IsAddressable(scope, projection, nil, resolve) {
 		t.Fatal("Addressable() fell back to shadowed scope binding")
@@ -127,7 +127,7 @@ func TestPlaceAddressabilityPointerAndReferenceBoundaries(t *testing.T) {
 func TestPlaceLocalRootPreservesBindingLocalAndPointerCutoff(t *testing.T) {
 	moduleScope := symbols.NewScope(nil)
 	scope := symbols.NewScope(moduleScope)
-	local := symbols.New("value", symbols.SymbolVar, &ast.LetDecl{IsMutable: true}, nil)
+	local := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "value"), "value", symbols.SymbolVar, &ast.LetDecl{IsMutable: true}, nil)
 	if err := scope.Declare(local); err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +149,7 @@ func TestPlaceLocalRootPreservesBindingLocalAndPointerCutoff(t *testing.T) {
 		t.Fatalf("LocalRoot() crossed owned pointer cutoff: (%v, %v)", root, ok)
 	}
 
-	resolved := symbols.New("value", symbols.SymbolConst, nil, nil)
+	resolved := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolConst, "value"), "value", symbols.SymbolConst, nil, nil)
 	for _, localBinding := range []bool{false, true} {
 		root, ok := LocalRoot(scope, moduleScope, base, nil, func(*ast.Ident) (Binding, bool) {
 			return Binding{Symbol: resolved, IsLocal: localBinding}, true
@@ -166,8 +166,8 @@ func TestPlaceLocalRootPreservesBindingLocalAndPointerCutoff(t *testing.T) {
 
 func TestResolvePreferResolvedBindingOverShadowingScope(t *testing.T) {
 	scope := symbols.NewScope(nil)
-	callerValue := symbols.New("value", symbols.SymbolVar, nil, nil)
-	declarationValue := symbols.New("value", symbols.SymbolConst, nil, nil)
+	callerValue := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "value"), "value", symbols.SymbolVar, nil, nil)
+	declarationValue := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolConst, "value"), "value", symbols.SymbolConst, nil, nil)
 	if err := scope.Declare(callerValue); err != nil {
 		t.Fatal(err)
 	}
@@ -186,9 +186,9 @@ func TestResolvePreferResolvedBindingOverShadowingScope(t *testing.T) {
 
 func TestResolveSeparatesReferenceStorageAndValueProjections(t *testing.T) {
 	scope := symbols.NewScope(nil)
-	value := symbols.New("value", symbols.SymbolVar, nil, nil)
+	value := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "value"), "value", symbols.SymbolVar, nil, nil)
 	value.BindType(&typeinfo.StructType{Fields: []typeinfo.Field{{Name: "items", Type: &typeinfo.ArrayType{Len: "2", Elem: typeinfo.DefaultIntegerType()}}}})
-	reference := symbols.New("reference", symbols.SymbolVar, nil, nil)
+	reference := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "reference"), "reference", symbols.SymbolVar, nil, nil)
 	reference.BindType(&typeinfo.RefType{Target: value.Type})
 	if err := scope.Declare(value); err != nil {
 		t.Fatal(err)
@@ -230,8 +230,8 @@ func TestResolveSeparatesReferenceStorageAndValueProjections(t *testing.T) {
 
 func TestResolveReferenceOriginsByProjectedStoragePlace(t *testing.T) {
 	scope := symbols.NewScope(nil)
-	value := symbols.New("value", symbols.SymbolVar, nil, nil)
-	holder := symbols.New("holder", symbols.SymbolVar, nil, nil)
+	value := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "value"), "value", symbols.SymbolVar, nil, nil)
+	holder := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "holder"), "holder", symbols.SymbolVar, nil, nil)
 	holder.BindType(&typeinfo.StructType{Fields: []typeinfo.Field{{
 		Name: "ref", Type: &typeinfo.RefType{Target: typeinfo.DefaultIntegerType()},
 	}}})
@@ -262,7 +262,7 @@ func TestResolveReferenceOriginsByProjectedStoragePlace(t *testing.T) {
 
 func TestResolveAddressProjectsProvenOptionalPayloadValue(t *testing.T) {
 	scope := symbols.NewScope(nil)
-	carrier := symbols.New("value", symbols.SymbolVar, nil, nil)
+	carrier := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "value"), "value", symbols.SymbolVar, nil, nil)
 	carrier.BindType(&typeinfo.OptionalType{Inner: typeinfo.DefaultIntegerType()})
 	if err := scope.Declare(carrier); err != nil {
 		t.Fatal(err)
@@ -287,11 +287,11 @@ func TestResolveAddressProjectsProvenOptionalPayloadValue(t *testing.T) {
 func TestResolveOrdersOptionalPayloadBeforePointeeAndSkipsNormalizedReferences(t *testing.T) {
 	scope := symbols.NewScope(nil)
 	valueType := &typeinfo.StructType{Fields: []typeinfo.Field{{Name: "value", Type: typeinfo.DefaultIntegerType()}}}
-	owner := symbols.New("owner", symbols.SymbolVar, nil, nil)
+	owner := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "owner"), "owner", symbols.SymbolVar, nil, nil)
 	owner.BindType(&typeinfo.OptionalType{Inner: &typeinfo.OwnedPtrType{Target: valueType}})
-	referent := symbols.New("referent", symbols.SymbolVar, nil, nil)
+	referent := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "referent"), "referent", symbols.SymbolVar, nil, nil)
 	referent.BindType(valueType)
-	reference := symbols.New("reference", symbols.SymbolVar, nil, nil)
+	reference := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "reference"), "reference", symbols.SymbolVar, nil, nil)
 	reference.BindType(&typeinfo.OptionalType{Inner: &typeinfo.RefType{IsMutable: true, Target: valueType}})
 	for _, sym := range []*symbols.Symbol{owner, referent, reference} {
 		if err := scope.Declare(sym); err != nil {
@@ -349,7 +349,7 @@ func TestResolveOrdersOptionalPayloadBeforePointeeAndSkipsNormalizedReferences(t
 
 func TestResolvePreserveOwningPointeeAndCollapseUnknownDescendants(t *testing.T) {
 	scope := symbols.NewScope(nil)
-	owner := symbols.New("owner", symbols.SymbolVar, nil, nil)
+	owner := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "owner"), "owner", symbols.SymbolVar, nil, nil)
 	inner := &typeinfo.ArrayType{Len: "2", Elem: typeinfo.DefaultIntegerType()}
 	owner.BindType(&typeinfo.OwnedPtrType{Target: &typeinfo.ArrayType{Len: "2", Elem: inner}})
 	if err := scope.Declare(owner); err != nil {
@@ -385,9 +385,9 @@ func TestResolvePreserveOwningPointeeAndCollapseUnknownDescendants(t *testing.T)
 
 func TestResolveUsesBindingIndexIdentityAfterConstantEvaluation(t *testing.T) {
 	scope := symbols.NewScope(nil)
-	values := symbols.New("values", symbols.SymbolParam, nil, nil)
+	values := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolParam, "values"), "values", symbols.SymbolParam, nil, nil)
 	values.BindType(&typeinfo.ArrayType{Len: "2", Elem: typeinfo.DefaultIntegerType()})
-	index := symbols.New("index", symbols.SymbolParam, nil, nil)
+	index := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolParam, "index"), "index", symbols.SymbolParam, nil, nil)
 	index.BindType(typeinfo.DefaultIntegerType())
 	if err := scope.Declare(values); err != nil {
 		t.Fatal(err)
@@ -407,8 +407,8 @@ func TestResolveUsesBindingIndexIdentityAfterConstantEvaluation(t *testing.T) {
 }
 
 func TestMergeOriginsUnionsWithoutAliasingInputPaths(t *testing.T) {
-	leftRoot := symbols.New("left", symbols.SymbolVar, nil, nil)
-	rightRoot := symbols.New("right", symbols.SymbolVar, nil, nil)
+	leftRoot := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "left"), "left", symbols.SymbolVar, nil, nil)
+	rightRoot := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "right"), "right", symbols.SymbolVar, nil, nil)
 	left := []Origin{{Root: leftRoot, Projections: []OriginProjection{{Kind: OriginField, Field: "value"}}}}
 	right := []Origin{
 		{Root: leftRoot, Projections: []OriginProjection{{Kind: OriginField, Field: "value"}}},
@@ -426,16 +426,16 @@ func TestMergeOriginsUnionsWithoutAliasingInputPaths(t *testing.T) {
 }
 
 func TestOriginsOverlap(t *testing.T) {
-	root := symbols.New("root", symbols.SymbolVar, nil, nil)
-	other := symbols.New("other", symbols.SymbolVar, nil, nil)
+	root := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "root"), "root", symbols.SymbolVar, nil, nil)
+	other := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "other"), "other", symbols.SymbolVar, nil, nil)
 	field := func(name string) OriginProjection { return OriginProjection{Kind: OriginField, Field: name} }
 	index := func(value string) OriginProjection { return OriginProjection{Kind: OriginIndex, Index: value} }
 	bindingIndex := func(binding *symbols.Symbol) OriginProjection {
 		return OriginProjection{Kind: OriginBindingIndex, Binding: binding}
 	}
 	wildcard := OriginProjection{Kind: OriginWildcard}
-	leftIndex := symbols.New("leftIndex", symbols.SymbolVar, nil, nil)
-	rightIndex := symbols.New("rightIndex", symbols.SymbolVar, nil, nil)
+	leftIndex := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "leftIndex"), "leftIndex", symbols.SymbolVar, nil, nil)
+	rightIndex := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "rightIndex"), "rightIndex", symbols.SymbolVar, nil, nil)
 
 	tests := []struct {
 		name    string
@@ -467,7 +467,7 @@ func TestOriginsOverlap(t *testing.T) {
 }
 
 func TestVariantPayloadOriginsPreserveExactCasePath(t *testing.T) {
-	root := symbols.New("value", symbols.SymbolVar, nil, nil)
+	root := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "value"), "value", symbols.SymbolVar, nil, nil)
 	origins := VariantPayloadOrigins([]Origin{{Root: root}}, []int{2, 1})
 	want := []Origin{{Root: root, Projections: []OriginProjection{
 		{Kind: OriginVariantPayload, Case: 2},

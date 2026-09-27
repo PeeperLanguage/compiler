@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -19,6 +20,26 @@ import (
 
 var _ func(*collector, ast.TypeDecl) = (*collector).collectConcreteTypeDecl
 var _ func(*collector, *ast.Ident, symbols.Kind, ast.Node) = (*collector).collectModuleBinding
+
+func TestModuleSymbolRecoveryOccurrencesAreDeterministic(t *testing.T) {
+	owner := moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/main"}
+	collect := func() []symbols.SymbolID {
+		collector := &collector{
+			module:                  &module.Module{ID: owner},
+			moduleSymbolOccurrences: make(map[symbols.SymbolID]uint64),
+		}
+		return []symbols.SymbolID{
+			collector.nextModuleSymbolID(symbols.SymbolConst, "value"),
+			collector.nextModuleSymbolID(symbols.SymbolConst, "value"),
+			collector.nextModuleSymbolID(symbols.SymbolType, "value"),
+		}
+	}
+	first := collect()
+	second := collect()
+	if !slices.Equal(first, second) || first[0] == first[1] || first[0] == first[2] {
+		t.Fatalf("module symbol identities = %v and %v", first, second)
+	}
+}
 
 func TestCallableSymbolsKeepDefiningModuleIdentity(t *testing.T) {
 	const filePath = "collector_callable_module_test" + peeper.SourceExt

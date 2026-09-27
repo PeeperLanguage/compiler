@@ -9,7 +9,7 @@ import (
 
 func TestResultSeparatesCachedAndPublishedConstants(t *testing.T) {
 	result := New()
-	id := symbols.SymbolID(1)
+	id := symbols.ProjectedSymbolID(symbols.SymbolConst, "value")
 	cached, ok := constvalue.NewIntText("1", "i32")
 	if !ok {
 		t.Fatal("create cached constant")
@@ -43,12 +43,12 @@ func TestResultSeparatesCachedAndPublishedConstants(t *testing.T) {
 
 func TestResultDiscardCachedDoesNotChangePublishedValue(t *testing.T) {
 	result := New()
-	id := symbols.SymbolID(1)
+	id := symbols.ProjectedSymbolID(symbols.SymbolConst, "published")
 	published, ok := constvalue.NewIntText("7", "i32")
 	if !ok {
 		t.Fatal("create published constant")
 	}
-	cachedID := symbols.SymbolID(2)
+	cachedID := symbols.ProjectedSymbolID(symbols.SymbolConst, "cached")
 	cached, ok := constvalue.NewIntText("9", "i32")
 	if !ok {
 		t.Fatal("create cached constant")

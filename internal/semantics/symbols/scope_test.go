@@ -8,7 +8,7 @@ import (
 
 func TestScopeDeclareAndLookup(t *testing.T) {
 	global := NewScope(nil)
-	sx := New("x", SymbolVar, nil, ast.LocOf(nil))
+	sx := New(ProjectedSymbolID(SymbolVar, "x"), "x", SymbolVar, nil, ast.LocOf(nil))
 	if err := global.Declare(sx); err != nil {
 		t.Fatalf("declare x failed: %v", err)
 	}
@@ -30,8 +30,8 @@ func TestScopeDeclareAndLookup(t *testing.T) {
 
 func TestScopeSymbolsOrder(t *testing.T) {
 	s := NewScope(nil)
-	a := New("a", SymbolVar, nil, ast.LocOf(nil))
-	b := New("b", SymbolVar, nil, ast.LocOf(nil))
+	a := New(ProjectedSymbolID(SymbolVar, "a"), "a", SymbolVar, nil, ast.LocOf(nil))
+	b := New(ProjectedSymbolID(SymbolVar, "b"), "b", SymbolVar, nil, ast.LocOf(nil))
 	if err := s.Declare(a); err != nil {
 		t.Fatalf("declare a failed: %v", err)
 	}
@@ -46,8 +46,8 @@ func TestScopeSymbolsOrder(t *testing.T) {
 
 func TestScopeAllowsMultipleDiscardDeclarations(t *testing.T) {
 	s := NewScope(nil)
-	first := New("_", SymbolVar, nil, ast.LocOf(nil))
-	second := New("_", SymbolVar, nil, ast.LocOf(nil))
+	first := New(ProjectedSymbolID(SymbolVar, "_"), "_", SymbolVar, nil, ast.LocOf(nil))
+	second := New(ProjectedSymbolID(SymbolVar, "_"), "_", SymbolVar, nil, ast.LocOf(nil))
 	if err := s.Declare(first); err != nil {
 		t.Fatalf("declare first discard failed: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestScopeAllowsMultipleDiscardDeclarations(t *testing.T) {
 
 func TestScopeMutableBindingIncludesParameters(t *testing.T) {
 	s := NewScope(nil)
-	param := New("value", SymbolParam, nil, ast.LocOf(nil))
+	param := New(ProjectedSymbolID(SymbolParam, "value"), "value", SymbolParam, nil, ast.LocOf(nil))
 	param.AllowsMutation = true
 	if err := s.Declare(param); err != nil {
 		t.Fatalf("declare mutable param failed: %v", err)

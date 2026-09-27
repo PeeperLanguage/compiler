@@ -358,8 +358,8 @@ fn IsLeft() -> bool { return Make() is Choice::Left; }`)
 func TestClearFlowScopeRemovesOnlyExitedBindingFacts(t *testing.T) {
 	outerScope := symbols.NewScope(nil)
 	innerScope := symbols.NewScope(outerScope)
-	outer := symbols.New("outer", symbols.SymbolVar, &ast.LetDecl{IsMutable: true}, nil)
-	inner := symbols.New("inner", symbols.SymbolVar, &ast.LetDecl{IsMutable: true}, nil)
+	outer := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "outer"), "outer", symbols.SymbolVar, &ast.LetDecl{IsMutable: true}, nil)
+	inner := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "inner"), "inner", symbols.SymbolVar, &ast.LetDecl{IsMutable: true}, nil)
 	if err := outerScope.Declare(outer); err != nil {
 		t.Fatal(err)
 	}
@@ -402,7 +402,7 @@ func TestClearFlowScopeRemovesOnlyExitedBindingFacts(t *testing.T) {
 
 func TestInvalidateCallClearsMutableModuleVariableFacts(t *testing.T) {
 	moduleScope := symbols.NewScope(nil)
-	global := symbols.New("maybe", symbols.SymbolVar, &ast.LetDecl{IsMutable: true, IsModuleVar: true}, nil)
+	global := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "maybe"), "maybe", symbols.SymbolVar, &ast.LetDecl{IsMutable: true, IsModuleVar: true}, nil)
 	global.AllowsMutation = true
 	if err := moduleScope.Declare(global); err != nil {
 		t.Fatal(err)
@@ -421,7 +421,7 @@ func TestInvalidateCallClearsMutableModuleVariableFacts(t *testing.T) {
 }
 
 func TestMergeVariantFactsUnionsPossibleCases(t *testing.T) {
-	root := symbols.New("value", symbols.SymbolVar, nil, nil)
+	root := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "value"), "value", symbols.SymbolVar, nil, nil)
 	origins := []place.Origin{{Root: root}}
 	left := flowState{isReachable: true, variants: []variantStateFact{{origins: origins, cases: []int{0}, caseCount: 3}}}
 	right := flowState{isReachable: true, variants: []variantStateFact{{origins: origins, cases: []int{1}, caseCount: 3}}}
@@ -433,7 +433,7 @@ func TestMergeVariantFactsUnionsPossibleCases(t *testing.T) {
 }
 
 func TestInvalidateVariantFactsPreservesCaseForPayloadDescendant(t *testing.T) {
-	root := symbols.New("value", symbols.SymbolVar, nil, nil)
+	root := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "value"), "value", symbols.SymbolVar, nil, nil)
 	carrier := []place.Origin{{Root: root}}
 	state := flowState{variants: []variantStateFact{{origins: carrier, cases: []int{1}, caseCount: 2}}}
 	mutated := place.VariantPayloadOrigins(carrier, []int{1})
@@ -446,9 +446,9 @@ func TestInvalidateVariantFactsPreservesCaseForPayloadDescendant(t *testing.T) {
 }
 
 func TestMergeFlowStatesTreatsMissingOriginAsUnknown(t *testing.T) {
-	pointer := symbols.New("pointer", symbols.SymbolVar, nil, nil)
-	left := symbols.New("left", symbols.SymbolVar, nil, nil)
-	right := symbols.New("right", symbols.SymbolVar, nil, nil)
+	pointer := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "pointer"), "pointer", symbols.SymbolVar, nil, nil)
+	left := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "left"), "left", symbols.SymbolVar, nil, nil)
+	right := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "right"), "right", symbols.SymbolVar, nil, nil)
 	pointerOrigins := []place.Origin{{Root: pointer}}
 	leftState := newFlowState()
 	leftState.rawPointers = setOriginFact(leftState.rawPointers, pointerOrigins, []place.Origin{{Root: left}})
@@ -468,8 +468,8 @@ func TestMergeFlowStatesTreatsMissingOriginAsUnknown(t *testing.T) {
 }
 
 func TestInvalidateVariantOriginsClearsIndexDependencies(t *testing.T) {
-	values := symbols.New("values", symbols.SymbolParam, nil, nil)
-	index := symbols.New("index", symbols.SymbolVar, nil, nil)
+	values := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolParam, "values"), "values", symbols.SymbolParam, nil, nil)
+	index := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "index"), "index", symbols.SymbolVar, nil, nil)
 	state := flowState{variants: []variantStateFact{{
 		origins: []place.Origin{{Root: values, Projections: []place.OriginProjection{{
 			Kind: place.OriginBindingIndex, Binding: index,

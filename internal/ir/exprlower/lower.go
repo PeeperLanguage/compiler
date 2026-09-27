@@ -614,7 +614,7 @@ func SymbolName(module moduleid.ID, isEntryModule bool, sym *symbols.Symbol) str
 		name, _ := CallableName(module, isEntryModule, sym)
 		return name
 	}
-	return fmt.Sprintf("%s$%d", sym.Name, sym.ID)
+	return fmt.Sprintf("%s$%s", sym.Name, sym.ID.String())
 }
 func CallableName(module moduleid.ID, isEntryModule bool, sym *symbols.Symbol) (string, bool) {
 	if sym == nil || (sym.Kind != symbols.SymbolFunc && sym.Kind != symbols.SymbolMethod) {

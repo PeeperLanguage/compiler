@@ -60,7 +60,7 @@ func TestLowerImplicitReferenceRetainsTemporaryOnlyForValues(t *testing.T) {
 	if !ok || temporary.Value.TypeID() == ir.InvalidType || temporary.Origin().NodeID != source.ParsedNodeID(1) {
 		t.Fatalf("borrowed literal = %#v, want temporary owner with source identity", temporary)
 	}
-	symbol := symbols.New("value", symbols.SymbolVar, nil, nil)
+	symbol := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "value"), "value", symbols.SymbolVar, nil, nil)
 	symbol.Type = integer
 	ident := &thir.Ident{ExprInfo: thir.ExprInfo{
 		Source: ir.SourceInfo{NodeID: source.ParsedNodeID(2)}, Type: integer, Place: &thir.Place{Root: symbol, Type: integer},

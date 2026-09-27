@@ -1177,7 +1177,7 @@ func TestHoverDoesNotShowCompilerFunctionsAsTypeMethods(t *testing.T) {
 }
 
 func TestHoverSyntheticMethodUsesSemanticParameterNames(t *testing.T) {
-	sym := symbols.New("contains", symbols.SymbolMethod, nil, nil)
+	sym := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolMethod, "contains"), "contains", symbols.SymbolMethod, nil, nil)
 	sym.Type = &typeinfo.FuncType{
 		Params: []typeinfo.Type{
 			&typeinfo.RefType{Target: &typeinfo.StringType{}},

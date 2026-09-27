@@ -64,7 +64,7 @@ func TestTypeHoverShowsInvalidInsteadOfDeclarationType(t *testing.T) {
 		Name: "Box", Identity: "main::Box", Kind: typeinfo.DefinedKindStruct,
 		TypeParameters: []*typeinfo.TypeParameterType{{Name: "T", OwnerIdentity: "main::Box", Index: 0}},
 	}
-	baseSymbol := symbols.New("Box", symbols.SymbolType, nil, nil)
+	baseSymbol := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolType, "Box"), "Box", symbols.SymbolType, nil, nil)
 	baseSymbol.BindType(base)
 	if err := module.ModuleScope.Declare(baseSymbol); err != nil {
 		t.Fatalf("declare generic type: %v", err)
@@ -73,7 +73,7 @@ func TestTypeHoverShowsInvalidInsteadOfDeclarationType(t *testing.T) {
 	typeNode := &ast.NamedType{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(1)}, Name: "Box"}
 	name := &ast.Ident{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(2)}, Name: "Alias"}
 	declaration := &ast.TypeAliasDecl{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(3)}, Name: name, Type: typeNode}
-	aliasSymbol := symbols.New("Alias", symbols.SymbolType, declaration, nil)
+	aliasSymbol := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolType, "Alias"), "Alias", symbols.SymbolType, declaration, nil)
 	aliasSymbol.BindType(&typeinfo.DefinedType{Name: "Alias", Identity: "main::Alias"})
 	module.Bindings.Bind(name, aliasSymbol)
 
@@ -98,7 +98,7 @@ func TestTypeHoverShowsLoadingForUnavailableGenericInstance(t *testing.T) {
 		Name: "Box", Identity: "main::Box", Kind: typeinfo.DefinedKindStruct,
 		TypeParameters: []*typeinfo.TypeParameterType{{Name: "T", OwnerIdentity: "main::Box", Index: 0}},
 	}
-	symbol := symbols.New("Box", symbols.SymbolType, nil, nil)
+	symbol := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolType, "Box"), "Box", symbols.SymbolType, nil, nil)
 	symbol.BindType(base)
 	if err := module.ModuleScope.Declare(symbol); err != nil {
 		t.Fatalf("declare generic type: %v", err)

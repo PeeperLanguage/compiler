@@ -19,7 +19,7 @@ func TestDiscardedCallDropsTemporariesBeforeResult(t *testing.T) {
 	borrow := &typeinfo.RefType{Target: integer}
 	result := &typeinfo.OwnedPtrType{Target: integer}
 	callable := &typeinfo.FuncType{Params: []typeinfo.Type{borrow, borrow}, Return: result}
-	symbol := symbols.New("consume", symbols.SymbolFunc, nil, nil)
+	symbol := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolFunc, "consume"), "consume", symbols.SymbolFunc, nil, nil)
 	symbol.Type = callable
 	call := &thir.Call{
 		ExprInfo: thir.ExprInfo{Source: ir.SourceInfo{NodeID: source.ParsedNodeID(3)}, Type: result},
@@ -95,7 +95,7 @@ func TestExternalFunctionSignatureUsesPublishedLinkName(t *testing.T) {
 	declaration := &ast.FnDecl{Attributed: ast.Attributed{Attributes: []ast.Attribute{{
 		Name: ast.AttributeExtern, Args: []ast.Expr{&ast.StringLit{Value: "native_name"}},
 	}}}}
-	sym := symbols.New("external", symbols.SymbolFunc, declaration, nil)
+	sym := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolFunc, "external"), "external", symbols.SymbolFunc, declaration, nil)
 	sym.DefiningModule = module
 	sym.ASTNode = nil
 	input := LoweringInput{ModuleID: module, Types: ir.NewTypeTable()}
@@ -118,17 +118,18 @@ func TestFunctionSignatureMatchesCallableReferences(t *testing.T) {
 		{name: "main", kind: symbols.SymbolFunc, want: "main"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			sym := symbols.New(test.name, test.kind, nil, nil)
+			identity := symbols.ProjectedSymbolID(test.kind, test.name)
+			sym := symbols.New(identity, test.name, test.kind, nil, nil)
 			sym.DefiningModule = module
 			fn := functionSignature(input, &thir.Function{Symbol: sym}, nil)
 			reference := exprlower.SymbolName(module, true, sym)
 			if fn.Name != reference {
 				t.Fatalf("definition %q does not match reference %q", fn.Name, reference)
 			}
-			other := symbols.New(test.name, test.kind, nil, nil)
+			other := symbols.New(identity, test.name, test.kind, nil, nil)
 			other.DefiningModule = module
-			if other.ID == sym.ID || exprlower.SymbolName(module, true, other) != reference {
-				t.Fatalf("callable reference depends on process-local symbol ID: %q", reference)
+			if other.ID != sym.ID || exprlower.SymbolName(module, true, other) != reference {
+				t.Fatalf("callable reference depends on symbol allocation: %q", reference)
 			}
 			if test.want != "" && fn.Name != test.want {
 				t.Fatalf("definition = %q, want %q", fn.Name, test.want)

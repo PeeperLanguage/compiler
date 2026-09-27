@@ -377,8 +377,9 @@ func TestOwnershipCheckClearsAllDerivedPlans(t *testing.T) {
 	fn := result.module.AST.Stmts[0].(*ast.FnDecl)
 	plan := cleanupPlanForFunction(t, result, fn)
 	staleID := source.ParsedNodeID(999999)
-	plan.AfterScope[cfg.SiteID{Block: 999999, Index: 999999}] = []symbols.SymbolID{999999}
-	plan.BeforeReturn[staleID] = []symbols.SymbolID{999999}
+	staleSymbolID := symbols.ProjectedSymbolID(symbols.SymbolVar, "stale")
+	plan.AfterScope[cfg.SiteID{Block: 999999, Index: 999999}] = []symbols.SymbolID{staleSymbolID}
+	plan.BeforeReturn[staleID] = []symbols.SymbolID{staleSymbolID}
 	plan.BeforeAssign[staleID] = struct{}{}
 	plan.DiscardedValue[staleID] = struct{}{}
 	plan.ProjectionBase[staleID] = struct{}{}

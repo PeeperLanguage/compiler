@@ -135,7 +135,7 @@ func resolveIdentSymbol(ident *ast.Ident, parents map[source.NodeID]ast.Node, mo
 	if sr, ok := parent.(*ast.ScopeResolution); ok && len(sr.Segments) > 1 && sr.Segments[0].Name == ident {
 		qualifier := ident.Name
 		if imp, ok := module.Imports[qualifier]; ok {
-			sym := symbols.New(ident.Name, symbols.SymbolImport, parent, ast.LocOf(ident))
+			sym := symbols.New(symbols.SourceSymbolID(parent.ID()), ident.Name, symbols.SymbolImport, parent, ast.LocOf(ident))
 			sym.Location = &source.Location{
 				Filename: &imp.FilePath,
 			}
@@ -274,7 +274,8 @@ func lookupStructFieldSymbol(baseType typeinfo.Type, fieldName string, ctx *proj
 			break
 		}
 	}
-	fieldSym := symbols.New(fieldName, symbols.SymbolField, fieldNode, location)
+	identity := symbols.ProjectedSymbolID(symbols.SymbolField, typeinfo.SemanticKey(baseType)+"::"+fieldName)
+	fieldSym := symbols.New(identity, fieldName, symbols.SymbolField, fieldNode, location)
 	fieldSym.BindType(field.Type)
 	return fieldSym
 }

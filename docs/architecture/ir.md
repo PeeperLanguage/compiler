@@ -30,7 +30,7 @@ owns flat executable operations. No intermediate HIR artifact exists.
 ## Shared identities
 
 - `source.NodeID` preserves canonical source-node identity across AST, THIR, CFG, evidence, and MIR lowering.
-- `symbols.SymbolID` identifies semantic storage and callable symbols.
+- `symbols.SymbolID` deterministically identifies semantic storage and callable declarations independently of symbol-object allocation order.
 - `cfg.SiteID` identifies one exact ordered program point.
 - `ir.TypeID` identifies one runtime type in compilation-owned `ir.TypeTable`.
 

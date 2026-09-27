@@ -40,13 +40,22 @@ This map records binding, type, place, intrinsic, and constant implementation ob
 
 ## Symbol IDs and symbol records
 
-`internal/semantics/symbols/symbol.go` owns symbol identity.
+`internal/semantics/symbols/identity.go` owns symbol identity;
+`symbol.go` owns symbol records.
 
-- `symbols.SymbolID` is `uint64`.
-- `symbols.New` allocates IDs from a process-wide atomic counter.
-- IDs are unique for symbol objects created during the compiler process.
-- Symbol identity is pointer-stable through semantic handoff; consumers compare
-  symbol pointers or IDs rather than names when identity matters.
+- `symbols.SymbolID` is a comparable value with private source, module,
+  generated, compiler, and tooling-projection domains.
+- Function declarations, parameters, locals, and generated declarations derive
+  identity from canonical `source.NodeID`.
+- Module declarations and imports derive identity from module ID, semantic kind,
+  declaration key, and recovery occurrence. Collector owns occurrence ordering.
+- Hidden loop state derives identity from the source loop plus a closed generated
+  role. Predeclared types/constants and intrinsic operations use compiler-owned
+  identity. LSP-only field projections use a separate projection domain and are
+  not published as semantic artifacts.
+- `symbols.New` requires an explicit valid identity and allocates no identity.
+  Fresh symbol objects remain generation-local; consumers compare pointers when
+  exact object generation matters and IDs when declaration/storage identity matters.
 - A `symbols.Symbol` contains name, kind, semantic type, visibility, mutability,
   usage state, compiler operation, defining module, source location, AST node,
   and an optional child scope.

@@ -237,10 +237,10 @@ func TestModuleResetSemanticDataInitializesCurrentResults(t *testing.T) {
 	if module.Bindings == nil || module.Bindings.OperationFunctions() == nil || module.Constants == nil || module.Typechecking != nil {
 		t.Fatalf("semantic reset = %#v", module)
 	}
-	if module.Constants.Published(0) != nil {
+	if module.Constants.Published(symbols.SymbolID{}) != nil {
 		t.Fatal("semantic reset retained a published constant")
 	}
-	if _, ok := module.Constants.Cached(0); ok {
+	if _, ok := module.Constants.Cached(symbols.SymbolID{}); ok {
 		t.Fatal("semantic reset retained a cached constant")
 	}
 }
@@ -325,7 +325,7 @@ func TestCompilerContextReindexesCollectedTypeDeclarations(t *testing.T) {
 		TypeParameters: []*typeinfo.TypeParameterType{{Name: "T", OwnerIdentity: "owner::Box", Index: 0}},
 	}
 	declaration := &ast.StructDecl{Name: &ast.Ident{Name: "Box"}, Type: &ast.StructType{}}
-	symbol := symbols.New("Box", symbols.SymbolType, declaration, nil)
+	symbol := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolType, "Box"), "Box", symbols.SymbolType, declaration, nil)
 	symbol.BindType(base)
 	if err := mod.ModuleScope.Declare(symbol); err != nil {
 		t.Fatalf("declare retained generic type: %v", err)

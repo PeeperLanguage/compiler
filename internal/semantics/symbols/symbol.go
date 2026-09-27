@@ -1,7 +1,6 @@
 package symbols
 
 import (
-	"sync/atomic"
 	"unicode"
 	"unicode/utf8"
 
@@ -10,10 +9,6 @@ import (
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
 )
-
-type SymbolID uint64
-
-var nextSymbolID atomic.Uint64
 
 type Kind string
 
@@ -65,9 +60,12 @@ type Symbol struct {
 	Scope                  *Scope
 }
 
-func New(name string, kind Kind, node ast.Node, location *source.Location) *Symbol {
+func New(id SymbolID, name string, kind Kind, node ast.Node, location *source.Location) *Symbol {
+	if !id.IsValid() {
+		panic("symbol requires valid identity")
+	}
 	sym := &Symbol{
-		ID:       SymbolID(nextSymbolID.Add(1)),
+		ID:       id,
 		Name:     name,
 		Kind:     kind,
 		IsPub:    IsPubName(name),

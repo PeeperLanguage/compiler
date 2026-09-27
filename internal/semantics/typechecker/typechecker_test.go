@@ -299,12 +299,79 @@ func TestDefaultCallDeclarationUsesResolvedImportedBinding(t *testing.T) {
 		NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(1)},
 		Segments:     []ast.PathSegment{{Name: &ast.Ident{Name: "external"}}, {Name: &ast.Ident{Name: "GetValue"}}},
 	}
-	bound := symbols.New("GetValue", symbols.SymbolFunc, nil, nil)
+	bound := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolFunc, "GetValue"), "GetValue", symbols.SymbolFunc, nil, nil)
 	bound.DefiningModule = owner.ID
 	caller.Bindings.Bind(path, bound)
 	checker := &checker{ctx: ctx, module: caller}
 	if sym, declModule := checker.defaultCallDeclaration(path); sym != bound || declModule != owner {
 		t.Fatalf("resolved callable = (%p, %p), want (%p, %p)", sym, declModule, bound, owner)
+	}
+}
+
+func TestSymbolIDsAreStableAcrossUnrelatedFunctionEdit(t *testing.T) {
+	compile := func(prepBody string) []symbols.SymbolID {
+		t.Helper()
+		module, diag := checkTypeModule(t, `struct Box {}
+fn Prep() { `+prepBody+` }
+fn main(input: i32) {
+	let local = input;
+	for index, value in 0..2 {}
+}`)
+		if diag.HasErrors() {
+			t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+		}
+		box, _ := module.ModuleScope.LookupLocal("Box")
+		main := module.AST.Stmts[2].(*ast.FnDecl)
+		local := main.Body.Stmts[0].(*ast.LetDecl)
+		loop := main.Body.Stmts[1].(*ast.ForStmt)
+		iteration, found := module.Typechecking.ForIteration(loop.ID())
+		if box == nil || !found {
+			t.Fatal("missing collected symbol or range iteration evidence")
+		}
+		rangePlan, ok := iteration.Plan.(*typecheckresult.RangeIteration)
+		if !ok || rangePlan == nil || rangePlan.Limit == nil || rangePlan.Ordinal == nil {
+			t.Fatalf("range iteration = %#v", iteration)
+		}
+		syms := []*symbols.Symbol{
+			box,
+			module.Bindings.Symbol(main.Name),
+			module.Bindings.Symbol(main.Params[0].Name),
+			module.Bindings.Symbol(local.Name),
+			module.Bindings.Symbol(loop.Index),
+			module.Bindings.Symbol(loop.Value),
+			iteration.Cursor,
+			rangePlan.Limit,
+			rangePlan.Ordinal,
+		}
+		ids := make([]symbols.SymbolID, len(syms))
+		for index, sym := range syms {
+			if sym == nil || !sym.ID.IsValid() {
+				t.Fatalf("symbol %d = %#v", index, sym)
+			}
+			ids[index] = sym.ID
+		}
+		return ids
+	}
+
+	baseline := compile("")
+	repeated := compile("let unrelated = 1;")
+	if !slices.Equal(baseline, repeated) {
+		t.Fatalf("symbol identities changed: %v and %v", baseline, repeated)
+	}
+}
+
+func TestRecoveryFunctionsKeepDistinctSymbolIDs(t *testing.T) {
+	module, diag := checkTypeModule(t, `fn Same() {}
+fn Same() {}`)
+	if !diag.HasErrors() {
+		t.Fatal("expected redeclaration diagnostics")
+	}
+	first := module.AST.Stmts[0].(*ast.FnDecl)
+	second := module.AST.Stmts[1].(*ast.FnDecl)
+	firstSymbol := module.Bindings.Symbol(first.Name)
+	secondSymbol := module.Bindings.Symbol(second.Name)
+	if firstSymbol == nil || secondSymbol == nil || firstSymbol.ID == secondSymbol.ID {
+		t.Fatalf("recovery symbols = %#v and %#v", firstSymbol, secondSymbol)
 	}
 }
 

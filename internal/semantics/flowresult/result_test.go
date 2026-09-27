@@ -10,9 +10,9 @@ import (
 
 func TestOriginsArePublishedAndMergedAtomically(t *testing.T) {
 	result := New()
-	first := symbols.New("first", symbols.SymbolVar, nil, nil)
-	second := symbols.New("second", symbols.SymbolVar, nil, nil)
-	third := symbols.New("third", symbols.SymbolVar, nil, nil)
+	first := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "first"), "first", symbols.SymbolVar, nil, nil)
+	second := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "second"), "second", symbols.SymbolVar, nil, nil)
+	third := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "third"), "third", symbols.SymbolVar, nil, nil)
 	id := source.ParsedNodeID(7)
 
 	storage := []place.Origin{{Root: first}}

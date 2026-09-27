@@ -21,7 +21,7 @@ func TestQualifiedTypeQueryIsObservationalAndSourceResolutionPublishesUse(t *tes
 	ctx := New(".", peeper.SourceExt, diag)
 	dependencyID := moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "dep"}
 	dependency := &module.Module{ID: dependencyID, ModuleScope: symbols.NewScope(nil)}
-	target := symbols.New("Thing", symbols.SymbolType, nil, nil)
+	target := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolType, "Thing"), "Thing", symbols.SymbolType, nil, nil)
 	target.IsPub = false
 	target.BindType(&typeinfo.DefinedType{Name: "Thing", Identity: "dep::Thing", Kind: typeinfo.DefinedKindStruct})
 	if err := dependency.ModuleScope.Declare(target); err != nil {
@@ -35,7 +35,7 @@ func TestQualifiedTypeQueryIsObservationalAndSourceResolutionPublishesUse(t *tes
 			"dep": {ID: dependencyID},
 		},
 	}
-	alias := symbols.New("dep", symbols.SymbolImport, nil, nil)
+	alias := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolImport, "dep"), "dep", symbols.SymbolImport, nil, nil)
 	if err := module.ModuleScope.Declare(alias); err != nil {
 		t.Fatalf("declare import alias: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestQualifiedTypeResolutionDoesNotMarkInvalidQualifierUsed(t *testing.T) {
 		ModuleScope: symbols.NewScope(nil),
 		Imports:     make(map[string]module.ResolvedImport),
 	}
-	local := symbols.New("local", symbols.SymbolVar, nil, nil)
+	local := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "local"), "local", symbols.SymbolVar, nil, nil)
 	if err := module.ModuleScope.Declare(local); err != nil {
 		t.Fatalf("declare local symbol: %v", err)
 	}

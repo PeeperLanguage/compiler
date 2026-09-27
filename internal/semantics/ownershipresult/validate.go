@@ -161,12 +161,12 @@ func validatePlan(fnID moduleid.FunctionID, plan *CleanupPlan, types *typecheckr
 }
 
 // validateSymbols rejects unidentified cleanup targets. Full symbol-identity
-// checking waits for a canonical symbol registry; a zero id is already proof the
-// plan lost the symbol it meant to drop.
+// checking waits for a canonical symbol registry; an invalid ID is already proof
+// the plan lost the symbol it meant to drop.
 func validateSymbols(fnID moduleid.FunctionID, where string, ids []symbols.SymbolID) []string {
 	problems := make([]string, 0)
 	for _, id := range ids {
-		if id == 0 {
+		if !id.IsValid() {
 			problems = append(problems, fmt.Sprintf("function %s plans an unidentified %s drop", fnID, where))
 		}
 	}

@@ -11,8 +11,9 @@ import (
 )
 
 type collector struct {
-	ctx    *project.CompilerContext
-	module *module.Module
+	ctx                     *project.CompilerContext
+	module                  *module.Module
+	moduleSymbolOccurrences map[symbols.SymbolID]uint64
 }
 
 func (c *collector) collectModule(mod *ast.Module) {
@@ -26,7 +27,7 @@ func (c *collector) collectModule(mod *ast.Module) {
 			continue
 		}
 		imp := c.module.Imports[alias]
-		impSym := symbols.New(alias, symbols.SymbolImport, imp.Decl, ast.LocOf(imp.Decl))
+		impSym := symbols.New(c.nextModuleSymbolID(symbols.SymbolImport, alias), alias, symbols.SymbolImport, imp.Decl, ast.LocOf(imp.Decl))
 		impSym.BindType(&typeinfo.UnknownType{})
 		if err := c.module.ModuleScope.Declare(impSym); err != nil {
 			if c.ctx != nil && c.ctx.Diagnostics != nil {
@@ -70,7 +71,7 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 	if fn.Receiver != nil {
 		kind = symbols.SymbolMethod
 	}
-	sym := symbols.New(fn.Name.Name, kind, fn, ast.LocOf(fn.Name))
+	sym := symbols.New(symbols.SourceSymbolID(fn.ID()), fn.Name.Name, kind, fn, ast.LocOf(fn.Name))
 	sym.DefiningModule = c.module.ID
 	sym.Scope = symbols.NewScope(c.module.ModuleScope)
 	c.module.Bindings.Bind(fn.Name, sym)
@@ -113,7 +114,7 @@ func (c *collector) collectConcreteTypeDecl(decl ast.TypeDecl) {
 	case *ast.EnumDecl:
 		kind = typeinfo.DefinedKindEnum
 	}
-	sym := symbols.New(name.Name, symbols.SymbolType, decl, ast.LocOf(name))
+	sym := symbols.New(c.nextModuleSymbolID(symbols.SymbolType, name.Name), name.Name, symbols.SymbolType, decl, ast.LocOf(name))
 	defined := &typeinfo.DefinedType{
 		Name:           name.Name,
 		Identity:       identity,
@@ -134,7 +135,8 @@ func (c *collector) collectConcreteTypeDecl(decl ast.TypeDecl) {
 				if variant.Name == nil || variant.Name.Name == "" {
 					continue
 				}
-				variantSymbol := symbols.New(variant.Name.Name, symbols.SymbolVariant, variant.Name, variant.Name.Location)
+				variantKey := name.Name + "::" + variant.Name.Name
+				variantSymbol := symbols.New(c.nextModuleSymbolID(symbols.SymbolVariant, variantKey), variant.Name.Name, symbols.SymbolVariant, variant.Name, variant.Name.Location)
 				variantSymbol.BindType(defined)
 				variantSymbol.DefiningModule = c.module.ID
 				if err := sym.Scope.Declare(variantSymbol); err != nil {
@@ -152,7 +154,7 @@ func (c *collector) collectModuleBinding(name *ast.Ident, kind symbols.Kind, nod
 	if c == nil || c.module == nil || name == nil || name.Name == "" {
 		return
 	}
-	sym := symbols.New(name.Name, kind, node, ast.LocOf(name))
+	sym := symbols.New(c.nextModuleSymbolID(kind, name.Name), name.Name, kind, node, ast.LocOf(name))
 	sym.DefiningModule = c.module.ID
 	sym.BindType(&typeinfo.UnknownType{}) // binder fills real type
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
@@ -162,11 +164,21 @@ func (c *collector) collectModuleBinding(name *ast.Ident, kind symbols.Kind, nod
 	c.module.Bindings.Bind(name, sym)
 }
 
+func (c *collector) nextModuleSymbolID(kind symbols.Kind, key string) symbols.SymbolID {
+	base := symbols.ModuleSymbolID(c.module.ID, kind, key, 0)
+	occurrence := c.moduleSymbolOccurrences[base]
+	c.moduleSymbolOccurrences[base] = occurrence + 1
+	return symbols.ModuleSymbolID(c.module.ID, kind, key, occurrence)
+}
+
 func Collect(ctx *project.CompilerContext, module *module.Module) {
 	if ctx == nil || module == nil || module.AST == nil {
 		return
 	}
 	ast.PublishFunctionIdentities(module.ID, module.AST)
-	c := &collector{ctx: ctx, module: module}
+	c := &collector{
+		ctx: ctx, module: module,
+		moduleSymbolOccurrences: make(map[symbols.SymbolID]uint64),
+	}
 	c.collectModule(module.AST)
 }

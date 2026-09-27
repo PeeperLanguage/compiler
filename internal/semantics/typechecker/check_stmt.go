@@ -672,21 +672,21 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 	c.module.Typechecking.ForgetForIteration(node.ID())
 	if valid && elemType != nil && !typeinfo.IsInvalidOrUnknown(elemType) {
 		location := ast.LocOf(node)
-		evidence.Cursor = symbols.New("$for.cursor", symbols.SymbolVar, nil, location)
+		evidence.Cursor = symbols.New(symbols.GeneratedSymbolID(node.ID(), symbols.GeneratedForCursor), "$for.cursor", symbols.SymbolVar, nil, location)
 		if isRange {
 			evidence.Cursor.BindType(elemType)
 			plan := &typecheckresult.RangeIteration{
-				Limit: symbols.New("$for.end", symbols.SymbolVar, nil, location),
+				Limit: symbols.New(symbols.GeneratedSymbolID(node.ID(), symbols.GeneratedForRangeLimit), "$for.end", symbols.SymbolVar, nil, location),
 			}
 			plan.Limit.BindType(elemType)
 			if node.Index != nil {
-				plan.Ordinal = symbols.New("$for.ordinal", symbols.SymbolVar, nil, location)
+				plan.Ordinal = symbols.New(symbols.GeneratedSymbolID(node.ID(), symbols.GeneratedForRangeOrdinal), "$for.ordinal", symbols.SymbolVar, nil, location)
 				plan.Ordinal.BindType(indexType)
 			}
 			evidence.Plan = plan
 		} else {
 			evidence.Cursor.BindType(indexType)
-			carrier := symbols.New("$for.carrier", symbols.SymbolVar, nil, location)
+			carrier := symbols.New(symbols.GeneratedSymbolID(node.ID(), symbols.GeneratedForSequenceCarrier), "$for.carrier", symbols.SymbolVar, nil, location)
 			carrier.BindType(carrierType)
 			evidence.Plan = &typecheckresult.SequenceIteration{Carrier: carrier, CarrierType: carrierType}
 		}
@@ -782,7 +782,7 @@ func (c *checker) expandCallIteration(scope *symbols.Scope, node *ast.ForStmt) {
 
 	c.module.Bindings.SetScope(checked.Body, iterationScope)
 	c.module.Bindings.SetScope(stop.Then, symbols.NewScope(iterationScope))
-	resultSymbol := symbols.New(resultName, symbols.SymbolVar, result, location)
+	resultSymbol := symbols.New(symbols.SourceSymbolID(result.ID()), resultName, symbols.SymbolVar, result, location)
 	resultSymbol.MarkUsed()
 	if err := iterationScope.Declare(resultSymbol); err != nil {
 		panic(err)

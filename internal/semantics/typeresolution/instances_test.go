@@ -201,7 +201,7 @@ func genericQueryContext(t *testing.T) (*Resolver, *diagnostics.DiagnosticBag, *
 		Name: "Box", Identity: "main::Box", Kind: typeinfo.DefinedKindStruct,
 		TypeParameters: []*typeinfo.TypeParameterType{{Name: "T", OwnerIdentity: "main::Box", Index: 0}},
 	}
-	symbol := symbols.New("Box", symbols.SymbolType, nil, nil)
+	symbol := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolType, "Box"), "Box", symbols.SymbolType, nil, nil)
 	symbol.BindType(base)
 	if err := mod.ModuleScope.Declare(symbol); err != nil {
 		t.Fatalf("declare generic type: %v", err)
