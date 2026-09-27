@@ -33,7 +33,7 @@ func TestHoverAndCompletionDoNotConsumeUsageEvidence(t *testing.T) {
 		if !ok || sym == nil {
 			t.Fatalf("%s compilation did not retain unused function symbol", query)
 		}
-		if sym.IsUsed() {
+		if module.SymbolIndex.IsUsed(sym) {
 			t.Fatalf("%s marked unused function as used", query)
 		}
 	}
@@ -59,7 +59,7 @@ func TestHoverAndCompletionDoNotConsumeUsageEvidence(t *testing.T) {
 
 func TestTypeHoverShowsInvalidInsteadOfDeclarationType(t *testing.T) {
 	ctx := project.New(".", peeper.SourceExt, nil)
-	module := &module.Module{ModuleScope: symbols.NewScope(nil), Bindings: symbols.NewBindings()}
+	module := &module.Module{ModuleScope: symbols.NewScope(nil), SymbolIndex: symbols.NewIndex()}
 	base := &typeinfo.DefinedType{
 		Name: "Box", Identity: "main::Box", Kind: typeinfo.DefinedKindStruct,
 		TypeParameters: []*typeinfo.TypeParameterType{{Name: "T", OwnerIdentity: "main::Box", Index: 0}},
@@ -75,7 +75,7 @@ func TestTypeHoverShowsInvalidInsteadOfDeclarationType(t *testing.T) {
 	declaration := &ast.TypeAliasDecl{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(3)}, Name: name, Type: typeNode}
 	aliasSymbol := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolType, "Alias"), "Alias", symbols.SymbolType, declaration, nil)
 	aliasSymbol.BindType(&typeinfo.DefinedType{Name: "Alias", Identity: "main::Alias"})
-	module.Bindings.Bind(name, aliasSymbol)
+	module.SymbolIndex.Bind(name, aliasSymbol)
 
 	subject := resolveTypeHoverSubject(&cursorContext{
 		ctx:     ctx,
@@ -126,7 +126,7 @@ func TestTypeHoverShowsLoadingForUnavailableGenericInstance(t *testing.T) {
 	if !strings.Contains(rendered, "<loading...>") || strings.Contains(rendered, "<invalid>") {
 		t.Fatalf("loading hover = %q", rendered)
 	}
-	if symbol.IsUsed() {
+	if module.SymbolIndex.IsUsed(symbol) {
 		t.Fatal("generic hover query marked type symbol used")
 	}
 }

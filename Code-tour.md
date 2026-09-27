@@ -153,9 +153,9 @@ scheduler enforces that by advancing everyone one rung at a time.
 | Phase | Produces | Stored on `Module` as |
 | --- | --- | --- |
 | `Parsed` | syntax tree | `AST` |
-| `Collected` | top-level symbols, method sets | `Bindings`, `ModuleScope` |
-| `Bound` | operator/interface bindings | `Bindings` |
-| `Resolved` | every identifier → symbol | `Bindings` occurrence index |
+| `Collected` | top-level symbols, method sets | `SymbolIndex`, `ModuleScope` |
+| `Bound` | operator/interface bindings | `SymbolIndex` |
+| `Resolved` | every identifier → symbol | `SymbolIndex` occurrence lookup |
 | `Typechecked` | types, typing decisions, finalized constants, typed source IR | `Typechecking`, `Constants`, `THIR` |
 | `CFG` | blocks, sites, edges | `CFG` |
 | `FlowTyped` | per-use narrowing | `Flow` |
@@ -240,11 +240,11 @@ resolves declaration types, publishes method sets, and wires up operator/interfa
 
 ```go
 // internal/semantics/resolver (simplified)
-module.Bindings.Bind(ident, symbol)
-module.Bindings.SetScope(block, scope)
+module.SymbolIndex.Bind(ident, symbol)
+module.SymbolIndex.SetScope(block, scope)
 ```
 
-> **Identity rule.** `Bindings` records resolved syntax occurrences, including
+> **Identity rule.** `SymbolIndex` records resolved syntax occurrences, including
 > declaration names and assignment targets. Lexical scopes remain responsible for name
 > lookup, shadowing, visibility, and declaration order; downstream phases use the
 > published node identity instead of rescanning symbols by AST pointer.

@@ -109,8 +109,8 @@ func (c *checker) typeExprBase(scope *symbols.Scope, expr ast.Expr, expected typ
 
 	case *ast.Ident:
 		var sym *symbols.Symbol
-		if c.module != nil && c.module.Bindings != nil {
-			sym = c.module.Bindings.Symbol(node)
+		if c.module != nil && c.module.SymbolIndex != nil {
+			sym = c.module.SymbolIndex.Symbol(node)
 		}
 		if sym == nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrUnknownIdentifier,
@@ -266,7 +266,7 @@ func (c *checker) typeAddressExpr(scope *symbols.Scope, node *ast.AddressExpr, e
 			return &typeinfo.InvalidType{}
 		}
 		if mutableBinding != nil {
-			mutableBinding.RequireMutable()
+			c.module.SymbolIndex.RequireMutable(mutableBinding)
 		}
 		return &typeinfo.RefType{IsMutable: true, Target: valueType}
 	}
@@ -502,15 +502,15 @@ type resolvedNamedVariant struct {
 // identity. Expanded defaults retain declaration-module symbols even when their
 // cloned syntax is typechecked inside a caller module.
 func (c *checker) resolveNamedVariant(path *ast.ScopeResolution) (resolvedNamedVariant, bool) {
-	if c == nil || c.module == nil || c.module.Bindings == nil || path == nil {
+	if c == nil || c.module == nil || c.module.SymbolIndex == nil || path == nil {
 		return resolvedNamedVariant{}, false
 	}
 	typePath, caseName, ok := path.EnumVariantMember()
-	caseSymbol := c.module.Bindings.Symbol(path)
+	caseSymbol := c.module.SymbolIndex.Symbol(path)
 	if !ok || caseName == nil || caseSymbol == nil || caseSymbol.Kind != symbols.SymbolVariant || caseSymbol.Name != caseName.Name {
 		return resolvedNamedVariant{}, false
 	}
-	qualifierSymbol := c.module.Bindings.Symbol(typePath)
+	qualifierSymbol := c.module.SymbolIndex.Symbol(typePath)
 	if qualifierSymbol == nil || qualifierSymbol.Kind != symbols.SymbolType {
 		return resolvedNamedVariant{}, false
 	}
@@ -580,8 +580,8 @@ func (c *checker) typeSelectorExpr(scope *symbols.Scope, node *ast.SelectorExpr)
 		return field.Type
 	}
 	if method, ok := c.lookupCallableMember(baseType, node.Name.Name); ok {
-		if method.Symbol != nil && c.module.Bindings != nil {
-			c.module.Bindings.Bind(node.Name, method.Symbol)
+		if method.Symbol != nil && c.module.SymbolIndex != nil {
+			c.module.SymbolIndex.Bind(node.Name, method.Symbol)
 		}
 		return method.Type
 	}
@@ -706,7 +706,7 @@ func (c *checker) typeRangeIndexExpr(scope *symbols.Scope, node *ast.IndexExpr, 
 		isMutable, _, mutableBinding = place.MutableAddressable(scope, node.Expr, exprType, c.module.ExpandedDefaultBinding)
 	}
 	if mutableBinding != nil {
-		mutableBinding.RequireMutable()
+		c.module.SymbolIndex.RequireMutable(mutableBinding)
 	}
 	return &typeinfo.RefType{
 		IsMutable: isMutable,

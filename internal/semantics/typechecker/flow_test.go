@@ -42,7 +42,7 @@ func checkFlowSource(t *testing.T, src string) (*module.Module, *diagnostics.Dia
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
 	Check(ctx, module)
-	module.THIR = thir.Build(module.ID, module.FilePath, module.AST, module.Bindings, module.Typechecking, nil)
+	module.THIR = thir.Build(module.ID, module.FilePath, module.AST, module.SymbolIndex, module.Typechecking, nil)
 	module.CFG = cfg.BuildModule(module.THIR)
 	module.Flow = CheckFlow(diag, module.THIR, module.CFG, module.ModuleScope)
 	return module, diag
@@ -94,16 +94,16 @@ fn main() {
 		if sourceLoop.ID() != id || sourceLoop.Iterable == nil {
 			t.Fatalf("source loop index replaced by checked loop: %#v", sourceLoop)
 		}
-		expansionScope := module.Bindings.Scope(expansion)
-		checkedScope := module.Bindings.Scope(checked.Body)
-		sourceBodyScope := module.Bindings.Scope(sourceLoop.Body)
+		expansionScope := module.SymbolIndex.Scope(expansion)
+		checkedScope := module.SymbolIndex.Scope(checked.Body)
+		sourceBodyScope := module.SymbolIndex.Scope(sourceLoop.Body)
 		if sourceBodyScope == nil || sourceBodyScope.Parent() == expansionScope || sourceBodyScope.Parent() == checkedScope {
 			t.Fatal("checked iteration mutated source body scope parent")
 		}
 		result := checked.Body.Stmts[0].(*ast.LetDecl)
 		call := result.Value.(*ast.CallExpr)
 		selector := call.Callee.(*ast.SelectorExpr)
-		if module.Bindings.Symbol(selector.Name) == nil {
+		if module.SymbolIndex.Symbol(selector.Name) == nil {
 			t.Fatal("missing static method evidence")
 		}
 		if mutable, found := module.Typechecking.ReferenceArgument(selector.Expr.ID()); !found || !mutable {
@@ -113,7 +113,7 @@ fn main() {
 		if item.Name == sourceLoop.Value || item.Name.ID() == sourceLoop.Value.ID() {
 			t.Fatal("checked iteration reused source binding syntax")
 		}
-		if got := typeinfo.TypeText(module.Bindings.Symbol(item.Name).Type); got != "i32" {
+		if got := typeinfo.TypeText(module.SymbolIndex.Symbol(item.Name).Type); got != "i32" {
 			t.Fatalf("item type = %s", got)
 		}
 	})

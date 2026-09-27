@@ -52,7 +52,7 @@ func (b *binder) bindModule() {
 		}
 		return true
 	})
-	b.module.Bindings.SortOperationFunctions()
+	b.module.SymbolIndex.SortOperationFunctions()
 }
 
 // Bind function and top-level declaration signatures into module scope.
@@ -61,7 +61,7 @@ func (b *binder) bindFunctionDecl(fn *ast.FnDecl) {
 		return
 	}
 	fnType := b.ctx.TypeResolver.ResolveFunction(b.ctx.Diagnostics, b.module, fn, typeresolution.Context{})
-	sym := b.module.Bindings.Symbol(fn.Name)
+	sym := b.module.SymbolIndex.Symbol(fn.Name)
 	if fn.Receiver != nil {
 		if sym == nil {
 			return
@@ -70,7 +70,7 @@ func (b *binder) bindFunctionDecl(fn *ast.FnDecl) {
 		if len(fnType.Params) == 0 {
 			return
 		}
-		if previous := b.module.Bindings.RegisterMethod(fnType.Params[0], sym); previous != nil {
+		if previous := b.module.SymbolIndex.RegisterMethod(fnType.Params[0], sym); previous != nil {
 			target, _ := typeinfo.ReceiverTarget(fnType.Params[0])
 			message := "method `" + sym.Name + "` already declared for `" + typeinfo.TypeText(target) + "`"
 			b.ctx.Diagnostics.Add(problems.Redeclaration(message, sym.Location, previous.Location))
@@ -83,7 +83,7 @@ func (b *binder) bindFunctionDecl(fn *ast.FnDecl) {
 	if sym != nil {
 		sym.BindType(fnType)
 		if len(fnType.Params) > 0 {
-			b.module.Bindings.AddOperationFunction(sym)
+			b.module.SymbolIndex.AddOperationFunction(sym)
 		}
 	}
 }

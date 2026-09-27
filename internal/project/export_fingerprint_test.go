@@ -16,7 +16,7 @@ import (
 func fingerprintModule(
 	t *testing.T,
 	exported *symbols.Symbol,
-	bindings *symbols.Bindings,
+	symbolIndex *symbols.Index,
 	constValues map[symbols.SymbolID]constvalue.Value,
 ) *module.Module {
 	t.Helper()
@@ -24,14 +24,14 @@ func fingerprintModule(
 	if err := scope.Declare(exported); err != nil {
 		t.Fatalf("declare export: %v", err)
 	}
-	if bindings == nil {
-		bindings = symbols.NewBindings()
+	if symbolIndex == nil {
+		symbolIndex = symbols.NewIndex()
 	}
 	constants := constantresult.New()
 	for id, value := range constValues {
 		constants.Publish(id, value)
 	}
-	return &module.Module{ModuleScope: scope, Bindings: bindings, Constants: constants}
+	return &module.Module{ModuleScope: scope, SymbolIndex: symbolIndex, Constants: constants}
 }
 
 func TestSemanticExportFingerprintChangesWithInferredTypeAndValue(t *testing.T) {
@@ -124,7 +124,7 @@ func TestSemanticExportFingerprintIncludesPrivateFactsUsedByPublicDefault(t *tes
 		fn.Type = &typeinfo.FuncType{Params: []typeinfo.Type{i32}, ParamNames: []string{"value"}}
 		private := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolConst, "limit"), "limit", symbols.SymbolConst, nil, nil)
 		private.Type = i32
-		bindings := symbols.NewBindings()
+		bindings := symbols.NewIndex()
 		bindings.Bind(defaultIdent, private)
 		constValues := make(map[symbols.SymbolID]constvalue.Value)
 		constValues[private.ID], _ = constvalue.NewIntText(value, "i32")
@@ -159,7 +159,7 @@ func TestSemanticExportFingerprintTracksImportedConstantInDefault(t *testing.T) 
 		decl.SetDeclSurface("fn::Read::value:i32=K:")
 		fn := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolFunc, "Read"), "Read", symbols.SymbolFunc, decl, nil)
 		fn.Type = &typeinfo.FuncType{Params: []typeinfo.Type{i32}, ParamNames: []string{"value"}}
-		bindings := symbols.NewBindings()
+		bindings := symbols.NewIndex()
 		bindings.Bind(defaultIdent, imported)
 
 		consumer := fingerprintModule(t, fn, bindings, nil)
@@ -177,7 +177,7 @@ func TestSemanticExportFingerprintChangesWithPublicMethodSignature(t *testing.T)
 		method := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolMethod, "Read"), "Read", symbols.SymbolMethod, nil, nil)
 		method.Type = &typeinfo.FuncType{Return: returnType}
 		receiver := &typeinfo.DefinedType{Name: "Buffer", Identity: "test::Buffer", Kind: typeinfo.DefinedKindStruct, Underlying: &typeinfo.StructType{}}
-		bindings := symbols.NewBindings()
+		bindings := symbols.NewIndex()
 		bindings.RegisterMethod(receiver, method)
 		typeSymbol := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolType, "Buffer"), "Buffer", symbols.SymbolType, nil, nil)
 		typeSymbol.Type = receiver

@@ -216,7 +216,7 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 		module := moduleWithArtifacts()
 		module.ResetToPhase(test.phase)
 		if module.Phase != test.phase || (module.ModuleScope != nil) != test.scope ||
-			(module.Bindings != nil) != test.bindings || (module.Constants != nil) != test.constants ||
+			(module.SymbolIndex != nil) != test.bindings || (module.Constants != nil) != test.constants ||
 			(module.Typechecking != nil) != test.typechecking ||
 			(module.THIR != nil) != test.thir ||
 			(module.SemanticExportFingerprint != "") != test.exportAPI ||
@@ -234,7 +234,7 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 func TestModuleResetSemanticDataInitializesCurrentResults(t *testing.T) {
 	module := &module.Module{Typechecking: typecheckresult.New()}
 	module.ResetSemanticData()
-	if module.Bindings == nil || module.Bindings.OperationFunctions() == nil || module.Constants == nil || module.Typechecking != nil {
+	if module.SymbolIndex == nil || module.SymbolIndex.OperationFunctions() == nil || module.Constants == nil || module.Typechecking != nil {
 		t.Fatalf("semantic reset = %#v", module)
 	}
 	if module.Constants.Published(symbols.SymbolID{}) != nil {

@@ -28,12 +28,12 @@ type site struct {
 
 // Input contains published artifacts ownership reads for one module generation.
 type Input struct {
-	Source   *thir.Module
-	CFG      *cfg.Module
-	Flow     *flowresult.Result
-	Effects  effect.Result
-	Scope    *symbols.Scope
-	Bindings *symbols.Bindings
+	Source      *thir.Module
+	CFG         *cfg.Module
+	Flow        *flowresult.Result
+	Effects     effect.Result
+	Scope       *symbols.Scope
+	SymbolIndex *symbols.Index
 }
 
 type analyzer struct {
@@ -65,7 +65,7 @@ type state struct {
 // value-flow rules from becoming ad hoc type rules.
 func Check(diag *diagnostics.DiagnosticBag, input Input) ownershipresult.Result {
 	result := make(ownershipresult.Result)
-	if diag == nil || input.Source == nil || input.Scope == nil || input.Bindings == nil || input.Effects == nil || input.CFG == nil {
+	if diag == nil || input.Source == nil || input.Scope == nil || input.SymbolIndex == nil || input.Effects == nil || input.CFG == nil {
 		return result
 	}
 	for _, sym := range input.Scope.Symbols() {
@@ -100,7 +100,7 @@ func Check(diag *diagnostics.DiagnosticBag, input Input) ownershipresult.Result 
 }
 
 func checkFunction(diag *diagnostics.DiagnosticBag, input Input, fn *thir.Function, scope *symbols.Scope, cfgFn *cfg.ControlFlowGraph, cleanup *ownershipresult.CleanupPlan) {
-	if diag == nil || input.Bindings == nil || fn == nil || fn.Body == nil || scope == nil || cfgFn == nil || cleanup == nil {
+	if diag == nil || input.SymbolIndex == nil || fn == nil || fn.Body == nil || scope == nil || cfgFn == nil || cleanup == nil {
 		return
 	}
 	sites, order := indexSites(input, cfgFn, scope)
@@ -121,7 +121,7 @@ func checkFunction(diag *diagnostics.DiagnosticBag, input Input, fn *thir.Functi
 func indexSites(input Input, cfgFn *cfg.ControlFlowGraph, scope *symbols.Scope) (map[cfg.SiteID]*site, []cfg.SiteID) {
 	sites := make(map[cfg.SiteID]*site)
 	order := make([]cfg.SiteID, 0)
-	if input.Bindings == nil || cfgFn == nil || scope == nil {
+	if input.SymbolIndex == nil || cfgFn == nil || scope == nil {
 		return sites, order
 	}
 	for _, block := range cfgFn.Blocks {
@@ -132,7 +132,7 @@ func indexSites(input Input, cfgFn *cfg.ControlFlowGraph, scope *symbols.Scope) 
 			if flowSite == nil {
 				continue
 			}
-			resolvedScope := input.Bindings.ScopeID(flowSite.ScopeID)
+			resolvedScope := input.SymbolIndex.ScopeID(flowSite.ScopeID)
 			if resolvedScope == nil {
 				resolvedScope = scope
 			}

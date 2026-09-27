@@ -134,12 +134,13 @@ func Run(ctx *project.CompilerContext, entry *module.Module) error {
 	if err := requireScheduledModulesAtLeast(orderedModules, loader.scheduled, phase.Ownership); err != nil {
 		return err
 	}
+	usedSymbols := usage.CollectUsedSymbols(orderedModules)
 	for _, module := range orderedModules {
 		if module == nil || module.Phase < phase.Ownership || module.Phase >= phase.Usage {
 			continue
 		}
 		usageDiag := diag.BeginPhase(phase.Usage, module.ID.String())
-		usage.Analyze(usageDiag, module, preludeID)
+		usage.Analyze(usageDiag, module, preludeID, usedSymbols)
 		module.Phase = phase.Usage
 		ctx.Metrics.AddPhaseAdvance()
 	}
@@ -430,7 +431,7 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 	if module.Phase < phase.Typechecked {
 		typechecker.Check(phaseCtx, module)
 		consteval.FinalizeValues(phaseCtx, module)
-		module.THIR = thir.Build(module.ID, module.FilePath, module.AST, module.Bindings, module.Typechecking,
+		module.THIR = thir.Build(module.ID, module.FilePath, module.AST, module.SymbolIndex, module.Typechecking,
 			func(expr ast.Expr, scope *symbols.Scope) (*bool, []*diagnostics.Diagnostic) {
 				// Constant evaluation may cache local constants and diagnose cycles.
 				// Keep diagnostics at their original CFG boundary, not Typechecked.
@@ -512,13 +513,13 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 	if module.Phase < phase.Ownership {
 		module.Ownership = ownership.Check(phaseDiag, ownership.Input{
 			Source: module.THIR, CFG: module.CFG, Flow: module.Flow,
-			Effects: module.Effects, Scope: module.ModuleScope, Bindings: module.Bindings,
+			Effects: module.Effects, Scope: module.ModuleScope, SymbolIndex: module.SymbolIndex,
 		})
 		// Published evidence is only checkable once the module is otherwise
 		// error-free: broken source legitimately leaves evidence incomplete,
 		// and reporting that as a compiler bug would bury the real diagnostic.
 		if !phaseDiag.HasErrors() {
-			if err := module.Ownership.Validate(module.Typechecking, module.Bindings, module.CFG); err != nil {
+			if err := module.Ownership.Validate(module.Typechecking, module.SymbolIndex, module.CFG); err != nil {
 				phaseDiag.AddError(diagnostics.ErrInvalidEvidence,
 					"ownership evidence is inconsistent: "+err.Error(), nil, "")
 			}
@@ -537,7 +538,7 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 		module.MIR = mir.GenerateMIR(mir.LoweringInput{
 			Types: ctx.Types, Diagnostics: phaseDiag, Source: module.THIR,
 			CFG: module.CFG, Flow: module.Flow, Ownership: module.Ownership,
-			Scope: module.ModuleScope, Constants: module.Constants,
+			Scope: module.ModuleScope, SymbolIndex: module.SymbolIndex, Constants: module.Constants,
 			ModuleID: module.ID, IsEntryModule: module.IsEntry,
 		})
 		if module.MIR == nil {

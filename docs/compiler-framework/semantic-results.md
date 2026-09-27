@@ -23,7 +23,7 @@ All inventoried semantic fields and constant-evaluation artifacts now have expli
 ## Current lifecycle
 
 `collector.collectModule` calls `Module.ResetSemanticData`, publishing fresh
-`Module.Bindings` and `Module.Constants` at start of one semantic generation.
+`Module.SymbolIndex` and `Module.Constants` at start of one semantic generation.
 Collector, binder, resolver, and typechecker stage one shared binding/scope graph.
 Constant queries performed while typechecking use the query cache lazily when a semantic
 decision needs a compile-time value. After base typechecking, `FinalizeValues`
@@ -36,7 +36,7 @@ entries to the query cache.
 `Module.resetToPhase` follows approved production contract:
 
 ```text
-retained <= Parsed  -> clear ModuleScope, Bindings, Constants, and later results
+retained <= Parsed  -> clear ModuleScope, SymbolIndex, Constants, and later results
 exact later reuse   -> retain completed artifacts without phase re-entry
 ```
 
@@ -50,7 +50,7 @@ This table records pre-migration storage and problems; current ownership is trac
 
 | Field | Baseline writers / complete phase | Main consumers | Baseline contract problem |
 | --- | --- | --- | --- |
-| scope index | resolver / `Resolved` | typechecker, CFG constant evaluation, flow, definite-init, ownership, usage, THIR/MIR, LSP | Scope topology is resolver-owned and exposed through `Bindings.Scope`; contained symbols later gain types and private usage/mutability state consumed through symbol methods by usage/THIR/MIR. |
+| scope index | resolver / `Resolved` | typechecker, CFG constant evaluation, flow, definite-init, ownership, usage, THIR/MIR, LSP | Scope topology is resolver-owned and exposed through `SymbolIndex.Scope`; contained symbols later gain types and private usage/mutability state consumed through symbol methods by usage/THIR/MIR. |
 | `ResolvedSymbols` | collector, resolver, typechecker / `Typechecked` | typechecker, semantic fingerprint, flow, definite-init, ownership, THIR/MIR, LSP | Name suggests resolver result, but enum declarations, selectors, and expanded defaults have different writers. |
 | `ExpandedDefaultBindings` | typechecker / `Typechecked` | typechecker, ownership, THIR/MIR | Marker requires paired symbol provenance, with copied type/lowering evidence where available. Parsed reset can delete marker while retaining expanded AST. |
 | `ExprTypes` | typechecker / `Typechecked` | typechecker, const evaluation, flow, ownership, THIR/MIR, LSP | Base type is distinct from flow-refined expression evidence; `EffectiveExprType` gives refined evidence precedence. |
@@ -94,7 +94,7 @@ normal scopes and symbols instead.
 
 Resolver produces:
 
-- block-scope identity, published through `Bindings.SetScope` / `Bindings.Scope`
+- block-scope identity, published through `SymbolIndex.SetScope` / `SymbolIndex.Scope`
 - most `ResolvedSymbols` entries.
 
 Typechecker later extends `ResolvedSymbols` for type-dependent selector resolution

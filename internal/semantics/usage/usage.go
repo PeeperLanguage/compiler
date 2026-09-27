@@ -9,7 +9,20 @@ import (
 	"compiler/internal/semantics/symbols"
 )
 
-func Analyze(diag *diagnostics.DiagnosticBag, module *module.Module, preludeID moduleid.ID) {
+func CollectUsedSymbols(modules []*module.Module) map[symbols.SymbolID]struct{} {
+	used := make(map[symbols.SymbolID]struct{})
+	for _, module := range modules {
+		if module == nil || module.SymbolIndex == nil {
+			continue
+		}
+		module.SymbolIndex.ForEachUsedSymbolID(func(id symbols.SymbolID) {
+			used[id] = struct{}{}
+		})
+	}
+	return used
+}
+
+func Analyze(diag *diagnostics.DiagnosticBag, module *module.Module, preludeID moduleid.ID, usedSymbols map[symbols.SymbolID]struct{}) {
 	if diag == nil || module == nil || module.ModuleScope == nil {
 		return
 	}
@@ -17,7 +30,7 @@ func Analyze(diag *diagnostics.DiagnosticBag, module *module.Module, preludeID m
 	// 1. Check for unused imports in ModuleScope
 	for _, sym := range module.ModuleScope.Symbols() {
 		if sym.Kind == symbols.SymbolImport {
-			if !sym.IsUsed() {
+			if _, used := usedSymbols[sym.ID]; !used {
 				diag.AddWarning(diagnostics.WarnUnusedImport,
 					fmt.Sprintf("unused import `%s`", sym.Name), sym.Location, "")
 			}
@@ -35,7 +48,7 @@ func Analyze(diag *diagnostics.DiagnosticBag, module *module.Module, preludeID m
 				continue
 			}
 			// Only the exact discard binding `_` suppresses unused warnings.
-			if !symbols.IsPubName(sym.Name) && !sym.IsUsed() && sym.Name != "_" {
+			if _, used := usedSymbols[sym.ID]; !symbols.IsPubName(sym.Name) && !used && sym.Name != "_" {
 				var code string
 				var msg string
 				switch sym.Kind {
@@ -57,13 +70,13 @@ func Analyze(diag *diagnostics.DiagnosticBag, module *module.Module, preludeID m
 	}
 
 	// 3. Check for unused local variables and parameters
-	if module.Bindings != nil {
-		module.Bindings.ForEachScope(func(scope *symbols.Scope) {
+	if module.SymbolIndex != nil {
+		module.SymbolIndex.ForEachScope(func(scope *symbols.Scope) {
 			for _, sym := range scope.Symbols() {
 				if sym.Name == "_" {
 					continue
 				}
-				if !sym.IsUsed() {
+				if _, used := usedSymbols[sym.ID]; !used {
 					switch sym.Kind {
 					case symbols.SymbolParam:
 						name := "parameter"
@@ -78,7 +91,7 @@ func Analyze(diag *diagnostics.DiagnosticBag, module *module.Module, preludeID m
 					}
 					continue
 				}
-				if !sym.IsMutable() || sym.RequiresMutable() || sym.MutableLocation == nil {
+				if !sym.IsMutable() || module.SymbolIndex.RequiresMutable(sym) || sym.MutableLocation == nil {
 					continue
 				}
 				diag.AddWarning(diagnostics.WarnUnmodifiedMutable,

@@ -137,8 +137,8 @@ func (r syntaxResolver) ResolveNamed(node ast.TypeExpr) (typeinfo.Type, bool) {
 	if r.module == nil || r.module.ModuleScope == nil || node == nil {
 		return nil, false
 	}
-	if r.module.Bindings != nil {
-		if sym := r.module.Bindings.Symbol(node); sym != nil && sym.Kind == symbols.SymbolType {
+	if r.module.SymbolIndex != nil {
+		if sym := r.module.SymbolIndex.Symbol(node); sym != nil && sym.Kind == symbols.SymbolType {
 			r.record(sym)
 			return symbols.GetSymbolType(sym)
 		}
@@ -152,8 +152,8 @@ func (r syntaxResolver) ResolveNamed(node ast.TypeExpr) (typeinfo.Type, bool) {
 		return nil, false
 	}
 	r.record(sym)
-	if r.query == nil && r.module.Bindings != nil {
-		r.module.Bindings.Bind(node, sym)
+	if r.query == nil && r.module.SymbolIndex != nil {
+		r.module.SymbolIndex.Bind(node, sym)
 	}
 	return symbols.GetSymbolType(sym)
 }
@@ -166,8 +166,8 @@ func (r syntaxResolver) ResolveQualified(node *ast.ScopeResolution) (typeinfo.Ty
 	if !imported {
 		return nil, false
 	}
-	if r.module.Bindings != nil {
-		if sym := r.module.Bindings.Symbol(node); sym != nil && sym.Kind == symbols.SymbolType && sym.IsPub {
+	if r.module.SymbolIndex != nil {
+		if sym := r.module.SymbolIndex.Symbol(node); sym != nil && sym.Kind == symbols.SymbolType && sym.IsPub {
 			if r.query == nil {
 				r.module.RecordImportedUse(qualifier.Name, sym)
 			}
@@ -180,8 +180,8 @@ func (r syntaxResolver) ResolveQualified(node *ast.ScopeResolution) (typeinfo.Ty
 	}
 	if r.query == nil {
 		r.module.RecordImportedUse(qualifier.Name, resolved.Symbol)
-		if r.module.Bindings != nil {
-			r.module.Bindings.Bind(node, resolved.Symbol)
+		if r.module.SymbolIndex != nil {
+			r.module.SymbolIndex.Bind(node, resolved.Symbol)
 		}
 	}
 	return symbols.GetSymbolType(resolved.Symbol)
@@ -213,7 +213,7 @@ func (r syntaxResolver) Instantiate(base *typeinfo.DefinedType, arguments []type
 }
 
 func (r syntaxResolver) record(sym *symbols.Symbol) {
-	if r.query == nil && sym != nil {
-		sym.MarkUsed()
+	if r.query == nil && r.module != nil && r.module.SymbolIndex != nil && sym != nil {
+		r.module.SymbolIndex.MarkUsed(sym)
 	}
 }

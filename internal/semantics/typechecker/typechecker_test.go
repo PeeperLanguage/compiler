@@ -292,8 +292,8 @@ func TestDefaultCallDeclarationUsesResolvedImportedBinding(t *testing.T) {
 	owner := &module.Module{ID: moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "external"}}
 	ctx.AddModule(owner)
 	caller := &module.Module{
-		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "caller"},
-		Bindings: symbols.NewBindings(),
+		ID:          moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "caller"},
+		SymbolIndex: symbols.NewIndex(),
 	}
 	path := &ast.ScopeResolution{
 		NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(1)},
@@ -301,7 +301,7 @@ func TestDefaultCallDeclarationUsesResolvedImportedBinding(t *testing.T) {
 	}
 	bound := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolFunc, "GetValue"), "GetValue", symbols.SymbolFunc, nil, nil)
 	bound.DefiningModule = owner.ID
-	caller.Bindings.Bind(path, bound)
+	caller.SymbolIndex.Bind(path, bound)
 	checker := &checker{ctx: ctx, module: caller}
 	if sym, declModule := checker.defaultCallDeclaration(path); sym != bound || declModule != owner {
 		t.Fatalf("resolved callable = (%p, %p), want (%p, %p)", sym, declModule, bound, owner)
@@ -334,11 +334,11 @@ fn main(input: i32) {
 		}
 		syms := []*symbols.Symbol{
 			box,
-			module.Bindings.Symbol(main.Name),
-			module.Bindings.Symbol(main.Params[0].Name),
-			module.Bindings.Symbol(local.Name),
-			module.Bindings.Symbol(loop.Index),
-			module.Bindings.Symbol(loop.Value),
+			module.SymbolIndex.Symbol(main.Name),
+			module.SymbolIndex.Symbol(main.Params[0].Name),
+			module.SymbolIndex.Symbol(local.Name),
+			module.SymbolIndex.Symbol(loop.Index),
+			module.SymbolIndex.Symbol(loop.Value),
 			iteration.Cursor,
 			rangePlan.Limit,
 			rangePlan.Ordinal,
@@ -368,8 +368,8 @@ fn Same() {}`)
 	}
 	first := module.AST.Stmts[0].(*ast.FnDecl)
 	second := module.AST.Stmts[1].(*ast.FnDecl)
-	firstSymbol := module.Bindings.Symbol(first.Name)
-	secondSymbol := module.Bindings.Symbol(second.Name)
+	firstSymbol := module.SymbolIndex.Symbol(first.Name)
+	secondSymbol := module.SymbolIndex.Symbol(second.Name)
 	if firstSymbol == nil || secondSymbol == nil || firstSymbol.ID == secondSymbol.ID {
 		t.Fatalf("recovery symbols = %#v and %#v", firstSymbol, secondSymbol)
 	}
@@ -3186,7 +3186,7 @@ func TestIntrinsicFunctionResolutionStoredForLaterPhases(t *testing.T) {
 	if callee == nil || callee.Name != "len" {
 		t.Fatal("len function missing from parsed module")
 	}
-	resolved := module.Bindings.Symbol(callee)
+	resolved := module.SymbolIndex.Symbol(callee)
 	if resolved == nil || resolved.CompilerOp != symbols.CompilerOpLen {
 		t.Fatalf("resolved function = %#v, want len intrinsic", resolved)
 	}

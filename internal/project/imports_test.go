@@ -30,7 +30,7 @@ func TestQualifiedTypeQueryIsObservationalAndSourceResolutionPublishesUse(t *tes
 	module := &module.Module{
 		ID:          moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "main"},
 		ModuleScope: symbols.NewScope(nil),
-		Bindings:    symbols.NewBindings(),
+		SymbolIndex: symbols.NewIndex(),
 		Imports: map[string]module.ResolvedImport{
 			"dep": {ID: dependencyID},
 		},
@@ -48,7 +48,7 @@ func TestQualifiedTypeQueryIsObservationalAndSourceResolutionPublishesUse(t *tes
 
 	ctx.TypeResolver.Query(module, node, typeresolution.Context{})
 	ctx.TypeResolver.Resolve(ctx.Diagnostics, module, node, typeresolution.Context{})
-	if alias.IsUsed() || target.IsUsed() || module.Bindings.Symbol(node) != nil {
+	if module.SymbolIndex.IsUsed(alias) || module.SymbolIndex.IsUsed(target) || module.SymbolIndex.Symbol(node) != nil {
 		t.Fatal("private imported type published usage or binding")
 	}
 
@@ -56,20 +56,20 @@ func TestQualifiedTypeQueryIsObservationalAndSourceResolutionPublishesUse(t *tes
 	if got := ctx.TypeResolver.Query(module, node, typeresolution.Context{}); got.Status != typeresolution.QueryAvailable || got.Type != target.Type {
 		t.Fatalf("query result = %#v, want available imported type %#v", got, target.Type)
 	}
-	if alias.IsUsed() || target.IsUsed() {
+	if module.SymbolIndex.IsUsed(alias) || module.SymbolIndex.IsUsed(target) {
 		t.Fatal("qualified query published source usage")
 	}
-	if module.Bindings.Symbol(node) != nil {
+	if module.SymbolIndex.Symbol(node) != nil {
 		t.Fatal("qualified query published a source binding")
 	}
 
 	if got := ctx.TypeResolver.Resolve(ctx.Diagnostics, module, node, typeresolution.Context{}); got != target.Type {
 		t.Fatalf("source type = %#v, want imported type %#v", got, target.Type)
 	}
-	if !alias.IsUsed() || !target.IsUsed() {
+	if !module.SymbolIndex.IsUsed(alias) || !module.SymbolIndex.IsUsed(target) {
 		t.Fatal("source resolution did not publish import alias and target usage")
 	}
-	if got := module.Bindings.Symbol(node); got != target {
+	if got := module.SymbolIndex.Symbol(node); got != target {
 		t.Fatalf("source binding = %#v, want imported target %#v", got, target)
 	}
 	if diag.HasErrors() {
@@ -82,6 +82,7 @@ func TestQualifiedTypeResolutionDoesNotMarkInvalidQualifierUsed(t *testing.T) {
 	module := &module.Module{
 		ID:          moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "main"},
 		ModuleScope: symbols.NewScope(nil),
+		SymbolIndex: symbols.NewIndex(),
 		Imports:     make(map[string]module.ResolvedImport),
 	}
 	local := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "local"), "local", symbols.SymbolVar, nil, nil)
@@ -94,7 +95,7 @@ func TestQualifiedTypeResolutionDoesNotMarkInvalidQualifierUsed(t *testing.T) {
 	}}
 
 	ctx.TypeResolver.Resolve(ctx.Diagnostics, module, node, typeresolution.Context{})
-	if local.IsUsed() {
+	if module.SymbolIndex.IsUsed(local) {
 		t.Fatal("invalid qualified type marked local qualifier used")
 	}
 }

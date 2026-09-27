@@ -105,7 +105,7 @@ func (s *ServerState) HandleCompletion(params CompletionParams) ([]CompletionIte
 		return qualifiedCompletionItems(ctx, module, parsed.qualifier, parsed.prefix, replacement), nil
 	case completionOperation:
 		sentinelCtx, sentinelModule := compileCompletionSource(ctx.Config, s.completionOverlays(filePath), filePath, parsed.sentinel)
-		if sentinelCtx == nil || sentinelModule == nil || sentinelModule.Bindings == nil {
+		if sentinelCtx == nil || sentinelModule == nil || sentinelModule.SymbolIndex == nil {
 			return []CompletionItem{}, nil
 		}
 		rewrite := Range{Start: positionAtOffset(sourceText, parsed.rewriteStart), End: replacement.End}
@@ -380,7 +380,7 @@ func isCompletionBoundary(ch byte) bool {
 }
 
 func lexicalCompletionItems(module *module.Module, cursor source.Position, prefix string, replacement Range) []CompletionItem {
-	if module == nil || module.ModuleScope == nil || module.Bindings == nil {
+	if module == nil || module.ModuleScope == nil || module.SymbolIndex == nil {
 		return []CompletionItem{}
 	}
 	scope := completionScope(module, cursor.Line, cursor.Column)
@@ -415,7 +415,7 @@ func completionScope(module *module.Module, line, col int) *symbols.Scope {
 		if !ok || !locContains(ast.LocOf(block), line, col) {
 			return true
 		}
-		if blockScope := module.Bindings.Scope(block); blockScope != nil {
+		if blockScope := module.SymbolIndex.Scope(block); blockScope != nil {
 			scope = blockScope
 		}
 		return true
@@ -686,7 +686,7 @@ func operationCompletionItems(ctx *project.CompilerContext, module *module.Modul
 			items = appendOperationCompletion(items, seen, methodSymbol, method.Name, fnType, replacement, rewrite, isPipeCall, preserveArguments)
 		}
 	}
-	for _, method := range module.Bindings.Methods(baseType) {
+	for _, method := range module.SymbolIndex.Methods(baseType) {
 		if method == nil {
 			continue
 		}
@@ -702,7 +702,7 @@ func operationCompletionItems(ctx *project.CompilerContext, module *module.Modul
 			items = appendOperationCompletion(items, seen, function, function.Name, fnType, replacement, rewrite, isPipeCall, preserveArguments)
 		}
 	}
-	for _, function := range operationFunctionsWithPrefix(module.Bindings.OperationFunctions(), prefix) {
+	for _, function := range operationFunctionsWithPrefix(module.SymbolIndex.OperationFunctions(), prefix) {
 		fnType, isCallable := function.Type.(*typeinfo.FuncType)
 		if !isCallable {
 			continue
@@ -713,10 +713,10 @@ func operationCompletionItems(ctx *project.CompilerContext, module *module.Modul
 	}
 	for alias, resolved := range module.Imports {
 		imported, found := ctx.ModuleByID(resolved.ID)
-		if !found || imported == nil || imported.Bindings == nil {
+		if !found || imported == nil || imported.SymbolIndex == nil {
 			continue
 		}
-		for _, function := range operationFunctionsWithPrefix(imported.Bindings.OperationFunctions(), prefix) {
+		for _, function := range operationFunctionsWithPrefix(imported.SymbolIndex.OperationFunctions(), prefix) {
 			fnType, isCallable := function.Type.(*typeinfo.FuncType)
 			if !function.IsPub || !isCallable {
 				continue

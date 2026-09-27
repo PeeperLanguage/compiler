@@ -22,8 +22,8 @@ func (r *resolver) resolveModule() {
 	if r == nil || r.module == nil || r.module.AST == nil {
 		return
 	}
-	if r.module.Bindings == nil {
-		r.module.Bindings = symbols.NewBindings()
+	if r.module.SymbolIndex == nil {
+		r.module.SymbolIndex = symbols.NewIndex()
 	}
 	r.markPendingTopLevelBindings()
 	ast.ForEachDecl(r.module.AST, func(decl ast.Decl) bool {
@@ -77,7 +77,7 @@ func (r *resolver) resolveFunction(fn *ast.FnDecl) {
 	if r == nil || r.module == nil || fn == nil {
 		return
 	}
-	sym := r.module.Bindings.Symbol(fn.Name)
+	sym := r.module.SymbolIndex.Symbol(fn.Name)
 	if sym == nil || sym.Scope == nil {
 		return
 	}
@@ -105,7 +105,7 @@ func (r *resolver) resolveFunction(fn *ast.FnDecl) {
 			problems.ReportRedeclaration(r.ctx.Diagnostics, funcScope, err.Error(), param.Name.Name, param.Name.Location)
 			return
 		}
-		r.module.Bindings.Bind(param.Name, paramSym)
+		r.module.SymbolIndex.Bind(param.Name, paramSym)
 	}
 	if fn.ReturnOrigins != nil {
 		for _, origin := range fn.ReturnOrigins.Sources {
@@ -117,8 +117,8 @@ func (r *resolver) resolveFunction(fn *ast.FnDecl) {
 				name = fn.Receiver.Name.Name
 			}
 			if source, ok := funcScope.Lookup(name); ok && source != nil && source.Kind == symbols.SymbolParam {
-				r.module.Bindings.Bind(origin, source)
-				source.MarkUsed()
+				r.module.SymbolIndex.Bind(origin, source)
+				r.module.SymbolIndex.MarkUsed(source)
 			}
 		}
 	}
@@ -131,7 +131,7 @@ func (r *resolver) resolveBlock(scope *symbols.Scope, block *ast.BlockStmt) {
 	if block == nil {
 		return
 	}
-	r.module.Bindings.SetScope(block, scope)
+	r.module.SymbolIndex.SetScope(block, scope)
 	for _, stmt := range block.Stmts {
 		r.resolveStmt(scope, stmt)
 	}
@@ -222,7 +222,7 @@ func (r *resolver) resolveLocalBinding(scope *symbols.Scope, name *ast.Ident, ki
 		problems.ReportRedeclaration(r.ctx.Diagnostics, scope, err.Error(), name.Name, loc)
 		return
 	}
-	r.module.Bindings.Bind(name, sym)
+	r.module.SymbolIndex.Bind(name, sym)
 	r.pendingBindings[sym.ID] = struct{}{}
 	if value != nil {
 		r.resolveExpr(scope, value)
@@ -250,8 +250,8 @@ func (r *resolver) resolveExpr(scope *symbols.Scope, expr ast.Expr) {
 	case *ast.Ident:
 		sym, ok := scope.Lookup(node.Name)
 		if ok && sym != nil {
-			r.module.Bindings.Bind(node, sym)
-			sym.MarkUsed()
+			r.module.SymbolIndex.Bind(node, sym)
+			r.module.SymbolIndex.MarkUsed(sym)
 			if sym.Kind == symbols.SymbolImport {
 				r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression, "import alias must be qualified with `::`", ast.LocOf(node), "")
 				return
@@ -346,8 +346,8 @@ func (r *resolver) resolveAssignTarget(scope *symbols.Scope, expr ast.Expr) {
 	case *ast.Ident:
 		sym, ok := scope.Lookup(node.Name)
 		if ok && sym != nil {
-			r.module.Bindings.Bind(node, sym)
-			sym.MarkUsed()
+			r.module.SymbolIndex.Bind(node, sym)
+			r.module.SymbolIndex.MarkUsed(sym)
 			return
 		}
 		reportUnresolved(r.module, scope, node, r.ctx.Diagnostics)
@@ -375,7 +375,7 @@ func (r *resolver) resolveScopeResolution(node *ast.ScopeResolution, allowTypeAr
 	if !ok {
 		return false
 	}
-	r.module.Bindings.Bind(node, resolved)
+	r.module.SymbolIndex.Bind(node, resolved)
 	return true
 }
 
@@ -428,12 +428,12 @@ func (r *resolver) resolveVariantPath(scope *symbols.Scope, path *ast.ScopeResol
 		r.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "unknown variant `"+caseName.Name+"` in enum `"+enumSymbol.Name+"`", ast.LocOf(caseName), "")
 		return true
 	}
-	qualifierSymbol.MarkUsed()
-	enumSymbol.MarkUsed()
-	variant.MarkUsed()
-	r.module.Bindings.Bind(enumName, qualifierSymbol)
-	r.module.Bindings.Bind(path, variant)
-	r.module.Bindings.Bind(caseName, variant)
+	r.module.SymbolIndex.MarkUsed(qualifierSymbol)
+	r.module.SymbolIndex.MarkUsed(enumSymbol)
+	r.module.SymbolIndex.MarkUsed(variant)
+	r.module.SymbolIndex.Bind(enumName, qualifierSymbol)
+	r.module.SymbolIndex.Bind(path, variant)
+	r.module.SymbolIndex.Bind(caseName, variant)
 	return true
 }
 

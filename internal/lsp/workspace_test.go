@@ -925,7 +925,7 @@ fn Read(input: i32 = value) -> i32 {
 		t.Fatalf("effective arguments after reset = %#v, want one rebuilt default", effectiveArgs)
 	}
 	ident, ok := effectiveArgs[0].(*ast.Ident)
-	if !ok || mainModule.Bindings == nil || mainModule.Bindings.Symbol(ident) == nil {
+	if !ok || mainModule.SymbolIndex == nil || mainModule.SymbolIndex.Symbol(ident) == nil {
 		t.Fatalf("rebuilt default = %#v, want resolved imported identifier", effectiveArgs[0])
 	}
 	if !mainModule.Typechecking.ExpandedDefaultBinding(ident.ID()) {

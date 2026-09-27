@@ -18,12 +18,12 @@ import (
 // Build materializes base-typechecked syntax into one self-contained semantic
 // tree. It does not resolve names or infer types: missing published evidence is
 // represented explicitly and rejected by Validate for otherwise-clean source.
-func Build(owner moduleid.ID, filePath string, source *ast.Module, bindings *symbols.Bindings, typing *typecheckresult.Result, constantCondition func(ast.Expr, *symbols.Scope) (*bool, []*diagnostics.Diagnostic)) *Module {
+func Build(owner moduleid.ID, filePath string, source *ast.Module, symbolIndex *symbols.Index, typing *typecheckresult.Result, constantCondition func(ast.Expr, *symbols.Scope) (*bool, []*diagnostics.Diagnostic)) *Module {
 	if source == nil {
 		return nil
 	}
 	builder := &builder{
-		bindings: bindings, typing: typing, constantCondition: constantCondition,
+		symbolIndex: symbolIndex, typing: typing, constantCondition: constantCondition,
 	}
 	module := &Module{
 		Name:          owner.ImportPath,
@@ -57,7 +57,7 @@ func Build(owner moduleid.ID, filePath string, source *ast.Module, bindings *sym
 }
 
 type builder struct {
-	bindings          *symbols.Bindings
+	symbolIndex       *symbols.Index
 	typing            *typecheckresult.Result
 	currentScope      *symbols.Scope
 	constantCondition func(ast.Expr, *symbols.Scope) (*bool, []*diagnostics.Diagnostic)
@@ -476,17 +476,17 @@ func projectPlace(base Expr, projection PlaceProjection, typ typeinfo.Type) *Pla
 }
 
 func (b *builder) symbol(node ast.Node) *symbols.Symbol {
-	if b.bindings == nil || typednil.IsNil(node) {
+	if b.symbolIndex == nil || typednil.IsNil(node) {
 		return nil
 	}
-	return b.bindings.Symbol(node)
+	return b.symbolIndex.Symbol(node)
 }
 
 func (b *builder) scope(node ast.Node) *symbols.Scope {
-	if b.bindings == nil || typednil.IsNil(node) {
+	if b.symbolIndex == nil || typednil.IsNil(node) {
 		return nil
 	}
-	return b.bindings.Scope(node)
+	return b.symbolIndex.Scope(node)
 }
 
 func sourceInfo(node ast.Node) ir.SourceInfo {

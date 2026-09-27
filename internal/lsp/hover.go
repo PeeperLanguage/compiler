@@ -129,7 +129,7 @@ func resolveTypeHoverSubject(cc *cursorContext) *hoverSubject {
 	methodType := query.Type
 	if query.Status == typeresolution.QueryAvailable {
 		if decl, ok := cc.parents[typeNode.ID()].(ast.TypeDecl); ok && decl != nil && decl.UnderlyingType() == typeNode {
-			if sym := cc.module.Bindings.Symbol(decl.DeclName()); sym != nil {
+			if sym := cc.module.SymbolIndex.Symbol(decl.DeclName()); sym != nil {
 				if declaredType, found := symbols.GetSymbolType(sym); found {
 					methodType = declaredType
 				}
@@ -419,18 +419,18 @@ func documentedDeclAncestor(node ast.Node, parents map[source.NodeID]ast.Node) a
 }
 
 func resolveDeclNameSymbol(ident *ast.Ident, parents map[source.NodeID]ast.Node, module *module.Module) *symbols.Symbol {
-	if ident == nil || module == nil || module.Bindings == nil {
+	if ident == nil || module == nil || module.SymbolIndex == nil {
 		return nil
 	}
 	parent := parents[ident.ID()]
 	if fn, ok := parent.(*ast.FnDecl); ok && fn != nil && fn.Name == ident {
-		return module.Bindings.Symbol(ident)
+		return module.SymbolIndex.Symbol(ident)
 	}
 	return nil
 }
 
 func resolveInterfaceMethodNameSymbol(ident *ast.Ident, parents map[source.NodeID]ast.Node, module *module.Module) *symbols.Symbol {
-	if ident == nil || module == nil || module.Bindings == nil {
+	if ident == nil || module == nil || module.SymbolIndex == nil {
 		return nil
 	}
 	iface, ok := parents[ident.ID()].(*ast.InterfaceType)
@@ -441,7 +441,7 @@ func resolveInterfaceMethodNameSymbol(ident *ast.Ident, parents map[source.NodeI
 	if !ok || decl == nil {
 		return nil
 	}
-	declarationType, _ := symbols.GetSymbolType(module.Bindings.Symbol(decl.Name))
+	declarationType, _ := symbols.GetSymbolType(module.SymbolIndex.Symbol(decl.Name))
 	resolved, _ := typeinfo.Underlying(declarationType).(*typeinfo.InterfaceType)
 	if resolved == nil {
 		return nil
@@ -471,10 +471,10 @@ func lookupMethodSet(ctx *project.CompilerContext, typ typeinfo.Type) []*symbols
 	seen := make(map[string]struct{})
 	var methods []*symbols.Symbol
 	for _, module := range ctx.Modules() {
-		if module == nil || module.Bindings == nil {
+		if module == nil || module.SymbolIndex == nil {
 			continue
 		}
-		for _, sym := range module.Bindings.Methods(typ) {
+		for _, sym := range module.SymbolIndex.Methods(typ) {
 			if sym == nil {
 				continue
 			}

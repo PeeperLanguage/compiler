@@ -74,7 +74,7 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 	sym := symbols.New(symbols.SourceSymbolID(fn.ID()), fn.Name.Name, kind, fn, ast.LocOf(fn.Name))
 	sym.DefiningModule = c.module.ID
 	sym.Scope = symbols.NewScope(c.module.ModuleScope)
-	c.module.Bindings.Bind(fn.Name, sym)
+	c.module.SymbolIndex.Bind(fn.Name, sym)
 	if fn.Receiver != nil {
 		// Receiver ownership is registered after binding resolves the semantic
 		// receiver type. Collection only publishes declaration identity.
@@ -127,7 +127,7 @@ func (c *collector) collectConcreteTypeDecl(decl ast.TypeDecl) {
 		problems.ReportRedeclaration(c.ctx.Diagnostics, c.module.ModuleScope, err.Error(), name.Name, name.Location)
 		return
 	}
-	c.module.Bindings.Bind(name, sym)
+	c.module.SymbolIndex.Bind(name, sym)
 	if enumDecl, ok := decl.(*ast.EnumDecl); ok {
 		sym.Scope = symbols.NewScope(nil)
 		if enumType, ok := enumDecl.Type.(*ast.EnumType); ok && enumType != nil {
@@ -143,7 +143,7 @@ func (c *collector) collectConcreteTypeDecl(decl ast.TypeDecl) {
 					problems.ReportRedeclaration(c.ctx.Diagnostics, sym.Scope, err.Error(), variant.Name.Name, variant.Name.Location)
 					continue
 				}
-				c.module.Bindings.Bind(variant.Name, variantSymbol)
+				c.module.SymbolIndex.Bind(variant.Name, variantSymbol)
 			}
 		}
 	}
@@ -161,7 +161,7 @@ func (c *collector) collectModuleBinding(name *ast.Ident, kind symbols.Kind, nod
 		problems.ReportRedeclaration(c.ctx.Diagnostics, c.module.ModuleScope, err.Error(), name.Name, name.Location)
 		return
 	}
-	c.module.Bindings.Bind(name, sym)
+	c.module.SymbolIndex.Bind(name, sym)
 }
 
 func (c *collector) nextModuleSymbolID(kind symbols.Kind, key string) symbols.SymbolID {

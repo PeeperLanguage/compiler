@@ -49,8 +49,8 @@ func TestFinalizeValuesInitializesOnlyConstantResult(t *testing.T) {
 	if module.Constants == nil {
 		t.Fatal("FinalizeValues did not initialize constant result")
 	}
-	if module.Bindings != nil {
-		t.Fatalf("FinalizeValues initialized Bindings: %#v", module.Bindings)
+	if module.SymbolIndex != nil {
+		t.Fatalf("FinalizeValues initialized Bindings: %#v", module.SymbolIndex)
 	}
 }
 
@@ -225,7 +225,7 @@ fn main() {
 	fn := module.AST.Stmts[1].(*ast.FnDecl)
 	local := fn.Body.Stmts[0].(*ast.ConstDecl)
 	reference := fn.Body.Stmts[1].(*ast.LetDecl).Value.(*ast.Ident)
-	scope := module.Bindings.Scope(fn.Body)
+	scope := module.SymbolIndex.Scope(fn.Body)
 	if _, ok := EvaluateExpr(ctx, module, scope, reference, nil); !ok {
 		t.Fatal("failed to evaluate local constant reference")
 	}

@@ -111,7 +111,7 @@ Its phase artifacts are:
 
 - `Phase`;
 - `AST` and `TypedASTNodes`;
-- `ModuleScope`, `Bindings`, `Constants`, and `Typechecking`;
+- `ModuleScope`, `SymbolIndex`, `Constants`, and `Typechecking`;
 - `Imports`, mapping aliases to `ResolvedImport`;
 - `CFG`, `Flow`, `Effects`, and `Ownership`;
 - `THIR`, `CFG`, `MIR`, and emitted `LLVMIR`;

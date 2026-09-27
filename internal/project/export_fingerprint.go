@@ -34,8 +34,8 @@ func SemanticExportFingerprint(ctx *CompilerContext, module *module.Module) stri
 		}
 		parts = append(parts, part)
 	}
-	if module.Bindings != nil {
-		module.Bindings.ForEachMethod(func(receiver string, method *symbols.Symbol) {
+	if module.SymbolIndex != nil {
+		module.SymbolIndex.ForEachMethod(func(receiver string, method *symbols.Symbol) {
 			if method == nil || !method.IsPub {
 				return
 			}
@@ -78,10 +78,10 @@ func semanticExportMetadata(ctx *CompilerContext, module *module.Module, sym *sy
 		facts := make([]string, 0)
 		ast.Inspect(param.Default, func(node ast.Node) bool {
 			ident, ok := node.(*ast.Ident)
-			if !ok || ident == nil || module.Bindings == nil {
+			if !ok || ident == nil || module.SymbolIndex == nil {
 				return true
 			}
-			resolved := module.Bindings.Symbol(ident)
+			resolved := module.SymbolIndex.Symbol(ident)
 			if resolved == nil {
 				return true
 			}

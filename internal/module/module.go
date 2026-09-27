@@ -68,8 +68,8 @@ type Module struct {
 	ModuleScope *symbols.Scope
 	// Generic declaration syntax and semantic shells produced by collection.
 	typeDeclarations map[string]TypeDeclaration
-	// Staged symbol/scope graph for current semantic generation.
-	Bindings *symbols.Bindings
+	// Symbol lookups and activity for current semantic generation.
+	SymbolIndex *symbols.Index
 	// Constant-evaluation artifacts for current semantic generation.
 	Constants *constantresult.Result
 	// Base typechecker result for current semantic generation.
@@ -123,7 +123,7 @@ func (m *Module) TypeDeclarationIdentities() []string {
 // RecordImportedUse publishes usage only after a source semantic phase has
 // resolved alias::member successfully. Query and tooling paths must not call it.
 func (m *Module) RecordImportedUse(alias string, target *symbols.Symbol) {
-	if m == nil || m.ModuleScope == nil || target == nil {
+	if m == nil || m.ModuleScope == nil || m.SymbolIndex == nil || target == nil {
 		return
 	}
 	if _, imported := m.Imports[alias]; !imported {
@@ -133,27 +133,27 @@ func (m *Module) RecordImportedUse(alias string, target *symbols.Symbol) {
 	if !found || aliasSymbol == nil || aliasSymbol.Kind != symbols.SymbolImport {
 		return
 	}
-	aliasSymbol.MarkUsed()
-	target.MarkUsed()
+	m.SymbolIndex.MarkUsed(aliasSymbol)
+	m.SymbolIndex.MarkUsed(target)
 }
 
 // ExpandedDefaultBinding resolves declaration-module symbols paired with generated
 // default-expression markers. Local remains false for caller escape analysis.
 func (m *Module) ExpandedDefaultBinding(ident *ast.Ident) (place.Binding, bool) {
-	if m == nil || m.Bindings == nil || m.Typechecking == nil || ident == nil {
+	if m == nil || m.SymbolIndex == nil || m.Typechecking == nil || ident == nil {
 		return place.Binding{}, false
 	}
 	if !m.Typechecking.ExpandedDefaultBinding(ident.ID()) {
 		return place.Binding{}, false
 	}
-	return place.Binding{Symbol: m.Bindings.Symbol(ident)}, true
+	return place.Binding{Symbol: m.SymbolIndex.Symbol(ident)}, true
 }
 
 func (m *Module) ResetSemanticData() {
 	if m == nil {
 		return
 	}
-	m.Bindings = symbols.NewBindings()
+	m.SymbolIndex = symbols.NewIndex()
 	m.Constants = constantresult.New()
 	m.Typechecking = nil
 }
@@ -196,7 +196,7 @@ func (m *Module) ResetToPhase(retained phase.Phase) {
 	m.Phase = retained
 	if retained <= phase.Parsed {
 		m.ModuleScope = nil
-		m.Bindings = nil
+		m.SymbolIndex = nil
 		m.Constants = nil
 	}
 	if retained < phase.Collected {

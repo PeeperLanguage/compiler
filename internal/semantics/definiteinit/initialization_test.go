@@ -40,7 +40,7 @@ func analyzeInitializationSource(t *testing.T, source string) (*functionResult, 
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
-	module.THIR = thir.Build(module.ID, module.FilePath, module.AST, module.Bindings, module.Typechecking, nil)
+	module.THIR = thir.Build(module.ID, module.FilePath, module.AST, module.SymbolIndex, module.Typechecking, nil)
 	module.CFG = cfg.BuildModule(module.THIR)
 	symbol, found := module.ModuleScope.Lookup("choose")
 	if !found || symbol == nil {
@@ -251,7 +251,7 @@ fn choose(result: Result) -> i32 {
 	}
 	fn := module.AST.Stmts[1].(*ast.FnDecl)
 	match := fn.Body.Stmts[0].(*ast.MatchStmt)
-	binding := module.Bindings.Symbol(match.Arms[0].Fields[0].Binding)
+	binding := module.SymbolIndex.Symbol(match.Arms[0].Fields[0].Binding)
 	returnID := match.Arms[0].Body.Stmts[0].ID()
 	for _, block := range module.CFG.FunctionByID(module.THIR.Function(fn.ID()).Identity).Blocks {
 		for _, cfgSite := range block.Sites {

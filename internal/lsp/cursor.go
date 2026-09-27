@@ -92,8 +92,8 @@ func resolveIdentSymbol(ident *ast.Ident, parents map[source.NodeID]ast.Node, mo
 	if ident == nil || module == nil {
 		return nil
 	}
-	if module.Bindings != nil {
-		if sym := module.Bindings.Symbol(ident); sym != nil {
+	if module.SymbolIndex != nil {
+		if sym := module.SymbolIndex.Symbol(ident); sym != nil {
 			return sym
 		}
 	}
@@ -148,8 +148,8 @@ func resolveIdentSymbol(ident *ast.Ident, parents map[source.NodeID]ast.Node, mo
 	var scope *symbols.Scope
 	curr := parent
 	for curr != nil {
-		if block, ok := curr.(*ast.BlockStmt); ok && module.Bindings != nil {
-			if s := module.Bindings.Scope(block); s != nil {
+		if block, ok := curr.(*ast.BlockStmt); ok && module.SymbolIndex != nil {
+			if s := module.SymbolIndex.Scope(block); s != nil {
 				scope = s
 				break
 			}
@@ -194,10 +194,10 @@ func resolveSelectorMemberSymbol(sel *ast.SelectorExpr, ident *ast.Ident, parent
 	if fieldSym := lookupStructFieldSymbol(baseType, ident.Name, ctx); fieldSym != nil {
 		return fieldSym
 	}
-	if module.Bindings == nil {
+	if module.SymbolIndex == nil {
 		return nil
 	}
-	for _, method := range module.Bindings.Methods(baseType) {
+	for _, method := range module.SymbolIndex.Methods(baseType) {
 		if method != nil && method.Name == ident.Name {
 			return method
 		}

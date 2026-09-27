@@ -206,14 +206,14 @@ Unknown effects must not be silently ignored.
 | Source structure | parser / `frontend/ast` | AST + stable node IDs |
 | Declaration catalog | collector | module symbols |
 | Type binding | binder | symbol type state / binding result |
-| Lexical/import resolution | resolver | `Bindings` symbol/scope identity |
+| Lexical/import resolution | resolver | `SymbolIndex` symbol/scope identity |
 | Type rules and adaptation | typechecker | `typecheckresult.Result` |
 | Control topology | `ir/cfg` | typed blocks/sites/edges |
 | Variant/optional path facts | flow typechecker | `flowresult.Result` |
 | Evaluation/storage actions | `semantics/effect` | ordered `effect.Result` |
 | Definite initialization | `semantics/definiteinit` | diagnostics |
 | Move/borrow/drop analysis | `semantics/ownership` | `ownershipresult.Result` |
-| Lexical usage warnings | `semantics/usage` | diagnostics from symbol usage/mutability state exposed by `IsUsed` / `RequiresMutable` |
+| Lexical usage warnings | `semantics/usage` | diagnostics from `symbols.Index` usage/mutable-required evidence |
 | Typed-source lowering | `ir/thir`, `ir/exprlower` | THIR/shared expressions |
 | Mid-level lowering | `ir/mir` | MIR |
 | Physical layout/codegen | backend | backend IR |

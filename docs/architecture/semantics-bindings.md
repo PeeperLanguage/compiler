@@ -20,7 +20,7 @@ This map records binding, type, place, intrinsic, and constant implementation ob
 - Parser IDs are provisional; before collection, function subtrees are republished
   under stable `moduleid.FunctionID` plus function-local preorder ordinal.
 - Semantic side tables use `source.NodeID`, not AST pointer identity, as their key.
-- `symbols.Bindings` owns syntax-occurrence-to-symbol identity behind `Bind` / `Symbol`.
+- `symbols.Index` owns syntax-occurrence-to-symbol identity behind `Bind` / `Symbol`.
 - The same result owns block-to-scope identity behind `SetScope` / `Scope`.
 - `typecheckresult.Result` owns base expression, call, and control evidence behind
   semantic operations such as `RecordExprType` / `ExprType`, `RecordMatch` /
@@ -56,9 +56,11 @@ This map records binding, type, place, intrinsic, and constant implementation ob
 - `symbols.New` requires an explicit valid identity and allocates no identity.
   Fresh symbol objects remain generation-local; consumers compare pointers when
   exact object generation matters and IDs when declaration/storage identity matters.
-- A `symbols.Symbol` contains name, kind, semantic type, visibility, mutability,
-  usage state, compiler operation, defining module, source location, AST node,
-  and an optional child scope.
+- A `symbols.Symbol` contains name, kind, semantic type, visibility, declared
+  mutability, compiler operation, defining module, source location, AST node,
+  and an optional child scope. Current-compilation usage and mutable-required
+  facts are keyed by `SymbolID` in module-owned `symbols.Index`, not mutated
+  on symbol objects shared with importers or retained compiler generations.
 - `Symbol.Kind` includes import, variable, constant, type, function, method,
   parameter, field, static, variant, error member, and unknown.
 - `Symbol.IsPub` is derived from the first rune of the name being uppercase.
@@ -86,15 +88,20 @@ This map records binding, type, place, intrinsic, and constant implementation ob
 - `IsMutableBinding` combines lookup, kind, and `Symbol.IsMutable`.
 - `Parent` supports bounded analyses such as `place.LocalRoot`.
 
-## Binding result
+## Symbol index
 
-`internal/semantics/bindingresult/result.go` owns the staged symbol/scope graph behind
-semantic operations. `Bind` / `Symbol` publish and query syntax identity; `SetScope` /
-`Scope` publish and query lexical scopes. `RegisterMethod` / `Methods` own receiver
-method membership using semantic nominal declaration identity, not display text, and
-`AddOperationFunction` owns the completion catalog. The backing indexes are private,
-so collection, binding, resolution, typechecking, THIR, and LSP depend on meaning rather than map layout.
-than map layout.
+`internal/semantics/symbols/index.go` owns module-generation symbol lookups and
+activity. `Bind` / `Symbol` publish and query syntax
+identity; `SetScope` / `Scope` publish and query lexical scopes. `RegisterMethod` /
+`Methods` own receiver method membership using semantic nominal declaration identity,
+not display text, and `AddOperationFunction` owns the completion catalog.
+`MarkUsed` / `IsUsed` and `RequireMutable` / `RequiresMutable` store activity by
+canonical `SymbolID`. Resolver and typechecker write only their current module's
+index, including imported target IDs. At the project Usage barrier,
+`usage.CollectUsedSymbols` unions those IDs before warnings are produced; retained
+indexes therefore replay their prior contribution without mutating shared symbols.
+MIR reads the same module index when deciding whether an unused call declaration can
+be discarded. Backing maps remain private.
 
 ## Collection
 
@@ -116,9 +123,9 @@ than map layout.
   top-level constants.
 - `collectFnDecl` creates `SymbolFunc` for ordinary functions.
 - A method gets `SymbolMethod`, a child scope parented by module scope, and its
-  declaration name is published through `Bindings.Bind`.
+  declaration name is published through `SymbolIndex.Bind`.
 - Collection does not invent a textual receiver key. Binder resolves the semantic
-  receiver type and then calls `Bindings.RegisterMethod`.
+  receiver type and then calls `SymbolIndex.RegisterMethod`.
 - Duplicate methods for one semantic receiver/name pair produce a redeclaration
   diagnostic after receiver binding.
 - Ordinary functions are declared in module scope; duplicate names are diagnosed.
@@ -137,7 +144,7 @@ than map layout.
 - The symbol's `Type` is a `*typeinfo.DefinedType` shell.
 - Enum declarations get a separate child scope with `SymbolVariant` entries.
 - Each variant symbol points at the enum defined type.
-- Variant declaration identifiers are published through `Bindings.Bind` immediately.
+- Variant declaration identifiers are published through `SymbolIndex.Bind` immediately.
 - `ctx.RegisterTypeDeclaration` retains declaration syntax and shell for generic
   substitution.
 - Underlying type structure is intentionally not completed by collection.
@@ -159,7 +166,7 @@ than map layout.
 ### Function and value types
 
 - `bindFunctionDecl` uses `typeinfo.FuncTypeFromDeclWithOptions`.
-- Method and ordinary-function declarations resolve through the same `Bindings.Symbol`
+- Method and ordinary-function declarations resolve through the same `SymbolIndex.Symbol`
   declaration identity. Method signatures are bound before receiver registration.
 - Ordinary function signatures are written to the module-scope symbol.
 - Functions with parameters are added to `OperationFunctions`.

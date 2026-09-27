@@ -30,7 +30,7 @@ func (c *checker) checkFunction(sym *symbols.Symbol, fn *ast.FnDecl) {
 		if param.Name == nil || index >= len(fnType.Params) {
 			continue
 		}
-		paramSym := c.module.Bindings.Symbol(param.Name)
+		paramSym := c.module.SymbolIndex.Symbol(param.Name)
 		if paramSym == nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrUndefinedSymbol, "missing parameter binding", ast.LocOf(param.Name), "")
 			return
@@ -82,7 +82,7 @@ func (c *checker) checkDefaultParameters(scope *symbols.Scope, fn *ast.FnDecl, f
 }
 
 func (c *checker) rejectOwnedParameterReferences(scope *symbols.Scope, fn *ast.FnDecl, fnType *typeinfo.FuncType, current int, expr ast.Expr) {
-	if c == nil || c.module == nil || c.module.Bindings == nil || fn == nil || expr == nil {
+	if c == nil || c.module == nil || c.module.SymbolIndex == nil || fn == nil || expr == nil {
 		return
 	}
 	params := fn.ParamsWithReceiver()
@@ -100,7 +100,7 @@ func (c *checker) rejectOwnedParameterReferences(scope *symbols.Scope, fn *ast.F
 		if !ok || ident == nil {
 			return true
 		}
-		sym := c.module.Bindings.Symbol(ident)
+		sym := c.module.SymbolIndex.Symbol(ident)
 		index, isParam := paramIndexes[sym]
 		if !isParam || index >= current || index < 0 || index >= len(params) {
 			return true
@@ -437,14 +437,14 @@ func (c *checker) checkEnumDecl(decl *ast.EnumDecl) {
 	if decl.Name == nil {
 		return
 	}
-	if c.module == nil || c.module.Bindings == nil {
+	if c.module == nil || c.module.SymbolIndex == nil {
 		return
 	}
-	declSymbol := c.module.Bindings.Symbol(decl.Name)
+	declSymbol := c.module.SymbolIndex.Symbol(decl.Name)
 	if declSymbol == nil {
 		return
 	}
-	for _, method := range c.module.Bindings.Methods(declSymbol.Type) {
+	for _, method := range c.module.SymbolIndex.Methods(declSymbol.Type) {
 		if method == nil || dataFields[method.Name] == nil {
 			continue
 		}

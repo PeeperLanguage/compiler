@@ -172,10 +172,10 @@ func (c *checker) lookupCallableMember(baseType typeinfo.Type, name string) (cal
 }
 
 func (c *checker) lookupDeclaredCallableMember(baseType typeinfo.Type, name string) (callableMember, bool) {
-	if c == nil || c.module == nil || c.module.Bindings == nil {
+	if c == nil || c.module == nil || c.module.SymbolIndex == nil {
 		return callableMember{}, false
 	}
-	for _, method := range c.module.Bindings.Methods(baseType) {
+	for _, method := range c.module.SymbolIndex.Methods(baseType) {
 		if method == nil || method.Name != name {
 			continue
 		}
@@ -198,8 +198,8 @@ func (c *checker) availableMethods(baseType typeinfo.Type) []string {
 			names = append(names, m.Name)
 		}
 	}
-	if c.module != nil && c.module.Bindings != nil {
-		for _, method := range c.module.Bindings.Methods(baseType) {
+	if c.module != nil && c.module.SymbolIndex != nil {
+		for _, method := range c.module.SymbolIndex.Methods(baseType) {
 			if method != nil {
 				names = append(names, method.Name)
 			}
@@ -287,8 +287,8 @@ func (c *checker) qualifiedScopeType(scope *symbols.Scope, node *ast.ScopeResolu
 		return &typeinfo.InvalidType{}
 	}
 	var sym *symbols.Symbol
-	if c.module != nil && c.module.Bindings != nil {
-		sym = c.module.Bindings.Symbol(node)
+	if c.module != nil && c.module.SymbolIndex != nil {
+		sym = c.module.SymbolIndex.Symbol(node)
 	}
 	if sym == nil {
 		qualifier, member, imported := node.ImportValueMember()

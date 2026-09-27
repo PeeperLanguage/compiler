@@ -15,6 +15,7 @@ import (
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/resolver"
+	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typechecker"
 	"compiler/pkg/peeper"
 )
@@ -70,8 +71,25 @@ fn GetValue() -> i32 { return 42; }`
 	binder.Bind(ctx, mod)
 	resolver.Resolve(ctx, mod)
 	typechecker.Check(ctx, mod)
-	Analyze(diag, mod, moduleid.ID{})
+	Analyze(diag, mod, moduleid.ID{}, CollectUsedSymbols([]*module.Module{mod}))
 	return diag
+}
+
+func TestCollectUsedSymbolsUnionsModuleOwnedActivity(t *testing.T) {
+	first := &module.Module{SymbolIndex: symbols.NewIndex()}
+	second := &module.Module{SymbolIndex: symbols.NewIndex()}
+	firstSymbol := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "first"), "first", symbols.SymbolVar, nil, nil)
+	secondSymbol := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "second"), "second", symbols.SymbolVar, nil, nil)
+	first.SymbolIndex.MarkUsed(firstSymbol)
+	second.SymbolIndex.MarkUsed(secondSymbol)
+
+	used := CollectUsedSymbols([]*module.Module{first, nil, second})
+	if _, ok := used[firstSymbol.ID]; !ok {
+		t.Fatal("first module use missing from project activity")
+	}
+	if _, ok := used[secondSymbol.ID]; !ok {
+		t.Fatal("second module use missing from project activity")
+	}
 }
 
 func hasCode(diag *diagnostics.DiagnosticBag, code string) bool {

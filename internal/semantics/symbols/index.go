@@ -9,25 +9,29 @@ import (
 	"compiler/internal/semantics/typeinfo"
 )
 
-type Bindings struct {
-	blockScopes        map[source.NodeID]*Scope
-	nodeSymbols        map[source.NodeID]*Symbol
-	methodsByReceiver  map[string][]*Symbol
-	operationFunctions []*Symbol
+type Index struct {
+	blockScopes            map[source.NodeID]*Scope
+	nodeSymbols            map[source.NodeID]*Symbol
+	methodsByReceiver      map[string][]*Symbol
+	operationFunctions     []*Symbol
+	usedSymbols            map[SymbolID]struct{}
+	mutableRequiredSymbols map[SymbolID]struct{}
 }
 
-func NewBindings() *Bindings {
-	return &Bindings{
-		blockScopes:        make(map[source.NodeID]*Scope),
-		nodeSymbols:        make(map[source.NodeID]*Symbol),
-		methodsByReceiver:  make(map[string][]*Symbol),
-		operationFunctions: make([]*Symbol, 0),
+func NewIndex() *Index {
+	return &Index{
+		blockScopes:            make(map[source.NodeID]*Scope),
+		nodeSymbols:            make(map[source.NodeID]*Symbol),
+		methodsByReceiver:      make(map[string][]*Symbol),
+		operationFunctions:     make([]*Symbol, 0),
+		usedSymbols:            make(map[SymbolID]struct{}),
+		mutableRequiredSymbols: make(map[SymbolID]struct{}),
 	}
 }
 
 // Bind records which declaration a syntax occurrence denotes. The caller owns
-// name resolution; bindings own the occurrence index used by later phases.
-func (r *Bindings) Bind(node ast.Node, sym *Symbol) {
+// name resolution; the index owns the occurrence lookup used by later phases.
+func (r *Index) Bind(node ast.Node, sym *Symbol) {
 	if r == nil || node == nil || sym == nil {
 		return
 	}
@@ -36,49 +40,49 @@ func (r *Bindings) Bind(node ast.Node, sym *Symbol) {
 
 // BindID is used for generated syntax whose stable node identity is already in
 // hand. Source code should prefer Bind so the key choice stays local here.
-func (r *Bindings) BindID(id source.NodeID, sym *Symbol) {
+func (r *Index) BindID(id source.NodeID, sym *Symbol) {
 	if r == nil || !id.IsValid() || sym == nil {
 		return
 	}
 	r.nodeSymbols[id] = sym
 }
 
-func (r *Bindings) Symbol(node ast.Node) *Symbol {
+func (r *Index) Symbol(node ast.Node) *Symbol {
 	if r == nil || node == nil {
 		return nil
 	}
 	return r.nodeSymbols[node.ID()]
 }
 
-func (r *Bindings) SymbolID(id source.NodeID) *Symbol {
+func (r *Index) SymbolID(id source.NodeID) *Symbol {
 	if r == nil || !id.IsValid() {
 		return nil
 	}
 	return r.nodeSymbols[id]
 }
 
-func (r *Bindings) SetScope(node ast.Node, scope *Scope) {
+func (r *Index) SetScope(node ast.Node, scope *Scope) {
 	if r == nil || node == nil || scope == nil {
 		return
 	}
 	r.blockScopes[node.ID()] = scope
 }
 
-func (r *Bindings) Scope(node ast.Node) *Scope {
+func (r *Index) Scope(node ast.Node) *Scope {
 	if r == nil || node == nil {
 		return nil
 	}
 	return r.blockScopes[node.ID()]
 }
 
-func (r *Bindings) ScopeID(id source.NodeID) *Scope {
+func (r *Index) ScopeID(id source.NodeID) *Scope {
 	if r == nil || !id.IsValid() {
 		return nil
 	}
 	return r.blockScopes[id]
 }
 
-func (r *Bindings) ForEachScope(fn func(*Scope)) {
+func (r *Index) ForEachScope(fn func(*Scope)) {
 	if r == nil || fn == nil {
 		return
 	}
@@ -92,7 +96,7 @@ func (r *Bindings) ForEachScope(fn func(*Scope)) {
 // RegisterMethod publishes one resolved receiver method. Method ownership is
 // keyed by semantic declaration identity, never display text. It returns the
 // existing same-name method when registration would be a redeclaration.
-func (r *Bindings) RegisterMethod(receiver typeinfo.Type, method *Symbol) *Symbol {
+func (r *Index) RegisterMethod(receiver typeinfo.Type, method *Symbol) *Symbol {
 	if r == nil || method == nil {
 		return nil
 	}
@@ -109,7 +113,7 @@ func (r *Bindings) RegisterMethod(receiver typeinfo.Type, method *Symbol) *Symbo
 	return nil
 }
 
-func (r *Bindings) Methods(receiver typeinfo.Type) []*Symbol {
+func (r *Index) Methods(receiver typeinfo.Type) []*Symbol {
 	if r == nil {
 		return nil
 	}
@@ -120,7 +124,7 @@ func (r *Bindings) Methods(receiver typeinfo.Type) []*Symbol {
 	return r.methodsByReceiver[key]
 }
 
-func (r *Bindings) ForEachMethod(fn func(receiverIdentity string, method *Symbol)) {
+func (r *Index) ForEachMethod(fn func(receiverIdentity string, method *Symbol)) {
 	if r == nil || fn == nil {
 		return
 	}
@@ -133,14 +137,14 @@ func (r *Bindings) ForEachMethod(fn func(receiverIdentity string, method *Symbol
 	}
 }
 
-func (r *Bindings) AddOperationFunction(sym *Symbol) {
+func (r *Index) AddOperationFunction(sym *Symbol) {
 	if r == nil || sym == nil {
 		return
 	}
 	r.operationFunctions = append(r.operationFunctions, sym)
 }
 
-func (r *Bindings) SortOperationFunctions() {
+func (r *Index) SortOperationFunctions() {
 	if r == nil {
 		return
 	}
@@ -149,9 +153,48 @@ func (r *Bindings) SortOperationFunctions() {
 	})
 }
 
-func (r *Bindings) OperationFunctions() []*Symbol {
+func (r *Index) OperationFunctions() []*Symbol {
 	if r == nil {
 		return nil
 	}
 	return r.operationFunctions
+}
+
+func (r *Index) MarkUsed(sym *Symbol) {
+	if r == nil || sym == nil || !sym.ID.IsValid() {
+		return
+	}
+	r.usedSymbols[sym.ID] = struct{}{}
+}
+
+func (r *Index) IsUsed(sym *Symbol) bool {
+	if r == nil || sym == nil {
+		return false
+	}
+	_, used := r.usedSymbols[sym.ID]
+	return used
+}
+
+func (r *Index) ForEachUsedSymbolID(fn func(SymbolID)) {
+	if r == nil || fn == nil {
+		return
+	}
+	for id := range r.usedSymbols {
+		fn(id)
+	}
+}
+
+func (r *Index) RequireMutable(sym *Symbol) {
+	if r == nil || sym == nil || !sym.ID.IsValid() {
+		return
+	}
+	r.mutableRequiredSymbols[sym.ID] = struct{}{}
+}
+
+func (r *Index) RequiresMutable(sym *Symbol) bool {
+	if r == nil || sym == nil {
+		return false
+	}
+	_, required := r.mutableRequiredSymbols[sym.ID]
+	return required
 }

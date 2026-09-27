@@ -51,6 +51,7 @@ func TestRejectedPrivateImportDoesNotPublishUsage(t *testing.T) {
 	module := &module.Module{
 		ID:          moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "main"},
 		ModuleScope: symbols.NewScope(nil),
+		SymbolIndex: symbols.NewIndex(),
 		Imports:     map[string]module.ResolvedImport{"dep": {ID: dependencyID}},
 	}
 	alias := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolImport, "dep"), "dep", symbols.SymbolImport, nil, nil)
@@ -64,7 +65,7 @@ func TestRejectedPrivateImportDoesNotPublishUsage(t *testing.T) {
 	if symbol, ok := r.lookupImportedMember(&ast.Ident{Name: "dep"}, &ast.Ident{Name: "hidden"}, &ast.Ident{Name: "hidden"}); ok || symbol != nil {
 		t.Fatalf("private imported symbol = (%#v, %t), want rejected", symbol, ok)
 	}
-	if alias.IsUsed() || private.IsUsed() {
+	if module.SymbolIndex.IsUsed(alias) || module.SymbolIndex.IsUsed(private) {
 		t.Fatal("rejected private import published usage")
 	}
 	if !diag.HasErrors() || !strings.Contains(diag.EmitAllToString(), "not exported") {
@@ -112,8 +113,8 @@ func TestResolvePublishesDiscardDeclarationSymbols(t *testing.T) {
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	first := fn.Body.Stmts[0].(*ast.LetDecl)
 	second := fn.Body.Stmts[1].(*ast.LetDecl)
-	firstSymbol := module.Bindings.Symbol(first.Name)
-	secondSymbol := module.Bindings.Symbol(second.Name)
+	firstSymbol := module.SymbolIndex.Symbol(first.Name)
+	secondSymbol := module.SymbolIndex.Symbol(second.Name)
 	if firstSymbol == nil || secondSymbol == nil || firstSymbol == secondSymbol {
 		t.Fatalf("discard declaration symbols = (%#v, %#v), want distinct symbols", firstSymbol, secondSymbol)
 	}
@@ -130,7 +131,7 @@ func TestResolvePublishesAssignmentTargetSymbol(t *testing.T) {
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	declaration := fn.Body.Stmts[0].(*ast.LetDecl)
 	target := fn.Body.Stmts[1].(*ast.AssignStmt).Target.(*ast.Ident)
-	resolved := module.Bindings.Symbol(target)
+	resolved := module.SymbolIndex.Symbol(target)
 	if resolved == nil || resolved.ASTNode != declaration {
 		t.Fatalf("assignment target = %#v, want declaration symbol for %#v", resolved, declaration)
 	}
@@ -152,7 +153,7 @@ fn main() {
 	okPath := fn.Body.Stmts[0].(*ast.LetDecl).Value.(*ast.VariantLit).Case
 	pendingPath := fn.Body.Stmts[1].(*ast.LetDecl).Value.(*ast.ScopeResolution)
 	for _, path := range []*ast.ScopeResolution{okPath, pendingPath} {
-		sym := module.Bindings.Symbol(path)
+		sym := module.SymbolIndex.Symbol(path)
 		if sym == nil {
 			t.Fatalf("resolved %s = nil, want child variant symbol", path.TypeText())
 		}
@@ -160,7 +161,7 @@ fn main() {
 		if sym.Kind != symbols.SymbolVariant || !variant || sym.Name != path.Segments[len(path.Segments)-1].Name.Name {
 			t.Fatalf("resolved %s = %#v, want child variant symbol", path.TypeText(), sym)
 		}
-		if module.Bindings.Symbol(path.Segments[len(path.Segments)-1].Name) != sym {
+		if module.SymbolIndex.Symbol(path.Segments[len(path.Segments)-1].Name) != sym {
 			t.Fatalf("final segment of %s does not resolve to variant symbol", path.TypeText())
 		}
 	}
@@ -193,7 +194,7 @@ fn main() {
 			t.Fatalf("invalid variant path %s", path.TypeText())
 		}
 		canonical, _ := result.Scope.LookupLocal(caseName.Name)
-		if got := module.Bindings.Symbol(path); got == nil || got != canonical {
+		if got := module.SymbolIndex.Symbol(path); got == nil || got != canonical {
 			t.Fatalf("resolved %s = %#v, want canonical %#v", path.TypeText(), got, canonical)
 		}
 	}
@@ -241,11 +242,11 @@ fn Read(result: Result) -> i32 {
 	match := fn.Body.Stmts[0].(*ast.MatchStmt)
 	binding := match.Arms[0].Fields[0].Binding
 	use := match.Arms[0].Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.Ident)
-	bindingSymbol := module.Bindings.Symbol(binding)
-	if bindingSymbol == nil || module.Bindings.Symbol(use) != bindingSymbol {
-		t.Fatalf("pattern binding = %#v, use = %#v", bindingSymbol, module.Bindings.Symbol(use))
+	bindingSymbol := module.SymbolIndex.Symbol(binding)
+	if bindingSymbol == nil || module.SymbolIndex.Symbol(use) != bindingSymbol {
+		t.Fatalf("pattern binding = %#v, use = %#v", bindingSymbol, module.SymbolIndex.Symbol(use))
 	}
-	if _, found := module.Bindings.Scope(match.Arms[0].Body).Lookup("payload"); !found {
+	if _, found := module.SymbolIndex.Scope(match.Arms[0].Body).Lookup("payload"); !found {
 		t.Fatal("pattern binding missing from arm body scope")
 	}
 }

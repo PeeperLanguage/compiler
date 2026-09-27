@@ -29,6 +29,7 @@ type LoweringInput struct {
 	Flow          *flowresult.Result
 	Ownership     ownershipresult.Result
 	Scope         *symbols.Scope
+	SymbolIndex   *symbols.Index
 	Constants     *constantresult.Result
 	ModuleID      moduleid.ID
 	IsEntryModule bool
@@ -479,7 +480,7 @@ func (l *lowerer) lowerCFGStmt(node thir.Node) bool {
 		if statement.Value == nil {
 			return true
 		}
-		if discardBinding(statement) {
+		if discardBinding(l.input.SymbolIndex, statement) {
 			return l.lowerExprStatement(statement.Value)
 		}
 		temporaryMark := len(l.temporaryDrops)
@@ -536,8 +537,8 @@ func (l *lowerer) lowerCFGStmt(node thir.Node) bool {
 	}
 }
 
-func discardBinding(binding *thir.Binding) bool {
-	if binding == nil || binding.Symbol == nil || binding.Symbol.IsUsed() || binding.Value == nil {
+func discardBinding(symbolIndex *symbols.Index, binding *thir.Binding) bool {
+	if binding == nil || binding.Symbol == nil || symbolIndex.IsUsed(binding.Symbol) || binding.Value == nil {
 		return false
 	}
 	if typ, ok := symbols.GetSymbolType(binding.Symbol); ok && typeinfo.OwnershipCapabilityOf(typ).NeedsDrop {

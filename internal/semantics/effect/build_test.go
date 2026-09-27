@@ -40,7 +40,7 @@ func buildEffects(t *testing.T, source string) (effect.Result, *module.Module) {
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
-	module.THIR = thir.Build(module.ID, module.FilePath, module.AST, module.Bindings, module.Typechecking, nil)
+	module.THIR = thir.Build(module.ID, module.FilePath, module.AST, module.SymbolIndex, module.Typechecking, nil)
 	module.CFG = cfg.BuildModule(module.THIR)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())

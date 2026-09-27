@@ -2753,7 +2753,7 @@ fn main() -> i32 {
 			for _, stmt := range entry.AST.Stmts {
 				ast.Inspect(stmt, func(node ast.Node) bool {
 					if node != nil {
-						symbol := entry.Bindings.Symbol(node)
+						symbol := entry.SymbolIndex.Symbol(node)
 						if symbol != nil && symbol.CompilerOp != "" {
 							observed[symbol.CompilerOp] = struct{}{}
 						}

@@ -155,7 +155,7 @@ bindings as initialized defines at the arm body's entry site.
 
 At this milestone, references resolved through the binding occurrence index while
 definitions resolved through the site's scope. A later symbol-table cleanup unified local
-declaration identity through `Bindings.Bind` / `Bindings.Symbol` using declaration-name IDs,
+declaration identity through `SymbolIndex.Bind` / `SymbolIndex.Symbol` using declaration-name IDs,
 avoiding both parent-scope name lookup and `Symbol.ASTNode` pointer scans.
 
 Intercept `*ast.CallExpr` and walk `Typechecking.CallArgumentsOrSource(call)` so

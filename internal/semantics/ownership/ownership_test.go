@@ -33,7 +33,7 @@ import (
 func ownershipInput(mod *module.Module) Input {
 	return Input{
 		Source: mod.THIR, CFG: mod.CFG, Flow: mod.Flow,
-		Effects: mod.Effects, Scope: mod.ModuleScope, Bindings: mod.Bindings,
+		Effects: mod.Effects, Scope: mod.ModuleScope, SymbolIndex: mod.SymbolIndex,
 	}
 }
 
@@ -62,7 +62,7 @@ func checkOwnershipSource(t *testing.T, src string) *ownershipResult {
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
 	typechecker.Check(ctx, module)
-	module.THIR = thir.Build(module.ID, module.FilePath, module.AST, module.Bindings, module.Typechecking, nil)
+	module.THIR = thir.Build(module.ID, module.FilePath, module.AST, module.SymbolIndex, module.Typechecking, nil)
 	module.CFG = cfg.BuildModule(module.THIR)
 	module.Flow = typechecker.CheckFlow(diag, module.THIR, module.CFG, module.ModuleScope)
 	module.Effects = effect.BuildTHIR(module.THIR, module.CFG)
@@ -275,8 +275,8 @@ func cleanupSymbolNames(module *module.Module, cleanup []symbols.SymbolID) []str
 			}
 		}
 	}
-	if module != nil && module.Bindings != nil {
-		module.Bindings.ForEachScope(func(scope *symbols.Scope) {
+	if module != nil && module.SymbolIndex != nil {
+		module.SymbolIndex.ForEachScope(func(scope *symbols.Scope) {
 			for _, sym := range scope.Symbols() {
 				if sym != nil {
 					names[sym.ID] = sym.Name
@@ -461,11 +461,11 @@ fn second() { let two = make(); }`)
 func TestOwnershipPublishesEmptyPlanForUnmatchedGraph(t *testing.T) {
 	graph := &cfg.ControlFlowGraph{FunctionID: "missing"}
 	result := Check(diagnostics.NewDiagnosticBag(), Input{
-		Source:   &thir.Module{},
-		CFG:      &cfg.Module{Functions: []*cfg.ControlFlowGraph{graph}},
-		Effects:  make(effect.Result),
-		Scope:    symbols.NewScope(nil),
-		Bindings: symbols.NewBindings(),
+		Source:      &thir.Module{},
+		CFG:         &cfg.Module{Functions: []*cfg.ControlFlowGraph{graph}},
+		Effects:     make(effect.Result),
+		Scope:       symbols.NewScope(nil),
+		SymbolIndex: symbols.NewIndex(),
 	})
 	plan := result[graph.FunctionID]
 	if plan == nil || plan.AfterScope == nil || plan.BeforeReturn == nil || plan.BeforeAssign == nil ||

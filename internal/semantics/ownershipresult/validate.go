@@ -31,11 +31,11 @@ const maxReportedProblems = 10
 // that is the analysis ownership already performs, and repeating it here would
 // make the validator a second implementation of the thing it checks rather than
 // a check on published shape.
-func (r Result) Validate(types *typecheckresult.Result, bindings *symbols.Bindings, graphs *cfg.Module) error {
+func (r Result) Validate(types *typecheckresult.Result, symbolIndex *symbols.Index, graphs *cfg.Module) error {
 	if len(r) == 0 && graphs == nil {
 		return nil
 	}
-	if types == nil || bindings == nil || graphs == nil {
+	if types == nil || symbolIndex == nil || graphs == nil {
 		return errors.New("ownership published a cleanup plan without typechecking, binding, or CFG evidence")
 	}
 
@@ -50,7 +50,7 @@ func (r Result) Validate(types *typecheckresult.Result, bindings *symbols.Bindin
 	}
 	problems = append(problems, validateValueUses(types)...)
 	for fnID, plan := range r {
-		problems = append(problems, validatePlan(fnID, plan, types, bindings, graphs)...)
+		problems = append(problems, validatePlan(fnID, plan, types, symbolIndex, graphs)...)
 	}
 	if len(problems) == 0 {
 		return nil
@@ -96,7 +96,7 @@ func validateValueUses(types *typecheckresult.Result) []string {
 
 // validatePlan checks one function's cleanup plan against its CFG and the
 // program points each map is keyed by.
-func validatePlan(fnID moduleid.FunctionID, plan *CleanupPlan, types *typecheckresult.Result, bindings *symbols.Bindings, graphs *cfg.Module) []string {
+func validatePlan(fnID moduleid.FunctionID, plan *CleanupPlan, types *typecheckresult.Result, symbolIndex *symbols.Index, graphs *cfg.Module) []string {
 	if plan == nil {
 		return []string{fmt.Sprintf("function %s has a nil cleanup plan", fnID)}
 	}
@@ -147,10 +147,10 @@ func validatePlan(fnID moduleid.FunctionID, plan *CleanupPlan, types *typecheckr
 		problems = append(problems, validateTypedNode(types, fnID, "projection base", nodeID)...)
 	}
 	for nodeID := range plan.MatchWholePayloadDrops {
-		problems = append(problems, validateArmBody(bindings, fnID, "match payload drop", nodeID)...)
+		problems = append(problems, validateArmBody(symbolIndex, fnID, "match payload drop", nodeID)...)
 	}
 	for nodeID, fields := range plan.MatchFieldDrops {
-		problems = append(problems, validateArmBody(bindings, fnID, "match field drop", nodeID)...)
+		problems = append(problems, validateArmBody(symbolIndex, fnID, "match field drop", nodeID)...)
 		for _, field := range fields {
 			if field < 0 {
 				problems = append(problems, fmt.Sprintf("function %s drops match field %v at %v", fnID, field, nodeID))
@@ -180,8 +180,8 @@ func validateTypedNode(types *typecheckresult.Result, fnID moduleid.FunctionID, 
 	return []string{fmt.Sprintf("function %s plans a %s at node %v with no expression type", fnID, where, nodeID)}
 }
 
-func validateArmBody(bindings *symbols.Bindings, fnID moduleid.FunctionID, where string, nodeID source.NodeID) []string {
-	if bindings.ScopeID(nodeID) != nil {
+func validateArmBody(symbolIndex *symbols.Index, fnID moduleid.FunctionID, where string, nodeID source.NodeID) []string {
+	if symbolIndex.ScopeID(nodeID) != nil {
 		return nil
 	}
 	return []string{fmt.Sprintf("function %s plans a %s at node %v, which is not a block", fnID, where, nodeID)}

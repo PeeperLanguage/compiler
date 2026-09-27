@@ -70,7 +70,7 @@ func TestQueryTypeDoesNotCreateOrDiagnoseGenericInstance(t *testing.T) {
 	if !found || symbol == nil {
 		t.Fatal("generic type symbol missing")
 	}
-	if symbol.IsUsed() {
+	if mod.SymbolIndex.IsUsed(symbol) {
 		t.Fatal("query marked generic type symbol used")
 	}
 	if got.Status != QueryLoading || got.Type != nil {
@@ -159,7 +159,7 @@ func TestResolveTypeCreatesGenericInstance(t *testing.T) {
 		t.Fatalf("source resolution created %d generic instances, want 1", len(resolver.instances))
 	}
 	symbol, found := mod.ModuleScope.LookupLocal("Box")
-	if !found || symbol == nil || !symbol.IsUsed() {
+	if !found || symbol == nil || !mod.SymbolIndex.IsUsed(symbol) {
 		t.Fatal("source resolution did not mark generic type symbol used")
 	}
 	if diag.HasErrors() {
@@ -196,6 +196,7 @@ func genericQueryContext(t *testing.T) (*Resolver, *diagnostics.DiagnosticBag, *
 	mod := &module.Module{
 		ID:          moduleid.ID{Origin: "local", ImportPath: "main"},
 		ModuleScope: symbols.NewScope(nil),
+		SymbolIndex: symbols.NewIndex(),
 	}
 	base := &typeinfo.DefinedType{
 		Name: "Box", Identity: "main::Box", Kind: typeinfo.DefinedKindStruct,

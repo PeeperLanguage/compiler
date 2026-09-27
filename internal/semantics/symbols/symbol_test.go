@@ -50,6 +50,29 @@ func TestNewPublishesExternalLinkNameWithoutRetainingSyntaxLookup(t *testing.T) 
 	}
 }
 
+func TestIndexTracksActivityByCanonicalSymbolID(t *testing.T) {
+	index := NewIndex()
+	identity := ProjectedSymbolID(SymbolVar, "value")
+	first := New(identity, "value", SymbolVar, nil, nil)
+	second := New(identity, "value", SymbolVar, nil, nil)
+
+	index.MarkUsed(first)
+	index.RequireMutable(first)
+	if !index.IsUsed(second) || !index.RequiresMutable(second) {
+		t.Fatal("symbol activity depends on object identity")
+	}
+	count := 0
+	index.ForEachUsedSymbolID(func(id SymbolID) {
+		if id != identity {
+			t.Fatalf("used symbol ID = %v, want %v", id, identity)
+		}
+		count++
+	})
+	if count != 1 {
+		t.Fatalf("used symbol count = %d, want 1", count)
+	}
+}
+
 func TestFunctionScopeHasConcreteType(t *testing.T) {
 	sym := New(ProjectedSymbolID(SymbolFunc, "main"), "main", SymbolFunc, nil, nil)
 	var scope *Scope = sym.Scope

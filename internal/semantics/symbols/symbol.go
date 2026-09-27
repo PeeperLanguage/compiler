@@ -42,22 +42,20 @@ const (
 )
 
 type Symbol struct {
-	ID                     SymbolID
-	Name                   string
-	Kind                   Kind
-	Type                   typeinfo.Type
-	IsPub                  bool
-	AllowsMutation         bool
-	IsReceiver             bool
-	isUsed                 bool
-	requiresMutableBinding bool
-	CompilerOp             CompilerOp
-	ExternalLinkName       *string
-	DefiningModule         moduleid.ID
-	Location               *source.Location
-	MutableLocation        *source.Location
-	ASTNode                ast.Node
-	Scope                  *Scope
+	ID               SymbolID
+	Name             string
+	Kind             Kind
+	Type             typeinfo.Type
+	IsPub            bool
+	AllowsMutation   bool
+	IsReceiver       bool
+	CompilerOp       CompilerOp
+	ExternalLinkName *string
+	DefiningModule   moduleid.ID
+	Location         *source.Location
+	MutableLocation  *source.Location
+	ASTNode          ast.Node
+	Scope            *Scope
 }
 
 func New(id SymbolID, name string, kind Kind, node ast.Node, location *source.Location) *Symbol {
@@ -99,26 +97,6 @@ func GetSymbolType(sym *Symbol) (typeinfo.Type, bool) {
 		return nil, false
 	}
 	return sym.Type, true
-}
-
-func (s *Symbol) MarkUsed() {
-	if s != nil {
-		s.isUsed = true
-	}
-}
-
-func (s *Symbol) IsUsed() bool {
-	return s != nil && s.isUsed
-}
-
-func (s *Symbol) RequireMutable() {
-	if s != nil {
-		s.requiresMutableBinding = true
-	}
-}
-
-func (s *Symbol) RequiresMutable() bool {
-	return s != nil && s.requiresMutableBinding
 }
 
 func (s *Symbol) IsMutable() bool {
