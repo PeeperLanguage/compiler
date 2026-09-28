@@ -4,33 +4,33 @@
   "assets": [
     {
       "id": "llvm-source",
-      "version": "23.1.0",
-      "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.0/llvm-project-23.1.0.src.tar.xz",
-      "size": 179140728,
-      "sha256": "ab1f0e3ec52448c33e8782eaf0422504b87c7b016b22514653ee0d8fcee479ff",
-      "signature_url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.0/llvm-project-23.1.0.src.tar.xz.sig",
+      "version": "23.1.2",
+      "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.2/llvm-project-23.1.2.src.tar.xz",
+      "size": 179200068,
+      "sha256": "c98bbef08a2b4c2613cd50e9aa9ae7b69b1fe6c16b2c40373bc0ab6116fdf78a",
+      "signature_url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.2/llvm-project-23.1.2.src.tar.xz.sig",
       "license": "Apache-2.0 WITH LLVM-exception",
-      "license_url": "https://github.com/llvm/llvm-project/blob/llvmorg-23.1.0/LICENSE.TXT"
+      "license_url": "https://github.com/llvm/llvm-project/blob/llvmorg-23.1.2/LICENSE.TXT"
     },
     {
       "id": "llvm-linux-amd64",
-      "version": "23.1.0",
-      "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.0/LLVM-23.1.0-Linux-X64.tar.xz",
-      "size": 2014511320,
-      "sha256": "18da30f77f475688a18f7704d23f9f155ae007ed9922dbed6850a9419d9fec8c",
-      "signature_url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.0/LLVM-23.1.0-Linux-X64.tar.xz.sig",
+      "version": "23.1.2",
+      "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.2/LLVM-23.1.2-Linux-X64.tar.xz",
+      "size": 2013958032,
+      "sha256": "b5ed9675149cc837c282e9b6962c276c9fa62863d5b2f91537b60848552995b7",
+      "signature_url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.2/LLVM-23.1.2-Linux-X64.tar.xz.sig",
       "license": "Apache-2.0 WITH LLVM-exception",
-      "license_url": "https://github.com/llvm/llvm-project/blob/llvmorg-23.1.0/LICENSE.TXT"
+      "license_url": "https://github.com/llvm/llvm-project/blob/llvmorg-23.1.2/LICENSE.TXT"
     },
     {
       "id": "llvm-linux-arm64",
-      "version": "23.1.0",
-      "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.0/LLVM-23.1.0-Linux-ARM64.tar.xz",
-      "size": 1828948604,
-      "sha256": "cfb31bfc713ef453248bf5bd026312f838ad6c52c25623e987cb6a340f3050d4",
-      "signature_url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.0/LLVM-23.1.0-Linux-ARM64.tar.xz.sig",
+      "version": "23.1.2",
+      "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.2/LLVM-23.1.2-Linux-ARM64.tar.xz",
+      "size": 1828822740,
+      "sha256": "075da47cb832273717d4c7bad4b6b4848d7c154262e9ba0dcc0025426d4073f0",
+      "signature_url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.2/LLVM-23.1.2-Linux-ARM64.tar.xz.sig",
       "license": "Apache-2.0 WITH LLVM-exception",
-      "license_url": "https://github.com/llvm/llvm-project/blob/llvmorg-23.1.0/LICENSE.TXT"
+      "license_url": "https://github.com/llvm/llvm-project/blob/llvmorg-23.1.2/LICENSE.TXT"
     },
     {
       "id": "musl-source",
@@ -43,21 +43,21 @@
     },
     {
       "id": "llvm-mingw-windows-amd64",
-      "version": "20260826",
-      "url": "https://github.com/mstorsjo/llvm-mingw/releases/download/20260826/llvm-mingw-20260826-ucrt-x86_64.zip",
-      "size": 190721391,
-      "sha256": "ae601f4e0f72bbdf441ad2df8bb16f037e2e9251559ea6b37b4057aef39c06c3",
+      "version": "20260922",
+      "url": "https://github.com/mstorsjo/llvm-mingw/releases/download/20260922/llvm-mingw-20260922-ucrt-x86_64.zip",
+      "size": 190725905,
+      "sha256": "e3ad77d117a4bea19a7a3b333341824d79a5a371004a10e25b8504e7b3047666",
       "license": "Apache-2.0 WITH LLVM-exception",
-      "license_url": "https://github.com/mstorsjo/llvm-mingw/blob/20260826/LICENSE.TXT"
+      "license_url": "https://github.com/mstorsjo/llvm-mingw/blob/20260922/LICENSE.TXT"
     },
     {
       "id": "llvm-mingw-windows-arm64",
-      "version": "20260826",
-      "url": "https://github.com/mstorsjo/llvm-mingw/releases/download/20260826/llvm-mingw-20260826-ucrt-aarch64.zip",
-      "size": 185650782,
-      "sha256": "dbce5a314c44cf44d02ab0d0e6bce948955b46429274df25544f9cfea4986f7b",
+      "version": "20260922",
+      "url": "https://github.com/mstorsjo/llvm-mingw/releases/download/20260922/llvm-mingw-20260922-ucrt-aarch64.zip",
+      "size": 185627547,
+      "sha256": "a317514a7a63badd692032c0c2b8e165f630bbaebbe7a3254348051f43a64949",
       "license": "Apache-2.0 WITH LLVM-exception",
-      "license_url": "https://github.com/mstorsjo/llvm-mingw/blob/20260826/LICENSE.TXT"
+      "license_url": "https://github.com/mstorsjo/llvm-mingw/blob/20260922/LICENSE.TXT"
     }
   ]
 }
