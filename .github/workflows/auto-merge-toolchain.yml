@@ -1,0 +1,109 @@
+name: Auto-merge approved toolchain updates
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+  check_suite:
+    types: [completed]
+
+permissions:
+  contents: read
+  checks: read
+  pull-requests: read
+
+jobs:
+  merge:
+    name: Merge approved toolchain update
+    if: github.event_name != 'pull_request_review' || github.event.review.state != 'dismissed'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - id: gate
+        name: Verify approval and checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_PATH: ${{ github.event_path }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          pr_number="$(jq -r '.pull_request.number // .check_suite.pull_requests[0].number // empty' "$EVENT_PATH")"
+          if [ -z "$pr_number" ]; then
+            echo "No pull request is associated with this event."
+            exit 0
+          fi
+          echo "number=$pr_number" >> "$GITHUB_OUTPUT"
+
+          pr_json="$(gh api "repos/$REPOSITORY/pulls/$pr_number")"
+          title="$(jq -r '.title' <<<"$pr_json")"
+          head_ref="$(jq -r '.head.ref' <<<"$pr_json")"
+          draft="$(jq -r '.draft' <<<"$pr_json")"
+          label="$(jq -r '[.labels[].name] | any(. == "Toolchain Update")' <<<"$pr_json")"
+
+          if [ "$title" != "Update toolchain sources" ] && [ "$title" != "Update Peeper toolchain lock" ]; then
+            echo "Not a toolchain update PR."
+            exit 0
+          fi
+          case "$head_ref" in
+            automation/*) ;;
+            *)
+              echo "Toolchain PR is not eligible for automatic merging."
+              exit 0
+              ;;
+          esac
+          if [ "$draft" = "true" ] || [ "$label" != "true" ]; then
+            echo "Toolchain PR is not eligible for automatic merging."
+            exit 0
+          fi
+
+          approved="$(gh api "repos/$REPOSITORY/pulls/$pr_number/reviews?per_page=100" --jq '
+            [ .[] | select(.user.type != "Bot") ]
+            | sort_by(.user.login)
+            | group_by(.user.login)
+            | map(max_by(.submitted_at))
+            | any(.state == "APPROVED")
+          ')"
+          if [ "$approved" != "true" ]; then
+            echo "No current human approval."
+            exit 0
+          fi
+
+          head_sha="$(jq -r '.head.sha' <<<"$pr_json")"
+          checks_ok="$(gh api "repos/$REPOSITORY/commits/$head_sha/check-runs?per_page=100" --jq '
+            if .total_count == 0 then false
+            else ([.check_runs[].conclusion] | all(. == "success" or . == "neutral" or . == "skipped"))
+            end
+          ')"
+          if [ "$checks_ok" != "true" ]; then
+            echo "One or more checks have not passed."
+            exit 0
+          fi
+
+          mergeable_state="$(jq -r '.mergeable_state' <<<"$pr_json")"
+          if [ "$mergeable_state" != "clean" ]; then
+            echo "GitHub does not report this PR as clean: $mergeable_state"
+            exit 0
+          fi
+
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+      - name: Mint peeper-bot token
+        id: mint-token
+        if: steps.gate.outputs.ready == 'true'
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.PEEPER_BOT_APP_ID }}
+          private-key: ${{ secrets.PEEPER_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: compiler
+      - name: Merge pull request as peeper-bot
+        if: steps.gate.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ steps.mint-token.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.gate.outputs.number }}
+        run: |
+          gh api --method PUT "repos/$REPOSITORY/pulls/$PR_NUMBER/merge" \
+            -f merge_method=merge \
+            -f commit_title="Merge toolchain update" \
+            --jq '.merged, .sha, .message'

@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: "23 3 * * 1"
   workflow_dispatch:
+    inputs:
+      force:
+        description: Open the update PR even when upstream sources are unchanged, to validate the bot push path
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: toolchain-source-update
@@ -24,6 +30,7 @@ jobs:
           persist-credentials: false
       - id: activity
         name: Check recent compiler activity
+        if: inputs.force != true
         env:
           EVENT_NAME: ${{ github.event_name }}
         run: |
@@ -39,22 +46,25 @@ jobs:
           echo "compiler_active=$active" >> "$GITHUB_STEP_SUMMARY"
       - id: existing
         name: Check existing source update pull request
-        if: steps.activity.outputs.active == 'true'
+        if: inputs.force != true && steps.activity.outputs.active == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           exists="$(gh pr list --state open --search 'Update toolchain sources in:title' --json number --jq 'length > 0')"
           echo "exists=$exists" >> "$GITHUB_OUTPUT"
       - name: Resolve stable upstream metadata
-        if: steps.activity.outputs.active == 'true' && steps.existing.outputs.exists != 'true'
+        if: inputs.force == true || (steps.activity.outputs.active == 'true' && steps.existing.outputs.exists != 'true')
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash scripts/update-toolchain-sources.sh toolchains/toolchain-sources.lock.json candidate-sources.lock.json
       - id: changed
         name: Check candidate change
-        if: steps.activity.outputs.active == 'true' && steps.existing.outputs.exists != 'true'
+        if: inputs.force == true || (steps.activity.outputs.active == 'true' && steps.existing.outputs.exists != 'true')
         run: |
           changed=false
+          if [ "${{ inputs.force }}" = "true" ]; then
+            changed=true
+          fi
           # Semantic compare: formatting-only differences must not open a PR.
           if ! jq -S . toolchains/toolchain-sources.lock.json | cmp -s - <(jq -S . candidate-sources.lock.json); then
             changed=true
@@ -83,13 +93,16 @@ jobs:
             echo "Merging builds affected toolchains; failed builds leave the finished lock unchanged."
             echo "Run [$GITHUB_RUN_ID]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."
           } > pr-body.md
+          if [ "${{ inputs.force }}" = "true" ]; then
+            echo "Forced validation run: upstream sources are unchanged; this PR validates the bot push path." >> pr-body.md
+          fi
           branch="automation/toolchain-sources-${GITHUB_RUN_ID}"
           mv candidate-sources.lock.json toolchains/toolchain-sources.lock.json
           git config user.name "peeper-bot[bot]"
           git config user.email "5118601+peeper-bot[bot]@users.noreply.github.com"
           git switch -c "$branch"
           git add toolchains/toolchain-sources.lock.json
-          git commit -m "Update toolchain sources"
+          git commit --allow-empty -m "Update toolchain sources"
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git push origin "$branch"
           gh pr create \
