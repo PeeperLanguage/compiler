@@ -124,7 +124,7 @@ func (r *Index) Methods(receiver typeinfo.Type) []*Symbol {
 	if !ok {
 		return nil
 	}
-	return r.methodsByReceiver[key]
+	return slices.Clone(r.methodsByReceiver[key])
 }
 
 func (r *Index) ForEachMethod(fn func(receiverIdentity string, method *Symbol)) {
@@ -160,7 +160,7 @@ func (r *Index) OperationFunctions() []*Symbol {
 	if r == nil {
 		return nil
 	}
-	return r.operationFunctions
+	return slices.Clone(r.operationFunctions)
 }
 
 func (r *Index) MarkUsed(sym *Symbol) {
