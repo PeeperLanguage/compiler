@@ -1,7 +1,7 @@
 package ast
 
 import (
-	"compiler/internal/source"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -50,17 +50,22 @@ func TestInspectPreservesExitAndPruningSemantics(t *testing.T) {
 	}
 }
 
-func TestIndexIncludesNestedNodes(t *testing.T) {
-	name := &Ident{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(2)}, Name: "main"}
-	result := &NumberLit{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(5)}, Value: "0"}
-	ret := &ReturnStmt{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(4)}, Value: result}
-	body := &BlockStmt{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(3)}, Stmts: []Stmt{ret}}
-	fn := &FnDecl{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(1)}, Name: name, Body: body}
+func TestInspectIncludesNestedNodes(t *testing.T) {
+	name := &Ident{Name: "main"}
+	result := &NumberLit{Value: "0"}
+	ret := &ReturnStmt{Value: result}
+	body := &BlockStmt{Stmts: []Stmt{ret}}
+	fn := &FnDecl{Name: name, Body: body}
 
-	nodes := Index(&Module{Stmts: []Stmt{fn}})
-	for id, want := range map[source.NodeID]Node{source.ParsedNodeID(1): fn, source.ParsedNodeID(2): name, source.ParsedNodeID(3): body, source.ParsedNodeID(4): ret, source.ParsedNodeID(5): result} {
-		if nodes[id] != want {
-			t.Fatalf("node %v = %#v, want %#v", id, nodes[id], want)
+	var nodes []Node
+	Inspect(fn, func(node Node) bool {
+		if node != nil {
+			nodes = append(nodes, node)
 		}
+		return true
+	})
+	want := []Node{fn, name, body, ret, result}
+	if !slices.Equal(nodes, want) {
+		t.Fatalf("inspect nodes = %v, want %v", nodes, want)
 	}
 }

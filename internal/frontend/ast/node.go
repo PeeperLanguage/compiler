@@ -76,6 +76,10 @@ type Expr interface {
 type TypeExpr interface {
 	Node
 	typeNode()
+	// copyTypeExpr clones this type and all nested type nodes while preserving
+	// generated-node provenance. The sealed method keeps new type syntax from
+	// reaching default-argument cloning without implementing clone semantics.
+	copyTypeExpr(func(source.NodeID, bool) source.NodeID, bool) TypeExpr
 	TypeText() string
 }
 

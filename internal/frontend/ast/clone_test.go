@@ -1,6 +1,7 @@
 package ast
 
 import (
+	"reflect"
 	"slices"
 	"testing"
 
@@ -91,6 +92,77 @@ func TestSubstituteExprSeparatesDefaultAndArgumentProvenance(t *testing.T) {
 		if original != source.ParsedNodeID(7) {
 			t.Fatalf("argument provenance contains default ID %v", original)
 		}
+	}
+}
+
+func TestSubstituteExprClonesEveryTypeExpression(t *testing.T) {
+	tests := []struct {
+		name string
+		typ  TypeExpr
+	}{
+		{"named", &NamedType{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(1)}, Name: "i32"}},
+		{"applied", &AppliedType{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(1)}, Name: &Ident{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(2)}, Name: "Box"}, TypeArgs: []TypeExpr{&NamedType{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(3)}, Name: "i32"}}}},
+		{"owned-pointer", &OwnedPtrType{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(1)}, Target: &NamedType{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(2)}, Name: "Item"}}},
+		{"raw-pointer", &RawPtrType{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(1)}}},
+		{"reference", &RefType{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(1)}, IsMutable: true, Target: &NamedType{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(2)}, Name: "Item"}}},
+		{"optional", &OptionalType{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(1)}, Inner: &NamedType{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(2)}, Name: "Item"}}},
+		{"array", &ArrayType{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(1)}, Len: &NumberLit{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(2)}, Value: "4"}, Elem: &NamedType{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(3)}, Name: "Item"}}},
+		{"function", &FuncType{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(1)}, Params: []Param{{Name: &Ident{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(2)}, Name: "value"}, Type: &NamedType{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(3)}, Name: "Item"}}}, Return: &NamedType{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(4)}, Name: "Result"}}},
+		{"struct", &StructType{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(1)}, Fields: []TypeField{{Name: &Ident{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(2)}, Name: "value"}, Type: &NamedType{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(3)}, Name: "Item"}}}}},
+		{"interface", &InterfaceType{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(1)}, Methods: []TypeMethod{{Name: &Ident{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(2)}, Name: "read"}, Params: []Param{{Type: &NamedType{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(3)}, Name: "Item"}}}, ReturnType: &NamedType{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(4)}, Name: "Result"}}}}},
+		{"enum", &EnumType{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(1)}, Variants: []EnumVariant{{Name: &Ident{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(2)}, Name: "some"}, Payload: &NamedType{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(3)}, Name: "Item"}}}}},
+		{"scope-resolution", &ScopeResolution{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(1)}, Segments: []PathSegment{{Name: &Ident{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(2)}, Name: "pkg"}}, {Name: &Ident{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(3)}, Name: "Item"}}}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			expr := &AsExpr{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(100)}, Expr: &Ident{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(101)}, Name: "value"}, TypeExpr: test.typ}
+			originalNodes := make(map[Node]source.NodeID)
+			Inspect(test.typ, func(node Node) bool {
+				if node != nil {
+					originalNodes[node] = node.ID()
+				}
+				return true
+			})
+			cloned, _, _ := SubstituteExpr(testGeneratedOwner(), 1, expr, nil)
+			out, ok := cloned.(*AsExpr)
+			if !ok || out == nil {
+				t.Fatalf("clone = %T, want non-nil *AsExpr", cloned)
+			}
+			if reflect.TypeOf(out.TypeExpr) != reflect.TypeOf(test.typ) {
+				t.Fatalf("type clone = %T, want %T", out.TypeExpr, test.typ)
+			}
+			if out.TypeExpr == test.typ {
+				t.Fatal("type clone reused original node")
+			}
+			if TypeText(out.TypeExpr) != TypeText(test.typ) {
+				t.Fatalf("type text = %q, want %q", TypeText(out.TypeExpr), TypeText(test.typ))
+			}
+			seen := make(map[source.NodeID]struct{})
+			Inspect(out.TypeExpr, func(node Node) bool {
+				if node == nil {
+					return true
+				}
+				if _, shared := originalNodes[node]; shared {
+					t.Fatalf("clone shares nested %T with original", node)
+				}
+				if !node.ID().IsGenerated() {
+					t.Fatalf("%T retained source ID %v", node, node.ID())
+				}
+				if _, exists := seen[node.ID()]; exists {
+					t.Fatalf("duplicate generated ID %v", node.ID())
+				}
+				seen[node.ID()] = struct{}{}
+				return true
+			})
+			if len(seen) != len(originalNodes) {
+				t.Fatalf("clone has %d nodes, want %d", len(seen), len(originalNodes))
+			}
+			for node, id := range originalNodes {
+				if node.ID() != id {
+					t.Fatalf("cloning mutated original %T identity", node)
+				}
+			}
+		})
 	}
 }
 

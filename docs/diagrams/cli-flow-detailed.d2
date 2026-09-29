@@ -16,7 +16,7 @@ compile: {
   newContext: "compiler.NewContext"
   parse: "compiler.ParseFileWithOverlay"
   pipeline: "pipeline.Run"
-  phases: "AST -> semantics -> HIR -> CFG -> ownership -> MIR -> LLVM [conceptual]"
+  phases: "AST -> THIR -> CFG -> Analysis -> MIR -> LLVM [conceptual]"
 
   compileEntry -> newContext -> parse -> pipeline -> phases
 }

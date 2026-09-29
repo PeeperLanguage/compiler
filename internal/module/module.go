@@ -1,6 +1,8 @@
 package module
 
 import (
+	"slices"
+
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/mir"
@@ -104,6 +106,7 @@ func (m *Module) TypeDeclarationIdentities() []string {
 	for identity := range m.typeDeclarations {
 		identities = append(identities, identity)
 	}
+	slices.Sort(identities)
 	return identities
 }
 

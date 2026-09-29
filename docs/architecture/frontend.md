@@ -365,7 +365,7 @@ opening keyword/operator and end after the last consumed token. Partial nodes
 may end at the last successfully parsed token. Synthetic fallback positions are
 used only to keep diagnostics and recovery nodes located.
 
-### IDs, traversal, and index: `ast/inspect.go`
+### IDs and traversal: `ast/inspect.go`
 
 `Parser.nextID` increments a parser-local ordinal; `reg` wraps it in a provisional
 parsed-domain `source.NodeID` and assigns it to each new non-nil node. IDs are
@@ -382,9 +382,10 @@ recurses through that node's `forEachChild` children when the visitor returns
 true, then calls the visitor with nil after the children. Each AST type owns its
 immediate child enumeration once; generic consumers should use `Inspect`.
 
-`ast.Index` walks every module statement with `Inspect` and returns a
-`map[source.NodeID]Node`. It indexes source nodes by their IDs, including recovery nodes
-that implement `Node`; it does not index module-level fields outside statements.
+LSP's `walkModuleAST` calls `ast.Inspect` on module imports and then statements.
+It maintains a parent stack using traversal exit callbacks and supports subtree
+pruning for cursor lookup, completion, and navigation. A flat node-ID index does
+not supply those traversal semantics; no separate AST indexing API is retained.
 
 ### Clone and substitution: `ast/clone.go`
 

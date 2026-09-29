@@ -49,82 +49,109 @@ func cloneIdent(ident *Ident, newID func(source.NodeID, bool) source.NodeID, fro
 }
 
 // cloneTypeExpr keeps expression annotations inside the same unique tree as
-// their owning expression. Type nodes have no copy interface because general
-// type syntax is not otherwise cloned.
+// their owning expression. Type-specific cloning is sealed by TypeExpr.
 func cloneTypeExpr(typ TypeExpr, newID func(source.NodeID, bool) source.NodeID, fromArgument bool) TypeExpr {
 	if typ == nil {
 		return nil
 	}
-	id := NodeIDHolder{NodeID: newID(typ.ID(), fromArgument)}
-	switch typ := typ.(type) {
-	case *NamedType:
-		return &NamedType{NodeIDHolder: id, Name: typ.Name, Location: typ.Location}
-	case *AppliedType:
-		args := make([]TypeExpr, len(typ.TypeArgs))
-		for index, arg := range typ.TypeArgs {
-			args[index] = cloneTypeExpr(arg, newID, fromArgument)
-		}
-		return &AppliedType{NodeIDHolder: id, Name: cloneIdent(typ.Name, newID, fromArgument), TypeArgs: args, Location: typ.Location}
-	case *OwnedPtrType:
-		return &OwnedPtrType{NodeIDHolder: id, Target: cloneTypeExpr(typ.Target, newID, fromArgument), Location: typ.Location}
-	case *RawPtrType:
-		return &RawPtrType{NodeIDHolder: id, Location: typ.Location}
-	case *RefType:
-		return &RefType{NodeIDHolder: id, IsMutable: typ.IsMutable, Target: cloneTypeExpr(typ.Target, newID, fromArgument), Location: typ.Location}
-	case *OptionalType:
-		return &OptionalType{NodeIDHolder: id, Inner: cloneTypeExpr(typ.Inner, newID, fromArgument), Location: typ.Location}
-	case *ArrayType:
-		var length *NumberLit
-		if typ.Len != nil {
-			length = typ.Len.copyExpr(nil, newID, fromArgument).(*NumberLit)
-		}
-		return &ArrayType{NodeIDHolder: id, Len: length, Shape: typ.Shape, Elem: cloneTypeExpr(typ.Elem, newID, fromArgument), Location: typ.Location}
-	case *FuncType:
-		params := make([]Param, len(typ.Params))
-		for index, param := range typ.Params {
-			params[index] = cloneParam(param, newID, fromArgument)
-		}
-		return &FuncType{NodeIDHolder: id, Params: params, Return: cloneTypeExpr(typ.Return, newID, fromArgument), ReturnOrigins: cloneReturnOrigins(typ.ReturnOrigins, newID, fromArgument), Location: typ.Location}
-	case *StructType:
-		fields := make([]TypeField, len(typ.Fields))
-		for index, field := range typ.Fields {
-			fields[index] = TypeField{Name: cloneIdent(field.Name, newID, fromArgument), Type: cloneTypeExpr(field.Type, newID, fromArgument), Location: field.Location}
-		}
-		return &StructType{NodeIDHolder: id, Fields: fields, Location: typ.Location}
-	case *InterfaceType:
-		methods := make([]TypeMethod, len(typ.Methods))
-		for index, method := range typ.Methods {
-			cloned := TypeMethod{Name: cloneIdent(method.Name, newID, fromArgument), ReturnType: cloneTypeExpr(method.ReturnType, newID, fromArgument), ReturnOrigins: cloneReturnOrigins(method.ReturnOrigins, newID, fromArgument), Location: method.Location}
-			if method.Receiver != nil {
-				receiver := cloneParam(*method.Receiver, newID, fromArgument)
-				cloned.Receiver = &receiver
-			}
-			cloned.TypeParams = make([]TypeParam, len(method.TypeParams))
-			for typeIndex, param := range method.TypeParams {
-				cloned.TypeParams[typeIndex] = TypeParam{Name: cloneIdent(param.Name, newID, fromArgument), Location: param.Location}
-			}
-			cloned.Params = make([]Param, len(method.Params))
-			for paramIndex, param := range method.Params {
-				cloned.Params[paramIndex] = cloneParam(param, newID, fromArgument)
-			}
-			methods[index] = cloned
-		}
-		return &InterfaceType{NodeIDHolder: id, Methods: methods, Location: typ.Location}
-	case *EnumType:
-		variants := make([]EnumVariant, len(typ.Variants))
-		for index, variant := range typ.Variants {
-			variants[index] = EnumVariant{
-				Name:     cloneIdent(variant.Name, newID, fromArgument),
-				Payload:  cloneTypeExpr(variant.Payload, newID, fromArgument),
-				Location: variant.Location,
-			}
-		}
-		return &EnumType{NodeIDHolder: id, Variants: variants, Location: typ.Location}
-	case *ScopeResolution:
-		return &ScopeResolution{NodeIDHolder: id, Segments: clonePathSegments(typ.Segments, newID, fromArgument), Location: typ.Location}
-	default:
-		panic("unhandled type expression in call-default clone")
+	return typ.copyTypeExpr(newID, fromArgument)
+}
+
+func (t *NamedType) copyTypeExpr(newID func(source.NodeID, bool) source.NodeID, fromArgument bool) TypeExpr {
+	id := NodeIDHolder{NodeID: newID(t.ID(), fromArgument)}
+	return &NamedType{NodeIDHolder: id, Name: t.Name, Location: t.Location}
+}
+
+func (t *AppliedType) copyTypeExpr(newID func(source.NodeID, bool) source.NodeID, fromArgument bool) TypeExpr {
+	id := NodeIDHolder{NodeID: newID(t.ID(), fromArgument)}
+	args := make([]TypeExpr, len(t.TypeArgs))
+	for index, arg := range t.TypeArgs {
+		args[index] = cloneTypeExpr(arg, newID, fromArgument)
 	}
+	return &AppliedType{NodeIDHolder: id, Name: cloneIdent(t.Name, newID, fromArgument), TypeArgs: args, Location: t.Location}
+}
+
+func (t *OwnedPtrType) copyTypeExpr(newID func(source.NodeID, bool) source.NodeID, fromArgument bool) TypeExpr {
+	id := NodeIDHolder{NodeID: newID(t.ID(), fromArgument)}
+	return &OwnedPtrType{NodeIDHolder: id, Target: cloneTypeExpr(t.Target, newID, fromArgument), Location: t.Location}
+}
+
+func (t *RawPtrType) copyTypeExpr(newID func(source.NodeID, bool) source.NodeID, fromArgument bool) TypeExpr {
+	id := NodeIDHolder{NodeID: newID(t.ID(), fromArgument)}
+	return &RawPtrType{NodeIDHolder: id, Location: t.Location}
+}
+
+func (t *RefType) copyTypeExpr(newID func(source.NodeID, bool) source.NodeID, fromArgument bool) TypeExpr {
+	id := NodeIDHolder{NodeID: newID(t.ID(), fromArgument)}
+	return &RefType{NodeIDHolder: id, IsMutable: t.IsMutable, Target: cloneTypeExpr(t.Target, newID, fromArgument), Location: t.Location}
+}
+
+func (t *OptionalType) copyTypeExpr(newID func(source.NodeID, bool) source.NodeID, fromArgument bool) TypeExpr {
+	id := NodeIDHolder{NodeID: newID(t.ID(), fromArgument)}
+	return &OptionalType{NodeIDHolder: id, Inner: cloneTypeExpr(t.Inner, newID, fromArgument), Location: t.Location}
+}
+
+func (t *ArrayType) copyTypeExpr(newID func(source.NodeID, bool) source.NodeID, fromArgument bool) TypeExpr {
+	id := NodeIDHolder{NodeID: newID(t.ID(), fromArgument)}
+	var length *NumberLit
+	if t.Len != nil {
+		length = t.Len.copyExpr(nil, newID, fromArgument).(*NumberLit)
+	}
+	return &ArrayType{NodeIDHolder: id, Len: length, Shape: t.Shape, Elem: cloneTypeExpr(t.Elem, newID, fromArgument), Location: t.Location}
+}
+
+func (t *FuncType) copyTypeExpr(newID func(source.NodeID, bool) source.NodeID, fromArgument bool) TypeExpr {
+	id := NodeIDHolder{NodeID: newID(t.ID(), fromArgument)}
+	params := make([]Param, len(t.Params))
+	for index, param := range t.Params {
+		params[index] = cloneParam(param, newID, fromArgument)
+	}
+	return &FuncType{NodeIDHolder: id, Params: params, Return: cloneTypeExpr(t.Return, newID, fromArgument), ReturnOrigins: cloneReturnOrigins(t.ReturnOrigins, newID, fromArgument), Location: t.Location}
+}
+
+func (t *StructType) copyTypeExpr(newID func(source.NodeID, bool) source.NodeID, fromArgument bool) TypeExpr {
+	id := NodeIDHolder{NodeID: newID(t.ID(), fromArgument)}
+	fields := make([]TypeField, len(t.Fields))
+	for index, field := range t.Fields {
+		fields[index] = TypeField{Name: cloneIdent(field.Name, newID, fromArgument), Type: cloneTypeExpr(field.Type, newID, fromArgument), Location: field.Location}
+	}
+	return &StructType{NodeIDHolder: id, Fields: fields, Location: t.Location}
+}
+
+func (t *InterfaceType) copyTypeExpr(newID func(source.NodeID, bool) source.NodeID, fromArgument bool) TypeExpr {
+	id := NodeIDHolder{NodeID: newID(t.ID(), fromArgument)}
+	methods := make([]TypeMethod, len(t.Methods))
+	for index, method := range t.Methods {
+		cloned := TypeMethod{Name: cloneIdent(method.Name, newID, fromArgument), ReturnType: cloneTypeExpr(method.ReturnType, newID, fromArgument), ReturnOrigins: cloneReturnOrigins(method.ReturnOrigins, newID, fromArgument), Location: method.Location}
+		if method.Receiver != nil {
+			receiver := cloneParam(*method.Receiver, newID, fromArgument)
+			cloned.Receiver = &receiver
+		}
+		cloned.TypeParams = make([]TypeParam, len(method.TypeParams))
+		for typeIndex, param := range method.TypeParams {
+			cloned.TypeParams[typeIndex] = TypeParam{Name: cloneIdent(param.Name, newID, fromArgument), Location: param.Location}
+		}
+		cloned.Params = make([]Param, len(method.Params))
+		for paramIndex, param := range method.Params {
+			cloned.Params[paramIndex] = cloneParam(param, newID, fromArgument)
+		}
+		methods[index] = cloned
+	}
+	return &InterfaceType{NodeIDHolder: id, Methods: methods, Location: t.Location}
+}
+
+func (t *EnumType) copyTypeExpr(newID func(source.NodeID, bool) source.NodeID, fromArgument bool) TypeExpr {
+	id := NodeIDHolder{NodeID: newID(t.ID(), fromArgument)}
+	variants := make([]EnumVariant, len(t.Variants))
+	for index, variant := range t.Variants {
+		variants[index] = EnumVariant{Name: cloneIdent(variant.Name, newID, fromArgument), Payload: cloneTypeExpr(variant.Payload, newID, fromArgument), Location: variant.Location}
+	}
+	return &EnumType{NodeIDHolder: id, Variants: variants, Location: t.Location}
+}
+
+func (t *ScopeResolution) copyTypeExpr(newID func(source.NodeID, bool) source.NodeID, fromArgument bool) TypeExpr {
+	id := NodeIDHolder{NodeID: newID(t.ID(), fromArgument)}
+	return &ScopeResolution{NodeIDHolder: id, Segments: clonePathSegments(t.Segments, newID, fromArgument), Location: t.Location}
 }
 
 func clonePathSegments(segments []PathSegment, newID func(source.NodeID, bool) source.NodeID, fromArgument bool) []PathSegment {
