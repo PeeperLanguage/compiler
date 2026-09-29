@@ -421,8 +421,10 @@ when present.
 A successful executable build has these jobs:
 
 1. Compile source with `driver.CompileFile`; require no active errors and valid entry.
-2. For each module, write `LLVMIR` to a temporary `.ll` input.
-3. Run Clang with `ObjectArgs` to produce a temporary `.o` output.
+2. For each module, derive a content-addressed object-cache key from its LLVM IR and
+   complete managed-toolchain object contract.
+3. Reuse the cached object when present; otherwise write a temporary `.ll` input, run
+   Clang with `ObjectArgs`, and atomically publish the resulting `.o` under the key.
 4. Write `objects.rsp`, containing object paths and optional runtime archive.
 5. Run the linker with `LinkArgs` and response-file input to a staged executable.
 6. Atomically replace the requested output path via the build command's replacement
@@ -455,11 +457,11 @@ artifacts use content-addressed keys derived from source content, dependency/API
 fingerprints, compiler build identity, target/profile configuration, and artifact
 schema. The module path is metadata, not storage identity.
 
-Artifact metadata is reserved beside the artifact for cache inspection and future
-artifact kinds; the first object slice validates identity through its content-addressed
-key and profile contract. Temporary files are created under the same target directory
-and atomically renamed into `artifacts/`, so interrupted builds cannot publish partial
-entries. `bin/` contains final outputs; `tmp/` contains only
-staging files. The first cache slice reuses managed-toolchain object files keyed by
-LLVM IR and the complete object-compilation contract; unmanaged toolchains remain
-temporary-only until their compiler identity can be included safely.
+The first object slice validates identity through its content-addressed key and
+profile contract; sidecar metadata is not written yet. Temporary files are created
+under the same target directory and atomically renamed into `artifacts/`, so
+interrupted builds cannot publish partial entries. `bin/` contains final outputs;
+`tmp/` contains only staging files. The first cache slice reuses managed-toolchain
+object files keyed by LLVM IR and the complete object-compilation contract;
+unmanaged toolchains remain temporary-only until their compiler identity can be
+included safely.
