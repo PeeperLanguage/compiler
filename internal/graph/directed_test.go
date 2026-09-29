@@ -42,14 +42,14 @@ func BenchmarkDirectedConstruction(b *testing.B) {
 	} {
 		b.Run(fmt.Sprintf("%s/%d", shape.name, shape.degree), func(b *testing.B) {
 			edges := make([][2]int, 0, shape.sources*shape.degree)
-			for from := 0; from < shape.sources; from++ {
+			for from := range shape.sources {
 				for offset := 1; offset <= shape.degree; offset++ {
 					edges = append(edges, [2]int{from, from + offset})
 				}
 			}
 			b.ReportAllocs()
 			b.ResetTimer()
-			for n := 0; n < b.N; n++ {
+			for range b.N {
 				g := NewDirected(func(edge [2]int) (int, int) { return edge[0], edge[1] })
 				for _, edge := range edges {
 					g.AddEdge(edge)

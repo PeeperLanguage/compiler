@@ -32,8 +32,7 @@ release manifest, verifies it against `SHA256SUMS`, reads the compiler and
 toolchain pack URLs and SHA-256 digests for the detected host, downloads both
 packs over HTTPS only, verifies every digest, extracts into a staging
 directory on the destination filesystem, then activates the complete
-installation atomically. The manifest is also published with an Ed25519
-signature that auditors can verify out of band.
+installation atomically.
 
 Installer intentionally leaves `PATH` changes to user. Default install root is
 `~/.peeper` on Unix-like systems and `%LOCALAPPDATA%\Peeper` on Windows.
@@ -50,20 +49,17 @@ configuration checks. Documentation-only changes skip native hosts.
 
 Tag workflow performs these additional gates:
 
-1. Validate tag, version, public key, finished toolchain lock, and focused
+1. Validate tag, version, finished toolchain lock, and focused
    distribution/toolchain tests in cheap Linux preflight.
 2. Fan out to six host jobs in parallel. Each host job builds the compiler,
    fetches and verifies its published immutable toolchain once, builds the
    native runtime, packages one compiler pack, then extracts the pack and
    toolchain into a fresh root and runs `peeper doctor` and source fixtures.
    Host jobs do not build LLVM, musl, or llvm-mingw.
-3. Require all six host jobs, then assemble the unsigned manifest and copy
-   host packs and bootstrap scripts into release assets.
-4. One protected finalization job signs the manifest, generates `SHA256SUMS`,
-   and creates or updates the draft release.
-
-Build and assembly jobs receive no signing secrets. Only protected `release`
-finalization job receives Ed25519 private key.
+3. Require all six host jobs, then assemble the manifest and copy host packs
+   and bootstrap scripts into release assets.
+4. One protected finalization job generates `SHA256SUMS` and creates or updates
+   the draft release.
 
 ## Toolchain production and bootstrap
 
@@ -101,19 +97,6 @@ component metadata. Release preflight rejects incomplete or invalid selections
 before any expensive target job starts. Failed toolchain candidates cannot
 replace this lock, so releases continue consuming the last validated toolchain.
 
-## Repository configuration
-
-Set repository variable:
-
-- `PEEPER_RELEASE_PUBLIC_KEY`: 32-byte Ed25519 public key as lowercase hex.
-
-Configure protected `release` environment with:
-
-- `PEEPER_RELEASE_PRIVATE_KEY`: 64-byte Ed25519 private key as lowercase hex.
-
-Public/private key pair must match. Restrict environment approval and secret
-access to release maintainers. Keep private key offline outside GitHub secret
-copy.
 
 ## Creating release candidate
 
@@ -121,13 +104,13 @@ copy.
 2. Run full local validation and merge clean review.
 3. Create and push signed tag `v<CompilerVersion>`.
 4. Approve protected release environment.
-5. Inspect draft assets: six host packs, two bootstrap scripts, signed
-   manifest, manifest signature, and `SHA256SUMS`. Toolchains
-   remain referenced immutable component assets, not duplicate release assets.
+5. Inspect draft assets: six host packs, two bootstrap scripts, the release
+   manifest, and `SHA256SUMS`. Toolchains remain referenced immutable component
+   assets, not duplicate release assets.
 6. Verify checksums on downloaded assets.
 7. Install on clean host for each supported pair; run `peeper doctor`, then
    compile and run source project with network unavailable.
 8. Publish draft only after all checks pass.
 
-Failed platform, signing, manifest, or checksum gate prevents draft creation.
+Failed platform, manifest, or checksum gate prevents draft creation.
 Existing published release is never overwritten by workflow rerun.

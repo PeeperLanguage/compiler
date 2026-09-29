@@ -45,7 +45,7 @@ func TestHoverAndCompletionDoNotConsumeUsageEvidence(t *testing.T) {
 	}
 	assertUnused("hover")
 
-	for run := 0; run < 2; run++ {
+	for run := range 2 {
 		compiled, _ := state.recompile(filePath)
 		found := false
 		for _, item := range compiled.Diagnostics.Diagnostics() {

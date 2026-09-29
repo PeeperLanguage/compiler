@@ -149,9 +149,7 @@ metadata. Its main files are `pack.go`, `extract.go`, `release.go`, and
   HTTPS artifacts, validates supported hosts, sorts components, and requires one
   compiler plus one toolchain for each supported host:
   darwin/linux/windows × amd64/arm64.
-- `SignReleaseManifest` signs exact bytes with Ed25519 and base64. `VerifyReleaseManifest`
-  verifies before strict JSON decoding, validates all install sets, then selects
-  the host-specific ordered compiler/toolchain pair.
+
 - `ToolchainLock` and `ReadToolchainLock` validate schema `1`, kind
   `peeper-toolchains`, unique component IDs, and exactly one valid toolchain per
   supported host. `Component` selects one host record.
@@ -170,8 +168,7 @@ metadata. Its main files are `pack.go`, `extract.go`, `release.go`, and
   `ReleaseComponent` as JSON.
 - `cmd/release-index`: strictly reads pack-result JSON files and a toolchain
   lock, calls `distribution.BuildReleaseManifest`, and emits release JSON.
-- `cmd/sign-release`: reads `PEEPER_RELEASE_PRIVATE_KEY` as hex, signs the exact
-  release-manifest bytes, and prints the base64 signature.
+
 
 ## 4. Registry, remotes, manifests, and format support
 

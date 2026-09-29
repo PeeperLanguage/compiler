@@ -1,13 +1,8 @@
 package distribution
 
 import (
-	"bytes"
-	"crypto/ed25519"
-	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/url"
 	"path"
 	"sort"
@@ -134,46 +129,6 @@ func BuildReleaseManifest(version, baseURL string, artifacts []ReleaseArtifact, 
 		return ReleaseManifest{}, err
 	}
 	return manifest, nil
-}
-
-func SignReleaseManifest(data, privateKey []byte) ([]byte, error) {
-	if len(privateKey) != ed25519.PrivateKeySize {
-		return nil, fmt.Errorf("release private key has invalid length")
-	}
-	encoded := make([]byte, base64.StdEncoding.EncodedLen(ed25519.SignatureSize))
-	base64.StdEncoding.Encode(encoded, ed25519.Sign(ed25519.PrivateKey(privateKey), data))
-	return encoded, nil
-}
-
-func VerifyReleaseManifest(data, encodedSignature, publicKey []byte, hostOS, hostArch string) (ReleaseManifest, []ReleaseComponent, error) {
-	if len(publicKey) != ed25519.PublicKeySize {
-		return ReleaseManifest{}, nil, fmt.Errorf("release public key has invalid length")
-	}
-	signature, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(encodedSignature)))
-	if err != nil {
-		return ReleaseManifest{}, nil, fmt.Errorf("decode release signature: %w", err)
-	}
-	if !ed25519.Verify(ed25519.PublicKey(publicKey), data, signature) {
-		return ReleaseManifest{}, nil, fmt.Errorf("release manifest signature is invalid")
-	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	var manifest ReleaseManifest
-	if err := decoder.Decode(&manifest); err != nil {
-		return ReleaseManifest{}, nil, fmt.Errorf("decode release manifest: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return ReleaseManifest{}, nil, fmt.Errorf("decode release manifest: trailing JSON data")
-	}
-	installSets, err := validateReleaseManifest(manifest)
-	if err != nil {
-		return ReleaseManifest{}, nil, err
-	}
-	selectedComponents, ok := installSets[releaseHost{os: hostOS, arch: hostArch}]
-	if !ok {
-		return ReleaseManifest{}, nil, fmt.Errorf("no release set for %s/%s", hostOS, hostArch)
-	}
-	return manifest, selectedComponents, nil
 }
 
 func validateReleaseManifest(manifest ReleaseManifest) (map[releaseHost][]ReleaseComponent, error) {

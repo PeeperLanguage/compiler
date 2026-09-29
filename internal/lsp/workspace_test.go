@@ -982,6 +982,60 @@ func TestWorkspaceIndexRebuildParsesOnlyChangedFiles(t *testing.T) {
 	}
 }
 
+func TestWorkspaceIndexRebuildDetectsDiskChange(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	filePath := filepath.Join(root, peeper.SourceDirName, "module"+peeper.SourceExt)
+	writeWorkspaceFile(t, filePath, "fn helper() { let a = 1; }\n")
+
+	index := newWorkspaceIndex(root)
+	if _, err := index.rebuild(nil); err != nil {
+		t.Fatalf("initial rebuild: %v", err)
+	}
+	if got := index.parsedFiles; got != 1 {
+		t.Fatalf("initial parsed files = %v, want 1", got)
+	}
+
+	writeWorkspaceFile(t, filePath, "fn helper() { let a = 2; }\n")
+	if _, err := index.rebuild(nil); err != nil {
+		t.Fatalf("rebuild after disk change: %v", err)
+	}
+	if got := index.parsedFiles; got != 1 {
+		t.Fatalf("parsed files after disk change = %v, want 1", got)
+	}
+}
+
+func TestWorkspaceIndexRebuildDetectsFileMembershipChange(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	first := filepath.Join(root, peeper.SourceDirName, "first"+peeper.SourceExt)
+	second := filepath.Join(root, peeper.SourceDirName, "second"+peeper.SourceExt)
+	writeWorkspaceFile(t, first, "fn first() {}\n")
+
+	index := newWorkspaceIndex(root)
+	if _, err := index.rebuild(nil); err != nil {
+		t.Fatalf("initial rebuild: %v", err)
+	}
+
+	writeWorkspaceFile(t, second, "fn second() {}\n")
+	if _, err := index.rebuild(nil); err != nil {
+		t.Fatalf("rebuild after file creation: %v", err)
+	}
+	if len(index.modules) != 2 || index.parsedFiles != 1 {
+		t.Fatalf("after file creation: modules=%d parsed=%d, want 2 and 1", len(index.modules), index.parsedFiles)
+	}
+
+	if err := os.Remove(second); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := index.rebuild(nil); err != nil {
+		t.Fatalf("rebuild after file deletion: %v", err)
+	}
+	if len(index.modules) != 1 {
+		t.Fatalf("after file deletion: modules=%d, want 1", len(index.modules))
+	}
+}
+
 func TestWorkspaceIndexKeepsProjectImportContextsSeparate(t *testing.T) {
 	root := t.TempDir()
 	for _, projectName := range []string{"first", "second"} {

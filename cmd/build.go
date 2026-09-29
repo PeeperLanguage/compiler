@@ -1,6 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -85,6 +88,15 @@ func buildExecutable(ctx *project.CompilerContext, entry *module.Module, outputP
 		if ir == "" {
 			return fmt.Errorf("empty LLVM IR for module %s", module.ID.ImportPath)
 		}
+		cachePath := objectCachePath(ctx, profile, ir)
+		if cachePath != "" {
+			if _, err := os.Stat(cachePath); err == nil {
+				objectPaths = append(objectPaths, cachePath)
+				continue
+			} else if !os.IsNotExist(err) {
+				return fmt.Errorf("inspect cached object for %s: %w", module.ID.ImportPath, err)
+			}
+		}
 		llPath := filepath.Join(artifactDir, fmt.Sprintf("mod_%d.ll", i))
 		if err := os.WriteFile(llPath, []byte(ir), 0o644); err != nil {
 			return fmt.Errorf("write llvm ir: %w", err)
@@ -92,6 +104,15 @@ func buildExecutable(ctx *project.CompilerContext, entry *module.Module, outputP
 		objectPath := filepath.Join(artifactDir, fmt.Sprintf("mod_%d.o", i))
 		if err := runCompilerTool(profile.ClangPath, profile.ObjectArgs(llPath, objectPath, ctx.Config.IsDebugBuild), "compile LLVM module "+module.ID.ImportPath); err != nil {
 			return err
+		}
+		if cachePath != "" {
+			if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
+				return fmt.Errorf("create object cache directory: %w", err)
+			}
+			if err := os.Rename(objectPath, cachePath); err != nil {
+				return fmt.Errorf("publish cached object: %w", err)
+			}
+			objectPath = cachePath
 		}
 		objectPaths = append(objectPaths, objectPath)
 	}
@@ -121,6 +142,32 @@ func buildExecutable(ctx *project.CompilerContext, entry *module.Module, outputP
 		return err
 	}
 	return replacePath(stagedPath, outputPath)
+}
+
+func objectCachePath(ctx *project.CompilerContext, profile toolchain.Profile, ir string) string {
+	if ctx == nil || !profile.IsManaged || ctx.Config.RootDir == "" {
+		return ""
+	}
+	profileName := "release"
+	if ctx.Config.IsDebugBuild {
+		profileName = "debug"
+	}
+	contract, err := json.Marshal(struct {
+		Profile toolchain.Profile
+		Args    []string
+		LLVMIR  string
+	}{
+		Profile: profile,
+		Args:    profile.ObjectArgs("LLVM_INPUT", "OBJECT_OUTPUT", ctx.Config.IsDebugBuild),
+		LLVMIR:  ir,
+	})
+	if err != nil {
+		return ""
+	}
+	keyBytes := sha256.Sum256(contract)
+	key := hex.EncodeToString(keyBytes[:])
+	target := profile.TargetOS + "-" + profile.TargetArch
+	return filepath.Join(ctx.Config.RootDir, "build", profileName, target, "artifacts", key[:2], key+".o")
 }
 
 func runCompilerTool(path string, args []string, action string) error {

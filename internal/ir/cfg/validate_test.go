@@ -219,7 +219,7 @@ func TestValidateRejectsTopologyDefects(t *testing.T) {
 // different defects on different runs and make an internal error unreproducible.
 func TestValidateReportsDefectsDeterministically(t *testing.T) {
 	first := ""
-	for attempt := 0; attempt < 8; attempt++ {
+	for attempt := range 8 {
 		module := branchingModule(t)
 		fn := module.Functions[0]
 		fn.BlockEdges = graphcore.NewDirected(func(edge BlockEdge) (int, int) { return edge.From, edge.To })

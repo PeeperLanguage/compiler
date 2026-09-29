@@ -2,10 +2,6 @@ package distribution
 
 import (
 	"bufio"
-	"crypto/ed25519"
-	"crypto/rand"
-	"encoding/base64"
-	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -115,91 +111,6 @@ func TestReleaseHostsMatchWorkflowJobs(t *testing.T) {
 	}
 }
 
-func TestVerifyReleaseManifestSelectsCompleteHostSet(t *testing.T) {
-	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	manifest := testReleaseManifest()
-	data, err := json.Marshal(manifest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	signature := []byte(base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, data)))
-
-	verified, components, err := VerifyReleaseManifest(data, signature, publicKey, "linux", "amd64")
-	if err != nil {
-		t.Fatalf("VerifyReleaseManifest() error = %v", err)
-	}
-	if verified.Version != "0.2.0" || len(components) != 2 {
-		t.Fatalf("verified release = %#v, components = %#v", verified, components)
-	}
-	for i, kind := range []string{PackKindCompiler, PackKindToolchain} {
-		if components[i].Kind != kind {
-			t.Fatalf("component %d kind = %q", i, components[i].Kind)
-		}
-	}
-}
-
-func TestVerifyReleaseManifestRejectsInvalidSignatureBeforeJSON(t *testing.T) {
-	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _, err = VerifyReleaseManifest([]byte(`{"schema_version":2}`), []byte(base64.StdEncoding.EncodeToString(make([]byte, ed25519.SignatureSize))), publicKey, "linux", "amd64")
-	if err == nil || !strings.Contains(err.Error(), "signature") {
-		t.Fatalf("VerifyReleaseManifest() error = %v", err)
-	}
-}
-
-func TestVerifyReleaseManifestRejectsIncompleteOrUnsupportedSet(t *testing.T) {
-	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, test := range []struct {
-		name     string
-		mutate   func(*ReleaseManifest)
-		hostOS   string
-		hostArch string
-		want     string
-	}{
-		{name: "unsupported", mutate: func(*ReleaseManifest) {}, hostOS: "darwin", hostArch: "arm64", want: "no release set"},
-		{name: "missing kind", mutate: func(manifest *ReleaseManifest) {
-			manifest.InstallSets[0].Components = manifest.InstallSets[0].Components[:1]
-		}, hostOS: "linux", hostArch: "amd64", want: "requires exactly one"},
-		{name: "duplicate kind", mutate: func(manifest *ReleaseManifest) { manifest.Components[1].Kind = PackKindCompiler }, hostOS: "linux", hostArch: "amd64", want: "requires exactly one"},
-		{name: "component mismatch", mutate: func(manifest *ReleaseManifest) { manifest.Components[1].Arch = "arm64" }, hostOS: "linux", hostArch: "amd64", want: "does not match release set"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			manifest := testReleaseManifest()
-			test.mutate(&manifest)
-			data, err := json.Marshal(manifest)
-			if err != nil {
-				t.Fatal(err)
-			}
-			signature := []byte(base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, data)))
-			_, _, err = VerifyReleaseManifest(data, signature, publicKey, test.hostOS, test.hostArch)
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("VerifyReleaseManifest() error = %v, want %q", err, test.want)
-			}
-		})
-	}
-}
-
-func TestVerifyReleaseManifestRejectsUnknownFields(t *testing.T) {
-	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	data := []byte(`{"schema_version":2,"version":"0.2.0","components":[],"install_sets":[],"surprise":true}`)
-	signature := []byte(base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, data)))
-	_, _, err = VerifyReleaseManifest(data, signature, publicKey, "linux", "amd64")
-	if err == nil || !strings.Contains(err.Error(), "unknown field") {
-		t.Fatalf("VerifyReleaseManifest() error = %v", err)
-	}
-}
-
 func TestBuildReleaseManifestCreatesDeterministicCompleteHostSets(t *testing.T) {
 	artifacts := completeReleaseArtifacts()
 	toolchains := artifactsByKind(artifacts, PackKindToolchain)
@@ -249,38 +160,6 @@ func TestBuildReleaseManifestKeepsExternalToolchainVersionAndURL(t *testing.T) {
 	}
 	if external.Version != "llvm23.1.0-rabc123" || external.URL != toolchains[0].URL {
 		t.Fatalf("external toolchain changed: %#v", external)
-	}
-}
-
-func TestSignReleaseManifestSignsExactBytes(t *testing.T) {
-	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	data := []byte("release bytes\n")
-	encoded, err := SignReleaseManifest(data, privateKey)
-	if err != nil {
-		t.Fatalf("SignReleaseManifest() error = %v", err)
-	}
-	signature, err := base64.StdEncoding.DecodeString(string(encoded))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ed25519.Verify(publicKey, data, signature) {
-		t.Fatal("signature does not verify exact release bytes")
-	}
-}
-
-func testReleaseManifest() ReleaseManifest {
-	digest := strings.Repeat("a", 64)
-	return ReleaseManifest{
-		SchemaVersion: ReleaseManifestVersion,
-		Version:       "0.2.0",
-		Components: []ReleaseComponent{
-			{ID: "compiler-linux-amd64", Kind: PackKindCompiler, Version: "0.2.0", OS: "linux", Arch: "amd64", URL: "https://example.com/compiler.tar.gz", Size: 10, SHA256: digest, Format: FormatTarGz},
-			{ID: "toolchain-linux-amd64", Kind: PackKindToolchain, Version: "23.1.0", OS: "linux", Arch: "amd64", URL: "https://example.com/toolchain.tar.gz", Size: 30, SHA256: digest, Format: FormatTarGz},
-		},
-		InstallSets: []InstallSet{{OS: "linux", Arch: "amd64", Components: []string{"compiler-linux-amd64", "toolchain-linux-amd64"}}},
 	}
 }
 

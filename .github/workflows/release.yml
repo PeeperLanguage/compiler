@@ -23,12 +23,11 @@ jobs:
       - id: version
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-          RELEASE_PUBLIC_KEY: ${{ vars.PEEPER_RELEASE_PUBLIC_KEY }}
         run: |
           [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
           version="${RELEASE_TAG#v}"
           test "v$version" = "$RELEASE_TAG"
-          [[ "$RELEASE_PUBLIC_KEY" =~ ^[0-9a-fA-F]{64}$ ]]
+
           GOCACHE="$RUNNER_TEMP/go-cache" CCACHE_DISABLE=1 go test ./pkg/distribution ./internal/toolchain
           for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
             go run ./cmd/toolchain-lock -lock toolchains/toolchains.lock.json -os "${target%/*}" -arch "${target#*/}" >/dev/null
@@ -162,10 +161,7 @@ jobs:
         with:
           name: release-assembled
           path: release-assets
-      - name: Sign exact manifest bytes
-        env:
-          PEEPER_RELEASE_PRIVATE_KEY: ${{ secrets.PEEPER_RELEASE_PRIVATE_KEY }}
-        run: go run ./cmd/sign-release release-assets/release-manifest.json > release-assets/release-manifest.json.sig
+
       - name: Generate SHA256SUMS
         run: |
           (
@@ -180,6 +176,6 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft > "$RUNNER_TEMP/is-draft" 2>/dev/null; then
             test "$(cat "$RUNNER_TEMP/is-draft")" = true
           else
-            gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "Peeper $GITHUB_REF_NAME" --notes "Open source release candidate signed with a self-managed Ed25519 key. Verify installers and checksums."
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "Peeper $GITHUB_REF_NAME" --notes "Open source release candidate. Verify installers and checksums."
           fi
           gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber

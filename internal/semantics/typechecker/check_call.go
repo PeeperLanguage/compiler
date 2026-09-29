@@ -566,7 +566,7 @@ func (c *checker) expandCallDefaults(call *ast.CallExpr, args []ast.Expr, sym *s
 		}
 		slotExprs[slot] = arg
 	}
-	for i := 0; i < provided; i++ {
+	for i := range provided {
 		if params[i].Name == nil || slotExprs[i] == nil {
 			continue
 		}

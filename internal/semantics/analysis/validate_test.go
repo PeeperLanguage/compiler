@@ -194,7 +194,7 @@ func TestValidateRejectsNilPlan(t *testing.T) {
 func TestValidateReportsProblemsDeterministically(t *testing.T) {
 	graphs, fnID := buildGraph(t, validationGraphSource)
 	first := ""
-	for attempt := 0; attempt < 8; attempt++ {
+	for attempt := range 8 {
 		plan := emptyPlan()
 		exprs := make([]thir.Expr, 0, 40)
 		for ordinal := uint64(1); ordinal <= 40; ordinal++ {

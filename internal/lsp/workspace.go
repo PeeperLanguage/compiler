@@ -27,6 +27,9 @@ type workspaceModule struct {
 	projectName       string
 	rootDir           string
 	contentHash       string
+	diskSize          int64
+	diskModTime       int64
+	diskStampValid    bool
 	importFingerprint string
 	exportFingerprint string
 	// Source import paths survive unresolved imports, so membership changes can
@@ -48,11 +51,12 @@ type workspaceParse struct {
 }
 
 type workspaceIndex struct {
-	rootDir     string
-	modules     map[string]*workspaceModule
-	components  []workspaceComponent
-	imports     *graph.DependencyGraph
-	parsedFiles int
+	rootDir         string
+	modules         map[string]*workspaceModule
+	components      []workspaceComponent
+	imports         *graph.DependencyGraph
+	directoryStamps map[string]int64
+	parsedFiles     int
 }
 
 func newWorkspaceIndex(rootDir string) *workspaceIndex {
@@ -67,7 +71,7 @@ func (w *workspaceIndex) rebuild(cache map[string]string) (map[string]workspaceP
 		return nil, nil
 	}
 
-	files, err := workspaceFiles(w.rootDir, cache)
+	files, err := w.sourceFiles(cache)
 	if err != nil {
 		return nil, err
 	}
@@ -122,9 +126,12 @@ func (w *workspaceIndex) rebuild(cache map[string]string) (map[string]workspaceP
 			}, diagnostics.NewDiagnosticBag())
 			projectContexts[key] = ctx
 		}
-		importPath, err := ctx.ImportPathForFile(project.ModuleOriginLocal, "", filePath)
-		if err != nil {
-			importPath = ""
+		importPath := ""
+		previous := w.modules[filePath]
+		if previous != nil && previous.rootDir == rootDir && previous.projectName == projectName {
+			importPath = previous.importPath
+		} else if resolved, err := ctx.ImportPathForFile(project.ModuleOriginLocal, "", filePath); err == nil {
+			importPath = resolved
 		}
 		fileSet[filePath] = struct{}{}
 		contexts[filePath] = workspaceFileContext{
@@ -134,6 +141,7 @@ func (w *workspaceIndex) rebuild(cache map[string]string) (map[string]workspaceP
 		}
 	}
 	fileMembershipChanged := len(w.modules) != len(fileSet)
+	workspaceChanged := fileMembershipChanged
 	if !fileMembershipChanged {
 		for filePath := range w.modules {
 			if _, ok := fileSet[filePath]; !ok {
@@ -148,12 +156,6 @@ func (w *workspaceIndex) rebuild(cache map[string]string) (map[string]workspaceP
 		if !ok {
 			continue
 		}
-		content, err := workspaceContent(filePath, cache)
-		if err != nil {
-			continue
-		}
-		contentHash := fingerprint.Text(content)
-
 		module := w.modules[filePath]
 		if module == nil {
 			module = &workspaceModule{filePath: filePath}
@@ -163,8 +165,39 @@ func (w *workspaceIndex) rebuild(cache map[string]string) (map[string]workspaceP
 		contextChanged := module.rootDir != fileCtx.rootDir ||
 			module.projectName != fileCtx.projectName ||
 			module.importPath != fileCtx.importPath
-		parseChanged := contextChanged || module.contentHash != contentHash
+		content := ""
+		contentHash := module.contentHash
+		contentUnchanged := false
+		var diskInfo os.FileInfo
+		if _, cached := cache[filePath]; !cached {
+			if info, statErr := os.Stat(filePath); statErr == nil {
+				diskInfo = info
+				if !contextChanged && module.diskStampValid &&
+					module.diskSize == info.Size() &&
+					module.diskModTime == info.ModTime().UnixNano() {
+					contentUnchanged = true
+				}
+			}
+		}
+		if !contentUnchanged {
+			var err error
+			content, err = workspaceContent(filePath, cache)
+			if err != nil {
+				continue
+			}
+			contentHash = fingerprint.Text(content)
+		}
+
+		parseChanged := contextChanged || !contentUnchanged && module.contentHash != contentHash
+		if diskInfo != nil {
+			module.diskSize = diskInfo.Size()
+			module.diskModTime = diskInfo.ModTime().UnixNano()
+			module.diskStampValid = true
+		} else {
+			module.diskStampValid = false
+		}
 		if parseChanged {
+			workspaceChanged = true
 			module.rootDir = fileCtx.rootDir
 			module.projectName = fileCtx.projectName
 			module.importPath = fileCtx.importPath
@@ -211,6 +244,10 @@ func (w *workspaceIndex) rebuild(cache map[string]string) (map[string]workspaceP
 			continue
 		}
 		delete(w.modules, filePath)
+	}
+
+	if !workspaceChanged && w.imports != nil {
+		return parsedModules, nil
 	}
 
 	g := graph.NewDependencyGraph(project.GraphEdgeImport)
@@ -473,6 +510,53 @@ func buildWorkspaceComponents(modules map[string]*workspaceModule, g *graph.Depe
 	}
 
 	return components
+}
+
+func (w *workspaceIndex) sourceFiles(cache map[string]string) ([]string, error) {
+	if len(cache) == 0 && len(w.modules) > 0 && w.directoriesUnchanged() {
+		files := make([]string, 0, len(w.modules))
+		for filePath := range w.modules {
+			files = append(files, filePath)
+		}
+		sort.Strings(files)
+		return files, nil
+	}
+
+	files, err := workspaceFiles(w.rootDir, cache)
+	if err != nil {
+		return nil, err
+	}
+	w.captureDirectoryStamps(files)
+	return files, nil
+}
+
+func (w *workspaceIndex) directoriesUnchanged() bool {
+	if len(w.directoryStamps) == 0 {
+		return false
+	}
+	for directory, previous := range w.directoryStamps {
+		info, err := os.Stat(directory)
+		if err != nil || !info.IsDir() || info.ModTime().UnixNano() != previous {
+			return false
+		}
+	}
+	return true
+}
+
+func (w *workspaceIndex) captureDirectoryStamps(files []string) {
+	stamps := make(map[string]int64)
+	add := func(directory string) {
+		info, err := os.Stat(directory)
+		if err == nil && info.IsDir() {
+			stamps[directory] = info.ModTime().UnixNano()
+		}
+	}
+	add(w.rootDir)
+	add(manifest.SourceDir(w.rootDir))
+	for _, filePath := range files {
+		add(filepath.Dir(filePath))
+	}
+	w.directoryStamps = stamps
 }
 
 func workspaceFiles(rootDir string, cache map[string]string) ([]string, error) {

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"compiler/pkg/manifest"
 	"compiler/pkg/peeper"
 )
 
@@ -15,7 +16,6 @@ type benchFixture struct {
 	leaf        string
 	unrelated   string
 	entryBody   string
-	leafBody    string
 	entryImport string
 }
 
@@ -32,24 +32,38 @@ func BenchmarkIncrementalWorkspace(b *testing.B) {
 				_, _ = state.recompile(fixture.entry)
 				return fixture.entry
 			})
-			runBenchCase(b, "body_only_edit", fixture, func(state *ServerState) string {
+			runBenchCase(b, "function_body_edit", fixture, func(state *ServerState) string {
 				state.Cache = map[string]string{}
 				_, _ = state.recompile(fixture.entry)
-				updated := fixture.leafBody + "\nfn local_detail() -> i32 { let x = 1; return x; }\n"
+				updated := "const leafLimit: i32 = 1;\nfn LeafValue() -> i32 { return 2; }\nfn StableValue() -> i32 { return 7; }\n"
 				state.applyDocumentSnapshot(fixture.leaf, &updated, nil)
-				return fixture.leaf
+				return fixture.entry
+			})
+			runBenchCase(b, "earlier_function_growth", fixture, func(state *ServerState) string {
+				state.Cache = map[string]string{}
+				_, _ = state.recompile(fixture.entry)
+				updated := "const leafLimit: i32 = 1;\nfn LeafValue() -> i32 {\n\tlet value = leafLimit;\n\treturn value;\n}\nfn StableValue() -> i32 { return 7; }\n"
+				state.applyDocumentSnapshot(fixture.leaf, &updated, nil)
+				return fixture.entry
+			})
+			runBenchCase(b, "private_constant_edit", fixture, func(state *ServerState) string {
+				state.Cache = map[string]string{}
+				_, _ = state.recompile(fixture.entry)
+				updated := "const leafLimit: i32 = 2;\nfn LeafValue() -> i32 { return leafLimit; }\nfn StableValue() -> i32 { return 7; }\n"
+				state.applyDocumentSnapshot(fixture.leaf, &updated, nil)
+				return fixture.entry
 			})
 			runBenchCase(b, "export_shape_edit", fixture, func(state *ServerState) string {
 				state.Cache = map[string]string{}
 				_, _ = state.recompile(fixture.entry)
-				updated := "fn LeafValue(v: i32) -> i32 { return v; }\n"
+				updated := "const leafLimit: i32 = 1;\nfn LeafValue() -> i32 { return leafLimit; }\nfn StableValue() -> i32 { return 7; }\nfn AddedValue() -> i32 { return 9; }\n"
 				state.applyDocumentSnapshot(fixture.leaf, &updated, nil)
-				return fixture.leaf
+				return fixture.entry
 			})
 			runBenchCase(b, "import_set_edit", fixture, func(state *ServerState) string {
 				state.Cache = map[string]string{}
 				_, _ = state.recompile(fixture.entry)
-				updated := fixture.entryImport + "import \"extra\";\n" + fixture.entryBody
+				updated := fixture.entryImport + "import \"bench/extra\";\n" + fixture.entryBody
 				state.applyDocumentSnapshot(fixture.entry, &updated, nil)
 				return fixture.entry
 			})
@@ -75,14 +89,21 @@ func BenchmarkIncrementalWorkspace(b *testing.B) {
 
 func runBenchCase(b *testing.B, name string, fixture benchFixture, prepare func(*ServerState) string) {
 	b.Run(name, func(b *testing.B) {
+		b.ReportAllocs()
 		var totalParsed, totalReused, totalDowngraded, totalAdvances float64
 		for range b.N {
 			state := NewServerState()
 			state.RootDir = fixture.root
 			target := prepare(state)
 			b.StartTimer()
-			_, _ = state.recompile(target)
+			ctx, _ := state.recompile(target)
 			b.StopTimer()
+			if ctx == nil || ctx.Diagnostics == nil {
+				b.Fatal("incremental compile returned no diagnostics")
+			}
+			if ctx.Diagnostics.HasErrors() {
+				b.Fatalf("incremental compile failed:\n%s", ctx.Diagnostics.EmitAllToString())
+			}
 			metrics := &state.LastMetrics
 			totalParsed += float64(metrics.ModulesParsed)
 			totalReused += float64(metrics.ModulesReused)
@@ -99,6 +120,8 @@ func runBenchCase(b *testing.B, name string, fixture benchFixture, prepare func(
 func createBenchFixture(tb testing.TB, size string) benchFixture {
 	tb.Helper()
 	root := tb.TempDir()
+	writeBenchWorkspaceFile(tb, filepath.Join(root, manifest.FileName), "name = \"bench\"\nbuild = \"program\"\n")
+	sourceRoot := filepath.Join(root, peeper.SourceDirName)
 	depth := map[string]int{
 		"small":  4,
 		"medium": 12,
@@ -108,24 +131,25 @@ func createBenchFixture(tb testing.TB, size string) benchFixture {
 		tb.Fatalf("unknown fixture size %q", size)
 	}
 
-	writeBenchWorkspaceFile(tb, filepath.Join(root, "extra"+peeper.SourceExt), "fn Extra() -> i32 { return 9; }\n")
-	unrelated := filepath.Join(root, "other"+peeper.SourceExt)
+	writeBenchWorkspaceFile(tb, filepath.Join(sourceRoot, "extra"+peeper.SourceExt), "fn Extra() -> i32 { return 9; }\n")
+	unrelated := filepath.Join(sourceRoot, "other"+peeper.SourceExt)
 	writeBenchWorkspaceFile(tb, unrelated, "fn main() -> i32 { return 1; }\n")
 
-	leaf := filepath.Join(root, fmt.Sprintf("chain_%02d%s", depth-1, peeper.SourceExt))
-	writeBenchWorkspaceFile(tb, leaf, "fn LeafValue() -> i32 { return 1; }\n")
+	leaf := filepath.Join(sourceRoot, fmt.Sprintf("chain_%02d%s", depth-1, peeper.SourceExt))
+	leafBody := "const leafLimit: i32 = 1;\nfn LeafValue() -> i32 { return leafLimit; }\nfn StableValue() -> i32 { return 7; }\n"
+	writeBenchWorkspaceFile(tb, leaf, leafBody)
 	for i := depth - 2; i >= 0; i-- {
-		path := filepath.Join(root, fmt.Sprintf("chain_%02d%s", i, peeper.SourceExt))
+		path := filepath.Join(sourceRoot, fmt.Sprintf("chain_%02d%s", i, peeper.SourceExt))
 		nextImport := fmt.Sprintf("chain_%02d", i+1)
 		nextCall := "LeafValue"
 		if i+1 < depth-1 {
 			nextCall = fmt.Sprintf("Chain%02d", i+1)
 		}
-		writeBenchWorkspaceFile(tb, path, fmt.Sprintf("import %q;\nfn Chain%02d() -> i32 { return %s::%s(); }\n", nextImport, i, nextImport, nextCall))
+		writeBenchWorkspaceFile(tb, path, fmt.Sprintf("import %q;\nfn Chain%02d() -> i32 { return %s::%s(); }\n", "bench/"+nextImport, i, nextImport, nextCall))
 	}
 
-	entry := filepath.Join(root, "main"+peeper.SourceExt)
-	entryImport := "import \"chain_00\";\n"
+	entry := filepath.Join(sourceRoot, peeper.MainFileName)
+	entryImport := "import \"bench/chain_00\";\n"
 	entryBody := "fn main() -> i32 {\n\treturn chain_00::Chain00();\n}\n"
 	writeBenchWorkspaceFile(tb, entry, entryImport+entryBody)
 	return benchFixture{
@@ -134,7 +158,6 @@ func createBenchFixture(tb testing.TB, size string) benchFixture {
 		leaf:        leaf,
 		unrelated:   unrelated,
 		entryBody:   entryBody,
-		leafBody:    "fn LeafValue() -> i32 { return 1; }\n",
 		entryImport: entryImport,
 	}
 }

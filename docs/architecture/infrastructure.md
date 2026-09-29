@@ -250,6 +250,55 @@ semantic invalidation after final dependency facts, not parser-surface invalidat
 `ResetModule` also invalidates phase-scoped diagnostics and generic instances. Thus
 artifact reset, diagnostic reset, and semantic cache reset move together.
 
+### Function-level reuse baseline and ownership inventory
+
+Temporary Task 1 instrumentation measured function counts and elapsed time for
+typechecking, CFG, Analysis, and MIR. It was removed after the measurements triggered
+the stop condition; production `CompileMetrics` retains only its existing workspace,
+module, and phase counters. The LSP incremental benchmark keeps end-to-end wall time,
+allocations, valid manifest-backed fixtures, and rejection of runs with compiler errors.
+
+A 50-iteration baseline on linux/amd64 measured body edits, growth of an earlier
+function that shifts later locations, and private constant changes across four-,
+twelve-, and twenty-four-module workspaces. Each changed module rebuilt three
+functions through THIR, CFG, Analysis, and MIR. Results across those cases were:
+
+| Measurement | Observed range per edit |
+| --- | ---: |
+| total request | 3.48–5.49 ms |
+| typechecking | 0.16–0.32 ms |
+| CFG construction, validation, and diagnostics | 0.038–0.080 ms |
+| unified analysis | 0.16–0.40 ms |
+| MIR construction and validation | 0.097–0.30 ms |
+
+CFG work was approximately 1.0–2.1% of total edit latency. Reusing one unchanged
+function from these three-function modules could therefore save at most about
+0.3–0.7% before paying for compatibility validation, graph copying, current-location
+rebinding, candidate retention, and synchronization. Per-function CFG reuse does not
+earn its implementation or maintenance cost and is not implemented.
+
+Cross-generation ownership also constrains broader reuse:
+
+- THIR retains generation-owned symbol pointers, semantic type objects, source
+  locations, generated bindings, checked iteration/default plans, and expression
+  relationships.
+- CFG uses stable function/source IDs, but graphs, blocks, sites, and terminators
+  retain pointer topology and source-location pointers. `CFG.Validate` checks
+  graph-internal topology; it does not prove compatibility with a different THIR
+  generation.
+- `analysis.Module` retains semantic types, origins rooted at symbol pointers,
+  payload descriptors, aggregate slots containing THIR expressions, and cleanup
+  decisions. Stable cleanup IDs do not make the whole artifact reusable.
+- MIR retains the current `TypeTable`, `TypeID` values, source locations, lowered
+  function/static-data state, and decisions derived from current Analysis.
+- Diagnostics are phase/module scoped and tied to current source content and
+  locations; they are copied only when the corresponding whole module phase is
+  retained.
+
+Whole-module snapshot reuse remains the only incremental artifact reuse path. Any
+future function-level work must begin from a new measured bottleneck rather than
+adding a generic cache or transplanting these artifacts by stable ID alone.
+
 ## Diagnostics
 
 `diagnostics.Diagnostic` carries severity, message, stable code, file path, ordered
@@ -388,3 +437,29 @@ arguments where configured, response-file input, and executable output.
 This boundary consumes completed `Module.LLVMIR`; it does not participate in module
 phase scheduling, graph invalidation, or diagnostic grouping beyond build-level
 errors returned by the command.
+
+### Persistent build artifact layout
+
+Cross-process build reuse is stored under the project `build/` directory, which source
+discovery already excludes. Profile and target are separate boundaries:
+
+```text
+build/<profile>/<target>/
+├── bin/
+├── artifacts/<first-two-key-characters>/<full-key>.<kind>
+└── tmp/
+```
+
+`profile` is `debug` or `release`; `target` identifies the OS and architecture. Cached
+artifacts use content-addressed keys derived from source content, dependency/API
+fingerprints, compiler build identity, target/profile configuration, and artifact
+schema. The module path is metadata, not storage identity.
+
+Artifact metadata is reserved beside the artifact for cache inspection and future
+artifact kinds; the first object slice validates identity through its content-addressed
+key and profile contract. Temporary files are created under the same target directory
+and atomically renamed into `artifacts/`, so interrupted builds cannot publish partial
+entries. `bin/` contains final outputs; `tmp/` contains only
+staging files. The first cache slice reuses managed-toolchain object files keyed by
+LLVM IR and the complete object-compilation contract; unmanaged toolchains remain
+temporary-only until their compiler identity can be included safely.
