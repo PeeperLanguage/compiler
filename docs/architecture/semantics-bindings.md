@@ -5,12 +5,11 @@ This map records binding, type, place, intrinsic, and constant implementation ob
 ## Scope and phase position
 
 - `internal/pipeline/pipeline.go` schedules semantic work per module.
-- Relevant order is: collect -> bind -> resolve -> constants -> typecheck.
-- Typechecking may query constants before final types; `consteval.FinalizeValues`
-  republishes authoritative module constants after typechecking.
+- Relevant order is: collect -> bind -> resolve -> typecheck and THIR publication.
+- Typechecking owns lazy constant evaluation and publishes authoritative module constants after final symbol types exist.
 - Later phases consume published evidence; they do not rediscover names, types,
   variant cases, or call adaptation from syntax.
-- `project.Module` stores staged results for one semantic generation.
+- `module.Module` stores durable artifacts and generation-owned symbol state.
 
 ## AST identity and NodeID evidence
 
@@ -22,12 +21,8 @@ This map records binding, type, place, intrinsic, and constant implementation ob
 - Semantic side tables use `source.NodeID`, not AST pointer identity, as their key.
 - `symbols.Index` owns syntax-occurrence-to-symbol identity behind `Bind` / `Symbol`.
 - The same result owns block-to-scope identity behind `SetScope` / `Scope`.
-- `typecheckresult.Result` owns base expression, call, and control evidence behind
-  semantic operations such as `RecordExprType` / `ExprType`, `RecordMatch` /
-  `Match`, and `RecordForIteration` / `ForIteration`.
-- Default-binding provenance, call expansion, conversions, interface proofs,
-  intrinsic dispatch, and selector decisions are likewise published and queried
-  through methods; their backing NodeID indexes are private.
+- The typechecker keeps base expression, call, and control evidence private while checking, then copies durable decisions into THIR.
+- Default-binding provenance, call expansion, conversions, interface proofs, intrinsic dispatch, selector decisions, match plans, and iteration plans are queried from THIR downstream.
 - Generated AST nodes use a deterministic generated identity domain owned by a
   function-local source site and generation kind.
 - Default-expression cloning derives IDs from call site, omitted parameter slot,
@@ -388,7 +383,7 @@ are `types.go`, `syntax.go`, `relations.go`, `compatibility.go`, `lookup.go`,
 - `CheckCompatibility` returns conversion kind and compatibility classification.
 - Compatible conversions include identity and approved widening/optional/reference
   cases; explicit casts and incompatible cases remain distinct.
-- `typecheckresult.ImplicitConversions` stores selected conversion evidence by ID.
+- Selected conversion evidence is represented on canonical THIR expressions.
 
 ## Places and origins
 
@@ -439,41 +434,36 @@ are `types.go`, `syntax.go`, `relations.go`, `compatibility.go`, `lookup.go`,
 - `as_bytes` returns a byte slice with return origin from its input.
 - `as_chars` returns an owned character array.
 - `from_bytes` accepts a byte slice plus allocator and returns a string.
-- Typechecking records chosen intrinsic dispatch in `CompilerCalls` by call ID.
-- Lowering consumes that evidence rather than repeating intrinsic applicability.
+- Typechecking selects intrinsic dispatch in private evidence and publishes it as `thir.Call.CompilerCall`.
+- Lowering consumes the THIR decision rather than repeating intrinsic applicability.
 
 ## Constant evaluation
 
-`internal/semantics/consteval/consteval.go` evaluates semantic constants.
+`internal/semantics/typechecker/constant_eval.go` evaluates semantic constants as private typechecker operation state.
 
-- `EvaluateExpr` evaluates one expression with optional expected type context.
-- `FinalizeValues` recomputes module constants after final symbol types exist.
-- `evaluator.inProgress` is keyed by `symbols.SymbolID` and detects cycles.
+- The private evaluator recursively evaluates expressions with optional expected type context.
+- Finalization recomputes module constants after final symbol types exist and publishes them to `symbols.Index`.
+- Evaluator cache and in-progress state are keyed by `symbols.SymbolID` and discarded after checking.
 - A module constant read from another module uses `ctx.PublishedConstant`.
-- Local module constants query published values first, then the lazy query cache.
-- Top-level authoritative values are published only during finalization.
+- Local module queries use the operation-local cache; authoritative values become visible through `SymbolIndex.ConstantValue` only during finalization.
 - Expected numeric types influence literal construction and identifier adaptation.
 - Numeric literals use default or explicit numeric types and target-aware parsing.
 - Boolean and string literals produce typed constant values.
 - Constant identifiers must resolve to `SymbolConst`.
 - Unary and binary operations delegate folding to `constvalue`.
-- Variant constructions use typechecker `VariantConstructions` evidence.
+- Variant constructions use private typechecker evidence before THIR publication.
 - Non-copyable variant types are not evaluated as constants.
 - Struct payloads are evaluated by declaration field order.
 - Named enum constants retain descriptor identity and case index.
-- Constant enum `is` tests use typechecker `CaseTests` evidence.
+- Constant enum `is` tests use private checked case-test evidence.
 - A failed fold is not silently treated as a constant.
 
-`internal/semantics/constantresult/result.go` separates the two lifetimes behind
-behavioral operations:
+The two constant lifetimes have different owners:
 
-- `Publish` / `Published` own authoritative module values exported through the
-  declaring module and included in semantic export facts.
-- `Cache` / `Cached` own lazy or expected-type-sensitive results for current analysis.
-- Publishing a symbol removes its provisional cached value, so one declaration cannot
-  remain represented in both lifetimes after finalization.
-- Query-cache-only changes do not alter semantic export fingerprints.
-- Storage is private and keyed by `symbols.SymbolID`.
+- `symbols.Index.PublishConstant` / `ConstantValue` own authoritative generation values exported through the declaring module and included in semantic export facts.
+- The private evaluator owns lazy or expected-type-sensitive cache entries for one check operation.
+- Query-cache-only changes cannot alter semantic export fingerprints.
+- Both stores are keyed by `symbols.SymbolID`, but only finalized values survive the operation.
 
 ## Constant values
 
@@ -486,24 +476,15 @@ reject invalid shifts and zero integer divisors, and return typed booleans for
 comparisons/logicals. Accessors copy integer/payload state; variant truthiness is
 false.
 
-## Typecheck result
+## THIR publication
 
-`internal/semantics/typecheckresult/result.go` is the published base semantic
-contract for later phases.
+`internal/semantics/typechecker.Check` publishes `*thir.Module` as the durable base semantic contract.
 
-- `Result` maps stable `NodeID` values to facts: interface implementations,
-  case tests, matches/arms/bindings, loop plans, variant constructions, compiler
-  calls, checked-loop expansions, expression types, value uses, and reference
-  argument mutability.
-- `ForIteration` carries typed symbols, element type, plan, and guaranteed entry;
-  `RangeIteration` carries limit/ordinal, while `SequenceIteration` carries the
-  hidden carrier and carrier type.
-- `MatchBinding` carries projection, field, type, symbol, and discard state.
-- Query methods (`MatchCases`, `ArmBindings`, `SequenceCarrier`, and others) hide
-  representation from consumers.
-- `CallArgumentsOrSource` returns expanded arguments when published, otherwise
-  source arguments during recovery. Successful loop evidence is complete; consumers
-  do not re-check its source syntax.
+- THIR expressions carry canonical types, use kinds, conversions, call adaptation, compiler dispatch, and source identity.
+- Calls contain effective/default arguments; identifiers retain generated-default provenance.
+- Match nodes and bindings contain checked case/projection decisions.
+- Iteration nodes contain checked range or sequence plans and hidden carrier identity.
+- Downstream consumers query THIR nodes rather than checker scratch maps or source syntax.
 
 ## End-to-end data flow
 
@@ -515,13 +496,7 @@ contract for later phases.
    cache cycles.
 4. Resolver creates lexical child scopes, declares local symbols, resolves names,
    imports, enum paths, defaults, and initialization boundaries.
-5. Typechecking writes expression types and all later-phase decisions into
-   `typecheckresult.Result` keyed by `NodeID`, performing lazy constant queries only
-   where a typing decision needs one.
-6. Constant finalization recomputes typed module constants and publishes authoritative
-   values for cross-module use.
-7. Place resolution, THIR, CFG, flow, effects, ownership, MIR, and backend consume
-   these artifacts through explicit queries.
-8. No downstream phase should perform a second independent name lookup, type
-   adaptation, variant-case discovery, intrinsic dispatch, or constant fold when
-   the corresponding result already exists.
+5. Typechecking keeps operation evidence private, performs lazy constant queries, finalizes symbol-owned constants, and publishes THIR.
+6. CFG consumes THIR and publishes explicit control topology.
+7. `analysis.Run` consumes THIR, CFG, scope, and symbol state; it publishes durable flow and cleanup facts through `analysis.Module`.
+8. MIR and backend consume these artifacts through explicit queries. No downstream operation should independently repeat name lookup, type adaptation, variant-case discovery, intrinsic dispatch, or constant folding when canonical evidence already exists.

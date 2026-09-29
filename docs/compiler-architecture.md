@@ -40,25 +40,22 @@ parse
   -> collect
   -> bind
   -> resolve
-  -> constants
-  -> typecheck
+  -> typecheck + constant finalization + THIR
   -> CFG
-  -> flow typing
-  -> semantic effects
-  -> definite initialization
-  -> ownership + cleanup
+  -> analysis (flow + effects + definite initialization + ownership)
   -> usage
-  -> direct MIR lowering from THIR/CFG/evidence
+  -> MIR lowering from THIR/CFG/Analysis
   -> backend
 ```
+
+The durable representation path is `AST → THIR → CFG → Analysis → MIR`. Flow, effect extraction, definite initialization, and ownership remain distinct algorithms inside `analysis.Run`; they are not separate module lifecycle artifacts.
 
 Project/module readiness and incremental checkpoints are explicit because current
 stages have different dependency, barrier, and invalidation rules. A replacement would need to represent those differences rather than hide them behind a uniform interface.
 
 ## Representation boundary
 
-Syntax remains source shape. Semantic facts remain side tables/results keyed by
-stable identity.
+Syntax remains source shape. Durable semantic facts live in THIR, CFG, `analysis.Module`, or generation-owned symbol state keyed by stable identity. Operation-local maps remain private scratch state.
 
 ```text
                          source
@@ -68,19 +65,18 @@ stable identity.
         +------------------+------------------+
         | syntax-aware semantic owners        |
         | resolver, typechecker, CFG builder, |
-        | effect publisher, THIR/MIR lowering |
+        | analysis operation, THIR/MIR lowering|
         +------------------+------------------+
                            |
-             canonical semantic evidence
-        symbols / types / places / CFG / effects
+             canonical durable artifacts
+          symbols / THIR / CFG / Analysis
                            |
         +------------------+------------------+
-        | syntax-agnostic generic analyses    |
-        | definite-init, most ownership value |
-        | flow/liveness/worklist mechanics    |
+        | transient analysis algorithms       |
+        | effects, init, ownership, liveness  |
         +------------------+------------------+
                            |
-                      cleanup / IR
+                           MIR
 ```
 
 Current later stages consume decisions published by earlier work. For example, typechecking records borrowed call arguments and effects publish `Borrow`; ownership consumes that evidence rather than inferring it again from call syntax. This is current design, not proof that same stage boundaries must remain.
@@ -161,8 +157,7 @@ are centralized; semantic lattices remain visible in their owning packages.
 
 ## Current semantic effects
 
-`internal/semantics/effect` publishes value/storage behavior in source evaluation
-order. Current operations are:
+Inside `analysis.Run`, the private effect builder derives value/storage behavior in source evaluation order. Current operations are:
 
 - `Define` — storage becomes a binding, optionally initialized from a value;
 - `Write` — existing place is replaced/mutated;
@@ -172,9 +167,7 @@ order. Current operations are:
 - `Discard` — produced value is thrown away;
 - `CallBegin` / `CallEnd` — call-lifetime brackets for argument loans.
 
-`effect.Visitor` is the exhaustive consumer boundary. An `effect.Op` is sealed and
-must dispatch through that visitor; adding a new semantic operation therefore makes
-every exhaustive consumer fail compilation until it implements the new visitor method.
+The private effect visitor is the exhaustive consumer boundary. An effect operation is sealed and must dispatch through that visitor; adding a new semantic operation therefore makes every exhaustive consumer fail compilation until it implements the new visitor method.
 This is where Peeper deliberately uses the visitor pattern: new **semantics** are
 introduced to every consumer, while new syntax that reuses existing effects is not.
 
@@ -207,12 +200,13 @@ Unknown effects must not be silently ignored.
 | Declaration catalog | collector | module symbols |
 | Type binding | binder | symbol type state / binding result |
 | Lexical/import resolution | resolver | `SymbolIndex` symbol/scope identity |
-| Type rules and adaptation | typechecker | `typecheckresult.Result` |
+| Type rules and adaptation | typechecker | THIR; private checking evidence |
+| Constants | typechecker / `symbols.Index` | finalized symbol-owned values |
 | Control topology | `ir/cfg` | typed blocks/sites/edges |
-| Variant/optional path facts | flow typechecker | `flowresult.Result` |
-| Evaluation/storage actions | `semantics/effect` | ordered `effect.Result` |
-| Definite initialization | `semantics/definiteinit` | diagnostics |
-| Move/borrow/drop analysis | `semantics/ownership` | `ownershipresult.Result` |
+| Post-CFG semantics | `semantics/analysis` | `analysis.Module`; diagnostics |
+| Evaluation/storage actions | `semantics/analysis` | transient ordered effect stream |
+| Definite initialization | `semantics/analysis` | diagnostics only |
+| Move/borrow/drop analysis | `semantics/analysis` | cleanup queries on `analysis.Module` |
 | Lexical usage warnings | `semantics/usage` | diagnostics from `symbols.Index` usage/mutable-required evidence |
 | Typed-source lowering | `ir/thir`, `ir/exprlower` | THIR/shared expressions |
 | Mid-level lowering | `ir/mir` | MIR |
@@ -244,24 +238,24 @@ implementation of that policy.
 
 ### Reference provenance and holder-relative loans
 
-`ownership.referenceValueForExpr` is not a generic aggregate interpreter. It uses
-existing holder loans, `Flow.ValueOrigins`, reference types, struct payload
-syntax and `Typechecking.VariantConstruction` evidence for currently accepted carriers.
-Pre-evaluation capture preserves loan identity before a move clears source state.
-Flow origin sets describe referents; they do not replace ownership's dynamic loan
-IDs, mutability, reservations/activation, liveness, joins or cleanup policy.
+`analysis.referenceValueForTHIR` is not a generic aggregate interpreter. It uses
+existing holder loans, `Analysis.ValueOrigins`, THIR reference types, and published
+aggregate-slot evidence for currently accepted carriers. Pre-evaluation capture
+preserves loan identity before a move clears source state. Analysis origin sets
+describe referents; they do not replace ownership's dynamic loan IDs, mutability,
+reservations/activation, liveness, joins, or cleanup policy.
 
 Each `referenceLoan.path` locates a slot relative to its holder, independently of
 `origins` (borrowed storage) and `id` (loan identity). Copies clone paths; equality
 and joins distinguish the same loan in different slots. Projected writes consume
-an exact `Flow.StorageOrigins` destination and captured RHS loans to replace
+an exact `Analysis.StorageOrigins` destination and captured RHS loans to replace
 one direct/optional enum reference field, including clearing it, while retaining
 sibling and copied-holder loans. Partial writes keep the carrier live. This is not
 full field-sensitive last-use analysis or support for nested stored-reference
 aggregates/arrays. Those storage restrictions remain typechecker-owned.
 
-Flow typing must retain recorded assignment-operand types and variant payload
-proofs for THIR/MIR; retyping an already checked operand can erase that evidence. THIR/MIR
+Analysis must retain recorded assignment-operand types and variant payload proofs
+for MIR; retyping an already checked operand can erase that evidence. THIR/MIR
 consume published payload/projection facts; backend typed-store invariants remain
 strict. Single-case enum selectors and optional-array index assignment have known
 separate typing limitations, not resolved by this reference-field repair.
@@ -351,9 +345,9 @@ Different mistakes are caught at different boundaries:
 | incorrect child relation or capability composition | structural tests + capability golden/cycle tests |
 | semantic type missing representation decision | sealed type methods + focused representation tests |
 | malformed graph topology | CFG/graph validators and tests |
-| malformed effect evidence | `effect.Result.Validate` |
-| new effect ignored by an exhaustive consumer | `effect.Visitor` compile-time contract |
-| malformed cleanup evidence | `ownershipresult.Validate` |
+| malformed transient effect evidence | analysis effect validator |
+| new effect ignored by an exhaustive consumer | private effect visitor compile-time contract |
+| malformed cleanup evidence | analysis cleanup validator |
 | malformed THIR/MIR | THIR/MIR validators |
 | wrong language behavior | package tests + `x_test` source fixtures |
 

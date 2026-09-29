@@ -15,14 +15,10 @@ Peeper uses four complementary mechanisms:
 1. **Canonical structure** — `ast.Inspect`, `typeinfo.ForEachChild`,
    `place.Project`/`Decompose`, and `graph.Directed` ensure structural knowledge is
    written once.
-2. **Canonical semantic evidence** — typechecker results, typed CFG edges/sites,
-   flow evidence, and ordered semantic effects prevent downstream rediscovery;
-   `effect.Visitor` makes the semantic operation set exhaustive for consumers.
+2. **Canonical semantic artifacts** — THIR, typed CFG edges/sites, `analysis.Module`, and symbol state prevent downstream rediscovery; the private effect visitor makes transient semantic operations exhaustive for consumers.
 3. **Generic mechanics** — `graph.Worklist` and shared graph topology remove
    repeated scheduling/adjacency code without hiding phase-specific lattices.
-4. **Explicit true extension points** — resolver/typechecker/THIR/CFG/effect/MIR and
-   semantic type representation decisions remain exhaustive where behavior really
-   differs.
+4. **Explicit true extension points** — resolver, typechecker, THIR, CFG, analysis, MIR, and semantic type representation decisions remain exhaustive where behavior really differs.
 
 Goal is not "every phase visits every AST node". Goal is stronger:
 
@@ -46,8 +42,8 @@ copy/drop behavior follows automatically.
 | graph adjacency | `graph.Directed` |
 | fixed-point scheduling | `graph.Worklist` |
 | control topology | `cfg.Graph` + typed `cfg.Edge` |
-| value/storage behavior | `effect.Result` + exhaustive `effect.Visitor` |
-| cleanup evidence | `ownershipresult.Result` |
+| value/storage behavior | transient effect stream inside `analysis.Run` |
+| durable flow/cleanup evidence | query-only `analysis.Module` |
 
 ## Contract philosophy
 

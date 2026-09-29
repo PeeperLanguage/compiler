@@ -9,8 +9,8 @@ See [`../compiler-architecture.md`](../compiler-architecture.md) for current ove
 | Map | Covers |
 |---|---|
 | [Frontend](frontend.md) | Lexer, tokens, parser, AST, source locations, node identity, traversal, cloning |
-| [Semantics: bindings](semantics-bindings.md) | Collection, binding, resolution, symbols, scopes, types, places, constants, semantic result models |
-| [Semantics: analyses](semantics-analyses.md) | Typechecking, flow typing, CFG-driven effects, definite initialization, ownership, cleanup, usage |
+| [Semantics: bindings](semantics-bindings.md) | Collection, binding, resolution, symbols, scopes, types, places, and symbol-owned constants |
+| [Semantics: analyses](semantics-analyses.md) | THIR publication, unified CFG analysis, durable flow/cleanup facts, and usage |
 | [IR](ir.md) | Core IR types, THIR, CFG, expression/type lowering, MIR |
 | [Backend](backend.md) | Target descriptions, physical layouts, ABI decisions, LLVM emission |
 | [Infrastructure](infrastructure.md) | Modules, pipeline scheduling, project state, diagnostics, graphs, source, toolchains |
@@ -28,11 +28,12 @@ flowchart TD
     Parser --> AST[frontend/ast]
     AST --> Bind[collector/binder/resolver]
     Bind --> Types[typeinfo and symbols]
-    Types --> Check[typechecker evidence]
+    Types --> Check[typechecker operation]
     Check --> THIR[THIR]
     THIR --> CFG[cfg]
-    CFG --> Analyses[flow effects init ownership usage]
-    Analyses --> MIR[direct MIR lowering]
+    CFG --> Analysis[analysis.Run]
+    Analysis --> Usage[usage diagnostics]
+    Usage --> MIR[direct MIR lowering]
     MIR --> Backend[target and LLVM]
     Backend --> Output[Executable or emitted IR]
 ```
@@ -88,8 +89,8 @@ docs/
 |---|---|
 | Wrong parse or recovery | [Frontend](frontend.md) |
 | Name/type not found | [Semantics: bindings](semantics-bindings.md) |
-| Wrong type refinement | [Semantics: analyses](semantics-analyses.md), typechecker flow section |
-| Missing cleanup or move error | [Semantics: analyses](semantics-analyses.md), ownership/effect sections |
+| Wrong type refinement | [Semantics: analyses](semantics-analyses.md), unified analysis section |
+| Missing cleanup or move error | [Semantics: analyses](semantics-analyses.md), ownership and cleanup section |
 | Wrong control flow | [IR](ir.md), CFG section |
 | Wrong THIR/MIR shape | [IR](ir.md), lowering sections |
 | Invalid layout or emitted LLVM | [Backend](backend.md) |

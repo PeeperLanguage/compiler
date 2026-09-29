@@ -107,41 +107,29 @@ Parser-owned AST surfaces carry syntax import/export fingerprints. The workspace
 index keeps current-file fingerprints for invalidation comparisons; they are not
 duplicate fields on `module.Module`.
 
-Its phase artifacts are:
+Its durable phase artifacts are:
 
 - `Phase`;
-- `AST` and `TypedASTNodes`;
-- `ModuleScope`, `SymbolIndex`, `Constants`, and `Typechecking`;
+- `AST`;
+- `ModuleScope` and `SymbolIndex`, including finalized symbol-owned constants;
 - `Imports`, mapping aliases to `ResolvedImport`;
-- `CFG`, `Flow`, `Effects`, and `Ownership`;
-- `THIR`, `CFG`, `MIR`, and emitted `LLVMIR`;
+- `THIR`, `CFG`, `Analysis`, `MIR`, and emitted `LLVMIR`;
 - collected generic declaration syntax and semantic shells.
 
-`RebuildTypedASTIndex` indexes source AST nodes, checked loop expansions, and
-expanded effective call arguments. It avoids replacing checked nested-loop trees
-when an outer expansion still contains the original nested loop. `BaseExprType`
-returns canonical typechecker evidence; `EffectiveExprType` prefers flow-refined
-evidence and falls back to the base result.
+`BaseExprType` reads canonical expression types from THIR. `EffectiveExprType` prefers a flow-refined type from `Analysis` and falls back to THIR.
 
-`ResetSemanticData` replaces binding/constants staging and clears typechecking.
-`ExpandedDefaultBinding` exposes generated default-expression bindings while marking
-them non-local for escape analysis. `TypeDeclarationIdentity` anchors nominal names
-at declaring module identity.
+`ResetSemanticData` replaces generation-owned scope and symbol state. Generated default bindings and checked iterations are represented in THIR rather than exposed as persistent checker evidence. `TypeDeclarationIdentity` anchors nominal names at declaring module identity.
 
 ### Phase advancement and reset
 
 `Module.Phase` is the last completed per-module phase. `resetToPhase` retains all
 artifacts through `retained` and clears downstream artifacts:
 
-- at or below `Parsed`: scope, bindings, constants;
+- at or below `Parsed`: scope and generation-owned symbol state;
 - below `Collected`: generic declaration index;
-- below `Typechecked`: typechecking, semantic export fingerprint, typed-node index;
+- below `Typechecked`: THIR and semantic export fingerprint;
 - below `CFG`: CFG;
-- below `FlowTyped`: flow result;
-- below `Effects`: effects;
-- below `Ownership`: ownership result;
-- below `Typechecked`: THIR;
-- below `CFG`: CFG;
+- below `Analyzed`: Analysis;
 - below `MIR`: MIR;
 - below `Backend`: LLVM IR.
 
@@ -210,8 +198,8 @@ The pipeline then runs these project jobs:
 | Job | Input | Output / barrier |
 | --- | --- | --- |
 | Load | entry, prelude, file/overlay content | registered modules, ASTs, imports, graph, `Load`/`Parsed` diagnostics. |
-| Ownership-through | ordered modules and import readiness | phases through `Ownership`; symbols, bindings, types, CFG, flow, effects, ownership. |
-| Usage | ownership-ready modules | usage diagnostics and `Usage` module/project barrier. |
+| Analysis-through | ordered modules and import readiness | phases through `Analyzed`; symbols, THIR, CFG, durable analysis facts and diagnostics. |
+| Usage | analyzed modules | usage diagnostics and `Usage` module/project barrier. |
 | Entrypoint check | entry module scope and function type | optional `ErrInvalidEntrypoint`. |
 | Backend-through | usage-ready modules and clean diagnostics | MIR, LLVM IR, `Backend` module/project barrier. |
 | Finalize | all MIR modules | runtime-symbol validation and `Finalize` project phase. |
@@ -223,20 +211,12 @@ The scheduler never advances a module more than one phase per call.
 
 The per-module sequence is:
 
-`Parsed -> Collected -> Bound -> Resolved -> Typechecked -> CFG ->`
-`FlowTyped -> Effects -> DefiniteInit -> Ownership -> Usage -> MIR -> Backend`.
+`Parsed -> Collected -> Bound -> Resolved -> Typechecked -> CFG -> Analyzed -> Usage -> MIR -> Backend`.
 
-`advanceModulePhase` owns the dispatch. Collection builds declarations; binding fills
-symbol/type state; resolution fills imports and names; typechecking performs lazy
-expected-type constant queries, publishes final module constants, semantic types, and
-the semantic export fingerprint;
-CFG builds and validates topology; flow typing refines types and origins; effects
-publish ordered storage/value actions; definite-init and ownership analyze evidence;
-MIR lowers directly from THIR, CFG, and published evidence; LLVM backend emits text.
+`advanceModulePhase` owns the dispatch. Collection builds declarations; binding fills symbol/type state; resolution fills imports and names; typechecking performs lazy constant queries, publishes finalized constants into `SymbolIndex`, builds THIR, and computes the semantic export fingerprint. CFG builds and validates topology. `analysis.Run` performs flow, transient effect extraction, definite initialization, and ownership while publishing one durable `Analysis` artifact. MIR lowers directly from THIR, CFG, Analysis, and symbol state; LLVM emits text.
 MIR/backend are blocked when active errors exist. Each successful advance increments metrics.
 
-`usage` is run as a separate project barrier because its diagnostics consume the
-completed ownership state. `requireScheduledModulesAtLeast` turns a scheduler stall
+`usage` is run as a separate project barrier because its diagnostics consume completed analyzed symbol state. `requireScheduledModulesAtLeast` turns a scheduler stall
 without user diagnostics into an internal error rather than successful partial
 compilation.
 
