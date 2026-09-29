@@ -102,6 +102,26 @@ Reviews prioritize correctness, one canonical implementation, honest compiler
 artifacts, clear ownership, and regression resistance over minimizing edited
 call sites.
 
+Every pull request must be approved by a human repository collaborator other than
+the author, enforced by branch protection. New commits make older approval stale.
+
+Before opening a pull request that touches source files, add these as the first two
+lines of `README.md` if not already present:
+
+```text
+> [!IMPORTANT]
+> Remove this line to confirm you have reviewed this PR before submitting.
+```
+
+Read your full diff, then remove those two lines yourself before requesting review.
+The `peeper-bot[bot]` check fails and comments on the pull request while the
+marker remains. Do not ask an agent to remove it for you — that defeats its purpose.
+
+Disclose AI assistance in the pull-request body as `none`, `assisted`, or
+`primarily generated`. The author remains responsible for every changed line and
+must be able to explain production consumers, ownership, tests, and tradeoffs.
+Disclosure does not replace review and is not itself a negative quality signal.
+
 ## Documentation changes
 
 Keep commands, supported behavior, release status, and architecture claims tied

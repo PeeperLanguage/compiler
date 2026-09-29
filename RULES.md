@@ -31,6 +31,22 @@ Do not add or keep:
 
 Possible future work is not sufficient justification.
 
+### 1.1 Production consumers and experimental code
+
+Every new production field, type, function, method, hook, or stored value must have a current non-test production consumer. Tests, benchmarks, debugging, one-time investigation, and possible future work do not count.
+
+Do not add production API or state only to inspect behavior from tests or benchmarks. Prefer existing behavior, test-local setup, or external profiling. If temporary production instrumentation is unavoidable, obtain explicit approval, mark its removal condition in the local plan, and remove it before completion unless a current production consumer justifies keeping it.
+
+When an experiment rejects its proposed feature, remove all production scaffolding in the same step. Keep only useful tests, benchmarks, and recorded findings.
+
+Before adding three or more sibling fields or functions with the same shape:
+
+1. ask whether the concept needs to exist;
+2. delete it when it has no production consumer;
+3. otherwise reuse an existing domain type or one clear parameterized implementation.
+
+Do not introduce an enum, map, wrapper, or abstraction solely to hide repetition. Deletion is preferred when the repeated concept has no durable purpose.
+
 ## 2. Helpers and shared logic
 
 New helper is allowed only when it:
@@ -170,12 +186,32 @@ Mention important behavior changes and justify non-obvious helpers or compromise
 
 Do not implement feature directly on `main` or `master`. Use `feature/<name>` for features and `fix/<name>` for fixes. Check branch before editing.
 
+### 10.1 Pull-request accountability
+
+Every pull request requires an approving review from a human repository collaborator who is not the pull-request author, enforced through GitHub branch protection (require a pull request before merging, require at least one approval, dismiss stale approvals on new commits). Self-review, AI review, passing CI, and checked template boxes do not satisfy this requirement.
+
+Every pull request that touches source files must begin with an unremoved self-review marker as the first two lines of `README.md`:
+
+```text
+> [!IMPORTANT]
+> Remove this line to confirm you have reviewed this PR before submitting.
+```
+
+The `peeper-bot[bot]` GitHub App checks every pull request. While the marker remains, the required check fails and the bot comments explaining why. The author removes the marker only after reading the full diff. No automation, including agents, may remove the marker on the author's behalf or otherwise force the check to pass.
+
+The same `peeper-bot[bot]` identity performs scheduled toolchain-lock and toolchain-source-update automation, so repository history distinguishes automated commits from human ones instead of attributing bot-authored changes to a maintainer.
+
+The submitter owns every changed line regardless of tool use and must be able to explain its purpose, production consumer, ownership boundary, and validation. AI assistance must be disclosed in the pull-request body; disclosure is not evidence of poor quality and must not replace technical review. Do not use speculative labels such as `AI slop`; enforce accountable review and an honest self-review marker instead of guessing authorship from code style.
+
+Do not bypass, disable, or game the self-review marker check or the required-review branch protection to merge a pull request.
+
 ## 11. Review checklist
 
 Before completion, verify:
 
 - [ ] Existing implementation and callers were searched before writing.
 - [ ] No pass-through wrapper, stale alias, unjustified ignored parameter, or unjustified one-field wrapper was introduced.
+- [ ] Every new production symbol has a current non-test production consumer; rejected experiments left no production scaffolding.
 - [ ] New helpers satisfy Section 2.
 - [ ] No duplicated semantic decision remains in touched area when one owner is clearer.
 - [ ] Diagnostics, validation, mutation, caching, normalization, logging, fallback behavior, and invariants were preserved or intentionally changed.

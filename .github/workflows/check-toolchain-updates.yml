@@ -17,9 +17,6 @@ jobs:
     name: Check stable upstream releases
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    permissions:
-      contents: write
-      pull-requests: write
     steps:
       - uses: actions/checkout@v6
         with:
@@ -63,10 +60,19 @@ jobs:
           fi
           echo "value=$changed" >> "$GITHUB_OUTPUT"
           echo "source_update_available=$changed" >> "$GITHUB_STEP_SUMMARY"
+      - name: Mint peeper-bot token
+        id: mint-token
+        if: steps.changed.outputs.value == 'true'
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.PEEPER_BOT_APP_ID }}
+          private-key: ${{ secrets.PEEPER_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: compiler
       - name: Open source update pull request
         if: steps.changed.outputs.value == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.mint-token.outputs.token }}
         run: |
           {
             echo "Updates stable upstream toolchain sources."
@@ -78,11 +84,12 @@ jobs:
           } > pr-body.md
           branch="automation/toolchain-sources-${GITHUB_RUN_ID}"
           mv candidate-sources.lock.json toolchains/toolchain-sources.lock.json
-          git config user.name "itsfuad"
-          git config user.email "fuad.cs22@gmail.com"
+          git config user.name "peeper-bot[bot]"
+          git config user.email "5118601+peeper-bot[bot]@users.noreply.github.com"
           git switch -c "$branch"
           git add toolchains/toolchain-sources.lock.json
           git commit -m "Update toolchain sources"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git push origin "$branch"
           gh pr create \
             --base main \

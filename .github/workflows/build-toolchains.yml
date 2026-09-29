@@ -153,9 +153,6 @@ jobs:
       - windows_amd64
       - windows_arm64
     runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-      pull-requests: write
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v7
@@ -190,10 +187,19 @@ jobs:
           else
             echo "value=true" >> "$GITHUB_OUTPUT"
           fi
+      - name: Mint peeper-bot token
+        id: mint-token
+        if: steps.changed.outputs.value == 'true'
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.PEEPER_BOT_APP_ID }}
+          private-key: ${{ secrets.PEEPER_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: compiler
       - name: Open lock update pull request
         if: steps.changed.outputs.value == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.mint-token.outputs.token }}
         run: |
           {
             echo "Records rebuilt toolchain artifacts."
@@ -204,11 +210,12 @@ jobs:
             echo "Run [$GITHUB_RUN_ID]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."
           } > pr-body.md
           branch="automation/toolchains-${GITHUB_RUN_ID}"
-          git config user.name "itsfuad"
-          git config user.email "fuad.cs22@gmail.com"
+          git config user.name "peeper-bot[bot]"
+          git config user.email "5118601+peeper-bot[bot]@users.noreply.github.com"
           git switch -c "$branch"
           git add toolchains/toolchains.lock.json
           git commit -m "Update Peeper toolchain lock"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git push origin "$branch"
           gh pr create \
             --base main \
