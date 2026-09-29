@@ -65,6 +65,54 @@ func TestTypeTableConcurrentInterningAndReads(t *testing.T) {
 	}
 }
 
+func TestTypeTableTypeReturnsDetachedDescriptor(t *testing.T) {
+	types := NewTypeTable()
+	i32 := types.Intern(Type{Kind: TypeInteger, IsSigned: true, Bits: 32})
+	u64 := types.Intern(Type{Kind: TypeInteger, Bits: 64})
+
+	id := types.Intern(Type{
+		Kind:   TypeStruct,
+		Fields: []TypeField{{Name: "field", Type: i32}},
+		Methods: []TypeMethod{{
+			Name:   "method",
+			Params: []TypeField{{Name: "param", Type: i32}},
+			Return: i32,
+		}},
+		Params: []TypeID{i32},
+		Cases:  []VariantCase{{Name: "case", Payload: i32}},
+	})
+
+	descriptor, ok := types.Type(id)
+	if !ok {
+		t.Fatal("interned descriptor was not published")
+	}
+	descriptor.Fields[0] = TypeField{Name: "changed-field", Type: u64}
+	descriptor.Methods[0].Name = "changed-method"
+	descriptor.Methods[0].Params[0] = TypeField{Name: "changed-param", Type: u64}
+	descriptor.Params[0] = u64
+	descriptor.Cases[0] = VariantCase{Name: "changed-case", Payload: u64}
+
+	got, ok := types.Type(id)
+	if !ok {
+		t.Fatal("interned descriptor disappeared after caller mutation")
+	}
+	if got.Fields[0] != (TypeField{Name: "field", Type: i32}) {
+		t.Fatalf("Fields mutation leaked into TypeTable: %#v", got.Fields)
+	}
+	if got.Methods[0].Name != "method" {
+		t.Fatalf("Methods mutation leaked into TypeTable: %#v", got.Methods)
+	}
+	if got.Methods[0].Params[0] != (TypeField{Name: "param", Type: i32}) {
+		t.Fatalf("method Params mutation leaked into TypeTable: %#v", got.Methods[0].Params)
+	}
+	if got.Params[0] != i32 {
+		t.Fatalf("Params mutation leaked into TypeTable: %#v", got.Params)
+	}
+	if got.Cases[0] != (VariantCase{Name: "case", Payload: i32}) {
+		t.Fatalf("Cases mutation leaked into TypeTable: %#v", got.Cases)
+	}
+}
+
 func TestTypeTableUsesLanguageNamesForStringTypes(t *testing.T) {
 	types := NewTypeTable()
 	if got := types.Text(types.Intern(Type{Kind: TypeString})); got != "str" {

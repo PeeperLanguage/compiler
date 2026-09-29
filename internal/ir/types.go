@@ -248,6 +248,8 @@ func (t *TypeTable) IndexType() TypeID {
 	return t.indexType
 }
 
+// Type returns a detached snapshot of one completed runtime descriptor.
+// Callers may inspect or modify returned slices without mutating table storage.
 func (t *TypeTable) Type(id TypeID) (Type, bool) {
 	if t == nil {
 		return Type{}, false
@@ -257,7 +259,7 @@ func (t *TypeTable) Type(id TypeID) (Type, bool) {
 	if id == InvalidType || int(id) >= len(t.types) || !t.isComplete[id] {
 		return Type{}, false
 	}
-	return t.types[id], true
+	return cloneType(t.types[id]), true
 }
 
 // InterfaceMethod returns one published interface method descriptor from an
