@@ -19,6 +19,10 @@ import (
 	"compiler/pkg/peeper"
 )
 
+func finalizeConstantValues(ctx *project.CompilerContext, module *module.Module, evidence *evidence) {
+	newConstantEvaluator(ctx, module, evidence).finalizeModuleValues()
+}
+
 func constevalModule(t *testing.T, src string) (*module.Module, *diagnostics.DiagnosticBag) {
 	t.Helper()
 	const filePath = "consteval_test" + peeper.SourceExt
@@ -38,20 +42,6 @@ func constevalModule(t *testing.T, src string) (*module.Module, *diagnostics.Dia
 	resolver.Resolve(ctx, module)
 	finalizeConstantValues(ctx, module, newEvidence())
 	return module, diag
-}
-
-func TestFinalizeValuesInitializesOnlyConstantResult(t *testing.T) {
-	diag := diagnostics.NewDiagnosticBag()
-	module := &module.Module{ModuleScope: symbols.NewScope(nil)}
-
-	finalizeConstantValues(project.New(".", peeper.SourceExt, diag), module, newEvidence())
-
-	if module.Constants == nil {
-		t.Fatal("FinalizeValues did not initialize constant result")
-	}
-	if module.SymbolIndex != nil {
-		t.Fatalf("FinalizeValues initialized Bindings: %#v", module.SymbolIndex)
-	}
 }
 
 func TestEvaluateTopLevelConstExpressions(t *testing.T) {
@@ -192,22 +182,23 @@ func TestFinalizeValuesRecomputesLazyConstantsWithFinalSymbolTypes(t *testing.T)
 	if !ok || sym == nil {
 		t.Fatal("missing symbol Value")
 	}
-	if _, ok := newConstantEvaluator(ctx, module, newEvidence(), false).evalConstSymbol(sym, module.ModuleScope); !ok {
+	evaluator := newConstantEvaluator(ctx, module, newEvidence())
+	if _, ok := evaluator.evalConstSymbol(sym, module.ModuleScope); !ok {
 		t.Fatal("failed to lazily evaluate Value")
 	}
-	if _, found := module.Constants.Cached(sym.ID); !found {
-		t.Fatal("lazy constant missing query-cache value")
+	if _, found := evaluator.cache[sym.ID]; !found {
+		t.Fatal("lazy constant missing operation-local cache value")
 	}
-	if module.Constants.Published(sym.ID) != nil {
+	if module.SymbolIndex.ConstantValue(sym.ID) != nil {
 		t.Fatal("lazy query published authoritative module value before finalization")
 	}
 	sym.BindType(&typeinfo.IntegerType{IsSigned: true, Bits: 64})
-	finalizeConstantValues(ctx, module, newEvidence())
+	evaluator.finalizeModuleValues()
 	assertIntConst(t, module, "Value", "1", "i64")
-	if _, found := module.Constants.Cached(sym.ID); found {
-		t.Fatal("finalized module constant remains duplicated in query cache")
+	if _, found := evaluator.cache[sym.ID]; found {
+		t.Fatal("finalized module constant remains duplicated in evaluator cache")
 	}
-	if module.Constants.Published(sym.ID) == nil {
+	if module.SymbolIndex.ConstantValue(sym.ID) == nil {
 		t.Fatal("finalized module constant was not published")
 	}
 }
@@ -221,27 +212,30 @@ fn main() {
 `)
 	ctx := project.New(".", peeper.SourceExt, diag)
 	ctx.AddModule(module)
-	finalizeConstantValues(ctx, module, newEvidence())
 	fn := module.AST.Stmts[1].(*ast.FnDecl)
 	local := fn.Body.Stmts[0].(*ast.ConstDecl)
 	reference := fn.Body.Stmts[1].(*ast.LetDecl).Value.(*ast.Ident)
 	scope := module.SymbolIndex.Scope(fn.Body)
-	if _, ok := evaluateConstantExpr(ctx, module, newEvidence(), scope, reference, nil); !ok {
+	evaluator := newConstantEvaluator(ctx, module, newEvidence())
+	if _, ok := evaluator.evalExpr(scope, reference, nil); !ok {
 		t.Fatal("failed to evaluate local constant reference")
 	}
 	localSymbol, found := scope.LookupLocal(local.Name.Name)
 	if !found || localSymbol == nil {
 		t.Fatal("missing local constant symbol")
 	}
-	if _, found := module.Constants.Cached(localSymbol.ID); !found {
-		t.Fatal("local constant missing query-cache entry")
+	if _, found := evaluator.cache[localSymbol.ID]; !found {
+		t.Fatal("local constant missing evaluator-cache entry")
 	}
-	if module.Constants.Published(localSymbol.ID) != nil {
+	if module.SymbolIndex.ConstantValue(localSymbol.ID) != nil {
 		t.Fatal("local constant leaked into authoritative module values")
 	}
 	top, _ := module.ModuleScope.LookupLocal("Top")
-	if _, found := module.Constants.Cached(top.ID); found {
+	if _, found := evaluator.cache[top.ID]; found {
 		t.Fatal("published module constant was duplicated by local query")
+	}
+	if module.SymbolIndex.ConstantValue(top.ID) == nil {
+		t.Fatal("top-level constant lost authoritative value")
 	}
 }
 
@@ -282,18 +276,19 @@ func TestEvaluateReadsForeignPublishedConstantWithoutConsumerCache(t *testing.T)
 	if !found || local == nil {
 		t.Fatal("missing consumer constant")
 	}
-	if _, ok := newConstantEvaluator(ctx, consumer, newEvidence(), false).evalConstSymbol(local, consumer.ModuleScope); !ok {
+	evaluator := newConstantEvaluator(ctx, consumer, newEvidence())
+	if _, ok := evaluator.evalConstSymbol(local, consumer.ModuleScope); !ok {
 		t.Fatal("failed to lazily evaluate imported constant")
 	}
-	cached, _ := consumer.Constants.Cached(local.ID)
+	cached := evaluator.cache[local.ID]
 	value, ok := cached.(*constvalue.IntConst)
 	if !ok || value == nil || value.Text() != "7" {
 		t.Fatalf("consumer value = %#v, want 7", cached)
 	}
-	if _, found := consumer.Constants.Cached(shared.ID); found {
+	if _, found := evaluator.cache[shared.ID]; found {
 		t.Fatal("foreign constant duplicated in consumer query cache")
 	}
-	if owner.Constants.Published(shared.ID) == nil {
+	if owner.SymbolIndex.ConstantValue(shared.ID) == nil {
 		t.Fatal("owner lost published constant")
 	}
 	if diag.HasErrors() {
@@ -342,11 +337,10 @@ func assertIntConst(t *testing.T, module *module.Module, name, want, wantType st
 }
 
 func evaluatedConst(module *module.Module, id symbols.SymbolID) constvalue.Value {
-	if value := module.Constants.Published(id); value != nil {
-		return value
+	if module == nil || module.SymbolIndex == nil {
+		return nil
 	}
-	value, _ := module.Constants.Cached(id)
-	return value
+	return module.SymbolIndex.ConstantValue(id)
 }
 
 func assertBoolConst(t *testing.T, module *module.Module, name string, want bool) {
@@ -359,5 +353,44 @@ func assertBoolConst(t *testing.T, module *module.Module, name string, want bool
 	got, ok := value.(*constvalue.BoolConst)
 	if !ok || got == nil || got.Bool() != want {
 		t.Fatalf("%s = %#v, want bool %v", name, value, want)
+	}
+}
+
+func TestConstantQueryCacheIsPrivateUntilFinalization(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	ctx := project.New(".", peeper.SourceExt, diag)
+	const filePath = "constant_cache_test" + peeper.SourceExt
+	src := `const Value = 1;`
+	diag.AddSourceContent(filePath, src)
+	mod := &module.Module{
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "constant_cache_test"},
+		FilePath: filePath,
+		Content:  src,
+		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
+		Imports:  make(map[string]module.ResolvedImport),
+	}
+	ctx.AddModule(mod)
+	collector.Collect(ctx, mod)
+	binder.Bind(ctx, mod)
+	resolver.Resolve(ctx, mod)
+	sym, ok := mod.ModuleScope.LookupLocal("Value")
+	if !ok || sym == nil {
+		t.Fatal("missing Value symbol")
+	}
+
+	evaluator := newConstantEvaluator(ctx, mod, newEvidence())
+	if _, ok := evaluator.evalConstSymbol(sym, mod.ModuleScope); !ok {
+		t.Fatal("lazy constant evaluation failed")
+	}
+	if got := mod.SymbolIndex.ConstantValue(sym.ID); got != nil {
+		t.Fatalf("lazy query published authoritative value: %#v", got)
+	}
+	if _, ok := evaluator.cache[sym.ID]; !ok {
+		t.Fatal("lazy value missing from operation-local evaluator cache")
+	}
+
+	finalizeConstantValues(ctx, mod, newEvidence())
+	if got := mod.SymbolIndex.ConstantValue(sym.ID); got == nil {
+		t.Fatal("finalization did not publish authoritative constant")
 	}
 }

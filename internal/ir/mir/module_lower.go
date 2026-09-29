@@ -11,7 +11,6 @@ import (
 	"compiler/internal/ir/thir"
 	"compiler/internal/ir/typelower"
 	"compiler/internal/moduleid"
-	"compiler/internal/semantics/constantresult"
 	"compiler/internal/semantics/flowresult"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/symbols"
@@ -30,7 +29,6 @@ type LoweringInput struct {
 	Ownership     ownershipresult.Result
 	Scope         *symbols.Scope
 	SymbolIndex   *symbols.Index
-	Constants     *constantresult.Result
 	ModuleID      moduleid.ID
 	IsEntryModule bool
 }
@@ -84,8 +82,8 @@ func GenerateMIR(input LoweringInput) *Module {
 				continue
 			}
 			var value constvalue.Value
-			if input.Constants != nil {
-				value = input.Constants.Published(symbol.ID)
+			if input.SymbolIndex != nil {
+				value = input.SymbolIndex.ConstantValue(symbol.ID)
 			}
 			internConstantStrings(out, value)
 			if entry, ok := staticEntryForConst(input.Types, symbol, value); ok {

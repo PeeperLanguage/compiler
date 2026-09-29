@@ -20,7 +20,7 @@ func (c *checker) buildTHIR() *thir.Module {
 	}
 	constantCondition := func(expr ast.Expr, scope *symbols.Scope) (*bool, []*diagnostics.Diagnostic) {
 		pending := diagnostics.NewDiagnosticBag()
-		value, ok := evaluateConstantExpr(c.ctx.WithDiagnostics(pending), c.module, c.evidence, scope, expr, &typeinfo.BoolType{})
+		value, ok := c.evaluateConstant(c.ctx.WithDiagnostics(pending), scope, expr, &typeinfo.BoolType{})
 		if !ok {
 			return nil, pending.Diagnostics()
 		}

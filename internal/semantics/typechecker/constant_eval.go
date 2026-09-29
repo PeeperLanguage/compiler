@@ -6,7 +6,6 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/module"
 	"compiler/internal/project"
-	"compiler/internal/semantics/constantresult"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/pkg/numeric"
@@ -16,53 +15,44 @@ type constantEvaluator struct {
 	ctx                 *project.CompilerContext
 	module              *module.Module
 	evidence            *evidence
-	constants           *constantresult.Result
+	cache               map[symbols.SymbolID]constvalue.Value
 	inProgress          map[symbols.SymbolID]struct{}
 	publishModuleValues bool
 }
 
-// FinalizeValues recomputes and publishes authoritative module constants after
-// typechecking assigns final symbol types. Lazy query-cache entries accumulated
-// during typechecking remain mutable for local constants.
-func finalizeConstantValues(ctx *project.CompilerContext, module *module.Module, evidence *evidence) {
-	if ctx == nil || module == nil || module.ModuleScope == nil {
+func newConstantEvaluator(ctx *project.CompilerContext, module *module.Module, evidence *evidence) *constantEvaluator {
+	return &constantEvaluator{
+		ctx:        ctx,
+		module:     module,
+		evidence:   evidence,
+		cache:      make(map[symbols.SymbolID]constvalue.Value),
+		inProgress: make(map[symbols.SymbolID]struct{}),
+	}
+}
+
+func (e *constantEvaluator) withContext(ctx *project.CompilerContext) *constantEvaluator {
+	if e == nil || ctx == nil || ctx == e.ctx {
+		return e
+	}
+	copy := *e
+	copy.ctx = ctx
+	return &copy
+}
+
+func (e *constantEvaluator) finalizeModuleValues() {
+	if e == nil || e.module == nil || e.module.ModuleScope == nil || e.module.SymbolIndex == nil {
 		return
 	}
-	e := newConstantEvaluator(ctx, module, evidence, true)
-	e.constants.ClearPublished()
-	for _, sym := range module.ModuleScope.Symbols() {
+	e.module.SymbolIndex.ClearConstants()
+	for _, sym := range e.module.ModuleScope.Symbols() {
 		if sym != nil && sym.Kind == symbols.SymbolConst {
-			e.constants.DiscardCached(sym.ID)
+			delete(e.cache, sym.ID)
 		}
 	}
+	previous := e.publishModuleValues
+	e.publishModuleValues = true
 	e.evalModuleConstants()
-}
-
-// EvaluateExpr computes one semantic constant using expected type information
-// available at the query site. It is valid during and after typechecking.
-func evaluateConstantExpr(ctx *project.CompilerContext, module *module.Module, evidence *evidence, scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) (constvalue.Value, bool) {
-	if ctx == nil || module == nil || expr == nil {
-		return nil, false
-	}
-	if scope == nil && module.ModuleScope == nil {
-		return nil, false
-	}
-	e := newConstantEvaluator(ctx, module, evidence, false)
-	return e.evalExpr(scope, expr, expected)
-}
-
-func newConstantEvaluator(ctx *project.CompilerContext, module *module.Module, evidence *evidence, publishModuleValues bool) *constantEvaluator {
-	if module.Constants == nil {
-		module.Constants = constantresult.New()
-	}
-	return &constantEvaluator{
-		ctx:                 ctx,
-		module:              module,
-		evidence:            evidence,
-		constants:           module.Constants,
-		inProgress:          make(map[symbols.SymbolID]struct{}),
-		publishModuleValues: publishModuleValues,
-	}
+	e.publishModuleValues = previous
 }
 
 func (e *constantEvaluator) evalModuleConstants() {
@@ -81,10 +71,12 @@ func (e *constantEvaluator) evalConstSymbol(sym *symbols.Symbol, scope *symbols.
 		value := e.ctx.PublishedConstant(e.module, sym)
 		return value, value != nil
 	}
-	if value := e.constants.Published(sym.ID); value != nil {
-		return value, true
+	if e.module.SymbolIndex != nil {
+		if value := e.module.SymbolIndex.ConstantValue(sym.ID); value != nil {
+			return value, true
+		}
 	}
-	if value, ok := e.constants.Cached(sym.ID); ok {
+	if value, ok := e.cache[sym.ID]; ok {
 		return value, true
 	}
 	if _, ok := e.inProgress[sym.ID]; ok {
@@ -121,11 +113,12 @@ func (e *constantEvaluator) evalConstSymbol(sym *symbols.Symbol, scope *symbols.
 	}
 	if e.publishModuleValues {
 		if topLevel, found := e.module.ModuleScope.LookupLocal(sym.Name); found && topLevel != nil && topLevel.ID == sym.ID {
-			e.constants.Publish(sym.ID, value)
+			e.module.SymbolIndex.PublishConstant(sym.ID, value)
+			delete(e.cache, sym.ID)
 			return value, true
 		}
 	}
-	e.constants.Cache(sym.ID, value)
+	e.cache[sym.ID] = value
 	return value, true
 }
 

@@ -523,7 +523,7 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 		module.MIR = mir.GenerateMIR(mir.LoweringInput{
 			Types: ctx.Types, Diagnostics: phaseDiag, Source: module.THIR,
 			CFG: module.CFG, Flow: module.Flow, Ownership: module.Ownership,
-			Scope: module.ModuleScope, SymbolIndex: module.SymbolIndex, Constants: module.Constants,
+			Scope: module.ModuleScope, SymbolIndex: module.SymbolIndex,
 			ModuleID: module.ID, IsEntryModule: module.IsEntry,
 		})
 		if module.MIR == nil {

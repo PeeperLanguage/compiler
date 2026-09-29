@@ -1031,15 +1031,12 @@ fn main() -> i32 { return Value; }
 	if !ok {
 		t.Fatal("failed to construct stale const value")
 	}
-	entry.Constants.Cache(sym.ID, stale)
+	entry.SymbolIndex.PublishConstant(sym.ID, stale)
 	if !advanceModulePhase(ctx, entry, diag) || entry.Phase != phase.Typechecked {
 		t.Fatalf("phase = %v, want typechecked", entry.Phase)
 	}
-	if got := entry.Constants.Published(sym.ID); got == nil || got.TypeText() != "i32" {
+	if got := entry.SymbolIndex.ConstantValue(sym.ID); got == nil || got.TypeText() != "i32" {
 		t.Fatalf("final const value = %#v, want i32", got)
-	}
-	if _, found := entry.Constants.Cached(sym.ID); found {
-		t.Fatal("published module constant remains duplicated in query cache")
 	}
 }
 
@@ -1070,7 +1067,7 @@ const WaitingIsReady: bool = Waiting is Status::Ready;
 	if !found || readySymbol == nil {
 		t.Fatal("missing const symbol Ready")
 	}
-	readyValue := entry.Constants.Published(readySymbol.ID)
+	readyValue := entry.SymbolIndex.ConstantValue(readySymbol.ID)
 	ready, ok := readyValue.(*constvalue.VariantConst)
 	if !ok || ready == nil || ready.NominalIdentity() == "" || ready.CaseIndex() != 0 || len(ready.FieldValues()) != 2 {
 		t.Fatalf("Ready constant = %#v, want named case 0 with two fields", readyValue)
@@ -1121,7 +1118,7 @@ func assertPipelineBoolConst(t *testing.T, module *module.Module, name string, w
 	if !found || sym == nil {
 		t.Fatalf("missing const symbol %s", name)
 	}
-	published := module.Constants.Published(sym.ID)
+	published := module.SymbolIndex.ConstantValue(sym.ID)
 	value, ok := published.(*constvalue.BoolConst)
 	if !ok || value == nil || value.Bool() != want {
 		t.Fatalf("%s = %#v, want bool %t", name, published, want)

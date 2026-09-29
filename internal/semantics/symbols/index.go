@@ -2,11 +2,12 @@ package symbols
 
 import (
 	"cmp"
-	"compiler/internal/source"
 	"slices"
 
+	"compiler/internal/constvalue"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/source"
 )
 
 type Index struct {
@@ -16,6 +17,7 @@ type Index struct {
 	operationFunctions     []*Symbol
 	usedSymbols            map[SymbolID]struct{}
 	mutableRequiredSymbols map[SymbolID]struct{}
+	constants              map[SymbolID]constvalue.Value
 }
 
 func NewIndex() *Index {
@@ -26,6 +28,7 @@ func NewIndex() *Index {
 		operationFunctions:     make([]*Symbol, 0),
 		usedSymbols:            make(map[SymbolID]struct{}),
 		mutableRequiredSymbols: make(map[SymbolID]struct{}),
+		constants:              make(map[SymbolID]constvalue.Value),
 	}
 }
 
@@ -197,4 +200,32 @@ func (r *Index) RequiresMutable(sym *Symbol) bool {
 	}
 	_, required := r.mutableRequiredSymbols[sym.ID]
 	return required
+}
+
+// PublishConstant records the authoritative value of a constant declaration for
+// the current semantic generation. Provisional evaluator cache entries never
+// enter the symbol index.
+func (r *Index) PublishConstant(id SymbolID, value constvalue.Value) {
+	if r == nil || !id.IsValid() || value == nil {
+		return
+	}
+	if r.constants == nil {
+		r.constants = make(map[SymbolID]constvalue.Value)
+	}
+	r.constants[id] = value
+}
+
+// ConstantValue returns the authoritative constant value for this generation.
+func (r *Index) ConstantValue(id SymbolID) constvalue.Value {
+	if r == nil || !id.IsValid() {
+		return nil
+	}
+	return r.constants[id]
+}
+
+// ClearConstants removes all authoritative constant values for this generation.
+func (r *Index) ClearConstants() {
+	if r != nil {
+		clear(r.constants)
+	}
 }

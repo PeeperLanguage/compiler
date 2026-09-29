@@ -7,7 +7,6 @@ import (
 	"compiler/internal/ir/thir"
 	"compiler/internal/moduleid"
 	"compiler/internal/phase"
-	"compiler/internal/semantics/constantresult"
 	"compiler/internal/semantics/effect"
 	"compiler/internal/semantics/flowresult"
 	"compiler/internal/semantics/ownershipresult"
@@ -66,10 +65,8 @@ type Module struct {
 	ModuleScope *symbols.Scope
 	// Generic declaration syntax and semantic shells produced by collection.
 	typeDeclarations map[string]TypeDeclaration
-	// Symbol lookups and activity for current semantic generation.
+	// Symbol lookups, activity, and published symbol facts for the current semantic generation.
 	SymbolIndex *symbols.Index
-	// Constant-evaluation artifacts for current semantic generation.
-	Constants *constantresult.Result
 	// Import alias -> resolved module import.
 	Imports map[string]ResolvedImport
 }
@@ -138,7 +135,6 @@ func (m *Module) ResetSemanticData() {
 		return
 	}
 	m.SymbolIndex = symbols.NewIndex()
-	m.Constants = constantresult.New()
 }
 
 // BaseExprType returns the canonical base type published in THIR when available.
@@ -177,7 +173,6 @@ func (m *Module) ResetToPhase(retained phase.Phase) {
 	if retained <= phase.Parsed {
 		m.ModuleScope = nil
 		m.SymbolIndex = nil
-		m.Constants = nil
 	}
 	if retained < phase.Collected {
 		m.typeDeclarations = nil

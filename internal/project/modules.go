@@ -132,8 +132,8 @@ func (ctx *CompilerContext) AddModule(module *compilation.Module) *diagnostics.D
 
 // PublishedConstant returns the authoritative value of a constant symbol,
 // resolving symbols owned by another module through their defining identity.
-// Query-cache entries are excluded because only published module values are
-// stable enough for cross-module reads and export fingerprints.
+// Evaluator caches are operation-local; only published symbol state is stable
+// enough for cross-module reads and export fingerprints.
 func (ctx *CompilerContext) PublishedConstant(module *compilation.Module, sym *symbols.Symbol) constvalue.Value {
 	if sym == nil {
 		return nil
@@ -148,10 +148,10 @@ func (ctx *CompilerContext) PublishedConstant(module *compilation.Module, sym *s
 			return nil
 		}
 	}
-	if owner == nil || owner.Constants == nil {
+	if owner == nil || owner.SymbolIndex == nil {
 		return nil
 	}
-	return owner.Constants.Published(sym.ID)
+	return owner.SymbolIndex.ConstantValue(sym.ID)
 }
 
 // ModuleByID resolves canonical module identity.

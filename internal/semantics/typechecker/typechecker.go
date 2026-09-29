@@ -1,6 +1,7 @@
 package typechecker
 
 import (
+	"compiler/internal/constvalue"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir/thir"
 	"compiler/internal/module"
@@ -11,9 +12,10 @@ import (
 )
 
 type checker struct {
-	ctx      *project.CompilerContext
-	module   *module.Module
-	evidence *evidence
+	ctx          *project.CompilerContext
+	module       *module.Module
+	evidence     *evidence
+	constantEval *constantEvaluator
 
 	payloadContext      int
 	optionalTestContext int
@@ -120,9 +122,21 @@ func Check(ctx *project.CompilerContext, module *module.Module) *thir.Module {
 		return nil
 	}
 	c := &checker{ctx: ctx, module: module, evidence: newEvidence()}
+	c.constantEval = newConstantEvaluator(ctx, module, c.evidence)
 	c.checkModule()
-	finalizeConstantValues(ctx, module, c.evidence)
+	c.constantEval.finalizeModuleValues()
 	return c.buildTHIR()
+}
+
+func (c *checker) evaluateConstant(ctx *project.CompilerContext, scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) (constvalue.Value, bool) {
+	if c == nil || c.module == nil || expr == nil {
+		return nil, false
+	}
+	if c.constantEval == nil {
+		c.constantEval = newConstantEvaluator(c.ctx, c.module, c.evidence)
+	}
+	evaluator := c.constantEval.withContext(ctx)
+	return evaluator.evalExpr(scope, expr, expected)
 }
 
 // CanAdaptFirstCallArgument reports whether argType can occupy a function's

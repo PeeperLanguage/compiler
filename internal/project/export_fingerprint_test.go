@@ -8,7 +8,6 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/module"
 	"compiler/internal/moduleid"
-	"compiler/internal/semantics/constantresult"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 )
@@ -27,11 +26,10 @@ func fingerprintModule(
 	if symbolIndex == nil {
 		symbolIndex = symbols.NewIndex()
 	}
-	constants := constantresult.New()
 	for id, value := range constValues {
-		constants.Publish(id, value)
+		symbolIndex.PublishConstant(id, value)
 	}
-	return &module.Module{ModuleScope: scope, SymbolIndex: symbolIndex, Constants: constants}
+	return &module.Module{ModuleScope: scope, SymbolIndex: symbolIndex}
 }
 
 func TestSemanticExportFingerprintChangesWithInferredTypeAndValue(t *testing.T) {
@@ -56,7 +54,7 @@ func TestSemanticExportFingerprintChangesWithInferredTypeAndValue(t *testing.T) 
 	}
 }
 
-func TestSemanticExportFingerprintIncludesConstValueWithoutBindings(t *testing.T) {
+func TestSemanticExportFingerprintIncludesConstValueWithoutNodeBindings(t *testing.T) {
 	fingerprint := func(value string) string {
 		decl := &ast.ConstDecl{Name: &ast.Ident{Name: "Value"}}
 		decl.SetDeclSurface("const:Value::number")
@@ -67,32 +65,12 @@ func TestSemanticExportFingerprintIncludesConstValueWithoutBindings(t *testing.T
 			t.Fatalf("declare export: %v", err)
 		}
 		constant, _ := constvalue.NewIntText(value, "i32")
-		constants := constantresult.New()
-		constants.Publish(sym.ID, constant)
-		return SemanticExportFingerprint(nil, &module.Module{ModuleScope: scope, Constants: constants})
+		index := symbols.NewIndex()
+		index.PublishConstant(sym.ID, constant)
+		return SemanticExportFingerprint(nil, &module.Module{ModuleScope: scope, SymbolIndex: index})
 	}
 	if fingerprint("1") == fingerprint("2") {
-		t.Fatal("binding-independent const value did not change semantic fingerprint")
-	}
-}
-
-func TestSemanticExportFingerprintIgnoresQueryCache(t *testing.T) {
-	fingerprint := func(value string) string {
-		decl := &ast.ConstDecl{Name: &ast.Ident{Name: "Value"}}
-		decl.SetDeclSurface("const:Value::number")
-		sym := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolConst, "Value"), "Value", symbols.SymbolConst, decl, nil)
-		sym.Type = &typeinfo.IntegerType{IsSigned: true, Bits: 32}
-		scope := symbols.NewScope(nil)
-		if err := scope.Declare(sym); err != nil {
-			t.Fatalf("declare export: %v", err)
-		}
-		constant, _ := constvalue.NewIntText(value, "i32")
-		constants := constantresult.New()
-		constants.Cache(sym.ID, constant)
-		return SemanticExportFingerprint(nil, &module.Module{ModuleScope: scope, Constants: constants})
-	}
-	if fingerprint("1") != fingerprint("2") {
-		t.Fatal("query-cache-only value changed semantic fingerprint")
+		t.Fatal("node-binding-independent const value did not change semantic fingerprint")
 	}
 }
 
@@ -146,10 +124,10 @@ func TestSemanticExportFingerprintTracksImportedConstantInDefault(t *testing.T) 
 		imported := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolConst, "K"), "K", symbols.SymbolConst, nil, nil)
 		imported.Type = i32
 		imported.DefiningModule = ownerID
-		ownerConstants := constantresult.New()
+		ownerIndex := symbols.NewIndex()
 		published, _ := constvalue.NewIntText(value, "i32")
-		ownerConstants.Publish(imported.ID, published)
-		ctx.AddModule(&module.Module{ID: ownerID, FilePath: "lib.peep", Constants: ownerConstants})
+		ownerIndex.PublishConstant(imported.ID, published)
+		ctx.AddModule(&module.Module{ID: ownerID, FilePath: "lib.peep", SymbolIndex: ownerIndex})
 
 		defaultIdent := &ast.Ident{Name: "K"}
 		decl := &ast.FnDecl{

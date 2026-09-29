@@ -1,6 +1,7 @@
 package project
 
 import (
+	"compiler/internal/constvalue"
 	"compiler/internal/source"
 	"path/filepath"
 	"testing"
@@ -203,7 +204,6 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 		phase     phase.Phase
 		scope     bool
 		bindings  bool
-		constants bool
 		exportAPI bool
 		thir      bool
 		cfg       bool
@@ -214,20 +214,20 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 		llvm      bool
 	}{
 		{phase: phase.Parsed},
-		{phase: phase.Typechecked, scope: true, bindings: true, constants: true, exportAPI: true, thir: true},
-		{phase: phase.CFG, scope: true, bindings: true, constants: true, exportAPI: true, thir: true, cfg: true},
-		{phase: phase.FlowTyped, scope: true, bindings: true, constants: true, exportAPI: true, thir: true, cfg: true, flow: true},
-		{phase: phase.DefiniteInit, scope: true, bindings: true, constants: true, exportAPI: true, thir: true, cfg: true, flow: true, effects: true},
-		{phase: phase.Ownership, scope: true, bindings: true, constants: true, exportAPI: true, thir: true, cfg: true, flow: true, effects: true, ownership: true},
-		{phase: phase.Usage, scope: true, bindings: true, constants: true, exportAPI: true, thir: true, cfg: true, flow: true, effects: true, ownership: true},
-		{phase: phase.MIR, scope: true, bindings: true, constants: true, exportAPI: true, thir: true, cfg: true, flow: true, effects: true, ownership: true, mir: true},
-		{phase: phase.Backend, scope: true, bindings: true, constants: true, exportAPI: true, thir: true, cfg: true, flow: true, effects: true, ownership: true, mir: true, llvm: true},
+		{phase: phase.Typechecked, scope: true, bindings: true, exportAPI: true, thir: true},
+		{phase: phase.CFG, scope: true, bindings: true, exportAPI: true, thir: true, cfg: true},
+		{phase: phase.FlowTyped, scope: true, bindings: true, exportAPI: true, thir: true, cfg: true, flow: true},
+		{phase: phase.DefiniteInit, scope: true, bindings: true, exportAPI: true, thir: true, cfg: true, flow: true, effects: true},
+		{phase: phase.Ownership, scope: true, bindings: true, exportAPI: true, thir: true, cfg: true, flow: true, effects: true, ownership: true},
+		{phase: phase.Usage, scope: true, bindings: true, exportAPI: true, thir: true, cfg: true, flow: true, effects: true, ownership: true},
+		{phase: phase.MIR, scope: true, bindings: true, exportAPI: true, thir: true, cfg: true, flow: true, effects: true, ownership: true, mir: true},
+		{phase: phase.Backend, scope: true, bindings: true, exportAPI: true, thir: true, cfg: true, flow: true, effects: true, ownership: true, mir: true, llvm: true},
 	}
 	for _, test := range tests {
 		module := moduleWithArtifacts()
 		module.ResetToPhase(test.phase)
 		if module.Phase != test.phase || (module.ModuleScope != nil) != test.scope ||
-			(module.SymbolIndex != nil) != test.bindings || (module.Constants != nil) != test.constants ||
+			(module.SymbolIndex != nil) != test.bindings ||
 			(module.THIR != nil) != test.thir ||
 			(module.SemanticExportFingerprint != "") != test.exportAPI ||
 			(module.CFG != nil) != test.cfg ||
@@ -242,16 +242,24 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 }
 
 func TestModuleResetSemanticDataInitializesCurrentResults(t *testing.T) {
-	module := &module.Module{}
+	module := &module.Module{SymbolIndex: symbols.NewIndex()}
+	id := symbols.ProjectedSymbolID(symbols.SymbolConst, "Value")
+	value, ok := constvalue.NewIntText("1", "i32")
+	if !ok {
+		t.Fatal("failed to construct constant")
+	}
+	module.SymbolIndex.PublishConstant(id, value)
+	previous := module.SymbolIndex
+
 	module.ResetSemanticData()
-	if module.SymbolIndex == nil || module.SymbolIndex.OperationFunctions() == nil || module.Constants == nil {
+	if module.SymbolIndex == nil || module.SymbolIndex.OperationFunctions() == nil {
 		t.Fatalf("semantic reset = %#v", module)
 	}
-	if module.Constants.Published(symbols.SymbolID{}) != nil {
-		t.Fatal("semantic reset retained a published constant")
+	if module.SymbolIndex == previous {
+		t.Fatal("semantic reset retained previous generation symbol index")
 	}
-	if _, ok := module.Constants.Cached(symbols.SymbolID{}); ok {
-		t.Fatal("semantic reset retained a cached constant")
+	if got := module.SymbolIndex.ConstantValue(id); got != nil {
+		t.Fatalf("semantic reset retained published constant: %#v", got)
 	}
 }
 
@@ -372,5 +380,25 @@ func TestCompilerContextPathlessReplacementClearsFileIndex(t *testing.T) {
 	module, found := ctx.ModuleByID(id)
 	if !found || module == nil || module.FilePath != "" {
 		t.Fatalf("ModuleByID = %#v, want pathless replacement module", module)
+	}
+}
+
+func TestPublishedConstantReadsOwnerSymbolState(t *testing.T) {
+	ctx := New(".", ".peep", diagnostics.NewDiagnosticBag())
+	ownerID := moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "lib"}
+	owner := &module.Module{ID: ownerID, SymbolIndex: symbols.NewIndex()}
+	sym := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolConst, "Value"), "Value", symbols.SymbolConst, nil, nil)
+	sym.DefiningModule = ownerID
+	value, ok := constvalue.NewIntText("9", "i32")
+	if !ok {
+		t.Fatal("failed to construct constant")
+	}
+	owner.SymbolIndex.PublishConstant(sym.ID, value)
+	if err := ctx.AddModule(owner); err != nil {
+		t.Fatalf("add owner module: %v", err)
+	}
+	consumer := &module.Module{ID: moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "app"}}
+	if got := ctx.PublishedConstant(consumer, sym); got != value {
+		t.Fatalf("published constant = %#v, want %#v", got, value)
 	}
 }

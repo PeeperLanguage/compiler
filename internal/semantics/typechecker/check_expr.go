@@ -400,7 +400,7 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 				"shift count must be integral"))
 			return &typeinfo.InvalidType{}
 		}
-		if value, ok := evaluateConstantExpr(c.ctx, c.module, c.evidence, scope, node.Right, right); ok {
+		if value, ok := c.evaluateConstant(c.ctx, scope, node.Right, right); ok {
 			if count, ok := value.(*constvalue.IntConst); ok && count != nil {
 				_, bits, _ := typeinfo.NumericInfo(left)
 				normalized, normalizedOK := constvalue.NormalizeInteger(count.Int(),
@@ -650,7 +650,7 @@ func (c *checker) typeIndexExpr(scope *symbols.Scope, node *ast.IndexExpr) typei
 		return elem
 	}
 	array := typeinfo.Underlying(baseType).(*typeinfo.ArrayType)
-	value, ok := evaluateConstantExpr(c.ctx, c.module, c.evidence, scope, node.Index, typeinfo.DefaultIntegerType())
+	value, ok := c.evaluateConstant(c.ctx, scope, node.Index, typeinfo.DefaultIntegerType())
 	if !ok {
 		return elem
 	}

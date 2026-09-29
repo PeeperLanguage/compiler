@@ -584,8 +584,8 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 			}
 		}
 		if valid {
-			startValue, startFound := evaluateConstantExpr(c.ctx, c.module, c.evidence, scope, rangeExpr.Start, elemType)
-			endValue, endFound := evaluateConstantExpr(c.ctx, c.module, c.evidence, scope, rangeExpr.End, elemType)
+			startValue, startFound := c.evaluateConstant(c.ctx, scope, rangeExpr.Start, elemType)
+			endValue, endFound := c.evaluateConstant(c.ctx, scope, rangeExpr.End, elemType)
 			start, startIntegral := startValue.(*constvalue.IntConst)
 			end, endIntegral := endValue.(*constvalue.IntConst)
 			if startFound && endFound && startIntegral && endIntegral && start.Int().Cmp(end.Int()) < 0 {

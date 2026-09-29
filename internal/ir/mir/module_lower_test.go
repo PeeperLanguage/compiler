@@ -1,6 +1,8 @@
 package mir
 
 import (
+	"compiler/internal/constvalue"
+	"compiler/internal/ir/cfg"
 	"compiler/internal/source"
 	"testing"
 
@@ -135,5 +137,32 @@ func TestFunctionSignatureMatchesCallableReferences(t *testing.T) {
 				t.Fatalf("definition = %q, want %q", fn.Name, test.want)
 			}
 		})
+	}
+}
+
+func TestGenerateMIREmitsStaticConstantFromSymbolIndex(t *testing.T) {
+	integer := &typeinfo.IntegerType{IsSigned: true, Bits: 32}
+	sym := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolConst, "Value"), "Value", symbols.SymbolConst, nil, nil)
+	sym.Type = integer
+	scope := symbols.NewScope(nil)
+	if err := scope.Declare(sym); err != nil {
+		t.Fatalf("declare constant: %v", err)
+	}
+	index := symbols.NewIndex()
+	value, ok := constvalue.NewIntText("7", "i32")
+	if !ok {
+		t.Fatal("failed to construct constant")
+	}
+	index.PublishConstant(sym.ID, value)
+	types := ir.NewTypeTable()
+	sourceModule := thir.NewModule("test", "test.peep", nil)
+	out := GenerateMIR(LoweringInput{
+		Types: types, Source: sourceModule, CFG: &cfg.Module{}, Scope: scope, SymbolIndex: index,
+	})
+	if out == nil || len(out.StaticData) != 1 {
+		t.Fatalf("static data = %#v, want one entry", out)
+	}
+	if out.StaticData[0].Constant != value {
+		t.Fatalf("static constant = %#v, want %#v", out.StaticData[0].Constant, value)
 	}
 }
