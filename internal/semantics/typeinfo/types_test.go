@@ -812,3 +812,23 @@ func TestReceiverIdentityCanonicalizesReceiverCarriers(t *testing.T) {
 		t.Fatal("non-nominal receiver must not have a method-set identity")
 	}
 }
+
+func TestOptionalLayerUtilities(t *testing.T) {
+	i32 := &IntegerType{IsSigned: true, Bits: 32}
+	nested := &OptionalType{Inner: &OptionalType{Inner: i32}}
+	if got := OptionalLayerCount(nested); got != 2 {
+		t.Fatalf("optional depth = %d, want 2", got)
+	}
+	if got := TypeText(UnwrapOptionalLayers(nested, 1)); got != "?i32" {
+		t.Fatalf("one-layer unwrap = %s, want ?i32", got)
+	}
+	if got := TypeText(UnwrapOptionalLayers(nested, 2)); got != "i32" {
+		t.Fatalf("two-layer unwrap = %s, want i32", got)
+	}
+	if got := OptionalPayloadDepthForExpected(nested, i32); got != 2 {
+		t.Fatalf("payload depth = %d, want 2", got)
+	}
+	if !IsOptional(nested) || IsOptional(i32) {
+		t.Fatal("optional classification mismatch")
+	}
+}

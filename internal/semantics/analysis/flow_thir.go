@@ -1,4 +1,4 @@
-package typechecker
+package analysis
 
 import (
 	"compiler/internal/diagnostics"
@@ -6,7 +6,6 @@ import (
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/thir"
-	"compiler/internal/semantics/flowresult"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -44,7 +43,7 @@ type flowAnalyzer struct {
 	function      *thir.Function
 	functionScope *symbols.Scope
 	graph         *cfg.ControlFlowGraph
-	result        *flowresult.Result
+	result        *Module
 	inStates      map[cfg.SiteID]flowState
 	bindingTypes  map[*symbols.Symbol]typeinfo.Type
 
@@ -54,8 +53,9 @@ type flowAnalyzer struct {
 	demand   flowDemand
 }
 
-func CheckFlow(diag *diagnostics.DiagnosticBag, source *thir.Module, graphs *cfg.Module, moduleScope *symbols.Scope) *flowresult.Result {
-	result := flowresult.New()
+func Run(diag *diagnostics.DiagnosticBag, input Input) *Module {
+	result := newModule()
+	source, graphs, moduleScope := input.Source, input.CFG, input.Scope
 	if diag == nil || source == nil || graphs == nil {
 		return result
 	}
@@ -105,7 +105,7 @@ func (a *flowAnalyzer) run() {
 		}
 		if _, _, isReference := typeinfo.ReferenceValueTarget(typ); isReference {
 			carrier := []place.Origin{{Root: sym}}
-			cases := make([]int, optionalLayerCount(typ))
+			cases := make([]int, typeinfo.OptionalLayerCount(typ))
 			for index := range cases {
 				cases[index] = ir.OptionalPresentCase
 			}
@@ -214,18 +214,18 @@ func (a *flowAnalyzer) finish(expr thir.Expr, base typeinfo.Type) typeinfo.Type 
 		a.recordResolution(expr, resolution)
 		return base
 	}
-	if !isOptionalType(base) {
+	if !typeinfo.IsOptional(base) {
 		a.recordResolution(expr, resolution)
 		return base
 	}
 	_, explicitCarrier := typeinfo.Underlying(a.expected).(*typeinfo.OptionalType)
-	required := payloadDepthForExpected(base, a.expected)
+	required := typeinfo.OptionalPayloadDepthForExpected(base, a.expected)
 	if a.demand == flowPayload && required == 0 && !explicitCarrier {
-		required = optionalLayerCount(base)
+		required = typeinfo.OptionalLayerCount(base)
 	}
 	payloadCases := provenOptionalPayloadCases(a.state.variants, resolution.StorageOrigins)
-	resolved := unwrapOptionalLayers(base, len(payloadCases))
-	applied := optionalLayerCount(base) - optionalLayerCount(resolved)
+	resolved := typeinfo.UnwrapOptionalLayers(base, len(payloadCases))
+	applied := typeinfo.OptionalLayerCount(base) - typeinfo.OptionalLayerCount(resolved)
 	payloadCases = payloadCases[:applied]
 	if a.demand != flowOptionalTest && explicitCarrier {
 		a.recordResolution(expr, resolution)
@@ -246,7 +246,7 @@ func (a *flowAnalyzer) finish(expr thir.Expr, base typeinfo.Type) typeinfo.Type 
 		} else {
 			a.diagnostics.Add(optionalPayloadProofAt(expr.SourceInfo().Location))
 		}
-		resolved = unwrapOptionalLayers(base, required)
+		resolved = typeinfo.UnwrapOptionalLayers(base, required)
 	}
 	a.result.RecordExprType(id, resolved)
 	return resolved
@@ -379,10 +379,10 @@ func (a *flowAnalyzer) AnalyzeField(expr *thir.Field) typeinfo.Type {
 		payload, _ := typeinfo.Underlying(descriptor.Cases[caseIndex].Payload).(*typeinfo.StructType)
 		if field, fieldIndex, found := typeinfo.LookupStructField(payload, expr.Name); found {
 			a.recordPayload(expr.Base, resolution, []int{caseIndex})
-			a.result.RecordPayload(expr.Source.NodeID, flowresult.PayloadAccess{
+			a.result.RecordPayload(expr.Source.NodeID, PayloadAccess{
 				CarrierOrigins: place.CloneOrigins(resolution.StorageOrigins), Cases: []int{caseIndex},
 			})
-			a.result.RecordVariantField(expr.Source.NodeID, flowresult.VariantFieldAccess{
+			a.result.RecordVariantField(expr.Source.NodeID, VariantFieldAccess{
 				Carrier: expr.Base.SourceInfo().NodeID, Case: caseIndex,
 				Payload: payload, Field: fieldIndex, Type: field.Type,
 			})
@@ -522,7 +522,7 @@ func (a *flowAnalyzer) recordCaseTest(expr thir.Expr, test *thir.CaseTest) {
 	if test == nil {
 		return
 	}
-	refined := flowresult.CaseTest{
+	refined := CaseTest{
 		SubjectID: test.SubjectID, Case: test.Case, MatchesWhenTrue: test.MatchesWhenTrue,
 		CaseCount: test.CaseCount, Family: test.Family,
 	}
@@ -545,7 +545,7 @@ func (a *flowAnalyzer) recordPayload(expr thir.Expr, resolution place.Resolution
 		return
 	}
 	isDirect := len(resolution.StorageOrigins) == 1 && resolution.StorageOrigins[0].Root != nil && len(resolution.StorageOrigins[0].Projections) == 0
-	a.result.RecordPayload(expr.SourceInfo().NodeID, flowresult.PayloadAccess{
+	a.result.RecordPayload(expr.SourceInfo().NodeID, PayloadAccess{
 		CarrierOrigins: place.CloneOrigins(resolution.StorageOrigins), Cases: append([]int(nil), cases...), IsDirect: isDirect,
 	})
 }
@@ -735,14 +735,14 @@ func (a *flowAnalyzer) updateOriginPlace(storage []place.Origin, typ typeinfo.Ty
 	}
 	switch expression := value.(type) {
 	case *thir.StructLiteral:
-		slots := make([]flowresult.AggregateSlot, 0, len(expression.Fields))
+		slots := make([]AggregateSlot, 0, len(expression.Fields))
 		semantic, _ := typeinfo.Underlying(typ).(*typeinfo.StructType)
 		for _, field := range expression.Fields {
 			if typednil.IsNil(field.Value) || semantic == nil || field.Index < 0 || field.Index >= len(semantic.Fields) {
 				continue
 			}
 			semanticField := semantic.Fields[field.Index]
-			slots = append(slots, flowresult.AggregateSlot{
+			slots = append(slots, AggregateSlot{
 				ValueExpr:  field.Value,
 				Projection: place.OriginProjection{Kind: place.OriginField, Field: semanticField.Name},
 			})
@@ -753,7 +753,7 @@ func (a *flowAnalyzer) updateOriginPlace(storage []place.Origin, typ typeinfo.Ty
 		if typednil.IsNil(expression.Payload) || expression.Case < 0 {
 			return
 		}
-		a.result.RecordAggregateSlots(expression.Source.NodeID, []flowresult.AggregateSlot{{
+		a.result.RecordAggregateSlots(expression.Source.NodeID, []AggregateSlot{{
 			ValueExpr:  expression.Payload,
 			Projection: place.OriginProjection{Kind: place.OriginVariantPayload, Case: expression.Case},
 		}})

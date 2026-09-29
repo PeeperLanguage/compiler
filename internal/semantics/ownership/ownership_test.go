@@ -17,6 +17,7 @@ import (
 	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
+	"compiler/internal/semantics/analysis"
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/effect"
@@ -32,7 +33,7 @@ import (
 // same published artifacts as the pipeline.
 func ownershipInput(mod *module.Module) Input {
 	return Input{
-		Source: mod.THIR, CFG: mod.CFG, Flow: mod.Flow,
+		Source: mod.THIR, CFG: mod.CFG, Analysis: mod.Analysis,
 		Effects: mod.Effects, Scope: mod.ModuleScope, SymbolIndex: mod.SymbolIndex,
 	}
 }
@@ -63,7 +64,7 @@ func checkOwnershipSource(t *testing.T, src string) *ownershipResult {
 	resolver.Resolve(ctx, module)
 	module.THIR = typechecker.Check(ctx, module)
 	module.CFG = cfg.BuildModule(module.THIR)
-	module.Flow = typechecker.CheckFlow(diag, module.THIR, module.CFG, module.ModuleScope)
+	module.Analysis = analysis.Run(diag, analysis.Input{Source: module.THIR, CFG: module.CFG, Scope: module.ModuleScope})
 	module.Effects = effect.BuildTHIR(module.THIR, module.CFG)
 	module.Ownership = Check(diag, ownershipInput(module))
 	return &ownershipResult{DiagnosticBag: diag, module: module}
@@ -1462,10 +1463,10 @@ fn inspect(value: ?Token) {
 		Root:        value,
 		Projections: []place.OriginProjection{{Kind: place.OriginVariantPayload, Case: ir.OptionalPresentCase}},
 	}}
-	if got := result.module.Flow.StorageOrigins(valueUse.ID()); !place.AreSameOrigins(got, storage) {
+	if got := result.module.Analysis.StorageOrigins(valueUse.ID()); !place.AreSameOrigins(got, storage) {
 		t.Fatalf("payload storage origins = %#v, want carrier %#v", got, storage)
 	}
-	if got := result.module.Flow.ValueOrigins(valueUse.ID()); !place.AreSameOrigins(got, payload) {
+	if got := result.module.Analysis.ValueOrigins(valueUse.ID()); !place.AreSameOrigins(got, payload) {
 		t.Fatalf("payload value origins = %#v, want %#v", got, payload)
 	}
 }

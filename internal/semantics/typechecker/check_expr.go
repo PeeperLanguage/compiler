@@ -47,18 +47,18 @@ func (c *checker) typeWholeCarrierExpr(scope *symbols.Scope, expr ast.Expr, expe
 }
 
 func (c *checker) effectiveExpressionType(expr ast.Expr, base, expected typeinfo.Type) typeinfo.Type {
-	if c == nil || expr == nil || base == nil || c.wholeCarrierExpr == expr || !isOptionalType(base) {
+	if c == nil || expr == nil || base == nil || c.wholeCarrierExpr == expr || !typeinfo.IsOptional(base) {
 		return base
 	}
 	_, explicitCarrier := typeinfo.Underlying(expected).(*typeinfo.OptionalType)
-	required := payloadDepthForExpected(base, expected)
+	required := typeinfo.OptionalPayloadDepthForExpected(base, expected)
 	if c.payloadContext > 0 && required == 0 && !explicitCarrier {
-		required = optionalLayerCount(base)
+		required = typeinfo.OptionalLayerCount(base)
 	}
 	if c.optionalTestContext > 0 || explicitCarrier || required == 0 {
 		return base
 	}
-	return unwrapOptionalLayers(base, required)
+	return typeinfo.UnwrapOptionalLayers(base, required)
 }
 
 func (c *checker) recordCaseTest(node ast.Expr, subject ast.Expr, caseIndex, caseCount int, caseWhenTrue bool, family typeinfo.VariantFamily) {
@@ -365,7 +365,7 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 			rightBase = typ
 		}
 	}
-	if (node.Op == "==" || node.Op == "!=") && isOptionalType(leftBase) && isOptionalType(rightBase) &&
+	if (node.Op == "==" || node.Op == "!=") && typeinfo.IsOptional(leftBase) && typeinfo.IsOptional(rightBase) &&
 		!isNoneExpr(node.Left) && !isNoneExpr(node.Right) {
 		c.ctx.Diagnostics.Add(invalidOperationError(node,
 			"optional equality currently requires `none` on one side"))
@@ -550,11 +550,6 @@ func optionalOperandExpected(typ typeinfo.Type) typeinfo.Type {
 		return typ
 	}
 	return nil
-}
-
-func isOptionalType(typ typeinfo.Type) bool {
-	_, ok := typeinfo.Underlying(typ).(*typeinfo.OptionalType)
-	return ok
 }
 
 func (c *checker) typeSelectorExpr(scope *symbols.Scope, node *ast.SelectorExpr) typeinfo.Type {

@@ -38,8 +38,8 @@ func (a *analyzer) exprType(expr thir.Expr) typeinfo.Type {
 	if a == nil || a.input.Source == nil || expr == nil {
 		return nil
 	}
-	if a.input.Flow != nil {
-		if typ := a.input.Flow.ExprType(expr.SourceInfo().NodeID); typ != nil {
+	if a.input.Analysis != nil {
+		if typ := a.input.Analysis.ExprType(expr.SourceInfo().NodeID); typ != nil {
 			return typ
 		}
 	}
@@ -47,10 +47,10 @@ func (a *analyzer) exprType(expr thir.Expr) typeinfo.Type {
 }
 
 func (a *analyzer) partialVariantPayloadMove(id source.NodeID) bool {
-	if a == nil || a.input.Source == nil || a.input.Flow == nil || !id.IsValid() {
+	if a == nil || a.input.Source == nil || a.input.Analysis == nil || !id.IsValid() {
 		return false
 	}
-	payload, ok := a.input.Flow.Payload(id)
+	payload, ok := a.input.Analysis.Payload(id)
 	return ok && len(payload.Cases) > 0 && !payload.IsDirect
 }
 
@@ -106,8 +106,8 @@ func (a *analyzer) pointerOrigin(scope *symbols.Scope, expr thir.Expr, st state)
 		if _, isRaw := typeinfo.Underlying(a.exprType(e)).(*typeinfo.RawPtrType); !isRaw {
 			return nil
 		}
-		if a.input.Source != nil && a.input.Flow != nil {
-			if resolution, resolved := a.input.Flow.Origins(e.SourceInfo().NodeID); resolved {
+		if a.input.Source != nil && a.input.Analysis != nil {
+			if resolution, resolved := a.input.Analysis.Origins(e.SourceInfo().NodeID); resolved {
 				for _, origin := range resolution.Value {
 					if origin.Root == nil {
 						continue

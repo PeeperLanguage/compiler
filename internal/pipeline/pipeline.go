@@ -18,6 +18,7 @@ import (
 	preludepkg "compiler/internal/prelude"
 	"compiler/internal/problems"
 	"compiler/internal/project"
+	"compiler/internal/semantics/analysis"
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/definiteinit"
@@ -470,7 +471,7 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 		return false
 	}
 	if module.Phase < phase.FlowTyped {
-		module.Flow = typechecker.CheckFlow(phaseDiag, module.THIR, module.CFG, module.ModuleScope)
+		module.Analysis = analysis.Run(phaseDiag, analysis.Input{Source: module.THIR, CFG: module.CFG, Scope: module.ModuleScope})
 		module.Phase = phase.FlowTyped
 		ctx.Metrics.AddPhaseAdvance()
 		return true
@@ -497,7 +498,7 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 	}
 	if module.Phase < phase.Ownership {
 		module.Ownership = ownership.Check(phaseDiag, ownership.Input{
-			Source: module.THIR, CFG: module.CFG, Flow: module.Flow,
+			Source: module.THIR, CFG: module.CFG, Analysis: module.Analysis,
 			Effects: module.Effects, Scope: module.ModuleScope, SymbolIndex: module.SymbolIndex,
 		})
 		// Published evidence is only checkable once the module is otherwise
@@ -522,7 +523,7 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 		}
 		module.MIR = mir.GenerateMIR(mir.LoweringInput{
 			Types: ctx.Types, Diagnostics: phaseDiag, Source: module.THIR,
-			CFG: module.CFG, Flow: module.Flow, Ownership: module.Ownership,
+			CFG: module.CFG, Analysis: module.Analysis, Ownership: module.Ownership,
 			Scope: module.ModuleScope, SymbolIndex: module.SymbolIndex,
 			ModuleID: module.ID, IsEntryModule: module.IsEntry,
 		})

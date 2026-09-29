@@ -1,14 +1,22 @@
-// Package flowresult defines semantic evidence produced by flow typing and
-// consumed by ownership, lowering, and language tooling.
-package flowresult
+package analysis
 
 import (
 	"compiler/internal/source"
 
+	"compiler/internal/ir/cfg"
+
 	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/place"
+	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 )
+
+// Input supplies the immutable artifacts required for flow analysis.
+type Input struct {
+	Source *thir.Module
+	CFG    *cfg.Module
+	Scope  *symbols.Scope
+}
 
 type PayloadAccess struct {
 	CarrierOrigins []place.Origin
@@ -64,14 +72,14 @@ type expressionEvidence struct {
 	aggregates    map[source.NodeID][]AggregateSlot
 }
 
-// Result owns path-sensitive evidence for one flow generation. Backing maps
+// Module owns durable post-CFG semantic evidence for one generation. Backing maps
 // stay private so consumers query semantic facts rather than storage layout.
-type Result struct {
+type Module struct {
 	expressions expressionEvidence
 }
 
-func New() *Result {
-	return &Result{expressions: expressionEvidence{
+func newModule() *Module {
+	return &Module{expressions: expressionEvidence{
 		types:         make(map[source.NodeID]typeinfo.Type),
 		payloads:      make(map[source.NodeID]PayloadAccess),
 		caseTests:     make(map[source.NodeID]CaseTest),
@@ -81,26 +89,26 @@ func New() *Result {
 	}}
 }
 
-func (r *Result) RecordExprType(id source.NodeID, typ typeinfo.Type) {
+func (r *Module) RecordExprType(id source.NodeID, typ typeinfo.Type) {
 	if r != nil && id.IsValid() && typ != nil {
 		r.expressions.types[id] = typ
 	}
 }
 
-func (r *Result) ExprType(id source.NodeID) typeinfo.Type {
+func (r *Module) ExprType(id source.NodeID) typeinfo.Type {
 	if r == nil || !id.IsValid() {
 		return nil
 	}
 	return r.expressions.types[id]
 }
 
-func (r *Result) RecordPayload(id source.NodeID, payload PayloadAccess) {
+func (r *Module) RecordPayload(id source.NodeID, payload PayloadAccess) {
 	if r != nil && id.IsValid() {
 		r.expressions.payloads[id] = payload
 	}
 }
 
-func (r *Result) Payload(id source.NodeID) (PayloadAccess, bool) {
+func (r *Module) Payload(id source.NodeID) (PayloadAccess, bool) {
 	if r == nil || !id.IsValid() {
 		return PayloadAccess{}, false
 	}
@@ -108,19 +116,19 @@ func (r *Result) Payload(id source.NodeID) (PayloadAccess, bool) {
 	return payload, ok
 }
 
-func (r *Result) ForgetPayload(id source.NodeID) {
+func (r *Module) ForgetPayload(id source.NodeID) {
 	if r != nil {
 		delete(r.expressions.payloads, id)
 	}
 }
 
-func (r *Result) RecordCaseTest(id source.NodeID, test CaseTest) {
+func (r *Module) RecordCaseTest(id source.NodeID, test CaseTest) {
 	if r != nil && id.IsValid() {
 		r.expressions.caseTests[id] = test
 	}
 }
 
-func (r *Result) CaseTest(id source.NodeID) (CaseTest, bool) {
+func (r *Module) CaseTest(id source.NodeID) (CaseTest, bool) {
 	if r == nil || !id.IsValid() {
 		return CaseTest{}, false
 	}
@@ -128,13 +136,13 @@ func (r *Result) CaseTest(id source.NodeID) (CaseTest, bool) {
 	return test, ok
 }
 
-func (r *Result) RecordVariantField(id source.NodeID, field VariantFieldAccess) {
+func (r *Module) RecordVariantField(id source.NodeID, field VariantFieldAccess) {
 	if r != nil && id.IsValid() {
 		r.expressions.variantFields[id] = field
 	}
 }
 
-func (r *Result) VariantField(id source.NodeID) (VariantFieldAccess, bool) {
+func (r *Module) VariantField(id source.NodeID) (VariantFieldAccess, bool) {
 	if r == nil || !id.IsValid() {
 		return VariantFieldAccess{}, false
 	}
@@ -142,7 +150,7 @@ func (r *Result) VariantField(id source.NodeID) (VariantFieldAccess, bool) {
 	return field, ok
 }
 
-func (r *Result) RecordOrigins(id source.NodeID, storage, value []place.Origin) {
+func (r *Module) RecordOrigins(id source.NodeID, storage, value []place.Origin) {
 	if r == nil || !id.IsValid() {
 		return
 	}
@@ -152,7 +160,7 @@ func (r *Result) RecordOrigins(id source.NodeID, storage, value []place.Origin) 
 	}
 }
 
-func (r *Result) MergeOrigins(id source.NodeID, storage, value []place.Origin) {
+func (r *Module) MergeOrigins(id source.NodeID, storage, value []place.Origin) {
 	if r == nil || !id.IsValid() {
 		return
 	}
@@ -162,7 +170,7 @@ func (r *Result) MergeOrigins(id source.NodeID, storage, value []place.Origin) {
 	r.expressions.origins[id] = current
 }
 
-func (r *Result) Origins(id source.NodeID) (OriginResolution, bool) {
+func (r *Module) Origins(id source.NodeID) (OriginResolution, bool) {
 	if r == nil || !id.IsValid() {
 		return OriginResolution{}, false
 	}
@@ -176,12 +184,12 @@ func (r *Result) Origins(id source.NodeID) (OriginResolution, bool) {
 	}, true
 }
 
-func (r *Result) StorageOrigins(id source.NodeID) []place.Origin {
+func (r *Module) StorageOrigins(id source.NodeID) []place.Origin {
 	origins, _ := r.Origins(id)
 	return origins.Storage
 }
 
-func (r *Result) ValueOrigins(id source.NodeID) []place.Origin {
+func (r *Module) ValueOrigins(id source.NodeID) []place.Origin {
 	origins, _ := r.Origins(id)
 	return origins.Value
 }
@@ -189,7 +197,7 @@ func (r *Result) ValueOrigins(id source.NodeID) []place.Origin {
 // RecordAggregateSlots publishes the direct slot decomposition Flow used when
 // storing an aggregate value. Recording an empty slice is meaningful: the
 // expression is an aggregate with no direct child slots.
-func (r *Result) RecordAggregateSlots(id source.NodeID, slots []AggregateSlot) {
+func (r *Module) RecordAggregateSlots(id source.NodeID, slots []AggregateSlot) {
 	if r == nil || !id.IsValid() {
 		return
 	}
@@ -199,7 +207,7 @@ func (r *Result) RecordAggregateSlots(id source.NodeID, slots []AggregateSlot) {
 // AggregateSlots returns the direct slot decomposition published for an
 // aggregate expression. The bool distinguishes a known empty aggregate from
 // an expression that has no aggregate evidence.
-func (r *Result) AggregateSlots(id source.NodeID) ([]AggregateSlot, bool) {
+func (r *Module) AggregateSlots(id source.NodeID) ([]AggregateSlot, bool) {
 	if r == nil || !id.IsValid() {
 		return nil, false
 	}

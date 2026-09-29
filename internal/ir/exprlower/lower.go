@@ -12,7 +12,7 @@ import (
 	"compiler/internal/ir/thir"
 	"compiler/internal/ir/typelower"
 	"compiler/internal/moduleid"
-	"compiler/internal/semantics/flowresult"
+	"compiler/internal/semantics/analysis"
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -25,7 +25,7 @@ type Context struct {
 	Types         *ir.TypeTable
 	Diagnostics   *diagnostics.DiagnosticBag
 	Source        *thir.Module
-	Flow          *flowresult.Result
+	Analysis      *analysis.Module
 	ModuleID      moduleid.ID
 	IsEntryModule bool
 }
@@ -70,8 +70,8 @@ func (l *lowerer) lower(expr thir.Expr, expected typeinfo.Type, applyConversions
 	}
 	origin := expr.SourceInfo()
 	resolved := l.effectiveType(expr)
-	if l.ctx.Flow != nil {
-		if test, ok := l.ctx.Flow.CaseTest(origin.NodeID); ok {
+	if l.ctx.Analysis != nil {
+		if test, ok := l.ctx.Analysis.CaseTest(origin.NodeID); ok {
 			subject, _ := l.ctx.Source.Node(test.SubjectID).(thir.Expr)
 			membership := &ir.VariantIs{Value: l.lower(subject, nil, true), Case: test.Case, Type: l.typeID(&typeinfo.BoolType{})}
 			if test.MatchesWhenTrue {
@@ -79,7 +79,7 @@ func (l *lowerer) lower(expr thir.Expr, expected typeinfo.Type, applyConversions
 			}
 			return ir.WithOrigin(&ir.Unary{Op: "!", Arg: membership, Type: membership.Type}, origin)
 		}
-		if payload, _ := l.ctx.Flow.Payload(origin.NodeID); len(payload.Cases) > 0 && expr.ExprPlace() != nil {
+		if payload, _ := l.ctx.Analysis.Payload(origin.NodeID); len(payload.Cases) > 0 && expr.ExprPlace() != nil {
 			return ir.WithOrigin(&ir.Load{Place: l.place(expr)}, origin)
 		}
 	}
@@ -122,8 +122,8 @@ func (l *lowerer) conversion(expr thir.Expr, expected, resolved typeinfo.Type) i
 }
 
 func (l *lowerer) effectiveType(expr thir.Expr) typeinfo.Type {
-	if l.ctx.Flow != nil {
-		if typ := l.ctx.Flow.ExprType(expr.SourceInfo().NodeID); typ != nil {
+	if l.ctx.Analysis != nil {
+		if typ := l.ctx.Analysis.ExprType(expr.SourceInfo().NodeID); typ != nil {
 			return typ
 		}
 	}
@@ -495,8 +495,8 @@ func (l *lowerer) place(expr thir.Expr) *ir.Place {
 		}
 		fieldIndex := projection.Field
 		projectionType := projection.Type
-		if l.ctx.Flow != nil && projection.Kind == thir.PlaceField {
-			if access, found := l.ctx.Flow.VariantField(projection.Source.NodeID); found {
+		if l.ctx.Analysis != nil && projection.Kind == thir.PlaceField {
+			if access, found := l.ctx.Analysis.VariantField(projection.Source.NodeID); found {
 				fieldIndex = access.Field
 				projectionType = access.Type
 			}
@@ -528,12 +528,12 @@ func (l *lowerer) place(expr thir.Expr) *ir.Place {
 }
 
 func (l *lowerer) appendPayloadProjections(place *ir.Place, source ir.SourceInfo) {
-	if l.ctx.Flow == nil || place == nil || !source.NodeID.IsValid() {
+	if l.ctx.Analysis == nil || place == nil || !source.NodeID.IsValid() {
 		return
 	}
 	id := source.NodeID
-	payload, _ := l.ctx.Flow.Payload(id)
-	if !payload.AppliesTo(l.ctx.Flow.StorageOrigins(id)) {
+	payload, _ := l.ctx.Analysis.Payload(id)
+	if !payload.AppliesTo(l.ctx.Analysis.StorageOrigins(id)) {
 		return
 	}
 	for _, caseIndex := range payload.Cases {

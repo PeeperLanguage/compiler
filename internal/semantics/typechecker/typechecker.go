@@ -118,14 +118,20 @@ func (c *checker) checkModule() {
 }
 
 func Check(ctx *project.CompilerContext, module *module.Module) *thir.Module {
+	source, _ := runCheck(ctx, module)
+	return source
+}
+
+func runCheck(ctx *project.CompilerContext, module *module.Module) (*thir.Module, *evidence) {
 	if module == nil || ctx == nil {
-		return nil
+		return nil, nil
 	}
-	c := &checker{ctx: ctx, module: module, evidence: newEvidence()}
-	c.constantEval = newConstantEvaluator(ctx, module, c.evidence)
+	evidence := newEvidence()
+	c := &checker{ctx: ctx, module: module, evidence: evidence}
+	c.constantEval = newConstantEvaluator(ctx, module, evidence)
 	c.checkModule()
 	c.constantEval.finalizeModuleValues()
-	return c.buildTHIR()
+	return c.buildTHIR(), evidence
 }
 
 func (c *checker) evaluateConstant(ctx *project.CompilerContext, scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) (constvalue.Value, bool) {

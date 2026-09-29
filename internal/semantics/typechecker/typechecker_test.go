@@ -29,14 +29,10 @@ import (
 var typecheckEvidenceForTests sync.Map
 
 func checkWithEvidence(ctx *project.CompilerContext, mod *module.Module) *thir.Module {
-	if ctx == nil || mod == nil {
-		return nil
+	source, evidence := runCheck(ctx, mod)
+	if evidence != nil {
+		typecheckEvidenceForTests.Store(mod, evidence)
 	}
-	c := &checker{ctx: ctx, module: mod, evidence: newEvidence()}
-	c.checkModule()
-	finalizeConstantValues(ctx, mod, c.evidence)
-	source := c.buildTHIR()
-	typecheckEvidenceForTests.Store(mod, c.evidence)
 	return source
 }
 
@@ -47,6 +43,51 @@ func testEvidence(mod *module.Module) *evidence {
 	value, _ := typecheckEvidenceForTests.Load(mod)
 	result, _ := value.(*evidence)
 	return result
+}
+
+func forEachCheckedIterationForTests(evidence *evidence, fn func(source.NodeID, *ast.BlockStmt)) {
+	if evidence == nil || fn == nil {
+		return
+	}
+	for id, expansion := range evidence.control.checkedIterations {
+		fn(id, expansion)
+	}
+}
+
+func TestRunCheckPublishesTHIRAndEvidenceFromOneOperation(t *testing.T) {
+	const src = `fn main() -> i32 { return 7; }`
+	const filePath = "run_check_test" + peeper.SourceExt
+	diag := diagnostics.NewDiagnosticBag()
+	diag.AddSourceContent(filePath, src)
+	ctx := project.New(".", peeper.SourceExt, diag)
+	parsed := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
+	mod := &module.Module{
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "run_check_test"},
+		FilePath: filePath,
+		Content:  src,
+		AST:      parsed,
+		Imports:  make(map[string]module.ResolvedImport),
+	}
+	ctx.AddModule(mod)
+	collector.Collect(ctx, mod)
+	binder.Bind(ctx, mod)
+	resolver.Resolve(ctx, mod)
+
+	source, evidence := runCheck(ctx, mod)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	if source == nil || evidence == nil {
+		t.Fatalf("runCheck returned source=%v evidence=%v, want both", source != nil, evidence != nil)
+	}
+	main := mod.AST.Stmts[0].(*ast.FnDecl)
+	ret := main.Body.Stmts[0].(*ast.ReturnStmt)
+	if got := typeinfo.TypeText(evidence.ExprType(ret.Value.ID())); got != "i32" {
+		t.Fatalf("return expression evidence type = %q, want i32", got)
+	}
+	if typed, ok := source.Node(ret.Value.ID()).(thir.Expr); !ok || typeinfo.TypeText(typed.ExprType()) != "i32" {
+		t.Fatalf("published THIR return expression = %#v, want i32 expression", source.Node(ret.Value.ID()))
+	}
 }
 
 func TestCheckPublishesTHIRWithoutPersistentTypingResult(t *testing.T) {

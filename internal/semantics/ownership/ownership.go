@@ -10,8 +10,8 @@ import (
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/thir"
+	"compiler/internal/semantics/analysis"
 	"compiler/internal/semantics/effect"
-	"compiler/internal/semantics/flowresult"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
@@ -30,7 +30,7 @@ type site struct {
 type Input struct {
 	Source      *thir.Module
 	CFG         *cfg.Module
-	Flow        *flowresult.Result
+	Analysis    *analysis.Module
 	Effects     effect.Result
 	Scope       *symbols.Scope
 	SymbolIndex *symbols.Index
@@ -600,10 +600,10 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
 			delete(st.moved, binding)
 			st.live[binding] = struct{}{}
 		}
-		if !field.Source.NodeID.IsValid() || a.input.Flow == nil {
+		if !field.Source.NodeID.IsValid() || a.input.Analysis == nil {
 			continue
 		}
-		origins := place.CloneOrigins(a.input.Flow.ValueOrigins(field.Source.NodeID))
+		origins := place.CloneOrigins(a.input.Analysis.ValueOrigins(field.Source.NodeID))
 		if isMutable, isReference := referenceMutability(binding); isReference && len(origins) > 0 {
 			st.references[binding] = []referenceLoan{{
 				id: loanID{node: field.Source.NodeID}, origins: origins, isMutable: isMutable, site: field.Source,

@@ -1,10 +1,9 @@
-package typechecker
+package analysis
 
 import (
 	"compiler/internal/ir"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
 )
 
 type variantStateFact struct {
@@ -29,49 +28,6 @@ type flowState struct {
 type edgeVariantFact struct {
 	variant variantStateFact
 	order   int
-}
-
-func payloadDepthForExpected(src, expected typeinfo.Type) int {
-	if src == nil || expected == nil {
-		return 0
-	}
-	if _, isOptional := typeinfo.Underlying(expected).(*typeinfo.OptionalType); isOptional {
-		return 0
-	}
-	current := src
-	for depth := 1; ; depth++ {
-		optional, ok := typeinfo.Underlying(current).(*typeinfo.OptionalType)
-		if !ok || optional == nil || optional.Inner == nil {
-			return 0
-		}
-		current = optional.Inner
-		if typeinfo.Assignable(expected, current) {
-			return depth
-		}
-	}
-}
-
-func optionalLayerCount(typ typeinfo.Type) int {
-	depth := 0
-	for {
-		optional, ok := typeinfo.Underlying(typ).(*typeinfo.OptionalType)
-		if !ok || optional == nil || optional.Inner == nil {
-			return depth
-		}
-		depth++
-		typ = optional.Inner
-	}
-}
-
-func unwrapOptionalLayers(typ typeinfo.Type, depth int) typeinfo.Type {
-	for range depth {
-		optional, ok := typeinfo.Underlying(typ).(*typeinfo.OptionalType)
-		if !ok || optional == nil || optional.Inner == nil {
-			break
-		}
-		typ = optional.Inner
-	}
-	return typ
 }
 
 func newFlowState() flowState {

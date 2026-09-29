@@ -976,7 +976,7 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 		if wantPhase == phase.CFG && (entry.CFG == nil || len(entry.CFG.Functions) == 0) {
 			t.Fatal("CFG phase must retain canonical graph")
 		}
-		if wantPhase == phase.FlowTyped && entry.Flow == nil {
+		if wantPhase == phase.FlowTyped && entry.Analysis == nil {
 			t.Fatal("flow-typed phase must retain canonical result")
 		}
 		if wantPhase == phase.Effects && entry.Effects == nil {

@@ -11,7 +11,7 @@ import (
 	"compiler/internal/ir/thir"
 	"compiler/internal/ir/typelower"
 	"compiler/internal/moduleid"
-	"compiler/internal/semantics/flowresult"
+	"compiler/internal/semantics/analysis"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -25,7 +25,7 @@ type LoweringInput struct {
 	Diagnostics   *diagnostics.DiagnosticBag
 	Source        *thir.Module
 	CFG           *cfg.Module
-	Flow          *flowresult.Result
+	Analysis      *analysis.Module
 	Ownership     ownershipresult.Result
 	Scope         *symbols.Scope
 	SymbolIndex   *symbols.Index
@@ -228,7 +228,7 @@ func lowerCFGFunction(mod *Module, input LoweringInput, sourceFn *thir.Function,
 func (l *lowerer) expressionContext() exprlower.Context {
 	return exprlower.Context{
 		Types: l.input.Types, Diagnostics: l.input.Diagnostics, Source: l.input.Source,
-		Flow: l.input.Flow, ModuleID: l.input.ModuleID, IsEntryModule: l.input.IsEntryModule,
+		Analysis: l.input.Analysis, ModuleID: l.input.ModuleID, IsEntryModule: l.input.IsEntryModule,
 	}
 }
 

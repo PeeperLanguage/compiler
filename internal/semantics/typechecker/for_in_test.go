@@ -225,7 +225,7 @@ fn main() { let mut cursor = Cursor.{ value = 1 }; __LOOP__ }`,
 					t.Fatalf("implicit=%v unexpected diagnostics:\n%s", implicit, diag.EmitAllToString())
 				}
 				checkedCount := 0
-				testEvidence(module).ForEachCheckedIteration(func(source.NodeID, *ast.BlockStmt) {
+				forEachCheckedIterationForTests(testEvidence(module), func(source.NodeID, *ast.BlockStmt) {
 					checkedCount++
 				})
 				expectedCount := 0

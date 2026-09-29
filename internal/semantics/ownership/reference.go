@@ -147,9 +147,9 @@ func (a *analyzer) checkStorageAccess(
 		return
 	}
 	origins := a.originsForExpr(expr)
-	if access == storageMutate && a.input.Source != nil && a.input.Flow != nil {
+	if access == storageMutate && a.input.Source != nil && a.input.Analysis != nil {
 		// Replacing a reference slot mutates the carrier, not its old referent.
-		origins = a.input.Flow.StorageOrigins(expr.SourceInfo().NodeID)
+		origins = a.input.Analysis.StorageOrigins(expr.SourceInfo().NodeID)
 	}
 	a.reportLoanConflict(
 		origins,
@@ -326,14 +326,14 @@ func (a *analyzer) referenceValueForTHIR(expr thir.Expr, st state) ([]referenceL
 			return copyReferenceLoans(value), true
 		}
 	}
-	if a.input.Flow == nil {
+	if a.input.Analysis == nil {
 		return []referenceLoan{}, false
 	}
 	id := expr.SourceInfo().NodeID
 	if _, isMutable, ok := typeinfo.ReferenceValueTarget(a.exprType(expr)); ok {
 		if _, projected := expr.(*thir.Field); projected {
 			var value []referenceLoan
-			for _, storage := range a.input.Flow.StorageOrigins(id) {
+			for _, storage := range a.input.Analysis.StorageOrigins(id) {
 				for _, loan := range st.references[storage.Root] {
 					if slices.Equal(loan.path, storage.Projections) {
 						loan.path = nil
@@ -345,13 +345,13 @@ func (a *analyzer) referenceValueForTHIR(expr thir.Expr, st state) ([]referenceL
 				return copyReferenceLoans(value), true
 			}
 		}
-		origins := place.CloneOrigins(a.input.Flow.ValueOrigins(id))
+		origins := place.CloneOrigins(a.input.Analysis.ValueOrigins(id))
 		if len(origins) == 0 {
 			return []referenceLoan{}, false
 		}
 		return []referenceLoan{{id: loanID{node: expr.SourceInfo().NodeID}, origins: origins, isMutable: isMutable, site: expr.SourceInfo()}}, true
 	}
-	slots, hasAggregateSlots := a.input.Flow.AggregateSlots(id)
+	slots, hasAggregateSlots := a.input.Analysis.AggregateSlots(id)
 	if hasAggregateSlots {
 		var loans []referenceLoan
 		for _, slot := range slots {
@@ -369,14 +369,14 @@ func (a *analyzer) referenceValueForTHIR(expr thir.Expr, st state) ([]referenceL
 	return []referenceLoan{}, false
 }
 
-// replaceReferenceField consumes flow's exact storage identity. Accepted local
+// replaceReferenceField consumes analysis's exact storage identity. Accepted local
 // enum reference fields are direct/optional; nested reference aggregates remain
 // rejected by typechecking. Other holders and sibling slots retain their loans.
 func (a *analyzer) replaceReferenceField(target thir.Expr, value storedReference, st state) {
-	if _, _, isReference := typeinfo.ReferenceValueTarget(a.exprType(target)); !isReference || a.input.Flow == nil {
+	if _, _, isReference := typeinfo.ReferenceValueTarget(a.exprType(target)); !isReference || a.input.Analysis == nil {
 		return
 	}
-	storage := a.input.Flow.StorageOrigins(target.SourceInfo().NodeID)
+	storage := a.input.Analysis.StorageOrigins(target.SourceInfo().NodeID)
 	if len(storage) != 1 || len(storage[0].Projections) == 0 {
 		return
 	}
@@ -398,10 +398,10 @@ func (a *analyzer) replaceReferenceField(target thir.Expr, value storedReference
 }
 
 func (a *analyzer) originsForExpr(expr thir.Expr) []place.Origin {
-	if a == nil || a.input.Source == nil || a.input.Flow == nil || expr == nil {
+	if a == nil || a.input.Source == nil || a.input.Analysis == nil || expr == nil {
 		return nil
 	}
-	return place.CloneOrigins(a.input.Flow.ValueOrigins(expr.SourceInfo().NodeID))
+	return place.CloneOrigins(a.input.Analysis.ValueOrigins(expr.SourceInfo().NodeID))
 }
 
 func (a *analyzer) validateReferenceReturn(stmt *thir.Return, st state) {

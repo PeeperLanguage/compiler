@@ -15,8 +15,8 @@ import (
 	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/phase"
+	"compiler/internal/semantics/analysis"
 	"compiler/internal/semantics/effect"
-	"compiler/internal/semantics/flowresult"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -188,14 +188,13 @@ func moduleWithArtifacts() *module.Module {
 		ModuleScope:               symbols.NewScope(nil),
 		THIR:                      typed,
 		CFG:                       &cfg.Module{Functions: []*cfg.ControlFlowGraph{{FunctionID: functionID}}},
-		Flow:                      flowresult.New(),
+		Analysis:                  &analysis.Module{},
 		Effects:                   effect.Result{functionID: {cfg.SiteID{}: {effect.Use{}}}},
 		Ownership:                 ownershipresult.Result{functionID: &ownershipresult.CleanupPlan{}},
 		MIR:                       &mir.Module{},
 		LLVMIR:                    "stale IR",
 	}
 	module.ResetSemanticData()
-	module.Flow.RecordExprType(source.ParsedNodeID(1), &typeinfo.IntegerType{IsSigned: true, Bits: 64})
 	return module
 }
 
@@ -231,7 +230,7 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 			(module.THIR != nil) != test.thir ||
 			(module.SemanticExportFingerprint != "") != test.exportAPI ||
 			(module.CFG != nil) != test.cfg ||
-			(module.Flow != nil) != test.flow ||
+			(module.Analysis != nil) != test.flow ||
 			(module.Effects != nil) != test.effects ||
 			(module.Ownership != nil) != test.ownership ||
 			(module.MIR != nil) != test.mir ||
@@ -269,11 +268,11 @@ func TestModuleExprTypeEvidenceFollowsPhaseLifecycle(t *testing.T) {
 	if base == nil {
 		t.Fatal("typechecked module has no base expression type")
 	}
-	if got := module.EffectiveExprType(source.ParsedNodeID(1)); got != module.Flow.ExprType(source.ParsedNodeID(1)) {
-		t.Fatalf("effective type = %#v, want flow refinement", got)
+	if got := module.EffectiveExprType(source.ParsedNodeID(1)); got != base {
+		t.Fatalf("effective type with empty analysis = %#v, want base type %#v", got, base)
 	}
 
-	module.Flow = nil
+	module.Analysis = nil
 	if got := module.EffectiveExprType(source.ParsedNodeID(1)); got != base {
 		t.Fatalf("effective type without flow = %#v, want base type %#v", got, base)
 	}

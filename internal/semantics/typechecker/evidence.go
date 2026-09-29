@@ -148,9 +148,9 @@ type CompilerCall struct {
 	Kind      intrinsics.FunctionKind
 }
 
-// Result owns base semantic evidence for one typecheck generation. Backing
-// indexes are grouped by semantic domain and remain private so producers and
-// consumers depend on compiler operations rather than storage layout.
+// evidence is temporary typechecker scratch used to publish canonical THIR.
+// Its indexes stay private to the checking operation and are discarded after
+// THIR construction; later phases must not depend on this storage directly.
 type evidence struct {
 	expressions expressionEvidence
 	calls       callEvidence
@@ -360,15 +360,6 @@ func (r *evidence) ValueUse(id source.NodeID) (typeinfo.UseKind, bool) {
 	return kind, found
 }
 
-func (r *evidence) ForEachValueUse(fn func(source.NodeID, typeinfo.UseKind)) {
-	if r == nil || fn == nil {
-		return
-	}
-	for id, use := range r.expressions.valueUses {
-		fn(id, use)
-	}
-}
-
 func (r *evidence) RecordReferenceArgument(id source.NodeID, isMutable bool) {
 	if r != nil && id.IsValid() {
 		r.expressions.referenceArguments[id] = isMutable
@@ -398,15 +389,6 @@ func (r *evidence) CallArguments(id source.NodeID) ([]ast.Expr, bool) {
 	}
 	args, ok := r.calls.effectiveArguments[id]
 	return args, ok
-}
-
-func (r *evidence) ForEachCallArguments(fn func(source.NodeID, []ast.Expr)) {
-	if r == nil || fn == nil {
-		return
-	}
-	for id, args := range r.calls.effectiveArguments {
-		fn(id, args)
-	}
 }
 
 // CallArgumentsOrSource returns published effective arguments when available.
@@ -477,27 +459,6 @@ func (r *evidence) Match(id source.NodeID) (Match, bool) {
 	return match, ok
 }
 
-// ArmBindings exposes the payload symbols one match arm binds, without leaking
-// match artifacts into the effect producer. A discarded binding still binds
-// storage, so it is reported like any other.
-func (r *evidence) ArmBindings(matchID source.NodeID, caseIndex int) []*symbols.Symbol {
-	evidence, found := r.Match(matchID)
-	if !found {
-		return nil
-	}
-	arm, found := evidence.Arm(caseIndex)
-	if !found {
-		return nil
-	}
-	bound := make([]*symbols.Symbol, 0, len(arm.Bindings))
-	for _, binding := range arm.Bindings {
-		if binding.Binding != nil {
-			bound = append(bound, binding.Binding)
-		}
-	}
-	return bound
-}
-
 func (r *evidence) RecordForIteration(id source.NodeID, iteration ForIteration) {
 	if r != nil && id.IsValid() {
 		r.control.forIterations[id] = iteration
@@ -518,21 +479,6 @@ func (r *evidence) ForIteration(id source.NodeID) (ForIteration, bool) {
 	return iteration, ok
 }
 
-// SequenceCarrier exposes the hidden carrier a typed sequence loop keeps for
-// the loop lifetime. Range loops have no carrier. Consumers ask this query
-// instead of inspecting the concrete iteration plan themselves.
-func (r *evidence) SequenceCarrier(id source.NodeID) (*symbols.Symbol, bool) {
-	iteration, found := r.ForIteration(id)
-	if !found {
-		return nil, false
-	}
-	sequence, ok := iteration.Plan.(*SequenceIteration)
-	if !ok || sequence == nil || sequence.Carrier == nil {
-		return nil, false
-	}
-	return sequence.Carrier, true
-}
-
 func (r *evidence) RecordCheckedIteration(id source.NodeID, expansion *ast.BlockStmt) {
 	if r != nil && id.IsValid() && expansion != nil {
 		r.control.checkedIterations[id] = expansion
@@ -544,15 +490,6 @@ func (r *evidence) CheckedIteration(id source.NodeID) *ast.BlockStmt {
 		return nil
 	}
 	return r.control.checkedIterations[id]
-}
-
-func (r *evidence) ForEachCheckedIteration(fn func(source.NodeID, *ast.BlockStmt)) {
-	if r == nil || fn == nil {
-		return
-	}
-	for id, expansion := range r.control.checkedIterations {
-		fn(id, expansion)
-	}
 }
 
 // CloneReusableExpressionEvidenceFrom copies declaration-context facts that

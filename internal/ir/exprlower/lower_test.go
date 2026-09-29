@@ -5,14 +5,17 @@ import (
 	"testing"
 
 	"compiler/internal/diagnostics"
+	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/ir"
+	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/exprlower"
 	"compiler/internal/ir/thir"
 	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
+	"compiler/internal/semantics/analysis"
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/resolver"
@@ -41,6 +44,8 @@ func buildTypedExprModule(t *testing.T, source string) (*module.Module, *diagnos
 	binder.Bind(ctx, mod)
 	resolver.Resolve(ctx, mod)
 	mod.THIR = typechecker.Check(ctx, mod)
+	mod.CFG = cfg.BuildModule(mod.THIR)
+	mod.Analysis = analysis.Run(diag, analysis.Input{Source: mod.THIR, CFG: mod.CFG, Scope: mod.ModuleScope})
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -156,5 +161,30 @@ fn main() -> i32 {
 	invalid, ok := exprlower.Lower(ctx, missing, fn.Params[0]).(*ir.InvalidExpr)
 	if !ok || invalid.Message != "missing interface implementation evidence" {
 		t.Fatalf("conversion without evidence = %#v, want missing evidence", invalid)
+	}
+}
+
+func TestLowerUsesAnalysisRefinedOptionalType(t *testing.T) {
+	mod, diag := buildTypedExprModule(t, `
+fn read(value: ?i32) -> i32 {
+	if value == none { return 0; }
+	return value;
+}
+`)
+	fn := mod.AST.Stmts[0].(*ast.FnDecl)
+	ret := fn.Body.Stmts[1].(*ast.ReturnStmt)
+	expr, ok := mod.THIR.Node(ret.Value.ID()).(thir.Expr)
+	if !ok || expr == nil {
+		t.Fatalf("return value missing from THIR: %#v", ret.Value)
+	}
+	if got := typeinfo.TypeText(mod.Analysis.ExprType(ret.Value.ID())); got != "i32" {
+		t.Fatalf("analysis type = %s, want i32", got)
+	}
+	types := ir.NewTypeTable()
+	lowered := exprlower.Lower(exprlower.Context{
+		Types: types, Diagnostics: diag, Source: mod.THIR, Analysis: mod.Analysis, ModuleID: mod.ID,
+	}, expr, nil)
+	if got := types.Text(lowered.TypeID()); got != "i32" {
+		t.Fatalf("lowered refined type = %s, want i32", got)
 	}
 }

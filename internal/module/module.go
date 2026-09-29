@@ -7,8 +7,8 @@ import (
 	"compiler/internal/ir/thir"
 	"compiler/internal/moduleid"
 	"compiler/internal/phase"
+	"compiler/internal/semantics/analysis"
 	"compiler/internal/semantics/effect"
-	"compiler/internal/semantics/flowresult"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -52,9 +52,9 @@ type Module struct {
 	// Parsed syntax tree.
 	AST *ast.Module
 	// Canonical IR slots.
-	THIR *thir.Module
-	CFG  *cfg.Module
-	Flow *flowresult.Result
+	THIR     *thir.Module
+	CFG      *cfg.Module
+	Analysis *analysis.Module
 	// Effects is the published semantic meaning of each CFG site, produced once
 	// and consumed by the dataflow analyses.
 	Effects   effect.Result
@@ -156,8 +156,8 @@ func (m *Module) EffectiveExprType(id source.NodeID) typeinfo.Type {
 	if m == nil {
 		return nil
 	}
-	if m.Flow != nil {
-		if typ := m.Flow.ExprType(id); typ != nil {
+	if m.Analysis != nil {
+		if typ := m.Analysis.ExprType(id); typ != nil {
 			return typ
 		}
 	}
@@ -185,7 +185,7 @@ func (m *Module) ResetToPhase(retained phase.Phase) {
 		m.CFG = nil
 	}
 	if retained < phase.FlowTyped {
-		m.Flow = nil
+		m.Analysis = nil
 	}
 	if retained < phase.Effects {
 		m.Effects = nil
