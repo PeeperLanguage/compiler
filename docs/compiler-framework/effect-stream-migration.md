@@ -46,9 +46,7 @@ One producer translates AST into ordered semantic effects, keyed by CFG site. Co
 effects, never syntax. A construct that maps onto existing effects needs no case in any
 consumer.
 
-This shares **evidence**, not a solver. `COMPILER_GUIDELINES.md` §6 forbids extracting a
-generic dataflow framework from similar-looking worklists. Each analysis keeps its own
-lattice, join, direction, and diagnostics. Only the facts are shared.
+This design shares **evidence**, not a solver. Each analysis keeps its own lattice, join, direction, and diagnostics. A generic dataflow framework would be justified only if it removed proven shared mechanics without hiding those differences.
 
 ### Package
 
@@ -73,7 +71,7 @@ them.
 
 `Op` is sealed by an unexported marker method, the same idiom as `cfg.Terminator` and
 `typecheckresult.IterationPlan`. Go cannot make a consumer's type switch exhaustive, so
-`internal/contracts` carries that half.
+Rejecting dispatch defaults and behavior tests carry that half without parsing compiler source.
 
 ### What the vocabulary grew, and why
 
@@ -100,7 +98,7 @@ Still absent, with its trigger recorded:
 ### Result and phase
 
 `Result` is `map[ir.NodeID]SiteOps` and `SiteOps` is `map[cfg.SiteID][]Op` — function
-identity outer, site inner, following `flowresult.Result.SiteFacts`. A `cfg.SiteID` is
+identity outer, site inner. A `cfg.SiteID` is
 `{Block, Index}` and is only meaningful relative to one graph, so the outer key is
 required. It is a bare map type rather than a struct with one field, matching
 `ownershipresult.Result`, because `RULES.md` §1 forbids the single-field wrapper.
@@ -121,7 +119,7 @@ Ownership is roughly 1900 lines with loans, NLL borrow-ending, and fifteen diagn
 The vocabulary is proved against one small consumer first.
 
 `usage` is **not** part of this and needs no migration: it has no AST switch and no state,
-it scans `sym.Used` flags.
+it reads symbol usage through `sym.IsUsed()`.
 
 Each step ends with its gate green and one commit. Do not start a step before the previous
 gate passes. Prefix every command with
@@ -155,12 +153,10 @@ write for an ident target, or reads of both for a projection target; `ExprStmt` 
 `ReturnStmt` as reads; a `*cfg.Branch` terminator site as reads of its condition; match arm
 bindings as initialized defines at the arm body's entry site.
 
-**References** resolve through `Bindings.NodeSymbols`. **Definitions do not**: the
-resolver indexes references only, so a declaration name and an assignment target are absent
-from that map and resolve through the site's scope, exactly as definite initialization did.
-Reproducing that split is what keeps the step free of behavior change. Unifying it needs
-separate approval, because scope lookup by name walks parents and can bind a shadowed
-symbol.
+At this milestone, references resolved through the binding occurrence index while
+definitions resolved through the site's scope. A later symbol-table cleanup unified local
+declaration identity through `SymbolIndex.Bind` / `SymbolIndex.Symbol` using declaration-name IDs,
+avoiding both parent-scope name lookup and `Symbol.ASTNode` pointer scans.
 
 Intercept `*ast.CallExpr` and walk `Typechecking.CallArgumentsOrSource(call)` so
 default-expanded arguments are covered.
@@ -198,19 +194,20 @@ Gate: focused tests, then full suite, then `go run ./scripts/bundle.go` and the 
 fixtures. **Zero diagnostic changes.**
 Commit: `Consume published effects in definite initialization`
 
-### Step 4 — contract and validator — **done**
+### Step 4 — validator — **done**
 
-Add the producer to `statementSites` in `internal/contracts/node_dispatch_test.go` with
-`inertDeclarations: true`; remove the `checkReads` entry, whose function no longer exists.
 Add `effect/validate.go` following `cfg/validate.go` literally — accumulate, sort, truncate
-at ten — and state in its doc comment what it does not re-derive.
+at ten — and state in its doc comment what it does not re-derive. Producer dispatch rejects
+unsupported syntax directly; effect consumers use the sealed `Op` family and `Visitor`
+methods where exhaustive behavior matters.
 
-Mutation-prove both: delete a producer case and confirm the named contract failure; corrupt
-an op and confirm the validator message. Restore both, and record the outputs in the commit
-body. Update the counts in `change-paths.md`.
+The original migration also added a source-parsing dispatch contract. That guard was later
+deleted: parsing the compiler's Go implementation duplicated its architecture and made
+correctness depend on source shape. Behavioral tests plus compiler-enforced interfaces are
+the maintained contract now.
 
 Gate: full suite plus race on `internal/project`, `internal/pipeline`, `internal/lsp`.
-Commit: `Require a phase decision for every published effect`
+Commit: `Require valid published effects`
 
 ## Behavior changes found, not fixed here
 

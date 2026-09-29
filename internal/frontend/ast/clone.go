@@ -1,31 +1,31 @@
 package ast
 
-import "sync/atomic"
-
-var nextSyntheticNodeID atomic.Uint32
-
-// NewSyntheticNodeID shares one identity space across checked expansions and
-// default-argument clones, disjoint from parser-assigned nodes.
-func NewSyntheticNodeID() NodeID {
-	return NodeID(nextSyntheticNodeID.Add(1) | (1 << 31))
-}
+import "compiler/internal/source"
 
 // SubstituteExpr clones an expression for call-site expansion. Parameter
 // identifiers are replaced with their already-evaluated argument expressions;
-// every cloned node gets a separate high-range ID so semantic caches cannot
-// collide with parser-assigned nodes.
+// every cloned node gets a deterministic generated ID owned by the call site
+// and omitted parameter slot.
 //
 // Clone logic lives on each expression type via the Expr.copyExpr interface
 // method. Adding a new Expr type that is missing copyExpr produces a compile
 // error, so there is no silent default fallthrough.
-func SubstituteExpr(expr Expr, substitutions map[string]Expr) (cloned Expr, defaultClones map[NodeID]NodeID, argumentClones map[NodeID]NodeID) {
+func SubstituteExpr(owner source.NodeID, parameterSlot uint64, expr Expr, substitutions map[string]Expr) (cloned Expr, defaultClones map[source.NodeID]source.NodeID, argumentClones map[source.NodeID]source.NodeID) {
 	if expr == nil {
 		return nil, nil, nil
 	}
-	defaultClones = make(map[NodeID]NodeID)
-	argumentClones = make(map[NodeID]NodeID)
-	newID := func(original NodeID, fromArgument bool) NodeID {
-		id := NewSyntheticNodeID()
+	if owner.Function() == "" {
+		panic("default-argument clone requires function-owned call identity")
+	}
+	defaultClones = make(map[source.NodeID]source.NodeID)
+	argumentClones = make(map[source.NodeID]source.NodeID)
+	var ordinal uint64
+	newID := func(original source.NodeID, fromArgument bool) source.NodeID {
+		ordinal++
+		id := source.GeneratedNodeID(owner, source.GeneratedDefaultArgument, parameterSlot, ordinal)
+		if !id.IsValid() {
+			panic("default-argument clone produced invalid generated identity")
+		}
 		if fromArgument {
 			argumentClones[id] = original
 		} else {
@@ -37,7 +37,7 @@ func SubstituteExpr(expr Expr, substitutions map[string]Expr) (cloned Expr, defa
 	return cloned, defaultClones, argumentClones
 }
 
-func cloneIdent(ident *Ident, newID func(NodeID, bool) NodeID, fromArgument bool) *Ident {
+func cloneIdent(ident *Ident, newID func(source.NodeID, bool) source.NodeID, fromArgument bool) *Ident {
 	if ident == nil {
 		return nil
 	}
@@ -51,7 +51,7 @@ func cloneIdent(ident *Ident, newID func(NodeID, bool) NodeID, fromArgument bool
 // cloneTypeExpr keeps expression annotations inside the same unique tree as
 // their owning expression. Type nodes have no copy interface because general
 // type syntax is not otherwise cloned.
-func cloneTypeExpr(typ TypeExpr, newID func(NodeID, bool) NodeID, fromArgument bool) TypeExpr {
+func cloneTypeExpr(typ TypeExpr, newID func(source.NodeID, bool) source.NodeID, fromArgument bool) TypeExpr {
 	if typ == nil {
 		return nil
 	}
@@ -70,7 +70,7 @@ func cloneTypeExpr(typ TypeExpr, newID func(NodeID, bool) NodeID, fromArgument b
 	case *RawPtrType:
 		return &RawPtrType{NodeIDHolder: id, Location: typ.Location}
 	case *RefType:
-		return &RefType{NodeIDHolder: id, Mutable: typ.Mutable, Target: cloneTypeExpr(typ.Target, newID, fromArgument), Location: typ.Location}
+		return &RefType{NodeIDHolder: id, IsMutable: typ.IsMutable, Target: cloneTypeExpr(typ.Target, newID, fromArgument), Location: typ.Location}
 	case *OptionalType:
 		return &OptionalType{NodeIDHolder: id, Inner: cloneTypeExpr(typ.Inner, newID, fromArgument), Location: typ.Location}
 	case *ArrayType:
@@ -127,7 +127,7 @@ func cloneTypeExpr(typ TypeExpr, newID func(NodeID, bool) NodeID, fromArgument b
 	}
 }
 
-func clonePathSegments(segments []PathSegment, newID func(NodeID, bool) NodeID, fromArgument bool) []PathSegment {
+func clonePathSegments(segments []PathSegment, newID func(source.NodeID, bool) source.NodeID, fromArgument bool) []PathSegment {
 	cloned := make([]PathSegment, len(segments))
 	for index, segment := range segments {
 		args := make([]TypeExpr, len(segment.TypeArgs))
@@ -141,7 +141,7 @@ func clonePathSegments(segments []PathSegment, newID func(NodeID, bool) NodeID, 
 	return cloned
 }
 
-func cloneParam(param Param, newID func(NodeID, bool) NodeID, fromArgument bool) Param {
+func cloneParam(param Param, newID func(source.NodeID, bool) source.NodeID, fromArgument bool) Param {
 	cloned := Param{IsMutable: param.IsMutable, MutableLocation: param.MutableLocation, Name: cloneIdent(param.Name, newID, fromArgument), Type: cloneTypeExpr(param.Type, newID, fromArgument), Location: param.Location}
 	if param.Default != nil {
 		cloned.Default = param.Default.copyExpr(nil, newID, fromArgument)
@@ -149,7 +149,7 @@ func cloneParam(param Param, newID func(NodeID, bool) NodeID, fromArgument bool)
 	return cloned
 }
 
-func cloneReturnOrigins(origins *ReturnOriginClause, newID func(NodeID, bool) NodeID, fromArgument bool) *ReturnOriginClause {
+func cloneReturnOrigins(origins *ReturnOriginClause, newID func(source.NodeID, bool) source.NodeID, fromArgument bool) *ReturnOriginClause {
 	if origins == nil {
 		return nil
 	}

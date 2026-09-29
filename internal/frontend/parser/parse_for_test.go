@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"compiler/internal/source"
 	"strings"
 	"testing"
 
@@ -123,7 +124,7 @@ return 0;
 	if !ok || loop.Value == nil {
 		t.Fatalf("expected recovered for-in binding, got %#v", fn.Body.Stmts[0])
 	}
-	if loop.Value.ID() == 0 {
+	if loop.Value.ID() == source.ParsedNodeID(0) {
 		t.Fatal("recovery binding has unregistered node ID")
 	}
 }
@@ -168,7 +169,7 @@ func TestParseMalformedForInHeaderPreservesLoopShape(t *testing.T) {
 			if !ok || loop.Cond != nil || loop.Iterable == nil || loop.Body == nil {
 				t.Fatalf("malformed header lost for-in shape: %#v", fn.Body.Stmts[0])
 			}
-			if loop.Value == nil || loop.Value.ID() == 0 {
+			if loop.Value == nil || loop.Value.ID() == source.ParsedNodeID(0) {
 				t.Fatalf("recovery value binding = %#v, want registered identifier", loop.Value)
 			}
 			if _, ok := fn.Body.Stmts[1].(*ast.ReturnStmt); !ok {

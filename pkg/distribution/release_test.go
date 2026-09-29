@@ -1,13 +1,119 @@
 package distribution
 
 import (
+	"bufio"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
+
+func TestReleaseHostsMatchToolchainPlannerOutputs(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is required to exercise the toolchain planner")
+	}
+
+	repositoryRoot := filepath.Clean(filepath.Join("..", ".."))
+	outputPath := filepath.Join(t.TempDir(), "planner-output")
+	command := exec.Command(bash, "scripts/plan-toolchains.sh")
+	command.Dir = repositoryRoot
+	command.Env = append(os.Environ(),
+		"FORCE_ALL=true",
+		"TOOLCHAIN_FAMILY=auto",
+		"GITHUB_OUTPUT="+outputPath,
+	)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("plan all toolchains: %v\n%s", err, output)
+	}
+
+	file, err := os.Open(outputPath)
+	if err != nil {
+		t.Fatalf("open planner output: %v", err)
+	}
+	defer file.Close()
+
+	planned := make(map[releaseHost]bool)
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		key, value, ok := strings.Cut(scanner.Text(), "=")
+		if !ok || value != "true" {
+			t.Fatalf("unexpected planner output %q", scanner.Text())
+		}
+		osName, arch, ok := strings.Cut(key, "_")
+		if !ok || osName == "" || arch == "" {
+			t.Fatalf("invalid planner target %q", key)
+		}
+		host := releaseHost{os: osName, arch: arch}
+		if planned[host] {
+			t.Fatalf("planner repeated target %s/%s", host.os, host.arch)
+		}
+		planned[host] = true
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("read planner output: %v", err)
+	}
+
+	if len(planned) != len(supportedReleaseHosts) {
+		t.Fatalf("planner emitted %d targets, release manifest supports %d", len(planned), len(supportedReleaseHosts))
+	}
+	for _, host := range supportedReleaseHosts {
+		if !planned[host] {
+			t.Fatalf("planner omits supported release host %s/%s", host.os, host.arch)
+		}
+	}
+}
+
+func TestReleaseHostsMatchWorkflowJobs(t *testing.T) {
+	workflow, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(workflow)
+	// Restrict matches to job headers, not target strings in shell snippets or comments.
+	headers := regexp.MustCompile(`(?m)^  ([a-z][a-z0-9_]*):$`).FindAllStringSubmatchIndex(text, -1)
+	jobs := make(map[releaseHost]bool)
+	for i, header := range headers {
+		name := text[header[2]:header[3]]
+		target, isHost := strings.CutPrefix(name, "host_")
+		if !isHost {
+			continue
+		}
+		osName, arch, valid := strings.Cut(target, "_")
+		if !valid || osName == "" || arch == "" {
+			t.Fatalf("invalid release host job %q", name)
+		}
+		end := len(text)
+		if i+1 < len(headers) {
+			end = headers[i+1][0]
+		}
+		body := text[header[1]:end]
+		if !strings.Contains(body, "\n    uses: ./.github/workflows/release-host.yml\n") ||
+			!strings.Contains(body, "\n      os: "+osName+"\n") ||
+			!strings.Contains(body, "\n      arch: "+arch+"\n") {
+			t.Fatalf("release host job %q has mismatched workflow or os/arch inputs", name)
+		}
+		host := releaseHost{os: osName, arch: arch}
+		if jobs[host] {
+			t.Fatalf("workflow repeats release host %s/%s", host.os, host.arch)
+		}
+		jobs[host] = true
+	}
+	if len(jobs) != len(supportedReleaseHosts) {
+		t.Fatalf("workflow schedules %d release hosts, Go supports %d", len(jobs), len(supportedReleaseHosts))
+	}
+	for _, host := range supportedReleaseHosts {
+		if !jobs[host] {
+			t.Fatalf("workflow omits supported release host %s/%s", host.os, host.arch)
+		}
+	}
+}
 
 func TestVerifyReleaseManifestSelectsCompleteHostSet(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)

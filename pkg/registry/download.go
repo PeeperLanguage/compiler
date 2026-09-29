@@ -45,7 +45,7 @@ func DownloadRemotePackage(httpClient *http.Client, cachePath, repoName, version
 	if err != nil {
 		return "", err
 	}
-	if devConfig != nil && devConfig.MockRemote && devConfig.MockPath != "" {
+	if devConfig != nil && devConfig.UsesMockRemote && devConfig.MockPath != "" {
 		return downloadFromMock(modulePath, repoName, version, expectedChecksum, devConfig.MockPath)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), archiveRequestTimeout)
@@ -58,7 +58,7 @@ func ListAvailableVersions(httpClient *http.Client, repoName string, devConfig *
 	if !ok {
 		return nil, fmt.Errorf("unsupported remote host for %s", repoName)
 	}
-	if devConfig != nil && devConfig.MockRemote && devConfig.MockPath != "" {
+	if devConfig != nil && devConfig.UsesMockRemote && devConfig.MockPath != "" {
 		return listMockVersions(repoName, devConfig.MockPath)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), tagRequestTimeout)

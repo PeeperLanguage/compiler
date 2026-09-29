@@ -271,7 +271,7 @@ func (l *Lexer) reportEscapeError(start source.Position, err error) {
 }
 
 func (l *Lexer) Tokenize() []token.Token {
-	for !l.atEOF() {
+	for !l.isAtEOF() {
 		matched := false
 		rem := l.remainder()
 
@@ -331,7 +331,7 @@ func (l *Lexer) remainder() string {
 	return l.input[l.pos.Index:]
 }
 
-func (l *Lexer) atEOF() bool {
+func (l *Lexer) isAtEOF() bool {
 	return l.pos.Index >= len(l.input)
 }
 

@@ -36,7 +36,7 @@ func UpdateCommand(args []string) error {
 		constraints := map[string][]string{
 			plan.RepoPath: []string{">" + plan.CurrentVersion, "<=" + plan.TargetVersion},
 		}
-		if err := installPackageRecursive(http.DefaultClient, cachePath, plan.RepoPath, "latest", &ctx.devConfig, ctx.lockfile, constraints, plan.Alias, "", map[string]bool{}); err != nil {
+		if _, err := installPackageRecursive(http.DefaultClient, cachePath, plan.RepoPath, "latest", &ctx.devConfig, ctx.lockfile, constraints, plan.Alias, "", map[string]bool{}); err != nil {
 			printError(fmt.Sprintf("Failed to update %s: %v", plan.RepoPath, err))
 			installErrors = append(installErrors, fmt.Errorf("update %s: %w", plan.RepoPath, err))
 			continue

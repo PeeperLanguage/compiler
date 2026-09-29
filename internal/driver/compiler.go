@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	"compiler/internal/diagnostics"
+	"compiler/internal/module"
 	"compiler/internal/phase"
 	"compiler/internal/pipeline"
 	"compiler/internal/prelude"
@@ -22,7 +23,7 @@ func NewCompilerContext(cfg project.Config, diag *diagnostics.DiagnosticBag) *pr
 
 // CompileFile compiles the entry file from overlay when non-nil, otherwise it
 // reads the source from disk.
-func CompileFile(ctx *project.CompilerContext, path string, overlay *string) *project.Module {
+func CompileFile(ctx *project.CompilerContext, path string, overlay *string) *module.Module {
 	if ctx == nil {
 		return nil
 	}

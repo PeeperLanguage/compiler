@@ -13,20 +13,20 @@ import (
 )
 
 type doctorReport struct {
-	OK               bool   `json:"ok"`
-	CompilerVersion  string `json:"compiler_version"`
-	HostOS           string `json:"host_os"`
-	HostArch         string `json:"host_arch"`
-	LLVMTriple       string `json:"llvm_triple"`
-	InstallationRoot string `json:"installation_root"`
-	CoreLibrary      string `json:"core_library"`
-	ProfileID        string `json:"profile_id,omitempty"`
-	ManagedToolchain bool   `json:"managed_toolchain"`
-	ClangPath        string `json:"clang_path,omitempty"`
-	LinkerPath       string `json:"linker_path,omitempty"`
-	RuntimeArchive   string `json:"runtime_archive,omitempty"`
-	RuntimeABI       string `json:"runtime_abi,omitempty"`
-	Error            string `json:"error,omitempty"`
+	IsHealthy            bool   `json:"ok"`
+	CompilerVersion      string `json:"compiler_version"`
+	HostOS               string `json:"host_os"`
+	HostArch             string `json:"host_arch"`
+	LLVMTriple           string `json:"llvm_triple"`
+	InstallationRoot     string `json:"installation_root"`
+	CoreLibrary          string `json:"core_library"`
+	ProfileID            string `json:"profile_id,omitempty"`
+	UsesManagedToolchain bool   `json:"managed_toolchain"`
+	ClangPath            string `json:"clang_path,omitempty"`
+	LinkerPath           string `json:"linker_path,omitempty"`
+	RuntimeArchive       string `json:"runtime_archive,omitempty"`
+	RuntimeABI           string `json:"runtime_abi,omitempty"`
+	Error                string `json:"error,omitempty"`
 }
 
 func doctorCommand(args []string) error {
@@ -59,7 +59,7 @@ func doctorCommand(args []string) error {
 			fmt.Println("Status: ready")
 		}
 	}
-	if !report.OK {
+	if !report.IsHealthy {
 		return programExitStatus(exitCodeError)
 	}
 	return nil
@@ -82,7 +82,7 @@ func inspectInstallation(executable string, host target.Info) doctorReport {
 		return report
 	}
 	report.ProfileID = profile.ProfileID
-	report.ManagedToolchain = profile.Managed
+	report.UsesManagedToolchain = profile.IsManaged
 	report.ClangPath = profile.ClangPath
 	report.LinkerPath = profile.LinkerPath
 	report.RuntimeArchive = profile.RuntimeArchive
@@ -93,7 +93,7 @@ func inspectInstallation(executable string, host target.Info) doctorReport {
 			return report
 		}
 	}
-	if profile.Managed {
+	if profile.IsManaged {
 		if profile.RuntimeABI != toolchain.RuntimeABIVersion || profile.RuntimeArchive == "" {
 			report.Error = "managed runtime is missing or incompatible"
 			return report
@@ -103,6 +103,6 @@ func inspectInstallation(executable string, host target.Info) doctorReport {
 			return report
 		}
 	}
-	report.OK = true
+	report.IsHealthy = true
 	return report
 }

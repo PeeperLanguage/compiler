@@ -11,11 +11,13 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/graph"
 	"compiler/internal/ir"
+	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/phase"
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/typeresolution"
 	"compiler/internal/target"
 	"compiler/pkg/manifest"
 	"compiler/pkg/peeper"
@@ -30,7 +32,7 @@ type CompilerContext struct {
 	Config Config
 	// Immutable target metadata shared by semantic and backend phases.
 	Target target.Info
-	// Canonical runtime types shared by HIR, MIR, and backend lowering.
+	// Canonical runtime types shared by MIR and backend lowering.
 	Types *ir.TypeTable
 	// Shared diagnostic stream.
 	Diagnostics *diagnostics.DiagnosticBag
@@ -43,17 +45,15 @@ type CompilerContext struct {
 	GlobalScope *symbols.Scope
 
 	// Canonical module identity -> module.
-	modules map[moduleid.ID]*Module
+	modules map[moduleid.ID]*module.Module
 	// Canonical file path -> module identity.
 	fileIndex map[string]moduleid.ID
 	// Prior semantic API fingerprints supplied by incremental clients.
 	semanticExportBaselines map[moduleid.ID]string
-	// Named declaration identity -> collected module declaration index.
-	typeDeclarations map[string]*Module
-	// Concrete semantic application identity -> canonical instance.
-	typeInstances map[string]namedTypeInstance
-	// Shared compiler dependency graph.
-	Graph *graph.Graph
+	// Semantic type construction and generic instance ownership.
+	TypeResolver *typeresolution.Resolver
+	// Import dependencies shared by module loading and pipeline scheduling.
+	ImportGraph *graph.DependencyGraph
 
 	// Guards module indexes.
 	mu *sync.RWMutex
@@ -80,18 +80,16 @@ type Config struct {
 	LibraryBaseDir string
 	// Optional explicit namespace -> root overrides.
 	LibraryRoots map[string]string
-	// Manifest alias -> dependency root.
-	DependencyRoots map[string]string
 	// Target operating system.
 	TargetOS string
 	// Target architecture.
 	TargetArch string
 	// Emit debug-friendly artifacts.
-	BuildDebug bool
+	IsDebugBuild bool
 	// Require an executable program entrypoint before backend lowering.
 	RequireEntrypoint bool
 	// Compile test entry points.
-	TestMode bool
+	IsTestMode bool
 	// Optional single test name.
 	TestName string
 }
@@ -155,28 +153,25 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 			setupDiag.Add(diagnostics.NewWarning("failed to access library root for " + namespace + ": " + err.Error()))
 		}
 	}
-	if cfg.DependencyRoots == nil {
-		cfg.DependencyRoots = make(map[string]string)
-	}
 	globalScope := predeclaredScope(compilerTarget)
 	types := ir.NewTypeTable()
 	types.SetIndexType(types.Intern(ir.Type{Kind: ir.TypeInteger, Bits: compilerTarget.IndexBits}))
-	return &CompilerContext{
+	ctx := &CompilerContext{
 		Config:                cfg,
 		Target:                compilerTarget,
 		Types:                 types,
 		Diagnostics:           diag,
 		CompletedProjectPhase: phase.Setup,
 		GlobalScope:           globalScope,
-		Graph:                 graph.New(GraphEdgeImport),
+		ImportGraph:           graph.NewDependencyGraph(GraphEdgeImport),
 		mu:                    &sync.RWMutex{},
 
-		modules:                 make(map[moduleid.ID]*Module),
+		modules:                 make(map[moduleid.ID]*module.Module),
 		fileIndex:               make(map[string]moduleid.ID),
 		semanticExportBaselines: make(map[moduleid.ID]string),
-		typeDeclarations:        make(map[string]*Module),
-		typeInstances:           make(map[string]namedTypeInstance),
 	}
+	ctx.TypeResolver = typeresolution.New(compilerTarget, ctx)
+	return ctx
 }
 
 // WithDiagnostics creates a phase-scoped context view sharing compiler state.
@@ -190,29 +185,15 @@ func (ctx *CompilerContext) WithDiagnostics(diag *diagnostics.DiagnosticBag) *Co
 }
 
 // ResetModule invalidates module artifacts and downstream diagnostics together.
-func (ctx *CompilerContext) ResetModule(module *Module, retained phase.Phase) {
+func (ctx *CompilerContext) ResetModule(module *module.Module, retained phase.Phase) {
 	if ctx == nil || module == nil {
 		return
 	}
-	module.resetToPhase(retained)
-	ctx.mu.Lock()
-	for identity, instance := range ctx.typeInstances {
-		if instance.ownerModuleID == module.ID {
-			if !instance.complete && instance.ready != nil {
-				close(instance.ready)
-			}
-			delete(ctx.typeInstances, identity)
-		}
+	if ctx.TypeResolver != nil {
+		ctx.TypeResolver.ResetModule(module, retained)
 	}
-	if retained < phase.Collected {
-		for identity, owner := range ctx.typeDeclarations {
-			if owner != nil && owner.ID == module.ID {
-				delete(ctx.typeDeclarations, identity)
-			}
-		}
-	}
-	ctx.mu.Unlock()
-	if ctx.Diagnostics != nil && module.ID.Valid() {
+	module.ResetToPhase(retained)
+	if ctx.Diagnostics != nil && module.ID.IsValid() {
 		ctx.Diagnostics.DiscardModuleAfter(module.ID.String(), retained)
 	}
 }
@@ -267,7 +248,7 @@ func (ctx *CompilerContext) ModuleOriginForFile(filePath string) (ModuleOrigin, 
 		if !ok {
 			continue
 		}
-		if PathWithinRoot(manifest.SourceDir(root), canonical) {
+		if IsPathWithinRoot(manifest.SourceDir(root), canonical) {
 			return ModuleOriginStdlib, namespace
 		}
 	}
@@ -308,14 +289,14 @@ func declarePredeclaredConst(scope *symbols.Scope, name string) {
 	if scope == nil || name == "" {
 		return
 	}
-	sym := symbols.New(name, symbols.SymbolConst, nil, ast.LocOf(nil))
+	sym := symbols.New(symbols.CompilerSymbolID(symbols.SymbolConst, name), name, symbols.SymbolConst, nil, ast.LocOf(nil))
 	switch name {
 	case "true", "false":
-		sym.Type = &typeinfo.BoolType{}
+		sym.BindType(&typeinfo.BoolType{})
 	case "none":
-		sym.Type = &typeinfo.NoneType{}
+		sym.BindType(&typeinfo.NoneType{})
 	default:
-		sym.Type = &typeinfo.UnknownType{}
+		sym.BindType(&typeinfo.UnknownType{})
 	}
 	sym.IsPub = true
 	if err := scope.Declare(sym); err != nil {
@@ -328,8 +309,8 @@ func declarePredeclaredType(scope *symbols.Scope, name string, typ typeinfo.Type
 	if scope == nil || name == "" || typ == nil {
 		return
 	}
-	sym := symbols.New(name, symbols.SymbolType, nil, ast.LocOf(nil))
-	sym.Type = typ
+	sym := symbols.New(symbols.CompilerSymbolID(symbols.SymbolType, name), name, symbols.SymbolType, nil, ast.LocOf(nil))
+	sym.BindType(typ)
 	sym.IsPub = true
 	if err := scope.Declare(sym); err != nil {
 		panic(err)

@@ -1,0 +1,7 @@
+name = "negative_struct_reordered_reference"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["cannot assign"]

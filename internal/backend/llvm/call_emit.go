@@ -51,7 +51,7 @@ func emitInterfaceThunk(out *strings.Builder, emitter *llvmEmitter, thunk *mir.I
 	builder := newLLVMBuilder(out, emitter, -1)
 	rawReceiver := builder.value("%p0", slotLayout.Parameters[0])
 	callArgs := make([]llvmValue, 0, len(actualLayout.Parameters))
-	if llvmPointerLike(actualLayout.Parameters[0]) {
+	if isLLVMPointerLike(actualLayout.Parameters[0]) {
 		callArgs = append(callArgs, builder.bitcast(rawReceiver, actualLayout.Parameters[0]))
 	} else {
 		receiverPtr := builder.bitcast(rawReceiver, llvmPointerLayout(actualLayout.Parameters[0]))
@@ -64,7 +64,7 @@ func emitInterfaceThunk(out *strings.Builder, emitter *llvmEmitter, thunk *mir.I
 		}
 		callArgs = append(callArgs, builder.value("%p"+strconv.Itoa(i), actualLayout.Parameters[i]))
 	}
-	callee := builder.value("@"+ir.SanitizeSymbolName(ir.StripSymbolInstance(thunk.FuncName)), actualLayout)
+	callee := builder.value("@"+ir.SanitizeSymbolName(thunk.FuncName), actualLayout)
 	result := builder.call(callee, callArgs)
 	if actualLayout.Return.Kind == llvmLayoutVoid {
 		builder.retVoid(actualLayout.Return)
@@ -78,24 +78,42 @@ func emitInterfaceThunk(out *strings.Builder, emitter *llvmEmitter, thunk *mir.I
 // It extracts data pointer and itab pointer from interface value, loads
 // function pointer from requested slot, then bitcasts it to callable LLVM type.
 // Callers reuse this for both expression-form and discarded-result calls.
-func emitInterfaceCallTarget(b *llvmBuilder, base mir.ValueRef, slot int) (llvmValue, llvmValue, bool) {
-	if b == nil || base == nil {
+func emitInterfaceCallTarget(b *llvmBuilder, base mir.ValueRef, slot int, slotType ir.TypeID) (llvmValue, llvmValue, bool) {
+	if b == nil || base == nil || slotType == ir.InvalidType {
 		return llvmValue{}, llvmValue{}, false
 	}
 	baseValue := emitRef(b, base)
 	data := b.extractField(baseValue, llvmFieldData)
 	itab := b.extractField(baseValue, llvmFieldDispatch)
-	slotLayout, ok := b.emitter.interfaceSlotLayout(mirRefType(base), slot)
-	if !ok {
+	slotLayout := b.emitter.layout(slotType)
+	if slotLayout == nil || slotLayout.Kind != llvmLayoutFunction {
+		b.emitter.markInvalid("interface call reached LLVM without published slot function type")
 		return llvmValue{}, llvmValue{}, false
 	}
 	rawPointer := llvmPointerLayout(llvmScalarLayout("i8"))
 	vtable := b.bitcast(itab, llvmPointerLayout(rawPointer))
-	methodOffset := interfaceMethodVtableSlotID(b.emitter.mod.Types, mirRefType(base), slot)
+	methodOffset := interfaceMethodVtableSlotID(b.emitter.mod.Types, base.TypeID(), slot)
 	fnPtrPtr := b.gep(b.pointerPlace(vtable), b.value(strconv.Itoa(methodOffset), llvmScalarLayout("i32")), true)
 	fnI8 := b.load(fnPtrPtr)
 	fn := b.bitcast(fnI8, slotLayout)
 	return data, fn, true
+}
+
+func emitCallArguments(b *llvmBuilder, args []mir.ValueRef) []llvmValue {
+	values := make([]llvmValue, len(args))
+	for i, arg := range args {
+		values[i] = emitRef(b, arg)
+	}
+	return values
+}
+
+func emitInterfaceCallArguments(b *llvmBuilder, data llvmValue, args []mir.ValueRef) []llvmValue {
+	values := make([]llvmValue, 1, len(args)+1)
+	values[0] = data
+	for _, arg := range args {
+		values = append(values, emitRef(b, arg))
+	}
+	return values
 }
 
 // emitDiscardedCall handles statement-form direct calls such as `foo();`.
@@ -105,10 +123,7 @@ func emitDiscardedCall(b *llvmBuilder, call *mir.Call) {
 	if b == nil || call == nil {
 		return
 	}
-	args := make([]llvmValue, len(call.Args))
-	for i, arg := range call.Args {
-		args[i] = emitRef(b, arg)
-	}
+	args := emitCallArguments(b, call.Args)
 	callee := emitRef(b, call.Callee)
 	if callee.Layout.Kind != llvmLayoutFunction {
 		b.emitter.markInvalid("call reached LLVM without function type")
@@ -123,24 +138,20 @@ func emitDiscardedInterfaceCall(b *llvmBuilder, call *mir.InterfaceCall) {
 	if b == nil || call == nil {
 		return
 	}
-	data, fn, ok := emitInterfaceCallTarget(b, call.Base, call.Slot)
+	data, fn, ok := emitInterfaceCallTarget(b, call.Base, call.Slot, call.SlotType)
 	if !ok {
 		return
 	}
-	args := make([]llvmValue, 1, len(call.Args)+1)
-	args[0] = data
-	for _, arg := range call.Args {
-		args = append(args, emitRef(b, arg))
-	}
+	args := emitInterfaceCallArguments(b, data, call.Args)
 	b.call(fn, args)
 	if consumesOwnedInterfaceStorage(b.emitter.mod.Types, call) {
-		emitInterfaceStorageRelease(b, mirRefType(call.Base), emitRef(b, call.Base), data)
+		emitInterfaceStorageRelease(b, call.Base.TypeID(), emitRef(b, call.Base), data)
 	}
 }
 
 func consumesOwnedInterfaceStorage(types *ir.TypeTable, call *mir.InterfaceCall) bool {
-	if call == nil || !call.Consumes {
+	if call == nil || !call.ConsumesBase {
 		return false
 	}
-	return isOwnedInterfaceType(types, mirRefType(call.Base))
+	return isOwnedInterfaceType(types, call.Base.TypeID())
 }

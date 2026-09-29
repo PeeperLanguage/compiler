@@ -9,11 +9,13 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
+	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/resolver"
+	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typechecker"
 	"compiler/pkg/peeper"
 )
@@ -32,12 +34,12 @@ func checkUsageSource(t *testing.T, src string, setupImports bool) *diagnostics.
 }
 fn GetValue() -> i32 { return 42; }`
 		extAST := parser.New("external"+peeper.SourceExt, lexer.New("external"+peeper.SourceExt, extSrc, diag).Tokenize(), diag).ParseModule()
-		extMod := &project.Module{
+		extMod := &module.Module{
 			ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "external"},
 			FilePath: "external" + peeper.SourceExt,
 			Content:  extSrc,
 			AST:      extAST,
-			Imports:  make(map[string]project.ResolvedImport),
+			Imports:  make(map[string]module.ResolvedImport),
 		}
 		ctx.AddModule(extMod)
 		collector.Collect(ctx, extMod)
@@ -48,28 +50,46 @@ fn GetValue() -> i32 { return 42; }`
 
 	stream := lexer.New(filePath, src, diag).Tokenize()
 	modAST := parser.New(filePath, stream, diag).ParseModule()
-	module := &project.Module{
+	mod := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "usage_test"},
 		FilePath: filePath,
 		Content:  src,
 		AST:      modAST,
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 
 	if setupImports {
-		module.Imports["external"] = project.ResolvedImport{
+		mod.Imports["external"] = module.ResolvedImport{
 			ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "external"},
 			FilePath: "external" + peeper.SourceExt,
 		}
 	}
 
-	ctx.AddModule(module)
-	collector.Collect(ctx, module)
-	binder.Bind(ctx, module)
-	resolver.Resolve(ctx, module)
-	typechecker.Check(ctx, module)
-	Analyze(ctx, module)
+	ctx.AddModule(mod)
+
+	collector.Collect(ctx, mod)
+	binder.Bind(ctx, mod)
+	resolver.Resolve(ctx, mod)
+	typechecker.Check(ctx, mod)
+	Analyze(diag, mod, moduleid.ID{}, CollectUsedSymbols([]*module.Module{mod}))
 	return diag
+}
+
+func TestCollectUsedSymbolsUnionsModuleOwnedActivity(t *testing.T) {
+	first := &module.Module{SymbolIndex: symbols.NewIndex()}
+	second := &module.Module{SymbolIndex: symbols.NewIndex()}
+	firstSymbol := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "first"), "first", symbols.SymbolVar, nil, nil)
+	secondSymbol := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "second"), "second", symbols.SymbolVar, nil, nil)
+	first.SymbolIndex.MarkUsed(firstSymbol)
+	second.SymbolIndex.MarkUsed(secondSymbol)
+
+	used := CollectUsedSymbols([]*module.Module{first, nil, second})
+	if _, ok := used[firstSymbol.ID]; !ok {
+		t.Fatal("first module use missing from project activity")
+	}
+	if _, ok := used[secondSymbol.ID]; !ok {
+		t.Fatal("second module use missing from project activity")
+	}
 }
 
 func hasCode(diag *diagnostics.DiagnosticBag, code string) bool {

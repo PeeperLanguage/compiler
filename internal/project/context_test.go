@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"compiler/internal/diagnostics"
+	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/phase"
 	"compiler/internal/semantics/symbols"
@@ -18,7 +19,7 @@ func TestWithDiagnosticsSharesCompilerStateAndLock(t *testing.T) {
 	id := moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "main"}
 	scopedBag := ctx.Diagnostics.BeginPhase(phase.Typechecked, id.String())
 	scoped := ctx.WithDiagnostics(scopedBag)
-	module := &Module{ID: id}
+	module := &module.Module{ID: id}
 	scoped.AddModule(module)
 	scoped.Diagnostics.Add(diagnostics.NewError("typed"))
 

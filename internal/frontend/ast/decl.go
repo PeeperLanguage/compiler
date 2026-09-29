@@ -93,9 +93,9 @@ func (t *RawPtrType) TypeText() string {
 
 type RefType struct {
 	NodeIDHolder
-	Mutable  bool
-	Target   TypeExpr
-	Location *source.Location
+	IsMutable bool
+	Target    TypeExpr
+	Location  *source.Location
 }
 
 func (*RefType) typeNode()                       {}
@@ -106,7 +106,7 @@ func (t *RefType) TypeText() string {
 		return ""
 	}
 	prefix := "&"
-	if t.Mutable {
+	if t.IsMutable {
 		prefix = "&mut "
 	}
 	return prefix + TypeText(t.Target)

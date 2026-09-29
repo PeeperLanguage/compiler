@@ -2,24 +2,23 @@
 
 This file defines how agents must work in this repository.
 
-`RULES.md` defines what code is acceptable. Follow it for every code change. If this file conflicts with `RULES.md`, `RULES.md` wins for code quality, architecture, testing, branch, and commit rules.
+`RULES.md` defines durable code-quality and delivery requirements. `AGENTS.md` owns agent workflow only. Specifications and architecture documents record language decisions and current design, but every claim must still be checked against explicit user requirements, source, tests, and engineering purpose.
 
-Human-facing project rules belong in `RULES.md`. Agent-only workflow, gates, local plans, GitHub automation, and response style belong here.
+When documents conflict, do not let a file's self-declared precedence settle technical correctness. Identify the conflict, inspect evidence, and ask for a decision when required. Human-facing engineering rules belong in `RULES.md`; agent-only gates, local plans, GitHub automation, and response style belong here.
 
 ---
 
 ## 1) Required pre-change check
 
-Before editing code, answer these questions in your rationale:
+Before editing production code, answer these five lines from inspected source:
 
-1. What existing function/module already implements part of this behavior?
-2. Can existing logic be reused directly instead of adding a wrapper?
-3. Would this change duplicate logic across files, phases, or backends?
-4. If a function is being replaced, renamed, removed, or simplified, what behavior did it previously own?
-5. If a parameter becomes unused, why should it still exist?
-6. If a new helper is introduced, which rule in `RULES.md` allows it?
+- **Need:** current non-test production behavior or consumer requiring this code.
+- **Owner:** existing function/package that should own it.
+- **Reuse:** existing implementation being reused or changed.
+- **Shape:** why it adds no repeated fields/functions, wrapper, stale alias, or ignored parameter.
+- **Exit:** what will be deleted if this is experimental and the hypothesis fails.
 
-Do not start implementation until these questions are answered from inspected code, not memory.
+If `Need` names only a test, benchmark, debugging session, future feature, or possible later use, do not edit production code without explicit user approval. If replacing or deleting code, also list the validation, diagnostics, mutation, caching, and invariants it owns. Do not start implementation from memory or with any line unanswered.
 
 ---
 
@@ -34,7 +33,7 @@ Immediately before every code edit or `apply_patch`:
    - behavior preservation
    - function replacement
    - change scope
-   - compiler pipeline architecture, if relevant
+   - relevant source, specifications, and architecture documents
    - testing requirements
 2. Re-answer the pre-change questions against the current diff.
 3. Check every planned new or changed function against:
@@ -53,22 +52,53 @@ Do not rely on earlier turn notes or earlier same-turn checks. Re-run this gate 
 
 ## 3) Agent hard constraints
 
-Full authority stays in `RULES.md`. Sections 2 and 7 enforce the shared reuse, wrapper (including old-name wrappers), alias, parameter, duplication, helper, and behavior-preservation constraints before and after every patch.
+Use `RULES.md` for durable engineering checks. Treat representation, package, and phase-boundary claims in every document as designs that may be reviewed and changed deliberately.
 
 - Reduce local repetition without harming clarity; leave no obviously cleanup-needed touched code.
 - Optimize for readability and maintainability, not only correctness.
 - Keep diffs minimal and task-focused; do not mix unrelated refactors.
-- Do not bypass intended compiler phase boundaries.
+- Do not bypass a verified correctness boundary merely to reduce edits.
+
+### Self-review marker
+
+Before creating a commit intended for a pull request, ensure the first two lines of `README.md` are:
+
+```text
+> [!IMPORTANT]
+> Remove this line to confirm you have reviewed this PR before submitting.
+```
+
+Add them if not already present. Never remove these lines yourself, even if asked to clean up, revert, or finalize the change — removing them is strictly a manual step for the human author, confirming they read the full diff before requesting review.
+
+### Efficient execution
+
+1. Search symbols first; do not read whole directories.
+2. Read only files and line ranges needed for the next decision. Do not re-read current user attachments.
+3. Run independent searches and reads in parallel.
+4. Summarize an implementation decision in at most five bullets before a non-trivial patch.
+5. Validate changed package first, affected packages next, and full suite once after focused checks pass.
+6. Do not rerun an unchanged expensive command without new evidence.
+7. Use sub-agents only for independent work whose saved effort exceeds coordination cost.
+8. Keep progress updates to one or two sentences; do not repeat visible tool output.
 
 ---
 
 ## 4) Stepwise workflow
 
-1. Keep a persistent local tracking file with the `*.localplan.md` naming pattern. Do not commit it.
+1. Keep a persistent local tracking file with the `*.localplan.md` naming pattern. Do not commit it. For explicitly read-only work, read an existing plan but do not create or modify one unless the user authorizes writes.
 2. Implement one approved step at a time.
 3. Stop after each step and wait for review, unless user explicitly asks for multiple steps in one pass.
 4. Commit only after explicit approval.
 5. Keep the local plan as a full progress report, not a short scratch note.
+
+Experimental work must follow this lifecycle:
+
+1. add the minimum measurement needed;
+2. run and record it;
+3. make the decision;
+4. remove experimental production scaffolding unless explicitly approved as permanent.
+
+A completed experiment with temporary production instrumentation still present is not complete.
 
 The local plan must preserve completed work, current work, remaining work, risks, validation, and resume context in one place.
 
@@ -189,6 +219,10 @@ One-word trigger:
 
 Required checks:
 
+- Agents must never approve their own pull request, submit approval through another identity, impersonate a reviewer, or weaken the human-review workflow. Only a non-author human collaborator may approve current head.
+- Agents must never remove the self-review marker from `README.md`; only the human author removes it.
+- After every pushed commit, treat prior human approval as stale until a human collaborator approves the new head.
+
 1. Check open PRs:
    - `gh pr list --state open --json number,title,headRefName,baseRefName,isDraft,mergeStateStatus,reviewDecision,url`
    - If an older clean PR is already contained in the current branch and user approves merge, merge it before opening/stacking more PRs.
@@ -238,9 +272,12 @@ Immediately after edits and before any stop, pause, or final response:
 4. Remove any ignored parameter introduced during current step, unless a real interface/API boundary requires it.
 5. Remove or centralize duplicated logic in touched areas when possible within current step scope.
 6. Re-check any new helper against the exact allowance rule in `RULES.md`.
-7. Confirm diagnostics, validation, mutation, caching, logging, and invariant checks were preserved, moved, or intentionally removed.
-8. Run focused validation for touched packages.
-9. Report rule-audit result explicitly.
+7. Search every new production symbol and identify its current non-test production callers. Tests and benchmarks do not count; delete symbols with none unless explicitly approved as public API.
+8. If three or more sibling fields/functions share one shape, first decide whether the concept should be deleted; do not hide unjustified repetition behind a new abstraction.
+9. If an experiment rejected its hypothesis, remove its production scaffolding before reporting completion.
+10. Confirm diagnostics, validation, mutation, caching, logging, and invariant checks were preserved, moved, or intentionally removed.
+11. Run focused validation for touched packages.
+12. Report rule-audit result explicitly.
 
 Do not stop at "step done" until this audit passes for touched files.
 

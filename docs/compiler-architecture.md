@@ -1,12 +1,10 @@
 # Peeper Compiler Architecture
 
-This document describes the compiler architecture that exists in this repository.
-Language behavior is defined by [`language-spec.md`](language-spec.md) and
-[`ownership-pointer-model.md`](ownership-pointer-model.md); this document defines
-where that behavior is implemented and how new work should compose with existing
-mechanisms.
+This document records compiler architecture observed in source. Verify mutable details against linked symbols and current tests. It explains current implementation and rationale; it does not make current phase order, package boundaries, or representations permanent.
 
-## Design goal
+Language intent is recorded in [`language-spec.md`](language-spec.md) and [`ownership-pointer-model.md`](ownership-pointer-model.md). Conflicts among documents, source, tests, and explicit requirements require review rather than automatic precedence.
+
+## Current design rationale
 
 Peeper's compiler is organized around one rule:
 
@@ -16,11 +14,11 @@ The architecture is intended to prevent the failure mode where a feature looks
 complete in parsing or typechecking but one forgotten ownership, flow, cleanup, or
 lowering walk survives until production.
 
-Three invariants drive the design:
+Three patterns currently drive the design:
 
-1. **One canonical mechanism per concern.** Tree structure, semantic type
+1. **Shared mechanisms for repeated concerns.** Tree structure, semantic type
    structure, place projections, graph adjacency, worklist scheduling, and value
-   effects each have one owner.
+   effects currently each have one implementation owner.
 2. **Compositional behavior.** A new container/type/syntax construct that is built
    from existing semantic operations and provenance evidence can reuse ownership,
    definite-init, liveness, and cleanup behavior. New reference-bearing value shapes
@@ -42,27 +40,22 @@ parse
   -> collect
   -> bind
   -> resolve
-  -> constants
-  -> typecheck
+  -> typecheck + constant finalization + THIR
   -> CFG
-  -> flow typing
-  -> semantic effects
-  -> definite initialization
-  -> ownership + cleanup
+  -> analysis (flow + effects + definite initialization + ownership)
   -> usage
-  -> HIR
-  -> MIR
+  -> MIR lowering from THIR/CFG/Analysis
   -> backend
 ```
 
-Project/module readiness and incremental checkpoints remain explicit. Do not hide
-this scheduler behind a uniform pass interface: phases have different dependency,
-barrier, and invalidation rules.
+The durable representation path is `AST → THIR → CFG → Analysis → MIR`. Flow, effect extraction, definite initialization, and ownership remain distinct algorithms inside `analysis.Run`; they are not separate module lifecycle artifacts.
+
+Project/module readiness and incremental checkpoints are explicit because current
+stages have different dependency, barrier, and invalidation rules. A replacement would need to represent those differences rather than hide them behind a uniform interface.
 
 ## Representation boundary
 
-Syntax remains source shape. Semantic facts remain side tables/results keyed by
-stable identity.
+Syntax remains source shape. Durable semantic facts live in THIR, CFG, `analysis.Module`, or generation-owned symbol state keyed by stable identity. Operation-local maps remain private scratch state.
 
 ```text
                          source
@@ -72,66 +65,61 @@ stable identity.
         +------------------+------------------+
         | syntax-aware semantic owners        |
         | resolver, typechecker, CFG builder, |
-        | effect publisher, HIR lowering      |
+        | analysis operation, THIR/MIR lowering|
         +------------------+------------------+
                            |
-             canonical semantic evidence
-        symbols / types / places / CFG / effects
+             canonical durable artifacts
+          symbols / THIR / CFG / Analysis
                            |
         +------------------+------------------+
-        | syntax-agnostic generic analyses    |
-        | definite-init, most ownership value |
-        | flow/liveness/worklist mechanics    |
+        | transient analysis algorithms       |
+        | effects, init, ownership, liveness  |
         +------------------+------------------+
                            |
-                      cleanup / IR
+                           MIR
 ```
 
-A later phase must not rediscover a decision already published by an earlier
-owner. If ownership needs to know that a call argument is borrowed, typechecking
-publishes that fact and effects publish `Borrow`; ownership must not inspect call
-syntax and infer it again.
+Current later stages consume decisions published by earlier work. For example, typechecking records borrowed call arguments and effects publish `Borrow`; ownership consumes that evidence rather than inferring it again from call syntax. This is current design, not proof that same stage boundaries must remain.
 
-## Canonical structural mechanisms
+## Current structural mechanisms
 
 ### AST: `ast.Inspect`
 
 AST nodes own child shape through `forEachChild`. Generic consumers use
 `ast.Inspect` rather than maintaining private recursive switches.
 
-A new AST node must declare its children once. Semantic phases may still dispatch
-on node kind when behavior genuinely differs.
+Under current AST contract, each node declares children once. Semantic stages may still dispatch on node kind when behavior genuinely differs.
 
 ### Semantic types: `typeinfo.ForEachChild`
 
-`typeinfo.Type` is sealed inside `typeinfo` and requires two structural contracts:
+`typeinfo.Type` is sealed inside `typeinfo` and requires explicit intrinsic
+operations:
 
-- `forEachChild` — immediate semantic children and their `TypeChildRelation`;
-- `ownershipShape` — how copy/drop semantics compose over those children.
+- `structure` — local semantic identity plus ordered child slots and their
+  `TypeChildRelation`;
+- `isSameType`, `isSized`, `isLowerable`, and `ownership` — operation-specific
+  behavior that new types must implement.
 
-`typeinfo.ForEachChild` is the semantic-type equivalent of `ast.Inspect`.
+`typeinfo.ForEachChild` projects present children from `structure`; semantic
+fingerprinting consumes the same structure, including absent slots.
+`ForEachChild` is the semantic-type equivalent of `ast.Inspect`.
 Containment and ownership capability queries consume this structure. Sizing and
 lowerability intentionally keep separate recursion policies because recursive
 cycles mean different things to those queries.
 
-Consequence: adding a new composite semantic type cannot satisfy `typeinfo.Type`
-until it declares child structure and ownership composition. Nested ownership/drop
-then propagates through generic machinery. This enforces method presence, not
-correct child enumeration or ownership policy; behavioral tests remain necessary.
+Consequence: adding a semantic type cannot satisfy `typeinfo.Type` until it
+declares structure, equality, representation, and ownership behavior. Required
+methods enforce presence; behavioral tests still prove each implementation's policy.
 
-Typed-nil capability inputs retain explicit-copy/no-drop answers. `isNilType` uses
-bounded pointer reflection before ownership dispatch: nil scalar and owned-pointer
-receivers otherwise return ordinary non-nil facts. Keep this guard rather than add
-an exhaustive type-kind switch or a nil-only interface. Traversal methods separately
-handle nil receivers; this is not a compiler-wide typed-nil validation guarantee.
+Typed-nil ownership inputs retain explicit-copy/no-drop answers. The ownership
+query checks `typednil.IsNil` before dispatch, while structural traversal separately
+skips typed-nil children. This is not a compiler-wide typed-nil validation guarantee.
 
 ### Places: `place.Project` / `place.Decompose`
 
-Selector/index place grammar is owned by `internal/semantics/place`.
-Consumers must not peel `SelectorExpr`/`IndexExpr` independently to answer which
-storage is touched.
+`internal/semantics/place` currently handles selector/index place grammar. Consumers use its evidence instead of independently peeling `SelectorExpr`/`IndexExpr` to answer which storage is touched.
 
-Canonical place facts carry:
+Current place facts carry:
 
 - root symbol when storage is named;
 - ordered field/index projections;
@@ -145,12 +133,11 @@ build on this contract.
 `internal/graph.Directed` owns directed adjacency and reverse adjacency once.
 Domain graphs keep semantic edge data on top:
 
-- import/type dependency graphs use `graph.Graph`;
+- import/type dependency graphs use `graph.DependencyGraph`;
 - CFG owns `cfg.Edge` kinds/case metadata while storing site/block topology in
   `graph.Directed`.
 
-Do not add another successors/predecessors store to a domain graph. Add domain
-metadata to its edge/node type and reuse the topology kernel.
+A second successors/predecessors store would duplicate current topology state. Reuse or deliberately replace the shared kernel when contracts differ.
 
 CFG terminators and ordered block sites define control flow. Block/site edge
 indexes are derived at construction and immutable by consumer convention after
@@ -165,13 +152,12 @@ and compare site targets, kinds, and case labels against the block topology.
 rescheduling. Flow, definite-init, ownership, and liveness retain their own state,
 join, direction, edge transfer, diagnostics, and convergence rules.
 
-This is deliberately smaller than a generic dataflow framework. Shared mechanics
+This is currently smaller than a generic dataflow framework. Shared mechanics
 are centralized; semantic lattices remain visible in their owning packages.
 
-## Canonical semantic effects
+## Current semantic effects
 
-`internal/semantics/effect` publishes value/storage behavior in source evaluation
-order. Current operations are:
+Inside `analysis.Run`, the private effect builder derives value/storage behavior in source evaluation order. Current operations are:
 
 - `Define` — storage becomes a binding, optionally initialized from a value;
 - `Write` — existing place is replaced/mutated;
@@ -181,9 +167,7 @@ order. Current operations are:
 - `Discard` — produced value is thrown away;
 - `CallBegin` / `CallEnd` — call-lifetime brackets for argument loans.
 
-`effect.Visitor` is the exhaustive consumer boundary. An `effect.Op` is sealed and
-must dispatch through that visitor; adding a new semantic operation therefore makes
-every exhaustive consumer fail compilation until it implements the new visitor method.
+The private effect visitor is the exhaustive consumer boundary. An effect operation is sealed and must dispatch through that visitor; adding a new semantic operation therefore makes every exhaustive consumer fail compilation until it implements the new visitor method.
 This is where Peeper deliberately uses the visitor pattern: new **semantics** are
 introduced to every consumer, while new syntax that reuses existing effects is not.
 
@@ -208,37 +192,37 @@ A new **semantic operation** is different. It is a real extension point: add the
 operation, validate it, and make each consumer explicitly decide what it means.
 Unknown effects must not be silently ignored.
 
-## Phase ownership
+## Current responsibility map
 
-| Concern | Canonical owner | Published evidence / artifact |
+| Concern | Current owner | Published evidence / artifact |
 | --- | --- | --- |
 | Source structure | parser / `frontend/ast` | AST + stable node IDs |
 | Declaration catalog | collector | module symbols |
 | Type binding | binder | symbol type state / binding result |
-| Lexical/import resolution | resolver | `Bindings.NodeSymbols`, scopes |
-| Type rules and adaptation | typechecker | `typecheckresult.Result` |
+| Lexical/import resolution | resolver | `SymbolIndex` symbol/scope identity |
+| Type rules and adaptation | typechecker | THIR; private checking evidence |
+| Constants | typechecker / `symbols.Index` | finalized symbol-owned values |
 | Control topology | `ir/cfg` | typed blocks/sites/edges |
-| Variant/optional path facts | flow typechecker | `flowresult.Result` |
-| Evaluation/storage actions | `semantics/effect` | ordered `effect.Result` |
-| Definite initialization | `semantics/definiteinit` | diagnostics |
-| Move/borrow/drop analysis | `semantics/ownership` | `ownershipresult.Result` |
-| Lexical usage warnings | `semantics/usage` | diagnostics from symbol `Used` / `RequiresMutable` flags |
-| High-level lowering | `ir/hir/lower` | HIR |
+| Post-CFG semantics | `semantics/analysis` | `analysis.Module`; diagnostics |
+| Evaluation/storage actions | `semantics/analysis` | transient ordered effect stream |
+| Definite initialization | `semantics/analysis` | diagnostics only |
+| Move/borrow/drop analysis | `semantics/analysis` | cleanup queries on `analysis.Module` |
+| Lexical usage warnings | `semantics/usage` | diagnostics from `symbols.Index` usage/mutable-required evidence |
+| Typed-source lowering | `ir/thir`, `ir/exprlower` | THIR/shared expressions |
 | Mid-level lowering | `ir/mir` | MIR |
 | Physical layout/codegen | backend | backend IR |
 
-When a phase needs a fact owned above it, extend the owner's result/query. Do not
-re-detect the fact from AST shape below the owner.
+Current stages usually obtain earlier facts through results or queries instead of re-detecting equivalent facts from AST shape. Audit whether that remains simplest boundary before extending it.
 
-## What remains syntax-aware, intentionally
+## Current syntax-aware responsibilities
 
-Some phases must understand syntax because syntax introduces semantics:
+These phases currently inspect syntax to establish distinct semantics:
 
 - resolver: names/scopes/import/variant paths;
 - typechecker: type rules, conversions, calls, loop/match semantics;
 - CFG builder: source control constructs -> topology;
 - effect publisher: evaluation order and value/storage action;
-- HIR lowering: source construct -> executable high-level IR;
+- THIR/MIR lowering: typed source construct and CFG site -> executable MIR;
 - ownership reference capture: bounded value-shape interpretation plus published
   type/flow evidence, preserving live loans before effects can move source values.
 
@@ -248,51 +232,51 @@ phases independently deriving the **same fact**.
 Ownership still has return-specific policy because return-origin/pointer-escape
 checks straddle returned-value evaluation: provenance must be checked before a
 move can erase it, while cleanup runs after evaluation. This is a deliberate
-language policy, not a generic child walk. If another control transfer needs the
-same semantic policy, publish a control effect rather than adding another parallel
-AST reconstruction.
+language policy, not a generic child walk. An equivalent future control transfer
+would need either shared published evidence or another explicitly justified
+implementation of that policy.
 
 ### Reference provenance and holder-relative loans
 
-`ownership.referenceValueForExpr` is not a generic aggregate interpreter. It uses
-existing holder loans, `Flow.ResolvedValueOrigins`, reference types, struct payload
-syntax and `Typechecking.VariantConstructions` for currently accepted carriers.
-Pre-evaluation capture preserves loan identity before a move clears source state.
-Flow origin sets describe referents; they do not replace ownership's dynamic loan
-IDs, mutability, reservations/activation, liveness, joins or cleanup policy.
+`analysis.referenceValueForTHIR` is not a generic aggregate interpreter. It uses
+existing holder loans, `Analysis.ValueOrigins`, THIR reference types, and published
+aggregate-slot evidence for currently accepted carriers. Pre-evaluation capture
+preserves loan identity before a move clears source state. Analysis origin sets
+describe referents; they do not replace ownership's dynamic loan IDs, mutability,
+reservations/activation, liveness, joins, or cleanup policy.
 
 Each `referenceLoan.path` locates a slot relative to its holder, independently of
 `origins` (borrowed storage) and `id` (loan identity). Copies clone paths; equality
 and joins distinguish the same loan in different slots. Projected writes consume
-an exact `Flow.ResolvedStorageOrigins` destination and captured RHS loans to replace
+an exact `Analysis.StorageOrigins` destination and captured RHS loans to replace
 one direct/optional enum reference field, including clearing it, while retaining
 sibling and copied-holder loans. Partial writes keep the carrier live. This is not
 full field-sensitive last-use analysis or support for nested stored-reference
 aggregates/arrays. Those storage restrictions remain typechecker-owned.
 
-Flow typing must retain recorded assignment-operand types and variant payload
-proofs for HIR; retyping an already checked operand can erase that evidence. HIR
-consumes published payload/projection facts; backend typed-store invariants remain
+Analysis must retain recorded assignment-operand types and variant payload proofs
+for MIR; retyping an already checked operand can erase that evidence. THIR/MIR
+consume published payload/projection facts; backend typed-store invariants remain
 strict. Single-case enum selectors and optional-array index assignment have known
 separate typing limitations, not resolved by this reference-field repair.
 
 ### Lexical usage, not runtime liveness
 
 `semantics/usage.Analyze` emits unused/import/private/local/parameter and unnecessary
-`mut` warnings from symbol flags. Resolver and project type/import lookup mark
-`Used`; typechecking marks `RequiresMutable`. Type-only/import references and source
+`mut` warnings from symbol-owned usage state. Resolver and project type/import lookup call
+`MarkUsed`; typechecking calls `RequireMutable`. The backing bits are private to `symbols.Symbol`. Type-only/import references and source
 uses outside reachable runtime paths are not equivalent to effect-stream uses.
 Ownership liveness remains a separate CFG/effect analysis. Moving usage to reachable
 CFG effects would change warning policy and needs explicit design/approval; it is
 not an unfinished mechanical migration required by this architecture.
 
-## Adding a new expression or statement
+## Current expression and statement extension path
 
-Classify the feature before editing downstream code.
+Current implementation is easiest to assess by classifying feature before editing downstream code.
 
 ### A. Pure syntax / sugar over existing semantics
 
-Expected work:
+Current edit points:
 
 1. AST + parser;
 2. AST child declaration (`forEachChild`);
@@ -303,14 +287,14 @@ graph scheduling, and cleanup should require no new node case.
 
 ### B. New typechecking or control semantics, existing value effects
 
-Expected work:
+Current edit points:
 
 1. AST + parser;
 2. resolver only if name/scope behavior differs;
 3. typechecker decision/evidence;
 4. CFG only if topology differs;
 5. effect publisher maps construct to existing operations;
-6. HIR lowering.
+6. THIR/MIR lowering.
 
 Generic mechanics stay unchanged; audit reference capture if the feature introduces
 a new accepted reference-bearing value shape.
@@ -326,38 +310,29 @@ Only when existing effects cannot represent behavior:
 4. add focused tests proving evaluation order and analysis behavior;
 5. add/update Peeper fixtures when language behavior changes.
 
-Do not introduce a new effect merely because syntax is new.
+Under current design, new syntax does not require new effect kind when existing operations represent its behavior.
 
-## Adding a semantic type
+## Current semantic-type extension path
 
-A new type must first satisfy `typeinfo.Type`:
+Under current sealed interface, new type first satisfies `typeinfo.Type`:
 
-1. `TypeNode` and `Text`;
-2. `forEachChild` with correct `TypeChildRelation` for every contained type;
-3. `ownershipShape` describing leaf/container ownership policy.
+1. `Text` for human-facing rendering;
+2. `structure` with semantic attributes and correct `TypeChildRelation` for every
+   contained type slot;
+3. `isSameType`, `isSized`, `isLowerable`, and `ownership` for intrinsic behavior.
 
-Once this is done, recursive containment and copy/drop propagation compose through
-the canonical structure.
+Then make explicit decisions only where another owner genuinely differs:
 
-Then make explicit decisions only where representation semantics genuinely differ:
-
-- `SameType` / compatibility;
-- sizing/lowerability when shape has special rules;
-- exported semantic fingerprint;
-- HIR/backend type lowering;
+- compatibility and conversions;
+- MIR/backend type lowering;
 - syntax conversion if source has new type syntax.
 
-`internal/contracts/type_dispatch_test.go` guards these true type-kind extension
-points. It should not grow entries for generic containment/ownership traversal.
+Focused typeinfo/IR tests guard the remaining type-kind extension
+points rather than generic containment or ownership traversal.
 
-## Adding a graph-backed analysis
+## Current graph-backed analysis path
 
-- Reuse `graph.Directed` for topology.
-- Keep semantic edge metadata in domain edge type.
-- Reuse `graph.Worklist` when analysis needs rescheduling.
-- Keep state/join/transfer in analysis package.
-- Do not infer true/false/case/loop meaning from successor position; use `cfg.Edge`
-  kind/case and CFG block/site metadata.
+Current implementations generally reuse `graph.Directed` for topology and `graph.Worklist` for rescheduling, keep semantic edge metadata in domain edge types, and keep state/join/transfer in analysis packages. They use explicit `cfg.Edge` and CFG metadata rather than inferring true/false/case/loop meaning from successor position. These are observed choices to evaluate, not permanent requirements.
 
 ## Validation model
 
@@ -365,31 +340,29 @@ Different mistakes are caught at different boundaries:
 
 | Mistake | Guard |
 | --- | --- |
-| AST child omitted | AST child completeness contracts/tests |
+| AST child omitted | AST traversal tests + source fixtures |
 | semantic type child/ownership method omitted | sealed `typeinfo.Type` compile-time contract |
 | incorrect child relation or capability composition | structural tests + capability golden/cycle tests |
-| semantic type missing representation decision | focused type dispatch contract |
+| semantic type missing representation decision | sealed type methods + focused representation tests |
 | malformed graph topology | CFG/graph validators and tests |
-| malformed effect evidence | `effect.Result.Validate` |
-| new effect ignored by an exhaustive consumer | `effect.Visitor` compile-time contract |
-| malformed cleanup evidence | `ownershipresult.Validate` |
-| malformed HIR/MIR | IR validators |
+| malformed transient effect evidence | analysis effect validator |
+| new effect ignored by an exhaustive consumer | private effect visitor compile-time contract |
+| malformed cleanup evidence | analysis cleanup validator |
+| malformed THIR/MIR | THIR/MIR validators |
 | wrong language behavior | package tests + `x_test` source fixtures |
 
 Effect validation checks node membership and expression categories, not whether
 an existing syntax case emitted every required operation. Definition, write-owner,
 and iteration-owner IDs remain generic source identities; consumers do not need
-a particular declaration syntax. Dispatch contracts catch missing kind decisions;
-producer ordering tests and source fixtures catch missing or reordered operations.
-Empty artifacts remain valid when no operations are needed.
+a particular declaration syntax. Rejecting dispatch boundaries catch unsupported kinds during execution; producer ordering tests and source fixtures catch missing or reordered operations.
+Each non-nil CFG function requires an outer effect and cleanup-plan entry; those
+per-function artifacts may be empty when no operations or cleanup are needed.
 
-Source-parsing contract tests are retained only where Go's type system cannot
-express a closed extension boundary more directly. They are not the primary
-architecture.
+Compiler correctness does not depend on parsing its own Go source. Closed families use sealed interfaces and required methods where that improves clarity; remaining dispatch sites reject unknown members loudly and are covered by behavior tests.
 
-## Forbidden patterns
+## Architecture review risks
 
-Do not add:
+Potential regressions under current design include:
 
 - a second recursive AST walk for a structural query already served by
   `ast.Inspect`;
@@ -403,10 +376,10 @@ Do not add:
 
 ## Verification commands
 
-Repository currently targets Go 1.23.2.
+Required Go version is declared in [`go.mod`](../go.mod).
 
 ```bash
-go test -count=1 ./internal/semantics/typeinfo ./internal/project ./internal/contracts
+go test -count=1 ./internal/semantics/typeinfo ./internal/project ./internal/ir/thir ./internal/ir/mir
 go test -count=1 ./...
 go vet ./...
 go test -race -count=1 ./internal/graph ./internal/project ./internal/pipeline
@@ -421,6 +394,6 @@ manifest-only success is not language validation. Race coverage above is focused
 not a claim that every package or target was race-tested.
 
 For language behavior, use `x_test` and the bundled compiler according to
-[`RULES.md`](../RULES.md). Architecture reviews should also search for new private
+[`RULES.md`](../RULES.md). Useful architecture-audit searches include private
 adjacency stores, queue/queued loops, repeated type-child enumeration, and AST
 switches appearing in previously syntax-agnostic analyses.

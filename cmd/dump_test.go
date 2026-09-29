@@ -6,14 +6,15 @@ import (
 	"strings"
 	"testing"
 
+	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
 )
 
 func TestSaveIRsKeepsSameBasenameModulesDistinctAndReplacesOldTree(t *testing.T) {
 	ctx := project.NewWithConfig(project.Config{RootDir: t.TempDir()}, nil)
-	ctx.AddModule(&project.Module{ID: moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/one/common"}, FilePath: "/one/common.peep", LLVMIR: "one"})
-	ctx.AddModule(&project.Module{ID: moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/two/common"}, FilePath: "/two/common.peep", LLVMIR: "two"})
+	ctx.AddModule(&module.Module{ID: moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/one/common"}, FilePath: "/one/common.peep", LLVMIR: "one"})
+	ctx.AddModule(&module.Module{ID: moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/two/common"}, FilePath: "/two/common.peep", LLVMIR: "two"})
 	target := filepath.Join(t.TempDir(), "_gen")
 	if err := os.MkdirAll(target, 0o755); err != nil {
 		t.Fatal(err)
@@ -42,11 +43,11 @@ func TestSaveIRsSeparatesIdentitiesDifferingOnlyByNamespace(t *testing.T) {
 	// Namespace and dependency are canonical identity components. Artifacts that
 	// ignored them collided, and the surviving file depended on map order.
 	ctx := project.NewWithConfig(project.Config{RootDir: t.TempDir()}, nil)
-	ctx.AddModule(&project.Module{
+	ctx.AddModule(&module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginStdlib), Namespace: "core", ImportPath: "json"},
 		FilePath: "/core/json.peep", LLVMIR: "core",
 	})
-	ctx.AddModule(&project.Module{
+	ctx.AddModule(&module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginStdlib), Namespace: "vendor", ImportPath: "json"},
 		FilePath: "/vendor/json.peep", LLVMIR: "vendor",
 	})
@@ -94,7 +95,7 @@ func TestModuleArtifactBaseEncodesIdentityComponentsInjectively(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := moduleArtifactBase(stage, &project.Module{ID: tc.id})
+			got, err := moduleArtifactBase(stage, &module.Module{ID: tc.id})
 			if err != nil {
 				t.Fatalf("moduleArtifactBase: %v", err)
 			}
@@ -110,18 +111,18 @@ func TestModuleArtifactBaseEncodesIdentityComponentsInjectively(t *testing.T) {
 		})
 	}
 
-	empty, err := moduleArtifactBase(stage, &project.Module{ID: moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app"}})
+	empty, err := moduleArtifactBase(stage, &module.Module{ID: moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app"}})
 	if err != nil {
 		t.Fatalf("moduleArtifactBase: %v", err)
 	}
-	underscore, err := moduleArtifactBase(stage, &project.Module{ID: moduleid.ID{Origin: string(project.ModuleOriginLocal), Namespace: "_", ImportPath: "app"}})
+	underscore, err := moduleArtifactBase(stage, &module.Module{ID: moduleid.ID{Origin: string(project.ModuleOriginLocal), Namespace: "_", ImportPath: "app"}})
 	if err != nil {
 		t.Fatalf("moduleArtifactBase: %v", err)
 	}
 	if empty == underscore {
 		t.Fatalf("empty and underscore namespaces share artifact path %q", empty)
 	}
-	dotdot, err := moduleArtifactBase(stage, &project.Module{ID: moduleid.ID{Origin: string(project.ModuleOriginLocal), Dependency: "..", ImportPath: "app"}})
+	dotdot, err := moduleArtifactBase(stage, &module.Module{ID: moduleid.ID{Origin: string(project.ModuleOriginLocal), Dependency: "..", ImportPath: "app"}})
 	if err != nil {
 		t.Fatalf("moduleArtifactBase: %v", err)
 	}
@@ -129,11 +130,11 @@ func TestModuleArtifactBaseEncodesIdentityComponentsInjectively(t *testing.T) {
 		t.Fatalf("dotdot and empty dependencies share artifact path %q", dotdot)
 	}
 
-	colon, err := moduleArtifactBase(stage, &project.Module{ID: moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "a:b"}})
+	colon, err := moduleArtifactBase(stage, &module.Module{ID: moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "a:b"}})
 	if err != nil {
 		t.Fatalf("moduleArtifactBase: %v", err)
 	}
-	slash, err := moduleArtifactBase(stage, &project.Module{ID: moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "a/b"}})
+	slash, err := moduleArtifactBase(stage, &module.Module{ID: moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "a/b"}})
 	if err != nil {
 		t.Fatalf("moduleArtifactBase: %v", err)
 	}
@@ -144,11 +145,11 @@ func TestModuleArtifactBaseEncodesIdentityComponentsInjectively(t *testing.T) {
 
 func TestSaveIRsWritesEncodedIdentityArtifacts(t *testing.T) {
 	ctx := project.NewWithConfig(project.Config{RootDir: t.TempDir()}, nil)
-	ctx.AddModule(&project.Module{
+	ctx.AddModule(&module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), Namespace: "_", ImportPath: "a:b"},
 		FilePath: "/colon.peep", LLVMIR: "colon",
 	})
-	ctx.AddModule(&project.Module{
+	ctx.AddModule(&module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "a/b"},
 		FilePath: "/slash.peep", LLVMIR: "slash",
 	})
@@ -168,11 +169,11 @@ func TestSaveIRsWritesEncodedIdentityArtifacts(t *testing.T) {
 
 func TestSaveIRsSeparatesIdentitiesDifferingOnlyByDependency(t *testing.T) {
 	ctx := project.NewWithConfig(project.Config{RootDir: t.TempDir()}, nil)
-	ctx.AddModule(&project.Module{
+	ctx.AddModule(&module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginDependency), Namespace: "vendor", Dependency: "left", ImportPath: "util"},
 		FilePath: "/left/util.peep", LLVMIR: "left",
 	})
-	ctx.AddModule(&project.Module{
+	ctx.AddModule(&module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginDependency), Namespace: "vendor", Dependency: "right", ImportPath: "util"},
 		FilePath: "/right/util.peep", LLVMIR: "right",
 	})

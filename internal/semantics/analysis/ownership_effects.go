@@ -1,0 +1,416 @@
+package analysis
+
+import (
+	"compiler/internal/diagnostics"
+	"compiler/internal/ir/thir"
+	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/source"
+)
+
+// callFrame remembers where a call's loans start, so completing the call can
+// give back the temporaries its arguments created.
+type callFrame struct {
+	location  *source.Location
+	temporary int
+	reserved  int
+}
+
+// storedReference is the reference value carried by an initializer/RHS before
+// that expression is evaluated. Evaluation can move the source binding, so
+// consumers must snapshot provenance before replaying the site's effects.
+type storedReference struct {
+	loans     []referenceLoan
+	isPresent bool
+}
+
+// applyEffects runs one site's published operations in evaluation order.
+//
+// This is what replaced ownership's own expression walk. Every decision it
+// needs for ordinary storage/use behavior is published: what happens to a
+// value, whether a reference is taken, and where a call begins and ends. AST
+// identity is recovered only for source diagnostics and ownership-specific
+// reference/raw-pointer provenance; generic action meaning is not re-derived.
+func (a *analyzer) applyEffects(node *site, st ownershipState, loans *loanContext) {
+	if a == nil || node == nil || node.cfgSite == nil {
+		return
+	}
+	ops := a.effects[node.cfgSite.ID]
+	visitor := &ownershipEffectVisitor{
+		a: a, node: node, st: st, loans: loans,
+		storedReferences: a.captureStoredReferences(ops, st),
+		calls:            make([]callFrame, 0, 2),
+	}
+	for _, op := range ops {
+		visitEffect(op, visitor)
+	}
+}
+
+type ownershipEffectVisitor struct {
+	a                *analyzer
+	node             *site
+	st               ownershipState
+	loans            *loanContext
+	storedReferences map[source.NodeID]storedReference
+	calls            []callFrame
+}
+
+func (v *ownershipEffectVisitor) visitDefine(op effectDefine) {
+	v.a.applyDefineEffect(v.node, op, v.st, v.storedReferences)
+}
+
+func (v *ownershipEffectVisitor) visitWrite(op effectWrite) {
+	v.a.applyWriteEffect(v.node, op, v.st, v.loans, v.storedReferences)
+}
+
+func (v *ownershipEffectVisitor) visitUse(op effectUse) {
+	v.a.applyUse(v.node, op, v.st, v.loans)
+}
+
+func (v *ownershipEffectVisitor) visitBorrow(op effectBorrow) {
+	v.a.applyBorrow(op, v.st, v.loans)
+}
+
+func (v *ownershipEffectVisitor) visitIterate(op effectIterate) {
+	v.a.applyIterateEffect(op, v.st, v.loans)
+}
+
+func (*ownershipEffectVisitor) visitDiscard(effectDiscard) {
+	// Cleanup planning consumes effectDiscard separately after evaluation.
+}
+
+func (v *ownershipEffectVisitor) visitCallBegin(op effectCallBegin) {
+	v.calls = append(v.calls, callFrame{
+		location: op.Location, temporary: len(v.loans.temporary), reserved: len(v.loans.reserved),
+	})
+}
+
+func (v *ownershipEffectVisitor) visitCallEnd(effectCallEnd) {
+	if len(v.calls) == 0 {
+		return
+	}
+	frame := v.calls[len(v.calls)-1]
+	v.calls = v.calls[:len(v.calls)-1]
+	// Reservations activate as the call starts, which is observable only once
+	// its arguments are evaluated; argument temporaries die with the call.
+	v.a.activateCallReservations(frame.location, frame.reserved, v.loans)
+	v.loans.temporary = v.loans.temporary[:frame.temporary]
+	v.loans.reserved = v.loans.reserved[:frame.reserved]
+}
+
+// captureStoredReferences snapshots the reference provenance carried by values
+// that a effectDefine or effectWrite will store. This runs before any operation at the site
+// so a move performed while evaluating the source cannot erase the value that
+// is about to enter the destination.
+func (a *analyzer) captureStoredReferences(ops []effectOp, st ownershipState) map[source.NodeID]storedReference {
+	visitor := &storedReferenceVisitor{a: a, st: st, values: make(map[source.NodeID]storedReference)}
+	for _, op := range ops {
+		visitEffect(op, visitor)
+	}
+	return visitor.values
+}
+
+type storedReferenceVisitor struct {
+	a      *analyzer
+	st     ownershipState
+	values map[source.NodeID]storedReference
+}
+
+func (v *storedReferenceVisitor) capture(value thir.Expr) {
+	if value == nil {
+		return
+	}
+	valueID := value.SourceInfo().NodeID
+	if _, isCaptured := v.values[valueID]; isCaptured {
+		return
+	}
+	loans, present := v.a.referenceValueForTHIR(value, v.st)
+	v.values[valueID] = storedReference{loans: loans, isPresent: present}
+}
+
+func (v *storedReferenceVisitor) visitDefine(op effectDefine)  { v.capture(op.ValueExpr) }
+func (v *storedReferenceVisitor) visitWrite(op effectWrite)    { v.capture(op.ValueExpr) }
+func (*storedReferenceVisitor) visitUse(effectUse)             {}
+func (*storedReferenceVisitor) visitBorrow(effectBorrow)       {}
+func (*storedReferenceVisitor) visitIterate(effectIterate)     {}
+func (*storedReferenceVisitor) visitDiscard(effectDiscard)     {}
+func (*storedReferenceVisitor) visitCallBegin(effectCallBegin) {}
+func (*storedReferenceVisitor) visitCallEnd(effectCallEnd)     {}
+
+// applyDefineEffect makes a newly defined binding own the value published by
+// the semantic producer. The declaration syntax is irrelevant here: any future
+// construct that publishes effectDefine inherits the same ownership transition.
+func (a *analyzer) applyDefineEffect(node *site, op effectDefine, st ownershipState, references map[source.NodeID]storedReference) {
+	if op.Symbol == nil {
+		return
+	}
+	if op.Value.IsValid() {
+		value := op.ValueExpr
+		reference := references[op.Value]
+		a.updatePointerSymbol(op.Symbol, node.scope, value, st)
+		a.updateReferenceSymbol(op.Symbol, reference.loans, reference.isPresent, st)
+	} else if !op.IsOnEntry {
+		// An ordinary declaration without an initializer establishes empty
+		// storage. Entry bindings already carry ownershipState seeded by the edge/function
+		// entry and must not have that provenance erased here.
+		a.updatePointerSymbol(op.Symbol, node.scope, nil, st)
+		a.updateReferenceSymbol(op.Symbol, nil, false, st)
+	}
+	if ownershipTrackedSymbol(op.Symbol) && (op.IsInitialized || op.IsOnEntry) {
+		delete(st.moved, op.Symbol)
+		st.live[op.Symbol] = struct{}{}
+	}
+}
+
+// applyWriteEffect records replacement of existing storage. effectPlace decides
+// whether this is whole-binding reinitialization or mutation through a
+// projection; Owner gives cleanup a stable identity independent of syntax kind.
+func (a *analyzer) applyWriteEffect(
+	node *site,
+	op effectWrite,
+	st ownershipState,
+	loans *loanContext,
+	references map[source.NodeID]storedReference,
+) {
+	if op.Owner.IsValid() {
+		delete(a.cleanup.BeforeAssign, op.Owner)
+	}
+	target := op.Target
+	if target == nil {
+		return
+	}
+
+	// Assigning through a projection reaches into existing storage and cannot
+	// revive a root that was already moved away.
+	if op.Place.Root == nil || len(op.Place.Projections) > 0 {
+		if op.Place.Root != nil && a.reportUseAfterMove(op.Place.Root, st, effectUse{
+			Place: op.Place, Node: op.Node, Location: op.Location,
+		}) {
+			return
+		}
+		a.checkStorageAccess(target, loans, storageMutate)
+		if op.Owner.IsValid() && typeinfo.OwnershipCapabilityOf(a.exprType(target)).NeedsDrop {
+			a.cleanup.BeforeAssign[op.Owner] = struct{}{}
+		}
+		if op.Value.IsValid() {
+			a.replaceReferenceField(target, references[op.Value], st)
+		}
+		return
+	}
+
+	sym := op.Place.Root
+	if _, referenceTarget := referenceMutability(sym); !referenceTarget {
+		a.checkStorageAccess(target, loans, storageMutate)
+	}
+	if typ, ok := symbols.GetSymbolType(sym); ok && typeinfo.OwnershipCapabilityOf(typ).NeedsDrop {
+		if _, live := st.live[sym]; live && op.Owner.IsValid() {
+			a.cleanup.BeforeAssign[op.Owner] = struct{}{}
+		}
+	}
+	if ownershipTrackedSymbol(sym) {
+		delete(st.moved, sym)
+		st.live[sym] = struct{}{}
+	}
+	if !op.Value.IsValid() {
+		return
+	}
+	value := op.ValueExpr
+	reference := references[op.Value]
+	a.updatePointerSymbol(sym, node.scope, value, st)
+	a.updateReferenceSymbol(sym, reference.loans, reference.isPresent, st)
+}
+
+// applyIterateEffect installs the long-lived shared access a sequence loop
+// holds on its iterable. Iteration kind and carrier identity were decided by
+// typechecking and published by effects; ownership does not inspect ForStmt or
+// the iteration plan.
+func (a *analyzer) applyIterateEffect(op effectIterate, st ownershipState, loans *loanContext) {
+	if op.Carrier == nil || !op.Node.IsValid() {
+		return
+	}
+	iterable := op.Source
+	if iterable == nil {
+		return
+	}
+	a.checkStorageAccess(iterable, loans, storageSharedBorrow)
+	origins := a.originsForExpr(iterable)
+	if op.Place.Root != nil {
+		if value, found := st.references[op.Place.Root]; found {
+			origins = referenceOrigins(value)
+		}
+	} else if value, hasValue := a.referenceValueForTHIR(op.Source, st); hasValue {
+		origins = referenceOrigins(value)
+	}
+	if len(origins) == 0 {
+		return
+	}
+	st.references[op.Carrier] = []referenceLoan{{
+		id: loanID{node: op.Node}, origins: origins, site: op.Source.SourceInfo(), loop: op.Loop,
+	}}
+}
+
+func (a *analyzer) applyUse(node *site, op effectUse, st ownershipState, loans *loanContext) {
+	syntax := op.Source
+	if op.Place.Root == nil {
+		// A value with no owner. Only a projection out of one has an effect
+		// here, and it is that the projection must be bound before use. The
+		// effect place already names the temporary base; do not peel syntax.
+		a.planProjectionBaseDrop(op.Source, op.Place.TemporaryExpr)
+		return
+	}
+	if a.reportUseAfterMove(op.Place.Root, st, op) {
+		return
+	}
+	if len(op.Place.Projections) == 0 {
+		a.applyWholeUse(node, op, st, loans, syntax)
+		return
+	}
+	a.applyProjectedUse(op, st, loans, syntax)
+}
+
+// applyWholeUse is the effect of using a binding entire: its move ownershipState changes,
+// and the storage it names is accessed.
+func (a *analyzer) applyWholeUse(node *site, op effectUse, st ownershipState, loans *loanContext, syntax thir.Expr) {
+	sym := op.Place.Root
+	a.applyUseKind(sym, op, st, syntax)
+	if _, isReference := referenceMutability(sym); isReference {
+		loans.useReference(sym)
+		return
+	}
+	if syntax != nil {
+		a.checkStorageAccess(syntax, loans, storageAccessForUse(a.exprType(syntax), op.Kind))
+	}
+	if referenceHoldingSymbol(sym) {
+		loans.useReference(sym)
+	}
+}
+
+// applyProjectedUse is the effect of using part of a binding. Consuming a part
+// is what a partial move is, and the language does not allow it out of a
+// move-only place.
+func (a *analyzer) applyProjectedUse(op effectUse, st ownershipState, loans *loanContext, syntax thir.Expr) {
+	if syntax == nil {
+		return
+	}
+	// Reaching through a binding spends it the same way naming it does, so a
+	// reference reached through here is one use closer to its last.
+	if sym := op.Place.Root; sym != nil {
+		if _, isReference := referenceMutability(sym); isReference || referenceHoldingSymbol(sym) {
+			loans.useReference(sym)
+		}
+	}
+	a.checkStorageAccess(syntax, loans, storageAccessForUse(a.exprType(syntax), op.Kind))
+	if op.Kind == typeinfo.UseRead || !ownershipTrackedType(a.exprType(syntax)) {
+		return
+	}
+	if a.partialVariantPayloadMove(op.Node) {
+		a.diagnostics.AddError(diagnostics.ErrInvalidCopy,
+			"move-only variant payload cannot be moved from partial place; borrow it instead", op.Location, "")
+		return
+	}
+	if _, indexed := syntax.(*thir.Index); indexed {
+		a.diagnostics.AddError(diagnostics.ErrInvalidCopy,
+			"move-only indexed element cannot be used by value; borrow it with `&` or `&mut`", op.Location, "")
+		return
+	}
+	a.diagnostics.AddError(diagnostics.ErrInvalidCopy,
+		"move-only subexpression must be bound before it can be consumed", op.Location, "")
+}
+
+// applyBorrow records a reference taken to a place. A mutable borrow taken while
+// a call is being evaluated is a reservation rather than a borrow: it does not
+// take effect until the call it is an argument to actually starts.
+func (a *analyzer) applyBorrow(op effectBorrow, st ownershipState, loans *loanContext) {
+	if op.Place.Root != nil && a.reportUseAfterMove(op.Place.Root, st, effectUse{
+		Place: op.Place, Node: op.Node, Location: op.Location, Kind: typeinfo.UseRead,
+	}) {
+		return
+	}
+	access := storageSharedBorrow
+	if op.IsMutable {
+		access = storageMutableBorrow
+		if op.IsCallArgument {
+			// A mutable borrow handed to a call does not take effect until the
+			// call starts, so it is reserved here and activated there.
+			access = storageMutableReservation
+		}
+	}
+	if op.IsRaw {
+		// A raw pointer is not a tracked reference: it neither conflicts with a
+		// live borrow nor becomes one.
+		return
+	}
+	if sym := op.Place.Root; sym != nil {
+		if _, isReference := referenceMutability(sym); isReference || referenceHoldingSymbol(sym) {
+			loans.useReference(sym)
+		}
+	}
+	borrowed := op.OperandExpr
+	if borrowed == nil {
+		return
+	}
+	a.checkStorageAccess(borrowed, loans, access)
+	if op.IsCallArgument {
+		a.installArgumentLoan(borrowed, op, loans)
+	}
+}
+
+// installArgumentLoan records the loan a call holds on an argument for as long
+// as it runs. A mutable one is reserved until the call starts; a shared one is
+// a temporary that dies when the call completes.
+func (a *analyzer) installArgumentLoan(borrowed thir.Expr, op effectBorrow, loans *loanContext) {
+	origins := a.originsForExpr(borrowed)
+	if len(origins) == 0 {
+		return
+	}
+	loan := referenceLoan{
+		id:        loanID{node: borrowed.SourceInfo().NodeID},
+		origins:   origins,
+		isMutable: op.IsMutable,
+		site:      op.OperandExpr.SourceInfo(),
+	}
+	if op.IsMutable {
+		loans.reserved = append(loans.reserved, loanFact{
+			loan:   loan,
+			holder: referenceHolder(borrowed),
+		})
+		return
+	}
+	loans.addTemporary([]referenceLoan{loan})
+}
+
+func (a *analyzer) reportUseAfterMove(sym *symbols.Symbol, st ownershipState, op effectUse) bool {
+	site, isMoved := st.moved[sym]
+	if !isMoved {
+		return false
+	}
+	diag := a.diagnostics.AddError(diagnostics.ErrUseAfterMove, "value used after move", op.Location, "")
+	if site.Location != nil {
+		diag.WithSecondaryLabel(site.Location, "moved here")
+	}
+	return true
+}
+
+// applyUseKind is what happens to a binding's value at one use: a move leaves it
+// dead, and a copy is rejected for anything the language will not duplicate. A
+// read leaves it as it was.
+func (a *analyzer) applyUseKind(sym *symbols.Symbol, op effectUse, st ownershipState, syntax thir.Expr) {
+	if !ownershipTrackedSymbol(sym) {
+		return
+	}
+	switch op.Kind {
+	case typeinfo.UseCopy:
+		if symType, typed := symbols.GetSymbolType(sym); typed {
+			if _, isMutable, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(symType)); ok && isMutable {
+				a.diagnostics.AddError(diagnostics.ErrInvalidCopy,
+					"mutable reference cannot be copied; pass it directly to transfer or reborrow", op.Location, "")
+				return
+			}
+		}
+		a.diagnostics.AddError(diagnostics.ErrInvalidCopy,
+			"copy of move-only value requires a consuming context", op.Location, "")
+	case typeinfo.UseMove:
+		st.moved[sym] = syntax.SourceInfo()
+		delete(st.live, sym)
+	}
+}

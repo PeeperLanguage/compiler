@@ -5,9 +5,11 @@ import (
 	"strings"
 
 	"compiler/internal/frontend/ast"
+	"compiler/internal/module"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/typeresolution"
 	"compiler/internal/source"
 )
 
@@ -25,16 +27,17 @@ const (
 // hoverSubject is the normalized cursor target after resolution. It hides how
 // the cursor was found so the renderer can stay flat and data-driven.
 type hoverSubject struct {
-	Kind           hoverSubjectKind
-	Node           ast.Node
-	Location       *source.Location
-	Symbol         *symbols.Symbol
-	ExprType       typeinfo.Type
-	ResolvedType   typeinfo.Type
-	Decl           ast.Node
-	ResolvedImport *project.ResolvedImport
-	Attribute      *ast.Attribute
-	MethodSymbols  []*symbols.Symbol
+	Kind            hoverSubjectKind
+	Node            ast.Node
+	Location        *source.Location
+	Symbol          *symbols.Symbol
+	ExprType        typeinfo.Type
+	ResolvedType    typeinfo.Type
+	TypeQueryStatus typeresolution.QueryStatus
+	Decl            ast.Node
+	ResolvedImport  *module.ResolvedImport
+	Attribute       *ast.Attribute
+	MethodSymbols   []*symbols.Symbol
 }
 
 func (s *ServerState) resolveHoverSubject(filePath string, position source.Position) *hoverSubject {
@@ -119,36 +122,31 @@ func resolveTypeHoverSubject(cc *cursorContext) *hoverSubject {
 	if !ok || typeNode == nil {
 		return nil
 	}
-	selfType, allowAbstractSelf := hoverTypeSyntaxContext(typeNode, cc.parents)
-	resolved := typeinfo.TypeFromSyntax(typeNode, project.TypeSyntaxOptions(cc.ctx, cc.module, selfType, allowAbstractSelf))
-	if resolved == nil {
+	query := cc.ctx.TypeResolver.Query(cc.module, typeNode, hoverTypeSyntaxContext(typeNode, cc.parents))
+	if query.Status == typeresolution.QueryAvailable && query.Type == nil {
 		return nil
 	}
+	methodType := query.Type
+	if query.Status == typeresolution.QueryAvailable {
+		if decl, ok := cc.parents[typeNode.ID()].(ast.TypeDecl); ok && decl != nil && decl.UnderlyingType() == typeNode {
+			if sym := cc.module.SymbolIndex.Symbol(decl.DeclName()); sym != nil {
+				if declaredType, found := symbols.GetSymbolType(sym); found {
+					methodType = declaredType
+				}
+			}
+		}
+	}
 	return &hoverSubject{
-		Kind:          hoverSubjectType,
-		Node:          cc.node,
-		Location:      ast.LocOf(cc.node),
-		ResolvedType:  resolved,
-		MethodSymbols: lookupMethodSet(cc.ctx, resolved, hoverMethodKeysForTypeNode(typeNode, cc.parents, resolved)),
+		Kind:            hoverSubjectType,
+		Node:            cc.node,
+		Location:        ast.LocOf(cc.node),
+		ResolvedType:    methodType,
+		TypeQueryStatus: query.Status,
+		MethodSymbols:   lookupMethodSet(cc.ctx, methodType),
 	}
 }
 
-func hoverMethodKeysForTypeNode(typeNode ast.TypeExpr, parents map[ast.NodeID]ast.Node, resolved typeinfo.Type) []string {
-	keys := []string{typeinfo.TypeText(resolved)}
-	for curr := ast.Node(typeNode); curr != nil; curr = parents[curr.ID()] {
-		decl, ok := curr.(ast.TypeDecl)
-		if !ok {
-			continue
-		}
-		if name := decl.DeclName(); name != nil && name.Name != "" && name.Name != keys[0] {
-			keys = append(keys, name.Name)
-		}
-		break
-	}
-	return keys
-}
-
-func hoverTypeNode(node ast.Node, parents map[ast.NodeID]ast.Node) (ast.TypeExpr, bool) {
+func hoverTypeNode(node ast.Node, parents map[source.NodeID]ast.Node) (ast.TypeExpr, bool) {
 	if node == nil {
 		return nil, false
 	}
@@ -186,14 +184,16 @@ func hoverTypeNode(node ast.Node, parents map[ast.NodeID]ast.Node) (ast.TypeExpr
 	return nil, false
 }
 
-func hoverTypeSyntaxContext(typeNode ast.TypeExpr, parents map[ast.NodeID]ast.Node) (typeinfo.Type, bool) {
+func hoverTypeSyntaxContext(typeNode ast.TypeExpr, parents map[source.NodeID]ast.Node) typeresolution.Context {
 	for curr := ast.Node(typeNode); curr != nil; curr = parents[curr.ID()] {
-		switch curr.(type) {
-		case *ast.InterfaceDecl:
-			return nil, true
+		if decl, ok := curr.(*ast.InterfaceDecl); ok {
+			return typeresolution.Context{
+				AllowAbstractSelf:  true,
+				NamedInterfaceRoot: decl.UnderlyingType(),
+			}
 		}
 	}
-	return nil, false
+	return typeresolution.Context{}
 }
 
 func isTypeExprPosition(typeNode ast.TypeExpr, parent ast.Node) bool {
@@ -313,7 +313,7 @@ func declHoverSubject(cc *cursorContext, decl ast.Node, name *ast.Ident) *hoverS
 		subject.Symbol = resolveIdentSymbol(name, cc.parents, cc.module, cc.ctx)
 		if subject.Symbol != nil && subject.Symbol.Kind == symbols.SymbolType {
 			if typ, ok := symbols.GetSymbolType(subject.Symbol); ok {
-				subject.MethodSymbols = lookupMethodSet(cc.ctx, typ, []string{subject.Symbol.Name})
+				subject.MethodSymbols = lookupMethodSet(cc.ctx, typ)
 			}
 		}
 	}
@@ -385,7 +385,7 @@ func resolveSymbolHoverSubject(cc *cursorContext) *hoverSubject {
 	}
 	sym := resolveDeclNameSymbol(ident, cc.parents, cc.module)
 	if sym == nil {
-		sym = resolveInterfaceMethodNameSymbol(ident, cc.parents, cc.ctx, cc.module)
+		sym = resolveInterfaceMethodNameSymbol(ident, cc.parents, cc.module)
 	}
 	if sym == nil {
 		sym = resolveIdentSymbol(ident, cc.parents, cc.module, cc.ctx)
@@ -403,13 +403,13 @@ func resolveSymbolHoverSubject(cc *cursorContext) *hoverSubject {
 	}
 	if sym.Kind == symbols.SymbolType {
 		if typ, ok := symbols.GetSymbolType(sym); ok {
-			subject.MethodSymbols = lookupMethodSet(cc.ctx, typ, []string{sym.Name})
+			subject.MethodSymbols = lookupMethodSet(cc.ctx, typ)
 		}
 	}
 	return subject
 }
 
-func documentedDeclAncestor(node ast.Node, parents map[ast.NodeID]ast.Node) ast.Node {
+func documentedDeclAncestor(node ast.Node, parents map[source.NodeID]ast.Node) ast.Node {
 	for current := node; current != nil; current = parents[current.ID()] {
 		if decl, ok := current.(ast.Decl); ok {
 			return decl
@@ -418,30 +418,32 @@ func documentedDeclAncestor(node ast.Node, parents map[ast.NodeID]ast.Node) ast.
 	return nil
 }
 
-func resolveDeclNameSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, module *project.Module) *symbols.Symbol {
-	if ident == nil || module == nil || module.Bindings == nil {
+func resolveDeclNameSymbol(ident *ast.Ident, parents map[source.NodeID]ast.Node, module *module.Module) *symbols.Symbol {
+	if ident == nil || module == nil || module.SymbolIndex == nil {
 		return nil
 	}
 	parent := parents[ident.ID()]
-	if fn, ok := parent.(*ast.FnDecl); ok && fn != nil && fn.Name == ident && fn.Receiver != nil {
-		if sym, ok := module.Bindings.MethodsByDecl[fn.ID()]; ok && sym != nil {
-			return sym
-		}
+	if fn, ok := parent.(*ast.FnDecl); ok && fn != nil && fn.Name == ident {
+		return module.SymbolIndex.Symbol(ident)
 	}
 	return nil
 }
 
-func resolveInterfaceMethodNameSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, ctx *project.CompilerContext, module *project.Module) *symbols.Symbol {
-	if ident == nil || ctx == nil || module == nil {
+func resolveInterfaceMethodNameSymbol(ident *ast.Ident, parents map[source.NodeID]ast.Node, module *module.Module) *symbols.Symbol {
+	if ident == nil || module == nil || module.SymbolIndex == nil {
 		return nil
 	}
 	iface, ok := parents[ident.ID()].(*ast.InterfaceType)
 	if !ok || iface == nil {
 		return nil
 	}
-	opts := project.TypeSyntaxOptions(ctx, module, nil, true)
-	resolved, ok := typeinfo.TypeFromSyntax(iface, opts).(*typeinfo.InterfaceType)
-	if !ok || resolved == nil {
+	decl, ok := parents[iface.ID()].(*ast.InterfaceDecl)
+	if !ok || decl == nil {
+		return nil
+	}
+	declarationType, _ := symbols.GetSymbolType(module.SymbolIndex.Symbol(decl.Name))
+	resolved, _ := typeinfo.Underlying(declarationType).(*typeinfo.InterfaceType)
+	if resolved == nil {
 		return nil
 	}
 	for i, method := range iface.Methods {
@@ -457,56 +459,43 @@ func interfaceMethodSymbol(ident *ast.Ident, method *typeinfo.Method) *symbols.S
 	if ident == nil || method == nil {
 		return nil
 	}
-	sym := symbols.New(ident.Name, symbols.SymbolMethod, ident, ast.LocOf(ident))
-	sym.Type = method.CallableType()
+	sym := symbols.New(symbols.SourceSymbolID(ident.ID()), ident.Name, symbols.SymbolMethod, ident, ast.LocOf(ident))
+	sym.BindType(method.CallableType())
 	return sym
 }
 
-func lookupMethodSet(ctx *project.CompilerContext, typ typeinfo.Type, keys []string) []*symbols.Symbol {
-	if ctx == nil || typ == nil || len(keys) == 0 {
-		return nil
-	}
-	keySet := make(map[string]struct{}, len(keys))
-	for _, key := range keys {
-		if key == "" {
-			continue
-		}
-		keySet[key] = struct{}{}
-	}
-	if len(keySet) == 0 {
+func lookupMethodSet(ctx *project.CompilerContext, typ typeinfo.Type) []*symbols.Symbol {
+	if ctx == nil || typ == nil {
 		return nil
 	}
 	seen := make(map[string]struct{})
 	var methods []*symbols.Symbol
 	for _, module := range ctx.Modules() {
-		if module == nil || module.Bindings == nil {
+		if module == nil || module.SymbolIndex == nil {
 			continue
 		}
-		for key := range keySet {
-			for _, sym := range module.Bindings.MethodsByReceiver[key] {
-				if sym == nil {
-					continue
-				}
-				signature := sym.Name
-				if typ, ok := symbols.GetSymbolType(sym); ok && typ != nil {
-					signature += "|" + typeinfo.TypeText(typ)
-				}
-				if sym.Location != nil && sym.Location.Filename != nil && sym.Location.Start != nil {
-					signature += fmt.Sprintf("|%s:%d:%d", *sym.Location.Filename, sym.Location.Start.Line, sym.Location.Start.Column)
-				}
-				if _, ok := seen[signature]; ok {
-					continue
-				}
-				seen[signature] = struct{}{}
-				methods = append(methods, sym)
+		for _, sym := range module.SymbolIndex.Methods(typ) {
+			if sym == nil {
+				continue
 			}
+			signature := sym.Name
+			if methodType, ok := symbols.GetSymbolType(sym); ok && methodType != nil {
+				signature += "|" + typeinfo.TypeText(methodType)
+			}
+			if sym.Location != nil && sym.Location.Filename != nil && sym.Location.Start != nil {
+				signature += fmt.Sprintf("|%s:%d:%d", *sym.Location.Filename, sym.Location.Start.Line, sym.Location.Start.Column)
+			}
+			if _, ok := seen[signature]; ok {
+				continue
+			}
+			seen[signature] = struct{}{}
+			methods = append(methods, sym)
 		}
 	}
 	return methods
 }
-
 func resolveExprHoverSubject(cc *cursorContext) *hoverSubject {
-	if cc == nil || cc.node == nil || cc.module == nil || cc.module.Typechecking == nil {
+	if cc == nil || cc.node == nil || cc.module == nil || cc.module.THIR == nil {
 		return nil
 	}
 	if _, ok := cc.node.(ast.Expr); !ok {
@@ -547,6 +536,15 @@ func renderHoverSubject(subject *hoverSubject) string {
 		}
 		text = fmt.Sprintf("(expr): %s", typeinfo.TypeText(subject.ExprType))
 	case hoverSubjectType:
+		switch subject.TypeQueryStatus {
+		case typeresolution.QueryLoading:
+			text = "(type) <loading...>"
+		case typeresolution.QueryInvalid:
+			text = "(type) <invalid>"
+		}
+		if text != "" {
+			break
+		}
 		if subject.ResolvedType == nil {
 			return ""
 		}
@@ -633,7 +631,7 @@ func formatHoverTypeBody(typ typeinfo.Type) string {
 			method := &t.Methods[i]
 			methodSymbol := &symbols.Symbol{Name: method.Name, Kind: symbols.SymbolMethod, Type: method.CallableType()}
 			b.WriteString("  ")
-			b.WriteString(renderSymbol(methodSymbol, symbolRenderContext{Embedded: true}))
+			b.WriteString(renderSymbol(methodSymbol, symbolRenderContext{IsEmbedded: true}))
 			b.WriteString(",\n")
 		}
 		b.WriteString("}")
@@ -677,7 +675,7 @@ func formatHoverMethods(methods []*symbols.Symbol) string {
 		if method == nil {
 			continue
 		}
-		signature := renderSymbol(method, symbolRenderContext{Embedded: true})
+		signature := renderSymbol(method, symbolRenderContext{IsEmbedded: true})
 		if signature == "" {
 			continue
 		}

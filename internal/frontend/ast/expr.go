@@ -23,7 +23,7 @@ func (e *Ident) exprText() string {
 	return e.Name
 }
 
-func (e *Ident) copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, fromArgument bool) Expr {
+func (e *Ident) copyExpr(substitutions map[string]Expr, newID func(source.NodeID, bool) source.NodeID, fromArgument bool) Expr {
 	if e == nil {
 		return nil
 	}
@@ -134,7 +134,7 @@ func (e *ScopeResolution) EnumVariantMember() (TypeExpr, *Ident, bool) {
 	}, caseSegment.Name, true
 }
 
-func (e *ScopeResolution) copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, fromArgument bool) Expr {
+func (e *ScopeResolution) copyExpr(substitutions map[string]Expr, newID func(source.NodeID, bool) source.NodeID, fromArgument bool) Expr {
 	if e == nil {
 		return nil
 	}
@@ -176,7 +176,7 @@ func (e *SelectorExpr) exprText() string {
 	return ExprText(e.Expr) + "." + identText(e.Name)
 }
 
-func (e *SelectorExpr) copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, fromArgument bool) Expr {
+func (e *SelectorExpr) copyExpr(substitutions map[string]Expr, newID func(source.NodeID, bool) source.NodeID, fromArgument bool) Expr {
 	if e == nil {
 		return nil
 	}
@@ -204,7 +204,7 @@ func (e *IndexExpr) exprText() string {
 	return ExprText(e.Expr) + "[" + ExprText(e.Index) + "]"
 }
 
-func (e *IndexExpr) copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, fromArgument bool) Expr {
+func (e *IndexExpr) copyExpr(substitutions map[string]Expr, newID func(source.NodeID, bool) source.NodeID, fromArgument bool) Expr {
 	if e == nil {
 		return nil
 	}
@@ -214,10 +214,10 @@ func (e *IndexExpr) copyExpr(substitutions map[string]Expr, newID func(NodeID, b
 
 type RangeExpr struct {
 	NodeIDHolder
-	Start        Expr
-	End          Expr
-	EndExclusive bool
-	Location     *source.Location
+	Start          Expr
+	End            Expr
+	IsEndExclusive bool
+	Location       *source.Location
 }
 
 func (*RangeExpr) exprNode() {}
@@ -231,18 +231,18 @@ func (e *RangeExpr) exprText() string {
 		return ""
 	}
 	op := ".."
-	if !e.EndExclusive {
+	if !e.IsEndExclusive {
 		op = "..="
 	}
 	return ExprText(e.Start) + op + ExprText(e.End)
 }
 
-func (e *RangeExpr) copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, fromArgument bool) Expr {
+func (e *RangeExpr) copyExpr(substitutions map[string]Expr, newID func(source.NodeID, bool) source.NodeID, fromArgument bool) Expr {
 	if e == nil {
 		return nil
 	}
 	id := newID(e.ID(), fromArgument)
-	cloned := &RangeExpr{NodeIDHolder: NodeIDHolder{NodeID: id}, EndExclusive: e.EndExclusive, Location: e.Location}
+	cloned := &RangeExpr{NodeIDHolder: NodeIDHolder{NodeID: id}, IsEndExclusive: e.IsEndExclusive, Location: e.Location}
 	if e.Start != nil {
 		cloned.Start = e.Start.copyExpr(substitutions, newID, fromArgument)
 	}
@@ -295,7 +295,7 @@ func (e *StructLit) exprText() string {
 	return b.String()
 }
 
-func (e *StructLit) copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, fromArgument bool) Expr {
+func (e *StructLit) copyExpr(substitutions map[string]Expr, newID func(source.NodeID, bool) source.NodeID, fromArgument bool) Expr {
 	if e == nil {
 		return nil
 	}
@@ -331,7 +331,7 @@ func (e *VariantLit) exprText() string {
 	return b.String()
 }
 
-func (e *VariantLit) copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, fromArgument bool) Expr {
+func (e *VariantLit) copyExpr(substitutions map[string]Expr, newID func(source.NodeID, bool) source.NodeID, fromArgument bool) Expr {
 	if e == nil {
 		return nil
 	}
@@ -349,10 +349,10 @@ func (e *VariantLit) copyExpr(substitutions map[string]Expr, newID func(NodeID, 
 
 type ArrayLit struct {
 	NodeIDHolder
-	Type        TypeExpr
-	Values      []Expr
-	InferredLen bool
-	Location    *source.Location
+	Type              TypeExpr
+	Values            []Expr
+	HasInferredLength bool
+	Location          *source.Location
 }
 
 func (*ArrayLit) exprNode() {}
@@ -380,7 +380,7 @@ func (e *ArrayLit) exprText() string {
 	return b.String()
 }
 
-func (e *ArrayLit) copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, fromArgument bool) Expr {
+func (e *ArrayLit) copyExpr(substitutions map[string]Expr, newID func(source.NodeID, bool) source.NodeID, fromArgument bool) Expr {
 	if e == nil {
 		return nil
 	}
@@ -389,7 +389,7 @@ func (e *ArrayLit) copyExpr(substitutions map[string]Expr, newID func(NodeID, bo
 	for i, v := range e.Values {
 		values[i] = v.copyExpr(substitutions, newID, fromArgument)
 	}
-	return &ArrayLit{NodeIDHolder: NodeIDHolder{NodeID: id}, Type: cloneTypeExpr(e.Type, newID, fromArgument), Values: values, InferredLen: e.InferredLen, Location: e.Location}
+	return &ArrayLit{NodeIDHolder: NodeIDHolder{NodeID: id}, Type: cloneTypeExpr(e.Type, newID, fromArgument), Values: values, HasInferredLength: e.HasInferredLength, Location: e.Location}
 }
 
 type BadExpr struct {
@@ -402,7 +402,7 @@ func (*BadExpr) forEachChild(func(Node)) {}
 func (e *BadExpr) loc() *source.Location { return e.Location }
 func (e *BadExpr) exprText() string      { return "<bad-expr>" }
 
-func (e *BadExpr) copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, fromArgument bool) Expr {
+func (e *BadExpr) copyExpr(substitutions map[string]Expr, newID func(source.NodeID, bool) source.NodeID, fromArgument bool) Expr {
 	if e == nil {
 		return nil
 	}
@@ -427,7 +427,7 @@ func (e *NumberLit) exprText() string {
 	return e.Value + e.ExplicitType
 }
 
-func (e *NumberLit) copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, fromArgument bool) Expr {
+func (e *NumberLit) copyExpr(substitutions map[string]Expr, newID func(source.NodeID, bool) source.NodeID, fromArgument bool) Expr {
 	if e == nil {
 		return nil
 	}
@@ -437,9 +437,9 @@ func (e *NumberLit) copyExpr(substitutions map[string]Expr, newID func(NodeID, b
 
 type StringLit struct {
 	NodeIDHolder
-	Value    string
-	CString  bool
-	Location *source.Location
+	Value     string
+	IsCString bool
+	Location  *source.Location
 }
 
 func (*StringLit) exprNode()               {}
@@ -449,18 +449,18 @@ func (e *StringLit) exprText() string {
 	if e == nil {
 		return ""
 	}
-	if e.CString {
+	if e.IsCString {
 		return "c" + strconv.Quote(e.Value)
 	}
 	return strconv.Quote(e.Value)
 }
 
-func (e *StringLit) copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, fromArgument bool) Expr {
+func (e *StringLit) copyExpr(substitutions map[string]Expr, newID func(source.NodeID, bool) source.NodeID, fromArgument bool) Expr {
 	if e == nil {
 		return nil
 	}
 	id := newID(e.ID(), fromArgument)
-	return &StringLit{NodeIDHolder: NodeIDHolder{NodeID: id}, Value: e.Value, CString: e.CString, Location: e.Location}
+	return &StringLit{NodeIDHolder: NodeIDHolder{NodeID: id}, Value: e.Value, IsCString: e.IsCString, Location: e.Location}
 }
 
 type ByteLit struct {
@@ -479,7 +479,7 @@ func (e *ByteLit) exprText() string {
 	return "b'" + e.Value + "'"
 }
 
-func (e *ByteLit) copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, fromArgument bool) Expr {
+func (e *ByteLit) copyExpr(substitutions map[string]Expr, newID func(source.NodeID, bool) source.NodeID, fromArgument bool) Expr {
 	if e == nil {
 		return nil
 	}
@@ -503,7 +503,7 @@ func (e *CharLit) exprText() string {
 	return "'" + e.Value + "'"
 }
 
-func (e *CharLit) copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, fromArgument bool) Expr {
+func (e *CharLit) copyExpr(substitutions map[string]Expr, newID func(source.NodeID, bool) source.NodeID, fromArgument bool) Expr {
 	if e == nil {
 		return nil
 	}
@@ -530,7 +530,7 @@ func (e *BoolLit) exprText() string {
 	return "false"
 }
 
-func (e *BoolLit) copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, fromArgument bool) Expr {
+func (e *BoolLit) copyExpr(substitutions map[string]Expr, newID func(source.NodeID, bool) source.NodeID, fromArgument bool) Expr {
 	if e == nil {
 		return nil
 	}
@@ -548,7 +548,7 @@ func (*NoneLit) forEachChild(func(Node)) {}
 func (e *NoneLit) loc() *source.Location { return e.Location }
 func (e *NoneLit) exprText() string      { return "none" }
 
-func (e *NoneLit) copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, fromArgument bool) Expr {
+func (e *NoneLit) copyExpr(substitutions map[string]Expr, newID func(source.NodeID, bool) source.NodeID, fromArgument bool) Expr {
 	if e == nil {
 		return nil
 	}
@@ -588,7 +588,7 @@ func (e *AddressExpr) exprText() string {
 	return prefix + ExprText(e.Expr)
 }
 
-func (e *AddressExpr) copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, fromArgument bool) Expr {
+func (e *AddressExpr) copyExpr(substitutions map[string]Expr, newID func(source.NodeID, bool) source.NodeID, fromArgument bool) Expr {
 	if e == nil {
 		return nil
 	}
@@ -613,7 +613,7 @@ func (e *UnaryExpr) exprText() string {
 	return "(" + e.Op + ExprText(e.Expr) + ")"
 }
 
-func (e *UnaryExpr) copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, fromArgument bool) Expr {
+func (e *UnaryExpr) copyExpr(substitutions map[string]Expr, newID func(source.NodeID, bool) source.NodeID, fromArgument bool) Expr {
 	if e == nil {
 		return nil
 	}
@@ -649,7 +649,7 @@ func (e *IsExpr) exprText() string {
 	return "(" + ExprText(e.Value) + " is " + ExprText(e.Case) + ")"
 }
 
-func (e *IsExpr) copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, fromArgument bool) Expr {
+func (e *IsExpr) copyExpr(substitutions map[string]Expr, newID func(source.NodeID, bool) source.NodeID, fromArgument bool) Expr {
 	if e == nil {
 		return nil
 	}
@@ -674,7 +674,7 @@ func (e *BinaryExpr) exprText() string {
 	return "(" + ExprText(e.Left) + " " + e.Op + " " + ExprText(e.Right) + ")"
 }
 
-func (e *BinaryExpr) copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, fromArgument bool) Expr {
+func (e *BinaryExpr) copyExpr(substitutions map[string]Expr, newID func(source.NodeID, bool) source.NodeID, fromArgument bool) Expr {
 	if e == nil {
 		return nil
 	}
@@ -686,7 +686,7 @@ type CallExpr struct {
 	NodeIDHolder
 	Callee   Expr
 	Args     []Expr
-	Piped    bool
+	IsPiped  bool
 	Location *source.Location
 }
 
@@ -703,14 +703,14 @@ func (e *CallExpr) exprText() string {
 		return ""
 	}
 	var b strings.Builder
-	if e.Piped && len(e.Args) > 0 {
+	if e.IsPiped && len(e.Args) > 0 {
 		b.WriteString(ExprText(e.Args[0]))
 		b.WriteString(" |> ")
 	}
 	b.WriteString(ExprText(e.Callee))
 	b.WriteByte('(')
 	start := 0
-	if e.Piped {
+	if e.IsPiped {
 		start = 1
 	}
 	for i, arg := range e.Args[start:] {
@@ -723,7 +723,7 @@ func (e *CallExpr) exprText() string {
 	return b.String()
 }
 
-func (e *CallExpr) copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, fromArgument bool) Expr {
+func (e *CallExpr) copyExpr(substitutions map[string]Expr, newID func(source.NodeID, bool) source.NodeID, fromArgument bool) Expr {
 	if e == nil {
 		return nil
 	}
@@ -732,7 +732,7 @@ func (e *CallExpr) copyExpr(substitutions map[string]Expr, newID func(NodeID, bo
 	for i, arg := range e.Args {
 		args[i] = arg.copyExpr(substitutions, newID, fromArgument)
 	}
-	return &CallExpr{NodeIDHolder: NodeIDHolder{NodeID: id}, Callee: e.Callee.copyExpr(substitutions, newID, fromArgument), Args: args, Piped: e.Piped, Location: e.Location}
+	return &CallExpr{NodeIDHolder: NodeIDHolder{NodeID: id}, Callee: e.Callee.copyExpr(substitutions, newID, fromArgument), Args: args, IsPiped: e.IsPiped, Location: e.Location}
 }
 
 type FreeExpr struct {
@@ -751,7 +751,7 @@ func (e *FreeExpr) exprText() string {
 	return "free(" + ExprText(e.Expr) + ")"
 }
 
-func (e *FreeExpr) copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, fromArgument bool) Expr {
+func (e *FreeExpr) copyExpr(substitutions map[string]Expr, newID func(source.NodeID, bool) source.NodeID, fromArgument bool) Expr {
 	if e == nil {
 		return nil
 	}
@@ -761,9 +761,9 @@ func (e *FreeExpr) copyExpr(substitutions map[string]Expr, newID func(NodeID, bo
 
 type PrintExpr struct {
 	NodeIDHolder
-	Expr     Expr
-	Newline  bool
-	Location *source.Location
+	Expr           Expr
+	AppendsNewline bool
+	Location       *source.Location
 }
 
 func (*PrintExpr) exprNode()                       {}
@@ -774,18 +774,18 @@ func (e *PrintExpr) exprText() string {
 		return ""
 	}
 	name := "print"
-	if e.Newline {
+	if e.AppendsNewline {
 		name = "println"
 	}
 	return name + "(" + ExprText(e.Expr) + ")"
 }
 
-func (e *PrintExpr) copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, fromArgument bool) Expr {
+func (e *PrintExpr) copyExpr(substitutions map[string]Expr, newID func(source.NodeID, bool) source.NodeID, fromArgument bool) Expr {
 	if e == nil {
 		return nil
 	}
 	id := newID(e.ID(), fromArgument)
-	return &PrintExpr{NodeIDHolder: NodeIDHolder{NodeID: id}, Expr: e.Expr.copyExpr(substitutions, newID, fromArgument), Newline: e.Newline, Location: e.Location}
+	return &PrintExpr{NodeIDHolder: NodeIDHolder{NodeID: id}, Expr: e.Expr.copyExpr(substitutions, newID, fromArgument), AppendsNewline: e.AppendsNewline, Location: e.Location}
 }
 
 type AsExpr struct {
@@ -808,7 +808,7 @@ func (e *AsExpr) exprText() string {
 	return "(" + ExprText(e.Expr) + " as " + TypeText(e.TypeExpr) + ")"
 }
 
-func (e *AsExpr) copyExpr(substitutions map[string]Expr, newID func(NodeID, bool) NodeID, fromArgument bool) Expr {
+func (e *AsExpr) copyExpr(substitutions map[string]Expr, newID func(source.NodeID, bool) source.NodeID, fromArgument bool) Expr {
 	if e == nil {
 		return nil
 	}

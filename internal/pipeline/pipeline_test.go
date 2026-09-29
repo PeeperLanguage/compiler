@@ -13,10 +13,10 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
-	"compiler/internal/ir"
+	"compiler/internal/graph"
 	"compiler/internal/ir/cfg"
-	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
+	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/phase"
 	"compiler/internal/prelude"
@@ -28,19 +28,53 @@ import (
 	"compiler/pkg/peeper"
 )
 
-func parseModuleSource(filePath, src string, diag *diagnostics.DiagnosticBag) *project.Module {
-	return &project.Module{
+func TestInvalidateSemanticDependentsUsesImportClosure(t *testing.T) {
+	ctx := project.New(".", peeper.SourceExt, diagnostics.NewDiagnosticBag())
+	ctx.Metrics = &project.CompileMetrics{}
+	leaf := &module.Module{
+		ID:                        moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "leaf"},
+		Phase:                     phase.Typechecked,
+		SemanticExportFingerprint: "new surface",
+	}
+	middle := &module.Module{ID: moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "middle"}, Phase: phase.Typechecked}
+	root := &module.Module{ID: moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "root"}, Phase: phase.Typechecked}
+	unrelated := &module.Module{ID: moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "unrelated"}, Phase: phase.Typechecked}
+	for _, module := range []*module.Module{leaf, middle, root, unrelated} {
+		ctx.AddModule(module)
+	}
+	ctx.ImportGraph.AddEdge(graph.NodeID(root.ID.String()), graph.NodeID(middle.ID.String()))
+	ctx.ImportGraph.AddEdge(graph.NodeID(middle.ID.String()), graph.NodeID(leaf.ID.String()))
+	ctx.SetSemanticExportBaseline(leaf.ID, "old surface")
+
+	invalidateSemanticDependents(ctx, []*module.Module{leaf})
+
+	if leaf.Phase != phase.Typechecked {
+		t.Fatalf("changed module phase = %v, want %v", leaf.Phase, phase.Typechecked)
+	}
+	if middle.Phase != phase.Parsed || root.Phase != phase.Parsed {
+		t.Fatalf("dependent phases = (%v, %v), want (%v, %v)", middle.Phase, root.Phase, phase.Parsed, phase.Parsed)
+	}
+	if unrelated.Phase != phase.Typechecked {
+		t.Fatalf("unrelated module phase = %v, want %v", unrelated.Phase, phase.Typechecked)
+	}
+	if got := ctx.Metrics.Snapshot().ModulesDowngraded; got != 2 {
+		t.Fatalf("downgraded modules = %d, want 2", got)
+	}
+}
+
+func parseModuleSource(filePath, src string, diag *diagnostics.DiagnosticBag) *module.Module {
+	return &module.Module{
 		ID: moduleid.ID{
 			Origin:     string(project.ModuleOriginLocal),
 			ImportPath: strings.TrimSuffix(filePath, peeper.SourceExt),
 		},
 		FilePath: filePath,
 		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 }
 
-func buildPipelineTestWithConfig(t *testing.T, cfg project.Config, preludeSrc, entrySrc string, afterRun ...func(*project.Module)) *diagnostics.DiagnosticBag {
+func buildPipelineTestWithConfig(t *testing.T, cfg project.Config, preludeSrc, entrySrc string, afterRun ...func(*module.Module)) *diagnostics.DiagnosticBag {
 	t.Helper()
 	const preludePath = "core/global" + peeper.SourceExt
 	const entryPath = "entry" + peeper.SourceExt
@@ -88,7 +122,7 @@ func runImportedRuntimeSymbolPipeline(t *testing.T, entrySrc, runtimeSrc string)
 		ProjectName: "app",
 		Extension:   peeper.SourceExt,
 	}, diag)
-	entry := &project.Module{
+	entry := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/main"},
 		FilePath: entryPath,
 	}
@@ -171,41 +205,9 @@ func TestPipelineLowersSequenceIndexesAsUsizeAcrossTargets(t *testing.T) {
 			}, "", `fn main() {
 	let items = [1]i32{1};
 	for index, value in items {}
-}`, func(entry *project.Module) {
-				if entry.HIR == nil || entry.MIR == nil || len(entry.HIR.Funcs) != 1 || len(entry.HIR.Funcs[0].Body.Stmts) != 2 {
-					t.Fatalf("pipeline artifacts missing: HIR=%v MIR=%v", entry.HIR != nil, entry.MIR != nil)
-				}
-				loop, ok := entry.HIR.Funcs[0].Body.Stmts[1].(*hir.For)
-				if !ok || loop.Init == nil || len(loop.Init.Stmts) != 2 || loop.Bindings == nil || len(loop.Bindings.Stmts) != 2 {
-					t.Fatalf("loop = %#v, want sequence segments", entry.HIR.Funcs[0].Body.Stmts[1])
-				}
-				cursor := loop.Init.Stmts[1].(*hir.Binding)
-				index := loop.Bindings.Stmts[0].(*hir.Binding)
-				if gotCursor, gotIndex := entry.HIR.Types.Text(cursor.Type), entry.HIR.Types.Text(index.Type); gotCursor != test.typeText || gotIndex != test.typeText {
-					t.Fatalf("cursor/index types = %s/%s, want %s/%s", gotCursor, gotIndex, test.typeText, test.typeText)
-				}
-				indexValue, ok := index.Value.(*ir.Ident)
-				if !ok || indexValue.Type != cursor.Type {
-					t.Fatalf("index binding = %#v, want direct cursor value", index)
-				}
-				cond, ok := loop.Cond.(*ir.Binary)
-				if !ok {
-					t.Fatalf("condition = %#v, want binary bounds check", loop.Cond)
-				}
-				length, ok := cond.Right.(*ir.Len)
-				if !ok || cond.Left.TypeID() != cursor.Type || length.Type != cursor.Type {
-					t.Fatalf("condition = %#v, want target-sized cursor and length", cond)
-				}
-
-				refType := func(ref mir.ValueRef) ir.TypeID {
-					switch value := ref.(type) {
-					case *mir.RefConst:
-						return value.Type
-					case *mir.RefName:
-						return value.Type
-					default:
-						return ir.InvalidType
-					}
+}`, func(entry *module.Module) {
+				if entry.MIR == nil || len(entry.MIR.Funcs) != 1 {
+					t.Fatalf("pipeline MIR missing: %#v", entry.MIR)
 				}
 				foundCompare := false
 				foundIndexMove := false
@@ -219,16 +221,16 @@ func TestPipelineLowersSequenceIndexesAsUsizeAcrossTargets(t *testing.T) {
 							}
 							switch value := assign.Value.(type) {
 							case *mir.Binary:
-								if value.Op == "<" && refType(value.Left) == cursor.Type && refType(value.Right) == cursor.Type {
+								if value.Op == "<" && entry.MIR.Types.Text(value.Left.TypeID()) == test.typeText && entry.MIR.Types.Text(value.Right.TypeID()) == test.typeText {
 									foundCompare = true
 								}
 							case *mir.Move:
-								if assign.Name == index.Name && value.Type == cursor.Type && refType(value.Src) == cursor.Type {
+								if entry.MIR.Types.Text(value.TypeID()) == test.typeText && value.TypeID() == value.Src.TypeID() {
 									foundIndexMove = true
 								}
 							case *mir.Load:
 								if value.Place != nil && len(value.Place.Projections) == 1 && value.Place.Projections[0].Kind == mir.PlaceProjectionIndex &&
-									refType(value.Place.Projections[0].Index) == cursor.Type {
+									entry.MIR.Types.Text(value.Place.Projections[0].Index.TypeID()) == test.typeText {
 									foundProjection = true
 								}
 							}
@@ -266,12 +268,12 @@ func TestPipelineLowersExactLoopExitCleanupToMIR(t *testing.T) {
 		let second = alloc(i);
 		if i == 1 { break; }
 	}
-}`, func(entry *project.Module) {
+}`, func(entry *module.Module) {
 		fn := entry.AST.Stmts[0].(*ast.FnDecl)
 		loop := fn.Body.Stmts[0].(*ast.ForStmt)
 		continueStmt := loop.Body.Stmts[1].(*ast.IfStmt).Then.Stmts[0].(*ast.ContinueStmt)
 		breakStmt := loop.Body.Stmts[3].(*ast.IfStmt).Then.Stmts[0].(*ast.BreakStmt)
-		graph := entry.CFG.Function(ir.NodeID(fn.ID()))
+		graph := entry.CFG.FunctionByID(entry.THIR.Function(fn.ID()).Identity)
 		if graph == nil || entry.MIR == nil {
 			t.Fatalf("pipeline artifacts missing: CFG=%v MIR=%v", graph != nil, entry.MIR != nil)
 		}
@@ -279,7 +281,7 @@ func TestPipelineLowersExactLoopExitCleanupToMIR(t *testing.T) {
 		var continueExit, breakExit, fallthroughExit cfg.SiteID
 		var continueFound, breakFound, fallthroughFound bool
 		for _, block := range graph.Blocks {
-			if block == nil || !block.Reachable {
+			if block == nil || !block.IsReachable {
 				continue
 			}
 			var exit *cfg.Site
@@ -289,9 +291,9 @@ func TestPipelineLowersExactLoopExitCleanupToMIR(t *testing.T) {
 				if site == nil {
 					continue
 				}
-				hasContinue = hasContinue || site.NodeID == ir.NodeID(continueStmt.ID())
-				hasBreak = hasBreak || site.NodeID == ir.NodeID(breakStmt.ID())
-				if site.Kind == cfg.SiteScopeExit && site.NodeID == ir.NodeID(loop.Body.ID()) {
+				hasContinue = hasContinue || site.NodeID == continueStmt.ID()
+				hasBreak = hasBreak || site.NodeID == breakStmt.ID()
+				if site.Kind == cfg.SiteScopeExit && site.NodeID == loop.Body.ID() {
 					exit = site
 				}
 			}
@@ -393,6 +395,40 @@ fn (self: App) main() {}`},
 	}
 }
 
+func TestValidateEntrypointWithoutAST(t *testing.T) {
+	for _, test := range []struct {
+		name, source string
+		valid        bool
+	}{
+		{"ordinary", `fn main() -> i32 { return 0; }`, true},
+		{"generic", `fn main<T>() {}`, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			diag := diagnostics.NewDiagnosticBag()
+			entry := parseModuleSource("entry"+peeper.SourceExt, test.source, diag)
+			entry.Phase = phase.Parsed
+			ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
+			ctx.AddModule(entry)
+			for entry.Phase < phase.Typechecked {
+				if !advanceModulePhase(ctx, entry, diag) {
+					t.Fatalf("advanceModulePhase stopped at %v", entry.Phase)
+				}
+			}
+			symbol, found := entry.ModuleScope.LookupLocal("main")
+			if !found || symbol == nil {
+				t.Fatal("missing main symbol")
+			}
+			entry.AST = nil
+			symbol.ASTNode = nil
+			check := diagnostics.NewDiagnosticBag()
+			validateProgramEntrypoint(entry, check)
+			if valid := !check.HasErrors(); valid != test.valid {
+				t.Fatalf("entrypoint validity = %v, want %v: %s", valid, test.valid, check.EmitAllToString())
+			}
+		})
+	}
+}
+
 func TestPipelineAcceptsBuildEntrypointReturns(t *testing.T) {
 	tests := []struct {
 		name string
@@ -454,11 +490,11 @@ fn main() -> i32 {
 		Extension:      peeper.SourceExt,
 		LibraryBaseDir: libraryBase,
 	}, diag)
-	entry := &project.Module{
+	entry := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "entry"},
 		FilePath: entryPath,
 		Content:  entrySrc,
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 
 	if err := Run(ctx, entry); err != nil {
@@ -500,11 +536,11 @@ func preludeQualifierPipeline(t *testing.T, libraryFile, librarySrc, entrySrc st
 	if err := prelude.Load(ctx); err != nil {
 		t.Fatalf("load prelude: %v", err)
 	}
-	entry := &project.Module{
+	entry := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "entry"},
 		FilePath: entryPath,
 		Content:  entrySrc,
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
@@ -671,7 +707,7 @@ fn main() -> i32 {
 	}
 }
 
-func TestPipelineSemanticErrorStopsBeforeUsageAndHIR(t *testing.T) {
+func TestPipelineSemanticErrorStopsBeforeUsageAndMIR(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `#[extern("puts")]
 fn puts(msg: cstr) -> i32 {
@@ -709,14 +745,14 @@ fn main() -> i32 {
 	if !strings.Contains(out, "attribute `#[extern]` requires a body-less function declaration") {
 		t.Fatalf("expected extern definition diagnostic, got:\n%s", out)
 	}
-	if entry.Phase != phase.Ownership {
-		t.Fatalf("expected pipeline to finish mandatory semantics and stop before Usage/HIR, got phase %v", entry.Phase)
+	if entry.Phase != phase.Analyzed {
+		t.Fatalf("expected pipeline to finish analysis and stop before Usage/MIR, got phase %v", entry.Phase)
 	}
-	if ctx.CompletedProjectPhase != phase.Ownership {
-		t.Fatalf("completed project phase = %v, want Ownership", ctx.CompletedProjectPhase)
+	if ctx.CompletedProjectPhase != phase.Analyzed {
+		t.Fatalf("completed project phase = %v, want Analyzed", ctx.CompletedProjectPhase)
 	}
-	if entry.HIR != nil {
-		t.Fatalf("semantic error produced HIR: %#v", entry.HIR)
+	if entry.MIR != nil {
+		t.Fatalf("semantic error produced MIR: %#v", entry.MIR)
 	}
 	if entry.CFG == nil || len(entry.CFG.Functions) == 0 {
 		t.Fatal("expected canonical CFG despite extern definition error")
@@ -728,7 +764,49 @@ fn main() -> i32 {
 	}
 }
 
-func TestPipelineRejectsUnsupportedComparisonsBeforeHIR(t *testing.T) {
+func TestPipelineSkipsIncompleteAnalysisValidationDuringRecovery(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	const entryPath = "entry" + peeper.SourceExt
+	entry := parseModuleSource(entryPath, `fn main() {}`, diag)
+	entry.Phase = phase.Parsed
+	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
+	ctx.AddModule(entry)
+
+	for entry.Phase < phase.CFG {
+		if !advanceModulePhase(ctx, entry, diag) {
+			t.Fatalf("advanceModulePhase() stopped at %v", entry.Phase)
+		}
+	}
+	diag.AddError(diagnostics.ErrInvalidAssignment, "source error", nil, "")
+	entry.THIR.Functions = nil
+	if !advanceModulePhase(ctx, entry, diag) || entry.Phase != phase.Analyzed {
+		t.Fatalf("phase = %v, want Analyzed", entry.Phase)
+	}
+	if entry.Analysis == nil {
+		t.Fatal("analysis artifact missing during source-error recovery")
+	}
+	if hasDiagnosticCode(diag, diagnostics.ErrInvalidEvidence) {
+		t.Fatalf("source-error recovery reported invalid evidence:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelinePreservesDiagnosticsForIdenticalRedeclarations(t *testing.T) {
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, "", `
+fn same() -> i32 {
+	let mut value: i32;
+	return value;
+}
+fn same() -> i32 { return 2; }
+`)
+	out := diag.EmitAllToString()
+	for _, code := range []string{diagnostics.ErrRedeclaredSymbol, diagnostics.ErrUninitializedVariable} {
+		if !strings.Contains(out, code) {
+			t.Fatalf("identical redeclarations lost %s diagnostic:\n%s", code, out)
+		}
+	}
+}
+
+func TestPipelineRejectsUnsupportedComparisonsBeforeMIR(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `struct Pair {
 	value: i32
@@ -763,11 +841,11 @@ fn main() -> i32 {
 	if !diag.HasErrors() {
 		t.Fatal("expected unsupported struct comparison diagnostic")
 	}
-	if entry.HIR != nil {
-		t.Fatalf("unsupported comparison produced HIR: %#v", entry.HIR)
+	if entry.MIR != nil {
+		t.Fatalf("unsupported comparison produced MIR: %#v", entry.MIR)
 	}
-	if entry.Phase != phase.Ownership {
-		t.Fatalf("expected pipeline to stop before HIR at Ownership, got phase %v", entry.Phase)
+	if entry.Phase != phase.Analyzed {
+		t.Fatalf("expected pipeline to stop before MIR at Analyzed, got phase %v", entry.Phase)
 	}
 }
 
@@ -836,11 +914,11 @@ func TestPipelineDebugBuildEmitsLLVMMetadata(t *testing.T) {
 }`
 
 	cfg := project.Config{
-		RootDir:    ".",
-		Extension:  peeper.SourceExt,
-		TargetOS:   "linux",
-		TargetArch: "amd64",
-		BuildDebug: true,
+		RootDir:      ".",
+		Extension:    peeper.SourceExt,
+		TargetOS:     "linux",
+		TargetArch:   "amd64",
+		IsDebugBuild: true,
 	}
 	diag := diagnostics.NewDiagnosticBag()
 	diag.AddSourceContent("core/global"+peeper.SourceExt, preludeSrc)
@@ -865,7 +943,7 @@ func TestPipelineDebugBuildEmitsLLVMMetadata(t *testing.T) {
 	}
 }
 
-func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
+func TestAdvancePublishesAnalyzedArtifact(t *testing.T) {
 	diag := diagnostics.NewDiagnosticBag()
 	const entryPath = "entry" + peeper.SourceExt
 	entrySrc := `fn main() -> i32 {
@@ -881,13 +959,9 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 		phase.Collected,
 		phase.Bound,
 		phase.Resolved,
-		phase.ConstEval,
 		phase.Typechecked,
 		phase.CFG,
-		phase.FlowTyped,
-		phase.Effects,
-		phase.DefiniteInit,
-		phase.Ownership,
+		phase.Analyzed,
 	}
 	for _, wantPhase := range want {
 		if !advanceModulePhase(ctx, entry, diag) {
@@ -899,14 +973,11 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 		if wantPhase == phase.CFG && (entry.CFG == nil || len(entry.CFG.Functions) == 0) {
 			t.Fatal("CFG phase must retain canonical graph")
 		}
-		if wantPhase == phase.FlowTyped && entry.Flow == nil {
-			t.Fatal("flow-typed phase must retain canonical result")
+		if wantPhase == phase.Analyzed && entry.Analysis == nil {
+			t.Fatal("analyzed phase must retain canonical analysis artifact")
 		}
-		if wantPhase == phase.Effects && entry.Effects == nil {
-			t.Fatal("effects phase must retain published site effects")
-		}
-		if wantPhase < phase.HIR && entry.HIR != nil {
-			t.Fatalf("phase %v produced HIR before mandatory semantics completed", wantPhase)
+		if wantPhase < phase.MIR && entry.MIR != nil {
+			t.Fatalf("phase %v produced MIR before mandatory semantics completed", wantPhase)
 		}
 	}
 	if advanceModulePhase(ctx, entry, diag) {
@@ -914,7 +985,6 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 	}
 	entry.Phase = phase.Usage
 	for _, wantPhase := range []phase.Phase{
-		phase.HIR,
 		phase.MIR,
 		phase.Backend,
 	} {
@@ -942,7 +1012,7 @@ fn main() -> i32 { return Value; }
 	entry.Phase = phase.Parsed
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 	ctx.AddModule(entry)
-	for entry.Phase < phase.ConstEval {
+	for entry.Phase < phase.Resolved {
 		if !advanceModulePhase(ctx, entry, diag) {
 			t.Fatalf("advanceModulePhase() stopped at %v", entry.Phase)
 		}
@@ -955,15 +1025,12 @@ fn main() -> i32 { return Value; }
 	if !ok {
 		t.Fatal("failed to construct stale const value")
 	}
-	entry.Constants.QueryCache[sym.ID] = stale
+	entry.SymbolIndex.PublishConstant(sym.ID, stale)
 	if !advanceModulePhase(ctx, entry, diag) || entry.Phase != phase.Typechecked {
 		t.Fatalf("phase = %v, want typechecked", entry.Phase)
 	}
-	if got := entry.Constants.ModuleValues[sym.ID]; got == nil || got.TypeText() != "i32" {
+	if got := entry.SymbolIndex.ConstantValue(sym.ID); got == nil || got.TypeText() != "i32" {
 		t.Fatalf("final const value = %#v, want i32", got)
-	}
-	if _, found := entry.Constants.QueryCache[sym.ID]; found {
-		t.Fatal("published module constant remains duplicated in query cache")
 	}
 }
 
@@ -994,9 +1061,10 @@ const WaitingIsReady: bool = Waiting is Status::Ready;
 	if !found || readySymbol == nil {
 		t.Fatal("missing const symbol Ready")
 	}
-	ready, ok := entry.Constants.ModuleValues[readySymbol.ID].(*constvalue.VariantConst)
+	readyValue := entry.SymbolIndex.ConstantValue(readySymbol.ID)
+	ready, ok := readyValue.(*constvalue.VariantConst)
 	if !ok || ready == nil || ready.NominalIdentity() == "" || ready.CaseIndex() != 0 || len(ready.FieldValues()) != 2 {
-		t.Fatalf("Ready constant = %#v, want named case 0 with two fields", entry.Constants.ModuleValues[readySymbol.ID])
+		t.Fatalf("Ready constant = %#v, want named case 0 with two fields", readyValue)
 	}
 	code, ok := ready.FieldValues()[0].(*constvalue.IntConst)
 	if !ok || code.Text() != "7" {
@@ -1038,15 +1106,16 @@ fn main() -> i32 {
 	}
 }
 
-func assertPipelineBoolConst(t *testing.T, module *project.Module, name string, want bool) {
+func assertPipelineBoolConst(t *testing.T, module *module.Module, name string, want bool) {
 	t.Helper()
 	sym, found := module.ModuleScope.LookupLocal(name)
 	if !found || sym == nil {
 		t.Fatalf("missing const symbol %s", name)
 	}
-	value, ok := module.Constants.ModuleValues[sym.ID].(*constvalue.BoolConst)
+	published := module.SymbolIndex.ConstantValue(sym.ID)
+	value, ok := published.(*constvalue.BoolConst)
 	if !ok || value == nil || value.Bool() != want {
-		t.Fatalf("%s = %#v, want bool %t", name, module.Constants.ModuleValues[sym.ID], want)
+		t.Fatalf("%s = %#v, want bool %t", name, published, want)
 	}
 }
 
@@ -1091,13 +1160,22 @@ func TestPipelineReportsConstantConditionInCFGPhase(t *testing.T) {
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 	ctx.AddModule(entry)
 
-	for entry.Phase < phase.CFG {
+	for entry.Phase < phase.Typechecked {
 		if !advanceModulePhase(ctx, entry, diag) {
 			t.Fatalf("advanceModulePhase stopped at %v", entry.Phase)
 		}
 	}
-	if entry.HIR != nil {
-		t.Fatalf("CFG phase produced HIR: %#v", entry.HIR)
+	for _, item := range diag.Diagnostics() {
+		if item != nil && item.Code == diagnostics.WarnConstantConditionFalse {
+			t.Fatal("constant-condition warning emitted before CFG phase")
+		}
+	}
+	entry.AST = nil
+	if !advanceModulePhase(ctx, entry, diag) {
+		t.Fatal("CFG phase requires AST")
+	}
+	if entry.MIR != nil {
+		t.Fatalf("CFG phase produced MIR: %#v", entry.MIR)
 	}
 	for _, item := range diag.Diagnostics() {
 		if item != nil && item.Code == diagnostics.WarnConstantConditionFalse {
@@ -1107,7 +1185,110 @@ func TestPipelineReportsConstantConditionInCFGPhase(t *testing.T) {
 	t.Fatalf("constant-condition diagnostic unavailable at CFG phase:\n%s", diag.EmitAllToString())
 }
 
-func TestPipelineDefiniteInitializationIgnoresTerminatingPredecessor(t *testing.T) {
+func TestPipelinePublishesLocalConstantConditions(t *testing.T) {
+	for _, test := range []struct {
+		name, value string
+		warning     string
+	}{
+		{"true", "true", diagnostics.WarnConstantConditionTrue},
+		{"false", "false", diagnostics.WarnConstantConditionFalse},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			diag := diagnostics.NewDiagnosticBag()
+			entry := parseModuleSource("entry"+peeper.SourceExt, "fn main() { const Flag = "+test.value+"; if Flag { print(1); } }", diag)
+			entry.Phase = phase.Parsed
+			ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
+			ctx.AddModule(entry)
+			for entry.Phase < phase.Typechecked {
+				if !advanceModulePhase(ctx, entry, diag) {
+					t.Fatalf("advanceModulePhase stopped at %v", entry.Phase)
+				}
+			}
+			entry.AST = nil
+			if !advanceModulePhase(ctx, entry, diag) {
+				t.Fatal("CFG phase requires AST")
+			}
+			for _, item := range diag.Diagnostics() {
+				if item.Code == test.warning {
+					return
+				}
+			}
+			t.Fatalf("missing %s: %s", test.warning, diag.EmitAllToString())
+		})
+	}
+}
+
+func TestPipelineDefersConstantEvaluationCycleToCFG(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	entry := parseModuleSource("entry"+peeper.SourceExt, `fn main() {
+		const First: bool = Second;
+		const Second: bool = First;
+		if First { print(1); }
+	}`, diag)
+	entry.Phase = phase.Parsed
+	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
+	ctx.AddModule(entry)
+	for entry.Phase < phase.Typechecked {
+		if !advanceModulePhase(ctx, entry, diag) {
+			t.Fatalf("advanceModulePhase stopped at %v", entry.Phase)
+		}
+	}
+	for _, item := range diag.Diagnostics() {
+		if item.Code == diagnostics.ErrCircularDependency {
+			t.Fatal("constant evaluation cycle emitted before CFG phase")
+		}
+	}
+	entry.AST = nil
+	if !advanceModulePhase(ctx, entry, diag) {
+		t.Fatal("CFG phase requires AST")
+	}
+	for _, item := range diag.Diagnostics() {
+		if item.Code == diagnostics.ErrCircularDependency {
+			return
+		}
+	}
+	t.Fatalf("missing constant evaluation cycle: %s", diag.EmitAllToString())
+}
+
+func TestPhaseReadinessRequiresSyntaxThroughTypingAndTHIRAfterward(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	entry := parseModuleSource("entry"+peeper.SourceExt, `fn main() -> i32 { return 0; }`, diag)
+	entry.Phase = phase.Parsed
+	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
+	ctx.AddModule(entry)
+
+	syntax := entry.AST
+	entry.AST = nil
+	if IsModuleReadyForNextPhase(ctx, entry, nil, true) || advanceModulePhase(ctx, entry, diag) {
+		t.Fatal("collection advanced without syntax")
+	}
+	entry.AST = syntax
+	for entry.Phase < phase.Typechecked {
+		if !advanceModulePhase(ctx, entry, diag) {
+			t.Fatalf("advanceModulePhase stopped at %v", entry.Phase)
+		}
+	}
+	typed := entry.THIR
+	entry.AST = nil
+	entry.ResetToPhase(phase.Typechecked)
+	if entry.THIR != typed || !IsModuleReadyForNextPhase(ctx, entry, nil, true) {
+		t.Fatal("typechecked reset did not preserve THIR readiness without AST")
+	}
+	for entry.Phase < phase.Analyzed {
+		if !advanceModulePhase(ctx, entry, diag) {
+			t.Fatalf("post-typing phase stopped without AST at %v", entry.Phase)
+		}
+	}
+	if diag.HasErrors() {
+		t.Fatalf("post-typing diagnostics without AST: %s", diag.EmitAllToString())
+	}
+	entry.ResetToPhase(phase.Resolved)
+	if entry.THIR != nil || IsModuleReadyForNextPhase(ctx, entry, nil, true) || advanceModulePhase(ctx, entry, diag) {
+		t.Fatal("typechecking advanced without AST after semantic reset")
+	}
+}
+
+func TestPipelineAnalyzedInitializationIgnoresTerminatingPredecessor(t *testing.T) {
 	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, "", `fn choose(cond: bool) -> i32 {
 	let mut value: i32;
 	if cond {
@@ -1149,25 +1330,25 @@ fn main() -> i32 {
 func TestRequireScheduledModulesAtLeastReportsStoppedPhase(t *testing.T) {
 	tests := []struct {
 		name   string
-		module *project.Module
+		module *module.Module
 		want   string
 	}{
-		{name: "blocked prerequisite", module: &project.Module{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.Resolved}, want: "resolved phase"},
-		{name: "missing HIR", module: &project.Module{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.Ownership}, want: "ownership phase"},
-		{name: "missing MIR", module: &project.Module{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.HIR}, want: "HIR phase"},
+		{name: "blocked prerequisite", module: &module.Module{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.Resolved}, want: "resolved phase"},
+		{name: "missing MIR", module: &module.Module{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.Analyzed}, want: "analyzed phase"},
+		{name: "missing backend", module: &module.Module{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.MIR}, want: "MIR phase"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err := requireScheduledModulesAtLeast([]*project.Module{test.module}, map[moduleid.ID]string{test.module.ID: ""}, phase.Backend)
+			err := requireScheduledModulesAtLeast([]*module.Module{test.module}, map[moduleid.ID]string{test.module.ID: ""}, phase.Backend)
 			if err == nil || !strings.Contains(err.Error(), "local:main") || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("terminal error = %v, want module and %q", err, test.want)
 			}
 		})
 	}
-	if err := requireScheduledModulesAtLeast([]*project.Module{{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.Backend}}, map[moduleid.ID]string{moduleid.ID{ImportPath: "local:main"}: ""}, phase.Backend); err != nil {
+	if err := requireScheduledModulesAtLeast([]*module.Module{{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.Backend}}, map[moduleid.ID]string{moduleid.ID{ImportPath: "local:main"}: ""}, phase.Backend); err != nil {
 		t.Fatalf("completed module rejected: %v", err)
 	}
-	if err := requireScheduledModulesAtLeast([]*project.Module{{ID: moduleid.ID{ImportPath: "overlay:stub"}, Phase: phase.None}}, map[moduleid.ID]string{moduleid.ID{ImportPath: "local:main"}: ""}, phase.Backend); err != nil {
+	if err := requireScheduledModulesAtLeast([]*module.Module{{ID: moduleid.ID{ImportPath: "overlay:stub"}, Phase: phase.None}}, map[moduleid.ID]string{moduleid.ID{ImportPath: "local:main"}: ""}, phase.Backend); err != nil {
 		t.Fatalf("unscheduled overlay rejected: %v", err)
 	}
 }
@@ -1275,7 +1456,7 @@ func TestPipelineModuleReadyForNextPhaseFollowsImportContracts(t *testing.T) {
 
 	entry := parseModuleSource("main"+peeper.SourceExt, "import \"util\";\nfn main() -> i32 { return util::Helper(); }\n", diag)
 	entry.Phase = phase.Parsed
-	entry.Imports = map[string]project.ResolvedImport{
+	entry.Imports = map[string]module.ResolvedImport{
 		"util": {
 			ID:       imported.ID,
 			FilePath: imported.FilePath,
@@ -1283,44 +1464,39 @@ func TestPipelineModuleReadyForNextPhaseFollowsImportContracts(t *testing.T) {
 	}
 	ctx.AddModule(entry)
 
-	if !moduleReadyForNextPhase(ctx, entry, nil, true) {
+	if !IsModuleReadyForNextPhase(ctx, entry, nil, true) {
 		t.Fatalf("parsed importer should be ready for collector when import is parsed")
 	}
 
 	entry.Phase = phase.Collected
-	if moduleReadyForNextPhase(ctx, entry, nil, true) {
+	if IsModuleReadyForNextPhase(ctx, entry, nil, true) {
 		t.Fatalf("collected importer should wait for bound import before binder")
 	}
 
 	imported.Phase = phase.Bound
-	if !moduleReadyForNextPhase(ctx, entry, nil, true) {
+	if !IsModuleReadyForNextPhase(ctx, entry, nil, true) {
 		t.Fatalf("collected importer should be ready for binder when import is bound")
 	}
 
 	entry.Phase = phase.Bound
 	imported.Phase = phase.Parsed
-	if moduleReadyForNextPhase(ctx, entry, nil, true) {
+	if IsModuleReadyForNextPhase(ctx, entry, nil, true) {
 		t.Fatalf("bound importer should wait for collected import before resolver")
 	}
 
 	imported.Phase = phase.Collected
-	if !moduleReadyForNextPhase(ctx, entry, nil, true) {
+	if !IsModuleReadyForNextPhase(ctx, entry, nil, true) {
 		t.Fatalf("bound importer should be ready for resolver when import is collected")
 	}
 
 	entry.Phase = phase.Resolved
-	if moduleReadyForNextPhase(ctx, entry, nil, true) {
-		t.Fatal("resolved importer should wait for typechecked import before consteval")
-	}
-
-	imported.Phase = phase.ConstEval
-	if moduleReadyForNextPhase(ctx, entry, nil, true) {
-		t.Fatal("resolved importer should not read provisional import constants")
+	if IsModuleReadyForNextPhase(ctx, entry, nil, true) {
+		t.Fatal("resolved importer should wait for typechecked import before typechecking")
 	}
 
 	imported.Phase = phase.Typechecked
-	if !moduleReadyForNextPhase(ctx, entry, nil, true) {
-		t.Fatal("resolved importer should be ready for consteval when import constants are published")
+	if !IsModuleReadyForNextPhase(ctx, entry, nil, true) {
+		t.Fatal("resolved importer should be ready for typechecking when import constants are published")
 	}
 }
 
@@ -1343,7 +1519,7 @@ fn main() -> i32 {
 		t.Fatalf("mkdir src dir: %v", err)
 	}
 
-	entry := &project.Module{
+	entry := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/main"},
 		FilePath: mainPath,
 	}
@@ -1412,7 +1588,7 @@ fn Value() -> i32 {
 
 	mainPath := filepath.Join(srcDir, peeper.MainFileName)
 	ctx := project.NewWithConfig(project.Config{RootDir: root, ProjectName: "app", Extension: peeper.SourceExt}, diag)
-	entry := &project.Module{
+	entry := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/main"},
 		FilePath: mainPath,
 	}
@@ -1921,8 +2097,8 @@ fn main() -> i32 {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected generic pipeline diagnostics:\n%s", diag.EmitAllToString())
 	}
-	if entry.HIR == nil || entry.MIR == nil || entry.LLVMIR == "" {
-		t.Fatal("generic named type did not reach HIR, MIR, and LLVM")
+	if entry.MIR == nil || entry.LLVMIR == "" {
+		t.Fatal("generic named type did not reach MIR and LLVM")
 	}
 }
 
@@ -2565,22 +2741,28 @@ fn main() -> i32 {
 			}
 
 			observed := make(map[symbols.CompilerOp]struct{})
-			for _, symbol := range entry.Bindings.NodeSymbols {
-				if symbol != nil && symbol.CompilerOp != "" {
-					observed[symbol.CompilerOp] = struct{}{}
-				}
+			for _, stmt := range entry.AST.Stmts {
+				ast.Inspect(stmt, func(node ast.Node) bool {
+					if node != nil {
+						symbol := entry.SymbolIndex.Symbol(node)
+						if symbol != nil && symbol.CompilerOp != "" {
+							observed[symbol.CompilerOp] = struct{}{}
+						}
+					}
+					return true
+				})
 			}
 			for _, op := range intrinsics.Operations() {
 				if _, ok := observed[op]; !ok {
-					t.Errorf("registered intrinsic %q lacks successful semantic/HIR/MIR/LLVM exercise", op)
+					t.Errorf("registered intrinsic %q lacks successful semantic/MIR/LLVM exercise", op)
 				}
 				delete(observed, op)
 			}
 			for op := range observed {
 				t.Errorf("lowered intrinsic %q is absent from compiler registry", op)
 			}
-			if entry.Phase != phase.Backend || entry.HIR == nil || entry.MIR == nil || entry.LLVMIR == "" {
-				t.Fatalf("intrinsic program stopped before backend: phase=%v HIR=%v MIR=%v LLVM=%v", entry.Phase, entry.HIR != nil, entry.MIR != nil, entry.LLVMIR != "")
+			if entry.Phase != phase.Backend || entry.MIR == nil || entry.LLVMIR == "" {
+				t.Fatalf("intrinsic program stopped before backend: phase=%v MIR=%v LLVM=%v", entry.Phase, entry.MIR != nil, entry.LLVMIR != "")
 			}
 			mirText := entry.MIR.Text()
 			for _, marker := range []string{"call ", "store ", " = addr ", " = load ", " = view ", "cast ", " = alloc ", "drop ", " != ", "ret "} {
@@ -3213,9 +3395,9 @@ func TestModuleLoaderReportsSameIdentityFromDifferentFiles(t *testing.T) {
 	}
 	id := moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/shared"}
 
-	loader.enqueue(&project.Module{ID: id, FilePath: firstPath, Content: "fn main() {}\n", ContentProvided: true})
+	loader.enqueue(&module.Module{ID: id, FilePath: firstPath, Content: "fn main() {}\n", HasProvidedContent: true})
 	loader.wg.Wait()
-	loader.enqueue(&project.Module{ID: id, FilePath: secondPath, Content: "fn helper() {}\n", ContentProvided: true})
+	loader.enqueue(&module.Module{ID: id, FilePath: secondPath, Content: "fn helper() {}\n", HasProvidedContent: true})
 	loader.wg.Wait()
 
 	ambiguous := 0
@@ -3255,7 +3437,7 @@ func TestModuleLoaderLabelsImportSiteOnIdentityConflict(t *testing.T) {
 		t.Fatalf("resolve import: %v", err)
 	}
 	// Claim the identity for a different file so the import below conflicts.
-	ctx.AddModule(&project.Module{ID: resolved.ID, FilePath: filepath.Join(srcDir, "other"+peeper.SourceExt)})
+	ctx.AddModule(&module.Module{ID: resolved.ID, FilePath: filepath.Join(srcDir, "other"+peeper.SourceExt)})
 
 	entryPath := filepath.Join(srcDir, "entry"+peeper.SourceExt)
 	entrySrc := "import \"app/shared\";\n"
@@ -3291,9 +3473,9 @@ func TestModuleLoaderSamePathDoubleEnqueueIsQuietDedupe(t *testing.T) {
 	}
 	id := moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/shared"}
 
-	loader.enqueue(&project.Module{ID: id, FilePath: filePath, Content: "fn main() {}\n", ContentProvided: true})
+	loader.enqueue(&module.Module{ID: id, FilePath: filePath, Content: "fn main() {}\n", HasProvidedContent: true})
 	loader.wg.Wait()
-	loader.enqueue(&project.Module{ID: id, FilePath: filePath, Content: "fn main() {}\n", ContentProvided: true})
+	loader.enqueue(&module.Module{ID: id, FilePath: filePath, Content: "fn main() {}\n", HasProvidedContent: true})
 	loader.wg.Wait()
 
 	if diag.HasErrors() {

@@ -32,7 +32,7 @@ func (m *Module) Validate() error {
 			problems = append(problems, "module holds a nil function graph")
 			continue
 		}
-		problems = append(problems, validateGraph(fn)...)
+		problems = append(problems, validateControlFlowGraph(fn)...)
 	}
 	if len(problems) == 0 {
 		return nil
@@ -48,7 +48,7 @@ func (m *Module) Validate() error {
 	return errors.New(strings.Join(problems, "; "))
 }
 
-func validateGraph(fn *Graph) []string {
+func validateControlFlowGraph(fn *ControlFlowGraph) []string {
 	problems := validateBlockIdentity(fn)
 	// Every later check indexes blocks by ID, so a broken index makes their
 	// output noise rather than evidence.
@@ -65,57 +65,57 @@ func validateGraph(fn *Graph) []string {
 // validateBlockIdentity checks the promise every other check depends on: block
 // IDs are dense indexes into Blocks, and entry and exit are blocks of this
 // graph rather than of another one.
-func validateBlockIdentity(fn *Graph) []string {
+func validateBlockIdentity(fn *ControlFlowGraph) []string {
 	problems := make([]string, 0)
 	for index, block := range fn.Blocks {
 		if block == nil {
-			problems = append(problems, fmt.Sprintf("function %d holds a nil block at index %d", fn.NodeID, index))
+			problems = append(problems, fmt.Sprintf("function %q holds a nil block at index %d", fn.FunctionID, index))
 			continue
 		}
 		if block.ID != index {
-			problems = append(problems, fmt.Sprintf("function %d block at index %d identifies as b%d", fn.NodeID, index, block.ID))
+			problems = append(problems, fmt.Sprintf("function %q block at index %d identifies as b%d", fn.FunctionID, index, block.ID))
 		}
 	}
 	if len(problems) > 0 {
 		return problems
 	}
 	if fn.Entry == nil {
-		problems = append(problems, fmt.Sprintf("function %d has no entry block", fn.NodeID))
+		problems = append(problems, fmt.Sprintf("function %q has no entry block", fn.FunctionID))
 	} else if !ownsBlock(fn, fn.Entry) {
-		problems = append(problems, fmt.Sprintf("function %d entry b%d is not one of its blocks", fn.NodeID, fn.Entry.ID))
+		problems = append(problems, fmt.Sprintf("function %q entry b%d is not one of its blocks", fn.FunctionID, fn.Entry.ID))
 	}
 	if fn.Exit == nil {
-		problems = append(problems, fmt.Sprintf("function %d has no exit block", fn.NodeID))
+		problems = append(problems, fmt.Sprintf("function %q has no exit block", fn.FunctionID))
 	} else if !ownsBlock(fn, fn.Exit) {
-		problems = append(problems, fmt.Sprintf("function %d exit b%d is not one of its blocks", fn.NodeID, fn.Exit.ID))
+		problems = append(problems, fmt.Sprintf("function %q exit b%d is not one of its blocks", fn.FunctionID, fn.Exit.ID))
 	}
 	return problems
 }
 
 // validateTermination checks that control leaves every reachable block. The
 // exit block is the one exception: it is where control stops.
-func validateTermination(fn *Graph) []string {
+func validateTermination(fn *ControlFlowGraph) []string {
 	problems := make([]string, 0)
 	for _, block := range fn.Blocks {
 		if block == fn.Exit {
 			if block.Terminator != nil {
-				problems = append(problems, fmt.Sprintf("function %d exit b%d carries a terminator", fn.NodeID, block.ID))
+				problems = append(problems, fmt.Sprintf("function %q exit b%d carries a terminator", fn.FunctionID, block.ID))
 			}
 			continue
 		}
 		if block.Terminator == nil {
 			// An unreachable block may legitimately have been abandoned mid
 			// construction; a reachable one leaves control nowhere.
-			if block.Reachable {
-				problems = append(problems, fmt.Sprintf("function %d reachable block b%d has no terminator", fn.NodeID, block.ID))
+			if block.IsReachable {
+				problems = append(problems, fmt.Sprintf("function %q reachable block b%d has no terminator", fn.FunctionID, block.ID))
 			}
 			continue
 		}
 		for _, successor := range block.Terminator.Successors() {
 			if successor == nil {
-				problems = append(problems, fmt.Sprintf("function %d block b%d transfers to a nil block", fn.NodeID, block.ID))
+				problems = append(problems, fmt.Sprintf("function %q block b%d transfers to a nil block", fn.FunctionID, block.ID))
 			} else if !ownsBlock(fn, successor) {
-				problems = append(problems, fmt.Sprintf("function %d block b%d transfers to b%d, which is not one of its blocks", fn.NodeID, block.ID, successor.ID))
+				problems = append(problems, fmt.Sprintf("function %q block b%d transfers to b%d, which is not one of its blocks", fn.FunctionID, block.ID, successor.ID))
 			}
 		}
 		if variant, ok := block.Terminator.(*SwitchVariant); ok {
@@ -129,15 +129,15 @@ func validateTermination(fn *Graph) []string {
 // Which cases a switch should carry is a typechecking decision; that two
 // targets claim the same one is a topology defect, because the second is
 // unreachable through the edge that names it.
-func validateVariantCases(fn *Graph, block *Block, term *SwitchVariant) []string {
+func validateVariantCases(fn *ControlFlowGraph, block *Block, term *SwitchVariant) []string {
 	problems := make([]string, 0)
 	seen := make(map[int]bool, len(term.Targets))
 	for _, target := range term.Targets {
 		if target.Case < 0 {
-			problems = append(problems, fmt.Sprintf("function %d block b%d switches on negative case %d", fn.NodeID, block.ID, target.Case))
+			problems = append(problems, fmt.Sprintf("function %q block b%d switches on negative case %d", fn.FunctionID, block.ID, target.Case))
 		}
 		if seen[target.Case] {
-			problems = append(problems, fmt.Sprintf("function %d block b%d switches twice on case %d", fn.NodeID, block.ID, target.Case))
+			problems = append(problems, fmt.Sprintf("function %q block b%d switches twice on case %d", fn.FunctionID, block.ID, target.Case))
 		}
 		seen[target.Case] = true
 	}
@@ -147,10 +147,10 @@ func validateVariantCases(fn *Graph, block *Block, term *SwitchVariant) []string
 // validateBlockAdjacency checks that block-level predecessors record exactly
 // the transfers terminators make. A consumer walking backwards must see the
 // same graph as one walking forwards.
-func validateBlockAdjacency(fn *Graph) []string {
+func validateBlockAdjacency(fn *ControlFlowGraph) []string {
 	problems := make([]string, 0)
 	if fn.BlockEdges == nil {
-		return append(problems, fmt.Sprintf("function %d has no block topology", fn.NodeID))
+		return append(problems, fmt.Sprintf("function %q has no block topology", fn.FunctionID))
 	}
 	forward := make(map[[2]int]bool)
 	for _, block := range fn.Blocks {
@@ -166,12 +166,12 @@ func validateBlockAdjacency(fn *Graph) []string {
 	for _, edge := range fn.BlockEdges.Edges() {
 		pair := [2]int{edge.From, edge.To}
 		if !forward[pair] {
-			problems = append(problems, fmt.Sprintf("function %d block topology records b%d -> b%d, but the terminator does not", fn.NodeID, edge.From, edge.To))
+			problems = append(problems, fmt.Sprintf("function %q block topology records b%d -> b%d, but the terminator does not", fn.FunctionID, edge.From, edge.To))
 		}
 		delete(forward, pair)
 	}
 	for pair := range forward {
-		problems = append(problems, fmt.Sprintf("function %d block b%d transfers to b%d, which is absent from block topology", fn.NodeID, pair[0], pair[1]))
+		problems = append(problems, fmt.Sprintf("function %q block b%d transfers to b%d, which is absent from block topology", fn.FunctionID, pair[0], pair[1]))
 	}
 	return problems
 }
@@ -180,24 +180,24 @@ func validateBlockAdjacency(fn *Graph) []string {
 // block owns at least one, each carries the identity its position implies, and
 // every site edge resolves, agrees with the terminator that produced it, and is
 // recorded from both ends.
-func validateSites(fn *Graph) []string {
+func validateSites(fn *ControlFlowGraph) []string {
 	problems := make([]string, 0)
 	for _, block := range fn.Blocks {
 		if len(block.Sites) == 0 {
-			problems = append(problems, fmt.Sprintf("function %d block b%d owns no site", fn.NodeID, block.ID))
+			problems = append(problems, fmt.Sprintf("function %q block b%d owns no site", fn.FunctionID, block.ID))
 			continue
 		}
 		for index, site := range block.Sites {
 			if site == nil {
-				problems = append(problems, fmt.Sprintf("function %d block b%d holds a nil site at index %d", fn.NodeID, block.ID, index))
+				problems = append(problems, fmt.Sprintf("function %q block b%d holds a nil site at index %d", fn.FunctionID, block.ID, index))
 				continue
 			}
 			want := SiteID{Block: block.ID, Index: index}
 			if site.ID != want {
-				problems = append(problems, fmt.Sprintf("function %d site at b%d[%d] identifies as b%d[%d]", fn.NodeID, block.ID, index, site.ID.Block, site.ID.Index))
+				problems = append(problems, fmt.Sprintf("function %q site at b%d[%d] identifies as b%d[%d]", fn.FunctionID, block.ID, index, site.ID.Block, site.ID.Index))
 			}
-			if site.Kind == SiteScopeExit && site.ScopeID == 0 {
-				problems = append(problems, fmt.Sprintf("function %d scope exit at b%d[%d] names no scope", fn.NodeID, block.ID, index))
+			if site.Kind == SiteScopeExit && !site.ScopeID.IsValid() {
+				problems = append(problems, fmt.Sprintf("function %q scope exit at b%d[%d] names no scope", fn.FunctionID, block.ID, index))
 			}
 		}
 	}
@@ -207,10 +207,10 @@ func validateSites(fn *Graph) []string {
 	return validateSiteEdges(fn)
 }
 
-func validateSiteEdges(fn *Graph) []string {
+func validateSiteEdges(fn *ControlFlowGraph) []string {
 	problems := make([]string, 0)
 	if fn.SiteEdges == nil {
-		return append(problems, fmt.Sprintf("function %d has no site topology", fn.NodeID))
+		return append(problems, fmt.Sprintf("function %q has no site topology", fn.FunctionID))
 	}
 	// Check the derived index against source topology, not against another
 	// adjacency index. A return has no block successor, but does have a site
@@ -240,23 +240,23 @@ func validateSiteEdges(fn *Graph) []string {
 			}
 		case nil:
 		default:
-			problems = append(problems, fmt.Sprintf("function %d block b%d has unknown terminator %T", fn.NodeID, block.ID, term))
+			problems = append(problems, fmt.Sprintf("function %q block b%d has unknown terminator %T", fn.FunctionID, block.ID, term))
 		}
 	}
 	for _, edge := range fn.SiteEdges.Edges() {
-		if siteAt(fn, edge.From) == nil {
-			problems = append(problems, fmt.Sprintf("function %d edge leaves %v, which is not a site", fn.NodeID, edge.From))
+		if fn.Site(edge.From) == nil {
+			problems = append(problems, fmt.Sprintf("function %q edge leaves %v, which is not a site", fn.FunctionID, edge.From))
 		}
-		if siteAt(fn, edge.To) == nil {
-			problems = append(problems, fmt.Sprintf("function %d edge transfers to %v, which is not a site", fn.NodeID, edge.To))
+		if fn.Site(edge.To) == nil {
+			problems = append(problems, fmt.Sprintf("function %q edge transfers to %v, which is not a site", fn.FunctionID, edge.To))
 		}
 		if !expected[edge] {
-			problems = append(problems, fmt.Sprintf("function %d site edge %v -> %v (%s, case %d) is not described by its block sites or terminator", fn.NodeID, edge.From, edge.To, edgeKindName(edge.Kind), edge.Case))
+			problems = append(problems, fmt.Sprintf("function %q site edge %v -> %v (%s, case %d) is not described by its block sites or terminator", fn.FunctionID, edge.From, edge.To, edgeKindName(edge.Kind), edge.Case))
 		}
 		delete(expected, edge)
 	}
 	for edge := range expected {
-		problems = append(problems, fmt.Sprintf("function %d site edge %v -> %v (%s, case %d) is absent from site topology", fn.NodeID, edge.From, edge.To, edgeKindName(edge.Kind), edge.Case))
+		problems = append(problems, fmt.Sprintf("function %q site edge %v -> %v (%s, case %d) is absent from site topology", fn.FunctionID, edge.From, edge.To, edgeKindName(edge.Kind), edge.Case))
 	}
 	return problems
 }
@@ -264,7 +264,7 @@ func validateSiteEdges(fn *Graph) []string {
 // validateReachability checks the flag consumers trust against the traversal it
 // claims to summarize. Analyze reports unreachable user code from this flag, so
 // a stale flag turns a construction defect into a wrong diagnostic.
-func validateReachability(fn *Graph) []string {
+func validateReachability(fn *ControlFlowGraph) []string {
 	seen := make(map[int]bool, len(fn.Blocks))
 	var walk func(block *Block)
 	walk = func(block *Block) {
@@ -283,26 +283,15 @@ func validateReachability(fn *Graph) []string {
 
 	problems := make([]string, 0)
 	for _, block := range fn.Blocks {
-		if block.Reachable != seen[block.ID] {
-			problems = append(problems, fmt.Sprintf("function %d block b%d is marked reachable=%t but entry traversal says %t", fn.NodeID, block.ID, block.Reachable, seen[block.ID]))
+		if block.IsReachable != seen[block.ID] {
+			problems = append(problems, fmt.Sprintf("function %q block b%d is marked reachable=%t but entry traversal says %t", fn.FunctionID, block.ID, block.IsReachable, seen[block.ID]))
 		}
 	}
 	return problems
 }
 
-func ownsBlock(fn *Graph, block *Block) bool {
+func ownsBlock(fn *ControlFlowGraph, block *Block) bool {
 	return block.ID >= 0 && block.ID < len(fn.Blocks) && fn.Blocks[block.ID] == block
-}
-
-func siteAt(fn *Graph, id SiteID) *Site {
-	if id.Block < 0 || id.Block >= len(fn.Blocks) {
-		return nil
-	}
-	block := fn.Blocks[id.Block]
-	if id.Index < 0 || id.Index >= len(block.Sites) {
-		return nil
-	}
-	return block.Sites[id.Index]
 }
 
 func edgeKindName(kind EdgeKind) string {

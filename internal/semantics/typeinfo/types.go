@@ -6,10 +6,16 @@ import (
 )
 
 type Type interface {
-	TypeNode()
+	// Text returns source-like text for diagnostics and other human-facing output.
 	Text() string
-	forEachChild(func(TypeChild) bool) bool
-	ownershipShape() ownershipShape
+	// structure returns immediate compiler-facing metadata and child relationships.
+	structure() typeStructure
+	isLowerable(*lowerQuery, bool) bool
+	isSized(*sizeQuery) bool
+	// ownership classifies copy and drop behavior using query-owned cycle state.
+	ownership(*ownershipQuery, bool) OwnershipCapability
+	isSameType(Type) bool
+	VisitRuntimeType(RuntimeTypeVisitor)
 }
 
 type InvalidType struct{}
@@ -17,8 +23,8 @@ type InvalidType struct{}
 type UnknownType struct{}
 
 type IntegerType struct {
-	Signed bool
-	Bits   int
+	IsSigned bool
+	Bits     int
 }
 
 type ByteType struct{}
@@ -75,8 +81,8 @@ type OwnedPtrType struct {
 type RawPtrType struct{}
 
 type RefType struct {
-	Mutable bool
-	Target  Type
+	IsMutable bool
+	Target    Type
 }
 
 type OptionalType struct {
@@ -136,25 +142,68 @@ type StructType struct {
 	Fields []Field
 }
 
+// MethodReceiver is the source-level carrier required by an interface method.
+// It is semantic evidence consumed by conformance, call binding, and lowering;
+// those phases must not rediscover it from an encoded `Self` type.
+type MethodReceiver uint8
+
+const (
+	MethodReceiverInvalid MethodReceiver = iota
+	MethodReceiverValue
+	MethodReceiverShared
+	MethodReceiverMutable
+)
+
 type Method struct {
 	Name          string
+	Receiver      MethodReceiver
 	Params        []Field
 	Return        Type
 	ReturnOrigins *ReturnOriginContract
 }
 
+// CallableType returns the abstract interface signature used for source-facing
+// display and declaration checks. Receiver remains `Self` in slot zero.
 func (m Method) CallableType() *FuncType {
-	params := make([]Type, len(m.Params))
-	paramNames := make([]string, len(m.Params))
+	return m.callableType(&NamedType{Name: "Self"})
+}
+
+// CallableTypeFor materializes the method signature for one concrete receiver
+// owner while preserving receiver slot zero and return-origin indexes.
+func (m Method) CallableTypeFor(owner Type) *FuncType {
+	return m.callableType(owner)
+}
+
+func (m Method) callableType(owner Type) *FuncType {
+	params := make([]Type, len(m.Params)+1)
+	paramNames := make([]string, len(m.Params)+1)
+	params[0] = m.Receiver.typeFor(owner)
+	paramNames[0] = "self"
 	for i, param := range m.Params {
-		params[i] = param.Type
-		paramNames[i] = param.Name
+		params[i+1] = param.Type
+		paramNames[i+1] = param.Name
 	}
 	return &FuncType{
 		Params:        params,
 		ParamNames:    paramNames,
 		Return:        m.Return,
 		ReturnOrigins: m.ReturnOrigins,
+	}
+}
+
+func (r MethodReceiver) typeFor(owner Type) Type {
+	if owner == nil {
+		return &InvalidType{}
+	}
+	switch r {
+	case MethodReceiverValue:
+		return owner
+	case MethodReceiverShared:
+		return &RefType{Target: owner}
+	case MethodReceiverMutable:
+		return &RefType{IsMutable: true, Target: owner}
+	default:
+		return &InvalidType{}
 	}
 }
 
@@ -166,30 +215,6 @@ type EnumType struct {
 	Cases []VariantCase
 }
 
-func (*InvalidType) TypeNode()       {}
-func (*UnknownType) TypeNode()       {}
-func (*IntegerType) TypeNode()       {}
-func (*ByteType) TypeNode()          {}
-func (*CharType) TypeNode()          {}
-func (*FloatType) TypeNode()         {}
-func (*BoolType) TypeNode()          {}
-func (*CStrType) TypeNode()          {}
-func (*StringType) TypeNode()        {}
-func (*NoneType) TypeNode()          {}
-func (*AllocatorType) TypeNode()     {}
-func (*NamedType) TypeNode()         {}
-func (*TypeParameterType) TypeNode() {}
-func (*DefinedType) TypeNode()       {}
-func (*OwnedPtrType) TypeNode()      {}
-func (*RawPtrType) TypeNode()        {}
-func (*RefType) TypeNode()           {}
-func (*OptionalType) TypeNode()      {}
-func (*ArrayType) TypeNode()         {}
-func (*FuncType) TypeNode()          {}
-func (*StructType) TypeNode()        {}
-func (*InterfaceType) TypeNode()     {}
-func (*EnumType) TypeNode()          {}
-
 func (*InvalidType) Text() string { return "<invalid>" }
 func (*UnknownType) Text() string { return "<unknown>" }
 
@@ -197,7 +222,7 @@ func (t *IntegerType) Text() string {
 	if t == nil {
 		return ""
 	}
-	if t.Signed {
+	if t.IsSigned {
 		return "i" + strconv.Itoa(t.Bits)
 	}
 	return "u" + strconv.Itoa(t.Bits)
@@ -315,21 +340,29 @@ func Unalias(t Type) Type {
 }
 
 func Underlying(t Type) Type {
+	seen := make(map[*DefinedType]struct{})
 	for {
 		defined, ok := t.(*DefinedType)
 		if !ok || defined == nil || defined.Underlying == nil {
 			return t
 		}
+		if _, found := seen[defined]; found {
+			return &InvalidType{}
+		}
+		seen[defined] = struct{}{}
 		t = defined.Underlying
 	}
 }
 
+type variantType interface {
+	variantDescriptor() (VariantDescriptor, bool)
+}
+
 // VariantDescriptorOf is source semantics' canonical variant classification.
-// It preserves nominal identity before inspecting a defined enum's underlying
-// representation, while optionals remain structural source types.
+// Variant types own their cases; this boundary adds declaration identity.
 func VariantDescriptorOf(t Type) (VariantDescriptor, bool) {
 	identity := ""
-	if enumIdentity, nominal := nominalEnumIdentity(t); nominal {
+	if enumIdentity, isNominal := nominalEnumIdentity(t); isNominal {
 		identity = enumIdentity
 	} else if defined, ok := t.(*DefinedType); ok && defined != nil && defined.Kind != DefinedKindAlias {
 		identity = defined.Identity
@@ -337,31 +370,45 @@ func VariantDescriptorOf(t Type) (VariantDescriptor, bool) {
 			identity = defined.Name
 		}
 	}
-	t = Underlying(t)
-	switch variant := t.(type) {
-	case *OptionalType:
-		if variant == nil || variant.Inner == nil {
-			return VariantDescriptor{}, false
-		}
-		return VariantDescriptor{
-			Family: VariantFamilyOptional,
-			Cases: []VariantCase{
-				{Name: "Absent"},
-				{Name: "Present", Payload: variant.Inner},
-			},
-		}, true
-	case *EnumType:
-		if variant == nil || len(variant.Cases) == 0 {
-			return VariantDescriptor{}, false
-		}
-		if identity == "" {
-			identity = variant.Text()
-		}
-		cases := append([]VariantCase(nil), variant.Cases...)
-		return VariantDescriptor{Family: VariantFamilyNamed, Identity: identity, Cases: cases}, true
-	default:
+	underlying := Underlying(t)
+	variant, ok := underlying.(variantType)
+	if !ok {
 		return VariantDescriptor{}, false
 	}
+	descriptor, ok := variant.variantDescriptor()
+	if !ok {
+		return VariantDescriptor{}, false
+	}
+	if descriptor.Family == VariantFamilyNamed {
+		if identity == "" {
+			identity = TypeText(underlying)
+		}
+		descriptor.Identity = identity
+	}
+	return descriptor, true
+}
+
+func (t *OptionalType) variantDescriptor() (VariantDescriptor, bool) {
+	if t == nil || t.Inner == nil {
+		return VariantDescriptor{}, false
+	}
+	return VariantDescriptor{
+		Family: VariantFamilyOptional,
+		Cases: []VariantCase{
+			{Name: "Absent"},
+			{Name: "Present", Payload: t.Inner},
+		},
+	}, true
+}
+
+func (t *EnumType) variantDescriptor() (VariantDescriptor, bool) {
+	if t == nil || len(t.Cases) == 0 {
+		return VariantDescriptor{}, false
+	}
+	return VariantDescriptor{
+		Family: VariantFamilyNamed,
+		Cases:  append([]VariantCase(nil), t.Cases...),
+	}, true
 }
 
 func (t *OwnedPtrType) Text() string {
@@ -383,7 +430,7 @@ func (t *RefType) Text() string {
 		return ""
 	}
 	prefix := "&"
-	if t.Mutable {
+	if t.IsMutable {
 		prefix = "&mut "
 	}
 	return prefix + TypeText(t.Target)
@@ -487,11 +534,10 @@ func (t *InterfaceType) Text() string {
 			b.WriteString("; ")
 		}
 		b.WriteString(method.Name)
-		b.WriteString("(")
-		for j, param := range method.Params {
-			if j > 0 {
-				b.WriteString(", ")
-			}
+		b.WriteString("(self: ")
+		b.WriteString(TypeText(method.Receiver.typeFor(&NamedType{Name: "Self"})))
+		for _, param := range method.Params {
+			b.WriteString(", ")
 			b.WriteString(param.Name)
 			if param.Name != "" {
 				b.WriteString(": ")

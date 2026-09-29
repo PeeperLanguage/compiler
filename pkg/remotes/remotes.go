@@ -38,7 +38,7 @@ func Parse(path string) (provider Provider, repoPath string, ok bool) {
 		if len(segments) < 2 || (!p.allowNesting && len(segments) != 2) {
 			return "", "", false
 		}
-		if !validSegments(segments) {
+		if !isValidSegments(segments) {
 			return "", "", false
 		}
 		return p.host, after, true
@@ -46,13 +46,13 @@ func Parse(path string) (provider Provider, repoPath string, ok bool) {
 	return "", "", false
 }
 
-func validSegments(segments []string) bool {
+func isValidSegments(segments []string) bool {
 	for _, s := range segments {
 		if s == "" || s == "." || s == ".." {
 			return false
 		}
 		for _, c := range s {
-			if !validPathChar(c) {
+			if !isValidPathChar(c) {
 				return false
 			}
 		}
@@ -60,7 +60,7 @@ func validSegments(segments []string) bool {
 	return true
 }
 
-func validPathChar(c rune) bool {
+func isValidPathChar(c rune) bool {
 	return ascii.IsAlnum(c) || c == '-' || c == '_' || c == '.'
 }
 

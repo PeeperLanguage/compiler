@@ -2,6 +2,7 @@ package lsp
 
 import (
 	"compiler/internal/frontend/ast"
+	"compiler/internal/module"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -13,11 +14,11 @@ import (
 // rename share one AST walk instead of rebuilding parent maps separately.
 type cursorContext struct {
 	ctx     *project.CompilerContext
-	module  *project.Module
+	module  *module.Module
 	node    ast.Node
 	line    int
 	col     int
-	parents map[ast.NodeID]ast.Node
+	parents map[source.NodeID]ast.Node
 }
 
 func locContains(loc *source.Location, line, col int) bool {
@@ -33,7 +34,7 @@ func locContains(loc *source.Location, line, col int) bool {
 	return true
 }
 
-func walkModuleAST(module *project.Module, visit func(ast.Node, ast.Node) bool) {
+func walkModuleAST(module *module.Module, visit func(ast.Node, ast.Node) bool) {
 	if module == nil || module.AST == nil || visit == nil {
 		return
 	}
@@ -63,7 +64,7 @@ func walkModuleAST(module *project.Module, visit func(ast.Node, ast.Node) bool) 
 	}
 }
 
-func buildCursorContext(ctx *project.CompilerContext, module *project.Module, position source.Position) *cursorContext {
+func buildCursorContext(ctx *project.CompilerContext, module *module.Module, position source.Position) *cursorContext {
 	if ctx == nil || module == nil || module.AST == nil {
 		return nil
 	}
@@ -72,7 +73,7 @@ func buildCursorContext(ctx *project.CompilerContext, module *project.Module, po
 		module:  module,
 		line:    position.Line,
 		col:     position.Column,
-		parents: make(map[ast.NodeID]ast.Node),
+		parents: make(map[source.NodeID]ast.Node),
 	}
 	walkModuleAST(module, func(n ast.Node, parent ast.Node) bool {
 		if parent != nil {
@@ -87,12 +88,12 @@ func buildCursorContext(ctx *project.CompilerContext, module *project.Module, po
 	return cc
 }
 
-func resolveIdentSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, module *project.Module, ctx *project.CompilerContext) *symbols.Symbol {
+func resolveIdentSymbol(ident *ast.Ident, parents map[source.NodeID]ast.Node, module *module.Module, ctx *project.CompilerContext) *symbols.Symbol {
 	if ident == nil || module == nil {
 		return nil
 	}
-	if module.Bindings != nil {
-		if sym := module.Bindings.NodeSymbols[ident.ID()]; sym != nil {
+	if module.SymbolIndex != nil {
+		if sym := module.SymbolIndex.Symbol(ident); sym != nil {
 			return sym
 		}
 	}
@@ -134,7 +135,7 @@ func resolveIdentSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, modul
 	if sr, ok := parent.(*ast.ScopeResolution); ok && len(sr.Segments) > 1 && sr.Segments[0].Name == ident {
 		qualifier := ident.Name
 		if imp, ok := module.Imports[qualifier]; ok {
-			sym := symbols.New(ident.Name, symbols.SymbolImport, parent, ast.LocOf(ident))
+			sym := symbols.New(symbols.SourceSymbolID(parent.ID()), ident.Name, symbols.SymbolImport, parent, ast.LocOf(ident))
 			sym.Location = &source.Location{
 				Filename: &imp.FilePath,
 			}
@@ -147,8 +148,8 @@ func resolveIdentSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, modul
 	var scope *symbols.Scope
 	curr := parent
 	for curr != nil {
-		if block, ok := curr.(*ast.BlockStmt); ok && module.Bindings != nil {
-			if s, ok := module.Bindings.BlockScopes[block.ID()]; ok && s != nil {
+		if block, ok := curr.(*ast.BlockStmt); ok && module.SymbolIndex != nil {
+			if s := module.SymbolIndex.Scope(block); s != nil {
 				scope = s
 				break
 			}
@@ -182,7 +183,7 @@ func resolveIdentSymbol(ident *ast.Ident, parents map[ast.NodeID]ast.Node, modul
 	return nil
 }
 
-func resolveSelectorMemberSymbol(sel *ast.SelectorExpr, ident *ast.Ident, parents map[ast.NodeID]ast.Node, module *project.Module, ctx *project.CompilerContext) *symbols.Symbol {
+func resolveSelectorMemberSymbol(sel *ast.SelectorExpr, ident *ast.Ident, parents map[source.NodeID]ast.Node, module *module.Module, ctx *project.CompilerContext) *symbols.Symbol {
 	if sel == nil || ident == nil || module == nil || ctx == nil {
 		return nil
 	}
@@ -193,22 +194,18 @@ func resolveSelectorMemberSymbol(sel *ast.SelectorExpr, ident *ast.Ident, parent
 	if fieldSym := lookupStructFieldSymbol(baseType, ident.Name, ctx); fieldSym != nil {
 		return fieldSym
 	}
-	if module.Bindings == nil {
+	if module.SymbolIndex == nil {
 		return nil
 	}
-	for _, key := range typeinfo.GetMethodLookupKeys(baseType) {
-		if methods, ok := module.Bindings.MethodsByReceiver[key]; ok {
-			for _, method := range methods {
-				if method != nil && method.Name == ident.Name {
-					return method
-				}
-			}
+	for _, method := range module.SymbolIndex.Methods(baseType) {
+		if method != nil && method.Name == ident.Name {
+			return method
 		}
 	}
 	return nil
 }
 
-func selectorBaseType(expr ast.Expr, parents map[ast.NodeID]ast.Node, module *project.Module, ctx *project.CompilerContext) (typeinfo.Type, bool) {
+func selectorBaseType(expr ast.Expr, parents map[source.NodeID]ast.Node, module *module.Module, ctx *project.CompilerContext) (typeinfo.Type, bool) {
 	if expr == nil || module == nil {
 		return nil, false
 	}
@@ -277,7 +274,8 @@ func lookupStructFieldSymbol(baseType typeinfo.Type, fieldName string, ctx *proj
 			break
 		}
 	}
-	fieldSym := symbols.New(fieldName, symbols.SymbolField, fieldNode, location)
-	fieldSym.Type = field.Type
+	identity := symbols.ProjectedSymbolID(symbols.SymbolField, typeinfo.SemanticKey(baseType)+"::"+fieldName)
+	fieldSym := symbols.New(identity, fieldName, symbols.SymbolField, fieldNode, location)
+	fieldSym.BindType(field.Type)
 	return fieldSym
 }

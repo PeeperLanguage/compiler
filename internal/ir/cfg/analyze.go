@@ -2,13 +2,12 @@ package cfg
 
 import (
 	"compiler/internal/diagnostics"
-	"compiler/internal/ir"
 	"compiler/internal/problems"
 	"compiler/internal/source"
 )
 
 // Analyze emits control-flow diagnostics without mutating finalized topology.
-func Analyze(module *Module, diag *diagnostics.DiagnosticBag, constantCondition func(conditionID, scopeID ir.NodeID) (bool, bool)) {
+func Analyze(module *Module, diag *diagnostics.DiagnosticBag, constantCondition func(*Branch) (bool, bool)) {
 	if module == nil {
 		return
 	}
@@ -17,7 +16,7 @@ func Analyze(module *Module, diag *diagnostics.DiagnosticBag, constantCondition 
 	}
 }
 
-func analyzeFunction(fn *Graph, diag *diagnostics.DiagnosticBag, constantCondition func(conditionID, scopeID ir.NodeID) (bool, bool)) {
+func analyzeFunction(fn *ControlFlowGraph, diag *diagnostics.DiagnosticBag, constantCondition func(*Branch) (bool, bool)) {
 	if fn == nil || fn.Entry == nil {
 		return
 	}
@@ -27,11 +26,11 @@ func analyzeFunction(fn *Graph, diag *diagnostics.DiagnosticBag, constantConditi
 				continue
 			}
 			if branch, ok := block.Terminator.(*Branch); ok && block.Origin != BlockLoop && constantCondition != nil {
-				if value, found := constantCondition(branch.ConditionID, branch.ScopeID); found {
+				if value, found := constantCondition(branch); found {
 					reportConstantCondition(branch, value, diag)
 				}
 			}
-			if block.Reachable {
+			if block.IsReachable {
 				continue
 			}
 			for _, site := range block.Sites {
@@ -41,7 +40,7 @@ func analyzeFunction(fn *Graph, diag *diagnostics.DiagnosticBag, constantConditi
 			}
 		}
 	}
-	if fn.Exit != nil && fn.Exit.Reachable && fn.ReturnsValue {
+	if fn.Exit != nil && fn.Exit.IsReachable && fn.HasReturnValue {
 		reportMissingReturn(fn, diag)
 	}
 }
@@ -59,7 +58,7 @@ func reportConstantCondition(branch *Branch, value bool, diag *diagnostics.Diagn
 	diag.Add(diagnostics.NewWarning(msg).WithCode(code).WithPrimaryLabel(branch.Location, msg))
 }
 
-func reportMissingReturn(fn *Graph, diag *diagnostics.DiagnosticBag) {
+func reportMissingReturn(fn *ControlFlowGraph, diag *diagnostics.DiagnosticBag) {
 	if fn == nil || diag == nil {
 		return
 	}
@@ -84,7 +83,7 @@ func reportMissingReturn(fn *Graph, diag *diagnostics.DiagnosticBag) {
 	diag.Add(diagnostic)
 }
 
-func findMissingReturnBranches(fn *Graph) []*Block {
+func findMissingReturnBranches(fn *ControlFlowGraph) []*Block {
 	if fn == nil || fn.Entry == nil || fn.Exit == nil {
 		return nil
 	}
@@ -124,7 +123,7 @@ func findMissingReturnBranches(fn *Graph) []*Block {
 	found := make([]*Block, 0)
 	seen := make(map[*Block]bool)
 	for block := range reachesExit {
-		if structuredControl(block.Origin) {
+		if isStructuredControl(block.Origin) {
 			if !seen[block] {
 				found = append(found, block)
 				seen[block] = true
@@ -140,7 +139,7 @@ func findMissingReturnBranches(fn *Graph) []*Block {
 				continue
 			}
 			traceSeen[current] = true
-			if structuredControl(current.Origin) {
+			if isStructuredControl(current.Origin) {
 				if !seen[current] {
 					found = append(found, current)
 					seen[current] = true
@@ -154,7 +153,7 @@ func findMissingReturnBranches(fn *Graph) []*Block {
 	return found
 }
 
-func predecessorBlocks(fn *Graph, block *Block) []*Block {
+func predecessorBlocks(fn *ControlFlowGraph, block *Block) []*Block {
 	if fn == nil || fn.BlockEdges == nil || block == nil {
 		return nil
 	}
@@ -168,12 +167,12 @@ func predecessorBlocks(fn *Graph, block *Block) []*Block {
 	return blocks
 }
 
-// structuredControl reports whether a block is part of a structured construct
+// isStructuredControl reports whether a block is part of a structured construct
 // rather than a plain continuation. Missing-return reporting walks back to the
 // nearest such block to name the branch that falls through. A loop exit is a
 // continuation despite carrying a loop role: the code after the loop lives
 // there, and reporting it would name the wrong branch.
-func structuredControl(origin BlockOrigin) bool {
+func isStructuredControl(origin BlockOrigin) bool {
 	switch origin {
 	case BlockNormal, BlockLoopExit:
 		return false
@@ -221,10 +220,10 @@ func locContains(outer, inner *source.Location) bool {
 	if inner.Filename != nil {
 		innerFile = *inner.Filename
 	}
-	return outerFile == innerFile && !posLess(inner.Start, outer.Start) && !posLess(outer.End, inner.End)
+	return outerFile == innerFile && !isPositionBefore(inner.Start, outer.Start) && !isPositionBefore(outer.End, inner.End)
 }
 
-func posLess(left, right *source.Position) bool {
+func isPositionBefore(left, right *source.Position) bool {
 	if left == nil || right == nil {
 		return false
 	}
@@ -237,14 +236,14 @@ func posLess(left, right *source.Position) bool {
 func sortMissingBranches(blocks []*Block) {
 	for index := range blocks {
 		for other := index + 1; other < len(blocks); other++ {
-			if blocks[index] != nil && blocks[other] != nil && laterLoc(blocks[other].Location, blocks[index].Location) {
+			if blocks[index] != nil && blocks[other] != nil && isLaterLocation(blocks[other].Location, blocks[index].Location) {
 				blocks[index], blocks[other] = blocks[other], blocks[index]
 			}
 		}
 	}
 }
 
-func laterLoc(left, right *source.Location) bool {
+func isLaterLocation(left, right *source.Location) bool {
 	if left == nil || left.Start == nil {
 		return false
 	}

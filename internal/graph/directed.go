@@ -103,13 +103,6 @@ func (g *Directed[Node, Edge]) Predecessors(id Node, include func(Edge) bool) []
 	return result
 }
 
-func (g *Directed[Node, Edge]) OutDegree(id Node, include func(Edge) bool) int {
-	if g == nil {
-		return 0
-	}
-	return countEdges(g.out[id], include)
-}
-
 func (g *Directed[Node, Edge]) InDegree(id Node, include func(Edge) bool) int {
 	if g == nil {
 		return 0

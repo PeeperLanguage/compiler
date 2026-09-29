@@ -2,13 +2,17 @@ package typechecker
 
 import (
 	"fmt"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
+	"compiler/internal/ir/thir"
+	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
@@ -16,11 +20,174 @@ import (
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/source"
 	"compiler/internal/target"
 	"compiler/pkg/peeper"
 )
+
+var typecheckEvidenceForTests sync.Map
+
+func checkWithEvidence(t *testing.T, ctx *project.CompilerContext, mod *module.Module) *thir.Module {
+	source, evidence := runCheck(ctx, mod)
+	if evidence != nil {
+		typecheckEvidenceForTests.Store(mod, evidence)
+		t.Cleanup(func() { typecheckEvidenceForTests.Delete(mod) })
+	}
+	return source
+}
+
+func testEvidence(mod *module.Module) *evidence {
+	if mod == nil {
+		return nil
+	}
+	value, _ := typecheckEvidenceForTests.Load(mod)
+	result, _ := value.(*evidence)
+	return result
+}
+
+func forEachCheckedIterationForTests(evidence *evidence, fn func(source.NodeID, *ast.BlockStmt)) {
+	if evidence == nil || fn == nil {
+		return
+	}
+	for id, expansion := range evidence.control.checkedIterations {
+		fn(id, expansion)
+	}
+}
+
+func TestRunCheckPublishesTHIRAndEvidenceFromOneOperation(t *testing.T) {
+	const src = `fn main() -> i32 { return 7; }`
+	const filePath = "run_check_test" + peeper.SourceExt
+	diag := diagnostics.NewDiagnosticBag()
+	diag.AddSourceContent(filePath, src)
+	ctx := project.New(".", peeper.SourceExt, diag)
+	parsed := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
+	mod := &module.Module{
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "run_check_test"},
+		FilePath: filePath,
+		Content:  src,
+		AST:      parsed,
+		Imports:  make(map[string]module.ResolvedImport),
+	}
+	ctx.AddModule(mod)
+	collector.Collect(ctx, mod)
+	binder.Bind(ctx, mod)
+	resolver.Resolve(ctx, mod)
+
+	source, evidence := runCheck(ctx, mod)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	if source == nil || evidence == nil {
+		t.Fatalf("runCheck returned source=%v evidence=%v, want both", source != nil, evidence != nil)
+	}
+	main := mod.AST.Stmts[0].(*ast.FnDecl)
+	ret := main.Body.Stmts[0].(*ast.ReturnStmt)
+	if got := typeinfo.TypeText(evidence.ExprType(ret.Value.ID())); got != "i32" {
+		t.Fatalf("return expression evidence type = %q, want i32", got)
+	}
+	if typed, ok := source.Node(ret.Value.ID()).(thir.Expr); !ok || typeinfo.TypeText(typed.ExprType()) != "i32" {
+		t.Fatalf("published THIR return expression = %#v, want i32 expression", source.Node(ret.Value.ID()))
+	}
+}
+
+func TestCheckPublishesTHIRWithoutPersistentTypingResult(t *testing.T) {
+	const src = `const defaultValue: i32 = 7;
+fn WithDefault(value: i32 = defaultValue) -> i32 { return value; }
+fn main() -> i32 {
+	let total = WithDefault();
+	for index, value in 0..2 {}
+	return total;
+}`
+	const filePath = "typechecker_publication_test" + peeper.SourceExt
+	diag := diagnostics.NewDiagnosticBag()
+	diag.AddSourceContent(filePath, src)
+	ctx := project.New(".", peeper.SourceExt, diag)
+	parsed := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
+	mod := &module.Module{
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "typechecker_publication_test"},
+		FilePath: filePath,
+		Content:  src,
+		AST:      parsed,
+		Imports:  make(map[string]module.ResolvedImport),
+	}
+	ctx.AddModule(mod)
+	collector.Collect(ctx, mod)
+	binder.Bind(ctx, mod)
+	resolver.Resolve(ctx, mod)
+
+	source := Check(ctx, mod)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	if source == nil {
+		t.Fatal("Check returned nil THIR")
+	}
+	if err := source.Validate(); err != nil {
+		t.Fatalf("published THIR failed validation: %v", err)
+	}
+
+	main := mod.AST.Stmts[2].(*ast.FnDecl)
+	call := main.Body.Stmts[0].(*ast.LetDecl).Value.(*ast.CallExpr)
+	typedCall, ok := source.Node(call.ID()).(*thir.Call)
+	if !ok || typedCall == nil {
+		t.Fatalf("call node = %#v, want *thir.Call", source.Node(call.ID()))
+	}
+	if got := typeinfo.TypeText(typedCall.ExprType()); got != "i32" {
+		t.Fatalf("call type = %q, want i32", got)
+	}
+	if len(typedCall.Args) != 1 {
+		t.Fatalf("effective arguments = %d, want 1", len(typedCall.Args))
+	}
+	defaultArg, ok := typedCall.Args[0].(*thir.Ident)
+	if !ok || defaultArg == nil || !defaultArg.IsExpandedDefaultBinding {
+		t.Fatalf("expanded default argument = %#v", typedCall.Args[0])
+	}
+
+	loop := main.Body.Stmts[1].(*ast.ForStmt)
+	typedLoop, ok := source.Node(loop.ID()).(*thir.For)
+	if !ok || typedLoop == nil || typedLoop.Iteration == nil {
+		t.Fatalf("for node = %#v, want published iteration plan", source.Node(loop.ID()))
+	}
+	if _, ok := typedLoop.Iteration.(*thir.RangeIteration); !ok {
+		t.Fatalf("iteration = %T, want *thir.RangeIteration", typedLoop.Iteration)
+	}
+}
+
+func TestCheckPublishesStructFieldAccesses(t *testing.T) {
+	module, diag := checkTypeModule(t, `struct Box { value: i32 }
+fn Read(value: Box, pointer: *Box, reference: &Box) -> i32 {
+	return value.value + pointer.value + reference.value;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+
+	found := map[string]bool{}
+	fn := module.AST.Stmts[1].(*ast.FnDecl)
+	ast.Inspect(fn.Body, func(node ast.Node) bool {
+		selector, ok := node.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		base := selector.Expr.(*ast.Ident).Name
+		access, published := testEvidence(module).StructField(selector.ID())
+		if !published || access.Field != 0 || typeinfo.TypeText(access.Type) != "i32" {
+			t.Fatalf("%s field evidence = %#v", base, access)
+		}
+		indirect := access.DereferenceType != nil
+		if indirect != (base != "value") || indirect && typeinfo.TypeText(access.DereferenceType) != "Box" {
+			t.Fatalf("%s dereference type = %s", base, typeinfo.TypeText(access.DereferenceType))
+		}
+		found[base] = true
+		return true
+	})
+	for _, name := range []string{"value", "pointer", "reference"} {
+		if !found[name] {
+			t.Fatalf("missing %s field evidence", name)
+		}
+	}
+}
 
 func TestCheckCallPublishesValueUses(t *testing.T) {
 	module, diag := checkTypeModule(t, `struct Box { value: i32 }
@@ -58,7 +225,7 @@ fn main() -> i32 {
 			return true
 		}
 		for _, arg := range call.Args {
-			kind, found := module.Typechecking.ValueUses[arg.ID()]
+			kind, found := testEvidence(module).ValueUse(arg.ID())
 			uses[callee.Name] = append(uses[callee.Name], callUse{use: kind, found: found})
 		}
 		return true
@@ -98,7 +265,7 @@ func TestCheckAllocPublishesConsumingUse(t *testing.T) {
 			if !ok {
 				return true
 			}
-			kind, found := module.Typechecking.ValueUses[lit.ID()]
+			kind, found := testEvidence(module).ValueUse(lit.ID())
 			if !found {
 				return true
 			}
@@ -110,7 +277,7 @@ func TestCheckAllocPublishesConsumingUse(t *testing.T) {
 		})
 	}
 	if published != 1 {
-		t.Fatalf("alloc operand published uses = %d, want 1", published)
+		t.Fatalf("alloc operand published uses = %v, want 1", published)
 	}
 }
 
@@ -132,7 +299,7 @@ fn main() -> i32 {
 			if !ok {
 				return true
 			}
-			kind, found := module.Typechecking.ValueUses[call.ID()]
+			kind, found := testEvidence(module).ValueUse(call.ID())
 			if !found {
 				return true
 			}
@@ -144,7 +311,7 @@ fn main() -> i32 {
 		})
 	}
 	if published != 1 {
-		t.Fatalf("alloc operand published uses = %d, want 1", published)
+		t.Fatalf("alloc operand published uses = %v, want 1", published)
 	}
 }
 
@@ -164,17 +331,18 @@ fn main() -> i32 {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
-	if len(module.Typechecking.Matches) != 1 {
-		t.Fatalf("published matches = %d, want 1", len(module.Typechecking.Matches))
+	main := module.AST.Stmts[2].(*ast.FnDecl)
+	matchStmt := main.Body.Stmts[1].(*ast.MatchStmt)
+	match, found := testEvidence(module).Match(matchStmt.ID())
+	if !found {
+		t.Fatal("match evidence was not published")
 	}
-	for _, match := range module.Typechecking.Matches {
-		for _, arm := range match.Arms {
-			if arm.Case == 0 && arm.CarrierUse != typeinfo.UseMove {
-				t.Fatalf("owned-payload arm carrier use = %v, want UseMove", arm.CarrierUse)
-			}
-			if arm.Case == 1 && arm.CarrierUse != typeinfo.UseRead {
-				t.Fatalf("payloadless arm carrier use = %v, want UseRead", arm.CarrierUse)
-			}
+	for _, arm := range match.Arms {
+		if arm.Case == 0 && arm.CarrierUse != typeinfo.UseMove {
+			t.Fatalf("owned-payload arm carrier use = %v, want UseMove", arm.CarrierUse)
+		}
+		if arm.Case == 1 && arm.CarrierUse != typeinfo.UseRead {
+			t.Fatalf("payloadless arm carrier use = %v, want UseRead", arm.CarrierUse)
 		}
 	}
 }
@@ -186,22 +354,22 @@ func checkTypeSource(t *testing.T, src string) *diagnostics.DiagnosticBag {
 	diag.AddSourceContent(filePath, src)
 	ctx := project.New(".", peeper.SourceExt, diag)
 	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
-	module := &project.Module{
+	module := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "typechecker_test"},
 		FilePath: filePath,
 		Content:  src,
 		AST:      modAST,
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 	ctx.AddModule(module)
 	collector.Collect(ctx, module)
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
-	Check(ctx, module)
+	module.THIR = checkWithEvidence(t, ctx, module)
 	return diag
 }
 
-func checkTypeSourceWithExternalImport(t *testing.T, src string) (*project.Module, *diagnostics.DiagnosticBag) {
+func checkTypeSourceWithExternalImport(t *testing.T, src string) (*module.Module, *diagnostics.DiagnosticBag) {
 	t.Helper()
 	const (
 		filePath     = "typechecker_test" + peeper.SourceExt
@@ -214,26 +382,26 @@ func checkTypeSourceWithExternalImport(t *testing.T, src string) (*project.Modul
 	ctx := project.New(".", peeper.SourceExt, diag)
 
 	extAST := parser.New(externalPath, lexer.New(externalPath, externalSrc, diag).Tokenize(), diag).ParseModule()
-	extModule := &project.Module{
+	extModule := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "external"},
 		FilePath: externalPath,
 		Content:  externalSrc,
 		AST:      extAST,
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 	ctx.AddModule(extModule)
 	collector.Collect(ctx, extModule)
 	binder.Bind(ctx, extModule)
 	resolver.Resolve(ctx, extModule)
-	Check(ctx, extModule)
+	extModule.THIR = checkWithEvidence(t, ctx, extModule)
 
 	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
-	module := &project.Module{
+	module := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "typechecker_test"},
 		FilePath: filePath,
 		Content:  src,
 		AST:      modAST,
-		Imports: map[string]project.ResolvedImport{
+		Imports: map[string]module.ResolvedImport{
 			"external": {
 				ID:       extModule.ID,
 				FilePath: externalPath,
@@ -244,8 +412,131 @@ func checkTypeSourceWithExternalImport(t *testing.T, src string) (*project.Modul
 	collector.Collect(ctx, module)
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
-	Check(ctx, module)
+	module.THIR = checkWithEvidence(t, ctx, module)
 	return module, diag
+}
+
+func TestDefaultCallDeclarationUsesResolvedImportedBinding(t *testing.T) {
+	ctx := project.New(".", peeper.SourceExt, diagnostics.NewDiagnosticBag())
+	owner := &module.Module{ID: moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "external"}}
+	ctx.AddModule(owner)
+	caller := &module.Module{
+		ID:          moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "caller"},
+		SymbolIndex: symbols.NewIndex(),
+	}
+	path := &ast.ScopeResolution{
+		NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(1)},
+		Segments:     []ast.PathSegment{{Name: &ast.Ident{Name: "external"}}, {Name: &ast.Ident{Name: "GetValue"}}},
+	}
+	bound := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolFunc, "GetValue"), "GetValue", symbols.SymbolFunc, nil, nil)
+	bound.DefiningModule = owner.ID
+	caller.SymbolIndex.Bind(path, bound)
+	checker := &checker{ctx: ctx, module: caller}
+	if sym, declModule := checker.defaultCallDeclaration(path); sym != bound || declModule != owner {
+		t.Fatalf("resolved callable = (%p, %p), want (%p, %p)", sym, declModule, bound, owner)
+	}
+}
+
+func TestSymbolIDsAreStableAcrossUnrelatedFunctionEdit(t *testing.T) {
+	compile := func(prepBody string) []symbols.SymbolID {
+		t.Helper()
+		module, diag := checkTypeModule(t, `struct Box {}
+fn Prep() { `+prepBody+` }
+fn main(input: i32) {
+	let local = input;
+	for index, value in 0..2 {}
+}`)
+		if diag.HasErrors() {
+			t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+		}
+		box, _ := module.ModuleScope.LookupLocal("Box")
+		main := module.AST.Stmts[2].(*ast.FnDecl)
+		local := main.Body.Stmts[0].(*ast.LetDecl)
+		loop := main.Body.Stmts[1].(*ast.ForStmt)
+		iteration, found := testEvidence(module).ForIteration(loop.ID())
+		if box == nil || !found {
+			t.Fatal("missing collected symbol or range iteration evidence")
+		}
+		rangePlan, ok := iteration.Plan.(*RangeIteration)
+		if !ok || rangePlan == nil || rangePlan.Limit == nil || rangePlan.Ordinal == nil {
+			t.Fatalf("range iteration = %#v", iteration)
+		}
+		syms := []*symbols.Symbol{
+			box,
+			module.SymbolIndex.Symbol(main.Name),
+			module.SymbolIndex.Symbol(main.Params[0].Name),
+			module.SymbolIndex.Symbol(local.Name),
+			module.SymbolIndex.Symbol(loop.Index),
+			module.SymbolIndex.Symbol(loop.Value),
+			iteration.Cursor,
+			rangePlan.Limit,
+			rangePlan.Ordinal,
+		}
+		ids := make([]symbols.SymbolID, len(syms))
+		for index, sym := range syms {
+			if sym == nil || !sym.ID.IsValid() {
+				t.Fatalf("symbol %d = %#v", index, sym)
+			}
+			ids[index] = sym.ID
+		}
+		return ids
+	}
+
+	baseline := compile("")
+	repeated := compile("let unrelated = 1;")
+	if !slices.Equal(baseline, repeated) {
+		t.Fatalf("symbol identities changed: %v and %v", baseline, repeated)
+	}
+}
+
+func TestRecoveryFunctionsKeepDistinctSymbolIDs(t *testing.T) {
+	module, diag := checkTypeModule(t, `fn Same() {}
+fn Same() {}`)
+	if !diag.HasErrors() {
+		t.Fatal("expected redeclaration diagnostics")
+	}
+	first := module.AST.Stmts[0].(*ast.FnDecl)
+	second := module.AST.Stmts[1].(*ast.FnDecl)
+	firstSymbol := module.SymbolIndex.Symbol(first.Name)
+	secondSymbol := module.SymbolIndex.Symbol(second.Name)
+	if firstSymbol == nil || secondSymbol == nil || firstSymbol.ID == secondSymbol.ID {
+		t.Fatalf("recovery symbols = %#v and %#v", firstSymbol, secondSymbol)
+	}
+}
+
+func TestDefaultExpansionGeneratedNodeIDsAreStable(t *testing.T) {
+	compile := func(prepBody string) []source.NodeID {
+		t.Helper()
+		module, diag := checkTypeModule(t, `fn WithDefault(value: i32 = 7) -> i32 { return value; }
+fn Prep() { `+prepBody+` }
+fn main() -> i32 { return WithDefault(); }`)
+		if diag.HasErrors() {
+			t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+		}
+		main := module.AST.Stmts[2].(*ast.FnDecl)
+		call := main.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.CallExpr)
+		arguments := testEvidence(module).CallArgumentsOrSource(call)
+		if len(arguments) != 1 {
+			t.Fatalf("effective arguments = %d, want 1", len(arguments))
+		}
+		ids := make([]source.NodeID, 0)
+		ast.Inspect(arguments[0], func(node ast.Node) bool {
+			if node != nil {
+				if !node.ID().IsGenerated() || node.ID().Function() != main.ID().Function() {
+					t.Fatalf("default node %v is not generated for main", node.ID())
+				}
+				ids = append(ids, node.ID())
+			}
+			return true
+		})
+		return ids
+	}
+
+	baseline := compile("")
+	repeated := compile("let unrelated = 1;")
+	if len(baseline) == 0 || !slices.Equal(baseline, repeated) {
+		t.Fatalf("default expansion identities changed: %v and %v", baseline, repeated)
+	}
 }
 
 func TestDefaultRangeWithOmittedBoundsClones(t *testing.T) {
@@ -314,25 +605,25 @@ func TestAllocArityReportsSourceArguments(t *testing.T) {
 	}
 }
 
-func checkTypeModule(t *testing.T, src string) (*project.Module, *diagnostics.DiagnosticBag) {
+func checkTypeModule(t *testing.T, src string) (*module.Module, *diagnostics.DiagnosticBag) {
 	t.Helper()
 	const filePath = "typechecker_test" + peeper.SourceExt
 	diag := diagnostics.NewDiagnosticBag()
 	diag.AddSourceContent(filePath, src)
 	ctx := project.New(".", peeper.SourceExt, diag)
 	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
-	module := &project.Module{
+	module := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "typechecker_test"},
 		FilePath: filePath,
 		Content:  src,
 		AST:      modAST,
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 	ctx.AddModule(module)
 	collector.Collect(ctx, module)
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
-	Check(ctx, module)
+	module.THIR = checkWithEvidence(t, ctx, module)
 	return module, diag
 }
 
@@ -374,12 +665,12 @@ fn main() {
 	fn := module.AST.Stmts[1].(*ast.FnDecl)
 	ok := fn.Body.Stmts[0].(*ast.LetDecl).Value
 	pending := fn.Body.Stmts[1].(*ast.LetDecl).Value
-	okEvidence, found := module.Typechecking.VariantConstructions[ok.ID()]
+	okEvidence, found := testEvidence(module).VariantConstruction(ok.ID())
 	if !found || typeinfo.TypeText(okEvidence.EnumType) != "Result<i32>" || okEvidence.Case != 0 ||
 		okEvidence.Payload == nil || ast.ExprText(okEvidence.Value) != ".{code = 7, value = 42}" {
 		t.Fatalf("Ok construction evidence = %#v", okEvidence)
 	}
-	pendingEvidence, found := module.Typechecking.VariantConstructions[pending.ID()]
+	pendingEvidence, found := testEvidence(module).VariantConstruction(pending.ID())
 	if !found || typeinfo.TypeText(pendingEvidence.EnumType) != "Result<i32>" || pendingEvidence.Case != 1 ||
 		pendingEvidence.Payload != nil || pendingEvidence.Value != nil {
 		t.Fatalf("Pending construction evidence = %#v", pendingEvidence)
@@ -507,16 +798,16 @@ fn Read(result: Result) -> i32 {
 	}
 	fn := module.AST.Stmts[1].(*ast.FnDecl)
 	match := fn.Body.Stmts[0].(*ast.MatchStmt)
-	evidence, found := module.Typechecking.Matches[match.ID()]
+	evidence, found := testEvidence(module).Match(match.ID())
 	if !found || evidence.SubjectID != match.Subject.ID() || typeinfo.TypeText(evidence.EnumType) != "Result" || len(evidence.Arms) != 3 {
 		t.Fatalf("match evidence = %#v", evidence)
 	}
 	if evidence.CaseCount != 3 || evidence.Arms[0].Case != 0 || len(evidence.Arms[0].Bindings) != 1 ||
-		evidence.Arms[0].Bindings[0].Projection != typecheckresult.MatchPayloadField ||
+		evidence.Arms[0].Bindings[0].Projection != MatchPayloadField ||
 		evidence.Arms[0].Bindings[0].Field != 0 || evidence.Arms[0].Bindings[0].Binding == nil {
 		t.Fatalf("Ok arm evidence = %#v", evidence.Arms[0])
 	}
-	if evidence.Arms[1].Case != 1 || !evidence.Arms[1].Bindings[0].Discard || evidence.Arms[2].Case != 2 {
+	if evidence.Arms[1].Case != 1 || !evidence.Arms[1].Bindings[0].IsDiscard || evidence.Arms[2].Case != 2 {
 		t.Fatalf("remaining arm evidence = %#v", evidence.Arms[1:])
 	}
 }
@@ -914,7 +1205,7 @@ fn disabled() -> i32 {
 		}
 	}
 	if count != 3 {
-		t.Fatalf("expected 3 target_os warnings, got %d:\n%s", count, out)
+		t.Fatalf("expected 3 target_os warnings, got %v:\n%s", count, out)
 	}
 }
 
@@ -1121,7 +1412,7 @@ func TestRawPointerFieldStructSupportsExplicitCopy(t *testing.T) {
 	if !ok || typ == nil {
 		t.Fatalf("missing View type")
 	}
-	if got := typeinfo.OwnershipCapabilityOf(typ); got.Copy != typeinfo.CopyExplicit || got.Drop {
+	if got := typeinfo.OwnershipCapabilityOf(typ); got.Copy != typeinfo.CopyExplicit || got.NeedsDrop {
 		t.Fatalf("View should support explicit copy without drop, got %v", got)
 	}
 }
@@ -1654,7 +1945,7 @@ func TestIndexExprRejectsFloatPostfixBeforeConstEvaluation(t *testing.T) {
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	ret := fn.Body.Stmts[0].(*ast.ReturnStmt)
 	index := ret.Value.(*ast.IndexExpr)
-	if !typeinfo.IsInvalidOrUnknown(module.Typechecking.ExprTypes[index.ID()]) {
+	if !typeinfo.IsInvalidOrUnknown(testEvidence(module).ExprType(index.ID())) {
 		t.Fatalf("index expression should have invalid semantic type")
 	}
 }
@@ -1704,7 +1995,7 @@ func TestArrayLiteralTypechecksExplicitLength(t *testing.T) {
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	letDecl := fn.Body.Stmts[0].(*ast.LetDecl)
-	got := module.Typechecking.ExprTypes[letDecl.Value.ID()]
+	got := testEvidence(module).ExprType(letDecl.Value.ID())
 	if typeinfo.TypeText(got) != "[3]i32" {
 		t.Fatalf("array literal type = %s, want [3]i32", typeinfo.TypeText(got))
 	}
@@ -1720,7 +2011,7 @@ func TestArrayLiteralTypechecksInferredLength(t *testing.T) {
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	letDecl := fn.Body.Stmts[0].(*ast.LetDecl)
-	got := module.Typechecking.ExprTypes[letDecl.Value.ID()]
+	got := testEvidence(module).ExprType(letDecl.Value.ID())
 	if typeinfo.TypeText(got) != "[3]i32" {
 		t.Fatalf("array literal type = %s, want [3]i32", typeinfo.TypeText(got))
 	}
@@ -1736,7 +2027,7 @@ func TestArrayLiteralTypechecksDynamicArray(t *testing.T) {
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	letDecl := fn.Body.Stmts[0].(*ast.LetDecl)
-	got := module.Typechecking.ExprTypes[letDecl.Value.ID()]
+	got := testEvidence(module).ExprType(letDecl.Value.ID())
 	if typeinfo.TypeText(got) != "[]i32" {
 		t.Fatalf("array literal type = %s, want []i32", typeinfo.TypeText(got))
 	}
@@ -1757,25 +2048,25 @@ func TestDynamicArrayOwnerOperationsTypecheck(t *testing.T) {
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	wantParams := [][]string{
 		{"&mut []i32", "i32"},
-		{"&mut []i32", fmt.Sprintf("u%d", target.Host().IndexBits)},
-		{"&mut []i32", fmt.Sprintf("u%d", target.Host().IndexBits), "i32"},
-		{"&mut []i32", fmt.Sprintf("u%d", target.Host().IndexBits)},
+		{"&mut []i32", fmt.Sprintf("u%v", target.Host().IndexBits)},
+		{"&mut []i32", fmt.Sprintf("u%v", target.Host().IndexBits), "i32"},
+		{"&mut []i32", fmt.Sprintf("u%v", target.Host().IndexBits)},
 	}
 	for i, stmt := range fn.Body.Stmts[1:] {
 		call := stmt.(*ast.ExprStmt).Expr.(*ast.CallExpr)
-		fnType, ok := module.Typechecking.ExprTypes[call.Callee.ID()].(*typeinfo.FuncType)
+		fnType, ok := testEvidence(module).ExprType(call.Callee.ID()).(*typeinfo.FuncType)
 		if !ok {
-			t.Fatalf("operation %d callee type = %#v, want function", i, module.Typechecking.ExprTypes[call.Callee.ID()])
+			t.Fatalf("operation %v callee type = %#v, want function", i, testEvidence(module).ExprType(call.Callee.ID()))
 		}
 		if fnType.Return != nil {
-			t.Fatalf("operation %d return = %s, want void", i, typeinfo.TypeText(fnType.Return))
+			t.Fatalf("operation %v return = %s, want void", i, typeinfo.TypeText(fnType.Return))
 		}
 		if len(fnType.Params) != len(wantParams[i]) {
-			t.Fatalf("operation %d parameter count = %d, want %d", i, len(fnType.Params), len(wantParams[i]))
+			t.Fatalf("operation %v parameter count = %v, want %v", i, len(fnType.Params), len(wantParams[i]))
 		}
 		for paramIndex, want := range wantParams[i] {
 			if got := typeinfo.TypeText(fnType.Params[paramIndex]); got != want {
-				t.Fatalf("operation %d parameter %d = %s, want %s", i, paramIndex, got, want)
+				t.Fatalf("operation %v parameter %v = %s, want %s", i, paramIndex, got, want)
 			}
 		}
 	}
@@ -1888,7 +2179,7 @@ func TestAllocTypecheck(t *testing.T) {
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	letDecl := fn.Body.Stmts[1].(*ast.LetDecl)
-	if got := typeinfo.TypeText(module.Typechecking.ExprTypes[letDecl.Value.ID()]); got != "*i32" {
+	if got := typeinfo.TypeText(testEvidence(module).ExprType(letDecl.Value.ID())); got != "*i32" {
 		t.Fatalf("alloc type = %s, want *i32", got)
 	}
 }
@@ -1940,7 +2231,7 @@ func TestArrayLiteralRejectsFloatPostfixLengthBeforeElementChecks(t *testing.T) 
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	letDecl := fn.Body.Stmts[0].(*ast.LetDecl)
-	if !typeinfo.IsInvalidOrUnknown(module.Typechecking.ExprTypes[letDecl.Value.ID()]) {
+	if !typeinfo.IsInvalidOrUnknown(testEvidence(module).ExprType(letDecl.Value.ID())) {
 		t.Fatalf("array literal should have invalid semantic type")
 	}
 }
@@ -2248,7 +2539,7 @@ fn release_interface(reader: *Reader) { free(reader); }`)
 	}
 	invalid := checkTypeSource(t, `fn bad(raw: rawptr, value: i32) { free(raw); free(value); }`)
 	if count := strings.Count(invalid.EmitAllToString(), "free requires an owned pointer"); count != 2 {
-		t.Fatalf("expected two invalid free diagnostics, got %d:\n%s", count, invalid.EmitAllToString())
+		t.Fatalf("expected two invalid free diagnostics, got %v:\n%s", count, invalid.EmitAllToString())
 	}
 }
 
@@ -2529,7 +2820,7 @@ fn nested(value: ?Envelope, values: [2]Status, pointer: *Status, reference: &Sta
 `)
 	out := diag.EmitAllToString()
 	if count := strings.Count(out, "named enums cannot cross extern boundaries"); count != 6 {
-		t.Fatalf("extern enum diagnostic count = %d, want 6:\n%s", count, out)
+		t.Fatalf("extern enum diagnostic count = %v, want 6:\n%s", count, out)
 	}
 	if !strings.Contains(out, "define a foreign representation after enum FFI rules are specified") {
 		t.Fatalf("missing enum FFI help:\n%s", out)
@@ -2631,7 +2922,7 @@ fn Heap(source: &i32) {
 }`)
 	emitted := rejected.EmitAllToString()
 	if count := strings.Count(emitted, "references cannot be stored"); count < 3 {
-		t.Fatalf("expected module, parameter, and heap reference-storage diagnostics, got %d:\n%s", count, emitted)
+		t.Fatalf("expected module, parameter, and heap reference-storage diagnostics, got %v:\n%s", count, emitted)
 	}
 	if !strings.Contains(emitted, "reference return must be a direct reference or optional reference value") {
 		t.Fatalf("expected aggregate reference-return diagnostic, got:\n%s", emitted)
@@ -2809,7 +3100,7 @@ func TestAssignmentRequiresMutableBinding(t *testing.T) {
 		t.Fatalf("expected title 'modification to immutable symbol', got %q", targetDiag.Message)
 	}
 	if len(targetDiag.Labels) != 2 {
-		t.Fatalf("expected 2 labels, got %d", len(targetDiag.Labels))
+		t.Fatalf("expected 2 labels, got %v", len(targetDiag.Labels))
 	}
 	// Verify primary label
 	if targetDiag.Labels[0].Style != diagnostics.Primary {
@@ -3011,7 +3302,7 @@ func TestIntrinsicFunctionResolutionStoredForLaterPhases(t *testing.T) {
 	for _, stmt := range module.AST.Stmts {
 		ast.Inspect(stmt, func(node ast.Node) bool {
 			candidate, ok := node.(*ast.CallExpr)
-			if ok && candidate.Piped {
+			if ok && candidate.IsPiped {
 				call = candidate
 				callee, _ = candidate.Callee.(*ast.Ident)
 			}
@@ -3024,11 +3315,11 @@ func TestIntrinsicFunctionResolutionStoredForLaterPhases(t *testing.T) {
 	if callee == nil || callee.Name != "len" {
 		t.Fatal("len function missing from parsed module")
 	}
-	resolved := module.Bindings.NodeSymbols[callee.ID()]
+	resolved := module.SymbolIndex.Symbol(callee)
 	if resolved == nil || resolved.CompilerOp != symbols.CompilerOpLen {
 		t.Fatalf("resolved function = %#v, want len intrinsic", resolved)
 	}
-	evidence, ok := module.Typechecking.CompilerCalls[call.ID()]
+	evidence, ok := testEvidence(module).CompilerCall(call.ID())
 	if !ok || evidence.Operation != symbols.CompilerOpLen || evidence.Kind != intrinsics.FunctionCollection {
 		t.Fatalf("compiler call evidence = %#v, want collection len", evidence)
 	}
@@ -3071,7 +3362,7 @@ fn main() {
 	if conversion == nil {
 		t.Fatal("reader interface conversion missing from parsed module")
 	}
-	implementations := module.Typechecking.InterfaceImplementations[conversion.ID()]
+	implementations := testEvidence(module).InterfaceImplementations(conversion.ID())
 	if len(implementations) != 1 {
 		t.Fatalf("implementation evidence = %#v, want one method", implementations)
 	}
@@ -3114,16 +3405,16 @@ fn main() -> i32 {
 		t.Fatal("use call not found")
 	}
 	if len(call.Args) != 1 {
-		t.Fatalf("source argument count = %d, want 1", len(call.Args))
+		t.Fatalf("source argument count = %v, want 1", len(call.Args))
 	}
-	effectiveArgs := module.Typechecking.EffectiveCallArguments[call.ID()]
+	effectiveArgs := testEvidence(module).CallArgumentsOrSource(call)
 	if len(effectiveArgs) != 3 {
-		t.Fatalf("effective argument count = %d, want 3", len(effectiveArgs))
+		t.Fatalf("effective argument count = %v, want 3", len(effectiveArgs))
 	}
-	first := module.Typechecking.InterfaceImplementations[effectiveArgs[1].ID()]
-	second := module.Typechecking.InterfaceImplementations[effectiveArgs[2].ID()]
+	first := testEvidence(module).InterfaceImplementations(effectiveArgs[1].ID())
+	second := testEvidence(module).InterfaceImplementations(effectiveArgs[2].ID())
 	if effectiveArgs[1].ID() == effectiveArgs[2].ID() || len(first) != 1 || len(second) != 1 {
-		t.Fatalf("default evidence IDs/evidence = %d:%#v %d:%#v", effectiveArgs[1].ID(), first, effectiveArgs[2].ID(), second)
+		t.Fatalf("default evidence IDs/evidence = %v:%#v %v:%#v", effectiveArgs[1].ID(), first, effectiveArgs[2].ID(), second)
 	}
 	if first[0].Symbol == nil || second[0].Symbol == nil ||
 		first[0].Symbol.Name != "read_a" || second[0].Symbol.Name != "read_b" {
@@ -3163,13 +3454,13 @@ fn valid() -> i32 {
 
 func TestCanAdaptFirstCallArgumentUsesCallConversionRules(t *testing.T) {
 	ctx := project.New(".", peeper.SourceExt, diagnostics.NewDiagnosticBag())
-	module := &project.Module{}
+	module := &module.Module{}
 	element, ok := typeinfo.NumericTypeFromName("i32", ctx.Target)
 	if !ok {
 		t.Fatal("missing i32 type")
 	}
 	owner := &typeinfo.ArrayType{Shape: typeinfo.ArrayOwner, Elem: element}
-	mutableOwner := &typeinfo.RefType{Target: owner, Mutable: true}
+	mutableOwner := &typeinfo.RefType{Target: owner, IsMutable: true}
 	if !CanAdaptFirstCallArgument(ctx, module, mutableOwner, owner) {
 		t.Fatal("owner should adapt to mutable owner reference")
 	}

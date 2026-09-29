@@ -40,7 +40,7 @@ func TestLoadProfileResolvesInstalledPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if !profile.Managed {
+	if !profile.IsManaged {
 		t.Fatal("installed profile reported as unmanaged")
 	}
 	if profile.ClangPath != filepath.Join(root, "toolchains", "native", "bin", "clang") {
@@ -126,7 +126,7 @@ func TestResolvePrefersInstalledProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
-	if !profile.Managed || profile.ProfileID != "managed" {
+	if !profile.IsManaged || profile.ProfileID != "managed" {
 		t.Fatalf("Resolve() profile = %#v", profile)
 	}
 }

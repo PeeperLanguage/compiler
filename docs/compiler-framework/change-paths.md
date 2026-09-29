@@ -5,8 +5,7 @@ Read that document first: the goal is **not** to make every phase acknowledge ev
 syntax node. The goal is to edit the few owners of unique semantics and let canonical
 structure/evidence drive the rest.
 
-Mandatory repository policy remains [`RULES.md`](../../RULES.md); durable compiler
-principles remain [`COMPILER_GUIDELINES.md`](../../COMPILER_GUIDELINES.md).
+Mandatory engineering requirements live in [`RULES.md`](../../RULES.md); compiler design-review guidance lives in [`COMPILER_GUIDELINES.md`](../../COMPILER_GUIDELINES.md). Current architecture claims in this guide must be verified against source.
 
 ## The rule for every change
 
@@ -16,17 +15,17 @@ Before adding a switch or recursive walk, ask what fact you need and who already
 | --- | --- |
 | AST children | node `forEachChild` + `ast.Inspect` |
 | semantic type children | `typeinfo.ForEachChild` |
-| copy/drop composition | sealed `typeinfo.Type.ownershipShape` |
+| copy/drop composition | sealed `typeinfo.Type.ownership` |
 | storage projection | `place.Project` / `place.Decompose` |
 | graph adjacency | `graph.Directed` |
 | fixed-point scheduling | `graph.Worklist` |
-| name identity | resolver/binding results |
-| type/use/adaptation decisions | `typecheckresult.Result` |
+| name identity | `symbols.Index` and lexical scopes |
+| type/use/adaptation decisions | THIR published by `typechecker.Check` |
 | control topology | `cfg.Module` / typed `cfg.Edge` |
-| evaluation/storage actions | `effect.Result` |
-| cleanup/drop evidence | `ownershipresult.Result` |
+| evaluation/storage actions | transient effect stream inside `analysis.Run` |
+| flow and cleanup evidence | query-only `analysis.Module` |
 
-If a later phase needs a fact from an earlier owner, extend the owner's published result.
+If a later phase needs a durable fact from an earlier owner, extend THIR, CFG, Analysis, or symbol state as appropriate.
 Do not reconstruct the fact from AST shape downstream.
 
 ## Path 1 — add an expression or statement
@@ -44,9 +43,8 @@ Expected edits:
 4. **Resolver/typechecker** — only where name, scope, type, call, or adaptation semantics
    differ.
 5. **CFG** — only when control topology differs.
-6. **Effect publisher** — map evaluation to existing `Define`/`Write`/`Use`/`Borrow`/
-   `Iterate`/`Discard`/call-boundary operations.
-7. **HIR** — lower the source construct when no existing source lowering covers it.
+6. **Analysis effect builder** — map evaluation to existing define/write/use/borrow/iterate/discard/call-boundary operations.
+7. **THIR/MIR** — publish typed source evidence and lower the construct when no existing MIR shape covers it.
 
 Do **not** add a corresponding AST case to definite initialization, ordinary ownership
 state transitions, liveness, or cleanup. If one of those needs syntax to understand the
@@ -54,14 +52,12 @@ new feature, the semantic boundary is probably missing evidence.
 
 ### Syntax with a genuinely new semantic action
 
-Only add a new `effect.Op` when the existing operations cannot express the behavior.
-Then the effect is a true closed extension point:
+Only add a new private analysis effect operation when the existing operations cannot express the behavior. Then it is a true closed extension point:
 
-1. add the sealed operation in `internal/semantics/effect`;
-2. publish it in evaluation order;
+1. add the sealed operation in `internal/semantics/analysis`;
+2. derive it in evaluation order;
 3. validate its required identity/evidence;
-4. extend `effect.Visitor`; every exhaustive consumer then fails compilation until it
-   explicitly decides what the operation means;
+4. extend the private effect visitor; every exhaustive consumer then fails compilation until it explicitly decides what the operation means;
 5. add focused Go tests and, for language behavior, `x_test` source fixtures.
 
 A new effect is therefore a compile-time introduction to semantic consumers, not a
@@ -72,23 +68,21 @@ search-and-remember exercise. It must never fall through as an accidental no-op.
 A semantic type is not complete until it satisfies the sealed `typeinfo.Type` contract.
 The first edits are therefore local to `internal/semantics/typeinfo`:
 
-1. add the type and its `TypeNode`/`Text` behavior;
-2. enumerate immediate contained types in `forEachChild` with correct
+1. add human-facing `Text` behavior;
+2. declare semantic attributes and ordered child slots in `structure`, using correct
    `TypeChildRelation` values;
-3. declare `ownershipShape` — whether it is a leaf/container and how copy/drop composes.
+3. implement required `isSameType`, `isSized`, `isLowerable`, and `ownership` behavior.
 
-That is the structural extension point. After it is correct, recursive containment and
-copy/drop propagation use the canonical traversal automatically.
+`ForEachChild` and semantic fingerprinting derive from the same structure. Each
+intrinsic query owns its cycle policy and reuses canonical children where needed.
 
-Then add only representation-specific decisions that truly differ, for example:
+Then add decisions owned outside the type model, for example:
 
-- equality/compatibility;
-- sizing or lowerability with special cycle/ABI rules;
-- exported semantic fingerprinting;
-- HIR/backend lowering;
+- compatibility and conversions;
+- MIR/backend lowering;
 - source-type conversion if new syntax is involved.
 
-`internal/contracts/type_dispatch_test.go` guards the remaining closed type-kind sites.
+Sealed type methods and focused type/IR tests guard the remaining closed type-kind sites.
 Do not add new private recursive type-child walkers to satisfy one query.
 
 ## Path 3 — add a graph-backed analysis
@@ -106,13 +100,11 @@ A domain graph may wrap the graph kernel; it should not own a second adjacency i
 
 Start from semantic evidence, not syntax.
 
-- Value is read/copied/moved? Extend the producer of `effect.Use` or its typechecker
-  decision, not an ownership expression switch.
-- Place is borrowed? Publish `effect.Borrow` with exact operand/place identity.
-- Storage is introduced/replaced? Use `effect.Define` / `effect.Write`.
-- A long-lived sequence iteration access is needed? Use `effect.Iterate` and CFG loop
-  identity.
-- A branch/case fact is needed? Put it on CFG/flow evidence.
+- Value is read/copied/moved? Extend THIR use classification or the transient use operation, not an ownership expression switch.
+- Place is borrowed? Derive a borrow operation with exact operand/place identity.
+- Storage is introduced/replaced? Use the existing define/write operations.
+- A long-lived sequence iteration access is needed? Use the iteration operation and CFG loop identity.
+- A branch/case fact is needed? Publish it through `analysis.Module`.
 - A type recursively contains ownership/reference behavior? Put the relationship on the
   semantic type structure.
 
@@ -132,8 +124,8 @@ points:
 | new syntax kind at a syntax-aware closed site | dispatch contract / compiler failure |
 | new semantic type | sealed `typeinfo.Type` compile failure until structure/ownership declared |
 | new semantic type missing representation decision | type dispatch contract |
-| new effect operation | `effect.Visitor` compile failure + artifact validator |
-| malformed CFG/effects/ownership/IR | artifact validator |
+| new effect operation | private visitor compile failure + transient evidence validator |
+| malformed CFG/analysis/MIR | artifact validator |
 | changed Peeper behavior | focused tests + `x_test` fixture |
 
 The ideal result is that a new ordinary syntax node causes **fewer** downstream edit
@@ -148,11 +140,11 @@ parallel machinery:
 # private fixed-point schedulers in semantic analyses
 rg -n 'queue|queued' internal/semantics
 
-# syntax knowledge leaking back into generic consumers
-rg -n 'case \*ast\.' internal/semantics/definiteinit internal/semantics/ownership
+# syntax knowledge leaking into generic analysis consumers
+rg -n 'case \*ast\.' internal/semantics/analysis
 
 # selector/index projection reimplementation
-rg -n 'SelectorExpr|IndexExpr' internal/semantics/ownership internal/semantics/effect
+rg -n 'SelectorExpr|IndexExpr' internal/semantics/analysis
 ```
 
 Interpret results semantically rather than mechanically. A return-specific ownership

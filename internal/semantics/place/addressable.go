@@ -15,8 +15,8 @@ type ExprTypeFunc func(ast.Expr) typeinfo.Type
 // module" because the same pointer appears in both the declaration
 // and caller module's ExpandedDefaultBindings.
 type Binding struct {
-	Symbol *symbols.Symbol
-	Local  bool
+	Symbol  *symbols.Symbol
+	IsLocal bool
 }
 
 // BindingResolver supplies symbols for idents that were injected
@@ -99,7 +99,7 @@ func IsPlaceExpr(expr ast.Expr) bool {
 	return identified && ident != nil
 }
 
-func Addressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFunc, resolve BindingResolver) bool {
+func IsAddressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFunc, resolve BindingResolver) bool {
 	if scope == nil || expr == nil {
 		return false
 	}
@@ -128,10 +128,10 @@ func Addressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFunc, res
 			return true
 		}
 	}
-	return Addressable(scope, projection.Base, exprType, resolve)
+	return IsAddressable(scope, projection.Base, exprType, resolve)
 }
 
-func MutableAddressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFunc, resolve BindingResolver) (mutable bool, sharedReference typeinfo.Type, mutableBinding *symbols.Symbol) {
+func MutableAddressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFunc, resolve BindingResolver) (isMutable bool, sharedReference typeinfo.Type, mutableBinding *symbols.Symbol) {
 	if scope == nil || expr == nil {
 		return false, nil, nil
 	}
@@ -172,8 +172,8 @@ func MutableAddressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFu
 		if _, ok := typeinfo.PointerTarget(baseType); ok {
 			return true, nil, nil
 		}
-		if target, mutable, ok := typeinfo.ReferenceTarget(baseType); ok {
-			if mutable {
+		if target, isMutable, ok := typeinfo.ReferenceTarget(baseType); ok {
+			if isMutable {
 				return true, nil, nil
 			}
 			return false, target, nil
@@ -195,7 +195,7 @@ func LocalRoot(scope, moduleScope *symbols.Scope, expr ast.Expr, exprType ExprTy
 				// Expanded defaults have Local=false: the symbol
 				// lives in the declaration module, not the caller,
 				// so it is not a pointer-escape source.
-				if binding.Local && addressableSymbol(binding.Symbol) {
+				if binding.IsLocal && addressableSymbol(binding.Symbol) {
 					return binding.Symbol, true
 				}
 				return nil, false

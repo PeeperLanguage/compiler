@@ -11,41 +11,64 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
 	"compiler/internal/problems"
-	"compiler/internal/project"
-	"compiler/internal/semantics/consteval"
-	"compiler/internal/semantics/flowresult"
+
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/typeresolution"
 	"compiler/pkg/numeric"
 )
 
-// typeExpr records canonical base typing, then applies per-use flow refinement.
-// Recursive typing stays in typeExprBase so both passes use one AST switch.
+// typeExpr records canonical base typing, then applies syntax-context optional
+// unwrapping needed while checking payload operations. Path-sensitive
+// refinement runs later over THIR and never re-enters this checker.
 func (c *checker) typeExpr(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) typeinfo.Type {
-	if c.flow != nil && expr != nil {
-		delete(c.flow.result.Payloads, expr.ID())
-	}
 	base := c.typeExprBase(scope, expr, expected)
-	if call, ok := expr.(*ast.CallExpr); ok && c.flow != nil && c.flow.analyzer != nil {
-		c.flow.analyzer.invalidateCall(c, scope, call, c.flow.state)
-		if c.flow.events != nil {
-			c.flow.events.next++
-			c.flow.events.calls = append(c.flow.events.calls, flowCallEvent{order: c.flow.events.next, call: call})
-		}
-	}
 	if base == nil || expr == nil {
 		return base
 	}
-	if c.module != nil && c.module.Typechecking != nil && c.flow == nil {
-		c.module.Typechecking.ExprTypes[expr.ID()] = base
+	if c.module != nil && c.evidence != nil {
+		c.evidence.RecordExprType(expr.ID(), base)
 	}
-	resolved := c.effectiveExpressionType(scope, expr, base, expected)
-	if c.flow != nil && resolved != nil {
-		c.flow.result.ExprTypes[expr.ID()] = resolved
+	return c.effectiveExpressionType(expr, base, expected)
+}
+
+func (c *checker) typePayloadExpr(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) typeinfo.Type {
+	c.payloadContext++
+	defer func() { c.payloadContext-- }()
+	return c.typeExpr(scope, expr, expected)
+}
+
+func (c *checker) typeWholeCarrierExpr(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) typeinfo.Type {
+	previous := c.wholeCarrierExpr
+	c.wholeCarrierExpr = expr
+	defer func() { c.wholeCarrierExpr = previous }()
+	return c.typeExpr(scope, expr, expected)
+}
+
+func (c *checker) effectiveExpressionType(expr ast.Expr, base, expected typeinfo.Type) typeinfo.Type {
+	if c == nil || expr == nil || base == nil || c.wholeCarrierExpr == expr || !typeinfo.IsOptional(base) {
+		return base
 	}
-	return resolved
+	_, explicitCarrier := typeinfo.Underlying(expected).(*typeinfo.OptionalType)
+	required := typeinfo.OptionalPayloadDepthForExpected(base, expected)
+	if c.payloadContext > 0 && required == 0 && !explicitCarrier {
+		required = typeinfo.OptionalLayerCount(base)
+	}
+	if c.optionalTestContext > 0 || explicitCarrier || required == 0 {
+		return base
+	}
+	return typeinfo.UnwrapOptionalLayers(base, required)
+}
+
+func (c *checker) recordCaseTest(node ast.Expr, subject ast.Expr, caseIndex, caseCount int, caseWhenTrue bool, family typeinfo.VariantFamily) {
+	if c == nil || c.module == nil || c.evidence == nil || node == nil || subject == nil {
+		return
+	}
+	c.evidence.RecordCaseTest(node.ID(), CaseTest{
+		SubjectID: subject.ID(), Case: caseIndex, MatchesWhenTrue: caseWhenTrue,
+		CaseCount: caseCount, Family: family,
+	})
 }
 
 func (c *checker) typeExprBase(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) typeinfo.Type {
@@ -57,7 +80,7 @@ func (c *checker) typeExprBase(scope *symbols.Scope, expr ast.Expr, expected typ
 		return c.typeNumber(node, expected)
 
 	case *ast.StringLit:
-		if node.CString {
+		if node.IsCString {
 			return &typeinfo.CStrType{}
 		}
 		return &typeinfo.StringType{}
@@ -84,15 +107,10 @@ func (c *checker) typeExprBase(scope *symbols.Scope, expr ast.Expr, expected typ
 
 	case *ast.Ident:
 		var sym *symbols.Symbol
-		var ok bool
-		if c.module != nil && c.module.Bindings != nil {
-			sym = c.module.Bindings.NodeSymbols[node.ID()]
-			ok = sym != nil
+		if c.module != nil && c.module.SymbolIndex != nil {
+			sym = c.module.SymbolIndex.Symbol(node)
 		}
-		if !ok {
-			sym, ok = scope.Lookup(node.Name)
-		}
-		if !ok || sym == nil {
+		if sym == nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrUnknownIdentifier,
 				fmt.Sprintf("unknown identifier `%s`\n", node.Name), ast.LocOf(node), "")
 			return &typeinfo.InvalidType{}
@@ -186,7 +204,7 @@ func (c *checker) typeUnaryExpr(scope *symbols.Scope, node *ast.UnaryExpr, expec
 		return &typeinfo.InvalidType{}
 	}
 	if node.Op == "!" {
-		if !typeinfo.SameType(argType, &typeinfo.BoolType{}) {
+		if !typeinfo.IsSameType(argType, &typeinfo.BoolType{}) {
 			c.ctx.Diagnostics.Add(explicitBoolCastRequiredError(node.Expr, "`!` operand must be bool"))
 			return nil
 		}
@@ -217,7 +235,7 @@ func (c *checker) typeAddressExpr(scope *symbols.Scope, node *ast.AddressExpr, e
 		valueType = c.typeWholeCarrierExpr(scope, node.Expr, nil)
 	} else {
 		var valueExpected typeinfo.Type
-		if target, _, reference := typeinfo.ReferenceValueTarget(typeinfo.Underlying(expected)); reference {
+		if target, _, isReference := typeinfo.ReferenceValueTarget(typeinfo.Underlying(expected)); isReference {
 			valueExpected = target
 		}
 		valueType = c.typeExpr(scope, node.Expr, valueExpected)
@@ -227,12 +245,12 @@ func (c *checker) typeAddressExpr(scope *symbols.Scope, node *ast.AddressExpr, e
 		return &typeinfo.InvalidType{}
 	}
 	exprType := func(expr ast.Expr) typeinfo.Type {
-		return c.module.EffectiveExprType(expr.ID())
+		return c.exprType(expr.ID())
 	}
-	addressable := place.Addressable(scope, node.Expr, exprType, c.module.ExpandedDefaultBinding)
+	isAddressable := place.IsAddressable(scope, node.Expr, exprType, c.expandedDefaultBinding)
 	if node.Mode == ast.AddressMutable {
-		mutable, sharedReference, mutableBinding := place.MutableAddressable(scope, node.Expr, exprType, c.module.ExpandedDefaultBinding)
-		if addressable && !mutable {
+		isMutable, sharedReference, mutableBinding := place.MutableAddressable(scope, node.Expr, exprType, c.expandedDefaultBinding)
+		if isAddressable && !isMutable {
 			diagnostic := c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
 				"mutable reference requires mutable addressable storage", ast.LocOf(node.Expr), "")
 			if sharedReference != nil {
@@ -240,23 +258,23 @@ func (c *checker) typeAddressExpr(scope *symbols.Scope, node *ast.AddressExpr, e
 			}
 			return &typeinfo.InvalidType{}
 		}
-		if _, _, nested := typeinfo.ReferenceTarget(typeinfo.Underlying(valueType)); nested {
+		if _, _, isNested := typeinfo.ReferenceTarget(typeinfo.Underlying(valueType)); isNested {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
 				"reference-to-reference types are not supported in v1", ast.LocOf(node), "")
 			return &typeinfo.InvalidType{}
 		}
 		if mutableBinding != nil {
-			mutableBinding.RequiresMutable = true
+			c.module.SymbolIndex.RequireMutable(mutableBinding)
 		}
-		return &typeinfo.RefType{Mutable: true, Target: valueType}
+		return &typeinfo.RefType{IsMutable: true, Target: valueType}
 	}
-	if node.Mode == ast.AddressRaw && !addressable {
+	if node.Mode == ast.AddressRaw && !isAddressable {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
 			"address operator requires addressable storage", ast.LocOf(node.Expr), "")
 		return &typeinfo.InvalidType{}
 	}
 	if node.Mode == ast.AddressShared {
-		if _, _, nested := typeinfo.ReferenceTarget(typeinfo.Underlying(valueType)); nested {
+		if _, _, isNested := typeinfo.ReferenceTarget(typeinfo.Underlying(valueType)); isNested {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
 				"reference-to-reference types are not supported in v1", ast.LocOf(node), "")
 			return &typeinfo.InvalidType{}
@@ -329,8 +347,8 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 		leftView, rightView := isStringView(left), isStringView(right)
 		if leftString || rightString || leftView || rightView {
 			wantRight := &typeinfo.RefType{Target: &typeinfo.StringType{}}
-			if leftString && typeinfo.SameType(right, wantRight) {
-				c.module.Typechecking.StringConcatenations[node.ID()] = struct{}{}
+			if leftString && typeinfo.IsSameType(right, wantRight) {
+				c.evidence.MarkStringConcatenation(node.ID())
 				return &typeinfo.StringType{}
 			}
 			c.ctx.Diagnostics.Add(invalidOperationError(node,
@@ -340,14 +358,14 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 	}
 	leftBase, rightBase := left, right
 	if c.module != nil {
-		if typ := c.module.BaseExprType(node.Left.ID()); typ != nil {
+		if typ := c.exprType(node.Left.ID()); typ != nil {
 			leftBase = typ
 		}
-		if typ := c.module.BaseExprType(node.Right.ID()); typ != nil {
+		if typ := c.exprType(node.Right.ID()); typ != nil {
 			rightBase = typ
 		}
 	}
-	if (node.Op == "==" || node.Op == "!=") && isOptionalType(leftBase) && isOptionalType(rightBase) &&
+	if (node.Op == "==" || node.Op == "!=") && typeinfo.IsOptional(leftBase) && typeinfo.IsOptional(rightBase) &&
 		!isNoneExpr(node.Left) && !isNoneExpr(node.Right) {
 		c.ctx.Diagnostics.Add(invalidOperationError(node,
 			"optional equality currently requires `none` on one side"))
@@ -382,7 +400,7 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 				"shift count must be integral"))
 			return &typeinfo.InvalidType{}
 		}
-		if value, ok := consteval.EvaluateExpr(c.ctx, c.module, scope, node.Right, right); ok {
+		if value, ok := c.evaluateConstant(c.ctx, scope, node.Right, right); ok {
 			if count, ok := value.(*constvalue.IntConst); ok && count != nil {
 				_, bits, _ := typeinfo.NumericInfo(left)
 				normalized, normalizedOK := constvalue.NormalizeInteger(count.Int(),
@@ -402,7 +420,7 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 		c.recordImplicitConversion(node.Left, typeinfo.CheckCompatibility(commonType, left))
 		c.recordImplicitConversion(node.Right, typeinfo.CheckCompatibility(commonType, right))
 	}
-	if commonType == nil && !c.assignable(left, right, node.Right) && !c.assignable(right, left, node.Left) {
+	if commonType == nil && !c.isAssignable(left, right, node.Right) && !c.isAssignable(right, left, node.Left) {
 		c.ctx.Diagnostics.Add(typeMismatchError(node,
 			fmt.Sprintf("operand types mismatch: %s vs %s",
 				typeinfo.TypeText(left), typeinfo.TypeText(right))))
@@ -415,7 +433,7 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 	}
 	switch node.Op {
 	case "&&", "||":
-		if !typeinfo.SameType(left, &typeinfo.BoolType{}) || !typeinfo.SameType(right, &typeinfo.BoolType{}) {
+		if !typeinfo.IsSameType(left, &typeinfo.BoolType{}) || !typeinfo.IsSameType(right, &typeinfo.BoolType{}) {
 			c.ctx.Diagnostics.Add(explicitBoolCastRequiredError(node, "logical operators require bool operands"))
 			return nil
 		}
@@ -437,7 +455,7 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 		}
 	}
 
-	if !c.validBinaryTypes(node.Op, exprType) {
+	if !c.areValidBinaryTypes(node.Op, exprType) {
 		c.ctx.Diagnostics.Add(invalidOperationError(node,
 			"unsupported operand type for operator `"+node.Op+"`"))
 		return nil
@@ -456,19 +474,12 @@ func (c *checker) typeIsExpr(scope *symbols.Scope, node *ast.IsExpr) typeinfo.Ty
 	if typeinfo.IsInvalidOrUnknown(valueType) {
 		return &typeinfo.InvalidType{}
 	}
-	if c.flow != nil {
-		test, found := c.module.Typechecking.CaseTests[node.ID()]
-		if !found {
-			return &typeinfo.InvalidType{}
-		}
-		c.recordCaseTest(node, node.Value, test.Case, test.CaseCount, test.CaseWhenTrue, test.Family)
-		return &typeinfo.BoolType{}
-	}
+
 	resolved, ok := c.resolveNamedVariant(node.Case)
 	if !ok {
 		return &typeinfo.InvalidType{}
 	}
-	if !typeinfo.SameType(valueType, resolved.EnumType) {
+	if !typeinfo.IsSameType(valueType, resolved.EnumType) {
 		c.ctx.Diagnostics.Add(typeMismatchError(node.Value,
 			fmt.Sprintf("case test requires %s, got %s", typeinfo.TypeText(resolved.EnumType), typeinfo.TypeText(valueType))))
 		return &typeinfo.InvalidType{}
@@ -489,61 +500,23 @@ type resolvedNamedVariant struct {
 // identity. Expanded defaults retain declaration-module symbols even when their
 // cloned syntax is typechecked inside a caller module.
 func (c *checker) resolveNamedVariant(path *ast.ScopeResolution) (resolvedNamedVariant, bool) {
-	if c == nil || c.module == nil || c.module.Bindings == nil || path == nil {
+	if c == nil || c.module == nil || c.module.SymbolIndex == nil || path == nil {
 		return resolvedNamedVariant{}, false
 	}
 	typePath, caseName, ok := path.EnumVariantMember()
-	caseSymbol := c.module.Bindings.NodeSymbols[path.ID()]
+	caseSymbol := c.module.SymbolIndex.Symbol(path)
 	if !ok || caseName == nil || caseSymbol == nil || caseSymbol.Kind != symbols.SymbolVariant || caseSymbol.Name != caseName.Name {
 		return resolvedNamedVariant{}, false
 	}
-	qualifierSymbol := c.module.Bindings.NodeSymbols[typePath.ID()]
+	qualifierSymbol := c.module.SymbolIndex.Symbol(typePath)
 	if qualifierSymbol == nil || qualifierSymbol.Kind != symbols.SymbolType {
 		return resolvedNamedVariant{}, false
 	}
-	qualifierType, ok := symbols.GetSymbolType(qualifierSymbol)
-	if !ok || qualifierType == nil {
+	if _, ok := symbols.GetSymbolType(qualifierSymbol); !ok {
 		return resolvedNamedVariant{}, false
 	}
 
-	opts := project.TypeSyntaxOptions(c.ctx, c.module, nil, false)
-	switch node := typePath.(type) {
-	case *ast.NamedType:
-		resolveNamed := opts.ResolveNamed
-		opts.ResolveNamed = func(name string) (typeinfo.Type, bool) {
-			if name == node.Name {
-				return qualifierType, true
-			}
-			return resolveNamed(name)
-		}
-	case *ast.AppliedType:
-		if node.Name == nil {
-			return resolvedNamedVariant{}, false
-		}
-		resolveNamed := opts.ResolveNamed
-		opts.ResolveNamed = func(name string) (typeinfo.Type, bool) {
-			if name == node.Name.Name {
-				return qualifierType, true
-			}
-			return resolveNamed(name)
-		}
-	case *ast.ScopeResolution:
-		qualifier, member, imported := node.ImportMember()
-		if !imported {
-			return resolvedNamedVariant{}, false
-		}
-		resolveQualified := opts.ResolveQualified
-		opts.ResolveQualified = func(moduleName, memberName string) (typeinfo.Type, bool) {
-			if moduleName == qualifier.Name && memberName == member.Name {
-				return qualifierType, true
-			}
-			return resolveQualified(moduleName, memberName)
-		}
-	default:
-		return resolvedNamedVariant{}, false
-	}
-
-	enumType := typeinfo.TypeFromSyntax(typePath, opts)
+	enumType := c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, typePath, typeresolution.Context{})
 	descriptor, ok := typeinfo.VariantDescriptorOf(enumType)
 	if !ok || descriptor.Family != typeinfo.VariantFamilyNamed {
 		return resolvedNamedVariant{}, false
@@ -579,11 +552,6 @@ func optionalOperandExpected(typ typeinfo.Type) typeinfo.Type {
 	return nil
 }
 
-func isOptionalType(typ typeinfo.Type) bool {
-	_, ok := typeinfo.Underlying(typ).(*typeinfo.OptionalType)
-	return ok
-}
-
 func (c *checker) typeSelectorExpr(scope *symbols.Scope, node *ast.SelectorExpr) typeinfo.Type {
 	if node == nil || node.Expr == nil || node.Name == nil {
 		return &typeinfo.InvalidType{}
@@ -592,17 +560,26 @@ func (c *checker) typeSelectorExpr(scope *symbols.Scope, node *ast.SelectorExpr)
 	if baseType == nil || typeinfo.IsInvalidOrUnknown(baseType) {
 		return &typeinfo.InvalidType{}
 	}
-	if field, _, ok := typeinfo.LookupStructField(baseType, node.Name.Name); ok {
+	if field, fieldIndex, ok := typeinfo.LookupStructField(baseType, node.Name.Name); ok {
+		var dereferenceType typeinfo.Type
+		if target, isIndirect := typeinfo.PointerTarget(baseType); isIndirect {
+			dereferenceType = target
+		} else if target, _, isIndirect := typeinfo.ReferenceTarget(typeinfo.Underlying(baseType)); isIndirect {
+			dereferenceType = target
+		}
+		c.evidence.RecordStructField(node.ID(), StructFieldAccess{
+			Field: fieldIndex, Type: field.Type, DereferenceType: dereferenceType,
+		})
 		return field.Type
 	}
 	if method, ok := c.lookupCallableMember(baseType, node.Name.Name); ok {
-		if method.Symbol != nil && c.module.Bindings != nil {
-			c.module.Bindings.NodeSymbols[node.Name.ID()] = method.Symbol
+		if method.Symbol != nil && c.module.SymbolIndex != nil {
+			c.module.SymbolIndex.Bind(node.Name, method.Symbol)
 		}
 		return method.Type
 	}
-	descriptor, variant := typeinfo.VariantDescriptorOf(baseType)
-	if variant && descriptor.Family == typeinfo.VariantFamilyNamed {
+	descriptor, isVariant := typeinfo.VariantDescriptorOf(baseType)
+	if isVariant && descriptor.Family == typeinfo.VariantFamilyNamed {
 		var deferred typeinfo.Type
 		conflictingTypes := false
 		for _, variantCase := range descriptor.Cases {
@@ -610,34 +587,16 @@ func (c *checker) typeSelectorExpr(scope *symbols.Scope, node *ast.SelectorExpr)
 			if field, _, found := typeinfo.LookupStructField(payload, node.Name.Name); found {
 				if deferred == nil {
 					deferred = field.Type
-				} else if !typeinfo.SameType(deferred, field.Type) {
+				} else if !typeinfo.IsSameType(deferred, field.Type) {
 					conflictingTypes = true
 				}
 			}
 		}
-		if c.flow == nil && deferred != nil {
+		if deferred != nil {
 			if conflictingTypes {
 				return &typeinfo.UnknownType{}
 			}
 			return deferred
-		}
-		if c.flow != nil {
-			resolution := c.resolveFlowPlace(scope, node.Expr, *c.flow.state)
-			if caseIndex, exact := provenVariantCase(c.flow.state.variants, resolution.StorageOrigins, len(descriptor.Cases)); exact {
-				payload, _ := typeinfo.Underlying(descriptor.Cases[caseIndex].Payload).(*typeinfo.StructType)
-				if field, fieldIndex, found := typeinfo.LookupStructField(payload, node.Name.Name); found {
-					c.recordPayloadAccess(node.Expr, resolution, []int{caseIndex})
-					c.flow.result.Payloads[node.ID()] = flowresult.PayloadAccess{
-						CarrierOrigins: place.CloneOrigins(resolution.StorageOrigins),
-						Cases:          []int{caseIndex},
-					}
-					c.flow.result.VariantFields[node.ID()] = flowresult.VariantFieldAccess{
-						Carrier: node.Expr.ID(), Case: caseIndex, Payload: payload,
-						Field: fieldIndex, Type: field.Type,
-					}
-					return field.Type
-				}
-			}
 		}
 	}
 	d := diagnostics.NewError(fmt.Sprintf("unknown member `%s`", node.Name.Name)).
@@ -686,7 +645,7 @@ func (c *checker) typeIndexExpr(scope *symbols.Scope, node *ast.IndexExpr) typei
 		return elem
 	}
 	array := typeinfo.Underlying(baseType).(*typeinfo.ArrayType)
-	value, ok := consteval.EvaluateExpr(c.ctx, c.module, scope, node.Index, typeinfo.DefaultIntegerType())
+	value, ok := c.evaluateConstant(c.ctx, scope, node.Index, typeinfo.DefaultIntegerType())
 	if !ok {
 		return elem
 	}
@@ -694,6 +653,10 @@ func (c *checker) typeIndexExpr(scope *symbols.Scope, node *ast.IndexExpr) typei
 	if !ok || indexConst == nil {
 		return elem
 	}
+	c.evidence.RecordConstantIndex(node.ID(), ConstantIndex{
+		Text: indexConst.Text(),
+		Type: indexType,
+	})
 	length, lengthErr := strconv.Atoi(array.Len)
 	indexText := indexConst.Text()
 	indexValue, indexErr := strconv.Atoi(indexText)
@@ -724,23 +687,23 @@ func (c *checker) typeRangeIndexExpr(scope *symbols.Scope, node *ast.IndexExpr, 
 		return c.typeExpr(scope, expr, nil)
 	}
 	if shape == indexableFixedArray || shape == indexableDynamicArray {
-		if !place.Addressable(scope, node.Expr, exprType, c.module.ExpandedDefaultBinding) {
+		if !place.IsAddressable(scope, node.Expr, exprType, c.expandedDefaultBinding) {
 			c.ctx.Diagnostics.Add(invalidExpressionError(node.Expr,
 				"slicing requires addressable array storage"))
 			return &typeinfo.InvalidType{}
 		}
 	}
-	mutable := shape == indexableMutableSliceView
+	isMutable := shape == indexableMutableSliceView
 	var mutableBinding *symbols.Symbol
 	if shape == indexableFixedArray || shape == indexableDynamicArray {
-		mutable, _, mutableBinding = place.MutableAddressable(scope, node.Expr, exprType, c.module.ExpandedDefaultBinding)
+		isMutable, _, mutableBinding = place.MutableAddressable(scope, node.Expr, exprType, c.expandedDefaultBinding)
 	}
 	if mutableBinding != nil {
-		mutableBinding.RequiresMutable = true
+		c.module.SymbolIndex.RequireMutable(mutableBinding)
 	}
 	return &typeinfo.RefType{
-		Mutable: mutable,
-		Target:  &typeinfo.ArrayType{Shape: typeinfo.ArraySlice, Elem: elem},
+		IsMutable: isMutable,
+		Target:    &typeinfo.ArrayType{Shape: typeinfo.ArraySlice, Elem: elem},
 	}
 }
 
@@ -789,7 +752,7 @@ func indexableSequence(t typeinfo.Type) (typeinfo.Type, indexableSequenceShape, 
 		if !ok || target == nil || (target.Shape != typeinfo.ArrayOwner && target.Shape != typeinfo.ArraySlice) || target.Elem == nil {
 			return nil, 0, false
 		}
-		if base.Mutable {
+		if base.IsMutable {
 			return target.Elem, indexableMutableSliceView, true
 		}
 		return target.Elem, indexableSharedSliceView, true
@@ -818,19 +781,25 @@ func (c *checker) typeStructLit(scope *symbols.Scope, node *ast.StructLit, expec
 		return &typeinfo.InvalidType{}
 	}
 	if node.Type != nil {
-		targetType := typeinfo.TypeFromSyntax(node.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
+		targetType := c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, node.Type, typeresolution.Context{})
 		targetStruct, ok := typeinfo.Underlying(targetType).(*typeinfo.StructType)
 		if !ok || targetStruct == nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
 				"composite literal type must be struct", ast.LocOf(node.Type), "")
 			return &typeinfo.InvalidType{}
 		}
-		c.typeLiteralFields(scope, node, node.Fields, targetStruct, "struct literal")
+		ordered, valid := c.typeLiteralFields(scope, node, node.Fields, targetStruct, "struct literal")
+		if valid {
+			c.evidence.RecordStructLiteralFields(node.ID(), ordered)
+		}
 		return targetType
 	}
 	targetStruct, targetType := c.expectedStructType(expected)
 	if targetStruct != nil {
-		c.typeLiteralFields(scope, node, node.Fields, targetStruct, "struct literal")
+		ordered, valid := c.typeLiteralFields(scope, node, node.Fields, targetStruct, "struct literal")
+		if valid {
+			c.evidence.RecordStructLiteralFields(node.ID(), ordered)
+		}
 		return targetType
 	}
 	return c.typeStructLitAnonymous(scope, node)
@@ -883,7 +852,7 @@ func (c *checker) typeLiteralFields(scope *symbols.Scope, site ast.Node, fields 
 			valid = false
 			continue
 		}
-		if !c.assignable(targetField.Type, valueType, field.Value) {
+		if !c.isAssignable(targetField.Type, valueType, field.Value) {
 			valid = false
 			c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
 				fmt.Sprintf("cannot assign %s to field `%s` of type %s",
@@ -910,7 +879,7 @@ func (c *checker) typeVariantConstruction(scope *symbols.Scope, site ast.Expr, p
 				"payloadless enum variant `"+resolved.CaseName.Name+"` does not accept a payload", ast.LocOf(site), "remove `with` and its value")
 			return &typeinfo.InvalidType{}
 		}
-		c.module.Typechecking.VariantConstructions[site.ID()] = typecheckresult.VariantConstruction{EnumType: resolved.EnumType, Case: resolved.CaseIndex}
+		c.evidence.RecordVariantConstruction(site.ID(), VariantConstruction{EnumType: resolved.EnumType, Case: resolved.CaseIndex})
 		return resolved.EnumType
 	}
 	if !initialized {
@@ -928,17 +897,17 @@ func (c *checker) typeVariantConstruction(scope *symbols.Scope, site ast.Expr, p
 	if typeinfo.IsInvalidOrUnknown(valueType) {
 		return &typeinfo.InvalidType{}
 	}
-	if !c.assignable(resolved.Case.Payload, valueType, value) {
+	if !c.isAssignable(resolved.Case.Payload, valueType, value) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
 			fmt.Sprintf("cannot assign %s to enum variant payload of type %s", typeinfo.TypeText(valueType), typeinfo.TypeText(resolved.Case.Payload)), ast.LocOf(value), "")
 		return &typeinfo.InvalidType{}
 	}
-	c.module.Typechecking.VariantConstructions[site.ID()] = typecheckresult.VariantConstruction{
+	c.evidence.RecordVariantConstruction(site.ID(), VariantConstruction{
 		EnumType: resolved.EnumType,
 		Case:     resolved.CaseIndex,
 		Payload:  resolved.Case.Payload,
 		Value:    value,
-	}
+	})
 	return resolved.EnumType
 }
 
@@ -962,6 +931,13 @@ func (c *checker) typeStructLitAnonymous(scope *symbols.Scope, node *ast.StructL
 		}
 		fields = append(fields, typeinfo.Field{Name: field.Name.Name, Type: valueType})
 	}
+	ordered := make([]ast.Expr, 0, len(node.Fields))
+	for _, field := range node.Fields {
+		if field.Name != nil && field.Name.Name != "" && field.Value != nil {
+			ordered = append(ordered, field.Value)
+		}
+	}
+	c.evidence.RecordStructLiteralFields(node.ID(), ordered)
 	return &typeinfo.StructType{Fields: fields}
 }
 
@@ -969,7 +945,7 @@ func (c *checker) typeArrayLit(scope *symbols.Scope, node *ast.ArrayLit) typeinf
 	if node == nil {
 		return &typeinfo.InvalidType{}
 	}
-	arrayType := typeinfo.TypeFromSyntax(node.Type, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
+	arrayType := c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, node.Type, typeresolution.Context{})
 	if typeinfo.IsInvalidOrUnknown(arrayType) {
 		return &typeinfo.InvalidType{}
 	}
@@ -989,7 +965,7 @@ func (c *checker) typeArrayLit(scope *symbols.Scope, node *ast.ArrayLit) typeinf
 			return &typeinfo.InvalidType{}
 		}
 	}
-	if !node.InferredLen {
+	if !node.HasInferredLength {
 		if nodeLen, err := strconv.Atoi(array.Len); err == nil && nodeLen != len(node.Values) {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
 				fmt.Sprintf("array literal has %d values but length is %d", len(node.Values), nodeLen), ast.LocOf(node), "")
@@ -1001,7 +977,7 @@ func (c *checker) typeArrayLit(scope *symbols.Scope, node *ast.ArrayLit) typeinf
 		if typeinfo.IsInvalidOrUnknown(valueType) {
 			continue
 		}
-		if !c.assignable(array.Elem, valueType, value) {
+		if !c.isAssignable(array.Elem, valueType, value) {
 			c.ctx.Diagnostics.Add(typeMismatchError(value,
 				fmt.Sprintf("cannot assign %s to array element of type %s",
 					typeinfo.TypeText(valueType), typeinfo.TypeText(array.Elem))))
@@ -1014,7 +990,7 @@ func (c *checker) typeAsExpr(scope *symbols.Scope, node *ast.AsExpr) typeinfo.Ty
 	if c == nil || node == nil {
 		return nil
 	}
-	targetType := typeinfo.TypeFromSyntax(node.TypeExpr, project.TypeSyntaxOptions(c.ctx, c.module, nil, false))
+	targetType := c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, node.TypeExpr, typeresolution.Context{})
 	if targetType == nil || typeinfo.IsInvalidOrUnknown(targetType) {
 		c.ctx.Diagnostics.Add(invalidTypeError(node.TypeExpr, "invalid target type for cast"))
 		return &typeinfo.InvalidType{}
@@ -1033,7 +1009,7 @@ func (c *checker) typeAsExpr(scope *symbols.Scope, node *ast.AsExpr) typeinfo.Ty
 	conversion := typeinfo.CheckCompatibility(targetType, exprType)
 	if conversion.Compatibility != typeinfo.Incompatible &&
 		(conversion.Kind == typeinfo.ConversionIdentity || conversion.Kind == typeinfo.ConversionBool ||
-			conversion.Kind == typeinfo.ConversionNumeric || conversion.Kind == typeinfo.ConversionStruct) {
+			conversion.Kind == typeinfo.ConversionNumeric) {
 		return targetType
 	}
 	c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCast,
@@ -1093,14 +1069,14 @@ func (c *checker) typeNumber(node *ast.NumberLit, expected typeinfo.Type) typein
 }
 
 func integerRangeHint(t *typeinfo.IntegerType) string {
-	if t.Signed {
+	if t.IsSigned {
 		bits := t.Bits - 1
 		return fmt.Sprintf("%s range: -2^%d to 2^%d-1", typeinfo.TypeText(t), bits, bits)
 	}
 	return fmt.Sprintf("%s range: 0 to 2^%d-1", typeinfo.TypeText(t), t.Bits)
 }
 
-func (c *checker) validBinaryTypes(op string, typ typeinfo.Type) bool {
+func (c *checker) areValidBinaryTypes(op string, typ typeinfo.Type) bool {
 	switch op {
 	case "+", "-", "*", "/":
 		return typeinfo.IsArithmetic(typ)

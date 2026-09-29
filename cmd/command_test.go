@@ -11,12 +11,35 @@ import (
 	"compiler/pkg/peeper"
 )
 
+func TestParseCommandArgsShowInternalErrors(t *testing.T) {
+	opts, err := parseCommandArgs("check", []string{"--show-internal-errors", "demo" + peeper.SourceExt}, false)
+	if err != nil {
+		t.Fatalf("parse command args: %v", err)
+	}
+	if !opts.showInternalErrors {
+		t.Fatal("expected show-internal-errors flag")
+	}
+}
+
+func TestParseBuildArgsShowInternalErrors(t *testing.T) {
+	flags, positional, err := parseBuildArgs("build", []string{"--show-internal-errors", "demo" + peeper.SourceExt})
+	if err != nil {
+		t.Fatalf("parse build args: %v", err)
+	}
+	if !flags.showInternalErrors {
+		t.Fatal("expected show-internal-errors flag")
+	}
+	if len(positional) != 1 || positional[0] != "demo"+peeper.SourceExt {
+		t.Fatalf("positional = %#v", positional)
+	}
+}
+
 func TestParseCommandArgsRunDebug(t *testing.T) {
 	opts, err := parseCommandArgs("run", []string{"--debug", "demo" + peeper.SourceExt}, true)
 	if err != nil {
 		t.Fatalf("parse command args: %v", err)
 	}
-	if !opts.debugBuild {
+	if !opts.isDebugBuild {
 		t.Fatal("expected debug build flag")
 	}
 	if len(opts.positional) != 1 || opts.positional[0] != "demo"+peeper.SourceExt {
@@ -78,7 +101,7 @@ build = "program"
 	if resolvedPath != entryPath {
 		t.Fatalf("resolved path = %q, want %q", resolvedPath, entryPath)
 	}
-	if !info.SelectedByDiscovery {
+	if !info.WasSelectedByDiscovery {
 		t.Fatal("expected manifest-based discovery")
 	}
 	if info.DefaultOutputPath != "sample_app" {
@@ -100,7 +123,7 @@ func TestResolveBuildTargetUsesFileStemWithoutManifest(t *testing.T) {
 	if resolvedPath != entryPath {
 		t.Fatalf("resolved path = %q, want %q", resolvedPath, entryPath)
 	}
-	if info.SelectedByDiscovery {
+	if info.WasSelectedByDiscovery {
 		t.Fatal("did not expect manifest-based discovery")
 	}
 	if info.DefaultOutputPath != "demo" {

@@ -8,6 +8,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
+	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
@@ -16,25 +17,60 @@ import (
 	"compiler/pkg/peeper"
 )
 
-func checkResolveSource(t *testing.T, src string) (*project.Module, *diagnostics.DiagnosticBag) {
+func checkResolveSource(t *testing.T, src string) (*module.Module, *diagnostics.DiagnosticBag) {
 	t.Helper()
 	const filePath = "resolver_test" + peeper.SourceExt
 	diag := diagnostics.NewDiagnosticBag()
 	diag.AddSourceContent(filePath, src)
 	ctx := project.New(".", peeper.SourceExt, diag)
 	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
-	module := &project.Module{
+	module := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "resolver_test"},
 		FilePath: filePath,
 		Content:  src,
 		AST:      modAST,
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 	ctx.AddModule(module)
+
 	collector.Collect(ctx, module)
 	binder.Bind(ctx, module)
 	Resolve(ctx, module)
 	return module, diag
+}
+
+func TestRejectedPrivateImportDoesNotPublishUsage(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	ctx := project.New(".", peeper.SourceExt, diag)
+	dependencyID := moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "dep"}
+	private := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolFunc, "hidden"), "hidden", symbols.SymbolFunc, nil, nil)
+	dependency := &module.Module{ID: dependencyID, ModuleScope: symbols.NewScope(nil)}
+	if err := dependency.ModuleScope.Declare(private); err != nil {
+		t.Fatalf("declare private imported symbol: %v", err)
+	}
+	module := &module.Module{
+		ID:          moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "main"},
+		ModuleScope: symbols.NewScope(nil),
+		SymbolIndex: symbols.NewIndex(),
+		Imports:     map[string]module.ResolvedImport{"dep": {ID: dependencyID}},
+	}
+	alias := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolImport, "dep"), "dep", symbols.SymbolImport, nil, nil)
+	if err := module.ModuleScope.Declare(alias); err != nil {
+		t.Fatalf("declare import alias: %v", err)
+	}
+	ctx.AddModule(dependency)
+	ctx.AddModule(module)
+
+	r := &resolver{ctx: ctx, module: module}
+	if symbol, ok := r.lookupImportedMember(&ast.Ident{Name: "dep"}, &ast.Ident{Name: "hidden"}, &ast.Ident{Name: "hidden"}); ok || symbol != nil {
+		t.Fatalf("private imported symbol = (%#v, %t), want rejected", symbol, ok)
+	}
+	if module.SymbolIndex.IsUsed(alias) || module.SymbolIndex.IsUsed(private) {
+		t.Fatal("rejected private import published usage")
+	}
+	if !diag.HasErrors() || !strings.Contains(diag.EmitAllToString(), "not exported") {
+		t.Fatalf("missing private import diagnostic:\n%s", diag.EmitAllToString())
+	}
 }
 
 func TestUnresolvedIdentifierSuggestionPrefersNearestScope(t *testing.T) {
@@ -66,6 +102,41 @@ func TestResolveRejectsLexicalSelfInitialization(t *testing.T) {
 	t.Fatalf("expected use-before-declaration diagnostic:\n%s", diag.EmitAllToString())
 }
 
+func TestResolvePublishesDiscardDeclarationSymbols(t *testing.T) {
+	module, diag := checkResolveSource(t, `fn main() {
+	let _ = 1;
+	let _ = 2;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	fn := module.AST.Stmts[0].(*ast.FnDecl)
+	first := fn.Body.Stmts[0].(*ast.LetDecl)
+	second := fn.Body.Stmts[1].(*ast.LetDecl)
+	firstSymbol := module.SymbolIndex.Symbol(first.Name)
+	secondSymbol := module.SymbolIndex.Symbol(second.Name)
+	if firstSymbol == nil || secondSymbol == nil || firstSymbol == secondSymbol {
+		t.Fatalf("discard declaration symbols = (%#v, %#v), want distinct symbols", firstSymbol, secondSymbol)
+	}
+}
+
+func TestResolvePublishesAssignmentTargetSymbol(t *testing.T) {
+	module, diag := checkResolveSource(t, `fn main() {
+	let mut value = 0;
+	value = 1;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	fn := module.AST.Stmts[0].(*ast.FnDecl)
+	declaration := fn.Body.Stmts[0].(*ast.LetDecl)
+	target := fn.Body.Stmts[1].(*ast.AssignStmt).Target.(*ast.Ident)
+	resolved := module.SymbolIndex.Symbol(target)
+	if resolved == nil || resolved.ASTNode != declaration {
+		t.Fatalf("assignment target = %#v, want declaration symbol for %#v", resolved, declaration)
+	}
+}
+
 func TestResolveEnumVariantPathsToChildSymbols(t *testing.T) {
 	module, diag := checkResolveSource(t, `enum Result<T> {
 	Ok: { value: T },
@@ -82,7 +153,7 @@ fn main() {
 	okPath := fn.Body.Stmts[0].(*ast.LetDecl).Value.(*ast.VariantLit).Case
 	pendingPath := fn.Body.Stmts[1].(*ast.LetDecl).Value.(*ast.ScopeResolution)
 	for _, path := range []*ast.ScopeResolution{okPath, pendingPath} {
-		sym := module.Bindings.NodeSymbols[path.ID()]
+		sym := module.SymbolIndex.Symbol(path)
 		if sym == nil {
 			t.Fatalf("resolved %s = nil, want child variant symbol", path.TypeText())
 		}
@@ -90,7 +161,7 @@ fn main() {
 		if sym.Kind != symbols.SymbolVariant || !variant || sym.Name != path.Segments[len(path.Segments)-1].Name.Name {
 			t.Fatalf("resolved %s = %#v, want child variant symbol", path.TypeText(), sym)
 		}
-		if module.Bindings.NodeSymbols[path.Segments[len(path.Segments)-1].Name.ID()] != sym {
+		if module.SymbolIndex.Symbol(path.Segments[len(path.Segments)-1].Name) != sym {
 			t.Fatalf("final segment of %s does not resolve to variant symbol", path.TypeText())
 		}
 	}
@@ -123,7 +194,7 @@ fn main() {
 			t.Fatalf("invalid variant path %s", path.TypeText())
 		}
 		canonical, _ := result.Scope.LookupLocal(caseName.Name)
-		if got := module.Bindings.NodeSymbols[path.ID()]; got == nil || got != canonical {
+		if got := module.SymbolIndex.Symbol(path); got == nil || got != canonical {
 			t.Fatalf("resolved %s = %#v, want canonical %#v", path.TypeText(), got, canonical)
 		}
 	}
@@ -171,11 +242,11 @@ fn Read(result: Result) -> i32 {
 	match := fn.Body.Stmts[0].(*ast.MatchStmt)
 	binding := match.Arms[0].Fields[0].Binding
 	use := match.Arms[0].Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.Ident)
-	bindingSymbol := module.Bindings.NodeSymbols[binding.ID()]
-	if bindingSymbol == nil || module.Bindings.NodeSymbols[use.ID()] != bindingSymbol {
-		t.Fatalf("pattern binding = %#v, use = %#v", bindingSymbol, module.Bindings.NodeSymbols[use.ID()])
+	bindingSymbol := module.SymbolIndex.Symbol(binding)
+	if bindingSymbol == nil || module.SymbolIndex.Symbol(use) != bindingSymbol {
+		t.Fatalf("pattern binding = %#v, use = %#v", bindingSymbol, module.SymbolIndex.Symbol(use))
 	}
-	if _, found := module.Bindings.BlockScopes[match.Arms[0].Body.ID()].Lookup("payload"); !found {
+	if _, found := module.SymbolIndex.Scope(match.Arms[0].Body).Lookup("payload"); !found {
 		t.Fatal("pattern binding missing from arm body scope")
 	}
 }

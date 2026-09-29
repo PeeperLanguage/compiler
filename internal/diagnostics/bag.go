@@ -34,7 +34,7 @@ type DiagnosticBag struct {
 
 type diagnosticGroup struct {
 	diagnostics []*Diagnostic
-	active      bool
+	isActive    bool
 }
 
 // NewDiagnosticBag creates a new diagnostic bag.
@@ -53,7 +53,7 @@ func (db *DiagnosticBag) BeginPhase(producingPhase phase.Phase, moduleScope stri
 	if db.groups[producingPhase] == nil {
 		db.groups[producingPhase] = make(map[string]diagnosticGroup)
 	}
-	db.groups[producingPhase][moduleScope] = diagnosticGroup{active: true}
+	db.groups[producingPhase][moduleScope] = diagnosticGroup{isActive: true}
 	db.mu.Unlock()
 	return scoped
 }
@@ -99,7 +99,7 @@ func (db *DiagnosticBag) CopyModuleRange(source *DiagnosticBag, moduleScope stri
 		if group, ok := modules[moduleScope]; ok {
 			copiedGroups[producingPhase] = diagnosticGroup{
 				diagnostics: append([]*Diagnostic(nil), group.diagnostics...),
-				active:      active,
+				isActive:    active,
 			}
 		}
 	}
@@ -139,7 +139,7 @@ func (db *DiagnosticBag) ActivateModuleRange(moduleScope string, first, last pha
 		if !ok {
 			continue
 		}
-		group.active = true
+		group.isActive = true
 		modules[moduleScope] = group
 	}
 }
@@ -165,7 +165,7 @@ func (db *DiagnosticBag) Add(diag *Diagnostic) {
 		if newLoc != nil && newLoc.Start != nil {
 			for _, modules := range db.groups {
 				for _, group := range modules {
-					if !group.active {
+					if !group.isActive {
 						continue
 					}
 					for _, existing := range group.diagnostics {
@@ -192,7 +192,7 @@ func (db *DiagnosticBag) Add(diag *Diagnostic) {
 	}
 	group := db.groups[db.phase][db.moduleScope]
 	group.diagnostics = append(group.diagnostics, diag)
-	group.active = true
+	group.isActive = true
 	db.groups[db.phase][db.moduleScope] = group
 }
 
@@ -239,7 +239,7 @@ func (db *DiagnosticBag) countLocked(severity Severity) int {
 	count := 0
 	for _, modules := range db.groups {
 		for _, group := range modules {
-			if !group.active {
+			if !group.isActive {
 				continue
 			}
 			for _, diagnostic := range group.diagnostics {
@@ -271,7 +271,7 @@ func (db *DiagnosticBag) Diagnostics() []*Diagnostic {
 		slices.Sort(moduleScopes)
 		for _, moduleScope := range moduleScopes {
 			group := modules[moduleScope]
-			if group.active {
+			if group.isActive {
 				result = append(result, group.diagnostics...)
 			}
 		}
@@ -326,9 +326,9 @@ func sortDiagnostics(diagnostics []*Diagnostic) {
 	})
 }
 
-func (db *DiagnosticBag) EmitAll() {
+func (db *DiagnosticBag) EmitAll(options PresentationOptions) {
 	emitter := NewEmitter(os.Stderr)
-	db.emitFiltered(emitter, func(*Diagnostic) bool { return true })
+	db.emitFiltered(emitter, func(*Diagnostic) bool { return true }, &options)
 }
 
 // EmitErrors prints only error diagnostics and an error-only summary.
@@ -336,10 +336,10 @@ func (db *DiagnosticBag) EmitErrors() {
 	emitter := NewEmitter(os.Stderr)
 	db.emitFiltered(emitter, func(diag *Diagnostic) bool {
 		return diag != nil && diag.Severity == Error
-	})
+	}, nil)
 }
 
-func (db *DiagnosticBag) emitFiltered(emitter *Emitter, keep func(*Diagnostic) bool) {
+func (db *DiagnosticBag) emitFiltered(emitter *Emitter, keep func(*Diagnostic) bool, presentation *PresentationOptions) {
 	diagnostics := db.Diagnostics()
 
 	filtered := diagnostics[:0]
@@ -361,6 +361,9 @@ func (db *DiagnosticBag) emitFiltered(emitter *Emitter, keep func(*Diagnostic) b
 	sortDiagnostics(filtered)
 
 	for _, diag := range filtered {
+		if presentation != nil {
+			diag = ForPresentation(diag, *presentation)
+		}
 		emitter.Emit(diag)
 	}
 
@@ -387,7 +390,7 @@ func (db *DiagnosticBag) emitAllToStringWithFormat(format colors.LogFormat) stri
 		highlighter: NewSyntaxHighlighter(true, logger),
 	}
 
-	db.emitFiltered(emitter, func(*Diagnostic) bool { return true })
+	db.emitFiltered(emitter, func(*Diagnostic) bool { return true }, nil)
 
 	return buf.String()
 }

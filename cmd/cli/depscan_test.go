@@ -25,7 +25,7 @@ mock_path = "./mock"
 `)
 	lock := manifest.NewLockfile()
 	packageID := "github.com/acme/missing@v1.0.0"
-	lock.SetDependency(packageID, manifest.LockfileEntry{Version: "v1.0.0", ResolvedURL: "github.com/acme/missing", Direct: true})
+	lock.SetDependency(packageID, manifest.LockfileEntry{Version: "v1.0.0", ResolvedURL: "github.com/acme/missing", IsDirect: true})
 	lock.SetDirectDependency("missing", packageID)
 	if err := manifest.SaveLockfile(root, lock); err != nil {
 		t.Fatal(err)
@@ -88,12 +88,12 @@ func TestListOrphanCandidatesIncludesLockAndStaleCache(t *testing.T) {
 	lock.SetDependency("github.com/acme/used@v1.0.0", manifest.LockfileEntry{
 		Version:     "v1.0.0",
 		ResolvedURL: "github.com/acme/used",
-		Direct:      true,
+		IsDirect:    true,
 	})
 	lock.SetDependency("github.com/acme/unused@v1.0.0", manifest.LockfileEntry{
 		Version:     "v1.0.0",
 		ResolvedURL: "github.com/acme/unused",
-		Direct:      false,
+		IsDirect:    false,
 	})
 	lock.SetDirectDependency("used", "github.com/acme/used@v1.0.0")
 
@@ -144,33 +144,33 @@ func TestPruneUnusedDependenciesCascadesAndPreservesShared(t *testing.T) {
 	lock.SetDependency("github.com/acme/a@v1", manifest.LockfileEntry{
 		Version:      "v1",
 		ResolvedURL:  "github.com/acme/a",
-		Direct:       false,
+		IsDirect:     false,
 		Dependencies: []string{"github.com/acme/b@v1"},
 	})
 	lock.SetDependency("github.com/acme/e@v1", manifest.LockfileEntry{
 		Version:      "v1",
 		ResolvedURL:  "github.com/acme/e",
-		Direct:       true,
+		IsDirect:     true,
 		Dependencies: []string{"github.com/acme/b@v1"},
 	})
 	lock.SetDependency("github.com/acme/b@v1", manifest.LockfileEntry{
 		Version:      "v1",
 		ResolvedURL:  "github.com/acme/b",
-		Direct:       false,
+		IsDirect:     false,
 		Dependencies: []string{"github.com/acme/c@v1"},
 		UsedBy:       []string{"github.com/acme/a@v1", "github.com/acme/e@v1"},
 	})
 	lock.SetDependency("github.com/acme/c@v1", manifest.LockfileEntry{
 		Version:      "v1",
 		ResolvedURL:  "github.com/acme/c",
-		Direct:       false,
+		IsDirect:     false,
 		Dependencies: []string{"github.com/acme/f@v1"},
 		UsedBy:       []string{"github.com/acme/b@v1"},
 	})
 	lock.SetDependency("github.com/acme/f@v1", manifest.LockfileEntry{
 		Version:     "v1",
 		ResolvedURL: "github.com/acme/f",
-		Direct:      false,
+		IsDirect:    false,
 		UsedBy:      []string{"github.com/acme/c@v1"},
 	})
 

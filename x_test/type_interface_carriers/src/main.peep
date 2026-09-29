@@ -10,6 +10,10 @@ iface Consumer {
     fn (Self) take() -> i32
 }
 
+iface GenericReader<T> {
+    fn (&Self) read() -> T
+}
+
 struct Counter {
     value: i32
 }
@@ -30,6 +34,10 @@ fn read(reader: &Reader) -> i32 {
     return reader.read();
 }
 
+fn read_generic(reader: &GenericReader<i32>) -> i32 {
+    return reader.read();
+}
+
 fn write(writer: &mut Writer, value: i32) {
     writer.write(value);
 }
@@ -43,6 +51,9 @@ fn main() -> i32 {
     write(&mut counter, 7);
     if read(&counter) != 7 {
         return 2;
+    }
+    if read_generic(&counter) != 7 {
+        return 4;
     }
 
     let owned_counter = alloc(Counter.{ value = 4 });

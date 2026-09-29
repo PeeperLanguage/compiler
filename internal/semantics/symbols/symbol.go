@@ -1,7 +1,6 @@
 package symbols
 
 import (
-	"sync/atomic"
 	"unicode"
 	"unicode/utf8"
 
@@ -10,10 +9,6 @@ import (
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
 )
-
-type SymbolID uint64
-
-var nextSymbolID atomic.Uint64
 
 type Kind string
 
@@ -47,46 +42,56 @@ const (
 )
 
 type Symbol struct {
-	ID              SymbolID
-	Name            string
-	Kind            Kind
-	Type            typeinfo.Type
-	IsPub           bool
-	Mutable         bool
-	IsReceiver      bool
-	Initializing    bool
-	Used            bool
-	RequiresMutable bool
-	CompilerOp      CompilerOp
-	DefiningModule  moduleid.ID
-	Location        *source.Location
-	MutableLocation *source.Location
-	ASTNode         ast.Node
-	Scope           *Scope
+	ID               SymbolID
+	Name             string
+	Kind             Kind
+	Type             typeinfo.Type
+	IsPub            bool
+	AllowsMutation   bool
+	IsReceiver       bool
+	CompilerOp       CompilerOp
+	ExternalLinkName *string
+	DefiningModule   moduleid.ID
+	Location         *source.Location
+	MutableLocation  *source.Location
+	ASTNode          ast.Node
+	Scope            *Scope
 }
 
-func New(name string, kind Kind, node ast.Node, location *source.Location) *Symbol {
-	return &Symbol{
-		ID:       SymbolID(nextSymbolID.Add(1)),
+func New(id SymbolID, name string, kind Kind, node ast.Node, location *source.Location) *Symbol {
+	if !id.IsValid() {
+		panic("symbol requires valid identity")
+	}
+	sym := &Symbol{
+		ID:       id,
 		Name:     name,
 		Kind:     kind,
 		IsPub:    IsPubName(name),
 		Location: location,
 		ASTNode:  node,
 	}
+	if declaration, ok := node.(*ast.LetDecl); ok && declaration != nil {
+		sym.AllowsMutation = declaration.IsMutable
+		sym.MutableLocation = declaration.MutableLocation
+	}
+	if declaration, ok := node.(*ast.FnDecl); ok && (kind == SymbolFunc || kind == SymbolMethod) {
+		if name, isExternal := ast.FunctionLinkName(declaration, sym.Name); isExternal {
+			sym.ExternalLinkName = &name
+		}
+	}
+	return sym
 }
 
-func (s *Symbol) BindType(typ typeinfo.Type) bool {
+func (s *Symbol) BindType(typ typeinfo.Type) {
 	if s == nil || typ == nil {
-		return false
+		return
 	}
 	s.Type = typ
-	return true
 }
 
-// SymbolType returns the semantic type stored on sym, or (nil, false) if sym
-// carries no type.
-// This is the canonical single-source-of-truth lookup shared across all passes.
+// GetSymbolType returns semantic type stored on sym, or (nil, false) when sym
+// is nil or carries no type. It is a nil-safe accessor; phase ownership remains
+// with the code that publishes and consumes each symbol type.
 func GetSymbolType(sym *Symbol) (typeinfo.Type, bool) {
 	if sym == nil || sym.Type == nil {
 		return nil, false
@@ -95,14 +100,7 @@ func GetSymbolType(sym *Symbol) (typeinfo.Type, bool) {
 }
 
 func (s *Symbol) IsMutable() bool {
-	if s == nil {
-		return false
-	}
-	if s.Kind == SymbolParam {
-		return s.Mutable
-	}
-	decl, ok := s.ASTNode.(*ast.LetDecl)
-	return ok && decl != nil && decl.IsMutable
+	return s != nil && s.AllowsMutation
 }
 
 func IsPubName(name string) bool {

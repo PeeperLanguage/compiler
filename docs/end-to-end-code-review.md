@@ -2,7 +2,7 @@
 
 ## Scope
 
-Review follows live execution paths from CLI/LSP entry points through dependency handling, compiler scheduling, semantic analysis, HIR/MIR lowering, LLVM emission, and user-facing documentation.
+Review follows live execution paths from CLI/LSP entry points through dependency handling, compiler scheduling, semantic analysis, THIR/MIR lowering, LLVM emission, and user-facing documentation.
 
 This document preserves original findings and reproduction snippets as baseline evidence. Remediation status below describes current implementation; snippets inside finding sections are historical unless marked otherwise.
 
@@ -10,7 +10,7 @@ This document preserves original findings and reproduction snippets as baseline 
 
 | Finding group | Status | Chosen implementation |
 |---|---|---|
-| Interface conversion evidence | Resolved | Default substitution deep-clones each occurrence with fresh `NodeID`s and separate declaration/caller provenance maps. Semantic metadata copies from owning module; HIR consumes unique per-occurrence interface evidence. |
+| Interface conversion evidence | Resolved | Default substitution deep-clones each occurrence with fresh `NodeID`s and separate declaration/caller provenance maps. Semantic metadata copies from owning module; THIR/MIR consume unique per-occurrence interface evidence. |
 | LSP diagnostics | Resolved | Compilation snapshots copy context, component files, generation, and versions under state lock. Publication is serialized, rejects stale generations, and writes without state lock. |
 | CLI contract and artifacts | Resolved | One command registry drives dispatch/help/aliases. Compiler APIs are LLVM-only. `check` recursively discovers and groups roots by project. `_gen` publishes completed identity-based staging trees. |
 | Dependency lifecycle | Resolved | Lock corruption propagates. `get`/`update` prepare in memory and publish coordinated manifest/lock state only after all work succeeds. Metadata commits before cache deletion. |
@@ -222,7 +222,7 @@ Lookup, help generation, alias handling, and validation should derive from this 
 
 ### 1.6 Generated IR artifacts can collide or remain stale - P2
 
-`-keep-gen` uses source basename for generated files. Different modules named `main.peep` can overwrite the same `main.hir`, `main.mir`, or `main.ll`. Old artifacts can also survive and appear current.
+`-keep-gen` uses identity-encoded module paths for generated files. MIR and LLVM artifacts are staged and replaced atomically, so old artifacts do not survive a successful publication.
 
 What should replace it:
 
@@ -232,10 +232,8 @@ What should replace it:
 
 ```text
 build/generated/
-  app/main.hir
   app/main.mir
   app/main.ll
-  deps/example/main.hir
   deps/example/main.mir
   deps/example/main.ll
 ```
@@ -254,7 +252,7 @@ tc.project.InterfaceImplementations[expr.ID()] = implementations
 
 Default-argument substitution can reuse one caller expression for multiple parameters. If two expanded defaults convert that expression to different interfaces, both conversions share the same `NodeID`. Second write overwrites first conversion's slot set.
 
-HIR later asks for evidence by expression ID:
+THIR/MIR lowering later asks for evidence by expression ID:
 
 ```go
 implementations := l.project.InterfaceImplementations[expr.ID()]
@@ -471,7 +469,7 @@ Parser
 Typechecker
   produces types + conversion evidence
       |
-HIR lowering
+THIR/MIR lowering
   consumes semantic evidence; does not rediscover it
       |
 MIR lowering

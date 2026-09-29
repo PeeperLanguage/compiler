@@ -1,0 +1,103 @@
+name: Self-review marker
+
+# Uses pull_request_target so peeper-bot[bot] has credentials to comment.
+# This workflow never checks out or executes code from the pull request; it
+# only reads README.md content through the GitHub Contents API and posts a
+# comment through the same API.
+on:
+  pull_request_target:
+    branches:
+      - main
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Verify self-review marker removed
+    if: github.repository == 'PeeperLanguage/compiler' && github.event.pull_request.draft == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Mint peeper-bot token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.PEEPER_BOT_APP_ID }}
+          private-key: ${{ secrets.PEEPER_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: compiler
+
+      - name: Check marker and report
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const marker = "Remove this line to confirm you have reviewed this PR before submitting.";
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const pull = context.payload.pull_request;
+            const number = pull.number;
+            const headSha = pull.head.sha;
+            const commentTag = "<!-- self-review-marker-check -->";
+
+            let content = "";
+            try {
+              const response = await github.rest.repos.getContent({
+                owner,
+                repo,
+                path: "README.md",
+                ref: headSha,
+              });
+              content = Buffer.from(response.data.content, response.data.encoding).toString("utf8");
+            } catch (error) {
+              core.warning(`could not read README.md at ${headSha}: ${error.message}`);
+            }
+
+            const markerPresent = content.includes(marker);
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number: number,
+              per_page: 100,
+            });
+            const existing = comments.find(comment => comment.body && comment.body.includes(commentTag));
+
+            if (markerPresent) {
+              const body = [
+                commentTag,
+                "**Self-review marker still present.**",
+                "",
+                "`README.md` still contains the reviewed-confirmation line:",
+                "",
+                `> ${marker}`,
+                "",
+                "Please read the full diff, then remove that line to confirm you reviewed it before requesting review.",
+              ].join("\n");
+
+              if (existing) {
+                await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+              } else {
+                await github.rest.issues.createComment({ owner, repo, issue_number: number, body });
+              }
+
+              core.setFailed("self-review marker is still present in README.md");
+              return;
+            }
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body: `${commentTag}\nSelf-review marker removed. Thanks for reviewing your diff.`,
+              });
+            }
+
+            core.info("self-review marker removed; check passes");

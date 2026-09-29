@@ -31,12 +31,12 @@ const (
 
 // emitAndCheckDiagnostics prints all pending diagnostics and returns errAlreadyReported
 // if any errors are present. Shared by build, run, and check commands.
-func emitAndCheckDiagnostics(ctx *project.CompilerContext) error {
+func emitAndCheckDiagnostics(ctx *project.CompilerContext, showInternalErrors bool) error {
 	if ctx == nil || ctx.Diagnostics == nil {
 		return fmt.Errorf("compiler diagnostics unavailable")
 	}
 	if diags := ctx.Diagnostics.Diagnostics(); len(diags) > 0 {
-		ctx.Diagnostics.EmitAll()
+		ctx.Diagnostics.EmitAll(diagnostics.PresentationOptions{ShowInternalErrors: showInternalErrors})
 	}
 	if ctx.Diagnostics.HasErrors() {
 		return errAlreadyReported
@@ -45,18 +45,20 @@ func emitAndCheckDiagnostics(ctx *project.CompilerContext) error {
 }
 
 type commandCommonFlags struct {
-	logFormat  *string
-	m32        *bool
-	targetOS   *string
-	targetArch *string
+	logFormat          *string
+	use32BitABI        *bool
+	targetOS           *string
+	targetArch         *string
+	showInternalErrors *bool
 }
 
 func addCommandCommonFlags(fs *flag.FlagSet) commandCommonFlags {
 	return commandCommonFlags{
-		logFormat:  fs.String("logformat", string(colors.LogFormatANSI), "log output format (ansi|normal|html)"),
-		m32:        fs.Bool("m32", false, "target 32-bit ABI"),
-		targetOS:   fs.String("target-os", "", "target operating system (defaults to host GOOS)"),
-		targetArch: fs.String("target-arch", "", "target architecture (defaults to host GOARCH)"),
+		logFormat:          fs.String("logformat", string(colors.LogFormatANSI), "log output format (ansi|normal|html)"),
+		use32BitABI:        fs.Bool("m32", false, "target 32-bit ABI"),
+		targetOS:           fs.String("target-os", "", "target operating system (defaults to host GOOS)"),
+		targetArch:         fs.String("target-arch", "", "target architecture (defaults to host GOARCH)"),
+		showInternalErrors: fs.Bool("show-internal-errors", false, "show compiler-internal diagnostic details"),
 	}
 }
 
@@ -66,7 +68,7 @@ func applyCommandCommonFlags(flags commandCommonFlags) (string, string, error) {
 	}
 	targetOS := target.NormalizeOS(*flags.targetOS)
 	targetArch := target.NormalizeArch(*flags.targetArch)
-	if *flags.m32 {
+	if *flags.use32BitABI {
 		if strings.TrimSpace(*flags.targetArch) != "" && target.DefaultSizeBitsForArch(targetArch) != target.Bits32 {
 			return "", "", fmt.Errorf("-m32 conflicts with explicit 64-bit target architecture %q; select a 32-bit target architecture", targetArch)
 		}
@@ -84,18 +86,19 @@ func applyCommandCommonFlags(flags commandCommonFlags) (string, string, error) {
 }
 
 type commandOptions struct {
-	positional []string
-	targetOS   string
-	targetArch string
-	debugBuild bool
+	positional         []string
+	targetOS           string
+	targetArch         string
+	isDebugBuild       bool
+	showInternalErrors bool
 }
 
 func parseCommandArgs(name string, args []string, allowDebug bool) (commandOptions, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	common := addCommandCommonFlags(fs)
-	debugBuild := false
+	isDebugBuild := false
 	if allowDebug {
-		fs.BoolVar(&debugBuild, "debug", false, debugBuildUsage)
+		fs.BoolVar(&isDebugBuild, "debug", false, debugBuildUsage)
 	}
 	if err := fs.Parse(args); err != nil {
 		return commandOptions{}, err
@@ -105,19 +108,21 @@ func parseCommandArgs(name string, args []string, allowDebug bool) (commandOptio
 		return commandOptions{}, err
 	}
 	return commandOptions{
-		positional: fs.Args(),
-		targetOS:   targetOS,
-		targetArch: targetArch,
-		debugBuild: debugBuild,
+		positional:         fs.Args(),
+		targetOS:           targetOS,
+		targetArch:         targetArch,
+		isDebugBuild:       isDebugBuild,
+		showInternalErrors: *common.showInternalErrors,
 	}, nil
 }
 
 type buildFlags struct {
-	outputPath string
-	keepGen    bool
-	debugBuild bool
-	targetOS   string
-	targetArch string
+	outputPath          string
+	keepsGeneratedFiles bool
+	isDebugBuild        bool
+	targetOS            string
+	targetArch          string
+	showInternalErrors  bool
 }
 
 func buildCommand(args []string) error {
@@ -137,19 +142,19 @@ func buildCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	if buildInfo.SelectedByDiscovery {
+	if buildInfo.WasSelectedByDiscovery {
 		colors.CYAN.Fprintf(os.Stderr, "using entry: %s\n", buildInfo.EntryPath)
 	}
 	if err := validateNativeLinkTarget(opts.targetOS, opts.targetArch); err != nil {
 		return err
 	}
 
-	ctx, entry := compileEntry(resolvedPath, opts.debugBuild, opts.targetOS, opts.targetArch)
-	if err := emitAndCheckDiagnostics(ctx); err != nil {
+	ctx, entry := compileEntry(resolvedPath, opts.isDebugBuild, opts.targetOS, opts.targetArch)
+	if err := emitAndCheckDiagnostics(ctx, opts.showInternalErrors); err != nil {
 		return err
 	}
 
-	if opts.keepGen {
+	if opts.keepsGeneratedFiles {
 		if err := saveIRs(ctx, genArtifactsDir); err != nil {
 			return err
 		}
@@ -171,7 +176,7 @@ func parseBuildArgs(name string, args []string) (buildFlags, []string, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	common := addCommandCommonFlags(fs)
 	outputPath := fs.String("o", "", "compile and link to executable")
-	keepGen := fs.Bool("keep-gen", false, "keep generated HIR, MIR, and LLVM IR in _gen directory")
+	keepGen := fs.Bool("keep-gen", false, "keep generated MIR and LLVM IR in _gen directory")
 	fs.BoolVar(keepGen, "k", false, "alias for -keep-gen")
 	debugBuild := fs.Bool("debug", false, debugBuildUsage)
 	if err := fs.Parse(args); err != nil {
@@ -182,11 +187,12 @@ func parseBuildArgs(name string, args []string) (buildFlags, []string, error) {
 		return buildFlags{}, nil, err
 	}
 	return buildFlags{
-		outputPath: *outputPath,
-		keepGen:    *keepGen,
-		debugBuild: *debugBuild,
-		targetOS:   targetOS,
-		targetArch: targetArch,
+		outputPath:          *outputPath,
+		keepsGeneratedFiles: *keepGen,
+		isDebugBuild:        *debugBuild,
+		targetOS:            targetOS,
+		targetArch:          targetArch,
+		showInternalErrors:  *common.showInternalErrors,
 	}, fs.Args(), nil
 }
 
@@ -206,15 +212,15 @@ func runCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	if buildInfo.SelectedByDiscovery {
+	if buildInfo.WasSelectedByDiscovery {
 		colors.CYAN.Fprintf(os.Stderr, "using entry: %s\n", buildInfo.EntryPath)
 	}
 	if err := validateNativeLinkTarget(opts.targetOS, opts.targetArch); err != nil {
 		return err
 	}
 
-	ctx, entry := compileEntry(resolvedPath, opts.debugBuild, opts.targetOS, opts.targetArch)
-	if err := emitAndCheckDiagnostics(ctx); err != nil {
+	ctx, entry := compileEntry(resolvedPath, opts.isDebugBuild, opts.targetOS, opts.targetArch)
+	if err := emitAndCheckDiagnostics(ctx, opts.showInternalErrors); err != nil {
 		return err
 	}
 
@@ -264,9 +270,9 @@ func validateNativeLinkTarget(targetOS, targetArch string) error {
 }
 
 type buildTarget struct {
-	EntryPath           string
-	SelectedByDiscovery bool
-	DefaultOutputPath   string
+	EntryPath              string
+	WasSelectedByDiscovery bool
+	DefaultOutputPath      string
 }
 
 func resolveBuildTarget(commandName, path string, targetOS string) (resolvedPath string, info buildTarget, err error) {
@@ -332,9 +338,9 @@ func resolveManifestBuildTarget(commandName, startPath string, targetOS string) 
 		outputPath += ext
 	}
 	return buildTarget{
-		EntryPath:           entryPath,
-		SelectedByDiscovery: true,
-		DefaultOutputPath:   outputPath,
+		EntryPath:              entryPath,
+		WasSelectedByDiscovery: true,
+		DefaultOutputPath:      outputPath,
 	}, nil
 }
 
@@ -395,7 +401,7 @@ func checkCommand(args []string) error {
 		for _, filePath := range groups[key] {
 			compiler.CompileFile(ctx, filePath, nil)
 		}
-		if err := emitAndCheckDiagnostics(ctx); err != nil {
+		if err := emitAndCheckDiagnostics(ctx, opts.showInternalErrors); err != nil {
 			failed = true
 		}
 	}

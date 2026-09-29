@@ -9,7 +9,7 @@ import (
 )
 
 func TestRenderSymbolKinds(t *testing.T) {
-	i32 := &typeinfo.IntegerType{Bits: 32, Signed: true}
+	i32 := &typeinfo.IntegerType{Bits: 32, IsSigned: true}
 	point := &typeinfo.NamedType{Name: "Point"}
 	function := &typeinfo.FuncType{Params: []typeinfo.Type{i32}, ParamNames: []string{"value"}, Return: i32}
 	method := &typeinfo.FuncType{Params: []typeinfo.Type{point}, ParamNames: []string{"self"}, Return: i32}
@@ -19,8 +19,8 @@ func TestRenderSymbolKinds(t *testing.T) {
 		context symbolRenderContext
 		want    string
 	}{
-		{name: "mutable variable", symbol: &symbols.Symbol{Name: "value", Kind: symbols.SymbolVar, Type: i32, ASTNode: &ast.LetDecl{IsMutable: true}}, want: "(var) mut value: i32"},
-		{name: "mutable parameter", symbol: &symbols.Symbol{Name: "value", Kind: symbols.SymbolParam, Type: i32, Mutable: true}, want: "(param) mut value: i32"},
+		{name: "mutable variable", symbol: &symbols.Symbol{Name: "value", Kind: symbols.SymbolVar, Type: i32, AllowsMutation: true}, want: "(var) mut value: i32"},
+		{name: "mutable parameter", symbol: &symbols.Symbol{Name: "value", Kind: symbols.SymbolParam, Type: i32, AllowsMutation: true}, want: "(param) mut value: i32"},
 		{name: "constant", symbol: &symbols.Symbol{Name: "Limit", Kind: symbols.SymbolConst, Type: i32}, want: "(const) Limit: i32"},
 		{name: "static", symbol: &symbols.Symbol{Name: "Global", Kind: symbols.SymbolStatic, Type: i32}, want: "(static) Global: i32"},
 		{name: "field", symbol: &symbols.Symbol{Name: "x", Kind: symbols.SymbolField, Type: i32}, want: "(field) x: i32"},
@@ -42,7 +42,7 @@ func TestRenderSymbolKinds(t *testing.T) {
 }
 
 func TestRenderSymbolUsesSemanticTypesAndASTDecorations(t *testing.T) {
-	i32 := &typeinfo.IntegerType{Bits: 32, Signed: true}
+	i32 := &typeinfo.IntegerType{Bits: 32, IsSigned: true}
 	typ := &typeinfo.NamedType{Name: "Resolved"}
 	decl := &ast.FnDecl{
 		TypeParams: []ast.TypeParam{{Name: &ast.Ident{Name: "T"}}},

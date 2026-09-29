@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -26,7 +25,7 @@ type LockfileEntry struct {
 	Version      string   `json:"version"`
 	ResolvedURL  string   `json:"resolved_url,omitempty"`
 	Checksum     string   `json:"checksum,omitempty"`
-	Direct       bool     `json:"direct,omitempty"`
+	IsDirect     bool     `json:"direct,omitempty"`
 	Description  string   `json:"description,omitempty"`
 	Dependencies []string `json:"dependencies,omitempty"`
 	UsedBy       []string `json:"used_by,omitempty"`
@@ -34,20 +33,18 @@ type LockfileEntry struct {
 }
 
 type Lockfile struct {
-	Version      string                   `json:"version"`
-	DirectDeps   map[string]string        `json:"direct_deps,omitempty"`
-	Packages     map[string]LockfileEntry `json:"packages,omitempty"`
-	Dependencies map[string]LockfileEntry `json:"dependencies,omitempty"`
-	GeneratedAt  string                   `json:"generated_at,omitempty"`
+	Version     string                   `json:"version"`
+	DirectDeps  map[string]string        `json:"direct_deps,omitempty"`
+	Packages    map[string]LockfileEntry `json:"packages,omitempty"`
+	GeneratedAt string                   `json:"generated_at,omitempty"`
 }
 
 func NewLockfile() *Lockfile {
 	return &Lockfile{
-		Version:      lockfileCurrentVersion,
-		DirectDeps:   map[string]string{},
-		Packages:     map[string]LockfileEntry{},
-		Dependencies: map[string]LockfileEntry{},
-		GeneratedAt:  time.Now().Format(time.RFC3339),
+		Version:     lockfileCurrentVersion,
+		DirectDeps:  map[string]string{},
+		Packages:    map[string]LockfileEntry{},
+		GeneratedAt: time.Now().Format(time.RFC3339),
 	}
 }
 
@@ -88,11 +85,9 @@ func ValidateLockfileChecksum(checksum string) error {
 }
 
 func validateLockfileChecksums(lock *Lockfile) error {
-	for _, entries := range []map[string]LockfileEntry{lock.Packages, lock.Dependencies} {
-		for packageID, entry := range entries {
-			if err := ValidateLockfileChecksum(entry.Checksum); err != nil {
-				return fmt.Errorf("lockfile package %q checksum: %w", packageID, err)
-			}
+	for packageID, entry := range lock.Packages {
+		if err := ValidateLockfileChecksum(entry.Checksum); err != nil {
+			return fmt.Errorf("lockfile package %q checksum: %w", packageID, err)
 		}
 	}
 	return nil
@@ -155,10 +150,10 @@ func parseLockfile(data []byte) (*Lockfile, error) {
 		directDeps[dependency] = dependency
 	}
 	return &Lockfile{
-		Version:      lockfileCurrentVersion,
-		DirectDeps:   directDeps,
-		Dependencies: normalizePackageEntries(raw.Dependencies),
-		GeneratedAt:  raw.GeneratedAt,
+		Version:     lockfileCurrentVersion,
+		DirectDeps:  directDeps,
+		Packages:    normalizePackageEntries(raw.Dependencies),
+		GeneratedAt: raw.GeneratedAt,
 	}, nil
 }
 
@@ -177,22 +172,11 @@ func decodeStrictJSON(data []byte, destination any) error {
 	return nil
 }
 
-// normalizeLockfileShape applies the current version, map-nil guards,
-// and the Packages/Dependencies sync rules used by both Load and Save.
+// normalizeLockfileShape applies the current runtime shape used by both Load and Save.
+// Legacy JSON is migrated at decode time and is never retained in Lockfile.
 func normalizeLockfileShape(lock *Lockfile) {
 	lock.Version = lockfileCurrentVersion
-	if lock.Packages == nil {
-		lock.Packages = map[string]LockfileEntry{}
-	}
-	if lock.Dependencies == nil {
-		lock.Dependencies = map[string]LockfileEntry{}
-	}
-	if len(lock.Packages) == 0 && len(lock.Dependencies) > 0 {
-		lock.Packages = copyEntries(lock.Dependencies)
-	}
-	if len(lock.Dependencies) == 0 && len(lock.Packages) > 0 {
-		lock.Dependencies = copyEntries(lock.Packages)
-	}
+	ensurePackagesMap(lock)
 	lock.DirectDeps = normalizeDirectDeps(lock.DirectDeps, lock.Packages)
 	reconcileDirectFlags(lock)
 	if lock.DirectDeps == nil {
@@ -234,19 +218,15 @@ func (l *Lockfile) SetDependency(key string, entry LockfileEntry) {
 	if l == nil {
 		return
 	}
-	ensureEntryMaps(l)
+	ensurePackagesMap(l)
 	l.Packages[key] = entry
-	l.Dependencies[key] = entry
 }
 
 func (l *Lockfile) GetDependency(key string) (LockfileEntry, bool) {
 	if l == nil {
 		return LockfileEntry{}, false
 	}
-	if entry, ok := l.Packages[key]; ok {
-		return entry, true
-	}
-	entry, ok := l.Dependencies[key]
+	entry, ok := l.Packages[key]
 	return entry, ok
 }
 
@@ -260,9 +240,8 @@ func (l *Lockfile) RemoveDependency(key string) {
 			l.RemoveUsedBy(child, key)
 		}
 	}
-	ensureEntryMaps(l)
+	ensurePackagesMap(l)
 	delete(l.Packages, key)
-	delete(l.Dependencies, key)
 	l.unlinkKeyFromAllUsedBy(key)
 	l.unlinkKeyFromDirectDeps(key)
 }
@@ -305,7 +284,7 @@ func (l *Lockfile) RemoveDirectDependency(alias string) {
 	if l.isStillDirect(packageID) {
 		return
 	}
-	entry.Direct = false
+	entry.IsDirect = false
 	l.SetDependency(packageID, entry)
 }
 
@@ -331,15 +310,16 @@ func (l *Lockfile) SetDirectDependency(alias, packageID string) {
 		return
 	}
 	ensureDirectDepsMap(l)
-	if previous, ok := l.DirectDeps[alias]; ok && previous != packageID {
+	previous, hadPrevious := l.DirectDeps[alias]
+	l.DirectDeps[alias] = packageID
+	if hadPrevious && previous != packageID && !l.isStillDirect(previous) {
 		if entry, found := l.GetDependency(previous); found {
-			entry.Direct = false
+			entry.IsDirect = false
 			l.SetDependency(previous, entry)
 		}
 	}
-	l.DirectDeps[alias] = packageID
 	if entry, found := l.GetDependency(packageID); found {
-		entry.Direct = true
+		entry.IsDirect = true
 		l.SetDependency(packageID, entry)
 	}
 }
@@ -409,7 +389,7 @@ func (l *Lockfile) GetUnusedDependencies() []string {
 	}
 	unused := make([]string, 0)
 	for key, entry := range l.Packages {
-		if !entry.Direct && len(entry.UsedBy) == 0 {
+		if !entry.IsDirect && len(entry.UsedBy) == 0 {
 			unused = append(unused, key)
 		}
 	}
@@ -475,15 +455,6 @@ func uniqueStrings(values []string) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-func copyEntries(src map[string]LockfileEntry) map[string]LockfileEntry {
-	if src == nil {
-		return nil
-	}
-	dst := make(map[string]LockfileEntry, len(src))
-	maps.Copy(dst, src)
-	return dst
 }
 
 func normalizePackageEntries(src map[string]LockfileEntry) map[string]LockfileEntry {
@@ -585,30 +556,25 @@ func reconcileDirectFlags(lock *Lockfile) {
 	if lock == nil {
 		return
 	}
-	ensureEntryMaps(lock)
+	ensurePackagesMap(lock)
 	for key, entry := range lock.Packages {
-		entry.Direct = false
+		entry.IsDirect = false
 		lock.Packages[key] = entry
-		lock.Dependencies[key] = entry
 	}
 	for _, packageID := range lock.DirectDeps {
 		entry, ok := lock.Packages[packageID]
 		if !ok {
 			continue
 		}
-		entry.Direct = true
+		entry.IsDirect = true
 		lock.Packages[packageID] = entry
-		lock.Dependencies[packageID] = entry
 	}
 }
 
-// ensureEntryMap guarantees that the Packages/Dependencies maps are non-nil.
-func ensureEntryMaps(l *Lockfile) {
+// ensurePackagesMap guarantees that the current package map is non-nil.
+func ensurePackagesMap(l *Lockfile) {
 	if l.Packages == nil {
 		l.Packages = make(map[string]LockfileEntry)
-	}
-	if l.Dependencies == nil {
-		l.Dependencies = make(map[string]LockfileEntry)
 	}
 }
 

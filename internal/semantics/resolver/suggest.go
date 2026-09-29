@@ -3,12 +3,12 @@ package resolver
 import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/project"
+	"compiler/internal/module"
 	"compiler/internal/semantics/symbols"
 	"compiler/pkg/colors"
 )
 
-func reportUnresolved(module *project.Module, scope *symbols.Scope, node *ast.Ident, diag *diagnostics.DiagnosticBag) bool {
+func reportUnresolved(module *module.Module, scope *symbols.Scope, node *ast.Ident, diag *diagnostics.DiagnosticBag) bool {
 	if module == nil || node == nil || diag == nil {
 		return false
 	}

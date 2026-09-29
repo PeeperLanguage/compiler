@@ -6,14 +6,12 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/project"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
 )
 
-func (c *checker) assignable(dst, src typeinfo.Type, site ast.Expr) bool {
+func (c *checker) isAssignable(dst, src typeinfo.Type, site ast.Expr) bool {
 	if c == nil {
 		return typeinfo.Assignable(dst, src)
 	}
@@ -48,15 +46,15 @@ func (c *checker) assignable(dst, src typeinfo.Type, site ast.Expr) bool {
 }
 
 func (c *checker) recordImplicitConversion(expr ast.Expr, conversion typeinfo.Conversion) {
-	if c == nil || c.module == nil || c.module.Typechecking == nil || expr == nil ||
+	if c == nil || c.module == nil || c.evidence == nil || expr == nil ||
 		conversion.Kind == typeinfo.ConversionNone || conversion.Kind == typeinfo.ConversionRecovery ||
 		conversion.Kind == typeinfo.ConversionIdentity || conversion.Compatibility != typeinfo.Compatible {
 		return
 	}
-	c.module.Typechecking.ImplicitConversions[expr.ID()] = conversion
+	c.evidence.RecordImplicitConversion(expr.ID(), conversion)
 }
 
-func (c *checker) resolveInterfaceImplementations(iface *typeinfo.InterfaceType, src typeinfo.Type) ([]typecheckresult.InterfaceImplementation, []string, bool) {
+func (c *checker) resolveInterfaceImplementations(iface *typeinfo.InterfaceType, src typeinfo.Type) ([]InterfaceImplementation, []string, bool) {
 	if c == nil || iface == nil || src == nil {
 		return nil, nil, false
 	}
@@ -68,18 +66,17 @@ func (c *checker) resolveInterfaceImplementations(iface *typeinfo.InterfaceType,
 		}
 		return nil, missing, false
 	}
-	implementations := make([]typecheckresult.InterfaceImplementation, 0, len(iface.Methods))
+	implementations := make([]InterfaceImplementation, 0, len(iface.Methods))
 	missing := make([]string, 0)
 	for _, required := range iface.Methods {
-		requiredType := typeinfo.ReplaceAbstractSelf(required.CallableType(), owner)
+		fnType := required.CallableTypeFor(owner)
 		actual, ok := c.lookupDeclaredCallableMember(owner, required.Name)
-		actualType, callable := actual.Type.(*typeinfo.FuncType)
-		if !ok || actual.Symbol == nil || !callable || actualType == nil || !typeinfo.SameType(requiredType, actualType) {
+		actualType, isCallable := actual.Type.(*typeinfo.FuncType)
+		if !ok || actual.Symbol == nil || !isCallable || actualType == nil || !typeinfo.IsSameType(fnType, actualType) {
 			missing = append(missing, required.Name)
 			continue
 		}
-		fnType, ok := requiredType.(*typeinfo.FuncType)
-		if !ok || fnType == nil || len(fnType.Params) == 0 {
+		if len(fnType.Params) == 0 {
 			missing = append(missing, required.Name)
 			continue
 		}
@@ -93,18 +90,18 @@ func (c *checker) resolveInterfaceImplementations(iface *typeinfo.InterfaceType,
 			missing = append(missing, required.Name)
 			continue
 		}
-		implementations = append(implementations, typecheckresult.InterfaceImplementation{
+		implementations = append(implementations, InterfaceImplementation{
 			Symbol: actual.Symbol, CallableType: actualType,
 		})
 	}
 	return implementations, missing, len(missing) == 0
 }
 
-func (c *checker) storeInterfaceImplementations(expr ast.Expr, implementations []typecheckresult.InterfaceImplementation) {
-	if c == nil || c.module == nil || c.module.Typechecking == nil || expr == nil {
+func (c *checker) storeInterfaceImplementations(expr ast.Expr, implementations []InterfaceImplementation) {
+	if c == nil || c.module == nil || c.evidence == nil || expr == nil {
 		return
 	}
-	c.module.Typechecking.InterfaceImplementations[expr.ID()] = implementations
+	c.evidence.RecordInterfaceImplementations(expr.ID(), implementations)
 }
 
 func (c *checker) addInterfaceHint(d *diagnostics.Diagnostic, dst, src typeinfo.Type) {
@@ -135,22 +132,22 @@ func isValidReceiverType(paramType, selfType typeinfo.Type) bool {
 	if paramType == nil || selfType == nil {
 		return false
 	}
-	if typeinfo.SameType(paramType, selfType) {
+	if typeinfo.IsSameType(paramType, selfType) {
 		return true
 	}
 	target, ok := typeinfo.PointerTarget(paramType)
 	if ok {
-		return typeinfo.SameType(target, selfType)
+		return typeinfo.IsSameType(target, selfType)
 	}
 	target, _, ok = typeinfo.ReferenceTarget(typeinfo.Underlying(paramType))
-	return ok && typeinfo.SameType(target, selfType)
+	return ok && typeinfo.IsSameType(target, selfType)
 }
 
 func (c *checker) matchesReceiverTarget(target, arg typeinfo.Type) bool {
 	if c == nil || target == nil || arg == nil {
 		return false
 	}
-	return typeinfo.SameType(target, arg) || c.assignable(target, arg, nil) || c.assignable(arg, target, nil)
+	return typeinfo.IsSameType(target, arg) || c.isAssignable(target, arg, nil) || c.isAssignable(arg, target, nil)
 }
 
 type callableMember struct {
@@ -174,19 +171,16 @@ func (c *checker) lookupCallableMember(baseType typeinfo.Type, name string) (cal
 }
 
 func (c *checker) lookupDeclaredCallableMember(baseType typeinfo.Type, name string) (callableMember, bool) {
-	if c == nil || c.module == nil || c.module.Bindings == nil {
+	if c == nil || c.module == nil || c.module.SymbolIndex == nil {
 		return callableMember{}, false
 	}
-	for _, key := range typeinfo.GetMethodLookupKeys(baseType) {
-		methods := c.module.Bindings.MethodsByReceiver[key]
-		for _, method := range methods {
-			if method == nil || method.Name != name {
-				continue
-			}
-			typ, ok := symbols.GetSymbolType(method)
-			if ok && typ != nil {
-				return callableMember{Type: typ, Symbol: method}, true
-			}
+	for _, method := range c.module.SymbolIndex.Methods(baseType) {
+		if method == nil || method.Name != name {
+			continue
+		}
+		typ, ok := symbols.GetSymbolType(method)
+		if ok && typ != nil {
+			return callableMember{Type: typ, Symbol: method}, true
 		}
 	}
 	return callableMember{}, false
@@ -203,12 +197,10 @@ func (c *checker) availableMethods(baseType typeinfo.Type) []string {
 			names = append(names, m.Name)
 		}
 	}
-	if c.module != nil && c.module.Bindings != nil {
-		for _, key := range typeinfo.GetMethodLookupKeys(baseType) {
-			for _, method := range c.module.Bindings.MethodsByReceiver[key] {
-				if method != nil {
-					names = append(names, method.Name)
-				}
+	if c.module != nil && c.module.SymbolIndex != nil {
+		for _, method := range c.module.SymbolIndex.Methods(baseType) {
+			if method != nil {
+				names = append(names, method.Name)
 			}
 		}
 	}
@@ -233,8 +225,8 @@ func (c *checker) boundInterfaceMethodType(method typeinfo.Method, receiverType 
 	if target, _, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(receiverType)); ok {
 		selfType = target
 	}
-	fnType, _ := typeinfo.ReplaceAbstractSelf(method.CallableType(), selfType).(*typeinfo.FuncType)
-	if fnType == nil || len(fnType.Params) == 0 {
+	fnType := method.CallableTypeFor(selfType)
+	if len(fnType.Params) == 0 {
 		return fnType
 	}
 	if _, _, referenceReceiver := typeinfo.ReferenceTarget(typeinfo.Underlying(fnType.Params[0])); !referenceReceiver {
@@ -251,7 +243,7 @@ func (c *checker) mutableAddressableExpr(scope *symbols.Scope, expr ast.Expr) (b
 	}
 	return place.MutableAddressable(scope, expr, func(e ast.Expr) typeinfo.Type {
 		return c.typeExpr(scope, e, nil)
-	}, c.module.ExpandedDefaultBinding)
+	}, c.expandedDefaultBinding)
 }
 
 func (c *checker) mutableImplicitArgumentDiagnostic(scope *symbols.Scope, expr ast.Expr) (ast.Node, string, bool) {
@@ -294,15 +286,15 @@ func (c *checker) qualifiedScopeType(scope *symbols.Scope, node *ast.ScopeResolu
 		return &typeinfo.InvalidType{}
 	}
 	var sym *symbols.Symbol
-	if c.module != nil && c.module.Bindings != nil {
-		sym = c.module.Bindings.NodeSymbols[node.ID()]
+	if c.module != nil && c.module.SymbolIndex != nil {
+		sym = c.module.SymbolIndex.Symbol(node)
 	}
 	if sym == nil {
 		qualifier, member, imported := node.ImportValueMember()
 		if !imported {
 			return &typeinfo.InvalidType{}
 		}
-		resolved, ok := project.LookupImportedSymbol(c.ctx, c.module, qualifier.Name, member.Name)
+		resolved, ok := c.ctx.TypeResolver.LookupImportedSymbol(c.module, qualifier.Name, member.Name)
 		if !ok || resolved.Symbol == nil {
 			return &typeinfo.InvalidType{}
 		}

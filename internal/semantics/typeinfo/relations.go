@@ -6,87 +6,27 @@ import (
 	"compiler/pkg/numeric"
 )
 
-func SameType(left, right Type) bool {
+// IsSameType preserves nominal declaration identity and transparent aliases before
+// delegating intrinsic equality to the normalized semantic type.
+func IsSameType(left, right Type) bool {
 	if left == right {
 		return true
 	}
-	if same, nominal := sameNominalEnum(left, right); nominal {
-		return same
+	if isSame, isNominal := isSameNominalEnum(left, right); isNominal {
+		return isSame
 	}
-	if same, nominal := sameNominalStruct(left, right); nominal {
-		return same
+	if isSame, isNominal := isSameNominalStruct(left, right); isNominal {
+		return isSame
 	}
 	left = Underlying(left)
 	right = Underlying(right)
-	switch l := left.(type) {
-	case *InvalidType:
-		_, ok := right.(*InvalidType)
-		return ok
-	case *UnknownType:
-		_, ok := right.(*UnknownType)
-		return ok
-	case *IntegerType:
-		r, ok := right.(*IntegerType)
-		return ok && r != nil && l.Signed == r.Signed && l.Bits == r.Bits
-	case *ByteType:
-		_, ok := right.(*ByteType)
-		return ok
-	case *CharType:
-		_, ok := right.(*CharType)
-		return ok
-	case *BoolType:
-		_, ok := right.(*BoolType)
-		return ok
-	case *CStrType:
-		_, ok := right.(*CStrType)
-		return ok
-	case *StringType:
-		_, ok := right.(*StringType)
-		return ok
-	case *NoneType:
-		_, ok := right.(*NoneType)
-		return ok
-	case *AllocatorType:
-		_, ok := right.(*AllocatorType)
-		return ok
-	case *FloatType:
-		r, ok := right.(*FloatType)
-		return ok && r != nil && l.Bits == r.Bits
-	case *NamedType:
-		r, ok := right.(*NamedType)
-		return ok && r != nil && l.Name == r.Name
-	case *TypeParameterType:
-		r, ok := right.(*TypeParameterType)
-		return ok && r != nil && l.OwnerIdentity == r.OwnerIdentity && l.Index == r.Index
-	case *OwnedPtrType:
-		r, ok := right.(*OwnedPtrType)
-		return ok && r != nil && SameType(l.Target, r.Target)
-	case *RawPtrType:
-		_, ok := right.(*RawPtrType)
-		return ok
-	case *RefType:
-		r, ok := right.(*RefType)
-		return ok && r != nil && l.Mutable == r.Mutable && SameType(l.Target, r.Target)
-	case *OptionalType:
-		r, ok := right.(*OptionalType)
-		return ok && r != nil && SameType(l.Inner, r.Inner)
-	case *ArrayType:
-		r, ok := right.(*ArrayType)
-		return ok && r != nil && l.Len == r.Len && l.Shape == r.Shape && SameType(l.Elem, r.Elem)
-	case *FuncType:
-		return checkFuncCompatibility(l, right) == Compatible
-	case *StructType:
-		return checkStructCompatibility(l, right) == Compatible
-	case *InterfaceType:
-		return checkInterfaceCompatibility(l, right) == Compatible
-	case *EnumType:
-		return checkEnumCompatibility(l, right) == Compatible
-	default:
-		return left == nil && right == nil
+	if left == nil {
+		return right == nil
 	}
+	return left.isSameType(right)
 }
 
-func sameNominalEnum(left, right Type) (same, nominal bool) {
+func isSameNominalEnum(left, right Type) (isSame, isNominal bool) {
 	leftIdentity, leftNominal := nominalEnumIdentity(left)
 	rightIdentity, rightNominal := nominalEnumIdentity(right)
 	if !leftNominal && !rightNominal {
@@ -96,23 +36,14 @@ func sameNominalEnum(left, right Type) (same, nominal bool) {
 }
 
 func nominalEnumIdentity(typ Type) (string, bool) {
-	for {
-		defined, ok := typ.(*DefinedType)
-		if !ok || defined == nil {
-			return "", false
-		}
-		switch defined.Kind {
-		case DefinedKindAlias:
-			typ = defined.Underlying
-		case DefinedKindEnum:
-			return defined.Identity, true
-		default:
-			return "", false
-		}
+	defined, ok := Unalias(typ).(*DefinedType)
+	if !ok || defined == nil || defined.Kind != DefinedKindEnum {
+		return "", false
 	}
+	return defined.Identity, true
 }
 
-func sameNominalStruct(left, right Type) (same, nominal bool) {
+func isSameNominalStruct(left, right Type) (isSame, isNominal bool) {
 	leftType, leftNominal := nominalStructType(left)
 	rightType, rightNominal := nominalStructType(right)
 	if !leftNominal && !rightNominal {
@@ -136,45 +67,57 @@ const (
 	NumericFloat
 )
 
+type numericType interface {
+	numericInfo() (family NumericFamily, bits int, ok bool)
+}
+
 func NumericInfo(t Type) (family NumericFamily, bits int, ok bool) {
-	t = Underlying(t)
-	switch typ := t.(type) {
-	case *IntegerType:
-		if typ == nil {
-			return NumericInvalid, 0, false
-		}
-		if typ.Signed {
-			return NumericSigned, typ.Bits, true
-		}
-		return NumericUnsigned, typ.Bits, true
-	case *ByteType:
+	numeric, ok := Underlying(t).(numericType)
+	if !ok {
+		return NumericInvalid, 0, false
+	}
+	return numeric.numericInfo()
+}
+
+func (t *IntegerType) numericInfo() (NumericFamily, int, bool) {
+	if t == nil {
+		return NumericInvalid, 0, false
+	}
+	if t.IsSigned {
+		return NumericSigned, t.Bits, true
+	}
+	return NumericUnsigned, t.Bits, true
+}
+
+func (*ByteType) numericInfo() (NumericFamily, int, bool) {
+	return NumericByte, 8, true
+}
+
+func (t *FloatType) numericInfo() (NumericFamily, int, bool) {
+	if t == nil {
+		return NumericInvalid, 0, false
+	}
+	return NumericFloat, t.Bits, true
+}
+
+func (t *NamedType) numericInfo() (NumericFamily, int, bool) {
+	if t == nil {
+		return NumericInvalid, 0, false
+	}
+	if t.Name == "byte" {
 		return NumericByte, 8, true
-	case *FloatType:
-		if typ == nil {
-			return NumericInvalid, 0, false
+	}
+	if signed, bits, ok := numeric.ParseIntegerTypeName(t.Name); ok {
+		if signed {
+			return NumericSigned, bits, true
 		}
-		return NumericFloat, typ.Bits, true
-	case *NamedType:
-		if typ == nil {
-			return NumericInvalid, 0, false
-		}
-		if typ.Name == "byte" {
-			return NumericByte, 8, true
-		}
-		if signed, bits, ok := numeric.ParseIntegerTypeName(typ.Name); ok {
-			if signed {
-				return NumericSigned, bits, true
-			}
-			return NumericUnsigned, bits, true
-		}
-		switch typ.Name {
-		case "f32":
-			return NumericFloat, 32, true
-		case "f64":
-			return NumericFloat, 64, true
-		default:
-			return NumericInvalid, 0, false
-		}
+		return NumericUnsigned, bits, true
+	}
+	switch t.Name {
+	case "f32":
+		return NumericFloat, 32, true
+	case "f64":
+		return NumericFloat, 64, true
 	default:
 		return NumericInvalid, 0, false
 	}
@@ -184,11 +127,11 @@ func NumericInfo(t Type) (family NumericFamily, bits int, ok bool) {
 // to semantic numeric identity. Arbitrary float widths stay rejected until the
 // language has a representation independent from LLVM's target float set.
 func NumericTypeFromName(name string, targetInfo target.Info) (Type, bool) {
-	if !targetInfo.Valid() {
+	if !targetInfo.IsValid() {
 		targetInfo = target.Host()
 	}
 	if signed, bits, ok := token.ParseIntegerBuiltin(name, targetInfo); ok {
-		return &IntegerType{Signed: signed, Bits: bits}, true
+		return &IntegerType{IsSigned: signed, Bits: bits}, true
 	}
 	switch name {
 	case "f32":
@@ -207,7 +150,7 @@ func CommonNumericType(a, b Type) Type {
 	if _, _, ok := NumericInfo(b); !ok {
 		return nil
 	}
-	if SameType(a, b) {
+	if IsSameType(a, b) {
 		return a
 	}
 	if checkNumericCompatibility(a, b) == Compatible {
@@ -221,13 +164,6 @@ func CommonNumericType(a, b Type) Type {
 
 func Assignable(dst, src Type) bool {
 	return CheckCompatibility(dst, src).Compatibility == Compatible
-}
-
-func ContainsAbstractSelf(t Type) bool {
-	return containsType(t, typeTraversal{followCallable: true}, func(candidate Type, _ bool) bool {
-		named, ok := candidate.(*NamedType)
-		return ok && named != nil && named.Name == "Self"
-	})
 }
 
 func ContainsTypeParameter(t Type) bool {
@@ -251,7 +187,7 @@ func ContainsReference(t Type) bool {
 }
 
 func ContainsStoredReference(t Type) bool {
-	return containsType(t, typeTraversal{followDefined: true, referenceLeaf: true}, func(candidate Type, stored bool) bool {
+	return containsType(t, typeTraversal{followDefined: true, stopAtReference: true}, func(candidate Type, stored bool) bool {
 		_, ok := candidate.(*RefType)
 		return stored && ok
 	})
@@ -265,15 +201,15 @@ func ContainsNamedEnum(t Type) bool {
 }
 
 type typeTraversal struct {
-	followDefined  bool
-	followCallable bool
-	referenceLeaf  bool
+	followDefined   bool
+	followCallable  bool
+	stopAtReference bool
 }
 
 func containsType(t Type, traversal typeTraversal, matches func(Type, bool) bool) bool {
 	type visitKey struct {
 		typeValue Type
-		stored    bool
+		isStored  bool
 	}
 	seen := make(map[visitKey]struct{})
 	var visit func(Type, bool) bool
@@ -284,7 +220,7 @@ func containsType(t Type, traversal typeTraversal, matches func(Type, bool) bool
 		if matches(current, stored) {
 			return true
 		}
-		key := visitKey{typeValue: current, stored: stored}
+		key := visitKey{typeValue: current, isStored: stored}
 		if _, found := seen[key]; found {
 			return false
 		}
@@ -314,91 +250,15 @@ func traversedChildState(relation TypeChildRelation, stored bool, traversal type
 	case TypeChildOwnedTarget, TypeChildArrayElement, TypeChildStructField, TypeChildEnumPayload:
 		return true, true
 	case TypeChildBorrowedTarget:
-		return stored, !traversal.referenceLeaf
+		return stored, !traversal.stopAtReference
 	case TypeChildOptionalPayload:
 		return stored, true
-	case TypeChildMethodReceiver, TypeChildCallableParameter, TypeChildCallableReturn:
+	case TypeChildCallableParameter, TypeChildCallableReturn:
 		return false, traversal.followCallable
+	case TypeChildTypeParameter, TypeChildTypeArgument:
+		return false, false
 	default:
 		panic("typeinfo: unknown semantic type child relation")
-	}
-}
-
-func ReplaceAbstractSelf(t Type, ownerType Type) Type {
-	switch typ := t.(type) {
-	case *NamedType:
-		if typ != nil && typ.Name == "Self" {
-			return ownerType
-		}
-		return t
-	case *OwnedPtrType:
-		if typ == nil {
-			return nil
-		}
-		return &OwnedPtrType{Target: ReplaceAbstractSelf(typ.Target, ownerType)}
-	case *RawPtrType:
-		if typ == nil {
-			return nil
-		}
-		return &RawPtrType{}
-	case *RefType:
-		if typ == nil {
-			return nil
-		}
-		return &RefType{Mutable: typ.Mutable, Target: ReplaceAbstractSelf(typ.Target, ownerType)}
-	case *OptionalType:
-		if typ == nil {
-			return nil
-		}
-		return NewOptional(ReplaceAbstractSelf(typ.Inner, ownerType))
-	case *ArrayType:
-		if typ == nil {
-			return nil
-		}
-		return &ArrayType{Len: typ.Len, Shape: typ.Shape, Elem: ReplaceAbstractSelf(typ.Elem, ownerType)}
-	case *FuncType:
-		if typ == nil {
-			return nil
-		}
-		params := make([]Type, 0, len(typ.Params))
-		for _, param := range typ.Params {
-			params = append(params, ReplaceAbstractSelf(param, ownerType))
-		}
-		return &FuncType{
-			Params:        params,
-			ParamNames:    append([]string(nil), typ.ParamNames...),
-			Return:        ReplaceAbstractSelf(typ.Return, ownerType),
-			ReturnOrigins: typ.ReturnOrigins,
-		}
-	case *StructType:
-		if typ == nil {
-			return nil
-		}
-		fields := make([]Field, 0, len(typ.Fields))
-		for _, field := range typ.Fields {
-			fields = append(fields, Field{Name: field.Name, Type: ReplaceAbstractSelf(field.Type, ownerType)})
-		}
-		return &StructType{Fields: fields}
-	case *InterfaceType:
-		if typ == nil {
-			return nil
-		}
-		methods := make([]Method, 0, len(typ.Methods))
-		for _, method := range typ.Methods {
-			params := make([]Field, 0, len(method.Params))
-			for _, param := range method.Params {
-				params = append(params, Field{Name: param.Name, Type: ReplaceAbstractSelf(param.Type, ownerType)})
-			}
-			methods = append(methods, Method{
-				Name:          method.Name,
-				Params:        params,
-				Return:        ReplaceAbstractSelf(method.Return, ownerType),
-				ReturnOrigins: method.ReturnOrigins,
-			})
-		}
-		return &InterfaceType{Methods: methods}
-	default:
-		return t
 	}
 }
 

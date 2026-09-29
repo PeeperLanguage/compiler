@@ -11,6 +11,8 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
+	"compiler/internal/graph"
+	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
 	"compiler/internal/semantics/collector"
@@ -28,19 +30,19 @@ fn (self: &Value) Method() {}
 fn Alpha(value: Value, extra: i32) {}`
 	diag := diagnostics.NewDiagnosticBag()
 	ctx := project.New(".", peeper.SourceExt, diag)
-	module := &project.Module{
+	module := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: strings.TrimSuffix(filePath, peeper.SourceExt)},
 		FilePath: filePath,
 		Content:  src,
 		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 	collector.Collect(ctx, module)
 	Bind(ctx, module)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
-	functions := module.Bindings.OperationFunctions
+	functions := module.SymbolIndex.OperationFunctions()
 	if len(functions) != 2 || functions[0].Name != "Alpha" || functions[1].Name != "Zebra" {
 		t.Fatalf("operation functions = %#v, want [Alpha Zebra]", functions)
 	}
@@ -90,12 +92,12 @@ struct B { a: A }`,
 			const filePath = "binder_type_cycle_test" + peeper.SourceExt
 			diag := diagnostics.NewDiagnosticBag()
 			ctx := project.New(".", peeper.SourceExt, diag)
-			module := &project.Module{
+			module := &module.Module{
 				ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: strings.TrimSuffix(filePath, peeper.SourceExt)},
 				FilePath: filePath,
 				Content:  test.source,
 				AST:      parser.New(filePath, lexer.New(filePath, test.source, diag).Tokenize(), diag).ParseModule(),
-				Imports:  make(map[string]project.ResolvedImport),
+				Imports:  make(map[string]module.ResolvedImport),
 			}
 			collector.Collect(ctx, module)
 			Bind(ctx, module)
@@ -114,6 +116,96 @@ struct B { a: A }`,
 	}
 }
 
+func TestBindUsesFreshTypeDependencyGraph(t *testing.T) {
+	const filePath = "binder_repeated_type_graph_test" + peeper.SourceExt
+	const firstSource = `struct A { b: B }
+struct B {}`
+	const secondSource = `struct A {}
+struct B { a: A }`
+
+	diag := diagnostics.NewDiagnosticBag()
+	ctx := project.New(".", peeper.SourceExt, diag)
+	importer := graph.NodeID("local:importer")
+	imported := graph.NodeID("local:imported")
+	ctx.ImportGraph.AddEdge(importer, imported)
+	module := &module.Module{
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: strings.TrimSuffix(filePath, peeper.SourceExt)},
+		FilePath: filePath,
+		Content:  firstSource,
+		AST:      parser.New(filePath, lexer.New(filePath, firstSource, diag).Tokenize(), diag).ParseModule(),
+		Imports:  make(map[string]module.ResolvedImport),
+	}
+	collector.Collect(ctx, module)
+	Bind(ctx, module)
+	if diag.HasErrors() {
+		t.Fatalf("first bind diagnostics:\n%s", diag.EmitAllToString())
+	}
+	if degree := ctx.ImportGraph.InDegree(imported); degree != 1 {
+		t.Fatalf("imported module in-degree = %d, want 1", degree)
+	}
+	for _, name := range []string{"A", "B"} {
+		if degree := ctx.ImportGraph.InDegree(typeDeclNodeID(module.ID, name), graphEdgeTypeValueRef); degree != 0 {
+			t.Fatalf("compiler import graph retained %d binder type edges for %s", degree, name)
+		}
+	}
+
+	module.Content = secondSource
+	module.AST = parser.New(filePath, lexer.New(filePath, secondSource, diag).Tokenize(), diag).ParseModule()
+	collector.Collect(ctx, module)
+	Bind(ctx, module)
+	if diag.HasErrors() {
+		t.Fatalf("second bind retained stale type dependencies:\n%s", diag.EmitAllToString())
+	}
+	if degree := ctx.ImportGraph.InDegree(imported); degree != 1 {
+		t.Fatalf("imported module in-degree after rebind = %d, want 1", degree)
+	}
+	for _, name := range []string{"A", "B"} {
+		if degree := ctx.ImportGraph.InDegree(typeDeclNodeID(module.ID, name), graphEdgeTypeValueRef); degree != 0 {
+			t.Fatalf("compiler import graph retained %d binder type edges for %s after rebind", degree, name)
+		}
+	}
+}
+
+func TestBindResolvesImportedTypeAliasesWithLocalGraph(t *testing.T) {
+	const dependencyPath = "binder_imported_alias_dependency" + peeper.SourceExt
+	const dependencySource = `type Alias = i32;`
+	const consumerPath = "binder_imported_alias_consumer" + peeper.SourceExt
+	const consumerSource = `type Local = dep::Alias;
+fn Use(value: Local) {}`
+
+	diag := diagnostics.NewDiagnosticBag()
+	ctx := project.New(".", peeper.SourceExt, diag)
+	dependency := &module.Module{
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: strings.TrimSuffix(dependencyPath, peeper.SourceExt)},
+		FilePath: dependencyPath,
+		Content:  dependencySource,
+		AST:      parser.New(dependencyPath, lexer.New(dependencyPath, dependencySource, diag).Tokenize(), diag).ParseModule(),
+		Imports:  make(map[string]module.ResolvedImport),
+	}
+	ctx.AddModule(dependency)
+	collector.Collect(ctx, dependency)
+	Bind(ctx, dependency)
+
+	consumer := &module.Module{
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: strings.TrimSuffix(consumerPath, peeper.SourceExt)},
+		FilePath: consumerPath,
+		Content:  consumerSource,
+		AST:      parser.New(consumerPath, lexer.New(consumerPath, consumerSource, diag).Tokenize(), diag).ParseModule(),
+		Imports: map[string]module.ResolvedImport{
+			"dep": {ID: dependency.ID, FilePath: dependency.FilePath},
+		},
+	}
+	collector.Collect(ctx, consumer)
+	Bind(ctx, consumer)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	local, ok := consumer.ModuleScope.LookupLocal("Local")
+	if !ok || local == nil || !typeinfo.IsSameType(typeinfo.Unalias(local.Type), &typeinfo.IntegerType{IsSigned: true, Bits: 32}) {
+		t.Fatalf("imported alias resolved as %#v, want i32", local)
+	}
+}
+
 func TestBindInstantiatesGenericNamedTypes(t *testing.T) {
 	const filePath = "binder_generic_instances_test" + peeper.SourceExt
 	const src = `struct Box<T> { value: T }
@@ -124,12 +216,12 @@ enum Choice<T> { Left: { value: T }, Right }
 fn Use(box: Box<i32>, again: Box<i32>, other: Box<i64>, nested: Box<Box<i32>>, node: Node<i32>, maybe: Maybe<i32>, reader: Reader<i32>, choice: Choice<i32>) {}`
 	diag := diagnostics.NewDiagnosticBag()
 	ctx := project.New(".", peeper.SourceExt, diag)
-	module := &project.Module{
+	module := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: strings.TrimSuffix(filePath, peeper.SourceExt)},
 		FilePath: filePath,
 		Content:  src,
 		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 	collector.Collect(ctx, module)
 	Bind(ctx, module)
@@ -177,11 +269,11 @@ fn Use(box: Box<i32>, again: Box<i32>, other: Box<i64>, nested: Box<Box<i32>>, n
 		t.Fatalf("recursive Node<i32> target = %#v, want provisional instance", nodeStruct.Fields[0].Type)
 	}
 	maybe, ok := typeinfo.Underlying(fn.Params[5]).(*typeinfo.OptionalType)
-	if !ok || !typeinfo.SameType(maybe.Inner, &typeinfo.IntegerType{Signed: true, Bits: 32}) {
+	if !ok || !typeinfo.IsSameType(maybe.Inner, &typeinfo.IntegerType{IsSigned: true, Bits: 32}) {
 		t.Fatalf("Maybe<i32> payload = %#v", fn.Params[5])
 	}
 	reader, ok := typeinfo.Underlying(fn.Params[6]).(*typeinfo.InterfaceType)
-	if !ok || len(reader.Methods) != 1 || !typeinfo.SameType(reader.Methods[0].Return, &typeinfo.IntegerType{Signed: true, Bits: 32}) {
+	if !ok || len(reader.Methods) != 1 || !typeinfo.IsSameType(reader.Methods[0].Return, &typeinfo.IntegerType{IsSigned: true, Bits: 32}) {
 		t.Fatalf("Reader<i32> payload = %#v", fn.Params[6])
 	}
 	choice, ok := fn.Params[7].(*typeinfo.DefinedType)
@@ -194,7 +286,7 @@ fn Use(box: Box<i32>, again: Box<i32>, other: Box<i64>, nested: Box<Box<i32>>, n
 	}
 	payload, ok := choiceDescriptor.Cases[0].Payload.(*typeinfo.StructType)
 	if !ok || len(payload.Fields) != 1 || payload.Fields[0].Name != "value" ||
-		!typeinfo.SameType(payload.Fields[0].Type, &typeinfo.IntegerType{Signed: true, Bits: 32}) {
+		!typeinfo.IsSameType(payload.Fields[0].Type, &typeinfo.IntegerType{IsSigned: true, Bits: 32}) {
 		t.Fatalf("Choice<i32>::Left payload = %#v, want value: i32", choiceDescriptor.Cases[0].Payload)
 	}
 }
@@ -207,12 +299,12 @@ enum Choice<T> { Left, Right }
 fn Use(alias: Choice<MyInt>, canonical: Choice<i32>) {}`
 	diag := diagnostics.NewDiagnosticBag()
 	ctx := project.New(".", peeper.SourceExt, diag)
-	module := &project.Module{
+	module := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: strings.TrimSuffix(filePath, peeper.SourceExt)},
 		FilePath: filePath,
 		Content:  src,
 		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 	collector.Collect(ctx, module)
 	Bind(ctx, module)
@@ -247,11 +339,11 @@ func TestBindCompletesGenericArgumentDependencies(t *testing.T) {
 			source += ` fn Use(early: Early, canonical: Box<?i32>) {}`
 			diag := diagnostics.NewDiagnosticBag()
 			ctx := project.New(".", peeper.SourceExt, diag)
-			module := &project.Module{
+			module := &module.Module{
 				ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: strings.TrimSuffix(filePath, peeper.SourceExt)},
 				FilePath: filePath, Content: source,
 				AST:     parser.New(filePath, lexer.New(filePath, source, diag).Tokenize(), diag).ParseModule(),
-				Imports: make(map[string]project.ResolvedImport),
+				Imports: make(map[string]module.ResolvedImport),
 			}
 			collector.Collect(ctx, module)
 			Bind(ctx, module)
@@ -316,12 +408,12 @@ fn Use(value: &Swap<i32, str>) {}`,
 			filePath := "binder_" + test.name + "_generic_recursion_test" + peeper.SourceExt
 			diag := diagnostics.NewDiagnosticBag()
 			ctx := project.New(".", peeper.SourceExt, diag)
-			module := &project.Module{
+			module := &module.Module{
 				ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: strings.TrimSuffix(filePath, peeper.SourceExt)},
 				FilePath: filePath,
 				Content:  test.source,
 				AST:      parser.New(filePath, lexer.New(filePath, test.source, diag).Tokenize(), diag).ParseModule(),
-				Imports:  make(map[string]project.ResolvedImport),
+				Imports:  make(map[string]module.ResolvedImport),
 			}
 			collector.Collect(ctx, module)
 			Bind(ctx, module)
@@ -362,12 +454,12 @@ func TestBindRequiresExactNamedTypeArguments(t *testing.T) {
 			const filePath = "binder_generic_arity_test" + peeper.SourceExt
 			diag := diagnostics.NewDiagnosticBag()
 			ctx := project.New(".", peeper.SourceExt, diag)
-			module := &project.Module{
+			module := &module.Module{
 				ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: strings.TrimSuffix(filePath, peeper.SourceExt)},
 				FilePath: filePath,
 				Content:  test.source,
 				AST:      parser.New(filePath, lexer.New(filePath, test.source, diag).Tokenize(), diag).ParseModule(),
-				Imports:  make(map[string]project.ResolvedImport),
+				Imports:  make(map[string]module.ResolvedImport),
 			}
 			collector.Collect(ctx, module)
 			Bind(ctx, module)

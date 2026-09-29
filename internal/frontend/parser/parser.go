@@ -21,13 +21,13 @@ import (
 )
 
 type Parser struct {
-	filePath      string
-	stream        []token.Token
-	diag          *diagnostics.DiagnosticBag
-	pos           int
-	nodeID        ast.NodeID
-	context       []string // parsing context stack for error messages
-	controlHeader bool
+	filePath        string
+	stream          []token.Token
+	diag            *diagnostics.DiagnosticBag
+	pos             int
+	nodeID          uint64
+	context         []string // parsing context stack for error messages
+	isControlHeader bool
 }
 
 const (
@@ -767,9 +767,9 @@ func (p *Parser) advance() *token.Token {
 	return &tok
 }
 
-func (p *Parser) nextID() ast.NodeID {
+func (p *Parser) nextID() source.NodeID {
 	p.nodeID++
-	return p.nodeID
+	return source.ParsedNodeID(p.nodeID)
 }
 
 func reg[T ast.Node](p *Parser, n T) T {

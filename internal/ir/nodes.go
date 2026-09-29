@@ -10,14 +10,11 @@ import (
 	"compiler/pkg/typednil"
 )
 
-// NodeID identifies source syntax without retaining an AST object in IR.
-type NodeID uint32
-
 // SourceInfo keeps semantic identity and source provenance together while IR
 // remains independent from AST objects. NodeID is stable across lowering;
 // Location is the current diagnostic/debug projection of that identity.
 type SourceInfo struct {
-	NodeID   NodeID
+	NodeID   source.NodeID
 	Location *source.Location
 }
 
@@ -156,8 +153,8 @@ type Place struct {
 
 type Load struct {
 	SourceInfo
-	Place    *Place
-	DropRoot bool
+	Place     *Place
+	DropsRoot bool
 }
 
 type AddrOf struct {
@@ -168,9 +165,9 @@ type AddrOf struct {
 
 type TempBorrow struct {
 	SourceInfo
-	Value Expr
-	Slice bool
-	Type  TypeID
+	Value   Expr
+	IsSlice bool
+	Type    TypeID
 }
 
 type Len struct {
@@ -196,11 +193,11 @@ type StringFromBytes struct {
 // SliceView shapes array storage into a non-owning reference value.
 type SliceView struct {
 	SourceInfo
-	Source       *Place
-	Start        Expr
-	End          Expr
-	EndExclusive bool
-	Type         TypeID
+	Place          *Place
+	Start          Expr
+	End            Expr
+	IsEndExclusive bool
+	Type           TypeID
 }
 
 type InterfaceSlot struct {
@@ -222,19 +219,20 @@ type InterfaceMake struct {
 
 type InterfaceCall struct {
 	SourceInfo
-	Base     Expr
-	Slot     int
-	Args     []Expr
-	Consumes bool
-	Type     TypeID
+	Base         Expr
+	Slot         int
+	SlotType     TypeID
+	Args         []Expr
+	ConsumesBase bool
+	Type         TypeID
 }
 
 type Field struct {
 	SourceInfo
-	Base     Expr
-	Index    int
-	DropBase bool
-	Type     TypeID
+	Base      Expr
+	Index     int
+	DropsBase bool
+	Type      TypeID
 }
 
 type StructLit struct {
@@ -245,9 +243,9 @@ type StructLit struct {
 
 type ArrayLit struct {
 	SourceInfo
-	Values  []Expr
-	Dynamic bool
-	Type    TypeID
+	Values    []Expr
+	IsDynamic bool
+	Type      TypeID
 }
 
 type DynamicArrayOp struct {
@@ -275,8 +273,8 @@ type Cast struct {
 
 type Print struct {
 	SourceInfo
-	Value   Expr
-	Newline bool
+	Value          Expr
+	AppendsNewline bool
 }
 
 type Drop struct {
@@ -375,7 +373,7 @@ func (e *StringFromBytes) forEachChild(visit func(Expr)) {
 }
 func (*SliceView) exprNode() {}
 func (e *SliceView) forEachChild(visit func(Expr)) {
-	e.Source.forEachChild(visit)
+	e.Place.forEachChild(visit)
 	visit(e.Start)
 	visit(e.End)
 }
@@ -611,7 +609,7 @@ func (e *Print) String() string {
 		return "print(<nil>)"
 	}
 	name := "print"
-	if e.Newline {
+	if e.AppendsNewline {
 		name = "println"
 	}
 	return name + "(" + e.Value.String() + ")"
@@ -751,10 +749,10 @@ func (e *StringFromBytes) TypeID() TypeID {
 }
 
 func (e *SliceView) String() string {
-	if e == nil || e.Source == nil {
+	if e == nil || e.Place == nil {
 		return ""
 	}
-	return "view(" + e.Source.String() + ")"
+	return "view(" + e.Place.String() + ")"
 }
 
 func (e *SliceView) TypeID() TypeID {
@@ -974,13 +972,6 @@ func SanitizeSymbolName(text string) string {
 		}
 	}
 	return b.String()
-}
-
-func StripSymbolInstance(text string) string {
-	if before, _, ok := strings.Cut(text, "$"); ok {
-		return before
-	}
-	return text
 }
 
 func InterfaceThunkName(interfaceTypeText, dataType, methodName string, index int) string {

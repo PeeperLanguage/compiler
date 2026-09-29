@@ -121,7 +121,7 @@ func TestSaveLockfileOmitsLegacyDependenciesField(t *testing.T) {
 	lock.SetDependency("github.com/acme/json@v1.2.3", LockfileEntry{
 		Version:     "v1.2.3",
 		ResolvedURL: "github.com/acme/json",
-		Direct:      true,
+		IsDirect:    true,
 	})
 
 	if err := SaveLockfile(root, lock); err != nil {
@@ -221,12 +221,12 @@ func TestSetDirectDependencyDemotesPreviousVersion(t *testing.T) {
 	lock.SetDependency("github.com/acme/json@v1.0.0", LockfileEntry{
 		Version:     "v1.0.0",
 		ResolvedURL: "github.com/acme/json",
-		Direct:      true,
+		IsDirect:    true,
 	})
 	lock.SetDependency("github.com/acme/json@v1.1.0", LockfileEntry{
 		Version:     "v1.1.0",
 		ResolvedURL: "github.com/acme/json",
-		Direct:      true,
+		IsDirect:    true,
 	})
 
 	lock.SetDirectDependency("json", "github.com/acme/json@v1.0.0")
@@ -236,15 +236,46 @@ func TestSetDirectDependencyDemotesPreviousVersion(t *testing.T) {
 	if !ok {
 		t.Fatal("expected old package entry")
 	}
-	if oldEntry.Direct {
+	if oldEntry.IsDirect {
 		t.Fatalf("expected old direct package to be demoted")
 	}
 	newEntry, ok := lock.GetDependency("github.com/acme/json@v1.1.0")
 	if !ok {
 		t.Fatal("expected new package entry")
 	}
-	if !newEntry.Direct {
+	if !newEntry.IsDirect {
 		t.Fatalf("expected new package entry to stay direct")
+	}
+}
+
+func TestSetDirectDependencyPreservesPackageUsedByAnotherAlias(t *testing.T) {
+	lock := NewLockfile()
+	lock.SetDependency("github.com/acme/json@v1.0.0", LockfileEntry{
+		Version:     "v1.0.0",
+		ResolvedURL: "github.com/acme/json",
+	})
+	lock.SetDependency("github.com/acme/json@v1.1.0", LockfileEntry{
+		Version:     "v1.1.0",
+		ResolvedURL: "github.com/acme/json",
+	})
+
+	lock.SetDirectDependency("json", "github.com/acme/json@v1.0.0")
+	lock.SetDirectDependency("json-compat", "github.com/acme/json@v1.0.0")
+	lock.SetDirectDependency("json", "github.com/acme/json@v1.1.0")
+
+	oldEntry, ok := lock.GetDependency("github.com/acme/json@v1.0.0")
+	if !ok {
+		t.Fatal("expected shared old package entry")
+	}
+	if !oldEntry.IsDirect {
+		t.Fatal("expected package used by json-compat to remain direct")
+	}
+	newEntry, ok := lock.GetDependency("github.com/acme/json@v1.1.0")
+	if !ok {
+		t.Fatal("expected replacement package entry")
+	}
+	if !newEntry.IsDirect {
+		t.Fatal("expected replacement package to be direct")
 	}
 }
 
@@ -281,14 +312,14 @@ func TestLoadLockfileReconcilesDirectFlagsFromDirectDeps(t *testing.T) {
 	if !ok {
 		t.Fatal("expected old package")
 	}
-	if oldEntry.Direct {
+	if oldEntry.IsDirect {
 		t.Fatalf("expected old package to be non-direct after reconcile")
 	}
 	newEntry, ok := lock.GetDependency("github.com/acme/json@v1.1.0")
 	if !ok {
 		t.Fatal("expected new package")
 	}
-	if !newEntry.Direct {
+	if !newEntry.IsDirect {
 		t.Fatalf("expected mapped direct package to be direct")
 	}
 }

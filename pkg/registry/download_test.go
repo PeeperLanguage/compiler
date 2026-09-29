@@ -391,7 +391,7 @@ func TestDownloadRemotePackageVerifiesBeforeReplacingCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dev := &manifest.DevConfig{MockRemote: true, MockPath: mock}
+	dev := &manifest.DevConfig{UsesMockRemote: true, MockPath: mock}
 
 	if _, err := DownloadRemotePackage(http.DefaultClient, cache, "github.com/acme/pkg", "v1.0.0", oldChecksum, dev); err == nil {
 		t.Fatal("moved package matched old checksum")

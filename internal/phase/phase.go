@@ -14,25 +14,14 @@ const (
 	Collected
 	Bound
 	Resolved
-	// ConstEval completes eager semantic evaluation. Expected-type queries may
-	// refine facts while typechecking.
-	ConstEval
 	// Typechecked includes final module const values and semantic API identity.
 	Typechecked
 	// CFG includes finalized topology and CFG diagnostics.
 	CFG
-	// FlowTyped includes CFG-refined expression types and place origins.
-	FlowTyped
-	// Effects publishes the ordered semantic meaning of each CFG site, which
-	// the dataflow analyses consume instead of re-reading syntax.
-	Effects
-	// DefiniteInit records completion of diagnostic-only initialization checks.
-	DefiniteInit
-	// Ownership includes ownership cleanup results.
-	Ownership
+	// Analyzed includes CFG-refined semantic facts and ownership cleanup decisions.
+	Analyzed
 	// Usage records completion of usage diagnostics at project barrier.
 	Usage
-	HIR
 	MIR
 	Backend
 	// Finalize contains checks spanning completed module backends.
@@ -55,24 +44,14 @@ func (phase Phase) String() string {
 		return "bound"
 	case Resolved:
 		return "resolved"
-	case ConstEval:
-		return "const-eval"
 	case Typechecked:
 		return "typechecked"
 	case CFG:
 		return "CFG"
-	case FlowTyped:
-		return "flow-typed"
-	case Effects:
-		return "effects"
-	case DefiniteInit:
-		return "definite-init"
-	case Ownership:
-		return "ownership"
+	case Analyzed:
+		return "analyzed"
 	case Usage:
 		return "usage"
-	case HIR:
-		return "HIR"
 	case MIR:
 		return "MIR"
 	case Backend:

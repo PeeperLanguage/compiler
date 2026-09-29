@@ -30,22 +30,17 @@ build/bin/peeper -version
 
 ## Project rules
 
-These files are canonical; do not copy their rules into new documents:
+Use each guidance file for its stated concern; do not copy its rules into new documents:
 
-- [`RULES.md`](RULES.md): mandatory architecture, code-quality, testing, branch,
-  and commit rules.
+- [`RULES.md`](RULES.md): mandatory, durable code-quality and delivery requirements.
 - [`go-style.md`](go-style.md): Go-specific style and lint guidance.
-- [`COMPILER_GUIDELINES.md`](COMPILER_GUIDELINES.md): compiler phase,
-  representation, traversal, and incremental-analysis guidance.
+- [`COMPILER_GUIDELINES.md`](COMPILER_GUIDELINES.md): compiler design-review guidance.
 
-For a change that touches the compiler pipeline or semantic model, read
-[`docs/compiler-architecture.md`](docs/compiler-architecture.md) first. It defines
-the canonical mechanisms, representation boundaries, and extension paths.
+For a change that touches compiler flow or semantic model, inspect current implementation and read [`docs/compiler-architecture.md`](docs/compiler-architecture.md) as a source-verified snapshot, not permanent design authority.
 [`docs/compiler-framework/change-paths.md`](docs/compiler-framework/change-paths.md)
 is the concrete file-by-file companion for common changes.
 
-`AGENTS.md` contains automation workflow, not additional human-facing code
-policy.
+`AGENTS.md` contains agent workflow, not additional human-facing code policy. Conflicts among guidance, source, tests, and explicit requirements require review.
 
 ## Change workflow
 
@@ -83,7 +78,7 @@ Language features and behavior changes require Peeper source coverage under
 - retain focused Go tests near affected compiler packages.
 
 Backend or ABI changes need coverage for every affected target width. Semantic
-acceptance changes must prove downstream HIR, MIR, and backend lowerability.
+acceptance changes must prove downstream THIR, MIR, and backend lowerability.
 
 ## Commits
 
@@ -106,6 +101,26 @@ A useful pull request explains:
 Reviews prioritize correctness, one canonical implementation, honest compiler
 artifacts, clear ownership, and regression resistance over minimizing edited
 call sites.
+
+Every pull request must be approved by a human repository collaborator other than
+the author, enforced by branch protection. New commits make older approval stale.
+
+Before opening a pull request that touches source files, add these as the first two
+lines of `README.md` if not already present:
+
+```text
+> [!IMPORTANT]
+> Remove this line to confirm you have reviewed this PR before submitting.
+```
+
+Read your full diff, then remove those two lines yourself before requesting review.
+The `peeper-bot[bot]` check fails and comments on the pull request while the
+marker remains. Do not ask an agent to remove it for you — that defeats its purpose.
+
+Disclose AI assistance in the pull-request body as `none`, `assisted`, or
+`primarily generated`. The author remains responsible for every changed line and
+must be able to explain production consumers, ownership, tests, and tradeoffs.
+Disclosure does not replace review and is not itself a negative quality signal.
 
 ## Documentation changes
 

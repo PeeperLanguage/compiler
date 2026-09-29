@@ -1,0 +1,10 @@
+struct Pair {
+    x: i32,
+    y: i32
+}
+
+fn main() -> i32 {
+    let named: Pair = .{ y = 20, x = 10 };
+    let anonymous: struct { x: i32, y: i32 } = .{ y = 20, x = 10 };
+    return named.x * 2 + anonymous.y;
+}

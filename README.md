@@ -12,7 +12,7 @@ server, and executable source fixtures.
 - Static semantic analysis with explicit compiler phases.
 - Ownership, move, borrow, pointer, and reference checks.
 - Scalars, aggregates, arrays, slices, optionals, interfaces, and modules.
-- HIR and MIR lowering to LLVM IR and native executables through Clang.
+- THIR and MIR lowering to LLVM IR and native executables through Clang.
 - Project manifests, dependency commands, source checking, and an LSP server.
 
 See the [open roadmap](https://github.com/PeeperLanguage/compiler/issues) for
@@ -23,9 +23,7 @@ unfinished language and runtime work.
 [`Code-tour.md`](Code-tour.md) walks one `.peep` file through every phase to a native
 binary, with diagrams and the real entry points at each stop.
 
-[`docs/compiler-architecture.md`](docs/compiler-architecture.md) explains the canonical
-compiler mechanisms and how to extend syntax, semantic types, graphs, and analyses
-without reintroducing duplicated walks or phase logic.
+[`docs/compiler-architecture.md`](docs/compiler-architecture.md) records current compiler mechanisms and their rationale. Verify mutable details against source when extending syntax, semantic types, graphs, or analyses.
 
 ## Binary installation
 
@@ -122,9 +120,7 @@ bash scripts/build.sh
 PEEPER_BIN="$PWD/build/bin/peeper" go test -count=1 ./x_test
 ```
 
-Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before proposing a change. Compiler
-work must also follow [`RULES.md`](RULES.md), [`go-style.md`](go-style.md), and
-[`COMPILER_GUIDELINES.md`](COMPILER_GUIDELINES.md).
+Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before proposing a change. Mandatory engineering requirements live in [`RULES.md`](RULES.md); Go and compiler design guidance live in [`go-style.md`](go-style.md) and [`COMPILER_GUIDELINES.md`](COMPILER_GUIDELINES.md).
 
 Security reports belong through the private process in
 [`SECURITY.md`](SECURITY.md), not a public issue. Community participation follows

@@ -36,7 +36,7 @@ func OrphansCommand(_ []string) error {
 	fmt.Printf("Orphaned dependencies (%d):\n", len(candidates))
 	for _, candidate := range candidates {
 		reason := "stale cache"
-		if candidate.InLock {
+		if candidate.IsInLockfile {
 			reason = "unused lockfile dependency"
 		}
 		fmt.Printf("  %s (%s)\n", candidate.PackageID, reason)

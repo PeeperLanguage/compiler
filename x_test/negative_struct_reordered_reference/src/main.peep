@@ -1,0 +1,5 @@
+fn main() -> i32 {
+    let source: struct { x: i32, y: i32 } = .{ x = 10, y = 20 };
+    let borrowed: &struct { y: i32, x: i32 } = &source;
+    return borrowed.x;
+}

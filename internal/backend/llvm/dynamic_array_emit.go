@@ -34,8 +34,8 @@ func emitDynamicArrayAlloc(b *llvmBuilder, alloc *mir.DynamicArrayAlloc) llvmVal
 }
 
 func emitDynamicArrayStorageAlloc(b *llvmBuilder, elemType ir.TypeID, capacity, allocator llvmValue) llvmValue {
-	size := emitAllocatorStorageSize(b, elemType, capacity)
-	raw := emitAllocatorAllocate(b, allocator, size, b.value("8", llvmScalarLayout("i32")))
+	size, alignment := emitAllocatorArrayLayout(b, elemType, capacity)
+	raw := emitAllocatorAllocate(b, allocator, size, alignment)
 	return b.bitcast(raw, llvmPointerLayout(b.emitter.layout(elemType)))
 }
 
@@ -55,12 +55,8 @@ func emitAlloc(b *llvmBuilder, e *mir.Alloc) llvmValue {
 	}
 	allocReg := allocatorHandleFromRef(b, e.Allocator)
 	targetLayout := b.emitter.layout(pointerType.Elem)
-	sizeLayout := b.emitter.layout(b.emitter.mod.Types.IndexType())
-	payloadEnd := b.value(fmt.Sprintf("getelementptr (%s, %s* null, i32 1)", targetLayout.Text, targetLayout.Text), llvmPointerLayout(targetLayout))
-	size := b.cast("ptrtoint", payloadEnd, sizeLayout)
-	zeroSize := b.compare("icmp", "eq", size, b.value("0", sizeLayout))
-	normSize := b.selectValue(zeroSize, b.value("1", sizeLayout), size)
-	raw := emitAllocatorAllocate(b, allocReg, normSize, b.value("8", llvmScalarLayout("i32")))
+	size, alignment := emitAllocatorTypeLayout(b, pointerType.Elem)
+	raw := emitAllocatorAllocate(b, allocReg, size, alignment)
 
 	dataPtr := b.bitcast(raw, llvmPointerLayout(targetLayout))
 	b.store(b.pointerPlace(dataPtr), emitRef(b, e.Value))
@@ -113,9 +109,9 @@ func emitDynamicArrayReserve(b *llvmBuilder, array llvmValue, typeID ir.TypeID, 
 	releaseDoneLabel := fmt.Sprintf("array_reserve_release_done_%d", id)
 	b.condBranch(oldIsNull, releaseDoneLabel, releaseLabel)
 	b.namedLabel(releaseLabel)
-	oldSize := emitAllocatorStorageSize(b, elemTypeID, capacity)
+	oldSize, alignment := emitAllocatorArrayLayout(b, elemTypeID, capacity)
 	oldRaw := b.bitcast(oldData, llvmPointerLayout(llvmScalarLayout("i8")))
-	emitAllocatorDeallocate(b, allocator, oldRaw, oldSize, b.value("8", llvmScalarLayout("i32")))
+	emitAllocatorDeallocate(b, allocator, oldRaw, oldSize, alignment)
 	b.branch(releaseDoneLabel)
 	b.namedLabel(releaseDoneLabel)
 	resized := emitDynamicArrayHeader(b, typeID, newData, length, minimum, allocator)

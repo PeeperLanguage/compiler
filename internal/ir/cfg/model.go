@@ -2,34 +2,39 @@ package cfg
 
 import (
 	graphcore "compiler/internal/graph"
-	"compiler/internal/ir"
+
+	"compiler/internal/moduleid"
 	"compiler/internal/source"
 )
 
 // Module owns canonical function CFG identity for one source module.
 type Module struct {
-	Functions []*Graph
-	byNodeID  map[ir.NodeID]*Graph
+	Functions []*ControlFlowGraph
 }
 
-// Function returns one graph by source function identity.
-func (m *Module) Function(id ir.NodeID) *Graph {
-	if m == nil {
+// FunctionByID returns one graph by stable module/function identity.
+func (m *Module) FunctionByID(id moduleid.FunctionID) *ControlFlowGraph {
+	if m == nil || id == "" {
 		return nil
 	}
-	return m.byNodeID[id]
+	for _, graph := range m.Functions {
+		if graph != nil && graph.FunctionID == id {
+			return graph
+		}
+	}
+	return nil
 }
 
-// Graph is finalized by BuildModule. Terminators and ordered block sites define
+// ControlFlowGraph is finalized by BuildModule. Terminators and ordered block sites define
 // control flow; BlockEdges and SiteEdges are derived traversal indexes. Consumers
 // must not mutate topology after publication: rebuild the CFG before publishing
 // a new generation, since site IDs and downstream evidence depend on it.
-type Graph struct {
-	NodeID         ir.NodeID
+type ControlFlowGraph struct {
+	FunctionID     moduleid.FunctionID
 	Name           string
 	Location       *source.Location
 	ReturnTypeText string
-	ReturnsValue   bool
+	HasReturnValue bool
 	Entry          *Block
 	Exit           *Block
 	Blocks         []*Block
@@ -44,6 +49,19 @@ type Graph struct {
 type SiteID struct {
 	Block int
 	Index int
+}
+
+// Site resolves an ID by its position in this graph. Invalid IDs and incomplete
+// graph structure return nil so topology consumers can reject malformed edges.
+func (g *ControlFlowGraph) Site(id SiteID) *Site {
+	if g == nil || id.Block < 0 || id.Block >= len(g.Blocks) {
+		return nil
+	}
+	block := g.Blocks[id.Block]
+	if block == nil || id.Index < 0 || id.Index >= len(block.Sites) {
+		return nil
+	}
+	return block.Sites[id.Index]
 }
 
 type EdgeKind uint8
@@ -82,8 +100,8 @@ const (
 type Site struct {
 	ID       SiteID
 	Kind     SiteKind
-	NodeID   ir.NodeID
-	ScopeID  ir.NodeID
+	NodeID   source.NodeID
+	ScopeID  source.NodeID
 	Location *source.Location
 }
 
@@ -106,13 +124,13 @@ const (
 )
 
 type Block struct {
-	ID         int
-	NodeID     ir.NodeID
-	Origin     BlockOrigin
-	Location   *source.Location
-	Sites      []*Site
-	Terminator Terminator
-	Reachable  bool
+	ID          int
+	NodeID      source.NodeID
+	Origin      BlockOrigin
+	Location    *source.Location
+	Sites       []*Site
+	Terminator  Terminator
+	IsReachable bool
 }
 
 type Terminator interface {
@@ -125,16 +143,16 @@ type Jump struct {
 }
 
 type Branch struct {
-	NodeID      ir.NodeID
-	ConditionID ir.NodeID
-	ScopeID     ir.NodeID
+	NodeID      source.NodeID
+	ConditionID source.NodeID
+	ScopeID     source.NodeID
 	Location    *source.Location
 	TrueTarget  *Block
 	FalseTarget *Block
 }
 
 type Return struct {
-	NodeID ir.NodeID
+	NodeID source.NodeID
 }
 
 type VariantTarget struct {
@@ -143,8 +161,8 @@ type VariantTarget struct {
 }
 
 type SwitchVariant struct {
-	NodeID   ir.NodeID
-	ScopeID  ir.NodeID
+	NodeID   source.NodeID
+	ScopeID  source.NodeID
 	Location *source.Location
 	Targets  []VariantTarget
 }

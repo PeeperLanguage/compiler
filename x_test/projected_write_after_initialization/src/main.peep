@@ -1,0 +1,11 @@
+struct Pair {
+    left: i32,
+    right: i32
+}
+
+fn main() -> i32 {
+    let mut pair: Pair;
+    pair = .{ left = 1, right = 2 };
+    pair.left = 7;
+    return pair.left;
+}

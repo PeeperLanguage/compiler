@@ -1,0 +1,14 @@
+struct Source {
+    x: i32,
+    y: i32
+}
+
+struct Other {
+    x: i32,
+    y: i32
+}
+
+fn main() {
+    let castSource: Source = .{ x = 10, y = 20 };
+    let castTarget = castSource as Other;
+}

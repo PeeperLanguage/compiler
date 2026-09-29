@@ -40,11 +40,10 @@ cannot drift silently.
 
 ## Already consolidated before this step
 
-`ContainsReference`, `ContainsStoredReference`, `ContainsAbstractSelf`,
-`ContainsTypeParameter`, `ContainsInvalid` and `ContainsNamedEnum` are six
-five-line wrappers over one shared `containsType` walker in `relations.go`, each
-supplying a traversal mode and a predicate. That is the target shape, reached
-already. Nothing to do.
+`ContainsReference`, `ContainsStoredReference`, `ContainsTypeParameter`,
+`ContainsInvalid`, and `ContainsNamedEnum` are narrow queries over one shared
+`containsType` walker in `relations.go`, each supplying a traversal mode and a
+predicate.
 
 ## Deliberately not consolidated
 

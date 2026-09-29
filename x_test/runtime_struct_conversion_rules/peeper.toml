@@ -5,4 +5,4 @@ build = "program"
 mode = "run"
 outcome = "exit_code"
 exit_code = 49
-stdout_contains = ["struct conversion rules ok"]
+stdout_contains = ["struct literal rules ok"]

@@ -8,28 +8,17 @@ import (
 	"strings"
 
 	"compiler/internal/diagnostics"
-	"compiler/internal/frontend/ast"
-	"compiler/internal/moduleid"
+	"compiler/internal/module"
 	"compiler/pkg/manifest"
 	"compiler/pkg/remotes"
 )
 
-// Canonical file-backed import after resolver lookup.
-type ResolvedImport struct {
-	// Canonical imported module identity.
-	ID moduleid.ID
-	// Source import declaration, when resolved from parsed syntax.
-	Decl *ast.ImportDecl
-	// Absolute slash-separated source path.
-	FilePath string
-}
-
 // ImportCandidate is one source-level import path visible from a compiler
 // context. Continuing candidates are directories or roots which need more path.
 type ImportCandidate struct {
-	ImportPath string
-	FilePath   string
-	Continuing bool
+	ImportPath  string
+	FilePath    string
+	CanContinue bool
 }
 
 // ImportError reports a resolved import failure with a diagnostic code.
@@ -65,7 +54,7 @@ func (ctx *CompilerContext) importRootCandidates(prefix string) []ImportCandidat
 	if ctx.Config.ProjectName != "" {
 		root := manifest.SourceDir(ctx.Config.RootDir)
 		if info, err := os.Stat(root); err == nil && info.IsDir() {
-			candidates = append(candidates, ImportCandidate{ImportPath: ctx.Config.ProjectName + "/", Continuing: true})
+			candidates = append(candidates, ImportCandidate{ImportPath: ctx.Config.ProjectName + "/", CanContinue: true})
 		}
 	}
 
@@ -88,7 +77,7 @@ func (ctx *CompilerContext) importRootCandidates(prefix string) []ImportCandidat
 		if info, err := os.Stat(manifest.SourceDir(root)); err != nil || !info.IsDir() {
 			continue
 		}
-		candidates = append(candidates, ImportCandidate{ImportPath: namespace + ":", Continuing: true})
+		candidates = append(candidates, ImportCandidate{ImportPath: namespace + ":", CanContinue: true})
 	}
 
 	slices.SortFunc(candidates, func(a, b ImportCandidate) int {
@@ -147,7 +136,7 @@ func (ctx *CompilerContext) enumerateImportDirectory(root, sourcePrefix, relativ
 		directoryPart = ""
 	}
 	directory := filepath.Join(root, filepath.FromSlash(directoryPart))
-	if !PathWithinRoot(root, directory) {
+	if !IsPathWithinRoot(root, directory) {
 		return nil
 	}
 	entries, err := os.ReadDir(directory)
@@ -167,7 +156,7 @@ func (ctx *CompilerContext) enumerateImportDirectory(root, sourcePrefix, relativ
 			relative = directoryPart + "/" + name
 		}
 		if entry.IsDir() {
-			directories = append(directories, ImportCandidate{ImportPath: sourcePrefix + relative + "/", Continuing: true})
+			directories = append(directories, ImportCandidate{ImportPath: sourcePrefix + relative + "/", CanContinue: true})
 			continue
 		}
 		if !strings.EqualFold(filepath.Ext(name), ctx.Config.Extension) {
@@ -232,7 +221,7 @@ func (ctx *CompilerContext) ImportPathForFile(origin ModuleOrigin, namespace, fi
 }
 
 // ResolveImportPath resolves an import path to a module file.
-func (ctx *CompilerContext) ResolveImportPath(rawPath string) (*ResolvedImport, error) {
+func (ctx *CompilerContext) ResolveImportPath(rawPath string) (*module.ResolvedImport, error) {
 	if ctx == nil {
 		return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: "nil compiler context"}
 	}
@@ -314,7 +303,7 @@ func (ctx *CompilerContext) ResolveImportPath(rawPath string) (*ResolvedImport, 
 		return nil, &ImportError{Code: diagnostics.ErrInvalidImportPath, Msg: err.Error()}
 	}
 
-	return &ResolvedImport{ID: id, FilePath: absPath}, nil
+	return &module.ResolvedImport{ID: id, FilePath: absPath}, nil
 }
 
 func splitNamespacedImportPath(importPath string) (string, string, bool) {

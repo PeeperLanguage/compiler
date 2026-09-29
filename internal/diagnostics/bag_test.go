@@ -54,7 +54,7 @@ func TestDiscardModuleAfterRetainsOtherModuleGroups(t *testing.T) {
 func TestCopyModuleRangeReplacesOnlySelectedGroups(t *testing.T) {
 	source := NewDiagnosticBag()
 	source.BeginPhase(phase.Parsed, "a").Add(NewWarning("a parse"))
-	source.BeginPhase(phase.Ownership, "a").Add(NewWarning("a ownership"))
+	source.BeginPhase(phase.Analyzed, "a").Add(NewWarning("a analyzed"))
 	source.BeginPhase(phase.Usage, "a").Add(NewWarning("a usage"))
 	source.BeginPhase(phase.Backend, "a").Add(NewError("a backend"))
 	source.BeginPhase(phase.Parsed, "b").Add(NewWarning("b parse"))
@@ -63,11 +63,11 @@ func TestCopyModuleRangeReplacesOnlySelectedGroups(t *testing.T) {
 	destination.BeginPhase(phase.Usage, "a").Add(NewWarning("stale usage"))
 	destination.BeginPhase(phase.Parsed, "b").Add(NewWarning("existing b parse"))
 
-	destination.CopyModuleRange(source, "a", phase.None, phase.Ownership, true)
-	destination.CopyModuleRange(source, "a", phase.None, phase.Ownership, true)
+	destination.CopyModuleRange(source, "a", phase.None, phase.Analyzed, true)
+	destination.CopyModuleRange(source, "a", phase.None, phase.Analyzed, true)
 
 	got := destination.Diagnostics()
-	want := []string{"a parse", "existing b parse", "a ownership", "stale usage"}
+	want := []string{"a parse", "existing b parse", "a analyzed", "stale usage"}
 	if len(got) != len(want) {
 		t.Fatalf("diagnostic count = %d, want %d: %#v", len(got), len(want), got)
 	}
@@ -79,7 +79,7 @@ func TestCopyModuleRangeReplacesOnlySelectedGroups(t *testing.T) {
 
 	destination.CopyModuleRange(source, "a", phase.Usage, phase.Backend, false)
 	got = destination.Diagnostics()
-	want = []string{"a parse", "existing b parse", "a ownership"}
+	want = []string{"a parse", "existing b parse", "a analyzed"}
 	if len(got) != len(want) || destination.HasErrors() {
 		t.Fatalf("inactive diagnostics affected active results: %#v", got)
 	}
@@ -92,7 +92,7 @@ func TestCopyModuleRangeReplacesOnlySelectedGroups(t *testing.T) {
 	destination.ActivateModuleRange("a", phase.Usage, phase.Backend)
 	destination.ActivateModuleRange("a", phase.Usage, phase.Backend)
 	got = destination.Diagnostics()
-	want = []string{"a parse", "existing b parse", "a ownership", "a usage", "a backend"}
+	want = []string{"a parse", "existing b parse", "a analyzed", "a usage", "a backend"}
 	if len(got) != len(want) || destination.ErrorCount() != 1 {
 		t.Fatalf("diagnostic count after deferred copy = %d, want %d: %#v", len(got), len(want), got)
 	}
@@ -222,6 +222,6 @@ func captureEmitErrors(bag *DiagnosticBag) string {
 	}
 	bag.emitFiltered(emitter, func(diag *Diagnostic) bool {
 		return diag != nil && diag.Severity == Error
-	})
+	}, nil)
 	return sb.String()
 }

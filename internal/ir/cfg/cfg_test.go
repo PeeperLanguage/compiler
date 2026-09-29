@@ -7,44 +7,183 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
+	"compiler/internal/ir/thir"
+	"compiler/internal/moduleid"
+	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
 )
 
-func testModule(body *ast.BlockStmt, returnType ast.TypeExpr) *ast.Module {
+func testModule(body *ast.BlockStmt, returnType ast.TypeExpr) *thir.Module {
 	location := source.NewLocation("cfg_test.peep", source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 10})
-	fn := &ast.FnDecl{
-		NodeIDHolder: ast.NodeIDHolder{NodeID: 1},
-		Name:         &ast.Ident{NodeIDHolder: ast.NodeIDHolder{NodeID: 2}, Name: "main", Location: location},
-		ReturnType:   returnType,
-		Body:         body,
-		Location:     location,
+	owner := moduleid.ID{Origin: "local", ImportPath: "test"}
+	functionID := moduleid.FunctionIdentity(owner, "fn:main:", 0)
+	functionSourceID := source.FunctionNodeID(functionID, 1)
+	function := &thir.Function{
+		Identity:       functionID,
+		Name:           "main",
+		ReturnTypeText: ast.TypeText(returnType),
+		HasReturnValue: returnType != nil,
+		Body:           testBlock(body),
+		Source:         ir.SourceInfo{NodeID: functionSourceID, Location: location},
 	}
-	return &ast.Module{Stmts: []ast.Stmt{fn}}
+	return thir.NewModule(owner.ImportPath, "cfg_test.peep", []*thir.Function{function})
 }
 
-func TestModuleIndexesFunctionBySourceIdentity(t *testing.T) {
-	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}}
-	module := BuildModule(testModule(body, nil), BuildQueries{})
-	if len(module.Functions) != 1 || module.Function(ir.NodeID(1)) != module.Functions[0] {
-		t.Fatalf("CFG function index = %#v, want source NodeID lookup", module)
+func testBlock(block *ast.BlockStmt) *thir.Block {
+	if block == nil {
+		return nil
 	}
-	if _, found := reflect.TypeOf(Graph{}).FieldByName("Cleanup"); found {
+	result := &thir.Block{StmtInfo: thir.StmtInfo{Source: testSource(block)}}
+	for _, statement := range block.Stmts {
+		if typed := testStmt(statement); typed != nil {
+			result.Stmts = append(result.Stmts, typed)
+		}
+	}
+	return result
+}
+
+func testStmt(statement ast.Stmt) thir.Stmt {
+	switch node := statement.(type) {
+	case nil:
+		return nil
+	case *ast.BlockStmt:
+		return testBlock(node)
+	case *ast.ExprStmt:
+		return &thir.ExprStmt{StmtInfo: thir.StmtInfo{Source: testSource(node)}, Value: testExpr(node.Expr)}
+	case *ast.ReturnStmt:
+		return &thir.Return{StmtInfo: thir.StmtInfo{Source: testSource(node)}, Value: testExpr(node.Value)}
+	case *ast.IfStmt:
+		return &thir.If{StmtInfo: thir.StmtInfo{Source: testSource(node)}, Condition: testExpr(node.Cond), Then: testBlock(node.Then), Else: testStmt(node.Else)}
+	case *ast.ForStmt:
+		return &thir.For{StmtInfo: thir.StmtInfo{Source: testSource(node)}, Condition: testExpr(node.Cond), Iterable: testExpr(node.Iterable), Body: testBlock(node.Body)}
+	case *ast.BreakStmt:
+		return &thir.Break{StmtInfo: thir.StmtInfo{Source: testSource(node)}}
+	case *ast.ContinueStmt:
+		return &thir.Continue{StmtInfo: thir.StmtInfo{Source: testSource(node)}}
+	case *ast.MatchStmt:
+		match := &thir.Match{StmtInfo: thir.StmtInfo{Source: testSource(node)}, Subject: testExpr(node.Subject)}
+		for _, arm := range node.Arms {
+			if arm == nil {
+				continue
+			}
+			match.Arms = append(match.Arms, thir.MatchArm{Source: testSource(arm), Body: testBlock(arm.Body)})
+		}
+		return match
+	default:
+		panic("unsupported CFG test statement")
+	}
+}
+
+func testExpr(expression ast.Expr) thir.Expr {
+	if expression == nil {
+		return nil
+	}
+	info := thir.ExprInfo{Source: testSource(expression)}
+	switch node := expression.(type) {
+	case *ast.BoolLit:
+		return &thir.BoolLiteral{ExprInfo: info, Value: node.Value}
+	case *ast.NumberLit:
+		return &thir.NumberLiteral{ExprInfo: info, Value: node.Value}
+	case *ast.Ident:
+		return &thir.Ident{ExprInfo: info, Name: node.Name}
+	default:
+		panic("unsupported CFG test expression")
+	}
+}
+
+func testSource(node ast.Node) ir.SourceInfo {
+	if node == nil {
+		return ir.SourceInfo{}
+	}
+	return ir.SourceInfo{NodeID: node.ID(), Location: ast.LocOf(node)}
+}
+
+func TestModuleFindsFunctionByStableIdentity(t *testing.T) {
+	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(10)}}
+	source := testModule(body, nil)
+	module := BuildModule(source)
+	if len(module.Functions) != 1 || module.Functions[0].FunctionID == "" || module.FunctionByID(source.Functions[0].Identity) != module.Functions[0] {
+		t.Fatalf("CFG function identity = %q, want THIR identity %q", module.Functions[0].FunctionID, source.Functions[0].Identity)
+	}
+	if _, found := reflect.TypeFor[ControlFlowGraph]().FieldByName("Cleanup"); found {
 		t.Fatal("CFG graph retains ownership cleanup output")
 	}
 }
 
+func TestModuleFunctionLookupUsesPublishedFunctions(t *testing.T) {
+	graph := &ControlFlowGraph{FunctionID: "test"}
+	module := &Module{Functions: []*ControlFlowGraph{nil, graph}}
+	if got := module.FunctionByID("test"); got != graph {
+		t.Fatalf("function lookup = %#v, want published graph", got)
+	}
+	if got := module.FunctionByID("missing"); got != nil {
+		t.Fatalf("missing function lookup = %#v, want nil", got)
+	}
+	var missing *Module
+	if got := missing.FunctionByID("test"); got != nil {
+		t.Fatalf("nil module lookup = %#v, want nil", got)
+	}
+}
+
+func TestBuildModuleRejectsMissingFunctionID(t *testing.T) {
+	source := testModule(&ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(10)}}, nil)
+	source.Functions[0].Identity = ""
+	defer func() {
+		if got := recover(); got != `CFG construction: function "main" has no stable identity` {
+			t.Fatalf("missing function identity panic = %v", got)
+		}
+	}()
+	BuildModule(source)
+}
+
+func TestBuildModuleRejectsDuplicateFunctionID(t *testing.T) {
+	typedModule := testModule(&ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(10)}}, nil)
+	duplicate := *typedModule.Functions[0]
+	duplicate.Source.NodeID = source.ParsedNodeID(2)
+	typedModule.Functions = append(typedModule.Functions, &duplicate)
+	defer func() {
+		if got := recover(); got != "CFG construction: duplicate stable function identity" {
+			t.Fatalf("duplicate function identity panic = %v", got)
+		}
+	}()
+	BuildModule(typedModule)
+}
+
+func TestGraphSiteResolvesPositionSafely(t *testing.T) {
+	site := &Site{}
+	graph := &ControlFlowGraph{Blocks: []*Block{{Sites: []*Site{site}}, nil}}
+	if got := graph.Site(SiteID{}); got != site {
+		t.Fatalf("site lookup = %#v, want %#v", got, site)
+	}
+	for _, id := range []SiteID{
+		{Block: -1},
+		{Block: 0, Index: -1},
+		{Block: 0, Index: 1},
+		{Block: 1},
+		{Block: 2},
+	} {
+		if got := graph.Site(id); got != nil {
+			t.Fatalf("invalid site lookup %v = %#v, want nil", id, got)
+		}
+	}
+	var missing *ControlFlowGraph
+	if got := missing.Site(SiteID{}); got != nil {
+		t.Fatalf("nil graph site lookup = %#v, want nil", got)
+	}
+}
+
 func TestBuildModulePreservesLexicalScopeExits(t *testing.T) {
-	nested := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 20}}
-	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}, Stmts: []ast.Stmt{nested}}
-	graph := BuildModule(testModule(body, nil), BuildQueries{}).Functions[0]
-	if graph.Entry == nil || len(graph.Entry.Sites) != 1 || graph.Entry.Sites[0].Kind != SiteScopeExit || graph.Entry.Sites[0].NodeID != 20 {
+	nested := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(20)}}
+	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(10)}, Stmts: []ast.Stmt{nested}}
+	graph := BuildModule(testModule(body, nil)).Functions[0]
+	if graph.Entry == nil || len(graph.Entry.Sites) != 1 || graph.Entry.Sites[0].Kind != SiteScopeExit || graph.Entry.Sites[0].NodeID != source.ParsedNodeID(20) {
 		t.Fatalf("entry sites = %#v, want nested scope exit", graph.Entry.Sites)
 	}
 	if len(graph.Blocks) < 3 {
 		t.Fatalf("CFG blocks = %#v, want nested continuation", graph.Blocks)
 	}
 	continuation := graph.Blocks[2]
-	if len(continuation.Sites) != 1 || continuation.Sites[0].Kind != SiteScopeExit || continuation.Sites[0].NodeID != 10 {
+	if len(continuation.Sites) != 1 || continuation.Sites[0].Kind != SiteScopeExit || continuation.Sites[0].NodeID != source.ParsedNodeID(10) {
 		t.Fatalf("continuation sites = %#v, want function-body scope exit", continuation.Sites)
 	}
 }
@@ -52,21 +191,21 @@ func TestBuildModulePreservesLexicalScopeExits(t *testing.T) {
 func TestBuildModulePreservesTerminatorSourceIdentity(t *testing.T) {
 	location := source.NewLocation("cfg_test.peep", source.Position{Line: 2, Column: 1}, source.Position{Line: 2, Column: 10})
 	branch := &ast.IfStmt{
-		NodeIDHolder: ast.NodeIDHolder{NodeID: 30},
-		Cond:         &ast.BoolLit{NodeIDHolder: ast.NodeIDHolder{NodeID: 31}, Value: true, Location: location},
-		Then:         &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 32}},
+		NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(30)},
+		Cond:         &ast.BoolLit{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(31)}, Value: true, Location: location},
+		Then:         &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(32)}},
 		Location:     location,
 	}
-	ret := &ast.ReturnStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 40}, Location: location}
-	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}, Stmts: []ast.Stmt{branch, ret}}
-	graph := BuildModule(testModule(body, nil), BuildQueries{}).Functions[0]
+	ret := &ast.ReturnStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(40)}, Location: location}
+	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(10)}, Stmts: []ast.Stmt{branch, ret}}
+	graph := BuildModule(testModule(body, nil)).Functions[0]
 	branchTerm, ok := graph.Entry.Terminator.(*Branch)
-	if !ok || branchTerm.NodeID != 30 || branchTerm.ConditionID != 31 {
+	if !ok || branchTerm.NodeID != source.ParsedNodeID(30) || branchTerm.ConditionID != source.ParsedNodeID(31) {
 		t.Fatalf("branch = %#v, want source nodes 30 and 31", graph.Entry.Terminator)
 	}
 	for _, block := range graph.Blocks {
 		if returnTerm, ok := block.Terminator.(*Return); ok {
-			if returnTerm.NodeID != 40 {
+			if returnTerm.NodeID != source.ParsedNodeID(40) {
 				t.Fatalf("return = %#v, want source node 40", returnTerm)
 			}
 			return
@@ -77,19 +216,19 @@ func TestBuildModulePreservesTerminatorSourceIdentity(t *testing.T) {
 
 func TestBuildModuleCreatesCanonicalSiteAdjacency(t *testing.T) {
 	branch := &ast.IfStmt{
-		NodeIDHolder: ast.NodeIDHolder{NodeID: 30},
-		Cond:         &ast.BoolLit{NodeIDHolder: ast.NodeIDHolder{NodeID: 31}, Value: true},
-		Then:         &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 32}},
-		Else:         &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 33}},
+		NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(30)},
+		Cond:         &ast.BoolLit{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(31)}, Value: true},
+		Then:         &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(32)}},
+		Else:         &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(33)}},
 	}
-	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}, Stmts: []ast.Stmt{branch}}
-	graph := BuildModule(testModule(body, nil), BuildQueries{}).Functions[0]
+	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(10)}, Stmts: []ast.Stmt{branch}}
+	graph := BuildModule(testModule(body, nil)).Functions[0]
 	if len(graph.Entry.Sites) != 1 {
 		t.Fatalf("entry sites = %#v, want one branch site", graph.Entry.Sites)
 	}
 	branchSite := graph.Entry.Sites[0]
 	branchEdges := graph.SiteEdges.OutEdges(branchSite.ID)
-	if branchSite.Kind != SiteTerminator || branchSite.NodeID != 30 || len(branchEdges) != 2 {
+	if branchSite.Kind != SiteTerminator || branchSite.NodeID != source.ParsedNodeID(30) || len(branchEdges) != 2 {
 		t.Fatalf("branch site = %#v, want two branch successors", branchSite)
 	}
 	wantKinds := map[EdgeKind]bool{EdgeTrue: false, EdgeFalse: false}
@@ -110,13 +249,13 @@ func TestFinalizeSitesLabelsVariantCaseEdges(t *testing.T) {
 	first := &Block{ID: 1}
 	second := &Block{ID: 2}
 	entry := &Block{ID: 0, Terminator: &SwitchVariant{
-		NodeID: 41,
+		NodeID: source.ParsedNodeID(41),
 		Targets: []VariantTarget{
 			{Case: 0, Target: first},
 			{Case: 1, Target: second},
 		},
 	}}
-	graph := &Graph{Entry: entry, Exit: &Block{ID: 3}, Blocks: []*Block{entry, first, second}}
+	graph := &ControlFlowGraph{Entry: entry, Exit: &Block{ID: 3}, Blocks: []*Block{entry, first, second}}
 	finalizeSites(graph)
 	edges := graph.SiteEdges.OutEdges(entry.Sites[0].ID)
 	if len(entry.Sites) != 1 || len(edges) != 2 {
@@ -124,30 +263,33 @@ func TestFinalizeSitesLabelsVariantCaseEdges(t *testing.T) {
 	}
 	for caseIndex, edge := range edges {
 		if edge.Kind != EdgeVariantCase || edge.Case != caseIndex {
-			t.Fatalf("switch edge %d = %#v", caseIndex, edge)
+			t.Fatalf("switch edge %v = %#v", caseIndex, edge)
 		}
 	}
 }
 
 func TestBuildModuleCreatesSemanticVariantSwitchAndSharedJoin(t *testing.T) {
 	match := &ast.MatchStmt{
-		NodeIDHolder: ast.NodeIDHolder{NodeID: 30},
-		Subject:      &ast.Ident{NodeIDHolder: ast.NodeIDHolder{NodeID: 31}, Name: "value"},
+		NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(30)},
+		Subject:      &ast.Ident{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(31)}, Name: "value"},
 		Arms: []*ast.MatchArm{
-			{NodeIDHolder: ast.NodeIDHolder{NodeID: 32}, Body: &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 33}}},
-			{NodeIDHolder: ast.NodeIDHolder{NodeID: 34}, Body: &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 35}}},
+			{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(32)}, Body: &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(33)}}},
+			{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(34)}, Body: &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(35)}}},
 		},
 	}
-	after := &ast.ExprStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 40}, Expr: &ast.NumberLit{NodeIDHolder: ast.NodeIDHolder{NodeID: 41}, Value: "1"}}
-	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}, Stmts: []ast.Stmt{match, after}}
-	graph := BuildModule(testModule(body, nil), BuildQueries{MatchCases: func(matchID ast.NodeID) ([]int, bool) {
-		if matchID != 30 {
-			t.Fatalf("match evidence query = %d, want 30", matchID)
-		}
-		return []int{1, 0}, true
-	}}).Functions[0]
+	after := &ast.ExprStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(40)}, Expr: &ast.NumberLit{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(41)}, Value: "1"}}
+	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(10)}, Stmts: []ast.Stmt{match, after}}
+	module := testModule(body, nil)
+	semanticMatch := module.Functions[0].Body.Stmts[0].(*thir.Match)
+	semanticMatch.EnumType = &typeinfo.NamedType{Name: "Status"}
+	semanticMatch.CaseCount = 2
+	semanticMatch.Arms = []thir.MatchArm{
+		{Source: ir.SourceInfo{NodeID: source.ParsedNodeID(32)}, Case: 1, Body: &thir.Block{StmtInfo: thir.StmtInfo{Source: ir.SourceInfo{NodeID: source.ParsedNodeID(33)}}}},
+		{Source: ir.SourceInfo{NodeID: source.ParsedNodeID(34)}, Case: 0, Body: &thir.Block{StmtInfo: thir.StmtInfo{Source: ir.SourceInfo{NodeID: source.ParsedNodeID(35)}}}},
+	}
+	graph := BuildModule(module).Functions[0]
 	switchTerm, ok := graph.Entry.Terminator.(*SwitchVariant)
-	if !ok || switchTerm.NodeID != 30 || len(switchTerm.Targets) != 2 {
+	if !ok || switchTerm.NodeID != source.ParsedNodeID(30) || len(switchTerm.Targets) != 2 {
 		t.Fatalf("match terminator = %#v", graph.Entry.Terminator)
 	}
 	if switchTerm.Targets[0].Case != 1 || switchTerm.Targets[1].Case != 0 {
@@ -159,7 +301,7 @@ func TestBuildModuleCreatesSemanticVariantSwitchAndSharedJoin(t *testing.T) {
 		t.Fatalf("match arms do not share join: first=%#v second=%#v", firstJump, secondJump)
 	}
 	join := firstJump.Target
-	if len(join.Sites) == 0 || join.Sites[0].NodeID != 40 {
+	if len(join.Sites) == 0 || join.Sites[0].NodeID != source.ParsedNodeID(40) {
 		t.Fatalf("match join sites = %#v, want following statement", join.Sites)
 	}
 	caseEdges := graph.SiteEdges.OutEdges(graph.Entry.Sites[0].ID)
@@ -170,16 +312,16 @@ func TestBuildModuleCreatesSemanticVariantSwitchAndSharedJoin(t *testing.T) {
 
 func TestBuildModulePreservesDisconnectedStatementsAfterReturn(t *testing.T) {
 	location := source.NewLocation("cfg_test.peep", source.Position{Line: 2, Column: 1}, source.Position{Line: 2, Column: 10})
-	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}, Stmts: []ast.Stmt{
-		&ast.ReturnStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 40}, Location: location},
-		&ast.ExprStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 41}, Expr: &ast.NumberLit{Value: "1"}, Location: location},
+	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(10)}, Stmts: []ast.Stmt{
+		&ast.ReturnStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(40)}, Location: location},
+		&ast.ExprStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(41)}, Expr: &ast.NumberLit{Value: "1"}, Location: location},
 	}}
-	module := BuildModule(testModule(body, nil), BuildQueries{})
+	module := BuildModule(testModule(body, nil))
 	graph := module.Functions[0]
 	found := false
 	for _, block := range graph.Blocks {
 		for _, site := range block.Sites {
-			if !block.Reachable && site.Kind == SiteStatement && site.NodeID == 41 {
+			if !block.IsReachable && site.Kind == SiteStatement && site.NodeID == source.ParsedNodeID(41) {
 				found = true
 			}
 		}
@@ -196,17 +338,17 @@ func TestBuildModulePreservesDisconnectedStatementsAfterReturn(t *testing.T) {
 
 func TestBuildModuleCreatesForInLoopBlocksWithSynthesizedCondition(t *testing.T) {
 	loop := &ast.ForStmt{
-		NodeIDHolder: ast.NodeIDHolder{NodeID: 30},
-		Iterable:     &ast.Ident{NodeIDHolder: ast.NodeIDHolder{NodeID: 31}, Name: "items"},
-		Body:         &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 32}},
+		NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(30)},
+		Iterable:     &ast.Ident{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(31)}, Name: "items"},
+		Body:         &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(32)}},
 	}
-	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}, Stmts: []ast.Stmt{loop}}
-	graph := BuildModule(testModule(body, nil), BuildQueries{}).Functions[0]
-	init := loopBlock(t, graph, 30, BlockLoopInit)
-	header := loopBlock(t, graph, 30, BlockLoop)
-	loopBody := loopBlock(t, graph, 30, BlockLoopBody)
-	latch := loopBlock(t, graph, 30, BlockLoopLatch)
-	exit := loopBlock(t, graph, 30, BlockLoopExit)
+	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(10)}, Stmts: []ast.Stmt{loop}}
+	graph := BuildModule(testModule(body, nil)).Functions[0]
+	init := loopBlock(t, graph, source.ParsedNodeID(30), BlockLoopInit)
+	header := loopBlock(t, graph, source.ParsedNodeID(30), BlockLoop)
+	loopBody := loopBlock(t, graph, source.ParsedNodeID(30), BlockLoopBody)
+	latch := loopBlock(t, graph, source.ParsedNodeID(30), BlockLoopLatch)
+	exit := loopBlock(t, graph, source.ParsedNodeID(30), BlockLoopExit)
 
 	entryJump, ok := graph.Entry.Terminator.(*Jump)
 	if !ok || entryJump.Target != init {
@@ -217,7 +359,7 @@ func TestBuildModuleCreatesForInLoopBlocksWithSynthesizedCondition(t *testing.T)
 		t.Fatalf("init terminator = %#v, want loop header", init.Terminator)
 	}
 	branch, ok := header.Terminator.(*Branch)
-	if !ok || branch.NodeID != 30 || branch.ConditionID != 0 || branch.TrueTarget != loopBody || branch.FalseTarget != exit {
+	if !ok || branch.NodeID != source.ParsedNodeID(30) || branch.ConditionID.IsValid() || branch.TrueTarget != loopBody || branch.FalseTarget != exit {
 		t.Fatalf("for-in header = %#v, want synthesized branch", header.Terminator)
 	}
 	latchJump, ok := latch.Terminator.(*Jump)
@@ -228,11 +370,11 @@ func TestBuildModuleCreatesForInLoopBlocksWithSynthesizedCondition(t *testing.T)
 
 func TestBuildModuleUsesGuaranteedLoopEntryEvidence(t *testing.T) {
 	loop := &ast.ForStmt{
-		NodeIDHolder: ast.NodeIDHolder{NodeID: 30},
-		Iterable:     &ast.Ident{NodeIDHolder: ast.NodeIDHolder{NodeID: 31}, Name: "items"},
-		Body:         &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 32}},
+		NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(30)},
+		Iterable:     &ast.Ident{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(31)}, Name: "items"},
+		Body:         &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(32)}},
 	}
-	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}, Stmts: []ast.Stmt{loop}}
+	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(10)}, Stmts: []ast.Stmt{loop}}
 	for _, test := range []struct {
 		name       string
 		guaranteed bool
@@ -242,21 +384,17 @@ func TestBuildModuleUsesGuaranteedLoopEntryEvidence(t *testing.T) {
 		{name: "guaranteed entry", guaranteed: true, wantOrigin: BlockLoopBody},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			graph := BuildModule(testModule(body, nil), BuildQueries{
-				LoopGuaranteedEntry: func(loopID ast.NodeID) bool {
-					if loopID != 30 {
-						t.Fatalf("loop evidence query = %d, want 30", loopID)
-					}
-					return test.guaranteed
-				},
-			}).Functions[0]
-			init := loopBlock(t, graph, 30, BlockLoopInit)
-			header := loopBlock(t, graph, 30, BlockLoop)
-			loopBody := loopBlock(t, graph, 30, BlockLoopBody)
-			latch := loopBlock(t, graph, 30, BlockLoopLatch)
+			module := testModule(body, nil)
+			semanticLoop := module.Functions[0].Body.Stmts[0].(*thir.For)
+			semanticLoop.Iteration = &thir.RangeIteration{HasGuaranteedEntry: test.guaranteed}
+			graph := BuildModule(module).Functions[0]
+			init := loopBlock(t, graph, source.ParsedNodeID(30), BlockLoopInit)
+			header := loopBlock(t, graph, source.ParsedNodeID(30), BlockLoop)
+			loopBody := loopBlock(t, graph, source.ParsedNodeID(30), BlockLoopBody)
+			latch := loopBlock(t, graph, source.ParsedNodeID(30), BlockLoopLatch)
 			initJump, ok := init.Terminator.(*Jump)
 			if !ok || initJump.Target.Origin != test.wantOrigin {
-				t.Fatalf("init terminator = %#v, want target origin %d", init.Terminator, test.wantOrigin)
+				t.Fatalf("init terminator = %#v, want target origin %v", init.Terminator, test.wantOrigin)
 			}
 			if test.guaranteed && initJump.Target != loopBody {
 				t.Fatalf("init target = %#v, want loop body", initJump.Target)
@@ -271,30 +409,30 @@ func TestBuildModuleUsesGuaranteedLoopEntryEvidence(t *testing.T) {
 
 func TestBuildModuleContinueTargetsLatchAndPreservesUnreachableBody(t *testing.T) {
 	loop := &ast.ForStmt{
-		NodeIDHolder: ast.NodeIDHolder{NodeID: 30},
-		Cond:         &ast.BoolLit{NodeIDHolder: ast.NodeIDHolder{NodeID: 31}, Value: true},
-		Body: &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 32}, Stmts: []ast.Stmt{
-			&ast.ContinueStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 40}},
-			&ast.ExprStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 41}, Expr: &ast.NumberLit{Value: "1"}},
+		NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(30)},
+		Cond:         &ast.BoolLit{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(31)}, Value: true},
+		Body: &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(32)}, Stmts: []ast.Stmt{
+			&ast.ContinueStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(40)}},
+			&ast.ExprStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(41)}, Expr: &ast.NumberLit{Value: "1"}},
 		}},
 	}
-	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}, Stmts: []ast.Stmt{loop}}
-	graph := BuildModule(testModule(body, nil), BuildQueries{}).Functions[0]
-	latch := loopBlock(t, graph, 30, BlockLoopLatch)
-	header := loopBlock(t, graph, 30, BlockLoop)
+	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(10)}, Stmts: []ast.Stmt{loop}}
+	graph := BuildModule(testModule(body, nil)).Functions[0]
+	latch := loopBlock(t, graph, source.ParsedNodeID(30), BlockLoopLatch)
+	header := loopBlock(t, graph, source.ParsedNodeID(30), BlockLoop)
 	foundContinue := false
 	foundUnreachable := false
 	for _, block := range graph.Blocks {
 		for _, site := range block.Sites {
 			switch site.NodeID {
-			case 40:
+			case source.ParsedNodeID(40):
 				jump, ok := block.Terminator.(*Jump)
 				if !ok || jump.Target != latch {
 					t.Fatalf("continue terminator = %#v, want latch", block.Terminator)
 				}
 				foundContinue = true
-			case 41:
-				foundUnreachable = !block.Reachable
+			case source.ParsedNodeID(41):
+				foundUnreachable = !block.IsReachable
 			}
 		}
 	}
@@ -309,32 +447,32 @@ func TestBuildModuleContinueTargetsLatchAndPreservesUnreachableBody(t *testing.T
 
 func TestBuildModuleNestedLoopJumpsUseInnermostTargets(t *testing.T) {
 	inner := &ast.ForStmt{
-		NodeIDHolder: ast.NodeIDHolder{NodeID: 40},
-		Cond:         &ast.BoolLit{NodeIDHolder: ast.NodeIDHolder{NodeID: 41}, Value: true},
-		Body: &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 42}, Stmts: []ast.Stmt{
+		NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(40)},
+		Cond:         &ast.BoolLit{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(41)}, Value: true},
+		Body: &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(42)}, Stmts: []ast.Stmt{
 			&ast.IfStmt{
-				NodeIDHolder: ast.NodeIDHolder{NodeID: 43},
-				Cond:         &ast.BoolLit{NodeIDHolder: ast.NodeIDHolder{NodeID: 44}, Value: true},
-				Then: &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 45}, Stmts: []ast.Stmt{
-					&ast.ContinueStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 52}},
+				NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(43)},
+				Cond:         &ast.BoolLit{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(44)}, Value: true},
+				Then: &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(45)}, Stmts: []ast.Stmt{
+					&ast.ContinueStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(52)}},
 				}},
 			},
-			&ast.BreakStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 50}},
+			&ast.BreakStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(50)}},
 		}},
 	}
 	outer := &ast.ForStmt{
-		NodeIDHolder: ast.NodeIDHolder{NodeID: 30},
-		Cond:         &ast.BoolLit{NodeIDHolder: ast.NodeIDHolder{NodeID: 31}, Value: true},
-		Body: &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 32}, Stmts: []ast.Stmt{
+		NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(30)},
+		Cond:         &ast.BoolLit{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(31)}, Value: true},
+		Body: &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(32)}, Stmts: []ast.Stmt{
 			inner,
-			&ast.ContinueStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 51}},
+			&ast.ContinueStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(51)}},
 		}},
 	}
-	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}, Stmts: []ast.Stmt{outer}}
-	graph := BuildModule(testModule(body, nil), BuildQueries{}).Functions[0]
-	innerExit := loopBlock(t, graph, 40, BlockLoopExit)
-	innerLatch := loopBlock(t, graph, 40, BlockLoopLatch)
-	outerLatch := loopBlock(t, graph, 30, BlockLoopLatch)
+	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(10)}, Stmts: []ast.Stmt{outer}}
+	graph := BuildModule(testModule(body, nil)).Functions[0]
+	innerExit := loopBlock(t, graph, source.ParsedNodeID(40), BlockLoopExit)
+	innerLatch := loopBlock(t, graph, source.ParsedNodeID(40), BlockLoopLatch)
+	outerLatch := loopBlock(t, graph, source.ParsedNodeID(30), BlockLoopLatch)
 	foundBreak := false
 	foundInnerContinue := false
 	foundOuterContinue := false
@@ -344,13 +482,13 @@ func TestBuildModuleNestedLoopJumpsUseInnermostTargets(t *testing.T) {
 			if !ok {
 				continue
 			}
-			if site.NodeID == 50 {
+			if site.NodeID == source.ParsedNodeID(50) {
 				foundBreak = jump.Target == innerExit
 			}
-			if site.NodeID == 51 {
+			if site.NodeID == source.ParsedNodeID(51) {
 				foundOuterContinue = jump.Target == outerLatch
 			}
-			if site.NodeID == 52 {
+			if site.NodeID == source.ParsedNodeID(52) {
 				foundInnerContinue = jump.Target == innerLatch
 			}
 		}
@@ -361,26 +499,26 @@ func TestBuildModuleNestedLoopJumpsUseInnermostTargets(t *testing.T) {
 }
 
 func TestBuildModuleLoopJumpExitsOnlyLoopScopesInnermostFirst(t *testing.T) {
-	nested := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 33}, Stmts: []ast.Stmt{
-		&ast.BreakStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 40}},
+	nested := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(33)}, Stmts: []ast.Stmt{
+		&ast.BreakStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(40)}},
 	}}
 	loop := &ast.ForStmt{
-		NodeIDHolder: ast.NodeIDHolder{NodeID: 30},
-		Cond:         &ast.BoolLit{NodeIDHolder: ast.NodeIDHolder{NodeID: 31}, Value: true},
-		Body:         &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 32}, Stmts: []ast.Stmt{nested}},
+		NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(30)},
+		Cond:         &ast.BoolLit{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(31)}, Value: true},
+		Body:         &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(32)}, Stmts: []ast.Stmt{nested}},
 	}
-	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}, Stmts: []ast.Stmt{loop}}
-	graph := BuildModule(testModule(body, nil), BuildQueries{}).Functions[0]
+	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(10)}, Stmts: []ast.Stmt{loop}}
+	graph := BuildModule(testModule(body, nil)).Functions[0]
 	for _, block := range graph.Blocks {
-		if len(block.Sites) < 3 || block.Sites[0].NodeID != 40 {
+		if len(block.Sites) < 3 || block.Sites[0].NodeID != source.ParsedNodeID(40) {
 			continue
 		}
-		if block.Sites[1].Kind != SiteScopeExit || block.Sites[1].NodeID != 33 ||
-			block.Sites[2].Kind != SiteScopeExit || block.Sites[2].NodeID != 32 {
+		if block.Sites[1].Kind != SiteScopeExit || block.Sites[1].NodeID != source.ParsedNodeID(33) ||
+			block.Sites[2].Kind != SiteScopeExit || block.Sites[2].NodeID != source.ParsedNodeID(32) {
 			t.Fatalf("break sites = %#v, want scope exits [33, 32]", block.Sites)
 		}
 		for _, site := range block.Sites[1:] {
-			if site.Kind == SiteScopeExit && site.NodeID == 10 {
+			if site.Kind == SiteScopeExit && site.NodeID == source.ParsedNodeID(10) {
 				t.Fatalf("break sites = %#v, must retain enclosing scope 10", block.Sites)
 			}
 		}
@@ -390,49 +528,49 @@ func TestBuildModuleLoopJumpExitsOnlyLoopScopesInnermostFirst(t *testing.T) {
 }
 
 func TestBuildModuleRecoversLoopJumpsOutsideLoop(t *testing.T) {
-	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}, Stmts: []ast.Stmt{
-		&ast.BreakStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 20}},
-		&ast.ExprStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 21}, Expr: &ast.NumberLit{Value: "1"}},
-		&ast.ContinueStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 22}},
-		&ast.ExprStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 23}, Expr: &ast.NumberLit{Value: "2"}},
+	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(10)}, Stmts: []ast.Stmt{
+		&ast.BreakStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(20)}},
+		&ast.ExprStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(21)}, Expr: &ast.NumberLit{Value: "1"}},
+		&ast.ContinueStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(22)}},
+		&ast.ExprStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(23)}, Expr: &ast.NumberLit{Value: "2"}},
 	}}
-	graph := BuildModule(testModule(body, nil), BuildQueries{}).Functions[0]
-	want := []ir.NodeID{20, 21, 22, 23}
+	graph := BuildModule(testModule(body, nil)).Functions[0]
+	want := []source.NodeID{source.ParsedNodeID(20), source.ParsedNodeID(21), source.ParsedNodeID(22), source.ParsedNodeID(23)}
 	if len(graph.Entry.Sites) < len(want) {
 		t.Fatalf("entry sites = %#v, want recovered statements", graph.Entry.Sites)
 	}
 	for index, nodeID := range want {
 		if graph.Entry.Sites[index].Kind != SiteStatement || graph.Entry.Sites[index].NodeID != nodeID {
-			t.Fatalf("entry site %d = %#v, want statement %d", index, graph.Entry.Sites[index], nodeID)
+			t.Fatalf("entry site %v = %#v, want statement %v", index, graph.Entry.Sites[index], nodeID)
 		}
 	}
 }
 
 func TestBuildModuleInfiniteLoopBreakMakesExitReachable(t *testing.T) {
 	loop := &ast.ForStmt{
-		NodeIDHolder: ast.NodeIDHolder{NodeID: 30},
-		Body: &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 32}, Stmts: []ast.Stmt{
-			&ast.BreakStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 40}},
+		NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(30)},
+		Body: &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(32)}, Stmts: []ast.Stmt{
+			&ast.BreakStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(40)}},
 		}},
 	}
-	after := &ast.ExprStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 50}, Expr: &ast.NumberLit{Value: "1"}}
-	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}, Stmts: []ast.Stmt{loop, after}}
-	graph := BuildModule(testModule(body, nil), BuildQueries{}).Functions[0]
-	init := loopBlock(t, graph, 30, BlockLoopInit)
-	loopBody := loopBlock(t, graph, 30, BlockLoopBody)
-	latch := loopBlock(t, graph, 30, BlockLoopLatch)
-	exit := loopBlock(t, graph, 30, BlockLoopExit)
+	after := &ast.ExprStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(50)}, Expr: &ast.NumberLit{Value: "1"}}
+	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(10)}, Stmts: []ast.Stmt{loop, after}}
+	graph := BuildModule(testModule(body, nil)).Functions[0]
+	init := loopBlock(t, graph, source.ParsedNodeID(30), BlockLoopInit)
+	loopBody := loopBlock(t, graph, source.ParsedNodeID(30), BlockLoopBody)
+	latch := loopBlock(t, graph, source.ParsedNodeID(30), BlockLoopLatch)
+	exit := loopBlock(t, graph, source.ParsedNodeID(30), BlockLoopExit)
 	initJump, initOK := init.Terminator.(*Jump)
 	latchJump, latchOK := latch.Terminator.(*Jump)
 	if !initOK || initJump.Target != loopBody || !latchOK || latchJump.Target != loopBody {
 		t.Fatalf("infinite loop topology: init=%#v latch=%#v, want body", init.Terminator, latch.Terminator)
 	}
-	if !exit.Reachable {
+	if !exit.IsReachable {
 		t.Fatal("infinite-loop exit unreachable despite break")
 	}
 	foundAfter := false
 	for _, site := range exit.Sites {
-		if site.Kind == SiteStatement && site.NodeID == 50 {
+		if site.Kind == SiteStatement && site.NodeID == source.ParsedNodeID(50) {
 			foundAfter = true
 		}
 	}
@@ -442,8 +580,8 @@ func TestBuildModuleInfiniteLoopBreakMakesExitReachable(t *testing.T) {
 }
 
 func TestAnalyzeDoesNotRebuildFinalizedTopology(t *testing.T) {
-	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}}
-	module := BuildModule(testModule(body, nil), BuildQueries{})
+	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(10)}}
+	module := BuildModule(testModule(body, nil))
 	graph := module.Functions[0]
 	before := graph.BlockEdges.InEdges(graph.Entry.ID)
 	graph.Entry.Sites = nil
@@ -454,10 +592,14 @@ func TestAnalyzeDoesNotRebuildFinalizedTopology(t *testing.T) {
 }
 
 func TestAnalyzeReportsMissingReturn(t *testing.T) {
-	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}}
-	returnType := &ast.NamedType{NodeIDHolder: ast.NodeIDHolder{NodeID: 11}, Name: "i32"}
+	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(10)}}
+	returnType := &ast.NamedType{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(11)}, Name: "i32"}
 	diag := diagnostics.NewDiagnosticBag()
-	Analyze(BuildModule(testModule(body, returnType), BuildQueries{}), diag, nil)
+	module := BuildModule(testModule(body, returnType))
+	if graph := module.Functions[0]; !graph.HasReturnValue || graph.ReturnTypeText != "i32" {
+		t.Fatalf("return metadata = (%t, %q), want (true, %q)", graph.HasReturnValue, graph.ReturnTypeText, "i32")
+	}
+	Analyze(module, diag, nil)
 	if !hasDiagnosticCode(diag, diagnostics.ErrMissingReturn) {
 		t.Fatalf("diagnostics = %#v, want missing return", diag.Diagnostics())
 	}
@@ -465,16 +607,16 @@ func TestAnalyzeReportsMissingReturn(t *testing.T) {
 
 func TestAnalyzeReportsConstantIfCondition(t *testing.T) {
 	location := source.NewLocation("cfg_test.peep", source.Position{Line: 2, Column: 1}, source.Position{Line: 4, Column: 2})
-	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}, Stmts: []ast.Stmt{&ast.IfStmt{
-		NodeIDHolder: ast.NodeIDHolder{NodeID: 30},
-		Cond:         &ast.BoolLit{NodeIDHolder: ast.NodeIDHolder{NodeID: 31}, Value: false, Location: location},
-		Then:         &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 32}},
+	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(10)}, Stmts: []ast.Stmt{&ast.IfStmt{
+		NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(30)},
+		Cond:         &ast.BoolLit{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(31)}, Value: false, Location: location},
+		Then:         &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(32)}},
 		Location:     location,
 	}}}
 	diag := diagnostics.NewDiagnosticBag()
-	Analyze(BuildModule(testModule(body, nil), BuildQueries{}), diag, func(conditionID, scopeID ir.NodeID) (bool, bool) {
-		if conditionID != 31 || scopeID != 10 {
-			t.Fatalf("constant condition query = (%d, %d), want (31, 10)", conditionID, scopeID)
+	Analyze(BuildModule(testModule(body, nil)), diag, func(branch *Branch) (bool, bool) {
+		if branch.NodeID != source.ParsedNodeID(30) || branch.ConditionID != source.ParsedNodeID(31) || branch.ScopeID != source.ParsedNodeID(10) {
+			t.Fatalf("constant condition query = (%v, %v, %v), want (30, 31, 10)", branch.NodeID, branch.ConditionID, branch.ScopeID)
 		}
 		return false, true
 	})
@@ -485,24 +627,24 @@ func TestAnalyzeReportsConstantIfCondition(t *testing.T) {
 
 func TestAnalyzeDoesNotReportConstantLoopCondition(t *testing.T) {
 	location := source.NewLocation("cfg_test.peep", source.Position{Line: 2, Column: 1}, source.Position{Line: 4, Column: 2})
-	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 10}, Stmts: []ast.Stmt{&ast.ForStmt{
-		NodeIDHolder: ast.NodeIDHolder{NodeID: 30},
-		Cond:         &ast.BoolLit{NodeIDHolder: ast.NodeIDHolder{NodeID: 31}, Value: false, Location: location},
-		Body:         &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: 32}},
+	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(10)}, Stmts: []ast.Stmt{&ast.ForStmt{
+		NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(30)},
+		Cond:         &ast.BoolLit{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(31)}, Value: false, Location: location},
+		Body:         &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(32)}},
 		Location:     location,
 	}}}
 	diag := diagnostics.NewDiagnosticBag()
 	queries := 0
-	Analyze(BuildModule(testModule(body, nil), BuildQueries{}), diag, func(ir.NodeID, ir.NodeID) (bool, bool) {
+	Analyze(BuildModule(testModule(body, nil)), diag, func(*Branch) (bool, bool) {
 		queries++
 		return false, true
 	})
 	if queries != 0 || hasDiagnosticCode(diag, diagnostics.WarnConstantConditionFalse) {
-		t.Fatalf("loop condition produced if-only diagnostic: queries=%d diagnostics=%#v", queries, diag.Diagnostics())
+		t.Fatalf("loop condition produced if-only diagnostic: queries=%v diagnostics=%#v", queries, diag.Diagnostics())
 	}
 }
 
-func loopBlock(t *testing.T, graph *Graph, loopID ir.NodeID, origin BlockOrigin) *Block {
+func loopBlock(t *testing.T, graph *ControlFlowGraph, loopID source.NodeID, origin BlockOrigin) *Block {
 	t.Helper()
 	var found *Block
 	for _, block := range graph.Blocks {
@@ -510,12 +652,12 @@ func loopBlock(t *testing.T, graph *Graph, loopID ir.NodeID, origin BlockOrigin)
 			continue
 		}
 		if found != nil {
-			t.Fatalf("multiple loop blocks for NodeID %d and origin %d", loopID, origin)
+			t.Fatalf("multiple loop blocks for NodeID %v and origin %v", loopID, origin)
 		}
 		found = block
 	}
 	if found == nil {
-		t.Fatalf("loop block missing for NodeID %d and origin %d", loopID, origin)
+		t.Fatalf("loop block missing for NodeID %v and origin %v", loopID, origin)
 	}
 	return found
 }
@@ -548,7 +690,7 @@ func TestStructuredControlClassifiesEveryBlockOrigin(t *testing.T) {
 		{BlockLoopBody, "loop body", true},
 		{BlockLoopLatch, "loop latch", true},
 	} {
-		if got := structuredControl(test.origin); got != test.want {
+		if got := isStructuredControl(test.origin); got != test.want {
 			t.Errorf("structuredControl(%s) = %t, want %t", test.name, got, test.want)
 		}
 	}

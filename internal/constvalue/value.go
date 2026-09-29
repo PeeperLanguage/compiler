@@ -5,12 +5,13 @@ import (
 	"strconv"
 
 	"compiler/pkg/numeric"
+	"compiler/pkg/typednil"
 )
 
 type Value interface {
-	constValueNode()
 	Truthy() bool
 	TypeText() string
+	semanticKey() string
 }
 
 type IntConst struct {
@@ -41,12 +42,6 @@ type VariantConst struct {
 	caseIndex       int
 	fieldValues     []Value
 }
-
-func (*IntConst) constValueNode()     {}
-func (*FloatConst) constValueNode()   {}
-func (*BoolConst) constValueNode()    {}
-func (*StringConst) constValueNode()  {}
-func (*VariantConst) constValueNode() {}
 
 func NewInt(value *big.Int, typeID string) (*IntConst, bool) {
 	out, ok := NormalizeInteger(value, typeID)
@@ -102,7 +97,7 @@ func NewVariant(nominalIdentity, typeID string, caseIndex int, fieldValues []Val
 	}
 	fields := make([]Value, len(fieldValues))
 	for index, field := range fieldValues {
-		if field == nil {
+		if field == nil || typednil.IsNil(field) {
 			return nil, false
 		}
 		fields[index] = field
@@ -348,7 +343,7 @@ func foldIntBinary(op string, left, right *IntConst) (Value, bool) {
 	return NewInt(out, left.TypeText())
 }
 
-func integerConstantType(typeID string) (signed bool, bits int, ok bool) {
+func integerConstantType(typeID string) (isSigned bool, bits int, ok bool) {
 	if typeID == "byte" {
 		return false, 8, true
 	}

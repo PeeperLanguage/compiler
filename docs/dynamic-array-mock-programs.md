@@ -138,7 +138,7 @@ introduced.
 
 ## Runtime Boundary
 
-HIR and MIR must represent construction and owner operations explicitly. LLVM
+THIR/MIR lowering must represent construction and owner operations explicitly. LLVM
 lowering may use current selected-program allocator implementation, but source
 semantics and phase models must not name libc `malloc`, `realloc`, or `free`.
 Allocator selection and instance provenance remain issue #26; this step must not

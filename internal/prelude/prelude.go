@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
 	"compiler/pkg/manifest"
@@ -47,22 +48,22 @@ func globalPreludePath(ctx *project.CompilerContext) (string, bool) {
 // points at the auto-loaded global prelude source. Direct-open and overlay
 // paths must reuse this exact identity so the same file does not appear twice
 // in compiler and LSP caches.
-func ModuleForFile(ctx *project.CompilerContext, filePath, content string) (*project.Module, bool) {
+func ModuleForFile(ctx *project.CompilerContext, filePath, content string) (*module.Module, bool) {
 	preludePath, ok := globalPreludePath(ctx)
 	if !ok || project.CanonicalPath(preludePath) != project.CanonicalPath(filePath) {
 		return nil, false
 	}
 	id := ModuleID(ctx)
-	if !id.Valid() {
+	if !id.IsValid() {
 		// Without derivable identity the module can never register, so reporting
 		// success here would hand callers a module every path silently drops.
 		return nil, false
 	}
-	return &project.Module{
-		ID:              id,
-		FilePath:        preludePath,
-		Content:         content,
-		ContentProvided: true,
+	return &module.Module{
+		ID:                 id,
+		FilePath:           preludePath,
+		Content:            content,
+		HasProvidedContent: true,
 	}, true
 }
 

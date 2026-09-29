@@ -22,11 +22,11 @@ const (
 // It emits module text in LLVM order: static data, helper itabs, declarations,
 // thunks, then function bodies. It also keeps one emitter state object so type
 // lowering failures and deferred external globals are reported consistently.
-func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo target.Info, debugBuild bool) string {
+func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo target.Info, isDebugBuild bool) string {
 	if mod == nil {
 		return ""
 	}
-	if !targetInfo.Valid() {
+	if !targetInfo.IsValid() {
 		if diag != nil {
 			diag.Add(diagnostics.NewError("invalid LLVM target").WithCode(diagnostics.ErrInvalidType))
 		}
@@ -42,7 +42,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 		target:          targetInfo,
 		badTypes:        make(map[string]struct{}),
 		externalGlobals: make(map[string]ir.TypeID),
-		debug:           newLLVMDebugEmitter(mod, targetInfo.OS, debugBuild),
+		debug:           newLLVMDebugEmitter(mod, targetInfo.OS, isDebugBuild),
 	}
 	var b strings.Builder
 	b.WriteString("source_filename = \"")
@@ -118,17 +118,18 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 				if isOwnedInterfaceType(mod.Types, makeVal.Type) {
 					fmt.Fprintf(&b, ", i8* bitcast (void (i8*, i8*)* %s to i8*)", interfaceSymbolName("iface_release", mod.Types, makeVal.Type, makeVal.DataType))
 				}
-				for i, slot := range makeVal.Slots {
+				for _, slot := range makeVal.Slots {
 					b.WriteString(", ")
 					refName, ok := slot.(*mir.RefName)
 					slotName := ""
 					if ok && refName != nil {
-						slotName = "@" + ir.SanitizeSymbolName(ir.StripSymbolInstance(refName.Name))
+						slotName = "@" + ir.SanitizeSymbolName(refName.Name)
 					} else {
 						slotName = "null"
 					}
-					slotLayout, ok := emitter.interfaceSlotLayout(makeVal.Type, i)
-					if !ok {
+					slotLayout := emitter.layout(slot.TypeID())
+					if slotLayout == nil || slotLayout.Kind != llvmLayoutFunction {
+						emitter.markInvalid("interface slot reached LLVM without published function type")
 						slotLayout = llvmPointerLayout(llvmScalarLayout("i8"))
 					}
 					if slotName == "null" {
@@ -472,7 +473,7 @@ func emitVariantSwitch(b *llvmBuilder, term *mir.SwitchVariant) {
 		}
 		return
 	}
-	variant, ok := b.emitter.mod.Types.Type(mirRefType(term.Value))
+	variant, ok := b.emitter.mod.Types.Type(term.Value.TypeID())
 	if !ok || variant.Kind != ir.TypeVariant {
 		b.emitter.markInvalid("variant switch requires variant subject")
 		return
@@ -586,11 +587,11 @@ func validateExternOwnership(mod *mir.Module, diag *diagnostics.DiagnosticBag) b
 		if fn == nil || fn.Blocks != nil {
 			continue
 		}
-		owned := typeNeedsDrop(mod.Types, fn.ReturnType)
+		isOwned := typeNeedsDrop(mod.Types, fn.ReturnType)
 		for _, param := range fn.Params {
-			owned = owned || typeNeedsDrop(mod.Types, param.Type)
+			isOwned = isOwned || typeNeedsDrop(mod.Types, param.Type)
 		}
-		if !owned {
+		if !isOwned {
 			continue
 		}
 		valid = false
@@ -636,8 +637,8 @@ func moduleRuntimeOperations(mod *mir.Module) (printUsed bool, dropUsed bool, al
 				}
 				if drop, ok := instr.(*mir.Drop); ok && drop != nil {
 					dropUsed = true
-					freeRuntimeUsed = freeRuntimeUsed || typeNeedsRawFreeID(mod.Types, mirRefType(drop.Value))
-					if typeCarriesAllocatorID(mod.Types, mirRefType(drop.Value)) {
+					freeRuntimeUsed = freeRuntimeUsed || typeNeedsRawFreeID(mod.Types, drop.Value.TypeID())
+					if typeCarriesAllocatorID(mod.Types, drop.Value.TypeID()) {
 						allocUsed = true
 						allocatorRuntimeUsed = true
 					}
@@ -738,7 +739,7 @@ func emitDefaultDescriptorThunks(b *strings.Builder, emitter *llvmEmitter) {
 // External globals are collected while lowering refs, so they cannot be emitted
 // earlier with full type information.
 func finalLLVMText(b *strings.Builder, emitter *llvmEmitter) string {
-	if emitter != nil && emitter.invalid {
+	if emitter != nil && emitter.isInvalid {
 		return ""
 	}
 	if b == nil {
@@ -766,7 +767,7 @@ func llvmFunctionReturnType(types *ir.TypeTable, fn *mir.Function) ir.TypeID {
 		return ir.InvalidType
 	}
 	if fn.Name == "main" && isVoidType(types, fn.ReturnType) {
-		return types.Intern(ir.Type{Kind: ir.TypeInteger, Signed: true, Bits: 32})
+		return types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
 	}
 	return fn.ReturnType
 }
@@ -821,7 +822,7 @@ func stackLocalSlots(typeTable *ir.TypeTable, fn *mir.Function) []stackLocalSlot
 				order = append(order, assign.Name)
 			}
 			counts[assign.Name]++
-			if typ := mirValueType(assign.Value); typ != ir.InvalidType {
+			if typ := assign.Value.TypeID(); typ != ir.InvalidType {
 				types[assign.Name] = typ
 			}
 			switch value := assign.Value.(type) {

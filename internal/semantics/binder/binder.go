@@ -1,25 +1,31 @@
 package binder
 
 import (
-	"cmp"
-	"slices"
-
 	"compiler/internal/frontend/ast"
+	"compiler/internal/graph"
+	"compiler/internal/module"
+	"compiler/internal/problems"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/typeresolution"
 )
 
 type binder struct {
-	ctx    *project.CompilerContext
-	module *project.Module
+	ctx       *project.CompilerContext
+	module    *module.Module
+	typeGraph *graph.DependencyGraph
 }
 
-func Bind(ctx *project.CompilerContext, module *project.Module) {
+func Bind(ctx *project.CompilerContext, module *module.Module) {
 	if ctx == nil || module == nil || module.AST == nil || module.ModuleScope == nil {
 		return
 	}
-	b := &binder{ctx: ctx, module: module}
+	b := &binder{
+		ctx:       ctx,
+		module:    module,
+		typeGraph: graph.NewDependencyGraph(""),
+	}
 	b.bindModule()
 }
 
@@ -34,7 +40,7 @@ func (b *binder) bindModule() {
 			completed = append(completed, defined)
 		}
 	}
-	b.ctx.CompleteTypeInstances(completed)
+	b.ctx.TypeResolver.CompleteTypeInstances(b.ctx.Diagnostics, completed)
 	ast.ForEachDecl(b.module.AST, func(decl ast.Decl) bool {
 		switch node := decl.(type) {
 		case *ast.FnDecl:
@@ -46,9 +52,7 @@ func (b *binder) bindModule() {
 		}
 		return true
 	})
-	slices.SortFunc(b.module.Bindings.OperationFunctions, func(left, right *symbols.Symbol) int {
-		return cmp.Compare(left.Name, right.Name)
-	})
+	b.module.SymbolIndex.SortOperationFunctions()
 }
 
 // Bind function and top-level declaration signatures into module scope.
@@ -56,17 +60,30 @@ func (b *binder) bindFunctionDecl(fn *ast.FnDecl) {
 	if b == nil || b.module == nil || fn == nil || fn.Name == nil {
 		return
 	}
-	fnType := typeinfo.FuncTypeFromDeclWithOptions(fn, project.TypeSyntaxOptions(b.ctx, b.module, nil, false))
+	fnType := b.ctx.TypeResolver.ResolveFunction(b.ctx.Diagnostics, b.module, fn, typeresolution.Context{})
+	sym := b.module.SymbolIndex.Symbol(fn.Name)
 	if fn.Receiver != nil {
-		if sym := b.module.Bindings.MethodsByDecl[fn.ID()]; sym != nil {
-			sym.BindType(fnType)
+		if sym == nil {
+			return
+		}
+		sym.BindType(fnType)
+		if len(fnType.Params) == 0 {
+			return
+		}
+		if previous := b.module.SymbolIndex.RegisterMethod(fnType.Params[0], sym); previous != nil {
+			target, _ := typeinfo.ReceiverTarget(fnType.Params[0])
+			message := "method `" + sym.Name + "` already declared for `" + typeinfo.TypeText(target) + "`"
+			b.ctx.Diagnostics.Add(problems.Redeclaration(message, sym.Location, previous.Location))
 		}
 		return
 	}
-	if sym := b.moduleScopeSymbol(fn.Name.Name); sym != nil {
+	if sym == nil {
+		sym = b.moduleScopeSymbol(fn.Name.Name)
+	}
+	if sym != nil {
 		sym.BindType(fnType)
 		if len(fnType.Params) > 0 {
-			b.module.Bindings.OperationFunctions = append(b.module.Bindings.OperationFunctions, sym)
+			b.module.SymbolIndex.AddOperationFunction(sym)
 		}
 	}
 }
@@ -85,7 +102,7 @@ func (b *binder) bindModuleBinding(name *ast.Ident, typ ast.TypeExpr) {
 		return
 	}
 	b.bindModuleScopeType(name.Name,
-		typeinfo.TypeFromSyntax(typ, project.TypeSyntaxOptions(b.ctx, b.module, nil, false)))
+		b.ctx.TypeResolver.Resolve(b.ctx.Diagnostics, b.module, typ, typeresolution.Context{}))
 }
 
 // Bind named type declarations using one stable shell per symbol.
@@ -115,9 +132,14 @@ func (b *binder) bindTypeDecl(decl ast.TypeDecl) *typeinfo.DefinedType {
 		}
 		sym.BindType(defined)
 	}
-	opts := project.TypeSyntaxOptions(b.ctx, b.module, nil, true)
-	opts.TypeParameters = typeinfo.TypeParameterBindings(defined.TypeParameters, nil)
-	defined.Underlying = typeinfo.TypeFromSyntax(typ, opts)
+	context := typeresolution.Context{
+		AllowAbstractSelf: true,
+		TypeParameters:    typeinfo.TypeParameterBindings(defined.TypeParameters, nil),
+	}
+	if _, ok := decl.(*ast.InterfaceDecl); ok {
+		context.NamedInterfaceRoot = typ
+	}
+	defined.Underlying = b.ctx.TypeResolver.Resolve(b.ctx.Diagnostics, b.module, typ, context)
 	return defined
 }
 

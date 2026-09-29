@@ -278,7 +278,7 @@ fn choose(left: &i32, right: &i32, pick_left: bool) -> &i32 from(left, right)
 ```
 
 The ownership phase validates returned origins and substitutes caller origins
-at calls. `from` metadata is erased before HIR. User aggregates containing
+at calls. `from` metadata is erased before MIR. User aggregates containing
 external references remain future work; safe self-referential aggregates are
 forbidden because moving inline storage would invalidate their internal views.
 
@@ -309,7 +309,7 @@ Every live owned value is destroyed on normal scope exit. Moves and explicit
 destination drops old value before storing replacement.
 
 Drop planning belongs to ownership phase. It produces explicit cleanup actions
-for lowering; HIR and backend do not re-infer liveness. Control-flow joins and
+for lowering; MIR and backend do not re-infer liveness. Control-flow joins and
 loop backedges require identical ownership state, so compiler never needs a
 runtime drop flag.
 
@@ -347,7 +347,7 @@ Unequal concrete fields and fixed indexes may reserve independently; dynamic
 indexes and slice views remain conservative.
 
 Reservation facts exist only while checking one expression. Persistent reference
-liveness remains on the existing ownership CFG, and HIR/MIR/backend call lowering
+liveness remains on the existing ownership CFG, and THIR/MIR/backend call lowering
 does not carry reservation state.
 
 ## Interface Ownership

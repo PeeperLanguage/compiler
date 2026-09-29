@@ -82,9 +82,10 @@ func (definition FunctionDefinition) Signature(baseType typeinfo.Type, compilerT
 }
 
 func (definition FunctionDefinition) symbolWithType(fnType *typeinfo.FuncType) *symbols.Symbol {
-	sym := symbols.New(string(definition.Operation), symbols.SymbolFunc, nil, nil)
+	name := string(definition.Operation)
+	sym := symbols.New(symbols.CompilerSymbolID(symbols.SymbolFunc, "intrinsic:"+name), name, symbols.SymbolFunc, nil, nil)
 	sym.CompilerOp = definition.Operation
-	sym.Type = fnType
+	sym.BindType(fnType)
 	sym.IsPub = true
 	return sym
 }
@@ -93,8 +94,8 @@ func dynamicArraySignature(op symbols.CompilerOp, baseType typeinfo.Type, compil
 	var elementType typeinfo.Type = &typeinfo.NamedType{Name: "T"}
 	var arrayType typeinfo.Type = &typeinfo.ArrayType{Shape: typeinfo.ArrayOwner, Elem: elementType}
 	if baseType != nil {
-		if targetType, mutable, referenced := typeinfo.ReferenceTarget(typeinfo.Underlying(baseType)); referenced {
-			if !mutable {
+		if targetType, isMutable, referenced := typeinfo.ReferenceTarget(typeinfo.Underlying(baseType)); referenced {
+			if !isMutable {
 				return nil
 			}
 			baseType = targetType
@@ -110,7 +111,7 @@ func dynamicArraySignature(op symbols.CompilerOp, baseType typeinfo.Type, compil
 	if !ok {
 		panic("missing builtin usize type")
 	}
-	params := []typeinfo.Type{&typeinfo.RefType{Target: arrayType, Mutable: true}, sizeType}
+	params := []typeinfo.Type{&typeinfo.RefType{Target: arrayType, IsMutable: true}, sizeType}
 	paramNames := []string{"values", "size"}
 	switch op {
 	case symbols.CompilerOpAppend:
@@ -151,7 +152,7 @@ func fromBytesSignature(op symbols.CompilerOp, baseType typeinfo.Type, _ target.
 		panic("missing from_bytes intrinsic signature")
 	}
 	bytes := &typeinfo.RefType{Target: &typeinfo.ArrayType{Shape: typeinfo.ArraySlice, Elem: &typeinfo.ByteType{}}}
-	if baseType != nil && !typeinfo.SameType(baseType, bytes) {
+	if baseType != nil && !typeinfo.IsSameType(baseType, bytes) {
 		return nil
 	}
 	return &typeinfo.FuncType{

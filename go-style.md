@@ -308,12 +308,14 @@ var name string
 var ok bool
 ```
 
-```go
-// BAD - map literal instead of make
-e := Env{vars: map[string]Type{}}
+Both empty map literals and `make` are idiomatic. Choose by intent:
 
-// GOOD
-e := Env{vars: make(map[string]Type)}
+```go
+// Initialize known entries directly.
+e := Env{vars: map[string]Type{"name": stringType}}
+
+// Preallocate when expected size is known.
+e := Env{vars: make(map[string]Type, expectedNames)}
 ```
 
 ---
@@ -337,6 +339,6 @@ func (n *Node) SetName(s string) { ... }
 - Use `any` instead of `interface{}` (Go 1.18+).
 - Don't use `new(T)` when `&T{}` is clearer.
 - Named return values only when they meaningfully document the output - not as a shortcut for bare `return`.
-- `defer` for cleanup is good. `defer` inside a loop is a bug waiting to happen - the deferred call runs at function exit, not loop iteration end.
+- `defer` for cleanup is good. Avoid deferring directly in a long-running loop because calls run at function exit; use a per-iteration function when cleanup must run after each iteration.
 - Avoid `init()` unless truly necessary; prefer explicit initialisation at call sites.
 - Don't use `fmt.Println` / `log.Print` for debug output in committed code. Use the compiler's diagnostic system or remove before committing.

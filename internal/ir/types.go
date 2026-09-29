@@ -8,7 +8,7 @@ import (
 )
 
 // TypeID identifies one runtime type in a compilation's TypeTable. IDs never
-// cross compilation contexts; semantic types are interned when HIR is formed.
+// cross compilation contexts; semantic types are interned during runtime type lowering.
 type TypeID uint32
 
 const InvalidType TypeID = 0
@@ -55,6 +55,7 @@ type TypeMethod struct {
 	Receiver MethodReceiver
 	Params   []TypeField
 	Return   TypeID
+	SlotType TypeID
 }
 
 type VariantFamily uint8
@@ -78,20 +79,20 @@ type VariantCase struct {
 // Type is a backend-independent runtime descriptor. Source-only aliases are
 // resolved before interning, so every child directly describes its ABI shape.
 type Type struct {
-	Kind     TypeKind
-	Signed   bool
-	Bits     int
-	Mutable  bool
-	Length   string
-	Elem     TypeID
-	Fields   []TypeField
-	Methods  []TypeMethod
-	Params   []TypeID
-	Return   TypeID
-	Name     string
-	Family   VariantFamily
-	Identity string
-	Cases    []VariantCase
+	Kind      TypeKind
+	IsSigned  bool
+	Bits      int
+	IsMutable bool
+	Length    string
+	Elem      TypeID
+	Fields    []TypeField
+	Methods   []TypeMethod
+	Params    []TypeID
+	Return    TypeID
+	Name      string
+	Family    VariantFamily
+	Identity  string
+	Cases     []VariantCase
 }
 
 // OptionalVariant owns optional's fixed case order. Flow facts, lowering, and
@@ -124,20 +125,20 @@ func (t Type) OptionalPayload() (TypeID, bool) {
 // TypeTable is owned by one CompilerContext. It is canonical storage for IR
 // types, their diagnostics text, and ABI identity.
 type TypeTable struct {
-	mu        sync.RWMutex
-	types     []Type
-	ids       map[string]TypeID
-	abiKeys   map[string]TypeID
-	complete  []bool
-	indexType TypeID
+	mu         sync.RWMutex
+	types      []Type
+	ids        map[string]TypeID
+	abiKeys    map[string]TypeID
+	isComplete []bool
+	indexType  TypeID
 }
 
 func NewTypeTable() *TypeTable {
 	return &TypeTable{
-		types:    []Type{{Name: "<invalid>"}},
-		ids:      make(map[string]TypeID),
-		abiKeys:  make(map[string]TypeID),
-		complete: []bool{false},
+		types:      []Type{{Name: "<invalid>"}},
+		ids:        make(map[string]TypeID),
+		abiKeys:    make(map[string]TypeID),
+		isComplete: []bool{false},
 	}
 }
 
@@ -153,7 +154,7 @@ func (t *TypeTable) Intern(typ Type) TypeID {
 	}
 	id := TypeID(len(t.types))
 	t.types = append(t.types, cloneType(typ))
-	t.complete = append(t.complete, true)
+	t.isComplete = append(t.isComplete, true)
 	t.ids[key] = id
 	t.abiKeys[t.abiKeyLocked(id)] = id
 	return id
@@ -177,7 +178,7 @@ func (t *TypeTable) ReserveNamed(shell Type) (TypeID, error) {
 	}
 	id := TypeID(len(t.types))
 	t.types = append(t.types, cloneType(shell))
-	t.complete = append(t.complete, false)
+	t.isComplete = append(t.isComplete, false)
 	t.ids[key] = id
 	return id, nil
 }
@@ -201,21 +202,21 @@ func (t *TypeTable) CompleteNamed(id TypeID, typ Type) error {
 	if !shellOK || shellKey != key {
 		return fmt.Errorf("completing named IR TypeID %d with mismatched identity", id)
 	}
-	if t.complete[id] {
+	if t.isComplete[id] {
 		if descriptorKey(t.types[id]) != descriptorKey(typ) {
 			return fmt.Errorf("named IR type %q completed with conflicting descriptor", typ.Name)
 		}
 		return nil
 	}
 	t.types[id] = cloneType(typ)
-	t.complete[id] = true
+	t.isComplete[id] = true
 	t.abiKeys[t.abiKeyLocked(id)] = id
 	return nil
 }
 
 // LookupABIKey bridges finalized semantic identity into an already-interned IR
-// type. It never parses text or creates a type; HIR lowering remains the only
-// semantic-to-IR type construction boundary.
+// type. It never parses text or creates a type; typelower remains the only
+// semantic-to-runtime-IR type construction boundary.
 func (t *TypeTable) LookupABIKey(key string) (TypeID, bool) {
 	if t == nil {
 		return InvalidType, false
@@ -247,16 +248,48 @@ func (t *TypeTable) IndexType() TypeID {
 	return t.indexType
 }
 
+// Type returns a detached snapshot of one completed runtime descriptor.
+// Callers may inspect or modify returned slices without mutating table storage.
 func (t *TypeTable) Type(id TypeID) (Type, bool) {
 	if t == nil {
 		return Type{}, false
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	if id == InvalidType || int(id) >= len(t.types) || !t.complete[id] {
+	if id == InvalidType || int(id) >= len(t.types) || !t.isComplete[id] {
 		return Type{}, false
 	}
-	return t.types[id], true
+	return cloneType(t.types[id]), true
+}
+
+// InterfaceMethod returns one published interface method descriptor from an
+// interface value or carrier type. The descriptor owns the method slot ABI
+// TypeID, so consumers never reconstruct slot function shape.
+func (t *TypeTable) InterfaceMethod(id TypeID, slot int) (TypeMethod, bool) {
+	typ, ok := t.interfaceType(id)
+	if !ok || slot < 0 || slot >= len(typ.Methods) {
+		return TypeMethod{}, false
+	}
+	return typ.Methods[slot], true
+}
+
+func (t *TypeTable) InterfaceMethodCount(id TypeID) (int, bool) {
+	typ, ok := t.interfaceType(id)
+	if !ok {
+		return 0, false
+	}
+	return len(typ.Methods), true
+}
+
+func (t *TypeTable) interfaceType(id TypeID) (Type, bool) {
+	typ, ok := t.Type(id)
+	if !ok {
+		return Type{}, false
+	}
+	if typ.Kind == TypeReference || typ.Kind == TypeOwnedPtr {
+		typ, ok = t.Type(typ.Elem)
+	}
+	return typ, ok && typ.Kind == TypeInterface
 }
 
 // NamedTypeIDs returns completed identified composites in stable TypeID order.
@@ -269,10 +302,10 @@ func (t *TypeTable) NamedTypeIDs() []TypeID {
 	defer t.mu.RUnlock()
 	ids := make([]TypeID, 0)
 	for index := 1; index < len(t.types); index++ {
-		if !t.complete[index] {
+		if !t.isComplete[index] {
 			continue
 		}
-		if _, named := identifiedTypeKey(t.types[index]); named {
+		if _, isNamed := identifiedTypeKey(t.types[index]); isNamed {
 			ids = append(ids, TypeID(index))
 		}
 	}
@@ -299,7 +332,7 @@ func (t *TypeTable) textLocked(id TypeID) string {
 	case TypeVoid:
 		return "void"
 	case TypeInteger:
-		if typ.Signed {
+		if typ.IsSigned {
 			return "i" + strconv.Itoa(typ.Bits)
 		}
 		return "u" + strconv.Itoa(typ.Bits)
@@ -323,12 +356,12 @@ func (t *TypeTable) textLocked(id TypeID) string {
 		return "*" + t.textLocked(typ.Elem)
 	case TypeReference:
 		prefix := "&"
-		if typ.Mutable {
+		if typ.IsMutable {
 			prefix = "&mut "
 		}
 		return prefix + t.textLocked(typ.Elem)
 	case TypeVariant:
-		if payload, optional := typ.OptionalPayload(); optional {
+		if payload, isOptional := typ.OptionalPayload(); isOptional {
 			return "?" + t.textLocked(payload)
 		}
 		if typ.Family == VariantFamilyNamed && typ.Name != "" {
@@ -430,7 +463,7 @@ func identifiedTypeKey(typ Type) (string, bool) {
 
 func descriptorKey(typ Type) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%d|%t|%d|%t|%q|%d|%d|%q|%d|%q", typ.Kind, typ.Signed, typ.Bits, typ.Mutable, typ.Length, typ.Elem, typ.Return, typ.Name, typ.Family, typ.Identity)
+	fmt.Fprintf(&b, "%d|%t|%d|%t|%q|%d|%d|%q|%d|%q", typ.Kind, typ.IsSigned, typ.Bits, typ.IsMutable, typ.Length, typ.Elem, typ.Return, typ.Name, typ.Family, typ.Identity)
 	for _, variant := range typ.Cases {
 		fmt.Fprintf(&b, "|v:%q:%d", variant.Name, variant.Payload)
 	}
@@ -438,7 +471,7 @@ func descriptorKey(typ Type) string {
 		fmt.Fprintf(&b, "|f:%q:%d", field.Name, field.Type)
 	}
 	for _, method := range typ.Methods {
-		fmt.Fprintf(&b, "|m:%q:%d:%d", method.Name, method.Receiver, method.Return)
+		fmt.Fprintf(&b, "|m:%q:%d:%d:%d", method.Name, method.Receiver, method.Return, method.SlotType)
 		for _, param := range method.Params {
 			fmt.Fprintf(&b, ":%q:%d", param.Name, param.Type)
 		}

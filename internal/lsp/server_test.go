@@ -332,6 +332,47 @@ func TestLSPServerLifecycleAndHandlers(t *testing.T) {
 	}
 }
 
+func TestHandleRenameUsesOneSnapshotDuringRecompile(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	filePath := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	source, position := markerPosition(t, "fn main() -> i32 {\n\tlet value: i32 = 1;\n\treturn __CURSOR__value;\n}\n")
+	writeWorkspaceFile(t, filePath, source)
+
+	state := NewServerState()
+	state.RootDir = root
+	if _, mod := state.recompile(filePath); mod == nil {
+		t.Fatal("expected compiled module")
+	}
+	params := RenameParams{
+		TextDocument: TextDocumentIdentifier{URI: DocumentURI(pathToURI(filePath))},
+		Position:     position,
+		NewName:      "renamed",
+	}
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	defer wg.Wait()
+	go func() {
+		defer wg.Done()
+		<-start
+		for range 30 {
+			state.recompile(filePath)
+		}
+	}()
+	close(start)
+	for range 30 {
+		edit, err := state.HandleRename(params)
+		if err != nil {
+			t.Fatalf("HandleRename failed: %v", err)
+		}
+		if edit == nil || len(edit.Changes[params.TextDocument.URI]) != 2 {
+			t.Fatalf("rename edits = %#v, want declaration and reference", edit)
+		}
+	}
+}
+
 func TestParseBundledPreludeFileKeepsStdlibIdentity(t *testing.T) {
 	root := t.TempDir()
 	libraryBase := filepath.Join(root, "libs")
@@ -1136,7 +1177,7 @@ func TestHoverDoesNotShowCompilerFunctionsAsTypeMethods(t *testing.T) {
 }
 
 func TestHoverSyntheticMethodUsesSemanticParameterNames(t *testing.T) {
-	sym := symbols.New("contains", symbols.SymbolMethod, nil, nil)
+	sym := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolMethod, "contains"), "contains", symbols.SymbolMethod, nil, nil)
 	sym.Type = &typeinfo.FuncType{
 		Params: []typeinfo.Type{
 			&typeinfo.RefType{Target: &typeinfo.StringType{}},
@@ -1146,7 +1187,7 @@ func TestHoverSyntheticMethodUsesSemanticParameterNames(t *testing.T) {
 		Return:     &typeinfo.BoolType{},
 	}
 
-	got := renderSymbol(sym, symbolRenderContext{Embedded: true})
+	got := renderSymbol(sym, symbolRenderContext{IsEmbedded: true})
 	want := "fn (self: &str) contains(needle: byte) -> bool"
 	if got != want {
 		t.Fatalf("synthetic method hover = %q, want %q", got, want)
@@ -1453,7 +1494,7 @@ func TestHoverShowsFlowRefinedOptionalUseType(t *testing.T) {
 	}
 }
 
-func TestLSPRefreshesOptionalFlowDiagnosticsAfterEdit(t *testing.T) {
+func TestRetainedAnalysisDiagnosticsRefreshAfterEdit(t *testing.T) {
 	tests := []struct {
 		name    string
 		code    string
@@ -2182,5 +2223,38 @@ func TestLSPDidChangePublishesInterfaceSeparatorErrorsAfterDebounce(t *testing.T
 	last := filePublished[len(filePublished)-1]
 	if len(last) == 0 {
 		t.Fatalf("expected syntax diagnostics after invalid interface edit")
+	}
+}
+
+func TestDiagnosticNotificationsHideInternalCompilerDetail(t *testing.T) {
+	filePath := filepath.Join(t.TempDir(), "main"+peeper.SourceExt)
+	bag := diagnostics.NewDiagnosticBag()
+	diag := diagnostics.NewError("lowered MIR is malformed: secret validator detail").WithCode(diagnostics.ErrInvalidEvidence)
+	diag.FilePath = filePath
+	bag.Add(diag)
+
+	notifications := diagnosticNotifications(&diagnosticSnapshot{
+		ctx:   &project.CompilerContext{Diagnostics: bag},
+		files: []string{filePath},
+	})
+	if len(notifications) != 1 {
+		t.Fatalf("notifications = %d, want 1", len(notifications))
+	}
+	params, ok := notifications[0].Params.(PublishDiagnosticsParams)
+	if !ok {
+		t.Fatalf("notification params type = %T", notifications[0].Params)
+	}
+	if len(params.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %d, want 1", len(params.Diagnostics))
+	}
+	published := params.Diagnostics[0]
+	if published.Code != diagnostics.ErrInvalidEvidence {
+		t.Fatalf("code = %v, want %s", published.Code, diagnostics.ErrInvalidEvidence)
+	}
+	if strings.Contains(published.Message, "secret validator detail") {
+		t.Fatalf("LSP leaked internal detail: %q", published.Message)
+	}
+	if !strings.Contains(published.Message, "internal compiler failure") {
+		t.Fatalf("LSP message = %q, want generic ICE text", published.Message)
 	}
 }

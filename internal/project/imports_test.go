@@ -5,10 +5,100 @@ import (
 	"path/filepath"
 	"testing"
 
+	"compiler/internal/diagnostics"
+	"compiler/internal/frontend/ast"
+	"compiler/internal/module"
 	"compiler/internal/moduleid"
+	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/typeresolution"
 	"compiler/pkg/manifest"
 	"compiler/pkg/peeper"
 )
+
+func TestQualifiedTypeQueryIsObservationalAndSourceResolutionPublishesUse(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	ctx := New(".", peeper.SourceExt, diag)
+	dependencyID := moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "dep"}
+	dependency := &module.Module{ID: dependencyID, ModuleScope: symbols.NewScope(nil)}
+	target := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolType, "Thing"), "Thing", symbols.SymbolType, nil, nil)
+	target.IsPub = false
+	target.BindType(&typeinfo.DefinedType{Name: "Thing", Identity: "dep::Thing", Kind: typeinfo.DefinedKindStruct})
+	if err := dependency.ModuleScope.Declare(target); err != nil {
+		t.Fatalf("declare imported type: %v", err)
+	}
+	module := &module.Module{
+		ID:          moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "main"},
+		ModuleScope: symbols.NewScope(nil),
+		SymbolIndex: symbols.NewIndex(),
+		Imports: map[string]module.ResolvedImport{
+			"dep": {ID: dependencyID},
+		},
+	}
+	alias := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolImport, "dep"), "dep", symbols.SymbolImport, nil, nil)
+	if err := module.ModuleScope.Declare(alias); err != nil {
+		t.Fatalf("declare import alias: %v", err)
+	}
+	ctx.AddModule(dependency)
+	ctx.AddModule(module)
+	node := &ast.ScopeResolution{Segments: []ast.PathSegment{
+		{Name: &ast.Ident{Name: "dep"}},
+		{Name: &ast.Ident{Name: "Thing"}},
+	}}
+
+	ctx.TypeResolver.Query(module, node, typeresolution.Context{})
+	ctx.TypeResolver.Resolve(ctx.Diagnostics, module, node, typeresolution.Context{})
+	if module.SymbolIndex.IsUsed(alias) || module.SymbolIndex.IsUsed(target) || module.SymbolIndex.Symbol(node) != nil {
+		t.Fatal("private imported type published usage or binding")
+	}
+
+	target.IsPub = true
+	if got := ctx.TypeResolver.Query(module, node, typeresolution.Context{}); got.Status != typeresolution.QueryAvailable || got.Type != target.Type {
+		t.Fatalf("query result = %#v, want available imported type %#v", got, target.Type)
+	}
+	if module.SymbolIndex.IsUsed(alias) || module.SymbolIndex.IsUsed(target) {
+		t.Fatal("qualified query published source usage")
+	}
+	if module.SymbolIndex.Symbol(node) != nil {
+		t.Fatal("qualified query published a source binding")
+	}
+
+	if got := ctx.TypeResolver.Resolve(ctx.Diagnostics, module, node, typeresolution.Context{}); got != target.Type {
+		t.Fatalf("source type = %#v, want imported type %#v", got, target.Type)
+	}
+	if !module.SymbolIndex.IsUsed(alias) || !module.SymbolIndex.IsUsed(target) {
+		t.Fatal("source resolution did not publish import alias and target usage")
+	}
+	if got := module.SymbolIndex.Symbol(node); got != target {
+		t.Fatalf("source binding = %#v, want imported target %#v", got, target)
+	}
+	if diag.HasErrors() {
+		t.Fatalf("qualified type resolution emitted diagnostics: %s", diag.EmitAllToString())
+	}
+}
+
+func TestQualifiedTypeResolutionDoesNotMarkInvalidQualifierUsed(t *testing.T) {
+	ctx := New(".", peeper.SourceExt, diagnostics.NewDiagnosticBag())
+	module := &module.Module{
+		ID:          moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "main"},
+		ModuleScope: symbols.NewScope(nil),
+		SymbolIndex: symbols.NewIndex(),
+		Imports:     make(map[string]module.ResolvedImport),
+	}
+	local := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "local"), "local", symbols.SymbolVar, nil, nil)
+	if err := module.ModuleScope.Declare(local); err != nil {
+		t.Fatalf("declare local symbol: %v", err)
+	}
+	node := &ast.ScopeResolution{Segments: []ast.PathSegment{
+		{Name: &ast.Ident{Name: "local"}},
+		{Name: &ast.Ident{Name: "Thing"}},
+	}}
+
+	ctx.TypeResolver.Resolve(ctx.Diagnostics, module, node, typeresolution.Context{})
+	if module.SymbolIndex.IsUsed(local) {
+		t.Fatal("invalid qualified type marked local qualifier used")
+	}
+}
 
 func TestResolveImportPathUsesLibraryNamespaceRoots(t *testing.T) {
 	root := t.TempDir()
@@ -117,12 +207,12 @@ func TestImportCandidatesEnumeratesRootsAndImmediateChildren(t *testing.T) {
 	}, nil)
 
 	assertImportCandidates(t, ctx.ImportCandidates("", files[0]), []ImportCandidate{
-		{ImportPath: "app/", Continuing: true},
-		{ImportPath: "core:", Continuing: true},
-		{ImportPath: "vendor:", Continuing: true},
+		{ImportPath: "app/", CanContinue: true},
+		{ImportPath: "core:", CanContinue: true},
+		{ImportPath: "vendor:", CanContinue: true},
 	})
 	assertImportCandidates(t, ctx.ImportCandidates("app/", files[0]), []ImportCandidate{
-		{ImportPath: "app/nested/", Continuing: true},
+		{ImportPath: "app/nested/", CanContinue: true},
 		{ImportPath: "app/util", FilePath: CanonicalPath(files[1])},
 	})
 	assertImportCandidates(t, ctx.ImportCandidates("vendor:json/", files[0]), []ImportCandidate{
@@ -143,7 +233,7 @@ func TestImportCandidatesFiltersPartialRootsAndMissingNamespaces(t *testing.T) {
 		},
 	}, nil)
 
-	assertImportCandidates(t, ctx.ImportCandidates("ap", ""), []ImportCandidate{{ImportPath: "app/", Continuing: true}})
+	assertImportCandidates(t, ctx.ImportCandidates("ap", ""), []ImportCandidate{{ImportPath: "app/", CanContinue: true}})
 	assertImportCandidates(t, ctx.ImportCandidates("missing:", ""), nil)
 	assertImportCandidates(t, ctx.ImportCandidates("unknown:", ""), nil)
 	assertImportCandidates(t, ctx.ImportCandidates("app/.hidden/", ""), nil)

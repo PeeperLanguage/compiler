@@ -23,7 +23,7 @@ func normalizeIndexForLength(b *llvmBuilder, indexRef mir.ValueRef, lengthI64 ll
 	if b == nil || indexRef == nil {
 		return llvmValue{}, llvmValue{}, llvmValue{}, false
 	}
-	indexType := mirRefType(indexRef)
+	indexType := indexRef.TypeID()
 	_, indexBits, ok := integerInfoID(b.emitter.mod.Types, indexType)
 	if !ok {
 		b.emitter.markInvalid("indexed access lowering requires integral index")
@@ -81,7 +81,7 @@ func emitSliceBounds(b *llvmBuilder, view *mir.SliceView, lengthI64 llvmValue) (
 		}
 		endI64 = normalized
 		predicate := "ugt"
-		if !view.EndExclusive {
+		if !view.IsEndExclusive {
 			predicate = "uge"
 		}
 		endInvalid := b.compare("icmp", predicate, end, compareLength)
@@ -105,7 +105,7 @@ func emitSliceBounds(b *llvmBuilder, view *mir.SliceView, lengthI64 llvmValue) (
 		b.namedLabel(normalizedLabel)
 		failEmitted = true
 	}
-	if view.End != nil && !view.EndExclusive {
+	if view.End != nil && !view.IsEndExclusive {
 		endI64 = b.arithmetic("add", endI64, b.value("1", i64))
 	}
 	reversed := b.compare("icmp", "ugt", startI64, endI64)
@@ -207,7 +207,7 @@ func emitStringDataAndLength(b *llvmBuilder, value llvmValue) (llvmValue, llvmVa
 func emitStringFromBytes(b *llvmBuilder, value *mir.StringFromBytes) llvmValue {
 	resultLayout := b.emitter.layout(value.Type)
 	resultType, resultOK := b.emitter.mod.Types.Type(value.Type)
-	refType, refOK := b.emitter.mod.Types.Type(mirRefType(value.Bytes))
+	refType, refOK := b.emitter.mod.Types.Type(value.Bytes.TypeID())
 	if !resultOK || resultType.Kind != ir.TypeString || !refOK || refType.Kind != ir.TypeReference {
 		b.emitter.markInvalid("from_bytes requires byte-slice reference and string result")
 		return b.zero(resultLayout)
@@ -230,10 +230,10 @@ func emitStringFromBytes(b *llvmBuilder, value *mir.StringFromBytes) llvmValue {
 func emitStringConcat(b *llvmBuilder, value *mir.StringConcat) llvmValue {
 	resultLayout := b.emitter.layout(value.Type)
 	resultType, resultOK := b.emitter.mod.Types.Type(value.Type)
-	leftType, leftOK := b.emitter.mod.Types.Type(mirRefType(value.Left))
-	rightRef, rightOK := b.emitter.mod.Types.Type(mirRefType(value.Right))
+	leftType, leftOK := b.emitter.mod.Types.Type(value.Left.TypeID())
+	rightRef, rightOK := b.emitter.mod.Types.Type(value.Right.TypeID())
 	if !resultOK || resultType.Kind != ir.TypeString || !leftOK || leftType.Kind != ir.TypeString ||
-		!rightOK || rightRef.Kind != ir.TypeReference || rightRef.Elem != mirRefType(value.Left) {
+		!rightOK || rightRef.Kind != ir.TypeReference || rightRef.Elem != value.Left.TypeID() {
 		b.emitter.markInvalid("string concatenation requires owned string and borrowed string")
 		return b.zero(resultLayout)
 	}
@@ -474,7 +474,7 @@ func emitStringChars(b *llvmBuilder, chars *mir.StringChars) llvmValue {
 	if chars.Value == nil {
 		return b.zero(resultLayout)
 	}
-	refType, ok := b.emitter.mod.Types.Type(mirRefType(chars.Value))
+	refType, ok := b.emitter.mod.Types.Type(chars.Value.TypeID())
 	if !ok || refType.Kind != ir.TypeReference {
 		b.emitter.markInvalid("string character conversion requires a string reference")
 		return b.zero(resultLayout)
@@ -746,7 +746,7 @@ func emitLen(b *llvmBuilder, value mir.ValueRef) llvmValue {
 		return llvmValue{}
 	}
 	indexLayout := b.emitter.layout(b.emitter.mod.Types.IndexType())
-	refType, ok := b.emitter.mod.Types.Type(mirRefType(value))
+	refType, ok := b.emitter.mod.Types.Type(value.TypeID())
 	if !ok || refType.Kind != ir.TypeReference {
 		b.emitter.markInvalid("len requires a reference value")
 		return b.value("0", indexLayout)

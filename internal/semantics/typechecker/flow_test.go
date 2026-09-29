@@ -1,6 +1,7 @@
 package typechecker
 
 import (
+	"compiler/internal/source"
 	"testing"
 
 	"compiler/internal/diagnostics"
@@ -8,43 +9,39 @@ import (
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/ir/cfg"
+	"compiler/internal/ir/thir"
+	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
+	"compiler/internal/semantics/analysis"
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
-	"compiler/internal/semantics/flowresult"
-	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/resolver"
-	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/pkg/peeper"
 )
 
-func checkFlowSource(t *testing.T, src string) (*project.Module, *diagnostics.DiagnosticBag) {
+func checkFlowSource(t *testing.T, src string) (*module.Module, *diagnostics.DiagnosticBag) {
 	t.Helper()
 	const filePath = "flow_test" + peeper.SourceExt
 	diag := diagnostics.NewDiagnosticBag()
 	diag.AddSourceContent(filePath, src)
 	ctx := project.New(".", peeper.SourceExt, diag)
-	module := &project.Module{
+	module := &module.Module{
 		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "flow_test"},
 		FilePath: filePath,
 		Content:  src,
 		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
-		Imports:  make(map[string]project.ResolvedImport),
+		Imports:  make(map[string]module.ResolvedImport),
 	}
 	ctx.AddModule(module)
+
 	collector.Collect(ctx, module)
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
-	Check(ctx, module)
-	module.RebuildTypedASTIndex()
-	module.CFG = cfg.BuildModule(module.AST, cfg.BuildQueries{
-		MatchCases:          module.Typechecking.MatchCases,
-		LoopGuaranteedEntry: module.Typechecking.ForLoopGuaranteedEntry,
-		CheckedIterations:   module.Typechecking.CheckedIterations,
-	})
-	module.Flow = CheckFlow(ctx, module)
+	module.THIR = checkWithEvidence(t, ctx, module)
+	module.CFG = cfg.BuildModule(module.THIR)
+	module.Analysis = analysis.Run(diag, analysis.Input{Source: module.THIR, CFG: module.CFG, Scope: module.ModuleScope, SymbolIndex: module.SymbolIndex})
 	return module, diag
 }
 
@@ -62,402 +59,62 @@ fn main() {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
-	if len(module.Typechecking.CheckedIterations) != 2 || len(module.Typechecking.ForIterations) != 0 {
-		t.Fatalf("iteration evidence = %#v", module.Typechecking)
-	}
 	if err := module.CFG.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	for id, expansion := range module.Typechecking.CheckedIterations {
-		loop := expansion.Stmts[len(expansion.Stmts)-1].(*ast.ForStmt)
-		if module.TypedASTNodes[expansion.ID()] != expansion {
-			t.Fatal("source scope not indexed")
+	checkedCount := 0
+	forEachCheckedIterationForTests(testEvidence(module), func(id source.NodeID, expansion *ast.BlockStmt) {
+		checkedCount++
+		if _, found := testEvidence(module).ForIteration(id); found {
+			t.Errorf("source loop %v has both checked and ordinary iteration evidence", id)
 		}
-		if module.TypedASTNodes[id] != loop || loop.Iterable != nil || loop.Cond != nil {
-			t.Fatalf("checked loop not indexed: %#v", loop)
-		}
-		result := loop.Body.Stmts[0].(*ast.LetDecl)
-		call := result.Value.(*ast.CallExpr)
-		selector := call.Callee.(*ast.SelectorExpr)
-		if module.Bindings.NodeSymbols[selector.Name.ID()] == nil {
-			t.Fatal("missing static method evidence")
-		}
-		if mutable, found := module.Typechecking.ReferenceArguments[selector.Expr.ID()]; !found || !mutable {
-			t.Fatal("generated receiver missing ordinary mutable-reference evidence")
-		}
-		body := loop.Body.Stmts[2].(*ast.BlockStmt)
-		item := body.Stmts[0].(*ast.LetDecl)
-		if got := typeinfo.TypeText(module.Bindings.NodeSymbols[item.Name.ID()].Type); got != "i32" {
-			t.Fatalf("item type = %s", got)
-		}
-		ast.Inspect(expansion, func(node ast.Node) bool {
-			if node != nil && module.TypedASTNodes[node.ID()] == nil {
-				t.Errorf("generated node %T/%d not indexed", node, node.ID())
+		checked := expansion.Stmts[len(expansion.Stmts)-1].(*ast.ForStmt)
+		var sourceLoop *ast.ForStmt
+		ast.Inspect(module.AST.Stmts[len(module.AST.Stmts)-1], func(node ast.Node) bool {
+			if loop, ok := node.(*ast.ForStmt); ok && loop.ID() == id {
+				sourceLoop = loop
 			}
 			return true
 		})
-	}
-}
-
-func TestNamedEnumCaseTestsRefineExactFields(t *testing.T) {
-	module, diag := checkFlowSource(t, `enum Choice {
-	Left: { value: i32 },
-	Right: { value: i32 },
-	Pending,
-}
-
-fn Read(choice: Choice) -> i32 {
-	if choice is Choice::Left {
-		return choice.value;
-	}
-	if !(choice is Choice::Right) {
-		return 0;
-	}
-	return choice.value;
-}`)
-	if diag.HasErrors() {
-		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
-	}
-	fn := module.AST.Stmts[1].(*ast.FnDecl)
-	leftBranch := fn.Body.Stmts[0].(*ast.IfStmt)
-	leftTest := leftBranch.Cond.(*ast.IsExpr)
-	baseTest, baseFound := module.Typechecking.CaseTests[leftTest.ID()]
-	flowTest, flowFound := module.Flow.CaseTests[leftTest.ID()]
-	if !baseFound || !flowFound || baseTest.Case != 0 || flowTest.Case != baseTest.Case ||
-		flowTest.SubjectID != baseTest.SubjectID || flowTest.CaseCount != baseTest.CaseCount {
-		t.Fatalf("case-test evidence = base %#v, flow %#v", baseTest, flowTest)
-	}
-	leftField := leftBranch.Then.Stmts[0].(*ast.ReturnStmt).Value.(*ast.SelectorExpr)
-	rightField := fn.Body.Stmts[2].(*ast.ReturnStmt).Value.(*ast.SelectorExpr)
-	for _, field := range []*ast.SelectorExpr{leftField, rightField} {
-		if typ := module.EffectiveExprType(field.ID()); typeinfo.TypeText(typ) != "i32" {
-			t.Fatalf("refined field type = %s, want i32", typeinfo.TypeText(typ))
+		if sourceLoop == nil {
+			t.Fatalf("source loop %v missing", id)
 		}
-		payload := module.Flow.Payloads[field.ID()]
-		if len(payload.Cases) != 1 {
-			t.Fatalf("field payload evidence = %#v, want one exact case", payload)
+		if _, ok := module.THIR.Node(expansion.ID()).(*thir.Block); !ok {
+			t.Fatal("checked expansion missing from THIR")
 		}
-	}
-}
-
-func TestNamedEnumMatchCaseEdgeRefinesExactField(t *testing.T) {
-	module, diag := checkFlowSource(t, `enum Result {
-	Ok: { value: i32 },
-	Error: { message: str },
-	Pending,
-}
-
-fn Read(result: Result) -> i32 {
-	match result {
-		Result::Ok with {} => {
-			return result.value;
+		if checked.ID() == id || checked.Iterable != nil || checked.Cond != nil {
+			t.Fatalf("checked loop identity not isolated: %#v", checked)
 		}
-		Result::Error with {} => {
-			return 1;
+		if _, ok := module.THIR.Node(checked.ID()).(*thir.For); !ok {
+			t.Fatal("checked loop missing from THIR")
 		}
-		Result::Pending => {
-			return 0;
+		if sourceLoop.ID() != id || sourceLoop.Iterable == nil {
+			t.Fatalf("source loop index replaced by checked loop: %#v", sourceLoop)
 		}
-	}
-}`)
-	if diag.HasErrors() {
-		t.Fatalf("unexpected match flow diagnostics:\n%s", diag.EmitAllToString())
-	}
-	fn := module.AST.Stmts[1].(*ast.FnDecl)
-	match := fn.Body.Stmts[0].(*ast.MatchStmt)
-	selector := match.Arms[0].Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.SelectorExpr)
-	fieldType := module.EffectiveExprType(selector.ID())
-	access, found := module.Flow.VariantFields[selector.ID()]
-	if !found || access.Case != 0 || typeinfo.TypeText(fieldType) != "i32" || typeinfo.TypeText(access.Type) != "i32" {
-		t.Fatalf("match field type = %s, access = %#v", typeinfo.TypeText(fieldType), access)
-	}
-}
-
-func TestNamedEnumCaseProofSelectsFieldType(t *testing.T) {
-	_, diag := checkFlowSource(t, `enum Choice {
-	Number: { value: i32 },
-	Text: { value: str }
-}
-
-fn Read(choice: Choice) -> str {
-	if choice is Choice::Text {
-		let value = choice.value;
-		return value;
-	}
-	return "";
-}`)
-	if diag.HasErrors() {
-		t.Fatalf("unexpected differing-field diagnostic:\n%s", diag.EmitAllToString())
-	}
-}
-
-func TestNamedEnumCaseTestInsideVariantPayload(t *testing.T) {
-	_, diag := checkFlowSource(t, `enum Inner {
-	Left: { value: i32 },
-	Right
-}
-
-enum Outer {
-	Wrapped: { inner: Inner },
-	Empty
-}
-
-fn Read(outer: Outer) -> i32 {
-	if outer is Outer::Wrapped {
-		if outer.inner is Inner::Left {
-			return outer.inner.value;
+		expansionScope := module.SymbolIndex.Scope(expansion)
+		checkedScope := module.SymbolIndex.Scope(checked.Body)
+		sourceBodyScope := module.SymbolIndex.Scope(sourceLoop.Body)
+		if sourceBodyScope == nil || sourceBodyScope.Parent() == expansionScope || sourceBodyScope.Parent() == checkedScope {
+			t.Fatal("checked iteration mutated source body scope parent")
 		}
-	}
-	return 0;
-}`)
-	if diag.HasErrors() {
-		t.Fatalf("unexpected nested-payload diagnostic:\n%s", diag.EmitAllToString())
-	}
-}
-
-func TestNamedEnumFieldRequiresExactCaseProof(t *testing.T) {
-	_, diag := checkFlowSource(t, `enum Choice {
-	Left: { value: i32 },
-	Right: { value: i32 },
-}
-
-fn Read(choice: Choice) -> i32 {
-	return choice.value;
-}`)
-	if !diag.HasErrors() {
-		t.Fatal("expected exact-case field diagnostic")
-	}
-}
-
-func TestNamedEnumCarrierMutationInvalidatesCaseProof(t *testing.T) {
-	_, diag := checkFlowSource(t, `enum Choice {
-	Left: { value: i32 },
-	Right: { value: i32 },
-}
-
-fn Read(mut choice: Choice) -> i32 {
-	if choice is Choice::Left {
-		choice = Choice::Right with .{ value = 0 };
-		return choice.value;
-	}
-	return 0;
-}`)
-	if !diag.HasErrors() {
-		t.Fatal("expected invalidated exact-case field diagnostic")
-	}
-}
-
-func TestNamedEnumCaseFactsSupportStableProjectionsLoopsAndJoins(t *testing.T) {
-	_, diag := checkFlowSource(t, `enum Choice {
-	Left: { value: i32 },
-	Right: { value: i32 },
-}
-
-struct Holder { choice: Choice }
-
-fn Field(holder: Holder) -> i32 {
-	if holder.choice is Choice::Left {
-		return holder.choice.value;
-	}
-	return 0;
-}
-
-fn Index(values: [1]Choice, index: usize) -> i32 {
-	if values[index] is Choice::Left {
-		return values[index].value;
-	}
-	return 0;
-}
-
-fn Loop(choice: Choice) -> i32 {
-	for choice is Choice::Left {
-		return choice.value;
-	}
-	return 0;
-}
-
-fn Join(choice: Choice, flag: bool) -> i32 {
-	if flag {
-		if !(choice is Choice::Left) { return 0; }
-	} else {
-		if !(choice is Choice::Left) { return 0; }
-	}
-	return choice.value;
-}`)
-	if diag.HasErrors() {
-		t.Fatalf("unexpected projection/CFG diagnostics:\n%s", diag.EmitAllToString())
-	}
-}
-
-func TestNamedEnumCaseFactsInvalidateThroughAliasAndIndexDependency(t *testing.T) {
-	tests := []struct {
-		name string
-		src  string
-	}{
-		{name: "mutable alias", src: `enum Choice { Left: { value: i32 }, Right: { value: i32 } }
-struct Holder { choice: Choice }
-fn Clear(holder: &mut Holder) { holder.choice = Choice::Right with .{ value = 0 }; }
-fn Read(mut holder: Holder) -> i32 {
-	if holder.choice is Choice::Left {
-		Clear(&mut holder);
-		return holder.choice.value;
-	}
-	return 0;
-}`},
-		{name: "index binding", src: `enum Choice { Left: { value: i32 }, Right: { value: i32 } }
-fn Read(values: [2]Choice, mut index: usize) -> i32 {
-	if values[index] is Choice::Left {
-		index = 1;
-		return values[index].value;
-	}
-	return 0;
-}`},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			_, diag := checkFlowSource(t, test.src)
-			if !diag.HasErrors() {
-				t.Fatal("expected invalidated exact-case field diagnostic")
-			}
-		})
-	}
-}
-
-func TestUnstableNamedEnumCaseTestDoesNotCreateReusableFact(t *testing.T) {
-	_, diag := checkFlowSource(t, `enum Choice { Left: { value: i32 }, Right: { value: i32 } }
-fn Make() -> Choice { return Choice::Left with .{ value = 1 }; }
-fn IsLeft() -> bool { return Make() is Choice::Left; }`)
-	if diag.HasErrors() {
-		t.Fatalf("unstable case test should remain valid without refinement:\n%s", diag.EmitAllToString())
-	}
-}
-
-func TestClearFlowScopeRemovesOnlyExitedBindingFacts(t *testing.T) {
-	outerScope := symbols.NewScope(nil)
-	innerScope := symbols.NewScope(outerScope)
-	outer := symbols.New("outer", symbols.SymbolVar, &ast.LetDecl{IsMutable: true}, nil)
-	inner := symbols.New("inner", symbols.SymbolVar, &ast.LetDecl{IsMutable: true}, nil)
-	if err := outerScope.Declare(outer); err != nil {
-		t.Fatal(err)
-	}
-	if err := innerScope.Declare(inner); err != nil {
-		t.Fatal(err)
-	}
-	outerOrigins := []place.Origin{{Root: outer}}
-	innerOrigins := []place.Origin{{Root: inner}}
-	state := flowState{
-		variants: []variantStateFact{
-			{origins: outerOrigins, cases: []int{1}, caseCount: 2},
-			{origins: innerOrigins, cases: []int{1}, caseCount: 2},
-			{origins: outerOrigins, cases: []int{1}, caseCount: 2, dependencies: []*symbols.Symbol{inner}},
-		},
-		references: []originStateFact{
-			{storage: outerOrigins, value: outerOrigins},
-			{storage: innerOrigins, value: innerOrigins},
-		},
-		rawPointers: []originStateFact{
-			{storage: outerOrigins, value: outerOrigins},
-			{storage: innerOrigins, value: innerOrigins},
-		},
-	}
-
-	clearFlowScope(innerScope, &state)
-
-	if len(state.variants) != 1 || state.variants[0].origins[0].Root != outer {
-		t.Fatalf("variant facts after scope exit = %#v, want only outer fact", state.variants)
-	}
-	if len(originValues(state.references, innerOrigins)) != 0 {
-		t.Fatal("scope exit retained inner reference origin")
-	}
-	if len(originValues(state.rawPointers, innerOrigins)) != 0 {
-		t.Fatal("scope exit retained inner raw-pointer origin")
-	}
-	if len(originValues(state.references, outerOrigins)) != 1 || len(originValues(state.rawPointers, outerOrigins)) != 1 {
-		t.Fatal("scope exit removed outer origin evidence")
-	}
-}
-
-func TestInvalidateCallClearsMutableModuleVariableFacts(t *testing.T) {
-	moduleScope := symbols.NewScope(nil)
-	global := symbols.New("maybe", symbols.SymbolVar, &ast.LetDecl{IsMutable: true, IsModuleVar: true}, nil)
-	if err := moduleScope.Declare(global); err != nil {
-		t.Fatal(err)
-	}
-	state := flowState{variants: []variantStateFact{{origins: []place.Origin{{Root: global}}, cases: []int{1}, caseCount: 2}}}
-	analyzer := flowAnalyzer{
-		module: &project.Module{ModuleScope: moduleScope},
-		result: &flowresult.Result{ExprTypes: make(map[ast.NodeID]typeinfo.Type)},
-	}
-
-	analyzer.invalidateCall(&checker{}, nil, &ast.CallExpr{Callee: &ast.Ident{Name: "Touch"}}, &state)
-
-	if len(state.variants) != 0 {
-		t.Fatalf("variant facts after call = %#v, want mutable module fact invalidated", state.variants)
-	}
-}
-
-func TestMergeVariantFactsUnionsPossibleCases(t *testing.T) {
-	root := symbols.New("value", symbols.SymbolVar, nil, nil)
-	origins := []place.Origin{{Root: root}}
-	left := flowState{reachable: true, variants: []variantStateFact{{origins: origins, cases: []int{0}, caseCount: 3}}}
-	right := flowState{reachable: true, variants: []variantStateFact{{origins: origins, cases: []int{1}, caseCount: 3}}}
-
-	merged := mergeFlowStates(left, right)
-	if !merged.reachable || len(merged.variants) != 1 || !sameCaseSet(merged.variants[0].cases, []int{0, 1}) {
-		t.Fatalf("merged variant facts = %#v", merged)
-	}
-}
-
-func TestInvalidateVariantFactsPreservesCaseForPayloadDescendant(t *testing.T) {
-	root := symbols.New("value", symbols.SymbolVar, nil, nil)
-	carrier := []place.Origin{{Root: root}}
-	state := flowState{variants: []variantStateFact{{origins: carrier, cases: []int{1}, caseCount: 2}}}
-	mutated := place.VariantPayloadOrigins(carrier, []int{1})
-	mutated[0].Projections = append(mutated[0].Projections, place.OriginProjection{Kind: place.OriginField, Field: "field"})
-
-	invalidateVariantOrigins(&state, mutated)
-	if len(state.variants) != 1 || !sameCaseSet(state.variants[0].cases, []int{1}) {
-		t.Fatalf("payload mutation invalidated carrier case = %#v", state.variants)
-	}
-}
-
-func TestMergeFlowStatesTreatsMissingOriginAsUnknown(t *testing.T) {
-	pointer := symbols.New("pointer", symbols.SymbolVar, nil, nil)
-	left := symbols.New("left", symbols.SymbolVar, nil, nil)
-	right := symbols.New("right", symbols.SymbolVar, nil, nil)
-	pointerOrigins := []place.Origin{{Root: pointer}}
-	leftState := newFlowState()
-	leftState.rawPointers = setOriginFact(leftState.rawPointers, pointerOrigins, []place.Origin{{Root: left}})
-
-	unknown := mergeFlowStates(leftState, newFlowState())
-	if known := originValues(unknown.rawPointers, pointerOrigins); len(known) != 0 {
-		t.Fatalf("one unknown predecessor retained raw-pointer origins: %#v", known)
-	}
-
-	rightState := newFlowState()
-	rightState.rawPointers = setOriginFact(rightState.rawPointers, pointerOrigins, []place.Origin{{Root: right}})
-	known := mergeFlowStates(leftState, rightState)
-	want := []place.Origin{{Root: left}, {Root: right}}
-	if got := originValues(known.rawPointers, pointerOrigins); !place.SameOrigins(got, want) {
-		t.Fatalf("known predecessor origins = %#v, want %#v", got, want)
-	}
-}
-
-func TestInvalidateVariantOriginsClearsIndexDependencies(t *testing.T) {
-	values := symbols.New("values", symbols.SymbolParam, nil, nil)
-	index := symbols.New("index", symbols.SymbolVar, nil, nil)
-	state := flowState{variants: []variantStateFact{{
-		origins: []place.Origin{{Root: values, Projections: []place.OriginProjection{{
-			Kind: place.OriginBindingIndex, Binding: index,
-		}}}},
-		cases:        []int{1},
-		caseCount:    2,
-		dependencies: []*symbols.Symbol{index},
-	}}}
-
-	invalidateVariantOrigins(&state, []place.Origin{{Root: index}})
-
-	if len(state.variants) != 0 {
-		t.Fatalf("index mutation retained dependent variant fact: %#v", state.variants)
+		result := checked.Body.Stmts[0].(*ast.LetDecl)
+		call := result.Value.(*ast.CallExpr)
+		selector := call.Callee.(*ast.SelectorExpr)
+		if module.SymbolIndex.Symbol(selector.Name) == nil {
+			t.Fatal("missing static method evidence")
+		}
+		if mutable, found := testEvidence(module).ReferenceArgument(selector.Expr.ID()); !found || !mutable {
+			t.Fatal("generated receiver missing ordinary mutable-reference evidence")
+		}
+		item := checked.Body.Stmts[2].(*ast.LetDecl)
+		if item.Name == sourceLoop.Value || item.Name.ID() == sourceLoop.Value.ID() {
+			t.Fatal("checked iteration reused source binding syntax")
+		}
+		if got := typeinfo.TypeText(module.SymbolIndex.Symbol(item.Name).Type); got != "i32" {
+			t.Fatalf("item type = %s", got)
+		}
+	})
+	if checkedCount != 2 {
+		t.Fatalf("checked iterations = %v, want 2", checkedCount)
 	}
 }

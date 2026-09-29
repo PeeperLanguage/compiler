@@ -6,9 +6,10 @@ import (
 )
 
 func TestForEachChildOwnsCompositeTypeStructure(t *testing.T) {
-	i32 := &IntegerType{Signed: true, Bits: 32}
+	i32 := &IntegerType{IsSigned: true, Bits: 32}
 	text := &StringType{}
-	receiver := &RefType{Target: i32}
+	parameter := &TypeParameterType{Name: "T", OwnerIdentity: "Box", Index: 0}
+
 	tests := []struct {
 		name string
 		typ  Type
@@ -16,8 +17,16 @@ func TestForEachChildOwnsCompositeTypeStructure(t *testing.T) {
 	}{
 		{
 			name: "defined",
-			typ:  &DefinedType{Underlying: i32},
-			want: []TypeChild{{Type: i32, Relation: TypeChildUnderlying}},
+			typ: &DefinedType{
+				Underlying:     i32,
+				TypeParameters: []*TypeParameterType{parameter},
+				TypeArguments:  []Type{text},
+			},
+			want: []TypeChild{
+				{Type: i32, Relation: TypeChildUnderlying},
+				{Type: parameter, Relation: TypeChildTypeParameter},
+				{Type: text, Relation: TypeChildTypeArgument},
+			},
 		},
 		{
 			name: "owned target",
@@ -57,11 +66,12 @@ func TestForEachChildOwnsCompositeTypeStructure(t *testing.T) {
 		{
 			name: "interface methods",
 			typ: &InterfaceType{Methods: []Method{{
-				Name:   "read",
-				Params: []Field{{Name: "self", Type: receiver}},
-				Return: text,
+				Name:     "read",
+				Receiver: MethodReceiverShared,
+				Params:   []Field{{Name: "value", Type: i32}},
+				Return:   text,
 			}}},
-			want: []TypeChild{{Type: receiver, Relation: TypeChildMethodReceiver}, {Type: text, Relation: TypeChildCallableReturn}},
+			want: []TypeChild{{Type: i32, Relation: TypeChildCallableParameter}, {Type: text, Relation: TypeChildCallableReturn}},
 		},
 	}
 
@@ -80,7 +90,7 @@ func TestForEachChildOwnsCompositeTypeStructure(t *testing.T) {
 }
 
 func TestTypeStructureDrivesRecursiveContainment(t *testing.T) {
-	stored := &StructType{Fields: []Field{{Name: "borrow", Type: &RefType{Target: &IntegerType{Signed: true, Bits: 32}}}}}
+	stored := &StructType{Fields: []Field{{Name: "borrow", Type: &RefType{Target: &IntegerType{IsSigned: true, Bits: 32}}}}}
 	wrapped := &OptionalType{Inner: &ArrayType{Len: "2", Elem: stored}}
 
 	if !ContainsReference(wrapped) {
@@ -97,16 +107,16 @@ func TestLeafTypeTraversalCompletesWithoutYield(t *testing.T) {
 		&FloatType{}, &BoolType{}, &CStrType{}, &StringType{}, &NoneType{},
 		&AllocatorType{}, &NamedType{}, &TypeParameterType{}, &RawPtrType{},
 	} {
-		if !typ.forEachChild(func(TypeChild) bool {
+		if !ForEachChild(typ, func(TypeChild) bool {
 			t.Errorf("leaf %T yielded a child", typ)
 			return false
-		}) || !typ.forEachChild(nil) {
+		}) || !ForEachChild(typ, nil) {
 			t.Errorf("leaf %T traversal did not complete", typ)
 		}
 	}
 }
 
-func TestNilTypeTraversalAndOwnership(t *testing.T) {
+func TestNilTypeTraversalOwnershipAndRepresentation(t *testing.T) {
 	for _, typ := range []Type{
 		nil, (*InvalidType)(nil), (*UnknownType)(nil), (*IntegerType)(nil),
 		(*ByteType)(nil), (*CharType)(nil), (*FloatType)(nil), (*BoolType)(nil),
@@ -122,8 +132,14 @@ func TestNilTypeTraversalAndOwnership(t *testing.T) {
 		}) {
 			t.Errorf("nil %T traversal did not complete", typ)
 		}
-		if got := ownershipCapability(typ); got != (OwnershipCapability{Copy: CopyExplicit}) {
+		if got := OwnershipCapabilityOf(typ); got != (OwnershipCapability{Copy: CopyExplicit}) {
 			t.Errorf("nil %T capability = %+v; want explicit copy, no drop", typ, got)
+		}
+		if IsSizedType(typ) {
+			t.Errorf("nil %T is sized", typ)
+		}
+		if IsLowerableType(typ) {
+			t.Errorf("nil %T is lowerable", typ)
 		}
 	}
 }

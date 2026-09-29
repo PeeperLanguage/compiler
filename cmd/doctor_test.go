@@ -49,7 +49,7 @@ func TestInspectInstallationReportsManagedToolchain(t *testing.T) {
 	}
 
 	report := inspectInstallation(executable, host)
-	if !report.OK || !report.ManagedToolchain || report.ProfileID != "managed-host" {
+	if !report.IsHealthy || !report.UsesManagedToolchain || report.ProfileID != "managed-host" {
 		t.Fatalf("inspectInstallation() = %#v", report)
 	}
 }
@@ -57,7 +57,7 @@ func TestInspectInstallationReportsManagedToolchain(t *testing.T) {
 func TestInspectInstallationReportsMissingCore(t *testing.T) {
 	root := t.TempDir()
 	report := inspectInstallation(filepath.Join(root, "bin", "peeper"), target.Host())
-	if report.OK || report.Error != "core library is missing" {
+	if report.IsHealthy || report.Error != "core library is missing" {
 		t.Fatalf("inspectInstallation() = %#v", report)
 	}
 }

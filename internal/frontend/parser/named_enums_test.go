@@ -66,7 +66,7 @@ fn inspect(result: Result) {
 		t.Fatalf("Ok payload = %#v", ok)
 	}
 	match := body.Stmts[2].(*ast.MatchStmt)
-	if match.Arms[1].Binding == nil || match.Arms[1].Binding.Name != "message" || match.Arms[1].Discard {
+	if match.Arms[1].Binding == nil || match.Arms[1].Binding.Name != "message" || match.Arms[1].IsDiscard {
 		t.Fatalf("Failed arm = %#v", match.Arms[1])
 	}
 }
@@ -198,7 +198,7 @@ func TestParseStatementMatch(t *testing.T) {
 		t.Fatalf("Ok arm = %#v", ok)
 	}
 	errorArm := match.Arms[1]
-	if !errorArm.Fields[0].Discard || errorArm.Fields[0].Binding != nil || errorArm.Fields[1].Binding.Name != "code" {
+	if !errorArm.Fields[0].IsDiscard || errorArm.Fields[0].Binding != nil || errorArm.Fields[1].Binding.Name != "code" {
 		t.Fatalf("Error fields = %#v", errorArm.Fields)
 	}
 	if match.Arms[2].HasData {

@@ -9,10 +9,12 @@ import (
 	"strings"
 
 	"compiler/internal/diagnostics"
+	"compiler/internal/fingerprint"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/graph"
+	"compiler/internal/module"
 	"compiler/internal/phase"
 	"compiler/internal/project"
 	"compiler/pkg/manifest"
@@ -27,7 +29,11 @@ type workspaceModule struct {
 	contentHash       string
 	importFingerprint string
 	exportFingerprint string
-	importTargets     []string
+	// Source import paths survive unresolved imports, so membership changes can
+	// be re-resolved without reparsing unchanged files.
+	sourceImportPaths []string
+	// Resolved file paths currently inside this workspace; these form graph edges.
+	resolvedLocalImportFiles []string
 }
 
 type workspaceComponent struct {
@@ -35,11 +41,17 @@ type workspaceComponent struct {
 	roots []string
 }
 
+type workspaceParse struct {
+	content     string
+	syntax      *ast.Module
+	diagnostics []*diagnostics.Diagnostic
+}
+
 type workspaceIndex struct {
 	rootDir     string
 	modules     map[string]*workspaceModule
 	components  []workspaceComponent
-	imports     *graph.Graph
+	imports     *graph.DependencyGraph
 	parsedFiles int
 }
 
@@ -50,14 +62,14 @@ func newWorkspaceIndex(rootDir string) *workspaceIndex {
 	}
 }
 
-func (w *workspaceIndex) rebuild(cache map[string]string) error {
+func (w *workspaceIndex) rebuild(cache map[string]string) (map[string]workspaceParse, error) {
 	if w == nil || w.rootDir == "" {
-		return nil
+		return nil, nil
 	}
 
 	files, err := workspaceFiles(w.rootDir, cache)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	type workspaceFileContext struct {
@@ -65,25 +77,51 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 		projectName string
 		importPath  string
 	}
-
 	fileSet := make(map[string]struct{}, len(files))
 	contexts := make(map[string]workspaceFileContext, len(files))
+	projectContexts := make(map[[2]string]*project.CompilerContext)
+	type workspaceProjectLookup struct {
+		project *manifest.Project
+	}
+	projectsByDir := make(map[string]workspaceProjectLookup)
+	projectsByManifest := make(map[string]workspaceProjectLookup)
 	w.parsedFiles = 0
+	parsedModules := make(map[string]workspaceParse)
 	for _, filePath := range files {
 		rootDir := filepath.Dir(filePath)
 		projectName := ""
-		if loadedProject, err := manifest.LoadProject(filePath); err == nil {
-			if !manifest.PathWithinSourceDir(loadedProject.RootDir, filePath) {
+		fileDir := filepath.Dir(filePath)
+		projectLookup, checked := projectsByDir[fileDir]
+		if !checked {
+			if manifestPath, err := manifest.FindManifestPath(filePath); err == nil {
+				manifestKey := project.CanonicalPath(manifestPath)
+				projectLookup, checked = projectsByManifest[manifestKey]
+				if !checked {
+					if loadedProject, loadErr := manifest.LoadProjectFromManifest(manifestPath); loadErr == nil {
+						projectLookup.project = loadedProject
+					}
+					projectsByManifest[manifestKey] = projectLookup
+				}
+			}
+			projectsByDir[fileDir] = projectLookup
+		}
+		if loadedProject := projectLookup.project; loadedProject != nil {
+			if !manifest.IsPathWithinSourceDir(loadedProject.RootDir, filePath) {
 				continue
 			}
 			rootDir = loadedProject.RootDir
 			projectName = loadedProject.File.Package.Name
 		}
-		ctx := project.NewWithConfig(project.Config{
-			RootDir:     rootDir,
-			ProjectName: projectName,
-			Extension:   peeper.SourceExt,
-		}, diagnostics.NewDiagnosticBag())
+		key := [2]string{rootDir, projectName}
+		ctx := projectContexts[key]
+		if ctx == nil {
+			ctx = project.NewWithConfig(project.Config{
+				RootDir:     rootDir,
+				ProjectName: projectName,
+				Extension:   peeper.SourceExt,
+			}, diagnostics.NewDiagnosticBag())
+			projectContexts[key] = ctx
+		}
 		importPath, err := ctx.ImportPathForFile(project.ModuleOriginLocal, "", filePath)
 		if err != nil {
 			importPath = ""
@@ -114,7 +152,7 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 		if err != nil {
 			continue
 		}
-		contentHash := ast.HashText(content)
+		contentHash := fingerprint.Text(content)
 
 		module := w.modules[filePath]
 		if module == nil {
@@ -125,30 +163,33 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 		contextChanged := module.rootDir != fileCtx.rootDir ||
 			module.projectName != fileCtx.projectName ||
 			module.importPath != fileCtx.importPath
-		if !fileMembershipChanged && !contextChanged && module.contentHash == contentHash {
+		parseChanged := contextChanged || module.contentHash != contentHash
+		if parseChanged {
+			module.rootDir = fileCtx.rootDir
+			module.projectName = fileCtx.projectName
+			module.importPath = fileCtx.importPath
+			module.contentHash = contentHash
+			diag := diagnostics.NewDiagnosticBag()
+			parsed := parser.New(filePath, lexer.New(filePath, content, diag).Tokenize(), diag).ParseModule()
+			parsedModules[filePath] = workspaceParse{content: content, syntax: parsed, diagnostics: diag.Diagnostics()}
+			module.exportFingerprint = parsed.ExportFingerprint
+			module.importFingerprint = parsed.ImportFingerprint
+			module.sourceImportPaths = module.sourceImportPaths[:0]
+			for _, imp := range parsed.Imports {
+				if rawPath, ok := ast.ImportPathFromDecl(imp); ok {
+					module.sourceImportPaths = append(module.sourceImportPaths, rawPath)
+				}
+			}
+			w.parsedFiles++
+		}
+		if !fileMembershipChanged && !parseChanged {
 			continue
 		}
 
-		module.rootDir = fileCtx.rootDir
-		module.projectName = fileCtx.projectName
-		module.importPath = fileCtx.importPath
-		module.contentHash = contentHash
-		diag := diagnostics.NewDiagnosticBag()
-		parsed := parser.New(filePath, lexer.New(filePath, content, diag).Tokenize(), diag).ParseModule()
-		module.exportFingerprint = parsed.ExportFingerprint
-		module.importFingerprint = parsed.ImportFingerprint
-		module.importTargets = module.importTargets[:0]
-		ctx := project.NewWithConfig(project.Config{
-			RootDir:     module.rootDir,
-			ProjectName: module.projectName,
-			Extension:   peeper.SourceExt,
-		}, diagnostics.NewDiagnosticBag())
+		module.resolvedLocalImportFiles = module.resolvedLocalImportFiles[:0]
+		ctx := projectContexts[[2]string{fileCtx.rootDir, fileCtx.projectName}]
 		seen := make(map[string]struct{})
-		for _, imp := range parsed.Imports {
-			rawPath, ok := ast.ImportPathFromDecl(imp)
-			if !ok {
-				continue
-			}
+		for _, rawPath := range module.sourceImportPaths {
 			resolved, err := ctx.ResolveImportPath(rawPath)
 			if err != nil || resolved == nil || resolved.ID.Origin != string(project.ModuleOriginLocal) {
 				continue
@@ -161,9 +202,8 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 				continue
 			}
 			seen[target] = struct{}{}
-			module.importTargets = append(module.importTargets, target)
+			module.resolvedLocalImportFiles = append(module.resolvedLocalImportFiles, target)
 		}
-		w.parsedFiles++
 	}
 
 	for filePath := range w.modules {
@@ -173,9 +213,9 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 		delete(w.modules, filePath)
 	}
 
-	g := graph.New(project.GraphEdgeImport)
+	g := graph.NewDependencyGraph(project.GraphEdgeImport)
 	for _, module := range w.modules {
-		for _, target := range module.importTargets {
+		for _, target := range module.resolvedLocalImportFiles {
 			if _, ok := w.modules[target]; !ok {
 				continue
 			}
@@ -185,7 +225,7 @@ func (w *workspaceIndex) rebuild(cache map[string]string) error {
 
 	w.components = buildWorkspaceComponents(w.modules, g)
 	w.imports = g
-	return nil
+	return parsedModules, nil
 }
 
 func (w *workspaceIndex) syntheticEntry(filePath string) (string, string, bool) {
@@ -252,50 +292,39 @@ func (w *workspaceIndex) componentForFile(filePath string) (workspaceComponent, 
 	return workspaceComponent{}, false
 }
 
-func (w *workspaceIndex) dirtyFiles(filePath string, cached map[string]*project.Module) map[string]struct{} {
+func (w *workspaceIndex) dirtyFiles(filePath string, cached map[string]*module.Module) map[string]struct{} {
 	dirty := make(map[string]struct{})
 	if w == nil {
 		return dirty
 	}
 	component := w.componentFiles(filePath)
-	propagate := make([]string, 0)
+	changedSurfaces := make([]graph.NodeID, 0)
 	for member := range component {
 		current := w.modules[member]
 		if current == nil {
 			continue
 		}
 		cachedModule := cached[member]
-		if cachedModule == nil {
+		if cachedModule == nil || cachedModule.AST == nil {
 			dirty[member] = struct{}{}
-			propagate = append(propagate, member)
+			changedSurfaces = append(changedSurfaces, graph.NodeID(member))
 			continue
 		}
-		if cachedModule.ContentHash == current.contentHash {
+		importsChanged := w.resolvedLocalImportsChanged(current, cachedModule)
+		if cachedModule.ContentHash == current.contentHash && !importsChanged {
 			continue
 		}
 		dirty[member] = struct{}{}
-		if cachedModule.ImportFingerprint != current.importFingerprint || cachedModule.ExportFingerprint != current.exportFingerprint {
-			propagate = append(propagate, member)
+		if importsChanged || cachedModule.AST.ImportFingerprint != current.importFingerprint || cachedModule.AST.ExportFingerprint != current.exportFingerprint {
+			changedSurfaces = append(changedSurfaces, graph.NodeID(member))
 		}
 	}
-	seen := make(map[string]struct{}, len(propagate))
-	for len(propagate) > 0 {
-		current := propagate[0]
-		propagate = propagate[1:]
-		if _, ok := seen[current]; ok {
+	for _, dependentID := range w.imports.TransitiveDependents(changedSurfaces) {
+		dependent := string(dependentID)
+		if _, ok := component[dependent]; !ok {
 			continue
 		}
-		seen[current] = struct{}{}
-		for dependent := range w.reverseDependents(current) {
-			if _, ok := component[dependent]; !ok {
-				continue
-			}
-			if _, ok := dirty[dependent]; ok {
-				continue
-			}
-			dirty[dependent] = struct{}{}
-			propagate = append(propagate, dependent)
-		}
+		dirty[dependent] = struct{}{}
 	}
 	if len(dirty) == 0 {
 		filePath = project.CanonicalPath(filePath)
@@ -306,7 +335,7 @@ func (w *workspaceIndex) dirtyFiles(filePath string, cached map[string]*project.
 	return dirty
 }
 
-func (w *workspaceIndex) reusePhases(filePath string, cached map[string]*project.Module) map[string]phase.Phase {
+func (w *workspaceIndex) reusePhases(filePath string, cached map[string]*module.Module) map[string]phase.Phase {
 	phases := make(map[string]phase.Phase)
 	if w == nil || len(cached) == 0 {
 		return phases
@@ -316,7 +345,7 @@ func (w *workspaceIndex) reusePhases(filePath string, cached map[string]*project
 	// "what is still reusable after this edit?" decision, while handlers only
 	// clone/reset and seed whichever phase this function authorizes.
 	component := w.componentFiles(filePath)
-	propagate := make([]string, 0)
+	changedSurfaces := make([]graph.NodeID, 0)
 	for cachedPath, cachedModule := range cached {
 		if cachedModule == nil || cachedModule.FilePath == "" {
 			continue
@@ -328,47 +357,71 @@ func (w *workspaceIndex) reusePhases(filePath string, cached map[string]*project
 		if _, inComponent := component[cachedPath]; !inComponent {
 			continue
 		}
-		// Byte-identical files can keep whatever completed phase they already had.
+		if cachedModule.AST == nil {
+			changedSurfaces = append(changedSurfaces, graph.NodeID(cachedPath))
+			continue
+		}
+		importsChanged := w.resolvedLocalImportsChanged(current, cachedModule)
+		// Syntax survives a resolution change; semantic artifacts must be rebuilt.
 		if cachedModule.ContentHash == current.contentHash {
-			phases[cachedPath] = cachedModule.Phase
+			if importsChanged {
+				phases[cachedPath] = phase.Parsed
+				changedSurfaces = append(changedSurfaces, graph.NodeID(cachedPath))
+			} else {
+				phases[cachedPath] = cachedModule.Phase
+			}
 			continue
 		}
 		// Import/export surface changes force dependents back to parse-only reuse.
 		// Body-only edits stay local to changed modules and do not downgrade
 		// importers inside same component.
-		if cachedModule.ImportFingerprint != current.importFingerprint || cachedModule.ExportFingerprint != current.exportFingerprint {
-			propagate = append(propagate, cachedPath)
+		if importsChanged || cachedModule.AST.ImportFingerprint != current.importFingerprint || cachedModule.AST.ExportFingerprint != current.exportFingerprint {
+			changedSurfaces = append(changedSurfaces, graph.NodeID(cachedPath))
 		}
 	}
 
-	seen := make(map[string]struct{}, len(propagate))
-	for len(propagate) > 0 {
-		current := propagate[0]
-		propagate = propagate[1:]
-		if _, ok := seen[current]; ok {
+	for _, dependentID := range w.imports.TransitiveDependents(changedSurfaces) {
+		dependent := string(dependentID)
+		if _, ok := component[dependent]; !ok {
 			continue
 		}
-		seen[current] = struct{}{}
-		for dependent := range w.reverseDependents(current) {
-			if _, ok := component[dependent]; !ok {
-				continue
-			}
-			cachedModule := cached[dependent]
-			currentModule := w.modules[dependent]
-			if cachedModule == nil || currentModule == nil {
-				continue
-			}
-			if cachedModule.ContentHash != currentModule.contentHash {
-				continue
-			}
-			// Dependents with unchanged text can skip reparsing, but they must
-			// rerun semantic/lowering phases because upstream module surface moved.
-			phases[dependent] = phase.Parsed
-			propagate = append(propagate, dependent)
+		cachedModule := cached[dependent]
+		currentModule := w.modules[dependent]
+		if cachedModule == nil || currentModule == nil {
+			continue
 		}
+		if cachedModule.ContentHash != currentModule.contentHash {
+			continue
+		}
+		// Dependents with unchanged text can skip reparsing, but they must
+		// rerun semantic/lowering phases because upstream module surface moved.
+		phases[dependent] = phase.Parsed
 	}
 
 	return phases
+}
+
+// resolvedLocalImportsChanged compares the workspace's current import targets
+// with the compiler's last published resolution, including targets that vanished.
+func (w *workspaceIndex) resolvedLocalImportsChanged(current *workspaceModule, cached *module.Module) bool {
+	if w == nil || current == nil || cached == nil {
+		return false
+	}
+	previous := make(map[string]struct{})
+	for _, imp := range cached.Imports {
+		if imp.ID.Origin == string(project.ModuleOriginLocal) && project.IsPathWithinRoot(w.rootDir, imp.FilePath) {
+			previous[project.CanonicalPath(imp.FilePath)] = struct{}{}
+		}
+	}
+	if len(previous) != len(current.resolvedLocalImportFiles) {
+		return true
+	}
+	for _, target := range current.resolvedLocalImportFiles {
+		if _, found := previous[target]; !found {
+			return true
+		}
+	}
+	return false
 }
 
 func (w *workspaceIndex) hasDiskBackedFiles() bool {
@@ -383,7 +436,7 @@ func (w *workspaceIndex) hasDiskBackedFiles() bool {
 	return true
 }
 
-func buildWorkspaceComponents(modules map[string]*workspaceModule, g *graph.Graph) []workspaceComponent {
+func buildWorkspaceComponents(modules map[string]*workspaceModule, g *graph.DependencyGraph) []workspaceComponent {
 	if len(modules) == 0 {
 		return nil
 	}
@@ -422,33 +475,6 @@ func buildWorkspaceComponents(modules map[string]*workspaceModule, g *graph.Grap
 	return components
 }
 
-func (w *workspaceIndex) reverseDependents(filePath string) map[string]struct{} {
-	out := make(map[string]struct{})
-	if w == nil || w.imports == nil {
-		return out
-	}
-	filePath = project.CanonicalPath(filePath)
-	if filePath == "" {
-		return out
-	}
-	queue := []string{filePath}
-	seen := map[string]struct{}{filePath: {}}
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-		for _, dependent := range w.imports.Predecessors(graph.NodeID(current)) {
-			file := string(dependent)
-			if _, ok := seen[file]; ok {
-				continue
-			}
-			seen[file] = struct{}{}
-			out[file] = struct{}{}
-			queue = append(queue, file)
-		}
-	}
-	return out
-}
-
 func workspaceFiles(rootDir string, cache map[string]string) ([]string, error) {
 	fileSet := make(map[string]struct{})
 	if rootDir != "" {
@@ -464,7 +490,7 @@ func workspaceFiles(rootDir string, cache map[string]string) ([]string, error) {
 		if filepath.Ext(path) != peeper.SourceExt {
 			continue
 		}
-		if rootDir != "" && !project.PathWithinRoot(rootDir, path) {
+		if rootDir != "" && !project.IsPathWithinRoot(rootDir, path) {
 			continue
 		}
 		fileSet[path] = struct{}{}

@@ -78,9 +78,9 @@ func InitCommand(args []string) (returnErr error) {
 	}
 
 	createdPaths := make([]string, 0, 3)
-	complete := false
+	didComplete := false
 	defer func() {
-		if complete {
+		if didComplete {
 			return
 		}
 		errs := []error{returnErr}
@@ -121,7 +121,7 @@ build = "program"
 	if err := manifest.WriteFileAtomic(manifest.FileName, []byte(manifestContent), 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", manifest.FileName, err)
 	}
-	complete = true
+	didComplete = true
 
 	printSuccess(fmt.Sprintf("Initialized project: %s", projectName))
 	fmt.Println("\nNext steps:")

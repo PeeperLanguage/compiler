@@ -1,37 +1,19 @@
 package typeinfo
 
-import "slices"
-
-func GetMethodLookupKeys(baseType Type) []string {
-
-	keys := make([]string, 0, 4)
-	appendKey := func(typ Type) {
-		if typ == nil {
-			return
-		}
-		key := TypeText(typ)
-		if key == "" {
-			return
-		}
-		if slices.Contains(keys, key) {
-			return
-		}
-		keys = append(keys, key)
+// ReceiverIdentity returns the nominal declaration identity whose method set
+// owns typ. Pointer/reference carriers and transparent aliases do not create
+// separate method namespaces.
+func ReceiverIdentity(typ Type) (string, bool) {
+	target, ok := ReceiverTarget(typ)
+	if !ok || target == nil {
+		return "", false
 	}
-	appendType := func(typ Type) {
-		appendKey(typ)
-		if underlying := Underlying(typ); underlying != typ {
-			appendKey(underlying)
-		}
+	target = Unalias(target)
+	defined, ok := target.(*DefinedType)
+	if !ok || defined == nil || defined.Identity == "" {
+		return "", false
 	}
-	appendType(baseType)
-	if target, ok := PointerTarget(baseType); ok {
-		appendType(target)
-	}
-	if target, _, ok := ReferenceTarget(Underlying(baseType)); ok {
-		appendType(target)
-	}
-	return keys
+	return defined.Identity, true
 }
 
 func PointerTarget(t Type) (Type, bool) {
@@ -42,18 +24,18 @@ func PointerTarget(t Type) (Type, bool) {
 	return nil, false
 }
 
-func ReferenceTarget(t Type) (target Type, mutable bool, ok bool) {
+func ReferenceTarget(t Type) (target Type, isMutable bool, ok bool) {
 	ref, ok := t.(*RefType)
 	if !ok || ref == nil || ref.Target == nil {
 		return nil, false, false
 	}
-	return ref.Target, ref.Mutable, true
+	return ref.Target, ref.IsMutable, true
 }
 
 // ReferenceValueTarget recognizes direct references and reference values made
 // nullable through optional wrappers. ReferenceTarget stays direct so pointer,
 // receiver, and method lookup rules do not treat optionals as transparent.
-func ReferenceValueTarget(t Type) (target Type, mutable bool, ok bool) {
+func ReferenceValueTarget(t Type) (target Type, isMutable bool, ok bool) {
 	for {
 		t = Underlying(t)
 		optional, optionalValue := t.(*OptionalType)
@@ -90,9 +72,8 @@ func InterfaceTypeOf(t Type) (*InterfaceType, bool) {
 	return iface, ok && iface != nil
 }
 
-// LookupStructField centralizes field search so checker and lowerer agree on
-// struct layout. Checker needs the field type for validation; lowerer needs
-// the same field index to emit field access.
+// LookupStructField centralizes semantic field search. Typechecking publishes
+// the selected slot and type for lowering rather than asking lowering to search again.
 func LookupStructField(baseType Type, name string) (field Field, index int, ok bool) {
 	if baseType == nil || name == "" {
 		return Field{}, -1, false

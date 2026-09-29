@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"compiler/internal/diagnostics"
-	"compiler/internal/frontend/ast"
+	"compiler/internal/fingerprint"
 	"compiler/internal/project"
 	"compiler/pkg/peeper"
 )
@@ -36,7 +36,7 @@ func TestCompileFileSourceSelection(t *testing.T) {
 			if mod == nil {
 				t.Fatalf("CompileFile returned nil")
 			}
-			if mod.ContentHash != ast.HashText(tt.want) {
+			if mod.ContentHash != fingerprint.Text(tt.want) {
 				t.Fatalf("content hash = %q, want hash for %q", mod.ContentHash, tt.want)
 			}
 		})

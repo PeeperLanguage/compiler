@@ -1,12 +1,13 @@
 package typechecker
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
 	"compiler/internal/frontend/ast"
-	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/source"
 	"compiler/internal/target"
 )
 
@@ -41,8 +42,10 @@ func TestCallIterationRecognition(t *testing.T) {
 				header = "item in cursor.Next()"
 			}
 			module, diag := checkTypeModule(t, "struct Cursor {}\n"+test.method+"\nfn main() { "+binding+" for "+header+" {} }")
+			main := module.AST.Stmts[len(module.AST.Stmts)-1].(*ast.FnDecl)
+			loop := main.Body.Stmts[len(main.Body.Stmts)-1].(*ast.ForStmt)
 			if test.diagnostic == "" {
-				if diag.HasErrors() || len(module.Typechecking.CheckedIterations) != 1 {
+				if diag.HasErrors() || testEvidence(module).CheckedIteration(loop.ID()) == nil {
 					t.Fatalf("missing checked iteration:\n%s", diag.EmitAllToString())
 				}
 			} else if !diag.HasErrors() || !strings.Contains(diag.EmitAllToString(), test.diagnostic) {
@@ -52,6 +55,58 @@ func TestCallIterationRecognition(t *testing.T) {
 				t.Fatalf("missing actionable hint %q:\n%s", test.hint, diag.EmitAllToString())
 			}
 		})
+	}
+}
+
+func TestCheckedIterationGeneratedNodeIDsAreStable(t *testing.T) {
+	compile := func(prepBody string) ([]source.NodeID, source.NodeID) {
+		t.Helper()
+		module, diag := checkTypeModule(t, `fn Produce() -> ?i32 { return none; }
+fn Prep() { `+prepBody+` }
+fn main() { for item in Produce() {} }`)
+		if diag.HasErrors() {
+			t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+		}
+		main := module.AST.Stmts[2].(*ast.FnDecl)
+		loop := main.Body.Stmts[0].(*ast.ForStmt)
+		expansion := testEvidence(module).CheckedIteration(loop.ID())
+		if expansion == nil {
+			t.Fatal("missing checked iteration")
+		}
+		ids := make([]source.NodeID, 0)
+		ast.Inspect(expansion, func(node ast.Node) bool {
+			if node != nil && node.ID().IsGenerated() {
+				if node.ID().Function() != main.ID().Function() {
+					t.Fatalf("generated node %v has wrong function owner", node.ID())
+				}
+				ids = append(ids, node.ID())
+			}
+			return true
+		})
+		return ids, expansion.ID()
+	}
+
+	baseline, baselineRoot := compile("")
+	repeated, repeatedRoot := compile("let unrelated = 1;")
+	if len(baseline) == 0 || !slices.Equal(baseline, repeated) || baselineRoot != repeatedRoot {
+		t.Fatalf("checked iteration identities changed: %v/%v and %v/%v", baselineRoot, baseline, repeatedRoot, repeated)
+	}
+}
+
+func TestCheckedIterationsUseDistinctGeneratedContexts(t *testing.T) {
+	module, diag := checkTypeModule(t, `fn Produce() -> ?i32 { return none; }
+fn main() {
+	for first in Produce() {}
+	for second in Produce() {}
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	main := module.AST.Stmts[1].(*ast.FnDecl)
+	first := testEvidence(module).CheckedIteration(main.Body.Stmts[0].ID())
+	second := testEvidence(module).CheckedIteration(main.Body.Stmts[1].ID())
+	if first == nil || second == nil || first.ID() == second.ID() {
+		t.Fatalf("checked iteration roots = %v and %v", first, second)
 	}
 }
 
@@ -83,14 +138,15 @@ fn main() {
 	if producer == nil {
 		t.Fatal("producer call not found")
 	}
-	effective := module.Typechecking.EffectiveCallArguments[producer.ID()]
+	effective := testEvidence(module).CallArgumentsOrSource(producer)
 	if len(effective) != 2 {
 		t.Fatalf("effective arguments = %d, want 2", len(effective))
 	}
-	if got := len(module.Typechecking.InterfaceImplementations); got != 2 {
-		t.Fatalf("interface evidence entries = %d, want declaration default plus one call expansion", got)
+	produce := module.AST.Stmts[3].(*ast.FnDecl)
+	if implementations := testEvidence(module).InterfaceImplementations(produce.Params[1].Default.ID()); len(implementations) != 1 {
+		t.Fatalf("declaration default evidence = %#v, want one implementation", implementations)
 	}
-	if implementations := module.Typechecking.InterfaceImplementations[effective[1].ID()]; len(implementations) != 1 {
+	if implementations := testEvidence(module).InterfaceImplementations(effective[1].ID()); len(implementations) != 1 {
 		t.Fatalf("effective default evidence = %#v, want one implementation", implementations)
 	}
 }
@@ -160,23 +216,54 @@ fn main() { let mut cursor = Cursor.{ value = 1 }; __LOOP__ }`,
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			for _, implicit := range []bool{false, true} {
-				loop := test.explicit
+				loopSource := test.explicit
 				if implicit {
-					loop = test.implicit
+					loopSource = test.implicit
 				}
-				module, diag := checkTypeModule(t, strings.Replace(test.source, "__LOOP__", loop, 1))
+				module, diag := checkTypeModule(t, strings.Replace(test.source, "__LOOP__", loopSource, 1))
 				if diag.HasErrors() {
 					t.Fatalf("implicit=%v unexpected diagnostics:\n%s", implicit, diag.EmitAllToString())
 				}
-				expectedExpansions := 0
+				checkedCount := 0
+				forEachCheckedIterationForTests(testEvidence(module), func(source.NodeID, *ast.BlockStmt) {
+					checkedCount++
+				})
+				expectedCount := 0
 				if implicit {
-					expectedExpansions = 1
+					expectedCount = 1
 				}
-				if got := len(module.Typechecking.CheckedIterations); got != expectedExpansions {
-					t.Fatalf("implicit=%v checked expansions = %d", implicit, got)
+				if checkedCount != expectedCount {
+					t.Fatalf("implicit=%v checked expansions=%d, want %d", implicit, checkedCount, expectedCount)
 				}
 			}
 		})
+	}
+}
+
+func TestCallIterationPublishesPayloadTypeForSourceBinding(t *testing.T) {
+	module, diag := checkTypeModule(t, `struct Item { value: i32 }
+struct Cursor {}
+fn (self: &Cursor) Next() -> ?Item { return none; }
+fn main() {
+	let cursor = Cursor.{};
+	for item in cursor.Next() { let value: i32 = item.value; }
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	fn := module.AST.Stmts[3].(*ast.FnDecl)
+	loop := fn.Body.Stmts[1].(*ast.ForStmt)
+	sym := module.SymbolIndex.Symbol(loop.Value)
+	if sym == nil {
+		t.Fatal("missing source iterator binding symbol")
+	}
+	if got := typeinfo.TypeText(sym.Type); got != "Item" {
+		t.Fatalf("source iterator binding type = %s, want Item", got)
+	}
+	body := loop.Body.Stmts[0].(*ast.LetDecl)
+	selector := body.Value.(*ast.SelectorExpr)
+	if got := typeinfo.TypeText(module.BaseExprType(selector.Expr.ID())); got != "Item" {
+		t.Fatalf("source iterator occurrence type = %s, want Item", got)
 	}
 }
 
@@ -218,7 +305,7 @@ return total;
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	loop := fn.Body.Stmts[1].(*ast.ForStmt)
-	binding := module.Bindings.NodeSymbols[loop.Value.ID()]
+	binding := module.SymbolIndex.Symbol(loop.Value)
 	if binding == nil {
 		t.Fatal("missing resolved loop binding")
 	}
@@ -235,7 +322,7 @@ return total;
 	if reference == nil {
 		t.Fatal("missing loop binding reference")
 	}
-	if resolved := module.Bindings.NodeSymbols[reference.ID()]; resolved != binding {
+	if resolved := module.SymbolIndex.Symbol(reference); resolved != binding {
 		t.Fatalf("loop reference resolved to %#v, want declaration symbol %#v", resolved, binding)
 	}
 }
@@ -254,18 +341,18 @@ return total;
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	loop := fn.Body.Stmts[1].(*ast.ForStmt)
-	evidence, ok := module.Typechecking.ForIterations[loop.ID()]
+	evidence, ok := testEvidence(module).ForIteration(loop.ID())
 	if !ok {
 		t.Fatal("missing range iteration evidence")
 	}
-	plan, isRange := evidence.Plan.(*typecheckresult.RangeIteration)
+	plan, isRange := evidence.Plan.(*RangeIteration)
 	if !isRange {
 		t.Fatalf("range iteration evidence = %#v", evidence)
 	}
 	if evidence.Cursor == nil || plan.Limit == nil || plan.Ordinal == nil {
 		t.Fatalf("range iteration evidence is incomplete = %#v", evidence)
 	}
-	if evidence.Index != module.Bindings.NodeSymbols[loop.Index.ID()] || evidence.Value != module.Bindings.NodeSymbols[loop.Value.ID()] {
+	if evidence.Index != module.SymbolIndex.Symbol(loop.Index) || evidence.Value != module.SymbolIndex.Symbol(loop.Value) {
 		t.Fatal("range evidence does not preserve source binding symbols")
 	}
 	for name, symbol := range map[string]string{
@@ -296,21 +383,21 @@ func TestCheckForInRangeTypeIsBoundOrderIndependent(t *testing.T) {
 			}
 			fn := module.AST.Stmts[0].(*ast.FnDecl)
 			loop := fn.Body.Stmts[0].(*ast.ForStmt)
-			evidence, found := module.Typechecking.ForIterations[loop.ID()]
+			evidence, found := testEvidence(module).ForIteration(loop.ID())
 			if !found {
 				t.Fatal("missing range iteration evidence")
 			}
 			for name, typ := range map[string]typeinfo.Type{
 				"element": evidence.ElementType,
 				"cursor":  evidence.Cursor.Type,
-				"end":     evidence.Plan.(*typecheckresult.RangeIteration).Limit.Type,
+				"end":     evidence.Plan.(*RangeIteration).Limit.Type,
 				"value":   evidence.Value.Type,
 			} {
 				if got := typeinfo.TypeText(typ); got != "i64" {
 					t.Fatalf("%s type = %s, want i64", name, got)
 				}
 			}
-			if !evidence.GuaranteedEntry {
+			if !evidence.HasGuaranteedEntry {
 				t.Fatal("ascending constant range lost guaranteed-entry proof")
 			}
 		})
@@ -330,11 +417,11 @@ return 0i64;
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	loop := fn.Body.Stmts[0].(*ast.ForStmt)
-	evidence := module.Typechecking.ForIterations[loop.ID()]
+	evidence, _ := testEvidence(module).ForIteration(loop.ID())
 	for name, typ := range map[string]typeinfo.Type{
 		"element": evidence.ElementType,
 		"cursor":  evidence.Cursor.Type,
-		"end":     evidence.Plan.(*typecheckresult.RangeIteration).Limit.Type,
+		"end":     evidence.Plan.(*RangeIteration).Limit.Type,
 		"value":   evidence.Value.Type,
 	} {
 		if got := typeinfo.TypeText(typ); got != "i64" {
@@ -361,12 +448,12 @@ func TestCheckForInRecordsGuaranteedRangeEntry(t *testing.T) {
 			}
 			fn := module.AST.Stmts[0].(*ast.FnDecl)
 			loop := fn.Body.Stmts[0].(*ast.ForStmt)
-			evidence, found := module.Typechecking.ForIterations[loop.ID()]
+			evidence, found := testEvidence(module).ForIteration(loop.ID())
 			if !found {
 				t.Fatal("missing range iteration evidence")
 			}
-			if evidence.GuaranteedEntry != test.guaranteed {
-				t.Fatalf("guaranteed entry = %v, want %v", evidence.GuaranteedEntry, test.guaranteed)
+			if evidence.HasGuaranteedEntry != test.guaranteed {
+				t.Fatalf("guaranteed entry = %v, want %v", evidence.HasGuaranteedEntry, test.guaranteed)
 			}
 		})
 	}
@@ -387,11 +474,11 @@ return total;
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	loop := fn.Body.Stmts[2].(*ast.ForStmt)
-	evidence, ok := module.Typechecking.ForIterations[loop.ID()]
+	evidence, ok := testEvidence(module).ForIteration(loop.ID())
 	if !ok {
 		t.Fatal("missing sequence iteration evidence")
 	}
-	plan, isSequence := evidence.Plan.(*typecheckresult.SequenceIteration)
+	plan, isSequence := evidence.Plan.(*SequenceIteration)
 	if !isSequence {
 		t.Fatalf("sequence iteration evidence = %#v", evidence)
 	}
@@ -402,7 +489,7 @@ return total;
 		t.Fatalf("carrier type = %s, want &[3]i32", got)
 	}
 	wantCursor, ok := typeinfo.NumericTypeFromName("usize", target.Host())
-	if !ok || !typeinfo.SameType(evidence.Cursor.Type, wantCursor) {
+	if !ok || !typeinfo.IsSameType(evidence.Cursor.Type, wantCursor) {
 		t.Fatalf("cursor type = %s, want target usize", typeinfo.TypeText(evidence.Cursor.Type))
 	}
 	if got := typeinfo.TypeText(evidence.ElementType); got != "i32" {
@@ -533,7 +620,7 @@ func TestRejectedForInDoesNotPublishIterationEvidence(t *testing.T) {
 			if loop == nil {
 				t.Fatal("missing recovered for-in loop")
 			}
-			if _, found := module.Typechecking.ForIterations[loop.ID()]; found {
+			if _, found := testEvidence(module).ForIteration(loop.ID()); found {
 				t.Fatal("rejected for-in loop retained semantic evidence")
 			}
 		})
@@ -552,7 +639,7 @@ func TestRejectedForInStillChecksBody(t *testing.T) {
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	loop := fn.Body.Stmts[0].(*ast.ForStmt)
-	if _, found := module.Typechecking.ForIterations[loop.ID()]; found {
+	if _, found := testEvidence(module).ForIteration(loop.ID()); found {
 		t.Fatal("rejected loop retained semantic evidence")
 	}
 }

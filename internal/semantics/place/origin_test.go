@@ -50,23 +50,23 @@ func TestPlaceExpressionProjectionGrammar(t *testing.T) {
 
 func TestPlaceAddressabilityUsesResolvedBindingBeforeScope(t *testing.T) {
 	scope := symbols.NewScope(nil)
-	scopeValue := symbols.New("value", symbols.SymbolVar, &ast.LetDecl{IsMutable: true}, nil)
+	scopeValue := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "value"), "value", symbols.SymbolVar, &ast.LetDecl{IsMutable: true}, nil)
 	if err := scope.Declare(scopeValue); err != nil {
 		t.Fatal(err)
 	}
-	resolvedValue := symbols.New("value", symbols.SymbolConst, nil, nil)
+	resolvedValue := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolConst, "value"), "value", symbols.SymbolConst, nil, nil)
 	projection := &ast.SelectorExpr{Expr: &ast.Ident{Name: "value"}, Name: &ast.Ident{Name: "field"}}
 	resolve := func(*ast.Ident) (Binding, bool) {
 		return Binding{Symbol: resolvedValue}, true
 	}
-	if !Addressable(scope, projection, nil, resolve) {
+	if !IsAddressable(scope, projection, nil, resolve) {
 		t.Fatal("Addressable() rejected resolved binding")
 	}
 
 	resolve = func(*ast.Ident) (Binding, bool) {
-		return Binding{Symbol: symbols.New("value", symbols.SymbolFunc, nil, nil)}, true
+		return Binding{Symbol: symbols.New(symbols.ProjectedSymbolID(symbols.SymbolFunc, "value"), "value", symbols.SymbolFunc, nil, nil)}, true
 	}
-	if Addressable(scope, projection, nil, resolve) {
+	if IsAddressable(scope, projection, nil, resolve) {
 		t.Fatal("Addressable() fell back to shadowed scope binding")
 	}
 }
@@ -91,13 +91,13 @@ func TestPlaceAddressabilityPointerAndReferenceBoundaries(t *testing.T) {
 				}
 				return nil
 			}
-			if got := Addressable(scope, projection, exprType, nil); got != test.want {
+			if got := IsAddressable(scope, projection, exprType, nil); got != test.want {
 				t.Fatalf("Addressable() = %v, want %v", got, test.want)
 			}
 		})
 	}
 
-	mutableReference := &typeinfo.RefType{Mutable: true, Target: typeinfo.DefaultIntegerType()}
+	mutableReference := &typeinfo.RefType{IsMutable: true, Target: typeinfo.DefaultIntegerType()}
 	sharedReference := &typeinfo.RefType{Target: typeinfo.DefaultIntegerType()}
 	for _, test := range []struct {
 		name   string
@@ -117,7 +117,7 @@ func TestPlaceAddressabilityPointerAndReferenceBoundaries(t *testing.T) {
 				return nil
 			}
 			mutable, shared, _ := MutableAddressable(scope, projection, exprType, nil)
-			if mutable != test.want || !typeinfo.SameType(shared, test.shared) {
+			if mutable != test.want || !typeinfo.IsSameType(shared, test.shared) {
 				t.Fatalf("MutableAddressable() = (%v, %v), want (%v, %v)", mutable, shared, test.want, test.shared)
 			}
 		})
@@ -127,7 +127,7 @@ func TestPlaceAddressabilityPointerAndReferenceBoundaries(t *testing.T) {
 func TestPlaceLocalRootPreservesBindingLocalAndPointerCutoff(t *testing.T) {
 	moduleScope := symbols.NewScope(nil)
 	scope := symbols.NewScope(moduleScope)
-	local := symbols.New("value", symbols.SymbolVar, &ast.LetDecl{IsMutable: true}, nil)
+	local := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "value"), "value", symbols.SymbolVar, &ast.LetDecl{IsMutable: true}, nil)
 	if err := scope.Declare(local); err != nil {
 		t.Fatal(err)
 	}
@@ -149,10 +149,10 @@ func TestPlaceLocalRootPreservesBindingLocalAndPointerCutoff(t *testing.T) {
 		t.Fatalf("LocalRoot() crossed owned pointer cutoff: (%v, %v)", root, ok)
 	}
 
-	resolved := symbols.New("value", symbols.SymbolConst, nil, nil)
+	resolved := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolConst, "value"), "value", symbols.SymbolConst, nil, nil)
 	for _, localBinding := range []bool{false, true} {
 		root, ok := LocalRoot(scope, moduleScope, base, nil, func(*ast.Ident) (Binding, bool) {
-			return Binding{Symbol: resolved, Local: localBinding}, true
+			return Binding{Symbol: resolved, IsLocal: localBinding}, true
 		})
 		if localBinding {
 			if !ok || root != resolved {
@@ -166,8 +166,8 @@ func TestPlaceLocalRootPreservesBindingLocalAndPointerCutoff(t *testing.T) {
 
 func TestResolvePreferResolvedBindingOverShadowingScope(t *testing.T) {
 	scope := symbols.NewScope(nil)
-	callerValue := symbols.New("value", symbols.SymbolVar, nil, nil)
-	declarationValue := symbols.New("value", symbols.SymbolConst, nil, nil)
+	callerValue := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "value"), "value", symbols.SymbolVar, nil, nil)
+	declarationValue := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolConst, "value"), "value", symbols.SymbolConst, nil, nil)
 	if err := scope.Declare(callerValue); err != nil {
 		t.Fatal(err)
 	}
@@ -179,16 +179,16 @@ func TestResolvePreferResolvedBindingOverShadowingScope(t *testing.T) {
 		},
 	})
 	want := []Origin{{Root: declarationValue}}
-	if !SameOrigins(resolved.StorageOrigins, want) || !SameOrigins(resolved.ValueOrigins, want) || !resolved.Stable {
+	if !AreSameOrigins(resolved.StorageOrigins, want) || !AreSameOrigins(resolved.ValueOrigins, want) || !resolved.IsStable {
 		t.Fatalf("resolution = %#v, want stable declaration binding", resolved)
 	}
 }
 
 func TestResolveSeparatesReferenceStorageAndValueProjections(t *testing.T) {
 	scope := symbols.NewScope(nil)
-	value := symbols.New("value", symbols.SymbolVar, nil, nil)
+	value := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "value"), "value", symbols.SymbolVar, nil, nil)
 	value.BindType(&typeinfo.StructType{Fields: []typeinfo.Field{{Name: "items", Type: &typeinfo.ArrayType{Len: "2", Elem: typeinfo.DefaultIntegerType()}}}})
-	reference := symbols.New("reference", symbols.SymbolVar, nil, nil)
+	reference := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "reference"), "reference", symbols.SymbolVar, nil, nil)
 	reference.BindType(&typeinfo.RefType{Target: value.Type})
 	if err := scope.Declare(value); err != nil {
 		t.Fatal(err)
@@ -207,7 +207,7 @@ func TestResolveSeparatesReferenceStorageAndValueProjections(t *testing.T) {
 	resolved := Resolve(scope, index, ResolveOptions{
 		ExprType: func(expr ast.Expr) typeinfo.Type { return types[expr] },
 		ReferenceOrigins: func(storage []Origin) []Origin {
-			if SameOrigins(storage, []Origin{{Root: reference}}) {
+			if AreSameOrigins(storage, []Origin{{Root: reference}}) {
 				return []Origin{{Root: value}}
 			}
 			return nil
@@ -218,10 +218,10 @@ func TestResolveSeparatesReferenceStorageAndValueProjections(t *testing.T) {
 		{Kind: OriginField, Field: "items"},
 		{Kind: OriginIndex, Index: "1"},
 	}}}
-	if !SameOrigins(resolved.ValueOrigins, want) || !resolved.Stable {
+	if !AreSameOrigins(resolved.ValueOrigins, want) || !resolved.IsStable {
 		t.Fatalf("resolution = %#v, want stable value origins %#v", resolved, want)
 	}
-	if !SameOrigins(Resolve(scope, base, ResolveOptions{
+	if !AreSameOrigins(Resolve(scope, base, ResolveOptions{
 		ReferenceOrigins: func([]Origin) []Origin { return []Origin{{Root: value}} },
 	}).StorageOrigins, []Origin{{Root: reference}}) {
 		t.Fatal("reference carrier storage did not retain binding identity")
@@ -230,8 +230,8 @@ func TestResolveSeparatesReferenceStorageAndValueProjections(t *testing.T) {
 
 func TestResolveReferenceOriginsByProjectedStoragePlace(t *testing.T) {
 	scope := symbols.NewScope(nil)
-	value := symbols.New("value", symbols.SymbolVar, nil, nil)
-	holder := symbols.New("holder", symbols.SymbolVar, nil, nil)
+	value := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "value"), "value", symbols.SymbolVar, nil, nil)
+	holder := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "holder"), "holder", symbols.SymbolVar, nil, nil)
 	holder.BindType(&typeinfo.StructType{Fields: []typeinfo.Field{{
 		Name: "ref", Type: &typeinfo.RefType{Target: typeinfo.DefaultIntegerType()},
 	}}})
@@ -248,21 +248,21 @@ func TestResolveReferenceOriginsByProjectedStoragePlace(t *testing.T) {
 	resolved := Resolve(scope, field, ResolveOptions{
 		ExprType: func(expr ast.Expr) typeinfo.Type { return types[expr] },
 		ReferenceOrigins: func(storage []Origin) []Origin {
-			if SameOrigins(storage, wantStorage) {
+			if AreSameOrigins(storage, wantStorage) {
 				return []Origin{{Root: value}}
 			}
 			return nil
 		},
 	})
-	if !SameOrigins(resolved.StorageOrigins, wantStorage) ||
-		!SameOrigins(resolved.ValueOrigins, []Origin{{Root: value}}) || !resolved.Stable {
+	if !AreSameOrigins(resolved.StorageOrigins, wantStorage) ||
+		!AreSameOrigins(resolved.ValueOrigins, []Origin{{Root: value}}) || !resolved.IsStable {
 		t.Fatalf("projected reference resolution = %#v", resolved)
 	}
 }
 
 func TestResolveAddressProjectsProvenOptionalPayloadValue(t *testing.T) {
 	scope := symbols.NewScope(nil)
-	carrier := symbols.New("value", symbols.SymbolVar, nil, nil)
+	carrier := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "value"), "value", symbols.SymbolVar, nil, nil)
 	carrier.BindType(&typeinfo.OptionalType{Inner: typeinfo.DefaultIntegerType()})
 	if err := scope.Declare(carrier); err != nil {
 		t.Fatal(err)
@@ -279,7 +279,7 @@ func TestResolveAddressProjectsProvenOptionalPayloadValue(t *testing.T) {
 	})
 	storage := []Origin{{Root: carrier}}
 	payload := VariantPayloadOrigins(storage, []int{ir.OptionalPresentCase})
-	if !SameOrigins(resolved.StorageOrigins, storage) || !SameOrigins(resolved.ValueOrigins, payload) {
+	if !AreSameOrigins(resolved.StorageOrigins, storage) || !AreSameOrigins(resolved.ValueOrigins, payload) {
 		t.Fatalf("address resolution = %#v, want carrier storage and payload value %#v", resolved, payload)
 	}
 }
@@ -287,12 +287,12 @@ func TestResolveAddressProjectsProvenOptionalPayloadValue(t *testing.T) {
 func TestResolveOrdersOptionalPayloadBeforePointeeAndSkipsNormalizedReferences(t *testing.T) {
 	scope := symbols.NewScope(nil)
 	valueType := &typeinfo.StructType{Fields: []typeinfo.Field{{Name: "value", Type: typeinfo.DefaultIntegerType()}}}
-	owner := symbols.New("owner", symbols.SymbolVar, nil, nil)
+	owner := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "owner"), "owner", symbols.SymbolVar, nil, nil)
 	owner.BindType(&typeinfo.OptionalType{Inner: &typeinfo.OwnedPtrType{Target: valueType}})
-	referent := symbols.New("referent", symbols.SymbolVar, nil, nil)
+	referent := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "referent"), "referent", symbols.SymbolVar, nil, nil)
 	referent.BindType(valueType)
-	reference := symbols.New("reference", symbols.SymbolVar, nil, nil)
-	reference.BindType(&typeinfo.OptionalType{Inner: &typeinfo.RefType{Mutable: true, Target: valueType}})
+	reference := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "reference"), "reference", symbols.SymbolVar, nil, nil)
+	reference.BindType(&typeinfo.OptionalType{Inner: &typeinfo.RefType{IsMutable: true, Target: valueType}})
 	for _, sym := range []*symbols.Symbol{owner, referent, reference} {
 		if err := scope.Declare(sym); err != nil {
 			t.Fatal(err)
@@ -315,7 +315,7 @@ func TestResolveOrdersOptionalPayloadBeforePointeeAndSkipsNormalizedReferences(t
 		{Kind: OriginPointee},
 		{Kind: OriginField, Field: "value"},
 	}}}
-	if !SameOrigins(ownerResolution.ValueOrigins, wantOwner) {
+	if !AreSameOrigins(ownerResolution.ValueOrigins, wantOwner) {
 		t.Fatalf("owned optional resolution = %#v, want %#v", ownerResolution, wantOwner)
 	}
 
@@ -324,12 +324,12 @@ func TestResolveOrdersOptionalPayloadBeforePointeeAndSkipsNormalizedReferences(t
 	referenceResolution := Resolve(scope, referenceField, ResolveOptions{
 		ExprType: func(expr ast.Expr) typeinfo.Type {
 			if expr == referenceBase {
-				return &typeinfo.RefType{Mutable: true, Target: valueType}
+				return &typeinfo.RefType{IsMutable: true, Target: valueType}
 			}
 			return typeinfo.DefaultIntegerType()
 		},
 		ReferenceOrigins: func(storage []Origin) []Origin {
-			if !SameOrigins(storage, []Origin{{Root: reference}}) {
+			if !AreSameOrigins(storage, []Origin{{Root: reference}}) {
 				return nil
 			}
 			return []Origin{{Root: referent}}
@@ -342,14 +342,14 @@ func TestResolveOrdersOptionalPayloadBeforePointeeAndSkipsNormalizedReferences(t
 		},
 	})
 	wantReference := []Origin{{Root: referent, Projections: []OriginProjection{{Kind: OriginField, Field: "value"}}}}
-	if !SameOrigins(referenceResolution.ValueOrigins, wantReference) {
+	if !AreSameOrigins(referenceResolution.ValueOrigins, wantReference) {
 		t.Fatalf("optional reference resolution = %#v, want %#v", referenceResolution, wantReference)
 	}
 }
 
 func TestResolvePreserveOwningPointeeAndCollapseUnknownDescendants(t *testing.T) {
 	scope := symbols.NewScope(nil)
-	owner := symbols.New("owner", symbols.SymbolVar, nil, nil)
+	owner := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "owner"), "owner", symbols.SymbolVar, nil, nil)
 	inner := &typeinfo.ArrayType{Len: "2", Elem: typeinfo.DefaultIntegerType()}
 	owner.BindType(&typeinfo.OwnedPtrType{Target: &typeinfo.ArrayType{Len: "2", Elem: inner}})
 	if err := scope.Declare(owner); err != nil {
@@ -378,16 +378,16 @@ func TestResolvePreserveOwningPointeeAndCollapseUnknownDescendants(t *testing.T)
 		{Kind: OriginPointee},
 		{Kind: OriginWildcard},
 	}}}
-	if !SameOrigins(resolved.ValueOrigins, want) || resolved.Stable {
+	if !AreSameOrigins(resolved.ValueOrigins, want) || resolved.IsStable {
 		t.Fatalf("resolution = %#v, want unstable origins %#v", resolved, want)
 	}
 }
 
 func TestResolveUsesBindingIndexIdentityAfterConstantEvaluation(t *testing.T) {
 	scope := symbols.NewScope(nil)
-	values := symbols.New("values", symbols.SymbolParam, nil, nil)
+	values := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolParam, "values"), "values", symbols.SymbolParam, nil, nil)
 	values.BindType(&typeinfo.ArrayType{Len: "2", Elem: typeinfo.DefaultIntegerType()})
-	index := symbols.New("index", symbols.SymbolParam, nil, nil)
+	index := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolParam, "index"), "index", symbols.SymbolParam, nil, nil)
 	index.BindType(typeinfo.DefaultIntegerType())
 	if err := scope.Declare(values); err != nil {
 		t.Fatal(err)
@@ -400,15 +400,15 @@ func TestResolveUsesBindingIndexIdentityAfterConstantEvaluation(t *testing.T) {
 		ConstantIndex: func(ast.Expr) (string, bool) { return "", false },
 	})
 	want := []Origin{{Root: values, Projections: []OriginProjection{{Kind: OriginBindingIndex, Binding: index}}}}
-	if !resolved.Stable || !SameOrigins(resolved.StorageOrigins, want) ||
+	if !resolved.IsStable || !AreSameOrigins(resolved.StorageOrigins, want) ||
 		len(resolved.Dependencies) != 1 || resolved.Dependencies[0] != index {
 		t.Fatalf("resolution = %#v, want binding-dependent stable index", resolved)
 	}
 }
 
 func TestMergeOriginsUnionsWithoutAliasingInputPaths(t *testing.T) {
-	leftRoot := symbols.New("left", symbols.SymbolVar, nil, nil)
-	rightRoot := symbols.New("right", symbols.SymbolVar, nil, nil)
+	leftRoot := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "left"), "left", symbols.SymbolVar, nil, nil)
+	rightRoot := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "right"), "right", symbols.SymbolVar, nil, nil)
 	left := []Origin{{Root: leftRoot, Projections: []OriginProjection{{Kind: OriginField, Field: "value"}}}}
 	right := []Origin{
 		{Root: leftRoot, Projections: []OriginProjection{{Kind: OriginField, Field: "value"}}},
@@ -416,7 +416,7 @@ func TestMergeOriginsUnionsWithoutAliasingInputPaths(t *testing.T) {
 	}
 
 	merged := MergeOrigins(left, right)
-	if len(merged) != 2 || !SameOrigins(merged, []Origin{left[0], right[1]}) {
+	if len(merged) != 2 || !AreSameOrigins(merged, []Origin{left[0], right[1]}) {
 		t.Fatalf("merged origins = %#v", merged)
 	}
 	merged[0].Projections[0].Field = "changed"
@@ -426,16 +426,16 @@ func TestMergeOriginsUnionsWithoutAliasingInputPaths(t *testing.T) {
 }
 
 func TestOriginsOverlap(t *testing.T) {
-	root := symbols.New("root", symbols.SymbolVar, nil, nil)
-	other := symbols.New("other", symbols.SymbolVar, nil, nil)
+	root := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "root"), "root", symbols.SymbolVar, nil, nil)
+	other := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "other"), "other", symbols.SymbolVar, nil, nil)
 	field := func(name string) OriginProjection { return OriginProjection{Kind: OriginField, Field: name} }
 	index := func(value string) OriginProjection { return OriginProjection{Kind: OriginIndex, Index: value} }
 	bindingIndex := func(binding *symbols.Symbol) OriginProjection {
 		return OriginProjection{Kind: OriginBindingIndex, Binding: binding}
 	}
 	wildcard := OriginProjection{Kind: OriginWildcard}
-	leftIndex := symbols.New("leftIndex", symbols.SymbolVar, nil, nil)
-	rightIndex := symbols.New("rightIndex", symbols.SymbolVar, nil, nil)
+	leftIndex := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "leftIndex"), "leftIndex", symbols.SymbolVar, nil, nil)
+	rightIndex := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "rightIndex"), "rightIndex", symbols.SymbolVar, nil, nil)
 
 	tests := []struct {
 		name    string
@@ -467,13 +467,13 @@ func TestOriginsOverlap(t *testing.T) {
 }
 
 func TestVariantPayloadOriginsPreserveExactCasePath(t *testing.T) {
-	root := symbols.New("value", symbols.SymbolVar, nil, nil)
+	root := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "value"), "value", symbols.SymbolVar, nil, nil)
 	origins := VariantPayloadOrigins([]Origin{{Root: root}}, []int{2, 1})
 	want := []Origin{{Root: root, Projections: []OriginProjection{
 		{Kind: OriginVariantPayload, Case: 2},
 		{Kind: OriginVariantPayload, Case: 1},
 	}}}
-	if !SameOrigins(origins, want) {
+	if !AreSameOrigins(origins, want) {
 		t.Fatalf("variant payload origins = %#v, want %#v", origins, want)
 	}
 }

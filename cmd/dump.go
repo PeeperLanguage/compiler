@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"compiler/internal/module"
 	"compiler/internal/project"
 )
 
@@ -40,13 +41,6 @@ func saveIRs(ctx *project.CompilerContext, dir string) error {
 		if err := os.MkdirAll(filepath.Dir(base), 0o755); err != nil {
 			return err
 		}
-		hirText := ""
-		if module.HIR != nil {
-			hirText = module.HIR.Text()
-		}
-		if err := os.WriteFile(base+".hir", []byte(hirText), 0o644); err != nil {
-			return err
-		}
 		mirText := ""
 		if module.MIR != nil {
 			mirText = module.MIR.Text()
@@ -67,7 +61,7 @@ func saveIRs(ctx *project.CompilerContext, dir string) error {
 // namespace "a" with import path "b/c" against no namespace with "a/b/c".
 const emptyIdentityComponent = "_"
 
-func moduleArtifactBase(stage string, module *project.Module) (string, error) {
+func moduleArtifactBase(stage string, module *module.Module) (string, error) {
 	origin := module.ID.Origin
 	if origin == "" {
 		origin = string(project.ModuleOriginLocal)

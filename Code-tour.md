@@ -7,11 +7,7 @@ need.
 Every code sample here is **simplified** — real signatures carry more parameters and more
 error handling. Each one names the file it came from so you can read the real thing.
 
-Related reading: [`RULES.md`](RULES.md) for what code is acceptable,
-[`COMPILER_GUIDELINES.md`](COMPILER_GUIDELINES.md) for phase discipline,
-[`docs/compiler-architecture.md`](docs/compiler-architecture.md) for the canonical
-architecture, and [`docs/compiler-framework/change-paths.md`](docs/compiler-framework/change-paths.md)
-for the file-by-file walk when you are *changing* something rather than learning it.
+Related reading: [`RULES.md`](RULES.md) for mandatory engineering requirements, [`COMPILER_GUIDELINES.md`](COMPILER_GUIDELINES.md) for design-review guidance, [`docs/compiler-architecture.md`](docs/compiler-architecture.md) for current architecture, and [`docs/compiler-framework/change-paths.md`](docs/compiler-framework/change-paths.md) for a file-by-file change guide. Verify mutable details against source.
 
 ---
 
@@ -23,10 +19,10 @@ flowchart LR
     LEX --> PAR[parser]
     PAR --> AST[AST]
     AST --> SEM[semantic analysis]
-    SEM --> CFG[control-flow graph]
+    SEM --> THIR[THIR]
+    THIR --> CFG[control-flow graph]
     CFG --> ANA[flow · effects · ownership]
-    ANA --> HIR[HIR]
-    HIR --> MIR[MIR]
+    ANA --> MIR[MIR]
     MIR --> LL["LLVM IR text"]
     LL --> CLANG["clang"]
     CLANG --> OBJ["object files"]
@@ -51,7 +47,6 @@ invoked as an external tool. Peeper does not link anything by hand.
 | `internal/semantics` | Collector, binder, resolver, const eval, typechecker, effects, definite init, ownership, usage, plus the artifact packages |
 | `internal/ir` | `cfg`, `hir`, `mir`, and the shared `ir` node/type model |
 | `internal/backend/llvm` | MIR → LLVM IR text |
-| `internal/contracts` | Test-tier contracts that force a decision for every node kind |
 | `internal/toolchain` | Finds `clang` and the sysroot; builds its command lines |
 | `internal/diagnostics` | Errors, warnings, source rendering, phase attribution |
 | `runtime/` | `peeper_rt.c` — the C runtime linked into every binary |
@@ -134,9 +129,9 @@ This is the spine of the compiler. Each module carries a `Phase`, and
 ```mermaid
 flowchart TD
     Setup --> Load --> Parsed --> Collected --> Bound --> Resolved
-    Resolved --> ConstEval --> Typechecked --> CFG --> FlowTyped
+    Resolved --> Typechecked --> CFG --> FlowTyped
     FlowTyped --> Effects --> DefiniteInit --> Ownership --> Usage
-    Usage --> HIR --> MIR --> Backend --> Finalize
+    Usage --> MIR --> Backend --> Finalize
 ```
 
 ```go
@@ -158,18 +153,17 @@ scheduler enforces that by advancing everyone one rung at a time.
 | Phase | Produces | Stored on `Module` as |
 | --- | --- | --- |
 | `Parsed` | syntax tree | `AST` |
-| `Collected` | top-level symbols, method sets | `Bindings`, `ModuleScope` |
-| `Bound` | operator/interface bindings | `Bindings` |
-| `Resolved` | every identifier → symbol | `Bindings.NodeSymbols` |
-| `ConstEval` | compile-time constants | `Constants` |
-| `Typechecked` | types and typing decisions | `Typechecking`, `TypedASTNodes` |
+| `Collected` | top-level symbols, method sets | `SymbolIndex`, `ModuleScope` |
+| `Bound` | operator/interface bindings | `SymbolIndex` |
+| `Resolved` | every identifier → symbol | `SymbolIndex` occurrence lookup |
+| `Typechecked` | types, typing decisions, finalized constants, typed source IR | `Typechecking`, `Constants`, `THIR` |
 | `CFG` | blocks, sites, edges | `CFG` |
 | `FlowTyped` | per-use narrowing | `Flow` |
 | `Effects` | ordered semantic effects | `Effects` |
 | `DefiniteInit` | *diagnostics only* | — |
 | `Ownership` | drop plan | `Ownership` |
 | `Usage` | *warnings only* | — |
-| `HIR` | typed high-level IR | `HIR` |
+
 | `MIR` | flat, block-structured IR | `MIR` |
 | `Backend` | LLVM IR text | `LLVMIR` |
 
@@ -208,7 +202,7 @@ that does not parse cleanly.
 
 AST nodes carry:
 
-- a **`NodeID`** — stable identity used as the key for every later fact about that node;
+- a **`source.NodeID`** — provisional after parsing, then function-owned and stable for callable syntax before semantic collection;
 - a **`Location`** — for diagnostics;
 - `forEachChild` — the one canonical child walk.
 
@@ -226,8 +220,7 @@ func (s *ForStmt) forEachChild(visit func(Node)) {
 }
 ```
 
-Forgetting a field in `forEachChild` makes it invisible to `ast.Inspect`. A contract test
-parses this package and fails naming the field you missed — see §13.
+Forgetting a field in `forEachChild` makes it invisible to `ast.Inspect`, so traversal behavior is covered by ordinary AST tests and source fixtures rather than a second parser for the compiler implementation.
 
 ---
 
@@ -241,35 +234,34 @@ flowchart LR
     K --> T["typechecker<br/>types + decisions"]
 ```
 
-**Collector** walks top-level declarations and puts them in `ModuleScope`, plus builds
-method sets. **Binder** wires up operator functions and interface members. **Resolver**
-creates block scopes and maps every referencing identifier to its symbol:
+**Collector** walks top-level declarations and puts them in `ModuleScope`. **Binder**
+resolves declaration types, publishes method sets, and wires up operator/interface members.
+**Resolver** creates block scopes and maps every referencing identifier to its symbol:
 
 ```go
 // internal/semantics/resolver (simplified)
-module.Bindings.NodeSymbols[ident.ID()] = symbol
-module.Bindings.BlockScopes[block.ID()] = scope
+module.SymbolIndex.Bind(ident, symbol)
+module.SymbolIndex.SetScope(block, scope)
 ```
 
-> **Gotcha worth knowing.** `NodeSymbols` indexes *references*, not definitions. A
-> declaration name and an assignment target are resolved through the block scope instead
-> (`scope.LookupNode`, `scope.Lookup`). Two mechanisms, deliberately.
+> **Identity rule.** `SymbolIndex` records resolved syntax occurrences, including
+> declaration names and assignment targets. Lexical scopes remain responsible for name
+> lookup, shadowing, visibility, and declaration order; downstream phases use the
+> published node identity instead of rescanning symbols by AST pointer.
 
 **The typechecker** does more than check types — it *publishes decisions* later phases
 depend on, so nothing has to re-derive them:
 
 ```go
 // internal/semantics/typecheckresult/result.go (excerpt)
-type Result struct {
-    ExprTypes             map[ast.NodeID]typeinfo.Type       // the type of each expression
-    ValueUses             map[ast.NodeID]typeinfo.UseKind    // read / copy / move
-    ReferenceArguments    map[ast.NodeID]bool                // borrows; value = mutable
-    ImplicitConversions   map[ast.NodeID]typeinfo.Conversion
-    ImplicitCallArguments map[ast.NodeID]typeinfo.Type       // receiver/pipe adaptation
-    Matches               map[ast.NodeID]Match               // resolved case evidence
-    ForIterations         map[ast.NodeID]ForIteration        // loop lowering plan
-    // ...
-}
+result.RecordExprType(expr.ID(), typ)
+result.RecordImplicitConversion(expr.ID(), conversion)
+result.RecordForIteration(loop.ID(), iteration)
+
+// Later phases ask semantic questions; the backing indexes stay private.
+typ := result.ExprType(expr.ID())
+conversion, ok := result.ImplicitConversion(expr.ID())
+iteration, ok := result.ForIteration(loop.ID())
 ```
 
 ---
@@ -299,8 +291,8 @@ type SiteID struct{ Block, Index int }   // dense and positional
 type Site struct {
     ID       SiteID
     Kind     SiteKind          // statement | scope exit | terminator | join
-    NodeID   ir.NodeID         // the AST node this point stands for
-    ScopeID  ir.NodeID
+    NodeID   source.NodeID     // the AST node this point stands for
+    ScopeID  source.NodeID
     Successors, Predecessors []Edge
 }
 ```
@@ -314,8 +306,8 @@ function types, which the typechecker result happens to satisfy:
 ```go
 // internal/ir/cfg/build.go
 type BuildQueries struct {
-    MatchCases          func(ast.NodeID) ([]int, bool)
-    LoopGuaranteedEntry func(ast.NodeID) bool
+    MatchCases          func(source.NodeID) ([]int, bool)
+    LoopGuaranteedEntry func(source.NodeID) bool
 }
 ```
 
@@ -341,7 +333,7 @@ type Op interface{ effectOp() }   // sealed set
 
 type Place struct {
     Root        *symbols.Symbol           // the binding …
-    Temporary   ast.NodeID                // … or the expression, for a value owning nothing
+    Temporary   source.NodeID             // … or the expression, for a value owning nothing
     Projections []place.OriginProjection  // .field, [index]
 }
 
@@ -350,8 +342,8 @@ type Write   struct{ Place Place }
 type Use     struct{ Place Place; Kind typeinfo.UseKind }
 type Borrow  struct{ Place Place; Mutable, Argument, Raw bool }
 type Discard struct{ Place Place }
-type CallBegin struct{ Node ast.NodeID }
-type CallEnd   struct{ Node ast.NodeID }
+type CallBegin struct{ Node source.NodeID }
+type CallEnd   struct{ Node source.NodeID }
 ```
 
 The producer is the only code that reads syntax to decide meaning:
@@ -408,8 +400,7 @@ flowchart LR
     OW --> CP["CleanupPlan"]
 ```
 
-They share **evidence, not machinery**. Each keeps its own lattice, join direction and
-diagnostics — `COMPILER_GUIDELINES.md` §6 explicitly forbids extracting a shared solver.
+They currently share **evidence, not solver machinery**. Each has distinct lattice, join direction, and diagnostics. A shared solver would need to reduce real duplication without hiding those differences.
 
 **Definite initialization** is a must-analysis: a symbol is initialized only if it is
 initialized on *every* path, so the join is intersection.
@@ -427,7 +418,7 @@ func apply(current state, op effect.Op) {
 }
 ```
 
-It contains **no AST switch at all** and does not import `ast` beyond `NodeID`.
+It contains **no AST switch at all**; source identity comes from `source.NodeID`.
 
 **Ownership** tracks moves, loans and liveness, then writes the drop plan:
 
@@ -459,9 +450,9 @@ values:
 // internal/semantics/ownershipresult/result.go
 type CleanupPlan struct {
     AfterScope     map[cfg.SiteID][]symbols.SymbolID  // scope exit
-    BeforeReturn   map[ir.NodeID][]symbols.SymbolID   // after the value is computed
-    BeforeAssign   map[ir.NodeID]struct{}             // replacing a value drops the old
-    DiscardedValue map[ir.NodeID]struct{}             // a temporary nobody owns
+    BeforeReturn   map[source.NodeID][]symbols.SymbolID // after the value is computed
+    BeforeAssign   map[source.NodeID]struct{}           // replacing a value drops the old
+    DiscardedValue map[source.NodeID]struct{}           // a temporary nobody owns
     // …
 }
 ```
@@ -470,16 +461,14 @@ Lowering *reads* this plan. It never decides a drop for itself.
 
 ---
 
-## 11. Lowering: HIR → MIR
+## 11. Lowering: THIR + CFG → MIR
 
-**HIR** is typed and still structured — `If`, `For`, `Block` are real nodes. It consumes
-published evidence rather than re-deciding anything:
+**THIR** is typed and structured. It carries symbols, conversions, places, ordered
+arguments, match arms, and iteration plans published by semantic analysis.
 
-```go
-// internal/ir/hir/lower (simplified)
-conversion, converting := module.Typechecking.ImplicitConversions[expr.ID()]
-iteration := module.Typechecking.ForIterations[stmt.ID()]   // carrier, cursor, bounds
-```
+**CFG** owns execution topology. **MIR** lowering joins CFG sites to THIR nodes by
+`source.NodeID`, lowers expressions through `internal/ir/exprlower`, and reads ownership
+cleanup plans. It does not re-read AST or reconstruct control flow.
 
 **MIR** is flat: basic blocks, instructions, terminators — close to what a backend wants.
 
@@ -489,14 +478,14 @@ type Instr interface{ instrNode() }       // Assign Store Print Drop DynamicArra
 type Terminator interface{ termNode() }   // Jump Branch SwitchVariant Ret
 ```
 
-Both sets are **sealed** by unexported marker methods, so an instruction can never be used
-where a terminator belongs. MIR lowering walks CFG sites and consumes the cleanup plan to
-place drops.
+MIR instructions and terminators are **sealed** by unexported marker methods, so an
+instruction can never be used where a terminator belongs. MIR lowering walks CFG sites
+and consumes cleanup plans to place drops.
 
 ```mermaid
 flowchart LR
-    A["AST<br/>structured, untyped"] --> H["HIR<br/>structured, typed"]
-    H --> M["MIR<br/>flat blocks + terminators"]
+    A["AST + evidence"] --> T["THIR<br/>structured, typed"]
+    T --> M["MIR<br/>flat blocks + terminators"]
     M --> L["LLVM IR text"]
 ```
 
@@ -552,20 +541,12 @@ the link working on platforms with tight argument limits.
 
 The compiler is built so that *forgetting* something fails loudly.
 
-```mermaid
-flowchart TD
-    N["you add an AST node kind"] --> C1["contracts: 8 statement sites<br/>fail by name"]
-    T["you add a typeinfo.Type"] --> C2["contracts: capability, identity,<br/>lowering fail by name"]
-    I["you add a mir.Instr"] --> C3["contracts: lowering and backend<br/>fail by name"]
-    A["a phase publishes evidence"] --> V["validators check its shape<br/>at the phase boundary"]
-```
-
 | Guard | Where | Catches |
 | --- | --- | --- |
-| Child traversal contract | `internal/contracts` | a node field missing from `forEachChild` |
-| Syntax-boundary dispatch contract | `internal/contracts` | a new node kind omitted by a true syntax-aware owner |
-| Semantic type contract | Go type system + `internal/contracts` | missing child/ownership structure or a required representation decision |
-| Lowered node contract | `internal/contracts` | an HIR/MIR kind nothing lowers or emits |
+| AST traversal tests | `frontend/ast` tests + source fixtures | broken child traversal behavior |
+| Sealed semantic type contract | Go type system | missing child/ownership behavior on a new semantic type |
+| THIR validation + required operation methods | `internal/ir/thir` | malformed evidence or missing consumer support |
+| MIR/backend rejecting dispatch | `internal/ir/mir`, `backend/llvm` | unsupported lowered nodes fail loudly |
 | `cfg.Validate` | `internal/ir/cfg` | malformed topology |
 | `effect.Validate` | `internal/semantics/effect` | operations with no symbol, unbalanced calls |
 | `ownershipresult.Validate` | `internal/semantics/ownershipresult` | evidence that contradicts published types |
@@ -593,7 +574,7 @@ For a new syntax construct, in order:
 5. **typechecker** — the type rule, and *publish* whatever later phases will need.
 6. **CFG** — only if the control-flow shape is genuinely new.
 7. **effects** — one case in `publishStmt`/`value` saying what it does to bindings.
-8. **HIR/MIR** — only if no existing lowering shape can represent it.
+8. **THIR/MIR** — only if no existing lowering shape can represent it.
 
 Steps 1–6 are unavoidable: where a name lives and what types are legal *is* the feature.
 Step 7 is what buys you definite initialization, ownership, liveness, drops and usage
@@ -609,7 +590,7 @@ at each true extension point.
 
 | Term | Meaning |
 | --- | --- |
-| **NodeID** | Stable identity of one AST node; the key for every fact about it |
+| **NodeID** | Canonical source identity; function syntax is owned by `FunctionID` plus local preorder |
 | **SymbolID** | Stable identity of one declaration |
 | **SiteID** | `{Block, Index}` — one ordered program point in a CFG |
 | **Place** | Storage: a root binding (or a temporary) plus projections |

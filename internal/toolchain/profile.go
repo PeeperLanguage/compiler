@@ -35,11 +35,11 @@ type Profile struct {
 	DebugFormat    string `json:"debug_format"`
 	MinimumOS      string `json:"minimum_os,omitempty"`
 	SDKDiscovery   string `json:"sdk_discovery,omitempty"`
-	Managed        bool   `json:"-"`
+	IsManaged      bool   `json:"-"`
 }
 
 func NewManagedProfile(compilerTarget target.Info, minimumOS string) (Profile, error) {
-	if !compilerTarget.Valid() || (compilerTarget.Arch != "amd64" && compilerTarget.Arch != "arm64") {
+	if !compilerTarget.IsValid() || (compilerTarget.Arch != "amd64" && compilerTarget.Arch != "arm64") {
 		return Profile{}, fmt.Errorf("unsupported managed release host %s/%s", compilerTarget.OS, compilerTarget.Arch)
 	}
 	minimumOS = strings.TrimSpace(minimumOS)
@@ -72,7 +72,7 @@ func NewManagedProfile(compilerTarget target.Info, minimumOS string) (Profile, e
 		}
 		profile.DebugFormat = "codeview"
 	case "darwin":
-		if !validMinimumOS(minimumOS) {
+		if !isValidMinimumOS(minimumOS) {
 			return Profile{}, fmt.Errorf("managed macOS profile requires a valid minimum macOS version")
 		}
 		profile.MinimumOS = minimumOS
@@ -127,7 +127,7 @@ func Load(profilePath, installationRoot string, compilerTarget target.Info) (Pro
 	if profile.DebugFormat != "dwarf" && profile.DebugFormat != "codeview" {
 		return Profile{}, fmt.Errorf("toolchain profile %q has invalid debug_format %q", profile.ProfileID, profile.DebugFormat)
 	}
-	if profile.MinimumOS != "" && !validMinimumOS(profile.MinimumOS) {
+	if profile.MinimumOS != "" && !isValidMinimumOS(profile.MinimumOS) {
 		return Profile{}, fmt.Errorf("toolchain profile %q has invalid minimum_os %q", profile.ProfileID, profile.MinimumOS)
 	}
 	if profile.SDKDiscovery != "" && (profile.TargetOS != "darwin" || profile.SDKDiscovery != "xcrun") {
@@ -161,7 +161,7 @@ func Load(profilePath, installationRoot string, compilerTarget target.Info) (Pro
 	if err != nil {
 		return Profile{}, err
 	}
-	profile.Managed = true
+	profile.IsManaged = true
 	return profile, nil
 }
 
@@ -217,7 +217,7 @@ func Resolve(executablePath string, compilerTarget target.Info) (Profile, error)
 	}, nil
 }
 
-func (profile Profile) ObjectArgs(inputPath, outputPath string, debug bool) []string {
+func (profile Profile) ObjectArgs(inputPath, outputPath string, isDebugBuild bool) []string {
 	args := []string{"-target", profile.LLVMTriple}
 	if profile.Sysroot != "" {
 		args = append(args, "--sysroot", profile.Sysroot)
@@ -225,7 +225,7 @@ func (profile Profile) ObjectArgs(inputPath, outputPath string, debug bool) []st
 	if profile.TargetOS == "darwin" && profile.MinimumOS != "" {
 		args = append(args, "-mmacosx-version-min="+profile.MinimumOS)
 	}
-	if debug {
+	if isDebugBuild {
 		args = append(args, "-O0")
 		if profile.DebugFormat == "codeview" {
 			args = append(args, "-gcodeview")
@@ -274,7 +274,7 @@ func discoverAppleSDK() (string, error) {
 	return sdkPath, nil
 }
 
-func validMinimumOS(value string) bool {
+func isValidMinimumOS(value string) bool {
 	parts := strings.Split(value, ".")
 	if len(parts) < 2 {
 		return false
@@ -313,10 +313,10 @@ func (profile Profile) WriteResponseFile(path string, objectPaths []string) erro
 	return nil
 }
 
-func resolveInstalledPath(root, value, field string, required bool) (string, error) {
+func resolveInstalledPath(root, value, field string, isRequired bool) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		if required {
+		if isRequired {
 			return "", fmt.Errorf("toolchain profile has no %s", field)
 		}
 		return "", nil

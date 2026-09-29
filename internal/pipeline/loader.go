@@ -7,10 +7,12 @@ import (
 	"sync"
 
 	"compiler/internal/diagnostics"
+	"compiler/internal/fingerprint"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/graph"
+	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/phase"
 	"compiler/internal/prelude"
@@ -24,7 +26,7 @@ type moduleLoader struct {
 	wg        sync.WaitGroup
 }
 
-func (l *moduleLoader) Load(entry *project.Module) error {
+func (l *moduleLoader) Load(entry *module.Module) error {
 	if l == nil || l.ctx == nil {
 		return errors.New("nil module loader")
 	}
@@ -36,11 +38,11 @@ func (l *moduleLoader) Load(entry *project.Module) error {
 	return nil
 }
 
-func (l *moduleLoader) enqueue(module *project.Module) {
+func (l *moduleLoader) enqueue(module *module.Module) {
 	if l == nil || l.ctx == nil || module == nil {
 		return
 	}
-	if !module.ID.Valid() {
+	if !module.ID.IsValid() {
 		return
 	}
 
@@ -69,58 +71,48 @@ func (l *moduleLoader) enqueue(module *project.Module) {
 	go l.loadModule(module)
 }
 
-func (l *moduleLoader) loadModule(module *project.Module) {
+func (l *moduleLoader) loadModule(module *module.Module) {
 	defer l.wg.Done()
 	if module == nil || l == nil {
 		return
 	}
 	loadDiag := l.ctx.Diagnostics.BeginPhase(phase.Load, module.ID.String())
 	if module.AST != nil {
-		if module.ImportFingerprint == "" {
-			module.ImportFingerprint = module.AST.ImportFingerprint
-		}
-		if module.ExportFingerprint == "" {
-			module.ExportFingerprint = module.AST.ExportFingerprint
-		}
 		if module.Phase < phase.Parsed {
 			l.ctx.ResetModule(module, phase.Parsed)
 		}
 		l.resolveImports(module, loadDiag)
 		return
 	}
-	if !module.ContentProvided && module.Content == "" && module.FilePath != "" {
+	if !module.HasProvidedContent && module.Content == "" && module.FilePath != "" {
 		content, err := os.ReadFile(module.FilePath)
 		if err != nil {
 			l.addImportError(loadDiag, nil, diagnostics.ErrModuleNotFound, "read module: "+err.Error())
 			return
 		}
 		module.Content = string(content)
-		module.ContentProvided = true
+		module.HasProvidedContent = true
 	}
 	if l.ctx != nil && l.ctx.Diagnostics != nil && module.FilePath != "" {
 		l.ctx.Diagnostics.AddSourceContent(module.FilePath, module.Content)
 	}
-	module.ContentHash = ast.HashText(module.Content)
+	module.ContentHash = fingerprint.Text(module.Content)
 	parseDiag := l.ctx.Diagnostics.BeginPhase(phase.Parsed, module.ID.String())
 	toks := lexer.New(module.FilePath, module.Content, parseDiag).Tokenize()
 	// Content is no longer needed after lexing; free the string.
 	module.Content = ""
 	module.AST = parser.New(module.FilePath, toks, parseDiag).ParseModule()
 	l.ctx.Metrics.AddParsedModule()
-	module.ImportFingerprint = module.AST.ImportFingerprint
-	module.ExportFingerprint = module.AST.ExportFingerprint
 	l.ctx.ResetModule(module, phase.Parsed)
 	l.resolveImports(module, loadDiag)
 }
 
-func (l *moduleLoader) resolveImports(module *project.Module, diag *diagnostics.DiagnosticBag) {
-	if module == nil || module.AST == nil {
+func (l *moduleLoader) resolveImports(mod *module.Module, diag *diagnostics.DiagnosticBag) {
+	if mod == nil || mod.AST == nil {
 		return
 	}
-	if module.Imports == nil {
-		module.Imports = make(map[string]project.ResolvedImport)
-	}
-	for _, imp := range module.AST.Imports {
+	mod.Imports = make(map[string]module.ResolvedImport)
+	for _, imp := range mod.AST.Imports {
 		rawPath, ok := ast.ImportPathFromDecl(imp)
 		if !ok {
 			l.addImportError(diag, imp, diagnostics.ErrInvalidImportPath, "invalid import path")
@@ -136,7 +128,7 @@ func (l *moduleLoader) resolveImports(module *project.Module, diag *diagnostics.
 			l.addImportError(diag, imp, diagnostics.ErrInvalidImportPath, "missing import alias")
 			continue
 		}
-		if existing, ok := module.Imports[alias]; ok && existing.ID != resolved.ID {
+		if existing, ok := mod.Imports[alias]; ok && existing.ID != resolved.ID {
 			l.addImportError(diag, imp, diagnostics.ErrAmbiguousImport, "import alias already in use")
 			continue
 		}
@@ -150,9 +142,9 @@ func (l *moduleLoader) resolveImports(module *project.Module, diag *diagnostics.
 		}
 		resolvedImport := *resolved
 		resolvedImport.Decl = imp
-		module.Imports[alias] = resolvedImport
-		if l.ctx.Graph != nil {
-			l.ctx.Graph.AddEdge(graph.NodeID(module.ID.String()), graph.NodeID(resolved.ID.String()))
+		mod.Imports[alias] = resolvedImport
+		if l.ctx.ImportGraph != nil {
+			l.ctx.ImportGraph.AddEdge(graph.NodeID(mod.ID.String()), graph.NodeID(resolved.ID.String()))
 		}
 
 		if existing, ok := l.ctx.ModuleByID(resolved.ID); ok {
@@ -163,7 +155,7 @@ func (l *moduleLoader) resolveImports(module *project.Module, diag *diagnostics.
 			// owns the conflict policy; only this site knows which import caused
 			// it, so it labels the diagnostic the registry recorded.
 			if existing.FilePath != "" && existing.FilePath != project.CanonicalPath(resolved.FilePath) {
-				if conflict := l.ctx.AddModule(&project.Module{ID: resolved.ID, FilePath: resolved.FilePath}); conflict != nil {
+				if conflict := l.ctx.AddModule(&module.Module{ID: resolved.ID, FilePath: resolved.FilePath}); conflict != nil {
 					conflict.WithPrimaryLabel(ast.LocOf(imp), "conflicting import")
 				}
 				continue
@@ -171,7 +163,7 @@ func (l *moduleLoader) resolveImports(module *project.Module, diag *diagnostics.
 			l.enqueue(existing)
 			continue
 		}
-		l.enqueue(&project.Module{ID: resolved.ID, FilePath: resolved.FilePath})
+		l.enqueue(&module.Module{ID: resolved.ID, FilePath: resolved.FilePath})
 	}
 }
 

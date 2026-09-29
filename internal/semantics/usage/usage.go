@@ -4,21 +4,34 @@ import (
 	"fmt"
 
 	"compiler/internal/diagnostics"
-	"compiler/internal/prelude"
-	"compiler/internal/project"
+	"compiler/internal/module"
+	"compiler/internal/moduleid"
 	"compiler/internal/semantics/symbols"
 )
 
-func Analyze(ctx *project.CompilerContext, module *project.Module) {
-	if ctx == nil || module == nil || module.ModuleScope == nil {
+func CollectUsedSymbols(modules []*module.Module) map[symbols.SymbolID]struct{} {
+	used := make(map[symbols.SymbolID]struct{})
+	for _, module := range modules {
+		if module == nil || module.SymbolIndex == nil {
+			continue
+		}
+		module.SymbolIndex.ForEachUsedSymbolID(func(id symbols.SymbolID) {
+			used[id] = struct{}{}
+		})
+	}
+	return used
+}
+
+func Analyze(diag *diagnostics.DiagnosticBag, module *module.Module, preludeID moduleid.ID, usedSymbols map[symbols.SymbolID]struct{}) {
+	if diag == nil || module == nil || module.ModuleScope == nil {
 		return
 	}
 
 	// 1. Check for unused imports in ModuleScope
 	for _, sym := range module.ModuleScope.Symbols() {
 		if sym.Kind == symbols.SymbolImport {
-			if !sym.Used {
-				ctx.Diagnostics.AddWarning(diagnostics.WarnUnusedImport,
+			if _, used := usedSymbols[sym.ID]; !used {
+				diag.AddWarning(diagnostics.WarnUnusedImport,
 					fmt.Sprintf("unused import `%s`", sym.Name), sym.Location, "")
 			}
 		}
@@ -26,7 +39,7 @@ func Analyze(ctx *project.CompilerContext, module *project.Module) {
 
 	// 2. Check for unused private module-level symbols (functions, types, constants, variables)
 	// Do not warn about prelude/global symbols since they represent a library
-	if module.ID != prelude.ModuleID(ctx) {
+	if module.ID != preludeID {
 		for _, sym := range module.ModuleScope.Symbols() {
 			if sym.Kind == symbols.SymbolImport {
 				continue
@@ -35,7 +48,7 @@ func Analyze(ctx *project.CompilerContext, module *project.Module) {
 				continue
 			}
 			// Only the exact discard binding `_` suppresses unused warnings.
-			if !symbols.IsPubName(sym.Name) && !sym.Used && sym.Name != "_" {
+			if _, used := usedSymbols[sym.ID]; !symbols.IsPubName(sym.Name) && !used && sym.Name != "_" {
 				var code string
 				var msg string
 				switch sym.Kind {
@@ -51,44 +64,41 @@ func Analyze(ctx *project.CompilerContext, module *project.Module) {
 				default:
 					continue
 				}
-				ctx.Diagnostics.AddWarning(code, msg, sym.Location, "")
+				diag.AddWarning(code, msg, sym.Location, "")
 			}
 		}
 	}
 
 	// 3. Check for unused local variables and parameters
-	if module.Bindings != nil {
-		for _, scope := range module.Bindings.BlockScopes {
-			if scope == nil {
-				continue
-			}
+	if module.SymbolIndex != nil {
+		module.SymbolIndex.ForEachScope(func(scope *symbols.Scope) {
 			for _, sym := range scope.Symbols() {
 				if sym.Name == "_" {
 					continue
 				}
-				if !sym.Used {
+				if _, used := usedSymbols[sym.ID]; !used {
 					switch sym.Kind {
 					case symbols.SymbolParam:
 						name := "parameter"
 						if sym.IsReceiver {
 							name = "receiver"
 						}
-						ctx.Diagnostics.AddWarning(diagnostics.WarnUnusedParameter,
+						diag.AddWarning(diagnostics.WarnUnusedParameter,
 							fmt.Sprintf("unused %s `%s`", name, sym.Name), sym.Location, "use it or rename it to `_` to suppress warning")
 					case symbols.SymbolVar, symbols.SymbolConst:
-						ctx.Diagnostics.AddWarning(diagnostics.WarnUnusedLocal,
+						diag.AddWarning(diagnostics.WarnUnusedLocal,
 							fmt.Sprintf("unused local `%s`", sym.Name), sym.Location, "use it or rename it to `_` to suppress warning")
 					}
 					continue
 				}
-				if !sym.IsMutable() || sym.RequiresMutable || sym.MutableLocation == nil {
+				if !sym.IsMutable() || module.SymbolIndex.RequiresMutable(sym) || sym.MutableLocation == nil {
 					continue
 				}
-				ctx.Diagnostics.AddWarning(diagnostics.WarnUnmodifiedMutable,
+				diag.AddWarning(diagnostics.WarnUnmodifiedMutable,
 					fmt.Sprintf("mutable binding `%s` is never modified", sym.Name), sym.MutableLocation, "remove unnecessary `mut`").
 					WithCodeReplacement(sym.MutableLocation, "mut", "").
 					WithHelp("remove unnecessary `mut`")
 			}
-		}
+		})
 	}
 }

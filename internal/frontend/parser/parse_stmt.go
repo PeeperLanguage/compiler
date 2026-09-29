@@ -305,7 +305,7 @@ func (p *Parser) parseMatchStmt() ast.Stmt {
 		}
 		var fields []ast.MatchPatternField
 		var binding *ast.Ident
-		discard := false
+		isDiscard := false
 		hasData := p.match(token.WITH)
 		endPos := ast.EndOf(casePath)
 		if hasData {
@@ -314,7 +314,7 @@ func (p *Parser) parseMatchStmt() ast.Stmt {
 				fields, end, _ = p.parseMatchPatternFields()
 				endPos = end.End
 			} else if p.at(token.IDENT) && p.current().Literal == "_" {
-				discard = true
+				isDiscard = true
 				endPos = p.advance().End
 			} else {
 				binding = p.parseIdent()
@@ -337,13 +337,13 @@ func (p *Parser) parseMatchStmt() ast.Stmt {
 			endPos = ast.EndOf(body)
 		}
 		arms = append(arms, reg(p, &ast.MatchArm{
-			Case:     casePath,
-			Binding:  binding,
-			Discard:  discard,
-			Fields:   fields,
-			HasData:  hasData,
-			Body:     body,
-			Location: source.NewLocation(p.filePath, ast.StartOf(casePath), endPos),
+			Case:      casePath,
+			Binding:   binding,
+			IsDiscard: isDiscard,
+			Fields:    fields,
+			HasData:   hasData,
+			Body:      body,
+			Location:  source.NewLocation(p.filePath, ast.StartOf(casePath), endPos),
 		}))
 		if p.match(token.COMMA) {
 			comma := p.prev()
@@ -382,9 +382,9 @@ func (p *Parser) parseMatchPatternFields() ([]ast.MatchPatternField, *token.Toke
 			if p.current().Kind == token.IDENT && p.current().Literal == "_" {
 				discard := p.advance()
 				return ast.MatchPatternField{
-					Name:     name,
-					Discard:  true,
-					Location: source.NewLocation(p.filePath, ast.StartOf(name), discard.End),
+					Name:      name,
+					IsDiscard: true,
+					Location:  source.NewLocation(p.filePath, ast.StartOf(name), discard.End),
 				}, true
 			}
 			binding := p.parseIdent()

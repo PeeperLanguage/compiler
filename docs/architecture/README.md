@@ -1,0 +1,109 @@
+# Compiler architecture maps
+
+These maps record implementation observed in source: where code lives, what each package currently does, and how data moves between files and stages. Verify mutable details against linked symbols. Maps do not prescribe future package boundaries, phase order, or ownership.
+
+See [`../compiler-architecture.md`](../compiler-architecture.md) for current overview, [`../../RULEBOOK.md`](../../RULEBOOK.md) for design-review questions, and [`../../RULES.md`](../../RULES.md) for durable engineering requirements.
+
+## Maps
+
+| Map | Covers |
+|---|---|
+| [Frontend](frontend.md) | Lexer, tokens, parser, AST, source locations, node identity, traversal, cloning |
+| [Semantics: bindings](semantics-bindings.md) | Collection, binding, resolution, symbols, scopes, types, places, and symbol-owned constants |
+| [Semantics: analyses](semantics-analyses.md) | THIR publication, unified CFG analysis, durable flow/cleanup facts, and usage |
+| [IR](ir.md) | Core IR types, THIR, CFG, expression/type lowering, MIR |
+| [Backend](backend.md) | Target descriptions, physical layouts, ABI decisions, LLVM emission |
+| [Infrastructure](infrastructure.md) | Modules, pipeline scheduling, project state, diagnostics, graphs, source, toolchains |
+| [LSP](lsp.md) | Server state, document snapshots, incremental compilation, requests, diagnostics, symbols |
+| [CLI and packages](cli-and-packages.md) | CLI registry and commands, packaging, manifests, registries, scripts, fixtures, support packages |
+
+## End-to-end data flow
+
+Current compilation is scheduled by `internal/pipeline` and operates on module snapshots in `internal/project`. Stages publish artifacts or evidence consumed by later work.
+
+```mermaid
+flowchart TD
+    Source[Source text] --> Lexer[lexer/token]
+    Lexer --> Parser[parser]
+    Parser --> AST[frontend/ast]
+    AST --> Bind[collector/binder/resolver]
+    Bind --> Types[typeinfo and symbols]
+    Types --> Check[typechecker operation]
+    Check --> THIR[THIR]
+    THIR --> CFG[cfg]
+    CFG --> Analysis[analysis.Run]
+    Analysis --> Usage[usage diagnostics]
+    Usage --> MIR[direct MIR lowering]
+    MIR --> Backend[target and LLVM]
+    Backend --> Output[Executable or emitted IR]
+```
+
+## Identity map
+
+| Identity | Created by | Used for |
+|---|---|---|
+| `source.NodeID` | parser, Parsed-to-Collected function publication, or deterministic semantic generation | Source/generated syntax lookup, semantic evidence maps, and IR provenance |
+| `moduleid.FunctionID` | Parsed-to-Collected function publication | Stable callable declaration identity across semantic and IR phases |
+| `symbols.SymbolID` | collector, resolver, typechecker generation, compiler definitions, or tooling projection | Stable declaration/storage identity, constant caches, ownership roots, cleanup plans, and IR references |
+| module ID | `internal/moduleid` | Cross-module identity, imports, caches, invalidation |
+| `cfg.SiteID` | CFG construction | Per-statement and terminator analysis sites |
+| `ir.TypeID` | shared IR type interning | Runtime type identity consumed by MIR and backend layout |
+
+Identity changes require checking every producer and consumer. Parser IDs are provisional. Before collection, function declarations and their syntax subtrees receive `FunctionID`-owned preorder identities; module-level syntax remains parser-generation-local. Generated syntax derives deterministic IDs from its function-owned source site, generation kind, slot, and generated preorder. Symbol IDs are explicit comparable values derived from source nodes, module declarations and recovery occurrence, generated roles, compiler definitions, or tooling-only projections; symbol allocation order is not identity. See frontend and semantics maps for observed behavior.
+
+## Folder map
+
+```text
+docs/
+├── compiler-architecture.md       pipeline and architectural invariants
+├── language-spec.md               source-language behavior
+├── ownership-pointer-model.md     ownership and pointer model
+├── compiler-framework/            focused framework design notes
+├── diagrams/                      D2 architecture diagrams
+└── architecture/                  package and data-flow maps
+    ├── frontend.md
+    ├── semantics-bindings.md
+    ├── semantics-analyses.md
+    ├── ir.md
+    ├── backend.md
+    ├── infrastructure.md
+    ├── lsp.md
+    └── cli-and-packages.md
+```
+
+## How to use these maps
+
+### Adding a language feature
+
+1. Start with [`language-spec.md`](../language-spec.md) and identify source behavior.
+2. Find syntax ownership in [Frontend](frontend.md).
+3. Find binding/type ownership in [Semantics: bindings](semantics-bindings.md).
+4. Find the semantic evidence and analysis consumers in [Semantics: analyses](semantics-analyses.md).
+5. Verify THIR, CFG, MIR, and backend lowerability in [IR](ir.md) and [Backend](backend.md).
+6. Add positive and negative `x_test/` fixtures plus focused phase tests.
+7. Update the affected map when ownership or data flow changes.
+
+### Debugging a wrong result
+
+| Symptom | Start here |
+|---|---|
+| Wrong parse or recovery | [Frontend](frontend.md) |
+| Name/type not found | [Semantics: bindings](semantics-bindings.md) |
+| Wrong type refinement | [Semantics: analyses](semantics-analyses.md), unified analysis section |
+| Missing cleanup or move error | [Semantics: analyses](semantics-analyses.md), ownership and cleanup section |
+| Wrong control flow | [IR](ir.md), CFG section |
+| Wrong THIR/MIR shape | [IR](ir.md), lowering sections |
+| Invalid layout or emitted LLVM | [Backend](backend.md) |
+| Stale diagnostics or hover | [LSP](lsp.md) and [Infrastructure](infrastructure.md) |
+| CLI, package, or fixture failure | [CLI and packages](cli-and-packages.md) |
+
+### Updating a map
+
+Keep entries factual and symbol-based:
+
+- name the owning package and file;
+- state concrete inputs and outputs;
+- explain identity keys and phase boundaries;
+- describe non-obvious invariants, not obvious syntax;
+- avoid copying the whole implementation or duplicating the language specification;
+- update data-flow prose when a handoff changes.

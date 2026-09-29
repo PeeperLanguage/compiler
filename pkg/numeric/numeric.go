@@ -91,15 +91,15 @@ func LooksFloatLike(s string) bool {
 	return strings.ContainsAny(clean, ".eE")
 }
 
-func ParseIntegerTypeName(name string) (signed bool, bits int, ok bool) {
+func ParseIntegerTypeName(name string) (isSigned bool, bits int, ok bool) {
 	if len(name) < 2 {
 		return false, 0, false
 	}
 	switch name[0] {
 	case 'i':
-		signed = true
+		isSigned = true
 	case 'u':
-		signed = false
+		isSigned = false
 	default:
 		return false, 0, false
 	}
@@ -110,7 +110,7 @@ func ParseIntegerTypeName(name string) (signed bool, bits int, ok bool) {
 	if err != nil || n < 1 || n > MaxIntegerBits {
 		return false, 0, false
 	}
-	return signed, n, true
+	return isSigned, n, true
 }
 
 // ParseLiteral owns the boundary between source spelling and the numeric value
@@ -219,12 +219,12 @@ func CanonicalizeIntegerLiteral(s string) (string, error) {
 	return value.String(), nil
 }
 
-func FitsIntegerLiteral(raw string, bitSize int, signed bool) bool {
+func FitsIntegerLiteral(raw string, bitSize int, isSigned bool) bool {
 	value, err := StringToBigInt(raw)
 	if err != nil {
 		return false
 	}
-	if signed {
+	if isSigned {
 		max := new(big.Int).Lsh(big.NewInt(1), uint(bitSize-1))
 		min := new(big.Int).Neg(max)
 		max.Sub(max, big.NewInt(1))
