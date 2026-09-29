@@ -6,10 +6,8 @@ import (
 	"compiler/internal/constvalue"
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/semantics/consteval"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/semantics/typeresolution"
 	"compiler/internal/source"
@@ -142,11 +140,11 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, retu
 			"ownership-bearing match subject must be a named place").
 			WithHelp("bind subject to a local before matching it"))
 	}
-	evidence := typecheckresult.Match{
+	evidence := Match{
 		SubjectID: node.Subject.ID(),
 		EnumType:  subjectType,
 		CaseCount: len(descriptor.Cases),
-		Arms:      make([]typecheckresult.MatchArm, 0, len(node.Arms)),
+		Arms:      make([]MatchArm, 0, len(node.Arms)),
 	}
 	seenCases := make(map[int]ast.Node, len(node.Arms))
 	for _, arm := range node.Arms {
@@ -154,7 +152,7 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, retu
 			evidenceComplete = false
 			continue
 		}
-		armEvidence := typecheckresult.MatchArm{ArmID: arm.ID(), Case: -1}
+		armEvidence := MatchArm{ArmID: arm.ID(), Case: -1}
 		if arm.Body != nil {
 			armEvidence.BodyID = arm.Body.ID()
 		}
@@ -196,7 +194,7 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, retu
 				c.ctx.Diagnostics.AddError(diagnostics.ErrMissingInitializer,
 					"data match case `"+resolved.CaseName.Name+"` requires a payload pattern", ast.LocOf(arm), "add `with <binding>` or `with _`")
 			} else if arm.Binding != nil || arm.IsDiscard {
-				fieldEvidence := typecheckresult.MatchBinding{Projection: typecheckresult.MatchWholePayload, Type: resolved.Case.Payload, IsDiscard: arm.IsDiscard}
+				fieldEvidence := MatchBinding{Projection: MatchWholePayload, Type: resolved.Case.Payload, IsDiscard: arm.IsDiscard}
 				if arm.Binding != nil {
 					fieldEvidence.Binding = c.module.SymbolIndex.Symbol(arm.Binding)
 					if fieldEvidence.Binding != nil {
@@ -230,7 +228,7 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, retu
 								"unknown match pattern field `"+name+"`", ast.LocOf(pattern.Name), "")
 							continue
 						}
-						fieldEvidence := typecheckresult.MatchBinding{Projection: typecheckresult.MatchPayloadField, Field: fieldIndex, Type: field.Type, IsDiscard: pattern.IsDiscard}
+						fieldEvidence := MatchBinding{Projection: MatchPayloadField, Field: fieldIndex, Type: field.Type, IsDiscard: pattern.IsDiscard}
 						if !pattern.IsDiscard && pattern.Binding != nil {
 							fieldEvidence.Binding = c.module.SymbolIndex.Symbol(pattern.Binding)
 							if fieldEvidence.Binding != nil {
@@ -261,7 +259,7 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, retu
 			"match is missing case `"+variant.Name+"`", ast.LocOf(node), "add one arm for every enum case")
 	}
 	if evidenceComplete && len(evidence.Arms) == len(node.Arms) {
-		c.module.Typechecking.RecordMatch(node.ID(), evidence)
+		c.evidence.RecordMatch(node.ID(), evidence)
 	}
 }
 
@@ -321,7 +319,7 @@ func (c *checker) checkAssign(scope *symbols.Scope, node *ast.AssignStmt) {
 			return
 		}
 	case *ast.SelectorExpr:
-		baseType := c.module.BaseExprType(target.Expr.ID())
+		baseType := c.exprType(target.Expr.ID())
 		if _, ok := typeinfo.PointerTarget(typeinfo.Underlying(baseType)); ok {
 			return
 		}
@@ -371,7 +369,7 @@ func (c *checker) checkIndexAssignmentTarget(scope *symbols.Scope, target *ast.I
 	if typeinfo.IsInvalidOrUnknown(targetType) {
 		return true
 	}
-	baseType := c.module.BaseExprType(target.Expr.ID())
+	baseType := c.exprType(target.Expr.ID())
 	if typeinfo.IsInvalidOrUnknown(baseType) {
 		return true
 	}
@@ -522,7 +520,7 @@ func (c *checker) checkBinding(scope *symbols.Scope, node ast.Stmt, requireIniti
 // as_bytes/as_chars view.
 func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, returnType typeinfo.Type) {
 	indexType := typeinfo.DefaultIntegerType()
-	evidence := typecheckresult.ForIteration{}
+	evidence := ForIteration{}
 	if node.Index != nil {
 		evidence.Index = c.module.SymbolIndex.Symbol(node.Index)
 	}
@@ -586,8 +584,8 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 			}
 		}
 		if valid {
-			startValue, startFound := consteval.EvaluateExpr(c.ctx, c.module, scope, rangeExpr.Start, elemType)
-			endValue, endFound := consteval.EvaluateExpr(c.ctx, c.module, scope, rangeExpr.End, elemType)
+			startValue, startFound := evaluateConstantExpr(c.ctx, c.module, c.evidence, scope, rangeExpr.Start, elemType)
+			endValue, endFound := evaluateConstantExpr(c.ctx, c.module, c.evidence, scope, rangeExpr.End, elemType)
 			start, startIntegral := startValue.(*constvalue.IntConst)
 			end, endIntegral := endValue.(*constvalue.IntConst)
 			if startFound && endFound && startIntegral && endIntegral && start.Int().Cmp(end.Int()) < 0 {
@@ -616,7 +614,7 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 				exprType := func(expr ast.Expr) typeinfo.Type {
 					return c.typeExpr(scope, expr, nil)
 				}
-				if !place.IsAddressable(scope, node.Iterable, exprType, c.module.ExpandedDefaultBinding) {
+				if !place.IsAddressable(scope, node.Iterable, exprType, c.expandedDefaultBinding) {
 					valid = false
 					c.ctx.Diagnostics.Add(invalidExpressionError(node.Iterable,
 						"for-in requires addressable array storage"))
@@ -651,7 +649,7 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 				default:
 					c.expandCallIteration(scope, node)
 				}
-				if checked := c.module.Typechecking.CheckedIteration(node.ID()); checked != nil {
+				if checked := c.evidence.CheckedIteration(node.ID()); checked != nil {
 					c.bindLoopVariable(node.Value, optional.Inner)
 					previous := c.reusedCall
 					c.reusedCall = call
@@ -669,13 +667,13 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 	if node.Value != nil {
 		c.bindLoopVariable(node.Value, elemType)
 	}
-	c.module.Typechecking.ForgetForIteration(node.ID())
+	c.evidence.ForgetForIteration(node.ID())
 	if valid && elemType != nil && !typeinfo.IsInvalidOrUnknown(elemType) {
 		location := ast.LocOf(node)
 		evidence.Cursor = symbols.New(symbols.GeneratedSymbolID(node.ID(), symbols.GeneratedForCursor), "$for.cursor", symbols.SymbolVar, nil, location)
 		if isRange {
 			evidence.Cursor.BindType(elemType)
-			plan := &typecheckresult.RangeIteration{
+			plan := &RangeIteration{
 				Limit: symbols.New(symbols.GeneratedSymbolID(node.ID(), symbols.GeneratedForRangeLimit), "$for.end", symbols.SymbolVar, nil, location),
 			}
 			plan.Limit.BindType(elemType)
@@ -688,9 +686,9 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 			evidence.Cursor.BindType(indexType)
 			carrier := symbols.New(symbols.GeneratedSymbolID(node.ID(), symbols.GeneratedForSequenceCarrier), "$for.carrier", symbols.SymbolVar, nil, location)
 			carrier.BindType(carrierType)
-			evidence.Plan = &typecheckresult.SequenceIteration{Carrier: carrier, CarrierType: carrierType}
+			evidence.Plan = &SequenceIteration{Carrier: carrier, CarrierType: carrierType}
 		}
-		c.module.Typechecking.RecordForIteration(node.ID(), evidence)
+		c.evidence.RecordForIteration(node.ID(), evidence)
 	}
 	c.loopDepth++
 	c.checkBlock(scope, node.Body, returnType)
@@ -792,7 +790,7 @@ func (c *checker) expandCallIteration(scope *symbols.Scope, node *ast.ForStmt) {
 	c.module.SymbolIndex.Bind(item.Value, resultSymbol)
 	c.module.SymbolIndex.Bind(item.Name, c.module.SymbolIndex.Symbol(node.Value))
 
-	c.module.Typechecking.RecordCheckedIteration(node.ID(), expansion)
+	c.evidence.RecordCheckedIteration(node.ID(), expansion)
 }
 
 func (c *checker) bindLoopVariable(name *ast.Ident, typ typeinfo.Type) {
@@ -880,25 +878,25 @@ func (c *checker) temporaryBorrowSource(scope *symbols.Scope, expr ast.Expr) ast
 		if node == nil {
 			return nil
 		}
-		return c.module.BaseExprType(node.ID())
+		return c.exprType(node.ID())
 	}
 	if _, _, isReference := typeinfo.ReferenceValueTarget(exprType(expr)); !isReference {
 		return nil
 	}
 	switch node := expr.(type) {
 	case *ast.AddressExpr:
-		if node == nil || node.Expr == nil || node.Mode == ast.AddressRaw || place.IsAddressable(scope, node.Expr, exprType, c.module.ExpandedDefaultBinding) {
+		if node == nil || node.Expr == nil || node.Mode == ast.AddressRaw || place.IsAddressable(scope, node.Expr, exprType, c.expandedDefaultBinding) {
 			return nil
 		}
 		return node
 	case *ast.CallExpr:
 		fn, _ := typeinfo.Underlying(exprType(node.Callee)).(*typeinfo.FuncType)
-		args := c.module.Typechecking.CallArgumentsOrSource(node)
+		args := c.evidence.CallArgumentsOrSource(node)
 		for _, source := range typeinfo.ReturnOriginSources(node, args, fn) {
 			if temporary := c.temporaryBorrowSource(scope, source); temporary != nil {
 				return temporary
 			}
-			if c.module.Typechecking.ImplicitCallArgument(source.ID()) != nil && !place.IsAddressable(scope, source, exprType, c.module.ExpandedDefaultBinding) {
+			if c.evidence.ImplicitCallArgument(source.ID()) != nil && !place.IsAddressable(scope, source, exprType, c.expandedDefaultBinding) {
 				if _, _, isReference := typeinfo.ReferenceValueTarget(exprType(source)); !isReference {
 					return source
 				}
@@ -910,14 +908,14 @@ func (c *checker) temporaryBorrowSource(scope *symbols.Scope, expr ast.Expr) ast
 		if temporary := c.temporaryBorrowSource(scope, node.Expr); temporary != nil {
 			return temporary
 		}
-		if !place.IsAddressable(scope, node.Expr, exprType, c.module.ExpandedDefaultBinding) {
+		if !place.IsAddressable(scope, node.Expr, exprType, c.expandedDefaultBinding) {
 			return node
 		}
 	case *ast.IndexExpr:
 		if temporary := c.temporaryBorrowSource(scope, node.Expr); temporary != nil {
 			return temporary
 		}
-		if !place.IsAddressable(scope, node.Expr, exprType, c.module.ExpandedDefaultBinding) {
+		if !place.IsAddressable(scope, node.Expr, exprType, c.expandedDefaultBinding) {
 			return node
 		}
 	}

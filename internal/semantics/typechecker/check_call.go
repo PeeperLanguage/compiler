@@ -7,11 +7,11 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/ir/thir"
 	"compiler/internal/module"
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -58,12 +58,12 @@ func (c *checker) typePrintExpr(scope *symbols.Scope, node *ast.PrintExpr) typei
 
 func (c *checker) typeCallExpr(scope *symbols.Scope, node *ast.CallExpr) typeinfo.Type {
 	if c.reusedCall == node {
-		if typ := c.module.Typechecking.ExprType(node.ID()); typ != nil {
+		if typ := c.evidence.ExprType(node.ID()); typ != nil {
 			return typ
 		}
 	}
 	effectiveArgs := append([]ast.Expr(nil), node.Args...)
-	c.module.Typechecking.RecordCallArguments(node.ID(), effectiveArgs)
+	c.evidence.RecordCallArguments(node.ID(), effectiveArgs)
 	if path, ok := node.Callee.(*ast.ScopeResolution); ok && path != nil && c.module.SymbolIndex != nil {
 		if sym := c.module.SymbolIndex.Symbol(path); sym != nil && sym.Kind == symbols.SymbolVariant {
 			for _, arg := range node.Args {
@@ -83,7 +83,7 @@ func (c *checker) typeCallExpr(scope *symbols.Scope, node *ast.CallExpr) typeinf
 			if !found {
 				panic(fmt.Sprintf("missing intrinsic definition for compiler operation %q", sym.CompilerOp))
 			}
-			c.module.Typechecking.RecordCompilerCall(node.ID(), typecheckresult.CompilerCall{Operation: definition.Operation, Kind: definition.Kind})
+			c.evidence.RecordCompilerCall(node.ID(), CompilerCall{Operation: definition.Operation, Kind: definition.Kind})
 			switch definition.Kind {
 			case intrinsics.FunctionAlloc:
 				return c.typeAllocCall(scope, node)
@@ -101,7 +101,7 @@ func (c *checker) typeCallExpr(scope *symbols.Scope, node *ast.CallExpr) typeinf
 	calleeType := c.typePayloadExpr(scope, node.Callee, nil)
 	if sym, declModule := c.defaultCallDeclaration(node.Callee); sym != nil {
 		effectiveArgs = c.expandCallDefaults(node, effectiveArgs, sym, declModule)
-		c.module.Typechecking.RecordCallArguments(node.ID(), effectiveArgs)
+		c.evidence.RecordCallArguments(node.ID(), effectiveArgs)
 	}
 	argTypes := make([]typeinfo.Type, 0, len(effectiveArgs))
 	fnType, _ := calleeType.(*typeinfo.FuncType)
@@ -125,7 +125,7 @@ func (c *checker) typeFromBytesCall(scope *symbols.Scope, node *ast.CallExpr, de
 	if fnType == nil {
 		panic("missing from_bytes signature")
 	}
-	c.module.Typechecking.RecordExprType(node.Callee.ID(), fnType)
+	c.evidence.RecordExprType(node.Callee.ID(), fnType)
 	for i, arg := range node.Args {
 		if i < len(fnType.Params) {
 			c.publishValueUse(arg, fnType.Params[i])
@@ -168,7 +168,7 @@ func (c *checker) typeCollectionCall(scope *symbols.Scope, node *ast.CallExpr, d
 			fmt.Sprintf("`%s` does not support %s", definition.Operation, typeinfo.TypeText(baseType))))
 		return &typeinfo.InvalidType{}
 	}
-	c.module.Typechecking.RecordExprType(node.Callee.ID(), fnType)
+	c.evidence.RecordExprType(node.Callee.ID(), fnType)
 	c.checkCall(scope, nil, node, fnType, node.Args, []typeinfo.Type{baseType})
 	return c.callReturnType(node, fnType)
 }
@@ -213,7 +213,7 @@ func (c *checker) typeDynamicArrayOwnerCall(scope *symbols.Scope, node *ast.Call
 		panic(fmt.Sprintf("missing dynamic-array signature for %q", op))
 	}
 
-	c.module.Typechecking.RecordExprType(node.Callee.ID(), fnType)
+	c.evidence.RecordExprType(node.Callee.ID(), fnType)
 	argTypes := make([]typeinfo.Type, 0, len(node.Args))
 	argTypes = append(argTypes, firstArgType)
 	for i, arg := range node.Args[1:] {
@@ -236,10 +236,10 @@ func (c *checker) typeAllocCall(scope *symbols.Scope, node *ast.CallExpr) typein
 	// The intrinsic has no parameter types to classify against, so the use kinds
 	// are published from its own semantics, before any type-dependent exit: the
 	// analyzer consumes them on diagnostics-continued paths too.
-	if c.module != nil && c.module.Typechecking != nil {
-		c.module.Typechecking.RecordValueUse(node.Args[0].ID(), typeinfo.UseMove)
+	if c.module != nil && c.evidence != nil {
+		c.evidence.RecordValueUse(node.Args[0].ID(), typeinfo.UseMove)
 		if len(node.Args) > 1 {
-			c.module.Typechecking.RecordValueUse(node.Args[1].ID(), typeinfo.UseRead)
+			c.evidence.RecordValueUse(node.Args[1].ID(), typeinfo.UseRead)
 		}
 	}
 
@@ -278,7 +278,7 @@ func (c *checker) typeAllocCall(scope *symbols.Scope, node *ast.CallExpr) typein
 // walks. Reference parameters publish UseRead: the kind is recorded for
 // completeness, while the borrow machinery in ownership still governs them.
 func (c *checker) publishValueUse(arg ast.Expr, paramType typeinfo.Type) {
-	if c == nil || arg == nil || paramType == nil || c.module == nil || c.module.Typechecking == nil {
+	if c == nil || arg == nil || paramType == nil || c.module == nil || c.evidence == nil {
 		return
 	}
 	use := typeinfo.UseMove
@@ -286,12 +286,12 @@ func (c *checker) publishValueUse(arg ast.Expr, paramType typeinfo.Type) {
 	if isReference || typeinfo.OwnershipCapabilityOf(paramType).Copy == typeinfo.CopyImplicit {
 		use = typeinfo.UseRead
 	}
-	c.module.Typechecking.RecordValueUse(arg.ID(), use)
+	c.evidence.RecordValueUse(arg.ID(), use)
 	// A reference parameter borrows its argument. The use kind cannot carry
 	// that: an implicit-copy argument publishes UseRead too, so a consumer could
 	// not tell a borrow from a plain read.
 	if isReference {
-		c.module.Typechecking.RecordReferenceArgument(arg.ID(), isMutable)
+		c.evidence.RecordReferenceArgument(arg.ID(), isMutable)
 	}
 }
 
@@ -327,11 +327,11 @@ func (c *checker) typeSelectorCall(scope *symbols.Scope, selector *ast.SelectorE
 		effectiveArgs := append([]ast.Expr(nil), call.Args...)
 		if methodSym != nil && methodSym.CompilerOp == "" {
 			effectiveArgs = c.expandCallDefaults(call, effectiveArgs, methodSym, c.module)
-			c.module.Typechecking.RecordCallArguments(call.ID(), effectiveArgs)
+			c.evidence.RecordCallArguments(call.ID(), effectiveArgs)
 		}
 		if c.module != nil {
-			if c.module.Typechecking != nil {
-				c.module.Typechecking.RecordExprType(selector.ID(), methodType)
+			if c.evidence != nil {
+				c.evidence.RecordExprType(selector.ID(), methodType)
 			}
 			if methodSym != nil && c.module.SymbolIndex != nil {
 				c.module.SymbolIndex.Bind(selector.Name, methodSym)
@@ -438,7 +438,7 @@ func (c *checker) checkCall(scope *symbols.Scope, receiverExpr ast.Expr, callExp
 			c.publishValueUse(argExpr, paramType)
 		}
 		if implicitExpr != nil && c.acceptImplicitCallArgument(scope, implicitExpr, argType, paramType) {
-			c.module.Typechecking.RecordImplicitCallArgument(implicitExpr.ID(), paramType)
+			c.evidence.RecordImplicitCallArgument(implicitExpr.ID(), paramType)
 			continue
 		}
 		site := ast.Node(callExpr)
@@ -470,7 +470,7 @@ func (c *checker) acceptImplicitCallArgument(scope *symbols.Scope, expr ast.Expr
 	}
 	isAddressable := place.IsAddressable(scope, expr, func(e ast.Expr) typeinfo.Type {
 		return c.typeExpr(scope, e, nil)
-	}, c.module.ExpandedDefaultBinding)
+	}, c.expandedDefaultBinding)
 	var mutableBinding *symbols.Symbol
 	if isMutable {
 		isAddressable, _, mutableBinding = c.mutableAddressableExpr(scope, expr)
@@ -524,7 +524,7 @@ func (c *checker) defaultCallDeclaration(callee ast.Expr) (*symbols.Symbol, *mod
 
 func (c *checker) expandCallDefaults(call *ast.CallExpr, args []ast.Expr, sym *symbols.Symbol, declModule *module.Module) []ast.Expr {
 	effectiveArgs := append([]ast.Expr(nil), args...)
-	if c == nil || c.module == nil || c.module.SymbolIndex == nil || c.module.Typechecking == nil || call == nil || sym == nil {
+	if c == nil || c.module == nil || c.module.SymbolIndex == nil || c.evidence == nil || call == nil || sym == nil {
 		return effectiveArgs
 	}
 	fn, ok := sym.ASTNode.(*ast.FnDecl)
@@ -589,19 +589,19 @@ func (c *checker) expandCallDefaults(call *ast.CallExpr, args []ast.Expr, sym *s
 			for clonedID, originalID := range defaultClones {
 				if resolved := declModule.SymbolIndex.SymbolID(originalID); resolved != nil {
 					c.module.SymbolIndex.BindID(clonedID, resolved)
-					c.module.Typechecking.MarkExpandedDefaultBinding(clonedID)
+					c.evidence.MarkExpandedDefaultBinding(clonedID)
 				}
-				copyExpressionEvidence(c.module, declModule, clonedID, originalID)
+				c.copyExpressionEvidence(declModule, clonedID, originalID)
 			}
 		}
 		for clonedID, originalID := range argumentClones {
 			if resolved := c.module.SymbolIndex.SymbolID(originalID); resolved != nil {
 				c.module.SymbolIndex.BindID(clonedID, resolved)
 			}
-			if c.module.Typechecking.ExpandedDefaultBinding(originalID) {
-				c.module.Typechecking.MarkExpandedDefaultBinding(clonedID)
+			if c.evidence.ExpandedDefaultBinding(originalID) {
+				c.evidence.MarkExpandedDefaultBinding(clonedID)
 			}
-			copyExpressionEvidence(c.module, c.module, clonedID, originalID)
+			c.copyExpressionEvidence(c.module, clonedID, originalID)
 		}
 		effectiveArgs = append(effectiveArgs, expanded)
 		slotExprs[i] = expanded
@@ -612,11 +612,40 @@ func (c *checker) expandCallDefaults(call *ast.CallExpr, args []ast.Expr, sym *s
 	return effectiveArgs
 }
 
-func copyExpressionEvidence(dst, src *module.Module, dstID, srcID source.NodeID) {
-	if dst == nil || dst.Typechecking == nil || src == nil || src.Typechecking == nil {
+func (c *checker) copyExpressionEvidence(src *module.Module, dstID, srcID source.NodeID) {
+	if c == nil || c.evidence == nil || src == nil || !dstID.IsValid() || !srcID.IsValid() {
 		return
 	}
-	dst.Typechecking.CloneReusableExpressionEvidenceFrom(dstID, src.Typechecking, srcID)
+	if src == c.module {
+		c.evidence.CloneReusableExpressionEvidenceFrom(dstID, c.evidence, srcID)
+		return
+	}
+	if src.THIR == nil {
+		return
+	}
+	expr, ok := src.THIR.Node(srcID).(thir.Expr)
+	if !ok || expr == nil {
+		return
+	}
+	if typ := expr.ExprType(); typ != nil {
+		c.evidence.RecordExprType(dstID, typ)
+	}
+	implementations := expr.InterfaceImplementations()
+	if len(implementations) != 0 {
+		copied := make([]InterfaceImplementation, 0, len(implementations))
+		for _, implementation := range implementations {
+			copied = append(copied, InterfaceImplementation{Symbol: implementation.Symbol, CallableType: implementation.CallableType})
+		}
+		c.evidence.RecordInterfaceImplementations(dstID, copied)
+	}
+	if conversion := expr.Conversion(); conversion != nil {
+		c.evidence.RecordImplicitConversion(dstID, *conversion)
+	}
+	if field, ok := expr.(*thir.Field); ok && field.Access != nil {
+		c.evidence.RecordStructField(dstID, StructFieldAccess{
+			Field: field.Access.Field, Type: field.ExprType(), DereferenceType: field.Access.DereferenceType,
+		})
+	}
 }
 
 func containsEffectfulExpression(expr ast.Expr) bool {

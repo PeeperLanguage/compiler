@@ -61,8 +61,7 @@ func checkOwnershipSource(t *testing.T, src string) *ownershipResult {
 	collector.Collect(ctx, module)
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
-	typechecker.Check(ctx, module)
-	module.THIR = thir.Build(module.ID, module.FilePath, module.AST, module.SymbolIndex, module.Typechecking, nil)
+	module.THIR = typechecker.Check(ctx, module)
 	module.CFG = cfg.BuildModule(module.THIR)
 	module.Flow = typechecker.CheckFlow(diag, module.THIR, module.CFG, module.ModuleScope)
 	module.Effects = effect.BuildTHIR(module.THIR, module.CFG)
@@ -158,12 +157,16 @@ fn main() { `+loop+` }`)
 				if expanded {
 					fn := result.module.AST.Stmts[3].(*ast.FnDecl)
 					sourceLoop := fn.Body.Stmts[0].(*ast.ForStmt)
-					expansion := result.module.Typechecking.CheckedIteration(sourceLoop.ID())
-					if len(expansion.Stmts) != 1 {
+					typedLoop, ok := result.module.THIR.Node(sourceLoop.ID()).(*thir.For)
+					if !ok || typedLoop == nil || typedLoop.Checked == nil || len(typedLoop.Checked.Stmts) != 1 {
 						t.Fatal("factory argument captured outside repeated call")
 					}
-					checked := expansion.Stmts[0].(*ast.ForStmt)
-					if checked.Body.Stmts[0].(*ast.LetDecl).Value != sourceLoop.Iterable {
+					checked, ok := typedLoop.Checked.Stmts[0].(*thir.For)
+					if !ok || checked.Body == nil || len(checked.Body.Stmts) == 0 {
+						t.Fatal("checked iteration missing repeated producer loop")
+					}
+					binding, ok := checked.Body.Stmts[0].(*thir.Binding)
+					if !ok || binding.Value == nil || binding.Value.SourceInfo().NodeID != sourceLoop.Iterable.ID() {
 						t.Fatal("producer call replaced instead of checked unchanged")
 					}
 				}

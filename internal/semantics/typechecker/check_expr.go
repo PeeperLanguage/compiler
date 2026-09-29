@@ -11,11 +11,9 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
 	"compiler/internal/problems"
-	"compiler/internal/semantics/consteval"
 
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/semantics/typeresolution"
 	"compiler/pkg/numeric"
@@ -29,8 +27,8 @@ func (c *checker) typeExpr(scope *symbols.Scope, expr ast.Expr, expected typeinf
 	if base == nil || expr == nil {
 		return base
 	}
-	if c.module != nil && c.module.Typechecking != nil {
-		c.module.Typechecking.RecordExprType(expr.ID(), base)
+	if c.module != nil && c.evidence != nil {
+		c.evidence.RecordExprType(expr.ID(), base)
 	}
 	return c.effectiveExpressionType(expr, base, expected)
 }
@@ -64,10 +62,10 @@ func (c *checker) effectiveExpressionType(expr ast.Expr, base, expected typeinfo
 }
 
 func (c *checker) recordCaseTest(node ast.Expr, subject ast.Expr, caseIndex, caseCount int, caseWhenTrue bool, family typeinfo.VariantFamily) {
-	if c == nil || c.module == nil || c.module.Typechecking == nil || node == nil || subject == nil {
+	if c == nil || c.module == nil || c.evidence == nil || node == nil || subject == nil {
 		return
 	}
-	c.module.Typechecking.RecordCaseTest(node.ID(), typecheckresult.CaseTest{
+	c.evidence.RecordCaseTest(node.ID(), CaseTest{
 		SubjectID: subject.ID(), Case: caseIndex, MatchesWhenTrue: caseWhenTrue,
 		CaseCount: caseCount, Family: family,
 	})
@@ -247,11 +245,11 @@ func (c *checker) typeAddressExpr(scope *symbols.Scope, node *ast.AddressExpr, e
 		return &typeinfo.InvalidType{}
 	}
 	exprType := func(expr ast.Expr) typeinfo.Type {
-		return c.module.EffectiveExprType(expr.ID())
+		return c.exprType(expr.ID())
 	}
-	isAddressable := place.IsAddressable(scope, node.Expr, exprType, c.module.ExpandedDefaultBinding)
+	isAddressable := place.IsAddressable(scope, node.Expr, exprType, c.expandedDefaultBinding)
 	if node.Mode == ast.AddressMutable {
-		isMutable, sharedReference, mutableBinding := place.MutableAddressable(scope, node.Expr, exprType, c.module.ExpandedDefaultBinding)
+		isMutable, sharedReference, mutableBinding := place.MutableAddressable(scope, node.Expr, exprType, c.expandedDefaultBinding)
 		if isAddressable && !isMutable {
 			diagnostic := c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
 				"mutable reference requires mutable addressable storage", ast.LocOf(node.Expr), "")
@@ -350,7 +348,7 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 		if leftString || rightString || leftView || rightView {
 			wantRight := &typeinfo.RefType{Target: &typeinfo.StringType{}}
 			if leftString && typeinfo.IsSameType(right, wantRight) {
-				c.module.Typechecking.MarkStringConcatenation(node.ID())
+				c.evidence.MarkStringConcatenation(node.ID())
 				return &typeinfo.StringType{}
 			}
 			c.ctx.Diagnostics.Add(invalidOperationError(node,
@@ -360,10 +358,10 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 	}
 	leftBase, rightBase := left, right
 	if c.module != nil {
-		if typ := c.module.BaseExprType(node.Left.ID()); typ != nil {
+		if typ := c.exprType(node.Left.ID()); typ != nil {
 			leftBase = typ
 		}
-		if typ := c.module.BaseExprType(node.Right.ID()); typ != nil {
+		if typ := c.exprType(node.Right.ID()); typ != nil {
 			rightBase = typ
 		}
 	}
@@ -402,7 +400,7 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 				"shift count must be integral"))
 			return &typeinfo.InvalidType{}
 		}
-		if value, ok := consteval.EvaluateExpr(c.ctx, c.module, scope, node.Right, right); ok {
+		if value, ok := evaluateConstantExpr(c.ctx, c.module, c.evidence, scope, node.Right, right); ok {
 			if count, ok := value.(*constvalue.IntConst); ok && count != nil {
 				_, bits, _ := typeinfo.NumericInfo(left)
 				normalized, normalizedOK := constvalue.NormalizeInteger(count.Int(),
@@ -574,7 +572,7 @@ func (c *checker) typeSelectorExpr(scope *symbols.Scope, node *ast.SelectorExpr)
 		} else if target, _, isIndirect := typeinfo.ReferenceTarget(typeinfo.Underlying(baseType)); isIndirect {
 			dereferenceType = target
 		}
-		c.module.Typechecking.RecordStructField(node.ID(), typecheckresult.StructFieldAccess{
+		c.evidence.RecordStructField(node.ID(), StructFieldAccess{
 			Field: fieldIndex, Type: field.Type, DereferenceType: dereferenceType,
 		})
 		return field.Type
@@ -652,7 +650,7 @@ func (c *checker) typeIndexExpr(scope *symbols.Scope, node *ast.IndexExpr) typei
 		return elem
 	}
 	array := typeinfo.Underlying(baseType).(*typeinfo.ArrayType)
-	value, ok := consteval.EvaluateExpr(c.ctx, c.module, scope, node.Index, typeinfo.DefaultIntegerType())
+	value, ok := evaluateConstantExpr(c.ctx, c.module, c.evidence, scope, node.Index, typeinfo.DefaultIntegerType())
 	if !ok {
 		return elem
 	}
@@ -660,7 +658,7 @@ func (c *checker) typeIndexExpr(scope *symbols.Scope, node *ast.IndexExpr) typei
 	if !ok || indexConst == nil {
 		return elem
 	}
-	c.module.Typechecking.RecordConstantIndex(node.ID(), typecheckresult.ConstantIndex{
+	c.evidence.RecordConstantIndex(node.ID(), ConstantIndex{
 		Text: indexConst.Text(),
 		Type: indexType,
 	})
@@ -694,7 +692,7 @@ func (c *checker) typeRangeIndexExpr(scope *symbols.Scope, node *ast.IndexExpr, 
 		return c.typeExpr(scope, expr, nil)
 	}
 	if shape == indexableFixedArray || shape == indexableDynamicArray {
-		if !place.IsAddressable(scope, node.Expr, exprType, c.module.ExpandedDefaultBinding) {
+		if !place.IsAddressable(scope, node.Expr, exprType, c.expandedDefaultBinding) {
 			c.ctx.Diagnostics.Add(invalidExpressionError(node.Expr,
 				"slicing requires addressable array storage"))
 			return &typeinfo.InvalidType{}
@@ -703,7 +701,7 @@ func (c *checker) typeRangeIndexExpr(scope *symbols.Scope, node *ast.IndexExpr, 
 	isMutable := shape == indexableMutableSliceView
 	var mutableBinding *symbols.Symbol
 	if shape == indexableFixedArray || shape == indexableDynamicArray {
-		isMutable, _, mutableBinding = place.MutableAddressable(scope, node.Expr, exprType, c.module.ExpandedDefaultBinding)
+		isMutable, _, mutableBinding = place.MutableAddressable(scope, node.Expr, exprType, c.expandedDefaultBinding)
 	}
 	if mutableBinding != nil {
 		c.module.SymbolIndex.RequireMutable(mutableBinding)
@@ -797,7 +795,7 @@ func (c *checker) typeStructLit(scope *symbols.Scope, node *ast.StructLit, expec
 		}
 		ordered, valid := c.typeLiteralFields(scope, node, node.Fields, targetStruct, "struct literal")
 		if valid {
-			c.module.Typechecking.RecordStructLiteralFields(node.ID(), ordered)
+			c.evidence.RecordStructLiteralFields(node.ID(), ordered)
 		}
 		return targetType
 	}
@@ -805,7 +803,7 @@ func (c *checker) typeStructLit(scope *symbols.Scope, node *ast.StructLit, expec
 	if targetStruct != nil {
 		ordered, valid := c.typeLiteralFields(scope, node, node.Fields, targetStruct, "struct literal")
 		if valid {
-			c.module.Typechecking.RecordStructLiteralFields(node.ID(), ordered)
+			c.evidence.RecordStructLiteralFields(node.ID(), ordered)
 		}
 		return targetType
 	}
@@ -886,7 +884,7 @@ func (c *checker) typeVariantConstruction(scope *symbols.Scope, site ast.Expr, p
 				"payloadless enum variant `"+resolved.CaseName.Name+"` does not accept a payload", ast.LocOf(site), "remove `with` and its value")
 			return &typeinfo.InvalidType{}
 		}
-		c.module.Typechecking.RecordVariantConstruction(site.ID(), typecheckresult.VariantConstruction{EnumType: resolved.EnumType, Case: resolved.CaseIndex})
+		c.evidence.RecordVariantConstruction(site.ID(), VariantConstruction{EnumType: resolved.EnumType, Case: resolved.CaseIndex})
 		return resolved.EnumType
 	}
 	if !initialized {
@@ -909,7 +907,7 @@ func (c *checker) typeVariantConstruction(scope *symbols.Scope, site ast.Expr, p
 			fmt.Sprintf("cannot assign %s to enum variant payload of type %s", typeinfo.TypeText(valueType), typeinfo.TypeText(resolved.Case.Payload)), ast.LocOf(value), "")
 		return &typeinfo.InvalidType{}
 	}
-	c.module.Typechecking.RecordVariantConstruction(site.ID(), typecheckresult.VariantConstruction{
+	c.evidence.RecordVariantConstruction(site.ID(), VariantConstruction{
 		EnumType: resolved.EnumType,
 		Case:     resolved.CaseIndex,
 		Payload:  resolved.Case.Payload,
@@ -944,7 +942,7 @@ func (c *checker) typeStructLitAnonymous(scope *symbols.Scope, node *ast.StructL
 			ordered = append(ordered, field.Value)
 		}
 	}
-	c.module.Typechecking.RecordStructLiteralFields(node.ID(), ordered)
+	c.evidence.RecordStructLiteralFields(node.ID(), ordered)
 	return &typeinfo.StructType{Fields: fields}
 }
 

@@ -2,16 +2,18 @@ package typechecker
 
 import (
 	"compiler/internal/frontend/ast"
+	"compiler/internal/ir/thir"
 	"compiler/internal/module"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/source"
 )
 
 type checker struct {
-	ctx    *project.CompilerContext
-	module *module.Module
+	ctx      *project.CompilerContext
+	module   *module.Module
+	evidence *evidence
 
 	payloadContext      int
 	optionalTestContext int
@@ -42,6 +44,13 @@ func (c *checker) enclosingFnDecl(scope *symbols.Scope) *ast.FnDecl {
 		}
 	}
 	return nil
+}
+
+func (c *checker) exprType(id source.NodeID) typeinfo.Type {
+	if c == nil || c.evidence == nil {
+		return nil
+	}
+	return c.evidence.ExprType(id)
 }
 
 func (c *checker) requireValueType(expr ast.Expr, typ typeinfo.Type, context string) typeinfo.Type {
@@ -106,12 +115,14 @@ func (c *checker) checkModule() {
 	})
 }
 
-func Check(ctx *project.CompilerContext, module *module.Module) {
+func Check(ctx *project.CompilerContext, module *module.Module) *thir.Module {
 	if module == nil || ctx == nil {
-		return
+		return nil
 	}
-	module.Typechecking = typecheckresult.New()
-	(&checker{ctx: ctx, module: module}).checkModule()
+	c := &checker{ctx: ctx, module: module, evidence: newEvidence()}
+	c.checkModule()
+	finalizeConstantValues(ctx, module, c.evidence)
+	return c.buildTHIR()
 }
 
 // CanAdaptFirstCallArgument reports whether argType can occupy a function's
@@ -121,7 +132,7 @@ func CanAdaptFirstCallArgument(ctx *project.CompilerContext, module *module.Modu
 	if ctx == nil || module == nil || paramType == nil || argType == nil {
 		return false
 	}
-	checker := &checker{ctx: ctx, module: module}
+	checker := &checker{ctx: ctx, module: module, evidence: newEvidence()}
 	if checker.isAssignable(paramType, argType, nil) {
 		return true
 	}

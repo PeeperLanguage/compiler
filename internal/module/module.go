@@ -11,9 +11,7 @@ import (
 	"compiler/internal/semantics/effect"
 	"compiler/internal/semantics/flowresult"
 	"compiler/internal/semantics/ownershipresult"
-	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
 )
@@ -72,8 +70,6 @@ type Module struct {
 	SymbolIndex *symbols.Index
 	// Constant-evaluation artifacts for current semantic generation.
 	Constants *constantresult.Result
-	// Base typechecker result for current semantic generation.
-	Typechecking *typecheckresult.Result
 	// Import alias -> resolved module import.
 	Imports map[string]ResolvedImport
 }
@@ -137,28 +133,15 @@ func (m *Module) RecordImportedUse(alias string, target *symbols.Symbol) {
 	m.SymbolIndex.MarkUsed(target)
 }
 
-// ExpandedDefaultBinding resolves declaration-module symbols paired with generated
-// default-expression markers. Local remains false for caller escape analysis.
-func (m *Module) ExpandedDefaultBinding(ident *ast.Ident) (place.Binding, bool) {
-	if m == nil || m.SymbolIndex == nil || m.Typechecking == nil || ident == nil {
-		return place.Binding{}, false
-	}
-	if !m.Typechecking.ExpandedDefaultBinding(ident.ID()) {
-		return place.Binding{}, false
-	}
-	return place.Binding{Symbol: m.SymbolIndex.Symbol(ident)}, true
-}
-
 func (m *Module) ResetSemanticData() {
 	if m == nil {
 		return
 	}
 	m.SymbolIndex = symbols.NewIndex()
 	m.Constants = constantresult.New()
-	m.Typechecking = nil
 }
 
-// BaseExprType returns canonical base typechecker evidence when available.
+// BaseExprType returns the canonical base type published in THIR when available.
 func (m *Module) BaseExprType(id source.NodeID) typeinfo.Type {
 	if m == nil || !id.IsValid() {
 		return nil
@@ -168,14 +151,11 @@ func (m *Module) BaseExprType(id source.NodeID) typeinfo.Type {
 			return expr.ExprType()
 		}
 	}
-	if m.Typechecking == nil {
-		return nil
-	}
-	return m.Typechecking.ExprType(id)
+	return nil
 }
 
 // EffectiveExprType returns per-use flow refinement when available and falls
-// back to the canonical base typechecker result.
+// back to the canonical base type published in THIR.
 func (m *Module) EffectiveExprType(id source.NodeID) typeinfo.Type {
 	if m == nil {
 		return nil
@@ -203,7 +183,6 @@ func (m *Module) ResetToPhase(retained phase.Phase) {
 		m.typeDeclarations = nil
 	}
 	if retained < phase.Typechecked {
-		m.Typechecking = nil
 		m.THIR = nil
 		m.SemanticExportFingerprint = ""
 	}

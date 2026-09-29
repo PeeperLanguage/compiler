@@ -8,7 +8,6 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -47,15 +46,15 @@ func (c *checker) isAssignable(dst, src typeinfo.Type, site ast.Expr) bool {
 }
 
 func (c *checker) recordImplicitConversion(expr ast.Expr, conversion typeinfo.Conversion) {
-	if c == nil || c.module == nil || c.module.Typechecking == nil || expr == nil ||
+	if c == nil || c.module == nil || c.evidence == nil || expr == nil ||
 		conversion.Kind == typeinfo.ConversionNone || conversion.Kind == typeinfo.ConversionRecovery ||
 		conversion.Kind == typeinfo.ConversionIdentity || conversion.Compatibility != typeinfo.Compatible {
 		return
 	}
-	c.module.Typechecking.RecordImplicitConversion(expr.ID(), conversion)
+	c.evidence.RecordImplicitConversion(expr.ID(), conversion)
 }
 
-func (c *checker) resolveInterfaceImplementations(iface *typeinfo.InterfaceType, src typeinfo.Type) ([]typecheckresult.InterfaceImplementation, []string, bool) {
+func (c *checker) resolveInterfaceImplementations(iface *typeinfo.InterfaceType, src typeinfo.Type) ([]InterfaceImplementation, []string, bool) {
 	if c == nil || iface == nil || src == nil {
 		return nil, nil, false
 	}
@@ -67,7 +66,7 @@ func (c *checker) resolveInterfaceImplementations(iface *typeinfo.InterfaceType,
 		}
 		return nil, missing, false
 	}
-	implementations := make([]typecheckresult.InterfaceImplementation, 0, len(iface.Methods))
+	implementations := make([]InterfaceImplementation, 0, len(iface.Methods))
 	missing := make([]string, 0)
 	for _, required := range iface.Methods {
 		fnType := required.CallableTypeFor(owner)
@@ -91,18 +90,18 @@ func (c *checker) resolveInterfaceImplementations(iface *typeinfo.InterfaceType,
 			missing = append(missing, required.Name)
 			continue
 		}
-		implementations = append(implementations, typecheckresult.InterfaceImplementation{
+		implementations = append(implementations, InterfaceImplementation{
 			Symbol: actual.Symbol, CallableType: actualType,
 		})
 	}
 	return implementations, missing, len(missing) == 0
 }
 
-func (c *checker) storeInterfaceImplementations(expr ast.Expr, implementations []typecheckresult.InterfaceImplementation) {
-	if c == nil || c.module == nil || c.module.Typechecking == nil || expr == nil {
+func (c *checker) storeInterfaceImplementations(expr ast.Expr, implementations []InterfaceImplementation) {
+	if c == nil || c.module == nil || c.evidence == nil || expr == nil {
 		return
 	}
-	c.module.Typechecking.RecordInterfaceImplementations(expr.ID(), implementations)
+	c.evidence.RecordInterfaceImplementations(expr.ID(), implementations)
 }
 
 func (c *checker) addInterfaceHint(d *diagnostics.Diagnostic, dst, src typeinfo.Type) {
@@ -244,7 +243,7 @@ func (c *checker) mutableAddressableExpr(scope *symbols.Scope, expr ast.Expr) (b
 	}
 	return place.MutableAddressable(scope, expr, func(e ast.Expr) typeinfo.Type {
 		return c.typeExpr(scope, e, nil)
-	}, c.module.ExpandedDefaultBinding)
+	}, c.expandedDefaultBinding)
 }
 
 func (c *checker) mutableImplicitArgumentDiagnostic(scope *symbols.Scope, expr ast.Expr) (ast.Node, string, bool) {

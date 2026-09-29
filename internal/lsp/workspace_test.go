@@ -14,6 +14,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
+	"compiler/internal/ir/thir"
 	"compiler/internal/module"
 	"compiler/internal/phase"
 	"compiler/internal/project"
@@ -920,16 +921,16 @@ fn Read(input: i32 = value) -> i32 {
 	if call == nil || len(call.Args) != 0 {
 		t.Fatalf("source call after reset = %#v, want zero source arguments", call)
 	}
-	effectiveArgs := mainModule.Typechecking.CallArgumentsOrSource(call)
-	if len(effectiveArgs) != 1 {
-		t.Fatalf("effective arguments after reset = %#v, want one rebuilt default", effectiveArgs)
+	typedCall, ok := mainModule.THIR.Node(call.ID()).(*thir.Call)
+	if !ok || typedCall == nil || len(typedCall.Args) != 1 {
+		t.Fatalf("effective arguments after reset = %#v, want one rebuilt default", typedCall)
 	}
-	ident, ok := effectiveArgs[0].(*ast.Ident)
-	if !ok || mainModule.SymbolIndex == nil || mainModule.SymbolIndex.Symbol(ident) == nil {
-		t.Fatalf("rebuilt default = %#v, want resolved imported identifier", effectiveArgs[0])
+	ident, ok := typedCall.Args[0].(*thir.Ident)
+	if !ok || ident.Symbol == nil {
+		t.Fatalf("rebuilt default = %#v, want resolved imported identifier", typedCall.Args[0])
 	}
-	if !mainModule.Typechecking.ExpandedDefaultBinding(ident.ID()) {
-		t.Fatalf("rebuilt default identifier %v missing declaration-binding provenance", ident.ID())
+	if !ident.IsExpandedDefaultBinding {
+		t.Fatalf("rebuilt default identifier %v missing declaration-binding provenance", ident.SourceInfo().NodeID)
 	}
 }
 

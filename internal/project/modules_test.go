@@ -7,6 +7,7 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/mir"
 	"compiler/internal/ir/thir"
@@ -17,7 +18,6 @@ import (
 	"compiler/internal/semantics/flowresult"
 	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/semantics/typeresolution"
 )
@@ -167,57 +167,67 @@ func TestCompilerContextModuleIDsKeepComponentsCollisionSafe(t *testing.T) {
 }
 
 func moduleWithArtifacts() *module.Module {
+	integer := typeinfo.DefaultIntegerType()
+	functionID := moduleid.FunctionID("test::main")
+	typed := thir.NewModule("test", "test.peep", []*thir.Function{{
+		Identity: functionID,
+		Name:     "main",
+		Source:   ir.SourceInfo{NodeID: source.ParsedNodeID(2)},
+		Body: &thir.Block{
+			StmtInfo: thir.StmtInfo{Source: ir.SourceInfo{NodeID: source.ParsedNodeID(3)}},
+			Stmts: []thir.Stmt{&thir.ExprStmt{
+				StmtInfo: thir.StmtInfo{Source: ir.SourceInfo{NodeID: source.ParsedNodeID(4)}},
+				Value:    &thir.NumberLiteral{ExprInfo: thir.ExprInfo{Source: ir.SourceInfo{NodeID: source.ParsedNodeID(1)}, Type: integer}, Value: "1"},
+			}},
+		},
+	}})
 	module := &module.Module{
 		Phase:                     phase.Backend,
 		SemanticExportFingerprint: "semantic API",
 		ModuleScope:               symbols.NewScope(nil),
-		THIR:                      &thir.Module{},
-		CFG:                       &cfg.Module{Functions: []*cfg.ControlFlowGraph{{}}},
+		THIR:                      typed,
+		CFG:                       &cfg.Module{Functions: []*cfg.ControlFlowGraph{{FunctionID: functionID}}},
 		Flow:                      flowresult.New(),
-		Effects:                   effect.Result{moduleid.FunctionID("test"): {cfg.SiteID{}: {effect.Use{}}}},
-		Ownership:                 ownershipresult.Result{moduleid.FunctionID("test"): &ownershipresult.CleanupPlan{}},
+		Effects:                   effect.Result{functionID: {cfg.SiteID{}: {effect.Use{}}}},
+		Ownership:                 ownershipresult.Result{functionID: &ownershipresult.CleanupPlan{}},
 		MIR:                       &mir.Module{},
 		LLVMIR:                    "stale IR",
 	}
 	module.ResetSemanticData()
-	module.Typechecking = typecheckresult.New()
-	module.Typechecking.RecordExprType(source.ParsedNodeID(1), typeinfo.DefaultIntegerType())
 	module.Flow.RecordExprType(source.ParsedNodeID(1), &typeinfo.IntegerType{IsSigned: true, Bits: 64})
 	return module
 }
 
 func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 	tests := []struct {
-		phase        phase.Phase
-		scope        bool
-		bindings     bool
-		constants    bool
-		typechecking bool
-		exportAPI    bool
-		thir         bool
-		cfg          bool
-		flow         bool
-		effects      bool
-		ownership    bool
-		mir          bool
-		llvm         bool
+		phase     phase.Phase
+		scope     bool
+		bindings  bool
+		constants bool
+		exportAPI bool
+		thir      bool
+		cfg       bool
+		flow      bool
+		effects   bool
+		ownership bool
+		mir       bool
+		llvm      bool
 	}{
 		{phase: phase.Parsed},
-		{phase: phase.Typechecked, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, thir: true},
-		{phase: phase.CFG, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, thir: true, cfg: true},
-		{phase: phase.FlowTyped, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, thir: true, cfg: true, flow: true},
-		{phase: phase.DefiniteInit, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, thir: true, cfg: true, flow: true, effects: true},
-		{phase: phase.Ownership, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, thir: true, cfg: true, flow: true, effects: true, ownership: true},
-		{phase: phase.Usage, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, thir: true, cfg: true, flow: true, effects: true, ownership: true},
-		{phase: phase.MIR, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, thir: true, cfg: true, flow: true, effects: true, ownership: true, mir: true},
-		{phase: phase.Backend, scope: true, bindings: true, constants: true, typechecking: true, exportAPI: true, thir: true, cfg: true, flow: true, effects: true, ownership: true, mir: true, llvm: true},
+		{phase: phase.Typechecked, scope: true, bindings: true, constants: true, exportAPI: true, thir: true},
+		{phase: phase.CFG, scope: true, bindings: true, constants: true, exportAPI: true, thir: true, cfg: true},
+		{phase: phase.FlowTyped, scope: true, bindings: true, constants: true, exportAPI: true, thir: true, cfg: true, flow: true},
+		{phase: phase.DefiniteInit, scope: true, bindings: true, constants: true, exportAPI: true, thir: true, cfg: true, flow: true, effects: true},
+		{phase: phase.Ownership, scope: true, bindings: true, constants: true, exportAPI: true, thir: true, cfg: true, flow: true, effects: true, ownership: true},
+		{phase: phase.Usage, scope: true, bindings: true, constants: true, exportAPI: true, thir: true, cfg: true, flow: true, effects: true, ownership: true},
+		{phase: phase.MIR, scope: true, bindings: true, constants: true, exportAPI: true, thir: true, cfg: true, flow: true, effects: true, ownership: true, mir: true},
+		{phase: phase.Backend, scope: true, bindings: true, constants: true, exportAPI: true, thir: true, cfg: true, flow: true, effects: true, ownership: true, mir: true, llvm: true},
 	}
 	for _, test := range tests {
 		module := moduleWithArtifacts()
 		module.ResetToPhase(test.phase)
 		if module.Phase != test.phase || (module.ModuleScope != nil) != test.scope ||
 			(module.SymbolIndex != nil) != test.bindings || (module.Constants != nil) != test.constants ||
-			(module.Typechecking != nil) != test.typechecking ||
 			(module.THIR != nil) != test.thir ||
 			(module.SemanticExportFingerprint != "") != test.exportAPI ||
 			(module.CFG != nil) != test.cfg ||
@@ -232,9 +242,9 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 }
 
 func TestModuleResetSemanticDataInitializesCurrentResults(t *testing.T) {
-	module := &module.Module{Typechecking: typecheckresult.New()}
+	module := &module.Module{}
 	module.ResetSemanticData()
-	if module.SymbolIndex == nil || module.SymbolIndex.OperationFunctions() == nil || module.Constants == nil || module.Typechecking != nil {
+	if module.SymbolIndex == nil || module.SymbolIndex.OperationFunctions() == nil || module.Constants == nil {
 		t.Fatalf("semantic reset = %#v", module)
 	}
 	if module.Constants.Published(symbols.SymbolID{}) != nil {
@@ -269,14 +279,14 @@ func TestModuleExprTypeEvidenceFollowsPhaseLifecycle(t *testing.T) {
 	}
 }
 
-func TestModuleExprTypeEvidenceHandlesMissingTypecheckResult(t *testing.T) {
+func TestModuleExprTypeEvidenceHandlesMissingTHIR(t *testing.T) {
 	var mod *module.Module
 	if mod.BaseExprType(source.ParsedNodeID(1)) != nil || mod.EffectiveExprType(source.ParsedNodeID(1)) != nil {
 		t.Fatal("nil module returned expression type evidence")
 	}
 	mod = &module.Module{}
 	if mod.BaseExprType(source.ParsedNodeID(1)) != nil || mod.EffectiveExprType(source.ParsedNodeID(1)) != nil {
-		t.Fatal("module without typecheck result returned expression type evidence")
+		t.Fatal("module without THIR returned expression type evidence")
 	}
 }
 

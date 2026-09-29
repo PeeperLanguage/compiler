@@ -39,8 +39,7 @@ func buildEffects(t *testing.T, source string) (effect.Result, *module.Module) {
 	collector.Collect(ctx, module)
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
-	typechecker.Check(ctx, module)
-	module.THIR = thir.Build(module.ID, module.FilePath, module.AST, module.SymbolIndex, module.Typechecking, nil)
+	module.THIR = typechecker.Check(ctx, module)
 	module.CFG = cfg.BuildModule(module.THIR)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
@@ -488,13 +487,13 @@ fn choose(point: Point) -> i32 {
 	if field == nil || len(field.Place.Projections) != 1 {
 		t.Fatalf("field use = %+v, want one projection", field)
 	}
-	// The receiver parameter is a reference, so the typechecker recorded the
-	// adaptation. That evidence is what a future consumer reads to know the
-	// call borrows rather than moves.
+	// The receiver parameter is a reference, so canonical THIR publishes the
+	// implicit receiver adaptation for downstream consumers.
 	binding := fn.Body.Stmts[0].(*ast.LetDecl)
 	call := binding.Value.(*ast.CallExpr)
 	selector := call.Callee.(*ast.SelectorExpr)
-	if module.Typechecking.ImplicitCallArgument(selector.Expr.ID()) == nil {
-		t.Fatal("expected the implicit receiver borrow to be published")
+	receiverExpr, ok := module.THIR.Node(selector.Expr.ID()).(thir.Expr)
+	if !ok || receiverExpr == nil || receiverExpr.ImplicitReferenceType() == nil {
+		t.Fatal("expected the implicit receiver borrow to be published in THIR")
 	}
 }

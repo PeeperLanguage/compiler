@@ -8,7 +8,6 @@ import (
 
 	"compiler/internal/backend/llvm"
 	"compiler/internal/diagnostics"
-	"compiler/internal/frontend/ast"
 	"compiler/internal/graph"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/mir"
@@ -21,7 +20,6 @@ import (
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
-	"compiler/internal/semantics/consteval"
 	"compiler/internal/semantics/definiteinit"
 	"compiler/internal/semantics/effect"
 	"compiler/internal/semantics/ownership"
@@ -429,20 +427,7 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 		return true
 	}
 	if module.Phase < phase.Typechecked {
-		typechecker.Check(phaseCtx, module)
-		consteval.FinalizeValues(phaseCtx, module)
-		module.THIR = thir.Build(module.ID, module.FilePath, module.AST, module.SymbolIndex, module.Typechecking,
-			func(expr ast.Expr, scope *symbols.Scope) (*bool, []*diagnostics.Diagnostic) {
-				// Constant evaluation may cache local constants and diagnose cycles.
-				// Keep diagnostics at their original CFG boundary, not Typechecked.
-				pending := diagnostics.NewDiagnosticBag()
-				value, ok := consteval.EvaluateExpr(phaseCtx.WithDiagnostics(pending), module, scope, expr, &typeinfo.BoolType{})
-				if !ok {
-					return nil, pending.Diagnostics()
-				}
-				truth := value != nil && value.Truthy()
-				return &truth, pending.Diagnostics()
-			})
+		module.THIR = typechecker.Check(phaseCtx, module)
 		if !phaseDiag.HasErrors() {
 			if err := module.THIR.Validate(); err != nil {
 				phaseDiag.AddError(diagnostics.ErrInvalidEvidence,
@@ -519,7 +504,7 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 		// error-free: broken source legitimately leaves evidence incomplete,
 		// and reporting that as a compiler bug would bury the real diagnostic.
 		if !phaseDiag.HasErrors() {
-			if err := module.Ownership.Validate(module.Typechecking, module.SymbolIndex, module.CFG); err != nil {
+			if err := module.Ownership.Validate(module.THIR, module.SymbolIndex, module.CFG); err != nil {
 				phaseDiag.AddError(diagnostics.ErrInvalidEvidence,
 					"ownership evidence is inconsistent: "+err.Error(), nil, "")
 			}

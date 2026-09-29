@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"compiler/internal/frontend/ast"
-	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
 	"compiler/internal/target"
@@ -46,7 +45,7 @@ func TestCallIterationRecognition(t *testing.T) {
 			main := module.AST.Stmts[len(module.AST.Stmts)-1].(*ast.FnDecl)
 			loop := main.Body.Stmts[len(main.Body.Stmts)-1].(*ast.ForStmt)
 			if test.diagnostic == "" {
-				if diag.HasErrors() || module.Typechecking.CheckedIteration(loop.ID()) == nil {
+				if diag.HasErrors() || testEvidence(module).CheckedIteration(loop.ID()) == nil {
 					t.Fatalf("missing checked iteration:\n%s", diag.EmitAllToString())
 				}
 			} else if !diag.HasErrors() || !strings.Contains(diag.EmitAllToString(), test.diagnostic) {
@@ -70,7 +69,7 @@ fn main() { for item in Produce() {} }`)
 		}
 		main := module.AST.Stmts[2].(*ast.FnDecl)
 		loop := main.Body.Stmts[0].(*ast.ForStmt)
-		expansion := module.Typechecking.CheckedIteration(loop.ID())
+		expansion := testEvidence(module).CheckedIteration(loop.ID())
 		if expansion == nil {
 			t.Fatal("missing checked iteration")
 		}
@@ -104,8 +103,8 @@ fn main() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 	main := module.AST.Stmts[1].(*ast.FnDecl)
-	first := module.Typechecking.CheckedIteration(main.Body.Stmts[0].ID())
-	second := module.Typechecking.CheckedIteration(main.Body.Stmts[1].ID())
+	first := testEvidence(module).CheckedIteration(main.Body.Stmts[0].ID())
+	second := testEvidence(module).CheckedIteration(main.Body.Stmts[1].ID())
 	if first == nil || second == nil || first.ID() == second.ID() {
 		t.Fatalf("checked iteration roots = %v and %v", first, second)
 	}
@@ -139,15 +138,15 @@ fn main() {
 	if producer == nil {
 		t.Fatal("producer call not found")
 	}
-	effective := module.Typechecking.CallArgumentsOrSource(producer)
+	effective := testEvidence(module).CallArgumentsOrSource(producer)
 	if len(effective) != 2 {
 		t.Fatalf("effective arguments = %d, want 2", len(effective))
 	}
 	produce := module.AST.Stmts[3].(*ast.FnDecl)
-	if implementations := module.Typechecking.InterfaceImplementations(produce.Params[1].Default.ID()); len(implementations) != 1 {
+	if implementations := testEvidence(module).InterfaceImplementations(produce.Params[1].Default.ID()); len(implementations) != 1 {
 		t.Fatalf("declaration default evidence = %#v, want one implementation", implementations)
 	}
-	if implementations := module.Typechecking.InterfaceImplementations(effective[1].ID()); len(implementations) != 1 {
+	if implementations := testEvidence(module).InterfaceImplementations(effective[1].ID()); len(implementations) != 1 {
 		t.Fatalf("effective default evidence = %#v, want one implementation", implementations)
 	}
 }
@@ -226,7 +225,7 @@ fn main() { let mut cursor = Cursor.{ value = 1 }; __LOOP__ }`,
 					t.Fatalf("implicit=%v unexpected diagnostics:\n%s", implicit, diag.EmitAllToString())
 				}
 				checkedCount := 0
-				module.Typechecking.ForEachCheckedIteration(func(source.NodeID, *ast.BlockStmt) {
+				testEvidence(module).ForEachCheckedIteration(func(source.NodeID, *ast.BlockStmt) {
 					checkedCount++
 				})
 				expectedCount := 0
@@ -342,11 +341,11 @@ return total;
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	loop := fn.Body.Stmts[1].(*ast.ForStmt)
-	evidence, ok := module.Typechecking.ForIteration(loop.ID())
+	evidence, ok := testEvidence(module).ForIteration(loop.ID())
 	if !ok {
 		t.Fatal("missing range iteration evidence")
 	}
-	plan, isRange := evidence.Plan.(*typecheckresult.RangeIteration)
+	plan, isRange := evidence.Plan.(*RangeIteration)
 	if !isRange {
 		t.Fatalf("range iteration evidence = %#v", evidence)
 	}
@@ -384,14 +383,14 @@ func TestCheckForInRangeTypeIsBoundOrderIndependent(t *testing.T) {
 			}
 			fn := module.AST.Stmts[0].(*ast.FnDecl)
 			loop := fn.Body.Stmts[0].(*ast.ForStmt)
-			evidence, found := module.Typechecking.ForIteration(loop.ID())
+			evidence, found := testEvidence(module).ForIteration(loop.ID())
 			if !found {
 				t.Fatal("missing range iteration evidence")
 			}
 			for name, typ := range map[string]typeinfo.Type{
 				"element": evidence.ElementType,
 				"cursor":  evidence.Cursor.Type,
-				"end":     evidence.Plan.(*typecheckresult.RangeIteration).Limit.Type,
+				"end":     evidence.Plan.(*RangeIteration).Limit.Type,
 				"value":   evidence.Value.Type,
 			} {
 				if got := typeinfo.TypeText(typ); got != "i64" {
@@ -418,11 +417,11 @@ return 0i64;
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	loop := fn.Body.Stmts[0].(*ast.ForStmt)
-	evidence, _ := module.Typechecking.ForIteration(loop.ID())
+	evidence, _ := testEvidence(module).ForIteration(loop.ID())
 	for name, typ := range map[string]typeinfo.Type{
 		"element": evidence.ElementType,
 		"cursor":  evidence.Cursor.Type,
-		"end":     evidence.Plan.(*typecheckresult.RangeIteration).Limit.Type,
+		"end":     evidence.Plan.(*RangeIteration).Limit.Type,
 		"value":   evidence.Value.Type,
 	} {
 		if got := typeinfo.TypeText(typ); got != "i64" {
@@ -449,7 +448,7 @@ func TestCheckForInRecordsGuaranteedRangeEntry(t *testing.T) {
 			}
 			fn := module.AST.Stmts[0].(*ast.FnDecl)
 			loop := fn.Body.Stmts[0].(*ast.ForStmt)
-			evidence, found := module.Typechecking.ForIteration(loop.ID())
+			evidence, found := testEvidence(module).ForIteration(loop.ID())
 			if !found {
 				t.Fatal("missing range iteration evidence")
 			}
@@ -475,11 +474,11 @@ return total;
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	loop := fn.Body.Stmts[2].(*ast.ForStmt)
-	evidence, ok := module.Typechecking.ForIteration(loop.ID())
+	evidence, ok := testEvidence(module).ForIteration(loop.ID())
 	if !ok {
 		t.Fatal("missing sequence iteration evidence")
 	}
-	plan, isSequence := evidence.Plan.(*typecheckresult.SequenceIteration)
+	plan, isSequence := evidence.Plan.(*SequenceIteration)
 	if !isSequence {
 		t.Fatalf("sequence iteration evidence = %#v", evidence)
 	}
@@ -621,7 +620,7 @@ func TestRejectedForInDoesNotPublishIterationEvidence(t *testing.T) {
 			if loop == nil {
 				t.Fatal("missing recovered for-in loop")
 			}
-			if _, found := module.Typechecking.ForIteration(loop.ID()); found {
+			if _, found := testEvidence(module).ForIteration(loop.ID()); found {
 				t.Fatal("rejected for-in loop retained semantic evidence")
 			}
 		})
@@ -640,7 +639,7 @@ func TestRejectedForInStillChecksBody(t *testing.T) {
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	loop := fn.Body.Stmts[0].(*ast.ForStmt)
-	if _, found := module.Typechecking.ForIteration(loop.ID()); found {
+	if _, found := testEvidence(module).ForIteration(loop.ID()); found {
 		t.Fatal("rejected loop retained semantic evidence")
 	}
 }

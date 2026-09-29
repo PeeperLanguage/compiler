@@ -7,11 +7,10 @@ import (
 	"sort"
 	"strings"
 
-	"compiler/internal/frontend/ast"
 	"compiler/internal/ir/cfg"
+	"compiler/internal/ir/thir"
 	"compiler/internal/moduleid"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -31,11 +30,11 @@ const maxReportedProblems = 10
 // that is the analysis ownership already performs, and repeating it here would
 // make the validator a second implementation of the thing it checks rather than
 // a check on published shape.
-func (r Result) Validate(types *typecheckresult.Result, symbolIndex *symbols.Index, graphs *cfg.Module) error {
+func (r Result) Validate(source *thir.Module, symbolIndex *symbols.Index, graphs *cfg.Module) error {
 	if len(r) == 0 && graphs == nil {
 		return nil
 	}
-	if types == nil || symbolIndex == nil || graphs == nil {
+	if source == nil || symbolIndex == nil || graphs == nil {
 		return errors.New("ownership published a cleanup plan without typechecking, binding, or CFG evidence")
 	}
 
@@ -48,9 +47,9 @@ func (r Result) Validate(types *typecheckresult.Result, symbolIndex *symbols.Ind
 			problems = append(problems, fmt.Sprintf("function %s has a control-flow graph but no published cleanup plan", graph.FunctionID))
 		}
 	}
-	problems = append(problems, validateValueUses(types)...)
+	problems = append(problems, validateValueUses(source)...)
 	for fnID, plan := range r {
-		problems = append(problems, validatePlan(fnID, plan, types, symbolIndex, graphs)...)
+		problems = append(problems, validatePlan(fnID, plan, source, symbolIndex, graphs)...)
 	}
 	if len(problems) == 0 {
 		return nil
@@ -69,34 +68,48 @@ func (r Result) Validate(types *typecheckresult.Result, symbolIndex *symbols.Ind
 // classify: a kind for an untyped node is stale evidence, a kind the type's
 // capability forbids is an illegal classification, and a resolved call argument
 // with no kind is the gap the ownership fallback used to hide.
-func validateValueUses(types *typecheckresult.Result) []string {
+func validateValueUses(source *thir.Module) []string {
 	problems := make([]string, 0)
-	types.ForEachValueUse(func(id source.NodeID, use typeinfo.UseKind) {
-		valueType := types.ExprType(id)
-		if valueType == nil {
-			problems = append(problems, fmt.Sprintf("use kind published for node %v with no expression type", id))
-			return
+	if source == nil {
+		return problems
+	}
+	for _, function := range source.Functions {
+		if function == nil || function.Body == nil {
+			continue
 		}
-		if use == typeinfo.UseCopy && typeinfo.OwnershipCapabilityOf(valueType).Copy == typeinfo.CopyNever {
-			problems = append(problems, fmt.Sprintf("node %v copies %s, which has no copy operation", id, typeinfo.TypeText(valueType)))
-		}
-	})
-	types.ForEachCallArguments(func(callID source.NodeID, args []ast.Expr) {
-		for index, arg := range args {
-			if arg == nil {
-				continue
+		thir.Inspect(function.Body, func(node thir.Node) bool {
+			expr, ok := node.(thir.Expr)
+			if ok && expr != nil {
+				if use, published := expr.UseKind(); published {
+					valueType := expr.ExprType()
+					if valueType == nil {
+						problems = append(problems, fmt.Sprintf("use kind published for node %v with no expression type", expr.SourceInfo().NodeID))
+					} else if use == typeinfo.UseCopy && typeinfo.OwnershipCapabilityOf(valueType).Copy == typeinfo.CopyNever {
+						problems = append(problems, fmt.Sprintf("node %v copies %s, which has no copy operation", expr.SourceInfo().NodeID, typeinfo.TypeText(valueType)))
+					}
+				}
 			}
-			if _, published := types.ValueUse(arg.ID()); !published {
-				problems = append(problems, fmt.Sprintf("call %v argument %v has no published use kind", callID, index))
+			call, ok := node.(*thir.Call)
+			if !ok || call == nil {
+				return true
 			}
-		}
-	})
+			for index, arg := range call.Args {
+				if arg == nil {
+					continue
+				}
+				if _, published := arg.UseKind(); !published {
+					problems = append(problems, fmt.Sprintf("call %v argument %v has no published use kind", call.SourceInfo().NodeID, index))
+				}
+			}
+			return true
+		})
+	}
 	return problems
 }
 
 // validatePlan checks one function's cleanup plan against its CFG and the
 // program points each map is keyed by.
-func validatePlan(fnID moduleid.FunctionID, plan *CleanupPlan, types *typecheckresult.Result, symbolIndex *symbols.Index, graphs *cfg.Module) []string {
+func validatePlan(fnID moduleid.FunctionID, plan *CleanupPlan, typed *thir.Module, symbolIndex *symbols.Index, graphs *cfg.Module) []string {
 	if plan == nil {
 		return []string{fmt.Sprintf("function %s has a nil cleanup plan", fnID)}
 	}
@@ -141,10 +154,10 @@ func validatePlan(fnID moduleid.FunctionID, plan *CleanupPlan, types *typecheckr
 		}
 	}
 	for nodeID := range plan.DiscardedValue {
-		problems = append(problems, validateTypedNode(types, fnID, "discarded value", nodeID)...)
+		problems = append(problems, validateTypedNode(typed, fnID, "discarded value", nodeID)...)
 	}
 	for nodeID := range plan.ProjectionBase {
-		problems = append(problems, validateTypedNode(types, fnID, "projection base", nodeID)...)
+		problems = append(problems, validateTypedNode(typed, fnID, "projection base", nodeID)...)
 	}
 	for nodeID := range plan.MatchWholePayloadDrops {
 		problems = append(problems, validateArmBody(symbolIndex, fnID, "match payload drop", nodeID)...)
@@ -173,9 +186,11 @@ func validateSymbols(fnID moduleid.FunctionID, where string, ids []symbols.Symbo
 	return problems
 }
 
-func validateTypedNode(types *typecheckresult.Result, fnID moduleid.FunctionID, where string, nodeID source.NodeID) []string {
-	if types.ExprType(nodeID) != nil {
-		return nil
+func validateTypedNode(typed *thir.Module, fnID moduleid.FunctionID, where string, nodeID source.NodeID) []string {
+	if typed != nil {
+		if expr, ok := typed.Node(nodeID).(thir.Expr); ok && expr != nil && expr.ExprType() != nil {
+			return nil
+		}
 	}
 	return []string{fmt.Sprintf("function %s plans a %s at node %v with no expression type", fnID, where, nodeID)}
 }

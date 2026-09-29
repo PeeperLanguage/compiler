@@ -495,7 +495,7 @@ func lookupMethodSet(ctx *project.CompilerContext, typ typeinfo.Type) []*symbols
 	return methods
 }
 func resolveExprHoverSubject(cc *cursorContext) *hoverSubject {
-	if cc == nil || cc.node == nil || cc.module == nil || cc.module.Typechecking == nil {
+	if cc == nil || cc.node == nil || cc.module == nil || cc.module.THIR == nil {
 		return nil
 	}
 	if _, ok := cc.node.(ast.Expr); !ok {

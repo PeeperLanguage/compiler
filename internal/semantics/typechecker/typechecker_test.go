@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
+	"compiler/internal/ir/thir"
 	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
@@ -18,12 +20,97 @@ import (
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
 	"compiler/internal/target"
 	"compiler/pkg/peeper"
 )
+
+var typecheckEvidenceForTests sync.Map
+
+func checkWithEvidence(ctx *project.CompilerContext, mod *module.Module) *thir.Module {
+	if ctx == nil || mod == nil {
+		return nil
+	}
+	c := &checker{ctx: ctx, module: mod, evidence: newEvidence()}
+	c.checkModule()
+	finalizeConstantValues(ctx, mod, c.evidence)
+	source := c.buildTHIR()
+	typecheckEvidenceForTests.Store(mod, c.evidence)
+	return source
+}
+
+func testEvidence(mod *module.Module) *evidence {
+	if mod == nil {
+		return nil
+	}
+	value, _ := typecheckEvidenceForTests.Load(mod)
+	result, _ := value.(*evidence)
+	return result
+}
+
+func TestCheckPublishesTHIRWithoutPersistentTypingResult(t *testing.T) {
+	const src = `const defaultValue: i32 = 7;
+fn WithDefault(value: i32 = defaultValue) -> i32 { return value; }
+fn main() -> i32 {
+	let total = WithDefault();
+	for index, value in 0..2 {}
+	return total;
+}`
+	const filePath = "typechecker_publication_test" + peeper.SourceExt
+	diag := diagnostics.NewDiagnosticBag()
+	diag.AddSourceContent(filePath, src)
+	ctx := project.New(".", peeper.SourceExt, diag)
+	parsed := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
+	mod := &module.Module{
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "typechecker_publication_test"},
+		FilePath: filePath,
+		Content:  src,
+		AST:      parsed,
+		Imports:  make(map[string]module.ResolvedImport),
+	}
+	ctx.AddModule(mod)
+	collector.Collect(ctx, mod)
+	binder.Bind(ctx, mod)
+	resolver.Resolve(ctx, mod)
+
+	source := Check(ctx, mod)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	if source == nil {
+		t.Fatal("Check returned nil THIR")
+	}
+	if err := source.Validate(); err != nil {
+		t.Fatalf("published THIR failed validation: %v", err)
+	}
+
+	main := mod.AST.Stmts[2].(*ast.FnDecl)
+	call := main.Body.Stmts[0].(*ast.LetDecl).Value.(*ast.CallExpr)
+	typedCall, ok := source.Node(call.ID()).(*thir.Call)
+	if !ok || typedCall == nil {
+		t.Fatalf("call node = %#v, want *thir.Call", source.Node(call.ID()))
+	}
+	if got := typeinfo.TypeText(typedCall.ExprType()); got != "i32" {
+		t.Fatalf("call type = %q, want i32", got)
+	}
+	if len(typedCall.Args) != 1 {
+		t.Fatalf("effective arguments = %d, want 1", len(typedCall.Args))
+	}
+	defaultArg, ok := typedCall.Args[0].(*thir.Ident)
+	if !ok || defaultArg == nil || !defaultArg.IsExpandedDefaultBinding {
+		t.Fatalf("expanded default argument = %#v", typedCall.Args[0])
+	}
+
+	loop := main.Body.Stmts[1].(*ast.ForStmt)
+	typedLoop, ok := source.Node(loop.ID()).(*thir.For)
+	if !ok || typedLoop == nil || typedLoop.Iteration == nil {
+		t.Fatalf("for node = %#v, want published iteration plan", source.Node(loop.ID()))
+	}
+	if _, ok := typedLoop.Iteration.(*thir.RangeIteration); !ok {
+		t.Fatalf("iteration = %T, want *thir.RangeIteration", typedLoop.Iteration)
+	}
+}
 
 func TestCheckPublishesStructFieldAccesses(t *testing.T) {
 	module, diag := checkTypeModule(t, `struct Box { value: i32 }
@@ -42,7 +129,7 @@ fn Read(value: Box, pointer: *Box, reference: &Box) -> i32 {
 			return true
 		}
 		base := selector.Expr.(*ast.Ident).Name
-		access, published := module.Typechecking.StructField(selector.ID())
+		access, published := testEvidence(module).StructField(selector.ID())
 		if !published || access.Field != 0 || typeinfo.TypeText(access.Type) != "i32" {
 			t.Fatalf("%s field evidence = %#v", base, access)
 		}
@@ -96,7 +183,7 @@ fn main() -> i32 {
 			return true
 		}
 		for _, arg := range call.Args {
-			kind, found := module.Typechecking.ValueUse(arg.ID())
+			kind, found := testEvidence(module).ValueUse(arg.ID())
 			uses[callee.Name] = append(uses[callee.Name], callUse{use: kind, found: found})
 		}
 		return true
@@ -136,7 +223,7 @@ func TestCheckAllocPublishesConsumingUse(t *testing.T) {
 			if !ok {
 				return true
 			}
-			kind, found := module.Typechecking.ValueUse(lit.ID())
+			kind, found := testEvidence(module).ValueUse(lit.ID())
 			if !found {
 				return true
 			}
@@ -170,7 +257,7 @@ fn main() -> i32 {
 			if !ok {
 				return true
 			}
-			kind, found := module.Typechecking.ValueUse(call.ID())
+			kind, found := testEvidence(module).ValueUse(call.ID())
 			if !found {
 				return true
 			}
@@ -204,7 +291,7 @@ fn main() -> i32 {
 	}
 	main := module.AST.Stmts[2].(*ast.FnDecl)
 	matchStmt := main.Body.Stmts[1].(*ast.MatchStmt)
-	match, found := module.Typechecking.Match(matchStmt.ID())
+	match, found := testEvidence(module).Match(matchStmt.ID())
 	if !found {
 		t.Fatal("match evidence was not published")
 	}
@@ -236,7 +323,7 @@ func checkTypeSource(t *testing.T, src string) *diagnostics.DiagnosticBag {
 	collector.Collect(ctx, module)
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
-	Check(ctx, module)
+	module.THIR = checkWithEvidence(ctx, module)
 	return diag
 }
 
@@ -264,7 +351,7 @@ func checkTypeSourceWithExternalImport(t *testing.T, src string) (*module.Module
 	collector.Collect(ctx, extModule)
 	binder.Bind(ctx, extModule)
 	resolver.Resolve(ctx, extModule)
-	Check(ctx, extModule)
+	extModule.THIR = checkWithEvidence(ctx, extModule)
 
 	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
 	module := &module.Module{
@@ -283,7 +370,7 @@ func checkTypeSourceWithExternalImport(t *testing.T, src string) (*module.Module
 	collector.Collect(ctx, module)
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
-	Check(ctx, module)
+	module.THIR = checkWithEvidence(ctx, module)
 	return module, diag
 }
 
@@ -324,11 +411,11 @@ fn main(input: i32) {
 		main := module.AST.Stmts[2].(*ast.FnDecl)
 		local := main.Body.Stmts[0].(*ast.LetDecl)
 		loop := main.Body.Stmts[1].(*ast.ForStmt)
-		iteration, found := module.Typechecking.ForIteration(loop.ID())
+		iteration, found := testEvidence(module).ForIteration(loop.ID())
 		if box == nil || !found {
 			t.Fatal("missing collected symbol or range iteration evidence")
 		}
-		rangePlan, ok := iteration.Plan.(*typecheckresult.RangeIteration)
+		rangePlan, ok := iteration.Plan.(*RangeIteration)
 		if !ok || rangePlan == nil || rangePlan.Limit == nil || rangePlan.Ordinal == nil {
 			t.Fatalf("range iteration = %#v", iteration)
 		}
@@ -386,7 +473,7 @@ fn main() -> i32 { return WithDefault(); }`)
 		}
 		main := module.AST.Stmts[2].(*ast.FnDecl)
 		call := main.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.CallExpr)
-		arguments := module.Typechecking.CallArgumentsOrSource(call)
+		arguments := testEvidence(module).CallArgumentsOrSource(call)
 		if len(arguments) != 1 {
 			t.Fatalf("effective arguments = %d, want 1", len(arguments))
 		}
@@ -494,7 +581,7 @@ func checkTypeModule(t *testing.T, src string) (*module.Module, *diagnostics.Dia
 	collector.Collect(ctx, module)
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
-	Check(ctx, module)
+	module.THIR = checkWithEvidence(ctx, module)
 	return module, diag
 }
 
@@ -536,12 +623,12 @@ fn main() {
 	fn := module.AST.Stmts[1].(*ast.FnDecl)
 	ok := fn.Body.Stmts[0].(*ast.LetDecl).Value
 	pending := fn.Body.Stmts[1].(*ast.LetDecl).Value
-	okEvidence, found := module.Typechecking.VariantConstruction(ok.ID())
+	okEvidence, found := testEvidence(module).VariantConstruction(ok.ID())
 	if !found || typeinfo.TypeText(okEvidence.EnumType) != "Result<i32>" || okEvidence.Case != 0 ||
 		okEvidence.Payload == nil || ast.ExprText(okEvidence.Value) != ".{code = 7, value = 42}" {
 		t.Fatalf("Ok construction evidence = %#v", okEvidence)
 	}
-	pendingEvidence, found := module.Typechecking.VariantConstruction(pending.ID())
+	pendingEvidence, found := testEvidence(module).VariantConstruction(pending.ID())
 	if !found || typeinfo.TypeText(pendingEvidence.EnumType) != "Result<i32>" || pendingEvidence.Case != 1 ||
 		pendingEvidence.Payload != nil || pendingEvidence.Value != nil {
 		t.Fatalf("Pending construction evidence = %#v", pendingEvidence)
@@ -669,12 +756,12 @@ fn Read(result: Result) -> i32 {
 	}
 	fn := module.AST.Stmts[1].(*ast.FnDecl)
 	match := fn.Body.Stmts[0].(*ast.MatchStmt)
-	evidence, found := module.Typechecking.Match(match.ID())
+	evidence, found := testEvidence(module).Match(match.ID())
 	if !found || evidence.SubjectID != match.Subject.ID() || typeinfo.TypeText(evidence.EnumType) != "Result" || len(evidence.Arms) != 3 {
 		t.Fatalf("match evidence = %#v", evidence)
 	}
 	if evidence.CaseCount != 3 || evidence.Arms[0].Case != 0 || len(evidence.Arms[0].Bindings) != 1 ||
-		evidence.Arms[0].Bindings[0].Projection != typecheckresult.MatchPayloadField ||
+		evidence.Arms[0].Bindings[0].Projection != MatchPayloadField ||
 		evidence.Arms[0].Bindings[0].Field != 0 || evidence.Arms[0].Bindings[0].Binding == nil {
 		t.Fatalf("Ok arm evidence = %#v", evidence.Arms[0])
 	}
@@ -1816,7 +1903,7 @@ func TestIndexExprRejectsFloatPostfixBeforeConstEvaluation(t *testing.T) {
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	ret := fn.Body.Stmts[0].(*ast.ReturnStmt)
 	index := ret.Value.(*ast.IndexExpr)
-	if !typeinfo.IsInvalidOrUnknown(module.Typechecking.ExprType(index.ID())) {
+	if !typeinfo.IsInvalidOrUnknown(testEvidence(module).ExprType(index.ID())) {
 		t.Fatalf("index expression should have invalid semantic type")
 	}
 }
@@ -1866,7 +1953,7 @@ func TestArrayLiteralTypechecksExplicitLength(t *testing.T) {
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	letDecl := fn.Body.Stmts[0].(*ast.LetDecl)
-	got := module.Typechecking.ExprType(letDecl.Value.ID())
+	got := testEvidence(module).ExprType(letDecl.Value.ID())
 	if typeinfo.TypeText(got) != "[3]i32" {
 		t.Fatalf("array literal type = %s, want [3]i32", typeinfo.TypeText(got))
 	}
@@ -1882,7 +1969,7 @@ func TestArrayLiteralTypechecksInferredLength(t *testing.T) {
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	letDecl := fn.Body.Stmts[0].(*ast.LetDecl)
-	got := module.Typechecking.ExprType(letDecl.Value.ID())
+	got := testEvidence(module).ExprType(letDecl.Value.ID())
 	if typeinfo.TypeText(got) != "[3]i32" {
 		t.Fatalf("array literal type = %s, want [3]i32", typeinfo.TypeText(got))
 	}
@@ -1898,7 +1985,7 @@ func TestArrayLiteralTypechecksDynamicArray(t *testing.T) {
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	letDecl := fn.Body.Stmts[0].(*ast.LetDecl)
-	got := module.Typechecking.ExprType(letDecl.Value.ID())
+	got := testEvidence(module).ExprType(letDecl.Value.ID())
 	if typeinfo.TypeText(got) != "[]i32" {
 		t.Fatalf("array literal type = %s, want []i32", typeinfo.TypeText(got))
 	}
@@ -1925,9 +2012,9 @@ func TestDynamicArrayOwnerOperationsTypecheck(t *testing.T) {
 	}
 	for i, stmt := range fn.Body.Stmts[1:] {
 		call := stmt.(*ast.ExprStmt).Expr.(*ast.CallExpr)
-		fnType, ok := module.Typechecking.ExprType(call.Callee.ID()).(*typeinfo.FuncType)
+		fnType, ok := testEvidence(module).ExprType(call.Callee.ID()).(*typeinfo.FuncType)
 		if !ok {
-			t.Fatalf("operation %v callee type = %#v, want function", i, module.Typechecking.ExprType(call.Callee.ID()))
+			t.Fatalf("operation %v callee type = %#v, want function", i, testEvidence(module).ExprType(call.Callee.ID()))
 		}
 		if fnType.Return != nil {
 			t.Fatalf("operation %v return = %s, want void", i, typeinfo.TypeText(fnType.Return))
@@ -2050,7 +2137,7 @@ func TestAllocTypecheck(t *testing.T) {
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	letDecl := fn.Body.Stmts[1].(*ast.LetDecl)
-	if got := typeinfo.TypeText(module.Typechecking.ExprType(letDecl.Value.ID())); got != "*i32" {
+	if got := typeinfo.TypeText(testEvidence(module).ExprType(letDecl.Value.ID())); got != "*i32" {
 		t.Fatalf("alloc type = %s, want *i32", got)
 	}
 }
@@ -2102,7 +2189,7 @@ func TestArrayLiteralRejectsFloatPostfixLengthBeforeElementChecks(t *testing.T) 
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	letDecl := fn.Body.Stmts[0].(*ast.LetDecl)
-	if !typeinfo.IsInvalidOrUnknown(module.Typechecking.ExprType(letDecl.Value.ID())) {
+	if !typeinfo.IsInvalidOrUnknown(testEvidence(module).ExprType(letDecl.Value.ID())) {
 		t.Fatalf("array literal should have invalid semantic type")
 	}
 }
@@ -3190,7 +3277,7 @@ func TestIntrinsicFunctionResolutionStoredForLaterPhases(t *testing.T) {
 	if resolved == nil || resolved.CompilerOp != symbols.CompilerOpLen {
 		t.Fatalf("resolved function = %#v, want len intrinsic", resolved)
 	}
-	evidence, ok := module.Typechecking.CompilerCall(call.ID())
+	evidence, ok := testEvidence(module).CompilerCall(call.ID())
 	if !ok || evidence.Operation != symbols.CompilerOpLen || evidence.Kind != intrinsics.FunctionCollection {
 		t.Fatalf("compiler call evidence = %#v, want collection len", evidence)
 	}
@@ -3233,7 +3320,7 @@ fn main() {
 	if conversion == nil {
 		t.Fatal("reader interface conversion missing from parsed module")
 	}
-	implementations := module.Typechecking.InterfaceImplementations(conversion.ID())
+	implementations := testEvidence(module).InterfaceImplementations(conversion.ID())
 	if len(implementations) != 1 {
 		t.Fatalf("implementation evidence = %#v, want one method", implementations)
 	}
@@ -3278,12 +3365,12 @@ fn main() -> i32 {
 	if len(call.Args) != 1 {
 		t.Fatalf("source argument count = %v, want 1", len(call.Args))
 	}
-	effectiveArgs := module.Typechecking.CallArgumentsOrSource(call)
+	effectiveArgs := testEvidence(module).CallArgumentsOrSource(call)
 	if len(effectiveArgs) != 3 {
 		t.Fatalf("effective argument count = %v, want 3", len(effectiveArgs))
 	}
-	first := module.Typechecking.InterfaceImplementations(effectiveArgs[1].ID())
-	second := module.Typechecking.InterfaceImplementations(effectiveArgs[2].ID())
+	first := testEvidence(module).InterfaceImplementations(effectiveArgs[1].ID())
+	second := testEvidence(module).InterfaceImplementations(effectiveArgs[2].ID())
 	if effectiveArgs[1].ID() == effectiveArgs[2].ID() || len(first) != 1 || len(second) != 1 {
 		t.Fatalf("default evidence IDs/evidence = %v:%#v %v:%#v", effectiveArgs[1].ID(), first, effectiveArgs[2].ID(), second)
 	}

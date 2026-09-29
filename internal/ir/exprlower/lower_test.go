@@ -40,11 +40,10 @@ func buildTypedExprModule(t *testing.T, source string) (*module.Module, *diagnos
 	collector.Collect(ctx, mod)
 	binder.Bind(ctx, mod)
 	resolver.Resolve(ctx, mod)
-	typechecker.Check(ctx, mod)
+	mod.THIR = typechecker.Check(ctx, mod)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
-	mod.THIR = thir.Build(mod.ID, mod.FilePath, mod.AST, mod.SymbolIndex, mod.Typechecking, nil)
 	if err := mod.THIR.Validate(); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}

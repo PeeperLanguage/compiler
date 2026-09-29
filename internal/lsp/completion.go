@@ -529,7 +529,7 @@ func completionQualifierSegments(qualifier string) []string {
 }
 
 func matchArmCompletionItems(ctx *project.CompilerContext, module *module.Module, cursor source.Position, replacement Range) ([]CompletionItem, bool) {
-	if module == nil || module.Typechecking == nil {
+	if module == nil || module.THIR == nil {
 		return nil, false
 	}
 	var match *ast.MatchStmt

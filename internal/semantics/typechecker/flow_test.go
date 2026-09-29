@@ -41,8 +41,7 @@ func checkFlowSource(t *testing.T, src string) (*module.Module, *diagnostics.Dia
 	collector.Collect(ctx, module)
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
-	Check(ctx, module)
-	module.THIR = thir.Build(module.ID, module.FilePath, module.AST, module.SymbolIndex, module.Typechecking, nil)
+	module.THIR = checkWithEvidence(ctx, module)
 	module.CFG = cfg.BuildModule(module.THIR)
 	module.Flow = CheckFlow(diag, module.THIR, module.CFG, module.ModuleScope)
 	return module, diag
@@ -66,9 +65,9 @@ fn main() {
 		t.Fatal(err)
 	}
 	checkedCount := 0
-	module.Typechecking.ForEachCheckedIteration(func(id source.NodeID, expansion *ast.BlockStmt) {
+	testEvidence(module).ForEachCheckedIteration(func(id source.NodeID, expansion *ast.BlockStmt) {
 		checkedCount++
-		if _, found := module.Typechecking.ForIteration(id); found {
+		if _, found := testEvidence(module).ForIteration(id); found {
 			t.Errorf("source loop %v has both checked and ordinary iteration evidence", id)
 		}
 		checked := expansion.Stmts[len(expansion.Stmts)-1].(*ast.ForStmt)
@@ -106,7 +105,7 @@ fn main() {
 		if module.SymbolIndex.Symbol(selector.Name) == nil {
 			t.Fatal("missing static method evidence")
 		}
-		if mutable, found := module.Typechecking.ReferenceArgument(selector.Expr.ID()); !found || !mutable {
+		if mutable, found := testEvidence(module).ReferenceArgument(selector.Expr.ID()); !found || !mutable {
 			t.Fatal("generated receiver missing ordinary mutable-reference evidence")
 		}
 		item := checked.Body.Stmts[2].(*ast.LetDecl)
@@ -144,7 +143,7 @@ fn Read(choice: Choice) -> i32 {
 	fn := module.AST.Stmts[1].(*ast.FnDecl)
 	leftBranch := fn.Body.Stmts[0].(*ast.IfStmt)
 	leftTest := leftBranch.Cond.(*ast.IsExpr)
-	baseTest, baseFound := module.Typechecking.CaseTest(leftTest.ID())
+	baseTest, baseFound := testEvidence(module).CaseTest(leftTest.ID())
 	flowTest, flowFound := module.Flow.CaseTest(leftTest.ID())
 	if !baseFound || !flowFound || baseTest.Case != 0 || flowTest.Case != baseTest.Case ||
 		flowTest.SubjectID != baseTest.SubjectID || flowTest.CaseCount != baseTest.CaseCount {

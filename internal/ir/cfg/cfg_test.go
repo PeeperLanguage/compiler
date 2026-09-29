@@ -15,17 +15,87 @@ import (
 
 func testModule(body *ast.BlockStmt, returnType ast.TypeExpr) *thir.Module {
 	location := source.NewLocation("cfg_test.peep", source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 10})
-	fn := &ast.FnDecl{
-		NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(1)},
-		Documented:   ast.Documented{DeclSurface: "fn:main:"},
-		Name:         &ast.Ident{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(2)}, Name: "main", Location: location},
-		ReturnType:   returnType,
-		Body:         body,
-		Location:     location,
-	}
 	owner := moduleid.ID{Origin: "local", ImportPath: "test"}
-	fn.SetID(source.FunctionNodeID(moduleid.FunctionIdentity(owner, fn.GetDeclSurface(), 0), 1))
-	return thir.Build(owner, "cfg_test.peep", &ast.Module{Stmts: []ast.Stmt{fn}}, nil, nil, nil)
+	functionID := moduleid.FunctionIdentity(owner, "fn:main:", 0)
+	functionSourceID := source.FunctionNodeID(functionID, 1)
+	function := &thir.Function{
+		Identity:       functionID,
+		Name:           "main",
+		ReturnTypeText: ast.TypeText(returnType),
+		HasReturnValue: returnType != nil,
+		Body:           testBlock(body),
+		Source:         ir.SourceInfo{NodeID: functionSourceID, Location: location},
+	}
+	return thir.NewModule(owner.ImportPath, "cfg_test.peep", []*thir.Function{function})
+}
+
+func testBlock(block *ast.BlockStmt) *thir.Block {
+	if block == nil {
+		return nil
+	}
+	result := &thir.Block{StmtInfo: thir.StmtInfo{Source: testSource(block)}}
+	for _, statement := range block.Stmts {
+		if typed := testStmt(statement); typed != nil {
+			result.Stmts = append(result.Stmts, typed)
+		}
+	}
+	return result
+}
+
+func testStmt(statement ast.Stmt) thir.Stmt {
+	switch node := statement.(type) {
+	case nil:
+		return nil
+	case *ast.BlockStmt:
+		return testBlock(node)
+	case *ast.ExprStmt:
+		return &thir.ExprStmt{StmtInfo: thir.StmtInfo{Source: testSource(node)}, Value: testExpr(node.Expr)}
+	case *ast.ReturnStmt:
+		return &thir.Return{StmtInfo: thir.StmtInfo{Source: testSource(node)}, Value: testExpr(node.Value)}
+	case *ast.IfStmt:
+		return &thir.If{StmtInfo: thir.StmtInfo{Source: testSource(node)}, Condition: testExpr(node.Cond), Then: testBlock(node.Then), Else: testStmt(node.Else)}
+	case *ast.ForStmt:
+		return &thir.For{StmtInfo: thir.StmtInfo{Source: testSource(node)}, Condition: testExpr(node.Cond), Iterable: testExpr(node.Iterable), Body: testBlock(node.Body)}
+	case *ast.BreakStmt:
+		return &thir.Break{StmtInfo: thir.StmtInfo{Source: testSource(node)}}
+	case *ast.ContinueStmt:
+		return &thir.Continue{StmtInfo: thir.StmtInfo{Source: testSource(node)}}
+	case *ast.MatchStmt:
+		match := &thir.Match{StmtInfo: thir.StmtInfo{Source: testSource(node)}, Subject: testExpr(node.Subject)}
+		for _, arm := range node.Arms {
+			if arm == nil {
+				continue
+			}
+			match.Arms = append(match.Arms, thir.MatchArm{Source: testSource(arm), Body: testBlock(arm.Body)})
+		}
+		return match
+	default:
+		panic("unsupported CFG test statement")
+	}
+}
+
+func testExpr(expression ast.Expr) thir.Expr {
+	if expression == nil {
+		return nil
+	}
+	info := thir.ExprInfo{Source: testSource(expression)}
+	switch node := expression.(type) {
+	case *ast.BoolLit:
+		return &thir.BoolLiteral{ExprInfo: info, Value: node.Value}
+	case *ast.NumberLit:
+		return &thir.NumberLiteral{ExprInfo: info, Value: node.Value}
+	case *ast.Ident:
+		return &thir.Ident{ExprInfo: info, Name: node.Name}
+	default:
+		panic("unsupported CFG test expression")
+	}
+}
+
+func testSource(node ast.Node) ir.SourceInfo {
+	if node == nil {
+		return ir.SourceInfo{}
+	}
+	return ir.SourceInfo{NodeID: node.ID(), Location: ast.LocOf(node)}
 }
 
 func TestModuleFindsFunctionByStableIdentity(t *testing.T) {

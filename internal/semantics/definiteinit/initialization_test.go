@@ -9,7 +9,6 @@ import (
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/ir/cfg"
-	"compiler/internal/ir/thir"
 	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
@@ -39,8 +38,7 @@ func analyzeInitializationSource(t *testing.T, source string) (*functionResult, 
 	collector.Collect(ctx, module)
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
-	typechecker.Check(ctx, module)
-	module.THIR = thir.Build(module.ID, module.FilePath, module.AST, module.SymbolIndex, module.Typechecking, nil)
+	module.THIR = typechecker.Check(ctx, module)
 	module.CFG = cfg.BuildModule(module.THIR)
 	symbol, found := module.ModuleScope.Lookup("choose")
 	if !found || symbol == nil {

@@ -22,6 +22,36 @@ type Module struct {
 	functionIndex map[moduleid.FunctionID]int
 }
 
+// NewModule publishes a complete typed module and builds its private lookup
+// indexes. Callers provide semantic functions; THIR owns indexing details.
+func NewModule(name, filePath string, functions []*Function) *Module {
+	m := &Module{
+		Name:          name,
+		FilePath:      filePath,
+		Functions:     append([]*Function(nil), functions...),
+		byNodeID:      make(map[source.NodeID]Node),
+		functionIndex: make(map[moduleid.FunctionID]int),
+	}
+	for index, function := range m.Functions {
+		if function == nil {
+			continue
+		}
+		if function.Identity != "" {
+			m.functionIndex[function.Identity] = index
+		}
+		if function.Body == nil {
+			continue
+		}
+		Inspect(function.Body, func(node Node) bool {
+			if id := node.SourceInfo().NodeID; id.IsValid() {
+				m.byNodeID[id] = node
+			}
+			return true
+		})
+	}
+	return m
+}
+
 // Node returns typed source node with source identity id.
 func (m *Module) Node(id source.NodeID) Node {
 	if m == nil || !id.IsValid() {
@@ -220,13 +250,13 @@ func (s StmtInfo) SourceInfo() ir.SourceInfo { return s.Source }
 type ExprInfo struct {
 	Source                     ir.SourceInfo
 	Type                       typeinfo.Type
-	conversion                 *typeinfo.Conversion
+	ConversionInfo             *typeinfo.Conversion
 	Use                        typeinfo.UseKind
 	HasUse                     bool
 	HasReferenceArgument       bool
 	IsReferenceArgumentMutable bool
 	ImplicitReference          typeinfo.Type
-	interfaceImplementations   []InterfaceImplementation
+	Implementations            []InterfaceImplementation
 	Place                      *Place
 }
 
@@ -235,10 +265,10 @@ func (e ExprInfo) exprNode()                            {}
 func (e ExprInfo) SourceInfo() ir.SourceInfo            { return e.Source }
 func (e ExprInfo) ExprType() typeinfo.Type              { return e.Type }
 func (e ExprInfo) ExprPlace() *Place                    { return e.Place }
-func (e ExprInfo) Conversion() *typeinfo.Conversion     { return e.conversion }
+func (e ExprInfo) Conversion() *typeinfo.Conversion     { return e.ConversionInfo }
 func (e ExprInfo) ImplicitReferenceType() typeinfo.Type { return e.ImplicitReference }
 func (e ExprInfo) InterfaceImplementations() []InterfaceImplementation {
-	return e.interfaceImplementations
+	return e.Implementations
 }
 func (e ExprInfo) UseKind() (typeinfo.UseKind, bool) {
 	return e.Use, e.HasUse

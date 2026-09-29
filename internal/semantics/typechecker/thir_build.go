@@ -1,70 +1,54 @@
-package thir
+package typechecker
 
 import (
-	sourceid "compiler/internal/source"
 	"fmt"
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
-	"compiler/internal/moduleid"
+	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typecheckresult"
 	"compiler/internal/semantics/typeinfo"
+	sourceid "compiler/internal/source"
 	"compiler/pkg/typednil"
 )
 
-// Build materializes base-typechecked syntax into one self-contained semantic
-// tree. It does not resolve names or infer types: missing published evidence is
-// represented explicitly and rejected by Validate for otherwise-clean source.
-func Build(owner moduleid.ID, filePath string, source *ast.Module, symbolIndex *symbols.Index, typing *typecheckresult.Result, constantCondition func(ast.Expr, *symbols.Scope) (*bool, []*diagnostics.Diagnostic)) *Module {
-	if source == nil {
+func (c *checker) buildTHIR() *thir.Module {
+	if c == nil || c.module == nil || c.module.AST == nil {
 		return nil
 	}
-	builder := &builder{
-		symbolIndex: symbolIndex, typing: typing, constantCondition: constantCondition,
+	constantCondition := func(expr ast.Expr, scope *symbols.Scope) (*bool, []*diagnostics.Diagnostic) {
+		pending := diagnostics.NewDiagnosticBag()
+		value, ok := evaluateConstantExpr(c.ctx.WithDiagnostics(pending), c.module, c.evidence, scope, expr, &typeinfo.BoolType{})
+		if !ok {
+			return nil, pending.Diagnostics()
+		}
+		truth := value != nil && value.Truthy()
+		return &truth, pending.Diagnostics()
 	}
-	module := &Module{
-		Name:          owner.ImportPath,
-		FilePath:      filePath,
-		Functions:     make([]*Function, 0),
-		byNodeID:      make(map[sourceid.NodeID]Node),
-		functionIndex: make(map[moduleid.FunctionID]int),
-	}
-	ast.ForEachDecl(source, func(declaration ast.Decl) bool {
+	builder := &thirBuilder{symbolIndex: c.module.SymbolIndex, typing: c.evidence, constantCondition: constantCondition}
+	functions := make([]*thir.Function, 0)
+	ast.ForEachDecl(c.module.AST, func(declaration ast.Decl) bool {
 		function, ok := declaration.(*ast.FnDecl)
 		if !ok || function == nil {
 			return true
 		}
-		typedFunction := builder.function(function)
-		module.functionIndex[typedFunction.Identity] = len(module.Functions)
-		module.Functions = append(module.Functions, typedFunction)
+		functions = append(functions, builder.function(function))
 		return true
 	})
-	for _, function := range module.Functions {
-		if function == nil || function.Body == nil {
-			continue
-		}
-		Inspect(function.Body, func(node Node) bool {
-			if id := node.SourceInfo().NodeID; id.IsValid() {
-				module.byNodeID[id] = node
-			}
-			return true
-		})
-	}
-	return module
+	return thir.NewModule(c.module.ID.ImportPath, c.module.FilePath, functions)
 }
 
-type builder struct {
+type thirBuilder struct {
 	symbolIndex       *symbols.Index
-	typing            *typecheckresult.Result
+	typing            *evidence
 	currentScope      *symbols.Scope
 	constantCondition func(ast.Expr, *symbols.Scope) (*bool, []*diagnostics.Diagnostic)
 }
 
-func (b *builder) function(source *ast.FnDecl) *Function {
-	function := &Function{
+func (b *thirBuilder) function(source *ast.FnDecl) *thir.Function {
+	function := &thir.Function{
 		Identity:          source.ID().Function(),
 		Source:            sourceInfo(source),
 		IsEntrypointShape: source.Receiver == nil && source.Body != nil && len(source.TypeParams) == 0,
@@ -86,7 +70,7 @@ func (b *builder) function(source *ast.FnDecl) *Function {
 		}
 	}
 	for _, parameter := range source.ParamsWithReceiver() {
-		param := Param{Source: sourceInfo(parameter.Name), Symbol: b.symbol(parameter.Name)}
+		param := thir.Param{Source: sourceInfo(parameter.Name), Symbol: b.symbol(parameter.Name)}
 		if param.Symbol != nil {
 			param.Type, _ = symbols.GetSymbolType(param.Symbol)
 		}
@@ -96,11 +80,11 @@ func (b *builder) function(source *ast.FnDecl) *Function {
 	return function
 }
 
-func (b *builder) block(source *ast.BlockStmt) *Block {
+func (b *thirBuilder) block(source *ast.BlockStmt) *thir.Block {
 	if source == nil {
 		return nil
 	}
-	block := &Block{StmtInfo: stmtInfo(source), Scope: b.scope(source), Stmts: make([]Stmt, 0, len(source.Stmts))}
+	block := &thir.Block{StmtInfo: stmtInfo(source), Scope: b.scope(source), Stmts: make([]thir.Stmt, 0, len(source.Stmts))}
 	previousScope := b.currentScope
 	b.currentScope = block.Scope
 	defer func() { b.currentScope = previousScope }()
@@ -112,24 +96,24 @@ func (b *builder) block(source *ast.BlockStmt) *Block {
 	return block
 }
 
-func (b *builder) statement(statement ast.Stmt) Stmt {
+func (b *thirBuilder) statement(statement ast.Stmt) thir.Stmt {
 	switch node := statement.(type) {
 	case nil:
 		return nil
 	case *ast.BlockStmt:
 		return b.block(node)
 	case *ast.LetDecl:
-		return &Binding{StmtInfo: stmtInfo(node), Symbol: b.symbol(node.Name), IsInferred: node.Type == nil, Value: b.expression(node.Value)}
+		return &thir.Binding{StmtInfo: stmtInfo(node), Symbol: b.symbol(node.Name), IsInferred: node.Type == nil, Value: b.expression(node.Value)}
 	case *ast.ConstDecl:
-		return &Binding{StmtInfo: stmtInfo(node), Symbol: b.symbol(node.Name), IsConstant: true, IsInferred: node.Type == nil, Value: b.expression(node.Value)}
+		return &thir.Binding{StmtInfo: stmtInfo(node), Symbol: b.symbol(node.Name), IsConstant: true, IsInferred: node.Type == nil, Value: b.expression(node.Value)}
 	case *ast.ExprStmt:
-		return &ExprStmt{StmtInfo: stmtInfo(node), Value: b.expression(node.Expr)}
+		return &thir.ExprStmt{StmtInfo: stmtInfo(node), Value: b.expression(node.Expr)}
 	case *ast.AssignStmt:
-		return &Assign{StmtInfo: stmtInfo(node), Target: b.expression(node.Target), Value: b.expression(node.Value)}
+		return &thir.Assign{StmtInfo: stmtInfo(node), Target: b.expression(node.Target), Value: b.expression(node.Value)}
 	case *ast.ReturnStmt:
-		return &Return{StmtInfo: stmtInfo(node), Value: b.expression(node.Value)}
+		return &thir.Return{StmtInfo: stmtInfo(node), Value: b.expression(node.Value)}
 	case *ast.IfStmt:
-		statement := &If{StmtInfo: stmtInfo(node), Condition: b.expression(node.Cond)}
+		statement := &thir.If{StmtInfo: stmtInfo(node), Condition: b.expression(node.Cond)}
 		if b.constantCondition != nil {
 			statement.ConstantCondition, statement.ConditionDiagnostics = b.constantCondition(node.Cond, b.currentScope)
 		}
@@ -139,22 +123,22 @@ func (b *builder) statement(statement ast.Stmt) Stmt {
 	case *ast.ForStmt:
 		return b.forStatement(node)
 	case *ast.BreakStmt:
-		return &Break{StmtInfo: stmtInfo(node)}
+		return &thir.Break{StmtInfo: stmtInfo(node)}
 	case *ast.ContinueStmt:
-		return &Continue{StmtInfo: stmtInfo(node)}
+		return &thir.Continue{StmtInfo: stmtInfo(node)}
 	case *ast.MatchStmt:
 		return b.matchStatement(node)
 	case *ast.BadStmt, *ast.BadDecl:
-		return &InvalidStmt{StmtInfo: stmtInfo(node), Message: "invalid source statement"}
+		return &thir.InvalidStmt{StmtInfo: stmtInfo(node), Message: "invalid source statement"}
 	case *ast.ImportDecl, *ast.FnDecl, *ast.TypeAliasDecl, *ast.StructDecl, *ast.InterfaceDecl, *ast.EnumDecl:
-		return &InvalidStmt{StmtInfo: stmtInfo(node), Message: "declaration is not executable in function body"}
+		return &thir.InvalidStmt{StmtInfo: stmtInfo(node), Message: "declaration is not executable in function body"}
 	default:
 		panic(fmt.Sprintf("THIR: unhandled statement %T", statement))
 	}
 }
 
-func (b *builder) forStatement(source *ast.ForStmt) *For {
-	loop := &For{StmtInfo: stmtInfo(source)}
+func (b *thirBuilder) forStatement(source *ast.ForStmt) *thir.For {
+	loop := &thir.For{StmtInfo: stmtInfo(source)}
 	if b.typing != nil {
 		if checked := b.typing.CheckedIteration(source.ID()); checked != nil {
 			loop.Checked = b.block(checked)
@@ -174,13 +158,13 @@ func (b *builder) forStatement(source *ast.ForStmt) *For {
 		return loop
 	}
 	switch plan := evidence.Plan.(type) {
-	case *typecheckresult.RangeIteration:
-		loop.Iteration = &RangeIteration{
+	case *RangeIteration:
+		loop.Iteration = &thir.RangeIteration{
 			ElementType: evidence.ElementType, Cursor: evidence.Cursor, Limit: plan.Limit,
 			Ordinal: plan.Ordinal, HasGuaranteedEntry: evidence.HasGuaranteedEntry,
 		}
-	case *typecheckresult.SequenceIteration:
-		loop.Iteration = &SequenceIteration{
+	case *SequenceIteration:
+		loop.Iteration = &thir.SequenceIteration{
 			ElementType: evidence.ElementType, Cursor: evidence.Cursor, Value: evidence.Value,
 			Index: evidence.Index, Carrier: plan.Carrier, CarrierType: plan.CarrierType,
 			HasGuaranteedEntry: evidence.HasGuaranteedEntry,
@@ -189,8 +173,8 @@ func (b *builder) forStatement(source *ast.ForStmt) *For {
 	return loop
 }
 
-func (b *builder) matchStatement(source *ast.MatchStmt) Stmt {
-	match := &Match{StmtInfo: stmtInfo(source), Subject: b.expression(source.Subject)}
+func (b *thirBuilder) matchStatement(source *ast.MatchStmt) thir.Stmt {
+	match := &thir.Match{StmtInfo: stmtInfo(source), Subject: b.expression(source.Subject)}
 	if b.typing == nil {
 		return match
 	}
@@ -205,7 +189,7 @@ func (b *builder) matchStatement(source *ast.MatchStmt) Stmt {
 			break
 		}
 		sourceArm := source.Arms[index]
-		lowered := MatchArm{
+		lowered := thir.MatchArm{
 			Source: sourceInfo(sourceArm), Case: arm.Case, Payload: arm.Payload,
 			CarrierUse: arm.CarrierUse, Body: b.block(sourceArm.Body),
 		}
@@ -214,11 +198,11 @@ func (b *builder) matchStatement(source *ast.MatchStmt) Stmt {
 			if binding.Binding != nil {
 				bindingSource = sourceInfo(binding.Binding.ASTNode)
 			}
-			projection := MatchPayloadField
-			if binding.Projection == typecheckresult.MatchWholePayload {
-				projection = MatchWholePayload
+			projection := thir.MatchPayloadField
+			if binding.Projection == MatchWholePayload {
+				projection = thir.MatchWholePayload
 			}
-			lowered.Bindings = append(lowered.Bindings, MatchBinding{
+			lowered.Bindings = append(lowered.Bindings, thir.MatchBinding{
 				Source: bindingSource, Projection: projection, Field: binding.Field, Type: binding.Type,
 				Symbol: binding.Binding, IsDiscard: binding.IsDiscard,
 			})
@@ -228,7 +212,7 @@ func (b *builder) matchStatement(source *ast.MatchStmt) Stmt {
 	return match
 }
 
-func (b *builder) expression(expression ast.Expr) Expr {
+func (b *thirBuilder) expression(expression ast.Expr) thir.Expr {
 	if expression == nil {
 		return nil
 	}
@@ -238,98 +222,98 @@ func (b *builder) expression(expression ast.Expr) Expr {
 			if info.Type == nil {
 				info.Type = construction.EnumType
 			}
-			return &Variant{
+			return &thir.Variant{
 				ExprInfo: info, Case: construction.Case,
 				Payload: b.expression(construction.Value), PayloadType: construction.Payload,
 			}
 		}
 	}
 
-	var result Expr
+	var result thir.Expr
 	switch node := expression.(type) {
 	case *ast.NumberLit:
-		result = &NumberLiteral{ExprInfo: info, Value: node.Value, ExplicitType: node.ExplicitType}
+		result = &thir.NumberLiteral{ExprInfo: info, Value: node.Value, ExplicitType: node.ExplicitType}
 	case *ast.StringLit:
-		result = &StringLiteral{ExprInfo: info, Value: node.Value, IsCString: node.IsCString}
+		result = &thir.StringLiteral{ExprInfo: info, Value: node.Value, IsCString: node.IsCString}
 	case *ast.ByteLit:
-		result = &ByteLiteral{ExprInfo: info, Value: node.Value}
+		result = &thir.ByteLiteral{ExprInfo: info, Value: node.Value}
 	case *ast.CharLit:
-		result = &CharLiteral{ExprInfo: info, Value: node.Value}
+		result = &thir.CharLiteral{ExprInfo: info, Value: node.Value}
 	case *ast.BoolLit:
-		result = &BoolLiteral{ExprInfo: info, Value: node.Value}
+		result = &thir.BoolLiteral{ExprInfo: info, Value: node.Value}
 	case *ast.NoneLit:
-		result = &NoneLiteral{ExprInfo: info}
+		result = &thir.NoneLiteral{ExprInfo: info}
 	case *ast.Ident:
 		symbol := b.symbol(node)
 		if info.Type == nil && symbol != nil {
 			info.Type, _ = symbols.GetSymbolType(symbol)
 		}
 		if isStorageSymbol(symbol) {
-			info.Place = &Place{Root: symbol, Type: info.Type}
+			info.Place = &thir.Place{Root: symbol, Type: info.Type}
 		}
-		result = &Ident{ExprInfo: info, Name: node.Name, Symbol: symbol, IsExpandedDefaultBinding: b.typing != nil && b.typing.ExpandedDefaultBinding(node.ID())}
+		result = &thir.Ident{ExprInfo: info, Name: node.Name, Symbol: symbol, IsExpandedDefaultBinding: b.typing != nil && b.typing.ExpandedDefaultBinding(node.ID())}
 	case *ast.ScopeResolution:
 		symbol := b.symbol(node)
 		if info.Type == nil && symbol != nil {
 			info.Type, _ = symbols.GetSymbolType(symbol)
 		}
 		if isStorageSymbol(symbol) {
-			info.Place = &Place{Root: symbol, Type: info.Type}
+			info.Place = &thir.Place{Root: symbol, Type: info.Type}
 		}
-		result = &QualifiedIdent{ExprInfo: info, Name: node.TypeText(), Symbol: symbol}
+		result = &thir.QualifiedIdent{ExprInfo: info, Name: node.TypeText(), Symbol: symbol}
 	case *ast.SelectorExpr:
 		result = b.fieldExpression(node, info)
 	case *ast.IndexExpr:
 		result = b.indexExpression(node, info)
 	case *ast.RangeExpr:
-		result = &Range{ExprInfo: info, Start: b.expression(node.Start), End: b.expression(node.End), IsEndExclusive: node.IsEndExclusive}
+		result = &thir.Range{ExprInfo: info, Start: b.expression(node.Start), End: b.expression(node.End), IsEndExclusive: node.IsEndExclusive}
 	case *ast.StructLit:
 		result = b.structLiteral(node, info)
 	case *ast.VariantLit:
-		result = &InvalidExpr{ExprInfo: info, Message: "variant construction missing semantic evidence"}
+		result = &thir.InvalidExpr{ExprInfo: info, Message: "variant construction missing semantic evidence"}
 	case *ast.ArrayLit:
-		values := make([]Expr, 0, len(node.Values))
+		values := make([]thir.Expr, 0, len(node.Values))
 		for _, value := range node.Values {
 			values = append(values, b.expression(value))
 		}
-		result = &ArrayLiteral{ExprInfo: info, Values: values}
+		result = &thir.ArrayLiteral{ExprInfo: info, Values: values}
 	case *ast.AddressExpr:
-		mode := AddressRaw
+		mode := thir.AddressRaw
 		switch node.Mode {
 		case ast.AddressShared:
-			mode = AddressShared
+			mode = thir.AddressShared
 		case ast.AddressMutable:
-			mode = AddressMutable
+			mode = thir.AddressMutable
 		}
-		result = &Address{ExprInfo: info, Mode: mode, Value: b.expression(node.Expr)}
+		result = &thir.Address{ExprInfo: info, Mode: mode, Value: b.expression(node.Expr)}
 	case *ast.UnaryExpr:
-		result = &Unary{ExprInfo: info, Op: node.Op, Value: b.expression(node.Expr)}
+		result = &thir.Unary{ExprInfo: info, Op: node.Op, Value: b.expression(node.Expr)}
 	case *ast.BinaryExpr:
 		isStringConcatenation := b.typing != nil && b.typing.StringConcatenation(node.ID())
-		result = &Binary{
+		result = &thir.Binary{
 			ExprInfo: info, Left: b.expression(node.Left), Op: node.Op,
 			Right: b.expression(node.Right), IsStringConcatenation: isStringConcatenation, Test: b.caseTest(node.ID()),
 		}
 	case *ast.IsExpr:
-		result = &Is{ExprInfo: info, Value: b.expression(node.Value), Test: b.caseTest(node.ID())}
+		result = &thir.Is{ExprInfo: info, Value: b.expression(node.Value), Test: b.caseTest(node.ID())}
 	case *ast.CallExpr:
 		result = b.callExpression(node, info)
 	case *ast.FreeExpr:
-		result = &Free{ExprInfo: info, Value: b.expression(node.Expr)}
+		result = &thir.Free{ExprInfo: info, Value: b.expression(node.Expr)}
 	case *ast.PrintExpr:
-		result = &Print{ExprInfo: info, Value: b.expression(node.Expr), AppendsNewline: node.AppendsNewline}
+		result = &thir.Print{ExprInfo: info, Value: b.expression(node.Expr), AppendsNewline: node.AppendsNewline}
 	case *ast.AsExpr:
-		result = &Cast{ExprInfo: info, Value: b.expression(node.Expr), TargetType: info.Type}
+		result = &thir.Cast{ExprInfo: info, Value: b.expression(node.Expr), TargetType: info.Type}
 	case *ast.BadExpr:
-		result = &InvalidExpr{ExprInfo: info, Message: "invalid source expression"}
+		result = &thir.InvalidExpr{ExprInfo: info, Message: "invalid source expression"}
 	default:
 		panic(fmt.Sprintf("THIR: unhandled expression %T", expression))
 	}
 	return result
 }
 
-func (b *builder) fieldExpression(source *ast.SelectorExpr, info ExprInfo) Expr {
-	field := &Field{ExprInfo: info, Base: b.expression(source.Expr)}
+func (b *thirBuilder) fieldExpression(source *ast.SelectorExpr, info thir.ExprInfo) thir.Expr {
+	field := &thir.Field{ExprInfo: info, Base: b.expression(source.Expr)}
 	if source.Name != nil {
 		field.Name = source.Name.Name
 		field.Symbol = b.symbol(source.Name)
@@ -343,7 +327,7 @@ func (b *builder) fieldExpression(source *ast.SelectorExpr, info ExprInfo) Expr 
 			if field.ExprInfo.Type == nil {
 				field.ExprInfo.Type = access.Type
 			}
-			field.Access = &FieldAccess{Field: access.Field, DereferenceType: access.DereferenceType}
+			field.Access = &thir.FieldAccess{Field: access.Field, DereferenceType: access.DereferenceType}
 		}
 	}
 	if projection, projected := place.Project(source); projected {
@@ -353,34 +337,34 @@ func (b *builder) fieldExpression(source *ast.SelectorExpr, info ExprInfo) Expr 
 			fieldIndex = field.Access.Field
 			dereferenceType = field.Access.DereferenceType
 		}
-		field.ExprInfo.Place = projectPlace(field.Base, PlaceProjection{
+		field.ExprInfo.Place = projectPlace(field.Base, thir.PlaceProjection{
 			Source: field.Source, BaseSource: field.Base.SourceInfo(),
-			Kind: PlaceField, Name: projection.Step.Field, Field: fieldIndex,
+			Kind: thir.PlaceField, Name: projection.Step.Field, Field: fieldIndex,
 			DereferenceType: dereferenceType, Type: field.ExprInfo.Type,
 		}, field.ExprInfo.Type)
 	}
 	return field
 }
 
-func (b *builder) indexExpression(source *ast.IndexExpr, info ExprInfo) Expr {
-	index := &Index{ExprInfo: info, Base: b.expression(source.Expr), Index: b.expression(source.Index)}
+func (b *thirBuilder) indexExpression(source *ast.IndexExpr, info thir.ExprInfo) thir.Expr {
+	index := &thir.Index{ExprInfo: info, Base: b.expression(source.Expr), Index: b.expression(source.Index)}
 	if b.typing != nil {
 		if constant, found := b.typing.ConstantIndex(source.ID()); found {
-			index.Constant = &ConstantIndex{Text: constant.Text, Type: constant.Type}
+			index.Constant = &thir.ConstantIndex{Text: constant.Text, Type: constant.Type}
 		}
 	}
 	if _, ranged := source.Index.(*ast.RangeExpr); !ranged && index.Index != nil {
 		if _, projected := place.Project(source); projected {
-			index.ExprInfo.Place = projectPlace(index.Base, PlaceProjection{
+			index.ExprInfo.Place = projectPlace(index.Base, thir.PlaceProjection{
 				Source: index.Source, BaseSource: index.Base.SourceInfo(),
-				Kind: PlaceIndex, Index: index.Index, ConstantIndex: index.Constant, Type: index.ExprInfo.Type,
+				Kind: thir.PlaceIndex, Index: index.Index, ConstantIndex: index.Constant, Type: index.ExprInfo.Type,
 			}, index.ExprInfo.Type)
 		}
 	}
 	return index
 }
 
-func (b *builder) structLiteral(source *ast.StructLit, info ExprInfo) Expr {
+func (b *thirBuilder) structLiteral(source *ast.StructLit, info thir.ExprInfo) thir.Expr {
 	values := make([]ast.Expr, 0, len(source.Fields))
 	if b.typing != nil {
 		if ordered, found := b.typing.StructLiteralFields(source.ID()); found {
@@ -392,25 +376,25 @@ func (b *builder) structLiteral(source *ast.StructLit, info ExprInfo) Expr {
 			values = append(values, field.Value)
 		}
 	}
-	fields := make([]StructField, 0, len(values))
+	fields := make([]thir.StructField, 0, len(values))
 	semantic, _ := typeinfo.Underlying(info.Type).(*typeinfo.StructType)
 	for index, value := range values {
 		name := ""
 		if semantic != nil && index < len(semantic.Fields) {
 			name = semantic.Fields[index].Name
 		}
-		fields = append(fields, StructField{Name: name, Index: index, Value: b.expression(value)})
+		fields = append(fields, thir.StructField{Name: name, Index: index, Value: b.expression(value)})
 	}
-	return &StructLiteral{ExprInfo: info, Fields: fields}
+	return &thir.StructLiteral{ExprInfo: info, Fields: fields}
 }
 
-func (b *builder) callExpression(source *ast.CallExpr, info ExprInfo) Expr {
-	call := &Call{ExprInfo: info, Callee: b.expression(source.Callee), IsPiped: source.IsPiped}
+func (b *thirBuilder) callExpression(source *ast.CallExpr, info thir.ExprInfo) thir.Expr {
+	call := &thir.Call{ExprInfo: info, Callee: b.expression(source.Callee), IsPiped: source.IsPiped}
 	arguments := source.Args
 	if b.typing != nil {
 		arguments = b.typing.CallArgumentsOrSource(source)
 		if compilerCall, found := b.typing.CompilerCall(source.ID()); found {
-			call.CompilerCall = &CompilerCall{Operation: compilerCall.Operation, Kind: compilerCall.Kind}
+			call.CompilerCall = &thir.CompilerCall{Operation: compilerCall.Operation, Kind: compilerCall.Kind}
 		}
 	}
 	for _, argument := range arguments {
@@ -419,15 +403,15 @@ func (b *builder) callExpression(source *ast.CallExpr, info ExprInfo) Expr {
 	return call
 }
 
-func (b *builder) expressionInfo(expression ast.Expr) ExprInfo {
-	info := ExprInfo{Source: sourceInfo(expression)}
+func (b *thirBuilder) expressionInfo(expression ast.Expr) thir.ExprInfo {
+	info := thir.ExprInfo{Source: sourceInfo(expression)}
 	if b.typing == nil {
 		return info
 	}
 	info.Type = b.typing.ExprType(expression.ID())
 	if conversion, found := b.typing.ImplicitConversion(expression.ID()); found {
 		copied := conversion
-		info.conversion = &copied
+		info.ConversionInfo = &copied
 	}
 	if use, found := b.typing.ValueUse(expression.ID()); found {
 		info.Use = use
@@ -439,14 +423,14 @@ func (b *builder) expressionInfo(expression ast.Expr) ExprInfo {
 	}
 	info.ImplicitReference = b.typing.ImplicitCallArgument(expression.ID())
 	for _, implementation := range b.typing.InterfaceImplementations(expression.ID()) {
-		info.interfaceImplementations = append(info.interfaceImplementations, InterfaceImplementation{
+		info.Implementations = append(info.Implementations, thir.InterfaceImplementation{
 			Symbol: implementation.Symbol, CallableType: implementation.CallableType,
 		})
 	}
 	return info
 }
 
-func (b *builder) caseTest(id sourceid.NodeID) *CaseTest {
+func (b *thirBuilder) caseTest(id sourceid.NodeID) *thir.CaseTest {
 	if b.typing == nil {
 		return nil
 	}
@@ -454,35 +438,35 @@ func (b *builder) caseTest(id sourceid.NodeID) *CaseTest {
 	if !found {
 		return nil
 	}
-	return &CaseTest{
+	return &thir.CaseTest{
 		SubjectID: test.SubjectID, Case: test.Case, MatchesWhenTrue: test.MatchesWhenTrue,
 		CaseCount: test.CaseCount, Family: test.Family,
 	}
 }
 
-func projectPlace(base Expr, projection PlaceProjection, typ typeinfo.Type) *Place {
+func projectPlace(base thir.Expr, projection thir.PlaceProjection, typ typeinfo.Type) *thir.Place {
 	if base == nil {
 		return nil
 	}
 	if existing := base.ExprPlace(); existing != nil {
-		projected := &Place{
+		projected := &thir.Place{
 			Root: existing.Root, Temporary: existing.Temporary, Type: typ,
-			Projections: append([]PlaceProjection(nil), existing.Projections...),
+			Projections: append([]thir.PlaceProjection(nil), existing.Projections...),
 		}
 		projected.Projections = append(projected.Projections, projection)
 		return projected
 	}
-	return &Place{Temporary: base, Projections: []PlaceProjection{projection}, Type: typ}
+	return &thir.Place{Temporary: base, Projections: []thir.PlaceProjection{projection}, Type: typ}
 }
 
-func (b *builder) symbol(node ast.Node) *symbols.Symbol {
+func (b *thirBuilder) symbol(node ast.Node) *symbols.Symbol {
 	if b.symbolIndex == nil || typednil.IsNil(node) {
 		return nil
 	}
 	return b.symbolIndex.Symbol(node)
 }
 
-func (b *builder) scope(node ast.Node) *symbols.Scope {
+func (b *thirBuilder) scope(node ast.Node) *symbols.Scope {
 	if b.symbolIndex == nil || typednil.IsNil(node) {
 		return nil
 	}
@@ -496,7 +480,7 @@ func sourceInfo(node ast.Node) ir.SourceInfo {
 	return ir.SourceInfo{NodeID: node.ID(), Location: ast.LocOf(node)}
 }
 
-func stmtInfo(node ast.Node) StmtInfo { return StmtInfo{Source: sourceInfo(node)} }
+func stmtInfo(node ast.Node) thir.StmtInfo { return thir.StmtInfo{Source: sourceInfo(node)} }
 
 func isStorageSymbol(symbol *symbols.Symbol) bool {
 	if symbol == nil {

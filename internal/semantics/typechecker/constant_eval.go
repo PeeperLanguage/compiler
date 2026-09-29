@@ -1,4 +1,4 @@
-package consteval
+package typechecker
 
 import (
 	"compiler/internal/constvalue"
@@ -12,9 +12,10 @@ import (
 	"compiler/pkg/numeric"
 )
 
-type evaluator struct {
+type constantEvaluator struct {
 	ctx                 *project.CompilerContext
 	module              *module.Module
+	evidence            *evidence
 	constants           *constantresult.Result
 	inProgress          map[symbols.SymbolID]struct{}
 	publishModuleValues bool
@@ -23,11 +24,11 @@ type evaluator struct {
 // FinalizeValues recomputes and publishes authoritative module constants after
 // typechecking assigns final symbol types. Lazy query-cache entries accumulated
 // during typechecking remain mutable for local constants.
-func FinalizeValues(ctx *project.CompilerContext, module *module.Module) {
+func finalizeConstantValues(ctx *project.CompilerContext, module *module.Module, evidence *evidence) {
 	if ctx == nil || module == nil || module.ModuleScope == nil {
 		return
 	}
-	e := newEvaluator(ctx, module, true)
+	e := newConstantEvaluator(ctx, module, evidence, true)
 	e.constants.ClearPublished()
 	for _, sym := range module.ModuleScope.Symbols() {
 		if sym != nil && sym.Kind == symbols.SymbolConst {
@@ -39,31 +40,32 @@ func FinalizeValues(ctx *project.CompilerContext, module *module.Module) {
 
 // EvaluateExpr computes one semantic constant using expected type information
 // available at the query site. It is valid during and after typechecking.
-func EvaluateExpr(ctx *project.CompilerContext, module *module.Module, scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) (constvalue.Value, bool) {
+func evaluateConstantExpr(ctx *project.CompilerContext, module *module.Module, evidence *evidence, scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) (constvalue.Value, bool) {
 	if ctx == nil || module == nil || expr == nil {
 		return nil, false
 	}
 	if scope == nil && module.ModuleScope == nil {
 		return nil, false
 	}
-	e := newEvaluator(ctx, module, false)
+	e := newConstantEvaluator(ctx, module, evidence, false)
 	return e.evalExpr(scope, expr, expected)
 }
 
-func newEvaluator(ctx *project.CompilerContext, module *module.Module, publishModuleValues bool) *evaluator {
+func newConstantEvaluator(ctx *project.CompilerContext, module *module.Module, evidence *evidence, publishModuleValues bool) *constantEvaluator {
 	if module.Constants == nil {
 		module.Constants = constantresult.New()
 	}
-	return &evaluator{
+	return &constantEvaluator{
 		ctx:                 ctx,
 		module:              module,
+		evidence:            evidence,
 		constants:           module.Constants,
 		inProgress:          make(map[symbols.SymbolID]struct{}),
 		publishModuleValues: publishModuleValues,
 	}
 }
 
-func (e *evaluator) evalModuleConstants() {
+func (e *constantEvaluator) evalModuleConstants() {
 	for _, sym := range e.module.ModuleScope.Symbols() {
 		if sym != nil && sym.Kind == symbols.SymbolConst {
 			e.evalConstSymbol(sym, e.module.ModuleScope)
@@ -71,7 +73,7 @@ func (e *evaluator) evalModuleConstants() {
 	}
 }
 
-func (e *evaluator) evalConstSymbol(sym *symbols.Symbol, scope *symbols.Scope) (constvalue.Value, bool) {
+func (e *constantEvaluator) evalConstSymbol(sym *symbols.Symbol, scope *symbols.Scope) (constvalue.Value, bool) {
 	if e == nil || e.module == nil || sym == nil {
 		return nil, false
 	}
@@ -127,9 +129,9 @@ func (e *evaluator) evalConstSymbol(sym *symbols.Symbol, scope *symbols.Scope) (
 	return value, true
 }
 
-func (e *evaluator) evalExpr(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) (constvalue.Value, bool) {
-	if e.module.Typechecking != nil {
-		if construction, ok := e.module.Typechecking.VariantConstruction(expr.ID()); ok {
+func (e *constantEvaluator) evalExpr(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) (constvalue.Value, bool) {
+	if e.evidence != nil {
+		if construction, ok := e.evidence.VariantConstruction(expr.ID()); ok {
 			if typeinfo.OwnershipCapabilityOf(construction.EnumType).Copy != typeinfo.CopyImplicit {
 				return nil, false
 			}
@@ -170,14 +172,14 @@ func (e *evaluator) evalExpr(scope *symbols.Scope, expr ast.Expr, expected typei
 		}
 	}
 	if node, ok := expr.(*ast.IsExpr); ok {
-		if e.module.Typechecking == nil {
+		if e.evidence == nil {
 			return nil, false
 		}
-		test, found := e.module.Typechecking.CaseTest(node.ID())
+		test, found := e.evidence.CaseTest(node.ID())
 		if !found || test.Family != typeinfo.VariantFamilyNamed {
 			return nil, false
 		}
-		value, ok := e.evalExpr(scope, node.Value, e.module.BaseExprType(node.Value.ID()))
+		value, ok := e.evalExpr(scope, node.Value, e.evidence.ExprType(node.Value.ID()))
 		variant, isConstant := value.(*constvalue.VariantConst)
 		if !ok || !isConstant || variant == nil {
 			return nil, false
