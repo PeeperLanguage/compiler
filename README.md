@@ -1,6 +1,3 @@
-> [!IMPORTANT]
-> Remove this line to confirm you have reviewed this PR before submitting.
-
 # Peeper
 
 Peeper is an experimental systems programming language and native compiler. This

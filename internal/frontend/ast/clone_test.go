@@ -1,6 +1,7 @@
 package ast
 
 import (
+	"reflect"
 	"slices"
 	"testing"
 
@@ -115,10 +116,23 @@ func TestSubstituteExprClonesEveryTypeExpression(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			expr := &AsExpr{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(100)}, Expr: &Ident{NodeIDHolder: NodeIDHolder{NodeID: source.ParsedNodeID(101)}, Name: "value"}, TypeExpr: test.typ}
+			originalNodes := make(map[Node]source.NodeID)
+			Inspect(test.typ, func(node Node) bool {
+				if node != nil {
+					originalNodes[node] = node.ID()
+				}
+				return true
+			})
 			cloned, _, _ := SubstituteExpr(testGeneratedOwner(), 1, expr, nil)
 			out, ok := cloned.(*AsExpr)
-			if !ok || out.TypeExpr == test.typ {
-				t.Fatalf("clone = %T, type clone = %p; want distinct AsExpr/type", cloned, out.TypeExpr)
+			if !ok || out == nil {
+				t.Fatalf("clone = %T, want non-nil *AsExpr", cloned)
+			}
+			if reflect.TypeOf(out.TypeExpr) != reflect.TypeOf(test.typ) {
+				t.Fatalf("type clone = %T, want %T", out.TypeExpr, test.typ)
+			}
+			if out.TypeExpr == test.typ {
+				t.Fatal("type clone reused original node")
 			}
 			if TypeText(out.TypeExpr) != TypeText(test.typ) {
 				t.Fatalf("type text = %q, want %q", TypeText(out.TypeExpr), TypeText(test.typ))
@@ -127,6 +141,9 @@ func TestSubstituteExprClonesEveryTypeExpression(t *testing.T) {
 			Inspect(out.TypeExpr, func(node Node) bool {
 				if node == nil {
 					return true
+				}
+				if _, shared := originalNodes[node]; shared {
+					t.Fatalf("clone shares nested %T with original", node)
 				}
 				if !node.ID().IsGenerated() {
 					t.Fatalf("%T retained source ID %v", node, node.ID())
@@ -137,6 +154,14 @@ func TestSubstituteExprClonesEveryTypeExpression(t *testing.T) {
 				seen[node.ID()] = struct{}{}
 				return true
 			})
+			if len(seen) != len(originalNodes) {
+				t.Fatalf("clone has %d nodes, want %d", len(seen), len(originalNodes))
+			}
+			for node, id := range originalNodes {
+				if node.ID() != id {
+					t.Fatalf("cloning mutated original %T identity", node)
+				}
+			}
 		})
 	}
 }
