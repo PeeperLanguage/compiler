@@ -1,4 +1,4 @@
-package ownershipresult
+package analysis
 
 import (
 	"compiler/internal/ir/cfg"
@@ -7,7 +7,7 @@ import (
 	"compiler/internal/source"
 )
 
-// CleanupPlan records ownership effects at CFG and stable THIR source sites.
+// cleanupPlan records ownership effects at CFG and stable THIR source sites.
 //
 // It is the only source of drop obligations over source values: lowering reads
 // the plan and never decides a drop for itself. The two other drops in the
@@ -22,7 +22,7 @@ import (
 // local being unwound would otherwise be freed before it is read. Folding return
 // into scope-exit sites therefore requires MIR to defer trailing site drops
 // until after the terminator's value expression.
-type CleanupPlan struct {
+type cleanupPlan struct {
 	// AfterScope drops the symbols owned by the one scope a site exits.
 	AfterScope map[cfg.SiteID][]symbols.SymbolID
 	// BeforeReturn drops every scope a return unwinds, after its value is
@@ -35,5 +35,5 @@ type CleanupPlan struct {
 	MatchWholePayloadDrops map[source.NodeID]struct{}
 }
 
-// Result stores ownership output by stable THIR function identity.
-type Result map[moduleid.FunctionID]*CleanupPlan
+// cleanupPlans stores private cleanup decisions by stable THIR function identity.
+type cleanupPlans map[moduleid.FunctionID]*cleanupPlan

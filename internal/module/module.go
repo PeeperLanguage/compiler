@@ -8,8 +8,6 @@ import (
 	"compiler/internal/moduleid"
 	"compiler/internal/phase"
 	"compiler/internal/semantics/analysis"
-	"compiler/internal/semantics/effect"
-	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
@@ -55,12 +53,8 @@ type Module struct {
 	THIR     *thir.Module
 	CFG      *cfg.Module
 	Analysis *analysis.Module
-	// Effects is the published semantic meaning of each CFG site, produced once
-	// and consumed by the dataflow analyses.
-	Effects   effect.Result
-	Ownership ownershipresult.Result
-	MIR       *mir.Module
-	LLVMIR    string
+	MIR      *mir.Module
+	LLVMIR   string
 	// Top-level names visible in module.
 	ModuleScope *symbols.Scope
 	// Generic declaration syntax and semantic shells produced by collection.
@@ -184,14 +178,8 @@ func (m *Module) ResetToPhase(retained phase.Phase) {
 	if retained < phase.CFG {
 		m.CFG = nil
 	}
-	if retained < phase.FlowTyped {
+	if retained < phase.Analyzed {
 		m.Analysis = nil
-	}
-	if retained < phase.Effects {
-		m.Effects = nil
-	}
-	if retained < phase.Ownership {
-		m.Ownership = nil
 	}
 	if retained < phase.MIR {
 		m.MIR = nil

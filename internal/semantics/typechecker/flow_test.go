@@ -39,9 +39,9 @@ func checkFlowSource(t *testing.T, src string) (*module.Module, *diagnostics.Dia
 	collector.Collect(ctx, module)
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
-	module.THIR = checkWithEvidence(ctx, module)
+	module.THIR = checkWithEvidence(t, ctx, module)
 	module.CFG = cfg.BuildModule(module.THIR)
-	module.Analysis = analysis.Run(diag, analysis.Input{Source: module.THIR, CFG: module.CFG, Scope: module.ModuleScope})
+	module.Analysis = analysis.Run(diag, analysis.Input{Source: module.THIR, CFG: module.CFG, Scope: module.ModuleScope, SymbolIndex: module.SymbolIndex})
 	return module, diag
 }
 

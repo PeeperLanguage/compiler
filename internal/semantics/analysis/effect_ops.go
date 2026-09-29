@@ -1,13 +1,9 @@
-// Package effect defines the ordered semantic meaning of source constructs.
-//
-// The producer in this package is the only code that inspects syntax to decide
-// what a construct does to a binding. Definite initialization consumes the
-// published stream and never switches on an AST kind, so a construct that maps
-// onto these operations needs no case in any consumer.
-//
-// This package shares evidence, not a solver. Each analysis keeps its own
-// lattice, join, direction, and diagnostics, per COMPILER_GUIDELINES.md section 6.
-package effect
+// The transient effect algebra defines the ordered semantic meaning of THIR
+// constructs during post-CFG analysis. The producer is the only code that
+// interprets a construct into binding effects; downstream analysis stages
+// consume this stream without rediscovering syntax. Each stage keeps its own
+// lattice, join, direction, and diagnostics.
+package analysis
 
 import (
 	"compiler/internal/ir/cfg"
@@ -19,20 +15,20 @@ import (
 	"compiler/internal/source"
 )
 
-// Op is one semantic effect on one binding.
+// effectOp is one semantic effect on one binding.
 //
 // The set is closed by unexported methods, so no kind can be introduced
-// outside this package. visit(Visitor) supplies the other half of the contract:
-// a new semantic operation extends Visitor and therefore breaks every exhaustive
+// outside this package. visit(effectVisitor) supplies the other half of the contract:
+// a new semantic operation extends effectVisitor and therefore breaks every exhaustive
 // consumer at compile time until it makes an explicit decision.
-type Op interface {
+type effectOp interface {
 	effectOp()
-	visit(Visitor)
+	visit(effectVisitor)
 }
 
-// Define brings a binding into existence. Initialized separates `let x = e`,
+// effectDefine brings a binding into existence. Initialized separates `let x = e`,
 // which also stores a value, from a declaration that leaves storage empty.
-type Define struct {
+type effectDefine struct {
 	Symbol *symbols.Symbol
 	Source thir.Node
 	// Node is the declaration, which is where a diagnostic about the binding
@@ -56,11 +52,11 @@ type Define struct {
 	IsOnEntry bool
 }
 
-// Write stores to storage that already exists. It names a place for the same
-// reason Use does: `a.b = x` writes a field, and an assignment target takes a
+// effectWrite stores to storage that already exists. It names a place for the same
+// reason effectUse does: `a.b = x` writes a field, and an assignment target takes a
 // mutating access whether it is a whole binding or a projection out of one.
-type Write struct {
-	Place  Place
+type effectWrite struct {
+	Place  effectPlace
 	Target thir.Expr
 	// Node is the assignment target.
 	Node source.NodeID
@@ -68,20 +64,20 @@ type Write struct {
 	// key pre-assignment drops by this identity, while Node remains the target
 	// expression used for diagnostics and place typing.
 	Owner source.NodeID
-	// Value is the expression whose value is stored into Place.
+	// Value is the expression whose value is stored into effectPlace.
 	Value     source.NodeID
 	ValueExpr thir.Expr
 	Location  *source.Location
 }
 
-// Place identifies storage: a root binding and the projections taken from it to
+// effectPlace identifies storage: a root binding and the projections taken from it to
 // reach the value being used.
 //
 // Projections are reused from the canonical place walk rather than restated, so
 // a consumer that already reasons about origins needs no translation. Empty
 // projections mean the whole binding. A consumer that only cares which binding
 // was touched reads Root and ignores the rest.
-type Place struct {
+type effectPlace struct {
 	// Root is the binding the storage belongs to. It is nil for a temporary:
 	// a value that never lives in a binding, such as a call result.
 	Root *symbols.Symbol
@@ -96,32 +92,32 @@ type Place struct {
 	Projections   []place.OriginProjection
 }
 
-// Use reads a binding's value. Node is the reading identifier rather than the
+// effectUse reads a binding's value. Node is the reading identifier rather than the
 // enclosing statement, so a diagnostic anchors on the read itself.
 //
 // Location travels with the operation so a consumer never has to resolve the
-// node back to syntax just to report against it. Write carries the same evidence
-// for assignment-access diagnostics; Define currently needs no location.
-type Use struct {
-	Place    Place
+// node back to syntax just to report against it. effectWrite carries the same evidence
+// for assignment-access diagnostics; effectDefine currently needs no location.
+type effectUse struct {
+	Place    effectPlace
 	Node     source.NodeID
 	Source   thir.Expr
 	Location *source.Location
 	// Kind is what happens to the value here: observed, duplicated, or
 	// consumed. The producer decides it from the position the value occupies
-	// and, for a call argument, from the typechecker's published decision.
+	// and, for a call argument, from the typechecker's recorded decision.
 	Kind typeinfo.UseKind
 }
 
-// Borrow takes a reference to a place rather than reading its value. Mutable
+// effectBorrow takes a reference to a place rather than reading its value. Mutable
 // separates `&mut x` from `&x`, which is the difference that decides whether a
 // second borrow conflicts.
 //
 // It names the place it borrows, so it is the whole access: a consumer that saw
 // both a borrow and a separate read of the same place would charge that place
 // twice.
-type Borrow struct {
-	Place  Place
+type effectBorrow struct {
+	Place  effectPlace
 	Source thir.Expr
 	// Node is the source expression that creates the borrow (an AddressExpr or
 	// an adapted call argument). Operand is the place expression actually
@@ -141,20 +137,20 @@ type Borrow struct {
 	IsRaw bool
 }
 
-// Iterate records the long-lived shared access a sequence loop holds on its
-// iterable storage. The ordinary Use for the iterable is still published in
-// evaluation order; Iterate adds only the lifetime fact that lasts until the
-// loop exit. Range loops publish no Iterate operation.
-type Iterate struct {
+// effectIterate records the long-lived shared access a sequence loop holds on its
+// iterable storage. The ordinary effectUse for the iterable remains in evaluation
+// order; effectIterate adds only the lifetime fact that lasts until the loop exit.
+// Range loops produce no effectIterate operation.
+type effectIterate struct {
 	Loop     source.NodeID
-	Place    Place
+	Place    effectPlace
 	Node     source.NodeID
 	Source   thir.Expr
 	Carrier  *symbols.Symbol
 	Location *source.Location
 }
 
-// CallBegin and CallEnd bracket the operations a call evaluates. Everything
+// effectCallBegin and effectCallEnd bracket the operations a call evaluates. Everything
 // between them happens while the call is in progress.
 //
 // The bracket is a fact about evaluation, not one analysis's bookkeeping: a
@@ -162,47 +158,42 @@ type Iterate struct {
 // and a reservation taken for a receiver activates when the call starts. Any
 // consumer modelling temporaries needs that boundary, and a flat sequence of
 // uses cannot express it. Calls nest, so the pair nests too.
-type CallBegin struct {
+type effectCallBegin struct {
 	Node     source.NodeID
 	Source   thir.Expr
 	Location *source.Location
 }
 
-type CallEnd struct {
+type effectCallEnd struct {
 	Node source.NodeID
 }
 
-// Discard is a value produced and dropped, as an expression statement does.
+// effectDiscard is a value produced and dropped, as an expression statement does.
 // The value never reaches a binding, so anything owned in it dies here.
-type Discard struct {
+type effectDiscard struct {
 	Source thir.Expr
-	// Place is what was discarded, so a consumer can tell a dropped temporary
+	// effectPlace is what was discarded, so a consumer can tell a dropped temporary
 	// from a statement that merely names storage.
-	Place    Place
+	Place    effectPlace
 	Node     source.NodeID
 	Location *source.Location
 }
 
-func (Define) effectOp()    {}
-func (Write) effectOp()     {}
-func (Use) effectOp()       {}
-func (Borrow) effectOp()    {}
-func (Iterate) effectOp()   {}
-func (Discard) effectOp()   {}
-func (CallBegin) effectOp() {}
-func (CallEnd) effectOp()   {}
+func (effectDefine) effectOp()    {}
+func (effectWrite) effectOp()     {}
+func (effectUse) effectOp()       {}
+func (effectBorrow) effectOp()    {}
+func (effectIterate) effectOp()   {}
+func (effectDiscard) effectOp()   {}
+func (effectCallBegin) effectOp() {}
+func (effectCallEnd) effectOp()   {}
 
-// Result holds published effects for one semantic generation.
+// effectStreams holds the transient effect streams for one analysis run.
 //
 // A cfg.SiteID is only meaningful relative to one graph, so function identity
 // is the outer key. Slice order is evaluation order; consumers must not reorder
 // it.
-type Result map[moduleid.FunctionID]SiteOps
+type effectStreams map[moduleid.FunctionID]effectSiteOps
 
-// SiteOps holds one function's effects, keyed by the site they happen at.
-type SiteOps map[cfg.SiteID][]Op
-
-// At returns the effects published for one site, in evaluation order.
-func (r Result) At(fn moduleid.FunctionID, site cfg.SiteID) []Op {
-	return r[fn][site]
-}
+// effectSiteOps holds one function's transient effects by CFG site.
+type effectSiteOps map[cfg.SiteID][]effectOp

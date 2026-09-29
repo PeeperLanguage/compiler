@@ -6,16 +6,18 @@ import (
 	"compiler/internal/ir/cfg"
 
 	"compiler/internal/ir/thir"
+	"compiler/internal/moduleid"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 )
 
-// Input supplies the immutable artifacts required for flow analysis.
+// Input supplies the immutable artifacts required for post-CFG semantic analysis.
 type Input struct {
-	Source *thir.Module
-	CFG    *cfg.Module
-	Scope  *symbols.Scope
+	Source      *thir.Module
+	CFG         *cfg.Module
+	Scope       *symbols.Scope
+	SymbolIndex *symbols.Index
 }
 
 type PayloadAccess struct {
@@ -76,6 +78,7 @@ type expressionEvidence struct {
 // stay private so consumers query semantic facts rather than storage layout.
 type Module struct {
 	expressions expressionEvidence
+	cleanup     cleanupPlans
 }
 
 func newModule() *Module {
@@ -89,7 +92,7 @@ func newModule() *Module {
 	}}
 }
 
-func (r *Module) RecordExprType(id source.NodeID, typ typeinfo.Type) {
+func (r *Module) recordExprType(id source.NodeID, typ typeinfo.Type) {
 	if r != nil && id.IsValid() && typ != nil {
 		r.expressions.types[id] = typ
 	}
@@ -102,9 +105,9 @@ func (r *Module) ExprType(id source.NodeID) typeinfo.Type {
 	return r.expressions.types[id]
 }
 
-func (r *Module) RecordPayload(id source.NodeID, payload PayloadAccess) {
+func (r *Module) recordPayload(id source.NodeID, payload PayloadAccess) {
 	if r != nil && id.IsValid() {
-		r.expressions.payloads[id] = payload
+		r.expressions.payloads[id] = clonePayload(payload)
 	}
 }
 
@@ -113,18 +116,24 @@ func (r *Module) Payload(id source.NodeID) (PayloadAccess, bool) {
 		return PayloadAccess{}, false
 	}
 	payload, ok := r.expressions.payloads[id]
-	return payload, ok
+	return clonePayload(payload), ok
 }
 
-func (r *Module) ForgetPayload(id source.NodeID) {
+func clonePayload(payload PayloadAccess) PayloadAccess {
+	payload.CarrierOrigins = place.CloneOrigins(payload.CarrierOrigins)
+	payload.Cases = append([]int(nil), payload.Cases...)
+	return payload
+}
+
+func (r *Module) forgetPayload(id source.NodeID) {
 	if r != nil {
 		delete(r.expressions.payloads, id)
 	}
 }
 
-func (r *Module) RecordCaseTest(id source.NodeID, test CaseTest) {
+func (r *Module) recordCaseTest(id source.NodeID, test CaseTest) {
 	if r != nil && id.IsValid() {
-		r.expressions.caseTests[id] = test
+		r.expressions.caseTests[id] = cloneCaseTest(test)
 	}
 }
 
@@ -133,10 +142,15 @@ func (r *Module) CaseTest(id source.NodeID) (CaseTest, bool) {
 		return CaseTest{}, false
 	}
 	test, ok := r.expressions.caseTests[id]
-	return test, ok
+	return cloneCaseTest(test), ok
 }
 
-func (r *Module) RecordVariantField(id source.NodeID, field VariantFieldAccess) {
+func cloneCaseTest(test CaseTest) CaseTest {
+	test.PayloadPath = append([]int(nil), test.PayloadPath...)
+	return test
+}
+
+func (r *Module) recordVariantField(id source.NodeID, field VariantFieldAccess) {
 	if r != nil && id.IsValid() {
 		r.expressions.variantFields[id] = field
 	}
@@ -150,7 +164,7 @@ func (r *Module) VariantField(id source.NodeID) (VariantFieldAccess, bool) {
 	return field, ok
 }
 
-func (r *Module) RecordOrigins(id source.NodeID, storage, value []place.Origin) {
+func (r *Module) recordOrigins(id source.NodeID, storage, value []place.Origin) {
 	if r == nil || !id.IsValid() {
 		return
 	}
@@ -160,7 +174,7 @@ func (r *Module) RecordOrigins(id source.NodeID, storage, value []place.Origin) 
 	}
 }
 
-func (r *Module) MergeOrigins(id source.NodeID, storage, value []place.Origin) {
+func (r *Module) mergeOrigins(id source.NodeID, storage, value []place.Origin) {
 	if r == nil || !id.IsValid() {
 		return
 	}
@@ -194,10 +208,10 @@ func (r *Module) ValueOrigins(id source.NodeID) []place.Origin {
 	return origins.Value
 }
 
-// RecordAggregateSlots publishes the direct slot decomposition Flow used when
+// recordAggregateSlots publishes the direct slot decomposition Flow used when
 // storing an aggregate value. Recording an empty slice is meaningful: the
 // expression is an aggregate with no direct child slots.
-func (r *Module) RecordAggregateSlots(id source.NodeID, slots []AggregateSlot) {
+func (r *Module) recordAggregateSlots(id source.NodeID, slots []AggregateSlot) {
 	if r == nil || !id.IsValid() {
 		return
 	}
@@ -216,4 +230,57 @@ func (r *Module) AggregateSlots(id source.NodeID) ([]AggregateSlot, bool) {
 		return nil, false
 	}
 	return append([]AggregateSlot(nil), slots...), true
+}
+
+func (m *Module) DropsAfterSite(fn moduleid.FunctionID, site cfg.SiteID) []symbols.SymbolID {
+	if m == nil || m.cleanup == nil || m.cleanup[fn] == nil {
+		return nil
+	}
+	return append([]symbols.SymbolID(nil), m.cleanup[fn].AfterScope[site]...)
+}
+
+func (m *Module) DropsBeforeReturn(fn moduleid.FunctionID, id source.NodeID) []symbols.SymbolID {
+	if m == nil || m.cleanup == nil || m.cleanup[fn] == nil {
+		return nil
+	}
+	return append([]symbols.SymbolID(nil), m.cleanup[fn].BeforeReturn[id]...)
+}
+
+func (m *Module) DropsBeforeAssign(fn moduleid.FunctionID, id source.NodeID) bool {
+	if m == nil || m.cleanup == nil || m.cleanup[fn] == nil {
+		return false
+	}
+	_, ok := m.cleanup[fn].BeforeAssign[id]
+	return ok
+}
+
+func (m *Module) DiscardedValue(fn moduleid.FunctionID, id source.NodeID) bool {
+	if m == nil || m.cleanup == nil || m.cleanup[fn] == nil {
+		return false
+	}
+	_, ok := m.cleanup[fn].DiscardedValue[id]
+	return ok
+}
+
+func (m *Module) ProjectionBase(fn moduleid.FunctionID, id source.NodeID) bool {
+	if m == nil || m.cleanup == nil || m.cleanup[fn] == nil {
+		return false
+	}
+	_, ok := m.cleanup[fn].ProjectionBase[id]
+	return ok
+}
+
+func (m *Module) MatchFieldDrops(fn moduleid.FunctionID, id source.NodeID) []int {
+	if m == nil || m.cleanup == nil || m.cleanup[fn] == nil {
+		return nil
+	}
+	return append([]int(nil), m.cleanup[fn].MatchFieldDrops[id]...)
+}
+
+func (m *Module) MatchWholePayloadDrop(fn moduleid.FunctionID, id source.NodeID) bool {
+	if m == nil || m.cleanup == nil || m.cleanup[fn] == nil {
+		return false
+	}
+	_, ok := m.cleanup[fn].MatchWholePayloadDrops[id]
+	return ok
 }

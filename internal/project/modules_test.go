@@ -16,8 +16,6 @@ import (
 	"compiler/internal/moduleid"
 	"compiler/internal/phase"
 	"compiler/internal/semantics/analysis"
-	"compiler/internal/semantics/effect"
-	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/semantics/typeresolution"
@@ -189,8 +187,6 @@ func moduleWithArtifacts() *module.Module {
 		THIR:                      typed,
 		CFG:                       &cfg.Module{Functions: []*cfg.ControlFlowGraph{{FunctionID: functionID}}},
 		Analysis:                  &analysis.Module{},
-		Effects:                   effect.Result{functionID: {cfg.SiteID{}: {effect.Use{}}}},
-		Ownership:                 ownershipresult.Result{functionID: &ownershipresult.CleanupPlan{}},
 		MIR:                       &mir.Module{},
 		LLVMIR:                    "stale IR",
 	}
@@ -206,36 +202,30 @@ func TestModuleResetToPhaseClearsOnlyDownstreamArtifacts(t *testing.T) {
 		exportAPI bool
 		thir      bool
 		cfg       bool
-		flow      bool
-		effects   bool
-		ownership bool
+		analysis  bool
 		mir       bool
 		llvm      bool
 	}{
 		{phase: phase.Parsed},
 		{phase: phase.Typechecked, scope: true, bindings: true, exportAPI: true, thir: true},
 		{phase: phase.CFG, scope: true, bindings: true, exportAPI: true, thir: true, cfg: true},
-		{phase: phase.FlowTyped, scope: true, bindings: true, exportAPI: true, thir: true, cfg: true, flow: true},
-		{phase: phase.DefiniteInit, scope: true, bindings: true, exportAPI: true, thir: true, cfg: true, flow: true, effects: true},
-		{phase: phase.Ownership, scope: true, bindings: true, exportAPI: true, thir: true, cfg: true, flow: true, effects: true, ownership: true},
-		{phase: phase.Usage, scope: true, bindings: true, exportAPI: true, thir: true, cfg: true, flow: true, effects: true, ownership: true},
-		{phase: phase.MIR, scope: true, bindings: true, exportAPI: true, thir: true, cfg: true, flow: true, effects: true, ownership: true, mir: true},
-		{phase: phase.Backend, scope: true, bindings: true, exportAPI: true, thir: true, cfg: true, flow: true, effects: true, ownership: true, mir: true, llvm: true},
+		{phase: phase.Analyzed, scope: true, bindings: true, exportAPI: true, thir: true, cfg: true, analysis: true},
+		{phase: phase.Usage, scope: true, bindings: true, exportAPI: true, thir: true, cfg: true, analysis: true},
+		{phase: phase.MIR, scope: true, bindings: true, exportAPI: true, thir: true, cfg: true, analysis: true, mir: true},
+		{phase: phase.Backend, scope: true, bindings: true, exportAPI: true, thir: true, cfg: true, analysis: true, mir: true, llvm: true},
 	}
 	for _, test := range tests {
-		module := moduleWithArtifacts()
-		module.ResetToPhase(test.phase)
-		if module.Phase != test.phase || (module.ModuleScope != nil) != test.scope ||
-			(module.SymbolIndex != nil) != test.bindings ||
-			(module.THIR != nil) != test.thir ||
-			(module.SemanticExportFingerprint != "") != test.exportAPI ||
-			(module.CFG != nil) != test.cfg ||
-			(module.Analysis != nil) != test.flow ||
-			(module.Effects != nil) != test.effects ||
-			(module.Ownership != nil) != test.ownership ||
-			(module.MIR != nil) != test.mir ||
-			(module.LLVMIR != "") != test.llvm {
-			t.Fatalf("phase %v reset = %#v", test.phase, module)
+		mod := moduleWithArtifacts()
+		mod.ResetToPhase(test.phase)
+		if mod.Phase != test.phase || (mod.ModuleScope != nil) != test.scope ||
+			(mod.SymbolIndex != nil) != test.bindings ||
+			(mod.THIR != nil) != test.thir ||
+			(mod.SemanticExportFingerprint != "") != test.exportAPI ||
+			(mod.CFG != nil) != test.cfg ||
+			(mod.Analysis != nil) != test.analysis ||
+			(mod.MIR != nil) != test.mir ||
+			(mod.LLVMIR != "") != test.llvm {
+			t.Fatalf("phase %v reset = %#v", test.phase, mod)
 		}
 	}
 }
@@ -304,8 +294,8 @@ func TestModuleResetToPhaseRetainsCFGIdentity(t *testing.T) {
 	if module.CFG.Functions[0] != graph {
 		t.Fatal("phase reset cloned immutable CFG")
 	}
-	if module.Ownership != nil {
-		t.Fatal("phase reset retained ownership result")
+	if module.Analysis != nil {
+		t.Fatal("CFG reset retained analysis artifact")
 	}
 }
 

@@ -1,4 +1,4 @@
-package ownership
+package analysis_test
 
 import (
 	"fmt"
@@ -35,28 +35,28 @@ fn probe(mut first: i32, mut second: i32) {
 	assign := branch.Then.Stmts[0].(*ast.AssignStmt)
 	match := branch.Then.Stmts[2].(*ast.MatchStmt)
 	node := analysisNodeForStmt(t, analysis, match)
-	resource, _ := analysis.functionScope.Lookup("resource")
-	first, _ := analysis.functionScope.Lookup("first")
-	second, _ := analysis.functionScope.Lookup("second")
-	value := analysis.inStates[node.cfgSite.ID].references[resource]
+	resource, _ := analysis.FunctionScope.Lookup("resource")
+	first, _ := analysis.FunctionScope.Lookup("first")
+	second, _ := analysis.FunctionScope.Lookup("second")
+	value := analysis.InReferences[node.ID][resource]
 	if len(value) != 2 {
 		t.Fatalf("carrier loans = %#v, want two distinct slots", value)
 	}
 	for _, loan := range value {
-		if len(loan.path) != 2 || loan.path[0].Kind != place.OriginVariantPayload || loan.path[0].Case != 0 {
-			t.Fatalf("invalid carrier path: %#v", loan.path)
+		if len(loan.Path) != 2 || loan.Path[0].Kind != place.OriginVariantPayload || loan.Path[0].Case != 0 {
+			t.Fatalf("invalid carrier path: %#v", loan.Path)
 		}
 		want := first
-		if loan.path[1].Field == "value" {
+		if loan.Path[1].Field == "value" {
 			want = second
-			if loan.id.node != assign.Value.ID() {
+			if loan.Node != assign.Value.ID() {
 				t.Fatal("field self-assignment changed loan identity")
 			}
-		} else if loan.path[1].Field != "sibling" {
-			t.Fatalf("unexpected field path: %#v", loan.path)
+		} else if loan.Path[1].Field != "sibling" {
+			t.Fatalf("unexpected field path: %#v", loan.Path)
 		}
-		if !place.AreSameOrigins(loan.origins, []place.Origin{{Root: want}}) {
-			t.Fatalf("%s loan origins = %#v, want %s", loan.path[1].Field, loan.origins, want.Name)
+		if !place.AreSameOrigins(loan.Origins, []place.Origin{{Root: want}}) {
+			t.Fatalf("%s loan origins = %#v, want %s", loan.Path[1].Field, loan.Origins, want.Name)
 		}
 	}
 	storage := result.module.Analysis.StorageOrigins(assign.Target.ID())

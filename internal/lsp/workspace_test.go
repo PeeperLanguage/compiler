@@ -285,21 +285,31 @@ fn main() -> i32 {
 	}
 }
 
-func TestServerStateReplaysErrorsBeforeLowering(t *testing.T) {
+func TestServerStateReplaysAnalysisErrorsBeforeLowering(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceProjectConfig(t, root, "app")
 	entry := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
-	writeWorkspaceFile(t, entry, "fn main() -> i32 { return missing; }\n")
+	writeWorkspaceFile(t, entry, "fn read(value: ?i32) -> i32 { return value; }\nfn main() {}\n")
 
 	state := NewServerState()
 	state.RootDir = root
 	first, mod := state.recompile(entry)
 	if mod == nil || first == nil || !first.Diagnostics.HasErrors() {
-		t.Fatal("initial compile did not report semantic error")
+		t.Fatal("initial compile did not report analysis error")
 	}
 	second, mod := state.recompile(entry)
 	if mod == nil || second == nil || !second.Diagnostics.HasErrors() {
-		t.Fatal("reused compile lost semantic error")
+		t.Fatal("reused compile lost analysis error")
+	}
+	found := false
+	for _, item := range second.Diagnostics.Diagnostics() {
+		if item.Code == diagnostics.ErrOptionalPayloadProof {
+			found = true
+			break
+		}
+	}
+	if !found || state.LastMetrics.ModulesReused == 0 {
+		t.Fatalf("analysis diagnostic replayed = %t, reused modules = %d", found, state.LastMetrics.ModulesReused)
 	}
 	if mod.MIR != nil || mod.LLVMIR != "" {
 		t.Fatal("reused erroneous module continued into lowering")

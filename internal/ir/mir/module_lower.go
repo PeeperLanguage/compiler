@@ -12,7 +12,6 @@ import (
 	"compiler/internal/ir/typelower"
 	"compiler/internal/moduleid"
 	"compiler/internal/semantics/analysis"
-	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
@@ -26,7 +25,6 @@ type LoweringInput struct {
 	Source        *thir.Module
 	CFG           *cfg.Module
 	Analysis      *analysis.Module
-	Ownership     ownershipresult.Result
 	Scope         *symbols.Scope
 	SymbolIndex   *symbols.Index
 	ModuleID      moduleid.ID
@@ -42,7 +40,6 @@ type lowerer struct {
 	current         *Block
 	location        *source.Location
 	temporaryDrops  []ValueRef
-	cleanup         *ownershipresult.CleanupPlan
 	symbolValues    map[symbols.SymbolID]*RefName
 	constantEnv     map[string]constvalue.Value
 	variantEntries  map[*cfg.Block]variantEntry
@@ -104,7 +101,7 @@ func GenerateMIR(input LoweringInput) *Module {
 		if graph == nil {
 			return nil
 		}
-		fn, ok := lowerCFGFunction(out, input, sourceFn, graph, input.Ownership[graph.FunctionID])
+		fn, ok := lowerCFGFunction(out, input, sourceFn, graph)
 		if !ok {
 			return nil
 		}
@@ -138,13 +135,13 @@ func functionSignature(input LoweringInput, sourceFn *thir.Function, blocks []*B
 
 // lowerCFGFunction converts finalized CFG topology into MIR. THIR supplies node
 // meaning while CFG remains sole owner of execution order and branch targets.
-func lowerCFGFunction(mod *Module, input LoweringInput, sourceFn *thir.Function, graph *cfg.ControlFlowGraph, cleanup *ownershipresult.CleanupPlan) (*Function, bool) {
+func lowerCFGFunction(mod *Module, input LoweringInput, sourceFn *thir.Function, graph *cfg.ControlFlowGraph) (*Function, bool) {
 	if mod == nil || sourceFn == nil || graph == nil || graph.Entry == nil {
 		return nil, false
 	}
 	fn := functionSignature(input, sourceFn, make([]*Block, 0, len(graph.Blocks)))
 	l := &lowerer{
-		input: input, module: mod, fn: fn, sourceFn: sourceFn, cleanup: cleanup,
+		input: input, module: mod, fn: fn, sourceFn: sourceFn,
 		symbolValues:    make(map[symbols.SymbolID]*RefName),
 		constantEnv:     make(map[string]constvalue.Value),
 		variantEntries:  make(map[*cfg.Block]variantEntry),
@@ -212,9 +209,9 @@ func lowerCFGFunction(mod *Module, input LoweringInput, sourceFn *thir.Function,
 					return nil, false
 				}
 			case cfg.SiteScopeExit:
-				if l.cleanup != nil {
+				if l.input.Analysis != nil {
 					l.location = site.Location
-					l.appendPlannedDrops(l.cleanup.AfterScope[site.ID], &block.Instrs)
+					l.appendPlannedDrops(l.input.Analysis.DropsAfterSite(graph.FunctionID, site.ID), &block.Instrs)
 				}
 			}
 		}
@@ -367,10 +364,10 @@ func (l *lowerer) lowerVariantBindings(entry variantEntry) bool {
 	payloadType := typelower.Type(l.input.Types, l.input.Diagnostics, arm.Payload)
 	var drops []int
 	payloadDrop := false
-	if l.cleanup != nil {
+	if l.input.Analysis != nil {
 		bodyID := arm.Body.Source.NodeID
-		drops = l.cleanup.MatchFieldDrops[bodyID]
-		_, payloadDrop = l.cleanup.MatchWholePayloadDrops[bodyID]
+		drops = l.input.Analysis.MatchFieldDrops(l.sourceFn.Identity, bodyID)
+		payloadDrop = l.input.Analysis.MatchWholePayloadDrop(l.sourceFn.Identity, bodyID)
 	}
 	if len(arm.Bindings) == 0 && len(drops) == 0 && !payloadDrop {
 		return true
@@ -507,10 +504,7 @@ func (l *lowerer) lowerCFGStmt(node thir.Node) bool {
 		if target == nil || target.Root == nil {
 			return false
 		}
-		shouldDropTarget := false
-		if l.cleanup != nil {
-			_, shouldDropTarget = l.cleanup.BeforeAssign[statement.Source.NodeID]
-		}
+		shouldDropTarget := l.input.Analysis != nil && l.input.Analysis.DropsBeforeAssign(l.sourceFn.Identity, statement.Source.NodeID)
 		if ident, isIdent := target.Root.(*ir.Ident); isIdent && len(target.Projections) == 0 {
 			if shouldDropTarget {
 				l.appendInstr(&l.current.Instrs, &Drop{Value: &RefName{Name: ident.Name, Type: target.TypeID(), Location: ident.Origin().Location}})
@@ -552,8 +546,8 @@ func (l *lowerer) lowerExprStatement(expr thir.Expr) bool {
 	}
 	temporaryMark := len(l.temporaryDrops)
 	lowered := l.sourceExpr(expr, nil)
-	if l.cleanup != nil {
-		if _, drop := l.cleanup.DiscardedValue[expr.SourceInfo().NodeID]; drop {
+	if l.input.Analysis != nil {
+		if drop := l.input.Analysis.DiscardedValue(l.sourceFn.Identity, expr.SourceInfo().NodeID); drop {
 			value := l.lowerExpr(lowered, &l.current.Instrs)
 			l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
 			if value != nil {
@@ -665,8 +659,8 @@ func (l *lowerer) lowerCFGTerminator(sourceBlock, exit *cfg.Block, blocks map[*c
 			value = l.lowerExpr(l.sourceExpr(statement.Value, l.sourceFn.ReturnType), &l.current.Instrs)
 		}
 		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
-		if l.cleanup != nil {
-			l.appendPlannedDrops(l.cleanup.BeforeReturn[term.NodeID], &l.current.Instrs)
+		if l.input.Analysis != nil {
+			l.appendPlannedDrops(l.input.Analysis.DropsBeforeReturn(l.sourceFn.Identity, term.NodeID), &l.current.Instrs)
 		}
 		l.setBlockTerm(l.current, &Ret{Value: value})
 		return true

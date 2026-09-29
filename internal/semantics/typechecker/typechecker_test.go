@@ -28,10 +28,11 @@ import (
 
 var typecheckEvidenceForTests sync.Map
 
-func checkWithEvidence(ctx *project.CompilerContext, mod *module.Module) *thir.Module {
+func checkWithEvidence(t *testing.T, ctx *project.CompilerContext, mod *module.Module) *thir.Module {
 	source, evidence := runCheck(ctx, mod)
 	if evidence != nil {
 		typecheckEvidenceForTests.Store(mod, evidence)
+		t.Cleanup(func() { typecheckEvidenceForTests.Delete(mod) })
 	}
 	return source
 }
@@ -364,7 +365,7 @@ func checkTypeSource(t *testing.T, src string) *diagnostics.DiagnosticBag {
 	collector.Collect(ctx, module)
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
-	module.THIR = checkWithEvidence(ctx, module)
+	module.THIR = checkWithEvidence(t, ctx, module)
 	return diag
 }
 
@@ -392,7 +393,7 @@ func checkTypeSourceWithExternalImport(t *testing.T, src string) (*module.Module
 	collector.Collect(ctx, extModule)
 	binder.Bind(ctx, extModule)
 	resolver.Resolve(ctx, extModule)
-	extModule.THIR = checkWithEvidence(ctx, extModule)
+	extModule.THIR = checkWithEvidence(t, ctx, extModule)
 
 	modAST := parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule()
 	module := &module.Module{
@@ -411,7 +412,7 @@ func checkTypeSourceWithExternalImport(t *testing.T, src string) (*module.Module
 	collector.Collect(ctx, module)
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
-	module.THIR = checkWithEvidence(ctx, module)
+	module.THIR = checkWithEvidence(t, ctx, module)
 	return module, diag
 }
 
@@ -622,7 +623,7 @@ func checkTypeModule(t *testing.T, src string) (*module.Module, *diagnostics.Dia
 	collector.Collect(ctx, module)
 	binder.Bind(ctx, module)
 	resolver.Resolve(ctx, module)
-	module.THIR = checkWithEvidence(ctx, module)
+	module.THIR = checkWithEvidence(t, ctx, module)
 	return module, diag
 }
 

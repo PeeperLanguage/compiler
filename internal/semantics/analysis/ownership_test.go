@@ -1,4 +1,4 @@
-package ownership
+package analysis_test
 
 import (
 	"compiler/internal/source"
@@ -17,26 +17,15 @@ import (
 	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
-	"compiler/internal/semantics/analysis"
+	semanalysis "compiler/internal/semantics/analysis"
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
-	"compiler/internal/semantics/effect"
-	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typechecker"
 	"compiler/pkg/peeper"
 )
-
-// ownershipInput keeps test reruns and manually constructed analyzers on the
-// same published artifacts as the pipeline.
-func ownershipInput(mod *module.Module) Input {
-	return Input{
-		Source: mod.THIR, CFG: mod.CFG, Analysis: mod.Analysis,
-		Effects: mod.Effects, Scope: mod.ModuleScope, SymbolIndex: mod.SymbolIndex,
-	}
-}
 
 type ownershipResult struct {
 	*diagnostics.DiagnosticBag
@@ -64,9 +53,7 @@ func checkOwnershipSource(t *testing.T, src string) *ownershipResult {
 	resolver.Resolve(ctx, module)
 	module.THIR = typechecker.Check(ctx, module)
 	module.CFG = cfg.BuildModule(module.THIR)
-	module.Analysis = analysis.Run(diag, analysis.Input{Source: module.THIR, CFG: module.CFG, Scope: module.ModuleScope})
-	module.Effects = effect.BuildTHIR(module.THIR, module.CFG)
-	module.Ownership = Check(diag, ownershipInput(module))
+	module.Analysis = semanalysis.Run(diag, semanalysis.Input{Source: module.THIR, CFG: module.CFG, Scope: module.ModuleScope, SymbolIndex: module.SymbolIndex})
 	return &ownershipResult{DiagnosticBag: diag, module: module}
 }
 
@@ -81,10 +68,10 @@ fn main() { let value = make(); let other = value; }`,
 	} {
 		result := checkOwnershipSource(t, src)
 		withASTDiagnostics := diagnostics.NewDiagnosticBag()
-		withAST := Check(withASTDiagnostics, ownershipInput(result.module))
+		withAST := semanalysis.Run(withASTDiagnostics, semanalysis.Input{Source: result.module.THIR, CFG: result.module.CFG, Scope: result.module.ModuleScope, SymbolIndex: result.module.SymbolIndex})
 		result.module.AST = nil
 		withoutASTDiagnostics := diagnostics.NewDiagnosticBag()
-		withoutAST := Check(withoutASTDiagnostics, ownershipInput(result.module))
+		withoutAST := semanalysis.Run(withoutASTDiagnostics, semanalysis.Input{Source: result.module.THIR, CFG: result.module.CFG, Scope: result.module.ModuleScope, SymbolIndex: result.module.SymbolIndex})
 		if !reflect.DeepEqual(withoutASTDiagnostics.Diagnostics(), withASTDiagnostics.Diagnostics()) {
 			t.Errorf("diagnostics changed without AST: want %#v, got %#v", withASTDiagnostics.Diagnostics(), withoutASTDiagnostics.Diagnostics())
 		}
@@ -145,13 +132,13 @@ fn main() { `+loop+` }`)
 					t.Fatalf("expanded=%v unexpected diagnostics:\n%s", expanded, result.EmitAllToString())
 				}
 				producer := result.module.AST.Stmts[2].(*ast.FnDecl)
-				plan := cleanupPlanForFunction(t, result, producer)
+				producerID := result.module.THIR.Function(producer.ID()).Identity
 				returns := []*ast.ReturnStmt{
 					producer.Body.Stmts[0].(*ast.IfStmt).Then.Stmts[0].(*ast.ReturnStmt),
 					producer.Body.Stmts[1].(*ast.ReturnStmt),
 				}
 				for _, ret := range returns {
-					if got := cleanupSymbolNames(result.module, plan.BeforeReturn[ret.ID()]); !slices.Equal(got, []string{"argument"}) {
+					if got := cleanupSymbolNames(result.module, result.module.Analysis.DropsBeforeReturn(producerID, ret.ID())); !slices.Equal(got, []string{"argument"}) {
 						t.Fatalf("expanded=%v argument cleanup = %v, want [argument]", expanded, got)
 					}
 				}
@@ -176,47 +163,29 @@ fn main() { `+loop+` }`)
 	}
 }
 
-func inspectFunctionAnalysis(t *testing.T, result *ownershipResult, name string) *analyzer {
+func inspectFunctionAnalysis(t *testing.T, result *ownershipResult, name string) *semanalysis.OwnershipInspectionForTest {
 	t.Helper()
 	sym, found := result.module.ModuleScope.Lookup(name)
 	if !found || sym == nil {
 		t.Fatalf("function %q not found", name)
 	}
 	fn, ok := sym.ASTNode.(*ast.FnDecl)
-	if !ok || fn == nil || fn.Body == nil {
-		t.Fatalf("symbol %q does not have function body", name)
+	if !ok || fn == nil || fn.Body == nil || sym.Scope == nil {
+		t.Fatalf("symbol %q does not have function body and scope", name)
 	}
-	scope := sym.Scope
-	if scope == nil {
-		t.Fatalf("function %q scope missing", name)
+	fnID := result.module.THIR.Function(fn.ID()).Identity
+	inspected := semanalysis.InspectOwnershipForTest(result.DiagnosticBag, result.module.THIR, result.module.CFG, result.module.Analysis, result.module.ModuleScope, sym.Scope, result.module.SymbolIndex, fnID)
+	if inspected == nil {
+		t.Fatalf("function %q ownership inspection missing", name)
 	}
-	cfgFn := result.module.CFG.FunctionByID(result.module.THIR.Function(fn.ID()).Identity)
-	if cfgFn == nil {
-		t.Fatalf("function %q cleanup plan missing", name)
-	}
-	cleanup := cleanupPlanForFunction(t, result, fn)
-	sites, order := indexSites(ownershipInput(result.module), cfgFn, scope)
-	analysis := &analyzer{
-		diagnostics:   result.DiagnosticBag,
-		input:         ownershipInput(result.module),
-		graph:         cfgFn,
-		sites:         sites,
-		order:         order,
-		effects:       result.module.Effects[cfgFn.FunctionID],
-		cleanup:       cleanup,
-		function:      result.module.THIR.Function(fn.ID()),
-		functionScope: scope,
-		reportedJoin:  make(map[cfg.SiteID]bool),
-	}
-	analysis.run()
-	return analysis
+	return inspected
 }
 
-func analysisNodeForStmt(t *testing.T, analysis *analyzer, stmt ast.Stmt) *site {
+func analysisNodeForStmt(t *testing.T, inspected *semanalysis.OwnershipInspectionForTest, stmt ast.Stmt) *semanalysis.OwnershipSiteForTest {
 	t.Helper()
-	for _, node := range analysis.sites {
-		if node != nil && node.cfgSite != nil &&
-			(node.cfgSite.Kind == cfg.SiteStatement || node.cfgSite.Kind == cfg.SiteTerminator) && node.stmt != nil && node.stmt.SourceInfo().NodeID == stmt.ID() {
+	for index := range inspected.Sites {
+		node := &inspected.Sites[index]
+		if (node.Kind == cfg.SiteStatement || node.Kind == cfg.SiteTerminator) && node.NodeID == stmt.ID() {
 			return node
 		}
 	}
@@ -236,13 +205,12 @@ func hasOwnershipCode(result *ownershipResult, code string) bool {
 	return false
 }
 
-func cleanupPlanForFunction(t *testing.T, result *ownershipResult, fn *ast.FnDecl) *ownershipresult.CleanupPlan {
-	t.Helper()
-	plan := result.module.Ownership[result.module.THIR.Function(fn.ID()).Identity]
-	if plan == nil {
-		t.Fatalf("cleanup plan for %q missing", fn.Name.Name)
+func referenceOriginsForTest(loans []semanalysis.LoanForTest) []place.Origin {
+	var origins []place.Origin
+	for _, loan := range loans {
+		origins = place.MergeOrigins(origins, loan.Origins)
 	}
-	return plan
+	return origins
 }
 
 func scopeExitSiteID(t *testing.T, graph *cfg.ControlFlowGraph, blockID source.NodeID) cfg.SiteID {
@@ -358,44 +326,27 @@ func TestUninitializedOwnedBindingDoesNotPlanCleanup(t *testing.T) {
 	if result.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", result.EmitAllToString())
 	}
-	fn := result.module.AST.Stmts[0].(*ast.FnDecl)
-	plan := cleanupPlanForFunction(t, result, fn)
-	for site, ids := range plan.AfterScope {
-		if len(ids) != 0 {
-			t.Fatalf("uninitialized binding cleanup at %v = %v", site, cleanupSymbolNames(result.module, ids))
+	fn := result.module.THIR.Function(result.module.AST.Stmts[0].ID())
+	graph := result.module.CFG.FunctionByID(fn.Identity)
+	for _, block := range graph.Blocks {
+		if block == nil {
+			continue
+		}
+		for _, site := range block.Sites {
+			if site != nil && len(result.module.Analysis.DropsAfterSite(fn.Identity, site.ID)) != 0 {
+				t.Fatalf("uninitialized binding cleanup at %v = %v", site.ID, cleanupSymbolNames(result.module, result.module.Analysis.DropsAfterSite(fn.Identity, site.ID)))
+			}
 		}
 	}
-	if len(plan.BeforeReturn) != 0 {
-		t.Fatalf("uninitialized binding return cleanup = %#v", plan.BeforeReturn)
-	}
-}
-
-func TestOwnershipCheckClearsAllDerivedPlans(t *testing.T) {
-	result := checkOwnershipSource(t, `fn main() {
-	let value: i32 = 1;
-}`)
-	if result.HasErrors() {
-		t.Fatalf("unexpected diagnostics:\n%s", result.EmitAllToString())
-	}
-
-	fn := result.module.AST.Stmts[0].(*ast.FnDecl)
-	plan := cleanupPlanForFunction(t, result, fn)
-	staleID := source.ParsedNodeID(999999)
-	staleSymbolID := symbols.ProjectedSymbolID(symbols.SymbolVar, "stale")
-	plan.AfterScope[cfg.SiteID{Block: 999999, Index: 999999}] = []symbols.SymbolID{staleSymbolID}
-	plan.BeforeReturn[staleID] = []symbols.SymbolID{staleSymbolID}
-	plan.BeforeAssign[staleID] = struct{}{}
-	plan.DiscardedValue[staleID] = struct{}{}
-	plan.ProjectionBase[staleID] = struct{}{}
-	plan.MatchFieldDrops[staleID] = []int{0}
-	plan.MatchWholePayloadDrops[staleID] = struct{}{}
-
-	result.module.Ownership = Check(result.DiagnosticBag, ownershipInput(result.module))
-	plan = cleanupPlanForFunction(t, result, fn)
-	if len(plan.AfterScope) != 0 || len(plan.BeforeReturn) != 0 || len(plan.BeforeAssign) != 0 ||
-		len(plan.DiscardedValue) != 0 || len(plan.ProjectionBase) != 0 ||
-		len(plan.MatchFieldDrops) != 0 || len(plan.MatchWholePayloadDrops) != 0 {
-		t.Fatalf("stale ownership plans survived rerun: %#v", plan)
+	for _, id := range []source.NodeID{fn.Body.SourceInfo().NodeID, fn.Body.Stmts[0].SourceInfo().NodeID} {
+		if drops := result.module.Analysis.DropsBeforeReturn(fn.Identity, id); len(drops) != 0 {
+			t.Fatalf("uninitialized binding return cleanup at %v = %v", id, cleanupSymbolNames(result.module, drops))
+		}
+		if result.module.Analysis.DropsBeforeAssign(fn.Identity, id) || result.module.Analysis.DiscardedValue(fn.Identity, id) ||
+			result.module.Analysis.ProjectionBase(fn.Identity, id) || len(result.module.Analysis.MatchFieldDrops(fn.Identity, id)) != 0 ||
+			result.module.Analysis.MatchWholePayloadDrop(fn.Identity, id) {
+			t.Fatalf("uninitialized binding has cleanup decision at %v", id)
+		}
 	}
 }
 
@@ -409,16 +360,15 @@ fn ReadTemporaryField() -> i32 { return MakeBox().value; }`)
 	fn := result.module.THIR.Function(result.module.AST.Stmts[2].ID())
 	projection := fn.Body.Stmts[0].(*thir.Return).Value.(*thir.Field)
 	result.module.AST = nil
-	cleanup := &ownershipresult.CleanupPlan{ProjectionBase: make(map[source.NodeID]struct{})}
-	analysis := &analyzer{diagnostics: result.DiagnosticBag, input: ownershipInput(result.module), cleanup: cleanup}
-	if analysis.planProjectionBaseDrop(projection, projection.Base) {
-		t.Fatal("scalar projection wrongly rejected")
+	diag := diagnostics.NewDiagnosticBag()
+	result.module.Analysis = semanalysis.Run(diag, semanalysis.Input{Source: result.module.THIR, CFG: result.module.CFG, Scope: result.module.ModuleScope, SymbolIndex: result.module.SymbolIndex})
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics without AST:\n%s", diag.EmitAllToString())
 	}
-	if _, found := cleanup.ProjectionBase[projection.SourceInfo().NodeID]; !found {
+	if !result.module.Analysis.ProjectionBase(fn.Identity, projection.SourceInfo().NodeID) {
 		t.Fatal("temporary projection lost base cleanup without typed AST index")
 	}
 }
-
 func TestStoredReferenceUsesTHIRValueWithoutAST(t *testing.T) {
 	result := checkOwnershipSource(t, `fn probe(value: i32) { let reference = &value; }`)
 	if result.HasErrors() {
@@ -426,18 +376,21 @@ func TestStoredReferenceUsesTHIRValueWithoutAST(t *testing.T) {
 	}
 	fn := result.module.THIR.Function(result.module.AST.Stmts[0].ID())
 	binding := fn.Body.Stmts[0].(*thir.Binding)
-	valueID := binding.Value.SourceInfo().NodeID
 	result.module.AST = nil
-	analysis := &analyzer{input: ownershipInput(result.module)}
-	captured := analysis.captureStoredReferences([]effect.Op{effect.Define{Value: valueID, ValueExpr: binding.Value}}, newState())
-	value := captured[valueID]
-	if !value.isPresent || len(value.loans) != 1 || value.loans[0].id.node != valueID ||
-		!place.AreSameOrigins(value.loans[0].origins, []place.Origin{{Root: fn.Params[0].Symbol}}) ||
-		value.loans[0].site != binding.Value.SourceInfo() || value.loans[0].site.Location == nil {
-		t.Fatalf("THIR reference provenance = %#v, want parameter loan", value)
+	diag := diagnostics.NewDiagnosticBag()
+	diag.AddSourceContent(result.module.FilePath, result.module.Content)
+	published := semanalysis.Run(diag, semanalysis.Input{
+		Source: result.module.THIR, CFG: result.module.CFG,
+		Scope: result.module.ModuleScope, SymbolIndex: result.module.SymbolIndex,
+	})
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics without AST:\n%s", diag.EmitAllToString())
+	}
+	origins := published.ValueOrigins(binding.Value.SourceInfo().NodeID)
+	if !place.AreSameOrigins(origins, []place.Origin{{Root: fn.Params[0].Symbol}}) {
+		t.Fatalf("THIR reference provenance = %#v, want parameter origin", origins)
 	}
 }
-
 func TestOwnershipPlansStayWithOwningCFGFunction(t *testing.T) {
 	result := checkOwnershipSource(t, `fn make() -> *i32;
 fn first() { let one = make(); }
@@ -447,34 +400,15 @@ fn second() { let two = make(); }`)
 	}
 	first := result.module.AST.Stmts[1].(*ast.FnDecl)
 	second := result.module.AST.Stmts[2].(*ast.FnDecl)
-	firstPlan := cleanupPlanForFunction(t, result, first)
-	secondPlan := cleanupPlanForFunction(t, result, second)
-	if len(firstPlan.AfterScope) != 1 || len(secondPlan.AfterScope) != 1 {
-		t.Fatalf("unexpected function cleanup plans: first=%#v second=%#v", firstPlan, secondPlan)
-	}
-	firstGraph := result.module.CFG.FunctionByID(result.module.THIR.Function(first.ID()).Identity)
-	secondGraph := result.module.CFG.FunctionByID(result.module.THIR.Function(second.ID()).Identity)
-	if got := cleanupSymbolNames(result.module, firstPlan.AfterScope[scopeExitSiteID(t, firstGraph, first.Body.ID())]); !slices.Equal(got, []string{"one"}) {
+	firstID := result.module.THIR.Function(first.ID()).Identity
+	secondID := result.module.THIR.Function(second.ID()).Identity
+	firstGraph := result.module.CFG.FunctionByID(firstID)
+	secondGraph := result.module.CFG.FunctionByID(secondID)
+	if got := cleanupSymbolNames(result.module, result.module.Analysis.DropsAfterSite(firstID, scopeExitSiteID(t, firstGraph, first.Body.ID()))); !slices.Equal(got, []string{"one"}) {
 		t.Fatalf("first function cleanup = %v, want [one]", got)
 	}
-	if got := cleanupSymbolNames(result.module, secondPlan.AfterScope[scopeExitSiteID(t, secondGraph, second.Body.ID())]); !slices.Equal(got, []string{"two"}) {
+	if got := cleanupSymbolNames(result.module, result.module.Analysis.DropsAfterSite(secondID, scopeExitSiteID(t, secondGraph, second.Body.ID()))); !slices.Equal(got, []string{"two"}) {
 		t.Fatalf("second function cleanup = %v, want [two]", got)
-	}
-}
-
-func TestOwnershipPublishesEmptyPlanForUnmatchedGraph(t *testing.T) {
-	graph := &cfg.ControlFlowGraph{FunctionID: "missing"}
-	result := Check(diagnostics.NewDiagnosticBag(), Input{
-		Source:      &thir.Module{},
-		CFG:         &cfg.Module{Functions: []*cfg.ControlFlowGraph{graph}},
-		Effects:     make(effect.Result),
-		Scope:       symbols.NewScope(nil),
-		SymbolIndex: symbols.NewIndex(),
-	})
-	plan := result[graph.FunctionID]
-	if plan == nil || plan.AfterScope == nil || plan.BeforeReturn == nil || plan.BeforeAssign == nil ||
-		plan.DiscardedValue == nil || plan.ProjectionBase == nil || plan.MatchFieldDrops == nil || plan.MatchWholePayloadDrops == nil {
-		t.Fatalf("unmatched CFG function plan = %#v, want initialized empty plan", plan)
 	}
 }
 
@@ -490,7 +424,7 @@ fn bad(mut holder: Holder) {
 	}
 	fn := result.module.AST.Stmts[2].(*ast.FnDecl)
 	assign := fn.Body.Stmts[1].(*ast.AssignStmt)
-	if _, ok := cleanupPlanForFunction(t, result, fn).BeforeAssign[assign.ID()]; !ok {
+	if !result.module.Analysis.DropsBeforeAssign(result.module.THIR.Function(fn.ID()).Identity, assign.ID()) {
 		t.Fatalf("missing drop-before-assignment plan")
 	}
 }
@@ -505,7 +439,7 @@ fn replace(mut values: [1]*i32) {
 	}
 	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
 	assign := fn.Body.Stmts[0].(*ast.AssignStmt)
-	if _, ok := cleanupPlanForFunction(t, result, fn).BeforeAssign[assign.ID()]; !ok {
+	if !result.module.Analysis.DropsBeforeAssign(result.module.THIR.Function(fn.ID()).Identity, assign.ID()) {
 		t.Fatalf("missing indexed drop-before-assignment plan")
 	}
 }
@@ -535,12 +469,12 @@ fn main() {
 	}
 	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
 	nested := fn.Body.Stmts[1].(*ast.BlockStmt)
-	graph := result.module.CFG.FunctionByID(result.module.THIR.Function(fn.ID()).Identity)
-	plan := cleanupPlanForFunction(t, result, fn)
-	if got := cleanupSymbolNames(result.module, plan.AfterScope[scopeExitSiteID(t, graph, nested.ID())]); !slices.Equal(got, []string{"nested"}) {
+	fnID := result.module.THIR.Function(fn.ID()).Identity
+	graph := result.module.CFG.FunctionByID(fnID)
+	if got := cleanupSymbolNames(result.module, result.module.Analysis.DropsAfterSite(fnID, scopeExitSiteID(t, graph, nested.ID()))); !slices.Equal(got, []string{"nested"}) {
 		t.Fatalf("nested cleanup = %v, want [nested]", got)
 	}
-	if got := cleanupSymbolNames(result.module, plan.AfterScope[scopeExitSiteID(t, graph, fn.Body.ID())]); !slices.Equal(got, []string{"last", "first"}) {
+	if got := cleanupSymbolNames(result.module, result.module.Analysis.DropsAfterSite(fnID, scopeExitSiteID(t, graph, fn.Body.ID()))); !slices.Equal(got, []string{"last", "first"}) {
 		t.Fatalf("function cleanup = %v, want [last first]", got)
 	}
 }
@@ -563,8 +497,8 @@ fn main() {
 	loop := fn.Body.Stmts[0].(*ast.ForStmt)
 	continueStmt := loop.Body.Stmts[1].(*ast.IfStmt).Then.Stmts[0].(*ast.ContinueStmt)
 	breakStmt := loop.Body.Stmts[3].(*ast.IfStmt).Then.Stmts[0].(*ast.BreakStmt)
-	graph := result.module.CFG.FunctionByID(result.module.THIR.Function(fn.ID()).Identity)
-	plan := cleanupPlanForFunction(t, result, fn)
+	fnID := result.module.THIR.Function(fn.ID()).Identity
+	graph := result.module.CFG.FunctionByID(fnID)
 
 	var continueExit, breakExit, fallthroughExit cfg.SiteID
 	continueFound := false
@@ -605,13 +539,13 @@ fn main() {
 	if continueExit == breakExit || continueExit == fallthroughExit || breakExit == fallthroughExit {
 		t.Fatalf("loop exits share CFG identity: continue=%v break=%v fallthrough=%v", continueExit, breakExit, fallthroughExit)
 	}
-	if got := cleanupSymbolNames(result.module, plan.AfterScope[continueExit]); !slices.Equal(got, []string{"first"}) {
+	if got := cleanupSymbolNames(result.module, result.module.Analysis.DropsAfterSite(fnID, continueExit)); !slices.Equal(got, []string{"first"}) {
 		t.Fatalf("continue cleanup = %v, want [first]", got)
 	}
-	if got := cleanupSymbolNames(result.module, plan.AfterScope[breakExit]); !slices.Equal(got, []string{"second", "first"}) {
+	if got := cleanupSymbolNames(result.module, result.module.Analysis.DropsAfterSite(fnID, breakExit)); !slices.Equal(got, []string{"second", "first"}) {
 		t.Fatalf("break cleanup = %v, want [second first]", got)
 	}
-	if got := cleanupSymbolNames(result.module, plan.AfterScope[fallthroughExit]); !slices.Equal(got, []string{"second", "first"}) {
+	if got := cleanupSymbolNames(result.module, result.module.Analysis.DropsAfterSite(fnID, fallthroughExit)); !slices.Equal(got, []string{"second", "first"}) {
 		t.Fatalf("fallthrough cleanup = %v, want [second first]", got)
 	}
 }
@@ -625,7 +559,7 @@ func TestReturnCleanupSuppressesMovedResult(t *testing.T) {
 	}
 	fn := result.module.AST.Stmts[0].(*ast.FnDecl)
 	ret := fn.Body.Stmts[0].(*ast.ReturnStmt)
-	if got := cleanupSymbolNames(result.module, cleanupPlanForFunction(t, result, fn).BeforeReturn[ret.ID()]); !slices.Equal(got, []string{"spare"}) {
+	if got := cleanupSymbolNames(result.module, result.module.Analysis.DropsBeforeReturn(result.module.THIR.Function(fn.ID()).Identity, ret.ID())); !slices.Equal(got, []string{"spare"}) {
 		t.Fatalf("return cleanup = %v, want [spare]", got)
 	}
 }
@@ -657,7 +591,7 @@ fn main(cond: bool) {
 	}
 	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
 	ret := fn.Body.Stmts[1].(*ast.IfStmt).Then.Stmts[0].(*ast.ReturnStmt)
-	if got := cleanupSymbolNames(result.module, cleanupPlanForFunction(t, result, fn).BeforeReturn[ret.ID()]); !slices.Equal(got, []string{"value"}) {
+	if got := cleanupSymbolNames(result.module, result.module.Analysis.DropsBeforeReturn(result.module.THIR.Function(fn.ID()).Identity, ret.ID())); !slices.Equal(got, []string{"value"}) {
 		t.Fatalf("return cleanup = %v, want [value]", got)
 	}
 }
@@ -680,9 +614,14 @@ fn main() -> i32 {
 		t.Fatalf("unexpected return diagnostics:\n%s", result.EmitAllToString())
 	}
 	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
+	typedFn := result.module.THIR.Function(fn.ID())
 	ret := fn.Body.Stmts[7].(*ast.ReturnStmt)
-	if got := cleanupSymbolNames(result.module, cleanupPlanForFunction(t, result, fn).BeforeReturn[ret.ID()]); !slices.Equal(got, []string{"first"}) {
+	if got := cleanupSymbolNames(result.module, result.module.Analysis.DropsBeforeReturn(typedFn.Identity, ret.ID())); !slices.Equal(got, []string{"first"}) {
 		t.Fatalf("return cleanup = %v, want [first]", got)
+	}
+	discarded := typedFn.Body.Stmts[6].(*thir.ExprStmt).Value.SourceInfo().NodeID
+	if !result.module.Analysis.DiscardedValue(typedFn.Identity, discarded) {
+		t.Fatal("discarded owned temporary has no planned drop")
 	}
 }
 
@@ -964,17 +903,17 @@ fn valid(resource: Resource) {
 	}
 	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
 	match := fn.Body.Stmts[0].(*ast.MatchStmt)
-	plan := cleanupPlanForFunction(t, result, fn)
-	graph := result.module.CFG.FunctionByID(result.module.THIR.Function(fn.ID()).Identity)
+	fnID := result.module.THIR.Function(fn.ID()).Identity
+	graph := result.module.CFG.FunctionByID(fnID)
 	// The owned arm consumes the carrier, so leaving it must not drop the
 	// carrier again; the pending arm never consumes it, so leaving there must.
-	if got := cleanupSymbolNames(result.module, plan.AfterScope[scopeExitSiteID(t, graph, match.Arms[0].Body.ID())]); slices.Contains(got, "resource") {
+	if got := cleanupSymbolNames(result.module, result.module.Analysis.DropsAfterSite(fnID, scopeExitSiteID(t, graph, match.Arms[0].Body.ID()))); slices.Contains(got, "resource") {
 		t.Fatalf("consumed carrier dropped on the owned arm: %v", got)
 	}
-	if got := cleanupSymbolNames(result.module, plan.AfterScope[scopeExitSiteID(t, graph, match.Arms[1].Body.ID())]); !slices.Equal(got, []string{"resource"}) {
+	if got := cleanupSymbolNames(result.module, result.module.Analysis.DropsAfterSite(fnID, scopeExitSiteID(t, graph, match.Arms[1].Body.ID()))); !slices.Equal(got, []string{"resource"}) {
 		t.Fatalf("pending arm cleanup = %v, want [resource]", got)
 	}
-	if got := cleanupSymbolNames(result.module, plan.AfterScope[scopeExitSiteID(t, graph, fn.Body.ID())]); slices.Contains(got, "resource") {
+	if got := cleanupSymbolNames(result.module, result.module.Analysis.DropsAfterSite(fnID, scopeExitSiteID(t, graph, fn.Body.ID()))); slices.Contains(got, "resource") {
 		t.Fatalf("dead carrier remains in function cleanup: %v", got)
 	}
 }
@@ -1071,12 +1010,12 @@ fn valid() {
 			fn := result.module.AST.Stmts[1].(*ast.FnDecl)
 			loop := fn.Body.Stmts[0].(*ast.ForStmt)
 			match := loop.Body.Stmts[1].(*ast.MatchStmt)
-			plan := cleanupPlanForFunction(t, result, fn)
-			graph := result.module.CFG.FunctionByID(result.module.THIR.Function(fn.ID()).Identity)
-			if got := cleanupSymbolNames(result.module, plan.AfterScope[scopeExitSiteID(t, graph, match.Arms[0].Body.ID())]); slices.Contains(got, "resource") {
+			fnID := result.module.THIR.Function(fn.ID()).Identity
+			graph := result.module.CFG.FunctionByID(fnID)
+			if got := cleanupSymbolNames(result.module, result.module.Analysis.DropsAfterSite(fnID, scopeExitSiteID(t, graph, match.Arms[0].Body.ID()))); slices.Contains(got, "resource") {
 				t.Fatalf("consuming arm received duplicate carrier cleanup: %v", got)
 			}
-			if got := cleanupSymbolNames(result.module, plan.AfterScope[scopeExitSiteID(t, graph, match.Arms[1].Body.ID())]); !slices.Equal(got, []string{"resource"}) {
+			if got := cleanupSymbolNames(result.module, result.module.Analysis.DropsAfterSite(fnID, scopeExitSiteID(t, graph, match.Arms[1].Body.ID()))); !slices.Equal(got, []string{"resource"}) {
 				t.Fatalf("preserving arm cleanup = %v, want [resource]", got)
 			}
 		})
@@ -1238,16 +1177,16 @@ fn valid(resource: Resource) {
 	}
 	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
 	match := fn.Body.Stmts[0].(*ast.MatchStmt)
-	plan := cleanupPlanForFunction(t, result, fn)
+	fnID := result.module.THIR.Function(fn.ID()).Identity
 	ownedBodyID := match.Arms[0].Body.ID()
-	graph := result.module.CFG.FunctionByID(result.module.THIR.Function(fn.ID()).Identity)
-	if got := plan.MatchFieldDrops[ownedBodyID]; !slices.Equal(got, []int{0}) {
+	graph := result.module.CFG.FunctionByID(fnID)
+	if got := result.module.Analysis.MatchFieldDrops(fnID, ownedBodyID); !slices.Equal(got, []int{0}) {
 		t.Fatalf("owned discard drops = %v, want [0]", got)
 	}
-	if got := cleanupSymbolNames(result.module, plan.AfterScope[scopeExitSiteID(t, graph, match.Arms[0].Body.ID())]); slices.Contains(got, "resource") {
+	if got := cleanupSymbolNames(result.module, result.module.Analysis.DropsAfterSite(fnID, scopeExitSiteID(t, graph, match.Arms[0].Body.ID()))); slices.Contains(got, "resource") {
 		t.Fatalf("consuming arm received duplicate carrier cleanup: %v", got)
 	}
-	if got := cleanupSymbolNames(result.module, plan.AfterScope[scopeExitSiteID(t, graph, match.Arms[1].Body.ID())]); !slices.Equal(got, []string{"resource"}) {
+	if got := cleanupSymbolNames(result.module, result.module.Analysis.DropsAfterSite(fnID, scopeExitSiteID(t, graph, match.Arms[1].Body.ID()))); !slices.Equal(got, []string{"resource"}) {
 		t.Fatalf("preserving arm cleanup = %v, want [resource]", got)
 	}
 }
@@ -1292,12 +1231,12 @@ fn valid(resource: Resource) {
 	}
 	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
 	match := fn.Body.Stmts[0].(*ast.MatchStmt)
-	plan := cleanupPlanForFunction(t, result, fn)
+	fnID := result.module.THIR.Function(fn.ID()).Identity
 	bodyID := match.Arms[0].Body.ID()
-	if _, ok := plan.MatchWholePayloadDrops[bodyID]; !ok {
-		t.Fatalf("whole-payload discard has no planned payload drop: %#v", plan)
+	if !result.module.Analysis.MatchWholePayloadDrop(fnID, bodyID) {
+		t.Fatal("whole-payload discard has no planned payload drop")
 	}
-	if fields := plan.MatchFieldDrops[bodyID]; len(fields) != 0 {
+	if fields := result.module.Analysis.MatchFieldDrops(fnID, bodyID); len(fields) != 0 {
 		t.Fatalf("whole-payload discard planned field drops: %v", fields)
 	}
 }
@@ -1427,16 +1366,16 @@ fn consume(resource: Resource) {
 	}
 	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
 	match := fn.Body.Stmts[0].(*ast.MatchStmt)
-	plan := cleanupPlanForFunction(t, result, fn)
+	fnID := result.module.THIR.Function(fn.ID()).Identity
 	bodyID := match.Arms[0].Body.ID()
-	if got := plan.MatchFieldDrops[bodyID]; !slices.Equal(got, []int{2, 1}) {
+	if got := result.module.Analysis.MatchFieldDrops(fnID, bodyID); !slices.Equal(got, []int{2, 1}) {
 		t.Fatalf("match field drops = %v, want [2 1]", got)
 	}
-	graph := result.module.CFG.FunctionByID(result.module.THIR.Function(fn.ID()).Identity)
-	if got := cleanupSymbolNames(result.module, plan.AfterScope[scopeExitSiteID(t, graph, match.Arms[0].Body.ID())]); !slices.Equal(got, []string{"selected"}) {
+	graph := result.module.CFG.FunctionByID(fnID)
+	if got := cleanupSymbolNames(result.module, result.module.Analysis.DropsAfterSite(fnID, scopeExitSiteID(t, graph, match.Arms[0].Body.ID()))); !slices.Equal(got, []string{"selected"}) {
 		t.Fatalf("arm binding cleanup = %v, want [selected]", got)
 	}
-	if got := cleanupSymbolNames(result.module, plan.AfterScope[scopeExitSiteID(t, graph, fn.Body.ID())]); slices.Contains(got, "resource") {
+	if got := cleanupSymbolNames(result.module, result.module.Analysis.DropsAfterSite(fnID, scopeExitSiteID(t, graph, fn.Body.ID()))); slices.Contains(got, "resource") {
 		t.Fatalf("consumed carrier remains in function cleanup: %v", got)
 	}
 }
@@ -1535,13 +1474,13 @@ fn inspect(mut holder: Holder) {
 	analysis := inspectFunctionAnalysis(t, result, "inspect")
 	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
 	finalNode := analysisNodeForStmt(t, analysis, fn.Body.Stmts[3])
-	holder, _ := analysis.functionScope.Lookup("holder")
-	second, _ := analysis.functionScope.Lookup("second")
+	holder, _ := analysis.FunctionScope.Lookup("holder")
+	second, _ := analysis.FunctionScope.Lookup("second")
 	want := []place.Origin{{Root: holder, Projections: []place.OriginProjection{
 		{Kind: place.OriginField, Field: "values"},
 		{Kind: place.OriginIndex, Index: "1"},
 	}}}
-	if got := referenceOrigins(analysis.inStates[finalNode.cfgSite.ID].references[second]); !place.AreSameOrigins(got, want) {
+	if got := referenceOriginsForTest(analysis.InReferences[finalNode.ID][second]); !place.AreSameOrigins(got, want) {
 		t.Fatalf("second origins = %#v, want %#v", got, want)
 	}
 }
@@ -1559,11 +1498,11 @@ func TestReferenceOriginsCanonicalizeEquivalentConstantIndexes(t *testing.T) {
 	analysis := inspectFunctionAnalysis(t, result, "inspect")
 	fn := result.module.AST.Stmts[0].(*ast.FnDecl)
 	finalNode := analysisNodeForStmt(t, analysis, fn.Body.Stmts[3])
-	values, _ := analysis.functionScope.Lookup("values")
+	values, _ := analysis.FunctionScope.Lookup("values")
 	want := []place.Origin{{Root: values, Projections: []place.OriginProjection{{Kind: place.OriginIndex, Index: "1"}}}}
 	for _, name := range []string{"decimal", "padded", "hexadecimal"} {
-		sym, _ := analysis.functionScope.Lookup(name)
-		if got := referenceOrigins(analysis.inStates[finalNode.cfgSite.ID].references[sym]); !place.AreSameOrigins(got, want) {
+		sym, _ := analysis.FunctionScope.Lookup(name)
+		if got := referenceOriginsForTest(analysis.InReferences[finalNode.ID][sym]); !place.AreSameOrigins(got, want) {
 			t.Fatalf("%s origins = %#v, want %#v", name, got, want)
 		}
 	}
@@ -1597,41 +1536,41 @@ fn parameter(maybe: ?&i32) {
 	local := inspectFunctionAnalysis(t, result, "local")
 	localFn := result.module.AST.Stmts[0].(*ast.FnDecl)
 	localUse := analysisNodeForStmt(t, local, localFn.Body.Stmts[2])
-	value, _ := local.functionScope.Lookup("value")
-	copied, _ := local.functionScope.Lookup("copied")
+	value, _ := local.FunctionScope.Lookup("value")
+	copied, _ := local.FunctionScope.Lookup("copied")
 	want := []place.Origin{{Root: value}}
-	if got := referenceOrigins(local.inStates[localUse.cfgSite.ID].references[copied]); !place.AreSameOrigins(got, want) {
+	if got := referenceOriginsForTest(local.InReferences[localUse.ID][copied]); !place.AreSameOrigins(got, want) {
 		t.Fatalf("copied optional origins = %#v, want %#v", got, want)
 	}
-	if _, live := local.symbolLiveIn[localUse.cfgSite.ID][copied]; !live {
+	if _, live := local.SymbolLiveIn[localUse.ID][copied]; !live {
 		t.Fatalf("optional reference not live at none comparison")
 	}
 
 	mutable := inspectFunctionAnalysis(t, result, "mutable")
 	mutableFn := result.module.AST.Stmts[1].(*ast.FnDecl)
 	mutableUse := analysisNodeForStmt(t, mutable, mutableFn.Body.Stmts[1])
-	maybeMutable, _ := mutable.functionScope.Lookup("maybe")
-	if tracked := mutable.inStates[mutableUse.cfgSite.ID].references[maybeMutable]; len(tracked) != 1 || !tracked[0].isMutable {
+	maybeMutable, _ := mutable.FunctionScope.Lookup("maybe")
+	if tracked := mutable.InReferences[mutableUse.ID][maybeMutable]; len(tracked) != 1 || !tracked[0].IsMutable {
 		t.Fatalf("optional mutable reference lost mutable loan kind")
 	}
 
 	clear := inspectFunctionAnalysis(t, result, "clear")
 	clearFn := result.module.AST.Stmts[2].(*ast.FnDecl)
 	marker := analysisNodeForStmt(t, clear, clearFn.Body.Stmts[2])
-	maybeCleared, _ := clear.functionScope.Lookup("maybe")
-	if _, tracked := clear.inStates[marker.cfgSite.ID].references[maybeCleared]; tracked {
+	maybeCleared, _ := clear.FunctionScope.Lookup("maybe")
+	if _, tracked := clear.InReferences[marker.ID][maybeCleared]; tracked {
 		t.Fatalf("none assignment retained optional reference origins")
 	}
 
 	parameter := inspectFunctionAnalysis(t, result, "parameter")
 	parameterFn := result.module.AST.Stmts[3].(*ast.FnDecl)
 	parameterUse := analysisNodeForStmt(t, parameter, parameterFn.Body.Stmts[0])
-	maybeParameter, _ := parameter.functionScope.Lookup("maybe")
-	parameterValue := parameter.inStates[parameterUse.cfgSite.ID].references[maybeParameter]
-	if !place.AreSameOrigins(referenceOrigins(parameterValue), []place.Origin{{Root: maybeParameter}}) {
-		t.Fatalf("optional reference parameter origins = %#v", referenceOrigins(parameterValue))
+	maybeParameter, _ := parameter.FunctionScope.Lookup("maybe")
+	parameterValue := parameter.InReferences[parameterUse.ID][maybeParameter]
+	if !place.AreSameOrigins(referenceOriginsForTest(parameterValue), []place.Origin{{Root: maybeParameter}}) {
+		t.Fatalf("optional reference parameter origins = %#v", referenceOriginsForTest(parameterValue))
 	}
-	if _, live := parameter.symbolLiveIn[parameterUse.cfgSite.ID][maybeParameter]; !live {
+	if _, live := parameter.SymbolLiveIn[parameterUse.ID][maybeParameter]; !live {
 		t.Fatalf("optional reference parameter not live at none comparison")
 	}
 }
@@ -1650,12 +1589,12 @@ func TestReferenceOriginsUnionAtConditionalJoin(t *testing.T) {
 	analysis := inspectFunctionAnalysis(t, result, "choose")
 	fn := result.module.AST.Stmts[0].(*ast.FnDecl)
 	copyNode := analysisNodeForStmt(t, analysis, fn.Body.Stmts[2])
-	selected, _ := analysis.functionScope.Lookup("selected")
-	left, _ := analysis.functionScope.Lookup("left")
-	right, _ := analysis.functionScope.Lookup("right")
+	selected, _ := analysis.FunctionScope.Lookup("selected")
+	left, _ := analysis.FunctionScope.Lookup("left")
+	right, _ := analysis.FunctionScope.Lookup("right")
 	want := []place.Origin{{Root: left}, {Root: right}}
-	selectedValue := analysis.inStates[copyNode.cfgSite.ID].references[selected]
-	if got := referenceOrigins(selectedValue); !place.AreSameOrigins(got, want) {
+	selectedValue := analysis.InReferences[copyNode.ID][selected]
+	if got := referenceOriginsForTest(selectedValue); !place.AreSameOrigins(got, want) {
 		t.Fatalf("joined origins = %#v, want %#v", got, want)
 	}
 	if len(selectedValue) != 2 {
@@ -1677,14 +1616,14 @@ fn inspect(mut value: i32) {
 	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
 	callNode := analysisNodeForStmt(t, analysis, fn.Body.Stmts[1])
 	assignNode := analysisNodeForStmt(t, analysis, fn.Body.Stmts[2])
-	reference, _ := analysis.functionScope.Lookup("reference")
-	if _, live := analysis.symbolLiveIn[callNode.cfgSite.ID][reference]; !live {
+	reference, _ := analysis.FunctionScope.Lookup("reference")
+	if _, live := analysis.SymbolLiveIn[callNode.ID][reference]; !live {
 		t.Fatalf("reference not live at its final use")
 	}
-	if _, live := analysis.symbolLiveOut[callNode.cfgSite.ID][reference]; live {
+	if _, live := analysis.SymbolLiveOut[callNode.ID][reference]; live {
 		t.Fatalf("reference remains live after final use")
 	}
-	if _, live := analysis.symbolLiveIn[assignNode.cfgSite.ID][reference]; live {
+	if _, live := analysis.SymbolLiveIn[assignNode.ID][reference]; live {
 		t.Fatalf("reference remains live at following assignment")
 	}
 }
@@ -1701,10 +1640,10 @@ fn inspect(value: i32) {
 	analysis := inspectFunctionAnalysis(t, result, "inspect")
 	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
 	call := analysisNodeForStmt(t, analysis, fn.Body.Stmts[1])
-	reference, _ := analysis.functionScope.Lookup("reference")
+	reference, _ := analysis.FunctionScope.Lookup("reference")
 	var expected ir.SourceInfo
-	for _, op := range analysis.effects[call.cfgSite.ID] {
-		if borrow, ok := op.(effect.Borrow); ok && borrow.Place.Root == reference {
+	for _, op := range analysis.SiteOps[call.ID] {
+		if borrow, ok := op.(semanalysis.BorrowForTest); ok && borrow.Place.Root == reference {
 			expected = borrow.Source.SourceInfo()
 		}
 	}
@@ -1712,11 +1651,11 @@ fn inspect(value: i32) {
 		t.Fatal("reference use has no THIR source")
 	}
 	result.module.AST = nil
-	analysis.computeSymbolLiveness()
-	if got, live := analysis.symbolLiveIn[call.cfgSite.ID][reference]; !live || got != expected {
+	analysis.RecomputeLivenessForTest()
+	if got, live := analysis.SymbolLiveIn[call.ID][reference]; !live || got != expected {
 		t.Fatalf("live reference site = %#v (live=%v), want %#v", got, live, expected)
 	}
-	if uses := analysis.symbolUseSequence(call, referenceHoldingSymbol); len(uses) != 1 || uses[0] != reference {
+	if uses := analysis.ReferenceHoldingUseSequenceForTest(call.ID); len(uses) != 1 || uses[0] != reference {
 		t.Fatalf("reference use sequence = %v, want reference", uses)
 	}
 }
@@ -1740,17 +1679,17 @@ func TestReferenceLivenessEndsAfterConditionalUse(t *testing.T) {
 	thenNode := analysisNodeForStmt(t, analysis, conditional.Then.Stmts[0])
 	elseBlock := conditional.Else.(*ast.BlockStmt)
 	elseNode := analysisNodeForStmt(t, analysis, elseBlock.Stmts[0])
-	maybe, _ := analysis.functionScope.Lookup("maybe")
-	if _, live := analysis.symbolLiveIn[conditionNode.cfgSite.ID][maybe]; !live {
+	maybe, _ := analysis.FunctionScope.Lookup("maybe")
+	if _, live := analysis.SymbolLiveIn[conditionNode.ID][maybe]; !live {
 		t.Fatalf("reference not live at conditional use")
 	}
-	if _, live := analysis.symbolLiveOut[conditionNode.cfgSite.ID][maybe]; live {
+	if _, live := analysis.SymbolLiveOut[conditionNode.ID][maybe]; live {
 		t.Fatalf("reference remains live after conditional use")
 	}
-	if _, live := analysis.symbolLiveIn[thenNode.cfgSite.ID][maybe]; live {
+	if _, live := analysis.SymbolLiveIn[thenNode.ID][maybe]; live {
 		t.Fatalf("reference remains live in then branch")
 	}
-	if _, live := analysis.symbolLiveIn[elseNode.cfgSite.ID][maybe]; live {
+	if _, live := analysis.SymbolLiveIn[elseNode.ID][maybe]; live {
 		t.Fatalf("reference remains live in else branch")
 	}
 }
@@ -1769,8 +1708,8 @@ fn inspect(cond: bool, value: i32) {
 	analysis := inspectFunctionAnalysis(t, result, "inspect")
 	fn := result.module.AST.Stmts[1].(*ast.FnDecl)
 	loopNode := analysisNodeForStmt(t, analysis, fn.Body.Stmts[1])
-	reference, _ := analysis.functionScope.Lookup("reference")
-	if _, live := analysis.symbolLiveIn[loopNode.cfgSite.ID][reference]; !live {
+	reference, _ := analysis.FunctionScope.Lookup("reference")
+	if _, live := analysis.SymbolLiveIn[loopNode.ID][reference]; !live {
 		t.Fatalf("loop body reference use did not propagate through header")
 	}
 }
@@ -1785,9 +1724,10 @@ func TestReferenceLivenessIgnoresLoopExitJoin(t *testing.T) {
 	}
 	analysis := inspectFunctionAnalysis(t, result, "inspect")
 	fn := result.module.AST.Stmts[0].(*ast.FnDecl)
-	var exit *site
-	for _, node := range analysis.sites {
-		if node != nil && node.cfgSite != nil && node.cfgSite.Kind == cfg.SiteScopeExit && node.block != nil && node.block.SourceInfo().NodeID == fn.Body.ID() {
+	var exit *semanalysis.OwnershipSiteForTest
+	for index := range analysis.Sites {
+		node := &analysis.Sites[index]
+		if node.Kind == cfg.SiteScopeExit && node.BlockNodeID == fn.Body.ID() {
 			exit = node
 			break
 		}
@@ -1795,8 +1735,8 @@ func TestReferenceLivenessIgnoresLoopExitJoin(t *testing.T) {
 	if exit == nil {
 		t.Fatalf("loop exit continuation not found")
 	}
-	maybe, _ := analysis.functionScope.Lookup("maybe")
-	if _, live := analysis.symbolLiveIn[exit.cfgSite.ID][maybe]; live {
+	maybe, _ := analysis.FunctionScope.Lookup("maybe")
+	if _, live := analysis.SymbolLiveIn[exit.ID][maybe]; live {
 		t.Fatalf("loop exit continuation repeats condition use")
 	}
 }
@@ -2595,7 +2535,7 @@ func TestReferenceReturnOriginsUseTHIRFunction(t *testing.T) {
 	result.module.AST = nil
 	diag := diagnostics.NewDiagnosticBag()
 	diag.AddSourceContent(result.module.FilePath, result.module.Content)
-	Check(diag, ownershipInput(result.module))
+	semanalysis.Run(diag, semanalysis.Input{Source: result.module.THIR, CFG: result.module.CFG, Scope: result.module.ModuleScope, SymbolIndex: result.module.SymbolIndex})
 	if text := diag.EmitAllToString(); !strings.Contains(text, "outside declared `from` sources") {
 		t.Fatalf("THIR return-origin diagnostic missing:\n%s", text)
 	}
@@ -2687,7 +2627,7 @@ func TestStringConcatenationSelfAssignmentDoesNotPlanSecondDrop(t *testing.T) {
 	}
 	fn := result.module.AST.Stmts[0].(*ast.FnDecl)
 	assignment := fn.Body.Stmts[0].(*ast.AssignStmt)
-	if _, planned := cleanupPlanForFunction(t, result, fn).BeforeAssign[assignment.ID()]; planned {
+	if result.module.Analysis.DropsBeforeAssign(result.module.THIR.Function(fn.ID()).Identity, assignment.ID()) {
 		t.Fatal("self-assignment planned a second drop after concatenation consumed the target")
 	}
 }

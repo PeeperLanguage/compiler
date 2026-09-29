@@ -1,4 +1,4 @@
-package effect_test
+package analysis_test
 
 import (
 	"testing"
@@ -12,16 +12,16 @@ import (
 	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
+	"compiler/internal/semantics/analysis"
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
-	"compiler/internal/semantics/effect"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/typechecker"
 	"compiler/pkg/peeper"
 )
 
-func buildEffects(t *testing.T, source string) (effect.Result, *module.Module) {
+func buildEffectsForTest(t *testing.T, source string) (analysis.EffectStreamsForTest, *module.Module) {
 	t.Helper()
 	const filePath = "effect_test" + peeper.SourceExt
 	diag := diagnostics.NewDiagnosticBag()
@@ -44,22 +44,22 @@ func buildEffects(t *testing.T, source string) (effect.Result, *module.Module) {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
-	result := effect.BuildTHIR(module.THIR, module.CFG)
+	result := analysis.BuildEffectsForTest(module.THIR, module.CFG)
 	if result == nil {
 		t.Fatal("Build published no result")
 	}
 	if err := module.CFG.Validate(); err != nil {
 		t.Fatalf("constructed CFG rejected: %v", err)
 	}
-	if err := result.Validate(module.CFG, module.THIR); err != nil {
-		t.Fatalf("published effects rejected: %v", err)
+	if err := analysis.ValidateEffectsForTest(result, module.CFG, module.THIR); err != nil {
+		t.Fatalf("derived effects rejected: %v", err)
 	}
 	return result, module
 }
 
 // publishedOps flattens one function's effects in site order so a test can
-// state the published sequence without naming SiteIDs.
-func publishedOps(t *testing.T, result effect.Result, module *module.Module, name string) []string {
+// state the derived sequence without naming SiteIDs.
+func publishedOps(t *testing.T, streams analysis.EffectStreamsForTest, module *module.Module, name string) []string {
 	t.Helper()
 	symbol, found := module.ModuleScope.Lookup(name)
 	if !found || symbol == nil {
@@ -82,7 +82,7 @@ func publishedOps(t *testing.T, result effect.Result, module *module.Module, nam
 			if site == nil {
 				continue
 			}
-			for _, op := range result.At(graph.FunctionID, site.ID) {
+			for _, op := range streams[graph.FunctionID][site.ID] {
 				published = append(published, describe(op))
 			}
 		}
@@ -90,32 +90,32 @@ func publishedOps(t *testing.T, result effect.Result, module *module.Module, nam
 	return published
 }
 
-func describe(op effect.Op) string {
+func describe(op analysis.OpForTest) string {
 	switch op := op.(type) {
-	case effect.Define:
+	case analysis.DefineForTest:
 		if op.IsInitialized {
 			return "define " + op.Symbol.Name
 		}
 		return "declare " + op.Symbol.Name
-	case effect.Write:
+	case analysis.WriteForTest:
 		return "write " + op.Place.Root.Name
-	case effect.Use:
+	case analysis.UseForTest:
 		if op.Place.Root == nil {
 			return "use temporary"
 		}
 		return "use " + op.Place.Root.Name
-	case effect.Borrow:
+	case analysis.BorrowForTest:
 		if op.Place.Root == nil {
 			return "borrow temporary"
 		}
 		return "borrow " + op.Place.Root.Name
-	case effect.CallBegin:
+	case analysis.CallBeginForTest:
 		return "call"
-	case effect.CallEnd:
+	case analysis.CallEndForTest:
 		return "end"
-	case effect.Discard:
+	case analysis.DiscardForTest:
 		return "discard"
-	case effect.Iterate:
+	case analysis.IterateForTest:
 		if op.Place.Root == nil {
 			return "iterate temporary"
 		}
@@ -125,7 +125,7 @@ func describe(op effect.Op) string {
 }
 
 func TestCallIterationPublishesOrdinaryReceiverCall(t *testing.T) {
-	result, module := buildEffects(t, `struct Cursor {}
+	result, module := buildEffectsForTest(t, `struct Cursor {}
 fn (self: &mut Cursor) Next() -> ?i32 { return none; }
 fn probe() {
 	let mut cursor = Cursor.{};
@@ -216,7 +216,7 @@ fn probe(i: i32) -> i32 { return make()[i]; }`,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			result, module := buildEffects(t, test.source)
+			result, module := buildEffectsForTest(t, test.source)
 			got := publishedOps(t, result, module, "probe")
 			if !sameOps(got, test.want) {
 				t.Fatalf("published %v, want %v", got, test.want)
@@ -225,7 +225,7 @@ fn probe(i: i32) -> i32 { return make()[i]; }`,
 			for _, sites := range result {
 				for _, ops := range sites {
 					for _, op := range ops {
-						use, ok := op.(effect.Use)
+						use, ok := op.(analysis.UseForTest)
 						if !ok {
 							continue
 						}
@@ -252,7 +252,7 @@ fn probe(i: i32) -> i32 { return make()[i]; }`,
 }
 
 func TestBuildPublishesSequenceIterationLifetime(t *testing.T) {
-	result, module := buildEffects(t, `fn walk(values: [2]i32) {
+	result, module := buildEffectsForTest(t, `fn walk(values: [2]i32) {
 	for value in values {}
 }`)
 	got := publishedOps(t, result, module, "walk")
@@ -278,7 +278,7 @@ func sameOps(got, want []string) bool {
 // before the binding it defines. That order is what makes `let x = x` resolve
 // against an outer binding rather than itself.
 func TestBuildPublishesReadsBeforeTheDefineTheyInitialize(t *testing.T) {
-	result, module := buildEffects(t, `fn add(a: i32, b: i32) -> i32 {
+	result, module := buildEffectsForTest(t, `fn add(a: i32, b: i32) -> i32 {
 	let total = a + b;
 	return total;
 }`)
@@ -294,8 +294,8 @@ func TestBuildPublishesReadsBeforeTheDefineTheyInitialize(t *testing.T) {
 }
 
 // An assignment reads its value before it writes its target.
-func TestBuildPublishesAssignmentAsReadThenWrite(t *testing.T) {
-	result, module := buildEffects(t, `fn bump(start: i32) -> i32 {
+func TestRunPreservesEffectOrdering(t *testing.T) {
+	result, module := buildEffectsForTest(t, `fn bump(start: i32) -> i32 {
 	let mut count = start;
 	count = count + 1;
 	return count;
@@ -315,7 +315,7 @@ func TestBuildPublishesAssignmentAsReadThenWrite(t *testing.T) {
 // A declaration with no initializer declares storage without initializing it.
 // That distinction is the whole basis of definite initialization.
 func TestBuildDistinguishesUninitializedDeclaration(t *testing.T) {
-	result, module := buildEffects(t, `fn choose(flag: bool) -> i32 {
+	result, module := buildEffectsForTest(t, `fn choose(flag: bool) -> i32 {
 	let mut value: i32;
 	if flag {
 		value = 7;
@@ -341,7 +341,7 @@ func TestBuildDistinguishesUninitializedDeclaration(t *testing.T) {
 // A branch condition belongs to the terminator site, not to the statement, so
 // each site carries exactly the reads that happen at it.
 func TestBuildPublishesBranchConditionAtTerminatorSite(t *testing.T) {
-	result, module := buildEffects(t, `fn gate(flag: bool) -> i32 {
+	result, module := buildEffectsForTest(t, `fn gate(flag: bool) -> i32 {
 	if flag {
 		return 1;
 	}
@@ -354,13 +354,13 @@ func TestBuildPublishesBranchConditionAtTerminatorSite(t *testing.T) {
 	}
 }
 
-// An arm's payload binding is published before that arm body's own effects,
-// because the body may read the payload it binds. The binding is published at
+// An arm's payload binding is derived before that arm body's own effects,
+// because the body may read the payload it binds. The binding is placed at
 // the arm block's first site rather than on the case edge, which is equivalent
 // because CFG construction gives every arm a fresh block reached only by its
 // own case edge.
 func TestBuildPublishesArmBindingBeforeArmBodyEffects(t *testing.T) {
-	result, module := buildEffects(t, `enum Result {
+	result, module := buildEffectsForTest(t, `enum Result {
 	Ok: { value: i32 },
 	Pending,
 }
@@ -376,8 +376,8 @@ fn choose(outcome: Result) -> i32 {
 	}
 }`)
 	got := publishedOps(t, result, module, "choose")
-	// The subject is published at the match's own site. Ownership's liveness
-	// needs it, and publishing it also closed the gap where definite
+	// The subject effect is at the match's own site. Ownership's liveness
+	// needs it, and deriving it also closed the gap where definite
 	// initialization never checked a match subject for initialization.
 	want := []string{
 		"define outcome",
@@ -393,7 +393,7 @@ fn choose(outcome: Result) -> i32 {
 // Ownership needs the distinction: moving out of `pair.left` is a different
 // decision from moving `pair`, and its diagnostics say so.
 func TestBuildPublishesProjectedPlaces(t *testing.T) {
-	result, module := buildEffects(t, `struct Pair { left: i32, right: i32 }
+	result, module := buildEffectsForTest(t, `struct Pair { left: i32, right: i32 }
 
 fn read(values: [3]i32, pair: Pair, index: i32) -> i32 {
 	return pair.left + values[index];
@@ -411,8 +411,8 @@ fn read(values: [3]i32, pair: Pair, index: i32) -> i32 {
 	projected := make([]string, 0)
 	for _, block := range graph.Blocks {
 		for _, site := range block.Sites {
-			for _, op := range result.At(graph.FunctionID, site.ID) {
-				use, ok := op.(effect.Use)
+			for _, op := range result[graph.FunctionID][site.ID] {
+				use, ok := op.(analysis.UseForTest)
 				if !ok || len(use.Place.Projections) == 0 {
 					continue
 				}
@@ -442,7 +442,7 @@ fn read(values: [3]i32, pair: Pair, index: i32) -> i32 {
 // says `&`, but the receiver parameter is `&Point`, so passing `point` borrows
 // it. The typechecker records that in ImplicitCallArguments.
 func TestBuildPublishesMethodReceiverAsWholeUse(t *testing.T) {
-	result, module := buildEffects(t, `struct Point { x: i32, y: i32 }
+	result, module := buildEffectsForTest(t, `struct Point { x: i32, y: i32 }
 
 fn (self: &Point) copy() -> Point {
 	return .{x = self.x, y = self.y};
@@ -459,18 +459,18 @@ fn choose(point: Point) -> i32 {
 	fn := symbol.ASTNode.(*ast.FnDecl)
 	graph := module.CFG.FunctionByID(module.THIR.Function(fn.ID()).Identity)
 
-	var receiver *effect.Borrow
-	var field *effect.Use
+	var receiver *analysis.BorrowForTest
+	var field *analysis.UseForTest
 	for _, block := range graph.Blocks {
 		for _, site := range block.Sites {
-			for _, op := range result.At(graph.FunctionID, site.ID) {
+			for _, op := range result[graph.FunctionID][site.ID] {
 				switch op := op.(type) {
-				case effect.Borrow:
+				case analysis.BorrowForTest:
 					if op.Place.Root != nil && op.Place.Root.Name == "point" {
 						copied := op
 						receiver = &copied
 					}
-				case effect.Use:
+				case analysis.UseForTest:
 					if op.Place.Root != nil && op.Place.Root.Name == "duplicate" {
 						copied := op
 						field = &copied
@@ -487,7 +487,7 @@ fn choose(point: Point) -> i32 {
 	if field == nil || len(field.Place.Projections) != 1 {
 		t.Fatalf("field use = %+v, want one projection", field)
 	}
-	// The receiver parameter is a reference, so canonical THIR publishes the
+	// The receiver parameter is a reference, so canonical THIR records the
 	// implicit receiver adaptation for downstream consumers.
 	binding := fn.Body.Stmts[0].(*ast.LetDecl)
 	call := binding.Value.(*ast.CallExpr)

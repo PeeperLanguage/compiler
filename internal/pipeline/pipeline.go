@@ -21,9 +21,6 @@ import (
 	"compiler/internal/semantics/analysis"
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
-	"compiler/internal/semantics/definiteinit"
-	"compiler/internal/semantics/effect"
-	"compiler/internal/semantics/ownership"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typechecker"
@@ -125,17 +122,17 @@ func Run(ctx *project.CompilerContext, entry *module.Module) error {
 	if preludeID.IsValid() {
 		prelude = moduleIndex[graph.NodeID(preludeID.String())]
 	}
-	preludeInjected := advanceModulesThrough(ctx, orderedModules, prelude, prelude == nil, phase.Ownership, diag)
-	ctx.CompletedProjectPhase = phase.Ownership
+	preludeInjected := advanceModulesThrough(ctx, orderedModules, prelude, prelude == nil, phase.Analyzed, diag)
+	ctx.CompletedProjectPhase = phase.Analyzed
 	if diag != nil && diag.HasErrors() {
 		return nil
 	}
-	if err := requireScheduledModulesAtLeast(orderedModules, loader.scheduled, phase.Ownership); err != nil {
+	if err := requireScheduledModulesAtLeast(orderedModules, loader.scheduled, phase.Analyzed); err != nil {
 		return err
 	}
 	usedSymbols := usage.CollectUsedSymbols(orderedModules)
 	for _, module := range orderedModules {
-		if module == nil || module.Phase < phase.Ownership || module.Phase >= phase.Usage {
+		if module == nil || module.Phase < phase.Analyzed || module.Phase >= phase.Usage {
 			continue
 		}
 		usageDiag := diag.BeginPhase(phase.Usage, module.ID.String())
@@ -346,14 +343,8 @@ func nextModulePhase(current phase.Phase) phase.Phase {
 	case phase.Typechecked:
 		return phase.CFG
 	case phase.CFG:
-		return phase.FlowTyped
-	case phase.FlowTyped:
-		return phase.Effects
-	case phase.Effects:
-		return phase.DefiniteInit
-	case phase.DefiniteInit:
-		return phase.Ownership
-	case phase.Ownership:
+		return phase.Analyzed
+	case phase.Analyzed:
 		return phase.Usage
 	case phase.Usage:
 		return phase.MIR
@@ -376,16 +367,10 @@ func importPrerequisitePhase(next phase.Phase) phase.Phase {
 		return phase.Collected
 	case phase.CFG:
 		return phase.Typechecked
-	case phase.FlowTyped:
+	case phase.Analyzed:
 		return phase.CFG
-	case phase.Effects:
-		return phase.FlowTyped
-	case phase.DefiniteInit:
-		return phase.Effects
-	case phase.Ownership:
-		return phase.DefiniteInit
 	case phase.Usage:
-		return phase.Ownership
+		return phase.Analyzed
 	case phase.MIR:
 		return phase.Usage
 	default:
@@ -470,47 +455,11 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 	if module.CFG == nil {
 		return false
 	}
-	if module.Phase < phase.FlowTyped {
-		module.Analysis = analysis.Run(phaseDiag, analysis.Input{Source: module.THIR, CFG: module.CFG, Scope: module.ModuleScope})
-		module.Phase = phase.FlowTyped
-		ctx.Metrics.AddPhaseAdvance()
-		return true
-	}
-	if module.Phase < phase.Effects {
-		module.Effects = effect.BuildTHIR(module.THIR, module.CFG)
-		// Broken source can legitimately leave effect evidence incomplete; report
-		// evidence shape only for an otherwise clean module.
-		if !phaseDiag.HasErrors() {
-			if err := module.Effects.Validate(module.CFG, module.THIR); err != nil {
-				phaseDiag.AddError(diagnostics.ErrInvalidEvidence,
-					"published semantic effects are malformed: "+err.Error(), nil, "")
-			}
-		}
-		module.Phase = phase.Effects
-		ctx.Metrics.AddPhaseAdvance()
-		return true
-	}
-	if module.Phase < phase.DefiniteInit {
-		definiteinit.Check(module.CFG, module.Effects, phaseDiag)
-		module.Phase = phase.DefiniteInit
-		ctx.Metrics.AddPhaseAdvance()
-		return true
-	}
-	if module.Phase < phase.Ownership {
-		module.Ownership = ownership.Check(phaseDiag, ownership.Input{
-			Source: module.THIR, CFG: module.CFG, Analysis: module.Analysis,
-			Effects: module.Effects, Scope: module.ModuleScope, SymbolIndex: module.SymbolIndex,
+	if module.Phase < phase.Analyzed {
+		module.Analysis = analysis.Run(phaseDiag, analysis.Input{
+			Source: module.THIR, CFG: module.CFG, Scope: module.ModuleScope, SymbolIndex: module.SymbolIndex,
 		})
-		// Published evidence is only checkable once the module is otherwise
-		// error-free: broken source legitimately leaves evidence incomplete,
-		// and reporting that as a compiler bug would bury the real diagnostic.
-		if !phaseDiag.HasErrors() {
-			if err := module.Ownership.Validate(module.THIR, module.SymbolIndex, module.CFG); err != nil {
-				phaseDiag.AddError(diagnostics.ErrInvalidEvidence,
-					"ownership evidence is inconsistent: "+err.Error(), nil, "")
-			}
-		}
-		module.Phase = phase.Ownership
+		module.Phase = phase.Analyzed
 		ctx.Metrics.AddPhaseAdvance()
 		return true
 	}
@@ -523,7 +472,7 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 		}
 		module.MIR = mir.GenerateMIR(mir.LoweringInput{
 			Types: ctx.Types, Diagnostics: phaseDiag, Source: module.THIR,
-			CFG: module.CFG, Analysis: module.Analysis, Ownership: module.Ownership,
+			CFG: module.CFG, Analysis: module.Analysis,
 			Scope: module.ModuleScope, SymbolIndex: module.SymbolIndex,
 			ModuleID: module.ID, IsEntryModule: module.IsEntry,
 		})
@@ -539,9 +488,6 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 		return true
 	}
 	if module.MIR == nil {
-		return false
-	}
-	if module.Phase >= phase.Backend {
 		return false
 	}
 	// Emission assumes the MIR it is handed is well formed, and says so by

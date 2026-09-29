@@ -1,4 +1,4 @@
-package ownership
+package analysis
 
 import (
 	"compiler/internal/source"
@@ -10,9 +10,6 @@ import (
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/thir"
-	"compiler/internal/semantics/analysis"
-	"compiler/internal/semantics/effect"
-	"compiler/internal/semantics/ownershipresult"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -26,47 +23,48 @@ type site struct {
 	scope    *symbols.Scope
 }
 
-// Input contains published artifacts ownership reads for one module generation.
-type Input struct {
+// ownershipInput contains the artifacts ownership reads for one module generation.
+type ownershipInput struct {
 	Source      *thir.Module
 	CFG         *cfg.Module
-	Analysis    *analysis.Module
-	Effects     effect.Result
+	Analysis    *Module
+	Ops         effectStreams
 	Scope       *symbols.Scope
 	SymbolIndex *symbols.Index
 }
 
 type analyzer struct {
 	diagnostics            *diagnostics.DiagnosticBag
-	input                  Input
+	input                  ownershipInput
 	graph                  *cfg.ControlFlowGraph
 	sites                  map[cfg.SiteID]*site
 	order                  []cfg.SiteID
-	effects                effect.SiteOps
-	cleanup                *ownershipresult.CleanupPlan
+	effects                effectSiteOps
+	cleanup                *cleanupPlan
 	function               *thir.Function
 	functionScope          *symbols.Scope
 	reportedJoin           map[cfg.SiteID]bool
-	inStates               map[cfg.SiteID]state
+	inStates               map[cfg.SiteID]ownershipState
 	symbolLiveIn           map[cfg.SiteID]map[*symbols.Symbol]ir.SourceInfo
 	symbolLiveOut          map[cfg.SiteID]map[*symbols.Symbol]ir.SourceInfo
 	deadMatchCarrierAtExit map[cfg.SiteID]*symbols.Symbol
 }
 
-type state struct {
+type ownershipState struct {
 	moved      map[*symbols.Symbol]ir.SourceInfo
 	live       map[*symbols.Symbol]struct{}
 	pointers   map[*symbols.Symbol]*symbols.Symbol
 	references map[*symbols.Symbol][]referenceLoan
 }
 
-// Check runs flow-sensitive ownership checks after typechecking has populated
-// expression types and scopes. Keeping this phase outside the checker prevents
-// value-flow rules from becoming ad hoc type rules.
-func Check(diag *diagnostics.DiagnosticBag, input Input) ownershipresult.Result {
-	result := make(ownershipresult.Result)
-	if diag == nil || input.Source == nil || input.Scope == nil || input.SymbolIndex == nil || input.Effects == nil || input.CFG == nil {
-		return result
+// checkOwnership runs the ownership stage after flow facts and the transient
+// effect stream are available. Keeping ownership inside post-CFG analysis keeps
+// value-flow rules separate from base typechecking without creating another
+// durable compiler artifact.
+func checkOwnership(diag *diagnostics.DiagnosticBag, input ownershipInput) cleanupPlans {
+	plans := make(cleanupPlans)
+	if diag == nil || input.Source == nil || input.Scope == nil || input.SymbolIndex == nil || input.Ops == nil || input.CFG == nil {
+		return plans
 	}
 	for _, sym := range input.Scope.Symbols() {
 		if sym == nil || (sym.Kind != symbols.SymbolVar && sym.Kind != symbols.SymbolConst) {
@@ -81,7 +79,7 @@ func Check(diag *diagnostics.DiagnosticBag, input Input) ownershipresult.Result 
 		if graph == nil {
 			continue
 		}
-		plan := &ownershipresult.CleanupPlan{
+		plan := &cleanupPlan{
 			AfterScope:             make(map[cfg.SiteID][]symbols.SymbolID),
 			BeforeReturn:           make(map[source.NodeID][]symbols.SymbolID),
 			BeforeAssign:           make(map[source.NodeID]struct{}),
@@ -94,12 +92,12 @@ func Check(diag *diagnostics.DiagnosticBag, input Input) ownershipresult.Result 
 		if fn != nil && fn.Symbol != nil && fn.Body != nil {
 			checkFunction(diag, input, fn, fn.Symbol.Scope, graph, plan)
 		}
-		result[graph.FunctionID] = plan
+		plans[graph.FunctionID] = plan
 	}
-	return result
+	return plans
 }
 
-func checkFunction(diag *diagnostics.DiagnosticBag, input Input, fn *thir.Function, scope *symbols.Scope, cfgFn *cfg.ControlFlowGraph, cleanup *ownershipresult.CleanupPlan) {
+func checkFunction(diag *diagnostics.DiagnosticBag, input ownershipInput, fn *thir.Function, scope *symbols.Scope, cfgFn *cfg.ControlFlowGraph, cleanup *cleanupPlan) {
 	if diag == nil || input.SymbolIndex == nil || fn == nil || fn.Body == nil || scope == nil || cfgFn == nil || cleanup == nil {
 		return
 	}
@@ -110,7 +108,7 @@ func checkFunction(diag *diagnostics.DiagnosticBag, input Input, fn *thir.Functi
 		graph:         cfgFn,
 		sites:         sites,
 		order:         order,
-		effects:       input.Effects[cfgFn.FunctionID],
+		effects:       input.Ops[cfgFn.FunctionID],
 		cleanup:       cleanup,
 		function:      fn,
 		functionScope: scope,
@@ -118,7 +116,7 @@ func checkFunction(diag *diagnostics.DiagnosticBag, input Input, fn *thir.Functi
 	}).run()
 }
 
-func indexSites(input Input, cfgFn *cfg.ControlFlowGraph, scope *symbols.Scope) (map[cfg.SiteID]*site, []cfg.SiteID) {
+func indexSites(input ownershipInput, cfgFn *cfg.ControlFlowGraph, scope *symbols.Scope) (map[cfg.SiteID]*site, []cfg.SiteID) {
 	sites := make(map[cfg.SiteID]*site)
 	order := make([]cfg.SiteID, 0)
 	if input.SymbolIndex == nil || cfgFn == nil || scope == nil {
@@ -160,7 +158,7 @@ func (a *analyzer) run() {
 	}
 	a.computeSymbolLiveness()
 	a.planDeadMatchCarrierCleanup()
-	entryState := newState()
+	entryState := newOwnershipState()
 	for _, parameter := range a.function.Params {
 		sym := parameter.Symbol
 		if sym == nil || sym.Kind != symbols.SymbolParam {
@@ -179,7 +177,7 @@ func (a *analyzer) run() {
 		}
 	}
 	entry := a.graph.Entry.Sites[0].ID
-	a.inStates = map[cfg.SiteID]state{entry: entryState}
+	a.inStates = map[cfg.SiteID]ownershipState{entry: entryState}
 	work := graphcore.NewWorklist(entry)
 	for {
 		id, pending := work.Next()
@@ -187,9 +185,9 @@ func (a *analyzer) run() {
 			break
 		}
 		node := a.sites[id]
-		next := copyState(a.inStates[id])
+		next := copyOwnershipState(a.inStates[id])
 		// Loop-owned loans are keyed by loop identity. Range loops publish no
-		// Iterate effect, so releasing by loop ID is harmless and avoids asking
+		// effectIterate effect, so releasing by loop ID is harmless and avoids asking
 		// typechecker what kind of loop produced this CFG exit.
 		if node != nil && node.cfgBlock != nil && node.cfgBlock.Origin == cfg.BlockLoopExit {
 			releaseIterationLoans(next, nil, node.cfgBlock.NodeID)
@@ -209,7 +207,7 @@ func (a *analyzer) run() {
 			if a.sites[succ] == nil {
 				continue
 			}
-			edgeState := copyState(next)
+			edgeState := copyOwnershipState(next)
 			if edge.Kind == cfg.EdgeVariantCase {
 				a.applyMatchEdge(node, edge, edgeState)
 			}
@@ -297,8 +295,8 @@ func (a *analyzer) planDeadMatchCarrierCleanup() {
 	}
 }
 
-func copyState(src state) state {
-	dst := newState()
+func copyOwnershipState(src ownershipState) ownershipState {
+	dst := newOwnershipState()
 	maps.Copy(dst.moved, src.moved)
 	maps.Copy(dst.live, src.live)
 	maps.Copy(dst.pointers, src.pointers)
@@ -310,7 +308,7 @@ func copyState(src state) state {
 
 // releaseIterationLoans ends synthetic carrier borrows when control leaves
 // their loop. A zero loop ID releases all active loops, as required by return.
-func releaseIterationLoans(st state, loans *loanContext, loopID source.NodeID) {
+func releaseIterationLoans(st ownershipState, loans *loanContext, loopID source.NodeID) {
 	matches := func(loan referenceLoan) bool {
 		return loan.loop.IsValid() && (!loopID.IsValid() || loan.loop == loopID)
 	}
@@ -329,9 +327,9 @@ func releaseIterationLoans(st state, loans *loanContext, loopID source.NodeID) {
 	}
 }
 
-func (a *analyzer) mergeState(nodeID cfg.SiteID, dst, src state, hasExistingState bool) (state, bool) {
+func (a *analyzer) mergeState(nodeID cfg.SiteID, dst, src ownershipState, hasExistingState bool) (ownershipState, bool) {
 	if !hasExistingState {
-		return copyState(src), true
+		return copyOwnershipState(src), true
 	}
 	node := a.sites[nodeID]
 	if node == nil || node.cfgSite == nil || a.graph.SiteEdges.InDegree(node.cfgSite.ID, nil) <= 1 {
@@ -339,7 +337,7 @@ func (a *analyzer) mergeState(nodeID cfg.SiteID, dst, src state, hasExistingStat
 			areSameReferenceValues(dst.references, src.references) {
 			return dst, false
 		}
-		return copyState(src), true
+		return copyOwnershipState(src), true
 	}
 	changed := false
 	mismatch := false
@@ -382,8 +380,8 @@ func (a *analyzer) mergeState(nodeID cfg.SiteID, dst, src state, hasExistingStat
 	return dst, changed
 }
 
-func newState() state {
-	return state{
+func newOwnershipState() ownershipState {
+	return ownershipState{
 		moved:      make(map[*symbols.Symbol]ir.SourceInfo),
 		live:       make(map[*symbols.Symbol]struct{}),
 		pointers:   make(map[*symbols.Symbol]*symbols.Symbol),
@@ -391,7 +389,7 @@ func newState() state {
 	}
 }
 
-func (a *analyzer) applyBlockExit(node *site, st state, loans *loanContext) {
+func (a *analyzer) applyBlockExit(node *site, st ownershipState, loans *loanContext) {
 	if a == nil || node == nil || node.cfgSite == nil || node.block == nil || node.scope == nil {
 		return
 	}
@@ -415,7 +413,7 @@ func (a *analyzer) applyBlockExit(node *site, st state, loans *loanContext) {
 	clearScopeOwnership(node.scope, st)
 }
 
-func clearScopeOwnership(scope *symbols.Scope, st state) {
+func clearScopeOwnership(scope *symbols.Scope, st ownershipState) {
 	if scope == nil {
 		return
 	}
@@ -427,7 +425,7 @@ func clearScopeOwnership(scope *symbols.Scope, st state) {
 	}
 }
 
-func cleanupSymbols(scope *symbols.Scope, st state) []*symbols.Symbol {
+func cleanupSymbols(scope *symbols.Scope, st ownershipState) []*symbols.Symbol {
 	if scope == nil {
 		return nil
 	}
@@ -448,7 +446,7 @@ func cleanupSymbols(scope *symbols.Scope, st state) []*symbols.Symbol {
 	return cleanup
 }
 
-func (a *analyzer) cleanupBeforeReturn(scope *symbols.Scope, stmt *thir.Return, st state, loans *loanContext) {
+func (a *analyzer) cleanupBeforeReturn(scope *symbols.Scope, stmt *thir.Return, st ownershipState, loans *loanContext) {
 	if a == nil || stmt == nil {
 		return
 	}
@@ -491,7 +489,7 @@ func (a *analyzer) planDiscardedDrops(node *site) {
 		return
 	}
 	for _, op := range a.effects[node.cfgSite.ID] {
-		discard, isDiscard := op.(effect.Discard)
+		discard, isDiscard := op.(effectDiscard)
 		if !isDiscard || discard.Place.Root != nil {
 			continue
 		}
@@ -501,23 +499,23 @@ func (a *analyzer) planDiscardedDrops(node *site) {
 	}
 }
 
-func (a *analyzer) applyStmt(node *site, st state) {
+func (a *analyzer) applyStmt(node *site, st ownershipState) {
 	if a == nil || node == nil || node.scope == nil || node.stmt == nil {
 		return
 	}
 	scope := node.scope
 	loans := a.newLoanContext(node, st)
 
-	// Return provenance has to be checked against the incoming state, before
+	// Return provenance has to be checked against the incoming ownershipState, before
 	// evaluating the returned value can move its source. Storage transitions for
-	// declarations and assignments are published effects and require no syntax
+	// declarations and assignments are derived effects and require no syntax
 	// cases here.
 	if s, ok := node.stmt.(*thir.Return); ok {
 		a.checkPointerEscape(scope, s.Value, st)
 		a.validateReferenceReturn(s, st)
 	}
 
-	// Evaluation and generic storage transitions come from published effects.
+	// Evaluation and generic storage transitions come from the derived effect stream.
 	a.applyEffects(node, st, loans)
 	a.planDiscardedDrops(node)
 
@@ -530,7 +528,7 @@ func (a *analyzer) applyStmt(node *site, st state) {
 	}
 }
 
-func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st state) {
+func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st ownershipState) {
 	if a == nil || node == nil || node.cfgSite == nil || edge.Kind != cfg.EdgeVariantCase {
 		return
 	}

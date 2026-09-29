@@ -1,4 +1,4 @@
-package ownership
+package analysis
 
 import (
 	"maps"
@@ -9,7 +9,6 @@ import (
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/thir"
-	"compiler/internal/semantics/effect"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -67,7 +66,7 @@ func (access storageAccess) requiresExclusiveAccess() bool {
 	}
 }
 
-func (a *analyzer) newLoanContext(node *site, st state) *loanContext {
+func (a *analyzer) newLoanContext(node *site, st ownershipState) *loanContext {
 	if node == nil || node.cfgSite == nil {
 		return &loanContext{remaining: make(map[*symbols.Symbol]int)}
 	}
@@ -317,7 +316,7 @@ func referenceHolder(expr thir.Expr) *symbols.Symbol {
 	return nil
 }
 
-func (a *analyzer) referenceValueForTHIR(expr thir.Expr, st state) ([]referenceLoan, bool) {
+func (a *analyzer) referenceValueForTHIR(expr thir.Expr, st ownershipState) ([]referenceLoan, bool) {
 	if a == nil || a.input.Source == nil || expr == nil {
 		return []referenceLoan{}, false
 	}
@@ -372,7 +371,7 @@ func (a *analyzer) referenceValueForTHIR(expr thir.Expr, st state) ([]referenceL
 // replaceReferenceField consumes analysis's exact storage identity. Accepted local
 // enum reference fields are direct/optional; nested reference aggregates remain
 // rejected by typechecking. Other holders and sibling slots retain their loans.
-func (a *analyzer) replaceReferenceField(target thir.Expr, value storedReference, st state) {
+func (a *analyzer) replaceReferenceField(target thir.Expr, value storedReference, st ownershipState) {
 	if _, _, isReference := typeinfo.ReferenceValueTarget(a.exprType(target)); !isReference || a.input.Analysis == nil {
 		return
 	}
@@ -404,7 +403,7 @@ func (a *analyzer) originsForExpr(expr thir.Expr) []place.Origin {
 	return place.CloneOrigins(a.input.Analysis.ValueOrigins(expr.SourceInfo().NodeID))
 }
 
-func (a *analyzer) validateReferenceReturn(stmt *thir.Return, st state) {
+func (a *analyzer) validateReferenceReturn(stmt *thir.Return, st ownershipState) {
 	if a == nil || a.function == nil || stmt == nil || stmt.Value == nil {
 		return
 	}
@@ -443,7 +442,7 @@ func (a *analyzer) validateReferenceReturn(stmt *thir.Return, st state) {
 	}
 }
 
-func (a *analyzer) updateReferenceSymbol(sym *symbols.Symbol, value []referenceLoan, hasValue bool, st state) {
+func (a *analyzer) updateReferenceSymbol(sym *symbols.Symbol, value []referenceLoan, hasValue bool, st ownershipState) {
 	if sym == nil {
 		return
 	}
@@ -605,7 +604,7 @@ func (a *analyzer) computeSymbolLiveness() {
 }
 
 // symbolUsesAndDefinitions reports what one site defines and what it reads,
-// both from published effects.
+// both from the derived effect stream.
 //
 // A write also counts as a use when the written symbol needs dropping: the
 // pre-assignment drop reads the old value, so the target must stay live up to
@@ -619,7 +618,7 @@ func (a *analyzer) symbolUsesAndDefinitions(node *site) (map[*symbols.Symbol]ir.
 		return visitor.uses, visitor.definitions
 	}
 	for _, op := range a.effects[node.cfgSite.ID] {
-		effect.Visit(op, visitor)
+		visitEffect(op, visitor)
 	}
 	return visitor.uses, visitor.definitions
 }
@@ -640,7 +639,7 @@ func (v *livenessEffectVisitor) recordUse(sym *symbols.Symbol, at ir.SourceInfo)
 	v.uses[sym] = at
 }
 
-func (v *livenessEffectVisitor) VisitDefine(op effect.Define) {
+func (v *livenessEffectVisitor) visitDefine(op effectDefine) {
 	// A binding that merely arrives at this site was established by the edge
 	// into it, so killing liveness here would end a borrow one site too early.
 	if !op.IsOnEntry && trackedLiveSymbol(op.Symbol) {
@@ -648,7 +647,7 @@ func (v *livenessEffectVisitor) VisitDefine(op effect.Define) {
 	}
 }
 
-func (v *livenessEffectVisitor) VisitWrite(op effect.Write) {
+func (v *livenessEffectVisitor) visitWrite(op effectWrite) {
 	if op.Place.Root == nil || !trackedLiveSymbol(op.Place.Root) {
 		return
 	}
@@ -662,26 +661,26 @@ func (v *livenessEffectVisitor) VisitWrite(op effect.Write) {
 	}
 }
 
-func (v *livenessEffectVisitor) VisitUse(op effect.Use) {
+func (v *livenessEffectVisitor) visitUse(op effectUse) {
 	if trackedLiveSymbol(op.Place.Root) {
 		v.recordUse(op.Place.Root, ir.SourceInfo{NodeID: op.Node, Location: op.Location})
 	}
 }
 
-func (v *livenessEffectVisitor) VisitBorrow(op effect.Borrow) {
+func (v *livenessEffectVisitor) visitBorrow(op effectBorrow) {
 	if trackedLiveSymbol(op.Place.Root) {
 		v.recordUse(op.Place.Root, ir.SourceInfo{NodeID: op.Node, Location: op.Location})
 	}
 }
 
-func (*livenessEffectVisitor) VisitIterate(effect.Iterate)     {}
-func (*livenessEffectVisitor) VisitDiscard(effect.Discard)     {}
-func (*livenessEffectVisitor) VisitCallBegin(effect.CallBegin) {}
-func (*livenessEffectVisitor) VisitCallEnd(effect.CallEnd)     {}
+func (*livenessEffectVisitor) visitIterate(effectIterate)     {}
+func (*livenessEffectVisitor) visitDiscard(effectDiscard)     {}
+func (*livenessEffectVisitor) visitCallBegin(effectCallBegin) {}
+func (*livenessEffectVisitor) visitCallEnd(effectCallEnd)     {}
 
 // symbolUseSequence returns the symbols this site reads, in evaluation order.
 //
-// It reads published effects rather than walking the statement itself. The
+// It reads the derived effect stream rather than walking the statement itself. The
 // walk it replaced enumerated eight statement kinds and missed ForStmt.Iterable,
 // which applyStmt does handle, so liveness and borrow-ending saw a different
 // program than the effect analysis did. One producer means they cannot disagree.
@@ -691,7 +690,7 @@ func (a *analyzer) symbolUseSequence(node *site, include func(*symbols.Symbol) b
 	}
 	visitor := &useSequenceEffectVisitor{include: include}
 	for _, op := range a.effects[node.cfgSite.ID] {
-		effect.Visit(op, visitor)
+		visitEffect(op, visitor)
 	}
 	return visitor.uses
 }
@@ -701,20 +700,20 @@ type useSequenceEffectVisitor struct {
 	uses    []*symbols.Symbol
 }
 
-func (v *useSequenceEffectVisitor) record(at effect.Place) {
+func (v *useSequenceEffectVisitor) record(at effectPlace) {
 	if v.include(at.Root) {
 		v.uses = append(v.uses, at.Root)
 	}
 }
 
-func (*useSequenceEffectVisitor) VisitDefine(effect.Define)       {}
-func (*useSequenceEffectVisitor) VisitWrite(effect.Write)         {}
-func (v *useSequenceEffectVisitor) VisitUse(op effect.Use)        { v.record(op.Place) }
-func (v *useSequenceEffectVisitor) VisitBorrow(op effect.Borrow)  { v.record(op.Place) }
-func (*useSequenceEffectVisitor) VisitIterate(effect.Iterate)     {}
-func (*useSequenceEffectVisitor) VisitDiscard(effect.Discard)     {}
-func (*useSequenceEffectVisitor) VisitCallBegin(effect.CallBegin) {}
-func (*useSequenceEffectVisitor) VisitCallEnd(effect.CallEnd)     {}
+func (*useSequenceEffectVisitor) visitDefine(effectDefine)       {}
+func (*useSequenceEffectVisitor) visitWrite(effectWrite)         {}
+func (v *useSequenceEffectVisitor) visitUse(op effectUse)        { v.record(op.Place) }
+func (v *useSequenceEffectVisitor) visitBorrow(op effectBorrow)  { v.record(op.Place) }
+func (*useSequenceEffectVisitor) visitIterate(effectIterate)     {}
+func (*useSequenceEffectVisitor) visitDiscard(effectDiscard)     {}
+func (*useSequenceEffectVisitor) visitCallBegin(effectCallBegin) {}
+func (*useSequenceEffectVisitor) visitCallEnd(effectCallEnd)     {}
 
 func mergeSymbolLiveSets(dst, src map[*symbols.Symbol]ir.SourceInfo) {
 	for sym, site := range src {

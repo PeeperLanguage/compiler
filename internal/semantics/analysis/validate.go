@@ -1,4 +1,4 @@
-package ownershipresult
+package analysis
 
 import (
 	"compiler/internal/source"
@@ -14,23 +14,115 @@ import (
 	"compiler/internal/semantics/typeinfo"
 )
 
-// maxReportedProblems bounds one internal error so a systematic evidence break
+// maxAnalysisValidationProblems bounds one internal error so a systematic evidence break
 // reports a readable sample instead of one line per node in the module.
-const maxReportedProblems = 10
+const maxAnalysisValidationProblems = 10
 
-// Validate checks published ownership evidence against the artifacts it
-// describes: every plan key must name a real program point, every published use
+func (m *Module) validate(source *thir.Module, symbolIndex *symbols.Index, graphs *cfg.Module) error {
+	if m == nil {
+		return errors.New("analysis produced no artifact")
+	}
+	if err := validationError(validateExpressionEvidence(m.expressions, source)); err != nil {
+		return err
+	}
+	return m.cleanup.validate(source, symbolIndex, graphs)
+}
+
+func validateExpressionEvidence(evidence expressionEvidence, source *thir.Module) []string {
+	problems := make([]string, 0)
+	for id, typ := range evidence.types {
+		problems = append(problems, validateExpressionNode(source, id, "type refinement")...)
+		if typ == nil {
+			problems = append(problems, fmt.Sprintf("node %v has a nil type refinement", id))
+		}
+	}
+	for id, payload := range evidence.payloads {
+		problems = append(problems, validateExpressionNode(source, id, "payload refinement")...)
+		if len(payload.Cases) == 0 {
+			problems = append(problems, fmt.Sprintf("node %v has an empty payload refinement", id))
+		}
+		for _, caseIndex := range payload.Cases {
+			if caseIndex < 0 {
+				problems = append(problems, fmt.Sprintf("node %v has negative payload case %v", id, caseIndex))
+			}
+		}
+	}
+	for id, test := range evidence.caseTests {
+		problems = append(problems, validateExpressionNode(source, id, "case test")...)
+		problems = append(problems, validateExpressionNode(source, test.SubjectID, "case-test subject")...)
+		if test.CaseCount <= 0 || test.Case < 0 || test.Case >= test.CaseCount {
+			problems = append(problems, fmt.Sprintf("node %v tests case %v of %v", id, test.Case, test.CaseCount))
+		}
+		for _, caseIndex := range test.PayloadPath {
+			if caseIndex < 0 {
+				problems = append(problems, fmt.Sprintf("node %v has negative payload-path case %v", id, caseIndex))
+			}
+		}
+	}
+	for id, field := range evidence.variantFields {
+		problems = append(problems, validateExpressionNode(source, id, "variant field")...)
+		problems = append(problems, validateExpressionNode(source, field.Carrier, "variant-field carrier")...)
+		if field.Case < 0 {
+			problems = append(problems, fmt.Sprintf("node %v selects negative variant case %v", id, field.Case))
+		}
+		if field.Payload == nil || field.Field < 0 || field.Field >= len(field.Payload.Fields) {
+			problems = append(problems, fmt.Sprintf("node %v selects invalid variant field %v", id, field.Field))
+		}
+		if field.Type == nil {
+			problems = append(problems, fmt.Sprintf("node %v has a nil variant-field type", id))
+		}
+	}
+	for id := range evidence.origins {
+		if !id.IsValid() {
+			problems = append(problems, "origin resolution published with no source identity")
+		}
+	}
+	for id, slots := range evidence.aggregates {
+		problems = append(problems, validateExpressionNode(source, id, "aggregate slots")...)
+		for index, slot := range slots {
+			if slot.ValueExpr == nil {
+				problems = append(problems, fmt.Sprintf("node %v aggregate slot %v has no value expression", id, index))
+			}
+		}
+	}
+	return problems
+}
+
+func validateExpressionNode(typed *thir.Module, id source.NodeID, fact string) []string {
+	if typed != nil {
+		if expr, ok := typed.Node(id).(thir.Expr); ok && expr != nil {
+			return nil
+		}
+	}
+	return []string{fmt.Sprintf("%s published for node %v with no typed expression", fact, id)}
+}
+
+func validationError(problems []string) error {
+	if len(problems) == 0 {
+		return nil
+	}
+	sort.Strings(problems)
+	total := len(problems)
+	if len(problems) > maxAnalysisValidationProblems {
+		problems = problems[:maxAnalysisValidationProblems]
+		return fmt.Errorf("%s (%v more)", strings.Join(problems, "; "), total-maxAnalysisValidationProblems)
+	}
+	return errors.New(strings.Join(problems, "; "))
+}
+
+// validate checks ownership evidence against the artifacts it describes: every
+// plan key must name a real program point, every recorded use
 // kind must belong to a typed expression and be legal for that type's
 // capability, and every call argument the typechecker resolved must carry a
-// classification. A failure means the compiler published inconsistent evidence,
+// classification. A failure means the compiler derived inconsistent evidence,
 // so callers report it as an internal error, never as a source diagnostic.
 //
 // The validator never re-derives an ownership decision. In particular, proving
 // that a symbol is dropped exactly once per path is deliberately out of scope:
 // that is the analysis ownership already performs, and repeating it here would
 // make the validator a second implementation of the thing it checks rather than
-// a check on published shape.
-func (r Result) Validate(source *thir.Module, symbolIndex *symbols.Index, graphs *cfg.Module) error {
+// a check on stored shape.
+func (r cleanupPlans) validate(source *thir.Module, symbolIndex *symbols.Index, graphs *cfg.Module) error {
 	if len(r) == 0 && graphs == nil {
 		return nil
 	}
@@ -51,20 +143,10 @@ func (r Result) Validate(source *thir.Module, symbolIndex *symbols.Index, graphs
 	for fnID, plan := range r {
 		problems = append(problems, validatePlan(fnID, plan, source, symbolIndex, graphs)...)
 	}
-	if len(problems) == 0 {
-		return nil
-	}
-	// Plans and evidence are maps, so a stable report needs an explicit order.
-	sort.Strings(problems)
-	total := len(problems)
-	if len(problems) > maxReportedProblems {
-		problems = problems[:maxReportedProblems]
-		return fmt.Errorf("%s (%v more)", strings.Join(problems, "; "), total-maxReportedProblems)
-	}
-	return errors.New(strings.Join(problems, "; "))
+	return validationError(problems)
 }
 
-// validateValueUses checks the published use kinds against the expressions they
+// validateValueUses checks the recorded use kinds against the expressions they
 // classify: a kind for an untyped node is stale evidence, a kind the type's
 // capability forbids is an illegal classification, and a resolved call argument
 // with no kind is the gap the ownership fallback used to hide.
@@ -109,7 +191,7 @@ func validateValueUses(source *thir.Module) []string {
 
 // validatePlan checks one function's cleanup plan against its CFG and the
 // program points each map is keyed by.
-func validatePlan(fnID moduleid.FunctionID, plan *CleanupPlan, typed *thir.Module, symbolIndex *symbols.Index, graphs *cfg.Module) []string {
+func validatePlan(fnID moduleid.FunctionID, plan *cleanupPlan, typed *thir.Module, symbolIndex *symbols.Index, graphs *cfg.Module) []string {
 	if plan == nil {
 		return []string{fmt.Sprintf("function %s has a nil cleanup plan", fnID)}
 	}

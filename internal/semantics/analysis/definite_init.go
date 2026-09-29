@@ -1,25 +1,20 @@
-package definiteinit
+package analysis
 
 import (
 	"compiler/internal/diagnostics"
 	graphcore "compiler/internal/graph"
 	"compiler/internal/ir/cfg"
-	"compiler/internal/semantics/effect"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/source"
 )
 
-type state map[symbols.SymbolID]struct{}
+type initState map[symbols.SymbolID]struct{}
 
-type functionResult struct {
-	In map[cfg.SiteID]state
-}
-
-// Check diagnoses reads not initialized on every reachable CFG predecessor.
+// checkInitialization diagnoses reads not initialized on every reachable CFG predecessor.
 //
-// It consumes published effects and never inspects syntax, so a new construct
+// It consumes the derived effect stream and never inspects syntax, so a new construct
 // that defines, writes, or reads a binding needs no case here.
-func Check(graphs *cfg.Module, effects effect.Result, diag *diagnostics.DiagnosticBag) {
+func checkInitialization(graphs *cfg.Module, effects effectStreams, diag *diagnostics.DiagnosticBag) {
 	if graphs == nil {
 		return
 	}
@@ -31,10 +26,10 @@ func Check(graphs *cfg.Module, effects effect.Result, diag *diagnostics.Diagnost
 	}
 }
 
-func analyzeFunction(graph *cfg.ControlFlowGraph, ops effect.SiteOps, diag *diagnostics.DiagnosticBag) *functionResult {
-	result := &functionResult{In: make(map[cfg.SiteID]state)}
+func analyzeFunction(graph *cfg.ControlFlowGraph, ops effectSiteOps, diag *diagnostics.DiagnosticBag) map[cfg.SiteID]initState {
+	inStates := make(map[cfg.SiteID]initState)
 	if graph == nil || graph.Entry == nil || len(graph.Entry.Sites) == 0 {
-		return result
+		return inStates
 	}
 	order := make([]cfg.SiteID, 0)
 	for _, block := range graph.Blocks {
@@ -50,9 +45,9 @@ func analyzeFunction(graph *cfg.ControlFlowGraph, ops effect.SiteOps, diag *diag
 	tracked := trackedSymbols(ops, order)
 
 	// Parameters and match payload bindings arrive as initialized defines at the
-	// site that receives them, so entry needs no seeded state of its own.
+	// site that receives them, so entry needs no seeded initState of its own.
 	entry := graph.Entry.Sites[0].ID
-	result.In[entry] = make(state)
+	inStates[entry] = make(initState)
 	work := graphcore.NewWorklist(entry)
 	for {
 		id, pending := work.Next()
@@ -63,42 +58,42 @@ func analyzeFunction(graph *cfg.ControlFlowGraph, ops effect.SiteOps, diag *diag
 		if site == nil || !graph.Blocks[id.Block].IsReachable {
 			continue
 		}
-		out := transfer(ops[id], result.In[id])
+		out := transfer(ops[id], inStates[id])
 		for _, edge := range graph.SiteEdges.OutEdges(site.ID) {
 			if graph.Site(edge.To) == nil || !graph.Blocks[edge.To.Block].IsReachable {
 				continue
 			}
-			edgeState := copyState(out)
-			current, exists := result.In[edge.To]
+			edgeState := copyInitState(out)
+			current, exists := inStates[edge.To]
 			merged := edgeState
 			if exists {
 				merged = intersectState(current, edgeState)
 			}
-			if exists && AreStatesEqual(current, merged) {
+			if exists && areInitStatesEqual(current, merged) {
 				continue
 			}
-			result.In[edge.To] = merged
+			inStates[edge.To] = merged
 			work.Add(edge.To)
 		}
 	}
 	// Reporting walks declaration order rather than worklist order so diagnostics
-	// are deterministic. A site absent from In was never reached.
+	// are deterministic. A site absent from inStates was never reached.
 	for _, id := range order {
-		if initialized, isReachable := result.In[id]; isReachable {
+		if initialized, isReachable := inStates[id]; isReachable {
 			checkAccesses(ops[id], initialized, tracked, diag)
 		}
 	}
-	return result
+	return inStates
 }
 
 // trackedSymbols is the diagnosable universe: a binding this function defines.
 // A symbol with no define belongs to an enclosing scope and is never reported.
-func trackedSymbols(ops effect.SiteOps, order []cfg.SiteID) map[symbols.SymbolID]string {
+func trackedSymbols(ops effectSiteOps, order []cfg.SiteID) map[symbols.SymbolID]string {
 	tracked := make(map[symbols.SymbolID]string)
 	visitor := &initializationVisitor{tracked: tracked}
 	for _, id := range order {
 		for _, op := range ops[id] {
-			effect.Visit(op, visitor)
+			visitEffect(op, visitor)
 		}
 	}
 	return tracked
@@ -107,11 +102,11 @@ func trackedSymbols(ops effect.SiteOps, order []cfg.SiteID) map[symbols.SymbolID
 // transfer applies one site's effects in evaluation order. The lattice only
 // gains initialized symbols, and the join intersects, so the fixed point
 // terminates.
-func transfer(ops []effect.Op, in state) state {
-	out := copyState(in)
+func transfer(ops []effectOp, in initState) initState {
+	out := copyInitState(in)
 	visitor := &initializationVisitor{current: out, shouldApplyState: true}
 	for _, op := range ops {
-		effect.Visit(op, visitor)
+		visitEffect(op, visitor)
 	}
 	return out
 }
@@ -119,7 +114,7 @@ func transfer(ops []effect.Op, in state) state {
 // checkAccesses reports reads, borrows, and projected writes against tracked
 // bindings that are not initialized at that point. It replays the site's effects
 // so an initialized define or whole-root write covers a later access.
-func checkAccesses(ops []effect.Op, initialized state, tracked map[symbols.SymbolID]string, diag *diagnostics.DiagnosticBag) {
+func checkAccesses(ops []effectOp, initialized initState, tracked map[symbols.SymbolID]string, diag *diagnostics.DiagnosticBag) {
 	if diag == nil {
 		return
 	}
@@ -127,9 +122,9 @@ func checkAccesses(ops []effect.Op, initialized state, tracked map[symbols.Symbo
 		current: initialized, tracked: tracked, diag: diag,
 		shouldApplyState: true, shouldReportAccesses: true,
 	}
-	visitor.current = copyState(initialized)
+	visitor.current = copyInitState(initialized)
 	for _, op := range ops {
-		effect.Visit(op, visitor)
+		visitEffect(op, visitor)
 	}
 }
 
@@ -137,14 +132,14 @@ func checkAccesses(ops []effect.Op, initialized state, tracked map[symbols.Symbo
 // definite initialization. Adding a new effect does not compile until this
 // analysis explicitly classifies it.
 type initializationVisitor struct {
-	current              state
+	current              initState
 	tracked              map[symbols.SymbolID]string
 	diag                 *diagnostics.DiagnosticBag
 	shouldApplyState     bool
 	shouldReportAccesses bool
 }
 
-func (v *initializationVisitor) VisitDefine(op effect.Define) {
+func (v *initializationVisitor) visitDefine(op effectDefine) {
 	if op.Symbol != nil && v.tracked != nil {
 		v.tracked[op.Symbol.ID] = op.Symbol.Name
 	}
@@ -153,7 +148,7 @@ func (v *initializationVisitor) VisitDefine(op effect.Define) {
 	}
 }
 
-func (v *initializationVisitor) VisitWrite(op effect.Write) {
+func (v *initializationVisitor) visitWrite(op effectWrite) {
 	if op.Place.Root == nil {
 		return
 	}
@@ -169,26 +164,26 @@ func (v *initializationVisitor) VisitWrite(op effect.Write) {
 	}
 }
 
-func (v *initializationVisitor) VisitUse(op effect.Use) {
+func (v *initializationVisitor) visitUse(op effectUse) {
 	if v.shouldReportAccesses {
 		reportUninitializedAccess(op.Place, op.Location, v.current, v.tracked, v.diag,
 			"assign a value before reading this symbol")
 	}
 }
 
-func (v *initializationVisitor) VisitBorrow(op effect.Borrow) {
+func (v *initializationVisitor) visitBorrow(op effectBorrow) {
 	if v.shouldReportAccesses {
 		reportUninitializedAccess(op.Place, op.Location, v.current, v.tracked, v.diag,
 			"assign a value before reading this symbol")
 	}
 }
 
-func (*initializationVisitor) VisitIterate(effect.Iterate)     {}
-func (*initializationVisitor) VisitDiscard(effect.Discard)     {}
-func (*initializationVisitor) VisitCallBegin(effect.CallBegin) {}
-func (*initializationVisitor) VisitCallEnd(effect.CallEnd)     {}
+func (*initializationVisitor) visitIterate(effectIterate)     {}
+func (*initializationVisitor) visitDiscard(effectDiscard)     {}
+func (*initializationVisitor) visitCallBegin(effectCallBegin) {}
+func (*initializationVisitor) visitCallEnd(effectCallEnd)     {}
 
-func reportUninitializedAccess(at effect.Place, location *source.Location, current state, tracked map[symbols.SymbolID]string, diag *diagnostics.DiagnosticBag, help string) {
+func reportUninitializedAccess(at effectPlace, location *source.Location, current initState, tracked map[symbols.SymbolID]string, diag *diagnostics.DiagnosticBag, help string) {
 	if at.Root == nil {
 		return
 	}
@@ -209,16 +204,16 @@ func reportUninitializedAccess(at effect.Place, location *source.Location, curre
 		WithHelp(help))
 }
 
-func copyState(current state) state {
-	copied := make(state, len(current))
+func copyInitState(current initState) initState {
+	copied := make(initState, len(current))
 	for symbol := range current {
 		copied[symbol] = struct{}{}
 	}
 	return copied
 }
 
-func intersectState(left, right state) state {
-	intersection := make(state)
+func intersectState(left, right initState) initState {
+	intersection := make(initState)
 	for symbol := range left {
 		if _, present := right[symbol]; present {
 			intersection[symbol] = struct{}{}
@@ -227,7 +222,7 @@ func intersectState(left, right state) state {
 	return intersection
 }
 
-func AreStatesEqual(left, right state) bool {
+func areInitStatesEqual(left, right initState) bool {
 	if len(left) != len(right) {
 		return false
 	}

@@ -45,7 +45,7 @@ func buildTypedExprModule(t *testing.T, source string) (*module.Module, *diagnos
 	resolver.Resolve(ctx, mod)
 	mod.THIR = typechecker.Check(ctx, mod)
 	mod.CFG = cfg.BuildModule(mod.THIR)
-	mod.Analysis = analysis.Run(diag, analysis.Input{Source: mod.THIR, CFG: mod.CFG, Scope: mod.ModuleScope})
+	mod.Analysis = analysis.Run(diag, analysis.Input{Source: mod.THIR, CFG: mod.CFG, Scope: mod.ModuleScope, SymbolIndex: mod.SymbolIndex})
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}

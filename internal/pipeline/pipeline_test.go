@@ -745,11 +745,11 @@ fn main() -> i32 {
 	if !strings.Contains(out, "attribute `#[extern]` requires a body-less function declaration") {
 		t.Fatalf("expected extern definition diagnostic, got:\n%s", out)
 	}
-	if entry.Phase != phase.Ownership {
-		t.Fatalf("expected pipeline to finish mandatory semantics and stop before Usage/MIR, got phase %v", entry.Phase)
+	if entry.Phase != phase.Analyzed {
+		t.Fatalf("expected pipeline to finish analysis and stop before Usage/MIR, got phase %v", entry.Phase)
 	}
-	if ctx.CompletedProjectPhase != phase.Ownership {
-		t.Fatalf("completed project phase = %v, want Ownership", ctx.CompletedProjectPhase)
+	if ctx.CompletedProjectPhase != phase.Analyzed {
+		t.Fatalf("completed project phase = %v, want Analyzed", ctx.CompletedProjectPhase)
 	}
 	if entry.MIR != nil {
 		t.Fatalf("semantic error produced MIR: %#v", entry.MIR)
@@ -764,7 +764,7 @@ fn main() -> i32 {
 	}
 }
 
-func TestPipelineSkipsIncompleteEffectValidationDuringRecovery(t *testing.T) {
+func TestPipelineSkipsIncompleteAnalysisValidationDuringRecovery(t *testing.T) {
 	diag := diagnostics.NewDiagnosticBag()
 	const entryPath = "entry" + peeper.SourceExt
 	entry := parseModuleSource(entryPath, `fn main() {}`, diag)
@@ -772,18 +772,18 @@ func TestPipelineSkipsIncompleteEffectValidationDuringRecovery(t *testing.T) {
 	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 	ctx.AddModule(entry)
 
-	for entry.Phase < phase.FlowTyped {
+	for entry.Phase < phase.CFG {
 		if !advanceModulePhase(ctx, entry, diag) {
 			t.Fatalf("advanceModulePhase() stopped at %v", entry.Phase)
 		}
 	}
 	diag.AddError(diagnostics.ErrInvalidAssignment, "source error", nil, "")
 	entry.THIR.Functions = nil
-	if !advanceModulePhase(ctx, entry, diag) || entry.Phase != phase.Effects {
-		t.Fatalf("phase = %v, want Effects", entry.Phase)
+	if !advanceModulePhase(ctx, entry, diag) || entry.Phase != phase.Analyzed {
+		t.Fatalf("phase = %v, want Analyzed", entry.Phase)
 	}
-	if len(entry.Effects) != 0 {
-		t.Fatalf("damaged THIR produced effects: %#v", entry.Effects)
+	if entry.Analysis == nil {
+		t.Fatal("analysis artifact missing during source-error recovery")
 	}
 	if hasDiagnosticCode(diag, diagnostics.ErrInvalidEvidence) {
 		t.Fatalf("source-error recovery reported invalid evidence:\n%s", diag.EmitAllToString())
@@ -844,8 +844,8 @@ fn main() -> i32 {
 	if entry.MIR != nil {
 		t.Fatalf("unsupported comparison produced MIR: %#v", entry.MIR)
 	}
-	if entry.Phase != phase.Ownership {
-		t.Fatalf("expected pipeline to stop before MIR at Ownership, got phase %v", entry.Phase)
+	if entry.Phase != phase.Analyzed {
+		t.Fatalf("expected pipeline to stop before MIR at Analyzed, got phase %v", entry.Phase)
 	}
 }
 
@@ -943,7 +943,7 @@ func TestPipelineDebugBuildEmitsLLVMMetadata(t *testing.T) {
 	}
 }
 
-func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
+func TestAdvancePublishesAnalyzedArtifact(t *testing.T) {
 	diag := diagnostics.NewDiagnosticBag()
 	const entryPath = "entry" + peeper.SourceExt
 	entrySrc := `fn main() -> i32 {
@@ -961,10 +961,7 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 		phase.Resolved,
 		phase.Typechecked,
 		phase.CFG,
-		phase.FlowTyped,
-		phase.Effects,
-		phase.DefiniteInit,
-		phase.Ownership,
+		phase.Analyzed,
 	}
 	for _, wantPhase := range want {
 		if !advanceModulePhase(ctx, entry, diag) {
@@ -976,11 +973,8 @@ func TestPipelineAdvanceModulePhaseRunsOnePhaseAtATime(t *testing.T) {
 		if wantPhase == phase.CFG && (entry.CFG == nil || len(entry.CFG.Functions) == 0) {
 			t.Fatal("CFG phase must retain canonical graph")
 		}
-		if wantPhase == phase.FlowTyped && entry.Analysis == nil {
-			t.Fatal("flow-typed phase must retain canonical result")
-		}
-		if wantPhase == phase.Effects && entry.Effects == nil {
-			t.Fatal("effects phase must retain published site effects")
+		if wantPhase == phase.Analyzed && entry.Analysis == nil {
+			t.Fatal("analyzed phase must retain canonical analysis artifact")
 		}
 		if wantPhase < phase.MIR && entry.MIR != nil {
 			t.Fatalf("phase %v produced MIR before mandatory semantics completed", wantPhase)
@@ -1280,7 +1274,7 @@ func TestPhaseReadinessRequiresSyntaxThroughTypingAndTHIRAfterward(t *testing.T)
 	if entry.THIR != typed || !IsModuleReadyForNextPhase(ctx, entry, nil, true) {
 		t.Fatal("typechecked reset did not preserve THIR readiness without AST")
 	}
-	for entry.Phase < phase.Ownership {
+	for entry.Phase < phase.Analyzed {
 		if !advanceModulePhase(ctx, entry, diag) {
 			t.Fatalf("post-typing phase stopped without AST at %v", entry.Phase)
 		}
@@ -1294,7 +1288,7 @@ func TestPhaseReadinessRequiresSyntaxThroughTypingAndTHIRAfterward(t *testing.T)
 	}
 }
 
-func TestPipelineDefiniteInitializationIgnoresTerminatingPredecessor(t *testing.T) {
+func TestPipelineAnalyzedInitializationIgnoresTerminatingPredecessor(t *testing.T) {
 	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, "", `fn choose(cond: bool) -> i32 {
 	let mut value: i32;
 	if cond {
@@ -1340,7 +1334,7 @@ func TestRequireScheduledModulesAtLeastReportsStoppedPhase(t *testing.T) {
 		want   string
 	}{
 		{name: "blocked prerequisite", module: &module.Module{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.Resolved}, want: "resolved phase"},
-		{name: "missing MIR", module: &module.Module{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.Ownership}, want: "ownership phase"},
+		{name: "missing MIR", module: &module.Module{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.Analyzed}, want: "analyzed phase"},
 		{name: "missing backend", module: &module.Module{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.MIR}, want: "MIR phase"},
 	}
 	for _, test := range tests {

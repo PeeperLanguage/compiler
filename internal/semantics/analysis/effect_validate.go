@@ -1,4 +1,4 @@
-package effect
+package analysis
 
 import (
 	"compiler/internal/source"
@@ -13,17 +13,17 @@ import (
 	"compiler/pkg/typednil"
 )
 
-const maxReportedProblems = 10
+const maxEffectValidationProblems = 10
 
-// Validate checks operation identities, expression categories, storage roots,
+// validate checks operation identities, expression categories, storage roots,
 // source locations, call brackets, and membership in the supplied CFG.
 //
 // It deliberately does not re-derive meaning. Whether a read should have been
-// published for some expression is the producer's decision, and re-deciding it
+// derived for some expression is the producer's decision, and re-deciding it
 // here would be a second implementation of the thing being validated. Dispatch
-// contracts check node-kind coverage, not what each case publishes. Required
+// contracts check node-kind coverage, not what each case derives. Required
 // operations and their order are covered by producer tests and source fixtures.
-func (r Result) Validate(graphs *cfg.Module, source *thir.Module) error {
+func (r effectStreams) validate(graphs *cfg.Module, source *thir.Module) error {
 	if len(r) == 0 && graphs == nil {
 		return nil
 	}
@@ -39,14 +39,14 @@ func (r Result) Validate(graphs *cfg.Module, source *thir.Module) error {
 			}
 			sitesByFunction[graph.FunctionID] = graphSites(graph)
 			if _, found := r[graph.FunctionID]; !found {
-				problems = append(problems, fmt.Sprintf("function %s has a control-flow graph but no published effects", graph.FunctionID))
+				problems = append(problems, fmt.Sprintf("function %s has a control-flow graph but no derived effects", graph.FunctionID))
 			}
 		}
 	}
 	for fn, siteOps := range r {
 		known, found := sitesByFunction[fn]
 		if !found {
-			problems = append(problems, fmt.Sprintf("function %s has published effects but no control-flow graph", fn))
+			problems = append(problems, fmt.Sprintf("function %s has derived effects but no control-flow graph", fn))
 			continue
 		}
 		for site, ops := range siteOps {
@@ -63,17 +63,17 @@ func (r Result) Validate(graphs *cfg.Module, source *thir.Module) error {
 	// Map iteration order is unspecified, so an unsorted report would differ
 	// between runs of the same broken artifact.
 	sort.Strings(problems)
-	if len(problems) > maxReportedProblems {
-		return fmt.Errorf("%s (%d more)", strings.Join(problems[:maxReportedProblems], "; "), len(problems)-maxReportedProblems)
+	if len(problems) > maxEffectValidationProblems {
+		return fmt.Errorf("%s (%d more)", strings.Join(problems[:maxEffectValidationProblems], "; "), len(problems)-maxEffectValidationProblems)
 	}
 	return errors.New(strings.Join(problems, "; "))
 }
 
-func validateOps(fn moduleid.FunctionID, site cfg.SiteID, ops []Op, source *thir.Module) []string {
+func validateOps(fn moduleid.FunctionID, site cfg.SiteID, ops []effectOp, source *thir.Module) []string {
 	visitor := &validationVisitor{fn: fn, site: site, source: source}
 	for index, op := range ops {
 		visitor.index = index
-		Visit(op, visitor)
+		visitEffect(op, visitor)
 	}
 	for _, unclosed := range visitor.open {
 		visitor.problems = append(visitor.problems, fmt.Sprintf("function %s site %v leaves call %v open", fn, site, unclosed))
@@ -94,7 +94,7 @@ func (v *validationVisitor) where() string {
 	return fmt.Sprintf("function %s site %v operation %d", v.fn, v.site, v.index)
 }
 
-func (v *validationVisitor) VisitDefine(op Define) {
+func (v *validationVisitor) visitDefine(op effectDefine) {
 	where := v.where()
 	if op.Symbol == nil {
 		v.problems = append(v.problems, where+" is a define with no symbol")
@@ -120,7 +120,7 @@ func (v *validationVisitor) VisitDefine(op Define) {
 	}
 }
 
-func (v *validationVisitor) VisitWrite(op Write) {
+func (v *validationVisitor) visitWrite(op effectWrite) {
 	where := v.where()
 	v.problems = append(v.problems, validatePlace(where, "write", op.Place, v.source)...)
 	v.problems = append(v.problems, validateNode[thir.Expr](where, "write", op.Node, op.Target, v.source)...)
@@ -130,7 +130,7 @@ func (v *validationVisitor) VisitWrite(op Write) {
 	}
 }
 
-func (v *validationVisitor) VisitUse(op Use) {
+func (v *validationVisitor) visitUse(op effectUse) {
 	where := v.where()
 	v.problems = append(v.problems, validatePlace(where, "use", op.Place, v.source)...)
 	v.problems = append(v.problems, validateNode[thir.Expr](where, "use", op.Node, op.Source, v.source)...)
@@ -139,7 +139,7 @@ func (v *validationVisitor) VisitUse(op Use) {
 	}
 }
 
-func (v *validationVisitor) VisitBorrow(op Borrow) {
+func (v *validationVisitor) visitBorrow(op effectBorrow) {
 	where := v.where()
 	v.problems = append(v.problems, validatePlace(where, "borrow", op.Place, v.source)...)
 	v.problems = append(v.problems, validateNode[thir.Expr](where, "borrow", op.Node, op.Source, v.source)...)
@@ -149,7 +149,7 @@ func (v *validationVisitor) VisitBorrow(op Borrow) {
 	}
 }
 
-func (v *validationVisitor) VisitIterate(op Iterate) {
+func (v *validationVisitor) visitIterate(op effectIterate) {
 	where := v.where()
 	v.problems = append(v.problems, validatePlace(where, "iteration", op.Place, v.source)...)
 	v.problems = append(v.problems, validateNode[thir.Expr](where, "iteration", op.Node, op.Source, v.source)...)
@@ -162,7 +162,7 @@ func (v *validationVisitor) VisitIterate(op Iterate) {
 	}
 }
 
-func (v *validationVisitor) VisitDiscard(op Discard) {
+func (v *validationVisitor) visitDiscard(op effectDiscard) {
 	where := v.where()
 	v.problems = append(v.problems, validatePlace(where, "discard", op.Place, v.source)...)
 	v.problems = append(v.problems, validateNode[thir.Expr](where, "discard", op.Node, op.Source, v.source)...)
@@ -171,13 +171,13 @@ func (v *validationVisitor) VisitDiscard(op Discard) {
 	}
 }
 
-func (v *validationVisitor) VisitCallBegin(op CallBegin) {
+func (v *validationVisitor) visitCallBegin(op effectCallBegin) {
 	where := v.where()
 	v.problems = append(v.problems, validateNode[*thir.Call](where, "call start", op.Node, op.Source, v.source)...)
 	v.open = append(v.open, op.Node)
 }
 
-func (v *validationVisitor) VisitCallEnd(op CallEnd) {
+func (v *validationVisitor) visitCallEnd(op effectCallEnd) {
 	where := v.where()
 	if len(v.open) == 0 {
 		v.problems = append(v.problems, fmt.Sprintf("%s ends a call that never started", where))
@@ -192,7 +192,7 @@ func (v *validationVisitor) VisitCallEnd(op CallEnd) {
 // validatePlace enforces that a place names exactly one root. A place with
 // neither names nothing; one with both would let a consumer reach two different
 // answers depending on which field it read.
-func validatePlace(where, kind string, at Place, source *thir.Module) []string {
+func validatePlace(where, kind string, at effectPlace, source *thir.Module) []string {
 	switch {
 	case at.Root == nil && !at.Temporary.IsValid():
 		return []string{fmt.Sprintf("%s is a %s whose place names neither a binding nor a temporary", where, kind)}

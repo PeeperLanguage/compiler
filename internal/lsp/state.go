@@ -356,9 +356,9 @@ func (s *ServerState) seedReusableModules(ctx *project.CompilerContext, dirtyFil
 		// context. Independent workspace components can leave a cached module
 		// without a diagnostic source; retain semantic artifacts but rerun the
 		// project Usage barrier instead of publishing an incomplete warning set.
-		if retainedPhase > phase.Ownership && s.LastCtx != nil {
+		if retainedPhase > phase.Analyzed && s.LastCtx != nil {
 			if _, found := s.LastCtx.ModuleByID(module.ID); !found {
-				retainedPhase = phase.Ownership
+				retainedPhase = phase.Analyzed
 			}
 		}
 		reused := *module
@@ -376,8 +376,8 @@ func (s *ServerState) seedReusableModules(ctx *project.CompilerContext, dirtyFil
 		// Cached artifacts may be ahead of this run's project barrier. Keep their
 		// later diagnostics inactive so failures can retain them for a future run
 		// without publishing them in the current one.
-		ctx.Diagnostics.CopyModuleRange(previousDiagnostics, reused.ID.String(), phase.None, min(retainedPhase, phase.Ownership), true)
-		if retainedPhase > phase.Ownership {
+		ctx.Diagnostics.CopyModuleRange(previousDiagnostics, reused.ID.String(), phase.None, min(retainedPhase, phase.Analyzed), true)
+		if retainedPhase > phase.Analyzed {
 			ctx.Diagnostics.CopyModuleRange(previousDiagnostics, reused.ID.String(), phase.Usage, retainedPhase, false)
 			deferredDiagnostics[reused.ID.String()] = retainedPhase
 		}

@@ -1,26 +1,25 @@
-package definiteinit
+package analysis_test
 
 import (
 	"strings"
 	"testing"
 
 	"compiler/internal/diagnostics"
-	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
+	"compiler/internal/semantics/analysis"
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
-	"compiler/internal/semantics/effect"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/typechecker"
 	"compiler/pkg/peeper"
 )
 
-func analyzeInitializationSource(t *testing.T, source string) (*functionResult, *diagnostics.DiagnosticBag, *module.Module) {
+func analyzeInitializationSource(t *testing.T, source string) *diagnostics.DiagnosticBag {
 	t.Helper()
 	const filePath = "definite_init_test" + peeper.SourceExt
 	diag := diagnostics.NewDiagnosticBag()
@@ -40,26 +39,17 @@ func analyzeInitializationSource(t *testing.T, source string) (*functionResult, 
 	resolver.Resolve(ctx, module)
 	module.THIR = typechecker.Check(ctx, module)
 	module.CFG = cfg.BuildModule(module.THIR)
-	symbol, found := module.ModuleScope.Lookup("choose")
-	if !found || symbol == nil {
-		t.Fatal("choose function symbol missing")
-	}
-	fn, ok := symbol.ASTNode.(*ast.FnDecl)
-	if !ok || fn == nil {
-		t.Fatal("choose function AST missing")
-	}
-	graph := module.CFG.FunctionByID(module.THIR.Function(fn.ID()).Identity)
-	if graph == nil {
-		t.Fatal("choose function CFG missing")
-	}
-	effects := effect.BuildTHIR(module.THIR, module.CFG)
-	module.Effects = effects
-	result := analyzeFunction(graph, effects[graph.FunctionID], diag)
-	return result, diag, module
+	analysis.Run(diag, analysis.Input{
+		Source:      module.THIR,
+		CFG:         module.CFG,
+		Scope:       module.ModuleScope,
+		SymbolIndex: module.SymbolIndex,
+	})
+	return diag
 }
 
 func TestCallIterationDoesNotGuaranteeEntry(t *testing.T) {
-	_, diag, _ := analyzeInitializationSource(t, `struct Cursor {}
+	diag := analyzeInitializationSource(t, `struct Cursor {}
 fn (self: &Cursor) Next() -> ?i32 { return none; }
 fn choose() -> i32 {
 	let cursor = Cursor.{};
@@ -73,7 +63,7 @@ fn choose() -> i32 {
 }
 
 func TestInitializationIgnoresTerminatingBranchAtJoin(t *testing.T) {
-	result, diag, _ := analyzeInitializationSource(t, `fn choose(flag: bool) -> i32 {
+	diag := analyzeInitializationSource(t, `fn choose(flag: bool) -> i32 {
 	let mut value: i32;
 	if flag {
 		value = 7;
@@ -85,13 +75,10 @@ func TestInitializationIgnoresTerminatingBranchAtJoin(t *testing.T) {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
-	if result == nil || len(result.In) == 0 {
-		t.Fatalf("initialization result = %#v, want per-site input states", result)
-	}
 }
 
 func TestInitializationRejectsContinuingUninitializedBranch(t *testing.T) {
-	_, diag, _ := analyzeInitializationSource(t, `fn choose(flag: bool) -> i32 {
+	diag := analyzeInitializationSource(t, `fn choose(flag: bool) -> i32 {
 	let mut value: i32;
 	if flag {
 		value = 7;
@@ -107,7 +94,7 @@ func TestInitializationRejectsContinuingUninitializedBranch(t *testing.T) {
 }
 
 func TestInitializationAcceptsAssignmentOnBothBranches(t *testing.T) {
-	_, diag, _ := analyzeInitializationSource(t, `fn choose(flag: bool) -> i32 {
+	diag := analyzeInitializationSource(t, `fn choose(flag: bool) -> i32 {
 	let mut value: i32;
 	if flag {
 		value = 7;
@@ -122,7 +109,7 @@ func TestInitializationAcceptsAssignmentOnBothBranches(t *testing.T) {
 }
 
 func TestInitializationLoopMayExecuteZeroTimes(t *testing.T) {
-	_, diag, _ := analyzeInitializationSource(t, `fn choose(flag: bool) -> i32 {
+	diag := analyzeInitializationSource(t, `fn choose(flag: bool) -> i32 {
 	let mut value: i32;
 	for flag {
 		value = 7;
@@ -145,7 +132,7 @@ func TestInitializationUsesGuaranteedRangeEntry(t *testing.T) {
 		{name: "runtime range", rangeText: "start..end", wantError: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			_, diag, _ := analyzeInitializationSource(t, `fn choose(start: i32, end: i32) -> i32 {
+			diag := analyzeInitializationSource(t, `fn choose(start: i32, end: i32) -> i32 {
 	let mut value: i32;
 	for item in `+test.rangeText+` {
 		value = item;
@@ -160,7 +147,7 @@ func TestInitializationUsesGuaranteedRangeEntry(t *testing.T) {
 }
 
 func TestInitializationAcceptsDirectAssignment(t *testing.T) {
-	_, diag, _ := analyzeInitializationSource(t, `fn choose(flag: bool) -> i32 {
+	diag := analyzeInitializationSource(t, `fn choose(flag: bool) -> i32 {
 	let mut value: i32;
 	value = 7;
 	return value;
@@ -204,7 +191,7 @@ fn choose() -> i32 {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, diag, _ := analyzeInitializationSource(t, test.source)
+			diag := analyzeInitializationSource(t, test.source)
 			if !hasDiagnosticCode(diag, diagnostics.ErrUninitializedVariable) {
 				t.Fatalf("expected projected write diagnostic:\n%s", diag.EmitAllToString())
 			}
@@ -216,7 +203,7 @@ fn choose() -> i32 {
 }
 
 func TestInitializationAcceptsProjectedWriteAfterWholeAssignment(t *testing.T) {
-	_, diag, _ := analyzeInitializationSource(t, `struct Pair { left: i32, right: i32 }
+	diag := analyzeInitializationSource(t, `struct Pair { left: i32, right: i32 }
 fn choose() -> i32 {
 	let mut pair: Pair;
 	pair = .{ left = 1, right = 2 };
@@ -229,7 +216,7 @@ fn choose() -> i32 {
 }
 
 func TestInitializationDefinesMatchPatternBindingOnCaseEdge(t *testing.T) {
-	result, diag, module := analyzeInitializationSource(t, `enum Result {
+	diag := analyzeInitializationSource(t, `enum Result {
 	Ok: { value: i32 },
 	Pending,
 }
@@ -244,32 +231,12 @@ fn choose(result: Result) -> i32 {
 		}
 	}
 }`)
+	if hasDiagnosticCode(diag, diagnostics.ErrUninitializedVariable) {
+		t.Fatalf("unexpected uninitialized diagnostic:\n%s", diag.EmitAllToString())
+	}
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
-	fn := module.AST.Stmts[1].(*ast.FnDecl)
-	match := fn.Body.Stmts[0].(*ast.MatchStmt)
-	binding := module.SymbolIndex.Symbol(match.Arms[0].Fields[0].Binding)
-	returnID := match.Arms[0].Body.Stmts[0].ID()
-	for _, block := range module.CFG.FunctionByID(module.THIR.Function(fn.ID()).Identity).Blocks {
-		for _, cfgSite := range block.Sites {
-			if cfgSite.NodeID != returnID {
-				continue
-			}
-			// The initialized define and read share this site. Input therefore
-			// excludes the binding; transfer applies the define before the read.
-			in := result.In[cfgSite.ID]
-			if _, initialized := in[binding.ID]; initialized {
-				t.Fatalf("pattern binding unexpectedly initialized before arm return: state=%#v", in)
-			}
-			out := transfer(module.Effects[module.THIR.Function(fn.ID()).Identity][cfgSite.ID], in)
-			if _, initialized := out[binding.ID]; !initialized {
-				t.Fatalf("pattern binding absent after arm return transfer: state=%#v", out)
-			}
-			return
-		}
-	}
-	t.Fatal("match arm return site missing")
 }
 
 func hasDiagnosticCode(diag *diagnostics.DiagnosticBag, code string) bool {
@@ -286,7 +253,7 @@ func hasDiagnosticCode(diag *diagnostics.DiagnosticBag, code string) bool {
 // nothing checked the subject of a match. Publishing the subject as an ordinary
 // read closed the gap, and this analysis learned nothing about matches to get it.
 func TestInitializationChecksMatchSubject(t *testing.T) {
-	_, diag, _ := analyzeInitializationSource(t, `enum Outcome {
+	diag := analyzeInitializationSource(t, `enum Outcome {
 	Ok: { value: i32 },
 	Pending,
 }
@@ -318,7 +285,7 @@ fn choose(flag: bool) -> i32 {
 // branch condition, and a for statement carries neither. Ownership always read
 // it, so publishing it once closed the gap for initialization too.
 func TestInitializationChecksLoopIterable(t *testing.T) {
-	_, diag, _ := analyzeInitializationSource(t, `fn choose(flag: bool) -> i32 {
+	diag := analyzeInitializationSource(t, `fn choose(flag: bool) -> i32 {
 	let mut limit: i32;
 	if flag {
 		limit = 3;

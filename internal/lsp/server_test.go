@@ -1494,7 +1494,7 @@ func TestHoverShowsFlowRefinedOptionalUseType(t *testing.T) {
 	}
 }
 
-func TestLSPRefreshesOptionalFlowDiagnosticsAfterEdit(t *testing.T) {
+func TestRetainedAnalysisDiagnosticsRefreshAfterEdit(t *testing.T) {
 	tests := []struct {
 		name    string
 		code    string

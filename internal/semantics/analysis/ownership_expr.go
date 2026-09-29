@@ -1,4 +1,4 @@
-package ownership
+package analysis
 
 import (
 	"compiler/internal/diagnostics"
@@ -54,7 +54,7 @@ func (a *analyzer) partialVariantPayloadMove(id source.NodeID) bool {
 	return ok && len(payload.Cases) > 0 && !payload.IsDirect
 }
 
-func (a *analyzer) updatePointerSymbol(sym *symbols.Symbol, scope *symbols.Scope, value thir.Expr, st state) {
+func (a *analyzer) updatePointerSymbol(sym *symbols.Symbol, scope *symbols.Scope, value thir.Expr, st ownershipState) {
 	if sym == nil || st.pointers == nil {
 		return
 	}
@@ -74,7 +74,7 @@ func (a *analyzer) updatePointerSymbol(sym *symbols.Symbol, scope *symbols.Scope
 	delete(st.pointers, sym)
 }
 
-func (a *analyzer) checkPointerEscape(scope *symbols.Scope, expr thir.Expr, st state) {
+func (a *analyzer) checkPointerEscape(scope *symbols.Scope, expr thir.Expr, st ownershipState) {
 	if expr == nil {
 		return
 	}
@@ -92,7 +92,7 @@ func (a *analyzer) checkPointerEscape(scope *symbols.Scope, expr thir.Expr, st s
 	}
 }
 
-func (a *analyzer) pointerOrigin(scope *symbols.Scope, expr thir.Expr, st state) *symbols.Symbol {
+func (a *analyzer) pointerOrigin(scope *symbols.Scope, expr thir.Expr, st ownershipState) *symbols.Symbol {
 	switch e := expr.(type) {
 	case *thir.Address:
 		if e.Mode != thir.AddressRaw {
