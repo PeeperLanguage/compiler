@@ -26,13 +26,13 @@ fn (_: &ConsumerImpl) consume(value: &Summer) -> i32 {
 }
 
 fn main() -> i32 {
-    let first = alloc(Point.{ x = 0, y = 0 });
+    let mut first = alloc(Point.{ x = 0, y = 0 });
     first.x = 15;
     first.y = 25;
     let first_summer: *Summer = first;
     let mut holder: SummerHolder = .{ value = first_summer };
 
-    let replacement = alloc(Point.{ x = 0, y = 0 });
+    let mut replacement = alloc(Point.{ x = 0, y = 0 });
     replacement.x = 15;
     replacement.y = 25;
     let replacement_summer: *Summer = replacement;

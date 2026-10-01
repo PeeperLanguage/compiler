@@ -56,14 +56,14 @@ func TestPlaceAddressabilityUsesResolvedBindingBeforeScope(t *testing.T) {
 	}
 	resolvedValue := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolConst, "value"), "value", symbols.SymbolConst, nil, nil)
 	projection := &ast.SelectorExpr{Expr: &ast.Ident{Name: "value"}, Name: &ast.Ident{Name: "field"}}
-	resolve := func(*ast.Ident) (Binding, bool) {
+	resolve := func(ast.Expr) (Binding, bool) {
 		return Binding{Symbol: resolvedValue}, true
 	}
 	if !IsAddressable(scope, projection, nil, resolve) {
 		t.Fatal("Addressable() rejected resolved binding")
 	}
 
-	resolve = func(*ast.Ident) (Binding, bool) {
+	resolve = func(ast.Expr) (Binding, bool) {
 		return Binding{Symbol: symbols.New(symbols.ProjectedSymbolID(symbols.SymbolFunc, "value"), "value", symbols.SymbolFunc, nil, nil)}, true
 	}
 	if IsAddressable(scope, projection, nil, resolve) {
@@ -151,7 +151,7 @@ func TestPlaceLocalRootPreservesBindingLocalAndPointerCutoff(t *testing.T) {
 
 	resolved := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolConst, "value"), "value", symbols.SymbolConst, nil, nil)
 	for _, localBinding := range []bool{false, true} {
-		root, ok := LocalRoot(scope, moduleScope, base, nil, func(*ast.Ident) (Binding, bool) {
+		root, ok := LocalRoot(scope, moduleScope, base, nil, func(ast.Expr) (Binding, bool) {
 			return Binding{Symbol: resolved, IsLocal: localBinding}, true
 		})
 		if localBinding {
@@ -174,7 +174,7 @@ func TestResolvePreferResolvedBindingOverShadowingScope(t *testing.T) {
 
 	ident := &ast.Ident{Name: "value"}
 	resolved := Resolve(scope, ident, ResolveOptions{
-		ResolveBinding: func(*ast.Ident) (Binding, bool) {
+		ResolveBinding: func(ast.Expr) (Binding, bool) {
 			return Binding{Symbol: declarationValue}, true
 		},
 	})

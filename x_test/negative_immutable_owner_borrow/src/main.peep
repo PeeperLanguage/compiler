@@ -1,0 +1,9 @@
+struct Inner { value: i32 }
+struct Outer { child: *Inner }
+
+fn Accept(_: &mut i32) {}
+
+fn main() {
+    let outer = Outer.{ child = alloc(Inner.{ value = 0 }) };
+    Accept(&mut outer.child.value);
+}

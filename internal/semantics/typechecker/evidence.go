@@ -517,11 +517,18 @@ func (r *evidence) CloneReusableExpressionEvidenceFrom(dstID source.NodeID, src 
 	}
 }
 
-func (c *checker) expandedDefaultBinding(ident *ast.Ident) (place.Binding, bool) {
-	if c == nil || c.module == nil || c.module.SymbolIndex == nil || c.evidence == nil || ident == nil {
+func (c *checker) expandedDefaultBinding(expr ast.Expr) (place.Binding, bool) {
+	if c == nil || c.module == nil || c.module.SymbolIndex == nil || expr == nil {
 		return place.Binding{}, false
 	}
-	if !c.evidence.ExpandedDefaultBinding(ident.ID()) {
+	if path, ok := expr.(*ast.ScopeResolution); ok {
+		if sym := c.module.SymbolIndex.Symbol(path); sym != nil {
+			return place.Binding{Symbol: sym}, true
+		}
+		return place.Binding{}, false
+	}
+	ident, ok := expr.(*ast.Ident)
+	if !ok || c.evidence == nil || !c.evidence.ExpandedDefaultBinding(ident.ID()) {
 		return place.Binding{}, false
 	}
 	return place.Binding{Symbol: c.module.SymbolIndex.Symbol(ident)}, true

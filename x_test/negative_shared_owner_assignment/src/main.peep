@@ -1,0 +1,8 @@
+struct Inner { value: i32 }
+struct Outer { child: *Inner }
+
+fn Corrupt(outer: &Outer) {
+    outer.child.value = 1;
+}
+
+fn main() {}

@@ -36,6 +36,12 @@ func validateExpressionEvidence(evidence expressionEvidence, source *thir.Module
 			problems = append(problems, fmt.Sprintf("node %v has a nil type refinement", id))
 		}
 	}
+	for id, conversion := range evidence.conversions {
+		problems = append(problems, validateExpressionNode(source, id, "implicit conversion")...)
+		if conversion.Compatibility != typeinfo.Compatible || conversion.Kind == typeinfo.ConversionIdentity || conversion.Kind == typeinfo.ConversionNone {
+			problems = append(problems, fmt.Sprintf("node %v has non-materializing implicit conversion %v", id, conversion.Kind))
+		}
+	}
 	for id, payload := range evidence.payloads {
 		problems = append(problems, validateExpressionNode(source, id, "payload refinement")...)
 		if len(payload.Cases) == 0 {

@@ -71,6 +71,9 @@ func (l *lowerer) lower(expr thir.Expr, expected typeinfo.Type, applyConversions
 	origin := expr.SourceInfo()
 	resolved := l.effectiveType(expr)
 	if l.ctx.Analysis != nil {
+		// Case tests are control-flow facts, not ordinary value expressions.
+		// Lower the published subject once, then materialize membership as a
+		// boolean MIR value for the CFG branch.
 		if test, ok := l.ctx.Analysis.CaseTest(origin.NodeID); ok {
 			subject, _ := l.ctx.Source.Node(test.SubjectID).(thir.Expr)
 			membership := &ir.VariantIs{Value: l.lower(subject, nil, true), Case: test.Case, Type: l.typeID(&typeinfo.BoolType{})}
@@ -79,13 +82,21 @@ func (l *lowerer) lower(expr thir.Expr, expected typeinfo.Type, applyConversions
 			}
 			return ir.WithOrigin(&ir.Unary{Op: "!", Arg: membership, Type: membership.Type}, origin)
 		}
-		if payload, _ := l.ctx.Analysis.Payload(origin.NodeID); len(payload.Cases) > 0 && expr.ExprPlace() != nil {
-			return ir.WithOrigin(&ir.Load{Place: l.place(expr)}, origin)
-		}
 	}
 	if applyConversions {
+		// Apply both base-typechecker conversions and late flow conversions
+		// before taking a payload place-load. Returning the load earlier would
+		// bypass a conversion published after enum-case refinement.
 		if converted := l.conversion(expr, expected, resolved); converted != nil {
 			return ir.WithOrigin(converted, origin)
+		}
+	}
+	if l.ctx.Analysis != nil {
+		// Refined payload fields retain source-place identity. Once conversions
+		// have been handled, load that physical place instead of re-lowering the
+		// source syntax and rediscovering its projection.
+		if payload, _ := l.ctx.Analysis.Payload(origin.NodeID); len(payload.Cases) > 0 && expr.ExprPlace() != nil {
+			return ir.WithOrigin(&ir.Load{Place: l.place(expr)}, origin)
 		}
 	}
 	previous := l.expected
@@ -100,6 +111,11 @@ func (l *lowerer) conversion(expr thir.Expr, expected, resolved typeinfo.Type) i
 		return nil
 	}
 	conversion := expr.Conversion()
+	if conversion == nil && l.ctx.Analysis != nil {
+		if late, ok := l.ctx.Analysis.ImplicitConversion(expr.SourceInfo().NodeID); ok {
+			conversion = &late
+		}
+	}
 	if conversion != nil && conversion.Compatibility == typeinfo.Compatible && conversion.Kind == typeinfo.ConversionOptional {
 		optional, ok := typeinfo.Underlying(expected).(*typeinfo.OptionalType)
 		if ok && optional != nil && optional.Inner != nil && !isNone(expr) && typeinfo.IsSameType(optional.Inner, resolved) {

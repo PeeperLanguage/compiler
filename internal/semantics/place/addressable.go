@@ -19,13 +19,12 @@ type Binding struct {
 	IsLocal bool
 }
 
-// BindingResolver supplies symbols for idents that were injected
-// into the caller AST (e.g. cloned default expressions). When the
-// resolver reports a match, scope lookup must be skipped entirely.
-// Expanded defaults use Local=false to prevent LocalRoot from
-// misclassifying declaration-module storage as a caller pointer-
-// escape source.
-type BindingResolver func(*ast.Ident) (Binding, bool)
+// BindingResolver supplies symbols for expressions that were resolved outside
+// the current scope tree (e.g. cloned defaults or qualified imports). When the
+// resolver reports a match, scope lookup must be skipped entirely. Expanded
+// defaults and qualified imports use Local=false to prevent LocalRoot from
+// misclassifying non-local storage as a caller pointer-escape source.
+type BindingResolver func(ast.Expr) (Binding, bool)
 
 // Projection describes one syntactic projection from a base expression.
 //
@@ -103,16 +102,9 @@ func IsAddressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFunc, r
 	if scope == nil || expr == nil {
 		return false
 	}
-	if e, ok := expr.(*ast.Ident); ok {
-		if e == nil {
-			return false
-		}
-		if resolve != nil {
-			if binding, found := resolve(e); found {
-				return addressableSymbol(binding.Symbol)
-			}
-		}
-		sym, found := scope.Lookup(e.Name)
+	switch expr.(type) {
+	case *ast.Ident, *ast.ScopeResolution:
+		sym, found := resolveSymbol(scope, expr, resolve)
 		return found && addressableSymbol(sym)
 	}
 	projection, ok := Project(expr)
@@ -124,7 +116,7 @@ func IsAddressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFunc, r
 		if _, ok := typeinfo.PointerTarget(typeinfo.Underlying(exprType(base))); ok {
 			return true
 		}
-		if _, _, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(exprType(base))); ok {
+		if _, _, ok := typeinfo.ReferenceValueTarget(exprType(base)); ok {
 			return true
 		}
 	}
@@ -135,20 +127,9 @@ func MutableAddressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFu
 	if scope == nil || expr == nil {
 		return false, nil, nil
 	}
-	if e, ok := expr.(*ast.Ident); ok {
-		if e == nil {
-			return false, nil, nil
-		}
-		if resolve != nil {
-			if binding, found := resolve(e); found {
-				sym := binding.Symbol
-				if sym != nil && (sym.Kind == symbols.SymbolVar || sym.Kind == symbols.SymbolParam) && sym.IsMutable() {
-					return true, nil, sym
-				}
-				return false, nil, nil
-			}
-		}
-		sym, found := scope.Lookup(e.Name)
+	switch expr.(type) {
+	case *ast.Ident, *ast.ScopeResolution:
+		sym, found := resolveSymbol(scope, expr, resolve)
 		if found && sym != nil && (sym.Kind == symbols.SymbolVar || sym.Kind == symbols.SymbolParam) && sym.IsMutable() {
 			return true, nil, sym
 		}
@@ -164,22 +145,26 @@ func MutableAddressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFu
 		return false, nil, nil
 	}
 	base := projection.Base
+	isMutable, sharedReference, mutableBinding = MutableAddressable(scope, base, exprType, resolve)
 	if exprType != nil {
 		baseType := typeinfo.Underlying(exprType(base))
 		if _, ok := baseType.(*typeinfo.RawPtrType); ok {
 			return true, nil, nil
 		}
-		if _, ok := typeinfo.PointerTarget(baseType); ok {
-			return true, nil, nil
+		// Ordinary projections, including owning-pointer dereferences, preserve
+		// access-path mutability. Only references supply a new capability, and
+		// cannot restore write access removed by an enclosing shared reference.
+		if sharedReference != nil {
+			return false, sharedReference, nil
 		}
-		if target, isMutable, ok := typeinfo.ReferenceTarget(baseType); ok {
+		if target, isMutable, ok := typeinfo.ReferenceValueTarget(baseType); ok {
 			if isMutable {
 				return true, nil, nil
 			}
 			return false, target, nil
 		}
 	}
-	return MutableAddressable(scope, base, exprType, resolve)
+	return isMutable, sharedReference, mutableBinding
 }
 
 func LocalRoot(scope, moduleScope *symbols.Scope, expr ast.Expr, exprType ExprTypeFunc, resolve BindingResolver) (*symbols.Symbol, bool) {

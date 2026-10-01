@@ -1,6 +1,8 @@
 package analysis
 
 import (
+	"fmt"
+
 	"compiler/internal/diagnostics"
 	graphcore "compiler/internal/graph"
 	"compiler/internal/ir"
@@ -290,12 +292,36 @@ func (a *flowAnalyzer) AnalyzeExprStmt(statement *thir.ExprStmt) {
 }
 
 func (a *flowAnalyzer) AnalyzeAssign(statement *thir.Assign) {
-	a.analyze(statement.Target, nil, flowCarrier)
+	// Resolve target type using current variant-flow facts.
+	targetType := a.analyze(statement.Target, nil, flowCarrier)
+	// Preserve state before the write for origin and ownership updates.
 	sourceState := copyFlowState(*a.state)
+	// Resolve the destination storage place.
 	resolution := a.resolve(statement.Target, *a.state)
+	// Invalidate refinements invalidated by writing to the destination.
 	invalidateVariantOrigins(a.state, resolution.StorageOrigins)
-	a.analyze(statement.Value, statement.Target.ExprType(), flowDefault)
-	a.updateOriginPlace(resolution.StorageOrigins, statement.Target.ExprType(), statement.Value, sourceState, a.state)
+	// Typecheck the RHS against the flow-resolved target type.
+	valueType := a.analyze(statement.Value, targetType, flowDefault)
+	// Complete assignments whose target type was unknown during base typing.
+	if typeinfo.IsUnknown(statement.Target.ExprType()) {
+		id := statement.Value.SourceInfo().NodeID
+		// Remove stale conversion evidence before recomputing this path.
+		delete(a.result.expressions.conversions, id)
+		// Validate deferred compatibility only when both types are known.
+		if targetType != nil && valueType != nil && !typeinfo.IsInvalidOrUnknown(targetType) && !typeinfo.IsInvalidOrUnknown(valueType) {
+			conversion := typeinfo.CheckCompatibility(targetType, valueType)
+			if conversion.Compatibility != typeinfo.Compatible {
+				a.diagnostics.AddError(diagnostics.ErrTypeMismatch,
+					fmt.Sprintf("cannot assign %s to %s", typeinfo.TypeText(valueType), typeinfo.TypeText(targetType)),
+					statement.Value.SourceInfo().Location, "")
+			} else if conversion.Kind != typeinfo.ConversionIdentity {
+				// Publish late conversion evidence because THIR is already immutable.
+				a.result.expressions.conversions[id] = conversion
+			}
+		}
+	}
+	// Publish the destination's refined type and post-write origin state.
+	a.updateOriginPlace(resolution.StorageOrigins, targetType, statement.Value, sourceState, a.state)
 }
 
 func (a *flowAnalyzer) AnalyzeReturn(statement *thir.Return) {

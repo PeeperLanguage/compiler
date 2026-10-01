@@ -67,6 +67,7 @@ type AggregateSlot struct {
 
 type expressionEvidence struct {
 	types         map[source.NodeID]typeinfo.Type
+	conversions   map[source.NodeID]typeinfo.Conversion
 	payloads      map[source.NodeID]PayloadAccess
 	caseTests     map[source.NodeID]CaseTest
 	variantFields map[source.NodeID]VariantFieldAccess
@@ -84,6 +85,7 @@ type Module struct {
 func newModule() *Module {
 	return &Module{expressions: expressionEvidence{
 		types:         make(map[source.NodeID]typeinfo.Type),
+		conversions:   make(map[source.NodeID]typeinfo.Conversion),
 		payloads:      make(map[source.NodeID]PayloadAccess),
 		caseTests:     make(map[source.NodeID]CaseTest),
 		variantFields: make(map[source.NodeID]VariantFieldAccess),
@@ -103,6 +105,16 @@ func (r *Module) ExprType(id source.NodeID) typeinfo.Type {
 		return nil
 	}
 	return r.expressions.types[id]
+}
+
+// ImplicitConversion supplies conversions whose destination was unknown until
+// flow resolved an enum payload field. Base conversions remain owned by THIR.
+func (r *Module) ImplicitConversion(id source.NodeID) (typeinfo.Conversion, bool) {
+	if r == nil || !id.IsValid() {
+		return typeinfo.Conversion{}, false
+	}
+	conversion, ok := r.expressions.conversions[id]
+	return conversion, ok
 }
 
 func (r *Module) recordPayload(id source.NodeID, payload PayloadAccess) {

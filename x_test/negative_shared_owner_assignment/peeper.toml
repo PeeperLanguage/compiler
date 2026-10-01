@@ -1,0 +1,7 @@
+name = "negative_shared_owner_assignment"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["cannot assign through immutable reference"]

@@ -155,16 +155,19 @@ func resolveStoredValueOrigins(typ typeinfo.Type, resolved Resolution, opts Reso
 	return resolved
 }
 
-func resolveSymbol(scope *symbols.Scope, ident *ast.Ident, resolve BindingResolver) (*symbols.Symbol, bool) {
-	if ident == nil {
+func resolveSymbol(scope *symbols.Scope, expr ast.Expr, resolve BindingResolver) (*symbols.Symbol, bool) {
+	if expr == nil {
 		return nil, false
 	}
 	if resolve != nil {
-		if binding, found := resolve(ident); found {
+		if binding, found := resolve(expr); found {
 			return binding.Symbol, binding.Symbol != nil
 		}
 	}
-	return scope.Lookup(ident.Name)
+	if ident, ok := expr.(*ast.Ident); ok && ident != nil {
+		return scope.Lookup(ident.Name)
+	}
+	return nil, false
 }
 
 func CloneOrigins(origins []Origin) []Origin {

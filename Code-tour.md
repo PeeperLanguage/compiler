@@ -21,7 +21,7 @@ flowchart LR
     AST --> SEM[semantic analysis]
     SEM --> THIR[THIR]
     THIR --> CFG[control-flow graph]
-    CFG --> ANA[flow · effects · ownership]
+    CFG --> ANA[flow facts · effects · ownership]
     ANA --> MIR[MIR]
     MIR --> LL["LLVM IR text"]
     LL --> CLANG["clang"]
@@ -44,7 +44,7 @@ invoked as an external tool. Peeper does not link anything by hand.
 | `internal/pipeline` | Module loading and the phase ladder that drives everything |
 | `internal/project` | `Module`, `CompilerContext` — where every phase artifact is stored |
 | `internal/frontend` | `token`, `lexer`, `parser`, `ast` |
-| `internal/semantics` | Collector, binder, resolver, const eval, typechecker, effects, definite init, ownership, usage, plus the artifact packages |
+| `internal/semantics` | Collector, binder, resolver, const eval, typechecker, flow facts, effects, definite init, ownership, usage, plus the artifact packages |
 | `internal/ir` | `cfg`, `hir`, `mir`, and the shared `ir` node/type model |
 | `internal/backend/llvm` | MIR → LLVM IR text |
 | `internal/toolchain` | Finds `clang` and the sysroot; builds its command lines |
@@ -158,8 +158,8 @@ scheduler enforces that by advancing everyone one rung at a time.
 | `Resolved` | every identifier → symbol | `SymbolIndex` occurrence lookup |
 | `Typechecked` | types, typing decisions, finalized constants, typed source IR | `Typechecking`, `Constants`, `THIR` |
 | `CFG` | blocks, sites, edges | `CFG` |
-| `FlowTyped` | per-use narrowing | `Flow` |
-| `Effects` | ordered semantic effects | `Effects` |
+| `FlowTyped` | path-sensitive narrowing | `Analysis` |
+| `Effects` | ordered evaluation/storage events | transient during `Analysis.Run` |
 | `DefiniteInit` | *diagnostics only* | — |
 | `Ownership` | drop plan | `Ownership` |
 | `Usage` | *warnings only* | — |
@@ -328,7 +328,7 @@ themselves, re-deriving what every construct did to a binding. Two walks that ha
 One producer now translates each CFG site into ordered operations:
 
 ```go
-// internal/semantics/effect/model.go (simplified)
+// internal/semantics/analysis/effect_ops.go (simplified)
 type Op interface{ effectOp() }   // sealed set
 
 type Place struct {
@@ -349,7 +349,7 @@ type CallEnd   struct{ Node source.NodeID }
 The producer is the only code that reads syntax to decide meaning:
 
 ```go
-// internal/semantics/effect/build.go (simplified)
+// internal/semantics/analysis/effects.go (simplified)
 func (b *builder) value(site cfg.SiteID, expr ast.Expr, kind typeinfo.UseKind) {
     switch node := expr.(type) {
     case *ast.Ident:
@@ -423,7 +423,7 @@ It contains **no AST switch at all**; source identity comes from `source.NodeID`
 **Ownership** tracks moves, loans and liveness, then writes the drop plan:
 
 ```go
-// internal/semantics/ownership/effects.go (simplified)
+// internal/semantics/analysis/effects.go (simplified)
 for _, op := range a.effects[site.ID] {
     switch op := op.(type) {
     case effect.CallBegin:

@@ -491,15 +491,25 @@ func TestUnusedMutableBindingDoesNotAlsoWarnAsUnmodified(t *testing.T) {
 	}
 }
 
-func TestPointeeMutationDoesNotCountAsBindingMutation(t *testing.T) {
-	src := `struct Box { value: i32 }
+func TestPointeeMutationBindingRequirement(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		init string
+		warn bool
+	}{
+		{name: "owner requires mutable binding", init: "let mut box = alloc(Box.{ value = 1 });"},
+		{name: "reference supplies mutable access", init: "let mut value = Box.{ value = 1 }; let mut box = &mut value;", warn: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			diag := checkUsageSource(t, `struct Box { value: i32 }
 fn main() -> i32 {
-	let mut box = alloc(Box.{ value = 1 });
+`+test.init+`
 	box.value = 2;
 	return box.value;
-}`
-	diag := checkUsageSource(t, src, false)
-	if diag.HasErrors() || !hasCode(diag, diagnostics.WarnUnmodifiedMutable) {
-		t.Fatalf("expected pointer binding W0013 despite pointee mutation, got:\n%s", diag.EmitAllToString())
+}`, false)
+			if diag.HasErrors() || hasCode(diag, diagnostics.WarnUnmodifiedMutable) != test.warn {
+				t.Fatalf("expected W0013 = %v, got:\n%s", test.warn, diag.EmitAllToString())
+			}
+		})
 	}
 }

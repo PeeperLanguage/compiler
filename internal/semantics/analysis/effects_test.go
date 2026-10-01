@@ -359,7 +359,7 @@ func TestBuildPublishesBranchConditionAtTerminatorSite(t *testing.T) {
 // the arm block's first site rather than on the case edge, which is equivalent
 // because CFG construction gives every arm a fresh block reached only by its
 // own case edge.
-func TestBuildPublishesArmBindingBeforeArmBodyEffects(t *testing.T) {
+func TestBuildPublishesArmBindingBeforeArmBodyEvaluationEvents(t *testing.T) {
 	result, module := buildEffectsForTest(t, `enum Result {
 	Ok: { value: i32 },
 	Pending,
