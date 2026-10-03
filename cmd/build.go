@@ -84,35 +84,9 @@ func buildExecutable(ctx *project.CompilerContext, entry *module.Module, outputP
 		if module == nil {
 			continue
 		}
-		ir := strings.TrimSpace(module.LLVMIR)
-		if ir == "" {
-			return fmt.Errorf("empty LLVM IR for module %s", module.ID.ImportPath)
-		}
-		cachePath := objectCachePath(ctx, profile, ir)
-		if cachePath != "" {
-			if _, err := os.Stat(cachePath); err == nil {
-				objectPaths = append(objectPaths, cachePath)
-				continue
-			} else if !os.IsNotExist(err) {
-				return fmt.Errorf("inspect cached object for %s: %w", module.ID.ImportPath, err)
-			}
-		}
-		llPath := filepath.Join(artifactDir, fmt.Sprintf("mod_%d.ll", i))
-		if err := os.WriteFile(llPath, []byte(ir), 0o644); err != nil {
-			return fmt.Errorf("write llvm ir: %w", err)
-		}
-		objectPath := filepath.Join(artifactDir, fmt.Sprintf("mod_%d.o", i))
-		if err := runCompilerTool(profile.ClangPath, profile.ObjectArgs(llPath, objectPath, ctx.Config.IsDebugBuild), "compile LLVM module "+module.ID.ImportPath); err != nil {
+		objectPath, err := compileObject(ctx, profile, module, filepath.Join(artifactDir, fmt.Sprintf("mod_%d", i)))
+		if err != nil {
 			return err
-		}
-		if cachePath != "" {
-			if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
-				return fmt.Errorf("create object cache directory: %w", err)
-			}
-			if err := os.Rename(objectPath, cachePath); err != nil {
-				return fmt.Errorf("publish cached object: %w", err)
-			}
-			objectPath = cachePath
 		}
 		objectPaths = append(objectPaths, objectPath)
 	}
@@ -142,6 +116,55 @@ func buildExecutable(ctx *project.CompilerContext, entry *module.Module, outputP
 		return err
 	}
 	return replacePath(stagedPath, outputPath)
+}
+
+// compileObject owns one module's cache staging lifetime, ending before linking.
+func compileObject(ctx *project.CompilerContext, profile toolchain.Profile, module *module.Module, objectBase string) (string, error) {
+	ir := strings.TrimSpace(module.LLVMIR)
+	if ir == "" {
+		return "", fmt.Errorf("empty LLVM IR for module %s", module.ID.ImportPath)
+	}
+	cachePath := objectCachePath(ctx, profile, ir)
+	if cachePath != "" {
+		if _, err := os.Stat(cachePath); err == nil {
+			return cachePath, nil
+		} else if !os.IsNotExist(err) {
+			return "", fmt.Errorf("inspect cached object for %s: %w", module.ID.ImportPath, err)
+		}
+	}
+	llPath := objectBase + ".ll"
+	if err := os.WriteFile(llPath, []byte(ir), 0o644); err != nil {
+		return "", fmt.Errorf("write llvm ir: %w", err)
+	}
+	objectPath := objectBase + ".o"
+	if cachePath != "" {
+		cacheDir := filepath.Dir(cachePath)
+		if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+			return "", fmt.Errorf("create object cache directory: %w", err)
+		}
+		// Clang must finish on the destination filesystem before publication.
+		stageDir, err := os.MkdirTemp(cacheDir, "."+filepath.Base(cachePath)+"-stage-*")
+		if err != nil {
+			return "", fmt.Errorf("stage cached object for %s: %w", module.ID.ImportPath, err)
+		}
+		defer os.RemoveAll(stageDir)
+		objectPath = filepath.Join(stageDir, filepath.Base(cachePath))
+	}
+	if err := runCompilerTool(profile.ClangPath, profile.ObjectArgs(llPath, objectPath, ctx.Config.IsDebugBuild), "compile LLVM module "+module.ID.ImportPath); err != nil {
+		return "", err
+	}
+	if cachePath != "" {
+		// Never move a published object aside: another linker may be opening it.
+		if err := os.Rename(objectPath, cachePath); err != nil {
+			// A competing build may have won this key. Reuse its complete object
+			// when replacement is blocked (e.g. an open file on Windows).
+			if info, statErr := os.Stat(cachePath); statErr != nil || !info.Mode().IsRegular() {
+				return "", fmt.Errorf("publish cached object: %w", err)
+			}
+		}
+		return cachePath, nil
+	}
+	return objectPath, nil
 }
 
 func objectCachePath(ctx *project.CompilerContext, profile toolchain.Profile, ir string) string {
