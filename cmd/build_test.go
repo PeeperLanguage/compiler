@@ -245,6 +245,39 @@ func TestCompileObjectLifecycle(t *testing.T) {
 	}
 }
 
+func TestCompileObjectRejectsPreexistingDirectory(t *testing.T) {
+	ctx, profile, mod, base := objectCompileFixture(t, t.TempDir())
+	cachePath := objectCachePath(ctx, profile, strings.TrimSpace(mod.LLVMIR))
+	// Unlike directory-collision, this entry exists before the initial lookup.
+	if err := os.MkdirAll(cachePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cachePath, "keep"), []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	objectPath, err := compileObject(ctx, profile, mod, base)
+	if err == nil || objectPath != "" {
+		t.Fatalf("compileObject() = %q, %v; want empty path and invalid-cache error", objectPath, err)
+	}
+	for _, text := range []string{"inspect cached object for " + mod.ID.ImportPath, cachePath, "not a regular file"} {
+		if !strings.Contains(err.Error(), text) {
+			t.Errorf("cache error = %v, want %q", err, text)
+		}
+	}
+	if data, err := os.ReadFile(filepath.Join(cachePath, "keep")); err != nil || string(data) != "keep" {
+		t.Fatalf("cache inspection damaged destination: %q, %v", data, err)
+	}
+	entries, err := os.ReadDir(filepath.Dir(cachePath))
+	if err != nil || len(entries) != 1 || entries[0].Name() != filepath.Base(cachePath) || !entries[0].IsDir() {
+		t.Fatalf("cache inspection changed cache entries: %v, %v", entries, err)
+	}
+	entries, err = os.ReadDir(filepath.Dir(base))
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("cache inspection wrote compiler artifacts: %v, %v", entries, err)
+	}
+}
+
 func TestCompileObjectConcurrentReaders(t *testing.T) {
 	ctx, profile, mod, base := objectCompileFixture(t, t.TempDir())
 	t.Setenv("PEEPER_TEST_OBJECT_MODE", "wait")

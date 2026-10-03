@@ -126,7 +126,10 @@ func compileObject(ctx *project.CompilerContext, profile toolchain.Profile, modu
 	}
 	cachePath := objectCachePath(ctx, profile, ir)
 	if cachePath != "" {
-		if _, err := os.Stat(cachePath); err == nil {
+		if info, err := os.Stat(cachePath); err == nil {
+			if !info.Mode().IsRegular() {
+				return "", fmt.Errorf("inspect cached object for %s: %s is not a regular file", module.ID.ImportPath, cachePath)
+			}
 			return cachePath, nil
 		} else if !os.IsNotExist(err) {
 			return "", fmt.Errorf("inspect cached object for %s: %w", module.ID.ImportPath, err)

@@ -77,6 +77,8 @@ func TestManagedObjectCacheFixture(t *testing.T) {
 	// Installed profiles require the canonical musl triple, but this cache-only
 	// fixture uses system Clang/libc. Select its host ABI so output does not depend
 	// on a musl loader being installed on the runner. The final --target wins.
+	// This tests real compilation, cross-filesystem caching, and execution with
+	// the system ABI; it does not validate the managed musl ABI/toolchain.
 	driver := "#!/bin/sh\nexec '" + strings.ReplaceAll(clang, "'", "'\"'\"'") + "' \"$@\" --target=" + systemTriple + "\n"
 	for _, tool := range []string{"clang", filepath.Join("link", "clang")} {
 		if err := os.WriteFile(filepath.Join(profileDir, tool), []byte(driver), 0o755); err != nil {
@@ -126,5 +128,21 @@ func TestManagedObjectCacheFixture(t *testing.T) {
 				t.Fatalf("cache staging directory leaked: %s", entry.Name())
 			}
 		}
+	}
+
+	// A non-regular entry present before the next build must fail cache inspection,
+	// rather than reach the compiler/linker or be removed as part of cache repair.
+	if err := os.Remove(objects[0]); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(objects[0], 0o755); err != nil {
+		t.Fatal(err)
+	}
+	expectation.Mode = "build"
+	expectation.Outcome = "failure"
+	expectation.StderrContains = []string{"inspect cached object for", objects[0], "not a regular file"}
+	runFixture(t, installedBinary, expectation)
+	if info, err := os.Stat(objects[0]); err != nil || !info.IsDir() {
+		t.Fatalf("cache inspection changed invalid entry: %v, %v", info, err)
 	}
 }
