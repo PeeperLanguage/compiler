@@ -499,7 +499,13 @@ func (l *lowerer) lowerCFGStmt(node thir.Node) bool {
 			return false
 		}
 		temporaryMark := len(l.temporaryDrops)
-		value := l.lowerExpr(l.sourceExpr(statement.Value, statement.Target.ExprType()), &l.current.Instrs)
+		targetType := statement.Target.ExprType()
+		if l.input.Analysis != nil {
+			if refined := l.input.Analysis.ExprType(statement.Target.SourceInfo().NodeID); refined != nil {
+				targetType = refined
+			}
+		}
+		value := l.lowerExpr(l.sourceExpr(statement.Value, targetType), &l.current.Instrs)
 		target := l.sourcePlace(statement.Target)
 		if target == nil || target.Root == nil {
 			return false

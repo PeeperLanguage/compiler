@@ -1,0 +1,31 @@
+struct Box { value: i32, values: [2]i32 }
+enum Value { Integer: { item: i32 }, Flag: { item: bool } }
+
+fn Update(view: ?&mut Box) {
+    if view != none {
+        view.value = 9;
+        view.values[0] = 7;
+    }
+}
+fn Replace(mut value: Value, replacement: i32) -> i32 {
+    if value is Value::Integer {
+        value.item = replacement;
+        return value.item;
+    }
+    return 0;
+}
+fn ReplaceFlag(mut value: Value) -> bool {
+    if value is Value::Flag {
+        value.item = true;
+        return value.item;
+    }
+    return false;
+}
+fn main() -> i32 {
+    let mut box = Box.{ value = 0, values = [2]i32{0, 0} };
+    Update(&mut box);
+    if box.value != 9 || box.values[0] != 7 { return 1; }
+    if Replace(Value::Integer with .{ item = 0 }, 11) != 11 { return 2; }
+    if !ReplaceFlag(Value::Flag with .{ item = false }) { return 3; }
+    return 0;
+}

@@ -30,7 +30,7 @@ This map records binding, type, place, intrinsic, and constant implementation ob
   default declaration or caller argument.
 - Checked call-iteration syntax derives IDs from the source `for` node and its
   generated preorder.
-- Evidence keyed by `NodeID` lets CFG, flow, effects, ownership, and lowering
+- Evidence keyed by `NodeID` lets CFG, flow facts, effects, ownership, and lowering
   consume one decision without repeating syntax resolution.
 
 ## Symbol IDs and symbol records
@@ -396,8 +396,10 @@ are `types.go`, `syntax.go`, `relations.go`, `compatibility.go`, `lookup.go`,
   origin projections in `Resolve`.
 - `Addressable` answers whether an identifier or projection names addressable
   storage, including pointer/reference bases.
-- `MutableAddressable` also reports shared immutable reference targets and mutable
-  binding symbols.
+- `MutableAddressable` preserves binding permission through value and owning-pointer
+  projections. Mutable references grant referent access; shared-reference restrictions
+  survive subsequent safe projections. It also reports shared reference targets and
+  the mutable binding required by the access, for diagnostics and usage tracking.
 - `LocalRoot` finds a caller-local root below module scope and stops at pointer
   indirection.
 - `Binding` carries a symbol and a transient `Local` flag.

@@ -531,6 +531,30 @@ For aggregate paths, the compiler may be conservative:
 foo(&mut xs[i], &mut xs[j]) // may be rejected when equality is unknown
 ```
 
+## Binding And Referent Mutability
+
+Bindings are immutable unless declared `mut`. Field access, indexing, and
+owning-pointer dereference preserve the access path's mutability: owning storage
+does not itself grant permission to mutate it. This applies equally to local
+bindings and by-value parameters, including owning pointers nested in aggregates.
+
+```peep
+let owner = alloc(Item.{ value = 0 });
+owner.value = 1;                  // error: immutable owning binding
+let mut writable = alloc(Item.{ value = 0 });
+writable.value = 1;               // valid
+```
+
+Mutable borrowing and implicit mutable receivers require the same permission as
+assignment. Replacing an owning pointer and mutating its pointee both require
+mutable access. A shared reference remains read-only through subsequent fields,
+indexes, and owning pointers; `mut` on a shared-reference binding does not change
+that. An `&mut T` reference grants mutation of its referent without requiring a
+mutable reference binding. Reassigning the reference binding still requires `mut`.
+
+Moving or explicitly freeing an immutable owner remains valid when ownership and
+loan rules permit it. Consumption and automatic destruction do not require `mut`.
+
 ## Mutable Parameters
 
 Parameters are immutable bindings by default. `mut` makes owned parameter

@@ -581,7 +581,7 @@ Stop for user review/commit approval.
   - `docs/compiler-framework/change-paths.md`
   - `docs/compiler-framework/semantic-results.md`
   - `docs/compiler-framework/ownership-vocabulary.md`
-- Historical migration notes such as `docs/compiler-framework/effect-stream-migration.md` may retain historical terminology if clearly marked historical; do not rewrite history merely to make `rg` clean.
+- Historical migration notes such as `docs/compiler-framework/evaluation-event-stream-migration.md` may retain historical terminology if clearly marked historical; do not rewrite history merely to make `rg` clean.
 - Modify no production code unless verification exposes a real defect; any defect fix returns to RED→GREEN and is recorded as a plan ruling.
 
 **Interfaces:**
@@ -608,7 +608,7 @@ Run:
 rg -n 'typecheckresult|constantresult|flowresult|ownershipresult|FlowTyped|DefiniteInit|module\.Effects|module\.Ownership|module\.Typechecking|module\.Constants' docs \
   --glob '*.md' \
   --glob '!docs/superpowers/specs/2026-09-28-artifact-oriented-semantics-design.md' \
-  --glob '!docs/compiler-framework/effect-stream-migration.md'
+  --glob '!docs/compiler-framework/evaluation-event-stream-migration.md'
 ```
 
 Expected: no matches in current documentation. Any intentional historical reference must be explicitly identified rather than silently excluded.

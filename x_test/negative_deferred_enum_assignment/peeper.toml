@@ -1,0 +1,7 @@
+name = "negative_deferred_enum_assignment"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["field assignment requires"]

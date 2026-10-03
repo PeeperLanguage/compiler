@@ -300,6 +300,9 @@ func (c *checker) qualifiedScopeType(scope *symbols.Scope, node *ast.ScopeResolu
 		}
 		sym = resolved.Symbol
 	}
+	if c.module != nil && c.module.SymbolIndex != nil {
+		c.module.SymbolIndex.Bind(node, sym)
+	}
 	if sym.Kind == symbols.SymbolVariant {
 		return c.typeVariantConstruction(scope, node, node, nil)
 	}

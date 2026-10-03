@@ -19,7 +19,7 @@ AST → THIR → CFG → Analysis → MIR
 - `AST`: parsed source syntax;
 - `THIR`: canonical typed source representation;
 - `CFG`: control topology and semantic edges;
-- `Analysis`: durable path-sensitive facts and source cleanup decisions;
+- `Analysis`: durable flow refinements and source cleanup decisions;
 - `MIR`: lowered executable representation;
 - `LLVMIR`: emitted backend text;
 - `ModuleScope` and `SymbolIndex`: generation-owned semantic environment.

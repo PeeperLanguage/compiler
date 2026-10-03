@@ -1,0 +1,6 @@
+enum Value { Integer: { item: i32 }, Flag: { item: bool } }
+
+fn Corrupt(value: Value, replacement: i32) {
+    if value is Value::Integer { value.item = replacement; }
+}
+fn main() {}

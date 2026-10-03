@@ -1,0 +1,7 @@
+name = "negative_qualified_constant_borrow"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["mutable reference requires mutable addressable storage"]

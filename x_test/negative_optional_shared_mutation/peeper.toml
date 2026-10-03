@@ -1,0 +1,7 @@
+name = "negative_optional_shared_mutation"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["cannot assign through immutable reference", "mutable reference requires mutable addressable storage", "index assignment requires"]

@@ -2602,12 +2602,12 @@ fn main(file: *File) -> i32 {
 	}
 }
 
-func TestOwnedPointerFieldAssignmentAccepted(t *testing.T) {
+func TestMutableOwnedPointerFieldAssignmentAccepted(t *testing.T) {
 	src := `struct Box {
 	value: i32
 }
 
-fn main(ptr: *Box) {
+fn main(mut ptr: *Box) {
 	ptr.value = 2;
 }`
 	diag := checkTypeSource(t, src)
@@ -3118,12 +3118,12 @@ func TestAssignmentRequiresMutableBinding(t *testing.T) {
 	}
 }
 
-func TestPointerFieldAssignmentResolves(t *testing.T) {
+func TestMutablePointerFieldAssignmentResolves(t *testing.T) {
 	src := `struct Counter {
 	value: i32
 }
 
-	fn (self: *Counter) bump() -> i32 {
+	fn (mut self: *Counter) bump() -> i32 {
 		self.value = self.value + 1;
 		return self.value;
 	}

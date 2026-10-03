@@ -1,0 +1,4 @@
+import "negative_qualified_constant_borrow/values";
+
+fn Touch(_: &mut i32) {}
+fn main() { Touch(&mut values::Number); }

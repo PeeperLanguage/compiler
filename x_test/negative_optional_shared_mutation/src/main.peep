@@ -1,0 +1,23 @@
+struct Box { value: i32, values: [2]i32 }
+struct Outer { child: *Box }
+fn Touch(_: &mut i32) {}
+
+fn Assign(mut view: ?&Box) {
+    if view != none { view.value = 9; }
+}
+fn Borrow(mut view: ?&Box) {
+    if view != none { Touch(&mut view.value); }
+}
+fn Indexed(mut view: ?&Box) {
+    if view != none { view.values[0] = 9; }
+}
+fn Sliced(mut view: ?&Box) {
+    if view != none {
+        let slice = view.values[..];
+        slice[0] = 9;
+    }
+}
+fn Nested(mut view: ?&Outer) {
+    if view != none { view.child.value = 9; }
+}
+fn main() {}

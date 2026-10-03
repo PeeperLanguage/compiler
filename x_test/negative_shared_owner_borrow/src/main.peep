@@ -1,0 +1,10 @@
+struct Inner { value: i32 }
+struct Outer { child: *Inner }
+
+fn Accept(_: &mut i32) {}
+
+fn Corrupt(outer: &Outer) {
+    Accept(&mut outer.child.value);
+}
+
+fn main() {}

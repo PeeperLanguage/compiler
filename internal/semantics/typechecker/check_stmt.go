@@ -268,18 +268,25 @@ func (c *checker) checkAssign(scope *symbols.Scope, node *ast.AssignStmt) {
 		return
 	}
 	targetType := c.typeWholeCarrierExpr(scope, node.Target, nil)
-	if targetType == nil || typeinfo.IsInvalidOrUnknown(targetType) {
+	if targetType == nil || typeinfo.IsInvalid(targetType) {
 		return
 	}
-	valueType := c.typeExpr(scope, node.Value, targetType)
+	// Conflicting enum payload fields are resolved by flow. Check the RHS and
+	// write capability now; only compatibility depends on the selected case.
+	expected := targetType
+	if typeinfo.IsUnknown(expected) {
+		expected = nil
+	}
+	valueType := c.typeExpr(scope, node.Value, expected)
 	valueType = c.requireValueType(node.Value, valueType, "assignment")
-	if typeinfo.IsInvalidOrUnknown(valueType) {
+	deferredTarget := typeinfo.IsUnknown(targetType)
+	if typeinfo.IsInvalid(valueType) || (typeinfo.IsUnknown(valueType) && !deferredTarget) {
 		return
 	}
 	if c.rejectTemporaryBorrowEscape(scope, node.Value, "assignment") {
 		return
 	}
-	if !c.isAssignable(targetType, valueType, node.Value) {
+	if !deferredTarget && !typeinfo.IsUnknown(valueType) && !c.isAssignable(targetType, valueType, node.Value) {
 		c.ctx.Diagnostics.Add(typeMismatchError(node.Value,
 			fmt.Sprintf("cannot assign %s to %s",
 				typeinfo.TypeText(valueType), typeinfo.TypeText(targetType))))
@@ -319,28 +326,12 @@ func (c *checker) checkAssign(scope *symbols.Scope, node *ast.AssignStmt) {
 			return
 		}
 	case *ast.SelectorExpr:
-		baseType := c.exprType(target.Expr.ID())
-		if _, ok := typeinfo.PointerTarget(typeinfo.Underlying(baseType)); ok {
+		isMutable, sharedReference, mutableBinding := c.mutableAddressableExpr(scope, target)
+		if isMutable {
+			if mutableBinding != nil {
+				c.module.SymbolIndex.RequireMutable(mutableBinding)
+			}
 			return
-		}
-		var (
-			sharedReference typeinfo.Type
-			mutableBinding  *symbols.Symbol
-		)
-		if refTarget, isMutable, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(baseType)); ok {
-			if isMutable {
-				return
-			}
-			sharedReference = refTarget
-		} else {
-			var isMutable bool
-			isMutable, sharedReference, mutableBinding = c.mutableAddressableExpr(scope, target.Expr)
-			if isMutable {
-				if mutableBinding != nil {
-					c.module.SymbolIndex.RequireMutable(mutableBinding)
-				}
-				return
-			}
 		}
 		if sharedReference != nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
@@ -384,10 +375,7 @@ func (c *checker) checkIndexAssignmentTarget(scope *symbols.Scope, target *ast.I
 			"index assignment requires mutable array or mutable slice view", ast.LocOf(target), "")
 		return false
 	}
-	if shape == indexableMutableSliceView {
-		return true
-	}
-	if isMutable, _, mutableBinding := c.mutableAddressableExpr(scope, target.Expr); isMutable {
+	if isMutable, _, mutableBinding := c.mutableAddressableExpr(scope, target); isMutable {
 		if mutableBinding != nil {
 			c.module.SymbolIndex.RequireMutable(mutableBinding)
 		}

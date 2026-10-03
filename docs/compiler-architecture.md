@@ -42,13 +42,13 @@ parse
   -> resolve
   -> typecheck + constant finalization + THIR
   -> CFG
-  -> analysis (flow + effects + definite initialization + ownership)
+  -> analysis (flow facts + effects + definite initialization + ownership)
   -> usage
   -> MIR lowering from THIR/CFG/Analysis
   -> backend
 ```
 
-The durable representation path is `AST → THIR → CFG → Analysis → MIR`. Flow, effect extraction, definite initialization, and ownership remain distinct algorithms inside `analysis.Run`; they are not separate module lifecycle artifacts.
+The durable representation path is `AST → THIR → CFG → Analysis → MIR`. Flow analysis, effect extraction, definite initialization, and ownership remain distinct algorithms inside `analysis.Run`; they are not separate module lifecycle artifacts.
 
 Project/module readiness and incremental checkpoints are explicit because current
 stages have different dependency, barrier, and invalidation rules. A replacement would need to represent those differences rather than hide them behind a uniform interface.

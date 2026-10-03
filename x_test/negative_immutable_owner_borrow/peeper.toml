@@ -1,0 +1,7 @@
+name = "negative_immutable_owner_borrow"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["mutable reference requires mutable addressable storage"]

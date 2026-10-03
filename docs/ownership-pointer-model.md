@@ -209,6 +209,12 @@ Allocator APIs return heap handles.
 let x: *Buffer = allocator.alloc<Buffer>()
 ```
 
+Owning pointers follow ordinary binding mutability. Mutation of an owned value,
+including nested fields or elements, requires a `mut` owning binding or access
+through `&mut T`. An owning pointer does not bypass an enclosing shared reference.
+Immutable owners may still be moved or consumed; ownership consumption is not a
+mutable access.
+
 Free consumes allocator-owned `*T`:
 
 ```peep

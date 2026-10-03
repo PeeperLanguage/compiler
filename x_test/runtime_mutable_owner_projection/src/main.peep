@@ -1,0 +1,30 @@
+struct Inner { value: i32 }
+struct Outer { child: *Inner }
+
+fn Accept(_: &mut i32) {}
+
+fn Update(outer: &mut Outer) {
+    outer.child.value = 2;
+    Accept(&mut outer.child.value);
+    outer.child.value = 4;
+}
+
+fn Read(outer: &Outer) -> i32 {
+    return outer.child.value;
+}
+
+fn main() -> i32 {
+    let mut direct = alloc(Inner.{ value = 0 });
+    direct.value = 1;
+    if direct.value != 1 { return 1; }
+
+    let mut outer = Outer.{ child = direct };
+    Update(&mut outer);
+    if Read(&outer) != 4 { return 2; }
+
+    let immutable = alloc(Inner.{ value = 5 });
+    let moved = immutable;
+    if moved.value != 5 { return 3; }
+    free(moved);
+    return 0;
+}

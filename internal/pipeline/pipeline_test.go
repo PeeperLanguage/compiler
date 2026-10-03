@@ -2025,7 +2025,7 @@ fn open_counter() -> *Counter {
 	return alloc(Counter.{ value = 0 });
 }
 
-	fn (self: *Counter) bump() -> i32 {
+	fn (mut self: *Counter) bump() -> i32 {
 		self.value = self.value + 1;
 		return self.value;
 	}
