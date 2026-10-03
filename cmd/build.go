@@ -126,13 +126,10 @@ func compileObject(ctx *project.CompilerContext, profile toolchain.Profile, modu
 	}
 	cachePath := objectCachePath(ctx, profile, ir)
 	if cachePath != "" {
-		if info, err := os.Stat(cachePath); err == nil {
-			if !info.Mode().IsRegular() {
-				return "", fmt.Errorf("inspect cached object for %s: %s is not a regular file", module.ID.ImportPath, cachePath)
-			}
-			return cachePath, nil
-		} else if !os.IsNotExist(err) {
+		if exists, err := inspectCachedObject(cachePath); err != nil {
 			return "", fmt.Errorf("inspect cached object for %s: %w", module.ID.ImportPath, err)
+		} else if exists {
+			return cachePath, nil
 		}
 	}
 	llPath := objectBase + ".ll"
@@ -157,17 +154,33 @@ func compileObject(ctx *project.CompilerContext, profile toolchain.Profile, modu
 		return "", err
 	}
 	if cachePath != "" {
-		// Never move a published object aside: another linker may be opening it.
-		if err := os.Rename(objectPath, cachePath); err != nil {
-			// A competing build may have won this key. Reuse its complete object
-			// when replacement is blocked (e.g. an open file on Windows).
-			if info, statErr := os.Stat(cachePath); statErr != nil || !info.Mode().IsRegular() {
-				return "", fmt.Errorf("publish cached object: %w", err)
+		// A hard link installs the completed object without replacing a winner.
+		if linkErr := os.Link(objectPath, cachePath); linkErr != nil {
+			// Any failed link may race with another publisher. Reuse only a
+			// regular directory entry and preserve the publication error otherwise.
+			if exists, err := inspectCachedObject(cachePath); err != nil {
+				return "", fmt.Errorf("publish cached object: %w; inspect cache winner: %w", linkErr, err)
+			} else if !exists {
+				return "", fmt.Errorf("publish cached object: %w", linkErr)
 			}
 		}
 		return cachePath, nil
 	}
 	return objectPath, nil
+}
+
+func inspectCachedObject(path string) (bool, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if !info.Mode().IsRegular() {
+		return false, fmt.Errorf("%s is not a regular file", path)
+	}
+	return true, nil
 }
 
 func objectCachePath(ctx *project.CompilerContext, profile toolchain.Profile, ir string) string {

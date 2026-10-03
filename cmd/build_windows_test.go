@@ -27,7 +27,7 @@ func TestCompileObjectReusesLockedWinner(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Model a linker holding a competing publisher's complete object without
-	// FILE_SHARE_DELETE. Windows must reject replacing this open destination.
+	// FILE_SHARE_DELETE. The probe proves the old replacement path is blocked.
 	want := "object:" + strings.TrimSpace(mod.LLVMIR)
 	if err := os.WriteFile(cachePath, []byte(want), 0o640); err != nil {
 		t.Fatal(err)

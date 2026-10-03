@@ -278,6 +278,45 @@ func TestCompileObjectRejectsPreexistingDirectory(t *testing.T) {
 	}
 }
 
+func TestCompileObjectRejectsPreexistingSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows CI does not guarantee symlink privileges")
+	}
+	ctx, profile, mod, base := objectCompileFixture(t, t.TempDir())
+	cachePath := objectCachePath(ctx, profile, strings.TrimSpace(mod.LLVMIR))
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	targetPath := filepath.Join(t.TempDir(), "object.o")
+	if err := os.WriteFile(targetPath, []byte("not cached"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(targetPath, cachePath); err != nil {
+		t.Fatal(err)
+	}
+
+	objectPath, err := compileObject(ctx, profile, mod, base)
+	if err == nil || objectPath != "" {
+		t.Fatalf("compileObject() = %q, %v; want empty path and invalid-cache error", objectPath, err)
+	}
+	for _, text := range []string{"inspect cached object for " + mod.ID.ImportPath, cachePath, "not a regular file"} {
+		if !strings.Contains(err.Error(), text) {
+			t.Errorf("cache error = %v, want %q", err, text)
+		}
+	}
+	info, err := os.Lstat(cachePath)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("cache inspection changed symlink: %v, %v", info, err)
+	}
+	if data, err := os.ReadFile(targetPath); err != nil || string(data) != "not cached" {
+		t.Fatalf("cache inspection changed symlink target: %q, %v", data, err)
+	}
+	entries, err := os.ReadDir(filepath.Dir(base))
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("cache inspection wrote compiler artifacts: %v, %v", entries, err)
+	}
+}
+
 func TestCompileObjectConcurrentReaders(t *testing.T) {
 	ctx, profile, mod, base := objectCompileFixture(t, t.TempDir())
 	t.Setenv("PEEPER_TEST_OBJECT_MODE", "wait")
@@ -312,6 +351,10 @@ func TestCompileObjectConcurrentReaders(t *testing.T) {
 	if err := <-results[0]; err != nil {
 		t.Fatal(err)
 	}
+	publishedInfo, err := os.Lstat(cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	stopReader := make(chan struct{})
 	readerDone := make(chan error, 1)
 	go func() {
@@ -340,6 +383,17 @@ func TestCompileObjectConcurrentReaders(t *testing.T) {
 	}
 	if err := <-results[1]; err != nil {
 		t.Fatal(err)
+	}
+	currentInfo, err := os.Lstat(cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(publishedInfo, currentInfo) {
+		t.Fatal("second publisher replaced the published cache object")
+	}
+	entries, err := os.ReadDir(filepath.Dir(cachePath))
+	if err != nil || len(entries) != 1 || entries[0].Name() != filepath.Base(cachePath) || entries[0].IsDir() {
+		t.Fatalf("duplicate publisher left cache entries: %v, %v", entries, err)
 	}
 }
 
