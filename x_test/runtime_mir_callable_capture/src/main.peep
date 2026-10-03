@@ -1,0 +1,41 @@
+#[extern("memcpy")]
+fn Memcpy(destination: rawptr, source: rawptr, size: usize) -> rawptr;
+
+fn Original(value: i32) -> i32 { return value + 7; }
+fn Replacement(value: i32) -> i32 { return value + 19; }
+
+fn Replace(destination: rawptr) -> i32 {
+    let replacement = Replacement;
+    // Function pointers and usize have the same width on supported targets.
+    let mut remaining: usize = ~0;
+    let mut bytes: usize = 0;
+    for remaining != 0 {
+        bytes = bytes + 1;
+        remaining = remaining / 256;
+    }
+    Memcpy(destination, @replacement, bytes);
+    return 3;
+}
+
+fn Invoke(callback: fn(i32) -> i32, value: i32) -> i32 {
+    return callback(value);
+}
+
+fn CaptureArgument() -> i32 {
+    let mut callback = Original;
+    let address = @callback;
+    return Invoke(callback, Replace(address));
+}
+
+fn CaptureCallee() -> i32 {
+    let mut callback = Original;
+    if callback(Replace(@callback)) != 10 { return 1; }
+    if callback(3) != 22 { return 2; }
+    return 0;
+}
+
+fn main() -> i32 {
+    if CaptureArgument() != 10 { return 1; }
+    if CaptureCallee() != 0 { return 2; }
+    return 0;
+}

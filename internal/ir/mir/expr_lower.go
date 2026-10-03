@@ -37,11 +37,21 @@ func (l *lowerer) load(out *[]Instr, place *Place, typ ir.TypeID, loc *source.Lo
 	return &RefName{Name: name, Type: typ, Location: loc}
 }
 
+func identifierRef(expr *ir.Ident) *RefName {
+	return &RefName{Name: expr.Name, Type: expr.TypeID(), Location: expr.Origin().Location}
+}
+
 func (l *lowerer) lowerPlace(place *ir.Place, out *[]Instr) *Place {
 	if place == nil || place.Root == nil {
 		panic("MIR place lowering requires a root expression")
 	}
-	root := l.lowerExpr(place.Root, out)
+	var root ValueRef
+	if ident, ok := place.Root.(*ir.Ident); ok {
+		// Places retain original storage; only value reads are captured.
+		root = identifierRef(ident)
+	} else {
+		root = l.lowerExpr(place.Root, out)
+	}
 	projections := make([]PlaceProjection, 0, len(place.Projections))
 	for _, projection := range place.Projections {
 		lowered := PlaceProjection{FieldIndex: projection.FieldIndex, Case: projection.Case, Type: projection.Type, Location: projection.Location}
@@ -153,7 +163,15 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		l.appendInstr(out, &Assign{Name: name, Value: &VariantIs{Value: value, Case: e.Case, Type: e.TypeID(), Location: e.Origin().Location}})
 		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.Ident:
-		return &RefName{Name: e.Name, Type: e.TypeID(), Location: e.Origin().Location}
+		ref := identifierRef(e)
+		// Direct symbols retain linkage names; callable storage is captured too.
+		if typ, ok := l.module.Types.Type(e.TypeID()); ok && typ.Kind == ir.TypeFunction && l.symbolValues[e.SymbolID] == nil {
+			return ref
+		}
+		name := l.nextTemp()
+		// MIR Move captures a value; semantic consumption remains analysis-owned.
+		l.appendInstr(out, &Assign{Name: name, Value: asValueExpr(ref)})
+		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.Unary:
 		arg := l.lowerExpr(e.Arg, out)
 		name := l.nextTemp()

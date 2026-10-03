@@ -1,0 +1,47 @@
+#[extern("memset")]
+fn Memset(pointer: rawptr, value: i32, size: usize) -> rawptr;
+
+fn Clear(pointer: rawptr) -> i32 {
+    Memset(pointer, 0, 4);
+    return 0;
+}
+
+fn Sum(first: i32, second: i32) -> i32 {
+    return first + second;
+}
+
+fn Read(reference: &Box) -> i32 {
+    return reference.value;
+}
+
+fn Write(reference: &mut Box, value: i32) {
+    reference.value = value;
+}
+
+struct Box { value: i32 }
+struct Pair { first: i32, second: i32 }
+
+fn main() -> i32 {
+    let mut value: i32 = 7;
+    let result = Sum(value, Clear(@value));
+    if result != 7 { return 1; }
+
+    value = 7;
+    if value + Clear(@value) != 7 { return 2; }
+
+    value = 7;
+    let pair = Pair.{ first = value, second = Clear(@value) };
+    if pair.first != 7 { return 3; }
+
+    let mut index: i32 = 1;
+    let values = [2]i32{7, 8};
+    let selected = values[index + Clear(@index)];
+    if selected != 8 { return 4; }
+
+    let mut box = Box.{ value = 7 };
+    Write(&mut box, 9);
+    if box.value != 9 { return 5; }
+
+    if Read(&box) != 9 { return 6; }
+    return 0;
+}

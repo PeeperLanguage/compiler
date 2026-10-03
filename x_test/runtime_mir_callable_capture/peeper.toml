@@ -1,0 +1,7 @@
+name = "runtime_mir_callable_capture"
+build = "program"
+entry = "src/main.peep"
+
+[test]
+mode = "run"
+outcome = "success"
