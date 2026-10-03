@@ -30,8 +30,22 @@ Mode: applied directly
 - Full `go test -count=1 ./...`, `go vet ./...`, fresh bundle, complete executable
   `x_test` suite, formatting check, and `git diff --check` pass.
 - Windows/amd64 and macOS/arm64 test binaries cross-compile. Native execution
-  remains unverified here. Existing GitHub Actions native matrix now runs
-  `TestCompileObject` on all six hosts, including Windows locked-reader test.
+  also passed in PR #151 CI run 37146240861, including Windows locked-reader
+  regression. Linux native cache Go tests passed; Linux integration fixture
+  runtime exposed the test setup ABI mismatch described below.
+
+## Linux CI fixture follow-up
+
+Both Ubuntu architectures linked the synthetic managed fixture for musl with
+system Clang, then failed execution because musl interpreter was absent.
+Test-local Clang launchers now select `target.SystemLLVMTriple` as final tool
+target while leaving installed-profile validation and production code intact.
+Real compilation/linking, cross-filesystem assertions, executable checks, and
+cache-hit proof remain enabled.
+
+Targeted fixture, full executable `x_test`, `internal/target` tests, `go vet
+./x_test`, formatting, and diff checks pass locally. Clang dry-runs confirm glibc
+interpreter selection for amd64 and arm64. Follow-up CI rerun pending publication.
 
 ## Files changed
 

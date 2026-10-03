@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -68,13 +69,20 @@ func TestManagedObjectCacheFixture(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Preserve argv[0] for Clang wrappers such as ccache.
+	host := target.Host()
+	systemTriple, err := target.SystemLLVMTriple(host.OS, host.Arch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Installed profiles require the canonical musl triple, but this cache-only
+	// fixture uses system Clang/libc. Select its host ABI so output does not depend
+	// on a musl loader being installed on the runner. The final --target wins.
+	driver := "#!/bin/sh\nexec '" + strings.ReplaceAll(clang, "'", "'\"'\"'") + "' \"$@\" --target=" + systemTriple + "\n"
 	for _, tool := range []string{"clang", filepath.Join("link", "clang")} {
-		if err := os.Symlink(clang, filepath.Join(profileDir, tool)); err != nil {
+		if err := os.WriteFile(filepath.Join(profileDir, tool), []byte(driver), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	host := target.Host()
 	profile := toolchain.Profile{
 		SchemaVersion: toolchain.ProfileSchemaVersion, ProfileID: "cache-fixture",
 		TargetOS: host.OS, TargetArch: host.Arch, LLVMTriple: host.LLVMTriple,

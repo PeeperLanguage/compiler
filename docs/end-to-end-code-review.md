@@ -1,621 +1,311 @@
-# End-to-End Code Review
-
-## Scope
-
-Review follows live execution paths from CLI/LSP entry points through dependency handling, compiler scheduling, semantic analysis, THIR/MIR lowering, LLVM emission, and user-facing documentation.
-
-This document preserves original findings and reproduction snippets as baseline evidence. Remediation status below describes current implementation; snippets inside finding sections are historical unless marked otherwise.
-
-## Remediation status
-
-| Finding group | Status | Chosen implementation |
-|---|---|---|
-| Interface conversion evidence | Resolved | Default substitution deep-clones each occurrence with fresh `NodeID`s and separate declaration/caller provenance maps. Semantic metadata copies from owning module; THIR/MIR consume unique per-occurrence interface evidence. |
-| LSP diagnostics | Resolved | Compilation snapshots copy context, component files, generation, and versions under state lock. Publication is serialized, rejects stale generations, and writes without state lock. |
-| CLI contract and artifacts | Resolved | One command registry drives dispatch/help/aliases. Compiler APIs are LLVM-only. `check` recursively discovers and groups roots by project. `_gen` publishes completed identity-based staging trees. |
-| Dependency lifecycle | Resolved | Lock corruption propagates. `get`/`update` prepare in memory and publish coordinated manifest/lock state only after all work succeeds. Metadata commits before cache deletion. |
-| Intrinsic and pipeline ownership | Resolved | One intrinsic definition slice drives compiler-owned free-function symbols, contextual discovery, operations, and signatures. Diagnostic-free scheduler completion requires every scheduled module at backend before runtime-symbol validation. |
-| Documentation | Resolved | Interface ownership, target-sized carrier fields, README registry claim, and CLI diagrams now follow live owners. |
-
-This report groups related defects by owning subsystem. Severity reflects impact, not amount of code needed:
-
-- **P1:** valid input can crash, fail silently, corrupt state, or race.
-- **P2:** architecture has multiple authorities, misleading abstractions, or silent failure paths that make extension unsafe.
-
-| Group | Highest severity | Main risk |
-|---|---:|---|
-| CLI and dependency lifecycle | P1 | Incorrect success, ignored input, damaged project state |
-| Semantic evidence and intrinsic ownership | P1 | Valid program reaches backend with wrong type evidence |
-| Compiler pipeline and backend boundary | P2 | Silent incomplete compilation and fake extensibility |
-| LSP state and concurrency | P1 | Data race and stale diagnostics |
-| Documentation and architectural truth | P2 | Maintainers implement against contracts that no longer exist |
-
-## 1. CLI and dependency lifecycle
-
-These defects belong together because they define command behavior and mutation of user-owned project state.
-
-### 1.1 `check` and `lint` do not implement their advertised input contract - P1
-
-Help text says these commands typecheck a file or recursively check a folder. Actual command handling defaults to `.` and passes one path to the single-entry compiler path:
-
-```go
-path := "."
-if len(args) > 0 {
-	path = args[0]
-}
-
-return compileEntry(path, options)
-```
-
-This has two observable failures:
-
-- `peeper check .` attempts to read the directory as a source file and fails.
-- `peeper check valid.peep invalid.peep` ignores every path after the first and can return success despite invalid requested input.
-
-Why wrong:
-
-- Command accepts syntax it does not honor.
-- Exit status no longer represents all user-requested work.
-- Help text and implementation have different owners for the command contract.
-
-What should replace it:
-
-Resolve input shape once, before compilation. Either support all documented forms or reject unsupported forms explicitly.
-
-```go
-type CheckTarget struct {
-	Files []string
-}
-
-func resolveCheckTarget(args []string) (CheckTarget, error) {
-	// No args: discover project rooted at current directory.
-	// One directory: discover project/source files recursively.
-	// One or more files: validate and retain every file.
-	// Unsupported mixtures: return a usage error.
-}
-```
-
-Compiler driver should receive resolved files or a project, not reinterpret raw CLI arguments. One owner must define which files form a check operation.
-
-Acceptance criteria:
-
-- Directory input checks intended project files.
-- Multiple explicit files are all checked, or extra arguments are rejected.
-- Any failed requested input produces nonzero exit status.
-- Help and argument validation derive from same command definition.
-
-### 1.2 Corrupt lockfiles are treated as missing lockfiles - P1
-
-`manifest.LoadLockfile` already distinguishes a missing file from other read or parse failures. `get` discards that distinction:
-
-```go
-lock, err := manifest.LoadLockfile(projectDir)
-if err != nil {
-	lock = manifest.NewLockfile()
-}
-```
-
-A malformed or unreadable existing lockfile therefore becomes an empty lockfile. Later save can replace evidence needed to reproduce the existing dependency graph.
-
-Why wrong:
-
-- Recovery policy is duplicated outside the lockfile owner.
-- Corruption becomes implicit destructive recovery.
-- User receives no diagnosis before state changes.
-
-What should replace it:
-
-Trust `LoadLockfile` to own the missing-file case and propagate every remaining error:
-
-```go
-lock, err := manifest.LoadLockfile(projectDir)
-if err != nil {
-	return fmt.Errorf("load dependency lockfile: %w", err)
-}
-```
-
-If explicit repair is desired, it should be a separately named operation with clear user intent-not normal `get` behavior.
-
-### 1.3 `update` reports success after dependency installation failures - P1
-
-Current loop prints an error and continues:
-
-```go
-if err := installUpdate(pkg); err != nil {
-	fmt.Fprintf(stderr, "failed to update %s: %v\n", pkg.Name, err)
-	continue
-}
-```
-
-Command can then print an up-to-date message and exit successfully. A partially failed mutation is indistinguishable to scripts from complete success.
-
-Why wrong:
-
-- Process status contradicts emitted diagnostics.
-- "No updates available" and "all updates failed" collapse into same result.
-- CI and automation cannot safely consume command result.
-
-What should replace it:
-
-Collect failures while allowing independent work to continue, then return one failure result:
-
-```go
-var failures []error
-
-for _, pkg := range updates {
-	if err := installUpdate(pkg); err != nil {
-		failures = append(failures, fmt.Errorf("%s: %w", pkg.Name, err))
-		continue
-	}
-	updated++
-}
-
-if len(failures) != 0 {
-	return errors.Join(failures...)
-}
-```
-
-Summary output must separately represent updated, unchanged, and failed counts.
-
-### 1.4 Dependency mutations are not transactional - P1
-
-`get`, `remove`, and `update` modify several related resources:
-
-- manifest
-- lockfile
-- package cache/install tree
-
-These resources are saved or pruned in different orders. For example, pruning can happen before both metadata files are safely persisted. Individual atomic file writes do not make the whole operation atomic.
-
-Why wrong:
-
-- Failure between writes leaves manifest and lockfile describing different graphs.
-- Early cache pruning can remove data still referenced by durable metadata.
-- Retry behavior depends on where failure occurred.
-
-What should replace it:
-
-Use one dependency transaction owned by dependency management:
-
-```go
-type DependencyPlan struct {
-	Manifest manifest.Manifest
-	Lockfile manifest.Lockfile
-	Installs []ResolvedPackage
-	Prunes   []PackagePath
-}
-
-func ApplyDependencyPlan(plan DependencyPlan) error {
-	// 1. Stage downloads and generated metadata.
-	// 2. Validate complete staged graph.
-	// 3. Commit manifest and lockfile as one coordinated operation.
-	// 4. Prune obsolete cache entries only after durable commit.
-}
-```
-
-Exact disk mechanism can vary, but invariant cannot: before commit, old state remains usable; after commit, both metadata files describe same dependency graph.
-
-### 1.5 Command metadata has multiple authorities - P2
-
-Command names, aliases, handlers, help, and backend policy are spread across separate switches and text blocks. Adding one command requires synchronized edits in several files. Alias and help drift already demonstrate this is not theoretical.
-
-What should replace it:
-
-One declarative registry should own command identity and dispatch metadata:
-
-```go
-type CommandDefinition struct {
-	Name        string
-	Aliases     []string
-	Usage       string
-	Run         func(CommandContext, []string) error
-	BackendRule BackendRule
-}
-
-var commands = []CommandDefinition{
-	{Name: "check", Aliases: []string{"lint"}, Usage: "check [path...]", Run: runCheck},
-	{Name: "build", Usage: "build [path]", Run: runBuild, BackendRule: LLVMOnly},
-}
-```
-
-Lookup, help generation, alias handling, and validation should derive from this registry. Do not add another wrapper around existing switches; remove split authorities when migrating.
-
-### 1.6 Generated IR artifacts can collide or remain stale - P2
-
-`-keep-gen` uses identity-encoded module paths for generated files. MIR and LLVM artifacts are staged and replaced atomically, so old artifacts do not survive a successful publication.
-
-What should replace it:
-
-- Derive artifact path from canonical module/import identity, not basename alone.
-- Write into a clean per-build staging directory.
-- Publish completed artifacts only after successful generation.
-
-```text
-build/generated/
-  app/main.mir
-  app/main.ll
-  deps/example/main.mir
-  deps/example/main.ll
-```
-
-## 2. Semantic evidence and intrinsic ownership
-
-These issues concern semantic facts that later compiler phases trust. Such facts need one owner and identity matching the operation they describe.
-
-### 2.1 Interface-conversion evidence is keyed by expression, not conversion occurrence - P1
-
-Typechecker stores interface implementation evidence using source expression `NodeID`:
-
-```go
-tc.project.InterfaceImplementations[expr.ID()] = implementations
-```
-
-Default-argument substitution can reuse one caller expression for multiple parameters. If two expanded defaults convert that expression to different interfaces, both conversions share the same `NodeID`. Second write overwrites first conversion's slot set.
-
-THIR/MIR lowering later asks for evidence by expression ID:
-
-```go
-implementations := l.project.InterfaceImplementations[expr.ID()]
-```
-
-By then target interface context is no longer sufficient to recover overwritten proof. Valid source can reach typed LLVM with wrong aggregate layout and panic, for example:
-
-```text
-call @use argument 1 is i32, want { i8*, i8* }
-```
-
-Why wrong:
-
-- Evidence describes a conversion, but key identifies only reused input expression.
-- Cache assumes one expression has at most one interface target.
-- Later phase receives mutable last-writer state instead of exact semantic result.
-- Backend panic is only symptom; ownership error begins in semantic handoff.
-
-What should replace it:
-
-Best model: make conversion explicit in typed semantic output so evidence travels with its occurrence:
-
-```go
-type InterfaceConversion struct {
-	Expr            ast.Expr
-	Target          typeinfo.Type
-	Implementations []project.InterfaceImplementation
-}
-```
-
-If current IR cannot represent explicit conversion nodes yet, use a conversion-site key that cannot collide across expanded arguments:
-
-```go
-type ConversionSite struct {
-	ExpressionID ast.NodeID
-	CallID       ast.NodeID
-	Parameter    int
-}
-
-type InterfaceEvidence map[ConversionSite][]project.InterfaceImplementation
-```
-
-Key requirement: evidence identity must include conversion occurrence and target context. Adding target type alone may still be insufficient if same expression converts to same interface at separate sites with distinct ownership/lifetime facts later.
-
-Required regression fixture:
-
-```peeper
-interface ReadA {
-    read_a(self: &Self) -> i32
-}
-
-interface ReadB {
-    read_b(self: &Self) -> i32
-}
-
-fn use[T](x: T, a: &ReadA = x, b: &ReadB = x) {
-    // Both defaults reuse x but require distinct interface evidence.
-}
-
-use(&c)
-```
-
-Fixture must compile and execute through bundled `build/bin/peeper`, not stop at Go unit coverage.
-
-### 2.2 Predeclared intrinsic registry still has two authorities - P2
-
-One list says which operations are predeclared:
-
-```go
-var predeclaredOperations = []symbols.CompilerOp{
-	// operation identities
-}
-```
-
-A separate switch says which signatures those operations have:
-
-```go
-switch op {
-case symbols.SomeOperation:
-	return someSignature(target)
-// ...
-default:
-	panic("missing intrinsic signature")
-}
-```
-
-Adding an operation requires editing both. Missing one edit either omits symbol exposure or panics during predeclared-scope initialization.
-
-Why wrong:
-
-- Registry is unified by API name, not by data ownership.
-- Startup correctness depends on synchronized declarations.
-- Extension failure occurs far from operation declaration.
-
-What should replace it:
-
-One definition must contain identity, exposure, and signature factory:
-
-```go
-type intrinsicDefinition struct {
-	Operation   symbols.CompilerOp
-	Name        string
-	Predeclared bool
-	Receiver    receiverShape
-	Signature   func(target.Info) *typeinfo.FuncType
-}
-
-var intrinsicDefinitions = []intrinsicDefinition{
-	{
-		Operation:   symbols.SomeOperation,
-		Name:        "some_operation",
-		Predeclared: true,
-		Signature:   someOperationSignature,
-	},
-}
-```
-
-`PredeclaredSymbols`, symbol lookup, and operation enumeration should derive from this same collection. A consistency test is useful defense, but it does not replace removing duplicate authority.
-
-## 3. Compiler pipeline and backend boundary
-
-These problems concern phase scheduling and ownership after semantic analysis.
-
-### 3.1 Pipeline scheduler can stop without reporting incomplete modules - P2
-
-Scheduler breaks when no module is ready or no phase advances. It can then return without proving every requested module reached backend completion.
-
-Conceptually, current control flow is:
-
-```go
-for {
-	ready := findReadyModules()
-	if len(ready) == 0 {
-		break
-	}
-
-	advanced := advance(ready)
-	if !advanced {
-		break
-	}
-}
-
-return nil
-```
-
-Later build code observes missing/empty LLVM IR, so diagnosis appears after scheduler lost information about blocked phase and prerequisite.
-
-Why wrong:
-
-- Loop termination is mistaken for successful compilation.
-- Root cause is replaced by downstream empty-artifact failure.
-- Adding a phase or dependency edge can silently create an unreported stall.
-
-What should replace it:
-
-Scheduler must establish terminal invariant before returning success:
-
-```go
-for _, module := range orderedModules {
-	if module.Phase != project.PhaseBackend {
-		return fmt.Errorf(
-			"pipeline stalled: module %s stopped at %s",
-			module.Path,
-			module.Phase,
-		)
-	}
-}
-```
-
-Production diagnostic should include unmet prerequisite or blocking diagnostic when available. Generic invariant error is fallback, not preferred user message.
-
-### 3.2 Backend abstraction is declared but not owned at one boundary - P2
-
-Project state defines LLVM and WASM backend identities, but pipeline imports LLVM directly, module state stores `LLVMIR`, CLI rejects non-LLVM backends, and build consumes LLVM-specific output.
-
-Current effective flow:
-
-```text
-CLI backend flag
-    -> project.TargetBackend
-    -> pipeline ignores abstraction
-    -> LLVM generator
-    -> module.LLVMIR
-    -> clang
-```
-
-Adding a backend requires edits across CLI, project core, scheduler, module representation, artifact handling, and build toolchain. `TargetBackend` therefore suggests an extension point that does not exist.
-
-Two valid directions exist:
-
-1. **Be honestly LLVM-only now.** Remove unsupported backend identities and generic configuration until a second backend is implemented.
-2. **Create a real post-MIR backend boundary.** Pipeline selects one backend owner and stores a backend-neutral artifact.
-
-```go
-type Backend interface {
-	Name() backend.Type
-	Emit(*mir.Module, target.Info, *diagnostics.DiagnosticBag) (Artifact, error)
-}
-
-type Artifact struct {
-	Kind backend.Type
-	Text string
-}
-```
-
-Do not add this interface merely to wrap `GenerateLLVMIR`. It is justified only when pipeline dispatch and artifact ownership actually move behind it. Until then, deleting false generality is simpler and more maintainable.
-
-### Desired phase ownership
-
-```text
-Parser
-  produces syntax
-      |
-Typechecker
-  produces types + conversion evidence
-      |
-THIR/MIR lowering
-  consumes semantic evidence; does not rediscover it
-      |
-MIR lowering
-  owns target-independent executable representation
-      |
-Backend boundary
-  owns target/backend-specific representation and emission
-      |
-CLI build
-  owns external tool invocation and final artifact placement
-```
-
-Each arrow is a typed contract. Later phases should not recover facts that an earlier phase already knew, and earlier phases should not store backend-specific output.
-
-## 4. LSP state and concurrency
-
-### 4.1 Diagnostic workers read workspace state outside its lock - P1
-
-Each changed file can schedule a diagnostic goroutine. Recompile locks shared state only while compilation runs. After unlock, worker computes component files from `state.workspace`. Another worker can rebuild or replace that workspace concurrently.
-
-Simplified race:
-
-```text
-worker A: lock -> compile A -> unlock
-worker B: lock -> rebuild workspace -> unlock
-worker A: read workspace component files without lock
-```
-
-Consequences:
-
-- Go data race on workspace state.
-- Diagnostics from one compiler context can be published using file membership from another workspace generation.
-- Older worker can overwrite newer diagnostics.
-
-What should replace it:
-
-Create immutable publication snapshot while holding state lock. Release lock before writing protocol output:
-
-```go
-type diagnosticSnapshot struct {
-	Context *project.CompilerContext
-	Files   []string
-	Version uint64
-}
-
-func (s *ServerState) compileDiagnosticSnapshot(path string) (diagnosticSnapshot, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	ctx, err := s.recompileLocked(path)
-	if err != nil {
-		return diagnosticSnapshot{}, err
-	}
-
-	return diagnosticSnapshot{
-		Context: ctx,
-		Files:   append([]string(nil), s.workspace.componentFiles(path)...),
-		Version: s.version,
-	}, nil
-}
-```
-
-Before publishing, compare snapshot version with latest requested version for each document. This prevents slow old workers from replacing current diagnostics.
-
-Do not hold state mutex while sending LSP messages. Output can block and should not serialize compilation state.
-
-Acceptance criteria:
-
-- Workspace reads and writes follow one locking policy.
-- Publication operates on copied immutable data.
-- Stale worker cannot publish over newer document version.
-- Race-enabled tests pass in a Go installation with working race runtime.
-
-## 5. Documentation and architectural truth
-
-Documentation defects are grouped because each describes a contract maintainers may use when extending compiler.
-
-### 5.1 Interface layout documentation is stale - P2
-
-Ownership documentation says all interface carriers use `{rawptr, vtable}`. Backend layout for owned interfaces includes allocator/provenance state and is effectively `{data, dispatch, allocator}`.
-
-Why wrong:
-
-- ABI work based on two-field model can omit ownership metadata.
-- Calls, returns, drops, comparisons, and conversions may use incompatible layouts.
-
-Correct documentation should distinguish borrowed and owned carriers explicitly:
-
-```text
-borrowed interface: { data pointer, dispatch table }
-owned interface:    { data pointer, dispatch table, allocator/provenance }
-```
-
-Field names and exact LLVM types should be copied from canonical type-lowering owner, not maintained as an independent guessed ABI.
-
-### 5.2 Length/index documentation hardcodes `i64` - P2
-
-Allocator documentation describes dynamic array and string lengths as `i64`. Live lowering uses target `IndexType`, so width follows target pointer/index width.
-
-Correct contract:
-
-```text
-length, capacity, and index fields use target usize/IndexType
-```
-
-This matters on 32-bit targets. ABI documentation must state target-sized intent and validation must cover both 32-bit and 64-bit layouts.
-
-### 5.3 Intrinsic registry documentation overstates unification - P2
-
-README describes a unified intrinsic registry, while predeclared membership and signature construction remain separate declarations. Documentation should not claim architectural work is complete until all consumers derive from one definition.
-
-### 5.4 CLI flow diagrams reference removed functions - P2
-
-CLI diagrams still reference old parser and test-command functions. This makes code-flow navigation actively misleading.
-
-What should replace current maintenance model:
-
-- Update diagrams in same change that moves command ownership.
-- Prefer function/module names verified from live source.
-- Add a lightweight documentation check for referenced paths or symbols where practical.
-- Mark conceptual nodes as conceptual, so they are not mistaken for real functions.
-
-## Implemented order
-
-1. Fixed default-expansion identity and semantic evidence ownership.
-2. Made LSP diagnostic compilation and publication snapshot-safe.
-3. Unified command contract, removed unused backend abstraction, fixed recursive checks, and staged generated artifacts.
-4. Made dependency metadata returned-error atomic and cache cleanup post-commit.
-5. Unified intrinsic ownership and enforced scheduler terminal state.
-6. Aligned documentation with live compiler owners.
-
-## Validation evidence
-
-Remediation used live source and executable behavior, not diagrams as authority.
-
-- `go test -count=1 ./...` passed.
-- `go vet ./...` passed.
-- `go test -race -count=1 ./internal/lsp` passed.
-- `bash scripts/build.sh` rebuilt bundled `build/bin/peeper` successfully.
-- Bundled `check` and `run` passed for `x_test/default_interface_evidence`; process exited zero.
-- Bundled checks rejected `x_test/negative_default_parameter_effect` and `x_test/negative_default_parameter_move`.
-- `TestPipelineLowersEveryRegisteredIntrinsic` passed for 32-bit and 64-bit targets, including clang assembly.
-- CLI subprocess tests cover recursive/multiple paths, mixed valid/invalid exit status, aliases/help, and same-basename generated artifacts.
-- Dependency tests cover malformed locks, multi-package rollback, coordinated publish rollback, registry-scan failure, graph-only pruning, and post-commit cache cleanup retry.
-- D2 renderer was unavailable in validation environment; diagram symbols were checked against live source, but rendered output was not verified.
+# Compiler Review — Completed Work and Remaining Tasks
 
 ## Review boundary
 
-Remediation implements all validated findings without commit, push, PR, or GitHub tracking changes. Suggested snippets in original finding sections remain historical design sketches, not current drop-in code. Coordinated dependency persistence guarantees restoration for returned publish errors; it does not claim journaled power-loss recovery or cross-process locking.
+This document is a fresh-start work list built from the earlier whole-codebase
+review and `final-code-review.md`. It is not a new whole-codebase audit. Each
+finding below was checked against the current source before being listed as
+open, resolved, or documentation-only.
+
+Current checkout used for this update:
+
+- branch: `main`
+- HEAD: `ee3be84` (`Merge pull request #148 from PeeperLanguage/fix/shared-reference-projections`)
+- worktree: clean
+- production source/fixture changes, resets, commits, pushes, and GitHub
+  tracking: none
+
+The earlier note about uncommitted candidates in
+`internal/ir/mir/expr_lower.go` and `internal/backend/llvm/instruction_emit.go`
+and the associated rvalue/shift tests and fixtures does not reproduce in this
+checkout. No files were removed to establish this baseline.
+
+Historical runtime results remain historical evidence. This update checked
+current source, tests, fixtures, workflows, and documentation paths; it did
+not claim to rerun the historical end-to-end reproductions.
+
+## Completed and revalidated work
+
+- [x] **Shared-reference and owner mutability:** committed in `1ae82933`.
+  Owning pointers do not independently grant mutation; immutable owners and
+  enclosing shared references cannot grant write access. Mutable owners and
+  `&mut` remain valid. Moving, freeing, and dropping an immutable owner remain
+  consumption operations and do not require `mut`.
+- [x] **Nested/deferred semantic cases:** `1ae82933` covers optional reference
+  permissions, qualified constant mutable-borrow rejection, deferred
+  enum-field assignment compatibility, and durable late conversions consumed
+  by lowering. Go regressions and Peeper fixtures are included in that work.
+- [x] **Artifact and AST cleanup:** `58a60595` and `76fbabc2` hardened
+  symbol-index snapshots and declaration ordering, sealed cloning, removed
+  unused `ast.Index`, and strengthened clone identity/isolation tests.
+- [x] **LSP rename snapshot consistency:** rename uses one captured compiler
+  context instead of rereading `LastCtx` during background replacement.
+- [x] **Transitive lockfile edge selection:** `71bdeef` records the recursive
+  resolver's selected package ID on parent edges. Regression covers competing
+  versions and persisted lockfiles.
+- [x] **Structural type identity and layout:** `fbdbb52b` makes anonymous
+  struct field order part of identity and keeps named structs nominal. Distinct
+  struct types no longer convert; contextual literals still lower in
+  declaration order.
+- [x] **THIR lookup experiment:** reverted. `Module.Node` uses its
+  module-owned index rather than repeated function scans.
+- [x] **Lockfile direct-alias consistency:** current
+  `pkg/manifest/lockfile.go:SetDirectDependency` publishes the replacement
+  alias before demoting the old package and checks `isStillDirect` first.
+  Current tests cover one-alias demotion and preserving a package referenced
+  by another alias. This item is resolved in the current source; it is not an
+  open implementation task.
+- [x] **CI toolchain classifier coverage:** current
+  `scripts/detect-changes.sh` includes `cmd/release-profile/*` in the
+  toolchain classification. The earlier omission is resolved.
+
+## Remaining compiler correctness work
+
+### 1. High — Capture rvalues before later operand side effects
+
+**Status:** open. Current source confirms the defect shape; no candidate is
+present in this checkout.
+
+**Owner:** `internal/ir/mir/expr_lower.go`, with the source-to-IR place/value
+boundary in `internal/ir/exprlower/lower.go`.
+
+`exprlower.LowerIdent` currently produces `ir.Ident`. MIR lowering of an
+identifier produces a `RefName`, while LLVM `emitRef` loads that name when it
+is emitted. A call argument or binary operand can therefore retain storage
+identity until a later nested operand has already mutated the storage. MIR
+lowering also emits nested call side effects while constructing the outer
+call's arguments.
+
+Historical reproduction:
+
+```peep
+#[extern("memset")]
+fn Memset(p: rawptr, value: i32, size: usize) -> rawptr;
+fn Clear(p: rawptr) -> i32 { Memset(p, 0, 4); return 0; }
+fn Sum(a: i32, b: i32) -> i32 { return a + b; }
+
+fn main() {
+    let mut x: i32 = 7;
+    println(Sum(x, Clear(@x)));
+}
+```
+
+Historical result was `0`; expected result under left-to-right evaluation is
+`7`. The same shape was reproduced with `println(x + Clear(@x))`.
+
+Required result:
+
+- materialize rvalue reads at their evaluation point using existing MIR
+  mechanisms;
+- retain storage identity for assignment, address, and borrow destinations;
+- do not blindly snapshot place roots;
+- distinguish MIR instruction behavior from language-level ownership
+  consumption.
+
+Regression coverage must include call arguments, binary operands, aggregate
+elements, index evaluation, preserved writes and borrows, and existing
+move/drop/ownership behavior. The historical candidate paths
+`internal/ir/mir/expr_lower_order_test.go`,
+`x_test/runtime_mir_rvalue_eval_order_call_capture/`, and
+`x_test/runtime_mir_rvalue_eval_order_binary_capture/` are absent here.
+
+### 2. High — Make narrow shift guards width-safe
+
+**Status:** open. Current source still contains the lossy guard.
+
+**Owner:** `internal/backend/llvm/instruction_emit.go`.
+
+Current shift lowering computes operand width, then compares `right` against
+`bits` using `right.Layout`:
+
+```go
+invalid := b.compare("icmp", "uge", right,
+    b.value(strconv.Itoa(bits), right.Layout))
+```
+
+For a narrow count such as `u5`, the bound `32` is not representable in the
+count type. LLVM therefore receives an invalid or wrapped bound instead of a
+comparison in a type that can represent both values. The later cast to the
+shift operand type happens only after this guard.
+
+Historical reproduction:
+
+```peep
+fn Shift(count: u5) -> u32 { return 1u32 << count; }
+fn main() { println(Shift(1u5)); }
+```
+
+Required result: validate signed negative and oversized counts in a width that
+can represent the count and operand-width bound, then convert to the shift
+operand width only after validation. Cover both directions, signed and
+unsigned counts, zero and highest valid counts, the exact bound, wide counts
+that would truncate to valid values, odd widths, and 32-/64-bit target
+layouts. Historical candidate files are absent here.
+
+### 3. Medium — Publish cached objects across filesystems safely
+
+**Status:** open. Current source still stages in system temporary storage and
+renames across filesystems.
+
+**Owner:** `cmd/build.go`.
+
+`buildExecutable` creates `artifactDir` with `os.MkdirTemp("", ...)`, then
+publishes each compiled object with `os.Rename(objectPath, cachePath)`. A
+managed build whose temporary directory and project cache use different
+filesystems can fail with `invalid cross-device link`.
+
+Required result: stage the object on the cache destination filesystem and
+atomically publish it there. Incomplete objects must remain invisible to cache
+readers. Test differing temporary/cache filesystems and cleanup on compiler or
+publish failure.
+
+### 4. Medium — Preserve negative zero in runtime floating negation
+
+**Status:** open. Current source still emits `fsub` from positive zero for
+floating unary minus.
+
+**Owner:** `internal/backend/llvm/instruction_emit.go`.
+
+The floating branch of unary `-` currently emits:
+
+```go
+b.arithmetic("fsub", b.value("0.0", arg.Layout), arg)
+```
+
+This differs from constant folding for signed zero. Historical reproduction
+used `1.0f64 / Neg(0.0f64)` and observed `inf` instead of `-inf`.
+
+Required result: emit LLVM `fneg` and prove constant/runtime parity for signed
+zero in both `f32` and `f64`.
+
+### 5. Medium — Reconcile floating remainder with the specification
+
+**Status:** open. Current source is inconsistent across specification,
+typechecking, constant folding, and backend emission.
+
+`docs/language-spec.md` says floating division and remainder keep IEEE
+behavior. LLVM emission already selects `frem` for floating `%`, but
+`internal/semantics/typechecker/check_expr.go` accepts `%` only for integral
+types, and `internal/constvalue/value.go` has no floating `%` case.
+
+Required result: confirm the intended language rule, then make typing,
+constant evaluation, and runtime behavior agree. Do not remove specified
+behavior merely to avoid implementation work. Cover floating boundary cases
+and constant/runtime parity.
+
+### 6. Medium — Discover new files in existing empty directories
+
+**Status:** open. Current source retains the incomplete discovery shortcut.
+
+**Owner:** `internal/lsp/workspace.go`.
+
+The fast path returns cached module paths when `directoriesUnchanged` is true.
+`captureDirectoryStamps` records the workspace root, source directory, and
+directories containing discovered files. It does not record every directory
+traversed during discovery, including pre-existing empty nested directories.
+Creating a source file in one of those directories can therefore leave the
+directory stamps unchanged and omit the new file when no open-buffer overlay
+exists.
+
+Required result: track all relevant traversed directories for invalidation, or
+remove the incomplete shortcut. Add an unopened-file regression while
+preserving existing discovery and incremental behavior. LSP workspace
+concurrency checks are required for any implementation change.
+
+## Broader repository findings to recheck before fixing
+
+### 7. Lockfile alias/direct-dependency consistency
+
+**Status:** resolved on current source; retained here as revalidated evidence.
+
+`SetDirectDependency` now uses `isStillDirect` before clearing the previous
+package's `IsDirect` flag. Tests cover replacement, shared aliases, and
+dependency-edge `UsedBy` rewiring. Any later lockfile work must still audit
+forward edges, reverse `UsedBy` edges, direct flags, pruning, and persistence
+without inventing another mirrored representation.
+
+### 8. Installer release-signature verification
+
+**Status:** open.
+
+The release workflow currently builds an unsigned manifest and publishes
+`SHA256SUMS`. Both `scripts/install.sh` and `scripts/install.ps1` authenticate
+the manifest and components only by checksums downloaded from the same
+release. The repository has signature-related source metadata paths, but the
+installers do not use authenticated release signatures.
+
+Required result: confirm the intended trust model and use authenticated
+release metadata consistently on Unix and Windows. Checksums alone do not
+establish publisher authenticity. Cover tampered and unsigned metadata under
+the selected policy.
+
+### 9. CI change classification
+
+**Status:** resolved in current source. `scripts/detect-changes.sh` includes
+`cmd/release-profile/*` in the toolchain case, matching toolchain fingerprint
+inputs. Keep a regression if classifier rules are changed later.
+
+### 10. Current contributor documentation
+
+**Status:** open documentation-only work.
+
+Current spot checks still find stale architecture claims:
+
+- `Code-tour.md` names `internal/project` as the owner of `Module` and lists
+  `hir` under `internal/ir`, while current ownership is in `internal/module`
+  and the repository has no HIR artifact.
+- `docs/architecture/ir.md` names removed
+  `internal/ir/thir/build.go`; current THIR materialization is owned by
+  `internal/semantics/typechecker/thir_build.go`.
+- Adjacent phase and infrastructure descriptions must be checked against live
+  source, including current `HasProvidedContent` and parser/workspace
+  fingerprint ownership.
+
+Required result: repair inaccurate paths, artifacts, phase descriptions, and
+ownership claims only after source verification. Keep `FlowAnalyzer`,
+`EffectBuilder`, and existing filenames. Do not repeat the rejected terminology
+migration or add a documentation framework.
+
+## Architecture and performance follow-ups
+
+These are investigations, not proven fixes:
+
+- **Workspace rebuild cost:** `bdd87ec` shared project context setup and
+  `f18a320` reused one index pass across diagnostic components. Discovery,
+  manifest, hash, and graph work remains per refresh. Measure real rebuild work
+  before adding cache representations.
+- **Safe per-function reuse:** identify one independently produced artifact,
+  every producer and consumer, and all semantic inputs: body/declaration,
+  scopes/imports, constants/defaults, generic instances, target/configuration,
+  diagnostics, and topology. FunctionID is identity, not cache validity.
+  Require demonstrated skipped work, clean-build parity, dependency-change
+  miss detection, and a full-module fallback when uncertain. Persistent
+  caching follows a proven in-memory boundary.
+- **`TypeTable.Type` backing slices:** shallow returned descriptors still expose
+  mutable backing slices. No production mutation was found in the earlier
+  audit, so this remains a latent ownership hazard rather than a demonstrated
+  active defect. Recheck before changing APIs.
+
+## Validation and next step
+
+For each source fix, validate the affected package first, then affected
+packages and the full suite. Language behavior changes require focused Go
+tests, positive and applicable negative `x_test/` fixtures, bundled executable
+validation, affected target widths, and backend output checks. The repository
+validation set is:
+
+```sh
+env CCACHE_DISABLE=1 GOCACHE=/tmp/peeper-go-cache go test -count=1 ./...
+env CCACHE_DISABLE=1 GOCACHE=/tmp/peeper-go-cache go vet ./...
+env CCACHE_DISABLE=1 GOCACHE=/tmp/peeper-go-cache go run ./scripts/bundle.go
+env CCACHE_DISABLE=1 GOCACHE=/tmp/peeper-go-cache PEEPER_BIN="$PWD/build/bin/peeper" go test -count=1 ./x_test
+git diff --check
+```
+
+Next implementation step: reproduce finding 1 or 2 against the current source,
+then make one focused fix in its canonical owner. Do not discard or silently
+overwrite unrelated work if a later checkout contains candidate changes.
+
+Preserve unrelated local artifacts and review inputs, including
+`docs/superpowers/plans/2026-09-29-function-level-incremental-reuse.md`,
+`final-code-review.md`, `review.md`, and `lsp.test` when they exist.
