@@ -1,0 +1,7 @@
+name = "negative_remainder_types"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["T0004", "unsupported operand type for operator `%`", "operand types mismatch"]

@@ -255,6 +255,9 @@ func (profile Profile) LinkArgs(responsePath, outputPath string) []string {
 		)
 	}
 	args = append(args, "@"+responsePath)
+	if profile.TargetOS == "linux" {
+		args = append(args, "-lm")
+	}
 	if profile.LinkMode == "static" {
 		args = append(args, "-lc", "-lclang_rt.builtins", path.Join(profile.Sysroot, "lib", "crtn.o"))
 	}

@@ -627,6 +627,34 @@ func checkTypeModule(t *testing.T, src string) (*module.Module, *diagnostics.Dia
 	return module, diag
 }
 
+func TestFloatingRemainderTypes(t *testing.T) {
+	for _, test := range []struct{ left, right, result string }{
+		{"f32", "f32", "f32"}, {"f64", "f64", "f64"},
+		{"f32", "f64", "f64"}, {"f64", "f32", "f64"},
+	} {
+		t.Run(test.left+"_"+test.right, func(t *testing.T) {
+			mod, diag := checkTypeModule(t, fmt.Sprintf("fn Rem(left: %s, right: %s) -> %s { return left %% right; }", test.left, test.right, test.result))
+			if diag.HasErrors() {
+				t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+			}
+			fn := mod.AST.Stmts[0].(*ast.FnDecl)
+			ret := fn.Body.Stmts[0].(*ast.ReturnStmt)
+			value := mod.THIR.Node(ret.Value.ID()).(thir.Expr)
+			if got := typeinfo.TypeText(value.ExprType()); got != test.result {
+				t.Fatalf("remainder type = %s, want %s", got, test.result)
+			}
+		})
+	}
+	for _, typ := range []string{"bool", "str", "rawptr", "char"} {
+		t.Run("reject_"+typ, func(t *testing.T) {
+			diag := checkTypeSource(t, fmt.Sprintf("fn Reject(left: %s, right: %s) { let _ = left %% right; }", typ, typ))
+			if out := diag.EmitAllToString(); !diag.HasErrors() || !strings.Contains(out, "unsupported operand type for operator `%`") {
+				t.Fatalf("missing rejected remainder diagnostic:\n%s", out)
+			}
+		})
+	}
+}
+
 func TestEnumDeclarationValidation(t *testing.T) {
 	tests := []struct {
 		name   string

@@ -1,0 +1,6 @@
+fn BoolRemainder(left: bool, right: bool) { let _ = left % right; }
+fn StringRemainder(left: str, right: str) { let _ = left % right; }
+fn PointerRemainder(left: rawptr, right: rawptr) { let _ = left % right; }
+fn CharRemainder(left: char, right: char) { let _ = left % right; }
+fn MixedRemainder(left: f64, right: i32) { let _ = left % right; }
+fn main() {}

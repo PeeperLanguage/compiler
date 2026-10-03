@@ -1078,10 +1078,8 @@ func integerRangeHint(t *typeinfo.IntegerType) string {
 
 func (c *checker) areValidBinaryTypes(op string, typ typeinfo.Type) bool {
 	switch op {
-	case "+", "-", "*", "/":
+	case "+", "-", "*", "/", "%":
 		return typeinfo.IsArithmetic(typ)
-	case "%":
-		return typeinfo.IsIntegral(typ)
 	case "&", "|", "^", "<<", ">>":
 		return typeinfo.IsIntegral(typ)
 	case "==", "!=":
