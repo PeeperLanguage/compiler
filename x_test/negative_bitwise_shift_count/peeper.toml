@@ -4,4 +4,4 @@ build = "program"
 [test]
 mode = "check"
 outcome = "failure"
-stderr_contains = ["Compilation failed"]
+stderr_contains = ["Compilation failed", "shift count type byte requires explicit cast to u32", "shift count type u5 requires explicit cast to byte"]

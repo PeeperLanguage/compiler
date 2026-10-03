@@ -36,7 +36,7 @@ fn shift_left_mixed(value: i64, count: u8) -> i64 {
 }
 
 fn shift_right_mixed(value: u8, count: u16) -> u8 {
-    return value >> count;
+    return value >> (count as u8);
 }
 
 fn precedence(a: u8, b: u8, c: u8, d: u8) -> u8 {
@@ -79,6 +79,9 @@ fn main() -> i32 {
     }
     if shift_right_mixed(128u8, 2u16) != 32u8 {
         return 12;
+    }
+    if shift_right_mixed(128u8, 258u16) != 32u8 {
+        return 13;
     }
     return 0;
 }

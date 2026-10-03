@@ -1,0 +1,7 @@
+fn shift(count: i5) -> i32 {
+    return 1i32 << count;
+}
+
+fn main() -> i32 {
+    return shift(-1i5);
+}

@@ -8,6 +8,7 @@ import (
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/typeresolution"
 	"compiler/pkg/numeric"
 )
 
@@ -236,6 +237,30 @@ func (e *constantEvaluator) evalExpr(scope *symbols.Scope, expr ast.Expr, expect
 			return nil, false
 		}
 		return expectedNumericConstValue(value, expected)
+	case *ast.AsExpr:
+		var targetType, sourceType typeinfo.Type
+		if e.evidence != nil {
+			targetType = e.evidence.ExprType(node.ID())
+			sourceType = e.evidence.ExprType(node.Expr.ID())
+		}
+		if targetType == nil {
+			targetType = e.ctx.TypeResolver.Query(e.module, node.TypeExpr, typeresolution.Context{}).Type
+		}
+		if !typeinfo.IsIntegral(targetType) {
+			return nil, false
+		}
+		// Cast input keeps its own width; destination context must not change
+		// overflow before the explicit finite-width conversion.
+		value, ok := e.evalExpr(scope, node.Expr, sourceType)
+		integer, isInteger := value.(*constvalue.IntConst)
+		if !ok || !isInteger || integer == nil {
+			return nil, false
+		}
+		converted, ok := constvalue.NewInt(integer.Int(), typeinfo.TypeText(typeinfo.Underlying(targetType)))
+		if !ok {
+			return nil, false
+		}
+		return expectedNumericConstValue(converted, expected)
 	case *ast.UnaryExpr:
 		value, ok := e.evalExpr(scope, node.Expr, expected)
 		if !ok {

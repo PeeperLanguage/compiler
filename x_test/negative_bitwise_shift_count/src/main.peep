@@ -5,3 +5,19 @@ fn main() -> i32 {
     1i8 >> true;
     return 0;
 }
+
+fn wider_shift_count(value: u8, count: u16) -> u8 {
+    return value >> count;
+}
+
+fn signedness_shift_count(value: i8, count: u8) -> i8 {
+    return value << count;
+}
+
+fn byte_shift_count(value: u32, count: byte) -> u32 {
+    return value << count;
+}
+
+fn integer_byte_shift_count(value: byte, count: u5) -> byte {
+    return value >> count;
+}

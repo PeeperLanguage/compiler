@@ -91,6 +91,47 @@ const Right: i8 = -8i8 >> 2i8;
 	assertIntConst(t, module, "Right", "-2", "i8")
 }
 
+func TestEvaluateIntegerCastsBeforeConstantShifts(t *testing.T) {
+	module, diag := checkTypeModule(t, `type Count = u8;
+const Shifted: u8 = 128u8 >> (2u16 as u8);
+const Truncated: u8 = 128u8 >> (258u16 as u8);
+const Wrapped: u8 = 1u8 << (256u16 as u8);
+const Nested: u8 = 1u8 << ((258u16 as Count) as u8);
+const SourceOverflow: u16 = (255u8 + 1u8) as u16;
+const SignedWiden: u16 = -1i8 as u16;
+const SignedNarrow: i8 = 255u16 as i8;
+const DeclaredWide: u32 = 258u16 as u8;
+const ByteCount: byte = 2u16 as byte;
+const FromByte: u32 = ByteCount as u32;
+`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	for _, test := range []struct{ name, value, typ string }{
+		{"Shifted", "32", "u8"}, {"Truncated", "32", "u8"},
+		{"Wrapped", "1", "u8"}, {"Nested", "4", "u8"},
+		{"SourceOverflow", "0", "u16"}, {"SignedWiden", "65535", "u16"},
+		{"SignedNarrow", "-1", "i8"}, {"DeclaredWide", "2", "u32"},
+		{"ByteCount", "2", "byte"}, {"FromByte", "2", "u32"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assertIntConst(t, module, test.name, test.value, test.typ)
+		})
+	}
+}
+
+func TestEvaluateIntegerCastWithoutTypingEvidence(t *testing.T) {
+	module, diag := constevalModule(t, `type Count = u8;
+const Converted: Count = 258u16 as Count;
+const Shifted: u8 = 128u8 >> Converted;
+`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	assertIntConst(t, module, "Shifted", "32", "u8")
+	assertIntConst(t, module, "Converted", "2", "u8")
+}
+
 func TestEvaluateBitwiseConstExpressionsThroughIntegralAlias(t *testing.T) {
 	module, diag := constevalModule(t, `type Flags = u8;
 const Mask: Flags = ~0;

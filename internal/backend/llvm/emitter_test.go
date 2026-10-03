@@ -751,6 +751,66 @@ func TestGenerateLLVMIRGuardsMixedShiftCountBeforeCast(t *testing.T) {
 	}
 }
 
+func TestGenerateLLVMIRWidensNarrowShiftCountBeforeGuard(t *testing.T) {
+	tests := []struct {
+		name        string
+		target      target.Info
+		operandBits int
+		leftSigned  bool
+		countSigned bool
+		op          string
+		opcode      string
+		extension   string
+	}{
+		{name: "u32-left-u5", target: testLinux386, operandBits: 32, op: "<<", opcode: "shl", extension: "zext"},
+		{name: "i64-right-i5", target: testLinuxAMD64, operandBits: 64, leftSigned: true, countSigned: true, op: ">>", opcode: "ashr", extension: "sext"},
+		{name: "u64-right-i5", target: testLinuxAMD64, operandBits: 64, countSigned: true, op: ">>", opcode: "lshr", extension: "sext"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			types := newLLVMTypeFixture(tt.target.PointerBits)
+			leftType := types.table.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: tt.leftSigned, Bits: tt.operandBits})
+			countType := types.table.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: tt.countSigned, Bits: 5})
+			result := &mir.RefName{Name: "result", Type: leftType}
+			mod := &mir.Module{
+				Name: "test", Types: types.table,
+				Funcs: []*mir.Function{{
+					Name:       "apply",
+					Params:     []ir.Param{{Name: "left", Type: leftType}, {Name: "right", Type: countType}},
+					ReturnType: leftType,
+					Blocks: []*mir.Block{{
+						ID: 0,
+						Instrs: []mir.Instr{&mir.Assign{Name: "result", Value: &mir.Binary{
+							Op: tt.op, Left: &mir.RefName{Name: "left", Type: leftType}, Right: &mir.RefName{Name: "right", Type: countType}, Type: leftType,
+						}}},
+						Term: &mir.Ret{Value: result},
+					}},
+				}},
+			}
+			out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), tt.target, false)
+			extension := strings.Index(out, fmt.Sprintf(" = %s i5 %%right to i%d", tt.extension, tt.operandBits))
+			guard := strings.Index(out, fmt.Sprintf("icmp uge i%d", tt.operandBits))
+			trap := strings.Index(out, "call void @llvm.trap()")
+			shift := strings.Index(out, fmt.Sprintf(" = %s i%d %%left,", tt.opcode, tt.operandBits))
+			if extension < 0 || guard < extension || trap < guard || shift < trap {
+				t.Fatalf("narrow shift count must widen before guarded %s, got:\n%s", tt.op, out)
+			}
+			if strings.Contains(out, "icmp uge i5 %right") {
+				t.Fatalf("narrow shift guard must not compare in i5, got:\n%s", out)
+			}
+			clang, err := exec.LookPath("clang")
+			if err != nil {
+				t.Skip("clang unavailable for LLVM IR validation")
+			}
+			cmd := exec.Command(clang, "-target", tt.target.LLVMTriple, "-x", "ir", "-c", "-o", filepath.Join(t.TempDir(), "shift.o"), "-")
+			cmd.Stdin = strings.NewReader(out)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("clang rejected shift LLVM IR: %v\n%s\n%s", err, output, out)
+			}
+		})
+	}
+}
+
 func TestGenerateLLVMIRLowersIntegerComplement(t *testing.T) {
 	result := &mir.RefName{Name: "result", Type: llvmTypes.u8}
 	mod := &mir.Module{

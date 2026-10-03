@@ -1,0 +1,7 @@
+name = "negative_bitwise_shift_cast_count"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["shift count must be between 0 and 7", "shift count must be between 0 and 31"]

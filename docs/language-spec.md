@@ -358,13 +358,21 @@ matching interface carrier implicitly.
 
 Integer and `byte` values support bitwise AND (`&`), OR (`|`), XOR (`^`),
 complement (`~`), left shift (`<<`), and right shift (`>>`). Floats, booleans,
-raw pointers, and composites do not support bitwise operators. Binary operands
+raw pointers, and composites do not support bitwise operators. AND, OR, and XOR
 use normal common-numeric-type conversion and produce that integral type.
 
 Bitwise results use finite-width two-complement representation. Right shift is
 arithmetic for signed integers and logical for unsigned integers and `byte`.
-Shift count must be non-negative and smaller than operand width. Invalid
-constant counts are compile errors; invalid runtime counts trap before shift.
+The left operand of `<<` or `>>` determines result type and width. A narrower
+integer count widens implicitly to that integer type. A wider integer count or
+same-width signedness mismatch requires an explicit `as` cast to the left
+type. Any `byte`/integer mismatch requires `as`, regardless of width; a `byte`
+count can shift a `byte` operand directly. Without a required cast, the
+expression is rejected. Explicit integer casts use the existing finite-width
+conversion rule before shift validation, so a lossy cast
+is intentional and visible in source. After conversion, shift count must be
+non-negative and smaller than operand width. Invalid constant counts are
+compile errors; invalid runtime counts trap before shift.
 
 Integer addition, subtraction, multiplication, division, and remainder use the
 same finite-width representation. Signed division truncates toward zero. The

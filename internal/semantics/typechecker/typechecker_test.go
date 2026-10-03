@@ -930,7 +930,8 @@ func TestBitwiseOperatorsRequireIntegralOperands(t *testing.T) {
 	let right: i8 = signed >> 2i8;
 	let wrapped_count: u8 = 1u8 << (255u8 + 1u8);
 	let mixed_left: i64 = 1i64 << 3u8;
-	let mixed_right: u8 = 128u8 >> 2u16;
+	let mixed_right: u8 = 128u8 >> (2u16 as u8);
+	let explicit_signedness: i8 = 1i8 << (1u8 as i8);
 	return 0;
 }`)
 	if valid.HasErrors() {
@@ -952,6 +953,16 @@ func TestBitwiseOperatorsRequireIntegralOperands(t *testing.T) {
 		strings.Count(out, "shift count must be integral") != 2 {
 		t.Fatalf("expected integral-only diagnostics, got:\n%s", out)
 	}
+
+	wider := checkTypeSource(t, `fn main() -> i32 {
+	let wider_count: u8 = 1u8 >> 2u16;
+	let signedness_change: i8 = 1i8 << 1u8;
+	return 0;
+}`)
+	widerOut := wider.EmitAllToString()
+	if !wider.HasErrors() || strings.Count(widerOut, "requires explicit cast") != 2 {
+		t.Fatalf("expected explicit shift-count cast diagnostics, got:\n%s", widerOut)
+	}
 }
 
 func TestBitwiseShiftRejectsConstantCountOutsideTypeWidth(t *testing.T) {
@@ -963,6 +974,41 @@ func TestBitwiseShiftRejectsConstantCountOutsideTypeWidth(t *testing.T) {
 	out := diag.EmitAllToString()
 	if !diag.HasErrors() || strings.Count(out, "shift count must be between 0 and 7") != 2 {
 		t.Fatalf("expected checked shift-count diagnostics, got:\n%s", out)
+	}
+}
+
+func TestBitwiseShiftRejectsInvalidCastedConstantCount(t *testing.T) {
+	for _, test := range []struct{ expr, want string }{
+		{"1u8 << (8u16 as u8)", "shift count must be between 0 and 7"},
+		{"1u8 >> (-1i16 as u8)", "shift count must be between 0 and 7"},
+		{"1i8 << (255u16 as i8)", "shift count must be between 0 and 7"},
+		{"1u32 << (-1i8 as u32)", "shift count must be between 0 and 31"},
+	} {
+		t.Run(test.expr, func(t *testing.T) {
+			diag := checkTypeSource(t, "fn main() { let _ = "+test.expr+"; }")
+			if out := diag.EmitAllToString(); !diag.HasErrors() || !strings.Contains(out, test.want) {
+				t.Fatalf("missing casted shift-count diagnostic:\n%s", out)
+			}
+		})
+	}
+}
+
+func TestBitwiseShiftRequiresExplicitByteIntegerConversion(t *testing.T) {
+	for _, test := range []struct{ left, count string }{
+		{"u32", "byte"}, {"byte", "u5"}, {"u8", "byte"}, {"byte", "u8"},
+	} {
+		t.Run(test.left+"_"+test.count, func(t *testing.T) {
+			for _, op := range []string{"<<", ">>"} {
+				diag := checkTypeSource(t, fmt.Sprintf("fn shift(value: %s, count: %s) -> %s { return value %s count; }", test.left, test.count, test.left, op))
+				if out := diag.EmitAllToString(); !diag.HasErrors() || !strings.Contains(out, "requires explicit cast") {
+					t.Fatalf("missing byte/integer shift-count diagnostic:\n%s", out)
+				}
+				cast := checkTypeSource(t, fmt.Sprintf("fn shift(value: %s, count: %s) -> %s { return value %s (count as %s); }", test.left, test.count, test.left, op, test.left))
+				if cast.HasErrors() {
+					t.Fatalf("explicit byte/integer count cast rejected:\n%s", cast.EmitAllToString())
+				}
+			}
+		})
 	}
 }
 

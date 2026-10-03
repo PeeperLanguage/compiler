@@ -120,6 +120,44 @@ fn make() -> Wide { return Wide::Value with 7i32; }
 	}
 }
 
+func TestLowerShiftWidensCountToLeftType(t *testing.T) {
+	mod, diag := buildTypedExprModule(t, `
+fn shift(count: u5) -> u32 { return 1u32 << count; }
+`)
+	var binary *thir.Binary
+	for _, function := range mod.THIR.Functions {
+		if function == nil || function.Body == nil {
+			continue
+		}
+		thir.Inspect(function.Body, func(node thir.Node) bool {
+			if current, ok := node.(*thir.Binary); ok && (current.Op == "<<" || current.Op == ">>") {
+				binary = current
+			}
+			return true
+		})
+	}
+	if binary == nil {
+		t.Fatal("shift expression missing from THIR")
+	}
+	types := ir.NewTypeTable()
+	lowered, ok := exprlower.Lower(exprlower.Context{
+		Types: types, Diagnostics: diag, Source: mod.THIR, ModuleID: mod.ID,
+	}, binary, nil).(*ir.Binary)
+	if !ok {
+		t.Fatalf("lowered shift = %T, want *ir.Binary", lowered)
+	}
+	if got, want := lowered.Left.TypeID(), lowered.Right.TypeID(); got != want {
+		t.Fatalf("lowered shift operand types = %d and %d, want equal types", got, want)
+	}
+	count, ok := lowered.Right.(*ir.Cast)
+	if !ok {
+		t.Fatalf("lowered shift count = %T, want implicit cast", lowered.Right)
+	}
+	if got := types.Text(count.TypeID()); got != "u32" {
+		t.Fatalf("lowered shift count type = %s, want u32", got)
+	}
+}
+
 func TestLowerInterfaceUsesPublishedImplementation(t *testing.T) {
 	mod, diag := buildTypedExprModule(t, `
 iface Summer { fn (&Self) sum() -> i32 }

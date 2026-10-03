@@ -1,0 +1,6 @@
+fn main() {
+    let _ = 1u8 << (8u16 as u8);
+    let _ = 1u8 >> (-1i16 as u8);
+    let _ = 1i8 << (255u16 as i8);
+    let _ = 1u32 << (-1i8 as u32);
+}

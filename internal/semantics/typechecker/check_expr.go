@@ -400,6 +400,14 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 				"shift count must be integral"))
 			return &typeinfo.InvalidType{}
 		}
+		conversion := typeinfo.CheckCompatibility(left, right)
+		if conversion.Compatibility != typeinfo.Compatible {
+			c.ctx.Diagnostics.Add(typeMismatchError(node.Right,
+				fmt.Sprintf("shift count type %s requires explicit cast to %s",
+					typeinfo.TypeText(right), typeinfo.TypeText(left))))
+			return &typeinfo.InvalidType{}
+		}
+		c.recordImplicitConversion(node.Right, conversion)
 		if value, ok := c.evaluateConstant(c.ctx, scope, node.Right, right); ok {
 			if count, ok := value.(*constvalue.IntConst); ok && count != nil {
 				_, bits, _ := typeinfo.NumericInfo(left)

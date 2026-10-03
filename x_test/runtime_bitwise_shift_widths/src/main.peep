@@ -1,0 +1,42 @@
+type Count = u8;
+
+const Shifted: u8 = 128u8 >> (2u16 as u8);
+const Truncated: u8 = 128u8 >> (258u16 as u8);
+const Wrapped: u8 = 1u8 << (256u16 as u8);
+const Nested: u8 = 1u8 << ((258u16 as Count) as u8);
+const SourceOverflow: u8 = 1u8 << ((255u8 + 1u8) as u8);
+
+fn shift_u32(count: u5) -> u32 {
+    return 1u32 << count;
+}
+
+fn shift_i32(count: i5) -> i32 {
+    return 1i32 << count;
+}
+
+fn shift_u64(count: u6) -> u64 {
+    return 1u64 << count;
+}
+
+fn shift_byte(count: u5) -> byte {
+    return (128u8 as byte) >> (count as byte);
+}
+
+fn shift_from_byte(count: byte) -> u32 {
+    return 1u32 << (count as u32);
+}
+
+fn main() -> i32 {
+    if shift_u32(1u5) != 2u32 { return 1; }
+    if shift_u32(31u5) != 2147483648u32 { return 2; }
+    if shift_i32(4i5) != 16i32 { return 3; }
+    if shift_u64(6u6) != 64u64 { return 4; }
+    if Shifted != 32u8 { return 5; }
+    if Truncated != 32u8 { return 6; }
+    if Wrapped != 1u8 { return 7; }
+    if Nested != 4u8 { return 8; }
+    if SourceOverflow != 1u8 { return 9; }
+    if (shift_byte(2u5) as u8) != 32u8 { return 10; }
+    if shift_from_byte(2u8 as byte) != 4u32 { return 11; }
+    return 0;
+}

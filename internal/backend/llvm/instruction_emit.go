@@ -577,7 +577,20 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) llvmValue {
 					b.emitter.markInvalid("shift lowering requires integral operands")
 					return left
 				}
-				invalid := b.compare("icmp", "uge", right, b.value(strconv.Itoa(bits), right.Layout))
+				rightSigned, rightBits, ok := integerInfoID(b.emitter.mod.Types, e.Right.TypeID())
+				if !ok {
+					b.emitter.markInvalid("shift lowering requires integral operands")
+					return left
+				}
+				guardCount := right
+				if rightBits < bits {
+					opcode := "zext"
+					if rightSigned {
+						opcode = "sext"
+					}
+					guardCount = b.cast(opcode, right, left.Layout)
+				}
+				invalid := b.compare("icmp", "uge", guardCount, b.value(strconv.Itoa(bits), guardCount.Layout))
 				shiftID := b.nextID
 				b.nextID++
 				failLabel := fmt.Sprintf("shift_fail_%d", shiftID)
@@ -593,9 +606,9 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) llvmValue {
 						opcode = "lshr"
 					}
 				}
-				shiftCount := right
-				if e.Right.TypeID() != e.Left.TypeID() {
-					shiftCount = emitCast(b, &mir.Cast{Arg: e.Right, Type: e.Left.TypeID(), Location: e.Right.SourceLocation()})
+				shiftCount := guardCount
+				if rightBits > bits {
+					shiftCount = b.cast("trunc", right, left.Layout)
 				}
 				return b.arithmetic(opcode, left, shiftCount)
 			case "==", "!=", "<", "<=", ">", ">=":

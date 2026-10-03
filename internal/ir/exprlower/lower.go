@@ -225,7 +225,7 @@ func (l *lowerer) LowerBinary(e *thir.Binary) ir.Expr {
 	switch e.Op {
 	case "<<", ">>":
 		leftExpected = leftType
-		rightExpected = rightType
+		rightExpected = leftType
 	case "==", "!=", "<", "<=", ">", ">=", "&&", "||":
 		leftExpected = leftType
 		rightExpected = rightType
