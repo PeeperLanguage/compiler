@@ -370,7 +370,19 @@ Integer addition, subtraction, multiplication, division, and remainder use the
 same finite-width representation. Signed division truncates toward zero. The
 unrepresentable signed case `MIN / -1` wraps to `MIN`, and `MIN % -1` is zero.
 Integer division or remainder by zero traps at runtime. Floating-point division
-and remainder keep IEEE behavior.
+keeps IEEE behavior.
+
+Floating-point `%` uses truncating remainder (LLVM `frem`, C `fmod`), not IEEE
+nearest-quotient remainder. For finite operands and a nonzero divisor, its
+mathematical result is `a - trunc(a / b) * b`, with the quotient computed in
+exact arithmetic. For example, `5.5 % 2.0` is `1.5`, `-5.5 % 2.0` is `-1.5`,
+and `5.5 % -2.0` is `1.5`. A nonzero result has the dividend's sign; an exact
+zero retains the dividend's sign, including negative zero.
+
+NaN operands, an infinite dividend, or a zero divisor produce NaN without
+trapping. A finite dividend with an infinite divisor returns the dividend.
+Constant evaluation and runtime execution follow the same rule for `f32` and
+`f64`, after normal operand conversion to their common floating-point type.
 
 Comparison operators are capability-based and checked before lowering:
 

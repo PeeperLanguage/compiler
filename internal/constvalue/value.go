@@ -1,6 +1,7 @@
 package constvalue
 
 import (
+	"math"
 	"math/big"
 	"strconv"
 
@@ -377,6 +378,8 @@ func foldFloatBinary(op string, left, right *FloatConst) (Value, bool) {
 		return NewFloat(lv*rv, left.TypeText())
 	case "/":
 		return NewFloat(lv/rv, left.TypeText())
+	case "%":
+		return NewFloat(math.Mod(lv, rv), left.TypeText())
 	case "==":
 		return NewBool(lv == rv), true
 	case "!=":

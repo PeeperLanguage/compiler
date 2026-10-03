@@ -1,0 +1,56 @@
+const Folded32: f32 = 5.5f32 % 2.0f32;
+const Folded64: f64 = 5.5f64 % 2.0f64;
+const Inf32: f32 = 1.0f32 / 0.0f32;
+const Inf64: f64 = 1.0f64 / 0.0f64;
+const NaN32: f32 = 0.0f32 / 0.0f32;
+const NaN64: f64 = 0.0f64 / 0.0f64;
+
+fn Rem32(left: f32, right: f32) -> f32 { return left % right; }
+fn Rem64(left: f64, right: f64) -> f64 { return left % right; }
+
+// Widening f32 results is exact; compare both paths with an independent result.
+fn Matches(actual: f64, folded: f64, expected: f64) -> bool {
+    if expected != expected { return actual != actual && folded != folded; }
+    if actual != expected || folded != expected { return false; }
+    if expected == 0.0 {
+        return 1.0 / actual == 1.0 / expected && 1.0 / folded == 1.0 / expected;
+    }
+    return true;
+}
+
+fn main() -> i32 {
+    if !Matches(Rem32(5.5, 2.0), Folded32, 1.5) { return 1; }
+    if !Matches(Rem64(5.5, 2.0), Folded64, 1.5) { return 2; }
+    if !Matches(Rem32(-5.5, 2.0), -5.5f32 % 2.0f32, -1.5) { return 3; }
+    if !Matches(Rem64(-5.5, 2.0), -5.5f64 % 2.0f64, -1.5) { return 4; }
+    if !Matches(Rem32(5.5, -2.0), 5.5f32 % -2.0f32, 1.5) { return 5; }
+    if !Matches(Rem64(5.5, -2.0), 5.5f64 % -2.0f64, 1.5) { return 6; }
+    if !Matches(Rem32(-5.5, -2.0), -5.5f32 % -2.0f32, -1.5) { return 7; }
+    if !Matches(Rem64(-5.5, -2.0), -5.5f64 % -2.0f64, -1.5) { return 8; }
+    if !Matches(Rem32(1.75, 0.5), 1.75f32 % 0.5f32, 0.25) { return 9; }
+    if !Matches(Rem64(1.75, 0.5), 1.75f64 % 0.5f64, 0.25) { return 10; }
+    if !Matches(Rem32(4.0, 2.0), 4.0f32 % 2.0f32, 0.0) { return 11; }
+    if !Matches(Rem64(4.0, 2.0), 4.0f64 % 2.0f64, 0.0) { return 12; }
+    if !Matches(Rem32(-4.0, 2.0), -4.0f32 % 2.0f32, -0.0) { return 13; }
+    if !Matches(Rem64(-4.0, 2.0), -4.0f64 % 2.0f64, -0.0) { return 14; }
+    if !Matches(Rem32(-0.0, 2.0), -0.0f32 % 2.0f32, -0.0) { return 15; }
+    if !Matches(Rem64(-0.0, 2.0), -0.0f64 % 2.0f64, -0.0) { return 16; }
+    if !Matches(Rem32(0.0, -2.0), 0.0f32 % -2.0f32, 0.0) { return 17; }
+    if !Matches(Rem64(0.0, -2.0), 0.0f64 % -2.0f64, 0.0) { return 18; }
+    if !Matches(Rem32(5.5, 0.0), 5.5f32 % 0.0f32, NaN64) { return 19; }
+    if !Matches(Rem64(5.5, 0.0), 5.5f64 % 0.0f64, NaN64) { return 20; }
+    if !Matches(Rem32(5.5, -0.0), 5.5f32 % -0.0f32, NaN64) { return 21; }
+    if !Matches(Rem64(5.5, -0.0), 5.5f64 % -0.0f64, NaN64) { return 22; }
+    if !Matches(Rem32(Inf32, 2.0), Inf32 % 2.0f32, NaN64) { return 23; }
+    if !Matches(Rem64(Inf64, 2.0), Inf64 % 2.0f64, NaN64) { return 24; }
+    if !Matches(Rem32(-5.5, Inf32), -5.5f32 % Inf32, -5.5) { return 25; }
+    if !Matches(Rem64(-5.5, Inf64), -5.5f64 % Inf64, -5.5) { return 26; }
+    if !Matches(Rem32(NaN32, 2.0), NaN32 % 2.0f32, NaN64) { return 27; }
+    if !Matches(Rem64(NaN64, 2.0), NaN64 % 2.0f64, NaN64) { return 28; }
+    if !Matches(Rem32(2.0, NaN32), 2.0f32 % NaN32, NaN64) { return 29; }
+    if !Matches(Rem64(2.0, NaN64), 2.0f64 % NaN64, NaN64) { return 30; }
+    // Inputs round to their declared width before remainder, not afterward.
+    if !Matches(Rem32(16777217.0, 2.0), 16777217.0f32 % 2.0f32, 0.0) { return 31; }
+    if !Matches(Rem64(16777217.0, 2.0), 16777217.0f64 % 2.0f64, 1.0) { return 32; }
+    return 0;
+}

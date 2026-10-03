@@ -143,6 +143,14 @@ func TestProfileMacOSArgumentsIncludeSDKAndMinimumVersion(t *testing.T) {
 	}
 }
 
+func TestProfileLinuxLinkIncludesMathLibrary(t *testing.T) {
+	profile := Profile{TargetOS: "linux", LLVMTriple: "x86_64-unknown-linux-musl", Sysroot: "/sysroot", LinkMode: "static"}
+	want := []string{"-target", "x86_64-unknown-linux-musl", "--sysroot", "/sysroot", "-static", "-nostdlib", "/sysroot/lib/crt1.o", "/sysroot/lib/crti.o", "@objects.rsp", "-lm", "-lc", "-lclang_rt.builtins", "/sysroot/lib/crtn.o", "-o", "demo"}
+	if got := profile.LinkArgs("objects.rsp", "demo"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("LinkArgs() = %#v, want %#v", got, want)
+	}
+}
+
 func TestNewManagedProfileDefinesReleaseLayout(t *testing.T) {
 	for _, test := range []struct {
 		name         string

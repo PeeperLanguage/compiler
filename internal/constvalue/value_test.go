@@ -1,6 +1,7 @@
 package constvalue
 
 import (
+	"math"
 	"math/big"
 	"testing"
 )
@@ -209,6 +210,55 @@ func TestFoldFloatBinaryRoundsF32(t *testing.T) {
 	value, valueOK := got.(*FloatConst)
 	if !ok || !valueOK || value.Text() != "1.6777216e+07" || value.TypeText() != "f32" {
 		t.Fatalf("FoldBinary(f32 add) = %#v, want 1.6777216e+07 f32", got)
+	}
+}
+
+func TestFoldFloatRemainder(t *testing.T) {
+	for _, typeID := range []string{"f32", "f64"} {
+		tiny := math.SmallestNonzeroFloat64
+		if typeID == "f32" {
+			tiny = math.SmallestNonzeroFloat32
+		}
+		for _, test := range []struct {
+			name              string
+			left, right, want float64
+		}{
+			{name: "truncating", left: 5.5, right: 2, want: 1.5},
+			{name: "negative dividend", left: -5.5, right: 2, want: -1.5},
+			{name: "negative divisor", left: 5.5, right: -2, want: 1.5},
+			{name: "both negative", left: -5.5, right: -2, want: -1.5},
+			{name: "fractional divisor", left: 1.75, right: 0.5, want: 0.25},
+			{name: "exact multiple", left: 4, right: 2, want: 0},
+			{name: "negative exact multiple", left: -4, right: 2, want: math.Copysign(0, -1)},
+			{name: "negative zero", left: math.Copysign(0, -1), right: 2, want: math.Copysign(0, -1)},
+			{name: "positive zero", left: 0, right: -2, want: 0},
+			{name: "zero divisor", left: 5.5, right: 0, want: math.NaN()},
+			{name: "negative zero divisor", left: 5.5, right: math.Copysign(0, -1), want: math.NaN()},
+			{name: "infinite dividend", left: math.Inf(1), right: 2, want: math.NaN()},
+			{name: "negative infinite dividend", left: math.Inf(-1), right: 2, want: math.NaN()},
+			{name: "infinite divisor", left: -5.5, right: math.Inf(1), want: -5.5},
+			{name: "negative infinite divisor", left: 5.5, right: math.Inf(-1), want: 5.5},
+			{name: "nan dividend", left: math.NaN(), right: 2, want: math.NaN()},
+			{name: "nan divisor", left: 2, right: math.NaN(), want: math.NaN()},
+			{name: "subnormal", left: 3 * tiny, right: 2 * tiny, want: tiny},
+		} {
+			t.Run(typeID+"/"+test.name, func(t *testing.T) {
+				left, _ := NewFloat(test.left, typeID)
+				right, _ := NewFloat(test.right, typeID)
+				folded, ok := FoldBinary("%", left, right)
+				got, isFloat := folded.(*FloatConst)
+				if !ok || !isFloat || got.TypeText() != typeID {
+					t.Fatalf("FoldBinary(%%) = %#v, want %s", folded, typeID)
+				}
+				if math.IsNaN(test.want) {
+					if !math.IsNaN(got.Float()) {
+						t.Fatalf("got %v, want NaN", got.Float())
+					}
+				} else if math.Float64bits(got.Float()) != math.Float64bits(test.want) {
+					t.Fatalf("got %v (%x), want %v (%x)", got.Float(), math.Float64bits(got.Float()), test.want, math.Float64bits(test.want))
+				}
+			})
+		}
 	}
 }
 

@@ -2,6 +2,7 @@ package llvm
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path"
@@ -689,27 +690,37 @@ func TestGenerateLLVMIRGuardsIntegerDivisionAndRemainder(t *testing.T) {
 	}
 }
 
-func TestGenerateLLVMIRLeavesFloatDivisionUnguarded(t *testing.T) {
-	f32 := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeFloat, Bits: 32})
-	result := &mir.RefName{Name: "result", Type: f32}
-	mod := &mir.Module{
-		Name: "test", Types: llvmTypes.table,
-		Funcs: []*mir.Function{{
-			Name:       "apply",
-			Params:     []ir.Param{{Name: "left", Type: f32}, {Name: "right", Type: f32}},
-			ReturnType: f32,
-			Blocks: []*mir.Block{{
-				ID: 0,
-				Instrs: []mir.Instr{&mir.Assign{Name: "result", Value: &mir.Binary{
-					Op: "/", Left: &mir.RefName{Name: "left", Type: f32}, Right: &mir.RefName{Name: "right", Type: f32}, Type: f32,
-				}}},
-				Term: &mir.Ret{Value: result},
-			}},
-		}},
-	}
-	out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
-	if !strings.Contains(out, " = fdiv float %left, %right") || strings.Contains(out, "call void @llvm.trap()") {
-		t.Fatalf("float division must retain direct IEEE lowering, got:\n%s", out)
+func TestGenerateLLVMIRLeavesFloatDivRemUnguarded(t *testing.T) {
+	for _, bits := range []int{32, 64} {
+		for _, test := range []struct{ op, instruction string }{{"/", "fdiv"}, {"%", "frem"}} {
+			t.Run(fmt.Sprintf("f%d/%s", bits, test.instruction), func(t *testing.T) {
+				floatType := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeFloat, Bits: bits})
+				result := &mir.RefName{Name: "result", Type: floatType}
+				mod := &mir.Module{
+					Name: "test", Types: llvmTypes.table,
+					Funcs: []*mir.Function{{
+						Name:       "apply",
+						Params:     []ir.Param{{Name: "left", Type: floatType}, {Name: "right", Type: floatType}},
+						ReturnType: floatType,
+						Blocks: []*mir.Block{{
+							ID: 0,
+							Instrs: []mir.Instr{&mir.Assign{Name: "result", Value: &mir.Binary{
+								Op: test.op, Left: &mir.RefName{Name: "left", Type: floatType}, Right: &mir.RefName{Name: "right", Type: floatType}, Type: floatType,
+							}}},
+							Term: &mir.Ret{Value: result},
+						}},
+					}},
+				}
+				out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
+				layout := "float"
+				if bits == 64 {
+					layout = "double"
+				}
+				if !strings.Contains(out, " = "+test.instruction+" "+layout+" %left, %right") || strings.Contains(out, "call void @llvm.trap()") {
+					t.Fatalf("floating %s must use unguarded %s, got:\n%s", test.op, test.instruction, out)
+				}
+			})
+		}
 	}
 }
 
