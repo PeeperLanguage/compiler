@@ -19,20 +19,20 @@ func TestCompileFileSourceSelection(t *testing.T) {
 		t.Fatalf("write source: %v", err)
 	}
 	empty := ""
-	nonempty := "fn overlay() -> i32 { return 2; }\n"
+	nonempty := "fn sourceText() -> i32 { return 2; }\n"
 	tests := []struct {
-		name    string
-		overlay *string
-		want    string
+		name       string
+		sourceText *string
+		want       string
 	}{
 		{name: "disk", want: disk},
-		{name: "empty overlay", overlay: &empty, want: ""},
-		{name: "nonempty overlay", overlay: &nonempty, want: nonempty},
+		{name: "empty source override", sourceText: &empty, want: ""},
+		{name: "nonempty source override", sourceText: &nonempty, want: nonempty},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := project.NewWithConfig(project.Config{RootDir: root, Extension: peeper.SourceExt}, diagnostics.NewDiagnosticBag())
-			mod := CompileFile(ctx, path, tt.overlay)
+			mod := CompileFile(ctx, path, tt.sourceText)
 			if mod == nil {
 				t.Fatalf("CompileFile returned nil")
 			}

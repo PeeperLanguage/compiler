@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -763,7 +765,7 @@ func TestHoverRecompilesDirtySnapshot(t *testing.T) {
 	}
 }
 
-func TestHoverRecompilesWhenLastSnapshotOnlyHasOverlayStub(t *testing.T) {
+func TestHoverRecompilesWhenLastSnapshotOnlyHasSourceOverrideStub(t *testing.T) {
 	root := t.TempDir()
 	firstPath := filepath.Join(root, "first"+peeper.SourceExt)
 	secondPath := filepath.Join(root, "second"+peeper.SourceExt)
@@ -784,9 +786,9 @@ func TestHoverRecompilesWhenLastSnapshotOnlyHasOverlayStub(t *testing.T) {
 		t.Fatalf("expected compiled module for %s", secondPath)
 	}
 
-	// Recompiling second file leaves first file as an overlay stub in LastCtx.
+	// Recompiling second file leaves first file as a source override stub in LastCtx.
 	if mod, ok := state.LastCtx.ModuleByFile(firstPath); !ok || mod == nil || mod.AST != nil {
-		t.Fatalf("expected last snapshot to hold first file as unparsed overlay stub")
+		t.Fatalf("expected last snapshot to hold first file as unparsed source override stub")
 	}
 
 	hover, err := state.HandleHover(HoverParams{
@@ -1687,6 +1689,98 @@ func TestLSPInitializedPublishesDiagnosticsForUnopenedWorkspaceFiles(t *testing.
 	utilPublished := published[pathToURI(utilPath)]
 	if len(utilPublished) == 0 || len(utilPublished[0]) == 0 {
 		t.Fatalf("expected diagnostics publish for unopened workspace file %s", utilPath)
+	}
+}
+
+func TestLSPDidCloseDiscardsSourceOverrideAndVersion(t *testing.T) {
+	for _, diskBacked := range []bool{false, true} {
+		name := "unsaved"
+		if diskBacked {
+			name = "disk-backed"
+		}
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeWorkspaceProjectConfig(t, root, "app")
+			filePath := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+			if diskBacked {
+				writeWorkspaceFile(t, filePath, "fn main() -> i32 { return 0; }\n")
+			}
+			rootURI := DocumentURI(pathToURI(root))
+			fileURI := DocumentURI(pathToURI(filePath))
+			var input bytes.Buffer
+			for _, message := range []struct {
+				method string
+				params any
+			}{
+				{method: "initialize", params: InitializeParams{RootURI: &rootURI}},
+				{method: "textDocument/didOpen", params: DidOpenTextDocumentParams{TextDocument: TextDocumentItem{
+					URI: fileURI, Version: 7, Text: "fn main() -> i32 { return missing; }\n",
+				}}},
+				{method: "textDocument/didClose", params: map[string]TextDocumentIdentifier{
+					"textDocument": {URI: fileURI},
+				}},
+			} {
+				params, err := json.Marshal(message.params)
+				if err != nil {
+					t.Fatalf("marshal %s: %v", message.method, err)
+				}
+				if err := writeMessage(&input, Request{JSONRPC: "2.0", Method: message.method, Params: params}); err != nil {
+					t.Fatalf("write %s: %v", message.method, err)
+				}
+			}
+			var output bytes.Buffer
+			if err := Run(io.NopCloser(&input), &output); err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			published := collectDiagnosticNotifications(t, output.Bytes())[string(fileURI)]
+			if len(published) != 2 {
+				t.Fatalf("diagnostic publications = %d, want open and close", len(published))
+			}
+			if published[0].Version == nil || *published[0].Version != 7 || !hasErrorDiagnostic(published[0].Diagnostics) {
+				t.Fatalf("open diagnostics = %#v, want invalid source override at version 7", published[0])
+			}
+			if published[1].Version != nil || len(published[1].Diagnostics) != 0 {
+				t.Fatalf("close diagnostics = %#v, want cleared diagnostics without document version", published[1])
+			}
+		})
+	}
+}
+
+func TestWorkspaceDiagnosticsFindUnopenedFileAfterClosingDocument(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceProjectConfig(t, root, "app")
+	mainFile := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
+	mainSource := "fn main() {}\n"
+	writeWorkspaceFile(t, mainFile, mainSource)
+	emptyDir := filepath.Join(root, peeper.SourceDirName, "nested", "empty")
+	if err := os.MkdirAll(emptyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	state := NewServerState()
+	state.RootDir = root
+	state.applyDocumentSnapshot(mainFile, &mainSource, nil)
+	if snapshots := state.workspaceDiagnosticSnapshots(); len(snapshots) != 1 {
+		t.Fatalf("initial snapshots = %d, want 1", len(snapshots))
+	}
+	newFile := filepath.Join(emptyDir, "new"+peeper.SourceExt)
+	writeWorkspaceFile(t, newFile, "fn Broken() -> i32 { return missing; }\n")
+	state.applyDocumentSnapshot(mainFile, nil, nil)
+	var output bytes.Buffer
+	if err := publishWorkspaceDiagnostics(newProtocolWriter(&output), state); err != nil {
+		t.Fatal(err)
+	}
+	published := collectPublishedDiagnostics(t, output.Bytes())
+	if got := published[pathToURI(newFile)]; len(got) != 1 || len(got[0]) == 0 {
+		t.Fatalf("new unopened file diagnostics = %#v, want one nonempty publication", got)
+	}
+	fresh := NewServerState()
+	fresh.RootDir = root
+	var cleanOutput bytes.Buffer
+	if err := publishWorkspaceDiagnostics(newProtocolWriter(&cleanOutput), fresh); err != nil {
+		t.Fatal(err)
+	}
+	if expected := collectPublishedDiagnostics(t, cleanOutput.Bytes()); !reflect.DeepEqual(published, expected) {
+		t.Fatalf("warm diagnostics differ from fresh publication: got %#v, want %#v", published, expected)
 	}
 }
 

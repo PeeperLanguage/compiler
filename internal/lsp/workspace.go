@@ -51,12 +51,11 @@ type workspaceParse struct {
 }
 
 type workspaceIndex struct {
-	rootDir         string
-	modules         map[string]*workspaceModule
-	components      []workspaceComponent
-	imports         *graph.DependencyGraph
-	directoryStamps map[string]int64
-	parsedFiles     int
+	rootDir     string
+	modules     map[string]*workspaceModule
+	components  []workspaceComponent
+	imports     *graph.DependencyGraph
+	parsedFiles int
 }
 
 func newWorkspaceIndex(rootDir string) *workspaceIndex {
@@ -66,12 +65,12 @@ func newWorkspaceIndex(rootDir string) *workspaceIndex {
 	}
 }
 
-func (w *workspaceIndex) rebuild(cache map[string]string) (map[string]workspaceParse, error) {
+func (w *workspaceIndex) rebuild(sourceOverrides map[string]string) (map[string]workspaceParse, error) {
 	if w == nil || w.rootDir == "" {
 		return nil, nil
 	}
 
-	files, err := w.sourceFiles(cache)
+	files, err := workspaceFiles(w.rootDir, sourceOverrides)
 	if err != nil {
 		return nil, err
 	}
@@ -81,75 +80,77 @@ func (w *workspaceIndex) rebuild(cache map[string]string) (map[string]workspaceP
 		projectName string
 		importPath  string
 	}
-	fileSet := make(map[string]struct{}, len(files))
 	contexts := make(map[string]workspaceFileContext, len(files))
 	projectContexts := make(map[[2]string]*project.CompilerContext)
-	type workspaceProjectLookup struct {
-		project *manifest.Project
+	contextForProject := func(rootDir, projectName string) *project.CompilerContext {
+		key := [2]string{rootDir, projectName}
+		if ctx := projectContexts[key]; ctx != nil {
+			return ctx
+		}
+		ctx := project.NewWithConfig(project.Config{
+			RootDir:     rootDir,
+			ProjectName: projectName,
+			Extension:   peeper.SourceExt,
+		}, diagnostics.NewDiagnosticBag())
+		projectContexts[key] = ctx
+		return ctx
 	}
-	projectsByDir := make(map[string]workspaceProjectLookup)
-	projectsByManifest := make(map[string]workspaceProjectLookup)
+	projectsByDir := make(map[string]*manifest.Project)
+	projectsByManifest := make(map[string]*manifest.Project)
 	w.parsedFiles = 0
 	parsedModules := make(map[string]workspaceParse)
 	for _, filePath := range files {
-		rootDir := filepath.Dir(filePath)
-		projectName := ""
 		fileDir := filepath.Dir(filePath)
-		projectLookup, checked := projectsByDir[fileDir]
+		rootDir := fileDir
+		projectName := ""
+		loadedProject, checked := projectsByDir[fileDir]
 		if !checked {
 			if manifestPath, err := manifest.FindManifestPath(filePath); err == nil {
 				manifestKey := project.CanonicalPath(manifestPath)
-				projectLookup, checked = projectsByManifest[manifestKey]
+				loadedProject, checked = projectsByManifest[manifestKey]
 				if !checked {
-					if loadedProject, loadErr := manifest.LoadProjectFromManifest(manifestPath); loadErr == nil {
-						projectLookup.project = loadedProject
+					if configuredProject, loadErr := manifest.LoadProjectFromManifest(manifestPath); loadErr == nil {
+						loadedProject = configuredProject
 					}
-					projectsByManifest[manifestKey] = projectLookup
+					projectsByManifest[manifestKey] = loadedProject
 				}
 			}
-			projectsByDir[fileDir] = projectLookup
+			projectsByDir[fileDir] = loadedProject
 		}
-		if loadedProject := projectLookup.project; loadedProject != nil {
+		if loadedProject != nil {
 			if !manifest.IsPathWithinSourceDir(loadedProject.RootDir, filePath) {
 				continue
 			}
 			rootDir = loadedProject.RootDir
 			projectName = loadedProject.File.Package.Name
 		}
-		key := [2]string{rootDir, projectName}
-		ctx := projectContexts[key]
-		if ctx == nil {
-			ctx = project.NewWithConfig(project.Config{
-				RootDir:     rootDir,
-				ProjectName: projectName,
-				Extension:   peeper.SourceExt,
-			}, diagnostics.NewDiagnosticBag())
-			projectContexts[key] = ctx
-		}
 		importPath := ""
 		previous := w.modules[filePath]
 		if previous != nil && previous.rootDir == rootDir && previous.projectName == projectName {
 			importPath = previous.importPath
-		} else if resolved, err := ctx.ImportPathForFile(project.ModuleOriginLocal, "", filePath); err == nil {
-			importPath = resolved
+		} else {
+			ctx := contextForProject(rootDir, projectName)
+			if resolved, resolveErr := ctx.ImportPathForFile(project.ModuleOriginLocal, "", filePath); resolveErr == nil {
+				importPath = resolved
+			}
 		}
-		fileSet[filePath] = struct{}{}
 		contexts[filePath] = workspaceFileContext{
 			rootDir:     rootDir,
 			projectName: projectName,
 			importPath:  importPath,
 		}
 	}
-	fileMembershipChanged := len(w.modules) != len(fileSet)
-	workspaceChanged := fileMembershipChanged
+	fileMembershipChanged := len(w.modules) != len(contexts)
 	if !fileMembershipChanged {
 		for filePath := range w.modules {
-			if _, ok := fileSet[filePath]; !ok {
+			if _, ok := contexts[filePath]; !ok {
 				fileMembershipChanged = true
 				break
 			}
 		}
 	}
+	// Membership changes invalidate the graph even when replacement content cannot be read.
+	workspaceChanged := fileMembershipChanged
 
 	for _, filePath := range files {
 		fileCtx, ok := contexts[filePath]
@@ -169,7 +170,7 @@ func (w *workspaceIndex) rebuild(cache map[string]string) (map[string]workspaceP
 		contentHash := module.contentHash
 		contentUnchanged := false
 		var diskInfo os.FileInfo
-		if _, cached := cache[filePath]; !cached {
+		if _, hasSourceOverride := sourceOverrides[filePath]; !hasSourceOverride {
 			if info, statErr := os.Stat(filePath); statErr == nil {
 				diskInfo = info
 				if !contextChanged && module.diskStampValid &&
@@ -181,7 +182,7 @@ func (w *workspaceIndex) rebuild(cache map[string]string) (map[string]workspaceP
 		}
 		if !contentUnchanged {
 			var err error
-			content, err = workspaceContent(filePath, cache)
+			content, err = workspaceContent(filePath, sourceOverrides)
 			if err != nil {
 				continue
 			}
@@ -220,15 +221,18 @@ func (w *workspaceIndex) rebuild(cache map[string]string) (map[string]workspaceP
 		}
 
 		module.resolvedLocalImportFiles = module.resolvedLocalImportFiles[:0]
-		ctx := projectContexts[[2]string{fileCtx.rootDir, fileCtx.projectName}]
+		if len(module.sourceImportPaths) == 0 {
+			continue
+		}
+		ctx := contextForProject(fileCtx.rootDir, fileCtx.projectName)
 		seen := make(map[string]struct{})
 		for _, rawPath := range module.sourceImportPaths {
-			resolved, err := ctx.ResolveImportPath(rawPath)
-			if err != nil || resolved == nil || resolved.ID.Origin != string(project.ModuleOriginLocal) {
+			resolved, resolveErr := ctx.ResolveImportPath(rawPath)
+			if resolveErr != nil || resolved == nil || resolved.ID.Origin != string(project.ModuleOriginLocal) {
 				continue
 			}
 			target := resolved.FilePath
-			if _, ok := fileSet[target]; !ok {
+			if _, ok := contexts[target]; !ok {
 				continue
 			}
 			if _, dup := seen[target]; dup {
@@ -240,7 +244,7 @@ func (w *workspaceIndex) rebuild(cache map[string]string) (map[string]workspaceP
 	}
 
 	for filePath := range w.modules {
-		if _, ok := fileSet[filePath]; ok {
+		if _, ok := contexts[filePath]; ok {
 			continue
 		}
 		delete(w.modules, filePath)
@@ -512,65 +516,21 @@ func buildWorkspaceComponents(modules map[string]*workspaceModule, g *graph.Depe
 	return components
 }
 
-func (w *workspaceIndex) sourceFiles(cache map[string]string) ([]string, error) {
-	if len(cache) == 0 && len(w.modules) > 0 && w.directoriesUnchanged() {
-		files := make([]string, 0, len(w.modules))
-		for filePath := range w.modules {
-			files = append(files, filePath)
-		}
-		sort.Strings(files)
-		return files, nil
-	}
-
-	files, err := workspaceFiles(w.rootDir, cache)
-	if err != nil {
-		return nil, err
-	}
-	w.captureDirectoryStamps(files)
-	return files, nil
-}
-
-func (w *workspaceIndex) directoriesUnchanged() bool {
-	if len(w.directoryStamps) == 0 {
-		return false
-	}
-	for directory, previous := range w.directoryStamps {
-		info, err := os.Stat(directory)
-		if err != nil || !info.IsDir() || info.ModTime().UnixNano() != previous {
-			return false
-		}
-	}
-	return true
-}
-
-func (w *workspaceIndex) captureDirectoryStamps(files []string) {
-	stamps := make(map[string]int64)
-	add := func(directory string) {
-		info, err := os.Stat(directory)
-		if err == nil && info.IsDir() {
-			stamps[directory] = info.ModTime().UnixNano()
-		}
-	}
-	add(w.rootDir)
-	add(manifest.SourceDir(w.rootDir))
-	for _, filePath := range files {
-		add(filepath.Dir(filePath))
-	}
-	w.directoryStamps = stamps
-}
-
-func workspaceFiles(rootDir string, cache map[string]string) ([]string, error) {
+func workspaceFiles(rootDir string, sourceOverrides map[string]string) ([]string, error) {
 	fileSet := make(map[string]struct{})
 	if rootDir != "" {
 		files, err := project.DiscoverSourceFiles([]string{rootDir})
 		if err != nil {
 			return nil, err
 		}
+		if len(sourceOverrides) == 0 {
+			return files, nil
+		}
 		for _, path := range files {
 			fileSet[path] = struct{}{}
 		}
 	}
-	for path := range cache {
+	for path := range sourceOverrides {
 		if filepath.Ext(path) != peeper.SourceExt {
 			continue
 		}
@@ -588,9 +548,9 @@ func workspaceFiles(rootDir string, cache map[string]string) ([]string, error) {
 	return files, nil
 }
 
-func workspaceContent(filePath string, cache map[string]string) (string, error) {
-	if content, ok := cache[filePath]; ok {
-		return content, nil
+func workspaceContent(filePath string, sourceOverrides map[string]string) (string, error) {
+	if sourceText, ok := sourceOverrides[filePath]; ok {
+		return sourceText, nil
 	}
 	data, err := os.ReadFile(filePath)
 	if err != nil {

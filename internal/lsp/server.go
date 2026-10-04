@@ -132,9 +132,9 @@ func Run(in io.ReadCloser, out io.Writer) error {
 			continue
 
 		case "textDocument/didClose":
-			var params TextDocumentIdentifier
+			var params DidCloseTextDocumentParams
 			if err := json.Unmarshal(req.Params, &params); err == nil {
-				filePath, uriErr := uriToPath(string(params.URI))
+				filePath, uriErr := uriToPath(string(params.TextDocument.URI))
 				if uriErr != nil {
 					continue
 				}

@@ -21,7 +21,7 @@ type ServerState struct {
 	diagWG            sync.WaitGroup
 	diagErr           error
 	RootDir           string
-	Cache             map[string]string
+	SourceOverrides   map[string]string
 	LastCtx           *project.CompilerContext
 	LastMetrics       project.CompileMetrics
 	lastCtxGeneration uint64
@@ -34,7 +34,7 @@ type ServerState struct {
 
 func NewServerState() *ServerState {
 	return &ServerState{
-		Cache:            make(map[string]string),
+		SourceOverrides:  make(map[string]string),
 		modules:          make(map[string]*module.Module),
 		diagVersion:      make(map[string]uint64),
 		documentVersions: make(map[string]int),
@@ -48,7 +48,7 @@ type diagnosticSnapshot struct {
 	versions   map[string]int
 }
 
-func (s *ServerState) applyDocumentSnapshot(filePath string, text *string, version *int) {
+func (s *ServerState) applyDocumentSnapshot(filePath string, sourceText *string, version *int) {
 	if s == nil {
 		return
 	}
@@ -59,11 +59,11 @@ func (s *ServerState) applyDocumentSnapshot(filePath string, text *string, versi
 	defer s.publishMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if text == nil {
-		delete(s.Cache, filePath)
+	if sourceText == nil {
+		delete(s.SourceOverrides, filePath)
 		delete(s.documentVersions, filePath)
 	} else {
-		s.Cache[filePath] = *text
+		s.SourceOverrides[filePath] = *sourceText
 		if version != nil {
 			s.documentVersions[filePath] = *version
 		}
@@ -113,7 +113,7 @@ func (s *ServerState) workspaceDiagnosticSnapshots() []*diagnosticSnapshot {
 	if s.workspace == nil {
 		s.workspace = newWorkspaceIndex(s.RootDir)
 	}
-	parsedModules, err := s.workspace.rebuild(s.Cache)
+	parsedModules, err := s.workspace.rebuild(s.SourceOverrides)
 	if err != nil {
 		return nil
 	}
@@ -173,14 +173,14 @@ func (s *ServerState) recompileLocked(entryFile string, parsedModules map[string
 		}
 		// A non-nil map came from a rebuild under this same state lock.
 		if parsedModules == nil {
-			parsedModules, err = s.workspace.rebuild(s.Cache)
+			parsedModules, err = s.workspace.rebuild(s.SourceOverrides)
 		}
 		if err == nil {
 			dirtyFiles := s.workspace.dirtyFiles(entryFile, s.modules)
 			ctx.Metrics.AddDirtyFiles(len(dirtyFiles))
 			deferredDiagnostics = s.seedReusableModules(ctx, dirtyFiles)
-			for cachedPath, cachedContent := range s.Cache {
-				compiler.AddSource(ctx, cachedPath, cachedContent)
+			for filePath, sourceText := range s.SourceOverrides {
+				compiler.AddSource(ctx, filePath, sourceText)
 			}
 			if virtualPath, content, ok := s.workspace.syntheticEntry(entryFile); ok {
 				for filePath := range s.workspace.componentFiles(entryFile) {
@@ -188,7 +188,7 @@ func (s *ServerState) recompileLocked(entryFile string, parsedModules map[string
 					if !found {
 						continue
 					}
-					current, err := workspaceContent(filePath, s.Cache)
+					current, err := workspaceContent(filePath, s.SourceOverrides)
 					if err != nil || current != parsed.content {
 						continue
 					}
@@ -223,18 +223,18 @@ func (s *ServerState) recompileLocked(entryFile string, parsedModules map[string
 		}
 	}
 
-	for cachedPath, cachedContent := range s.Cache {
-		if cachedPath == canonicalEntry {
+	for filePath, sourceText := range s.SourceOverrides {
+		if filePath == canonicalEntry {
 			continue
 		}
-		compiler.AddSource(ctx, cachedPath, cachedContent)
+		compiler.AddSource(ctx, filePath, sourceText)
 	}
 
-	var overlay *string
-	if content, ok := s.Cache[canonicalEntry]; ok {
-		overlay = &content
+	var sourceText *string
+	if content, ok := s.SourceOverrides[canonicalEntry]; ok {
+		sourceText = &content
 	}
-	mod := compiler.CompileFile(ctx, entryFile, overlay)
+	mod := compiler.CompileFile(ctx, entryFile, sourceText)
 	activateReusableDiagnostics(ctx, deferredDiagnostics)
 	s.retainCompiledContext(ctx)
 	s.captureModules(ctx)
@@ -257,16 +257,16 @@ func (s *ServerState) currentCompiledModule(filePath string) (*project.CompilerC
 		canonical := project.CanonicalPath(filePath)
 		if canonical != "" {
 			if mod, ok := s.LastCtx.ModuleByFile(canonical); ok && mod != nil {
-				// Overlays for other open files register placeholder modules in the
-				// context before they are parsed. Hover/definition/rename must not
-				// reuse those stubs even if their content hash matches the buffer.
+				// Source overrides register placeholder modules for other open files.
+				// Hover/definition/rename must not reuse those unparsed stubs even
+				// if their content hash matches the buffer.
 				if mod.AST == nil || mod.Phase < phase.Parsed {
 					return s.recompileLocked(filePath, nil)
 				}
 				// Reuse the last compiled snapshot only when the current buffer text
 				// still matches it. Otherwise hover/definition/rename would keep
 				// reading a frozen AST after edits until some later path recompiles.
-				if content, err := workspaceContent(canonical, s.Cache); err == nil && mod.ContentHash == fingerprint.Text(content) {
+				if content, err := workspaceContent(canonical, s.SourceOverrides); err == nil && mod.ContentHash == fingerprint.Text(content) {
 					return s.LastCtx, mod
 				}
 			}
@@ -370,7 +370,7 @@ func (s *ServerState) seedReusableModules(ctx *project.CompilerContext, dirtyFil
 		}
 		ctx.Metrics.AddReusedModule()
 		ctx.AddModule(&reused)
-		if content, err := workspaceContent(filePath, s.Cache); err == nil {
+		if content, err := workspaceContent(filePath, s.SourceOverrides); err == nil {
 			ctx.Diagnostics.AddSourceContent(reused.FilePath, content)
 		}
 		// Cached artifacts may be ahead of this run's project barrier. Keep their

@@ -9,7 +9,7 @@ This map records infrastructure implementation observed in `internal/module`, `i
 | `module` | Per-source artifact container, phase reset, and published semantic/IR handoff state. |
 | `project` | Compilation context, module registry, paths, imports, snapshots, fingerprints, semantic lookup, metrics. |
 | `pipeline` | Concurrent module loading, import graph construction, phase barriers, phase advancement, invalidation. |
-| `driver` | Public compile entrypoints and source/overlay selection. |
+| `driver` | Public compile entrypoints and disk/source override selection. |
 | `diagnostics` | Phase/module-scoped diagnostic storage, codes, labels, source cache, rendering, suggestions, highlighting. |
 | `graph` | Directed adjacency, reverse edges, topology algorithms, FIFO worklists. |
 | `problems` | Reusable construction of common semantic diagnostics. |
@@ -144,9 +144,9 @@ can survive a parse-only reset; later pipeline phases rebuild dependent artifact
 ## Inputs, outputs, and loading
 
 `driver.CompileFile` is the ordinary entrypoint. It resolves an absolute input path,
-reads disk content when `overlay == nil`, or uses the overlay string otherwise. It
-creates or obtains the module, marks it as entry, runs `pipeline.Run`, and returns
-the module. Read/path/pipeline failures are added to a load-scoped diagnostic bag.
+reads disk content when `sourceOverride == nil`, or uses the source override string
+otherwise. It creates or obtains the module, marks it as entry, runs `pipeline.Run`,
+and returns the module. Read/path/pipeline failures are added to a load-scoped diagnostic bag.
 `driver.AddSource` registers virtual content without running the pipeline.
 
 `project.DiscoverSourceFiles` expands explicit files and directories, accepts the
@@ -197,7 +197,7 @@ The pipeline then runs these project jobs:
 
 | Job | Input | Output / barrier |
 | --- | --- | --- |
-| Load | entry, prelude, file/overlay content | registered modules, ASTs, imports, graph, `Load`/`Parsed` diagnostics. |
+| Load | entry, prelude, disk/source override content | registered modules, ASTs, imports, graph, `Load`/`Parsed` diagnostics. |
 | Analysis-through | ordered modules and import readiness | phases through `Analyzed`; symbols, THIR, CFG, durable analysis facts and diagnostics. |
 | Usage | analyzed modules | usage diagnostics and `Usage` module/project barrier. |
 | Entrypoint check | entry module scope and function type | optional `ErrInvalidEntrypoint`. |
@@ -346,11 +346,11 @@ both locations. It does not store or emit diagnostics itself beyond the supplied
 back to bounded file scanning.
 
 `diagnostics.SourceCache` stores split source lines under an RW mutex. The bag accepts
-in-memory source through `AddSourceContent`, allowing diagnostics for overlays. The
-emitter supports ANSI/HTML strings and stderr output, source snippets, labels,
-code hints, tab expansion, and optional syntax highlighting. `SyntaxHighlighter`
-performs lightweight line tokenization; `suggest.go` supplies Levenshtein-based,
-ambiguity-aware nearest-name suggestions with stable priorities.
+in-memory source through `AddSourceContent`, allowing diagnostics for source
+overrides. The emitter supports ANSI/HTML strings and stderr output, source
+snippets, labels, code hints, tab expansion, and optional syntax highlighting.
+`SyntaxHighlighter` performs lightweight line tokenization; `suggest.go` supplies
+Levenshtein-based, ambiguity-aware nearest-name suggestions with stable priorities.
 
 ## Graphs and worklists
 

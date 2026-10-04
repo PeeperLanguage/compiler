@@ -24,51 +24,52 @@ func BenchmarkIncrementalWorkspace(b *testing.B) {
 		fixture := createBenchFixture(b, fixtureName)
 		b.Run(fixtureName, func(b *testing.B) {
 			runBenchCase(b, "cold_compile", fixture, func(state *ServerState) string {
-				state.Cache = map[string]string{}
+				state.SourceOverrides = map[string]string{}
 				return fixture.entry
 			})
 			runBenchCase(b, "warm_no_change_open", fixture, func(state *ServerState) string {
-				state.Cache = map[string]string{}
+				sourceText := fixture.entryImport + fixture.entryBody
+				state.applyDocumentSnapshot(fixture.entry, &sourceText, nil)
 				_, _ = state.recompile(fixture.entry)
 				return fixture.entry
 			})
 			runBenchCase(b, "function_body_edit", fixture, func(state *ServerState) string {
-				state.Cache = map[string]string{}
+				state.SourceOverrides = map[string]string{}
 				_, _ = state.recompile(fixture.entry)
 				updated := "const leafLimit: i32 = 1;\nfn LeafValue() -> i32 { return 2; }\nfn StableValue() -> i32 { return 7; }\n"
 				state.applyDocumentSnapshot(fixture.leaf, &updated, nil)
 				return fixture.entry
 			})
 			runBenchCase(b, "earlier_function_growth", fixture, func(state *ServerState) string {
-				state.Cache = map[string]string{}
+				state.SourceOverrides = map[string]string{}
 				_, _ = state.recompile(fixture.entry)
 				updated := "const leafLimit: i32 = 1;\nfn LeafValue() -> i32 {\n\tlet value = leafLimit;\n\treturn value;\n}\nfn StableValue() -> i32 { return 7; }\n"
 				state.applyDocumentSnapshot(fixture.leaf, &updated, nil)
 				return fixture.entry
 			})
 			runBenchCase(b, "private_constant_edit", fixture, func(state *ServerState) string {
-				state.Cache = map[string]string{}
+				state.SourceOverrides = map[string]string{}
 				_, _ = state.recompile(fixture.entry)
 				updated := "const leafLimit: i32 = 2;\nfn LeafValue() -> i32 { return leafLimit; }\nfn StableValue() -> i32 { return 7; }\n"
 				state.applyDocumentSnapshot(fixture.leaf, &updated, nil)
 				return fixture.entry
 			})
 			runBenchCase(b, "export_shape_edit", fixture, func(state *ServerState) string {
-				state.Cache = map[string]string{}
+				state.SourceOverrides = map[string]string{}
 				_, _ = state.recompile(fixture.entry)
 				updated := "const leafLimit: i32 = 1;\nfn LeafValue() -> i32 { return leafLimit; }\nfn StableValue() -> i32 { return 7; }\nfn AddedValue() -> i32 { return 9; }\n"
 				state.applyDocumentSnapshot(fixture.leaf, &updated, nil)
 				return fixture.entry
 			})
 			runBenchCase(b, "import_set_edit", fixture, func(state *ServerState) string {
-				state.Cache = map[string]string{}
+				state.SourceOverrides = map[string]string{}
 				_, _ = state.recompile(fixture.entry)
 				updated := fixture.entryImport + "import \"bench/extra\";\n" + fixture.entryBody
 				state.applyDocumentSnapshot(fixture.entry, &updated, nil)
 				return fixture.entry
 			})
 			runBenchCase(b, "unrelated_component_edit", fixture, func(state *ServerState) string {
-				state.Cache = map[string]string{}
+				state.SourceOverrides = map[string]string{}
 				_, _ = state.recompile(fixture.entry)
 				_, _ = state.recompile(fixture.unrelated)
 				updated := "fn main() -> i32 { return 2; }\n"
@@ -76,11 +77,11 @@ func BenchmarkIncrementalWorkspace(b *testing.B) {
 				return fixture.unrelated
 			})
 			runBenchCase(b, "multi_main_first_root", fixture, func(state *ServerState) string {
-				state.Cache = map[string]string{}
+				state.SourceOverrides = map[string]string{}
 				return fixture.entry
 			})
 			runBenchCase(b, "multi_main_second_root", fixture, func(state *ServerState) string {
-				state.Cache = map[string]string{}
+				state.SourceOverrides = map[string]string{}
 				return fixture.unrelated
 			})
 		})

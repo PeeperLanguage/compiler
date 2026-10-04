@@ -1348,8 +1348,8 @@ func TestRequireScheduledModulesAtLeastReportsStoppedPhase(t *testing.T) {
 	if err := requireScheduledModulesAtLeast([]*module.Module{{ID: moduleid.ID{ImportPath: "local:main"}, Phase: phase.Backend}}, map[moduleid.ID]string{moduleid.ID{ImportPath: "local:main"}: ""}, phase.Backend); err != nil {
 		t.Fatalf("completed module rejected: %v", err)
 	}
-	if err := requireScheduledModulesAtLeast([]*module.Module{{ID: moduleid.ID{ImportPath: "overlay:stub"}, Phase: phase.None}}, map[moduleid.ID]string{moduleid.ID{ImportPath: "local:main"}: ""}, phase.Backend); err != nil {
-		t.Fatalf("unscheduled overlay rejected: %v", err)
+	if err := requireScheduledModulesAtLeast([]*module.Module{{ID: moduleid.ID{ImportPath: "sourceOverride:stub"}, Phase: phase.None}}, map[moduleid.ID]string{moduleid.ID{ImportPath: "local:main"}: ""}, phase.Backend); err != nil {
+		t.Fatalf("unscheduled source override rejected: %v", err)
 	}
 }
 
