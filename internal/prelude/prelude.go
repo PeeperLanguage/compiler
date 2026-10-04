@@ -45,7 +45,7 @@ func globalPreludePath(ctx *project.CompilerContext) (string, bool) {
 }
 
 // ModuleForFile returns the canonical prelude module identity when a file path
-// points at the auto-loaded global prelude source. Direct-open and overlay
+// points at the auto-loaded global prelude source. Direct-open and source override
 // paths must reuse this exact identity so the same file does not appear twice
 // in compiler and LSP caches.
 func ModuleForFile(ctx *project.CompilerContext, filePath, content string) (*module.Module, bool) {

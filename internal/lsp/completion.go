@@ -104,7 +104,7 @@ func (s *ServerState) HandleCompletion(params CompletionParams) ([]CompletionIte
 	case completionQualified:
 		return qualifiedCompletionItems(ctx, module, parsed.qualifier, parsed.prefix, replacement), nil
 	case completionOperation:
-		sentinelCtx, sentinelModule := compileCompletionSource(ctx.Config, s.completionOverlays(filePath), filePath, parsed.sentinel)
+		sentinelCtx, sentinelModule := compileCompletionSource(ctx.Config, s.completionSourceOverrides(filePath), filePath, parsed.sentinel)
 		if sentinelCtx == nil || sentinelModule == nil || sentinelModule.SymbolIndex == nil {
 			return []CompletionItem{}, nil
 		}
@@ -130,28 +130,28 @@ func (s *ServerState) HandleCompletion(params CompletionParams) ([]CompletionIte
 func (s *ServerState) completionSource(filePath string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return workspaceContent(project.CanonicalPath(filePath), s.Cache)
+	return workspaceContent(project.CanonicalPath(filePath), s.SourceOverrides)
 }
 
-func (s *ServerState) completionOverlays(currentFile string) map[string]string {
+func (s *ServerState) completionSourceOverrides(currentFile string) map[string]string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	currentFile = project.CanonicalPath(currentFile)
-	overlays := make(map[string]string, len(s.Cache))
-	for filePath, content := range s.Cache {
+	sourceOverrides := make(map[string]string, len(s.SourceOverrides))
+	for filePath, sourceOverride := range s.SourceOverrides {
 		if filePath != currentFile {
-			overlays[filePath] = content
+			sourceOverrides[filePath] = sourceOverride
 		}
 	}
-	return overlays
+	return sourceOverrides
 }
 
-func compileCompletionSource(cfg project.Config, overlays map[string]string, filePath, content string) (*project.CompilerContext, *module.Module) {
+func compileCompletionSource(cfg project.Config, sourceOverrides map[string]string, filePath, sourceOverride string) (*project.CompilerContext, *module.Module) {
 	ctx := compiler.NewCompilerContext(cfg, diagnostics.NewDiagnosticBag())
-	for overlayPath, overlayContent := range overlays {
-		compiler.AddSource(ctx, overlayPath, overlayContent)
+	for sourceOverridePath, sourceOverrideText := range sourceOverrides {
+		compiler.AddSource(ctx, sourceOverridePath, sourceOverrideText)
 	}
-	return ctx, compiler.CompileFile(ctx, filePath, &content)
+	return ctx, compiler.CompileFile(ctx, filePath, &sourceOverride)
 }
 
 func parseCompletionContext(text string, position Position) parsedCompletionContext {

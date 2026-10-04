@@ -8,8 +8,8 @@ Key implementation files:
 
 - `server.go` owns the session loop, method dispatch, diagnostic publication, and
   file URI/path conversion.
-- `state.go` owns mutable server state, document overlays, compiler snapshots,
-  diagnostic generations, debounce workers, and module reuse.
+- `state.go` owns mutable server state, document source overrides, compiler
+  snapshots, diagnostic generations, debounce workers, and module reuse.
 - `types.go` defines the LSP request, response, notification, position, range,
   document, diagnostic, hover, completion, rename, and workspace-edit payloads.
 - `jsonrpc.go` frames JSON-RPC messages and serializes writes.
@@ -42,8 +42,8 @@ The supported lifecycle and document methods are:
   and publishes component diagnostics immediately.
 - `textDocument/didChange`: converts the URI, takes the first full-text change,
   stores its version, and schedules diagnostics after the debounce delay.
-- `textDocument/didClose`: removes the overlay and version, then publishes the
-  resulting component diagnostics.
+- `textDocument/didClose`: decodes `textDocument.uri`, removes the source override
+  and version, then publishes the resulting component diagnostics.
 - `textDocument/hover`, `definition`, `completion`, and `rename`: invoke the
   corresponding `ServerState` handler and return its result.
 - `shutdown`: returns a successful null result.
@@ -75,17 +75,18 @@ completion requests.
 
 `ServerState` contains:
 
-- `RootDir`, `Cache`, `LastCtx`, and `LastMetrics` for workspace configuration,
-  open-document text, the latest compiler context, and metrics.
+- `RootDir`, `SourceOverrides`, `LastCtx`, and `LastMetrics` for workspace
+  configuration, open-document text, the latest compiler context, and metrics.
 - `modules` for retained compiled modules used by incremental recompilation.
 - `workspace` for the source/import index.
 - `documentVersions` for LSP document versions included in diagnostic
   notifications.
-- `diagGeneration` for invalidating diagnostic snapshots after any overlay
-  mutation.
+- `diagGeneration` for invalidating diagnostic snapshots after any source
+  override mutation.
 - `diagVersion` for per-file debounce cancellation.
 - `diagWG` and `diagErr` for waiting on workers and retaining their first error.
-- `mu` for state, cache, compiler snapshot, workspace, and debounce metadata.
+- `mu` for state, source overrides, compiler snapshot, workspace, and debounce
+  metadata.
 - `publishMu` for the publication/mutation boundary.
 
 `NewServerState` initializes the maps. Most state reads and writes use `mu`.
@@ -102,17 +103,17 @@ The request loop itself is sequential, but diagnostic refreshes run in goroutine
 The protocol writer remains safe when those workers publish concurrently with the
 request loop.
 
-## Document overlays and generations
+## Document source overrides and generations
 
 Peeper uses full synchronization. A document snapshot is the complete text from
 `didOpen` or the first `didChange` content item. `applyDocumentSnapshot` canonicalizes
-the path, stores text in `Cache`, and stores the supplied LSP version. Closing the
-document deletes both entries, so later reads fall back to disk.
+the path, stores text in `SourceOverrides`, and stores the supplied LSP version.
+Closing the document deletes both entries, so later reads fall back to disk.
 
-Every open, change, or close increments `diagGeneration`, including removal of an
-overlay. `diagnosticSnapshotLocked` recompiles while state is locked, copies the
-selected file list, captures current document versions, and records the current
-generation in `diagnosticSnapshot`.
+Every open, change, or close increments `diagGeneration`, including removal of a
+source override. `diagnosticSnapshotLocked` recompiles while state is locked,
+copies the selected file list, captures current document versions, and records
+the current generation in `diagnosticSnapshot`.
 
 `currentCompiledModule` reuses `LastCtx` only when `lastCtxGeneration` equals the
 current `diagGeneration`, the module is parsed, and its content hash matches
@@ -151,8 +152,8 @@ forms become invalid-parameter errors for request handlers or are ignored by
 notifications.
 
 `pathToURI` normalizes backslashes and path cleaning, preserves UNC authorities,
-and emits a `file:` URI. Internal cache, workspace, module, and version keys use
-`project.CanonicalPath`; URI conversion is kept at the protocol boundary.
+and emits a `file:` URI. Internal source override, workspace, module, and version
+keys use `project.CanonicalPath`; URI conversion is kept at the protocol boundary.
 
 LSP positions are zero-based and use UTF-16 code units. `offsetAtPosition` walks a
 line and counts one or two UTF-16 units per decoded rune. `positionAtOffset` does
@@ -164,11 +165,24 @@ zero range.
 
 ## Workspace index and incremental compilation
 
-`workspaceIndex.rebuild` discovers source files under `RootDir` and adds cached
-source files within that root. Cached content wins over disk content in
+`workspaceIndex.rebuild` discovers source files under `RootDir` and adds source
+overrides within that root. Source overrides win over disk content in
 `workspaceContent`. Each indexed `workspaceModule` records canonical path,
 project/import context, content hash, import/export fingerprints, and resolved
 local import targets.
+
+Each rebuild uses `workspaceFiles` and canonical `project.DiscoverSourceFiles`
+to enumerate disk sources, including files added inside previously empty nested
+directories. Unchanged files still reuse their content/parse evidence; directory
+membership is not inferred from stamps of directories already containing sources.
+With no source overrides, the canonical sorted, deduplicated result is returned
+directly.
+
+Filtered file contexts also supply membership checks. Import lookup contexts are
+created on demand per project and reused only within that rebuild.
+Project lookup maps retain both loaded projects and checked negative results.
+Membership comparison includes counts and keys before content reads; a same-count
+replacement invalidates graph/components even if its content cannot be read.
 
 Changed or new files are lexed and parsed only for index construction. The index
 builds a directed import graph and groups modules into weakly connected
@@ -208,11 +222,11 @@ If source-project resolution fails, it records a load diagnostic and retains the
 context.
 
 For a configured root, it rebuilds the workspace, computes dirty files, seeds
-reusable modules, adds cached sources, and tries the synthetic component entry.
+reusable modules, adds source overrides, and tries the synthetic component entry.
 If that entry produces the requested module, the context is retained and returned.
-Otherwise cached sources are added and the requested file is compiled with its
-current overlay, if present. Reusable diagnostics are activated, then the context
-and modules are retained.
+Otherwise source overrides are added and the requested file is compiled with its
+current source override, if present. Reusable diagnostics are activated, then the
+context and modules are retained.
 
 `retainCompiledContext` updates `LastCtx`, `LastMetrics`, and
 `lastCtxGeneration`. `diagnosticSnapshotLocked` selects a component's files when
@@ -255,10 +269,10 @@ rather than maintaining independent AST parent maps for the same operation.
 
 ## Hover and rendering
 
-`HandleHover` reads current overlay/disk text, converts the LSP position, resolves
-a subject from the current compiled module, renders it, and returns Markdown plus
-its source range. `resolveHoverSubject` checks attributes, imports, types,
-declarations, selectors, symbols, and expressions in that order.
+`HandleHover` reads current source override or disk text, converts the LSP
+position, resolves a subject from the current compiled module, renders it, and
+returns Markdown plus its source range. `resolveHoverSubject` checks attributes,
+imports, types, declarations, selectors, symbols, and expressions in that order.
 
 The normalized `hoverSubject` can represent a symbol, expression type, resolved
 type, declaration, import, or attribute. Type syntax is resolved through
@@ -299,8 +313,8 @@ LSP positions.
   after the cursor, deduplicates names, and sorts results.
 - Qualified completion returns enum variants or public symbols from an imported
   module.
-- Operation completion builds a sentinel source, compiles it with other cached
-  overlays, resolves the base type, and offers fields, interface methods, receiver
+- Operation completion builds a sentinel source, compiles it with other source
+  overrides, resolves the base type, and offers fields, interface methods, receiver
   methods, intrinsics, adaptable local operations, and public imported operations.
   It creates edits for method-call or pipe syntax and can preserve existing
   arguments.
@@ -317,7 +331,7 @@ ordering by sort text, label, and item kind.
 - Compiler contexts are never published as diagnostics after their generation is
   invalidated.
 - Query handlers do not reuse a compiled module whose generation or content hash
-  no longer matches the current document overlay.
+  no longer matches the current document source override.
 - Full-sync changes replace complete document snapshots; the server does not apply
   text ranges.
 - Workspace reuse is constrained by content and import/export fingerprints; a

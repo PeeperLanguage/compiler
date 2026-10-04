@@ -86,6 +86,10 @@ type DidChangeTextDocumentParams struct {
 	ContentChanges []TextDocumentContentChangeEvent `json:"contentChanges"`
 }
 
+type DidCloseTextDocumentParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+}
+
 type PublishDiagnosticsParams struct {
 	URI         DocumentURI  `json:"uri"`
 	Version     *int         `json:"version,omitempty"`

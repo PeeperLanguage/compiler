@@ -35,7 +35,8 @@ func Run(ctx *project.CompilerContext, entry *module.Module) error {
 	}
 
 	entry.IsEntry = true
-	// Explicit entry content must replace any overlay stub registered for same ID.
+	// Explicit entry content must replace any source override stub registered
+	// for the same ID.
 	ctx.AddModule(entry)
 	ctx.CompletedProjectPhase = phase.Load
 	diag := ctx.Diagnostics
