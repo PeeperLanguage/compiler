@@ -21,9 +21,9 @@ func NewCompilerContext(cfg project.Config, diag *diagnostics.DiagnosticBag) *pr
 	return ctx
 }
 
-// CompileFile compiles the entry file from sourceOverride when non-nil.
+// CompileFile compiles the entry file from sourceText when non-nil.
 // Otherwise it reads the source from disk.
-func CompileFile(ctx *project.CompilerContext, path string, sourceOverride *string) *module.Module {
+func CompileFile(ctx *project.CompilerContext, path string, sourceText *string) *module.Module {
 	if ctx == nil {
 		return nil
 	}
@@ -39,7 +39,7 @@ func CompileFile(ctx *project.CompilerContext, path string, sourceOverride *stri
 		return nil
 	}
 	content := ""
-	if sourceOverride == nil {
+	if sourceText == nil {
 		data, err := os.ReadFile(absPath)
 		if err != nil {
 			loadDiag.Add(diagnostics.NewError("read input file: " + err.Error()))
@@ -47,7 +47,7 @@ func CompileFile(ctx *project.CompilerContext, path string, sourceOverride *stri
 		}
 		content = string(data)
 	} else {
-		content = *sourceOverride
+		content = *sourceText
 	}
 	if module, ok := prelude.ModuleForFile(ctx, absPath, content); ok {
 		module.IsEntry = true
@@ -69,7 +69,7 @@ func CompileFile(ctx *project.CompilerContext, path string, sourceOverride *stri
 }
 
 // AddSource registers a virtual/in-memory module in the compiler context.
-func AddSource(ctx *project.CompilerContext, path string, sourceOverride string) {
+func AddSource(ctx *project.CompilerContext, path string, sourceText string) {
 	if ctx == nil {
 		return
 	}
@@ -77,9 +77,9 @@ func AddSource(ctx *project.CompilerContext, path string, sourceOverride string)
 	if err != nil {
 		return
 	}
-	if module, ok := prelude.ModuleForFile(ctx, absPath, sourceOverride); ok {
+	if module, ok := prelude.ModuleForFile(ctx, absPath, sourceText); ok {
 		ctx.AddModule(module)
 		return
 	}
-	ctx.AddModule(ctx.NewModuleForFile(absPath, sourceOverride))
+	ctx.AddModule(ctx.NewModuleForFile(absPath, sourceText))
 }

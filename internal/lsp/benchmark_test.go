@@ -28,8 +28,8 @@ func BenchmarkIncrementalWorkspace(b *testing.B) {
 				return fixture.entry
 			})
 			runBenchCase(b, "warm_no_change_open", fixture, func(state *ServerState) string {
-				sourceOverride := fixture.entryImport + fixture.entryBody
-				state.applyDocumentSnapshot(fixture.entry, &sourceOverride, nil)
+				sourceText := fixture.entryImport + fixture.entryBody
+				state.applyDocumentSnapshot(fixture.entry, &sourceText, nil)
 				_, _ = state.recompile(fixture.entry)
 				return fixture.entry
 			})

@@ -48,7 +48,7 @@ type diagnosticSnapshot struct {
 	versions   map[string]int
 }
 
-func (s *ServerState) applyDocumentSnapshot(filePath string, sourceOverride *string, version *int) {
+func (s *ServerState) applyDocumentSnapshot(filePath string, sourceText *string, version *int) {
 	if s == nil {
 		return
 	}
@@ -59,11 +59,11 @@ func (s *ServerState) applyDocumentSnapshot(filePath string, sourceOverride *str
 	defer s.publishMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if sourceOverride == nil {
+	if sourceText == nil {
 		delete(s.SourceOverrides, filePath)
 		delete(s.documentVersions, filePath)
 	} else {
-		s.SourceOverrides[filePath] = *sourceOverride
+		s.SourceOverrides[filePath] = *sourceText
 		if version != nil {
 			s.documentVersions[filePath] = *version
 		}
@@ -179,8 +179,8 @@ func (s *ServerState) recompileLocked(entryFile string, parsedModules map[string
 			dirtyFiles := s.workspace.dirtyFiles(entryFile, s.modules)
 			ctx.Metrics.AddDirtyFiles(len(dirtyFiles))
 			deferredDiagnostics = s.seedReusableModules(ctx, dirtyFiles)
-			for filePath, sourceOverride := range s.SourceOverrides {
-				compiler.AddSource(ctx, filePath, sourceOverride)
+			for filePath, sourceText := range s.SourceOverrides {
+				compiler.AddSource(ctx, filePath, sourceText)
 			}
 			if virtualPath, content, ok := s.workspace.syntheticEntry(entryFile); ok {
 				for filePath := range s.workspace.componentFiles(entryFile) {
@@ -223,18 +223,18 @@ func (s *ServerState) recompileLocked(entryFile string, parsedModules map[string
 		}
 	}
 
-	for filePath, sourceOverride := range s.SourceOverrides {
+	for filePath, sourceText := range s.SourceOverrides {
 		if filePath == canonicalEntry {
 			continue
 		}
-		compiler.AddSource(ctx, filePath, sourceOverride)
+		compiler.AddSource(ctx, filePath, sourceText)
 	}
 
-	var sourceOverride *string
+	var sourceText *string
 	if content, ok := s.SourceOverrides[canonicalEntry]; ok {
-		sourceOverride = &content
+		sourceText = &content
 	}
-	mod := compiler.CompileFile(ctx, entryFile, sourceOverride)
+	mod := compiler.CompileFile(ctx, entryFile, sourceText)
 	activateReusableDiagnostics(ctx, deferredDiagnostics)
 	s.retainCompiledContext(ctx)
 	s.captureModules(ctx)

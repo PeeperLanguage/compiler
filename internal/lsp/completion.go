@@ -138,20 +138,20 @@ func (s *ServerState) completionSourceOverrides(currentFile string) map[string]s
 	defer s.mu.Unlock()
 	currentFile = project.CanonicalPath(currentFile)
 	sourceOverrides := make(map[string]string, len(s.SourceOverrides))
-	for filePath, sourceOverride := range s.SourceOverrides {
+	for filePath, sourceText := range s.SourceOverrides {
 		if filePath != currentFile {
-			sourceOverrides[filePath] = sourceOverride
+			sourceOverrides[filePath] = sourceText
 		}
 	}
 	return sourceOverrides
 }
 
-func compileCompletionSource(cfg project.Config, sourceOverrides map[string]string, filePath, sourceOverride string) (*project.CompilerContext, *module.Module) {
+func compileCompletionSource(cfg project.Config, sourceOverrides map[string]string, filePath, sourceText string) (*project.CompilerContext, *module.Module) {
 	ctx := compiler.NewCompilerContext(cfg, diagnostics.NewDiagnosticBag())
-	for sourceOverridePath, sourceOverrideText := range sourceOverrides {
-		compiler.AddSource(ctx, sourceOverridePath, sourceOverrideText)
+	for sourcePath, sourceText := range sourceOverrides {
+		compiler.AddSource(ctx, sourcePath, sourceText)
 	}
-	return ctx, compiler.CompileFile(ctx, filePath, &sourceOverride)
+	return ctx, compiler.CompileFile(ctx, filePath, &sourceText)
 }
 
 func parseCompletionContext(text string, position Position) parsedCompletionContext {

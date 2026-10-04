@@ -549,8 +549,8 @@ func workspaceFiles(rootDir string, sourceOverrides map[string]string) ([]string
 }
 
 func workspaceContent(filePath string, sourceOverrides map[string]string) (string, error) {
-	if sourceOverride, ok := sourceOverrides[filePath]; ok {
-		return sourceOverride, nil
+	if sourceText, ok := sourceOverrides[filePath]; ok {
+		return sourceText, nil
 	}
 	data, err := os.ReadFile(filePath)
 	if err != nil {
