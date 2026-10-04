@@ -21,9 +21,9 @@ func TestCompileFileSourceSelection(t *testing.T) {
 	empty := ""
 	nonempty := "fn sourceText() -> i32 { return 2; }\n"
 	tests := []struct {
-		name           string
+		name       string
 		sourceText *string
-		want           string
+		want       string
 	}{
 		{name: "disk", want: disk},
 		{name: "empty source override", sourceText: &empty, want: ""},
