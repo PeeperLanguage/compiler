@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "${EVENT_NAME:-}" = pull_request ]; then
+if [ "${EVENT_NAME:-}" = pull_request ] || [ "${EVENT_NAME:-}" = merge_group ]; then
   base="$EVENT_BASE_SHA"
   head="$EVENT_HEAD_SHA"
 elif [ "${EVENT_NAME:-}" = push ] && [ -n "${EVENT_BEFORE:-}" ] && [[ "$EVENT_BEFORE" != 0000000000000000000000000000000000000000 ]]; then
