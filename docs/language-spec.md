@@ -380,6 +380,11 @@ unrepresentable signed case `MIN / -1` wraps to `MIN`, and `MIN % -1` is zero.
 Integer division or remainder by zero traps at runtime. Floating-point division
 keeps IEEE behavior.
 
+Floating-point unary `-` reverses the operand's sign without changing its `f32`
+or `f64` type. It maps `+0.0` to `-0.0` and `-0.0` to `+0.0`, and reverses the
+sign of infinities. Negating NaN produces NaN; no NaN payload or sign encoding
+is specified. Constant evaluation and runtime execution follow the same rule.
+
 Floating-point `%` uses truncating remainder (LLVM `frem`, C `fmod`), not IEEE
 nearest-quotient remainder. For finite operands and a nonzero divisor, its
 mathematical result is `a - trunc(a / b) * b`, with the quotient computed in

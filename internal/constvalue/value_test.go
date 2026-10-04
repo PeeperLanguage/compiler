@@ -213,6 +213,51 @@ func TestFoldFloatBinaryRoundsF32(t *testing.T) {
 	}
 }
 
+func TestFoldFloatUnaryNegation(t *testing.T) {
+	for _, typeID := range []string{"f32", "f64"} {
+		tiny := math.SmallestNonzeroFloat64
+		rounded := float64(16777217)
+		if typeID == "f32" {
+			tiny = math.SmallestNonzeroFloat32
+			rounded = 16777216
+		}
+		for _, test := range []struct {
+			name        string
+			input, want float64
+		}{
+			{name: "positive zero", input: 0, want: math.Copysign(0, -1)},
+			{name: "negative zero", input: math.Copysign(0, -1), want: 0},
+			{name: "positive finite", input: 5.5, want: -5.5},
+			{name: "negative finite", input: -5.5, want: 5.5},
+			{name: "positive subnormal", input: tiny, want: -tiny},
+			{name: "negative subnormal", input: -tiny, want: tiny},
+			{name: "positive infinity", input: math.Inf(1), want: math.Inf(-1)},
+			{name: "negative infinity", input: math.Inf(-1), want: math.Inf(1)},
+			{name: "nan", input: math.NaN(), want: math.NaN()},
+			{name: "rounded input", input: 16777217, want: -rounded},
+		} {
+			t.Run(typeID+"/"+test.name, func(t *testing.T) {
+				input, ok := NewFloat(test.input, typeID)
+				if !ok {
+					t.Fatalf("NewFloat(%v, %s) failed", test.input, typeID)
+				}
+				folded, ok := FoldUnary("-", input)
+				got, isFloat := folded.(*FloatConst)
+				if !ok || !isFloat || got.TypeText() != typeID {
+					t.Fatalf("FoldUnary(-) = %#v, want %s", folded, typeID)
+				}
+				if math.IsNaN(test.want) {
+					if !math.IsNaN(got.Float()) {
+						t.Fatalf("got %v, want NaN", got.Float())
+					}
+				} else if math.Float64bits(got.Float()) != math.Float64bits(test.want) {
+					t.Fatalf("got %v (%x), want %v (%x)", got.Float(), math.Float64bits(got.Float()), test.want, math.Float64bits(test.want))
+				}
+			})
+		}
+	}
+}
+
 func TestFoldFloatRemainder(t *testing.T) {
 	for _, typeID := range []string{"f32", "f64"} {
 		tiny := math.SmallestNonzeroFloat64

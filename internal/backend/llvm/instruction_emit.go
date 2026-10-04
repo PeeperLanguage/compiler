@@ -518,7 +518,12 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) llvmValue {
 				return arg
 			case "-":
 				if isFloatType(b.emitter.mod.Types, e.Type) {
-					return b.arithmetic("fsub", b.value("0.0", arg.Layout), arg)
+					if arg.Layout.Kind != llvmLayoutScalar {
+						b.invariant("fneg requires scalar operand, got %s", arg.Layout.Text)
+					}
+					result := b.nextValue(arg.Layout)
+					b.line(fmt.Sprintf("%s = fneg %s %s", result.Text, arg.Layout.Text, arg.Text))
+					return result
 				}
 				return b.arithmetic("sub", b.value("0", arg.Layout), arg)
 			case "!":

@@ -4,9 +4,13 @@ const Inf32: f32 = 1.0f32 / 0.0f32;
 const Inf64: f64 = 1.0f64 / 0.0f64;
 const NaN32: f32 = 0.0f32 / 0.0f32;
 const NaN64: f64 = 0.0f64 / 0.0f64;
+const NegativeZero32: f32 = -0.0f32;
+const NegativeZero64: f64 = -0.0f64;
 
 fn Rem32(left: f32, right: f32) -> f32 { return left % right; }
 fn Rem64(left: f64, right: f64) -> f64 { return left % right; }
+fn Neg32(value: f32) -> f32 { return -value; }
+fn Neg64(value: f64) -> f64 { return -value; }
 
 // Widening f32 results is exact; compare both paths with an independent result.
 fn Matches(actual: f64, folded: f64, expected: f64) -> bool {
@@ -52,5 +56,30 @@ fn main() -> i32 {
     // Inputs round to their declared width before remainder, not afterward.
     if !Matches(Rem32(16777217.0, 2.0), 16777217.0f32 % 2.0f32, 0.0) { return 31; }
     if !Matches(Rem64(16777217.0, 2.0), 16777217.0f64 % 2.0f64, 1.0) { return 32; }
+    // Parameter-backed negation must preserve the sign that constant folding flips.
+    if !Matches(Neg32(0.0), NegativeZero32, -0.0) { return 33; }
+    if !Matches(Neg64(0.0), NegativeZero64, -0.0) { return 34; }
+    if !Matches(Neg32(NegativeZero32), -NegativeZero32, 0.0) { return 35; }
+    if !Matches(Neg64(NegativeZero64), -NegativeZero64, 0.0) { return 36; }
+    if !Matches(Neg32(5.5), -5.5f32, -5.5) { return 37; }
+    if !Matches(Neg64(5.5), -5.5f64, -5.5) { return 38; }
+    if !Matches(Neg32(-5.5), -(-5.5f32), 5.5) { return 39; }
+    if !Matches(Neg64(-5.5), -(-5.5f64), 5.5) { return 40; }
+    if !Matches(Neg32(1e-45f32), -1e-45f32, -1e-45f32) { return 41; }
+    if !Matches(Neg64(5e-324f64), -5e-324f64, -5e-324f64) { return 42; }
+    if !Matches(Neg32(-1e-45f32), -(-1e-45f32), 1e-45f32) { return 43; }
+    if !Matches(Neg64(-5e-324f64), -(-5e-324f64), 5e-324f64) { return 44; }
+    if !Matches(Neg32(Inf32), -Inf32, -Inf64) { return 45; }
+    if !Matches(Neg64(Inf64), -Inf64, -Inf64) { return 46; }
+    if !Matches(Neg32(-Inf32), -(-Inf32), Inf64) { return 47; }
+    if !Matches(Neg64(-Inf64), -(-Inf64), Inf64) { return 48; }
+    if !Matches(Neg32(NaN32), -NaN32, NaN64) { return 49; }
+    if !Matches(Neg64(NaN64), -NaN64, NaN64) { return 50; }
+    if !Matches(Neg32(Neg32(0.0)), -(-0.0f32), 0.0) { return 51; }
+    if !Matches(Neg64(Neg64(0.0)), -(-0.0f64), 0.0) { return 52; }
+    if !Matches(Neg32(Neg32(NegativeZero32)), -(-NegativeZero32), NegativeZero64) { return 53; }
+    if !Matches(Neg64(Neg64(NegativeZero64)), -(-NegativeZero64), NegativeZero64) { return 54; }
+    if !Matches(Neg32(16777217.0), -16777217.0f32, -16777216.0) { return 55; }
+    if !Matches(Neg64(16777217.0), -16777217.0f64, -16777217.0) { return 56; }
     return 0;
 }
