@@ -690,6 +690,71 @@ func TestGenerateLLVMIRGuardsIntegerDivisionAndRemainder(t *testing.T) {
 	}
 }
 
+func TestGenerateLLVMIRLowersUnaryNegation(t *testing.T) {
+	for _, compilerTarget := range []target.Info{testLinux386, testLinuxAMD64} {
+		for _, test := range []struct {
+			name        string
+			typ         ir.Type
+			instruction string
+		}{
+			{name: "f32", typ: ir.Type{Kind: ir.TypeFloat, Bits: 32}, instruction: "fneg float %value"},
+			{name: "f64", typ: ir.Type{Kind: ir.TypeFloat, Bits: 64}, instruction: "fneg double %value"},
+			{name: "i32", typ: ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32}, instruction: "sub i32 0, %value"},
+		} {
+			t.Run(fmt.Sprintf("%d/%s", compilerTarget.PointerBits, test.name), func(t *testing.T) {
+				types := newLLVMTypeFixture(compilerTarget.PointerBits)
+				typeID := types.table.Intern(test.typ)
+				location := source.NewLocation(unixTestPath, source.Position{Line: 2, Column: 4}, source.Position{Line: 2, Column: 10})
+				mod := &mir.Module{
+					Name: "test", Types: types.table, FilePath: unixTestPath,
+					Funcs: []*mir.Function{{
+						Name:       "negate",
+						Params:     []ir.Param{{Name: "value", Type: typeID}},
+						ReturnType: typeID,
+						Location:   source.NewLocation(unixTestPath, source.Position{Line: 1, Column: 1}, source.Position{Line: 3, Column: 1}),
+						Blocks: []*mir.Block{{
+							ID: 0,
+							Instrs: []mir.Instr{&mir.Assign{Name: "result", Location: location, Value: &mir.Unary{
+								Op: "-", Arg: &mir.RefName{Name: "value", Type: typeID}, Type: typeID, Location: location,
+							}}},
+							Term: &mir.Ret{Value: &mir.RefName{Name: "result", Type: typeID}},
+						}},
+					}},
+				}
+				out := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), compilerTarget, true)
+				_, after, found := strings.Cut(out, " = "+test.instruction+", !dbg !")
+				if !found {
+					t.Fatalf("expected debug-tagged %s, got:\n%s", test.instruction, out)
+				}
+				debugID, _, _ := strings.Cut(after, "\n")
+				if !strings.Contains(out, "!"+debugID+" = !DILocation(line: 2, column: 4,") {
+					t.Fatalf("negation must retain its source location, got:\n%s", out)
+				}
+				clang, err := exec.LookPath("clang")
+				if err != nil {
+					t.Skip("clang unavailable for LLVM IR validation")
+				}
+				cmd := exec.Command(clang, "-target", compilerTarget.LLVMTriple, "-x", "ir", "-c", "-o", filepath.Join(t.TempDir(), "negation.o"), "-")
+				cmd.Stdin = strings.NewReader(out)
+				if output, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("clang rejected unary negation LLVM IR: %v\n%s\n%s", err, output, out)
+				}
+			})
+		}
+	}
+}
+
+func TestLLVMEmitterRejectsNonScalarFloatNegation(t *testing.T) {
+	types := newLLVMTypeFixture(testLinuxAMD64.PointerBits)
+	floatType := types.table.Intern(ir.Type{Kind: ir.TypeFloat, Bits: 32})
+	emitter := &llvmEmitter{mod: &mir.Module{Types: types.table}}
+	requireLLVMInvariant(t, func() {
+		emitValueExpr(newLLVMBuilder(&strings.Builder{}, emitter, -1), &mir.Unary{
+			Op: "-", Arg: &mir.RefConst{Value: "null", Type: types.rawptr}, Type: floatType,
+		})
+	})
+}
+
 func TestGenerateLLVMIRLeavesFloatDivRemUnguarded(t *testing.T) {
 	for _, bits := range []int{32, 64} {
 		for _, test := range []struct{ op, instruction string }{{"/", "fdiv"}, {"%", "frem"}} {
