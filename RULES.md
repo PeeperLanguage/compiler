@@ -201,7 +201,7 @@ The `peeper-bot[bot]` GitHub App checks every pull request. While the marker rem
 
 The same `peeper-bot[bot]` identity performs scheduled toolchain-lock and toolchain-source-update automation, so repository history distinguishes automated commits from human ones instead of attributing bot-authored changes to a maintainer.
 
-The submitter owns every changed line regardless of tool use and must be able to explain its purpose, production consumer, ownership boundary, and validation. AI assistance must be disclosed in the pull-request body; disclosure is not evidence of poor quality and must not replace technical review. Do not use speculative labels such as `AI slop`; enforce accountable review and an honest self-review marker instead of guessing authorship from code style.
+The submitter owns every changed line regardless of tool use and must be able to explain its purpose, production consumer, ownership boundary, and validation.
 
 Do not bypass, disable, or game the self-review marker check or the required-review branch protection to merge a pull request.
 
