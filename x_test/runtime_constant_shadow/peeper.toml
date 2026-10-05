@@ -1,0 +1,6 @@
+name = "runtime_constant_shadow"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "success"

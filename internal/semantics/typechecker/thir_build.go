@@ -18,9 +18,9 @@ func (c *checker) buildTHIR() *thir.Module {
 	if c == nil || c.module == nil || c.module.AST == nil {
 		return nil
 	}
-	constantCondition := func(expr ast.Expr, scope *symbols.Scope) (*bool, []*diagnostics.Diagnostic) {
+	constantCondition := func(expr ast.Expr) (*bool, []*diagnostics.Diagnostic) {
 		pending := diagnostics.NewDiagnosticBag()
-		value, ok := c.evaluateConstant(c.ctx.WithDiagnostics(pending), scope, expr, &typeinfo.BoolType{})
+		value, ok := c.evaluateConstant(c.ctx.WithDiagnostics(pending), expr, &typeinfo.BoolType{})
 		if !ok {
 			return nil, pending.Diagnostics()
 		}
@@ -43,8 +43,7 @@ func (c *checker) buildTHIR() *thir.Module {
 type thirBuilder struct {
 	symbolIndex       *symbols.Index
 	typing            *evidence
-	currentScope      *symbols.Scope
-	constantCondition func(ast.Expr, *symbols.Scope) (*bool, []*diagnostics.Diagnostic)
+	constantCondition func(ast.Expr) (*bool, []*diagnostics.Diagnostic)
 }
 
 func (b *thirBuilder) function(source *ast.FnDecl) *thir.Function {
@@ -85,9 +84,6 @@ func (b *thirBuilder) block(source *ast.BlockStmt) *thir.Block {
 		return nil
 	}
 	block := &thir.Block{StmtInfo: stmtInfo(source), Scope: b.scope(source), Stmts: make([]thir.Stmt, 0, len(source.Stmts))}
-	previousScope := b.currentScope
-	b.currentScope = block.Scope
-	defer func() { b.currentScope = previousScope }()
 	for _, statement := range source.Stmts {
 		if lowered := b.statement(statement); lowered != nil {
 			block.Stmts = append(block.Stmts, lowered)
@@ -115,7 +111,7 @@ func (b *thirBuilder) statement(statement ast.Stmt) thir.Stmt {
 	case *ast.IfStmt:
 		statement := &thir.If{StmtInfo: stmtInfo(node), Condition: b.expression(node.Cond)}
 		if b.constantCondition != nil {
-			statement.ConstantCondition, statement.ConditionDiagnostics = b.constantCondition(node.Cond, b.currentScope)
+			statement.ConstantCondition, statement.ConditionDiagnostics = b.constantCondition(node.Cond)
 		}
 		statement.Then = b.block(node.Then)
 		statement.Else = b.statement(node.Else)

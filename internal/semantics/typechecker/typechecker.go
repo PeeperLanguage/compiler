@@ -134,7 +134,7 @@ func runCheck(ctx *project.CompilerContext, module *module.Module) (*thir.Module
 	return c.buildTHIR(), evidence
 }
 
-func (c *checker) evaluateConstant(ctx *project.CompilerContext, scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) (constvalue.Value, bool) {
+func (c *checker) evaluateConstant(ctx *project.CompilerContext, expr ast.Expr, expected typeinfo.Type) (constvalue.Value, bool) {
 	if c == nil || c.module == nil || expr == nil {
 		return nil, false
 	}
@@ -142,7 +142,7 @@ func (c *checker) evaluateConstant(ctx *project.CompilerContext, scope *symbols.
 		c.constantEval = newConstantEvaluator(c.ctx, c.module, c.evidence)
 	}
 	evaluator := c.constantEval.withContext(ctx)
-	return evaluator.evalExpr(scope, expr, expected)
+	return evaluator.evalExpr(expr, expected)
 }
 
 // CanAdaptFirstCallArgument reports whether argType can occupy a function's

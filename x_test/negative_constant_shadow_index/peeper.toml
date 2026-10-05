@@ -1,0 +1,7 @@
+name = "negative_constant_shadow_index"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["array index out of bounds: index 3 for length 3"]

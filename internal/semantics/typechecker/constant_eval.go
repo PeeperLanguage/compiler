@@ -45,26 +45,24 @@ func (e *constantEvaluator) finalizeModuleValues() {
 		return
 	}
 	e.module.SymbolIndex.ClearConstants()
-	for _, sym := range e.module.ModuleScope.Symbols() {
+	moduleSymbols := e.module.ModuleScope.Symbols()
+	// Invalidate every module constant before evaluating any dependency.
+	for _, sym := range moduleSymbols {
 		if sym != nil && sym.Kind == symbols.SymbolConst {
 			delete(e.cache, sym.ID)
 		}
 	}
 	previous := e.publishModuleValues
 	e.publishModuleValues = true
-	e.evalModuleConstants()
+	for _, sym := range moduleSymbols {
+		if sym != nil && sym.Kind == symbols.SymbolConst {
+			e.evalConstSymbol(sym)
+		}
+	}
 	e.publishModuleValues = previous
 }
 
-func (e *constantEvaluator) evalModuleConstants() {
-	for _, sym := range e.module.ModuleScope.Symbols() {
-		if sym != nil && sym.Kind == symbols.SymbolConst {
-			e.evalConstSymbol(sym, e.module.ModuleScope)
-		}
-	}
-}
-
-func (e *constantEvaluator) evalConstSymbol(sym *symbols.Symbol, scope *symbols.Scope) (constvalue.Value, bool) {
+func (e *constantEvaluator) evalConstSymbol(sym *symbols.Symbol) (constvalue.Value, bool) {
 	if e == nil || e.module == nil || sym == nil {
 		return nil, false
 	}
@@ -94,20 +92,11 @@ func (e *constantEvaluator) evalConstSymbol(sym *symbols.Symbol, scope *symbols.
 		return nil, false
 	}
 	e.inProgress[sym.ID] = struct{}{}
-	valueScope := scope
-	if e.module.ModuleScope != nil {
-		if found, ok := e.module.ModuleScope.LookupLocal(sym.Name); ok && found != nil && found.ID == sym.ID {
-			valueScope = e.module.ModuleScope
-		}
-	}
-	if valueScope == nil {
-		valueScope = e.module.ModuleScope
-	}
 	expected := typeinfo.Type(nil)
 	if sym.Type != nil && !typeinfo.IsInvalidOrUnknown(sym.Type) {
 		expected = sym.Type
 	}
-	value, ok := e.evalExpr(valueScope, decl.Value, expected)
+	value, ok := e.evalExpr(decl.Value, expected)
 	delete(e.inProgress, sym.ID)
 	if !ok {
 		return nil, false
@@ -123,7 +112,7 @@ func (e *constantEvaluator) evalConstSymbol(sym *symbols.Symbol, scope *symbols.
 	return value, true
 }
 
-func (e *constantEvaluator) evalExpr(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) (constvalue.Value, bool) {
+func (e *constantEvaluator) evalExpr(expr ast.Expr, expected typeinfo.Type) (constvalue.Value, bool) {
 	if e.evidence != nil {
 		if construction, ok := e.evidence.VariantConstruction(expr.ID()); ok {
 			if typeinfo.OwnershipCapabilityOf(construction.EnumType).Copy != typeinfo.CopyImplicit {
@@ -148,7 +137,7 @@ func (e *constantEvaluator) evalExpr(scope *symbols.Scope, expr ast.Expr, expect
 					fields := make([]constvalue.Value, len(payload.Fields))
 					for index, field := range payload.Fields {
 						valueExpr := valuesByName[field.Name]
-						value, ok := e.evalExpr(scope, valueExpr, field.Type)
+						value, ok := e.evalExpr(valueExpr, field.Type)
 						if !ok {
 							return nil, false
 						}
@@ -156,7 +145,7 @@ func (e *constantEvaluator) evalExpr(scope *symbols.Scope, expr ast.Expr, expect
 					}
 					return constvalue.NewVariant(descriptor.Identity, typeinfo.TypeText(construction.EnumType), construction.Case, fields)
 				}
-				value, ok := e.evalExpr(scope, construction.Value, construction.Payload)
+				value, ok := e.evalExpr(construction.Value, construction.Payload)
 				if !ok {
 					return nil, false
 				}
@@ -173,7 +162,7 @@ func (e *constantEvaluator) evalExpr(scope *symbols.Scope, expr ast.Expr, expect
 		if !found || test.Family != typeinfo.VariantFamilyNamed {
 			return nil, false
 		}
-		value, ok := e.evalExpr(scope, node.Value, e.evidence.ExprType(node.Value.ID()))
+		value, ok := e.evalExpr(node.Value, e.evidence.ExprType(node.Value.ID()))
 		variant, isConstant := value.(*constvalue.VariantConst)
 		if !ok || !isConstant || variant == nil {
 			return nil, false
@@ -224,15 +213,12 @@ func (e *constantEvaluator) evalExpr(scope *symbols.Scope, expr ast.Expr, expect
 	case *ast.BoolLit:
 		return constvalue.NewBool(node.Value), true
 	case *ast.Ident:
-		lookup := scope
-		if lookup == nil {
-			lookup = e.module.ModuleScope
-		}
-		sym, ok := lookup.Lookup(node.Name)
-		if !ok || sym == nil || sym.Kind != symbols.SymbolConst {
+		// Later declarations may shadow the name, but not its resolved binding.
+		sym := e.module.SymbolIndex.Symbol(node)
+		if sym == nil || sym.Kind != symbols.SymbolConst {
 			return nil, false
 		}
-		value, ok := e.evalConstSymbol(sym, lookup)
+		value, ok := e.evalConstSymbol(sym)
 		if !ok {
 			return nil, false
 		}
@@ -251,7 +237,7 @@ func (e *constantEvaluator) evalExpr(scope *symbols.Scope, expr ast.Expr, expect
 		}
 		// Cast input keeps its own width; destination context must not change
 		// overflow before the explicit finite-width conversion.
-		value, ok := e.evalExpr(scope, node.Expr, sourceType)
+		value, ok := e.evalExpr(node.Expr, sourceType)
 		integer, isInteger := value.(*constvalue.IntConst)
 		if !ok || !isInteger || integer == nil {
 			return nil, false
@@ -262,14 +248,14 @@ func (e *constantEvaluator) evalExpr(scope *symbols.Scope, expr ast.Expr, expect
 		}
 		return expectedNumericConstValue(converted, expected)
 	case *ast.UnaryExpr:
-		value, ok := e.evalExpr(scope, node.Expr, expected)
+		value, ok := e.evalExpr(node.Expr, expected)
 		if !ok {
 			return nil, false
 		}
 		return constvalue.FoldUnary(node.Op, value)
 	case *ast.BinaryExpr:
-		left, lok := e.evalExpr(scope, node.Left, expected)
-		right, rok := e.evalExpr(scope, node.Right, expected)
+		left, lok := e.evalExpr(node.Left, expected)
+		right, rok := e.evalExpr(node.Right, expected)
 		if !lok || !rok {
 			return nil, false
 		}
@@ -283,8 +269,8 @@ func (e *constantEvaluator) evalExpr(scope *symbols.Scope, expr ast.Expr, expect
 		if commonType == nil {
 			return nil, false
 		}
-		left, lok = e.evalExpr(scope, node.Left, commonType)
-		right, rok = e.evalExpr(scope, node.Right, commonType)
+		left, lok = e.evalExpr(node.Left, commonType)
+		right, rok = e.evalExpr(node.Right, commonType)
 		if !lok || !rok {
 			return nil, false
 		}

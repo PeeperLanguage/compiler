@@ -1,0 +1,9 @@
+fn main() -> i32 {
+    const index: i32 = 3;
+    {
+        const saved: i32 = index;
+        const index: i32 = 0;
+        let values = [3]i32{10, 20, 30};
+        return values[saved];
+    }
+}

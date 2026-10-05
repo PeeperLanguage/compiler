@@ -202,8 +202,12 @@ func TestPipelineLowersSequenceIndexesAsUsizeAcrossTargets(t *testing.T) {
 				Extension:  peeper.SourceExt,
 				TargetOS:   "linux",
 				TargetArch: test.arch,
-			}, "", `fn main() {
+			}, "", `const selected: i32 = 0;
+fn main() {
+	const saved: i32 = selected;
+	const selected: i32 = 1;
 	let items = [1]i32{1};
+	let chosen = items[saved];
 	for index, value in items {}
 }`, func(entry *module.Module) {
 				if entry.MIR == nil || len(entry.MIR.Funcs) != 1 {
@@ -1147,55 +1151,52 @@ func TestPipelineFinalizesMissingReturnDiagnosticInCFGPhase(t *testing.T) {
 	t.Fatalf("missing-return diagnostic unavailable at CFG phase:\n%s", diag.EmitAllToString())
 }
 
-func TestPipelineReportsConstantConditionInCFGPhase(t *testing.T) {
-	diag := diagnostics.NewDiagnosticBag()
-	const entryPath = "entry" + peeper.SourceExt
-	entry := parseModuleSource(entryPath, `fn main() -> i32 {
-	if false {
-		return 1;
-	}
-	return 0;
-}`, diag)
-	entry.Phase = phase.Parsed
-	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
-	ctx.AddModule(entry)
-
-	for entry.Phase < phase.Typechecked {
-		if !advanceModulePhase(ctx, entry, diag) {
-			t.Fatalf("advanceModulePhase stopped at %v", entry.Phase)
-		}
-	}
-	for _, item := range diag.Diagnostics() {
-		if item != nil && item.Code == diagnostics.WarnConstantConditionFalse {
-			t.Fatal("constant-condition warning emitted before CFG phase")
-		}
-	}
-	entry.AST = nil
-	if !advanceModulePhase(ctx, entry, diag) {
-		t.Fatal("CFG phase requires AST")
-	}
-	if entry.MIR != nil {
-		t.Fatalf("CFG phase produced MIR: %#v", entry.MIR)
-	}
-	for _, item := range diag.Diagnostics() {
-		if item != nil && item.Code == diagnostics.WarnConstantConditionFalse {
-			return
-		}
-	}
-	t.Fatalf("constant-condition diagnostic unavailable at CFG phase:\n%s", diag.EmitAllToString())
-}
-
-func TestPipelinePublishesLocalConstantConditions(t *testing.T) {
+func TestPipelineReportsConstantConditionsInCFGPhase(t *testing.T) {
 	for _, test := range []struct {
-		name, value string
-		warning     string
+		name, source, warning string
 	}{
-		{"true", "true", diagnostics.WarnConstantConditionTrue},
-		{"false", "false", diagnostics.WarnConstantConditionFalse},
+		{"literal false", `fn main() -> i32 {
+	if false { return 1; }
+	return 0;
+}`, diagnostics.WarnConstantConditionFalse},
+		{"local true", `fn main() { const Flag = true; if Flag { print(1); } }`, diagnostics.WarnConstantConditionTrue},
+		{"local false", `fn main() { const Flag = false; if Flag { print(1); } }`, diagnostics.WarnConstantConditionFalse},
+		{"const shadow true", `fn main() {
+	const value: i32 = 10;
+	{
+		const saved: i32 = value;
+		const value: i32 = 20;
+		if saved == 10 { print(1); }
+	}
+}`, diagnostics.WarnConstantConditionTrue},
+		{"const shadow false", `fn main() {
+	const value: i32 = 10;
+	{
+		const saved: i32 = value;
+		const value: i32 = 20;
+		if saved == 20 { print(1); }
+	}
+}`, diagnostics.WarnConstantConditionFalse},
+		{"let shadow true", `fn main() {
+	const value: i32 = 10;
+	{
+		const saved: i32 = value;
+		let value: i32 = 20;
+		if saved == 10 { print(1); }
+	}
+}`, diagnostics.WarnConstantConditionTrue},
+		{"let shadow false", `fn main() {
+	const value: i32 = 10;
+	{
+		const saved: i32 = value;
+		let value: i32 = 20;
+		if saved == 20 { print(1); }
+	}
+}`, diagnostics.WarnConstantConditionFalse},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			diag := diagnostics.NewDiagnosticBag()
-			entry := parseModuleSource("entry"+peeper.SourceExt, "fn main() { const Flag = "+test.value+"; if Flag { print(1); } }", diag)
+			entry := parseModuleSource("entry"+peeper.SourceExt, test.source, diag)
 			entry.Phase = phase.Parsed
 			ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
 			ctx.AddModule(entry)
@@ -1204,16 +1205,37 @@ func TestPipelinePublishesLocalConstantConditions(t *testing.T) {
 					t.Fatalf("advanceModulePhase stopped at %v", entry.Phase)
 				}
 			}
-			entry.AST = nil
-			if !advanceModulePhase(ctx, entry, diag) {
-				t.Fatal("CFG phase requires AST")
+			if diag.HasErrors() {
+				t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 			}
 			for _, item := range diag.Diagnostics() {
-				if item.Code == test.warning {
-					return
+				if item != nil && (item.Code == diagnostics.WarnConstantConditionTrue || item.Code == diagnostics.WarnConstantConditionFalse) {
+					t.Fatal("constant-condition warning emitted before CFG phase")
 				}
 			}
-			t.Fatalf("missing %s: %s", test.warning, diag.EmitAllToString())
+			entry.AST = nil
+			if !advanceModulePhase(ctx, entry, diag) || entry.Phase != phase.CFG {
+				t.Fatal("CFG phase did not consume THIR without AST")
+			}
+			if diag.HasErrors() {
+				t.Fatalf("unexpected CFG diagnostics:\n%s", diag.EmitAllToString())
+			}
+			if entry.MIR != nil {
+				t.Fatalf("CFG phase produced MIR: %#v", entry.MIR)
+			}
+			warnings := 0
+			for _, item := range diag.Diagnostics() {
+				if item == nil || (item.Code != diagnostics.WarnConstantConditionTrue && item.Code != diagnostics.WarnConstantConditionFalse) {
+					continue
+				}
+				if item.Code != test.warning {
+					t.Fatalf("wrong constant-condition warning %s:\n%s", item.Code, diag.EmitAllToString())
+				}
+				warnings++
+			}
+			if warnings != 1 {
+				t.Fatalf("got %d warnings %s, want exactly one:\n%s", warnings, test.warning, diag.EmitAllToString())
+			}
 		})
 	}
 }
@@ -1221,8 +1243,7 @@ func TestPipelinePublishesLocalConstantConditions(t *testing.T) {
 func TestPipelineDefersConstantEvaluationCycleToCFG(t *testing.T) {
 	diag := diagnostics.NewDiagnosticBag()
 	entry := parseModuleSource("entry"+peeper.SourceExt, `fn main() {
-		const First: bool = Second;
-		const Second: bool = First;
+		const First: bool = First;
 		if First { print(1); }
 	}`, diag)
 	entry.Phase = phase.Parsed
