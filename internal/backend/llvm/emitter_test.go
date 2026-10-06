@@ -3107,6 +3107,10 @@ func TestBoundsCheckedIndexHandlesUnsignedLengths(t *testing.T) {
 	if err != nil {
 		t.Skip("clang unavailable for native bounds validation")
 	}
+	systemTriple, err := target.SystemLLVMTriple(testLinuxAMD64.OS, testLinuxAMD64.Arch)
+	if err != nil {
+		t.Fatal(err)
+	}
 	types := newLLVMTypeFixture(target.Bits64)
 	i64 := types.table.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 64})
 	i128 := types.table.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 128})
@@ -3142,7 +3146,7 @@ func TestBoundsCheckedIndexHandlesUnsignedLengths(t *testing.T) {
 				indexLayout.Text, body.String(), indexLayout.Text, test.value)
 			dir := t.TempDir()
 			binary := filepath.Join(dir, "bounds")
-			cmd := exec.Command(clang, "-target", testLinuxAMD64.LLVMTriple, "-x", "ir", "-o", binary, "-")
+			cmd := exec.Command(clang, "-target", systemTriple, "-x", "ir", "-o", binary, "-")
 			cmd.Stdin = strings.NewReader(text)
 			if output, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("bounds LLVM is invalid: %v\n%s\n%s", err, output, text)
