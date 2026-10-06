@@ -42,10 +42,11 @@ invoked as an external tool. Peeper does not link anything by hand.
 | `cmd/` | CLI commands: `build`, `run`, `check`, `dump`, `doctor` |
 | `internal/driver` | Thin wrapper that builds a `CompilerContext` and compiles one file |
 | `internal/pipeline` | Module loading and the phase ladder that drives everything |
-| `internal/project` | `Module`, `CompilerContext` — where every phase artifact is stored |
+| `internal/module` | `Module` and its phase artifacts |
+| `internal/project` | `CompilerContext`, module registry, imports, and fingerprints |
 | `internal/frontend` | `token`, `lexer`, `parser`, `ast` |
 | `internal/semantics` | Collector, binder, resolver, const eval, typechecker, flow facts, effects, definite init, ownership, usage, plus the artifact packages |
-| `internal/ir` | `cfg`, `hir`, `mir`, and the shared `ir` node/type model |
+| `internal/ir` | `thir`, `cfg`, `exprlower`, `mir`, and the shared `ir` node/type model |
 | `internal/backend/llvm` | MIR → LLVM IR text |
 | `internal/toolchain` | Finds `clang` and the sysroot; builds its command lines |
 | `internal/diagnostics` | Errors, warnings, source rendering, phase attribution |
@@ -86,7 +87,7 @@ Before any phase runs, the loader walks imports and builds a dependency graph.
 
 ```go
 // internal/pipeline/loader.go (simplified)
-func (l *moduleLoader) Load(entry *project.Module) error {
+func (l *moduleLoader) Load(entry *module.Module) error {
     l.enqueue(entry)
     for len(l.queue) > 0 {
         module := l.pop()
@@ -129,14 +130,14 @@ This is the spine of the compiler. Each module carries a `Phase`, and
 ```mermaid
 flowchart TD
     Setup --> Load --> Parsed --> Collected --> Bound --> Resolved
-    Resolved --> Typechecked --> CFG --> FlowTyped
-    FlowTyped --> Effects --> DefiniteInit --> Ownership --> Usage
+    Resolved --> Typechecked --> CFG --> Analyzed
+    Analyzed --> Usage
     Usage --> MIR --> Backend --> Finalize
 ```
 
 ```go
 // internal/pipeline/pipeline.go (heavily simplified)
-func advanceModulePhase(ctx *project.CompilerContext, module *project.Module) bool {
+func advanceModulePhase(ctx *project.CompilerContext, module *module.Module) bool {
     if module.Phase < phase.Collected { collector.Collect(ctx, module); module.Phase = phase.Collected; return true }
     if module.Phase < phase.Bound     { binder.Bind(ctx, module);       module.Phase = phase.Bound;     return true }
     if module.Phase < phase.Resolved  { resolver.Resolve(ctx, module);  module.Phase = phase.Resolved;  return true }
@@ -156,32 +157,34 @@ scheduler enforces that by advancing everyone one rung at a time.
 | `Collected` | top-level symbols, method sets | `SymbolIndex`, `ModuleScope` |
 | `Bound` | operator/interface bindings | `SymbolIndex` |
 | `Resolved` | every identifier → symbol | `SymbolIndex` occurrence lookup |
-| `Typechecked` | types, typing decisions, finalized constants, typed source IR | `Typechecking`, `Constants`, `THIR` |
+| `Typechecked` | types, typing decisions, finalized constants, typed source IR | `SymbolIndex`, `THIR`, `SemanticExportFingerprint` |
 | `CFG` | blocks, sites, edges | `CFG` |
-| `FlowTyped` | path-sensitive narrowing | `Analysis` |
-| `Effects` | ordered evaluation/storage events | transient during `Analysis.Run` |
-| `DefiniteInit` | *diagnostics only* | — |
-| `Ownership` | drop plan | `Ownership` |
-| `Usage` | *warnings only* | — |
+| `Analyzed` | flow, effect, definite-init, and ownership evidence | `Analysis` |
+| `Usage` | usage diagnostics at the project barrier | diagnostics; no durable module artifact |
 
 | `MIR` | flat, block-structured IR | `MIR` |
 | `Backend` | LLVM IR text | `LLVMIR` |
+| `Finalize` | cross-module runtime-symbol validation | project phase |
 
-**Phase artifacts are the central design idea.** Each fact is produced by exactly one
-phase, stored in exactly one place, and read by later phases. No phase reaches backwards
-to recompute something an earlier one already decided.
+**Phase artifacts are the central design idea.** Each durable artifact is produced by one
+owning phase and read by later phases. Flow, effects, definite initialization, and
+ownership evidence are published together in `Analysis`; `Usage` is a project barrier
+for diagnostics rather than another durable module artifact.
 
-`Module.resetToPhase` clears artifacts in phase order, so incremental rebuilds cannot
-leave stale evidence behind:
+`Module.ResetToPhase` clears downstream artifacts in phase order, so incremental rebuilds
+cannot leave stale evidence behind:
 
 ```go
-// internal/project/modules.go (simplified)
-func (m *Module) resetToPhase(retained phase.Phase) {
-    if retained < phase.Typechecked { m.Typechecking = nil; m.TypedASTNodes = nil }
-    if retained < phase.CFG         { m.CFG = nil }
-    if retained < phase.Effects     { m.Effects = nil }
-    if retained < phase.Ownership   { m.Ownership = nil }
-    // ...
+// internal/module/module.go (simplified)
+func (m *Module) ResetToPhase(retained phase.Phase) {
+    m.Phase = retained
+    if retained <= phase.Parsed { m.ModuleScope = nil; m.SymbolIndex = nil }
+    if retained < phase.Collected { m.typeDeclarations = nil }
+    if retained < phase.Typechecked { m.THIR = nil; m.SemanticExportFingerprint = "" }
+    if retained < phase.CFG { m.CFG = nil }
+    if retained < phase.Analyzed { m.Analysis = nil }
+    if retained < phase.MIR { m.MIR = nil }
+    if retained < phase.Backend { m.LLVMIR = "" }
 }
 ```
 
@@ -253,15 +256,13 @@ module.SymbolIndex.SetScope(block, scope)
 depend on, so nothing has to re-derive them:
 
 ```go
-// internal/semantics/typecheckresult/result.go (excerpt)
-result.RecordExprType(expr.ID(), typ)
-result.RecordImplicitConversion(expr.ID(), conversion)
-result.RecordForIteration(loop.ID(), iteration)
+// internal/semantics/typechecker/evidence.go (private during Check)
+c.evidence.RecordExprType(expr.ID(), typ)
+c.evidence.RecordImplicitConversion(expr.ID(), conversion)
+c.evidence.RecordForIteration(loop.ID(), iteration)
 
-// Later phases ask semantic questions; the backing indexes stay private.
-typ := result.ExprType(expr.ID())
-conversion, ok := result.ImplicitConversion(expr.ID())
-iteration, ok := result.ForIteration(loop.ID())
+// internal/semantics/typechecker/thir_build.go materializes those facts on THIR;
+// later phases query THIR instead of re-deriving source meaning.
 ```
 
 ---
@@ -406,15 +407,14 @@ They currently share **evidence, not solver machinery**. Each has distinct latti
 initialized on *every* path, so the join is intersection.
 
 ```go
-// internal/semantics/definiteinit (simplified)
-func apply(current state, op effect.Op) {
-    switch op := op.(type) {
-    case effect.Define:  if op.Initialized { current[op.Symbol.ID] = struct{}{} }
-    case effect.Write:   current[op.Place.Root.ID] = struct{}{}
-    case effect.Use:     // a read changes nothing
-    case effect.Borrow:  // nor does taking a reference
-    default:             panic("unhandled effect")   // a new op fails loudly here
+// internal/semantics/analysis/definite_init.go (simplified)
+func transfer(ops []effectOp, in initState) initState {
+    out := copyInitState(in)
+    visitor := &initializationVisitor{current: out, shouldApplyState: true}
+    for _, op := range ops {
+        visitEffect(op, visitor)
     }
+    return out
 }
 ```
 
@@ -423,22 +423,12 @@ It contains **no AST switch at all**; source identity comes from `source.NodeID`
 **Ownership** tracks moves, loans and liveness, then writes the drop plan:
 
 ```go
-// internal/semantics/analysis/effects.go (simplified)
-for _, op := range a.effects[site.ID] {
-    switch op := op.(type) {
-    case effect.CallBegin:
-        calls = append(calls, callFrame{                 // remember where this call's loans start
-            call: callFor(op), temporary: len(loans.temporary), reserved: len(loans.reserved),
-        })
-    case effect.CallEnd:
-        frame := pop(&calls)
-        a.activateCallReservations(frame.call, frame.reserved, loans)  // fire at call start
-        loans.temporary = loans.temporary[:frame.temporary]            // argument temporaries die
-        loans.reserved = loans.reserved[:frame.reserved]
-    case effect.Use:
-        a.applyUse(op, st, loans)                        // move state + storage access
-    case effect.Borrow:
-        a.applyBorrow(op, st, loans, calls)              // access + loan
+// internal/semantics/analysis/ownership_effects.go (simplified)
+func (a *analyzer) applyEffects(node *site, st ownershipState, loans *loanContext) {
+    ops := a.effects[node.cfgSite.ID]
+    visitor := &ownershipEffectVisitor{a: a, node: node, st: st, loans: loans}
+    for _, op := range ops {
+        visitEffect(op, visitor)
     }
 }
 ```
@@ -447,12 +437,12 @@ The result is the `CleanupPlan` — the **single source of drop obligations** ov
 values:
 
 ```go
-// internal/semantics/ownershipresult/result.go
-type CleanupPlan struct {
-    AfterScope     map[cfg.SiteID][]symbols.SymbolID  // scope exit
-    BeforeReturn   map[source.NodeID][]symbols.SymbolID // after the value is computed
-    BeforeAssign   map[source.NodeID]struct{}           // replacing a value drops the old
-    DiscardedValue map[source.NodeID]struct{}           // a temporary nobody owns
+// internal/semantics/analysis/cleanup.go
+type cleanupPlan struct {
+    AfterScope   map[cfg.SiteID][]symbols.SymbolID
+    BeforeReturn map[source.NodeID][]symbols.SymbolID
+    BeforeAssign map[source.NodeID]struct{}
+    DiscardedValue map[source.NodeID]struct{}
     // …
 }
 ```
@@ -543,18 +533,18 @@ The compiler is built so that *forgetting* something fails loudly.
 
 | Guard | Where | Catches |
 | --- | --- | --- |
-| AST traversal tests | `frontend/ast` tests + source fixtures | broken child traversal behavior |
+| AST traversal tests | `internal/frontend/ast` tests + source fixtures | broken child traversal behavior |
 | Sealed semantic type contract | Go type system | missing child/ownership behavior on a new semantic type |
 | THIR validation + required operation methods | `internal/ir/thir` | malformed evidence or missing consumer support |
-| MIR/backend rejecting dispatch | `internal/ir/mir`, `backend/llvm` | unsupported lowered nodes fail loudly |
+| MIR/backend rejecting dispatch | `internal/ir/mir`, `internal/backend/llvm` | unsupported lowered nodes fail loudly |
 | `cfg.Validate` | `internal/ir/cfg` | malformed topology |
-| `effect.Validate` | `internal/semantics/effect` | operations with no symbol, unbalanced calls |
-| `ownershipresult.Validate` | `internal/semantics/ownershipresult` | evidence that contradicts published types |
+| `Analysis` validation | `internal/semantics/analysis` | malformed effects or cleanup evidence |
 
 A contract failure reads like this:
 
 ```
-publishStmt makes no decision about ast.YieldStmt; add a case or declare why the kind is inert
+THIR operation contract has no implementation for a new node kind; add its case or
+declare why the kind is inert
 ```
 
 At true closed extension points, every omission must be handled or deliberately
@@ -573,7 +563,8 @@ For a new syntax construct, in order:
 4. **resolver** — scopes and bindings.
 5. **typechecker** — the type rule, and *publish* whatever later phases will need.
 6. **CFG** — only if the control-flow shape is genuinely new.
-7. **effects** — one case in `publishStmt`/`value` saying what it does to bindings.
+7. **analysis** — implement required `AnalyzeFlow` and `BuildEffects` methods when
+   the construct changes flow or storage behavior.
 8. **THIR/MIR** — only if no existing lowering shape can represent it.
 
 Steps 1–6 are unavoidable: where a name lives and what types are legal *is* the feature.
@@ -607,7 +598,7 @@ at each true extension point.
 | --- | --- |
 | Why is my program rejected? | `internal/diagnostics/codes.go`, then the phase that owns the code |
 | How does phase ordering work? | `internal/pipeline/pipeline.go`, `advanceModulePhase` |
-| What does the typechecker publish? | `internal/semantics/typecheckresult/result.go` |
-| Why is a value moved/dropped here? | `internal/semantics/effect`, then `internal/semantics/ownership` |
+| What does the typechecker publish? | `internal/semantics/typechecker/evidence.go`, then `internal/ir/thir` |
+| Why is a value moved/dropped here? | `internal/semantics/analysis`, then `internal/ir/mir` |
 | What does the backend emit for X? | `internal/backend/llvm/emitter.go` |
 | How do I add a node kind safely? | `docs/compiler-architecture.md`, then the owning syntax boundary |
