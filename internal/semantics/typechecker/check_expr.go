@@ -653,7 +653,8 @@ func (c *checker) typeIndexExpr(scope *symbols.Scope, node *ast.IndexExpr) typei
 		return elem
 	}
 	array := typeinfo.Underlying(baseType).(*typeinfo.ArrayType)
-	value, ok := c.evaluateConstant(c.ctx, node.Index, typeinfo.DefaultIntegerType())
+	// Literal inference is finished; bounds checking must keep the checked width.
+	value, ok := c.evaluateConstant(c.ctx, node.Index, indexType)
 	if !ok {
 		return elem
 	}
@@ -665,11 +666,10 @@ func (c *checker) typeIndexExpr(scope *symbols.Scope, node *ast.IndexExpr) typei
 		Text: indexConst.Text(),
 		Type: indexType,
 	})
-	length, lengthErr := strconv.Atoi(array.Len)
-	indexText := indexConst.Text()
-	indexValue, indexErr := strconv.Atoi(indexText)
-	if lengthErr == nil && (indexErr != nil || indexValue < 0 || indexValue >= length) {
-		c.ctx.Diagnostics.Add(problems.ArrayIndexOutOfBounds(indexText, array.Len, ast.LocOf(node.Index)))
+	length, lengthErr := numeric.StringToBigInt(array.Len)
+	indexValue := indexConst.Int()
+	if lengthErr == nil && (indexValue == nil || indexValue.Sign() < 0 || indexValue.Cmp(length) >= 0) {
+		c.ctx.Diagnostics.Add(problems.ArrayIndexOutOfBounds(indexConst.Text(), array.Len, ast.LocOf(node.Index)))
 	}
 	return elem
 }

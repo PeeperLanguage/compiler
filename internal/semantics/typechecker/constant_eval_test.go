@@ -2,6 +2,7 @@ package typechecker
 
 import (
 	"fmt"
+	"math"
 	"testing"
 
 	"compiler/internal/constvalue"
@@ -16,7 +17,6 @@ import (
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/resolver"
-	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/pkg/peeper"
 )
@@ -126,12 +126,110 @@ func TestEvaluateIntegerCastWithoutTypingEvidence(t *testing.T) {
 	module, diag := constevalModule(t, `type Count = u8;
 const Converted: Count = 258u16 as Count;
 const Shifted: u8 = 128u8 >> Converted;
+const Inferred = 258u16 as Count;
+const Widened: u16 = 258u16 as Count;
+const InferredByte = 258u16 as byte;
 `)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 	assertIntConst(t, module, "Shifted", "32", "u8")
 	assertIntConst(t, module, "Converted", "2", "u8")
+	assertIntConst(t, module, "Inferred", "2", "u8")
+	assertIntConst(t, module, "Widened", "2", "u16")
+	assertIntConst(t, module, "InferredByte", "2", "byte")
+}
+
+func TestEvaluateCheckedNumericConversions(t *testing.T) {
+	for _, test := range []struct{ name, source, value, typ string }{
+		{"mixed operands", "const Value: i64 = 1i32 + 2i64;", "3", "i64"},
+		{"explicit initializer", "const Value: i64 = 2i8;", "2", "i64"},
+		{"signed widening", "const Value: u16 = -1i8;", "65535", "u16"},
+		{"source overflow", "const Value: i64 = 127i8 + 1i8;", "-128", "i64"},
+		{"nested overflow", "const Value: i64 = (127i8 + 1i8) + 1i64;", "-127", "i64"},
+		{"unary overflow", "const Value: i64 = -(-128i8);", "-128", "i64"},
+		{"implicit float widening", "const Value: f64 = 1.25f32;", "1.25", "f64"},
+		{"mixed floats", "const Value: f64 = 1.25f32 + 2.5f64;", "3.75", "f64"},
+		{"explicit float narrowing", "const Value: f32 = 1.25f64 as f32;", "1.25", "f32"},
+		{"round then widen", "const Value: f64 = 16777217f64 as f32;", "1.6777216e+07", "f64"},
+		{"aliased round then widen", "type Narrow = f32; type Wide = f64; const Value: Wide = 16777217f64 as Narrow;", "1.6777216e+07", "f64"},
+		{"negative zero then widen", "const Value: f64 = -0f64 as f32;", "-0", "f64"},
+		{"float intermediate width", "const Value: f64 = 16777216f32 + 1f32;", "1.6777216e+07", "f64"},
+		{"integer to float", "const Value: f32 = -3i8 as f32;", "-3", "f32"},
+		{"float to integer", "const Value: i8 = -3.75f64 as i8;", "-3", "i8"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			module, diag := checkTypeModule(t, test.source)
+			if diag.HasErrors() {
+				t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+			}
+			value := evaluatedConst(t, module, "Value")
+			text, ok := value.(interface{ Text() string })
+			if !ok || text.Text() != test.value || value.TypeText() != test.typ {
+				t.Fatalf("published Value = %#v, want %s %s", value, test.value, test.typ)
+			}
+		})
+	}
+	module, diag := checkTypeModule(t, `const Less: bool = 1i8 < 2i64;
+const Greater: bool = 2i64 > 1i8;`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected comparison diagnostics:\n%s", diag.EmitAllToString())
+	}
+	assertBoolConst(t, module, "Less", true)
+	assertBoolConst(t, module, "Greater", true)
+}
+
+func TestEvaluateRejectsUnrepresentableFloatToIntegerConstants(t *testing.T) {
+	for _, expression := range []string{
+		"128f64 as i8", "-129f64 as i8", "-1f64 as u8", "256f64 as u8",
+		"(1f64 / 0f64) as i32", "(0f64 / 0f64) as i32",
+	} {
+		t.Run(expression, func(t *testing.T) {
+			module, diag := checkTypeModule(t, "const Value = "+expression+";")
+			if diag.HasErrors() {
+				t.Fatalf("unexpected typing diagnostics:\n%s", diag.EmitAllToString())
+			}
+			if value := evaluatedConst(t, module, "Value"); value != nil {
+				t.Fatalf("unrepresentable float cast published %#v", value)
+			}
+		})
+	}
+}
+
+func TestEvaluateIntegerToFloatRoundsAtDestinationWidth(t *testing.T) {
+	for _, test := range []struct {
+		name, expression, typ string
+		want                  float64
+	}{
+		{"midpoint", "9223372586610589696u64 as f32", "f32", 9223372036854775808},
+		{"above midpoint", "9223372586610589697u64 as f32", "f32", 9223373136366403584},
+		{"negative above midpoint", "-9007199791611905i64 as f32", "f32", -9007200328482816},
+		{"f32 infinity", "(1u256 << 128u256) as f32", "f32", math.Inf(1)},
+		{"f64 infinity", "(1u2048 << 1024u2048) as f64", "f64", math.Inf(1)},
+		{"negative infinity", "-(1i2048 << 1024i2048) as f64", "f64", math.Inf(-1)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			module, diag := checkTypeModule(t, "const Value = "+test.expression+";")
+			if diag.HasErrors() {
+				t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+			}
+			published := evaluatedConst(t, module, "Value")
+			value, ok := published.(*constvalue.FloatConst)
+			if !ok || value == nil || value.Float() != test.want || value.TypeText() != test.typ {
+				t.Fatalf("published Value = %#v, want %g %s", published, test.want, test.typ)
+			}
+		})
+	}
+}
+
+func TestExpectedNumericConstValueRejectsInvalidIntegers(t *testing.T) {
+	for _, value := range []*constvalue.IntConst{nil, {}} {
+		for _, typ := range []typeinfo.Type{&typeinfo.FloatType{Bits: 32}, &typeinfo.IntegerType{IsSigned: true, Bits: 64}} {
+			if converted, ok := expectedNumericConstValue(value, typ); ok || converted != nil {
+				t.Fatalf("invalid integer converted to %#v", converted)
+			}
+		}
+	}
 }
 
 func TestEvaluateBitwiseConstExpressionsThroughIntegralAlias(t *testing.T) {
@@ -319,8 +417,13 @@ func TestEvaluateRejectsUnboundConstantReferences(t *testing.T) {
 	ctx := project.New(".", peeper.SourceExt, diag)
 	ctx.AddModule(module)
 	evaluator := newConstantEvaluator(ctx, module, newEvidence())
-	if value, ok := evaluator.evalExpr(&ast.Ident{Name: "Value"}, nil); ok {
-		t.Fatalf("unbound identifier evaluated to %#v through name lookup", value)
+	for _, expr := range []ast.Expr{
+		&ast.Ident{Name: "Value"},
+		&ast.ScopeResolution{Segments: []ast.PathSegment{{Name: &ast.Ident{Name: "owner"}}, {Name: &ast.Ident{Name: "Value"}}}},
+	} {
+		if value, ok := evaluator.evalExpr(expr, nil); ok {
+			t.Fatalf("unbound %T evaluated to %#v through name lookup", expr, value)
+		}
 	}
 }
 
@@ -344,7 +447,9 @@ func TestEvaluateReadsForeignPublishedConstantWithoutConsumerCache(t *testing.T)
 		resolver.Resolve(ctx, module)
 	}
 
-	owner := parse("owner"+peeper.SourceExt, "owner", "const Shared: i32 = 7;")
+	owner := parse("owner"+peeper.SourceExt, "owner", `const Shared: i32 = 7;
+type Number = i32;
+fn Read() -> i32 { return 7; }`)
 	resolve(owner)
 	finalizeConstantValues(ctx, owner, newEvidence())
 	shared, found := owner.ModuleScope.LookupLocal("Shared")
@@ -355,26 +460,62 @@ func TestEvaluateReadsForeignPublishedConstantWithoutConsumerCache(t *testing.T)
 		t.Fatalf("publish shared constant: %v", err)
 	}
 
-	consumer := parse("consumer"+peeper.SourceExt, "consumer", "const Local = Shared;")
+	consumer := parse("consumer"+peeper.SourceExt, "consumer", `const Local = Shared;
+const Qualified = owner::Shared;
+fn Probe() {
+	let Mutable: i32 = 7;
+	const Variable = Mutable;
+	const Function = owner::Read;
+	const Type = owner::Number;
+}`)
+	consumer.Imports["owner"] = module.ResolvedImport{ID: owner.ID, FilePath: owner.FilePath}
 	resolve(consumer)
-	local, found := consumer.ModuleScope.LookupLocal("Local")
-	if !found || local == nil {
-		t.Fatal("missing consumer constant")
+	if diag.HasErrors() {
+		t.Fatalf("foreign binding setup failed:\n%s", diag.EmitAllToString())
 	}
+	// Foreign reads must use the published value, not re-evaluate changed owner AST.
+	shared.ASTNode.(*ast.ConstDecl).Value = &ast.NumberLit{Value: "99"}
 	evaluator := newConstantEvaluator(ctx, consumer, newEvidence())
-	if _, ok := evaluator.evalConstSymbol(local); !ok {
-		t.Fatal("failed to lazily evaluate imported constant")
-	}
-	cached := evaluator.cache[local.ID]
-	value, ok := cached.(*constvalue.IntConst)
-	if !ok || value == nil || value.Text() != "7" {
-		t.Fatalf("consumer value = %#v, want 7", cached)
+	for _, name := range []string{"Local", "Qualified"} {
+		local, found := consumer.ModuleScope.LookupLocal(name)
+		if !found || local == nil {
+			t.Fatalf("missing consumer constant %s", name)
+		}
+		if _, ok := evaluator.evalConstSymbol(local); !ok {
+			t.Fatalf("failed to lazily evaluate %s", name)
+		}
+		cached := evaluator.cache[local.ID]
+		value, ok := cached.(*constvalue.IntConst)
+		if !ok || value == nil || value.Text() != "7" {
+			t.Fatalf("%s consumer value = %#v, want published 7", name, cached)
+		}
 	}
 	if _, found := evaluator.cache[shared.ID]; found {
 		t.Fatal("foreign constant duplicated in consumer query cache")
 	}
-	if owner.SymbolIndex.ConstantValue(shared.ID) == nil {
-		t.Fatal("owner lost published constant")
+	if value := owner.SymbolIndex.ConstantValue(shared.ID).(*constvalue.IntConst); value.Text() != "7" {
+		t.Fatalf("owner published value changed to %s", value.Text())
+	}
+	probe := consumer.AST.Stmts[2].(*ast.FnDecl)
+	for _, stmt := range probe.Body.Stmts[1:] {
+		decl := stmt.(*ast.ConstDecl)
+		expr := decl.Value
+		bound := consumer.SymbolIndex.Symbol(expr)
+		if bound == nil {
+			t.Fatalf("nonconstant %s has no canonical binding", decl.Name.Name)
+		}
+		evaluator.cache[bound.ID], _ = constvalue.NewIntText("99", "i32")
+		if value, ok := evaluator.evalExpr(expr, nil); ok {
+			t.Fatalf("nonconstant %s evaluated to %#v", decl.Name.Name, value)
+		}
+	}
+	owner.SymbolIndex.ClearConstants()
+	evaluator.cache[shared.ID], _ = constvalue.NewIntText("99", "i32")
+	for _, stmt := range consumer.AST.Stmts[:2] {
+		expr := stmt.(*ast.ConstDecl).Value
+		if value, ok := evaluator.evalExpr(expr, nil); ok {
+			t.Fatalf("unpublished foreign %T evaluated to %#v through consumer cache or owner AST", expr, value)
+		}
 	}
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
@@ -397,11 +538,7 @@ func TestEvaluateStringConst(t *testing.T) {
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
-	sym, ok := module.ModuleScope.LookupLocal("Name")
-	if !ok || sym == nil {
-		t.Fatalf("missing symbol Name")
-	}
-	value := evaluatedConst(module, sym.ID)
+	value := evaluatedConst(t, module, "Name")
 	got, ok := value.(*constvalue.StringConst)
 	if !ok || got == nil || got.Text() != "puts" || got.TypeText() != "cstr" {
 		t.Fatalf("Name = %#v, want str puts cstr", value)
@@ -410,31 +547,28 @@ func TestEvaluateStringConst(t *testing.T) {
 
 func assertIntConst(t *testing.T, module *module.Module, name, want, wantType string) {
 	t.Helper()
-	sym, ok := module.ModuleScope.LookupLocal(name)
-	if !ok || sym == nil {
-		t.Fatalf("missing symbol %s", name)
-	}
-	value := evaluatedConst(module, sym.ID)
+	value := evaluatedConst(t, module, name)
 	got, ok := value.(*constvalue.IntConst)
 	if !ok || got == nil || got.Text() != want || (wantType != "" && got.TypeText() != wantType) {
 		t.Fatalf("%s = %#v, want int %s %s", name, value, want, wantType)
 	}
 }
 
-func evaluatedConst(module *module.Module, id symbols.SymbolID) constvalue.Value {
-	if module == nil || module.SymbolIndex == nil {
-		return nil
+func evaluatedConst(t *testing.T, module *module.Module, name string) constvalue.Value {
+	t.Helper()
+	if module == nil || module.ModuleScope == nil || module.SymbolIndex == nil {
+		t.Fatal("constant publication setup missing")
 	}
-	return module.SymbolIndex.ConstantValue(id)
+	sym, ok := module.ModuleScope.LookupLocal(name)
+	if !ok || sym == nil {
+		t.Fatalf("missing constant %s", name)
+	}
+	return module.SymbolIndex.ConstantValue(sym.ID)
 }
 
 func assertBoolConst(t *testing.T, module *module.Module, name string, want bool) {
 	t.Helper()
-	sym, ok := module.ModuleScope.LookupLocal(name)
-	if !ok || sym == nil {
-		t.Fatalf("missing symbol %s", name)
-	}
-	value := evaluatedConst(module, sym.ID)
+	value := evaluatedConst(t, module, name)
 	got, ok := value.(*constvalue.BoolConst)
 	if !ok || got == nil || got.Bool() != want {
 		t.Fatalf("%s = %#v, want bool %v", name, value, want)

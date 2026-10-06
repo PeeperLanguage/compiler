@@ -16,6 +16,7 @@ import (
 	"compiler/internal/graph"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/mir"
+	"compiler/internal/ir/thir"
 	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/phase"
@@ -23,6 +24,7 @@ import (
 	"compiler/internal/project"
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/target"
 	"compiler/pkg/manifest"
 	"compiler/pkg/peeper"
@@ -100,36 +102,108 @@ func buildPipelineTestWithConfig(t *testing.T, cfg project.Config, preludeSrc, e
 	return diag
 }
 
+func assertLLVMCompiles(t *testing.T, compilerTarget target.Info, text string) {
+	t.Helper()
+	clang, err := exec.LookPath("clang")
+	if err != nil {
+		t.Skip("clang unavailable for LLVM IR validation")
+	}
+	cmd := exec.Command(clang, "-target", compilerTarget.LLVMTriple, "-x", "ir", "-c", "-o", filepath.Join(t.TempDir(), "module.o"), "-")
+	cmd.Stdin = strings.NewReader(text)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%s LLVM is invalid: %v\n%s\n%s", compilerTarget.LLVMTriple, err, output, text)
+	}
+}
+
 func runImportedRuntimeSymbolPipeline(t *testing.T, entrySrc, runtimeSrc string) *diagnostics.DiagnosticBag {
 	t.Helper()
-	root := t.TempDir()
-	srcDir := filepath.Join(root, peeper.SourceDirName)
-	entryPath := filepath.Join(srcDir, peeper.MainFileName)
-	runtimePath := filepath.Join(srcDir, "runtime"+peeper.SourceExt)
-	if err := os.MkdirAll(srcDir, 0o755); err != nil {
-		t.Fatalf("mkdir source dir: %v", err)
-	}
-	if err := os.WriteFile(entryPath, []byte(entrySrc), 0o644); err != nil {
-		t.Fatalf("write entry: %v", err)
-	}
-	if err := os.WriteFile(runtimePath, []byte(runtimeSrc), 0o644); err != nil {
-		t.Fatalf("write runtime module: %v", err)
-	}
-
-	diag := diagnostics.NewDiagnosticBag()
-	ctx := project.NewWithConfig(project.Config{
-		RootDir:     root,
-		ProjectName: "app",
-		Extension:   peeper.SourceExt,
-	}, diag)
-	entry := &module.Module{
-		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/main"},
-		FilePath: entryPath,
-	}
+	ctx, entry := importedPipelineContext(t, "", map[string]string{
+		peeper.MainFileName: entrySrc, "runtime" + peeper.SourceExt: runtimeSrc,
+	})
 	if err := Run(ctx, entry); err != nil {
 		t.Fatalf("pipeline.Run returned error: %v", err)
 	}
-	return diag
+	return ctx.Diagnostics
+}
+
+func importedPipelineContext(t *testing.T, arch string, sources map[string]string) (*project.CompilerContext, *module.Module) {
+	t.Helper()
+	root := t.TempDir()
+	srcDir := filepath.Join(root, peeper.SourceDirName)
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatalf("mkdir source dir: %v", err)
+	}
+	for name, src := range sources {
+		if err := os.WriteFile(filepath.Join(srcDir, name), []byte(src), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	diag := diagnostics.NewDiagnosticBag()
+	cfg := project.Config{
+		RootDir:     root,
+		ProjectName: "app",
+		Extension:   peeper.SourceExt,
+		TargetArch:  arch,
+	}
+	if arch != "" {
+		cfg.TargetOS = "linux"
+	}
+	ctx := project.NewWithConfig(cfg, diag)
+	entry := &module.Module{
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/main"},
+		FilePath: filepath.Join(srcDir, peeper.MainFileName),
+	}
+	return ctx, entry
+}
+
+func assertCheckedConstantIndex(t *testing.T, entry *module.Module, wantValue, wantType string) {
+	t.Helper()
+	if entry.THIR == nil || entry.MIR == nil || entry.LLVMIR == "" {
+		t.Fatal("constant index did not reach THIR, MIR and backend")
+	}
+	accesses := 0
+	for _, stmt := range entry.AST.Stmts {
+		ast.Inspect(stmt, func(node ast.Node) bool {
+			if index, ok := node.(*ast.IndexExpr); ok {
+				accesses++
+				checked := entry.THIR.Node(index.ID()).(*thir.Index)
+				if checked.Constant == nil || checked.Constant.Text != wantValue ||
+					!typeinfo.IsSameType(checked.Constant.Type, checked.Index.ExprType()) || typeinfo.TypeText(typeinfo.Underlying(checked.Constant.Type)) != wantType {
+					t.Fatalf("THIR index = %#v, want %s %s", checked.Constant, wantType, wantValue)
+				}
+			}
+			return true
+		})
+	}
+	projections := 0
+	for _, function := range entry.MIR.Funcs {
+		for _, block := range function.Blocks {
+			for _, instruction := range block.Instrs {
+				assign, ok := instruction.(*mir.Assign)
+				if !ok {
+					continue
+				}
+				load, ok := assign.Value.(*mir.Load)
+				if !ok || load.Place == nil {
+					continue
+				}
+				for _, projection := range load.Place.Projections {
+					if projection.Kind != mir.PlaceProjectionIndex {
+						continue
+					}
+					projections++
+					index, ok := projection.Index.(*mir.RefConst)
+					if !ok || index.Value != wantValue || entry.MIR.Types.Text(index.TypeID()) != wantType {
+						t.Fatalf("MIR index = %#v, want %s %s", projection.Index, wantType, wantValue)
+					}
+				}
+			}
+		}
+	}
+	if accesses != 1 || projections != 1 {
+		t.Fatalf("index counts: AST %d, MIR %d, want one each", accesses, projections)
+	}
 }
 
 // TestPipelinePreludeSymbolsVisibleInEntry verifies that prelude-defined symbols
@@ -244,18 +318,11 @@ fn main() {
 				if !foundCompare || !foundIndexMove || !foundProjection {
 					t.Fatalf("MIR target-width evidence missing: compare=%v index=%v projection=%v\n%s", foundCompare, foundIndexMove, foundProjection, entry.MIR.Text())
 				}
-				if !strings.Contains(entry.LLVMIR, "icmp ult "+test.llvmType) || strings.Contains(entry.LLVMIR, "trunc i64") {
+				physicalTrunc := strings.Contains(entry.LLVMIR, "trunc i64")
+				if !strings.Contains(entry.LLVMIR, "icmp ult "+test.llvmType) || physicalTrunc != (test.arch == "386") {
 					t.Fatalf("LLVM index width invalid for %s:\n%s", test.arch, entry.LLVMIR)
 				}
-				clang, err := exec.LookPath("clang")
-				if err != nil {
-					t.Skip("clang unavailable for LLVM IR validation")
-				}
-				cmd := exec.Command(clang, "-target", targetInfo.LLVMTriple, "-x", "ir", "-c", "-o", filepath.Join(t.TempDir(), "for-loop.o"), "-")
-				cmd.Stdin = strings.NewReader(entry.LLVMIR)
-				if output, err := cmd.CombinedOutput(); err != nil {
-					t.Fatalf("%s for-loop LLVM is invalid: %v\n%s\n%s", test.arch, err, output, entry.LLVMIR)
-				}
+				assertLLVMCompiles(t, targetInfo, entry.LLVMIR)
 			})
 			if diag.HasErrors() {
 				t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
@@ -1035,6 +1102,79 @@ fn main() -> i32 { return Value; }
 	}
 	if got := entry.SymbolIndex.ConstantValue(sym.ID); got == nil || got.TypeText() != "i32" {
 		t.Fatalf("final const value = %#v, want i32", got)
+	}
+}
+
+func TestPipelineMaterializesNumericConstantsAcrossTargets(t *testing.T) {
+	for _, arch := range []string{"386", "amd64"} {
+		for _, test := range []struct{ name, source, typ, value string }{
+			{"mixed widths", "const Value: i64 = 1i32 + 2i64;", "i64", "3"},
+			{"narrow initializer", "const Value: i64 = 2i8;", "i64", "2"},
+			{"narrow type interned", "const Narrow: i8 = 1i8; const Value: i64 = 2i8;", "i64", "2"},
+			{"float narrowing", "const Value: f32 = 1.25f64 as f32;", "f32", "1.25"},
+			{"source overflow", "const Value: i64 = 127i8 + 1i8;", "i64", "-128"},
+			{"integer float rounding", "const Value: f32 = 9223372586610589697u64 as f32;", "f32", "9.223373e+18"},
+			{"integer float infinity", "const Value: f64 = (1u2048 << 1024u2048) as f64;", "f64", "+Inf"},
+		} {
+			t.Run(arch+"/"+test.name, func(t *testing.T) {
+				source := test.source + "\nfn Read(value: " + test.typ + ") -> " + test.typ + " { return value; }\nfn main() { let value = Read(Value); }"
+				diag := buildPipelineTestWithConfig(t, project.Config{
+					RootDir: ".", Extension: peeper.SourceExt, TargetOS: "linux", TargetArch: arch,
+				}, "", source, func(entry *module.Module) {
+					if entry.MIR == nil || entry.LLVMIR == "" {
+						t.Fatal("constant did not reach backend")
+					}
+					symbol, found := entry.ModuleScope.LookupLocal("Value")
+					if !found || symbol == nil {
+						t.Fatal("missing constant Value")
+					}
+					name := "@Value$" + symbol.ID.String()
+					var static *mir.StaticEntry
+					for _, candidate := range entry.MIR.StaticData {
+						if candidate.Name == name {
+							static = candidate
+						}
+					}
+					if static == nil || entry.MIR.Types.Text(static.Type) != test.typ || static.Constant != entry.SymbolIndex.ConstantValue(symbol.ID) {
+						t.Fatalf("static = %#v, want authoritative %s constant", static, test.typ)
+					}
+					text, ok := static.Constant.(interface{ Text() string })
+					if !ok || text.Text() != test.value || static.Constant.TypeText() != test.typ {
+						t.Fatalf("static value = %#v, want %s %s", static.Constant, test.value, test.typ)
+					}
+					if !strings.Contains(entry.LLVMIR, name+" = constant ") {
+						t.Fatal("LLVM lacks required constant definition")
+					}
+					targetInfo, err := target.New("linux", arch)
+					if err != nil {
+						t.Fatal(err)
+					}
+					assertLLVMCompiles(t, targetInfo, entry.LLVMIR)
+				})
+				if diag.HasErrors() {
+					t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+				}
+			})
+		}
+	}
+}
+
+func TestPipelineOmitsDiscardConstantStaticsAcrossTargets(t *testing.T) {
+	for _, arch := range []string{"386", "amd64"} {
+		t.Run(arch, func(t *testing.T) {
+			diag := buildPipelineTestWithConfig(t, project.Config{
+				RootDir: ".", Extension: peeper.SourceExt, TargetOS: "linux", TargetArch: arch,
+			}, "", `const _: i32 = 1i32;
+const _: f64 = 1.25f32;
+fn main() -> i32 { return 0; }`, func(entry *module.Module) {
+				if entry.MIR == nil || entry.LLVMIR == "" || len(entry.MIR.StaticData) != 0 {
+					t.Fatalf("discard bindings require no static data: MIR=%#v LLVM=%v", entry.MIR, entry.LLVMIR != "")
+				}
+			})
+			if diag.HasErrors() {
+				t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+			}
+		})
 	}
 }
 
@@ -1891,15 +2031,7 @@ fn main() -> i32 {
 				t.Fatalf("reference-recursive enum stopped before backend: phase=%v\n%s", entry.Phase, diag.EmitAllToString())
 			}
 
-			clang, err := exec.LookPath("clang")
-			if err != nil {
-				t.Skip("clang unavailable for LLVM IR validation")
-			}
-			cmd := exec.Command(clang, "-target", ctx.Target.LLVMTriple, "-x", "ir", "-c", "-o", filepath.Join(t.TempDir(), "recursive-enum.o"), "-")
-			cmd.Stdin = strings.NewReader(entry.LLVMIR)
-			if output, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("%s reference-recursive enum LLVM is invalid: %v\n%s\n%s", arch, err, output, entry.LLVMIR)
-			}
+			assertLLVMCompiles(t, ctx.Target, entry.LLVMIR)
 		})
 	}
 }
@@ -2419,6 +2551,435 @@ fn first() -> i32 {
 	}
 }
 
+func TestPipelineRejectsWideConstantIndexesAcrossTargets(t *testing.T) {
+	for _, arch := range []string{"386", "amd64"} {
+		for _, test := range []struct{ name, declaration, index, value string }{
+			{"float cast", "", "4294967296f64 as u64", "4294967296"},
+			{"negative float cast", "", "(-4294967296f64) as i64", "-4294967296"},
+			{"local constant", "const Offset: i64 = 4294967296i64;", "Offset", "4294967296"},
+			{"negative local constant", "const Offset: i64 = -4294967296i64;", "Offset", "-4294967296"},
+		} {
+			t.Run(arch+"/"+test.name, func(t *testing.T) {
+				var entry *module.Module
+				diag := buildPipelineTestWithConfig(t, project.Config{
+					RootDir: ".", Extension: peeper.SourceExt, TargetOS: "linux", TargetArch: arch,
+				}, "", "fn main() -> i32 { "+test.declaration+" let values = [1]i32{7}; return values["+test.index+"]; }", func(mod *module.Module) {
+					entry = mod
+				})
+				items := diag.Diagnostics()
+				if len(items) != 1 || items[0].Code != diagnostics.ErrArrayOutOfBounds ||
+					items[0].Message != "array index out of bounds: index "+test.value+" for length 1" ||
+					len(items[0].Labels) != 1 || items[0].Labels[0].Location == nil {
+					t.Fatalf("expected located bounds diagnostic, got:\n%s", diag.EmitAllToString())
+				}
+				if entry.MIR != nil || entry.LLVMIR != "" {
+					t.Fatal("invalid constant index reached backend")
+				}
+			})
+		}
+	}
+}
+
+func TestPipelineRejectsHostSizedConstantBounds(t *testing.T) {
+	for _, index := range []struct{ source, value string }{
+		{"-1i64", "-1"},
+		{"9223372036854775808u64", "9223372036854775808"},
+		{"18446744073709551616u128", "18446744073709551616"},
+	} {
+		t.Run(index.source, func(t *testing.T) {
+			var entry *module.Module
+			diag := buildPipelineTestWithConfig(t, project.Config{
+				RootDir: ".", Extension: peeper.SourceExt, TargetOS: "linux", TargetArch: "amd64",
+			}, "", "fn read(xs: [9223372036854775808u64]u8) -> u8 { return xs["+index.source+"]; }", func(mod *module.Module) {
+				entry = mod
+			})
+			fn := entry.AST.Stmts[0].(*ast.FnDecl)
+			access := fn.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.IndexExpr)
+			items := diag.Diagnostics()
+			if len(items) != 1 || items[0].Code != diagnostics.ErrArrayOutOfBounds ||
+				items[0].Message != "array index out of bounds: index "+index.value+" for length 9223372036854775808" ||
+				len(items[0].Labels) != 1 || items[0].Labels[0].Location != ast.LocOf(access.Index) {
+				t.Fatalf("expected source-located exact bounds diagnostic:\n%s", diag.EmitAllToString())
+			}
+			if entry.MIR != nil || entry.LLVMIR != "" {
+				t.Fatal("invalid large-array index reached backend")
+			}
+		})
+	}
+}
+
+func TestPipelineLowersLargeArrayBoundsAcrossTargets(t *testing.T) {
+	for _, compilerTarget := range []struct{ arch, length string }{
+		{"386", "2147483648"}, {"amd64", "9223372036854775808"}, {"amd64", "9223372036854775809"},
+	} {
+		for _, index := range []string{"0u64", "index"} {
+			t.Run(compilerTarget.arch+"/"+compilerTarget.length+"/"+index, func(t *testing.T) {
+				params := "xs: &Large"
+				if index == "index" {
+					params += ", index: i64"
+				}
+				src := "struct Large { values: [" + compilerTarget.length + "u64]u8, flag: bool }\n" +
+					"fn read(" + params + ") -> u8 { return xs.values[" + index + "]; }"
+				var entry *module.Module
+				diag := buildPipelineTestWithConfig(t, project.Config{
+					RootDir: ".", Extension: peeper.SourceExt, TargetOS: "linux", TargetArch: compilerTarget.arch,
+				}, "", src, func(mod *module.Module) { entry = mod })
+				if diag.HasErrors() || entry.MIR == nil || entry.LLVMIR == "" {
+					t.Fatalf("large array access failed:\n%s", diag.EmitAllToString())
+				}
+				if index == "index" && (!strings.Contains(entry.LLVMIR, "icmp uge i64") || !strings.Contains(entry.LLVMIR, "icmp slt i64") ||
+					!strings.Contains(entry.LLVMIR, compilerTarget.length) || !strings.Contains(entry.LLVMIR, "call void @llvm.trap()")) {
+					t.Fatalf("large array runtime guard missing:\n%s", entry.LLVMIR)
+				}
+				targetInfo, err := target.New("linux", compilerTarget.arch)
+				if err != nil {
+					t.Fatal(err)
+				}
+				assertLLVMCompiles(t, targetInfo, entry.LLVMIR)
+			})
+		}
+	}
+}
+
+func TestPipelineLowersHighBitZeroSizedArrayIndexesAtPhysicalWidth(t *testing.T) {
+	for _, test := range []struct {
+		arch, length, lowIndex, highIndex, physicalIndex string
+	}{
+		{"386", "2147483649", "2147483647", "2147483648", "i32"},
+		{"amd64", "9223372036854775809", "9223372036854775807", "9223372036854775808", "i64"},
+	} {
+		t.Run(test.arch, func(t *testing.T) {
+			var entry *module.Module
+			src := "struct Empty {}\n" +
+				"struct Large { values: [" + test.length + "u64]Empty }\n" +
+				"fn constant_low(value: &Large) -> bool { return @value.values[" + test.lowIndex + "u64] == @value.values[0u64]; }\n" +
+				"fn constant_high(value: &Large) -> bool { return @value.values[" + test.highIndex + "u64] == @value.values[0u64]; }\n" +
+				"fn runtime_high(value: &Large, index: usize) -> bool { return @value.values[index] == @value.values[0u64]; }"
+			diag := buildPipelineTestWithConfig(t, project.Config{
+				RootDir: ".", Extension: peeper.SourceExt, TargetOS: "linux", TargetArch: test.arch,
+			}, "", src, func(mod *module.Module) { entry = mod })
+			if diag.HasErrors() || entry.MIR == nil || entry.LLVMIR == "" {
+				t.Fatalf("high-bit zero-sized array access failed:\n%s", diag.EmitAllToString())
+			}
+			lines := strings.Split(entry.LLVMIR, "\n")
+			arrayGEPs := 0
+			for _, line := range lines {
+				if !strings.Contains(line, "getelementptr inbounds ["+test.length+" x") {
+					continue
+				}
+				arrayGEPs++
+				if !strings.Contains(line, ", i32 0, "+test.physicalIndex+" ") {
+					t.Fatalf("array GEP used wrong physical index width:\n%s", entry.LLVMIR)
+				}
+			}
+			for _, index := range []string{test.lowIndex, test.highIndex} {
+				found := false
+				for lineIndex, line := range lines {
+					if test.physicalIndex == "i32" {
+						if strings.Contains(line, "trunc i64 "+index+" to i32") &&
+							lineIndex+1 < len(lines) &&
+							strings.Contains(lines[lineIndex+1], "getelementptr inbounds ["+test.length+" x") {
+							found = true
+							break
+						}
+						continue
+					}
+					if strings.Contains(line, "getelementptr inbounds ["+test.length+" x") &&
+						strings.Contains(line, ", i32 0, i64 "+index) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Fatalf("boundary index %s did not reach final array GEP:\n%s", index, entry.LLVMIR)
+				}
+			}
+			runtimeGuard := false
+			for _, line := range lines {
+				if strings.Contains(line, "icmp uge i64") && strings.HasSuffix(strings.TrimSpace(line), ", "+test.length) {
+					runtimeGuard = true
+					break
+				}
+			}
+			if !runtimeGuard {
+				t.Fatalf("runtime index did not reach exact bounds guard:\n%s", entry.LLVMIR)
+			}
+			if arrayGEPs < 6 {
+				t.Fatalf("expected low/high constant and runtime array GEPs, got %d:\n%s", arrayGEPs, entry.LLVMIR)
+			}
+			targetInfo, err := target.New("linux", test.arch)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertLLVMCompiles(t, targetInfo, entry.LLVMIR)
+		})
+	}
+}
+
+func TestPipelineLowersCheckedConstantIndexesAcrossTargets(t *testing.T) {
+	for _, arch := range []string{"386", "amd64"} {
+		for _, test := range []struct{ name, declaration, index, typ, value, conversion, length string }{
+			{"float cast", "", "1.75f64 as u64", "u64", "1", "", ""},
+			{"source width negation", "const Offset: u8 = 255u8;", "-Offset", "u8", "1", "zext i8 1 to i64", ""},
+			{"explicit narrowing", "", "257u16 as u8", "u8", "1", "zext i8 1 to i64", ""},
+			{"single bit literal", "", "1u1", "u1", "1", "zext i1 1 to i64", ""},
+			{"single bit zero", "", "0u1", "u1", "0", "zext i1 0 to i64", ""},
+			{"single bit float cast", "", "1f64 as u1", "u1", "1", "zext i1 1 to i64", ""},
+			{"single bit binding", "const Offset: u1 = 1u1;", "Offset", "u1", "1", "zext i1 1 to i64", ""},
+			{"signed narrow", "", "1i8", "i8", "1", "sext i8 1 to i64", ""},
+			{"wide unsigned", "", "1u128", "u128", "1", "trunc i128 1 to i64", ""},
+			{"byte", "", "1u8 as byte", "byte", "1", "zext i8 1 to i64", ""},
+			{"u8 top bit", "", "128u8", "u8", "128", "zext i8 128 to i64", "129"},
+			{"u24 top bit", "", "8388608u24", "u24", "8388608", "zext i24 8388608 to i64", "8388609"},
+		} {
+			t.Run(arch+"/"+test.name, func(t *testing.T) {
+				src := "fn main() -> i32 { " + test.declaration + " let values = [2]i32{7, 9}; return values[" + test.index + "]; }"
+				if test.length != "" {
+					// High-bit indexes use borrowed storage; no large object is allocated.
+					src = "struct Values { items: [" + test.length + "]i32 }\n" +
+						"fn read(values: &Values) -> i32 { " + test.declaration + " return values.items[" + test.index + "]; }"
+				}
+				diag := buildPipelineTestWithConfig(t, project.Config{
+					RootDir: ".", Extension: peeper.SourceExt, TargetOS: "linux", TargetArch: arch,
+				}, "", src, func(entry *module.Module) {
+					assertCheckedConstantIndex(t, entry, test.value, test.typ)
+					if test.conversion != "" && !strings.Contains(entry.LLVMIR, test.conversion) {
+						t.Fatalf("checked index value not preserved for GEP; missing %q:\n%s", test.conversion, entry.LLVMIR)
+					}
+					targetInfo, err := target.New("linux", arch)
+					if err != nil {
+						t.Fatal(err)
+					}
+					assertLLVMCompiles(t, targetInfo, entry.LLVMIR)
+				})
+				if diag.HasErrors() {
+					t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+				}
+			})
+		}
+	}
+}
+
+func TestPipelineEvaluatesQualifiedConstantIndexesAcrossTargets(t *testing.T) {
+	for _, arch := range []string{"386", "amd64"} {
+		for _, test := range []struct {
+			name, prefix, declaration, index, value, typ string
+			rejected                                     bool
+		}{
+			{"direct wide", "", "", "values::Offset", "18446744073709551616", "", true},
+			{"local wide", "", "const Saved: u128 = values::Offset;", "Saved", "18446744073709551616", "", true},
+			{"module wide", "const Saved: u128 = values::Offset;", "", "Saved", "18446744073709551616", "", true},
+			{"arithmetic wide", "", "", "values::Offset + 0u128", "18446744073709551616", "", true},
+			{"cast wide", "", "", "values::Offset as i128", "18446744073709551616", "", true},
+			{"transitive wide", "import \"app/bridge\";", "", "bridge::Forward", "18446744073709551616", "", true},
+			{"negative", "", "", "values::Negative", "-4294967296", "", true},
+			{"equal length", "", "", "values::End", "2", "", true},
+			{"zero", "", "", "values::Zero", "0", "u128", false},
+			{"unsigned single bit", "", "", "values::Bit", "1", "u1", false},
+			{"type alias", "", "", "values::Selected", "1", "u64", false},
+			{"source width negation", "", "", "-values::Wrapped", "1", "u8", false},
+			{"explicit narrowing", "", "", "values::Wide as u8", "1", "u8", false},
+			{"module alias", "const Saved: u128 = values::Zero;", "", "Saved", "0", "u128", false},
+			{"transitive valid", "import \"app/bridge\";", "", "bridge::Selected", "1", "u1", false},
+		} {
+			t.Run(arch+"/"+test.name, func(t *testing.T) {
+				ctx, entry := importedPipelineContext(t, arch, map[string]string{
+					peeper.MainFileName: "import \"app/values\";\n" + test.prefix + "\nfn main() -> i32 { " + test.declaration + " let items = [2]i32{7, 9}; return items[" + test.index + "]; }",
+					"values" + peeper.SourceExt: `type Index = u64;
+const Offset: u128 = 1u128 << 64u128;
+const Negative: i64 = -4294967296i64;
+const End: u8 = 2u8;
+const Zero: u128 = 0u128;
+const Bit: u1 = 1u1;
+const Selected: Index = 1u64;
+const Wrapped: u8 = 255u8;
+const Wide: u16 = 257u16;`,
+					"bridge" + peeper.SourceExt: `import "app/values";
+const Forward: u128 = values::Offset;
+const Selected: u1 = values::Bit;`,
+				})
+				if err := Run(ctx, entry); err != nil {
+					t.Fatal(err)
+				}
+				diag := ctx.Diagnostics
+				if test.rejected {
+					fn := entry.AST.Stmts[len(entry.AST.Stmts)-1].(*ast.FnDecl)
+					access := fn.Body.Stmts[len(fn.Body.Stmts)-1].(*ast.ReturnStmt).Value.(*ast.IndexExpr)
+					if diag.ErrorCount() != 1 {
+						t.Fatalf("want one source bounds error, got:\n%s", diag.EmitAllToString())
+					}
+					for _, item := range diag.Diagnostics() {
+						if item.Severity != diagnostics.Error {
+							continue
+						}
+						if item.Code != diagnostics.ErrArrayOutOfBounds || item.Message != "array index out of bounds: index "+test.value+" for length 2" ||
+							len(item.Labels) != 1 || item.Labels[0].Location != ast.LocOf(access.Index) {
+							t.Fatalf("want exact index-located bounds error, got:\n%s", diag.EmitAllToString())
+						}
+					}
+					if entry.MIR != nil || entry.LLVMIR != "" {
+						t.Fatal("invalid qualified constant reached backend")
+					}
+					return
+				}
+				if diag.HasErrors() {
+					t.Fatalf("valid qualified constant failed:\n%s", diag.EmitAllToString())
+				}
+				assertCheckedConstantIndex(t, entry, test.value, test.typ)
+				assertLLVMCompiles(t, ctx.Target, entry.LLVMIR)
+			})
+		}
+	}
+}
+
+func TestPipelineChecksQualifiedConstantShiftCounts(t *testing.T) {
+	for _, arch := range []string{"386", "amd64"} {
+		for _, test := range []struct {
+			name, left, count string
+			rejected          bool
+		}{
+			{"out of width", "1u8", "values::Invalid", true},
+			{"negative", "1i8", "values::Negative", true},
+			{"direct valid", "1u8", "values::Valid", false},
+			{"explicit narrowing", "1u8", "values::Wide as u8", false},
+		} {
+			t.Run(arch+"/"+test.name, func(t *testing.T) {
+				ctx, entry := importedPipelineContext(t, arch, map[string]string{
+					peeper.MainFileName: "import \"app/values\"; fn Read() -> i32 { return (" + test.left + " << (" + test.count + ")) as i32; }",
+					"values" + peeper.SourceExt: `const Invalid: u8 = 8u8;
+const Negative: i8 = -1i8;
+const Valid: u8 = 2u8;
+const Wide: u16 = 258u16;`,
+				})
+				if err := Run(ctx, entry); err != nil {
+					t.Fatal(err)
+				}
+				diag := ctx.Diagnostics
+				if test.rejected {
+					cast := entry.AST.Stmts[0].(*ast.FnDecl).Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.AsExpr)
+					shift := cast.Expr.(*ast.BinaryExpr)
+					items := diag.Diagnostics()
+					if len(items) != 1 || items[0].Code != diagnostics.ErrInvalidOperation || items[0].Message != "shift count must be between 0 and 7" ||
+						len(items[0].Labels) != 1 || items[0].Labels[0].Location != ast.LocOf(shift.Right) || entry.MIR != nil || entry.LLVMIR != "" {
+						t.Fatalf("want located constant-shift error before MIR, got:\n%s", diag.EmitAllToString())
+					}
+					return
+				}
+				if diag.HasErrors() || entry.MIR == nil || entry.LLVMIR == "" {
+					t.Fatalf("valid qualified shift failed:\n%s", diag.EmitAllToString())
+				}
+				assertLLVMCompiles(t, ctx.Target, entry.LLVMIR)
+			})
+		}
+	}
+}
+
+func TestPipelineRecordsQualifiedRangeEntryAcrossTargets(t *testing.T) {
+	for _, arch := range []string{"386", "amd64"} {
+		for _, test := range []struct {
+			name, params, start, end string
+			guaranteed               bool
+		}{
+			{"ascending", "", "values::Zero", "values::One", true},
+			{"equal", "", "values::One", "values::One", false},
+			{"reversed", "", "values::One", "values::Zero", false},
+			{"runtime", "start: i64", "start", "values::One", false},
+		} {
+			t.Run(arch+"/"+test.name, func(t *testing.T) {
+				ctx, entry := importedPipelineContext(t, arch, map[string]string{
+					peeper.MainFileName:         "import \"app/values\"; fn Read(" + test.params + ") -> i64 { for value in " + test.start + "..(" + test.end + " as i64) { return value; } }",
+					"values" + peeper.SourceExt: `const Zero: i64 = 0i64; const One: i64 = 1i64;`,
+				})
+				if err := Run(ctx, entry); err != nil {
+					t.Fatal(err)
+				}
+				loop := entry.AST.Stmts[0].(*ast.FnDecl).Body.Stmts[0].(*ast.ForStmt)
+				plan, ok := entry.THIR.Node(loop.ID()).(*thir.For).Iteration.(*thir.RangeIteration)
+				if !ok {
+					t.Fatalf("missing range plan for %T:\n%s", loop.Iterable, ctx.Diagnostics.EmitAllToString())
+				}
+				if plan.HasGuaranteedEntry != test.guaranteed {
+					t.Fatalf("range entry = %v, want %v", plan.HasGuaranteedEntry, test.guaranteed)
+				}
+				for name, typ := range map[string]typeinfo.Type{"element": plan.ElementType, "cursor": plan.Cursor.Type, "limit": plan.Limit.Type} {
+					if typeinfo.TypeText(typ) != "i64" {
+						t.Fatalf("%s type = %s, want i64", name, typeinfo.TypeText(typ))
+					}
+				}
+				diag := ctx.Diagnostics
+				if !test.guaranteed {
+					if diag.ErrorCount() != 1 || !hasDiagnosticCode(diag, diagnostics.ErrMissingReturn) || entry.MIR != nil || entry.LLVMIR != "" {
+						t.Fatalf("non-guaranteed range must retain missing-return error:\n%s", diag.EmitAllToString())
+					}
+					return
+				}
+				if diag.HasErrors() || entry.MIR == nil || entry.LLVMIR == "" {
+					t.Fatalf("guaranteed imported range failed:\n%s", diag.EmitAllToString())
+				}
+				assertLLVMCompiles(t, ctx.Target, entry.LLVMIR)
+			})
+		}
+	}
+}
+
+func TestPipelineReportsQualifiedConstantConditionsInCFGPhase(t *testing.T) {
+	for _, test := range []struct {
+		condition, warning string
+		value              bool
+	}{
+		{"values::Flag", diagnostics.WarnConstantConditionTrue, true},
+		{"values::One == 1i64", diagnostics.WarnConstantConditionTrue, true},
+		{"values::One == 0i64", diagnostics.WarnConstantConditionFalse, false},
+	} {
+		t.Run(test.condition, func(t *testing.T) {
+			ctx, entry := importedPipelineContext(t, "amd64", map[string]string{
+				peeper.MainFileName:         "import \"app/values\"; fn main() -> i32 { if " + test.condition + " { return 1; } return 0; }",
+				"values" + peeper.SourceExt: `const Flag: bool = true; const One: i64 = 1i64;`,
+			})
+			loader := &moduleLoader{ctx: ctx, scheduled: make(map[moduleid.ID]string)}
+			if err := loader.Load(entry); err != nil {
+				t.Fatal(err)
+			}
+			owner, found := ctx.ModuleByID(entry.Imports["values"].ID)
+			if !found {
+				t.Fatal("qualified owner was not loaded")
+			}
+			diag := ctx.Diagnostics
+			for _, mod := range []*module.Module{owner, entry} {
+				for mod.Phase < phase.Typechecked {
+					if !advanceModulePhase(ctx, mod, diag) {
+						t.Fatalf("typing stopped at %v:\n%s", mod.Phase, diag.EmitAllToString())
+					}
+				}
+			}
+			condition := entry.AST.Stmts[0].(*ast.FnDecl).Body.Stmts[0].(*ast.IfStmt)
+			checked := entry.THIR.Node(condition.ID()).(*thir.If)
+			if checked.ConstantCondition == nil || *checked.ConstantCondition != test.value {
+				t.Fatalf("qualified condition = %v, want %v", checked.ConstantCondition, test.value)
+			}
+			if diag.HasErrors() || hasDiagnosticCode(diag, diagnostics.WarnConstantConditionTrue) || hasDiagnosticCode(diag, diagnostics.WarnConstantConditionFalse) {
+				t.Fatalf("qualified warning/error emitted before CFG:\n%s", diag.EmitAllToString())
+			}
+			entry.AST = nil
+			if !advanceModulePhase(ctx, entry, diag) || entry.Phase != phase.CFG || entry.MIR != nil || diag.HasErrors() {
+				t.Fatalf("CFG did not consume qualified evidence without AST:\n%s", diag.EmitAllToString())
+			}
+			warnings := 0
+			for _, item := range diag.Diagnostics() {
+				if item.Code == diagnostics.WarnConstantConditionTrue || item.Code == diagnostics.WarnConstantConditionFalse {
+					if item.Code != test.warning {
+						t.Fatalf("wrong qualified warning %s", item.Code)
+					}
+					warnings++
+				}
+			}
+			if warnings != 1 {
+				t.Fatalf("qualified warnings = %d, want one:\n%s", warnings, diag.EmitAllToString())
+			}
+		})
+	}
+}
+
 func TestPipelineLowersTopLevelConstArrayIndex(t *testing.T) {
 	preludeSrc := ``
 	entrySrc := `const I: i32 = 1;
@@ -2792,15 +3353,7 @@ fn main() -> i32 {
 				}
 			}
 
-			clang, err := exec.LookPath("clang")
-			if err != nil {
-				t.Skip("clang unavailable for LLVM IR validation")
-			}
-			cmd := exec.Command(clang, "-target", ctx.Target.LLVMTriple, "-x", "ir", "-c", "-o", filepath.Join(t.TempDir(), "intrinsic.o"), "-")
-			cmd.Stdin = strings.NewReader(entry.LLVMIR)
-			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("%s representative LLVM IR is invalid: %v\n%s\n%s", compilerTarget.name, err, out, entry.LLVMIR)
-			}
+			assertLLVMCompiles(t, ctx.Target, entry.LLVMIR)
 		})
 	}
 }

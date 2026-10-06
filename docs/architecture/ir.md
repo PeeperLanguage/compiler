@@ -130,7 +130,21 @@ rebuilt:
 - expression trees lower through `exprlower`, then existing shared-IR-to-MIR logic.
 
 External functions and body-backed functions share THIR signature lowering.
-Published module constants become MIR static data before function lowering.
+Published module constants become MIR static data before function lowering, using
+the declared semantic type's runtime representation. Lowering checks published
+value ABI identity against that type, including nominal enum identity. Missing
+values produce a compile-time evaluation diagnostic; mismatched published types
+produce an invalid-evidence diagnostic. Neither failure emits partial MIR.
+Discard (`_`) module bindings remain source-checked but emit no addressable static.
+
+LLVM fixed-array index lowering retains unsigned 64-bit lengths and compares
+constant indexes exactly; backend bounds diagnostics retain index source location.
+After exact logical bounds validation, physical offsets use the target pointer-index
+width for GEP; narrow unsigned values must not become negative through LLVM's
+implicit sign extension or wider-index truncation. Checked constant-index
+types/values remain intact in THIR/MIR.
+Runtime indexes continue through the shared bounds guard before element access;
+signed indexes also reject negative values independently of unsigned length.
 
 ## Validation boundaries
 

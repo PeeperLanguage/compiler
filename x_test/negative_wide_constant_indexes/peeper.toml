@@ -1,0 +1,7 @@
+name = "negative_wide_constant_indexes"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["array index out of bounds: index 4294967296 for length 1", "array index out of bounds: index -4294967296 for length 1", "array index out of bounds: index 18446744073709551616 for length 1"]

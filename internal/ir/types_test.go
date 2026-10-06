@@ -32,9 +32,8 @@ func TestTypeTableConcurrentInterningAndReads(t *testing.T) {
 					results <- result{err: fmt.Sprintf("Text(%d) = %q, want %q", unique, got, uniqueName)}
 					return
 				}
-				abiKey := types.ABIKey(unique)
-				if got, ok := types.LookupABIKey(abiKey); !ok || got != unique {
-					results <- result{err: fmt.Sprintf("LookupABIKey(%q) = (%d, %t), want (%d, true)", abiKey, got, ok, unique)}
+				if got := types.ABIKey(unique); got != "struct:test::"+uniqueName {
+					results <- result{err: fmt.Sprintf("ABIKey(%d) = %q, want %q", unique, got, "struct:test::"+uniqueName)}
 					return
 				}
 				if typ, ok := types.Type(shared); !ok || typ.Kind != TypeStruct {
@@ -146,6 +145,9 @@ func TestTypeTableReservesAndCompletesRecursiveNamedComposite(t *testing.T) {
 	}
 	if _, complete := types.Type(nodeID); complete {
 		t.Fatal("reserved named type was visible before completion")
+	}
+	if got := types.ABIKey(nodeID); got != "struct:test::Node" {
+		t.Fatalf("reserved recursive ABI key = %q, want struct:test::Node", got)
 	}
 	if repeated, err := types.ReserveNamed(nodeShell); err != nil || repeated != nodeID {
 		t.Fatalf("repeated reservation = (%d, %v), want (%d, nil)", repeated, err, nodeID)

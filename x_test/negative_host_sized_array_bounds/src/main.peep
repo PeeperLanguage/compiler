@@ -1,0 +1,5 @@
+fn read(xs: [9223372036854775808u64]u8) -> u8 {
+    return xs[-1i64];
+}
+
+fn main() -> i32 { return 0; }

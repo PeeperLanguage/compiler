@@ -1,0 +1,6 @@
+const _: i32 = 1i32;
+const _: f64 = 1.25f32;
+
+fn main() -> i32 {
+    return 0;
+}

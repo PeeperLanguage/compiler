@@ -1,0 +1,7 @@
+name = "negative_imported_constant_queries"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["array index out of bounds: index 18446744073709551616 for length 1", "shift count must be between 0 and 7"]

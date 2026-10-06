@@ -1,0 +1,14 @@
+type WideInteger = i64;
+
+const Total: WideInteger = 1i32 + 2i64;
+const Ratio: f32 = 1.25f64 as f32;
+const Wide: i64 = 2i8;
+const SourceOverflow: i64 = 127i8 + 1i8;
+const NestedOverflow: i64 = (127i8 + 1i8) + 1i64;
+const UnaryOverflow: i64 = -(-128i8);
+const RoundedWide: f64 = 16777217f64 as f32;
+const FloatOverflow: f64 = 16777216f32 + 1f32;
+const ConvertedFloat: f32 = -3i8 as f32;
+const ConvertedInteger: i8 = -3.75f64 as i8;
+const RoundedInteger: f32 = 9223372586610589697u64 as f32;
+const IntegerInfinity: f64 = (1u2048 << 1024u2048) as f64;

@@ -1,0 +1,4 @@
+type Index = u64;
+const Selected: Index = 1u64;
+const Wrapped: u8 = 255u8;
+const Bit: u1 = 1u1;

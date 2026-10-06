@@ -1,17 +1,19 @@
 package mir
 
 import (
-	"compiler/internal/constvalue"
-	"compiler/internal/ir/cfg"
 	"testing"
 
+	"compiler/internal/constvalue"
+	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
+	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/exprlower"
 	"compiler/internal/ir/thir"
 	"compiler/internal/moduleid"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/source"
 )
 
 func TestExternalFunctionSignatureUsesPublishedLinkName(t *testing.T) {
@@ -86,5 +88,50 @@ func TestGenerateMIREmitsStaticConstantFromSymbolIndex(t *testing.T) {
 	}
 	if out.StaticData[0].Constant != value {
 		t.Fatalf("static constant = %#v, want %#v", out.StaticData[0].Constant, value)
+	}
+}
+
+func TestGenerateMIRRejectsUnmaterializableModuleConstants(t *testing.T) {
+	for _, test := range []struct {
+		name, valueType, code string
+		internValueType       bool
+	}{
+		{name: "missing value", code: diagnostics.ErrInvalidOperation},
+		{name: "mismatched value", valueType: "i8", code: diagnostics.ErrInvalidEvidence},
+		{name: "mismatched interned value", valueType: "i8", code: diagnostics.ErrInvalidEvidence, internValueType: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			symbol := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolConst, "Value"), "Value", symbols.SymbolConst, nil, nil)
+			symbol.BindType(&typeinfo.IntegerType{IsSigned: true, Bits: 64})
+			symbol.Location = source.NewLocation("test.peep", source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 6})
+			scope := symbols.NewScope(nil)
+			if err := scope.Declare(symbol); err != nil {
+				t.Fatal(err)
+			}
+			index := symbols.NewIndex()
+			if test.valueType != "" {
+				value, ok := constvalue.NewIntText("2", test.valueType)
+				if !ok {
+					t.Fatal("cannot construct test constant")
+				}
+				index.PublishConstant(symbol.ID, value)
+			}
+			types := ir.NewTypeTable()
+			if test.internValueType {
+				types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 8})
+			}
+			diag := diagnostics.NewDiagnosticBag()
+			out := GenerateMIR(LoweringInput{
+				Types: types, Diagnostics: diag, Source: thir.NewModule("test", "test.peep", nil),
+				CFG: &cfg.Module{}, Scope: scope, SymbolIndex: index,
+			})
+			if out != nil || !diag.HasErrors() {
+				t.Fatalf("MIR = %#v, diagnostics = %s; want materialization rejection", out, diag.EmitAllToString())
+			}
+			items := diag.Diagnostics()
+			if len(items) != 1 || items[0].Code != test.code || len(items[0].Labels) != 1 || items[0].Labels[0].Location != symbol.Location {
+				t.Fatalf("diagnostics = %#v, want %s at constant declaration", items, test.code)
+			}
+		})
 	}
 }

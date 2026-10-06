@@ -6,6 +6,10 @@ This file defines how agents must work in this repository.
 
 When documents conflict, do not let a file's self-declared precedence settle technical correctness. Identify the conflict, inspect evidence, and ask for a decision when required. Human-facing engineering rules belong in `RULES.md`; agent-only gates, local plans, GitHub automation, and response style belong here.
 
+For code-review requests, read [Peeper code review](.agents/skills/peeper-code-review/SKILL.md).
+It captures the review workflow and user's simplicity preferences; use `RULES.md`
+for durable engineering requirements.
+
 ---
 
 ## 1) Required pre-change check

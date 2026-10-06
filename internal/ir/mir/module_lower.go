@@ -64,28 +64,46 @@ func GenerateMIR(input LoweringInput) *Module {
 		Funcs:           make([]*Function, 0, len(input.Source.Functions)),
 	}
 
-	// All semantic constant types must be interned before ABI-key lookup below.
 	if input.Scope != nil {
-		for _, symbol := range input.Scope.Symbols() {
-			if symbol != nil && symbol.Kind == symbols.SymbolConst {
-				semanticType, _ := symbols.GetSymbolType(symbol)
-				if typelower.Type(input.Types, input.Diagnostics, semanticType) == ir.InvalidType {
-					return nil
-				}
-			}
-		}
 		for _, symbol := range input.Scope.Symbols() {
 			if symbol == nil || symbol.Kind != symbols.SymbolConst {
 				continue
+			}
+			// Discard bindings are checked, but have no addressable static value.
+			if symbol.Name == "_" {
+				continue
+			}
+			semanticType, _ := symbols.GetSymbolType(symbol)
+			typ := typelower.Type(input.Types, input.Diagnostics, semanticType)
+			if typ == ir.InvalidType {
+				return nil
 			}
 			var value constvalue.Value
 			if input.SymbolIndex != nil {
 				value = input.SymbolIndex.ConstantValue(symbol.ID)
 			}
-			internConstantStrings(out, value)
-			if entry, ok := staticEntryForConst(input.Types, symbol, value); ok {
-				out.StaticData = append(out.StaticData, entry)
+			if value == nil {
+				if input.Diagnostics != nil {
+					input.Diagnostics.AddError(diagnostics.ErrInvalidOperation,
+						"module constant `"+symbol.Name+"` cannot be evaluated at compile time", symbol.Location, "")
+				}
+				return nil
 			}
+			abiKey := value.TypeText()
+			if variant, ok := value.(*constvalue.VariantConst); ok && variant != nil && variant.NominalIdentity() != "" {
+				abiKey = "variant:" + variant.NominalIdentity()
+			}
+			if abiKey != input.Types.ABIKey(typ) {
+				if input.Diagnostics != nil {
+					input.Diagnostics.AddError(diagnostics.ErrInvalidEvidence,
+						fmt.Sprintf("module constant `%s` has value type %s, want %s", symbol.Name, value.TypeText(), typeinfo.TypeText(semanticType)), symbol.Location, "")
+				}
+				return nil
+			}
+			internConstantStrings(out, value)
+			out.StaticData = append(out.StaticData, &StaticEntry{
+				Name: fmt.Sprintf("@%s$%s", symbol.Name, symbol.ID.String()), Type: typ, Constant: value,
+			})
 		}
 	}
 
@@ -426,22 +444,6 @@ func variantPayloadPlace(subject ValueRef, caseIndex int, payloadType ir.TypeID,
 		Projections: []PlaceProjection{{Kind: PlaceProjectionVariantPayload, Case: caseIndex, Type: payloadType, Location: location}},
 		Type:        payloadType, Location: location,
 	}
-}
-
-func staticEntryForConst(types *ir.TypeTable, symbol *symbols.Symbol, value constvalue.Value) (*StaticEntry, bool) {
-	if types == nil || symbol == nil || value == nil {
-		return nil, false
-	}
-	typeText := value.TypeText()
-	abiKey := typeText
-	if variant, ok := value.(*constvalue.VariantConst); ok && variant != nil && variant.NominalIdentity() != "" {
-		abiKey = "variant:" + variant.NominalIdentity()
-	}
-	typ, ok := types.LookupABIKey(abiKey)
-	if !ok {
-		return nil, false
-	}
-	return &StaticEntry{Name: fmt.Sprintf("@%s$%s", symbol.Name, symbol.ID.String()), Type: typ, Constant: value}, true
 }
 
 func internConstantStrings(module *Module, value constvalue.Value) {

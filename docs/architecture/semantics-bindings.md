@@ -448,11 +448,24 @@ are `types.go`, `syntax.go`, `relations.go`, `compatibility.go`, `lookup.go`,
 - Evaluator cache and in-progress state are keyed by `symbols.SymbolID` and discarded after checking.
 - A module constant read from another module uses `ctx.PublishedConstant`.
 - Local module queries use the operation-local cache; authoritative values become visible through `SymbolIndex.ConstantValue` only during finalization.
-- Expected numeric types influence literal construction and identifier adaptation.
+- Expected numeric types influence literal construction and bound-symbol adaptation.
+- Fixed-array bounds queries use the checked index type after literal inference;
+  constant-index evidence preserves that value and type for THIR/MIR lowering.
+- Constant bounds compare exact integers, without host-sized length/index parsing.
+- Checked numeric conversions run after folding at the source expression's width;
+  binary operands use the checked operation type, or the unconverted operand's
+  type for comparisons. Untyped lazy queries retain common-type fallback.
+- Explicit numeric casts preserve source-width intermediates before converting.
+  Float narrowing rounds before any later widening; nonfinite or out-of-range
+  float-to-integer values are not published as wrapping integers.
+- Integer-to-float casts round the exact integer directly to the destination
+  width, preserving IEEE infinity when the conversion overflows.
 - Numeric literals use default or explicit numeric types and target-aware parsing.
 - Boolean and string literals produce typed constant values.
-- Constant identifiers consume their resolver-bound `SymbolIndex` entry and must
-  denote `SymbolConst`; evaluation never repeats lexical name lookup.
+- Identifiers and qualified constant paths consume their resolver-bound `SymbolIndex`
+  entry and must denote `SymbolConst`; evaluation never repeats name/import lookup.
+  Foreign values come only from the defining module's finalized publication, not
+  consumer caches or a fresh evaluation of the foreign declaration.
 - Unary and binary operations delegate folding to `constvalue`.
 - Variant constructions use private typechecker evidence before THIR publication.
 - Non-copyable variant types are not evaluated as constants.

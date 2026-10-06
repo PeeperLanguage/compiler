@@ -1739,6 +1739,52 @@ fn first(xs: [4]i32) -> i32 {
 	}
 }
 
+func TestArrayConstantIndexPreservesCheckedTypeAndValue(t *testing.T) {
+	for _, test := range []struct {
+		name, declarations, index, value, typ string
+		rejected                              bool
+	}{
+		{"wide float cast", "", "4294967296f64 as u64", "4294967296", "u64", true},
+		{"negative float cast", "", "(-4294967296f64) as i64", "-4294967296", "i64", true},
+		{"wide signed constant", "const Offset: i64 = 4294967296i64;", "Offset", "4294967296", "i64", true},
+		{"negative signed constant", "const Offset: i64 = -4294967296i64;", "Offset", "-4294967296", "i64", true},
+		{"unsigned boundary", "const Offset: u64 = 18446744073709551615u64;", "Offset", "18446744073709551615", "u64", true},
+		{"beyond host integer", "const Offset: u128 = 1u128 << 64u128;", "Offset", "18446744073709551616", "u128", true},
+		{"wide integer cast", "", "4294967296u64 as i64", "4294967296", "i64", true},
+		{"wide literal control", "", "4294967296u64", "4294967296", "u64", true},
+		{"default literal", "", "1", "1", "i32", false},
+		{"fractional float cast", "", "1.75f64 as u64", "1", "u64", false},
+		{"negative fraction", "", "(-0.75f64) as i64", "0", "i64", false},
+		{"explicit narrowing", "", "257u16 as u8", "1", "u8", false},
+		{"source width negation", "const Offset: u8 = 255u8;", "-Offset", "1", "u8", false},
+		{"alias constant", "type Index = u64; const Offset: Index = 1u64;", "Offset", "1", "u64", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			mod, diag := checkTypeModule(t, test.declarations+"\nfn first(values: [2]i32) -> i32 { return values["+test.index+"]; }")
+			fn := mod.AST.Stmts[len(mod.AST.Stmts)-1].(*ast.FnDecl)
+			index := fn.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.IndexExpr)
+			typing := testEvidence(mod)
+			constant, found := typing.ConstantIndex(index.ID())
+			if !found || constant.Text != test.value || typeinfo.TypeText(typeinfo.Underlying(constant.Type)) != test.typ ||
+				!typeinfo.IsSameType(constant.Type, typing.ExprType(index.Index.ID())) {
+				t.Fatalf("constant index = %#v, want checked %s %s", constant, test.typ, test.value)
+			}
+			if !test.rejected {
+				if diag.HasErrors() {
+					t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+				}
+				return
+			}
+			items := diag.Diagnostics()
+			if len(items) != 1 || items[0].Code != diagnostics.ErrArrayOutOfBounds ||
+				items[0].Message != "array index out of bounds: index "+test.value+" for length 2" ||
+				len(items[0].Labels) != 1 || items[0].Labels[0].Location != ast.LocOf(index.Index) {
+				t.Fatalf("expected exact located bounds diagnostic, got:\n%s", diag.EmitAllToString())
+			}
+		})
+	}
+}
+
 func TestArrayIndexExprAcceptsRuntimeIndex(t *testing.T) {
 	src := `fn first(xs: [4]i32, i: i32) -> i32 {
 	return xs[i];

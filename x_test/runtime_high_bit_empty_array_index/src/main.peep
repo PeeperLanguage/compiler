@@ -1,0 +1,16 @@
+struct Empty {}
+struct Large { values: [2147483649u64]Empty }
+
+fn constant_high(value: &Large) -> bool {
+    return @value.values[2147483648u32] == @value.values[0u32];
+}
+
+fn constant_low(value: &Large) -> bool {
+    return @value.values[2147483647u32] == @value.values[0u32];
+}
+
+fn runtime_high(value: &Large, index: u32) -> bool {
+    return @value.values[index] == @value.values[0u32];
+}
+
+fn main() -> i32 { return 0; }

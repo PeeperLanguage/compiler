@@ -26,6 +26,13 @@ graphify-out
 *.patch
 clean.md
 .*/
+!.agents/
+.agents/*
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/peeper-code-review/
+.agents/skills/peeper-code-review/*
+!.agents/skills/peeper-code-review/SKILL.md
 !.gitignore
 !.github/
 !.github/workflows/

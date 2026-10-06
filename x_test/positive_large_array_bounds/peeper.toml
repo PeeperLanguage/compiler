@@ -1,0 +1,7 @@
+name = "positive_large_array_bounds"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "success"
+compiler_args = ["-target-os", "linux", "-target-arch", "amd64"]

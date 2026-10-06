@@ -1,0 +1,7 @@
+name = "negative_module_constant_materialization"
+build = "program"
+
+[test]
+mode = "build"
+outcome = "failure"
+stderr_contains = ["module constant `Value` cannot be evaluated at compile time"]

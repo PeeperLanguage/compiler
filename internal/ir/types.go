@@ -128,7 +128,6 @@ type TypeTable struct {
 	mu         sync.RWMutex
 	types      []Type
 	ids        map[string]TypeID
-	abiKeys    map[string]TypeID
 	isComplete []bool
 	indexType  TypeID
 }
@@ -137,7 +136,6 @@ func NewTypeTable() *TypeTable {
 	return &TypeTable{
 		types:      []Type{{Name: "<invalid>"}},
 		ids:        make(map[string]TypeID),
-		abiKeys:    make(map[string]TypeID),
 		isComplete: []bool{false},
 	}
 }
@@ -156,7 +154,6 @@ func (t *TypeTable) Intern(typ Type) TypeID {
 	t.types = append(t.types, cloneType(typ))
 	t.isComplete = append(t.isComplete, true)
 	t.ids[key] = id
-	t.abiKeys[t.abiKeyLocked(id)] = id
 	return id
 }
 
@@ -210,21 +207,7 @@ func (t *TypeTable) CompleteNamed(id TypeID, typ Type) error {
 	}
 	t.types[id] = cloneType(typ)
 	t.isComplete[id] = true
-	t.abiKeys[t.abiKeyLocked(id)] = id
 	return nil
-}
-
-// LookupABIKey bridges finalized semantic identity into an already-interned IR
-// type. It never parses text or creates a type; typelower remains the only
-// semantic-to-runtime-IR type construction boundary.
-func (t *TypeTable) LookupABIKey(key string) (TypeID, bool) {
-	if t == nil {
-		return InvalidType, false
-	}
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	id, ok := t.abiKeys[key]
-	return id, ok
 }
 
 func (t *TypeTable) SetIndexType(id TypeID) {
@@ -428,12 +411,7 @@ func (t *TypeTable) ABIKey(id TypeID) string {
 	if id == InvalidType || int(id) >= len(t.types) {
 		return "<invalid>"
 	}
-	return t.abiKeyLocked(id)
-}
-
-func (t *TypeTable) abiKeyLocked(id TypeID) string {
-	typ := t.types[id]
-	if key, ok := identifiedTypeKey(typ); ok {
+	if key, ok := identifiedTypeKey(t.types[id]); ok {
 		return key
 	}
 	return t.textLocked(id)

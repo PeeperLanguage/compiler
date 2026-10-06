@@ -1,0 +1,23 @@
+import "negative_imported_constant_queries/values";
+
+const Saved: u128 = values::Offset;
+
+fn Direct() -> i32 {
+    let items = [1]i32{7};
+    return items[values::Offset];
+}
+
+fn Local() -> i32 {
+    const LocalOffset: u128 = values::Offset;
+    let items = [1]i32{7};
+    return items[LocalOffset];
+}
+
+fn ModuleAlias() -> i32 {
+    let items = [1]i32{7};
+    return items[Saved];
+}
+
+fn InvalidShift() -> u8 { return 1u8 << values::Shift; }
+
+fn main() -> i32 { return Direct() + Local() + ModuleAlias(); }

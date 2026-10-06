@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -2914,6 +2915,57 @@ func TestGenerateLLVMIRLowersIndexPlaceForArrayRead(t *testing.T) {
 	}
 }
 
+func TestGenerateLLVMIRNormalizesConstantArrayIndexes(t *testing.T) {
+	u1 := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInteger, Bits: 1})
+	for _, compilerTarget := range []target.Info{testLinux386, testLinuxAMD64} {
+		for _, test := range []struct {
+			name                      string
+			indexType                 ir.TypeID
+			value, length, conversion string
+		}{
+			{"u1_zero", u1, "0", "2", "zext i1 0 to i64"},
+			{"u1_one", u1, "1", "2", "zext i1 1 to i64"},
+			{"u8_top_bit", llvmTypes.u8, "128", "129", "zext i8 128 to i64"},
+			{"u24_top_bit", llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInteger, Bits: 24}), "8388608", "8388609", "zext i24 8388608 to i64"},
+			{"byte_top_bit", llvmTypes.table.Intern(ir.Type{Kind: ir.TypeByte}), "128", "129", "zext i8 128 to i64"},
+			{"signed_i8", llvmTypes.i8, "1", "2", "sext i8 1 to i64"},
+			{"u64", llvmTypes.usize, "1", "2", ""},
+			{"i128", llvmTypes.table.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 128}), "1", "2", "trunc i128 1 to i64"},
+			{"u128", llvmTypes.u128, "1", "2", "trunc i128 1 to i64"},
+		} {
+			for _, operation := range []struct {
+				name  string
+				build func(ir.TypeID, mir.ValueRef) *mir.Module
+			}{{"read", indexReadMIRModule}, {"store", indexStoreMIRModule}} {
+				t.Run(compilerTarget.Arch+"/"+test.name+"/"+operation.name, func(t *testing.T) {
+					array := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeArray, Elem: llvmTypes.i32, Length: test.length})
+					base := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeReference, Elem: array, IsMutable: true})
+					diag := diagnostics.NewDiagnosticBag()
+					text := GenerateLLVMIR(operation.build(base, &mir.RefConst{Value: test.value, Type: test.indexType}), diag, compilerTarget, false)
+					if diag.HasErrors() || text == "" {
+						t.Fatalf("valid constant index failed:\n%s", diag.EmitAllToString())
+					}
+					if test.conversion != "" && !strings.Contains(text, test.conversion) {
+						t.Fatalf("missing value-preserving conversion %q:\n%s", test.conversion, text)
+					}
+					projections := 0
+					for _, line := range strings.Split(text, "\n") {
+						if strings.Contains(line, "getelementptr inbounds ["+test.length+" x i32]") {
+							projections++
+							if !strings.Contains(line, ", i32 0, i64 ") {
+								t.Fatalf("constant element GEP did not use normalized index:\n%s", text)
+							}
+						}
+					}
+					if projections != 1 || strings.Contains(text, "call void @llvm.trap()") {
+						t.Fatalf("constant index must have one GEP and no runtime bounds trap:\n%s", text)
+					}
+				})
+			}
+		}
+	}
+}
+
 func TestGenerateLLVMIRBoundsChecksRuntimeFixedArrayIndex(t *testing.T) {
 	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := indexReadMIRModule(llvmTypes.fixed4I32, &mir.RefName{Name: "index", Type: llvmTypes.i32})
@@ -3014,6 +3066,98 @@ func TestGenerateLLVMIRRejectsInvalidConstantArrayIndexes(t *testing.T) {
 		if !strings.Contains(diag.EmitAllToString(), want) {
 			t.Fatalf("expected %q diagnostic, got:\n%s", want, diag.EmitAllToString())
 		}
+	}
+}
+
+func TestGenerateLLVMIRChecksUnsignedArrayBounds(t *testing.T) {
+	large := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeArray, Elem: llvmTypes.i32, Length: "9223372036854775808"})
+	for _, index := range []struct {
+		value    string
+		rejected bool
+	}{
+		{"0", false}, {"9223372036854775807", false},
+		{"-1", true}, {"9223372036854775808", true}, {"18446744073709551616", true}, {"bad", true},
+	} {
+		t.Run(index.value, func(t *testing.T) {
+			location := source.NewLocation(unixTestPath, source.Position{Line: 2, Column: 4}, source.Position{Line: 2, Column: 8})
+			diag := diagnostics.NewDiagnosticBag()
+			text := GenerateLLVMIR(indexReadMIRModule(large, &mir.RefConst{
+				Value: index.value, Type: llvmTypes.u128, Location: location,
+			}), diag, testLinuxAMD64, false)
+			if !index.rejected {
+				if diag.HasErrors() || text == "" {
+					t.Fatalf("valid unsigned bounds rejected:\n%s", diag.EmitAllToString())
+				}
+				return
+			}
+			items := diag.Diagnostics()
+			if text != "" || len(items) != 1 || items[0].Code != diagnostics.ErrArrayOutOfBounds ||
+				len(items[0].Labels) != 1 || items[0].Labels[0].Location != location {
+				t.Fatalf("expected located backend bounds rejection:\n%s", diag.EmitAllToString())
+			}
+		})
+	}
+}
+
+func TestBoundsCheckedIndexHandlesUnsignedLengths(t *testing.T) {
+	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+		t.Skip("native bounds execution requires Linux/amd64")
+	}
+	clang, err := exec.LookPath("clang")
+	if err != nil {
+		t.Skip("clang unavailable for native bounds validation")
+	}
+	types := newLLVMTypeFixture(target.Bits64)
+	i64 := types.table.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 64})
+	i128 := types.table.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 128})
+	for _, test := range []struct {
+		name      string
+		indexType ir.TypeID
+		value     string
+		trap      bool
+	}{
+		{"negative_i8", types.i8, "-2", true},
+		{"negative_i64", i64, "-9223372036854775808", true},
+		{"negative_i128", i128, "-2", true},
+		{"positive_i64", i64, "9223372036854775807", false},
+		{"unsigned_high", types.usize, "9223372036854775808", false},
+		{"last_unsigned", types.usize, "18446744073709551614", false},
+		{"equal_unsigned", types.usize, "18446744073709551615", true},
+		{"wide_unsigned", types.u128, "18446744073709551616", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var body strings.Builder
+			emitter := &llvmEmitter{mod: &mir.Module{Types: types.table}, target: testLinuxAMD64}
+			builder := newLLVMBuilder(&body, emitter, -1)
+			indexLayout := emitter.layout(test.indexType)
+			builder.locals["index"] = builder.value("%index", indexLayout)
+			builder.namedLabel("entry")
+			if _, ok := emitBoundsCheckedIndex(builder, &mir.RefName{Name: "index", Type: test.indexType},
+				builder.value("18446744073709551615", llvmScalarLayout("i64"))); !ok || emitter.isInvalid {
+				t.Fatal("bounds lowering failed")
+			}
+			builder.line("ret i32 0")
+			text := fmt.Sprintf("declare void @llvm.trap()\ndefine i32 @check(%s %%index) {\n%s}\n"+
+				"define i32 @main() {\n  %%result = call i32 @check(%s %s)\n  ret i32 %%result\n}\n",
+				indexLayout.Text, body.String(), indexLayout.Text, test.value)
+			dir := t.TempDir()
+			binary := filepath.Join(dir, "bounds")
+			cmd := exec.Command(clang, "-target", testLinuxAMD64.LLVMTriple, "-x", "ir", "-o", binary, "-")
+			cmd.Stdin = strings.NewReader(text)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("bounds LLVM is invalid: %v\n%s\n%s", err, output, text)
+			}
+			run := exec.Command(binary)
+			run.Dir = dir
+			output, err := run.CombinedOutput()
+			if test.trap {
+				if run.ProcessState == nil || run.ProcessState.ExitCode() != -1 {
+					t.Fatalf("expected bounds trap, got %v\n%s\n%s", err, output, text)
+				}
+			} else if err != nil {
+				t.Fatalf("valid index trapped: %v\n%s\n%s", err, output, text)
+			}
+		})
 	}
 }
 

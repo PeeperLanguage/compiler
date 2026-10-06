@@ -1,0 +1,8 @@
+struct Large {
+    values: [9223372036854775809u64]u8,
+    flag: bool
+}
+
+fn first(value: &Large) -> u8 { return value.values[0u64]; }
+fn read(value: &Large, index: i64) -> u8 { return value.values[index]; }
+fn main() -> i32 { return 0; }

@@ -1,0 +1,7 @@
+name = "runtime_high_bit_empty_array_index"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "success"
+compiler_args = ["-target-os", "linux", "-target-arch", "386"]

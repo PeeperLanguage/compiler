@@ -1,0 +1,38 @@
+import "runtime_checked_constant_indexes/indexes";
+
+type Bit = u1;
+struct Cell { value: i32 }
+struct Box { guard: i32, values: [2]Cell }
+
+fn read(cell: &Cell) -> i32 { return cell.value; }
+fn write(cell: &mut Cell, value: i32) { cell.value = value; }
+
+fn main() -> i32 {
+    const Wrapped: u8 = 255u8;
+    let values = [2]i32{7, 9};
+    if values[0f64 as u64] != 7 { return 1; }
+    if values[1.75f64 as i64] != 9 { return 2; }
+    if values[(-0.75f64) as i64] != 7 { return 3; }
+    if values[indexes::Selected] != 9 { return 4; }
+    if values[-indexes::Wrapped] != 9 { return 5; }
+    if values[257u16 as u8] != 9 { return 6; }
+    if values[-Wrapped] != 9 { return 7; }
+
+    const Selected: Bit = 1u1;
+    let mut box = Box.{guard = 31, values = [2]Cell{.{value = 7}, .{value = 9}}};
+    if box.values[1f64 as u1].value != 9 { return 8; }
+    if box.values[1u1].value != 9 || box.values[0u1].value != 7 { return 9; }
+    if read(&box.values[Selected]) != 9 { return 10; }
+    if @box.values[1f64 as u1].value != @box.values[1u64].value { return 11; }
+
+    box.values[1f64 as u1].value = 13;
+    if box.guard != 31 || box.values[0u64].value != 7 || box.values[1u64].value != 13 { return 12; }
+    write(&mut box.values[Selected], 17);
+    if box.guard != 31 || box.values[0u64].value != 7 || box.values[1u64].value != 17 { return 13; }
+    let index = 1f64 as u1;
+    if box.values[index].value != 17 { return 14; }
+    if read(&box.values[indexes::Bit]) != 17 { return 15; }
+    write(&mut box.values[indexes::Bit], 19);
+    if box.guard != 31 || box.values[0u64].value != 7 || box.values[1u64].value != 19 { return 16; }
+    return 0;
+}
