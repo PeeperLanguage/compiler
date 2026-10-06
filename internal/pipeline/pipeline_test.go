@@ -318,7 +318,8 @@ fn main() {
 				if !foundCompare || !foundIndexMove || !foundProjection {
 					t.Fatalf("MIR target-width evidence missing: compare=%v index=%v projection=%v\n%s", foundCompare, foundIndexMove, foundProjection, entry.MIR.Text())
 				}
-				if !strings.Contains(entry.LLVMIR, "icmp ult "+test.llvmType) || strings.Contains(entry.LLVMIR, "trunc i64") {
+				physicalTrunc := strings.Contains(entry.LLVMIR, "trunc i64")
+				if !strings.Contains(entry.LLVMIR, "icmp ult "+test.llvmType) || physicalTrunc != (test.arch == "386") {
 					t.Fatalf("LLVM index width invalid for %s:\n%s", test.arch, entry.LLVMIR)
 				}
 				assertLLVMCompiles(t, targetInfo, entry.LLVMIR)
@@ -2637,6 +2638,81 @@ func TestPipelineLowersLargeArrayBoundsAcrossTargets(t *testing.T) {
 				assertLLVMCompiles(t, targetInfo, entry.LLVMIR)
 			})
 		}
+	}
+}
+
+func TestPipelineLowersHighBitZeroSizedArrayIndexesAtPhysicalWidth(t *testing.T) {
+	for _, test := range []struct {
+		arch, length, lowIndex, highIndex, physicalIndex string
+	}{
+		{"386", "2147483649", "2147483647", "2147483648", "i32"},
+		{"amd64", "9223372036854775809", "9223372036854775807", "9223372036854775808", "i64"},
+	} {
+		t.Run(test.arch, func(t *testing.T) {
+			var entry *module.Module
+			src := "struct Empty {}\n" +
+				"struct Large { values: [" + test.length + "u64]Empty }\n" +
+				"fn constant_low(value: &Large) -> bool { return @value.values[" + test.lowIndex + "u64] == @value.values[0u64]; }\n" +
+				"fn constant_high(value: &Large) -> bool { return @value.values[" + test.highIndex + "u64] == @value.values[0u64]; }\n" +
+				"fn runtime_high(value: &Large, index: usize) -> bool { return @value.values[index] == @value.values[0u64]; }"
+			diag := buildPipelineTestWithConfig(t, project.Config{
+				RootDir: ".", Extension: peeper.SourceExt, TargetOS: "linux", TargetArch: test.arch,
+			}, "", src, func(mod *module.Module) { entry = mod })
+			if diag.HasErrors() || entry.MIR == nil || entry.LLVMIR == "" {
+				t.Fatalf("high-bit zero-sized array access failed:\n%s", diag.EmitAllToString())
+			}
+			lines := strings.Split(entry.LLVMIR, "\n")
+			arrayGEPs := 0
+			for _, line := range lines {
+				if !strings.Contains(line, "getelementptr inbounds ["+test.length+" x") {
+					continue
+				}
+				arrayGEPs++
+				if !strings.Contains(line, ", i32 0, "+test.physicalIndex+" ") {
+					t.Fatalf("array GEP used wrong physical index width:\n%s", entry.LLVMIR)
+				}
+			}
+			for _, index := range []string{test.lowIndex, test.highIndex} {
+				found := false
+				for lineIndex, line := range lines {
+					if test.physicalIndex == "i32" {
+						if strings.Contains(line, "trunc i64 "+index+" to i32") &&
+							lineIndex+1 < len(lines) &&
+							strings.Contains(lines[lineIndex+1], "getelementptr inbounds ["+test.length+" x") {
+							found = true
+							break
+						}
+						continue
+					}
+					if strings.Contains(line, "getelementptr inbounds ["+test.length+" x") &&
+						strings.Contains(line, ", i32 0, i64 "+index) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Fatalf("boundary index %s did not reach final array GEP:\n%s", index, entry.LLVMIR)
+				}
+			}
+			runtimeGuard := false
+			for _, line := range lines {
+				if strings.Contains(line, "icmp uge i64") && strings.HasSuffix(strings.TrimSpace(line), ", "+test.length) {
+					runtimeGuard = true
+					break
+				}
+			}
+			if !runtimeGuard {
+				t.Fatalf("runtime index did not reach exact bounds guard:\n%s", entry.LLVMIR)
+			}
+			if arrayGEPs < 6 {
+				t.Fatalf("expected low/high constant and runtime array GEPs, got %d:\n%s", arrayGEPs, entry.LLVMIR)
+			}
+			targetInfo, err := target.New("linux", test.arch)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertLLVMCompiles(t, targetInfo, entry.LLVMIR)
+		})
 	}
 }
 

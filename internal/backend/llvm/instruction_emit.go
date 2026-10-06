@@ -169,7 +169,14 @@ func emitIndexPtr(b *llvmBuilder, base llvmValue, baseType ir.TypeID, addressed 
 		return llvmPlace{}, false
 	}
 	arrayPlace := b.pointerPlace(base)
-	return b.arrayElement(arrayPlace, index, true), true
+	physicalIndex := index
+	physicalLayout := b.emitter.layout(b.emitter.mod.Types.IndexType())
+	if physicalIndex.Layout.Text != physicalLayout.Text {
+		// Bounds use i64 so wide values stay exact; GEP must receive the target
+		// pointer-index width so inbounds does not implicitly truncate it.
+		physicalIndex = b.cast("trunc", physicalIndex, physicalLayout)
+	}
+	return b.arrayElement(arrayPlace, physicalIndex, true), true
 }
 
 // Directly addressed roots need entry-block storage so one pointer dominates every place use.

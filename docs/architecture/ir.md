@@ -139,9 +139,10 @@ Discard (`_`) module bindings remain source-checked but emit no addressable stat
 
 LLVM fixed-array index lowering retains unsigned 64-bit lengths and compares
 constant indexes exactly; backend bounds diagnostics retain index source location.
-After validation, constant offsets use existing signed/unsigned cast rules to i64
-for GEP; narrow unsigned values must not become negative through LLVM's implicit
-sign extension. Checked constant-index types/values remain intact in THIR/MIR.
+After exact logical bounds validation, physical offsets use the target pointer-index
+width for GEP; narrow unsigned values must not become negative through LLVM's
+implicit sign extension or wider-index truncation. Checked constant-index
+types/values remain intact in THIR/MIR.
 Runtime indexes continue through the shared bounds guard before element access;
 signed indexes also reject negative values independently of unsigned length.
 
