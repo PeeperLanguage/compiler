@@ -48,8 +48,12 @@ func emitBoundsCheckedIndex(b *llvmBuilder, indexRef mir.ValueRef, length llvmVa
 	if !ok {
 		return llvmValue{}, false
 	}
-	// Unsigned comparison also rejects negative signed indexes after sign extension.
 	outOfBounds := b.compare("icmp", "uge", compareIndex, compareLength)
+	// Unsigned lengths can exceed the signed index range.
+	if !isUnsignedTypeID(b.emitter.mod.Types, indexRef.TypeID()) {
+		negative := b.compare("icmp", "slt", compareIndex, b.value("0", compareIndex.Layout))
+		outOfBounds = b.arithmetic("or", outOfBounds, negative)
+	}
 	boundsID := b.nextID
 	b.nextID++
 	failLabel := fmt.Sprintf("bounds_fail_%d", boundsID)

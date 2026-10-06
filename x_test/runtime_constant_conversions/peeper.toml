@@ -1,0 +1,6 @@
+name = "runtime_constant_conversions"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "success"

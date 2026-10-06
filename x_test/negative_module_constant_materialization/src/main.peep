@@ -1,0 +1,5 @@
+const Value: i32 = 1i32 / 0i32;
+
+fn main() -> i32 {
+    return Value;
+}

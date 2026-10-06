@@ -1,0 +1,10 @@
+const Signed: i64 = -4294967296i64;
+const Unsigned: u128 = 1u128 << 64u128;
+
+fn main() -> i32 {
+    let values = [1]i32{7};
+    let _ = values[4294967296f64 as u64];
+    let _ = values[(-4294967296f64) as i64];
+    let _ = values[Signed];
+    return values[Unsigned];
+}

@@ -1,6 +1,9 @@
 package typechecker
 
 import (
+	"math"
+	"math/big"
+
 	"compiler/internal/constvalue"
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
@@ -112,8 +115,24 @@ func (e *constantEvaluator) evalConstSymbol(sym *symbols.Symbol) (constvalue.Val
 	return value, true
 }
 
-func (e *constantEvaluator) evalExpr(expr ast.Expr, expected typeinfo.Type) (constvalue.Value, bool) {
+func (e *constantEvaluator) evalExpr(expr ast.Expr, expected typeinfo.Type) (value constvalue.Value, evaluated bool) {
+	if expr == nil {
+		return nil, false
+	}
+	var checkedType typeinfo.Type
 	if e.evidence != nil {
+		checkedType = e.evidence.ExprType(expr.ID())
+		if conversion, found := e.evidence.ImplicitConversion(expr.ID()); found && checkedType != nil &&
+			conversion.Kind == typeinfo.ConversionNumeric && conversion.Compatibility == typeinfo.Compatible {
+			// Fold at the checked source width before converting to the context's
+			// destination. Widening earlier would change intermediate overflow.
+			defer func(destination typeinfo.Type) {
+				if evaluated {
+					value, evaluated = expectedNumericConstValue(value, destination)
+				}
+			}(expected)
+			expected = checkedType
+		}
 		if construction, ok := e.evidence.VariantConstruction(expr.ID()); ok {
 			if typeinfo.OwnershipCapabilityOf(construction.EnumType).Copy != typeinfo.CopyImplicit {
 				return nil, false
@@ -212,9 +231,9 @@ func (e *constantEvaluator) evalExpr(expr ast.Expr, expected typeinfo.Type) (con
 		return constvalue.NewIntText(value, typText)
 	case *ast.BoolLit:
 		return constvalue.NewBool(node.Value), true
-	case *ast.Ident:
+	case *ast.Ident, *ast.ScopeResolution:
 		// Later declarations may shadow the name, but not its resolved binding.
-		sym := e.module.SymbolIndex.Symbol(node)
+		sym := e.module.SymbolIndex.Symbol(expr)
 		if sym == nil || sym.Kind != symbols.SymbolConst {
 			return nil, false
 		}
@@ -224,27 +243,29 @@ func (e *constantEvaluator) evalExpr(expr ast.Expr, expected typeinfo.Type) (con
 		}
 		return expectedNumericConstValue(value, expected)
 	case *ast.AsExpr:
-		var targetType, sourceType typeinfo.Type
+		targetType := checkedType
+		var sourceType typeinfo.Type
 		if e.evidence != nil {
-			targetType = e.evidence.ExprType(node.ID())
 			sourceType = e.evidence.ExprType(node.Expr.ID())
 		}
 		if targetType == nil {
 			targetType = e.ctx.TypeResolver.Query(e.module, node.TypeExpr, typeresolution.Context{}).Type
 		}
-		if !typeinfo.IsIntegral(targetType) {
+		if _, _, numericTarget := typeinfo.NumericInfo(targetType); !numericTarget {
 			return nil, false
 		}
 		// Cast input keeps its own width; destination context must not change
 		// overflow before the explicit finite-width conversion.
 		value, ok := e.evalExpr(node.Expr, sourceType)
-		integer, isInteger := value.(*constvalue.IntConst)
-		if !ok || !isInteger || integer == nil {
-			return nil, false
-		}
-		converted, ok := constvalue.NewInt(integer.Int(), typeinfo.TypeText(typeinfo.Underlying(targetType)))
 		if !ok {
 			return nil, false
+		}
+		converted, ok := expectedNumericConstValue(value, targetType)
+		if !ok {
+			return nil, false
+		}
+		if typeinfo.IsSameType(targetType, expected) {
+			return converted, true
 		}
 		return expectedNumericConstValue(converted, expected)
 	case *ast.UnaryExpr:
@@ -254,15 +275,28 @@ func (e *constantEvaluator) evalExpr(expr ast.Expr, expected typeinfo.Type) (con
 		}
 		return constvalue.FoldUnary(node.Op, value)
 	case *ast.BinaryExpr:
-		left, lok := e.evalExpr(node.Left, expected)
-		right, rok := e.evalExpr(node.Right, expected)
+		operandType := expected
+		if checkedType != nil {
+			operandType = checkedType
+			if binaryResultIsBool(node.Op) {
+				// The result is bool; the unconverted operand owns the checked
+				// numeric destination for comparisons.
+				operandType = e.evidence.ExprType(node.Left.ID())
+				if conversion, found := e.evidence.ImplicitConversion(node.Left.ID()); found &&
+					conversion.Kind == typeinfo.ConversionNumeric && conversion.Compatibility == typeinfo.Compatible {
+					operandType = e.evidence.ExprType(node.Right.ID())
+				}
+			}
+		}
+		left, lok := e.evalExpr(node.Left, operandType)
+		right, rok := e.evalExpr(node.Right, operandType)
 		if !lok || !rok {
 			return nil, false
 		}
 		if folded, ok := constvalue.FoldBinary(node.Op, left, right); ok {
 			return folded, true
 		}
-		if expected != nil {
+		if checkedType != nil || expected != nil {
 			return nil, false
 		}
 		commonType := typeinfo.CommonNumericType(&typeinfo.NamedType{Name: left.TypeText()}, &typeinfo.NamedType{Name: right.TypeText()})
@@ -284,20 +318,29 @@ func expectedNumericConstValue(value constvalue.Value, expected typeinfo.Type) (
 	if expected == nil {
 		return value, true
 	}
-	family, _, ok := typeinfo.NumericInfo(expected)
+	family, bits, ok := typeinfo.NumericInfo(expected)
 	if !ok {
 		return value, true
 	}
 	typeText := typeinfo.TypeText(typeinfo.Underlying(expected))
 	switch v := value.(type) {
 	case *constvalue.IntConst:
-		if v == nil {
+		integer := v.Int()
+		if integer == nil {
 			return nil, false
 		}
 		if family == typeinfo.NumericFloat {
-			return constvalue.NewFloatText(v.Text(), typeText)
+			// Round the exact integer directly to its destination. Routing f32
+			// through f64 can double-round, and text parsing rejects IEEE overflow.
+			number := new(big.Float).SetInt(integer)
+			if bits == 32 {
+				rounded, _ := number.Float32()
+				return constvalue.NewFloat(float64(rounded), typeText)
+			}
+			rounded, _ := number.Float64()
+			return constvalue.NewFloat(rounded, typeText)
 		}
-		return constvalue.NewInt(v.Int(), typeText)
+		return constvalue.NewInt(integer, typeText)
 	case *constvalue.FloatConst:
 		if v == nil {
 			return nil, false
@@ -305,7 +348,16 @@ func expectedNumericConstValue(value constvalue.Value, expected typeinfo.Type) (
 		if family == typeinfo.NumericFloat {
 			return constvalue.NewFloat(v.Float(), typeText)
 		}
-		return nil, false
+		if math.IsNaN(v.Float()) || math.IsInf(v.Float(), 0) {
+			return nil, false
+		}
+		integer, _ := big.NewFloat(v.Float()).Int(nil)
+		// LLVM float-to-integer conversion is undefined outside the destination
+		// range. Do not turn an unmaterializable cast into a wrapping integer.
+		if !numeric.FitsIntegerLiteral(integer.String(), bits, family == typeinfo.NumericSigned) {
+			return nil, false
+		}
+		return constvalue.NewInt(integer, typeText)
 	default:
 		return value, true
 	}

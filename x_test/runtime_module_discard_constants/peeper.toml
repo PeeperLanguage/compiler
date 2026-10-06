@@ -1,0 +1,6 @@
+name = "runtime_module_discard_constants"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "success"

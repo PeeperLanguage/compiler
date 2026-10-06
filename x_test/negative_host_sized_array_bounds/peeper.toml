@@ -1,0 +1,8 @@
+name = "negative_host_sized_array_bounds"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+compiler_args = ["-target-os", "linux", "-target-arch", "amd64"]
+stderr_contains = ["array index out of bounds: index -1 for length 9223372036854775808", "main.peep:2:"]

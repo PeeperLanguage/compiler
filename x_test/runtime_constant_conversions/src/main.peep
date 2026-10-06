@@ -1,0 +1,38 @@
+import "runtime_constant_conversions/numbers";
+
+const ImportedInteger: i64 = numbers::ConvertedInteger;
+const ImportedRounded: f64 = numbers::RoundedInteger;
+
+fn DefaultWide(value: i64 = numbers::Total) -> i64 { return value; }
+
+fn ReadWide(value: i64) -> i64 {
+    return value;
+}
+
+fn ConvertInteger(value: u64) -> f32 {
+    return value as f32;
+}
+
+fn main() -> i32 {
+    if ReadWide(numbers::Total) != 3i64 { return 1; }
+    if numbers::Ratio != 1.25f32 { return 2; }
+    if ReadWide(numbers::Wide) != 2i64 { return 3; }
+    if numbers::SourceOverflow != -128i64 { return 4; }
+    if numbers::NestedOverflow != -127i64 { return 5; }
+    if numbers::UnaryOverflow != -128i64 { return 6; }
+    if numbers::RoundedWide != 16777216f64 { return 7; }
+    if numbers::FloatOverflow != 16777216f64 { return 8; }
+    if numbers::ConvertedFloat != -3f32 { return 9; }
+    if numbers::ConvertedInteger != -3i8 { return 10; }
+    let rounded = ConvertInteger(9223372586610589697u64);
+    if (rounded as u64) != 9223373136366403584u64 { return 11; }
+    if numbers::RoundedInteger != rounded { return 12; }
+    let infinity = (1u2048 << 1024u2048) as f64;
+    if numbers::IntegerInfinity != infinity { return 13; }
+    if numbers::IntegerInfinity != (1f64 / 0f64) { return 14; }
+    if ImportedInteger != -3i64 { return 15; }
+    if ImportedRounded != 9223373136366403584f64 { return 16; }
+    const Total: i64 = 99i64;
+    if DefaultWide() != 3i64 || Total != 99i64 { return 17; }
+    return 0;
+}

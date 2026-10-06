@@ -107,8 +107,6 @@ func emitPrint(b *llvmBuilder, printInstr *mir.Print) {
 	}
 }
 
-// emitTargetIndexAsI64 widens a target-sized length before it reaches lowering
-// paths whose arithmetic and comparisons are intentionally i64.
 func emitIndexPtr(b *llvmBuilder, base llvmValue, baseType ir.TypeID, addressed bool, indexRef mir.ValueRef) (llvmPlace, bool) {
 	if b == nil || base.Layout == nil || baseType == ir.InvalidType || indexRef == nil {
 		return llvmPlace{}, false
@@ -143,18 +141,20 @@ func emitIndexPtr(b *llvmBuilder, base llvmValue, baseType ir.TypeID, addressed 
 		}
 		return b.gep(b.pointerPlace(data), index, false), true
 	}
-	length, lengthErr := strconv.Atoi(target.Length)
+	length, lengthErr := strconv.ParseUint(target.Length, 10, 64)
 	var index llvmValue
 	if indexConst, isConstant := indexRef.(*mir.RefConst); isConstant {
-		parsedIndex, indexErr := strconv.Atoi(indexConst.Value)
-		if lengthErr != nil || indexErr != nil || parsedIndex < 0 || parsedIndex >= length {
+		parsedIndex, indexOK := new(big.Int).SetString(indexConst.Value, 10)
+		if lengthErr != nil || !indexOK || parsedIndex.Sign() < 0 || parsedIndex.Cmp(new(big.Int).SetUint64(length)) >= 0 {
 			b.emitter.isInvalid = true
 			if b.emitter.diag != nil {
-				b.emitter.diag.Add(problems.ArrayIndexOutOfBounds(indexConst.Value, target.Length, nil))
+				b.emitter.diag.Add(problems.ArrayIndexOutOfBounds(indexConst.Value, target.Length, indexConst.SourceLocation()))
 			}
 			return llvmPlace{}, false
 		}
-		index = emitRef(b, indexRef)
+		// GEP (getelementptr) sign-extends narrow indexes even when the source integer is unsigned.
+		u64 := b.emitter.mod.Types.Intern(ir.Type{Kind: ir.TypeInteger, Bits: 64})
+		index = emitCast(b, &mir.Cast{Arg: indexRef, Type: u64})
 	} else {
 		if lengthErr != nil {
 			return llvmPlace{}, false
