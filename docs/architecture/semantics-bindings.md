@@ -451,7 +451,8 @@ are `types.go`, `syntax.go`, `relations.go`, `compatibility.go`, `lookup.go`,
 - Expected numeric types influence literal construction and identifier adaptation.
 - Numeric literals use default or explicit numeric types and target-aware parsing.
 - Boolean and string literals produce typed constant values.
-- Constant identifiers must resolve to `SymbolConst`.
+- Constant identifiers consume their resolver-bound `SymbolIndex` entry and must
+  denote `SymbolConst`; evaluation never repeats lexical name lookup.
 - Unary and binary operations delegate folding to `constvalue`.
 - Variant constructions use private typechecker evidence before THIR publication.
 - Non-copyable variant types are not evaluated as constants.

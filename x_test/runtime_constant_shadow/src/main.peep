@@ -1,0 +1,24 @@
+fn main() -> i32 {
+    const index: i32 = 0;
+    {
+        const saved: i32 = index;
+        const index: i32 = 2;
+        let values = [3]i32{10, 20, 30};
+        println(values[saved]);
+        println(saved);
+        if values[saved] != 10 || saved != 0 {
+            return 1;
+        }
+    }
+    {
+        const saved: i32 = index;
+        let index: i32 = 2;
+        let values = [3]i32{10, 20, 30};
+        println(values[saved]);
+        println(saved);
+        if values[saved] != 10 || saved != 0 {
+            return 2;
+        }
+    }
+    return 0;
+}

@@ -1,6 +1,7 @@
 package typechecker
 
 import (
+	"fmt"
 	"testing"
 
 	"compiler/internal/constvalue"
@@ -8,6 +9,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
+	"compiler/internal/ir/thir"
 	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
@@ -224,7 +226,7 @@ func TestFinalizeValuesRecomputesLazyConstantsWithFinalSymbolTypes(t *testing.T)
 		t.Fatal("missing symbol Value")
 	}
 	evaluator := newConstantEvaluator(ctx, module, newEvidence())
-	if _, ok := evaluator.evalConstSymbol(sym, module.ModuleScope); !ok {
+	if _, ok := evaluator.evalConstSymbol(sym); !ok {
 		t.Fatal("failed to lazily evaluate Value")
 	}
 	if _, found := evaluator.cache[sym.ID]; !found {
@@ -258,7 +260,7 @@ fn main() {
 	reference := fn.Body.Stmts[1].(*ast.LetDecl).Value.(*ast.Ident)
 	scope := module.SymbolIndex.Scope(fn.Body)
 	evaluator := newConstantEvaluator(ctx, module, newEvidence())
-	if _, ok := evaluator.evalExpr(scope, reference, nil); !ok {
+	if _, ok := evaluator.evalExpr(reference, nil); !ok {
 		t.Fatal("failed to evaluate local constant reference")
 	}
 	localSymbol, found := scope.LookupLocal(local.Name.Name)
@@ -277,6 +279,48 @@ fn main() {
 	}
 	if module.SymbolIndex.ConstantValue(top.ID) == nil {
 		t.Fatal("top-level constant lost authoritative value")
+	}
+}
+
+func TestEvaluateUsesResolvedConstantBindings(t *testing.T) {
+	for _, shadow := range []string{"const", "let"} {
+		t.Run(shadow, func(t *testing.T) {
+			module, diag := checkTypeModule(t, fmt.Sprintf(`const index: i32 = 0;
+fn main() {
+	const saved: i32 = index;
+	%s index: i32 = 2;
+	let values = [3]i32{10, 20, 30};
+	let selected = values[saved];
+	if saved == 0 { print(selected); }
+}`, shadow))
+			if diag.HasErrors() {
+				t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+			}
+			fn := module.AST.Stmts[1].(*ast.FnDecl)
+			index := fn.Body.Stmts[3].(*ast.LetDecl).Value.(*ast.IndexExpr)
+			checkedIndex := module.THIR.Node(index.ID()).(*thir.Index)
+			if checkedIndex.Constant == nil || checkedIndex.Constant.Text != "0" {
+				t.Errorf("constant index = %#v, want resolved outer value 0", checkedIndex.Constant)
+			}
+			condition := fn.Body.Stmts[4].(*ast.IfStmt)
+			checkedCondition := module.THIR.Node(condition.ID()).(*thir.If)
+			if checkedCondition.ConstantCondition == nil || !*checkedCondition.ConstantCondition {
+				t.Errorf("constant condition = %v, want true from resolved outer value", checkedCondition.ConstantCondition)
+			}
+		})
+	}
+}
+
+func TestEvaluateRejectsUnboundConstantReferences(t *testing.T) {
+	module, diag := constevalModule(t, `const Value: i32 = 7;`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	ctx := project.New(".", peeper.SourceExt, diag)
+	ctx.AddModule(module)
+	evaluator := newConstantEvaluator(ctx, module, newEvidence())
+	if value, ok := evaluator.evalExpr(&ast.Ident{Name: "Value"}, nil); ok {
+		t.Fatalf("unbound identifier evaluated to %#v through name lookup", value)
 	}
 }
 
@@ -318,7 +362,7 @@ func TestEvaluateReadsForeignPublishedConstantWithoutConsumerCache(t *testing.T)
 		t.Fatal("missing consumer constant")
 	}
 	evaluator := newConstantEvaluator(ctx, consumer, newEvidence())
-	if _, ok := evaluator.evalConstSymbol(local, consumer.ModuleScope); !ok {
+	if _, ok := evaluator.evalConstSymbol(local); !ok {
 		t.Fatal("failed to lazily evaluate imported constant")
 	}
 	cached := evaluator.cache[local.ID]
@@ -420,7 +464,7 @@ func TestConstantQueryCacheIsPrivateUntilFinalization(t *testing.T) {
 	}
 
 	evaluator := newConstantEvaluator(ctx, mod, newEvidence())
-	if _, ok := evaluator.evalConstSymbol(sym, mod.ModuleScope); !ok {
+	if _, ok := evaluator.evalConstSymbol(sym); !ok {
 		t.Fatal("lazy constant evaluation failed")
 	}
 	if got := mod.SymbolIndex.ConstantValue(sym.ID); got != nil {
