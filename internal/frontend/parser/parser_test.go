@@ -1623,36 +1623,11 @@ func TestParseStructLiteralGenericComparisons(t *testing.T) {
 	}
 }
 
-func TestParseRejectsOldNamedStructLiteralsAndRecovers(t *testing.T) {
-	for _, expr := range []string{".Point{ x = 1 }", ".Box<Box<i32>>{ x = 1 }", ".pkg::Box<i32>{ x = 1 }"} {
-		t.Run(expr, func(t *testing.T) {
-			src := "fn main() { let bad = " + expr + "; let good = Point.{}; if value == " + expr + " {} return good; }"
-			mod, diag := parseTestModule(src)
-			if !diag.HasErrors() || !strings.Contains(diag.EmitAllToString(), "Type.{...}") {
-				t.Fatalf("expected migration diagnostic: %s", diag.EmitAllToString())
-			}
-			body := mod.Stmts[0].(*ast.FnDecl).Body.Stmts
-			if len(body) != 4 {
-				t.Fatalf("recovered statements = %d, want 4", len(body))
-			}
-			bad, ok := body[0].(*ast.LetDecl).Value.(*ast.BadExpr)
-			if !ok || ast.StartOf(bad).Index != strings.Index(src, expr) || ast.EndOf(bad).Index != strings.Index(src, expr)+len(expr) {
-				t.Fatalf("bad literal = %#v", bad)
-			}
-			if _, ok := body[1].(*ast.LetDecl).Value.(*ast.StructLit); !ok {
-				t.Fatal("expected recovered named literal")
-			}
-			if _, ok := body[2].(*ast.IfStmt).Cond.(*ast.BinaryExpr).Right.(*ast.BadExpr); !ok {
-				t.Fatal("expected rejected old literal in control header")
-			}
-		})
-	}
-}
-
 func TestParseRejectsStructLiteralExpressionTypesAndFields(t *testing.T) {
 	for _, expr := range []string{
 		"make().{}", "value.field.{}", "values[0].{}", "(Point).{}", "(a + b).{}", "1.{}",
 		"Point{ x = 1 }", "Point.{ .x = 1 }", "Point.{ x: 1 }", "Point.{ x = }",
+		".Point{ x = 1 }", ".Box<Box<i32>>{ x = 1 }", ".pkg::Box<i32>{ x = 1 }",
 		"Box<>.{}", "Box<1>.{}", "Point.{ x = 1",
 	} {
 		t.Run(expr, func(t *testing.T) {

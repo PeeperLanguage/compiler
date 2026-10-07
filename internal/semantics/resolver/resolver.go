@@ -327,7 +327,7 @@ func (r *resolver) resolveExpr(scope *symbols.Scope, expr ast.Expr) {
 	case *ast.AsExpr:
 		r.resolveExpr(scope, node.Expr)
 	case *ast.BadExpr:
-		r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression, "unsupported expression type", ast.LocOf(node), "")
+		return // Parser already diagnosed this error node.
 	default:
 		panic(fmt.Sprintf("resolver: unhandled expression %T", expr))
 	}

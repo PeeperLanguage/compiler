@@ -21,13 +21,12 @@ import (
 )
 
 type Parser struct {
-	filePath        string
-	stream          []token.Token
-	diag            *diagnostics.DiagnosticBag
-	pos             int
-	nodeID          uint64
-	context         []string // parsing context stack for error messages
-	isControlHeader bool
+	filePath string
+	stream   []token.Token
+	diag     *diagnostics.DiagnosticBag
+	pos      int
+	nodeID   uint64
+	context  []string // parsing context stack for error messages
 }
 
 const (
@@ -363,7 +362,7 @@ func (p *Parser) parseBindingFields() (name *ast.Ident, ty ast.TypeExpr, value a
 		// ty may be nil if type parsing failed; continue with name and value
 	}
 	if p.match(token.ASSIGN) {
-		value = p.parseExpr(precLowest)
+		value = p.parseExpr(precLowest, token.SEMICOLON)
 	}
 	end = p.consume(token.SEMICOLON, "expected ';' after statement")
 	if end == nil {
@@ -495,7 +494,7 @@ func (p *Parser) parseAttributes() []ast.Attribute {
 		)
 		if p.match(token.LPAREN) {
 			for !p.at(token.RPAREN) && !p.at(token.EOF) {
-				arg := p.parseExpr(precLowest)
+				arg := p.parseExpr(precLowest, token.RPAREN)
 				if arg != nil {
 					args = append(args, arg)
 				}

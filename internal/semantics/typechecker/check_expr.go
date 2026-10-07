@@ -171,7 +171,7 @@ func (c *checker) typeExprBase(scope *symbols.Scope, expr ast.Expr, expected typ
 		return c.typeAsExpr(scope, node)
 
 	case *ast.BadExpr:
-		return nil // resolver already diagnosed unsupported expressions
+		return &typeinfo.InvalidType{}
 
 	default:
 		panic(fmt.Sprintf("typechecker: unhandled expression %T", expr))

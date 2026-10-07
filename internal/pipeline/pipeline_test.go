@@ -2887,13 +2887,29 @@ func TestPipelineRecordsQualifiedRangeEntryAcrossTargets(t *testing.T) {
 		} {
 			t.Run(arch+"/"+test.name, func(t *testing.T) {
 				ctx, entry := importedPipelineContext(t, arch, map[string]string{
-					peeper.MainFileName:         "import \"app/values\"; fn Read(" + test.params + ") -> i64 { for value in " + test.start + "..(" + test.end + " as i64) { return value; } }",
+					peeper.MainFileName:         "import \"app/values\"; fn Read(" + test.params + ") -> i64 { for value in " + test.start + ".." + test.end + " { return value; } }",
 					"values" + peeper.SourceExt: `const Zero: i64 = 0i64; const One: i64 = 1i64;`,
 				})
 				if err := Run(ctx, entry); err != nil {
 					t.Fatal(err)
 				}
 				loop := entry.AST.Stmts[0].(*ast.FnDecl).Body.Stmts[0].(*ast.ForStmt)
+				rangeExpr := loop.Iterable.(*ast.RangeExpr)
+				for _, endpoint := range []struct {
+					expr ast.Expr
+					name string
+				}{
+					{rangeExpr.Start, strings.TrimPrefix(test.start, "values::")},
+					{rangeExpr.End, strings.TrimPrefix(test.end, "values::")},
+				} {
+					binding := entry.SymbolIndex.Symbol(endpoint.expr)
+					if binding == nil || binding.Name != endpoint.name || typeinfo.TypeText(binding.Type) != "i64" {
+						t.Fatalf("endpoint %q lost resolved i64 binding: %#v", ast.ExprText(endpoint.expr), binding)
+					}
+					if _, qualified := endpoint.expr.(*ast.ScopeResolution); qualified && binding.DefiningModule != entry.Imports["values"].ID {
+						t.Fatalf("endpoint %q binding belongs to %v, want imported owner %v", ast.ExprText(endpoint.expr), binding.DefiningModule, entry.Imports["values"].ID)
+					}
+				}
 				plan, ok := entry.THIR.Node(loop.ID()).(*thir.For).Iteration.(*thir.RangeIteration)
 				if !ok {
 					t.Fatalf("missing range plan for %T:\n%s", loop.Iterable, ctx.Diagnostics.EmitAllToString())

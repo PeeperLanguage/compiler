@@ -37,10 +37,10 @@ const (
 )
 
 // nudFunc parses a prefix (null-denotation) expression.
-type nudFunc func(p *Parser) ast.Expr
+type nudFunc func(p *Parser, boundary token.Kind) ast.Expr
 
 // ledFunc parses an infix (left-denotation) expression.
-type ledFunc func(p *Parser, left ast.Expr, prec uint8) ast.Expr
+type ledFunc func(p *Parser, left ast.Expr, prec uint8, boundary token.Kind) ast.Expr
 
 var (
 	nudLookup = map[token.Kind]nudFunc{}
@@ -59,63 +59,61 @@ func led(kind token.Kind, prec uint8, handler ledFunc) {
 
 func init() {
 	// literals & identifiers
-	nud(token.NUMBER, func(p *Parser) ast.Expr {
+	nud(token.NUMBER, func(p *Parser, _ token.Kind) ast.Expr {
 		return p.parseNumberLit("")
 	})
-	nud(token.STRING, func(p *Parser) ast.Expr {
+	nud(token.STRING, func(p *Parser, _ token.Kind) ast.Expr {
 		tok := p.advance()
 		return reg(p, &ast.StringLit{Value: tok.Literal, Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
 	})
-	nud(token.CSTRING, func(p *Parser) ast.Expr {
+	nud(token.CSTRING, func(p *Parser, _ token.Kind) ast.Expr {
 		tok := p.advance()
 		return reg(p, &ast.StringLit{Value: tok.Literal, IsCString: true, Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
 	})
-	nud(token.BYTE_CHAR, func(p *Parser) ast.Expr {
+	nud(token.BYTE_CHAR, func(p *Parser, _ token.Kind) ast.Expr {
 		tok := p.advance()
 		return reg(p, &ast.ByteLit{Value: tok.Literal, Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
 	})
-	nud(token.CHAR, func(p *Parser) ast.Expr {
+	nud(token.CHAR, func(p *Parser, _ token.Kind) ast.Expr {
 		tok := p.advance()
 		return reg(p, &ast.CharLit{Value: tok.Literal, Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
 	})
-	nud(token.NONE, func(p *Parser) ast.Expr {
+	nud(token.NONE, func(p *Parser, _ token.Kind) ast.Expr {
 		tok := p.advance()
 		return reg(p, &ast.NoneLit{Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
 	})
-	nud(token.TRUE, func(p *Parser) ast.Expr {
+	nud(token.TRUE, func(p *Parser, _ token.Kind) ast.Expr {
 		tok := p.advance()
 		return reg(p, &ast.BoolLit{Value: true, Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
 	})
-	nud(token.FALSE, func(p *Parser) ast.Expr {
+	nud(token.FALSE, func(p *Parser, _ token.Kind) ast.Expr {
 		tok := p.advance()
 		return reg(p, &ast.BoolLit{Value: false, Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
 	})
-	nud(token.AT, func(p *Parser) ast.Expr { return p.parseAddressExpr(ast.AddressRaw) })
-	nud(token.AMP, func(p *Parser) ast.Expr { return p.parseAddressExpr(ast.AddressShared) })
-	nud(token.FREE, func(p *Parser) ast.Expr { return p.parseFreeExpr() })
-	nud(token.PRINT, func(p *Parser) ast.Expr { return p.parsePrintExpr() })
-	nud(token.PRINTLN, func(p *Parser) ast.Expr { return p.parsePrintExpr() })
-	nud(token.IDENT, func(p *Parser) ast.Expr { return p.parseIdentExpr() })
+	nud(token.AT, func(p *Parser, boundary token.Kind) ast.Expr { return p.parseAddressExpr(ast.AddressRaw, boundary) })
+	nud(token.AMP, func(p *Parser, boundary token.Kind) ast.Expr { return p.parseAddressExpr(ast.AddressShared, boundary) })
+	nud(token.FREE, func(p *Parser, _ token.Kind) ast.Expr { return p.parseFreeExpr() })
+	nud(token.PRINT, func(p *Parser, _ token.Kind) ast.Expr { return p.parsePrintExpr() })
+	nud(token.PRINTLN, func(p *Parser, _ token.Kind) ast.Expr { return p.parsePrintExpr() })
+	nud(token.IDENT, func(p *Parser, boundary token.Kind) ast.Expr { return p.parseIdentExpr(boundary) })
 
 	// grouping
-	nud(token.LPAREN, func(p *Parser) ast.Expr {
+	nud(token.LPAREN, func(p *Parser, _ token.Kind) ast.Expr {
 		p.advance()
-		inner := p.parseExprWithControlHeader(precLowest, false)
-		if p.consume(token.RPAREN, "expected ')'") == nil {
-			return inner
-		}
+		inner := p.parseExpr(precLowest, token.RPAREN)
+		p.consume(token.RPAREN, "expected ')'")
 		return inner
 	})
 
 	// prefix / unary
-	nud(token.PLUS, func(p *Parser) ast.Expr { return p.parseUnaryExpr() })
-	nud(token.MINUS, func(p *Parser) ast.Expr { return p.parseUnaryExpr() })
-	nud(token.BANG, func(p *Parser) ast.Expr { return p.parseUnaryExpr() })
-	nud(token.TILDE, func(p *Parser) ast.Expr { return p.parseUnaryExpr() })
+	nud(token.PLUS, func(p *Parser, boundary token.Kind) ast.Expr { return p.parseUnaryExpr(boundary) })
+	nud(token.MINUS, func(p *Parser, boundary token.Kind) ast.Expr { return p.parseUnaryExpr(boundary) })
+	nud(token.BANG, func(p *Parser, boundary token.Kind) ast.Expr { return p.parseUnaryExpr(boundary) })
+	nud(token.TILDE, func(p *Parser, boundary token.Kind) ast.Expr { return p.parseUnaryExpr(boundary) })
 
 	// composite literal
-	nud(token.DOT, func(p *Parser) ast.Expr { return p.parseCompositeLiteral(nil) })
-	nud(token.LBRACK, func(p *Parser) ast.Expr { return p.parseArrayLiteral() })
+	nud(token.DOT, func(p *Parser, _ token.Kind) ast.Expr { return p.parseCompositeLiteral(nil) })
+	nud(token.LBRACK, func(p *Parser, _ token.Kind) ast.Expr { return p.parseArrayLiteral() })
 
 	// logical
 	led(token.PIPE_ARROW, precPipe, parsePipeExpr)
@@ -152,25 +150,25 @@ func init() {
 	led(token.PERCENT, precProduct, parseBinaryExpr)
 
 	// cast
-	led(token.AS, precCast, func(p *Parser, left ast.Expr, _ uint8) ast.Expr {
+	led(token.AS, precCast, func(p *Parser, left ast.Expr, _ uint8, _ token.Kind) ast.Expr {
 		return p.parseAsExpr(left)
 	})
 
 	// call & member
-	led(token.LPAREN, precCall, func(p *Parser, left ast.Expr, _ uint8) ast.Expr {
+	led(token.LPAREN, precCall, func(p *Parser, left ast.Expr, _ uint8, _ token.Kind) ast.Expr {
 		return p.parseCall(left)
 	})
-	led(token.LBRACK, precCall, func(p *Parser, left ast.Expr, _ uint8) ast.Expr {
+	led(token.LBRACK, precCall, func(p *Parser, left ast.Expr, _ uint8, _ token.Kind) ast.Expr {
 		return p.parseIndexExpr(left)
 	})
-	led(token.DOT, precCall, func(p *Parser, left ast.Expr, _ uint8) ast.Expr {
+	led(token.DOT, precCall, func(p *Parser, left ast.Expr, _ uint8, _ token.Kind) ast.Expr {
 		return p.parseSelector(left)
 	})
 }
 
-func parsePipeExpr(p *Parser, left ast.Expr, _ uint8) ast.Expr {
+func parsePipeExpr(p *Parser, left ast.Expr, _ uint8, boundary token.Kind) ast.Expr {
 	op := p.advance()
-	right := p.parseExpr(precPrefix)
+	right := p.parseExpr(precPrefix, boundary)
 	call, ok := right.(*ast.CallExpr)
 	if !ok || call == nil || call.IsPiped {
 		loc := source.NewLocation(p.filePath, op.Start, ast.EndOf(right))
@@ -192,24 +190,40 @@ func parsePipeExpr(p *Parser, left ast.Expr, _ uint8) ast.Expr {
 	return call
 }
 
-func (p *Parser) parseExpr(precedence uint8) ast.Expr {
-	nudHandler, ok := nudLookup[p.current().Kind]
-	if !ok {
-		loc := source.NewLocation(p.filePath, p.current().Start, p.current().End)
-		p.diag.Add(diagnostics.NewError("expected expression").WithCode(diagnostics.ErrInvalidExpression).WithPrimaryLabel(loc, fmt.Sprintf("found %s", p.current().Kind)))
-		return reg(p, &ast.BadExpr{Location: loc})
+func (p *Parser) parseExpr(precedence uint8, boundary token.Kind) ast.Expr {
+	var left ast.Expr
+	if p.at(token.LBRACE) {
+		left = p.recoverBracedLiteral(p.current().Start, boundary, false)
 	}
-	left := nudHandler(p)
 	if left == nil {
-		loc := source.NewLocation(p.filePath, p.current().Start, p.current().End)
-		return reg(p, &ast.BadExpr{Location: loc})
+		nudHandler, ok := nudLookup[p.current().Kind]
+		if !ok {
+			loc := source.NewLocation(p.filePath, p.current().Start, p.current().End)
+			p.diag.Add(diagnostics.NewError("expected expression").WithCode(diagnostics.ErrInvalidExpression).WithPrimaryLabel(loc, fmt.Sprintf("found %s", p.current().Kind)))
+			return reg(p, &ast.BadExpr{Location: loc})
+		}
+		left = nudHandler(p, boundary)
+		if left == nil {
+			loc := source.NewLocation(p.filePath, p.current().Start, p.current().End)
+			return reg(p, &ast.BadExpr{Location: loc})
+		}
 	}
 	for !p.at(token.SEMICOLON) && !p.at(token.COMMA) && !p.at(token.RPAREN) && !p.at(token.RBRACE) {
+		if p.at(token.LBRACE) {
+			switch left.(type) {
+			case *ast.Ident, *ast.ScopeResolution:
+				_, scoped := left.(*ast.ScopeResolution)
+				if bad := p.recoverBracedLiteral(ast.StartOf(left), boundary, scoped); bad != nil {
+					left = bad
+					continue
+				}
+			}
+		}
 		prec, ok := precTable[p.current().Kind]
 		if !ok || prec <= precedence {
 			break
 		}
-		left = ledLookup[p.current().Kind](p, left, prec)
+		left = ledLookup[p.current().Kind](p, left, prec, boundary)
 		if left == nil {
 			break
 		}
@@ -217,22 +231,14 @@ func (p *Parser) parseExpr(precedence uint8) ast.Expr {
 	return left
 }
 
-func (p *Parser) parseExprWithControlHeader(precedence uint8, enabled bool) ast.Expr {
-	controlHeader := p.isControlHeader
-	p.isControlHeader = enabled
-	expr := p.parseExpr(precedence)
-	p.isControlHeader = controlHeader
-	return expr
-}
-
-func (p *Parser) parseUnaryExpr() ast.Expr {
+func (p *Parser) parseUnaryExpr(boundary token.Kind) ast.Expr {
 	tok := p.advance()
 	if (tok.Kind == token.PLUS || tok.Kind == token.MINUS) && p.at(token.NUMBER) {
 		if literal, err := numeric.ParseLiteral(p.current().Literal); err == nil && literal.ExplicitType != "" {
 			return p.parseNumberLit(tok.Literal)
 		}
 	}
-	expr := p.parseExpr(precPrefix)
+	expr := p.parseExpr(precPrefix, boundary)
 	if expr == nil {
 		expr = reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, tok.Start, tok.End)})
 	}
@@ -268,12 +274,12 @@ func (p *Parser) parseNumberLit(sign string) ast.Expr {
 	return reg(p, &ast.NumberLit{Value: literal.Value, ExplicitType: literal.ExplicitType, Location: loc})
 }
 
-func (p *Parser) parseAddressExpr(mode ast.AddressMode) ast.Expr {
+func (p *Parser) parseAddressExpr(mode ast.AddressMode, boundary token.Kind) ast.Expr {
 	tok := p.advance()
 	if mode == ast.AddressShared && p.match(token.MUT) {
 		mode = ast.AddressMutable
 	}
-	expr := p.parseExpr(precPrefix)
+	expr := p.parseExpr(precPrefix, boundary)
 	if expr == nil {
 		loc := source.NewLocation(p.filePath, tok.Start, tok.End)
 		return reg(p, &ast.BadExpr{Location: loc})
@@ -290,7 +296,7 @@ func (p *Parser) parseFreeExpr() ast.Expr {
 	if p.consume(token.LPAREN, "expected '(' after 'free'") == nil {
 		return reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, start.Start, start.End)})
 	}
-	expr := p.parseExpr(precLowest)
+	expr := p.parseExpr(precLowest, token.RPAREN)
 	end := p.expectClose(start.Start, token.RPAREN, "(")
 	endPos := ast.EndOf(expr)
 	if end != nil {
@@ -307,7 +313,7 @@ func (p *Parser) parsePrintExpr() ast.Expr {
 	if p.consume(token.LPAREN, "expected '(' after 'print'") == nil {
 		return reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, start.Start, start.End)})
 	}
-	expr := p.parseExpr(precLowest)
+	expr := p.parseExpr(precLowest, token.RPAREN)
 	end := p.expectClose(start.Start, token.RPAREN, "(")
 	endPos := ast.EndOf(expr)
 	if end != nil {
@@ -316,12 +322,12 @@ func (p *Parser) parsePrintExpr() ast.Expr {
 	return reg(p, &ast.PrintExpr{Expr: expr, AppendsNewline: start.Kind == token.PRINTLN, Location: source.NewLocation(p.filePath, start.Start, endPos)})
 }
 
-func parseBinaryExpr(p *Parser, left ast.Expr, prec uint8) ast.Expr {
+func parseBinaryExpr(p *Parser, left ast.Expr, prec uint8, boundary token.Kind) ast.Expr {
 	op := p.advance()
 	if op == nil {
 		return left
 	}
-	right := p.parseExpr(prec)
+	right := p.parseExpr(prec, boundary)
 	if right == nil {
 		right = reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, op.Start, op.End)})
 	}
@@ -333,7 +339,7 @@ func parseBinaryExpr(p *Parser, left ast.Expr, prec uint8) ast.Expr {
 	})
 }
 
-func parseIsExpr(p *Parser, left ast.Expr, _ uint8) ast.Expr {
+func parseIsExpr(p *Parser, left ast.Expr, _ uint8, _ token.Kind) ast.Expr {
 	p.advance()
 	casePath := p.parseVariantCasePath()
 	if casePath == nil {
@@ -354,7 +360,7 @@ func (p *Parser) parseCall(callee ast.Expr) ast.Expr {
 	var args []ast.Expr
 	if !p.at(token.RPAREN) {
 		for {
-			arg := p.parseExprWithControlHeader(precLowest, false)
+			arg := p.parseExpr(precLowest, token.RPAREN)
 			if arg != nil {
 				args = append(args, arg)
 			}
@@ -386,7 +392,7 @@ func (p *Parser) parseIndexExpr(left ast.Expr) ast.Expr {
 	if start == nil {
 		return left
 	}
-	index := p.parseIndexOperand()
+	index := p.parseIndexOperand(token.RBRACK)
 	end := p.expectClose(start.Start, token.RBRACK, "[")
 	var fallbackEnd source.Position
 	if end == nil {
@@ -404,24 +410,24 @@ func (p *Parser) parseIndexExpr(left ast.Expr) ast.Expr {
 	})
 }
 
-func (p *Parser) parseIndexOperand() ast.Expr {
+func (p *Parser) parseIndexOperand(boundary token.Kind) ast.Expr {
 	if p.at(token.DOTDOT) || p.at(token.DOTDOT_EQ) {
-		return p.parseRangeExpr(nil)
+		return p.parseRangeExpr(nil, boundary)
 	}
-	start := p.parseExprWithControlHeader(precLowest, false)
+	start := p.parseExpr(precLowest, boundary)
 	if p.at(token.DOTDOT) || p.at(token.DOTDOT_EQ) {
-		return p.parseRangeExpr(start)
+		return p.parseRangeExpr(start, boundary)
 	}
 	return start
 }
 
-func (p *Parser) parseRangeExpr(start ast.Expr) ast.Expr {
+func (p *Parser) parseRangeExpr(start ast.Expr, boundary token.Kind) ast.Expr {
 	tok := p.current()
 	isEndExclusive := tok.Kind == token.DOTDOT
 	p.advance()
 	var end ast.Expr
 	if !p.at(token.RBRACK) {
-		end = p.parseExprWithControlHeader(precLowest, false)
+		end = p.parseExpr(precLowest, boundary)
 	} else if tok.Kind == token.DOTDOT_EQ {
 		loc := source.NewLocation(p.filePath, tok.Start, tok.End)
 		p.diag.Add(diagnostics.NewError("inclusive range requires an end bound").
@@ -479,7 +485,7 @@ func (p *Parser) parseArrayLiteral() ast.Expr {
 	}
 	values, end, ok := parseBracedItemList(p, "expected '{' after array literal type", "expected '}' after array literal",
 		func() (ast.Expr, bool) {
-			value := p.parseExprWithControlHeader(precLowest, false)
+			value := p.parseExpr(precLowest, token.RBRACE)
 			return value, value != nil
 		})
 	if !ok {
@@ -509,35 +515,21 @@ func (p *Parser) parseArrayLiteral() ast.Expr {
 	})
 }
 
-func (p *Parser) parseIdentExpr() ast.Expr {
-	expr := p.parseIdentPath()
+func (p *Parser) parseIdentExpr(boundary token.Kind) ast.Expr {
+	expr := p.parseIdentPath(boundary)
 	path, ok := expr.(*ast.ScopeResolution)
-	if !ok {
+	if !ok || !p.match(token.WITH) {
 		return expr
 	}
-	if p.match(token.WITH) {
-		payload := p.parseExpr(precLowest)
-		return reg(p, &ast.VariantLit{
-			Case:     path,
-			Payload:  payload,
-			Location: source.NewLocation(p.filePath, ast.StartOf(path), ast.EndOf(payload)),
-		})
-	}
-	if !p.at(token.LBRACE) {
-		return path
-	}
-	if p.isControlHeader && !p.variantLiteralPrecedesControlBody() {
-		return path
-	}
-	_, end, _ := p.parseStructLiteralFields("expected '{' after enum variant", "expected '}' after enum variant literal")
-	location := source.NewLocation(p.filePath, ast.StartOf(path), end.End)
-	p.diag.Add(diagnostics.NewError("enum variant payload requires 'with'").
-		WithCode(diagnostics.ErrInvalidExpression).
-		WithPrimaryLabel(location, "write `Enum::Variant with .{ ... }`"))
-	return reg(p, &ast.BadExpr{Location: location})
+	payload := p.parseExpr(precLowest, boundary)
+	return reg(p, &ast.VariantLit{
+		Case:     path,
+		Payload:  payload,
+		Location: source.NewLocation(p.filePath, ast.StartOf(path), ast.EndOf(payload)),
+	})
 }
 
-func (p *Parser) parseIdentPath() ast.Expr {
+func (p *Parser) parseIdentPath(boundary token.Kind) ast.Expr {
 	next := p.next().Kind
 	if next != token.DCOLON &&
 		!(next == token.LT && p.typeArgumentsPrecedePathOrLiteral()) &&
@@ -554,11 +546,25 @@ func (p *Parser) parseIdentPath() ast.Expr {
 	if path, ok := typ.(*ast.ScopeResolution); ok {
 		return path
 	}
+	if p.at(token.LBRACE) {
+		if bad := p.recoverBracedLiteral(ast.StartOf(typ), boundary, false); bad != nil {
+			return bad
+		}
+		message := "expected value expression"
+		if applied, ok := typ.(*ast.AppliedType); ok && len(applied.TypeArgs) > 0 {
+			message += " after type arguments"
+		}
+		p.diag.Add(diagnostics.NewError(message).
+			WithCode(diagnostics.ErrInvalidExpression).
+			WithPrimaryLabel(ast.LocOf(typ), "expected a value here").
+			WithHelp("if constructing a struct, insert '.' before '{'"))
+		return reg(p, &ast.BadExpr{Location: ast.LocOf(typ)})
+	}
 	return nil
 }
 
 func (p *Parser) parseVariantCasePath() *ast.ScopeResolution {
-	expr := p.parseIdentPath()
+	expr := p.parseIdentPath(token.FATARROW)
 	path, ok := expr.(*ast.ScopeResolution)
 	if ok {
 		return path
@@ -571,24 +577,6 @@ func (p *Parser) parseVariantCasePath() *ast.ScopeResolution {
 		WithCode(diagnostics.ErrInvalidExpression).
 		WithPrimaryLabel(loc, "write `Enum::Variant`"))
 	return nil
-}
-
-func (p *Parser) variantLiteralPrecedesControlBody() bool {
-	depth := 0
-	for index := p.pos; index < len(p.stream); index++ {
-		switch p.stream[index].Kind {
-		case token.LBRACE:
-			depth++
-		case token.RBRACE:
-			depth--
-			if depth == 0 {
-				return index+1 < len(p.stream) && p.stream[index+1].Kind == token.LBRACE
-			}
-		case token.EOF:
-			return false
-		}
-	}
-	return false
 }
 
 func (p *Parser) typeArgumentsPrecedePathOrLiteral() bool {
@@ -609,6 +597,7 @@ func (p *Parser) typeArgumentsPrecedePathOrLiteral() bool {
 		}
 		if depth == 0 {
 			return index+1 < len(p.stream) && (p.stream[index+1].Kind == token.DCOLON ||
+				p.stream[index+1].Kind == token.LBRACE ||
 				(index+2 < len(p.stream) && p.stream[index+1].Kind == token.DOT && p.stream[index+2].Kind == token.LBRACE))
 		}
 	}
@@ -640,27 +629,7 @@ func (p *Parser) parseCompositeLiteral(typ ast.TypeExpr) ast.Expr {
 	if typ != nil {
 		startPos = ast.StartOf(typ)
 	}
-	oldSpelling := typ == nil && p.at(token.IDENT)
-	if oldSpelling {
-		typ = p.parseTypeExpr()
-	}
-	fields, end, _ := p.parseStructLiteralFields("expected '{' after '.'", "expected '}' after composite literal")
-	location := source.NewLocation(p.filePath, startPos, end.End)
-	if oldSpelling {
-		p.diag.Add(diagnostics.NewError("named struct literals use Type.{...}, not .Type{...}").
-			WithCode(diagnostics.ErrInvalidExpression).
-			WithPrimaryLabel(location, "write `Type.{...}`; keep fields as `x = value`"))
-		return reg(p, &ast.BadExpr{Location: location})
-	}
-	return reg(p, &ast.StructLit{
-		Type:     typ,
-		Fields:   fields,
-		Location: location,
-	})
-}
-
-func (p *Parser) parseStructLiteralFields(openerMsg, itemMsg string) ([]ast.StructLitField, *token.Token, bool) {
-	return parseBracedItemList(p, openerMsg, itemMsg,
+	fields, end, ok := parseBracedItemList(p, "expected '{' after '.'", "expected '}' after composite literal",
 		func() (ast.StructLitField, bool) {
 			name := p.parseIdent()
 			if name == nil {
@@ -669,7 +638,7 @@ func (p *Parser) parseStructLiteralFields(openerMsg, itemMsg string) ([]ast.Stru
 			if p.consume(token.ASSIGN, "expected '=' after struct literal field name") == nil {
 				return ast.StructLitField{}, false
 			}
-			value := p.parseExprWithControlHeader(precLowest, false)
+			value := p.parseExpr(precLowest, token.RBRACE)
 			if value == nil {
 				return ast.StructLitField{}, false
 			}
@@ -679,6 +648,15 @@ func (p *Parser) parseStructLiteralFields(openerMsg, itemMsg string) ([]ast.Stru
 				Location: source.NewLocation(p.filePath, ast.StartOf(name), ast.EndOf(value)),
 			}, true
 		})
+	location := source.NewLocation(p.filePath, startPos, end.End)
+	if !ok {
+		return reg(p, &ast.BadExpr{Location: location})
+	}
+	return reg(p, &ast.StructLit{
+		Type:     typ,
+		Fields:   fields,
+		Location: location,
+	})
 }
 
 func (p *Parser) parseIdent() *ast.Ident {

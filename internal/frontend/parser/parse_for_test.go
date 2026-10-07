@@ -1,11 +1,11 @@
 package parser
 
 import (
-	"compiler/internal/source"
 	"strings"
 	"testing"
 
 	"compiler/internal/frontend/ast"
+	"compiler/internal/source"
 )
 
 func parseForBody(t *testing.T, src string) *ast.ForStmt {
@@ -63,6 +63,84 @@ return 0;
 	}
 	if _, ok := forStmt.Iterable.(*ast.RangeExpr); !ok {
 		t.Fatalf("expected range iterable, got %#v", forStmt.Iterable)
+	}
+}
+
+func TestParseForInQualifiedRangeEndpoints(t *testing.T) {
+	for _, test := range []struct {
+		name, start, end string
+	}{
+		{name: "ascending", start: "values::Zero", end: "values::One"},
+		{name: "equal", start: "values::Zero", end: "values::Zero"},
+		{name: "reversed", start: "values::One", end: "values::Zero"},
+		{name: "runtime", start: "start", end: "values::One"},
+	} {
+		for _, bindings := range []string{"value", "index, value"} {
+			t.Run(test.name+"/"+bindings, func(t *testing.T) {
+				src := "fn main() -> i32 { for " + bindings + " in " + test.start + ".." + test.end + " { return value; } return 0; }"
+				loop := parseForBody(t, src)
+				rangeExpr, ok := loop.Iterable.(*ast.RangeExpr)
+				if !ok || !rangeExpr.IsEndExclusive {
+					t.Fatalf("iterable = %#v, want exclusive range expression", loop.Iterable)
+				}
+				for _, endpoint := range []struct {
+					expr  ast.Expr
+					text  string
+					start int
+				}{
+					{rangeExpr.Start, test.start, strings.Index(src, test.start)},
+					{rangeExpr.End, test.end, strings.LastIndex(src, test.end)},
+				} {
+					if endpoint.expr == nil || endpoint.expr.ID() == source.ParsedNodeID(0) {
+						t.Fatalf("endpoint %q lost registered node", endpoint.text)
+					}
+					if got := ast.ExprText(endpoint.expr); got != endpoint.text {
+						t.Fatalf("endpoint = %q, want %q", got, endpoint.text)
+					}
+					if strings.Contains(endpoint.text, "::") {
+						if _, ok := endpoint.expr.(*ast.ScopeResolution); !ok {
+							t.Fatalf("endpoint = %T, want qualified path", endpoint.expr)
+						}
+					}
+					if ast.StartOf(endpoint.expr).Index != endpoint.start || ast.EndOf(endpoint.expr).Index != endpoint.start+len(endpoint.text) {
+						t.Fatalf("endpoint %q location = %#v, want [%d, %d)", endpoint.text, ast.LocOf(endpoint.expr), endpoint.start, endpoint.start+len(endpoint.text))
+					}
+				}
+				if loop.Body == nil || len(loop.Body.Stmts) != 1 || ast.StartOf(loop.Body).Index != strings.Index(src, "{ return") {
+					t.Fatalf("loop body = %#v, want separate return block", loop.Body)
+				}
+			})
+		}
+	}
+}
+
+func TestParseForInKeepsDelimitedExpressionContexts(t *testing.T) {
+	for _, iterable := range []string{
+		"values::Items",
+		"values[values::Zero..values::One]",
+		"Result::Ok with .{ value = 1 }",
+		"values[Result::Ok with .{ value = 1 }]",
+	} {
+		t.Run(iterable, func(t *testing.T) {
+			loop := parseForBody(t, "fn main() { for value in "+iterable+" {} }")
+			if loop.Body == nil || len(loop.Body.Stmts) != 0 {
+				t.Fatalf("loop body = %#v, want separate empty block", loop.Body)
+			}
+		})
+	}
+	for _, expr := range []string{
+		"Result::Ok{ value = 1 }",
+		"values[Result::Ok{ value = 1 }]",
+		"values[0..Result::Ok{ value = 1 }]",
+		"accept(Result::Ok{ value = 1 })",
+		"(Result::Ok{ value = 1 })",
+	} {
+		t.Run("rejected/"+expr, func(t *testing.T) {
+			_, diag := parseTestModule("fn main() { for value in " + expr + " {} }")
+			if diag.ErrorCount() != 1 || !strings.Contains(diag.EmitAllToString(), "literal requires '.' or 'with'") {
+				t.Fatalf("expected one literal-introducer diagnostic:\n%s", diag.EmitAllToString())
+			}
+		})
 	}
 }
 

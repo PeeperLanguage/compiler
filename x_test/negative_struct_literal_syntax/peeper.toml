@@ -1,0 +1,8 @@
+name = "negative_struct_literal_syntax"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["P0002", "expected '{' after '.'"]
+stderr_excludes = ["panic:"]

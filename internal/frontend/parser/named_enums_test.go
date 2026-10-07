@@ -224,23 +224,26 @@ func TestParseVariantLiteralInIfHeader(t *testing.T) {
 	}
 }
 
-func TestParseDiagnosesOldBraceOnlyVariantLiteral(t *testing.T) {
-	mod, diag := parseTestModule(`fn check(value: Result<i32>) {
-	if value == Result<i32>::Ok{ value = 1 } { println("ok"); }
-	if pkg::ready { println("ready"); }
-}`)
-	if !diag.HasErrors() {
-		t.Fatal("expected old variant literal diagnostic")
-	}
-	if output := diag.EmitAllToString(); !strings.Contains(output, "enum variant payload requires 'with'") {
-		t.Fatalf("unexpected diagnostics:\n%s", output)
-	}
-	body := mod.Stmts[0].(*ast.FnDecl).Body
-	if len(body.Stmts) != 2 {
-		t.Fatalf("statements = %d, want recovery to retain both if statements", len(body.Stmts))
-	}
-	ordinary := body.Stmts[1].(*ast.IfStmt)
-	if got := ast.ExprText(ordinary.Cond); got != "pkg::ready" {
-		t.Fatalf("ordinary qualified condition = %q", got)
+func TestParseQualifiedControlHeadersBeforeStandaloneBlocks(t *testing.T) {
+	for _, statement := range []string{
+		"if pkg::ready {}",
+		"for pkg::ready {}",
+		"for value in values::Zero..values::One {}",
+		"match Result::Pending { Result::Pending => {} }",
+	} {
+		t.Run(statement, func(t *testing.T) {
+			mod, diag := parseTestModule("fn check() { " + statement + " { println(1); } }")
+			if diag.HasErrors() {
+				t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+			}
+			body := mod.Stmts[0].(*ast.FnDecl).Body
+			if len(body.Stmts) != 2 {
+				t.Fatalf("statements = %d, want control statement and separate block", len(body.Stmts))
+			}
+			block, ok := body.Stmts[1].(*ast.BlockStmt)
+			if !ok || len(block.Stmts) != 1 {
+				t.Fatalf("following statement = %#v, want separate block", body.Stmts[1])
+			}
+		})
 	}
 }

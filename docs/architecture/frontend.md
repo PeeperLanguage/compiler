@@ -156,7 +156,7 @@ ranges must retain the same one-based convention.
 ### Shared state: `parser/parser.go`
 
 `Parser` stores the file path, token stream, diagnostic bag, current token index,
-next AST node ID, a context stack, and the `controlHeader` flag. `New` receives
+next AST node ID, and a context stack. `New` receives
 the already-tokenized stream; the lexer is not called by the parser.
 
 `current`, `next`, and `prev` inspect the stream without advancing. `advance`
@@ -255,9 +255,25 @@ first call argument and marks the call `Piped`; it rejects method targets.
 
 Identifier paths can represent scoped names, generic applications, composite
 literals, and enum variants. `parseVariantCasePath` requires a fully named path
-for enum cases. Control-header parsing uses `controlHeader` to distinguish a
-following block from a composite literal. Array literals parse a type and a
-braced value list; `_` infers length from the number of values.
+for enum cases. Enum payload construction requires `with`; named struct literals
+require `Type.{...}` and anonymous struct literals use `.{...}`. A qualified name
+followed by a valid body leaves that brace for the enclosing statement parser.
+Array literals parse a type and a braced value list; `_` infers length from the
+number of values.
+
+Expression parsing carries the caller's expected delimiter for recovery.
+Operators inherit it; calls, grouping, indexes, and literal values establish
+their own boundaries. `recoverBracedLiteral` diagnoses a missing literal
+introducer, scans nested braces/parentheses/brackets, and returns a registered
+`BadExpr` before normal postfix/operator parsing resumes. Qualified names receive
+both struct and enum syntax suggestions because parsing cannot resolve their
+meaning. Control-header recovery requires field-shaped contents without
+top-level statement separators and a following body or expression continuation;
+two adjacent blocks alone do not trigger it. Unclosed groups stop conservatively
+at statement boundaries, mismatched closing delimiters, or a following argument.
+No stored header flag or global diagnostic suppression is used.
+Resolver leaves parser-owned `BadExpr` diagnostics intact; typechecking records
+invalid type for these nodes rather than issuing another syntax error.
 
 Numeric interpretation is delegated to `numeric.ParseLiteral`. The parser adds
 an invalid-number diagnostic on failure and a leading-zero warning for decimal

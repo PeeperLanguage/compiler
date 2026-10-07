@@ -123,7 +123,7 @@ func (p *Parser) parseIfStmt() ast.Stmt {
 	if start == nil {
 		return nil
 	}
-	cond := p.parseExprWithControlHeader(precLowest, true)
+	cond := p.parseExpr(precLowest, token.LBRACE)
 	if cond == nil {
 		cond = reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, start.Start, start.End)})
 	}
@@ -187,11 +187,11 @@ func (p *Parser) parseForStmt() ast.Stmt {
 	var index, value *ast.Ident
 	var iterable, cond ast.Expr
 	if !p.at(token.LBRACE) {
-		head := p.parseExprWithControlHeader(precLowest, true)
+		head := p.parseExpr(precLowest, token.LBRACE)
 		switch {
 		case head != nil && p.at(token.IN):
 			p.advance()
-			iterable = p.parseIndexOperand()
+			iterable = p.parseIndexOperand(token.LBRACE)
 			value = p.forInBindingName(head)
 		case head != nil && p.at(token.COMMA):
 			// `for i, v in expr` — comma commits to the two-binding form even
@@ -204,7 +204,7 @@ func (p *Parser) parseForStmt() ast.Stmt {
 				value = reg(p, &ast.Ident{Name: "", Location: source.NewLocation(p.filePath, current.Start, current.End)})
 			}
 			if p.match(token.IN) {
-				iterable = p.parseIndexOperand()
+				iterable = p.parseIndexOperand(token.LBRACE)
 			} else {
 				p.consume(token.IN, "expected 'in' after loop variables")
 				current := p.current()
@@ -285,7 +285,7 @@ func (p *Parser) parseMatchStmt() ast.Stmt {
 	if start == nil {
 		return nil
 	}
-	subject := p.parseExprWithControlHeader(precLowest, true)
+	subject := p.parseExpr(precLowest, token.LBRACE)
 	open := p.consume(token.LBRACE, "expected '{' after match subject")
 	if open == nil {
 		return reg(p, &ast.MatchStmt{Subject: subject, Location: source.NewLocation(p.filePath, start.Start, ast.EndOf(subject))})
@@ -406,7 +406,7 @@ func (p *Parser) parseReturnStmt() ast.Stmt {
 	}
 	var value ast.Expr
 	if !p.at(token.SEMICOLON) {
-		value = p.parseExpr(precLowest)
+		value = p.parseExpr(precLowest, token.SEMICOLON)
 	}
 	end := p.consume(token.SEMICOLON, "expected ';' after return")
 	if end == nil {
@@ -420,12 +420,12 @@ func (p *Parser) parseReturnStmt() ast.Stmt {
 }
 
 func (p *Parser) parseExprStmt() ast.Stmt {
-	expr := p.parseExpr(precLowest)
+	expr := p.parseExpr(precLowest, token.SEMICOLON)
 	if expr == nil {
 		return nil
 	}
 	if p.match(token.ASSIGN) {
-		value := p.parseExpr(precLowest)
+		value := p.parseExpr(precLowest, token.SEMICOLON)
 		if value == nil {
 			return nil
 		}
