@@ -491,9 +491,6 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 	if module.MIR == nil {
 		return false
 	}
-	// Emission assumes the MIR it is handed is well formed, and says so by
-	// panicking. The validator above is what makes that assumption safe, so
-	// nothing may reach emission once an error is recorded.
 	if diag != nil && diag.HasErrors() {
 		return false
 	}
