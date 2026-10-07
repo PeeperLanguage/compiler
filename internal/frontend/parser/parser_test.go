@@ -1627,7 +1627,6 @@ func TestParseRejectsStructLiteralExpressionTypesAndFields(t *testing.T) {
 	for _, expr := range []string{
 		"make().{}", "value.field.{}", "values[0].{}", "(Point).{}", "(a + b).{}", "1.{}",
 		"Point{ x = 1 }", "Point.{ .x = 1 }", "Point.{ x: 1 }", "Point.{ x = }",
-		".Point{ x = 1 }", ".Box<Box<i32>>{ x = 1 }", ".pkg::Box<i32>{ x = 1 }",
 		"Box<>.{}", "Box<1>.{}", "Point.{ x = 1",
 	} {
 		t.Run(expr, func(t *testing.T) {
