@@ -17,6 +17,7 @@ _gen
 .tmpdebug
 _tmp
 *.localplan.md
+backlog.md
 *.html
 playground
 installers/dist
