@@ -138,13 +138,6 @@ Each edit needs source/path verification and documentation diff validation.
 
 ## Next
 
-### [ ] #133 — Explicit struct literals
-
-Issue: https://github.com/PeeperLanguage/compiler/issues/133  
-Review grammar publication, migration status, parser/typechecker behavior, and
-language-support documentation. Coordinate with #157 before changing overlapping
-control-header or literal grammar.
-
 ### [ ] #122 — Windows installer end-to-end validation
 
 Issue: https://github.com/PeeperLanguage/compiler/issues/122  
@@ -193,7 +186,8 @@ Requires lifetime/region ownership design.
 ### [ ] #134 — LSP struct-literal snippets
 
 Issue: https://github.com/PeeperLanguage/compiler/issues/134  
-Coordinate with #133 grammar and type-shape decisions.
+Add completion for current `Type.{...}` syntax using existing required/defaulted
+field rules.
 
 ## Later
 
