@@ -14,6 +14,7 @@ import (
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/graph"
+	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/mir"
 	"compiler/internal/ir/thir"
@@ -858,6 +859,45 @@ func TestPipelineSkipsIncompleteAnalysisValidationDuringRecovery(t *testing.T) {
 	}
 	if hasDiagnosticCode(diag, diagnostics.ErrInvalidEvidence) {
 		t.Fatalf("source-error recovery reported invalid evidence:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestPipelineStopsBeforeBackendWhenEmitterRejectsMalformedMIR(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	types := ir.NewTypeTable()
+	voidType := types.Intern(ir.Type{Kind: ir.TypeVoid})
+	i32 := types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
+	var value *mir.RefName
+	broken := &mir.Module{
+		Name: "broken", Types: types,
+		Funcs: []*mir.Function{{
+			Name: "broken", ReturnType: voidType, EntryID: 0,
+			Blocks: []*mir.Block{{
+				ID: 0,
+				Instrs: []mir.Instr{&mir.Store{
+					Place: &mir.Place{Root: &mir.RefName{Type: i32}, Type: i32}, Value: value,
+				}},
+				Term: &mir.Ret{},
+			}},
+		}},
+	}
+
+	ctx := project.NewWithConfig(project.Config{RootDir: ".", Extension: peeper.SourceExt}, diag)
+	entry := &module.Module{
+		ID:    moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "broken"},
+		Phase: phase.MIR, THIR: &thir.Module{}, CFG: &cfg.Module{}, MIR: broken,
+	}
+	if advanceModulePhase(ctx, entry, diag) {
+		t.Fatal("advanceModulePhase() advanced after emitter rejected malformed MIR")
+	}
+	if !diag.HasErrors() || !strings.Contains(diag.EmitAllToString(), "MIR is malformed") {
+		t.Fatalf("diagnostics = %q, want malformed MIR diagnostic", diag.EmitAllToString())
+	}
+	if entry.Phase != phase.MIR {
+		t.Fatalf("phase = %v, want MIR", entry.Phase)
+	}
+	if entry.LLVMIR != "" {
+		t.Fatalf("LLVM IR = %q, want no emission after MIR validation error", entry.LLVMIR)
 	}
 }
 

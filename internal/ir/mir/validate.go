@@ -134,7 +134,7 @@ func validateInstruction(types *ir.TypeTable, fn *Function, block *Block, index 
 	case *Store:
 		problems := validatePlace(types, node.Place, where+" store")
 		problems = append(problems, validateValueRef(types, node.Value, where+" store value")...)
-		if node.Place != nil && node.Value != nil && node.Place.Type != node.Value.TypeID() {
+		if node.Place != nil && !typednil.IsNil(node.Value) && node.Place.Type != node.Value.TypeID() {
 			problems = append(problems, fmt.Sprintf("%s stores type#%d into place type#%d", where, node.Value.TypeID(), node.Place.Type))
 		}
 		return problems
@@ -150,7 +150,7 @@ func validateInstruction(types *ir.TypeTable, fn *Function, block *Block, index 
 			if !arrayOK || arrayType.Kind != ir.TypeArray || arrayType.Length != "" {
 				problems = append(problems, fmt.Sprintf("%s operates on non-dynamic-array type#%d", where, node.ArrayType))
 			}
-			if node.Array != nil {
+			if !typednil.IsNil(node.Array) {
 				carrier, carrierOK := types.Type(node.Array.TypeID())
 				if !carrierOK || carrier.Kind != ir.TypeReference || carrier.Elem != node.ArrayType {
 					problems = append(problems, fmt.Sprintf("%s array value type#%d does not reference array type#%d", where, node.Array.TypeID(), node.ArrayType))
@@ -179,14 +179,14 @@ func validateTerminator(types *ir.TypeTable, fn *Function, block *Block, blocks 
 	switch term := block.Term.(type) {
 	case *Branch:
 		problems = append(problems, validateValueRef(types, term.Cond, where+" branch condition")...)
-		if term.Cond != nil && types != nil {
+		if !typednil.IsNil(term.Cond) && types != nil {
 			if typ, ok := types.Type(term.Cond.TypeID()); !ok || typ.Kind != ir.TypeBool {
 				problems = append(problems, fmt.Sprintf("%s branches on non-bool type#%d", where, term.Cond.TypeID()))
 			}
 		}
 	case *SwitchVariant:
 		problems = append(problems, validateValueRef(types, term.Value, where+" variant switch value")...)
-		if term.Value != nil && types != nil {
+		if !typednil.IsNil(term.Value) && types != nil {
 			if variant, ok := types.Type(term.Value.TypeID()); !ok || variant.Kind != ir.TypeVariant {
 				problems = append(problems, fmt.Sprintf("%s switches on non-variant type#%d", where, term.Value.TypeID()))
 			} else {
@@ -215,6 +215,9 @@ func validateTerminator(types *ir.TypeTable, fn *Function, block *Block, blocks 
 			break
 		}
 		problems = append(problems, validateValueRef(types, term.Value, where+" return value")...)
+		if typednil.IsNil(term.Value) {
+			break
+		}
 		if returnType.Kind == ir.TypeVoid {
 			problems = append(problems, fmt.Sprintf("%s returns a value from void function", where))
 		} else if term.Value.TypeID() != fn.ReturnType {
@@ -326,7 +329,7 @@ func validateValueExpr(types *ir.TypeTable, expr ValueExpr, where string) []stri
 		}
 	case *Field:
 		problems = append(problems, validateValueRef(types, node.Base, where+" field base")...)
-		if node.Base != nil && types != nil {
+		if !typednil.IsNil(node.Base) && types != nil {
 			if base, ok := types.Type(node.Base.TypeID()); !ok || base.Kind != ir.TypeStruct || node.Index < 0 || node.Index >= len(base.Fields) {
 				problems = append(problems, fmt.Sprintf("%s selects invalid field %d from type#%d", where, node.Index, node.Base.TypeID()))
 			} else if base.Fields[node.Index].Type != node.Type {
@@ -347,7 +350,7 @@ func validateValueExpr(types *ir.TypeTable, expr ValueExpr, where string) []stri
 			problems = append(problems, validateValueRef(types, node.Allocator, where+" allocator")...)
 		}
 		if types != nil {
-			if allocated, ok := types.Type(node.Type); ok && allocated.Kind == ir.TypeOwnedPtr && node.Value != nil && allocated.Elem != node.Value.TypeID() {
+			if allocated, ok := types.Type(node.Type); ok && allocated.Kind == ir.TypeOwnedPtr && !typednil.IsNil(node.Value) && allocated.Elem != node.Value.TypeID() {
 				problems = append(problems, fmt.Sprintf("%s owns type#%d but allocates type#%d", where, allocated.Elem, node.Value.TypeID()))
 			}
 		}
@@ -368,7 +371,7 @@ func validateValueExpr(types *ir.TypeTable, expr ValueExpr, where string) []stri
 		for index, slot := range node.Slots {
 			problems = append(problems, validateValueRef(types, slot, fmt.Sprintf("%s interface slot %d", where, index))...)
 			method, ok := types.InterfaceMethod(node.Type, index)
-			if ok && slot != nil && slot.TypeID() != method.SlotType {
+			if ok && !typednil.IsNil(slot) && slot.TypeID() != method.SlotType {
 				problems = append(problems, fmt.Sprintf("%s interface slot %d has type#%d, want published type#%d", where, index, slot.TypeID(), method.SlotType))
 			}
 		}
@@ -391,7 +394,7 @@ func validateCall(types *ir.TypeTable, call *Call, where string) []string {
 	for index, arg := range call.Args {
 		problems = append(problems, validateValueRef(types, arg, fmt.Sprintf("%s argument %d", where, index))...)
 	}
-	if call.Callee == nil || types == nil {
+	if typednil.IsNil(call.Callee) || types == nil {
 		return problems
 	}
 	function, ok := types.Type(call.Callee.TypeID())
@@ -406,7 +409,7 @@ func validateCall(types *ir.TypeTable, call *Call, where string) []string {
 		return problems
 	}
 	for index, arg := range call.Args {
-		if arg != nil && arg.TypeID() != function.Params[index] {
+		if !typednil.IsNil(arg) && arg.TypeID() != function.Params[index] {
 			problems = append(problems, fmt.Sprintf("%s argument %d has type#%d, want type#%d", where, index, arg.TypeID(), function.Params[index]))
 		}
 	}
@@ -422,7 +425,7 @@ func validateInterfaceCall(types *ir.TypeTable, call *InterfaceCall, where strin
 	for index, arg := range call.Args {
 		problems = append(problems, validateValueRef(types, arg, fmt.Sprintf("%s interface argument %d", where, index))...)
 	}
-	if call.Base == nil || types == nil {
+	if typednil.IsNil(call.Base) || types == nil {
 		return problems
 	}
 	method, ok := types.InterfaceMethod(call.Base.TypeID(), call.Slot)
@@ -446,7 +449,7 @@ func validateInterfaceCall(types *ir.TypeTable, call *InterfaceCall, where strin
 	}
 	for index, arg := range call.Args {
 		param := index + 1
-		if param < len(slotType.Params) && arg != nil && arg.TypeID() != slotType.Params[param] {
+		if param < len(slotType.Params) && !typednil.IsNil(arg) && arg.TypeID() != slotType.Params[param] {
 			problems = append(problems, fmt.Sprintf("%s interface argument %d has type#%d, want type#%d", where, index, arg.TypeID(), slotType.Params[param]))
 		}
 	}
@@ -491,7 +494,7 @@ func validateStructLiteral(types *ir.TypeTable, value *StructLit, where string) 
 	}
 	for index, field := range value.Fields {
 		problems = append(problems, validateValueRef(types, field, fmt.Sprintf("%s field %d", where, index))...)
-		if index < len(structure.Fields) && field != nil && field.TypeID() != structure.Fields[index].Type {
+		if index < len(structure.Fields) && !typednil.IsNil(field) && field.TypeID() != structure.Fields[index].Type {
 			problems = append(problems, fmt.Sprintf("%s field %d has type#%d, want type#%d", where, index, field.TypeID(), structure.Fields[index].Type))
 		}
 	}
@@ -509,7 +512,7 @@ func validateArrayLiteral(types *ir.TypeTable, value *ArrayLit, where string) []
 	}
 	for index, element := range value.Values {
 		problems = append(problems, validateValueRef(types, element, fmt.Sprintf("%s element %d", where, index))...)
-		if element != nil && element.TypeID() != array.Elem {
+		if !typednil.IsNil(element) && element.TypeID() != array.Elem {
 			problems = append(problems, fmt.Sprintf("%s element %d has type#%d, want type#%d", where, index, element.TypeID(), array.Elem))
 		}
 	}
@@ -529,13 +532,16 @@ func validateVariantMake(types *ir.TypeTable, value *VariantMake, where string) 
 		return []string{fmt.Sprintf("%s constructs invalid case %d of type#%d", where, value.Case, value.Type)}
 	}
 	if variantCase.Payload == ir.InvalidType {
-		if value.Payload != nil {
-			return []string{fmt.Sprintf("%s gives payload to payloadless case %d", where, value.Case)}
+		if value.Payload == nil {
+			return nil
 		}
-		return nil
+		if typednil.IsNil(value.Payload) {
+			return []string{where + " variant payload is nil"}
+		}
+		return []string{fmt.Sprintf("%s gives payload to payloadless case %d", where, value.Case)}
 	}
 	problems := validateValueRef(types, value.Payload, where+" variant payload")
-	if value.Payload != nil && value.Payload.TypeID() != variantCase.Payload {
+	if !typednil.IsNil(value.Payload) && value.Payload.TypeID() != variantCase.Payload {
 		problems = append(problems, fmt.Sprintf("%s payload has type#%d, want type#%d", where, value.Payload.TypeID(), variantCase.Payload))
 	}
 	return problems
@@ -543,7 +549,7 @@ func validateVariantMake(types *ir.TypeTable, value *VariantMake, where string) 
 
 func validateVariantIs(types *ir.TypeTable, value *VariantIs, where string) []string {
 	problems := validateValueRef(types, value.Value, where+" variant value")
-	if types == nil || value.Value == nil {
+	if types == nil || typednil.IsNil(value.Value) {
 		return problems
 	}
 	variant, ok := types.Type(value.Value.TypeID())
@@ -565,7 +571,7 @@ func validatePlace(types *ir.TypeTable, place *Place, where string) []string {
 	}
 	problems := validateValueRef(types, place.Root, where+" root")
 	problems = append(problems, validateKnownType(types, place.Type, where+" result type")...)
-	if types == nil || place.Root == nil {
+	if types == nil || typednil.IsNil(place.Root) {
 		return problems
 	}
 	current := place.Root.TypeID()

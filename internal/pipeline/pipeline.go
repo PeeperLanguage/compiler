@@ -498,6 +498,9 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 		return false
 	}
 	module.LLVMIR = llvm.GenerateLLVMIR(module.MIR, phaseDiag, ctx.Target, ctx.Config.IsDebugBuild)
+	if phaseDiag.HasErrors() || module.LLVMIR == "" {
+		return false
+	}
 	module.Phase = phase.Backend
 	ctx.Metrics.AddPhaseAdvance()
 	return true

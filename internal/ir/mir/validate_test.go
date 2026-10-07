@@ -187,6 +187,297 @@ func TestValidateReportsDefects(t *testing.T) {
 	}
 }
 
+func typedNilValueRef() ValueRef {
+	var ref *RefName
+	return ref
+}
+
+func typedNilValueExpr() ValueExpr {
+	var expr *Unary
+	return expr
+}
+
+func assertValidationError(t *testing.T, module *Module, want string) {
+	t.Helper()
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Fatalf("Validate() panicked: %v", recovered)
+		}
+	}()
+	err := module.Validate()
+	if err == nil {
+		t.Fatalf("Validate() = nil, want a report containing %q", want)
+	}
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("Validate() = %v, want a report containing %q", err, want)
+	}
+}
+
+func TestValidateRejectsNestedTypedNilValues(t *testing.T) {
+	tests := []struct {
+		name   string
+		module func() *Module
+		want   string
+	}{
+		{
+			name: "assignment expression",
+			module: func() *Module {
+				module := wellFormed()
+				module.Funcs[0].Blocks[0].Instrs = []Instr{&Assign{
+					Name: "broken", Value: typedNilValueExpr(),
+				}}
+				return module
+			},
+			want: "assignment is nil",
+		},
+		{
+			name: "unary operand",
+			module: func() *Module {
+				module := wellFormed()
+				i32 := module.Types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
+				module.Funcs[0].Blocks[0].Instrs = []Instr{&Assign{
+					Name: "broken", Value: &Unary{Arg: typedNilValueRef(), Type: i32},
+				}}
+				return module
+			},
+			want: "assignment operand is nil",
+		},
+		{
+			name: "store value",
+			module: func() *Module {
+				module := wellFormed()
+				i32 := module.Types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
+				module.Funcs[0].Blocks[0].Instrs = []Instr{&Store{
+					Place: &Place{Root: &RefName{Name: "slot", Type: i32}, Type: i32},
+					Value: typedNilValueRef(),
+				}}
+				return module
+			},
+			want: "store value is nil",
+		},
+		{
+			name: "dynamic array value",
+			module: func() *Module {
+				module := wellFormed()
+				i32 := module.Types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
+				array := module.Types.Intern(ir.Type{Kind: ir.TypeArray, Elem: i32})
+				module.Funcs[0].Blocks[0].Instrs = []Instr{&DynamicArrayOp{Array: typedNilValueRef(), ArrayType: array}}
+				return module
+			},
+			want: "dynamic-array value is nil",
+		},
+		{
+			name: "branch condition",
+			module: func() *Module {
+				module := wellFormed()
+				module.Funcs[0].Blocks[0].Term = &Branch{Cond: typedNilValueRef(), ThenID: 1, ElseID: 2}
+				return module
+			},
+			want: "branch condition is nil",
+		},
+		{
+			name: "variant switch value",
+			module: func() *Module {
+				module := wellFormed()
+				module.Funcs[0].Blocks[0].Term = &SwitchVariant{Value: typedNilValueRef()}
+				return module
+			},
+			want: "variant switch value is nil",
+		},
+		{
+			name: "return value",
+			module: func() *Module {
+				module := wellFormed()
+				i32 := module.Types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
+				module.Funcs[0].ReturnType = i32
+				module.Funcs[0].Blocks[3].Term = &Ret{Value: typedNilValueRef()}
+				return module
+			},
+			want: "return value is nil",
+		},
+		{
+			name: "field base",
+			module: func() *Module {
+				module := wellFormed()
+				i32 := module.Types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
+				module.Funcs[0].Blocks[0].Instrs = []Instr{&Assign{Value: &Field{Base: typedNilValueRef(), Index: 0, Type: i32}}}
+				return module
+			},
+			want: "field base is nil",
+		},
+		{
+			name: "allocation value",
+			module: func() *Module {
+				module := wellFormed()
+				i32 := module.Types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
+				owned := module.Types.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: i32})
+				module.Funcs[0].Blocks[0].Instrs = []Instr{&Assign{Value: &Alloc{Value: typedNilValueRef(), Type: owned}}}
+				return module
+			},
+			want: "allocated value is nil",
+		},
+		{
+			name: "call callee",
+			module: func() *Module {
+				module := wellFormed()
+				module.Funcs[0].Blocks[0].Instrs = []Instr{&Assign{Value: &Call{Callee: typedNilValueRef(), Type: module.Funcs[0].ReturnType}}}
+				return module
+			},
+			want: "callee is nil",
+		},
+		{
+			name: "call argument",
+			module: func() *Module {
+				module := wellFormed()
+				i32 := module.Types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
+				fnType := module.Types.Intern(ir.Type{Kind: ir.TypeFunction, Params: []ir.TypeID{i32}, Return: module.Funcs[0].ReturnType})
+				module.Funcs[0].Blocks[0].Instrs = []Instr{&Assign{Value: &Call{
+					Callee: &RefName{Name: "callee", Type: fnType}, Args: []ValueRef{typedNilValueRef()}, Type: module.Funcs[0].ReturnType,
+				}}}
+				return module
+			},
+			want: "argument 0 is nil",
+		},
+		{
+			name: "interface call base",
+			module: func() *Module {
+				module, _, _, _ := interfaceValidationFixture()
+				call := module.Funcs[0].Blocks[0].Instrs[0].(*InterfaceCall)
+				call.Base = typedNilValueRef()
+				return module
+			},
+			want: "interface base is nil",
+		},
+		{
+			name: "interface call argument",
+			module: func() *Module {
+				module, _, slotType, _ := interfaceValidationFixture()
+				call := module.Funcs[0].Blocks[0].Instrs[0].(*InterfaceCall)
+				i32 := module.Types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
+				slot, _ := module.Types.Type(slotType)
+				call.SlotType = module.Types.Intern(ir.Type{Kind: ir.TypeFunction, Params: []ir.TypeID{slot.Params[0], i32}, Return: slot.Return})
+				call.Args = []ValueRef{typedNilValueRef()}
+				return module
+			},
+			want: "interface argument 0 is nil",
+		},
+		{
+			name: "interface construction slot",
+			module: func() *Module {
+				module, carrier, _, _ := interfaceValidationFixture()
+				module.Funcs[0].Blocks[0].Instrs = []Instr{&Assign{Value: &InterfaceMake{
+					Value: &RefName{Name: "value", Type: carrier}, DataType: carrier,
+					Slots: []ValueRef{typedNilValueRef()}, Type: carrier,
+				}}}
+				return module
+			},
+			want: "interface slot 0 is nil",
+		},
+		{
+			name: "struct literal field",
+			module: func() *Module {
+				module := wellFormed()
+				i32 := module.Types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
+				structure := module.Types.Intern(ir.Type{Kind: ir.TypeStruct, Fields: []ir.TypeField{{Name: "value", Type: i32}}})
+				module.Funcs[0].Blocks[0].Instrs = []Instr{&Assign{Value: &StructLit{Fields: []ValueRef{typedNilValueRef()}, Type: structure}}}
+				return module
+			},
+			want: "field 0 is nil",
+		},
+		{
+			name: "array literal element",
+			module: func() *Module {
+				module := wellFormed()
+				i32 := module.Types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
+				array := module.Types.Intern(ir.Type{Kind: ir.TypeArray, Elem: i32})
+				module.Funcs[0].Blocks[0].Instrs = []Instr{&Assign{Value: &ArrayLit{Values: []ValueRef{typedNilValueRef()}, Type: array}}}
+				return module
+			},
+			want: "element 0 is nil",
+		},
+		{
+			name: "variant payload",
+			module: func() *Module {
+				module := wellFormed()
+				i32 := module.Types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
+				variant := module.Types.Intern(ir.Type{Kind: ir.TypeVariant, Cases: []ir.VariantCase{{Name: "Some", Payload: i32}}})
+				module.Funcs[0].Blocks[0].Instrs = []Instr{&Assign{Value: &VariantMake{Case: 0, Payload: typedNilValueRef(), Type: variant}}}
+				return module
+			},
+			want: "variant payload is nil",
+		},
+		{
+			name: "payloadless variant payload",
+			module: func() *Module {
+				module := wellFormed()
+				variant := module.Types.Intern(ir.Type{Kind: ir.TypeVariant, Cases: []ir.VariantCase{{Name: "None"}}})
+				module.Funcs[0].Blocks[0].Instrs = []Instr{&Assign{Value: &VariantMake{Case: 0, Payload: typedNilValueRef(), Type: variant}}}
+				return module
+			},
+			want: "variant payload is nil",
+		},
+		{
+			name: "variant test value",
+			module: func() *Module {
+				module := wellFormed()
+				boolean := module.Types.Intern(ir.Type{Kind: ir.TypeBool})
+				module.Funcs[0].Blocks[0].Instrs = []Instr{&Assign{Value: &VariantIs{Value: typedNilValueRef(), Case: 0, Type: boolean}}}
+				return module
+			},
+			want: "variant value is nil",
+		},
+		{
+			name: "place root",
+			module: func() *Module {
+				module := wellFormed()
+				i32 := module.Types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
+				module.Funcs[0].Blocks[0].Instrs = []Instr{&Assign{Value: &Load{Place: &Place{Root: typedNilValueRef(), Type: i32}, Type: i32}}}
+				return module
+			},
+			want: "load place root is nil",
+		},
+		{
+			name: "place index",
+			module: func() *Module {
+				module := wellFormed()
+				i32 := module.Types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
+				array := module.Types.Intern(ir.Type{Kind: ir.TypeArray, Elem: i32, Length: "1"})
+				module.Funcs[0].Blocks[0].Instrs = []Instr{&Assign{Value: &Load{Place: &Place{
+					Root: &RefName{Name: "values", Type: array}, Projections: []PlaceProjection{{
+						Kind: PlaceProjectionIndex, Index: typedNilValueRef(), Type: i32,
+					}}, Type: i32,
+				}, Type: i32}}}
+				return module
+			},
+			want: "projection 0 index is nil",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assertValidationError(t, test.module(), test.want)
+		})
+	}
+}
+
+func TestValidatePreservesPlainNilSemantics(t *testing.T) {
+	t.Run("missing return value remains diagnostic", func(t *testing.T) {
+		module := wellFormed()
+		i32 := module.Types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
+		module.Funcs[0].ReturnType = i32
+		module.Funcs[0].Blocks[3].Term = &Ret{}
+		assertValidationError(t, module, "returns no value")
+	})
+
+	t.Run("payloadless variant may omit payload", func(t *testing.T) {
+		module := wellFormed()
+		variant := module.Types.Intern(ir.Type{Kind: ir.TypeVariant, Cases: []ir.VariantCase{{Name: "None"}}})
+		module.Funcs[0].Blocks[0].Instrs = []Instr{&Assign{Value: &VariantMake{Case: 0, Type: variant}}}
+		if err := module.Validate(); err != nil {
+			t.Fatalf("Validate() = %v, want nil for payloadless variant", err)
+		}
+	})
+}
+
 func TestValidateAcceptsMixedWidthShiftCount(t *testing.T) {
 	module := wellFormed()
 	i32 := module.Types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})

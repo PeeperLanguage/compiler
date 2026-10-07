@@ -32,6 +32,12 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 		}
 		return ""
 	}
+	if err := mod.Validate(); err != nil {
+		if diag != nil {
+			diag.AddError(diagnostics.ErrInvalidEvidence, "MIR is malformed: "+err.Error(), nil, "")
+		}
+		return ""
+	}
 	if !ValidateRuntimeSymbols([]*mir.Module{mod}, diag) {
 		return ""
 	}

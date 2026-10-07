@@ -351,11 +351,7 @@ func TestTypedLLVMBuilderRejectsOperandMismatches(t *testing.T) {
 	}
 }
 
-// mir.Instr and mir.Terminator are sealed, so a node this package could pass to
-// emission no longer exists: the earlier fabricated one cannot implement either
-// interface. What remains reachable is a block that carries no terminator at
-// all, which would otherwise emit an unterminated basic block with no signal.
-func TestGenerateLLVMIRPanicsForMalformedMIRBlocks(t *testing.T) {
+func TestGenerateLLVMIRRejectsMalformedMIRBlocks(t *testing.T) {
 	for _, tt := range []struct {
 		name  string
 		block *mir.Block
@@ -364,16 +360,12 @@ func TestGenerateLLVMIRPanicsForMalformedMIRBlocks(t *testing.T) {
 		{
 			name:  "missing terminator",
 			block: &mir.Block{ID: 7},
-			want:  "LLVM emission: block b7 has no terminator",
+			want:  "MIR is malformed: function test block b7 has no terminator",
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			defer func() {
-				if recovered := recover(); recovered != tt.want {
-					t.Fatalf("GenerateLLVMIR panic = %#v; want %q", recovered, tt.want)
-				}
-			}()
-			GenerateLLVMIR(&mir.Module{
+			diag := diagnostics.NewDiagnosticBag()
+			if out := GenerateLLVMIR(&mir.Module{
 				Name:  "unknown-node",
 				Types: llvmTypes.table,
 				Funcs: []*mir.Function{{
@@ -381,7 +373,12 @@ func TestGenerateLLVMIRPanicsForMalformedMIRBlocks(t *testing.T) {
 					ReturnType: llvmTypes.void,
 					Blocks:     []*mir.Block{tt.block},
 				}},
-			}, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
+			}, diag, testLinuxAMD64, false); out != "" {
+				t.Fatalf("GenerateLLVMIR() = %q, want empty output", out)
+			}
+			if !diag.HasErrors() || !strings.Contains(diag.EmitAllToString(), tt.want) {
+				t.Fatalf("diagnostics = %q, want %q", diag.EmitAllToString(), tt.want)
+			}
 		})
 	}
 }
@@ -1477,7 +1474,7 @@ func TestGenerateLLVMIRRejectsIncompleteNamedType(t *testing.T) {
 	if out := GenerateLLVMIR(mod, diag, testLinuxAMD64, false); out != "" {
 		t.Fatalf("incomplete named type emitted LLVM:\n%s", out)
 	}
-	if !diag.HasErrors() || !strings.Contains(diag.EmitAllToString(), "unsupported llvm type: Pending") {
+	if !diag.HasErrors() || !strings.Contains(diag.EmitAllToString(), "MIR is malformed: function use_pending parameter 0 has invalid type#") {
 		t.Fatalf("incomplete named type diagnostic missing:\n%s", diag.EmitAllToString())
 	}
 }
@@ -3583,7 +3580,7 @@ func TestGenerateLLVMIRRejectsIncompleteVariantSwitch(t *testing.T) {
 	if out := GenerateLLVMIR(mod, diag, testLinuxAMD64, false); out != "" {
 		t.Fatalf("incomplete variant switch must suppress LLVM output, got:\n%s", out)
 	}
-	if !diag.HasErrors() || !strings.Contains(diag.EmitAllToString(), "cover every case") {
+	if !diag.HasErrors() || !strings.Contains(diag.EmitAllToString(), "MIR is malformed: function select block b0 variant switch has 1 targets, want 2") {
 		t.Fatalf("incomplete variant switch diagnostic missing:\n%s", diag.EmitAllToString())
 	}
 }

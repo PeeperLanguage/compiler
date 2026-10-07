@@ -153,7 +153,11 @@ signed indexes also reject negative values independently of unsigned length.
 - effect and ownership result validators reject inconsistent analysis evidence.
 - `mir.Module.Validate` rejects invalid runtime types, places, instructions,
   terminators, calls, and return shapes before backend emission.
-- LLVM emission treats validated MIR violations as internal invariants.
+- The pipeline validates MIR before entering backend phase, and LLVM emission
+  revalidates at its direct entry boundary so callers that bypass the pipeline
+  receive diagnostics instead of sending malformed MIR into lowering.
+- After these validation boundaries, LLVM emission treats unclassified backend
+  invariants as internal failures.
 
 ## Adding a language construct
 
