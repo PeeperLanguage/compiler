@@ -60,5 +60,11 @@ fn main() -> i32 {
         State::Ready => { println("struct literal dot ok"); }
         State::Waiting => { return 8; }
     }
+    {
+        sum = sum + 1;
+    }
+    if sum != 8 {
+        return 9;
+    }
     return 0;
 }

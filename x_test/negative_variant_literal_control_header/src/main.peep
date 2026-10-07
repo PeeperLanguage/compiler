@@ -11,3 +11,7 @@ fn Check(value: Result) -> bool {
     }
     return false;
 }
+
+fn InvalidPayload() {
+    let invalid = Result::Ok{ value = 1 };
+}

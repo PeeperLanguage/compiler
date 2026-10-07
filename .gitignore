@@ -33,6 +33,8 @@ clean.md
 !.agents/skills/peeper-code-review/
 .agents/skills/peeper-code-review/*
 !.agents/skills/peeper-code-review/SKILL.md
+!.agents/skills/gstack-investigate/
+!.agents/skills/gstack-plan-eng-review/
 !.gitignore
 !.github/
 !.github/workflows/

@@ -1,0 +1,6 @@
+interface:
+  display_name: "gstack-plan-eng-review"
+  short_description: "Plan compiler changes around owners, invariants and fixtures."
+  default_prompt: "Use $plan-eng-review to plan or review this Peeper compiler change."
+policy:
+  allow_implicit_invocation: true

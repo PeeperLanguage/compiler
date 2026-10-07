@@ -1,8 +1,0 @@
-name = "negative_struct_literal_old_spelling"
-build = "program"
-
-[test]
-mode = "check"
-outcome = "failure"
-stderr_contains = ["named struct literals use Type.{...}, not .Type{...}"]
-stderr_excludes = ["panic:"]

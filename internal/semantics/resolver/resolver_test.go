@@ -39,6 +39,22 @@ func checkResolveSource(t *testing.T, src string) (*module.Module, *diagnostics.
 	return module, diag
 }
 
+func TestResolveRecoveredLiteralKeepsParserDiagnostic(t *testing.T) {
+	mod, diag := checkResolveSource(t, `fn main() -> i32 {
+		let bad = Point{ x = 1 };
+		let good = 2;
+		return good;
+	}`)
+	if diag.ErrorCount() != 1 || !strings.Contains(diag.EmitAllToString(), "struct literal requires '.'") {
+		t.Fatalf("recovered literal caused resolver cascade:\n%s", diag.EmitAllToString())
+	}
+	body := mod.AST.Stmts[0].(*ast.FnDecl).Body
+	returned := body.Stmts[2].(*ast.ReturnStmt).Value
+	if sym := mod.SymbolIndex.Symbol(returned); sym == nil || sym.Name != "good" {
+		t.Fatalf("following valid expression lost binding: %#v", sym)
+	}
+}
+
 func TestRejectedPrivateImportDoesNotPublishUsage(t *testing.T) {
 	diag := diagnostics.NewDiagnosticBag()
 	ctx := project.New(".", peeper.SourceExt, diag)

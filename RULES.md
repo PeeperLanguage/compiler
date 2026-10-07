@@ -123,6 +123,8 @@ Fix defect at source layer when possible. Use workaround only with explicit appr
 
 Remove dead code and migration debris in same change. Do not trade correctness for fewer edited files.
 
+Peeper is pre-stable and targets the current language grammar. Do not preserve deprecated syntax, compatibility paths, or migration-only parser behavior unless explicitly requested. Unsupported syntax must still be rejected through current grammar and validation.
+
 ## 7. Errors, diagnostics, and panics
 
 Preserve root-cause context and error identity. When wrapping Go error, use `%w` so callers can use `errors.Is` and `errors.As`.

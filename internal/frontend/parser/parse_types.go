@@ -531,7 +531,7 @@ func (p *Parser) parseParam() (ast.Param, bool) {
 		}
 		var defaultValue ast.Expr
 		if p.match(token.ASSIGN) {
-			defaultValue = p.parseExpr(precLowest)
+			defaultValue = p.parseExpr(precLowest, token.RPAREN)
 			if defaultValue != nil {
 				endPos = ast.EndOf(defaultValue)
 			}

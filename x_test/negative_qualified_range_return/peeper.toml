@@ -1,0 +1,8 @@
+name = "negative_qualified_range_return"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["not all control paths return a value"]
+stderr_excludes = ["P0002", "P0003"]

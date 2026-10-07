@@ -13,3 +13,12 @@ fn main() {
     let bare = Result::Ok;
     Result::Pending();
 }
+
+fn Check(value: Result) {
+    if value == Result::Ok {
+        println(1);
+    }
+    {
+        println(2);
+    }
+}

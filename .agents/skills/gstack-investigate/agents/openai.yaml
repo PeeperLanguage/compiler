@@ -1,0 +1,6 @@
+interface:
+  display_name: "gstack-investigate"
+  short_description: "Reproduce compiler bugs, prove root cause, fix and validate."
+  default_prompt: "Use $investigate to investigate and fix this Peeper compiler bug."
+policy:
+  allow_implicit_invocation: true

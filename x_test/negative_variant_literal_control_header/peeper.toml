@@ -4,4 +4,5 @@ build = "lib"
 [test]
 mode = "check"
 outcome = "failure"
-stderr_contains = ["P0003", "enum variant payload requires 'with'"]
+stderr_contains = ["P0003", "literal requires '.' or 'with'", "Enum::Variant with .{ ... }", "Compilation failed with 2 error(s)"]
+stderr_excludes = ["P0002", "P0005", "panic:"]

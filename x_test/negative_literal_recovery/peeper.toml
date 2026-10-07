@@ -1,0 +1,8 @@
+name = "negative_literal_recovery"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["P0003", "struct literal requires '.' before '{'", "expected value expression after type arguments", "if constructing a struct, insert '.' before '{'", "Compilation failed with 2 error(s)"]
+stderr_excludes = ["P0002", "P0005", "found generic type", "Type<...>", "panic:"]

@@ -1,0 +1,19 @@
+import "negative_qualified_range_return/values";
+
+fn Equal() -> i32 {
+    for value in values::One..values::One {
+        return value;
+    }
+}
+
+fn Reversed() -> i32 {
+    for value in values::One..values::Zero {
+        return value;
+    }
+}
+
+fn Runtime(start: i32) -> i32 {
+    for value in start..values::One {
+        return value;
+    }
+}

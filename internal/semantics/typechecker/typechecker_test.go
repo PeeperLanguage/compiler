@@ -738,7 +738,7 @@ func TestWithVariantPayloadDiagnostics(t *testing.T) {
 		{name: "missing payload", source: `enum Result { Failed: str } fn main() { let value = Result::Failed; }`, want: "requires"},
 		{name: "payloadless value", source: `enum Result { Pending } fn main() { let value = Result::Pending with 1; }`, want: "does not accept a payload"},
 		{name: "wrong direct type", source: `enum Result { Failed: str } fn main() { let value = Result::Failed with 404; }`, want: "cannot be used as str"},
-		{name: "old braces", source: `enum Result { Ok: { value: i32 } } fn main() { let value = Result::Ok{ value = 1 }; }`, want: "requires 'with'"},
+		{name: "brace-only payload", source: `enum Result { Ok: { value: i32 } } fn main() { let value = Result::Ok{ value = 1 }; }`, want: "literal requires '.' or 'with'"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -747,6 +747,26 @@ func TestWithVariantPayloadDiagnostics(t *testing.T) {
 				t.Fatalf("expected %q diagnostic, got:\n%s", test.want, out)
 			}
 		})
+	}
+}
+
+func TestRecoveredLiteralHasInvalidTypeWithoutCascade(t *testing.T) {
+	mod, diag := checkTypeModule(t, `fn main() -> i32 {
+		let bad = Point{ x = 1 };
+		let good = 2;
+		return good;
+	}`)
+	if diag.ErrorCount() != 1 || !strings.Contains(diag.EmitAllToString(), "struct literal requires '.'") {
+		t.Fatalf("recovered literal caused semantic cascade:\n%s", diag.EmitAllToString())
+	}
+	body := mod.AST.Stmts[0].(*ast.FnDecl).Body
+	bad := body.Stmts[0].(*ast.LetDecl).Value
+	if _, ok := testEvidence(mod).ExprType(bad.ID()).(*typeinfo.InvalidType); !ok {
+		t.Fatal("recovered expression must record invalid type")
+	}
+	good := body.Stmts[2].(*ast.ReturnStmt).Value
+	if got := typeinfo.TypeText(testEvidence(mod).ExprType(good.ID())); got != "i32" {
+		t.Fatalf("following valid expression type = %s, want i32", got)
 	}
 }
 
@@ -761,6 +781,7 @@ func TestEnumConstructorDiagnostics(t *testing.T) {
 		{name: "unknown field", source: `enum Result { Ok: { value: i32 } } fn main() { let value = Result::Ok with .{ item = 1 }; }`, want: "unknown struct literal field `item`"},
 		{name: "payloadless payload", source: `enum Result { Pending } fn main() { let value = Result::Pending with 1; }`, want: "payloadless enum variant `Pending` does not accept a payload"},
 		{name: "data without payload", source: `enum Result { Ok: { value: i32 } } fn main() { let value = Result::Ok; }`, want: "data enum variant `Ok` requires a payload"},
+		{name: "data without payload before blocks", source: `enum Result { Ok: { value: i32 } } fn main(result: Result) { if result == Result::Ok { let value = 1; } {} }`, want: "data enum variant `Ok` requires a payload"},
 		{name: "missing generic arguments", source: `enum Result<T> { Pending } fn main() { let value = Result::Pending; }`, want: "expects 1 type argument, got 0"},
 		{name: "variant call", source: `enum Result { Pending } fn main() { Result::Pending(); }`, want: "enum variants are not callable"},
 		{name: "variant type", source: `enum Result { Pending } fn Read(value: Result::Pending) {}`, want: "not lowerable"},

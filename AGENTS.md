@@ -10,6 +10,21 @@ For code-review requests, read [Peeper code review](.agents/skills/peeper-code-r
 It captures the review workflow and user's simplicity preferences; use `RULES.md`
 for durable engineering requirements.
 
+### Automatic skill routing
+
+Read the matching repo-local skill before starting its workflow, even when the
+user does not name it. Use the skill tool when available; otherwise read its file.
+
+| Task | Local skill |
+| --- | --- |
+| Investigate or fix compiler bugs, diagnostics, crashes, or regressions | [investigate](.agents/skills/gstack-investigate/SKILL.md) |
+| Brainstorm implementation approaches, plan compiler features, or review architecture/execution plans | [plan-eng-review](.agents/skills/gstack-plan-eng-review/SKILL.md) |
+| Review source changes, branches, or PRs; audit completed implementation | [peeper-code-review](.agents/skills/peeper-code-review/SKILL.md) |
+
+Use investigation and planning alongside Peeper code review when each phase is
+needed. Skills do not authorize implementation during a plan-only request or
+change the edit, validation, review, and delivery gates below.
+
 ---
 
 ## 1) Required pre-change check
