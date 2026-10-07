@@ -20,6 +20,8 @@ func NewData() Data {
 	}
 }
 
+// HasSection reports whether a section exists. Retained at maintainer request
+// as part of the TOML API; do not remove it as dead code without asking.
 func (d Data) HasSection(name string) bool {
 	_, ok := d.Sections[name]
 	return ok
@@ -30,6 +32,9 @@ func (d Data) Section(name string) (Table, bool) {
 	return section, ok
 }
 
+// EnsureSection returns a section, creating it when missing. Retained at
+// maintainer request as part of the TOML API; do not remove it as dead code
+// without asking.
 func (d *Data) EnsureSection(name string) (Table, error) {
 	if section, ok := d.Sections[name]; ok {
 		return section, nil

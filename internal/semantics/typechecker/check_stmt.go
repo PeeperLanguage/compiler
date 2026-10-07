@@ -124,7 +124,7 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, retu
 	if c == nil || scope == nil || node == nil || node.Subject == nil {
 		return
 	}
-	subjectType := c.requireValueType(node.Subject, c.typeWholeCarrierExpr(scope, node.Subject, nil), "match subject")
+	subjectType := c.requireValueType(node.Subject, c.typeWholeCarrierExpr(scope, node.Subject), "match subject")
 	if typeinfo.IsInvalidOrUnknown(subjectType) {
 		return
 	}
@@ -267,7 +267,7 @@ func (c *checker) checkAssign(scope *symbols.Scope, node *ast.AssignStmt) {
 	if c == nil || scope == nil || node == nil || node.Target == nil || node.Value == nil {
 		return
 	}
-	targetType := c.typeWholeCarrierExpr(scope, node.Target, nil)
+	targetType := c.typeWholeCarrierExpr(scope, node.Target)
 	if targetType == nil || typeinfo.IsInvalid(targetType) {
 		return
 	}
@@ -524,62 +524,7 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 	var carrierType typeinfo.Type
 	rangeExpr, isRange := node.Iterable.(*ast.RangeExpr)
 	if isRange {
-		if !rangeExpr.IsEndExclusive {
-			valid = false
-			c.ctx.Diagnostics.Add(invalidExpressionError(rangeExpr, "for range requires an exclusive end; use `..` instead of `..=`"))
-		}
-		_, badStart := rangeExpr.Start.(*ast.BadExpr)
-		if rangeExpr.Start == nil || badStart {
-			valid = false
-			c.ctx.Diagnostics.Add(invalidExpressionError(rangeExpr, "range iteration requires a start bound"))
-		}
-		_, badEnd := rangeExpr.End.(*ast.BadExpr)
-		if rangeExpr.End == nil || badEnd {
-			valid = false
-			c.ctx.Diagnostics.Add(invalidExpressionError(rangeExpr, "range iteration requires an end bound"))
-		}
-
-		defaultType := typeinfo.DefaultIntegerType()
-		startNumber, startLiteral := rangeExpr.Start.(*ast.NumberLit)
-		endNumber, endLiteral := rangeExpr.End.(*ast.NumberLit)
-		startUntyped := startLiteral && startNumber.ExplicitType == ""
-		endUntyped := endLiteral && endNumber.ExplicitType == ""
-		var startType, endType typeinfo.Type
-		if startUntyped && !endUntyped {
-			endType = c.checkRangeBound(scope, rangeExpr.End, defaultType)
-			startType = c.checkRangeBound(scope, rangeExpr.Start, endType)
-		} else {
-			startType = c.checkRangeBound(scope, rangeExpr.Start, defaultType)
-			endExpected := defaultType
-			if endUntyped && !typeinfo.IsInvalidOrUnknown(startType) {
-				endExpected = startType
-			}
-			endType = c.checkRangeBound(scope, rangeExpr.End, endExpected)
-		}
-		if typeinfo.IsInvalidOrUnknown(startType) || typeinfo.IsInvalidOrUnknown(endType) ||
-			!typeinfo.IsIntegral(startType) || !typeinfo.IsIntegral(endType) {
-			valid = false
-		} else {
-			elemType = typeinfo.CommonNumericType(startType, endType)
-			if elemType == nil || !typeinfo.IsIntegral(elemType) {
-				valid = false
-				c.ctx.Diagnostics.Add(typeMismatchError(rangeExpr,
-					"range bounds of type "+typeinfo.TypeText(startType)+" and "+typeinfo.TypeText(endType)+" have no common integer type"))
-			} else {
-				if !c.isAssignable(elemType, startType, rangeExpr.Start) || !c.isAssignable(elemType, endType, rangeExpr.End) {
-					valid = false
-				}
-			}
-		}
-		if valid {
-			startValue, startFound := c.evaluateConstant(c.ctx, rangeExpr.Start, elemType)
-			endValue, endFound := c.evaluateConstant(c.ctx, rangeExpr.End, elemType)
-			start, startIntegral := startValue.(*constvalue.IntConst)
-			end, endIntegral := endValue.(*constvalue.IntConst)
-			if startFound && endFound && startIntegral && endIntegral && start.Int().Cmp(end.Int()) < 0 {
-				evidence.HasGuaranteedEntry = true
-			}
-		}
+		elemType, valid, evidence.HasGuaranteedEntry = c.checkRangeIteration(scope, rangeExpr, valid)
 		evidence.ElementType = elemType
 	} else {
 		var ok bool
@@ -620,31 +565,8 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 			}
 			evidence.ElementType = elem
 		} else {
-			if valid {
-				call, isCallExpression := node.Iterable.(*ast.CallExpr)
-				optional, isOptionalResultType := typeinfo.Underlying(iterableType).(*typeinfo.OptionalType)
-				switch {
-				case !isCallExpression:
-					c.ctx.Diagnostics.Add(invalidExpressionError(node.Iterable, "cannot iterate over "+typeinfo.TypeText(iterableType)).
-						WithHelp("use a range, array, slice, or an explicit call returning an optional item, such as `for item in producer()`").
-						WithNote("iterator calls, including arguments, are evaluated on every attempt; a bare optional value is not a producer"))
-				case !isOptionalResultType || optional.Inner == nil:
-					c.ctx.Diagnostics.Add(invalidExpressionError(node.Iterable, "iterator call must return an optional item").
-						WithHelp("return an optional type, such as `?i32`: return an item to continue, or `none` to end the loop"))
-				case node.Index != nil:
-					c.ctx.Diagnostics.Add(invalidExpressionError(node.Index, "iterator loops provide an item, not an index").
-						WithHelp("use `for item in producer()`; if you need an index, maintain a separate counter"))
-				default:
-					c.expandCallIteration(scope, node)
-				}
-				if checked := c.evidence.CheckedIteration(node.ID()); checked != nil {
-					c.bindLoopVariable(node.Value, optional.Inner)
-					previous := c.reusedCall
-					c.reusedCall = call
-					c.checkStmt(scope, checked, returnType)
-					c.reusedCall = previous
-					return
-				}
+			if valid && c.checkCallIteration(scope, node, iterableType, returnType) {
+				return
 			}
 			valid = false
 		}
@@ -681,6 +603,100 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 	c.loopDepth++
 	c.checkBlock(scope, node.Body, returnType)
 	c.loopDepth--
+}
+
+// checkRangeIteration types the bounds of `for x in a..b`. It returns the
+// element type, whether the loop is still valid, and whether constant bounds
+// prove the body runs at least once.
+func (c *checker) checkRangeIteration(scope *symbols.Scope, rangeExpr *ast.RangeExpr, valid bool) (elemType typeinfo.Type, stillValid, hasGuaranteedEntry bool) {
+	if !rangeExpr.IsEndExclusive {
+		valid = false
+		c.ctx.Diagnostics.Add(invalidExpressionError(rangeExpr, "for range requires an exclusive end; use `..` instead of `..=`"))
+	}
+	_, badStart := rangeExpr.Start.(*ast.BadExpr)
+	if rangeExpr.Start == nil || badStart {
+		valid = false
+		c.ctx.Diagnostics.Add(invalidExpressionError(rangeExpr, "range iteration requires a start bound"))
+	}
+	_, badEnd := rangeExpr.End.(*ast.BadExpr)
+	if rangeExpr.End == nil || badEnd {
+		valid = false
+		c.ctx.Diagnostics.Add(invalidExpressionError(rangeExpr, "range iteration requires an end bound"))
+	}
+
+	defaultType := typeinfo.DefaultIntegerType()
+	startNumber, startLiteral := rangeExpr.Start.(*ast.NumberLit)
+	endNumber, endLiteral := rangeExpr.End.(*ast.NumberLit)
+	startUntyped := startLiteral && startNumber.ExplicitType == ""
+	endUntyped := endLiteral && endNumber.ExplicitType == ""
+	var startType, endType typeinfo.Type
+	if startUntyped && !endUntyped {
+		endType = c.checkRangeBound(scope, rangeExpr.End, defaultType)
+		startType = c.checkRangeBound(scope, rangeExpr.Start, endType)
+	} else {
+		startType = c.checkRangeBound(scope, rangeExpr.Start, defaultType)
+		endExpected := defaultType
+		if endUntyped && !typeinfo.IsInvalidOrUnknown(startType) {
+			endExpected = startType
+		}
+		endType = c.checkRangeBound(scope, rangeExpr.End, endExpected)
+	}
+	if typeinfo.IsInvalidOrUnknown(startType) || typeinfo.IsInvalidOrUnknown(endType) ||
+		!typeinfo.IsIntegral(startType) || !typeinfo.IsIntegral(endType) {
+		valid = false
+	} else {
+		elemType = typeinfo.CommonNumericType(startType, endType)
+		if elemType == nil || !typeinfo.IsIntegral(elemType) {
+			valid = false
+			c.ctx.Diagnostics.Add(typeMismatchError(rangeExpr,
+				"range bounds of type "+typeinfo.TypeText(startType)+" and "+typeinfo.TypeText(endType)+" have no common integer type"))
+		} else {
+			if !c.isAssignable(elemType, startType, rangeExpr.Start) || !c.isAssignable(elemType, endType, rangeExpr.End) {
+				valid = false
+			}
+		}
+	}
+	if valid {
+		startValue, startFound := c.evaluateConstant(c.ctx, rangeExpr.Start, elemType)
+		endValue, endFound := c.evaluateConstant(c.ctx, rangeExpr.End, elemType)
+		start, startIntegral := startValue.(*constvalue.IntConst)
+		end, endIntegral := endValue.(*constvalue.IntConst)
+		if startFound && endFound && startIntegral && endIntegral && start.Int().Cmp(end.Int()) < 0 {
+			hasGuaranteedEntry = true
+		}
+	}
+	return elemType, valid, hasGuaranteedEntry
+}
+
+// checkCallIteration handles `for item in producer()`. It reports true when it
+// expanded the loop and checked the expansion, so the caller has nothing left
+// to do; false means the iterable is not a usable producer call.
+func (c *checker) checkCallIteration(scope *symbols.Scope, node *ast.ForStmt, iterableType, returnType typeinfo.Type) bool {
+	call, isCallExpression := node.Iterable.(*ast.CallExpr)
+	optional, isOptionalResultType := typeinfo.Underlying(iterableType).(*typeinfo.OptionalType)
+	switch {
+	case !isCallExpression:
+		c.ctx.Diagnostics.Add(invalidExpressionError(node.Iterable, "cannot iterate over "+typeinfo.TypeText(iterableType)).
+			WithHelp("use a range, array, slice, or an explicit call returning an optional item, such as `for item in producer()`").
+			WithNote("iterator calls, including arguments, are evaluated on every attempt; a bare optional value is not a producer"))
+	case !isOptionalResultType || optional.Inner == nil:
+		c.ctx.Diagnostics.Add(invalidExpressionError(node.Iterable, "iterator call must return an optional item").
+			WithHelp("return an optional type, such as `?i32`: return an item to continue, or `none` to end the loop"))
+	case node.Index != nil:
+		c.ctx.Diagnostics.Add(invalidExpressionError(node.Index, "iterator loops provide an item, not an index").
+			WithHelp("use `for item in producer()`; if you need an index, maintain a separate counter"))
+	default:
+		c.expandCallIteration(scope, node)
+	}
+	if checked := c.evidence.CheckedIteration(node.ID()); checked != nil {
+		c.bindLoopVariable(node.Value, optional.Inner)
+		previous := c.reusedCall
+		c.reusedCall = call
+		c.checkStmt(scope, checked, returnType)
+		c.reusedCall = previous
+		return true
+	}
+	return false
 }
 
 // expandCallIteration publishes ordinary checked statements before flow and

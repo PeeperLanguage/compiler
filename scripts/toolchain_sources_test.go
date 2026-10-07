@@ -184,12 +184,3 @@ func writeTestFile(t *testing.T, path, contents string) {
 		t.Fatal(err)
 	}
 }
-
-func runGit(t *testing.T, directory string, arguments ...string) {
-	t.Helper()
-	command := exec.Command("git", arguments...)
-	command.Dir = directory
-	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("git %s: %v\n%s", strings.Join(arguments, " "), err, output)
-	}
-}

@@ -5,7 +5,6 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/source"
 )
 
 func invalidExpressionError(node ast.Node, message string) *diagnostics.Diagnostic {
@@ -45,20 +44,6 @@ func typeMismatchError(node ast.Node, message string) *diagnostics.Diagnostic {
 	return diagnostics.NewError(message).
 		WithPrimaryLabel(ast.LocOf(node), "").
 		WithCode(diagnostics.ErrTypeMismatch)
-}
-
-func optionalPayloadProofError(location *source.Location) *diagnostics.Diagnostic {
-	return diagnostics.NewError("optional payload use requires a presence proof").
-		WithPrimaryLabel(location, "payload is not proven present here").
-		WithCode(diagnostics.ErrOptionalPayloadProof).
-		WithHelp("guard this stable place with `value != none` or return after `value == none`")
-}
-
-func unstableOptionalNarrowingError(location *source.Location) *diagnostics.Diagnostic {
-	return diagnostics.NewError("optional narrowing subject is not a stable place").
-		WithPrimaryLabel(location, "this expression can change between the test and use").
-		WithCode(diagnostics.ErrUnstableNarrowing).
-		WithHelp("bind the expression or index to a direct local before testing it")
 }
 
 func notCallableError(node ast.Node, message string) *diagnostics.Diagnostic {

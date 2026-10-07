@@ -376,6 +376,16 @@ type Match struct {
 	Arms      []MatchArm
 }
 
+// Arm returns the arm that handles caseIndex, or nil when no arm does.
+func (s *Match) Arm(caseIndex int) *MatchArm {
+	for index := range s.Arms {
+		if s.Arms[index].Case == caseIndex {
+			return &s.Arms[index]
+		}
+	}
+	return nil
+}
+
 type MatchArm struct {
 	Source     ir.SourceInfo
 	Case       int

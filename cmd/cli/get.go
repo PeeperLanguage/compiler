@@ -94,14 +94,6 @@ func prepareInstallContext() (*installContext, error) {
 	}, nil
 }
 
-func installAllDependencies() error {
-	ctx, err := prepareInstallContext()
-	if err != nil {
-		return err
-	}
-	return installManifestDependencies(ctx)
-}
-
 func installManifestDependencies(ctx *installContext) error {
 	if len(ctx.file.Dependencies) == 0 {
 		printInfo("No dependencies to install")

@@ -165,16 +165,12 @@ type Method struct {
 // CallableType returns the abstract interface signature used for source-facing
 // display and declaration checks. Receiver remains `Self` in slot zero.
 func (m Method) CallableType() *FuncType {
-	return m.callableType(&NamedType{Name: "Self"})
+	return m.CallableTypeFor(&NamedType{Name: "Self"})
 }
 
 // CallableTypeFor materializes the method signature for one concrete receiver
 // owner while preserving receiver slot zero and return-origin indexes.
 func (m Method) CallableTypeFor(owner Type) *FuncType {
-	return m.callableType(owner)
-}
-
-func (m Method) callableType(owner Type) *FuncType {
 	params := make([]Type, len(m.Params)+1)
 	paramNames := make([]string, len(m.Params)+1)
 	params[0] = m.Receiver.typeFor(owner)

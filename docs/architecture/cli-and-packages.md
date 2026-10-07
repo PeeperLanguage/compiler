@@ -82,7 +82,7 @@ registry tests check unique names, aliases, arity contracts, and help output.
 `cmd/cli` owns user-facing dependency operations. It uses `manifest` for
 project state, `registry` for package content and versions, `remotes` for host
 validation, and `semver` for constraints. `ui.go` is a thin stdout vocabulary:
-`printHeader`, `printSuccess`, `printInfo`, `printWarning`, `printError`,
+`printHeader`, `printSuccess`, `printInfo`, `printError`,
 `printUpdate`, `printPackage`, `printDim`, `printDownload`, `printCached`, and
 `printTransitive`.
 
@@ -205,7 +205,7 @@ validator; `StripProviderPrefix` returns the provider-local path when valid.
   rule to CLI and LSP. `Load` parses package metadata, compiler constraint,
   build type, neighbor/remote dependencies, and optional mock-remote settings.
   `ValidatePackageName` and `ParseDependency` own package/dependency validation.
-  `Save` and `RemoveDependency` serialize manifest state.
+  `Save` serializes manifest state.
 - `lockfile.go`: `LockfileEntry` stores version, resolved URL, checksum, direct
   bit, description, dependency edges, reverse `UsedBy`, and timestamp.
   `Lockfile` stores schema, alias-to-package `DirectDeps`, package entries, and

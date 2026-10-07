@@ -2195,7 +2195,6 @@ func TestGenerateLLVMIRReslicesSharedViewWithoutCapacity(t *testing.T) {
 }
 
 func TestGenerateLLVMIRLowersZeroValueOptionals(t *testing.T) {
-	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := &mir.Module{
 		Name:     "test",
 		Types:    llvmTypes.table,
@@ -2244,7 +2243,6 @@ func TestGenerateLLVMIRLowersZeroValueOptionals(t *testing.T) {
 }
 
 func TestGenerateLLVMIRLowersVariantMake(t *testing.T) {
-	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := &mir.Module{
 		Name:     "test",
 		Types:    llvmTypes.table,
@@ -2294,7 +2292,6 @@ func TestGenerateLLVMIRLowersVariantMake(t *testing.T) {
 }
 
 func TestGenerateLLVMIRReadsTaggedOptionalPresence(t *testing.T) {
-	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := &mir.Module{
 		Name:     "test",
 		Types:    llvmTypes.table,
@@ -2361,7 +2358,6 @@ func TestGenerateLLVMIRLoadsTaggedOptionalPayload(t *testing.T) {
 }
 
 func TestGenerateLLVMIRLoopMutationUsesStackSlot(t *testing.T) {
-	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := &mir.Module{
 		Name:     "test",
 		Types:    llvmTypes.table,
@@ -2504,7 +2500,6 @@ func TestGenerateLLVMIRDeclaresDiscardedDirectCall(t *testing.T) {
 }
 
 func TestGenerateLLVMIRDebugMetadata(t *testing.T) {
-	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := &mir.Module{
 		Name:     "test",
 		Types:    llvmTypes.table,
@@ -2551,7 +2546,6 @@ func TestGenerateLLVMIRDebugMetadata(t *testing.T) {
 }
 
 func TestGenerateLLVMIRDebugMetadataPreservesNestedExpressionLines(t *testing.T) {
-	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := &mir.Module{
 		Name:     "test",
 		Types:    llvmTypes.table,
@@ -2609,7 +2603,6 @@ func TestGenerateLLVMIRDebugMetadataPreservesNestedExpressionLines(t *testing.T)
 }
 
 func TestGenerateLLVMIRExplicitBoolCastUsesCompare(t *testing.T) {
-	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := &mir.Module{
 		Name:     "test",
 		Types:    llvmTypes.table,
@@ -2664,7 +2657,6 @@ func TestGenerateLLVMIRExplicitBoolCastUsesCompare(t *testing.T) {
 }
 
 func TestGenerateLLVMIRLowersIndirectFieldPlaceWithoutTempAlloca(t *testing.T) {
-	const targetTriple = "x86_64-unknown-linux-gnu"
 	owned := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: llvmTypes.valueStruct})
 	shared := llvmTypes.refValueStruct
 	mutable := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeReference, IsMutable: true, Elem: llvmTypes.valueStruct})
@@ -2730,7 +2722,6 @@ func TestGenerateLLVMIRLowersIndirectFieldPlaceWithoutTempAlloca(t *testing.T) {
 }
 
 func TestGenerateLLVMIRLowersProjectedFieldRawAddressDirectly(t *testing.T) {
-	const targetTriple = "x86_64-unknown-linux-gnu"
 	mutableStruct := llvmTypes.table.Intern(ir.Type{Kind: ir.TypeReference, IsMutable: true, Elem: llvmTypes.valueStruct})
 	mod := &mir.Module{
 		Name:     "test",
@@ -2901,7 +2892,6 @@ func indexStoreMIRModule(baseType ir.TypeID, index mir.ValueRef) *mir.Module {
 }
 
 func TestGenerateLLVMIRLowersIndexPlaceForArrayRead(t *testing.T) {
-	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := indexReadMIRModule(llvmTypes.fixed4I32, &mir.RefConst{Value: "0", Type: llvmTypes.i32})
 	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(irText, "getelementptr inbounds [4 x i32], [4 x i32]*") {
@@ -2964,7 +2954,6 @@ func TestGenerateLLVMIRNormalizesConstantArrayIndexes(t *testing.T) {
 }
 
 func TestGenerateLLVMIRBoundsChecksRuntimeFixedArrayIndex(t *testing.T) {
-	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := indexReadMIRModule(llvmTypes.fixed4I32, &mir.RefName{Name: "index", Type: llvmTypes.i32})
 	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	for _, expected := range []string{"sext i32 %index to i64", "icmp uge i64", "call void @llvm.trap()", "getelementptr inbounds [4 x i32]"} {
@@ -2975,7 +2964,6 @@ func TestGenerateLLVMIRBoundsChecksRuntimeFixedArrayIndex(t *testing.T) {
 }
 
 func TestGenerateLLVMIRBoundsChecksWideRuntimeFixedArrayIndexBeforeTruncation(t *testing.T) {
-	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := indexReadMIRModule(llvmTypes.fixed4I32, &mir.RefName{Name: "index", Type: llvmTypes.u128})
 	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	for _, expected := range []string{"zext i64 4 to i128", "icmp uge i128 %index", "trunc i128 %index to i64", "getelementptr inbounds [4 x i32]"} {
@@ -2986,7 +2974,6 @@ func TestGenerateLLVMIRBoundsChecksWideRuntimeFixedArrayIndexBeforeTruncation(t 
 }
 
 func TestGenerateLLVMIRLowersIndexPlaceStoreForArrayWrite(t *testing.T) {
-	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := indexStoreMIRModule(llvmTypes.fixed4I32, &mir.RefConst{Value: "0", Type: llvmTypes.i32})
 	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(irText, "getelementptr inbounds [4 x i32], [4 x i32]*") {
@@ -2998,7 +2985,6 @@ func TestGenerateLLVMIRLowersIndexPlaceStoreForArrayWrite(t *testing.T) {
 }
 
 func TestGenerateLLVMIRLowersArrayLiteral(t *testing.T) {
-	const targetTriple = "x86_64-unknown-linux-gnu"
 	mod := &mir.Module{
 		Name:     "test",
 		Types:    llvmTypes.table,
@@ -3040,7 +3026,6 @@ func TestGenerateLLVMIRLowersArrayLiteral(t *testing.T) {
 }
 
 func TestGenerateLLVMIRRejectsConstantArrayIndexOutOfBounds(t *testing.T) {
-	const targetTriple = "x86_64-unknown-linux-gnu"
 	diag := diagnostics.NewDiagnosticBag()
 	irText := GenerateLLVMIR(indexReadMIRModule(llvmTypes.fixed4I32, &mir.RefConst{Value: "4", Type: llvmTypes.i32}), diag, testLinuxAMD64, false)
 	if irText != "" {
@@ -3052,7 +3037,6 @@ func TestGenerateLLVMIRRejectsConstantArrayIndexOutOfBounds(t *testing.T) {
 }
 
 func TestGenerateLLVMIRRejectsInvalidConstantArrayIndexes(t *testing.T) {
-	const targetTriple = "x86_64-unknown-linux-gnu"
 	for _, index := range []string{"-1", "bad"} {
 		diag := diagnostics.NewDiagnosticBag()
 		irText := GenerateLLVMIR(indexReadMIRModule(llvmTypes.fixed4I32, &mir.RefConst{Value: index, Type: llvmTypes.i32}), diag, testLinuxAMD64, false)
@@ -3163,7 +3147,6 @@ func TestBoundsCheckedIndexHandlesUnsignedLengths(t *testing.T) {
 }
 
 func TestGenerateLLVMIRLowersDynamicArrayIndexRead(t *testing.T) {
-	const targetTriple = "x86_64-unknown-linux-gnu"
 	irText := GenerateLLVMIR(indexReadMIRModule(llvmTypes.dynamicI32, &mir.RefName{Name: "i", Type: llvmTypes.i32}), diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(irText, "extractvalue { i32*, i64, i64, i8* } %xs, 0") {
 		t.Fatalf("expected dynamic array index to extract data pointer, got:\n%s", irText)
@@ -3193,7 +3176,6 @@ func TestGenerateLLVMIRLowersBorrowedDynamicArrayIndexRead(t *testing.T) {
 }
 
 func TestGenerateLLVMIRUsesWidenedUnsignedDynamicArrayIndexForGEP(t *testing.T) {
-	const targetTriple = "x86_64-unknown-linux-gnu"
 	irText := GenerateLLVMIR(indexReadMIRModule(llvmTypes.dynamicI32, &mir.RefName{Name: "i", Type: llvmTypes.u8}), diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(irText, "zext i8 %i to i64") {
 		t.Fatalf("expected narrow unsigned index widening, got:\n%s", irText)
@@ -3211,7 +3193,6 @@ func TestGenerateLLVMIRUsesWidenedUnsignedDynamicArrayIndexForGEP(t *testing.T) 
 }
 
 func TestGenerateLLVMIRLowersDynamicArrayIndexStore(t *testing.T) {
-	const targetTriple = "x86_64-unknown-linux-gnu"
 	irText := GenerateLLVMIR(indexStoreMIRModule(llvmTypes.dynamicI32, &mir.RefConst{Value: "0", Type: llvmTypes.i32}), diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(irText, "extractvalue { i32*, i64, i64, i8* } %xs, 0") {
 		t.Fatalf("expected dynamic array index to extract data pointer, got:\n%s", irText)
@@ -3228,7 +3209,6 @@ func TestGenerateLLVMIRLowersDynamicArrayIndexStore(t *testing.T) {
 }
 
 func TestGenerateLLVMIRLowersSharedSliceViewIndexRead(t *testing.T) {
-	const targetTriple = "x86_64-unknown-linux-gnu"
 	irText := GenerateLLVMIR(indexReadMIRModule(llvmTypes.refSliceI32, &mir.RefName{Name: "i", Type: llvmTypes.i32}), diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(irText, "extractvalue { i32*, i64 } %xs, 0") ||
 		!strings.Contains(irText, "extractvalue { i32*, i64 } %xs, 1") {
@@ -3255,7 +3235,6 @@ func TestGenerateLLVMIRLowersSharedSliceViewIndexRead(t *testing.T) {
 }
 
 func TestGenerateLLVMIRLowersMutableSliceViewIndexStore(t *testing.T) {
-	const targetTriple = "x86_64-unknown-linux-gnu"
 	irText := GenerateLLVMIR(indexStoreMIRModule(llvmTypes.mutRefSliceI32, &mir.RefConst{Value: "0", Type: llvmTypes.u8}), diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
 	if !strings.Contains(irText, "extractvalue { i32*, i64 } %xs, 0") ||
 		!strings.Contains(irText, "extractvalue { i32*, i64 } %xs, 1") {

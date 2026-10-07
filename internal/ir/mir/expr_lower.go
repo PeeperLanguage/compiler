@@ -149,40 +149,28 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		}
 		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.ZeroValue:
-		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &ZeroValue{Type: e.TypeID(), Location: e.Origin().Location}})
-		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
+		return l.storeInTemp(out, e, &ZeroValue{Type: e.TypeID(), Location: e.Origin().Location})
 	case *ir.VariantMake:
 		payload := l.lowerExpr(e.Payload, out)
-		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &VariantMake{Case: e.Case, Payload: payload, Type: e.TypeID(), Location: e.Origin().Location}})
-		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
+		return l.storeInTemp(out, e, &VariantMake{Case: e.Case, Payload: payload, Type: e.TypeID(), Location: e.Origin().Location})
 	case *ir.VariantIs:
 		value := l.lowerExpr(e.Value, out)
-		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &VariantIs{Value: value, Case: e.Case, Type: e.TypeID(), Location: e.Origin().Location}})
-		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
+		return l.storeInTemp(out, e, &VariantIs{Value: value, Case: e.Case, Type: e.TypeID(), Location: e.Origin().Location})
 	case *ir.Ident:
 		ref := identifierRef(e)
 		// Direct symbols retain linkage names; callable storage is captured too.
 		if typ, ok := l.module.Types.Type(e.TypeID()); ok && typ.Kind == ir.TypeFunction && l.symbolValues[e.SymbolID] == nil {
 			return ref
 		}
-		name := l.nextTemp()
 		// MIR Move captures a value; semantic consumption remains analysis-owned.
-		l.appendInstr(out, &Assign{Name: name, Value: asValueExpr(ref)})
-		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
+		return l.storeInTemp(out, e, asValueExpr(ref))
 	case *ir.Unary:
 		arg := l.lowerExpr(e.Arg, out)
-		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &Unary{Op: e.Op, Arg: arg, Type: e.TypeID(), Location: e.Origin().Location}})
-		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
+		return l.storeInTemp(out, e, &Unary{Op: e.Op, Arg: arg, Type: e.TypeID(), Location: e.Origin().Location})
 	case *ir.Binary:
 		left := l.lowerExpr(e.Left, out)
 		right := l.lowerExpr(e.Right, out)
-		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &Binary{Op: e.Op, Left: left, Right: right, Type: e.TypeID(), Location: e.Origin().Location}})
-		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
+		return l.storeInTemp(out, e, &Binary{Op: e.Op, Left: left, Right: right, Type: e.TypeID(), Location: e.Origin().Location})
 	case *ir.StringConcat:
 		left := l.lowerExpr(e.Left, out)
 		right := l.lowerExpr(e.Right, out)
@@ -198,9 +186,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 			l.appendInstr(out, call)
 			return nil
 		}
-		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: call})
-		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
+		return l.storeInTemp(out, e, call)
 	case *ir.Print:
 		value := l.lowerExpr(e.Value, out)
 		l.appendInstr(out, &Print{Value: value, AppendsNewline: e.AppendsNewline, Location: e.Origin().Location})
@@ -222,34 +208,26 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		return value
 	case *ir.Len:
 		value := l.lowerExpr(e.Value, out)
-		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &Len{
+		return l.storeInTemp(out, e, &Len{
 			Value: value, Type: e.TypeID(), Location: e.Origin().Location,
-		}})
-		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
+		})
 	case *ir.StringChars:
 		value := l.lowerExpr(e.Value, out)
-		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &StringChars{
+		return l.storeInTemp(out, e, &StringChars{
 			Value: value, Type: e.TypeID(), Location: e.Origin().Location,
-		}})
-		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
+		})
 	case *ir.StringFromBytes:
 		bytes := l.lowerExpr(e.Bytes, out)
 		var allocator ValueRef
 		if e.Allocator != nil {
 			allocator = l.lowerExpr(e.Allocator, out)
 		}
-		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &StringFromBytes{
+		return l.storeInTemp(out, e, &StringFromBytes{
 			Bytes: bytes, Allocator: allocator, Type: e.TypeID(), Location: e.Origin().Location,
-		}})
-		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
+		})
 	case *ir.AddrOf:
 		place := l.lowerPlace(e.Place, out)
-		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &AddrOf{Place: place, Type: e.TypeID(), Location: e.Origin().Location}})
-		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
+		return l.storeInTemp(out, e, &AddrOf{Place: place, Type: e.TypeID(), Location: e.Origin().Location})
 	case *ir.TempBorrow:
 		value := l.lowerExpr(e.Value, out)
 		if value == nil {
@@ -279,16 +257,14 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		if e.End != nil {
 			end = l.lowerExpr(e.End, out)
 		}
-		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &SliceView{
+		return l.storeInTemp(out, e, &SliceView{
 			Source:         source,
 			Start:          start,
 			End:            end,
 			IsEndExclusive: e.IsEndExclusive,
 			Type:           e.TypeID(),
 			Location:       e.Origin().Location,
-		}})
-		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
+		})
 	case *ir.Field:
 		base := l.lowerExpr(e.Base, out)
 		name := l.nextTemp()
@@ -306,9 +282,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		for _, field := range e.Fields {
 			fields = append(fields, l.lowerExpr(field, out))
 		}
-		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &StructLit{Fields: fields, Type: e.TypeID(), Location: e.Origin().Location}})
-		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
+		return l.storeInTemp(out, e, &StructLit{Fields: fields, Type: e.TypeID(), Location: e.Origin().Location})
 	case *ir.ArrayLit:
 		if e.IsDynamic {
 			name := l.nextTemp()
@@ -340,9 +314,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		for _, value := range e.Values {
 			values = append(values, l.lowerExpr(value, out))
 		}
-		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &ArrayLit{Values: values, Type: e.TypeID(), Location: e.Origin().Location}})
-		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
+		return l.storeInTemp(out, e, &ArrayLit{Values: values, Type: e.TypeID(), Location: e.Origin().Location})
 	case *ir.DynamicArrayOp:
 		array := l.lowerExpr(e.Array, out)
 		var length, value ValueRef
@@ -367,11 +339,9 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		if e.Allocator != nil {
 			allocRef = l.lowerExpr(e.Allocator, out)
 		}
-		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &Alloc{
+		return l.storeInTemp(out, e, &Alloc{
 			Value: value, Allocator: allocRef, Type: e.TypeID(), Location: e.Origin().Location,
-		}})
-		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
+		})
 	case *ir.InterfaceMake:
 		value := l.lowerExpr(e.Value, out)
 		dataType := interfaceDataType(l.module.Types, e.Value.TypeID())
@@ -384,34 +354,26 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 			l.registerInterfaceThunk(slot, index)
 			slots = append(slots, &RefName{Name: wrapperName, Type: slot.SlotType})
 		}
-		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &InterfaceMake{
+		return l.storeInTemp(out, e, &InterfaceMake{
 			Value:    value,
 			DataType: dataType,
 			Slots:    slots,
 			Type:     e.TypeID(),
 			Location: e.Origin().Location,
-		}})
-		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
+		})
 	case *ir.InterfaceCall:
 		call := l.lowerInterfaceCall(e, out)
 		if l.isVoid(call.Type) {
 			l.appendInstr(out, call)
 			return nil
 		}
-		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: call})
-		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
+		return l.storeInTemp(out, e, call)
 	case *ir.Cast:
 		arg := l.lowerExpr(e.Expr, out)
 		if fields, ok := l.structCastFields(arg, e.TypeID(), e.Origin().Location, out); ok {
-			name := l.nextTemp()
-			l.appendInstr(out, &Assign{Name: name, Value: &StructLit{Fields: fields, Type: e.TypeID(), Location: e.Origin().Location}})
-			return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
+			return l.storeInTemp(out, e, &StructLit{Fields: fields, Type: e.TypeID(), Location: e.Origin().Location})
 		}
-		name := l.nextTemp()
-		l.appendInstr(out, &Assign{Name: name, Value: &Cast{Arg: arg, Type: e.TypeID(), Location: e.Origin().Location}})
-		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
+		return l.storeInTemp(out, e, &Cast{Arg: arg, Type: e.TypeID(), Location: e.Origin().Location})
 	default:
 		panic(fmt.Sprintf("MIR lowering: unhandled IR expression %T", expr))
 	}
@@ -463,6 +425,15 @@ func (l *lowerer) registerInterfaceThunk(slot ir.InterfaceSlot, index int) {
 		DataType:      slot.DataType,
 	}
 	l.module.InterfaceThunks = append(l.module.InterfaceThunks, thunk)
+}
+
+// storeInTemp binds value to a fresh temporary and returns a reference typed and
+// located like e. Callers lower operands first so temporaries stay in
+// evaluation order.
+func (l *lowerer) storeInTemp(out *[]Instr, e ir.Expr, value ValueExpr) ValueRef {
+	name := l.nextTemp()
+	l.appendInstr(out, &Assign{Name: name, Value: value})
+	return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 }
 
 func (l *lowerer) nextTemp() string {

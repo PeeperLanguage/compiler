@@ -284,14 +284,6 @@ func (b *llvmBuilder) fieldPlace(base llvmPlace, index int) llvmPlace {
 	return result
 }
 
-func (b *llvmBuilder) namedFieldPlace(base llvmPlace, field llvmFieldName) llvmPlace {
-	index, ok := base.Pointee.Fields[field]
-	if !ok {
-		b.invariant("layout %s has no field %q", base.Pointee.Text, field)
-	}
-	return b.fieldPlace(base, index)
-}
-
 func (b *llvmBuilder) phi(layout *llvmLayout, incoming ...llvmIncoming) llvmValue {
 	result := b.nextValue(layout)
 	b.definePhi(result, incoming...)
@@ -337,7 +329,7 @@ func (b *llvmBuilder) call(callee llvmValue, args []llvmValue) llvmValue {
 	return result
 }
 
-func (b *llvmBuilder) variadicCall(callee llvmValue, fixed, variadic []llvmValue) llvmValue {
+func (b *llvmBuilder) variadicCall(callee llvmValue, fixed, variadic []llvmValue) {
 	if callee.Layout == nil || callee.Layout.Kind != llvmLayoutFunction || callee.Layout.Return == nil || len(fixed) != len(callee.Layout.Parameters) {
 		b.invariant("variadic call requires function and exact fixed arguments")
 	}
@@ -363,11 +355,9 @@ func (b *llvmBuilder) variadicCall(callee llvmValue, fixed, variadic []llvmValue
 	callText := fmt.Sprintf("call %s (%s) %s(%s)", callee.Layout.Return.Text, signature, callee.Text, strings.Join(args, ", "))
 	if callee.Layout.Return.Kind == llvmLayoutVoid {
 		b.line(callText)
-		return b.value("void", callee.Layout.Return)
+		return
 	}
-	result := b.nextValue(callee.Layout.Return)
-	b.line(result.Text + " = " + callText)
-	return result
+	b.line(b.nextReg() + " = " + callText)
 }
 
 func (b *llvmBuilder) trap() {

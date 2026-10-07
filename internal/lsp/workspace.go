@@ -75,12 +75,6 @@ func (w *workspaceIndex) rebuild(sourceOverrides map[string]string) (map[string]
 		return nil, err
 	}
 
-	type workspaceFileContext struct {
-		rootDir     string
-		projectName string
-		importPath  string
-	}
-	contexts := make(map[string]workspaceFileContext, len(files))
 	projectContexts := make(map[[2]string]*project.CompilerContext)
 	contextForProject := func(rootDir, projectName string) *project.CompilerContext {
 		key := [2]string{rootDir, projectName}
@@ -95,51 +89,9 @@ func (w *workspaceIndex) rebuild(sourceOverrides map[string]string) (map[string]
 		projectContexts[key] = ctx
 		return ctx
 	}
-	projectsByDir := make(map[string]*manifest.Project)
-	projectsByManifest := make(map[string]*manifest.Project)
 	w.parsedFiles = 0
 	parsedModules := make(map[string]workspaceParse)
-	for _, filePath := range files {
-		fileDir := filepath.Dir(filePath)
-		rootDir := fileDir
-		projectName := ""
-		loadedProject, checked := projectsByDir[fileDir]
-		if !checked {
-			if manifestPath, err := manifest.FindManifestPath(filePath); err == nil {
-				manifestKey := project.CanonicalPath(manifestPath)
-				loadedProject, checked = projectsByManifest[manifestKey]
-				if !checked {
-					if configuredProject, loadErr := manifest.LoadProjectFromManifest(manifestPath); loadErr == nil {
-						loadedProject = configuredProject
-					}
-					projectsByManifest[manifestKey] = loadedProject
-				}
-			}
-			projectsByDir[fileDir] = loadedProject
-		}
-		if loadedProject != nil {
-			if !manifest.IsPathWithinSourceDir(loadedProject.RootDir, filePath) {
-				continue
-			}
-			rootDir = loadedProject.RootDir
-			projectName = loadedProject.File.Package.Name
-		}
-		importPath := ""
-		previous := w.modules[filePath]
-		if previous != nil && previous.rootDir == rootDir && previous.projectName == projectName {
-			importPath = previous.importPath
-		} else {
-			ctx := contextForProject(rootDir, projectName)
-			if resolved, resolveErr := ctx.ImportPathForFile(project.ModuleOriginLocal, "", filePath); resolveErr == nil {
-				importPath = resolved
-			}
-		}
-		contexts[filePath] = workspaceFileContext{
-			rootDir:     rootDir,
-			projectName: projectName,
-			importPath:  importPath,
-		}
-	}
+	contexts := w.fileContexts(files, contextForProject)
 	fileMembershipChanged := len(w.modules) != len(contexts)
 	if !fileMembershipChanged {
 		for filePath := range w.modules {
@@ -225,22 +177,7 @@ func (w *workspaceIndex) rebuild(sourceOverrides map[string]string) (map[string]
 			continue
 		}
 		ctx := contextForProject(fileCtx.rootDir, fileCtx.projectName)
-		seen := make(map[string]struct{})
-		for _, rawPath := range module.sourceImportPaths {
-			resolved, resolveErr := ctx.ResolveImportPath(rawPath)
-			if resolveErr != nil || resolved == nil || resolved.ID.Origin != string(project.ModuleOriginLocal) {
-				continue
-			}
-			target := resolved.FilePath
-			if _, ok := contexts[target]; !ok {
-				continue
-			}
-			if _, dup := seen[target]; dup {
-				continue
-			}
-			seen[target] = struct{}{}
-			module.resolvedLocalImportFiles = append(module.resolvedLocalImportFiles, target)
-		}
+		resolveLocalImportFiles(ctx, module, contexts)
 	}
 
 	for filePath := range w.modules {
@@ -254,6 +191,90 @@ func (w *workspaceIndex) rebuild(sourceOverrides map[string]string) (map[string]
 		return parsedModules, nil
 	}
 
+	w.rebuildImportGraph()
+	return parsedModules, nil
+}
+
+// workspaceFileContext is the project a workspace file belongs to and the
+// import path other files use to reach it.
+type workspaceFileContext struct {
+	rootDir     string
+	projectName string
+	importPath  string
+}
+
+// fileContexts decides, for every source file, which project owns it. Files
+// outside their project's source directory are left out.
+func (w *workspaceIndex) fileContexts(files []string, contextForProject func(rootDir, projectName string) *project.CompilerContext) map[string]workspaceFileContext {
+	contexts := make(map[string]workspaceFileContext, len(files))
+	projectsByDir := make(map[string]*manifest.Project)
+	projectsByManifest := make(map[string]*manifest.Project)
+	for _, filePath := range files {
+		fileDir := filepath.Dir(filePath)
+		rootDir := fileDir
+		projectName := ""
+		loadedProject, checked := projectsByDir[fileDir]
+		if !checked {
+			if manifestPath, err := manifest.FindManifestPath(filePath); err == nil {
+				manifestKey := project.CanonicalPath(manifestPath)
+				loadedProject, checked = projectsByManifest[manifestKey]
+				if !checked {
+					if configuredProject, loadErr := manifest.LoadProjectFromManifest(manifestPath); loadErr == nil {
+						loadedProject = configuredProject
+					}
+					projectsByManifest[manifestKey] = loadedProject
+				}
+			}
+			projectsByDir[fileDir] = loadedProject
+		}
+		if loadedProject != nil {
+			if !manifest.IsPathWithinSourceDir(loadedProject.RootDir, filePath) {
+				continue
+			}
+			rootDir = loadedProject.RootDir
+			projectName = loadedProject.File.Package.Name
+		}
+		importPath := ""
+		previous := w.modules[filePath]
+		if previous != nil && previous.rootDir == rootDir && previous.projectName == projectName {
+			importPath = previous.importPath
+		} else {
+			ctx := contextForProject(rootDir, projectName)
+			if resolved, resolveErr := ctx.ImportPathForFile(project.ModuleOriginLocal, "", filePath); resolveErr == nil {
+				importPath = resolved
+			}
+		}
+		contexts[filePath] = workspaceFileContext{
+			rootDir:     rootDir,
+			projectName: projectName,
+			importPath:  importPath,
+		}
+	}
+	return contexts
+}
+
+// resolveLocalImportFiles records the workspace files a module imports, once
+// each, in source order.
+func resolveLocalImportFiles(ctx *project.CompilerContext, module *workspaceModule, contexts map[string]workspaceFileContext) {
+	seen := make(map[string]struct{})
+	for _, rawPath := range module.sourceImportPaths {
+		resolved, resolveErr := ctx.ResolveImportPath(rawPath)
+		if resolveErr != nil || resolved == nil || resolved.ID.Origin != string(project.ModuleOriginLocal) {
+			continue
+		}
+		target := resolved.FilePath
+		if _, ok := contexts[target]; !ok {
+			continue
+		}
+		if _, dup := seen[target]; dup {
+			continue
+		}
+		seen[target] = struct{}{}
+		module.resolvedLocalImportFiles = append(module.resolvedLocalImportFiles, target)
+	}
+}
+
+func (w *workspaceIndex) rebuildImportGraph() {
 	g := graph.NewDependencyGraph(project.GraphEdgeImport)
 	for _, module := range w.modules {
 		for _, target := range module.resolvedLocalImportFiles {
@@ -266,7 +287,6 @@ func (w *workspaceIndex) rebuild(sourceOverrides map[string]string) (map[string]
 
 	w.components = buildWorkspaceComponents(w.modules, g)
 	w.imports = g
-	return parsedModules, nil
 }
 
 func (w *workspaceIndex) syntheticEntry(filePath string) (string, string, bool) {

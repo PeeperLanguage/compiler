@@ -196,7 +196,7 @@ func Load(path string) (*File, error) {
 	if !ok {
 		return nil, fmt.Errorf("missing top-level package config")
 	}
-	name, ok, err := toml.LookupKey[string](pkg, "name")
+	name, _, err := toml.LookupKey[string](pkg, "name")
 	if err != nil {
 		return nil, err
 	}
@@ -226,7 +226,7 @@ func Load(path string) (*File, error) {
 		}
 		manifest.Package.CompilerVersion = compilerVersion
 	}
-	build, ok, err := toml.LookupKey[string](pkg, "build")
+	build, _, err := toml.LookupKey[string](pkg, "build")
 	if err != nil {
 		return nil, fmt.Errorf("build: %w", err)
 	}
@@ -421,15 +421,6 @@ func renderDevSection(builder *strings.Builder, dev *DevConfig) {
 	if dev.MockPath != "" {
 		fmt.Fprintf(builder, "mock_path = %s\n", strconv.Quote(dev.MockPath))
 	}
-}
-
-func RemoveDependency(path, alias string) error {
-	file, err := Load(path)
-	if err != nil {
-		return err
-	}
-	delete(file.Dependencies, alias)
-	return Save(path, file)
 }
 
 func renderDependency(dep Dependency) string {

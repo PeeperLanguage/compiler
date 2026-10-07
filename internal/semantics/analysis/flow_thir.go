@@ -890,13 +890,7 @@ func (a *flowAnalyzer) applyVariantCaseEdge(site *cfg.Site, edge cfg.Edge, state
 			dependencies: append([]*symbols.Symbol(nil), resolution.Dependencies...),
 		})
 	}
-	var selected *thir.MatchArm
-	for index := range match.Arms {
-		if match.Arms[index].Case == edge.Case {
-			selected = &match.Arms[index]
-			break
-		}
-	}
+	selected := match.Arm(edge.Case)
 	if selected == nil || selected.Payload == nil {
 		return
 	}

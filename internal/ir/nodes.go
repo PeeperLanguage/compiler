@@ -499,12 +499,7 @@ func (e *BoolLit) TypeID() TypeID {
 	}
 	return e.Type
 }
-func (e *ZeroValue) String() string {
-	if e == nil || e.Type == InvalidType {
-		return "zero"
-	}
-	return "zero"
-}
+func (*ZeroValue) String() string { return "zero" }
 func (e *ZeroValue) TypeID() TypeID {
 	if e == nil {
 		return InvalidType
@@ -917,18 +912,6 @@ func (e *Cast) TypeID() TypeID {
 		return InvalidType
 	}
 	return e.Type
-}
-
-func ArrayTypeParts(typeText string) (string, string, bool) {
-	typeText = strings.TrimSpace(typeText)
-	if !strings.HasPrefix(typeText, "[") {
-		return "", "", false
-	}
-	close := strings.IndexByte(typeText, ']')
-	if close <= 1 || close == len(typeText)-1 {
-		return "", "", false
-	}
-	return strings.TrimSpace(typeText[1:close]), strings.TrimSpace(typeText[close+1:]), true
 }
 
 func SignatureText(types *TypeTable, params []Param, returnType TypeID) string {

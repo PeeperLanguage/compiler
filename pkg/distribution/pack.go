@@ -304,12 +304,13 @@ func writeZipPack(output io.Writer, entries []packEntry, manifestJSON []byte) er
 	zipWriter := zip.NewWriter(output)
 	for _, entry := range entries {
 		header := &zip.FileHeader{Name: entry.record.Path, Method: zip.Deflate}
-		header.SetModTime(time.Date(1980, 1, 1, 0, 0, 0, 0, time.UTC))
+		header.Modified = time.Date(1980, 1, 1, 0, 0, 0, 0, time.UTC)
 		mode := os.FileMode(entry.record.Mode)
-		if entry.record.Type == FileTypeDirectory {
+		switch entry.record.Type {
+		case FileTypeDirectory:
 			header.Name += "/"
 			mode |= os.ModeDir
-		} else if entry.record.Type == FileTypeSymlink {
+		case FileTypeSymlink:
 			mode |= os.ModeSymlink
 		}
 		header.SetMode(mode)
@@ -317,18 +318,19 @@ func writeZipPack(output io.Writer, entries []packEntry, manifestJSON []byte) er
 		if err != nil {
 			return fmt.Errorf("write zip header %q: %w", entry.record.Path, err)
 		}
-		if entry.record.Type == FileTypeRegular {
+		switch entry.record.Type {
+		case FileTypeRegular:
 			if err := copyPackFile(writer, entry); err != nil {
 				return err
 			}
-		} else if entry.record.Type == FileTypeSymlink {
+		case FileTypeSymlink:
 			if _, err := io.WriteString(writer, entry.record.LinkTarget); err != nil {
 				return fmt.Errorf("write zip symlink %q: %w", entry.record.Path, err)
 			}
 		}
 	}
 	manifestHeader := &zip.FileHeader{Name: ManifestName, Method: zip.Deflate}
-	manifestHeader.SetModTime(time.Date(1980, 1, 1, 0, 0, 0, 0, time.UTC))
+	manifestHeader.Modified = time.Date(1980, 1, 1, 0, 0, 0, 0, time.UTC)
 	manifestHeader.SetMode(0o644)
 	manifestWriter, err := zipWriter.CreateHeader(manifestHeader)
 	if err != nil {

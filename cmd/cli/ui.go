@@ -16,10 +16,6 @@ func printInfo(text string) {
 	fmt.Printf("ℹ %s\n", text)
 }
 
-func printWarning(text string) {
-	fmt.Printf("⚠ %s\n", text)
-}
-
 func printError(text string) {
 	fmt.Printf("✗ %s\n", text)
 }

@@ -8,23 +8,10 @@ import (
 
 type ExprTypeFunc func(ast.Expr) typeinfo.Type
 
-// Binding carries a symbol lookup result with transient context.
-// Symbol is the underlying cross-module symbol pointer; Local is
-// true only when the symbol was resolved in the current module's
-// scope tree. A shared *symbols.Symbol cannot carry "local-to-this-
-// module" because the same pointer appears in both the declaration
-// and caller module's ExpandedDefaultBindings.
-type Binding struct {
-	Symbol  *symbols.Symbol
-	IsLocal bool
-}
-
 // BindingResolver supplies symbols for expressions that were resolved outside
 // the current scope tree (e.g. cloned defaults or qualified imports). When the
-// resolver reports a match, scope lookup must be skipped entirely. Expanded
-// defaults and qualified imports use Local=false to prevent LocalRoot from
-// misclassifying non-local storage as a caller pointer-escape source.
-type BindingResolver func(ast.Expr) (Binding, bool)
+// resolver reports a match, scope lookup must be skipped entirely.
+type BindingResolver func(ast.Expr) (*symbols.Symbol, bool)
 
 // Projection describes one syntactic projection from a base expression.
 //
@@ -165,46 +152,6 @@ func MutableAddressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFu
 		}
 	}
 	return isMutable, sharedReference, mutableBinding
-}
-
-func LocalRoot(scope, moduleScope *symbols.Scope, expr ast.Expr, exprType ExprTypeFunc, resolve BindingResolver) (*symbols.Symbol, bool) {
-	if scope == nil || moduleScope == nil || expr == nil {
-		return nil, false
-	}
-	if e, ok := expr.(*ast.Ident); ok {
-		if e == nil {
-			return nil, false
-		}
-		if resolve != nil {
-			if binding, found := resolve(e); found {
-				// Expanded defaults have Local=false: the symbol
-				// lives in the declaration module, not the caller,
-				// so it is not a pointer-escape source.
-				if binding.IsLocal && addressableSymbol(binding.Symbol) {
-					return binding.Symbol, true
-				}
-				return nil, false
-			}
-		}
-		for current := scope; current != nil && current != moduleScope; current = current.Parent() {
-			sym, found := current.LookupLocal(e.Name)
-			if found {
-				return sym, addressableSymbol(sym)
-			}
-		}
-		return nil, false
-	}
-	projection, ok := Project(expr)
-	if !ok {
-		return nil, false
-	}
-	base := projection.Base
-	if exprType != nil {
-		if _, ok := typeinfo.PointerTarget(typeinfo.Underlying(exprType(base))); ok {
-			return nil, false
-		}
-	}
-	return LocalRoot(scope, moduleScope, base, exprType, resolve)
 }
 
 func addressableSymbol(sym *symbols.Symbol) bool {

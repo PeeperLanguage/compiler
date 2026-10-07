@@ -276,7 +276,7 @@ func (c *checker) checkFunctionTypeContracts() {
 		context := typeresolution.Context{}
 		allowTypeParameters := false
 		if typeDecl, ok := decl.(ast.TypeDecl); ok && len(typeDecl.DeclarationTypeParams()) > 0 {
-			context = c.typeContextForDecl(typeDecl, false)
+			context = c.typeContextForDecl(typeDecl)
 			allowTypeParameters = true
 		}
 		ast.Inspect(decl, func(node ast.Node) bool {
@@ -296,7 +296,7 @@ func (c *checker) checkTypeDeclReferenceStorage(decl ast.TypeDecl) {
 	if decl == nil {
 		return
 	}
-	context := c.typeContextForDecl(decl, false)
+	context := c.typeContextForDecl(decl)
 	switch node := decl.(type) {
 	case *ast.StructDecl:
 		strct, ok := node.Type.(*ast.StructType)
@@ -325,7 +325,7 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidTypeInParser, "interface declaration missing interface payload", ast.LocOf(decl), "")
 		return
 	}
-	resolvedIface, _ := c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, iface, c.typeContextForDecl(decl, false)).(*typeinfo.InterfaceType)
+	resolvedIface, _ := c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, iface, c.typeContextForDecl(decl)).(*typeinfo.InterfaceType)
 	allowTypeParameters := len(decl.DeclarationTypeParams()) > 0
 	for methodIndex, method := range iface.Methods {
 		if method.Name == nil || method.Name.Name == "" {
@@ -342,7 +342,7 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 			c.ctx.Diagnostics.Add(invalidTypeError(method.Receiver.Type,
 				"iface method receiver must be Self, &Self, or &mut Self"))
 		}
-		context := c.typeContextForDecl(decl, false)
+		context := c.typeContextForDecl(decl)
 		for _, param := range method.Params {
 			paramType := c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, param.Type, context)
 			if c.rejectUnsizedType(paramType, param.Type, "interface method parameter") {
@@ -381,7 +381,7 @@ func (c *checker) checkEnumDecl(decl *ast.EnumDecl) {
 		c.ctx.Diagnostics.Add(invalidTypeError(decl, "enum requires at least one variant"))
 		return
 	}
-	context := c.typeContextForDecl(decl, false)
+	context := c.typeContextForDecl(decl)
 	allowTypeParameters := len(decl.DeclarationTypeParams()) > 0
 	dataFields := make(map[string]*source.Location)
 	for _, variant := range enumType.Variants {
@@ -466,8 +466,8 @@ func (c *checker) checkEnumPayloadType(syntax ast.TypeExpr, typeContext typereso
 	}
 }
 
-func (c *checker) typeContextForDecl(decl ast.TypeDecl, allowAbstractSelf bool) typeresolution.Context {
-	context := typeresolution.Context{AllowAbstractSelf: allowAbstractSelf}
+func (c *checker) typeContextForDecl(decl ast.TypeDecl) typeresolution.Context {
+	var context typeresolution.Context
 	if iface, ok := decl.(*ast.InterfaceDecl); ok {
 		context.NamedInterfaceRoot = iface.UnderlyingType()
 	}

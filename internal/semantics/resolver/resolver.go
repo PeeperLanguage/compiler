@@ -268,7 +268,7 @@ func (r *resolver) resolveExpr(scope *symbols.Scope, expr ast.Expr) {
 			}
 			return
 		}
-		reportUnresolved(r.module, scope, node, r.ctx.Diagnostics)
+		reportUnresolved(scope, node, r.ctx.Diagnostics)
 	case *ast.ScopeResolution:
 		if r.resolveVariantPath(scope, node) {
 			return
@@ -350,7 +350,7 @@ func (r *resolver) resolveAssignTarget(scope *symbols.Scope, expr ast.Expr) {
 			r.module.SymbolIndex.MarkUsed(sym)
 			return
 		}
-		reportUnresolved(r.module, scope, node, r.ctx.Diagnostics)
+		reportUnresolved(scope, node, r.ctx.Diagnostics)
 	case *ast.SelectorExpr:
 		r.resolveExpr(scope, node.Expr)
 	default:
