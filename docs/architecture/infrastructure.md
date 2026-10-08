@@ -303,8 +303,9 @@ adding a generic cache or transplanting these artifacts by stable ID alone.
 
 `diagnostics.Diagnostic` carries severity, message, stable code, file path, ordered
 labels, and extras. A primary label is the diagnostic origin; secondary labels carry
-context such as a previous declaration or recursive generic application. Code hints,
-insertions, removals, replacements, notes, and help are extras.
+context such as a previous declaration or recursive generic application. Notes and
+help lines are extras; each can carry fixes (`Fix.Remove`, `Fix.Insert`, `Fix.Replace`)
+whose fixed source line is shown beneath it.
 
 `DiagnosticBag` stores `groups[producingPhase][moduleScope]`. `BeginPhase` replaces
 one phase/module group and returns a scoped writer. `AppendPhase` appends to an
@@ -348,7 +349,8 @@ back to bounded file scanning.
 `diagnostics.SourceCache` stores split source lines under an RW mutex. The bag accepts
 in-memory source through `AddSourceContent`, allowing diagnostics for source
 overrides. The emitter supports ANSI/HTML strings and stderr output, source
-snippets, labels, code hints, tab expansion, and optional syntax highlighting.
+snippets, labels, help and note lines with the fixed source line beneath them,
+tab expansion, and optional syntax highlighting.
 `SyntaxHighlighter` performs lightweight line tokenization; `suggest.go` supplies
 Levenshtein-based, ambiguity-aware nearest-name suggestions with stable priorities.
 

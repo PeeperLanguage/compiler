@@ -1,13 +1,14 @@
 package diagnostics
 
 import (
+	"cmp"
 	"fmt"
 	"io"
-	"os"
-	pathpkg "path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"compiler/internal/source"
 	"compiler/pkg/colors"
@@ -162,15 +163,6 @@ type Emitter struct {
 	highlighter         *SyntaxHighlighter
 }
 
-type labelContext struct {
-	filepath string
-	line     int
-	startCol int
-	endCol   int
-	codeHint *CodeHint
-	severity Severity
-}
-
 func NewEmitter(w io.Writer) *Emitter {
 	logger := colors.NewLogger(colors.CurrentLogFormat())
 	return &Emitter{
@@ -213,20 +205,6 @@ func (e *Emitter) printCurrentGutter(line int) {
 
 func (e *Emitter) printBlankGutter() {
 	e.logger.Fprintf(e.writer, colors.GREY, GUTTER_BLANK, e.currentLineNumWidth, "")
-}
-
-func (e *Emitter) printAddedGutter(color colors.COLOR) {
-	if color == "" {
-		color = colors.GREEN
-	}
-	e.logger.Fprintf(e.writer, color, GUTTER_BLANK, e.currentLineNumWidth, "+")
-}
-
-func (e *Emitter) printRemovedGutter(color colors.COLOR) {
-	if color == "" {
-		color = colors.RED
-	}
-	e.logger.Fprintf(e.writer, color, GUTTER_BLANK, e.currentLineNumWidth, "-")
 }
 
 func (e *Emitter) printPipeOnly() {
@@ -287,6 +265,14 @@ func (e *Emitter) calculateLineNumWidthForDiagnostic(diag *Diagnostic) int {
 		}
 	}
 
+	for _, extra := range diag.Extras {
+		for _, fix := range extra.Text.Fixes {
+			if fix.Location != nil && fix.Location.Start != nil {
+				lineNumbers[fix.Location.Start.Line] = true
+			}
+		}
+	}
+
 	maxLine := 0
 	for line := range lineNumbers {
 		if line > maxLine {
@@ -301,7 +287,6 @@ func (e *Emitter) calculateLineNumWidthForDiagnostic(diag *Diagnostic) int {
 
 func (e *Emitter) Emit(diag *Diagnostic) {
 	e.currentLineNumWidth = e.calculateLineNumWidthForDiagnostic(diag)
-	fallbackHintCtx := e.fallbackCodeHintContext(diag)
 
 	// Step 1: Print Main Diagnostic Header Block
 	e.printDiagnosticHeader(diag)
@@ -370,31 +355,28 @@ func (e *Emitter) Emit(diag *Diagnostic) {
 				lastLine = label.Location.End.Line
 			}
 		}
-		fmt.Fprintln(e.writer)
+		// Keep the margin unbroken when help or notes follow the snippet.
+		if len(diag.Extras) > 0 {
+			e.printPipeOnly()
+		}
 	} else if strings.TrimSpace(diag.FilePath) != "" {
 		e.printLocationHeader(diag.FilePath, 1, 1)
 	}
 
-	// Step 3: Print Extras and Alternative Code Corrections
-	suggestionHeaderPrinted := false
+	// Step 3: Print extra text lines and the fixes they propose
+	isAfterFixedLine := false
 	for _, extra := range diag.Extras {
-		switch extra.Kind {
-		case ExtraText:
-			e.printText(extra.Text)
-		case ExtraCodeHint:
-			hint := extra.CodeHint
-			if !e.hasRenderableCodeHint(&hint) {
-				continue
-			}
-			if !suggestionHeaderPrinted {
-				e.printSuggestionHeader()
-				suggestionHeaderPrinted = true
-			}
-			ctx := e.codeHintContext(diag, &hint, fallbackHintCtx)
-			e.printCodeHint(ctx)
+		// A fixed line belongs to the text above it; a margin line keeps the
+		// next text from reading as part of it.
+		if isAfterFixedLine && extra.Text.Message != "" {
 			e.printPipeOnly()
 		}
+		isAfterFixedLine = e.printText(extra.Text)
 	}
+
+	// Every diagnostic ends with one blank line, so the next one, or the
+	// summary, never runs into it.
+	fmt.Fprintln(e.writer)
 }
 
 func (e *Emitter) printPeeperSnippetBlock(filepath string, label Label, severity Severity) {
@@ -455,61 +437,6 @@ func (e *Emitter) printPeeperSnippetBlock(filepath string, label Label, severity
 	}
 }
 
-func (e *Emitter) fallbackCodeHintContext(diag *Diagnostic) labelContext {
-	ctx := labelContext{
-		filepath: diag.FilePath,
-		line:     1,
-		startCol: 1,
-		endCol:   1,
-		severity: diag.Severity,
-	}
-	for _, label := range diag.Labels {
-		if label.Location == nil || label.Location.Start == nil {
-			continue
-		}
-		start := label.Location.Start
-		end := label.Location.End
-		if end == nil {
-			end = start
-		}
-		if label.Location.Filename != nil && *label.Location.Filename != "" {
-			ctx.filepath = *label.Location.Filename
-		}
-		ctx.line = start.Line
-		ctx.startCol = start.Column
-		ctx.endCol = end.Column
-		if label.Style == Primary {
-			return ctx
-		}
-	}
-	return ctx
-}
-
-func (e *Emitter) codeHintContext(diag *Diagnostic, hint *CodeHint, fallback labelContext) labelContext {
-	ctx := fallback
-	ctx.severity = diag.Severity
-	ctx.codeHint = hint
-
-	if hint == nil || hint.Location == nil || hint.Location.Start == nil {
-		return ctx
-	}
-
-	start := hint.Location.Start
-	end := hint.Location.End
-	if end == nil {
-		end = start
-	}
-
-	ctx.filepath = diag.FilePath
-	if hint.Location.Filename != nil && *hint.Location.Filename != "" {
-		ctx.filepath = *hint.Location.Filename
-	}
-	ctx.line = start.Line
-	ctx.startCol = start.Column
-	ctx.endCol = end.Column
-	return ctx
-}
-
 func (e *Emitter) printDiagnosticHeader(diag *Diagnostic) {
 	var color colors.COLOR
 	switch diag.Severity {
@@ -528,245 +455,11 @@ func (e *Emitter) printDiagnosticHeader(diag *Diagnostic) {
 	e.logger.Fprintln(e.writer, color, diag.Message)
 }
 
-func (e *Emitter) printCodeHint(ctx labelContext) {
-	hint := ctx.codeHint
-	if hint == nil {
-		return
-	}
-	if e.printInlineReplacementHint(ctx, hint) {
-		return
-	}
-
-	lines := e.codeHintRenderableLines(hint)
-	if len(lines) == 0 {
-		return
-	}
-
-	e.printBlankGutter()
-	fmt.Fprintln(e.writer)
-
-	labelsByLine := make(map[int][]CodeHintLabel)
-	for _, label := range hint.Labels {
-		if label.Line <= 0 {
-			continue
-		}
-		labelsByLine[label.Line] = append(labelsByLine[label.Line], label)
-	}
-
-	for i, line := range lines {
-		prefix := strings.TrimSpace(line.Prefix)
-		switch prefix {
-		case "+":
-			e.printAddedGutter(hint.GutterColor)
-		case "-":
-			e.printRemovedGutter(colors.RED)
-		default:
-			e.printBlankGutter()
-		}
-
-		if line.BaseColor != "" {
-			e.highlighter.HighlightWithBaseColor(line.Code, e.writer, line.BaseColor)
-		} else if hint.BaseColor != "" {
-			e.highlighter.HighlightWithBaseColor(line.Code, e.writer, hint.BaseColor)
-		} else {
-			e.highlighter.HighlightWithColor(line.Code, e.writer)
-		}
-		fmt.Fprintln(e.writer)
-
-		if labels := labelsByLine[i+1]; len(labels) > 0 {
-			for _, label := range labels {
-				e.printCodeHintLabelLine(label, ctx.severity)
-			}
-		}
-	}
-}
-
-func (e *Emitter) printInlineReplacementHint(ctx labelContext, hint *CodeHint) bool {
-	if hint == nil {
-		return false
-	}
-	lines := e.codeHintRenderableLines(hint)
-	if len(lines) != 2 {
-		return false
-	}
-	if strings.TrimSpace(lines[0].Prefix) != "-" || strings.TrimSpace(lines[1].Prefix) != "+" {
-		return false
-	}
-	if strings.Contains(lines[0].Code, "\n") || strings.Contains(lines[1].Code, "\n") {
-		return false
-	}
-	if ctx.filepath == "" || ctx.line <= 0 || ctx.startCol <= 0 || ctx.endCol < ctx.startCol {
-		return false
-	}
-
-	sourceLine, err := e.cache.GetLine(ctx.filepath, ctx.line)
-	if err != nil {
-		return false
-	}
-	expandedSourceLine := expandTabs(sourceLine)
-
-	oldFrag := lines[0].Code
-	start := visualColumnToPosition(sourceLine, ctx.startCol)
-	if start < 0 || start > len(expandedSourceLine) {
-		return false
-	}
-	end := visualColumnToPosition(sourceLine, ctx.endCol)
-
-	if oldFrag != "" {
-		if start+len(oldFrag) <= len(expandedSourceLine) && expandedSourceLine[start:start+len(oldFrag)] == oldFrag {
-			end = start + len(oldFrag)
-		} else if idx := strings.Index(expandedSourceLine, oldFrag); idx >= 0 {
-			start = idx
-			end = idx + len(oldFrag)
-		}
-	}
-	if end < start || end > len(expandedSourceLine) {
-		return false
-	}
-
-	newFrag := lines[1].Code
-	replacementLine := expandedSourceLine[:start] + newFrag + expandedSourceLine[end:]
-	oldAbsStart, oldDiffLen, newAbsStart, newDiffLen := diffHighlightSpans(start, oldFrag, newFrag)
-
-	e.printBlankGutter()
-	fmt.Fprintln(e.writer)
-
-	if oldAbsStart < 0 {
-		oldAbsStart = 0
-	}
-	if oldAbsStart > len(expandedSourceLine) {
-		oldAbsStart = len(expandedSourceLine)
-	}
-
-	relPath := e.diffDisplayPath(ctx.filepath)
-	e.printBlankGutter()
-	e.logger.Fprintf(e.writer, colors.RED, "  --- a/%s\n", relPath)
-	e.printBlankGutter()
-	e.logger.Fprintf(e.writer, colors.GREEN, "  +++ b/%s\n", relPath)
-	e.printBlankGutter()
-	e.logger.Fprintf(e.writer, colors.GREY, "  @@ line %d @@\n", ctx.line)
-
-	e.printBlankGutter()
-	e.logger.Fprint(e.writer, colors.RED, "- ")
-	e.printLineWithColoredSpan(expandedSourceLine, oldAbsStart, oldDiffLen, colors.RED)
-	fmt.Fprintln(e.writer)
-
-	e.printBlankGutter()
-	e.logger.Fprint(e.writer, colors.GREEN, "+ ")
-	e.printLineWithColoredSpan(replacementLine, newAbsStart, newDiffLen, colors.GREEN)
-	fmt.Fprintln(e.writer)
-
-	return true
-}
-
-func diffHighlightSpans(baseStart int, oldFrag, newFrag string) (oldStart, oldLen, newStart, newLen int) {
-	oldStart, newStart = baseStart, baseStart
-	oldBytes, newBytes := []byte(oldFrag), []byte(newFrag)
-
-	prefix := 0
-	for prefix < len(oldBytes) && prefix < len(newBytes) && oldBytes[prefix] == newBytes[prefix] {
-		prefix++
-	}
-
-	suffix := 0
-	for suffix < len(oldBytes)-prefix && suffix < len(newBytes)-prefix &&
-		oldBytes[len(oldBytes)-1-suffix] == newBytes[len(newBytes)-1-suffix] {
-		suffix++
-	}
-
-	oldLen = len(oldBytes) - prefix - suffix
-	newLen = len(newBytes) - prefix - suffix
-	oldStart += prefix
-	newStart += prefix
-
-	return oldStart, oldLen, newStart, newLen
-}
-
-func (e *Emitter) printLineWithColoredSpan(line string, start, length int, spanColor colors.COLOR) {
-	if spanColor == "" || length <= 0 || start < 0 || start > len(line) {
-		e.highlighter.HighlightWithColor(line, e.writer)
-		return
-	}
-	end := min(start+length, len(line))
-	if start >= end {
-		e.highlighter.HighlightWithColor(line, e.writer)
-		return
-	}
-
-	e.highlighter.HighlightWithColor(line[:start], e.writer)
-	e.logger.Fprint(e.writer, spanColor, line[start:end])
-	e.highlighter.HighlightWithColor(line[end:], e.writer)
-}
-
-func (e *Emitter) diffDisplayPath(filepath string) string {
-	if filepath == "" {
-		return "unknown"
-	}
-	rel := filepath
-	if wd, err := os.Getwd(); err == nil {
-		if r, err := pathpkg.Rel(wd, filepath); err == nil && r != "" && !strings.HasPrefix(r, "..") {
-			rel = r
-		}
-	}
-	return pathpkg.ToSlash(rel)
-}
-
-func (e *Emitter) hasRenderableCodeHint(hint *CodeHint) bool {
-	return len(e.codeHintRenderableLines(hint)) > 0
-}
-
-func (e *Emitter) codeHintRenderableLines(hint *CodeHint) []CodeHintLine {
-	if hint == nil {
-		return nil
-	}
-	if len(hint.Lines) > 0 {
-		return hint.Lines
-	}
-	if hint.Code == "" {
-		return nil
-	}
-	rawLines := strings.Split(hint.Code, "\n")
-	lines := make([]CodeHintLine, 0, len(rawLines))
-	for _, line := range rawLines {
-		lines = append(lines, CodeHintLine{
-			Prefix:    "+",
-			Code:      line,
-			BaseColor: hint.BaseColor,
-		})
-	}
-	return lines
-}
-
-func (e *Emitter) printCodeHintLabelLine(label CodeHintLabel, severity Severity) {
-	if label.Column <= 0 {
-		return
-	}
-	length := label.Length
-	if length <= 0 {
-		length = 1
-	}
-
-	padding := label.Column - 1
-	e.printBlankGutter()
-	fmt.Fprint(e.writer, strings.Repeat(" ", padding))
-
-	var color colors.COLOR
-	if label.Style == Primary {
-		color = e.getSeverityColor(severity)
-	} else {
-		color = colors.BLUE
-	}
-
-	e.logger.Fprint(e.writer, color, strings.Repeat("~", length))
-	if label.Message != "" {
-		e.logger.Fprintf(e.writer, color, " %s", label.Message)
-	}
-	fmt.Fprintln(e.writer)
-}
-
-func (e *Emitter) printText(text DiagnosticText) {
+// printText prints one extra line and reports whether fixed source lines were
+// drawn beneath it.
+func (e *Emitter) printText(text DiagnosticText) bool {
 	if text.Message == "" {
-		return
+		return false
 	}
 	color := text.Color
 	if color == "" {
@@ -780,12 +473,175 @@ func (e *Emitter) printText(text DiagnosticText) {
 		e.logger.Fprintf(e.writer, color, "= ")
 	}
 	fmt.Fprintln(e.writer, text.Message)
+	return e.printFixes(text.Fixes)
 }
 
-func (e *Emitter) printSuggestionHeader() {
-	e.printSideNotePrefix()
-	e.logger.Fprint(e.writer, colors.GREEN, "= suggestion:")
+// fixSpan is one fix placed on its source line, as byte offsets into the
+// tab-expanded line.
+type fixSpan struct {
+	start, end int
+	newText    string
+}
+
+// fixedLine is a source line together with every fix that changes it.
+type fixedLine struct {
+	file   string
+	number int
+	source string
+	spans  []fixSpan
+}
+
+// printFixes shows every source line that fixes change, in the order the
+// lines are first mentioned. Fixes that cannot be shown faithfully on single
+// lines are not drawn at all; the text that proposes them still stands.
+func (e *Emitter) printFixes(fixes []CodeFix) bool {
+	lines, ok := e.fixedLines(fixes)
+	if !ok || len(lines) == 0 {
+		return false
+	}
+	e.printPipeOnly()
+	for _, line := range lines {
+		e.printFixedLine(line)
+	}
+	return true
+}
+
+// fixedLines groups fixes by the line they change and orders each line's fixes
+// by position. It reports false when any fix has no usable location, spans
+// lines, points outside its line, or overlaps another: drawing only part of a
+// set of edits would show a line the fix does not produce.
+func (e *Emitter) fixedLines(fixes []CodeFix) ([]fixedLine, bool) {
+	var lines []fixedLine
+	for _, fix := range fixes {
+		loc := fix.Location
+		if loc == nil || loc.Start == nil || loc.Filename == nil {
+			return nil, false
+		}
+		if loc.End != nil && loc.End.Line != loc.Start.Line || strings.ContainsAny(fix.NewText, "\r\n") {
+			return nil, false
+		}
+		index := slices.IndexFunc(lines, func(line fixedLine) bool {
+			return line.file == *loc.Filename && line.number == loc.Start.Line
+		})
+		if index < 0 {
+			sourceLine, err := e.cache.GetLine(*loc.Filename, loc.Start.Line)
+			if err != nil {
+				return nil, false
+			}
+			index = len(lines)
+			lines = append(lines, fixedLine{file: *loc.Filename, number: loc.Start.Line, source: sourceLine})
+		}
+		start, ok := columnOffset(lines[index].source, loc.Start.Column)
+		end := start
+		if ok && loc.End != nil {
+			end, ok = columnOffset(lines[index].source, loc.End.Column)
+		}
+		if !ok || end < start {
+			return nil, false
+		}
+		lines[index].spans = append(lines[index].spans, fixSpan{start: start, end: end, newText: fix.NewText})
+	}
+	for _, line := range lines {
+		// An insertion sorts before a wider fix that starts at the same place,
+		// so the result does not depend on the order the fixes were given in.
+		slices.SortStableFunc(line.spans, func(a, b fixSpan) int { return cmp.Or(a.start-b.start, a.end-b.end) })
+		for i := 1; i < len(line.spans); i++ {
+			if line.spans[i].start < line.spans[i-1].end {
+				return nil, false
+			}
+		}
+	}
+	return lines, true
+}
+
+// columnOffset maps a 1-based character column of sourceLine to a byte offset
+// in its tab-expanded form. Columns count characters, so a character of
+// several bytes or a tab of several spaces is one column. The column just past
+// the last character is the end of the line; anything further is not on it.
+func columnOffset(sourceLine string, column int) (int, bool) {
+	offset, visual, current := 0, 0, 1
+	for _, ch := range sourceLine {
+		if current == column {
+			return offset, true
+		}
+		if ch == '\t' {
+			spaces := TAB_WIDTH - (visual % TAB_WIDTH)
+			offset += spaces
+			visual += spaces
+		} else {
+			offset += utf8.RuneLen(ch)
+			visual++
+		}
+		current++
+	}
+	return offset, current == column
+}
+
+// printFixedLine draws one fixed line. A line that gains text is shown as it
+// will read, with only the new characters marked. A line that only loses text
+// is shown as it reads now, with the removed part marked; plain output cannot
+// show that marking, so it shows the line as it will read.
+func (e *Emitter) printFixedLine(line fixedLine) {
+	text := expandTabs(line.source)
+	showsResult := e.logger.Format() == colors.LogFormatNormal ||
+		slices.ContainsFunc(line.spans, func(span fixSpan) bool {
+			_, _, added, _ := diffText(text[span.start:span.end], span.newText)
+			return added != ""
+		})
+
+	e.printGutter(line.number)
+	position := 0
+	for i, span := range line.spans {
+		kept, removed, added, keptAfter := diffText(text[span.start:span.end], span.newText)
+		// Removing a whole word leaves the space on each side of it next to
+		// each other, or a stray one beside a bracket or at the line's end;
+		// drop one so the line reads as a person would type it.
+		isWordRemoved := showsResult && span.newText == "" && removed != ""
+		before := text[position:span.start]
+		if isWordRemoved && span.end == len(text) {
+			before = strings.TrimSuffix(before, " ")
+		}
+		e.highlighter.HighlightWithColor(before, e.writer)
+		position = span.end
+
+		e.highlighter.HighlightWithColor(kept, e.writer)
+		if showsResult && added != "" {
+			e.logger.Fprint(e.writer, colors.FIX_ADDED, added)
+		} else if !showsResult && removed != "" {
+			e.logger.Fprint(e.writer, colors.FIX_REMOVED, removed)
+		}
+		e.highlighter.HighlightWithColor(keptAfter, e.writer)
+
+		// The space after the word goes when the word followed a space, an
+		// opening bracket or the line's start, unless the next fix starts on it.
+		isSpaceNext := strings.HasPrefix(text[position:], " ")
+		isAfterInsertion := i > 0 && line.spans[i-1].end == span.start && line.spans[i-1].newText != ""
+		isAfterGap := !isAfterInsertion && (span.start == 0 || strings.ContainsRune(" ([{<", rune(text[span.start-1])))
+		isSpaceFree := i+1 == len(line.spans) || line.spans[i+1].start > position
+		if isWordRemoved && isSpaceNext && isAfterGap && isSpaceFree {
+			position++
+		}
+	}
+	e.highlighter.HighlightWithColor(text[position:], e.writer)
 	fmt.Fprintln(e.writer)
+}
+
+// diffText splits a replacement into what both texts share at the start and
+// the end, and what differs in between: the characters that go and the
+// characters that come. Only the differing part is marked.
+func diffText(oldText, newText string) (kept, removed, added, keptAfter string) {
+	before, after := []rune(oldText), []rune(newText)
+	prefix := 0
+	for prefix < len(before) && prefix < len(after) && before[prefix] == after[prefix] {
+		prefix++
+	}
+	suffix := 0
+	for suffix < len(before)-prefix && suffix < len(after)-prefix &&
+		before[len(before)-1-suffix] == after[len(after)-1-suffix] {
+		suffix++
+	}
+	return string(before[:prefix]), string(before[prefix : len(before)-suffix]),
+		string(after[prefix : len(after)-suffix]), string(before[len(before)-suffix:])
 }
 
 func (e *Emitter) getSeverityColor(severity Severity) colors.COLOR {

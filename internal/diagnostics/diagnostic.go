@@ -48,19 +48,53 @@ type DiagnosticExtraKind int
 
 const (
 	ExtraText DiagnosticExtraKind = iota
-	ExtraCodeHint
 )
 
 type DiagnosticText struct {
 	Kind    string
 	Message string
 	Color   colors.COLOR
+	// Fixes are the source edits this text proposes, shown beneath it.
+	Fixes []CodeFix
+}
+
+// CodeFix replaces the source at Location with NewText. An empty Location
+// inserts; an empty NewText removes. Build one with Fix.Remove, Fix.Insert or
+// Fix.Replace.
+type CodeFix struct {
+	Location *source.Location
+	NewText  string
+}
+
+// Fix groups the ways to build a CodeFix, so a call site reads as the edit it
+// proposes: Fix.Remove(where), Fix.Insert(where, text), Fix.Replace(where, text).
+var Fix fixBuilder
+
+type fixBuilder struct{}
+
+// Remove deletes the source at where.
+func (fixBuilder) Remove(where *source.Location) CodeFix {
+	return CodeFix{Location: where}
+}
+
+// Insert adds text at the start of where and keeps everything already there.
+func (fixBuilder) Insert(where *source.Location, text string) CodeFix {
+	if where == nil {
+		return CodeFix{NewText: text}
+	}
+	point := *where
+	point.End = where.Start
+	return CodeFix{Location: &point, NewText: text}
+}
+
+// Replace swaps the source at where for newText.
+func (fixBuilder) Replace(where *source.Location, newText string) CodeFix {
+	return CodeFix{Location: where, NewText: newText}
 }
 
 type DiagnosticExtra struct {
-	Kind     DiagnosticExtraKind
-	Text     DiagnosticText
-	CodeHint CodeHint
+	Kind DiagnosticExtraKind
+	Text DiagnosticText
 }
 
 type Diagnostic struct {
@@ -73,29 +107,6 @@ type Diagnostic struct {
 }
 
 const internalCompilerErrorCode = "ICE0001"
-
-type CodeHintLine struct {
-	Prefix    string
-	Code      string
-	BaseColor colors.COLOR
-}
-
-type CodeHint struct {
-	Code        string
-	Lines       []CodeHintLine
-	Labels      []CodeHintLabel
-	Location    *source.Location
-	BaseColor   colors.COLOR
-	GutterColor colors.COLOR
-}
-
-type CodeHintLabel struct {
-	Line    int
-	Column  int
-	Length  int
-	Message string
-	Style   LabelStyle
-}
 
 func NewError(message string) *Diagnostic {
 	return &Diagnostic{Severity: Error, Message: message}
@@ -182,60 +193,9 @@ func (d *Diagnostic) markInternalCompilerError(message string) *Diagnostic {
 	return d
 }
 
-func (d *Diagnostic) WithCodeHint(loc *source.Location, code string, labels ...CodeHintLabel) *Diagnostic {
-	if loc == nil {
-		return d
-	}
-	d.WithPrimaryLabel(loc, "")
-	d.Extras = append(d.Extras, DiagnosticExtra{
-		Kind: ExtraCodeHint,
-		CodeHint: CodeHint{
-			Code:        code,
-			Labels:      labels,
-			Location:    loc,
-			GutterColor: colors.GREEN,
-		},
-	})
-	return d
-}
-
-func (d *Diagnostic) WithCodeHintLines(loc *source.Location, lines []CodeHintLine, labels ...CodeHintLabel) *Diagnostic {
-	if loc == nil {
-		return d
-	}
-	d.WithPrimaryLabel(loc, "")
-	d.Extras = append(d.Extras, DiagnosticExtra{
-		Kind: ExtraCodeHint,
-		CodeHint: CodeHint{
-			Lines:       append([]CodeHintLine(nil), lines...),
-			Labels:      labels,
-			Location:    loc,
-			GutterColor: colors.GREEN,
-		},
-	})
-	return d
-}
-
-func (d *Diagnostic) WithCodeInsertion(loc *source.Location, code string, labels ...CodeHintLabel) *Diagnostic {
-	return d.WithCodeHintLines(loc, []CodeHintLine{
-		{Prefix: "+", Code: code, BaseColor: colors.GREEN},
-	}, labels...)
-}
-
-func (d *Diagnostic) WithCodeRemoval(loc *source.Location, code string, labels ...CodeHintLabel) *Diagnostic {
-	return d.WithCodeHintLines(loc, []CodeHintLine{
-		{Prefix: "-", Code: code, BaseColor: colors.RED},
-	}, labels...)
-}
-
-func (d *Diagnostic) WithCodeReplacement(loc *source.Location, oldCode, newCode string, labels ...CodeHintLabel) *Diagnostic {
-	return d.WithCodeHintLines(loc, []CodeHintLine{
-		{Prefix: "-", Code: oldCode, BaseColor: colors.RED},
-		{Prefix: "+", Code: newCode, BaseColor: colors.GREEN},
-	}, labels...)
-}
-
-func (d *Diagnostic) WithText(kind, message string, color colors.COLOR) *Diagnostic {
+// WithText adds a `= kind: message` line. Fixes are the source edits the
+// message proposes; each fixed line is shown beneath it.
+func (d *Diagnostic) WithText(kind, message string, color colors.COLOR, fixes ...CodeFix) *Diagnostic {
 	if message == "" {
 		return d
 	}
@@ -244,17 +204,17 @@ func (d *Diagnostic) WithText(kind, message string, color colors.COLOR) *Diagnos
 	}
 	d.Extras = append(d.Extras, DiagnosticExtra{
 		Kind: ExtraText,
-		Text: DiagnosticText{Kind: kind, Message: message, Color: color},
+		Text: DiagnosticText{Kind: kind, Message: message, Color: color, Fixes: fixes},
 	})
 	return d
 }
 
-func (d *Diagnostic) WithNote(message string) *Diagnostic {
-	return d.WithText("note", message, colors.CYAN)
+func (d *Diagnostic) WithNote(message string, fixes ...CodeFix) *Diagnostic {
+	return d.WithText("note", message, colors.CYAN, fixes...)
 }
 
-func (d *Diagnostic) WithHelp(help string) *Diagnostic {
-	return d.WithText("help", help, colors.GREEN)
+func (d *Diagnostic) WithHelp(help string, fixes ...CodeFix) *Diagnostic {
+	return d.WithText("help", help, colors.GREEN, fixes...)
 }
 
 const internalCompilerFailureMessage = "internal compiler failure"

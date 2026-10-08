@@ -2078,7 +2078,7 @@ func TestParseInterfaceMethodsUnexpectedSemicolonRecovers(t *testing.T) {
 		t.Fatalf("methods: got %d want 2", len(ifaceType.Methods))
 	}
 	if !strings.Contains(diag.EmitAllToString(), "expected '}' after iface methods") &&
-		!strings.Contains(diag.EmitAllToString(), "add missing `,` here") {
+		!strings.Contains(diag.EmitAllToString(), "add missing `,`") {
 		t.Fatalf("expected separator recovery diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
@@ -2687,8 +2687,10 @@ func TestParseRedundantOptionalSyntax(t *testing.T) {
 				if item.Severity != diagnostics.Info {
 					t.Fatalf("severity = %v, want info", item.Severity)
 				}
-				if len(item.Labels) != 1 || !strings.Contains(item.Labels[0].Message, "remove redundant `?`") {
-					t.Fatalf("missing removal advice: %#v", item)
+				if len(item.Labels) != 1 || len(item.Extras) == 0 ||
+					item.Extras[0].Text.Message != "remove redundant `?`" || len(item.Extras[0].Text.Fixes) != 1 ||
+					item.Extras[0].Text.Fixes[0] != diagnostics.Fix.Remove(item.Labels[0].Location) {
+					t.Fatalf("missing removal advice with its fix: %#v", item)
 				}
 				loc := item.Labels[0].Location
 				if loc == nil || loc.Start == nil || loc.End == nil {
@@ -2706,5 +2708,151 @@ func TestParseRedundantOptionalSyntax(t *testing.T) {
 				t.Fatalf("notes = %d, want %d:\n%s", notes, test.notes, diag.EmitAllToString())
 			}
 		})
+	}
+}
+
+func TestMissingTokenFixOnlyForSeparatorsAndClosers(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		source  string
+		message string
+		insert  string
+		label   string
+	}{
+		{name: "semicolon", source: "fn main() { let total = 5 }", message: "expected ';' after statement", insert: ";"},
+		{name: "closing paren", source: "fn main() { let total = (5; }", message: "expected ')'", insert: ")"},
+		{name: "identifier", source: "import \"std/io\" as;", label: "add missing `identifier` here"},
+		{name: "keyword", source: "fn main() { for a, b v {} }", label: "add missing `in` here"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, diag := parseTestModule(test.source)
+			for _, item := range diag.Diagnostics() {
+				if item.Code != diagnostics.ErrExpectedToken || len(item.Labels) == 0 {
+					continue
+				}
+				if test.message != "" && item.Message != test.message {
+					continue
+				}
+				if test.insert == "" {
+					if len(item.Extras) != 0 || item.Labels[0].Message != test.label {
+						continue
+					}
+					return
+				}
+				at := item.Labels[0].Location
+				if len(item.Extras) != 1 || item.Extras[0].Text.Message != "add missing `"+test.insert+"`" ||
+					len(item.Extras[0].Text.Fixes) != 1 || item.Labels[0].Message != "" {
+					t.Fatalf("expected one insertion fix and an empty label, got: %#v", item)
+				}
+				fix := item.Extras[0].Text.Fixes[0]
+				if fix.NewText != test.insert || *fix.Location.Start != *at.Start || *fix.Location.End != *at.Start {
+					t.Fatalf("fix must insert %q at the reported point, got: %#v at %v", test.insert, fix, fix.Location)
+				}
+				return
+			}
+			t.Fatalf("expected diagnostic not found, got:\n%s", diag.EmitAllToString())
+		})
+	}
+}
+
+func TestTrailingCommaOffersItsRemoval(t *testing.T) {
+	_, diag := parseTestModule("struct Point { x: i32, y: i32, }")
+	for _, item := range diag.Diagnostics() {
+		if item.Code != diagnostics.InfoTrailingComma {
+			continue
+		}
+		if len(item.Labels) != 1 || len(item.Extras) != 1 || item.Extras[0].Text.Message != "remove this comma" ||
+			len(item.Extras[0].Text.Fixes) != 1 || item.Extras[0].Text.Fixes[0] != diagnostics.Fix.Remove(item.Labels[0].Location) {
+			t.Fatalf("expected the advice with a fix removing the comma, got: %#v", item)
+		}
+		return
+	}
+	t.Fatalf("expected trailing comma info, got:\n%s", diag.EmitAllToString())
+}
+
+func TestRedundantSeparatorFixKeepsTheNeededOne(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		source       string
+		code         string
+		removedStart int
+		removedEnd   int
+	}{
+		{name: "commas after an item keep one", source: "struct Point { x: i32,,, y: i32 }", code: diagnostics.InfoRedundantComma, removedStart: 23, removedEnd: 25},
+		{name: "commas before the first item all go", source: "struct Point { ,, x: i32 }", code: diagnostics.InfoRedundantComma, removedStart: 16, removedEnd: 18},
+		{name: "semicolons all go", source: "fn main() { let total = 5;;; }", code: diagnostics.InfoUnnecessarySemicolon, removedStart: 27, removedEnd: 29},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, diag := parseTestModule(test.source)
+			for _, item := range diag.Diagnostics() {
+				if item.Code != test.code {
+					continue
+				}
+				if len(item.Extras) != 1 || len(item.Extras[0].Text.Fixes) != 1 {
+					t.Fatalf("expected one removal fix, got: %#v", item)
+				}
+				fix := item.Extras[0].Text.Fixes[0]
+				if fix.NewText != "" || fix.Location.Start.Column != test.removedStart || fix.Location.End.Column != test.removedEnd {
+					t.Fatalf("fix removes columns %d-%d, want %d-%d", fix.Location.Start.Column, fix.Location.End.Column, test.removedStart, test.removedEnd)
+				}
+				return
+			}
+			t.Fatalf("expected %s, got:\n%s", test.code, diag.EmitAllToString())
+		})
+	}
+}
+
+func TestLeadingZeroRun(t *testing.T) {
+	for literal, want := range map[string]string{
+		"007":    "00",
+		"000":    "00",
+		"00_7":   "00_",
+		"0_0_7":  "0_0_",
+		"0_0":    "0_",
+		"007i32": "00",
+		"00_":    "",
+		"7":      "",
+		"0":      "",
+	} {
+		if got := leadingZeroRun(literal); got != want {
+			t.Errorf("leadingZeroRun(%q) = %q, want %q", literal, got, want)
+		}
+	}
+}
+
+func TestLeadingZeroFixRemovesSeparatorsWithTheZeros(t *testing.T) {
+	_, diag := parseTestModule("fn main() -> i32 { return 00_7; }")
+	for _, item := range diag.Diagnostics() {
+		if item.Code != diagnostics.WarnLeadingZeroDecimal {
+			continue
+		}
+		if len(item.Extras) == 0 || len(item.Extras[0].Text.Fixes) != 1 {
+			t.Fatalf("expected a removal fix, got: %#v", item)
+		}
+		fix := item.Extras[0].Text.Fixes[0]
+		if fix.NewText != "" || fix.Location.Start.Column != 27 || fix.Location.End.Column != 30 {
+			t.Fatalf("fix removes columns %d-%d, want 27-30 (`00_`)", fix.Location.Start.Column, fix.Location.End.Column)
+		}
+		return
+	}
+	t.Fatalf("expected leading zero warning, got:\n%s", diag.EmitAllToString())
+}
+
+func TestRedundantCommaAdviceCountsOnlyTheExtraOnes(t *testing.T) {
+	for source, want := range map[string]string{
+		"struct Point { x: i32,, y: i32 }":  "remove the extra comma",
+		"struct Point { x: i32,,, y: i32 }": "remove the extra commas",
+		"struct Point { ,, x: i32 }":        "remove these commas",
+	} {
+		_, diag := parseTestModule(source)
+		found := false
+		for _, item := range diag.Diagnostics() {
+			if item.Code == diagnostics.InfoRedundantComma && len(item.Extras) == 1 && item.Extras[0].Text.Message == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%q: expected advice %q, got:\n%s", source, want, diag.EmitAllToString())
+		}
 	}
 }

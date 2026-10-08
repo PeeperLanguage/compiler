@@ -170,9 +170,11 @@ func (p *Parser) parseOptionalTypeExpr() ast.TypeExpr {
 	for _, start := range markers[:len(markers)-1] {
 		end := start
 		end.Advance("?")
+		loc := source.NewLocation(p.filePath, start, end)
 		p.diag.Add(diagnostics.NewInfo("redundant optional marker").
 			WithCode(diagnostics.InfoRedundantOptional).
-			WithPrimaryLabel(source.NewLocation(p.filePath, start, end), "remove redundant `?`").
+			WithPrimaryLabel(loc, "").
+			WithHelp("remove redundant `?`", diagnostics.Fix.Remove(loc)).
 			WithNote("nested optional types are the same as a single optional type"))
 	}
 	return inner

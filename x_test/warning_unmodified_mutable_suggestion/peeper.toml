@@ -1,0 +1,8 @@
+name = "warning_unmodified_mutable_suggestion"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "success"
+stderr_contains = ["W0013", "mutable binding `total` is never modified", "  = help: remove unnecessary `mut`\n  | \n2 |     let total: i32 = 5;\n\n", "  = help: remove unnecessary `mut`\n  | \n7 | fn Add(left: i32, right: i32) -> i32 {\n\n"]
+stderr_excludes = ["= suggestion:", "let  total", "( left", "\n\n\n"]

@@ -14,9 +14,9 @@ import (
 )
 
 const (
-	compileFailedMsg          = "\nCompilation failed with %d error(s)"
+	compileFailedMsg          = "Compilation failed with %d error(s)"
 	andWarningMsg             = " and %d warning(s)"
-	compileSuccessWithWarning = "\nCompilation succeeded with %d warning(s)\n"
+	compileSuccessWithWarning = "Compilation succeeded with %d warning(s)\n"
 )
 
 // DiagnosticBag collects diagnostics during compilation

@@ -90,7 +90,7 @@ func (p *Parser) parseBlock() *ast.BlockStmt {
 	}
 	var stmts []ast.Stmt
 	for !p.at(token.RBRACE) && !p.at(token.EOF) {
-		p.consumeRedundant(token.SEMICOLON, diagnostics.InfoUnnecessarySemicolon, "unnecessary semicolons", "remove these semicolons")
+		p.consumeRedundant(token.SEMICOLON, diagnostics.InfoUnnecessarySemicolon, "semicolon", false)
 		before := p.pos
 		if stmt := p.parseStmt(false); stmt != nil {
 			stmts = append(stmts, stmt)
@@ -347,9 +347,11 @@ func (p *Parser) parseMatchStmt() ast.Stmt {
 		}))
 		if p.match(token.COMMA) {
 			comma := p.prev()
+			loc := source.NewLocation(p.filePath, comma.Start, comma.End)
 			p.diag.Add(diagnostics.NewError("match arms do not use commas").
 				WithCode(diagnostics.ErrExpectedToken).
-				WithPrimaryLabel(source.NewLocation(p.filePath, comma.Start, comma.End), "remove this comma"))
+				WithPrimaryLabel(loc, "").
+				WithHelp("remove this comma", diagnostics.Fix.Remove(loc)))
 		}
 	}
 	armListEnd := p.current().End

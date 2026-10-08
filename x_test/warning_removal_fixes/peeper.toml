@@ -1,0 +1,8 @@
+name = "warning_removal_fixes"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "success"
+stderr_contains = ["  = help: remove the extra comma\n  | \n2 |     x: i32,\n", "  = help: remove this comma\n  | \n3 |     y: i32\n", "  = help: remove redundant `?`\n  | \n6 | fn Pick(value: ?i32) -> i32 {\n  | \n  = note: nested optional types", "  = help: remove the leading zero\n  | \n7 |     return 7;;;\n  | \n  = help: use the `0o` prefix", "  = help: remove these semicolons\n  | \n7 |     return 00_7;\n"]
+stderr_excludes = ["\n\n\n"]

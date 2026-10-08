@@ -1,0 +1,8 @@
+name = "negative_missing_semicolon_fix"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["expected ';' after statement", "  = help: add missing `;`\n  | \n2 |     let total: i32 = 5;\n\nCompilation failed"]
+stderr_excludes = ["add missing `;` here", "\n\n\n"]

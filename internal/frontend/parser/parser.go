@@ -45,7 +45,7 @@ func (p *Parser) ParseModule() *ast.Module {
 	surface := moduleSurface{}
 
 	for !p.at(token.EOF) {
-		p.consumeRedundant(token.SEMICOLON, diagnostics.InfoUnnecessarySemicolon, "unnecessary semicolons", "remove these semicolons")
+		p.consumeRedundant(token.SEMICOLON, diagnostics.InfoUnnecessarySemicolon, "semicolon", false)
 		if p.at(token.IMPORT) {
 			if imp := p.parseImport(); imp != nil {
 				mod.Imports = append(mod.Imports, imp)
@@ -599,9 +599,7 @@ func (p *Parser) expectClose(openPos source.Position, kind token.Kind, name stri
 	}
 	prev := p.prev()
 	loc := source.NewLocation(p.filePath, prev.End, prev.End)
-	p.diag.Add(diagnostics.NewError(
-		fmt.Sprintf("expected '%s'", string(kind)),
-	).WithCode(diagnostics.ErrExpectedToken).WithPrimaryLabel(loc, fmt.Sprintf("add missing `%s` here", string(kind))))
+	p.diag.Add(missingTokenError(fmt.Sprintf("expected '%s'", string(kind)), kind, loc))
 	p.synchronize(kind)
 	if p.current().Kind == kind {
 		return p.advance()
@@ -609,7 +607,11 @@ func (p *Parser) expectClose(openPos source.Position, kind token.Kind, name stri
 	return nil
 }
 
-func (p *Parser) consumeRedundant(kind token.Kind, code string, msg string, label string) {
+// consumeRedundant skips a run of kind, named noun in messages, and reports it
+// when it holds more than one token. isFirstNeeded says the run starts with a
+// token the grammar wants there, such as the comma after a list item, so the
+// advice and the fix leave that one alone.
+func (p *Parser) consumeRedundant(kind token.Kind, code string, noun string, isFirstNeeded bool) {
 	count := 0
 	var first, last *token.Token
 	for p.at(kind) {
@@ -621,9 +623,24 @@ func (p *Parser) consumeRedundant(kind token.Kind, code string, msg string, labe
 		last = tok
 	}
 	if count > 1 && first != nil && last != nil {
-		p.diag.Add(diagnostics.NewInfo(msg).
-			WithCode(code).
-			WithPrimaryLabel(source.NewLocation(p.filePath, first.Start, last.End), label))
+		loc := source.NewLocation(p.filePath, first.Start, last.End)
+		removed, advice := loc, "remove these "+noun+"s"
+		if isFirstNeeded {
+			removed = source.NewLocation(p.filePath, first.End, last.End)
+			advice = "remove the extra " + noun
+			if count > 2 {
+				advice += "s"
+			}
+		}
+		d := diagnostics.NewInfo("unnecessary " + noun + "s").WithCode(code)
+		// A fixed line can only be shown for a run that sits on one line; a
+		// longer run keeps the advice beside the marker.
+		if first.Start.Line == last.End.Line {
+			d.WithPrimaryLabel(loc, "").WithHelp(advice, diagnostics.Fix.Remove(removed))
+		} else {
+			d.WithPrimaryLabel(loc, advice)
+		}
+		p.diag.Add(d)
 	}
 }
 
@@ -640,11 +657,14 @@ func parseBracedItemList[T any](
 	}
 	lbraceStart := lbrace.Start
 	var items []T
+	// The comma that follows an item is consumed with any extra ones at the top
+	// of the next round, so only a run before the first item is all redundant.
+	isAfterItem := false
 	for !p.at(token.RBRACE) && !p.at(token.EOF) {
 		for p.at(token.DOC_COMMENT) {
 			p.advance()
 		}
-		p.consumeRedundant(token.COMMA, diagnostics.InfoRedundantComma, "unnecessary commas", "remove these commas")
+		p.consumeRedundant(token.COMMA, diagnostics.InfoRedundantComma, "comma", isAfterItem)
 		for p.at(token.DOC_COMMENT) {
 			p.advance()
 		}
@@ -652,6 +672,7 @@ func parseBracedItemList[T any](
 			break
 		}
 		item, ok := parseItem()
+		isAfterItem = true
 		if ok {
 			items = append(items, item)
 		} else {
@@ -659,15 +680,17 @@ func parseBracedItemList[T any](
 		}
 		if p.at(token.COMMA) {
 			if p.next().Kind == token.RBRACE {
+				loc := source.NewLocation(p.filePath, p.current().Start, p.current().End)
 				p.diag.Add(diagnostics.NewInfo("trailing comma is unnecessary").
 					WithCode(diagnostics.InfoTrailingComma).
-					WithPrimaryLabel(source.NewLocation(p.filePath, p.current().Start, p.current().End), "remove this comma"))
+					WithPrimaryLabel(loc, "").
+					WithHelp("remove this comma", diagnostics.Fix.Remove(loc)))
 			}
 			continue
 		}
 		if !p.at(token.RBRACE) {
 			prev := p.stream[p.pos-1]
-			p.diag.Add(diagnostics.NewError(itemMsg).WithCode(diagnostics.ErrExpectedToken).WithPrimaryLabel(source.NewLocation(p.filePath, prev.End, prev.End), "add missing `,` here"))
+			p.diag.Add(missingTokenError(itemMsg, token.COMMA, source.NewLocation(p.filePath, prev.End, prev.End)))
 			// Recovery must always consume or skip the unexpected separator token.
 			// Without this, inputs like `foo();` inside a braced item list keep
 			// reporting the same missing-comma diagnostic forever.
@@ -700,10 +723,23 @@ func (p *Parser) consume(kind token.Kind, msg string) *token.Token {
 	}
 	prev := p.stream[p.pos-1]
 	loc := source.NewLocation(p.filePath, prev.End, prev.End)
-	p.diag.Add(diagnostics.NewError(msg).
-		WithCode(diagnostics.ErrExpectedToken).
-		WithPrimaryLabel(loc, fmt.Sprintf("add missing `%s` here", string(kind))))
+	p.diag.Add(missingTokenError(msg, kind, loc))
 	return nil
+}
+
+// missingTokenError reports a token that should follow loc. Separators and
+// closing delimiters are spelled exactly as their kind, so the diagnostic can
+// show the line with the token inserted. Other kinds name a category
+// ("identifier") or need spacing a blind insertion would get wrong, so they
+// only say what is missing.
+func missingTokenError(msg string, kind token.Kind, loc *source.Location) *diagnostics.Diagnostic {
+	d := diagnostics.NewError(msg).WithCode(diagnostics.ErrExpectedToken)
+	switch kind {
+	case token.SEMICOLON, token.COMMA, token.RPAREN, token.RBRACK, token.RBRACE, token.GT:
+		return d.WithPrimaryLabel(loc, "").
+			WithHelp(fmt.Sprintf("add missing `%s`", string(kind)), diagnostics.Fix.Insert(loc, string(kind)))
+	}
+	return d.WithPrimaryLabel(loc, fmt.Sprintf("add missing `%s` here", string(kind)))
 }
 
 // advances token if matched

@@ -263,15 +263,41 @@ func (p *Parser) parseNumberLit(sign string) ast.Expr {
 	}
 	if len(literal.Value) > 1 && literal.Value[0] == '0' && numeric.IsDecimal(literal.Value) &&
 		(literal.ExplicitType == "" || literal.ExplicitType[0] != 'f') {
-		p.diag.Add(diagnostics.NewWarning("decimal integer literal has a leading zero").
-			WithCode(diagnostics.WarnLeadingZeroDecimal).
-			WithPrimaryLabel(loc, "remove the leading zero").
-			WithHelp("use the `0o` prefix for octal values"))
+		d := diagnostics.NewWarning("decimal integer literal has a leading zero").
+			WithCode(diagnostics.WarnLeadingZeroDecimal)
+		if zeros := leadingZeroRun(tok.Literal); zeros != "" {
+			zerosEnd := tok.Start
+			zerosEnd.Advance(zeros)
+			d.WithPrimaryLabel(loc, "").
+				WithHelp("remove the leading zero", diagnostics.Fix.Remove(source.NewLocation(p.filePath, tok.Start, zerosEnd)))
+		} else {
+			d.WithPrimaryLabel(loc, "remove the leading zero")
+		}
+		p.diag.Add(d.WithHelp("use the `0o` prefix for octal values"))
 	}
 	if sign == "-" {
 		literal.Value = "-" + literal.Value
 	}
 	return reg(p, &ast.NumberLit{Value: literal.Value, ExplicitType: literal.ExplicitType, Location: loc})
+}
+
+// leadingZeroRun returns the zeros, and the digit separators among them, that
+// can be dropped from the front of a decimal literal as written. It always
+// leaves a digit behind, so `000` keeps one zero, and returns "" when what
+// would remain does not start with a digit.
+func leadingZeroRun(literal string) string {
+	digitsEnd := 0
+	for digitsEnd < len(literal) && (literal[digitsEnd] == '_' || (literal[digitsEnd] >= '0' && literal[digitsEnd] <= '9')) {
+		digitsEnd++
+	}
+	run := 0
+	for run < digitsEnd-1 && (literal[run] == '0' || literal[run] == '_') {
+		run++
+	}
+	if run == digitsEnd || literal[run] == '_' {
+		return ""
+	}
+	return literal[:run]
 }
 
 func (p *Parser) parseAddressExpr(mode ast.AddressMode, boundary token.Kind) ast.Expr {

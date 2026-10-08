@@ -63,6 +63,8 @@ var htmlStyles = map[COLOR]string{
 	LIGHT_BLUE:    "color: #5fd7ff",
 	LIGHT_GREEN:   "color: #87ff87",
 	LIGHT_YELLOW:  "color: #ffffaf",
+	FIX_ADDED:     "color: #005f00; background-color: #87d787",
+	FIX_REMOVED:   "color: #5f0000; background-color: #ff8787",
 }
 
 func ParseLogFormat(raw string) (LogFormat, error) {
