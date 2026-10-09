@@ -19,5 +19,7 @@ fn main() -> i32 {
         3
     ;
     let near = Add(1, 2, 3;
-    return total + near + twice;
+    let next = Add(1,
+        2, 3;
+    return total + near + next + twice;
 }

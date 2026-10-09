@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -220,20 +219,18 @@ func (e *Emitter) printUnderlineIndent(extraPadding int) {
 	fmt.Fprint(e.writer, strings.Repeat(" ", indent+extraPadding))
 }
 
-func (e *Emitter) printPrevNonEmptyLine(filepath string, line int) {
-	if line <= 1 {
-		return
+// contextLine returns the line above line, which is shown so the marked line
+// is read in its setting. There is none when that line is blank or already on
+// screen.
+func (e *Emitter) contextLine(filepath string, line, lastPrinted int) (string, bool) {
+	if line <= 1 || line-1 <= lastPrinted {
+		return "", false
 	}
 	prevLine, err := e.cache.GetLine(filepath, line-1)
-	if err != nil {
-		return
+	if err != nil || strings.TrimSpace(prevLine) == "" {
+		return "", false
 	}
-	if strings.TrimSpace(prevLine) == "" {
-		return
-	}
-	e.printGutter(line - 1)
-	e.highlighter.HighlightWithColor(expandTabs(prevLine), e.writer)
-	fmt.Fprintln(e.writer)
+	return prevLine, true
 }
 
 func (e *Emitter) printLocationHeader(filepath string, line int, col int) {
@@ -291,68 +288,33 @@ func (e *Emitter) Emit(diag *Diagnostic) {
 	// Step 1: Print Main Diagnostic Header Block
 	e.printDiagnosticHeader(diag)
 
-	var lastFile string
-	var lastLine int
-
-	// Step 2: Print Sequential Location Cards
-	if len(diag.Labels) > 0 {
-		// Clone and sort labels by line number so we read the file top-to-bottom
-		sortedLabels := make([]Label, len(diag.Labels))
-		copy(sortedLabels, diag.Labels)
-		sort.SliceStable(sortedLabels, func(i, j int) bool {
-			locI, locJ := sortedLabels[i].Location, sortedLabels[j].Location
-			if locI == nil || locJ == nil || locI.Start == nil || locJ.Start == nil {
-				return false
+	// Step 2: Print the marked source lines, file by file
+	if files := snippetFiles(diag); len(files) > 0 {
+		for index, file := range files {
+			if index > 0 {
+				fmt.Fprintln(e.writer)
 			}
-			fileI, fileJ := "", ""
-			if locI.Filename != nil {
-				fileI = *locI.Filename
-			}
-			if locJ.Filename != nil {
-				fileJ = *locJ.Filename
-			}
-
-			if fileI != fileJ {
-				return fileI < fileJ
-			}
-			return locI.Start.Line < locJ.Start.Line
-		})
-
-		for _, label := range sortedLabels {
-			if label.Location == nil || label.Location.Filename == nil {
-				continue
-			}
-			filepath := *label.Location.Filename
-			if filepath == "" {
-				filepath = diag.FilePath
-			}
-
-			line := label.Location.Start.Line
-			col := label.Location.Start.Column
-
-			if filepath != lastFile {
-				// CASE 1: Different file -> Print full file path header
-				if lastFile != "" {
+			e.printLocationHeader(file.path, file.headerLine, file.headerColumn)
+			e.printPipeOnly()
+			// Each source line is printed once, and `...` stands for lines
+			// really left out between two printed ones.
+			lastPrinted := 0
+			for _, line := range file.lines {
+				context, hasContext := e.contextLine(file.path, line.number, lastPrinted)
+				firstShown := line.number
+				if hasContext {
+					firstShown--
+				}
+				if lastPrinted > 0 && firstShown > lastPrinted+1 {
+					e.logger.Fprintf(e.writer, colors.GREY, "%*s\n", e.currentLineNumWidth, "...")
+				}
+				if hasContext {
+					e.printGutter(line.number - 1)
+					e.highlighter.HighlightWithColor(expandTabs(context), e.writer)
 					fmt.Fprintln(e.writer)
 				}
-				e.printLocationHeader(filepath, line, col)
-				e.printBlankGutter()
-				fmt.Fprintln(e.writer)
-
-				lastFile = filepath
-			} else if line > lastLine+1 {
-				// CASE 2: Same file, skip in lines -> Print aligned '...' without the pipe
-				// This aligns the dots perfectly with where the line numbers sit
-				e.logger.Fprintf(e.writer, colors.GREY, "%*s\n", e.currentLineNumWidth, "...")
-			}
-
-			// Clean context code block with customizable tilde/caret markings
-			e.printPeeperSnippetBlock(filepath, label, diag.Severity)
-
-			// Track the end line of this snippet to know where we left off
-			lastLine = line
-			if label.Location.End != nil {
-				lastLine = label.Location.End.Line
+				e.printSnippetLine(file.path, line, diag.Severity)
+				lastPrinted = line.number
 			}
 		}
 		// Keep the margin unbroken when help or notes follow the snippet.
@@ -379,59 +341,139 @@ func (e *Emitter) Emit(diag *Diagnostic) {
 	fmt.Fprintln(e.writer)
 }
 
-func (e *Emitter) printPeeperSnippetBlock(filepath string, label Label, severity Severity) {
-	startLine := label.Location.Start.Line
-	endLine := startLine
-	if label.Location.End != nil {
-		endLine = label.Location.End.Line
-	}
+// snippetMark is the stretch of one source line that a label covers.
+type snippetMark struct {
+	startColumn int
+	endColumn   int // 0 when the label runs on past the end of the line
+	style       LabelStyle
+	message     string
+}
 
-	e.printPrevNonEmptyLine(filepath, startLine)
+type snippetLine struct {
+	number int
+	marks  []snippetMark
+}
 
-	for l := startLine; l <= endLine; l++ {
-		sourceLine, err := e.cache.GetLine(filepath, l)
-		if err != nil {
+// snippetFile holds the marked lines of one file in the order they are read,
+// and the position its `-->` header names.
+type snippetFile struct {
+	path         string
+	headerLine   int
+	headerColumn int
+	lines        []snippetLine
+}
+
+// snippetFiles arranges the labels of diag for printing: the file of the
+// primary label first, then the others by name; within a file the lines in
+// order, and on a line the marks from left to right with the primary one
+// ahead of a secondary one that starts at the same column. The header of a
+// file names its primary label, or its first mark when it has none.
+func snippetFiles(diag *Diagnostic) []snippetFile {
+	var files []snippetFile
+	primaryPath := ""
+	for _, label := range diag.Labels {
+		if label.Location == nil || label.Location.Filename == nil || label.Location.Start == nil {
 			continue
 		}
+		path := *label.Location.Filename
+		if path == "" {
+			path = diag.FilePath
+		}
+		fileIndex := slices.IndexFunc(files, func(file snippetFile) bool { return file.path == path })
+		if fileIndex < 0 {
+			fileIndex = len(files)
+			files = append(files, snippetFile{path: path})
+		}
+		file := &files[fileIndex]
+		start, end := label.Location.Start, label.Location.End
+		if end == nil {
+			end = start
+		}
+		if label.Style == Primary && primaryPath == "" {
+			primaryPath = path
+			file.headerLine, file.headerColumn = start.Line, start.Column
+		}
+		for number := start.Line; number <= end.Line; number++ {
+			mark := snippetMark{startColumn: 1, style: label.Style}
+			if number == start.Line {
+				mark.startColumn = start.Column
+			}
+			if number == end.Line {
+				mark.message = label.Message
+				if label.Location.End != nil {
+					mark.endColumn = end.Column
+				}
+			}
+			lineIndex := slices.IndexFunc(file.lines, func(line snippetLine) bool { return line.number == number })
+			if lineIndex < 0 {
+				lineIndex = len(file.lines)
+				file.lines = append(file.lines, snippetLine{number: number})
+			}
+			file.lines[lineIndex].marks = append(file.lines[lineIndex].marks, mark)
+		}
+	}
+	for index := range files {
+		file := &files[index]
+		slices.SortFunc(file.lines, func(a, b snippetLine) int { return a.number - b.number })
+		for _, line := range file.lines {
+			slices.SortStableFunc(line.marks, func(a, b snippetMark) int {
+				if a.startColumn != b.startColumn {
+					return a.startColumn - b.startColumn
+				}
+				return int(a.style) - int(b.style)
+			})
+		}
+		if file.headerLine == 0 {
+			file.headerLine, file.headerColumn = file.lines[0].number, file.lines[0].marks[0].startColumn
+		}
+	}
+	slices.SortStableFunc(files, func(a, b snippetFile) int {
+		switch {
+		case a.path == primaryPath:
+			return -1
+		case b.path == primaryPath:
+			return 1
+		}
+		return strings.Compare(a.path, b.path)
+	})
+	return files
+}
 
-		e.printCurrentGutter(l)
-		e.highlighter.HighlightWithColor(expandTabs(sourceLine), e.writer)
-		fmt.Fprintln(e.writer)
+// printSnippetLine prints one source line and, beneath it, a row for each
+// label that covers part of it.
+func (e *Emitter) printSnippetLine(filepath string, line snippetLine, severity Severity) {
+	sourceLine, err := e.cache.GetLine(filepath, line.number)
+	if err != nil {
+		return
+	}
+	e.printCurrentGutter(line.number)
+	e.highlighter.HighlightWithColor(expandTabs(sourceLine), e.writer)
+	fmt.Fprintln(e.writer)
 
+	for _, mark := range line.marks {
 		e.printBlankGutter()
 
-		startCol := 1
-		if l == startLine {
-			startCol = label.Location.Start.Column
+		endColumn := mark.endColumn
+		if endColumn == 0 {
+			endColumn = len(sourceLine) + 1
 		}
-
-		endCol := len(sourceLine) + 1
-		if l == endLine && label.Location.End != nil {
-			endCol = label.Location.End.Column
-		}
-
-		padding := visualColumnToPosition(sourceLine, startCol)
-		length := visualColumnToPosition(sourceLine, endCol) - padding
+		padding := visualColumnToPosition(sourceLine, mark.startColumn)
+		length := visualColumnToPosition(sourceLine, endColumn) - padding
 		if length <= 0 {
 			length = 1
 		}
 
-		var underlineColor colors.COLOR
-		var underlineChar string
-
-		if label.Style == Primary {
+		underlineColor := colors.BLUE
+		underlineChar := "-" // Soft line for secondary context
+		if mark.style == Primary {
 			underlineColor = e.getSeverityColor(severity)
 			underlineChar = "^" // Sharp pointer for the main error
-		} else {
-			underlineColor = colors.BLUE
-			underlineChar = "-" // Soft line for secondary context
 		}
 
 		fmt.Fprint(e.writer, strings.Repeat(" ", padding))
 		e.logger.Fprint(e.writer, underlineColor, strings.Repeat(underlineChar, length))
-
-		if l == endLine && label.Message != "" {
-			e.logger.Fprintf(e.writer, underlineColor, " %s", label.Message)
+		if mark.message != "" {
+			e.logger.Fprintf(e.writer, underlineColor, " %s", mark.message)
 		}
 		fmt.Fprintln(e.writer)
 	}
