@@ -702,7 +702,7 @@ func (p *Parser) expectClose(openPos source.Position, kind token.Kind, name stri
 	}
 	prev := p.prev()
 	loc := source.NewLocation(p.filePath, prev.End, prev.End)
-	p.diag.Add(p.missingTokenError(fmt.Sprintf("expected '%s'", string(kind)), kind, loc))
+	p.diag.Add(p.withOpener(p.missingTokenError(fmt.Sprintf("expected '%s'", string(kind)), kind, loc), openPos, name))
 	if p.isMissingTokenLikely(kind, loc) {
 		// The closer belongs right here, so the tokens after it are not part
 		// of the bracket; skipping ahead to find one would drop them.
@@ -713,6 +713,19 @@ func (p *Parser) expectClose(openPos source.Position, kind token.Kind, name stri
 		return p.advance()
 	}
 	return nil
+}
+
+// withOpener marks the bracket a missing closer belongs to, when it was opened
+// on a line above the one the diagnostic points at. On the same line the
+// opener is in view already; further up it is the part of the mistake the
+// reader cannot see.
+func (p *Parser) withOpener(d *diagnostics.Diagnostic, openPos source.Position, name string) *diagnostics.Diagnostic {
+	if openPos.Line >= p.prev().End.Line {
+		return d
+	}
+	openEnd := openPos
+	openEnd.Column++
+	return d.WithSecondaryLabel(source.NewLocation(p.filePath, openPos, openEnd), "this `"+name+"` is still open")
 }
 
 // consumeRedundant skips a run of kind, named noun in messages, and reports it
@@ -811,14 +824,14 @@ func parseBracedItemList[T any](
 			// `[3]i32{1, 2, 3;`: the statement ended where the list should
 			// have closed. Leaving the `;` for the statement keeps the rest of
 			// the block from being read as values.
-			p.diag.Add(insertionError(itemMsg, p.prev().End, p.filePath, "}", "}"))
+			p.diag.Add(p.withOpener(insertionError(itemMsg, p.prev().End, p.filePath, "}", "}"), lbraceStart, "{"))
 			isClosedEarly = true
 			break
 		}
 		if p.at(token.RPAREN) || p.at(token.RBRACK) {
 			// `f(.{ x = 1 );`: the closer of a bracket around the list can
 			// only follow the list's own `}`.
-			p.diag.Add(insertionError(itemMsg, p.prev().End, p.filePath, "}", "}"))
+			p.diag.Add(p.withOpener(insertionError(itemMsg, p.prev().End, p.filePath, "}", "}"), lbraceStart, "{"))
 			isClosedEarly = true
 			break
 		}
@@ -881,16 +894,22 @@ func (p *Parser) consume(kind token.Kind, msg string) *token.Token {
 }
 
 // missingTokenError reports a token that should follow loc. Where the guess
-// is reliable the diagnostic shows the line with the token inserted; elsewhere
-// it only says what is missing, because the real mistake is often a different
-// token between the two pieces of code on that line.
+// is reliable the diagnostic shows the line with the token inserted. Where a
+// separator or closer is expected but the guess is not reliable, it points at
+// the token found instead and proposes nothing: the real mistake is often a
+// different token between the two pieces of code on that line. Any other kind
+// has one place it can go, so the diagnostic says to add it there.
 func (p *Parser) missingTokenError(msg string, kind token.Kind, loc *source.Location) *diagnostics.Diagnostic {
 	if p.isMissingTokenLikely(kind, loc) {
 		return insertionError(msg, *loc.Start, p.filePath, string(kind), string(kind))
 	}
-	return diagnostics.NewError(msg).
-		WithCode(diagnostics.ErrExpectedToken).
-		WithPrimaryLabel(loc, fmt.Sprintf("add missing `%s` here", string(kind)))
+	d := diagnostics.NewError(msg).WithCode(diagnostics.ErrExpectedToken)
+	switch kind {
+	case token.SEMICOLON, token.COMMA, token.RPAREN, token.RBRACK, token.RBRACE, token.GT:
+		found := p.current()
+		return d.WithPrimaryLabel(source.NewLocation(p.filePath, found.Start, found.End), "found `"+found.Literal+"`")
+	}
+	return d.WithPrimaryLabel(loc, fmt.Sprintf("add missing `%s` here", string(kind)))
 }
 
 // isMissingTokenLikely reports whether inserting kind at loc is very probably

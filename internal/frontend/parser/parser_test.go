@@ -2908,8 +2908,8 @@ func TestMissingTokenFixIsShownOnlyWhereTheGuessIsReliable(t *testing.T) {
 				if gotFix != test.hasFix {
 					t.Fatalf("fix shown = %t, want %t: %#v", gotFix, test.hasFix, item)
 				}
-				if !gotFix && !strings.HasPrefix(item.Labels[0].Message, "add missing `") {
-					t.Fatalf("expected the short hint on the label, got: %#v", item.Labels)
+				if !gotFix && !strings.HasPrefix(item.Labels[0].Message, "found `") {
+					t.Fatalf("expected the label to name the token found, got: %#v", item.Labels)
 				}
 				return
 			}
@@ -3189,6 +3189,43 @@ func TestBracedListRecoveryStillEndsOnTokensNoItemAccepts(t *testing.T) {
 		_, diag := parseTestModule(source)
 		if !diag.HasErrors() {
 			t.Errorf("%s: expected an error", name)
+		}
+	}
+}
+
+func TestUnreliableSeparatorOrCloserPointsAtTheTokenFound(t *testing.T) {
+	for _, test := range []struct{ name, source, message, label string }{
+		{"two values in a row", "fn main() { let b = a c; }", "expected ';' after statement", "found `c`"},
+		{"two calls on a line", "fn main() { f(a) g(a); }", "expected ';' after expression", "found `g`"},
+		{"not after an argument", "fn main() { f(a !b); }", "expected ')'", "found `!`"},
+	} {
+		_, diag := parseTestModule(test.source)
+		items := diag.Diagnostics()
+		if len(items) == 0 || items[0].Message != test.message || len(items[0].Extras) != 0 ||
+			len(items[0].Labels) != 1 || items[0].Labels[0].Message != test.label {
+			t.Errorf("%s: expected %q marked %q with no fix, got:\n%s", test.name, test.message, test.label, diag.EmitAllToString())
+		}
+	}
+}
+
+func TestMissingCloserMarksAnOpenerFromAnEarlierLine(t *testing.T) {
+	for _, test := range []struct {
+		name, source string
+		wantOpener   bool
+	}{
+		{"call opened above", "fn main() {\n    f(\n        1\n    ;\n}", true},
+		{"literal opened above", "fn main() {\n    let a = [2]i32{\n        1, 2\n    ;\n}", true},
+		{"call opened on the same line", "fn main() {\n    f(1;\n}", false},
+	} {
+		_, diag := parseTestModule(test.source)
+		items := diag.Diagnostics()
+		if len(items) != 1 {
+			t.Errorf("%s: expected one error, got:\n%s", test.name, diag.EmitAllToString())
+			continue
+		}
+		hasOpener := len(items[0].Labels) == 2 && strings.Contains(items[0].Labels[1].Message, "is still open")
+		if hasOpener != test.wantOpener {
+			t.Errorf("%s: opener marker = %v, want %v:\n%s", test.name, hasOpener, test.wantOpener, diag.EmitAllToString())
 		}
 	}
 }

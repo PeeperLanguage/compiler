@@ -4,5 +4,5 @@ build = "program"
 [test]
 mode = "check"
 outcome = "failure"
-stderr_contains = ["expected ']' after array literal length", "add missing `]` here"]
+stderr_contains = ["expected ']' after array literal length", "found `,`"]
 stderr_excludes = ["= help: add missing", "\n\n\n"]
