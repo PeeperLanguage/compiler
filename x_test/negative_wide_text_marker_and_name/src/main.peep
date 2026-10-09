@@ -1,0 +1,7 @@
+fn main() -> i32 {
+    // 日本語のコメント
+    let first: str = "日本語 😀" + 1;
+    let second = "한국어" "x";
+    let 名前 = 3;
+    return 名前;
+}

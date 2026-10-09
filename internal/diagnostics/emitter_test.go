@@ -148,3 +148,37 @@ func TestEmitterDropsCarriageReturnsOfCRLFSources(t *testing.T) {
 		t.Fatalf("got:\n%q\nwant:\n%q", got, want)
 	}
 }
+
+func TestMarkerSitsUnderTheCharacterWhateverItsWidth(t *testing.T) {
+	path := "main" + peeper.SourceExt
+	for _, test := range []struct {
+		name, line string
+		startCol   int
+		endCol     int
+		wantMarker string
+	}{
+		{"plain text", `a = "ab" + 1;`, 12, 13, "  |            ^ here"},
+		{"wide characters before", `a = "日本" + 1;`, 12, 13, "  |              ^ here"},
+		{"emoji before", `a = "😀b" + 1;`, 12, 13, "  |             ^ here"},
+		{"combining mark before", "a = \"éb\" + 1;", 13, 14, "  |            ^ here"},
+		{"wide characters under the marker", `a = 日本 + 1;`, 5, 7, "  |     ^^^^ here"},
+		{"tab then wide characters", "\ta = \"日本\" + 1;", 13, 14, "  |                  ^ here"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			diag := NewError("bad").WithCode("X").WithPrimaryLabel(spanLoc(path, 1, test.startCol, 1, test.endCol), "here")
+			got := emitPlain(t, map[string]string{path: test.line}, diag)
+			if !strings.Contains(got, "\n"+test.wantMarker+"\n") {
+				t.Fatalf("want marker row %q, got:\n%s", test.wantMarker, got)
+			}
+		})
+	}
+}
+
+func TestLabelToTheEndOfALineCountsCharactersNotBytes(t *testing.T) {
+	path := "main" + peeper.SourceExt
+	diag := NewError("bad").WithCode("X").WithPrimaryLabel(spanLoc(path, 1, 1, 2, 2), "here")
+	got := emitPlain(t, map[string]string{path: "éé\nb"}, diag)
+	if !strings.Contains(got, "1 | éé\n  | ^^\n2 | b\n") {
+		t.Fatalf("expected a two-cell underline beneath the first line, got:\n%s", got)
+	}
+}

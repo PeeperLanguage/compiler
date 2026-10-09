@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"unicode"
 	"unicode/utf8"
 
 	"compiler/internal/source"
@@ -21,6 +22,26 @@ const (
 	TAB_WIDTH = 4
 )
 
+// cellWidth is the number of terminal cells ch takes when it is printed at
+// visualPos: a tab runs to the next tab stop, a combining mark or a format
+// character sits on the cell before it, and East Asian wide characters and
+// emoji take two cells. Terminals differ on rarer cases, such as emoji joined
+// into one picture, so a marker after those can still be a cell or two off.
+func cellWidth(ch rune, visualPos int) int {
+	switch {
+	case ch == '\t':
+		return TAB_WIDTH - (visualPos % TAB_WIDTH)
+	case unicode.In(ch, unicode.Mn, unicode.Me, unicode.Cf):
+		return 0
+	case unicode.In(ch, unicode.Han, unicode.Hiragana, unicode.Katakana, unicode.Hangul),
+		ch >= 0x3000 && ch <= 0x303F,                               // CJK symbols and punctuation
+		ch >= 0xFF01 && ch <= 0xFF60, ch >= 0xFFE0 && ch <= 0xFFE6, // fullwidth forms
+		ch >= 0x1F300 && ch <= 0x1FAFF: // emoji and pictographs
+		return 2
+	}
+	return 1
+}
+
 // expandTabs replaces tab characters with spaces to align with tab stops.
 // This ensures consistent visual alignment between source lines and diagnostic markers.
 func expandTabs(line string) string {
@@ -30,59 +51,30 @@ func expandTabs(line string) string {
 	var result strings.Builder
 	col := 0
 	for _, ch := range line {
+		width := cellWidth(ch, col)
 		if ch == '\t' {
-			spaces := TAB_WIDTH - (col % TAB_WIDTH)
-			result.WriteString(strings.Repeat(" ", spaces))
-			col += spaces
+			result.WriteString(strings.Repeat(" ", width))
 		} else {
 			result.WriteRune(ch)
-			col++
 		}
+		col += width
 	}
 	return result.String()
 }
 
-// visualColumnToPosition converts a character column (where tabs=1) to a visual position
-// in an expanded line (where tabs are expanded to TAB_WIDTH spaces).
-// This is used to align carets with source code when tabs are present.
+// visualColumnToPosition converts a character column to the terminal cell
+// where that character is drawn, so a marker lines up with the source above
+// it. A column past the end of the line counts one cell for each column.
 func visualColumnToPosition(line string, column int) int {
-	if column <= 0 {
-		return 0
-	}
-	if !strings.ContainsRune(line, '\t') {
-		// No tabs, column is already the correct position (1-indexed to 0-indexed)
-		return column - 1
-	}
-	// Iterate through characters, tracking both character column and visual position
-	charCol := 1   // 1-indexed character column
-	visualPos := 0 // 0-indexed visual position in expanded line
-
+	visualPos, charCol := 0, 1
 	for _, ch := range line {
 		if charCol >= column {
-			// Found the character at or past our target column
-			// For tabs, we need to check if the column falls within the tab expansion
-			if ch == '\t' {
-				// This tab starts at charCol and expands to visual positions
-				// The tab spans from charCol to charCol (it's one character)
-				// but visually it's from visualPos to visualPos+spaces-1
-				// Since column == charCol, we return visualPos
-				return visualPos
-			}
 			return visualPos
 		}
-
-		if ch == '\t' {
-			spaces := TAB_WIDTH - (visualPos % TAB_WIDTH)
-			visualPos += spaces
-			charCol++
-		} else {
-			visualPos++
-			charCol++
-		}
+		visualPos += cellWidth(ch, visualPos)
+		charCol++
 	}
-
-	// If we get here, the column is beyond the end of the line
-	return visualPos
+	return visualPos + max(column-charCol, 0)
 }
 
 // SourceCache caches source file contents for error reporting
@@ -459,7 +451,7 @@ func (e *Emitter) printSnippetLine(filepath string, line snippetLine, severity S
 
 		endColumn := mark.endColumn
 		if endColumn == 0 {
-			endColumn = len(sourceLine) + 1
+			endColumn = utf8.RuneCountInString(sourceLine) + 1
 		}
 		padding := visualColumnToPosition(sourceLine, mark.startColumn)
 		length := visualColumnToPosition(sourceLine, endColumn) - padding
@@ -610,14 +602,13 @@ func columnOffset(sourceLine string, column int) (int, bool) {
 		if current == column {
 			return offset, true
 		}
+		width := cellWidth(ch, visual)
 		if ch == '\t' {
-			spaces := TAB_WIDTH - (visual % TAB_WIDTH)
-			offset += spaces
-			visual += spaces
+			offset += width
 		} else {
 			offset += utf8.RuneLen(ch)
-			visual++
 		}
+		visual += width
 		current++
 	}
 	return offset, current == column
