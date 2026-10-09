@@ -43,12 +43,11 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 	}
 
 	emitter := &llvmEmitter{
-		mod:             mod,
-		diag:            diag,
-		target:          targetInfo,
-		badTypes:        make(map[string]struct{}),
-		externalGlobals: make(map[string]ir.TypeID),
-		debug:           newLLVMDebugEmitter(mod, targetInfo.OS, isDebugBuild),
+		mod:      mod,
+		diag:     diag,
+		target:   targetInfo,
+		badTypes: make(map[string]struct{}),
+		debug:    newLLVMDebugEmitter(mod, targetInfo.OS, isDebugBuild),
 	}
 	var b strings.Builder
 	b.WriteString("source_filename = \"")
@@ -782,9 +781,9 @@ func finalLLVMText(b *strings.Builder, emitter *llvmEmitter) string {
 	if b == nil {
 		return ""
 	}
-	if emitter != nil && len(emitter.externalGlobals) > 0 {
+	if emitter != nil && emitter.externalGlobals.Len() > 0 {
 		b.WriteString("\n; external globals\n")
-		for name, typeID := range emitter.externalGlobals {
+		for name, typeID := range emitter.externalGlobals.All() {
 			llvmType := emitter.layout(typeID).Text
 			fmt.Fprintf(b, "%s = external global %s\n", name, llvmType)
 		}

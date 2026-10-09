@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -13,6 +14,7 @@ import (
 	"compiler/internal/problems"
 	"compiler/internal/source"
 	"compiler/internal/target"
+	"compiler/pkg/orderedmap"
 )
 
 type llvmEmitter struct {
@@ -24,7 +26,7 @@ type llvmEmitter struct {
 	layoutBuilding  map[ir.TypeID]bool
 	dropHelpers     map[ir.TypeID]string
 	isInvalid       bool
-	externalGlobals map[string]ir.TypeID
+	externalGlobals orderedmap.Map[string, ir.TypeID]
 	debug           *llvmDebugEmitter
 }
 
@@ -844,10 +846,7 @@ func emitRef(b *llvmBuilder, ref mir.ValueRef) llvmValue {
 
 			if idx := strings.IndexByte(v.Name, '$'); idx >= 0 {
 				name := "@" + v.Name
-				if b.emitter.externalGlobals == nil {
-					b.emitter.externalGlobals = make(map[string]ir.TypeID)
-				}
-				b.emitter.externalGlobals[name] = v.Type
+				b.emitter.externalGlobals.Set(name, v.Type)
 
 				return b.load(b.place(name, layout))
 			}
@@ -959,7 +958,7 @@ func collectCallDecls(mod *mir.Module) []callDecl {
 			defined[fn.Name] = struct{}{}
 		}
 	}
-	decls := make(map[string]callDecl)
+	var decls orderedmap.Map[string, callDecl]
 	for _, fn := range mod.Funcs {
 		if fn == nil || fn.Blocks == nil {
 			continue
@@ -975,21 +974,17 @@ func collectCallDecls(mod *mir.Module) []callDecl {
 					if !ok || call == nil {
 						continue
 					}
-					recordCallDecl(decls, defined, call)
+					recordCallDecl(&decls, defined, call)
 				case *mir.Call:
-					recordCallDecl(decls, defined, callInstr)
+					recordCallDecl(&decls, defined, callInstr)
 				}
 			}
 		}
 	}
-	out := make([]callDecl, 0, len(decls))
-	for _, decl := range decls {
-		out = append(out, decl)
-	}
-	return out
+	return slices.Collect(decls.Values())
 }
 
-func recordCallDecl(decls map[string]callDecl, defined map[string]struct{}, call *mir.Call) {
+func recordCallDecl(decls *orderedmap.Map[string, callDecl], defined map[string]struct{}, call *mir.Call) {
 	if call == nil {
 		return
 	}
@@ -1008,5 +1003,5 @@ func recordCallDecl(decls map[string]callDecl, defined map[string]struct{}, call
 	for _, arg := range call.Args {
 		params = append(params, arg.TypeID())
 	}
-	decls[name] = callDecl{Name: name, ReturnType: call.Type, Params: params}
+	decls.Set(name, callDecl{Name: name, ReturnType: call.Type, Params: params})
 }

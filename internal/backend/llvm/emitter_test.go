@@ -8,6 +8,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -469,6 +470,48 @@ func TestGenerateLLVMIRLowersBooleanCallArguments(t *testing.T) {
 	for _, call := range []string{"call void @accept(i1 true)", "call void @accept(i1 false)"} {
 		if !strings.Contains(irText, call) {
 			t.Fatalf("expected %q, got:\n%s", call, irText)
+		}
+	}
+}
+
+func TestGenerateLLVMIRDeclaresExternalsInUseOrder(t *testing.T) {
+	callees := []string{"zeta", "alpha", "mid", "omega", "beta", "alpha", "kappa", "delta", "zeta", "gamma"}
+	instrs := make([]mir.Instr, 0, len(callees))
+	for _, callee := range callees {
+		instrs = append(instrs, &mir.Call{
+			Callee: &mir.RefName{Name: callee, Type: llvmTypes.fnBoolVoid},
+			Args:   []mir.ValueRef{&mir.RefName{Name: callee + "$flag", Type: llvmTypes.boolType}},
+			Type:   llvmTypes.void,
+		})
+	}
+	mod := &mir.Module{
+		Name: "test", Types: llvmTypes.table,
+		Funcs: []*mir.Function{{
+			Name:       "main",
+			ReturnType: llvmTypes.i32,
+			Blocks: []*mir.Block{{
+				ID:     0,
+				Instrs: instrs,
+				Term:   &mir.Ret{Value: &mir.RefConst{Value: "0", Type: llvmTypes.i32}},
+			}},
+		}},
+	}
+
+	want := []string{"zeta", "alpha", "mid", "omega", "beta", "kappa", "delta", "gamma"}
+	// Map iteration can land on the right order by chance; repeat to catch it.
+	for range 20 {
+		irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
+		var declared, globals []string
+		for _, line := range strings.Split(irText, "\n") {
+			if name, ok := strings.CutPrefix(line, "declare void @"); ok {
+				declared = append(declared, strings.TrimSuffix(name, "(i1)"))
+			}
+			if name, ok := strings.CutSuffix(line, "$flag = external global i1"); ok {
+				globals = append(globals, strings.TrimPrefix(name, "@"))
+			}
+		}
+		if !slices.Equal(declared, want) || !slices.Equal(globals, want) {
+			t.Fatalf("declare order = %v, external global order = %v, want %v; got:\n%s", declared, globals, want, irText)
 		}
 	}
 }
