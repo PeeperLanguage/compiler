@@ -30,32 +30,34 @@ and an optional source location. Each block contains MIR instructions and one
 terminator. `Instr` and `Terminator` are sealed interfaces; the emitter uses
 exhaustive type switches and panics if a new MIR node is not classified.
 
-The result is LLVM module text. Invalid target or invalid runtime-symbol use
-returns an empty string after diagnostics. Unsupported layouts and lowering
-errors set emitter invalid state; `finalLLVMText` then returns an empty string.
+The result is LLVM module text. Invalid target, malformed MIR, or invalid
+runtime-symbol use returns an empty string after diagnostics. Unsupported
+layouts and lowering errors set emitter invalid state; `finalLLVMText` then
+returns an empty string.
 
 ## Module emission job
 
 `GenerateLLVMIR` emits in this order:
 
 1. Validate non-nil module and `target.Info.Valid()`.
-2. Validate reserved runtime symbols with `ValidateRuntimeSymbols`.
-3. Create one `llvmEmitter` for the module.
-4. Emit `source_filename` and `target triple`.
-5. Resolve and emit identified named type definitions.
-6. Emit print format globals when print is used.
-7. Emit MIR static data: raw byte arrays or typed constants.
-8. Discover interface constructions and emit unique itab globals.
-9. Emit declared MIR functions.
-10. Emit print, allocator, free, and overflow-intrinsic declarations as needed.
-11. Emit default allocator descriptor thunks when allocator runtime is needed.
-12. Collect and emit direct-call declarations.
-13. If no function has blocks, finalize.
-14. Emit named drop helpers.
-15. Emit MIR interface thunks.
-16. Emit interface payload drop/release thunks.
-17. Emit each defined function and its blocks.
-18. Append late external globals and debug metadata.
+2. Validate backend-independent MIR invariants with `mir.Module.Validate`.
+3. Validate reserved runtime symbols with `ValidateRuntimeSymbols`.
+4. Create one `llvmEmitter` for the module.
+5. Emit `source_filename` and `target triple`.
+6. Resolve and emit identified named type definitions.
+7. Emit print format globals when print is used.
+8. Emit MIR static data: raw byte arrays or typed constants.
+9. Discover interface constructions and emit unique itab globals.
+10. Emit declared MIR functions.
+11. Emit print, allocator, free, and overflow-intrinsic declarations as needed.
+12. Emit default allocator descriptor thunks when allocator runtime is needed.
+13. Collect and emit direct-call declarations.
+14. If no function has blocks, finalize.
+15. Emit named drop helpers.
+16. Emit MIR interface thunks.
+17. Emit interface payload drop/release thunks.
+18. Emit each defined function and its blocks.
+19. Append late external globals and debug metadata.
 
 Static strings are already interned by `mir.Module.InternString`; raw entries are
 escaped by `llvmEscapeString`. Typed constants are lowered by `staticConstant`.
