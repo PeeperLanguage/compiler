@@ -95,14 +95,15 @@ func (b *binder) bindModuleBinding(name *ast.Ident, typ ast.TypeExpr) {
 		return
 	}
 	if typ == nil {
-		if b.moduleScopeSymbol(name.Name) == nil {
-			return
+		if sym := b.moduleScopeSymbol(name.Name); sym != nil && sym.Type == nil {
+			sym.BindType(&typeinfo.UnknownType{})
 		}
-		b.bindModuleScopeTypeIfUnset(name.Name, &typeinfo.UnknownType{})
 		return
 	}
-	b.bindModuleScopeType(name.Name,
-		b.ctx.TypeResolver.Resolve(b.ctx.Diagnostics, b.module, typ, typeresolution.Context{}))
+	resolved := b.ctx.TypeResolver.Resolve(b.ctx.Diagnostics, b.module, typ, typeresolution.Context{})
+	if sym := b.moduleScopeSymbol(name.Name); sym != nil && resolved != nil {
+		sym.BindType(resolved)
+	}
 }
 
 // Bind named type declarations using one stable shell per symbol.
@@ -152,16 +153,4 @@ func (b *binder) moduleScopeSymbol(name string) *symbols.Symbol {
 		return nil
 	}
 	return sym
-}
-
-func (b *binder) bindModuleScopeType(name string, typ typeinfo.Type) {
-	if sym := b.moduleScopeSymbol(name); sym != nil && typ != nil {
-		sym.BindType(typ)
-	}
-}
-
-func (b *binder) bindModuleScopeTypeIfUnset(name string, typ typeinfo.Type) {
-	if sym := b.moduleScopeSymbol(name); sym != nil && typ != nil && sym.Type == nil {
-		sym.BindType(typ)
-	}
 }

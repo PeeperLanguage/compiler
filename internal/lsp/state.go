@@ -132,15 +132,6 @@ func (s *ServerState) workspaceDiagnosticSnapshots() []*diagnosticSnapshot {
 	return snapshots
 }
 
-func (s *ServerState) recompile(entryFile string) (*project.CompilerContext, *module.Module) {
-	if s == nil {
-		return nil, nil
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.recompileLocked(entryFile, nil)
-}
-
 func (s *ServerState) recompileLocked(entryFile string, parsedModules map[string]workspaceParse) (*project.CompilerContext, *module.Module) {
 	canonicalEntry := project.CanonicalPath(entryFile)
 	diagBag := diagnostics.NewDiagnosticBag()

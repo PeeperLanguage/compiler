@@ -117,8 +117,8 @@ precede `.`. Whitespace and ordinary comments are skipped.
 - `numberHandler` emits `NUMBER` without numeric interpretation.
 - `docHandler` emits `DOC_COMMENT`; it removes the `///` prefix and trims the
   remaining text. Normal `//` and `/* ... */` comments are discarded.
-- `stringHandler` and `cstringHandler` remove delimiters, decode escapes, and
-  emit `STRING` or `CSTRING`.
+- `stringHandler` removes delimiters, decodes escapes, and emits `STRING` or
+  `CSTRING`.
 - `charHandler` decodes a single-quoted value and requires exactly one valid
   UTF-8 rune.
 - `byteCharHandler` decodes a `b'...'` value and requires exactly one byte.
@@ -156,7 +156,7 @@ ranges must retain the same one-based convention.
 ### Shared state: `parser/parser.go`
 
 `Parser` stores the file path, token stream, diagnostic bag, current token index,
-next AST node ID, and a context stack. `New` receives
+and next AST node ID. `New` receives
 the already-tokenized stream; the lexer is not called by the parser.
 
 `current`, `next`, and `prev` inspect the stream without advancing. `advance`

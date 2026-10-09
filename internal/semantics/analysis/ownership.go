@@ -536,13 +536,7 @@ func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st ownershipState) 
 	if match == nil {
 		return
 	}
-	var arm *thir.MatchArm
-	for index := range match.Arms {
-		if match.Arms[index].Case == edge.Case {
-			arm = &match.Arms[index]
-			break
-		}
-	}
+	arm := match.Arm(edge.Case)
 	if arm == nil || arm.Payload == nil {
 		return
 	}

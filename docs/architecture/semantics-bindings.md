@@ -81,7 +81,7 @@ This map records binding, type, place, intrinsic, and constant implementation ob
   wins and shadowing is lexical.
 - `Symbols` preserves declaration order; declaration identity comes from the binding result rather than scanning symbol AST pointers.
 - `IsMutableBinding` combines lookup, kind, and `Symbol.IsMutable`.
-- `Parent` supports bounded analyses such as `place.LocalRoot`.
+- `Parent` supports bounded scope walks.
 
 ## Symbol index
 
@@ -167,8 +167,7 @@ be discarded. Backing maps remain private.
 - Functions with parameters are added to `OperationFunctions`.
 - `bindModuleBinding` binds an explicit source type through `TypeFromSyntax`.
 - Missing top-level types retain `UnknownType` for later inference/recovery.
-- `moduleScopeSymbol`, `bindModuleScopeType`, and
-  `bindModuleScopeTypeIfUnset` centralize module-local symbol access and writes.
+- `moduleScopeSymbol` centralizes module-local symbol access.
 
 ### Named type binding
 
@@ -393,29 +392,16 @@ are `types.go`, `syntax.go`, `relations.go`, `compatibility.go`, `lookup.go`,
 - `Project` recognizes one selector or non-slicing index projection.
 - `Decompose` returns root expression and projections in source order.
 - Slices are not independently addressable places; range indexes become wildcard
-  origin projections in `Resolve`.
+  origin projections.
 - `Addressable` answers whether an identifier or projection names addressable
   storage, including pointer/reference bases.
 - `MutableAddressable` preserves binding permission through value and owning-pointer
   projections. Mutable references grant referent access; shared-reference restrictions
   survive subsequent safe projections. It also reports shared reference targets and
   the mutable binding required by the access, for diagnostics and usage tracking.
-- `LocalRoot` finds a caller-local root below module scope and stops at pointer
-  indirection.
-- `Binding` carries a symbol and a transient `Local` flag.
 - `BindingResolver` supplies symbols for identifiers injected into cloned defaults.
-- Expanded defaults use `Local=false`; declaration-module storage must not become a
-  caller pointer-escape source.
-- `Resolve` is the canonical place walk and returns storage origins, value origins,
-  dependencies, and stability.
-- Identifiers start with a symbol root.
-- Selectors append field projections.
-- Constant indexes append stable index projections.
-- Integral identifier indexes append binding-index projections and dependencies.
-- Unknown indexes and range indexes append wildcard projections.
-- Owned pointers append pointee projections for the projected base.
-- Proven variant cases append variant-payload projections.
-- Reference and raw-pointer value origins can be normalized through callbacks.
+- `Resolution` carries storage origins, value origins, dependencies, and
+  stability; flow analysis over THIR builds it.
 - `OriginsOverlap` is conservative; concrete different fields/fixed indexes prove
   disjointness, while prefixes, wildcards, and symbolic indexes may overlap.
 

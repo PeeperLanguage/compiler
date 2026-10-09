@@ -63,38 +63,7 @@ func Run(in io.ReadCloser, out io.Writer) error {
 
 		switch req.Method {
 		case "initialize":
-			var params InitializeParams
-			if err := json.Unmarshal(req.Params, &params); err != nil {
-				respErr = invalidParams("Invalid params")
-				break
-			}
-			rootDir := state.RootDir
-			if params.RootURI != nil {
-				rootDir, err = uriToPath(string(*params.RootURI))
-				if err != nil {
-					respErr = invalidParams(err.Error())
-					break
-				}
-			} else if params.RootPath != nil {
-				rootDir = *params.RootPath
-			}
-			state.RootDir = rootDir
-			state.workspace = newWorkspaceIndex(state.RootDir)
-			result = InitializeResult{
-				Capabilities: ServerCapabilities{
-					TextDocumentSync:   1, // Full Sync
-					SupportsHover:      true,
-					SupportsDefinition: true,
-					SupportsRename:     true,
-					CompletionProvider: &CompletionOptions{
-						TriggerCharacters: []string{".", "|", ">", ":", "/", "\""},
-					},
-				},
-				ServerInfo: &ServerInfo{
-					Name:    "Peeper Language Server",
-					Version: LSP_VERSION,
-				},
-			}
+			result, respErr = state.handleInitialize(req.Params)
 
 		case "initialized":
 			if err := publishWorkspaceDiagnostics(writer, state); err != nil {
@@ -103,91 +72,32 @@ func Run(in io.ReadCloser, out io.Writer) error {
 			continue
 
 		case "textDocument/didOpen":
-			var params DidOpenTextDocumentParams
-			if err := json.Unmarshal(req.Params, &params); err == nil {
-				filePath, uriErr := uriToPath(string(params.TextDocument.URI))
-				if uriErr != nil {
-					continue
-				}
-				state.applyDocumentSnapshot(filePath, &params.TextDocument.Text, &params.TextDocument.Version)
-				if err := publishComponentDiagnostics(writer, state, filePath, nil); err != nil {
-					return err
-				}
+			if err := handleDidOpen(writer, state, req.Params); err != nil {
+				return err
 			}
 			continue
 
 		case "textDocument/didChange":
-			var params DidChangeTextDocumentParams
-			if err := json.Unmarshal(req.Params, &params); err == nil && len(params.ContentChanges) > 0 {
-				filePath, uriErr := uriToPath(string(params.TextDocument.URI))
-				if uriErr != nil {
-					continue
-				}
-				// Under Full Sync, the first change has the entire file text
-				state.applyDocumentSnapshot(filePath, &params.ContentChanges[0].Text, &params.TextDocument.Version)
-				state.scheduleDiagnosticRefresh(filePath, diagnosticsDebounceDelay, func() error {
-					return publishComponentDiagnostics(writer, state, filePath, nil)
-				})
-			}
+			handleDidChange(writer, state, req.Params)
 			continue
 
 		case "textDocument/didClose":
-			var params DidCloseTextDocumentParams
-			if err := json.Unmarshal(req.Params, &params); err == nil {
-				filePath, uriErr := uriToPath(string(params.TextDocument.URI))
-				if uriErr != nil {
-					continue
-				}
-				state.applyDocumentSnapshot(filePath, nil, nil)
-				if err := publishComponentDiagnostics(writer, state, filePath, nil); err != nil {
-					return err
-				}
+			if err := handleDidClose(writer, state, req.Params); err != nil {
+				return err
 			}
 			continue
 
 		case "textDocument/hover":
-			var params HoverParams
-			if err := json.Unmarshal(req.Params, &params); err == nil {
-				result, err = state.HandleHover(params)
-				if err != nil {
-					respErr = responseErrorFrom(err)
-				}
-			} else {
-				respErr = invalidParams("Invalid params")
-			}
+			result, respErr = handleRequest(req.Params, state.HandleHover)
 
 		case "textDocument/definition":
-			var params DefinitionParams
-			if err := json.Unmarshal(req.Params, &params); err == nil {
-				result, err = state.HandleDefinition(params)
-				if err != nil {
-					respErr = responseErrorFrom(err)
-				}
-			} else {
-				respErr = invalidParams("Invalid params")
-			}
+			result, respErr = handleRequest(req.Params, state.HandleDefinition)
 
 		case "textDocument/completion":
-			var params CompletionParams
-			if err := json.Unmarshal(req.Params, &params); err == nil {
-				result, err = state.HandleCompletion(params)
-				if err != nil {
-					respErr = responseErrorFrom(err)
-				}
-			} else {
-				respErr = invalidParams("Invalid params")
-			}
+			result, respErr = handleRequest(req.Params, state.HandleCompletion)
 
 		case "textDocument/rename":
-			var params RenameParams
-			if err := json.Unmarshal(req.Params, &params); err == nil {
-				result, err = state.HandleRename(params)
-				if err != nil {
-					respErr = responseErrorFrom(err)
-				}
-			} else {
-				respErr = invalidParams("Invalid params")
-			}
+			result, respErr = handleRequest(req.Params, state.HandleRename)
 
 		case "shutdown":
 			result = nil
@@ -218,6 +128,96 @@ func Run(in io.ReadCloser, out io.Writer) error {
 			}
 		}
 	}
+}
+
+func (s *ServerState) handleInitialize(rawParams json.RawMessage) (any, *ResponseError) {
+	var params InitializeParams
+	if err := json.Unmarshal(rawParams, &params); err != nil {
+		return nil, invalidParams("Invalid params")
+	}
+	rootDir := s.RootDir
+	if params.RootURI != nil {
+		var err error
+		rootDir, err = uriToPath(string(*params.RootURI))
+		if err != nil {
+			return nil, invalidParams(err.Error())
+		}
+	} else if params.RootPath != nil {
+		rootDir = *params.RootPath
+	}
+	s.RootDir = rootDir
+	s.workspace = newWorkspaceIndex(s.RootDir)
+	return InitializeResult{
+		Capabilities: ServerCapabilities{
+			TextDocumentSync:   1, // Full Sync
+			SupportsHover:      true,
+			SupportsDefinition: true,
+			SupportsRename:     true,
+			CompletionProvider: &CompletionOptions{
+				TriggerCharacters: []string{".", "|", ">", ":", "/", "\""},
+			},
+		},
+		ServerInfo: &ServerInfo{
+			Name:    "Peeper Language Server",
+			Version: LSP_VERSION,
+		},
+	}, nil
+}
+
+// handleRequest decodes a request's params, runs its handler, and maps the
+// outcome to a JSON-RPC result or error.
+func handleRequest[P, R any](rawParams json.RawMessage, handle func(P) (R, error)) (any, *ResponseError) {
+	var params P
+	if err := json.Unmarshal(rawParams, &params); err != nil {
+		return nil, invalidParams("Invalid params")
+	}
+	result, err := handle(params)
+	if err != nil {
+		return result, responseErrorFrom(err)
+	}
+	return result, nil
+}
+
+func handleDidOpen(writer *protocolWriter, state *ServerState, rawParams json.RawMessage) error {
+	var params DidOpenTextDocumentParams
+	if err := json.Unmarshal(rawParams, &params); err != nil {
+		return nil
+	}
+	filePath, err := uriToPath(string(params.TextDocument.URI))
+	if err != nil {
+		return nil
+	}
+	state.applyDocumentSnapshot(filePath, &params.TextDocument.Text, &params.TextDocument.Version)
+	return publishComponentDiagnostics(writer, state, filePath, nil)
+}
+
+func handleDidChange(writer *protocolWriter, state *ServerState, rawParams json.RawMessage) {
+	var params DidChangeTextDocumentParams
+	if err := json.Unmarshal(rawParams, &params); err != nil || len(params.ContentChanges) == 0 {
+		return
+	}
+	filePath, err := uriToPath(string(params.TextDocument.URI))
+	if err != nil {
+		return
+	}
+	// Under Full Sync, the first change has the entire file text
+	state.applyDocumentSnapshot(filePath, &params.ContentChanges[0].Text, &params.TextDocument.Version)
+	state.scheduleDiagnosticRefresh(filePath, diagnosticsDebounceDelay, func() error {
+		return publishComponentDiagnostics(writer, state, filePath, nil)
+	})
+}
+
+func handleDidClose(writer *protocolWriter, state *ServerState, rawParams json.RawMessage) error {
+	var params DidCloseTextDocumentParams
+	if err := json.Unmarshal(rawParams, &params); err != nil {
+		return nil
+	}
+	filePath, err := uriToPath(string(params.TextDocument.URI))
+	if err != nil {
+		return nil
+	}
+	state.applyDocumentSnapshot(filePath, nil, nil)
+	return publishComponentDiagnostics(writer, state, filePath, nil)
 }
 
 func publishWorkspaceDiagnostics(writer *protocolWriter, state *ServerState) error {

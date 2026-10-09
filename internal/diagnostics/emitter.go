@@ -163,16 +163,12 @@ type Emitter struct {
 }
 
 type labelContext struct {
-	filepath     string
-	line         int
-	startLine    int
-	endLine      int
-	startCol     int
-	endCol       int
-	label        Label
-	codeHint     *CodeHint
-	lineNumWidth int
-	severity     Severity
+	filepath string
+	line     int
+	startCol int
+	endCol   int
+	codeHint *CodeHint
+	severity Severity
 }
 
 func NewEmitter(w io.Writer) *Emitter {
@@ -238,6 +234,9 @@ func (e *Emitter) printPipeOnly() {
 	fmt.Fprintln(e.writer)
 }
 
+// printUnderlineIndent pads to the column where source text starts, so an
+// underline can be drawn beneath it. Retained at maintainer request for planned
+// diagnostics work; do not remove it as dead code without asking.
 func (e *Emitter) printUnderlineIndent(extraPadding int) {
 	indent := e.currentLineNumWidth + 6 // "   N | " = width + 6 spaces/chars
 	fmt.Fprint(e.writer, strings.Repeat(" ", indent+extraPadding))

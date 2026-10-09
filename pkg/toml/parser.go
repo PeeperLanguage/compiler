@@ -36,6 +36,8 @@ func ParseString(src string) (Data, error) {
 	return Parse(strings.NewReader(src))
 }
 
+// ParseBytes parses TOML held in memory. Retained at maintainer request as part
+// of the TOML API; do not remove it as dead code without asking.
 func ParseBytes(src []byte) (Data, error) {
 	return Parse(bytes.NewReader(src))
 }
@@ -82,15 +84,15 @@ func ensureSection(data *Data, section string) error {
 }
 
 func parseKeyValue(data *Data, currentSection string, lineNo int, line string) error {
-	parts := strings.SplitN(line, "=", 2)
-	if len(parts) != 2 {
+	key, valueText, ok := strings.Cut(line, "=")
+	if !ok {
 		return &ParseError{Line: lineNo, Message: fmt.Sprintf("invalid key/value pair: %s", line)}
 	}
-	key := strings.TrimSpace(parts[0])
+	key = strings.TrimSpace(key)
 	if key == "" {
 		return &ParseError{Line: lineNo, Message: "empty key"}
 	}
-	valueText := stripInlineComment(strings.TrimSpace(parts[1]))
+	valueText = stripInlineComment(strings.TrimSpace(valueText))
 	section := currentSection
 	if section == "" {
 		section = "default"
@@ -178,18 +180,18 @@ func parseInlineTable(text string) (Table, error) {
 		return nil, err
 	}
 	for _, part := range parts {
-		kv := strings.SplitN(part, "=", 2)
-		if len(kv) != 2 {
+		key, valueText, ok := strings.Cut(part, "=")
+		if !ok {
 			return nil, fmt.Errorf("invalid inline table entry %q", part)
 		}
-		key := strings.TrimSpace(kv[0])
+		key = strings.TrimSpace(key)
 		if key == "" {
 			return nil, fmt.Errorf("empty inline table key")
 		}
 		if _, exists := table[key]; exists {
 			return nil, fmt.Errorf("duplicate inline table key %q", key)
 		}
-		value, err := parseValue(strings.TrimSpace(kv[1]))
+		value, err := parseValue(strings.TrimSpace(valueText))
 		if err != nil {
 			return nil, err
 		}

@@ -39,11 +39,11 @@ func (c *checker) typePayloadExpr(scope *symbols.Scope, expr ast.Expr, expected 
 	return c.typeExpr(scope, expr, expected)
 }
 
-func (c *checker) typeWholeCarrierExpr(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) typeinfo.Type {
+func (c *checker) typeWholeCarrierExpr(scope *symbols.Scope, expr ast.Expr) typeinfo.Type {
 	previous := c.wholeCarrierExpr
 	c.wholeCarrierExpr = expr
 	defer func() { c.wholeCarrierExpr = previous }()
-	return c.typeExpr(scope, expr, expected)
+	return c.typeExpr(scope, expr, nil)
 }
 
 func (c *checker) effectiveExpressionType(expr ast.Expr, base, expected typeinfo.Type) typeinfo.Type {
@@ -232,7 +232,7 @@ func (c *checker) typeAddressExpr(scope *symbols.Scope, node *ast.AddressExpr, e
 	}
 	var valueType typeinfo.Type
 	if node.Mode == ast.AddressRaw {
-		valueType = c.typeWholeCarrierExpr(scope, node.Expr, nil)
+		valueType = c.typeWholeCarrierExpr(scope, node.Expr)
 	} else {
 		var valueExpected typeinfo.Type
 		if target, _, isReference := typeinfo.ReferenceValueTarget(typeinfo.Underlying(expected)); isReference {
@@ -478,7 +478,7 @@ func (c *checker) typeIsExpr(scope *symbols.Scope, node *ast.IsExpr) typeinfo.Ty
 	if node == nil || node.Value == nil || node.Case == nil {
 		return &typeinfo.InvalidType{}
 	}
-	valueType := c.requireValueType(node.Value, c.typeWholeCarrierExpr(scope, node.Value, nil), "case-test subject")
+	valueType := c.requireValueType(node.Value, c.typeWholeCarrierExpr(scope, node.Value), "case-test subject")
 	if typeinfo.IsInvalidOrUnknown(valueType) {
 		return &typeinfo.InvalidType{}
 	}

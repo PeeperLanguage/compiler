@@ -26,8 +26,8 @@ var regexPatterns = [...]regexPattern{
 	{regexp.MustCompile(`///[^\n\r]*`), docHandler},
 	{regexp.MustCompile(`//[^\n\r]*`), skipHandler},
 	{regexp.MustCompile(`(?s)/\*.*?\*/`), skipHandler},
-	{regexp.MustCompile(`c"(?:\\.|[^"\\])*"`), cstringHandler},
-	{regexp.MustCompile(`"(?:\\.|[^"\\])*"`), stringHandler},
+	{regexp.MustCompile(`c"(?:\\.|[^"\\])*"`), stringHandler(1, token.CSTRING)},
+	{regexp.MustCompile(`"(?:\\.|[^"\\])*"`), stringHandler(0, token.STRING)},
 	{regexp.MustCompile(`b'(?:\\.|[^'\\])*'`), byteCharHandler},
 	{regexp.MustCompile(`'(?:\\.|[^'\\])*'`), charHandler},
 	{regexp.MustCompile(numeric.NumberTokenPattern), numberHandler},
@@ -160,44 +160,28 @@ func numberHandler(l *Lexer, match string) {
 	})
 }
 
-func stringHandler(l *Lexer, match string) {
-	start := l.pos
+// stringHandler lexes a double-quoted literal whose opening quote follows
+// prefixLen prefix bytes (0 for "...", 1 for c"...").
+func stringHandler(prefixLen int, kind token.Kind) func(*Lexer, string) {
+	return func(l *Lexer, match string) {
+		start := l.pos
 
-	l.advanceBy(match)
+		l.advanceBy(match)
 
-	inner := match[1 : len(match)-1]
-	value, err := unescapeQuoted(inner, '"')
-	if err != nil {
-		l.reportEscapeError(start, err)
-		return
+		inner := match[prefixLen+1 : len(match)-1]
+		value, err := unescapeQuoted(inner, '"')
+		if err != nil {
+			l.reportEscapeError(start, err)
+			return
+		}
+
+		l.push(token.Token{
+			Kind:    kind,
+			Literal: value,
+			Start:   start,
+			End:     l.pos,
+		})
 	}
-
-	l.push(token.Token{
-		Kind:    token.STRING,
-		Literal: value,
-		Start:   start,
-		End:     l.pos,
-	})
-}
-
-func cstringHandler(l *Lexer, match string) {
-	start := l.pos
-
-	l.advanceBy(match)
-
-	inner := match[2 : len(match)-1]
-	value, err := unescapeQuoted(inner, '"')
-	if err != nil {
-		l.reportEscapeError(start, err)
-		return
-	}
-
-	l.push(token.Token{
-		Kind:    token.CSTRING,
-		Literal: value,
-		Start:   start,
-		End:     l.pos,
-	})
 }
 
 func charHandler(l *Lexer, match string) {

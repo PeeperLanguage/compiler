@@ -379,18 +379,6 @@ func isOwnedInterfaceType(types *ir.TypeTable, id ir.TypeID) bool {
 	return ok && typ.Kind == ir.TypeOwnedPtr && isInterfaceType(types, typ.Elem)
 }
 
-func interfaceTypeID(types *ir.TypeTable, id ir.TypeID) (ir.TypeID, bool) {
-	typ, ok := types.Type(id)
-	if !ok {
-		return ir.InvalidType, false
-	}
-	if typ.Kind == ir.TypeOwnedPtr || typ.Kind == ir.TypeReference {
-		id = typ.Elem
-		typ, ok = types.Type(id)
-	}
-	return id, ok && typ.Kind == ir.TypeInterface
-}
-
 func interfaceMethodVtableSlotID(types *ir.TypeTable, id ir.TypeID, methodSlot int) int {
 	offset := interfaceReleaseVtableSlot
 	if isOwnedInterfaceType(types, id) {

@@ -52,7 +52,7 @@ func emitPrint(b *llvmBuilder, printInstr *mir.Print) {
 	value := emitRef(b, printInstr.Value)
 	formatName := ""
 	formatSize := 0
-	arguments := make([]llvmValue, 0, 2)
+	var arguments []llvmValue
 	i8 := llvmScalarLayout("i8")
 	i8Pointer := llvmPointerLayout(i8)
 	switch {
@@ -374,10 +374,6 @@ func emitCast(b *llvmBuilder, cast *mir.Cast) llvmValue {
 		return argRef
 	}
 	return argRef
-}
-
-func isMIRFloatType(typ string) bool {
-	return typ == "f32" || typ == "f64"
 }
 
 func newLLVMBuilder(out *strings.Builder, emitter *llvmEmitter, debugScopeID int) *llvmBuilder {

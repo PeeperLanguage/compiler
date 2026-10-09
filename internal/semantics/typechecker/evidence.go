@@ -3,7 +3,6 @@ package typechecker
 import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/semantics/intrinsics"
-	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
@@ -58,15 +57,6 @@ type MatchBinding struct {
 	Type       typeinfo.Type
 	Binding    *symbols.Symbol
 	IsDiscard  bool
-}
-
-func (m Match) Arm(caseIndex int) (MatchArm, bool) {
-	for _, arm := range m.Arms {
-		if arm.Case == caseIndex {
-			return arm, true
-		}
-	}
-	return MatchArm{}, false
 }
 
 // ForIteration records typechecker-owned loop lowering and CFG evidence.
@@ -517,19 +507,19 @@ func (r *evidence) CloneReusableExpressionEvidenceFrom(dstID source.NodeID, src 
 	}
 }
 
-func (c *checker) expandedDefaultBinding(expr ast.Expr) (place.Binding, bool) {
+func (c *checker) expandedDefaultBinding(expr ast.Expr) (*symbols.Symbol, bool) {
 	if c == nil || c.module == nil || c.module.SymbolIndex == nil || expr == nil {
-		return place.Binding{}, false
+		return nil, false
 	}
 	if path, ok := expr.(*ast.ScopeResolution); ok {
 		if sym := c.module.SymbolIndex.Symbol(path); sym != nil {
-			return place.Binding{Symbol: sym}, true
+			return sym, true
 		}
-		return place.Binding{}, false
+		return nil, false
 	}
 	ident, ok := expr.(*ast.Ident)
 	if !ok || c.evidence == nil || !c.evidence.ExpandedDefaultBinding(ident.ID()) {
-		return place.Binding{}, false
+		return nil, false
 	}
-	return place.Binding{Symbol: c.module.SymbolIndex.Symbol(ident)}, true
+	return c.module.SymbolIndex.Symbol(ident), true
 }

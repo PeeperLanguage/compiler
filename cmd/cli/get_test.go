@@ -62,8 +62,8 @@ build = "lib"
 		}
 	}()
 
-	if err := installAllDependencies(); err != nil {
-		t.Fatalf("installAllDependencies: %v", err)
+	if err := GetCommand(nil); err != nil {
+		t.Fatalf("GetCommand: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(versionedModule, manifest.FileName)); err != nil {
 		t.Fatalf("expected restored versioned cache: %v", err)
@@ -105,7 +105,7 @@ mock_path = "./mock"
 	mustWriteGetTest(t, filepath.Join(cachePackage, "src", "pkg.peep"), "unlocked-cache")
 	chdirForTest(t, root)
 
-	if err := installAllDependencies(); err != nil {
+	if err := GetCommand(nil); err != nil {
 		t.Fatal(err)
 	}
 	lock, err := manifest.LoadLockfile(root)
@@ -127,7 +127,7 @@ mock_path = "./mock"
 	if err := os.Rename(mockPackage, offlineMock); err != nil {
 		t.Fatal(err)
 	}
-	if err := installAllDependencies(); err != nil {
+	if err := GetCommand(nil); err != nil {
 		t.Fatalf("valid cache triggered refetch: %v", err)
 	}
 	if err := os.Rename(offlineMock, mockPackage); err != nil {
@@ -138,7 +138,7 @@ mock_path = "./mock"
 	if err := os.WriteFile(cacheSource, []byte("tampered"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := installAllDependencies(); err != nil {
+	if err := GetCommand(nil); err != nil {
 		t.Fatalf("tampered cache was not repaired: %v", err)
 	}
 	if data, err := os.ReadFile(cacheSource); err != nil || string(data) != "original" {
@@ -155,7 +155,7 @@ mock_path = "./mock"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := installAllDependencies(); err == nil || !strings.Contains(err.Error(), "checksum") {
+	if err := GetCommand(nil); err == nil || !strings.Contains(err.Error(), "checksum") {
 		t.Fatalf("moved tag error = %v", err)
 	}
 	lockAfter, err := os.ReadFile(filepath.Join(root, manifest.LockfileName))
@@ -191,7 +191,7 @@ child = "github.com/acme/child"
 	mustWriteGetTest(t, filepath.Join(root, "mock", "acme", "child-v1.0.0", manifest.FileName), "name = \"child\"\nbuild = \"lib\"\n")
 	chdirForTest(t, root)
 
-	if err := installAllDependencies(); err != nil {
+	if err := GetCommand(nil); err != nil {
 		t.Fatal(err)
 	}
 	lock, err := manifest.LoadLockfile(root)
@@ -307,7 +307,7 @@ mock_path = "./mock"
 			}
 			chdirForTest(t, root)
 
-			err = installAllDependencies()
+			err = GetCommand(nil)
 			if test.wantError {
 				if err == nil {
 					t.Fatal("legacy migration succeeded")

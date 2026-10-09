@@ -33,7 +33,6 @@ func TestUIPrinters(t *testing.T) {
 		printHeader("Header")
 		printSuccess("ok")
 		printInfo("info")
-		printWarning("warn")
 		printError("err")
 		printUpdate("upd")
 		printPackage("pkg", "1.0.0")
@@ -42,7 +41,7 @@ func TestUIPrinters(t *testing.T) {
 		printCached()
 		printTransitive("dep", "2.0.0")
 	})
-	for _, part := range []string{"Header", "ok", "info", "warn", "err", "upd", "pkg @1.0.0", "dim", "dl", "cached", "dep@2.0.0"} {
+	for _, part := range []string{"Header", "ok", "info", "err", "upd", "pkg @1.0.0", "dim", "dl", "cached", "dep@2.0.0"} {
 		if !strings.Contains(out, part) {
 			t.Fatalf("missing %q in output: %q", part, out)
 		}

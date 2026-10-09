@@ -62,130 +62,11 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 	}
 	printUsed, _, allocUsed, allocatorRuntimeUsed, freeRuntimeUsed := moduleRuntimeOperations(mod)
 	if printUsed {
-		b.WriteString("@.print.signed = private unnamed_addr constant [5 x i8] c\"%lld\\00\", align 1\n")
-		b.WriteString("@.print.unsigned = private unnamed_addr constant [5 x i8] c\"%llu\\00\", align 1\n")
-		b.WriteString("@.print.float = private unnamed_addr constant [3 x i8] c\"%g\\00\", align 1\n")
-		b.WriteString("@.print.string = private unnamed_addr constant [3 x i8] c\"%s\\00\", align 1\n")
-		b.WriteString("@.print.str = private unnamed_addr constant [5 x i8] c\"%.*s\\00\", align 1\n")
-		b.WriteString("@.print.pointer = private unnamed_addr constant [3 x i8] c\"%p\\00\", align 1\n")
-		b.WriteString("@.print.true = private unnamed_addr constant [5 x i8] c\"true\\00\", align 1\n")
-		b.WriteString("@.print.false = private unnamed_addr constant [6 x i8] c\"false\\00\", align 1\n\n")
-		b.WriteString("@.print.newline = private unnamed_addr constant [2 x i8] c\"\\0A\\00\", align 1\n\n")
+		emitPrintFormats(&b)
 	}
-
-	for _, entry := range mod.StaticData {
-		if entry.Constant == nil {
-			escaped := llvmEscapeString(entry.Bytes)
-			fmt.Fprintf(&b, "%s = private unnamed_addr constant [%d x i8] c\"%s\", align %d\n", entry.Name, len(entry.Bytes)+1, escaped, entry.Align)
-			continue
-		}
-		value, ok := emitter.staticConstant(entry.Constant, entry.Type)
-		if !ok {
-			emitter.markInvalid("cannot lower typed static constant " + entry.Name)
-			continue
-		}
-		llvmType := emitter.layout(entry.Type).Text
-		fmt.Fprintf(&b, "%s = constant %s %s\n", entry.Name, llvmType, value)
-	}
-	if len(mod.StaticData) > 0 {
-		b.WriteString("\n")
-	}
-
-	emittedItabs := make(map[string]bool)
-	interfaceMakes := make([]*mir.InterfaceMake, 0)
-	hasItab := false
-	for _, fn := range mod.Funcs {
-		if fn == nil || fn.Blocks == nil {
-			continue
-		}
-		for _, block := range fn.Blocks {
-			if block == nil {
-				continue
-			}
-			for _, instr := range block.Instrs {
-				assign, ok := instr.(*mir.Assign)
-				if !ok || assign == nil || assign.Value == nil {
-					continue
-				}
-				makeVal, ok := assign.Value.(*mir.InterfaceMake)
-				if !ok || makeVal == nil {
-					continue
-				}
-				itabSym := interfaceSymbolName("itab", mod.Types, makeVal.Type, makeVal.DataType)
-				if emittedItabs[itabSym] {
-					continue
-				}
-				emittedItabs[itabSym] = true
-				interfaceMakes = append(interfaceMakes, makeVal)
-				hasItab = true
-				b.WriteString(itabSym)
-				fmt.Fprintf(&b, " = private constant [%d x i8*] [", interfaceVtableLength(mod.Types, makeVal.Type, len(makeVal.Slots)))
-				fmt.Fprintf(&b, "i8* bitcast (void (i8*)* %s to i8*)", interfaceSymbolName("iface_drop", mod.Types, makeVal.Type, makeVal.DataType))
-				if isOwnedInterfaceType(mod.Types, makeVal.Type) {
-					fmt.Fprintf(&b, ", i8* bitcast (void (i8*, i8*)* %s to i8*)", interfaceSymbolName("iface_release", mod.Types, makeVal.Type, makeVal.DataType))
-				}
-				for _, slot := range makeVal.Slots {
-					b.WriteString(", ")
-					refName, ok := slot.(*mir.RefName)
-					slotName := ""
-					if ok && refName != nil {
-						slotName = "@" + ir.SanitizeSymbolName(refName.Name)
-					} else {
-						slotName = "null"
-					}
-					slotLayout := emitter.layout(slot.TypeID())
-					if slotLayout == nil || slotLayout.Kind != llvmLayoutFunction {
-						emitter.markInvalid("interface slot reached LLVM without published function type")
-						slotLayout = llvmPointerLayout(llvmScalarLayout("i8"))
-					}
-					if slotName == "null" {
-						b.WriteString("i8* null")
-					} else {
-						fmt.Fprintf(&b, "i8* bitcast (%s %s to i8*)", slotLayout.Text, slotName)
-					}
-				}
-				b.WriteString("], align 8\n")
-			}
-		}
-	}
-	if hasItab {
-		b.WriteString("\n")
-	}
-
-	hasDecl := false
-	runtimeFreeDeclared := false
-	runtimeAllocDeclared := false
-	for _, fn := range mod.Funcs {
-		if fn == nil {
-			continue
-		}
-		name := ir.SanitizeSymbolName(fn.Name)
-		if name == runtimeFreeSymbol {
-			runtimeFreeDeclared = runtimeFreeDeclared || runtimeFreeDeclaration(mod.Types, fn)
-		}
-		if name == runtimeAllocSymbol {
-			runtimeAllocDeclared = runtimeAllocDeclared || runtimeAllocDeclaration(mod.Types, fn)
-		}
-		if fn.Blocks != nil {
-			continue
-		}
-		hasDecl = true
-		b.WriteString("declare ")
-		b.WriteString(emitter.layout(llvmFunctionReturnType(mod.Types, fn)).Text)
-		b.WriteString(" @")
-		b.WriteString(name)
-		b.WriteString("(")
-		for i, param := range fn.Params {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-			b.WriteString(emitter.layout(param.Type).Text)
-		}
-		b.WriteString(")\n")
-	}
-	if hasDecl {
-		b.WriteString("\n")
-	}
+	emitter.emitStaticData(&b)
+	interfaceMakes := emitter.emitInterfaceTables(&b)
+	runtimeFreeDeclared, runtimeAllocDeclared := emitter.emitFunctionDeclarations(&b)
 	if printUsed {
 		fmt.Fprintf(&b, "declare i32 @%s(i8*, ...)\n\n", runtimePrintfSymbol)
 	}
@@ -208,27 +89,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 		emitDefaultDescriptorThunks(&b, emitter)
 	}
 
-	decls := collectCallDecls(mod)
-	for _, decl := range decls {
-		if (allocUsed || allocatorRuntimeUsed) && ir.SanitizeSymbolName(decl.Name) == runtimeAllocSymbol {
-			continue
-		}
-		b.WriteString("declare ")
-		b.WriteString(emitter.layout(decl.ReturnType).Text)
-		b.WriteString(" @")
-		b.WriteString(ir.SanitizeSymbolName(decl.Name))
-		b.WriteString("(")
-		for i, param := range decl.Params {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-			b.WriteString(emitter.layout(param).Text)
-		}
-		b.WriteString(")\n")
-	}
-	if len(decls) > 0 {
-		b.WriteString("\n")
-	}
+	emitter.emitCallDeclarations(&b, allocUsed || allocatorRuntimeUsed)
 
 	hasDefine := false
 	for _, fn := range mod.Funcs {
@@ -257,112 +118,282 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 		if fn == nil || fn.Blocks == nil {
 			continue
 		}
-		debugScopeID := -1
-		if emitter.debug != nil {
-			debugScopeID = emitter.debug.functionID(fn)
+		emitter.emitFunctionDefinition(&b, fn)
+	}
+	return finalLLVMText(&b, emitter)
+}
+
+func emitPrintFormats(b *strings.Builder) {
+	b.WriteString("@.print.signed = private unnamed_addr constant [5 x i8] c\"%lld\\00\", align 1\n")
+	b.WriteString("@.print.unsigned = private unnamed_addr constant [5 x i8] c\"%llu\\00\", align 1\n")
+	b.WriteString("@.print.float = private unnamed_addr constant [3 x i8] c\"%g\\00\", align 1\n")
+	b.WriteString("@.print.string = private unnamed_addr constant [3 x i8] c\"%s\\00\", align 1\n")
+	b.WriteString("@.print.str = private unnamed_addr constant [5 x i8] c\"%.*s\\00\", align 1\n")
+	b.WriteString("@.print.pointer = private unnamed_addr constant [3 x i8] c\"%p\\00\", align 1\n")
+	b.WriteString("@.print.true = private unnamed_addr constant [5 x i8] c\"true\\00\", align 1\n")
+	b.WriteString("@.print.false = private unnamed_addr constant [6 x i8] c\"false\\00\", align 1\n\n")
+	b.WriteString("@.print.newline = private unnamed_addr constant [2 x i8] c\"\\0A\\00\", align 1\n\n")
+}
+
+func (e *llvmEmitter) emitStaticData(b *strings.Builder) {
+	for _, entry := range e.mod.StaticData {
+		if entry.Constant == nil {
+			escaped := llvmEscapeString(entry.Bytes)
+			fmt.Fprintf(b, "%s = private unnamed_addr constant [%d x i8] c\"%s\", align %d\n", entry.Name, len(entry.Bytes)+1, escaped, entry.Align)
+			continue
 		}
-		b.WriteString("define ")
-		b.WriteString(emitter.layout(llvmFunctionReturnType(mod.Types, fn)).Text)
-		b.WriteString(" @")
-		b.WriteString(ir.SanitizeSymbolName(fn.Name))
-		b.WriteString("(")
-		for i, param := range fn.Params {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-			b.WriteString(emitter.layout(param.Type).Text)
-			b.WriteString(" %")
-			b.WriteString(param.Name)
+		value, ok := e.staticConstant(entry.Constant, entry.Type)
+		if !ok {
+			e.markInvalid("cannot lower typed static constant " + entry.Name)
+			continue
 		}
-		b.WriteString(")")
-		if debugScopeID >= 0 {
-			fmt.Fprintf(&b, " !dbg !%d", debugScopeID)
-		}
-		b.WriteString(" {\n")
-		lb := newLLVMBuilder(&b, emitter, debugScopeID)
-		stackSlots := stackLocalSlots(mod.Types, fn)
-		for _, param := range fn.Params {
-			lb.locals[param.Name] = lb.value("%"+param.Name, emitter.layout(param.Type))
+		llvmType := e.layout(entry.Type).Text
+		fmt.Fprintf(b, "%s = constant %s %s\n", entry.Name, llvmType, value)
+	}
+	if len(e.mod.StaticData) > 0 {
+		b.WriteString("\n")
+	}
+}
+
+// emitInterfaceTables writes one itab per distinct interface/data pair and
+// returns the makes that own them, in first-use order.
+func (e *llvmEmitter) emitInterfaceTables(b *strings.Builder) []*mir.InterfaceMake {
+	emittedItabs := make(map[string]bool)
+	interfaceMakes := make([]*mir.InterfaceMake, 0)
+	hasItab := false
+	for _, fn := range e.mod.Funcs {
+		if fn == nil || fn.Blocks == nil {
+			continue
 		}
 		for _, block := range fn.Blocks {
 			if block == nil {
 				continue
 			}
-			lb.label(block.ID)
-			if block.ID == fn.EntryID {
-				emitStackLocalSlots(lb, stackSlots)
-			}
 			for _, instr := range block.Instrs {
-				if instr == nil {
+				assign, ok := instr.(*mir.Assign)
+				if !ok || assign == nil || assign.Value == nil {
 					continue
 				}
-				lb.setLocation(instr.SourceLocation())
-				// Emitting nothing for an unrecognized instruction silently drops
-				// program behavior, so every MIR instruction must be classified
-				// here. mir.Instr is sealed, so the only way to reach the
-				// default is to add an instruction inside the mir package and
-				// not classify it here: a compiler bug, not invalid source.
-				switch typed := instr.(type) {
-				case *mir.Assign:
-					val := emitValueExpr(lb, typed.Value)
-					if ptr, ok := lb.localPtrs[typed.Name]; ok {
-						lb.store(ptr, val)
-					} else {
-						lb.locals[typed.Name] = val
-					}
-				case *mir.Store:
-					emitStore(lb, typed)
-				case *mir.Print:
-					emitPrint(lb, typed)
-				case *mir.Drop:
-					emitDrop(lb, typed)
-				case *mir.DynamicArrayOp:
-					emitDynamicArrayOp(lb, typed)
-				case *mir.Call:
-					emitDiscardedCall(lb, typed)
-				case *mir.InterfaceCall:
-					emitDiscardedInterfaceCall(lb, typed)
-				default:
-					panic(fmt.Sprintf("LLVM emission: unhandled MIR instruction %T", instr))
-				}
-			}
-			// Both terminator invariants are compiler bugs, not invalid source:
-			// every block carries a terminator, and every terminator kind emits
-			// one. Skipping either silently produces unterminated LLVM IR.
-			// mir.Terminator is sealed, so the unhandled-kind default below can
-			// only be reached from inside the mir package.
-			if block.Term == nil {
-				panic(fmt.Sprintf("LLVM emission: block b%d has no terminator", block.ID))
-			}
-			returnLayout := emitter.layout(llvmFunctionReturnType(mod.Types, fn))
-			lb.setLocation(block.Term.SourceLocation())
-			switch term := block.Term.(type) {
-			case *mir.Jump:
-				lb.branch(fmt.Sprintf("b%d", term.TargetID))
-			case *mir.Branch:
-				cond := emitCondRef(lb, term.Cond)
-				lb.condBranch(cond, fmt.Sprintf("b%d", term.ThenID), fmt.Sprintf("b%d", term.ElseID))
-			case *mir.SwitchVariant:
-				emitVariantSwitch(lb, term)
-			case *mir.Ret:
-				if term.Value == nil || isVoidType(mod.Types, fn.ReturnType) {
-					if returnLayout.Kind != llvmLayoutVoid {
-						lb.ret(lb.value("0", returnLayout), returnLayout)
-					} else {
-						lb.retVoid(returnLayout)
-					}
+				makeVal, ok := assign.Value.(*mir.InterfaceMake)
+				if !ok || makeVal == nil {
 					continue
 				}
-				val := emitRef(lb, term.Value)
-				lb.ret(val, returnLayout)
-			default:
-				panic(fmt.Sprintf("LLVM emission: unhandled MIR terminator %T", block.Term))
+				itabSym := interfaceSymbolName("itab", e.mod.Types, makeVal.Type, makeVal.DataType)
+				if emittedItabs[itabSym] {
+					continue
+				}
+				emittedItabs[itabSym] = true
+				interfaceMakes = append(interfaceMakes, makeVal)
+				hasItab = true
+				b.WriteString(itabSym)
+				fmt.Fprintf(b, " = private constant [%d x i8*] [", interfaceVtableLength(e.mod.Types, makeVal.Type, len(makeVal.Slots)))
+				fmt.Fprintf(b, "i8* bitcast (void (i8*)* %s to i8*)", interfaceSymbolName("iface_drop", e.mod.Types, makeVal.Type, makeVal.DataType))
+				if isOwnedInterfaceType(e.mod.Types, makeVal.Type) {
+					fmt.Fprintf(b, ", i8* bitcast (void (i8*, i8*)* %s to i8*)", interfaceSymbolName("iface_release", e.mod.Types, makeVal.Type, makeVal.DataType))
+				}
+				for _, slot := range makeVal.Slots {
+					b.WriteString(", ")
+					refName, ok := slot.(*mir.RefName)
+					slotName := ""
+					if ok && refName != nil {
+						slotName = "@" + ir.SanitizeSymbolName(refName.Name)
+					} else {
+						slotName = "null"
+					}
+					slotLayout := e.layout(slot.TypeID())
+					if slotLayout == nil || slotLayout.Kind != llvmLayoutFunction {
+						e.markInvalid("interface slot reached LLVM without published function type")
+						slotLayout = llvmPointerLayout(llvmScalarLayout("i8"))
+					}
+					if slotName == "null" {
+						b.WriteString("i8* null")
+					} else {
+						fmt.Fprintf(b, "i8* bitcast (%s %s to i8*)", slotLayout.Text, slotName)
+					}
+				}
+				b.WriteString("], align 8\n")
 			}
-			lb.setLocation(nil)
 		}
-		b.WriteString("}\n")
 	}
-	return finalLLVMText(&b, emitter)
+	if hasItab {
+		b.WriteString("\n")
+	}
+	return interfaceMakes
+}
+
+// emitFunctionDeclarations declares bodiless functions and reports whether the
+// module already declares the runtime free and alloc symbols itself.
+func (e *llvmEmitter) emitFunctionDeclarations(b *strings.Builder) (runtimeFreeDeclared, runtimeAllocDeclared bool) {
+	hasDecl := false
+	for _, fn := range e.mod.Funcs {
+		if fn == nil {
+			continue
+		}
+		name := ir.SanitizeSymbolName(fn.Name)
+		if name == runtimeFreeSymbol {
+			runtimeFreeDeclared = runtimeFreeDeclared || runtimeFreeDeclaration(e.mod.Types, fn)
+		}
+		if name == runtimeAllocSymbol {
+			runtimeAllocDeclared = runtimeAllocDeclared || runtimeAllocDeclaration(e.mod.Types, fn)
+		}
+		if fn.Blocks != nil {
+			continue
+		}
+		hasDecl = true
+		b.WriteString("declare ")
+		b.WriteString(e.layout(llvmFunctionReturnType(e.mod.Types, fn)).Text)
+		b.WriteString(" @")
+		b.WriteString(name)
+		b.WriteString("(")
+		for i, param := range fn.Params {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(e.layout(param.Type).Text)
+		}
+		b.WriteString(")\n")
+	}
+	if hasDecl {
+		b.WriteString("\n")
+	}
+	return runtimeFreeDeclared, runtimeAllocDeclared
+}
+
+// emitCallDeclarations declares called externals. skipRuntimeAlloc leaves out
+// the runtime alloc symbol when the runtime declarations already cover it.
+func (e *llvmEmitter) emitCallDeclarations(b *strings.Builder, skipRuntimeAlloc bool) {
+	decls := collectCallDecls(e.mod)
+	for _, decl := range decls {
+		if skipRuntimeAlloc && ir.SanitizeSymbolName(decl.Name) == runtimeAllocSymbol {
+			continue
+		}
+		b.WriteString("declare ")
+		b.WriteString(e.layout(decl.ReturnType).Text)
+		b.WriteString(" @")
+		b.WriteString(ir.SanitizeSymbolName(decl.Name))
+		b.WriteString("(")
+		for i, param := range decl.Params {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(e.layout(param).Text)
+		}
+		b.WriteString(")\n")
+	}
+	if len(decls) > 0 {
+		b.WriteString("\n")
+	}
+}
+
+func (e *llvmEmitter) emitFunctionDefinition(b *strings.Builder, fn *mir.Function) {
+	debugScopeID := -1
+	if e.debug != nil {
+		debugScopeID = e.debug.functionID(fn)
+	}
+	b.WriteString("define ")
+	b.WriteString(e.layout(llvmFunctionReturnType(e.mod.Types, fn)).Text)
+	b.WriteString(" @")
+	b.WriteString(ir.SanitizeSymbolName(fn.Name))
+	b.WriteString("(")
+	for i, param := range fn.Params {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(e.layout(param.Type).Text)
+		b.WriteString(" %")
+		b.WriteString(param.Name)
+	}
+	b.WriteString(")")
+	if debugScopeID >= 0 {
+		fmt.Fprintf(b, " !dbg !%d", debugScopeID)
+	}
+	b.WriteString(" {\n")
+	lb := newLLVMBuilder(b, e, debugScopeID)
+	stackSlots := stackLocalSlots(e.mod.Types, fn)
+	for _, param := range fn.Params {
+		lb.locals[param.Name] = lb.value("%"+param.Name, e.layout(param.Type))
+	}
+	for _, block := range fn.Blocks {
+		if block == nil {
+			continue
+		}
+		e.emitBlock(lb, fn, block, stackSlots)
+	}
+	b.WriteString("}\n")
+}
+
+func (e *llvmEmitter) emitBlock(lb *llvmBuilder, fn *mir.Function, block *mir.Block, stackSlots []stackLocalSlot) {
+	lb.label(block.ID)
+	if block.ID == fn.EntryID {
+		emitStackLocalSlots(lb, stackSlots)
+	}
+	for _, instr := range block.Instrs {
+		if instr == nil {
+			continue
+		}
+		lb.setLocation(instr.SourceLocation())
+		// Emitting nothing for an unrecognized instruction silently drops
+		// program behavior, so every MIR instruction must be classified
+		// here. mir.Instr is sealed, so the only way to reach the
+		// default is to add an instruction inside the mir package and
+		// not classify it here: a compiler bug, not invalid source.
+		switch typed := instr.(type) {
+		case *mir.Assign:
+			val := emitValueExpr(lb, typed.Value)
+			if ptr, ok := lb.localPtrs[typed.Name]; ok {
+				lb.store(ptr, val)
+			} else {
+				lb.locals[typed.Name] = val
+			}
+		case *mir.Store:
+			emitStore(lb, typed)
+		case *mir.Print:
+			emitPrint(lb, typed)
+		case *mir.Drop:
+			emitDrop(lb, typed)
+		case *mir.DynamicArrayOp:
+			emitDynamicArrayOp(lb, typed)
+		case *mir.Call:
+			emitDiscardedCall(lb, typed)
+		case *mir.InterfaceCall:
+			emitDiscardedInterfaceCall(lb, typed)
+		default:
+			panic(fmt.Sprintf("LLVM emission: unhandled MIR instruction %T", instr))
+		}
+	}
+	// Both terminator invariants are compiler bugs, not invalid source:
+	// every block carries a terminator, and every terminator kind emits
+	// one. Skipping either silently produces unterminated LLVM IR.
+	// mir.Terminator is sealed, so the unhandled-kind default below can
+	// only be reached from inside the mir package.
+	if block.Term == nil {
+		panic(fmt.Sprintf("LLVM emission: block b%d has no terminator", block.ID))
+	}
+	returnLayout := e.layout(llvmFunctionReturnType(e.mod.Types, fn))
+	lb.setLocation(block.Term.SourceLocation())
+	switch term := block.Term.(type) {
+	case *mir.Jump:
+		lb.branch(fmt.Sprintf("b%d", term.TargetID))
+	case *mir.Branch:
+		cond := emitCondRef(lb, term.Cond)
+		lb.condBranch(cond, fmt.Sprintf("b%d", term.ThenID), fmt.Sprintf("b%d", term.ElseID))
+	case *mir.SwitchVariant:
+		emitVariantSwitch(lb, term)
+	case *mir.Ret:
+		if term.Value == nil || isVoidType(e.mod.Types, fn.ReturnType) {
+			if returnLayout.Kind != llvmLayoutVoid {
+				lb.ret(lb.value("0", returnLayout), returnLayout)
+			} else {
+				lb.retVoid(returnLayout)
+			}
+			return
+		}
+		val := emitRef(lb, term.Value)
+		lb.ret(val, returnLayout)
+	default:
+		panic(fmt.Sprintf("LLVM emission: unhandled MIR terminator %T", block.Term))
+	}
+	lb.setLocation(nil)
 }
 
 func (e *llvmEmitter) staticConstant(value constvalue.Value, typeID ir.TypeID) (string, bool) {

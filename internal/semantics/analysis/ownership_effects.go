@@ -64,7 +64,7 @@ func (v *ownershipEffectVisitor) visitWrite(op effectWrite) {
 }
 
 func (v *ownershipEffectVisitor) visitUse(op effectUse) {
-	v.a.applyUse(v.node, op, v.st, v.loans)
+	v.a.applyUse(op, v.st, v.loans)
 }
 
 func (v *ownershipEffectVisitor) visitBorrow(op effectBorrow) {
@@ -249,7 +249,7 @@ func (a *analyzer) applyIterateEffect(op effectIterate, st ownershipState, loans
 	}}
 }
 
-func (a *analyzer) applyUse(node *site, op effectUse, st ownershipState, loans *loanContext) {
+func (a *analyzer) applyUse(op effectUse, st ownershipState, loans *loanContext) {
 	syntax := op.Source
 	if op.Place.Root == nil {
 		// A value with no owner. Only a projection out of one has an effect
@@ -262,15 +262,15 @@ func (a *analyzer) applyUse(node *site, op effectUse, st ownershipState, loans *
 		return
 	}
 	if len(op.Place.Projections) == 0 {
-		a.applyWholeUse(node, op, st, loans, syntax)
+		a.applyWholeUse(op, st, loans, syntax)
 		return
 	}
-	a.applyProjectedUse(op, st, loans, syntax)
+	a.applyProjectedUse(op, loans, syntax)
 }
 
 // applyWholeUse is the effect of using a binding entire: its move ownershipState changes,
 // and the storage it names is accessed.
-func (a *analyzer) applyWholeUse(node *site, op effectUse, st ownershipState, loans *loanContext, syntax thir.Expr) {
+func (a *analyzer) applyWholeUse(op effectUse, st ownershipState, loans *loanContext, syntax thir.Expr) {
 	sym := op.Place.Root
 	a.applyUseKind(sym, op, st, syntax)
 	if _, isReference := referenceMutability(sym); isReference {
@@ -288,7 +288,7 @@ func (a *analyzer) applyWholeUse(node *site, op effectUse, st ownershipState, lo
 // applyProjectedUse is the effect of using part of a binding. Consuming a part
 // is what a partial move is, and the language does not allow it out of a
 // move-only place.
-func (a *analyzer) applyProjectedUse(op effectUse, st ownershipState, loans *loanContext, syntax thir.Expr) {
+func (a *analyzer) applyProjectedUse(op effectUse, loans *loanContext, syntax thir.Expr) {
 	if syntax == nil {
 		return
 	}

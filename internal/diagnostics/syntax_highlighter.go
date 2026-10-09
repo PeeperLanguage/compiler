@@ -70,6 +70,23 @@ type Token struct {
 	Color colors.COLOR
 }
 
+// scanQuoted returns the index just past the closing quote of a literal whose
+// body starts at i, skipping escaped characters. An unterminated literal ends
+// at the end of the line.
+func scanQuoted(line string, i int, quote byte) int {
+	for i < len(line) && line[i] != quote {
+		if line[i] == '\\' && i+1 < len(line) {
+			i += 2
+		} else {
+			i++
+		}
+	}
+	if i < len(line) {
+		i++
+	}
+	return i
+}
+
 // Highlight applies syntax highlighting to a line of code
 // Returns a slice of tokens with their associated colors
 func (sh *SyntaxHighlighter) Highlight(line string) []Token {
@@ -94,17 +111,7 @@ func (sh *SyntaxHighlighter) Highlight(line string) []Token {
 		// String literals (double quotes)
 		if line[i] == '"' {
 			start := i
-			i++
-			for i < len(line) && line[i] != '"' {
-				if line[i] == '\\' && i+1 < len(line) {
-					i += 2 // Skip escaped character
-				} else {
-					i++
-				}
-			}
-			if i < len(line) {
-				i++ // Include closing quote
-			}
+			i = scanQuoted(line, i+1, '"')
 			tokensSlice = append(tokensSlice, Token{Text: line[start:i], Color: colorMap[STRING]})
 			continue
 		}
@@ -119,17 +126,7 @@ func (sh *SyntaxHighlighter) Highlight(line string) []Token {
 		// Byte literals (b'X')
 		if line[i] == 'b' && i+1 < len(line) && line[i+1] == '\'' {
 			start := i
-			i += 2
-			for i < len(line) && line[i] != '\'' {
-				if line[i] == '\\' && i+1 < len(line) {
-					i += 2
-				} else {
-					i++
-				}
-			}
-			if i < len(line) {
-				i++
-			}
+			i = scanQuoted(line, i+2, '\'')
 			tokensSlice = append(tokensSlice, Token{Text: line[start:i], Color: colorMap[CHAR]})
 			continue
 		}
@@ -137,17 +134,7 @@ func (sh *SyntaxHighlighter) Highlight(line string) []Token {
 		// Character literals (single quotes)
 		if line[i] == '\'' {
 			start := i
-			i++
-			for i < len(line) && line[i] != '\'' {
-				if line[i] == '\\' && i+1 < len(line) {
-					i += 2 // Skip escaped character
-				} else {
-					i++
-				}
-			}
-			if i < len(line) {
-				i++ // Include closing quote
-			}
+			i = scanQuoted(line, i+1, '\'')
 			tokensSlice = append(tokensSlice, Token{Text: line[start:i], Color: colorMap[CHAR]})
 			continue
 		}

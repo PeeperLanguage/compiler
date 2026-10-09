@@ -133,7 +133,7 @@ func (a *analyzer) pointerOrigin(scope *symbols.Scope, expr thir.Expr, st owners
 }
 
 // localPointerRoot retains declaration-module locality for expanded defaults
-// and stops at pointer projections, as place.LocalRoot does for source syntax.
+// and stops at pointer projections.
 func (a *analyzer) localPointerRoot(scope *symbols.Scope, expr thir.Expr) *symbols.Symbol {
 	if a == nil || a.input.Source == nil || scope == nil || expr == nil {
 		return nil

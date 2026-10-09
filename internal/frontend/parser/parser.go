@@ -26,14 +26,7 @@ type Parser struct {
 	diag     *diagnostics.DiagnosticBag
 	pos      int
 	nodeID   uint64
-	context  []string // parsing context stack for error messages
 }
-
-const (
-	ownerFunction = "function"
-	ownerIf       = "if"
-	ownerElse     = "else"
-)
 
 func New(filePath string, stream []token.Token, diag *diagnostics.DiagnosticBag) *Parser {
 	return &Parser{
@@ -169,10 +162,6 @@ func (p *Parser) parseFnDecl() ast.Decl {
 		receiver = p.parseReceiver()
 	}
 	name, typeParams, params, returnType, returnOrigins, ok := p.parseFnSignature()
-	if name != nil {
-		p.pushContext("function '" + name.Name + "'")
-		defer p.popContext()
-	}
 	if !ok {
 		// Return partial FnDecl with whatever was parsed
 		decl := reg(p, &ast.FnDecl{
@@ -776,19 +765,6 @@ func reg[T ast.Node](p *Parser, n T) T {
 		n.SetID(p.nextID())
 	}
 	return n
-}
-
-func (p *Parser) pushContext(ctx string) { p.context = append(p.context, ctx) }
-func (p *Parser) popContext() {
-	if len(p.context) > 0 {
-		p.context = p.context[:len(p.context)-1]
-	}
-}
-func (p *Parser) currentContext() string {
-	if len(p.context) == 0 {
-		return ""
-	}
-	return p.context[len(p.context)-1]
 }
 
 func (p *Parser) lastNonNilToken(fallback token.Token) token.Token {
