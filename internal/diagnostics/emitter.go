@@ -97,6 +97,10 @@ func NewSourceCache() *SourceCache {
 
 func (sc *SourceCache) AddSource(filepath, content string) {
 	lines := strings.Split(content, "\n")
+	// A file with CRLF line ends must not carry the `\r` into printed lines.
+	for index, line := range lines {
+		lines[index] = strings.TrimSuffix(line, "\r")
+	}
 	sc.mu.Lock()
 	sc.files[filepath] = lines
 	sc.mu.Unlock()

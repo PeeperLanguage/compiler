@@ -136,3 +136,15 @@ func TestEmitterGivesEachFileItsHeaderWithThePrimaryFileFirst(t *testing.T) {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
 	}
 }
+
+func TestEmitterDropsCarriageReturnsOfCRLFSources(t *testing.T) {
+	path := "main" + peeper.SourceExt
+	loc := spanLoc(path, 2, 4, 2, 4)
+	diag := NewError("bad").WithCode("X").
+		WithPrimaryLabel(loc, "").
+		Help("end it", Fix.Insert(loc, ";"))
+	want := "[X]: bad\n  --> " + path + ":2:4\n  | \n1 | one\n2 | two\n  |    ^\n  | \n  = help: end it\n  | \n2 | two;\n\n"
+	if got := emitPlain(t, map[string]string{path: "one\r\ntwo\r\nthree\r\n"}, diag); got != want {
+		t.Fatalf("got:\n%q\nwant:\n%q", got, want)
+	}
+}

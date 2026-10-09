@@ -75,6 +75,8 @@ func (l *Location) GetText(cache SourceCache) string {
 	return result.String()
 }
 
+// GetSourceLines reads a file as lines without their line ends, whether the
+// file uses LF or CRLF.
 func GetSourceLines(filepath string) ([]string, error) {
 	content, err := os.ReadFile(filepath)
 	if err != nil {
@@ -87,12 +89,12 @@ func GetSourceLines(filepath string) ([]string, error) {
 	start := 0
 	for i := range content {
 		if content[i] == '\n' {
-			lines = append(lines, string(content[start:i]))
+			lines = append(lines, strings.TrimSuffix(string(content[start:i]), "\r"))
 			start = i + 1
 		}
 	}
 	if start < len(content) {
-		lines = append(lines, string(content[start:]))
+		lines = append(lines, strings.TrimSuffix(string(content[start:]), "\r"))
 	}
 	return lines, nil
 }
