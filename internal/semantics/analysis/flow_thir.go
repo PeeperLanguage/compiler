@@ -256,14 +256,14 @@ func optionalPayloadProofAt(location *source.Location) *diagnostics.Diagnostic {
 	return diagnostics.NewError("optional payload use requires a presence proof").
 		WithPrimaryLabel(location, "payload is not proven present here").
 		WithCode(diagnostics.ErrOptionalPayloadProof).
-		WithHelp("guard this stable place with `value != none` or return after `value == none`")
+		Help("guard this stable place with `value != none` or return after `value == none`")
 }
 
 func unstableOptionalNarrowingAt(location *source.Location) *diagnostics.Diagnostic {
 	return diagnostics.NewError("optional narrowing subject is not a stable place").
 		WithPrimaryLabel(location, "this expression can change between the test and use").
 		WithCode(diagnostics.ErrUnstableNarrowing).
-		WithHelp("bind the expression or index to a direct local before testing it")
+		Help("bind the expression or index to a direct local before testing it")
 }
 
 func (a *flowAnalyzer) AnalyzeBlock(*thir.Block)             {}

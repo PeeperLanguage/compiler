@@ -263,15 +263,41 @@ func (p *Parser) parseNumberLit(sign string) ast.Expr {
 	}
 	if len(literal.Value) > 1 && literal.Value[0] == '0' && numeric.IsDecimal(literal.Value) &&
 		(literal.ExplicitType == "" || literal.ExplicitType[0] != 'f') {
-		p.diag.Add(diagnostics.NewWarning("decimal integer literal has a leading zero").
-			WithCode(diagnostics.WarnLeadingZeroDecimal).
-			WithPrimaryLabel(loc, "remove the leading zero").
-			WithHelp("use the `0o` prefix for octal values"))
+		d := diagnostics.NewWarning("decimal integer literal has a leading zero").
+			WithCode(diagnostics.WarnLeadingZeroDecimal)
+		if zeros := leadingZeroRun(tok.Literal); zeros != "" {
+			zerosEnd := tok.Start
+			zerosEnd.Advance(zeros)
+			d.WithPrimaryLabel(loc, "").
+				Help("remove the leading zero", diagnostics.Fix.Remove(source.NewLocation(p.filePath, tok.Start, zerosEnd)))
+		} else {
+			d.WithPrimaryLabel(loc, "remove the leading zero")
+		}
+		p.diag.Add(d.Help("use the `0o` prefix for octal values"))
 	}
 	if sign == "-" {
 		literal.Value = "-" + literal.Value
 	}
 	return reg(p, &ast.NumberLit{Value: literal.Value, ExplicitType: literal.ExplicitType, Location: loc})
+}
+
+// leadingZeroRun returns the zeros, and the digit separators among them, that
+// can be dropped from the front of a decimal literal as written. It always
+// leaves a digit behind, so `000` keeps one zero, and returns "" when what
+// would remain does not start with a digit.
+func leadingZeroRun(literal string) string {
+	digitsEnd := 0
+	for digitsEnd < len(literal) && (literal[digitsEnd] == '_' || (literal[digitsEnd] >= '0' && literal[digitsEnd] <= '9')) {
+		digitsEnd++
+	}
+	run := 0
+	for run < digitsEnd-1 && (literal[run] == '0' || literal[run] == '_') {
+		run++
+	}
+	if run == digitsEnd || literal[run] == '_' {
+		return ""
+	}
+	return literal[:run]
 }
 
 func (p *Parser) parseAddressExpr(mode ast.AddressMode, boundary token.Kind) ast.Expr {
@@ -359,15 +385,20 @@ func (p *Parser) parseCall(callee ast.Expr) ast.Expr {
 	}
 	var args []ast.Expr
 	if !p.at(token.RPAREN) {
+		var missingCommas []diagnostics.CodeFix
 		for {
 			arg := p.parseExpr(precLowest, token.RPAREN)
 			if arg != nil {
 				args = append(args, arg)
 			}
-			if !p.match(token.COMMA) {
+			// parseExpr has taken every operator that continues the argument,
+			// so a token that begins a value here starts the next argument
+			// without its comma.
+			if !p.listContinues(arg != nil && p.startsArgument(), &missingCommas) {
 				break
 			}
 		}
+		p.reportMissingCommas(missingCommas)
 	}
 	end := p.expectClose(start.Start, token.RPAREN, "(")
 	var fallbackEnd source.Position
@@ -483,7 +514,7 @@ func (p *Parser) parseArrayLiteral() ast.Expr {
 	if elem == nil {
 		return reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, start.Start, start.End)})
 	}
-	values, end, ok := parseBracedItemList(p, "expected '{' after array literal type", "expected '}' after array literal",
+	values, end, ok := parseBracedItemList(p, "expected '{' after array literal type", "expected '}' after array literal", true,
 		func() (ast.Expr, bool) {
 			value := p.parseExpr(precLowest, token.RBRACE)
 			return value, value != nil
@@ -557,7 +588,7 @@ func (p *Parser) parseIdentPath(boundary token.Kind) ast.Expr {
 		p.diag.Add(diagnostics.NewError(message).
 			WithCode(diagnostics.ErrInvalidExpression).
 			WithPrimaryLabel(ast.LocOf(typ), "expected a value here").
-			WithHelp("if constructing a struct, insert '.' before '{'"))
+			Help("if constructing a struct, insert '.' before '{'"))
 		return reg(p, &ast.BadExpr{Location: ast.LocOf(typ)})
 	}
 	return nil
@@ -629,13 +660,19 @@ func (p *Parser) parseCompositeLiteral(typ ast.TypeExpr) ast.Expr {
 	if typ != nil {
 		startPos = ast.StartOf(typ)
 	}
-	fields, end, ok := parseBracedItemList(p, "expected '{' after '.'", "expected '}' after composite literal",
+	var colons []diagnostics.CodeFix
+	fields, end, ok := parseBracedItemList(p, "expected '{' after '.'", "expected '}' after composite literal", true,
 		func() (ast.StructLitField, bool) {
 			name := p.parseIdent()
 			if name == nil {
 				return ast.StructLitField{}, false
 			}
-			if p.consume(token.ASSIGN, "expected '=' after struct literal field name") == nil {
+			if p.at(token.COLON) {
+				// `.{ x: 1 }`: the colon of a declaration written where a
+				// field is set. Reading on keeps the field and its value.
+				colon := p.advance()
+				colons = append(colons, diagnostics.Fix.Replace(source.NewLocation(p.filePath, colon.Start, colon.End), " ="))
+			} else if p.consume(token.ASSIGN, "expected '=' after struct literal field name") == nil {
 				return ast.StructLitField{}, false
 			}
 			value := p.parseExpr(precLowest, token.RBRACE)
@@ -648,6 +685,12 @@ func (p *Parser) parseCompositeLiteral(typ ast.TypeExpr) ast.Expr {
 				Location: source.NewLocation(p.filePath, ast.StartOf(name), ast.EndOf(value)),
 			}, true
 		})
+	if len(colons) > 0 {
+		p.diag.Add(diagnostics.NewError("expected '=' after struct literal field name").
+			WithCode(diagnostics.ErrExpectedToken).
+			WithPrimaryLabel(colons[0].Location, "").
+			Help("set a field with `=`", colons...))
+	}
 	location := source.NewLocation(p.filePath, startPos, end.End)
 	if !ok {
 		return reg(p, &ast.BadExpr{Location: location})

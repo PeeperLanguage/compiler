@@ -1,0 +1,8 @@
+name = "negative_unknown_const_value"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["unknown identifier `nothing`", "Compilation failed with 1 error(s)"]
+stderr_excludes = ["ownership-tracked module bindings are not supported"]

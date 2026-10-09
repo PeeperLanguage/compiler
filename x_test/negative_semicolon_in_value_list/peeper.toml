@@ -1,0 +1,8 @@
+name = "negative_semicolon_in_value_list"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["expected ',' between items, found ';'", "  = help: separate items with `,`\n  | \n2 |     x: i32,\n", "  = help: separate items with `,`\n   | \n11 |     let origin: Point = .{ x = 1, y = 2 };\n", "  = help: separate items with `,`\n   | \n12 |     let values = [3]i32{1, 2, 3};\n", "expected '}' after array literal", "  = help: add missing `}`\n   | \n13 |     let open = [3]i32{4, 5, 6};\n", "expected ':' or '=' after the name", "  = help: if `i32` is a type, add `:`\n   | \n14 |     let size: i32\n   | \n   = help: if `i32` is a value, add `=`\n   | \n14 |     let size = i32\n", "  = help: add missing `)`\n   | \n15 |     Double(origin.x)\n", "Compilation failed with 7 error(s)"]
+stderr_excludes = ["\n\n\n", "wrong number of arguments", "module scope expects declaration", "unknown identifier", "expected ','\n"]

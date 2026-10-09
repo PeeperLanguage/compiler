@@ -1,0 +1,8 @@
+name = "negative_unknown_type_name"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["unknown type `Missing`", "7 |     inner: Missing,\n  |            ^^^^^^^\n", "unknown type `Absent`", "unknown type `Pont`", "  = help: did you mean `Point`?", "functions cannot take type parameters yet", "unknown type `Nope`", "unknown type `Gone`", "unknown type `Lost`", "Compilation failed with 7 error(s)"]
+stderr_excludes = ["unknown type `Later`", "unknown type `T`", "is unsized", "not lowerable", "cannot be used as", "ownership-tracked", "used after move", "panic:"]

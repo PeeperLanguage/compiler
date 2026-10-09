@@ -262,7 +262,7 @@ func (r *resolver) resolveExpr(scope *symbols.Scope, expr ast.Expr) {
 					diagnostics.NewError(msg).
 						WithCode(diagnostics.ErrUseBeforeDecl).
 						WithPrimaryLabel(ast.LocOf(node), msg).
-						WithHelp("rename binding or use earlier value"),
+						Help("rename binding or use earlier value"),
 				)
 				return
 			}
@@ -454,7 +454,7 @@ func (r *resolver) lookupImportedMember(qualifierNode, memberNode *ast.Ident, si
 	if !resolved.Symbol.IsPub {
 		r.ctx.Diagnostics.AddError(diagnostics.ErrSymbolNotExported, "`"+member+"` is not exported from `"+qualifier+"`", ast.LocOf(site), "use of unexported symbol").
 			WithSecondaryLabel(resolved.Symbol.Location, "defined here").
-			WithNote("symbols with uppercase are exported otherwise private")
+			Note("symbols with uppercase are exported otherwise private")
 		r.reportGlobalQualifier(resolved.Symbol, qualifier, site)
 		return nil, false
 	}
@@ -477,5 +477,5 @@ func (r *resolver) reportGlobalQualifier(sym *symbols.Symbol, qualifier string, 
 	r.ctx.Diagnostics.Add(diagnostics.NewInfo("`"+sym.Name+"` is already in scope without `"+qualifier+"::`").
 		WithCode(diagnostics.InfoRedundantGlobalQualifier).
 		WithPrimaryLabel(ast.LocOf(site), "drop the `"+qualifier+"::` prefix").
-		WithNote("global symbols are always in scope"))
+		Note("global symbols are always in scope"))
 }

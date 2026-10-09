@@ -1,0 +1,14 @@
+struct Point { x: i32, y: i32 }
+enum Kind { A, B }
+fn (self: &Point) sum() -> i32 { return self.x + self.y; }
+fn main() -> i32 {
+    let p: Point = .{ x = 1, y = 2 };
+    let a = missing_value;
+    let b = MissingFn(1);
+    let c = p.z;
+    let d = p.total();
+    let e = Kind::C;
+    let f: Point = .{ x = 1, y = 2, w = 3 };
+    p.q = 4;
+    return 0;
+}

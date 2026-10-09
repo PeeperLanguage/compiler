@@ -1,0 +1,8 @@
+name = "negative_single_repair_spots"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["expected '->' before the return type", "   = help: add missing `->`\n   | \n15 | fn Width() -> i32 {\n", "   = help: add missing `)`\n   | \n19 | fn Add(first: i32, second: i32) -> i32 {\n", "expected '=>' after match pattern", "   = help: add missing `=>`\n   | \n25 |         Kind::Empty => {\n", "   = help: add missing `:`\n   | \n36 |     let slots: [3]i32;\n", "   = help: add missing `:`\n   | \n37 |     let maybe: ?i32;\n", "   = help: set a field with `=`\n   | \n38 |     let first: Point = .{ x = 1, y = 2 };\n", "   = help: add missing `,`\n   | \n39 |     let second: Point = .{ x = 1, y = 2 };\n", "   = help: add missing `}`\n   | \n40 |     let taken = Take(.{ x = 1, y = 2} );\n", "expected '==' in condition, found '='", "   = help: compare with `==`\n   | \n41 |     if count == 1 {\n", "trailing comma is unnecessary", "   = help: remove this comma\n   | \n44 |     return Add(taken, Width()) + first.x + second.x;\n", "Compilation failed with 9 error(s)"]
+stderr_excludes = ["\n\n\n", "module scope expects declaration", "missing function body", "missing if body", "requires 'with'", "missing struct literal field", "wrong number of arguments", "expected expression"]

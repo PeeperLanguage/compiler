@@ -1,0 +1,8 @@
+name = "negative_missing_comma_fix"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["  = help: add missing `,`\n  | \n2 |     x: i32,\n", "  = help: add missing `)`\n  | \n7 |     let total: i32 = (5);\n"]
+stderr_excludes = ["\n\n\n"]

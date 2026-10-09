@@ -138,7 +138,7 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, retu
 	if typeinfo.OwnershipCapabilityOf(subjectType).NeedsDrop && !place.IsPlaceExpr(node.Subject) {
 		c.ctx.Diagnostics.Add(invalidOperationError(node.Subject,
 			"ownership-bearing match subject must be a named place").
-			WithHelp("bind subject to a local before matching it"))
+			Help("bind subject to a local before matching it"))
 	}
 	evidence := Match{
 		SubjectID: node.Subject.ID(),
@@ -336,7 +336,7 @@ func (c *checker) checkAssign(scope *symbols.Scope, node *ast.AssignStmt) {
 		if sharedReference != nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
 				"cannot assign through immutable reference", ast.LocOf(target), "").
-				WithHelp(fmt.Sprintf("use `&mut %s` to modify referenced value", typeinfo.TypeText(sharedReference)))
+				Help(fmt.Sprintf("use `&mut %s` to modify referenced value", typeinfo.TypeText(sharedReference)))
 			return
 		}
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
@@ -677,14 +677,14 @@ func (c *checker) checkCallIteration(scope *symbols.Scope, node *ast.ForStmt, it
 	switch {
 	case !isCallExpression:
 		c.ctx.Diagnostics.Add(invalidExpressionError(node.Iterable, "cannot iterate over "+typeinfo.TypeText(iterableType)).
-			WithHelp("use a range, array, slice, or an explicit call returning an optional item, such as `for item in producer()`").
-			WithNote("iterator calls, including arguments, are evaluated on every attempt; a bare optional value is not a producer"))
+			Help("use a range, array, slice, or an explicit call returning an optional item, such as `for item in producer()`").
+			Note("iterator calls, including arguments, are evaluated on every attempt; a bare optional value is not a producer"))
 	case !isOptionalResultType || optional.Inner == nil:
 		c.ctx.Diagnostics.Add(invalidExpressionError(node.Iterable, "iterator call must return an optional item").
-			WithHelp("return an optional type, such as `?i32`: return an item to continue, or `none` to end the loop"))
+			Help("return an optional type, such as `?i32`: return an item to continue, or `none` to end the loop"))
 	case node.Index != nil:
 		c.ctx.Diagnostics.Add(invalidExpressionError(node.Index, "iterator loops provide an item, not an index").
-			WithHelp("use `for item in producer()`; if you need an index, maintain a separate counter"))
+			Help("use `for item in producer()`; if you need an index, maintain a separate counter"))
 	default:
 		c.expandCallIteration(scope, node)
 	}
@@ -810,10 +810,15 @@ func (c *checker) rejectUnsizedType(typ typeinfo.Type, site ast.Node, context st
 	if typeinfo.IsSizedType(typ) {
 		return false
 	}
+	// A type with an invalid part is rejected by the error already reported
+	// for that part; saying it has no size would only repeat it.
+	if typeinfo.ContainsInvalid(typ) {
+		return true
+	}
 	diagnostic := invalidTypeError(site,
 		fmt.Sprintf("%s requires a sized type; %s is unsized", context, typeinfo.TypeText(typ)))
 	if _, ok := typeinfo.Underlying(typ).(*typeinfo.InterfaceType); ok {
-		diagnostic.WithHelp("use &Interface, &mut Interface, or *Interface instead of a bare interface value")
+		diagnostic.Help("use &Interface, &mut Interface, or *Interface instead of a bare interface value")
 	}
 	c.ctx.Diagnostics.Add(diagnostic)
 	return true
@@ -867,7 +872,7 @@ func (c *checker) rejectTemporaryBorrowEscape(scope *symbols.Scope, expr ast.Exp
 	}
 	diagnostic := c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
 		fmt.Sprintf("reference to temporary cannot escape through %s", context), ast.LocOf(expr), "temporary borrow escapes here").
-		WithHelp("pass the borrow directly to a call so it ends with the full expression")
+		Help("pass the borrow directly to a call so it ends with the full expression")
 	if temporary != expr {
 		diagnostic.WithSecondaryLabel(ast.LocOf(temporary), "temporary borrowed here")
 	}

@@ -1,0 +1,9 @@
+fn Add(left: i32 right: i32) -> i32 {
+    return left + right;
+}
+
+fn main() -> i32 {
+    let first i32 = 1;
+    let second 2;
+    return Add(first second);
+}

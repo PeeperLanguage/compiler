@@ -1,0 +1,8 @@
+name = "negative_wide_text_marker_and_name"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["3 |     let first: str = \"日本語 😀\" + 1;\n  |                                    ^\n", "4 |     let second = \"한국어\" \"x\";\n  |                           ^^^ found `x`\n", "name `名前` uses characters that are not allowed in names", "5 |     let 名前 = 3;\n  |         ^^^^ use only `A-Z`, `a-z`, `0-9` and `_`\n", "Compilation failed with 4 error(s)"]
+stderr_excludes = ["illegal character", "unknown identifier", "\n\n\n"]

@@ -1,0 +1,7 @@
+name = "runtime_mir_rvalue_eval_order_binary_capture"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 0

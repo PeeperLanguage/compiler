@@ -51,4 +51,9 @@ const (
 	LIGHT_BLUE   COLOR = "\033[38;5;81m"
 	LIGHT_GREEN  COLOR = "\033[38;5;120m"
 	LIGHT_YELLOW COLOR = "\033[38;5;229m"
+
+	// Text a suggested fix adds or removes: a dark letter on a mid-tone block
+	// of the same hue, chosen to read on both dark and light terminals.
+	FIX_ADDED   COLOR = "\033[38;5;22;48;5;114m"
+	FIX_REMOVED COLOR = "\033[38;5;52;48;5;210m"
 )

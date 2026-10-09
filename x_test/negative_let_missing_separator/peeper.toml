@@ -1,0 +1,8 @@
+name = "negative_let_missing_separator"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["  = help: add missing `=`\n  | \n1 | const Limit = 5;\n", "  = help: add missing `:`\n  | \n2 | const Width: i32 = 6;\n", "  = help: add missing `=`\n  | \n3 | const Depth: i32 = 7;\n", "  = help: add missing `=`\n  | \n6 |     let first: i32 = 5;\n", "  = help: add missing `=`\n  | \n7 |     let second = 5 + 3;\n", "  = help: add missing `:`\n  | \n8 |     let third: i32 = 1;\n", "  = help: add missing `=`\n  | \n9 |     let values = [3]i32{1, 2, 3};\n", "  = help: add missing `=`\n   | \n10 |     let target = &first;\n", "Compilation failed with 8 error(s)"]
+stderr_excludes = ["\n\n\n", "expected ';'", "unknown identifier", "needs type or initializer", "module scope expects declaration"]

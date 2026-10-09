@@ -4,5 +4,5 @@ build = "program"
 [test]
 mode = "check"
 outcome = "failure"
-stderr_contains = ["composite literal type must be struct"]
+stderr_contains = ["unknown type `point`"]
 stderr_excludes = ["panic:"]

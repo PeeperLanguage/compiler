@@ -1,0 +1,20 @@
+fn Scale(mut value, factor: i32) -> i32 {
+    return factor;
+}
+
+fn Shift(value amount: i32) -> i32 {
+    return amount;
+}
+
+fn Count(mut mut total: i32) -> i32 {
+    total = total + 1;
+    return total;
+}
+
+fn Keep(mut i32) -> i32 {
+    return 0;
+}
+
+fn main() -> i32 {
+    return Count(1);
+}

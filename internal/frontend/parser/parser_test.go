@@ -2077,8 +2077,7 @@ func TestParseInterfaceMethodsUnexpectedSemicolonRecovers(t *testing.T) {
 	if len(ifaceType.Methods) != 2 {
 		t.Fatalf("methods: got %d want 2", len(ifaceType.Methods))
 	}
-	if !strings.Contains(diag.EmitAllToString(), "expected '}' after iface methods") &&
-		!strings.Contains(diag.EmitAllToString(), "add missing `,` here") {
+	if !strings.Contains(diag.EmitAllToString(), "expected ',' between items, found ';'") {
 		t.Fatalf("expected separator recovery diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
@@ -2687,8 +2686,10 @@ func TestParseRedundantOptionalSyntax(t *testing.T) {
 				if item.Severity != diagnostics.Info {
 					t.Fatalf("severity = %v, want info", item.Severity)
 				}
-				if len(item.Labels) != 1 || !strings.Contains(item.Labels[0].Message, "remove redundant `?`") {
-					t.Fatalf("missing removal advice: %#v", item)
+				if len(item.Labels) != 1 || len(item.Extras) == 0 ||
+					item.Extras[0].Text.Message != "remove redundant `?`" || len(item.Extras[0].Text.Fixes) != 1 ||
+					item.Extras[0].Text.Fixes[0] != diagnostics.Fix.Remove(item.Labels[0].Location) {
+					t.Fatalf("missing removal advice with its fix: %#v", item)
 				}
 				loc := item.Labels[0].Location
 				if loc == nil || loc.Start == nil || loc.End == nil {
@@ -2706,5 +2707,525 @@ func TestParseRedundantOptionalSyntax(t *testing.T) {
 				t.Fatalf("notes = %d, want %d:\n%s", notes, test.notes, diag.EmitAllToString())
 			}
 		})
+	}
+}
+
+func TestMissingTokenFixOnlyForSeparatorsAndClosers(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		source  string
+		message string
+		insert  string
+		label   string
+	}{
+		{name: "semicolon", source: "fn main() { let total = 5 }", message: "expected ';' after statement", insert: ";"},
+		{name: "closing paren", source: "fn main() { let total = (5; }", message: "expected ')'", insert: ")"},
+		{name: "identifier", source: "import \"std/io\" as;", label: "add missing `identifier` here"},
+		{name: "keyword", source: "fn main() { for a, b v {} }", label: "add missing `in` here"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, diag := parseTestModule(test.source)
+			for _, item := range diag.Diagnostics() {
+				if item.Code != diagnostics.ErrExpectedToken || len(item.Labels) == 0 {
+					continue
+				}
+				if test.message != "" && item.Message != test.message {
+					continue
+				}
+				if test.insert == "" {
+					if len(item.Extras) != 0 || item.Labels[0].Message != test.label {
+						continue
+					}
+					return
+				}
+				at := item.Labels[0].Location
+				if len(item.Extras) != 1 || item.Extras[0].Text.Message != "add missing `"+test.insert+"`" ||
+					len(item.Extras[0].Text.Fixes) != 1 || item.Labels[0].Message != "" {
+					t.Fatalf("expected one insertion fix and an empty label, got: %#v", item)
+				}
+				fix := item.Extras[0].Text.Fixes[0]
+				if fix.NewText != test.insert || *fix.Location.Start != *at.Start || *fix.Location.End != *at.Start {
+					t.Fatalf("fix must insert %q at the reported point, got: %#v at %v", test.insert, fix, fix.Location)
+				}
+				return
+			}
+			t.Fatalf("expected diagnostic not found, got:\n%s", diag.EmitAllToString())
+		})
+	}
+}
+
+func TestTrailingCommaOffersItsRemoval(t *testing.T) {
+	_, diag := parseTestModule("struct Point { x: i32, y: i32, }")
+	for _, item := range diag.Diagnostics() {
+		if item.Code != diagnostics.InfoTrailingComma {
+			continue
+		}
+		if len(item.Labels) != 1 || len(item.Extras) != 1 || item.Extras[0].Text.Message != "remove this comma" ||
+			len(item.Extras[0].Text.Fixes) != 1 || item.Extras[0].Text.Fixes[0] != diagnostics.Fix.Remove(item.Labels[0].Location) {
+			t.Fatalf("expected the advice with a fix removing the comma, got: %#v", item)
+		}
+		return
+	}
+	t.Fatalf("expected trailing comma info, got:\n%s", diag.EmitAllToString())
+}
+
+func TestRedundantSeparatorFixKeepsTheNeededOne(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		source       string
+		code         string
+		removedStart int
+		removedEnd   int
+	}{
+		{name: "commas after an item keep one", source: "struct Point { x: i32,,, y: i32 }", code: diagnostics.InfoRedundantComma, removedStart: 23, removedEnd: 25},
+		{name: "commas before the first item all go", source: "struct Point { ,, x: i32 }", code: diagnostics.InfoRedundantComma, removedStart: 16, removedEnd: 18},
+		{name: "semicolons all go", source: "fn main() { let total = 5;;; }", code: diagnostics.InfoUnnecessarySemicolon, removedStart: 27, removedEnd: 29},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, diag := parseTestModule(test.source)
+			for _, item := range diag.Diagnostics() {
+				if item.Code != test.code {
+					continue
+				}
+				if len(item.Extras) != 1 || len(item.Extras[0].Text.Fixes) != 1 {
+					t.Fatalf("expected one removal fix, got: %#v", item)
+				}
+				fix := item.Extras[0].Text.Fixes[0]
+				if fix.NewText != "" || fix.Location.Start.Column != test.removedStart || fix.Location.End.Column != test.removedEnd {
+					t.Fatalf("fix removes columns %d-%d, want %d-%d", fix.Location.Start.Column, fix.Location.End.Column, test.removedStart, test.removedEnd)
+				}
+				return
+			}
+			t.Fatalf("expected %s, got:\n%s", test.code, diag.EmitAllToString())
+		})
+	}
+}
+
+func TestLeadingZeroRun(t *testing.T) {
+	for literal, want := range map[string]string{
+		"007":    "00",
+		"000":    "00",
+		"00_7":   "00_",
+		"0_0_7":  "0_0_",
+		"0_0":    "0_",
+		"007i32": "00",
+		"00_":    "",
+		"7":      "",
+		"0":      "",
+	} {
+		if got := leadingZeroRun(literal); got != want {
+			t.Errorf("leadingZeroRun(%q) = %q, want %q", literal, got, want)
+		}
+	}
+}
+
+func TestLeadingZeroFixRemovesSeparatorsWithTheZeros(t *testing.T) {
+	_, diag := parseTestModule("fn main() -> i32 { return 00_7; }")
+	for _, item := range diag.Diagnostics() {
+		if item.Code != diagnostics.WarnLeadingZeroDecimal {
+			continue
+		}
+		if len(item.Extras) == 0 || len(item.Extras[0].Text.Fixes) != 1 {
+			t.Fatalf("expected a removal fix, got: %#v", item)
+		}
+		fix := item.Extras[0].Text.Fixes[0]
+		if fix.NewText != "" || fix.Location.Start.Column != 27 || fix.Location.End.Column != 30 {
+			t.Fatalf("fix removes columns %d-%d, want 27-30 (`00_`)", fix.Location.Start.Column, fix.Location.End.Column)
+		}
+		return
+	}
+	t.Fatalf("expected leading zero warning, got:\n%s", diag.EmitAllToString())
+}
+
+func TestRedundantCommaAdviceCountsOnlyTheExtraOnes(t *testing.T) {
+	for source, want := range map[string]string{
+		"struct Point { x: i32,, y: i32 }":  "remove the extra comma",
+		"struct Point { x: i32,,, y: i32 }": "remove the extra commas",
+		"struct Point { ,, x: i32 }":        "remove these commas",
+	} {
+		_, diag := parseTestModule(source)
+		found := false
+		for _, item := range diag.Diagnostics() {
+			if item.Code == diagnostics.InfoRedundantComma && len(item.Extras) == 1 && item.Extras[0].Text.Message == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%q: expected advice %q, got:\n%s", source, want, diag.EmitAllToString())
+		}
+	}
+}
+
+func TestMissingTokenAtAKnownSpotNamesTheRealToken(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		source  string
+		message string
+		insert  string
+	}{
+		{"colon before a let type", "fn main() { let a i32 = 1; }", "expected ':' before the type", ":"},
+		{"equals before a let value", "fn main() { let a 5; }", "expected '=' before the value", " ="},
+		{"equals after a let type", "fn main() { let a: i32 5; }", "expected '=' before the value", " ="},
+		{"equals before a call value", "fn main() { let a foo(); }", "expected '=' before the value", " ="},
+		{"comma between call arguments", "fn main() { add(1 2); }", "expected ','", ","},
+		{"comma between parameters", "fn add(a: i32 b: i32) {}", "expected ','", ","},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, diag := parseTestModule(test.source)
+			items := diag.Diagnostics()
+			if len(items) != 1 {
+				t.Fatalf("expected exactly one diagnostic, got %d:\n%s", len(items), diag.EmitAllToString())
+			}
+			item := items[0]
+			if item.Message != test.message || len(item.Extras) != 1 || len(item.Extras[0].Text.Fixes) != 1 ||
+				item.Extras[0].Text.Fixes[0].NewText != test.insert {
+				t.Fatalf("expected %q with a fix inserting %q, got: %#v", test.message, test.insert, item)
+			}
+		})
+	}
+}
+
+func TestMissingTokenFixIsShownOnlyWhereTheGuessIsReliable(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		source string
+		code   string
+		hasFix bool
+	}{
+		{"semicolon at the end of a line", "fn main() {\n    let total = 5\n    return;\n}", diagnostics.ErrExpectedToken, true},
+		{"semicolon before a closing brace", "fn main() { let total = 5 }", diagnostics.ErrExpectedToken, true},
+		{"closer before a semicolon", "fn main() { let total = (5; }", diagnostics.ErrExpectedToken, true},
+		{"closer with more code on the line", "fn main() { let xs = [1, 2, 3; }", diagnostics.ErrExpectedToken, false},
+		{"semicolon with a value on the next line is still trusted", "fn main() {\n    let a\n    foo();\n}", diagnostics.ErrExpectedToken, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, diag := parseTestModule(test.source)
+			for _, item := range diag.Diagnostics() {
+				if item.Code != test.code {
+					continue
+				}
+				gotFix := len(item.Extras) == 1 && len(item.Extras[0].Text.Fixes) == 1
+				if gotFix != test.hasFix {
+					t.Fatalf("fix shown = %t, want %t: %#v", gotFix, test.hasFix, item)
+				}
+				if !gotFix && !strings.HasPrefix(item.Labels[0].Message, "found `") {
+					t.Fatalf("expected the label to name the token found, got: %#v", item.Labels)
+				}
+				return
+			}
+			t.Fatalf("expected a missing-token error, got:\n%s", diag.EmitAllToString())
+		})
+	}
+}
+
+func TestLetWithoutSemicolonEndsAtItsLastToken(t *testing.T) {
+	module, diag := parseTestModule("fn main() {\n    let a\n}")
+	if out := diag.EmitAllToString(); !strings.Contains(out, "expected ';' after statement") {
+		t.Fatalf("expected the missing semicolon error, got:\n%s", out)
+	}
+	found := false
+	for _, stmt := range module.Stmts {
+		ast.Inspect(stmt, func(node ast.Node) bool {
+			if let, ok := node.(*ast.LetDecl); ok {
+				found = true
+				if let.Location.End.Line != let.Location.Start.Line {
+					t.Fatalf("let ends on line %d, want its own line %d", let.Location.End.Line, let.Location.Start.Line)
+				}
+			}
+			return true
+		})
+	}
+	if !found {
+		t.Fatal("let declaration not found")
+	}
+}
+
+func TestMissingTokenRulesStaySilentWhenTheGuessWouldBeWrong(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		source string
+		want   string // message of the one diagnostic that must carry a fix, or "" for none at all
+		insert string
+	}{
+		{"reference type without colon", "fn main() { let c &i32 = x; }", "expected ':' before the type", ":"},
+		{"array type without colon", "fn main() { let c [3]i32 = xs; }", "expected ':' before the type", ":"},
+		{"generic type without colon", "fn main() { let c Box<i32> = x; }", "expected ':' before the type", ":"},
+		{"optional type without colon", "fn main() { let c ?i32 = none; }", "expected ':' before the type", ":"},
+		{"const type without colon", "const N i32 = 3;", "expected ':' before the type", ":"},
+		{"colon and equals both missing", "fn main() { let c i32 5; }", "", ""},
+		{"field access is not a binding", "fn main() { let c.x = 5; }", "", ""},
+		{"parameter without colon", "fn f(a i32) {}", "expected ':' after parameter name", ":"},
+		{"name before a named parameter", "fn f(a b: i32) {}", "", ""},
+		{"modifier before a lone name", "fn f(mut a, b: i32) {}", "", ""},
+		{"modifier and name without colon", "fn f(mut a [3]i32) {}", "expected ':' after parameter name", ":"},
+		{"not after an argument", "fn main() { f(a !b); }", "", ""},
+		{"closer before a semicolon in the middle of a line", "fn main() { add(a; b); }", "", ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, diag := parseTestModule(test.source)
+			for _, item := range diag.Diagnostics() {
+				for _, extra := range item.Extras {
+					for _, fix := range extra.Text.Fixes {
+						if item.Message != test.want || fix.NewText != test.insert {
+							t.Fatalf("unexpected fix %q on %q:\n%s", fix.NewText, item.Message, diag.EmitAllToString())
+						}
+						return
+					}
+				}
+			}
+			if test.want != "" {
+				t.Fatalf("expected a fix on %q, got:\n%s", test.want, diag.EmitAllToString())
+			}
+		})
+	}
+}
+
+func TestNoCommaFixAfterASkippedSemicolon(t *testing.T) {
+	_, diag := parseTestModule("fn main() {\n    let c = [3]i32{1, 2, 3;\n}")
+	for _, item := range diag.Diagnostics() {
+		for _, extra := range item.Extras {
+			for _, fix := range extra.Text.Fixes {
+				if fix.NewText == "," {
+					t.Fatalf("a comma must not be offered after the stray `;`:\n%s", diag.EmitAllToString())
+				}
+			}
+		}
+	}
+}
+
+func TestMissingCommasInOneListAreOneError(t *testing.T) {
+	_, diag := parseTestModule("fn main() { add(1 2 3); }")
+	items := diag.Diagnostics()
+	if len(items) != 1 || items[0].Message != "expected ','" || len(items[0].Extras) != 1 ||
+		items[0].Extras[0].Text.Message != "add the missing commas" || len(items[0].Extras[0].Text.Fixes) != 2 {
+		t.Fatalf("expected one error carrying both commas, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestMissingCommaInOtherLists(t *testing.T) {
+	for name, source := range map[string]string{
+		"type parameters":         "struct Pair<T U> { a: T, b: U }",
+		"function type":           "type F = fn(i32 i32) -> i32;",
+		"parameter without colon": "fn f(a i32 b: i32) {}",
+	} {
+		_, diag := parseTestModule(source)
+		found := false
+		for _, item := range diag.Diagnostics() {
+			if item.Message == "expected ','" && len(item.Extras) == 1 && len(item.Extras[0].Text.Fixes) == 1 {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s: expected a missing-comma fix, got:\n%s", name, diag.EmitAllToString())
+		}
+	}
+}
+
+func TestSemicolonClosesAValueListMissingItsBrace(t *testing.T) {
+	_, diag := parseTestModule("fn main() {\n    let c = [3]i32{1, 2, 3;\n    return;\n}")
+	items := diag.Diagnostics()
+	if len(items) != 1 || items[0].Message != "expected '}' after array literal" || len(items[0].Extras) != 1 ||
+		items[0].Extras[0].Text.Fixes[0].NewText != "}" {
+		t.Fatalf("expected one error inserting `}`, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestUnclosedCallDoesNotTakeTheNextStatementAsAnArgument(t *testing.T) {
+	for name, source := range map[string]string{
+		"call statement":       "fn main() {\n    f(1\n    g(2);\n}",
+		"assignment statement": "fn main() {\n    f(1, 2\n    x = 3;\n}",
+	} {
+		mod, diag := parseTestModule(source)
+		items := diag.Diagnostics()
+		if len(items) != 1 || items[0].Message != "expected ')'" || len(items[0].Extras) != 1 ||
+			items[0].Extras[0].Text.Fixes[0].NewText != ")" {
+			t.Errorf("%s: expected one error inserting `)`, got:\n%s", name, diag.EmitAllToString())
+		}
+		if body := mod.Stmts[0].(*ast.FnDecl).Body; len(body.Stmts) != 2 {
+			t.Errorf("%s: got %d statements, want the call and the one after it", name, len(body.Stmts))
+		}
+	}
+}
+
+func TestMissingCommasAcrossLinesOfAClosedCall(t *testing.T) {
+	_, diag := parseTestModule("fn main() {\n    add(\n        1\n        2\n        3\n    );\n}")
+	items := diag.Diagnostics()
+	if len(items) != 1 || items[0].Message != "expected ','" || len(items[0].Extras) != 1 ||
+		len(items[0].Extras[0].Text.Fixes) != 2 {
+		t.Fatalf("expected one error carrying both commas, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestSemicolonsTypedForCommasAreOneError(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		source string
+		want   []string // text each fix puts in place of a `;`
+	}{
+		{"composite literal", "fn main() { let p: P = .{ x = 1; y = 2 }; }", []string{","}},
+		{"array literal", "fn main() { let xs = [3]i32{1; 2; 3}; }", []string{",", ","}},
+		{"one item per line", "fn main() {\n    let p: P = .{\n        x = 1;\n        y = 2;\n    };\n}", []string{",", ""}},
+		{"literal as an argument", "fn main() { f(.{ x = 1; y = 2 }); }", []string{","}},
+		{"struct fields", "struct P { x: i32; y: i32 }", []string{","}},
+		{"enum variants", "enum E {\n    A;\n    B;\n}", []string{",", ""}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, diag := parseTestModule(test.source)
+			items := diag.Diagnostics()
+			if len(items) != 1 || items[0].Message != "expected ',' between items, found ';'" || len(items[0].Extras) != 1 {
+				t.Fatalf("expected one separator error, got:\n%s", diag.EmitAllToString())
+			}
+			fixes := items[0].Extras[0].Text.Fixes
+			if len(fixes) != len(test.want) {
+				t.Fatalf("got %d fixes, want %d:\n%s", len(fixes), len(test.want), diag.EmitAllToString())
+			}
+			for i, fix := range fixes {
+				if fix.NewText != test.want[i] {
+					t.Errorf("fix %d puts %q, want %q", i, fix.NewText, test.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestParameterNameWithoutTypeIsOneErrorAndKeepsTheList(t *testing.T) {
+	for _, test := range []struct{ name, source, want string }{
+		{"name before a named parameter", "fn f(a b: i32) {}", "expected a type after parameter name"},
+		{"modifier before a lone name", "fn f(mut a, b: i32) {}", "expected a name and a type after `mut`"},
+		{"modifier before a lone type name", "fn f(mut i32, b: i32) {}", "expected a name and a type after `mut`"},
+		{"modifier before a lone last word", "fn f(b: i32, mut a) {}", "expected a name and a type after `mut`"},
+	} {
+		mod, diag := parseTestModule(test.source)
+		items := diag.Diagnostics()
+		if len(items) != 1 || items[0].Message != test.want || len(items[0].Extras) != 0 {
+			t.Errorf("%s: expected only %q with no fix, got:\n%s", test.name, test.want, diag.EmitAllToString())
+		}
+		params := mod.Stmts[0].(*ast.FnDecl).Params
+		if len(params) != 2 || params[0].Name == nil || params[1].Name == nil {
+			t.Errorf("%s: expected two named parameters, got %d", test.name, len(params))
+		}
+	}
+}
+
+func TestLoneNameAfterBindingNameOffersBothRepairs(t *testing.T) {
+	for name, source := range map[string]string{
+		"before a semicolon":   "fn main() { let c other; }",
+		"at the end of a line": "fn main() {\n    let c other\n}",
+		"in a const":           "const c other;",
+	} {
+		_, diag := parseTestModule(source)
+		var found *diagnostics.Diagnostic
+		for _, item := range diag.Diagnostics() {
+			if item.Message == "expected ':' or '=' after the name" {
+				found = item
+			}
+		}
+		if found == nil || len(found.Extras) != 2 ||
+			found.Extras[0].Text.Message != "if `other` is a type, add `:`" || found.Extras[0].Text.Fixes[0].NewText != ":" ||
+			found.Extras[1].Text.Message != "if `other` is a value, add `=`" || found.Extras[1].Text.Fixes[0].NewText != " =" {
+			t.Errorf("%s: expected both repairs, got:\n%s", name, diag.EmitAllToString())
+		}
+	}
+}
+
+func TestRepeatedParameterModifierIsOneError(t *testing.T) {
+	mod, diag := parseTestModule("fn f(mut mut a: i32) {}")
+	items := diag.Diagnostics()
+	if len(items) != 1 || items[0].Message != "`mut` is repeated" || len(items[0].Extras) != 1 ||
+		len(items[0].Extras[0].Text.Fixes) != 1 || items[0].Extras[0].Text.Fixes[0].NewText != "" {
+		t.Fatalf("expected one error removing the extra `mut`, got:\n%s", diag.EmitAllToString())
+	}
+	if params := mod.Stmts[0].(*ast.FnDecl).Params; len(params) != 1 || !params[0].IsMutable {
+		t.Fatalf("expected one mutable parameter, got %d", len(params))
+	}
+}
+
+func TestSingleRepairDiagnostics(t *testing.T) {
+	for _, test := range []struct {
+		name, source, message, text string
+	}{
+		{"return type without arrow", "fn f() i32 { return 0; }", "expected '->' before the return type", " ->"},
+		{"parameter list closed before the arrow", "fn f(a: i32 -> i32 { return a; }", "expected ')'", ")"},
+		{"match arm without arrow", "fn f(e: E) { match e { E::A { return; } } }", "expected '=>' after match pattern", " =>"},
+		{"array type without colon", "fn main() { let a [3]i32; }", "expected ':' before the type", ":"},
+		{"optional type without colon", "fn main() { let a ?i32; }", "expected ':' before the type", ":"},
+		{"colon in a struct literal", "fn main() { let p = P.{ x: 1, y: 2 }; }", "expected '=' after struct literal field name", " ="},
+		{"literal closed by the call's paren", "fn main() { f(.{ x = 1 ); }", "expected '}' after composite literal", "}"},
+		{"assignment in a condition", "fn main() { if a = 1 { return; } }", "expected '==' in condition, found '='", "=="},
+		{"fields on one line without comma", "struct P { x: i32 y: i32 }", "expected ','", ","},
+		{"literal fields on one line without comma", "fn main() { let p = P.{ x = 1 y = 2 }; }", "expected ','", ","},
+		{"variants on separate lines without comma", "enum E {\n    A\n    B\n}", "expected ','", ","},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, diag := parseTestModule(test.source)
+			items := diag.Diagnostics()
+			if len(items) != 1 || items[0].Message != test.message || len(items[0].Extras) != 1 ||
+				items[0].Extras[0].Text.Fixes[0].NewText != test.text {
+				t.Fatalf("expected only %q with fix %q, got:\n%s", test.message, test.text, diag.EmitAllToString())
+			}
+		})
+	}
+}
+
+func TestTrailingCommaBeforeAParenIsOnlyANote(t *testing.T) {
+	for name, source := range map[string]string{
+		"call":       "fn main() { f(1, 2,); }",
+		"parameters": "fn f(a: i32, b: i32,) {}",
+	} {
+		_, diag := parseTestModule(source)
+		items := diag.Diagnostics()
+		if diag.HasErrors() || len(items) != 1 || items[0].Message != "trailing comma is unnecessary" {
+			t.Errorf("%s: expected only the trailing comma note, got:\n%s", name, diag.EmitAllToString())
+		}
+	}
+}
+
+func TestBracedListRecoveryStillEndsOnTokensNoItemAccepts(t *testing.T) {
+	for name, source := range map[string]string{
+		"function inside struct fields": "struct S { x: i32 fn f() {} }",
+		"statement inside a literal":    "fn main() {\n    let a = [3]i32{1, 2\n    foo(x);\n}",
+		"pattern fields keep with":      "fn f(e: E) { match e { E::B { v = x } => { return; } } }",
+	} {
+		_, diag := parseTestModule(source)
+		if !diag.HasErrors() {
+			t.Errorf("%s: expected an error", name)
+		}
+	}
+}
+
+func TestUnreliableSeparatorOrCloserPointsAtTheTokenFound(t *testing.T) {
+	for _, test := range []struct{ name, source, message, label string }{
+		{"two values in a row", "fn main() { let b = a c; }", "expected ';' after statement", "found `c`"},
+		{"two calls on a line", "fn main() { f(a) g(a); }", "expected ';' after expression", "found `g`"},
+		{"not after an argument", "fn main() { f(a !b); }", "expected ')'", "found `!`"},
+	} {
+		_, diag := parseTestModule(test.source)
+		items := diag.Diagnostics()
+		if len(items) == 0 || items[0].Message != test.message || len(items[0].Extras) != 0 ||
+			len(items[0].Labels) != 1 || items[0].Labels[0].Message != test.label {
+			t.Errorf("%s: expected %q marked %q with no fix, got:\n%s", test.name, test.message, test.label, diag.EmitAllToString())
+		}
+	}
+}
+
+func TestMissingCloserMarksAnOpenerFromAnEarlierLine(t *testing.T) {
+	for _, test := range []struct {
+		name, source string
+		wantOpener   bool
+	}{
+		{"call opened above", "fn main() {\n    f(\n        1\n    ;\n}", true},
+		{"literal opened above", "fn main() {\n    let a = [2]i32{\n        1, 2\n    ;\n}", true},
+		{"call opened on the same line", "fn main() {\n    f(1;\n}", false},
+	} {
+		_, diag := parseTestModule(test.source)
+		items := diag.Diagnostics()
+		if len(items) != 1 {
+			t.Errorf("%s: expected one error, got:\n%s", test.name, diag.EmitAllToString())
+			continue
+		}
+		hasOpener := len(items[0].Labels) == 2 && strings.Contains(items[0].Labels[1].Message, "is still open")
+		if hasOpener != test.wantOpener {
+			t.Errorf("%s: opener marker = %v, want %v:\n%s", test.name, hasOpener, test.wantOpener, diag.EmitAllToString())
+		}
 	}
 }

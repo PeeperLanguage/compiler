@@ -1,0 +1,9 @@
+fn main() -> i32 {
+    let mut total: i32 = 5;
+    return Add(total, 1);
+}
+
+
+fn Add(mut left: i32, right: i32) -> i32 {
+    return left + right;
+}

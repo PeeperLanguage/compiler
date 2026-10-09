@@ -611,7 +611,7 @@ func (c *checker) typeSelectorExpr(scope *symbols.Scope, node *ast.SelectorExpr)
 		WithCode(diagnostics.ErrFieldNotFound).
 		WithPrimaryLabel(ast.LocOf(node.Name), "")
 	if match, ok := diagnostics.NearestName(node.Name.Name, append(availableFields(baseType), c.availableMethods(baseType)...)); ok {
-		d.WithHelp("did you mean `" + match + "`?")
+		d.Help("did you mean `" + match + "`?")
 	}
 	c.ctx.Diagnostics.Add(d)
 	return &typeinfo.InvalidType{}
@@ -849,7 +849,7 @@ func (c *checker) typeLiteralFields(scope *symbols.Scope, site ast.Node, fields 
 			valid = false
 			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingInitializer,
 				"missing "+literal+" field `"+targetField.Name+"`", ast.LocOf(site), "").
-				WithHelp(fmt.Sprintf("required fields: %s", strings.Join(required, ", ")))
+				Help(fmt.Sprintf("required fields: %s", strings.Join(required, ", ")))
 			continue
 		}
 		ordered[index] = field.Value
@@ -954,7 +954,7 @@ func (c *checker) typeArrayLit(scope *symbols.Scope, node *ast.ArrayLit) typeinf
 		return &typeinfo.InvalidType{}
 	}
 	arrayType := c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, node.Type, typeresolution.Context{})
-	if typeinfo.IsInvalidOrUnknown(arrayType) {
+	if typeinfo.IsInvalidOrUnknown(arrayType) || typeinfo.ContainsInvalid(arrayType) {
 		return &typeinfo.InvalidType{}
 	}
 	array, ok := typeinfo.Underlying(arrayType).(*typeinfo.ArrayType)
@@ -1038,7 +1038,7 @@ func (c *checker) typeNumber(node *ast.NumberLit, expected typeinfo.Type) typein
 		if !ok {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidNumber,
 				fmt.Sprintf("unsupported numeric literal suffix `%s`", node.ExplicitType), ast.LocOf(node), "").
-				WithHelp("integer suffix widths must be between 1 and 8388608; float suffixes are limited to f32 and f64")
+				Help("integer suffix widths must be between 1 and 8388608; float suffixes are limited to f32 and f64")
 			return &typeinfo.InvalidType{}
 		}
 		if !typeinfo.LiteralFitsType(node.Value, explicit) {
@@ -1066,7 +1066,7 @@ func (c *checker) typeNumber(node *ast.NumberLit, expected typeinfo.Type) typein
 				WithCode(diagnostics.ErrInvalidNumber).
 				WithPrimaryLabel(ast.LocOf(node), "")
 			if intType, ok := numberTarget.(*typeinfo.IntegerType); ok {
-				d.WithHelp(integerRangeHint(intType))
+				d.Help(integerRangeHint(intType))
 			}
 			c.ctx.Diagnostics.Add(d)
 			return nil

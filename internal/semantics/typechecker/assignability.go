@@ -111,7 +111,7 @@ func (c *checker) addInterfaceHint(d *diagnostics.Diagnostic, dst, src typeinfo.
 	}
 	_, missing, _ := c.resolveInterfaceImplementations(iface, src)
 	if len(missing) > 0 {
-		d.WithHelp(fmt.Sprintf("missing methods: %s", strings.Join(missing, ", ")))
+		d.Help(fmt.Sprintf("missing methods: %s", strings.Join(missing, ", ")))
 	}
 }
 

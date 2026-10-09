@@ -1,0 +1,41 @@
+struct Point {
+    x: i32,
+    y: i32
+}
+
+fn (self: &Point) sum() -> i32 {
+    return self.x + self.y;
+}
+
+fn Add(
+    first: i32,
+    second: i32
+) -> i32 {
+    return first
+        + second;
+}
+
+fn main() -> i32 {
+    let point: Point = .{
+        x = 1,
+        y = 2
+    };
+    let values = [3]i32{
+        1,
+        2,
+        3
+    };
+    let total = Add(
+        point.x,
+        -point.y
+    );
+    let chained = point
+        .sum();
+    let later: i32
+        = total;
+    let next =
+        values[0];
+    Add(total, next);
+    Add(later, chained);
+    return total + later + chained + next - 2;
+}

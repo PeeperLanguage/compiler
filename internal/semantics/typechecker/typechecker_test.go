@@ -2299,13 +2299,12 @@ func TestDynamicArrayLiteralRejectsReferenceElementWithoutBinding(t *testing.T) 
 	}
 }
 
-func TestDynamicArrayLiteralRejectsNonLowerableElement(t *testing.T) {
+func TestDynamicArrayLiteralReportsUnknownElementTypeOnce(t *testing.T) {
 	diag := checkTypeSource(t, `fn main() {
 	[]void{};
 }`)
-	if !hasTypeCode(diag, diagnostics.ErrInvalidType) ||
-		!strings.Contains(diag.EmitAllToString(), "dynamic array element type is not lowerable") {
-		t.Fatalf("expected non-lowerable element diagnostic, got:\n%s", diag.EmitAllToString())
+	if len(diag.Diagnostics()) != 1 || !strings.Contains(diag.EmitAllToString(), "unknown type `void`") {
+		t.Fatalf("expected only the unknown element type diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }
 
@@ -3667,5 +3666,79 @@ func TestRuntimeStringConstructionAndConcatenationRejectUnsupportedForms(t *test
 				t.Fatalf("missing %q diagnostic:\n%s", test.want, diag.EmitAllToString())
 			}
 		})
+	}
+}
+
+func TestUnknownTypeNameIsReportedWhereverItIsWritten(t *testing.T) {
+	for name, source := range map[string]string{
+		"local":            "fn main() { let a: Nope; }",
+		"parameter":        "fn f(a: Nope) {}",
+		"return":           "fn f() -> Nope {}",
+		"struct field":     "struct S { a: Nope }",
+		"enum payload":     "enum E { A: { v: Nope }, B }",
+		"alias":            "type A = Nope;",
+		"optional":         "fn main() { let a: ?Nope = none; }",
+		"array element":    "fn main() { let a: [2]Nope; }",
+		"reference target": "fn f(a: &Nope) {}",
+		"type argument":    "struct Box<T> { v: T } fn main() { let a: Box<Nope>; }",
+		"applied name":     "fn main() { let a: Nope<i32>; }",
+	} {
+		diag := checkTypeSource(t, source)
+		if !hasTypeCode(diag, diagnostics.ErrUndefinedSymbol) ||
+			!strings.Contains(diag.EmitAllToString(), "unknown type `Nope`") {
+			t.Errorf("%s: expected unknown type diagnostic, got:\n%s", name, diag.EmitAllToString())
+		}
+	}
+}
+
+func TestDeclaredTypeNamesAreNotReportedAsUnknown(t *testing.T) {
+	diag := checkTypeSource(t, `fn Read(a: Later) -> i32 { return a.v; }
+struct Later { v: i32 }
+struct Node { next: ?*Node, v: i32 }
+struct Box<T> { value: T }
+fn Keep<T>(value: T) -> T { return value; }
+fn main() {
+	let a: Box<i32> = .{ value = 1 };
+	let b: usize = 1;
+	let c: str = "x";
+}`)
+	if strings.Contains(diag.EmitAllToString(), "unknown type") {
+		t.Fatalf("declared, generic and built-in names must resolve, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestUnknownTypeNameIsReportedOnceAndSilencesLaterChecks(t *testing.T) {
+	for name, source := range map[string]string{
+		"value used later":      "fn main() { let a: Nope = 1; let b = a + 1; }",
+		"struct with the field": "struct S { a: Nope, b: i32 } fn main() { let s: S = .{ a = 1, b = 2 }; let t = s; let u = s; }",
+		"module constant":       "const c: Nope = 1;",
+		"parameter":             "fn f(a: Nope) -> i32 { return 0; }",
+		"cast target":           "fn main() { let a = 1 as Nope; }",
+	} {
+		diag := checkTypeSource(t, source)
+		items := diag.Diagnostics()
+		if len(items) != 1 || items[0].Message != "unknown type `Nope`" {
+			t.Errorf("%s: expected only the unknown type diagnostic, got:\n%s", name, diag.EmitAllToString())
+		}
+	}
+}
+
+func TestUnknownTypeNameSuggestsADeclaredType(t *testing.T) {
+	diag := checkTypeSource(t, "struct Point { x: i32 } fn f(p: Pont) {}")
+	if !strings.Contains(diag.EmitAllToString(), "unknown type `Pont`") ||
+		!strings.Contains(diag.EmitAllToString(), "did you mean `Point`?") {
+		t.Fatalf("expected a suggestion for the misspelled type, got:\n%s", diag.EmitAllToString())
+	}
+	diag = checkTypeSource(t, "struct Point { x: i32 } fn f(p: Zzzzzz) {}")
+	if strings.Contains(diag.EmitAllToString(), "did you mean") {
+		t.Fatalf("an unrelated name must get no suggestion, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestFunctionTypeParametersAreRejectedOnce(t *testing.T) {
+	diag := checkTypeSource(t, "fn keep<T>(value: T) -> T { return value; }")
+	items := diag.Diagnostics()
+	if len(items) != 1 || items[0].Message != "functions cannot take type parameters yet" {
+		t.Fatalf("expected only the type parameter diagnostic, got:\n%s", diag.EmitAllToString())
 	}
 }

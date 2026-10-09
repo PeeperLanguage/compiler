@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"compiler/internal/diagnostics"
@@ -254,10 +255,42 @@ func (l *Lexer) reportEscapeError(start source.Position, err error) {
 	)
 }
 
+// nonASCIIWord returns the word at the start of text when it is written like a
+// name but holds a letter, mark or digit outside ASCII, and "" otherwise.
+func nonASCIIWord(text string) string {
+	end, isASCII := 0, true
+	for index, ch := range text {
+		isWordStart := ch == '_' || unicode.IsLetter(ch)
+		if !isWordStart && (index == 0 || !unicode.IsDigit(ch) && !unicode.IsMark(ch)) {
+			break
+		}
+		isASCII = isASCII && ch < utf8.RuneSelf
+		end = index + utf8.RuneLen(ch)
+	}
+	if isASCII {
+		return ""
+	}
+	return text[:end]
+}
+
 func (l *Lexer) Tokenize() []token.Token {
 	for !l.isAtEOF() {
 		matched := false
 		rem := l.remainder()
+
+		if word := nonASCIIWord(rem); word != "" {
+			// One error for the whole word, and a name token in its place so
+			// the parser reads on as if the name were allowed.
+			start := l.pos
+			l.advanceBy(word)
+			l.diag.Add(
+				diagnostics.NewError(fmt.Sprintf("name `%s` uses characters that are not allowed in names", word)).
+					WithCode(diagnostics.ErrUnexpectedCharacter).
+					WithPrimaryLabel(source.NewLocation(l.file, start, l.pos), "use only `A-Z`, `a-z`, `0-9` and `_`"),
+			)
+			l.push(token.Token{Kind: token.IDENT, Literal: word, Start: start, End: l.pos})
+			continue
+		}
 
 		for _, p := range regexPatterns {
 			loc := p.regex.FindStringIndex(rem)

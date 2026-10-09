@@ -1,0 +1,8 @@
+name = "negative_found_token_and_open_bracket"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["expected ';' after statement", "12 |     let twice = count count;\n   |                       ^^^^^ found `count`\n", "13 |     if Same(ready !ready) {\n   |                   ^ found `!`\n", "16 |     let total = Add(\n   |                    - this `(` is still open\n", "   = help: add missing `)`\n   | \n19 |         3)\n", "   = help: add missing `)`\n   | \n21 |     let near = Add(1, 2, 3);\n", "  --> ", ":23:13\n", "22 |     let next = Add(1,\n   |                   - this `(` is still open\n23 |         2, 3;\n   |             ^\n", "Compilation failed with 5 error(s)"]
+stderr_excludes = ["add missing `;` here", "add missing `)` here", "expected ','", "wrong number of arguments", "21 |     let near = Add(1, 2, 3;\n   |                   - this", "22 |     let next = Add(1,\n22 |     let next = Add(1,\n"]

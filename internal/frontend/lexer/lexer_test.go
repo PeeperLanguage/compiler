@@ -1,6 +1,7 @@
 package lexer
 
 import (
+	"strings"
 	"testing"
 
 	"compiler/internal/diagnostics"
@@ -150,5 +151,27 @@ fn add(a: i32, b: i32): i32 {
 
 	for range b.N {
 		New("benchmark"+peeper.SourceExt, src, nil).Tokenize()
+	}
+}
+
+func TestNameWithNonASCIICharactersIsOneErrorAndOneToken(t *testing.T) {
+	for _, word := range []string{"名前", "größe", "নাম", "naïve_1", "_é"} {
+		diag := diagnostics.NewDiagnosticBag()
+		stream := New("names"+peeper.SourceExt, "let "+word+" = 1;", diag).Tokenize()
+		items := diag.Diagnostics()
+		if len(items) != 1 || !strings.Contains(items[0].Message, "`"+word+"`") {
+			t.Errorf("%s: expected one error naming the word, got %d:\n%s", word, len(items), diag.EmitAllToString())
+		}
+		if len(stream) < 2 || stream[1].Kind != token.IDENT || stream[1].Literal != word {
+			t.Errorf("%s: expected the word as one name token, got %#v", word, stream)
+		}
+	}
+}
+
+func TestASCIINamesAndNonASCIITextElsewhereAreNotReported(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag()
+	New("ok"+peeper.SourceExt, "// 日本語\nlet name_1 = \"বাংলা 😀\"; let c = 'λ'; let s = c\"é\";", diag).Tokenize()
+	if diag.HasErrors() {
+		t.Fatalf("unexpected errors:\n%s", diag.EmitAllToString())
 	}
 }

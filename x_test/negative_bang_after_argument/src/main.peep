@@ -1,0 +1,12 @@
+fn Same(value: bool) -> bool {
+    return value;
+}
+
+fn main() -> i32 {
+    let ready = true;
+    let done = false;
+    if Same(ready !done) {
+        return 1;
+    }
+    return 0;
+}

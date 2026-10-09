@@ -86,3 +86,20 @@ func TestGetSourceLinesRangeUsesCache(t *testing.T) {
 		t.Fatalf("unexpected cached lines: %#v", lines)
 	}
 }
+
+func TestGetSourceLinesDropsLineEndsOfLFAndCRLFFiles(t *testing.T) {
+	for name, content := range map[string]string{
+		"lf":                    "one\ntwo\n",
+		"crlf":                  "one\r\ntwo\r\n",
+		"crlf without last end": "one\r\ntwo",
+	} {
+		path := filepath.Join(t.TempDir(), "lines.txt")
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		lines, err := GetSourceLines(path)
+		if err != nil || len(lines) != 2 || lines[0] != "one" || lines[1] != "two" {
+			t.Errorf("%s: got %q, %v", name, lines, err)
+		}
+	}
+}

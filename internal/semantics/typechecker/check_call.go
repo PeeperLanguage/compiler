@@ -353,7 +353,7 @@ func (c *checker) typeSelectorCall(scope *symbols.Scope, selector *ast.SelectorE
 	if field, _, fieldOK := typeinfo.LookupStructField(baseType, selector.Name.Name); fieldOK {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrNotCallable,
 			fmt.Sprintf("field `%s` is not callable", selector.Name.Name), ast.LocOf(selector.Name), "").
-			WithHelp(fmt.Sprintf("field `%s` has type %s - access it without `()`", selector.Name.Name, typeinfo.TypeText(field.Type)))
+			Help(fmt.Sprintf("field `%s` has type %s - access it without `()`", selector.Name.Name, typeinfo.TypeText(field.Type)))
 		return &typeinfo.InvalidType{}
 	}
 	methods := c.availableMethods(baseType)
@@ -361,9 +361,9 @@ func (c *checker) typeSelectorCall(scope *symbols.Scope, selector *ast.SelectorE
 		WithCode(diagnostics.ErrMethodNotFound).
 		WithPrimaryLabel(ast.LocOf(selector.Name), "")
 	if len(methods) > 0 {
-		d.WithHelp("available methods: " + strings.Join(methods, ", "))
+		d.Help("available methods: " + strings.Join(methods, ", "))
 	} else if match, ok := diagnostics.NearestName(selector.Name.Name, availableFields(baseType)); ok {
-		d.WithHelp("did you mean field `" + match + "`?")
+		d.Help("did you mean field `" + match + "`?")
 	}
 	c.ctx.Diagnostics.Add(d)
 	return &typeinfo.InvalidType{}
@@ -399,7 +399,7 @@ func (c *checker) checkCall(scope *symbols.Scope, receiverExpr ast.Expr, callExp
 			for i, p := range fnType.Params[displayOffset:] {
 				paramDescs[i] = typeinfo.TypeText(p)
 			}
-			d.WithHelp(fmt.Sprintf("expected parameters: (%s)", strings.Join(paramDescs, ", ")))
+			d.Help(fmt.Sprintf("expected parameters: (%s)", strings.Join(paramDescs, ", ")))
 		}
 		c.ctx.Diagnostics.Add(d)
 		return

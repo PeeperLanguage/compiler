@@ -90,7 +90,7 @@ func (p *Parser) parseBlock() *ast.BlockStmt {
 	}
 	var stmts []ast.Stmt
 	for !p.at(token.RBRACE) && !p.at(token.EOF) {
-		p.consumeRedundant(token.SEMICOLON, diagnostics.InfoUnnecessarySemicolon, "unnecessary semicolons", "remove these semicolons")
+		p.consumeRedundant(token.SEMICOLON, diagnostics.InfoUnnecessarySemicolon, "semicolon", false)
 		before := p.pos
 		if stmt := p.parseStmt(false); stmt != nil {
 			stmts = append(stmts, stmt)
@@ -126,6 +126,21 @@ func (p *Parser) parseIfStmt() ast.Stmt {
 	cond := p.parseExpr(precLowest, token.LBRACE)
 	if cond == nil {
 		cond = reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, start.Start, start.End)})
+	}
+	if p.at(token.ASSIGN) {
+		// `if a = 1 {`: a condition cannot assign, so the `=` stands for a
+		// comparison and the condition is read as one.
+		op := p.advance()
+		loc := source.NewLocation(p.filePath, op.Start, op.End)
+		p.diag.Add(diagnostics.NewError("expected '==' in condition, found '='").
+			WithCode(diagnostics.ErrExpectedToken).
+			WithPrimaryLabel(loc, "").
+			Help("compare with `==`", diagnostics.Fix.Replace(loc, "==")))
+		right := p.parseExpr(precLowest, token.LBRACE)
+		if right == nil {
+			right = reg(p, &ast.BadExpr{Location: loc})
+		}
+		cond = reg(p, &ast.BinaryExpr{Left: cond, Op: "==", Right: right, Location: source.NewLocation(p.filePath, ast.StartOf(cond), ast.EndOf(right))})
 	}
 	var thenBlock *ast.BlockStmt
 	if p.at(token.LBRACE) {
@@ -322,14 +337,18 @@ func (p *Parser) parseMatchStmt() ast.Stmt {
 					endPos = ast.EndOf(binding)
 				}
 			}
-		} else if p.at(token.LBRACE) {
+		} else if p.at(token.LBRACE) && p.isBraceClosedBeforeArrow() {
 			_, end, _ := p.parseMatchPatternFields()
 			endPos = end.End
 			p.diag.Add(diagnostics.NewError("enum variant pattern requires 'with'").
 				WithCode(diagnostics.ErrInvalidExpression).
 				WithPrimaryLabel(source.NewLocation(p.filePath, ast.StartOf(casePath), end.End), "write `Enum::Variant with { ... }`"))
 		}
-		if p.consume(token.FATARROW, "expected '=>' after match pattern") == nil {
+		if p.at(token.LBRACE) {
+			// `Case { ... }`: the brace opens the arm's body, so only the
+			// arrow is missing and the body is read as it stands.
+			p.diag.Add(insertionError("expected '=>' after match pattern", p.prev().End, p.filePath, "=>", " =>"))
+		} else if p.consume(token.FATARROW, "expected '=>' after match pattern") == nil {
 			p.synchronize(token.LBRACE, token.RBRACE)
 		}
 		body := p.parseBlock()
@@ -347,9 +366,11 @@ func (p *Parser) parseMatchStmt() ast.Stmt {
 		}))
 		if p.match(token.COMMA) {
 			comma := p.prev()
+			loc := source.NewLocation(p.filePath, comma.Start, comma.End)
 			p.diag.Add(diagnostics.NewError("match arms do not use commas").
 				WithCode(diagnostics.ErrExpectedToken).
-				WithPrimaryLabel(source.NewLocation(p.filePath, comma.Start, comma.End), "remove this comma"))
+				WithPrimaryLabel(loc, "").
+				Help("remove this comma", diagnostics.Fix.Remove(loc)))
 		}
 	}
 	armListEnd := p.current().End
@@ -369,8 +390,16 @@ func (p *Parser) parseMatchStmt() ast.Stmt {
 	})
 }
 
+// isBraceClosedBeforeArrow reports whether the `{` at the current token closes
+// right before a `=>`. Then it holds pattern fields; otherwise it is the body
+// of an arm whose arrow was left out.
+func (p *Parser) isBraceClosedBeforeArrow() bool {
+	closer := p.closerAhead(p.pos + 1)
+	return closer >= 0 && closer+1 < len(p.stream) && p.stream[closer+1].Kind == token.FATARROW
+}
+
 func (p *Parser) parseMatchPatternFields() ([]ast.MatchPatternField, *token.Token, bool) {
-	return parseBracedItemList(p, "expected '{' after enum case", "expected '}' after match pattern fields",
+	return parseBracedItemList(p, "expected '{' after enum case", "expected '}' after match pattern fields", false,
 		func() (ast.MatchPatternField, bool) {
 			name := p.parseIdent()
 			if name == nil {

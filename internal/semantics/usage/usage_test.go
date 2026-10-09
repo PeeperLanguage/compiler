@@ -365,8 +365,8 @@ func TestUnmodifiedMutableLocalSuggestsRemovingModifier(t *testing.T) {
 	}
 	for _, text := range []string{
 		"mutable binding `value` is never modified",
+		"= help: ",
 		"remove unnecessary `mut`",
-		"= suggestion:",
 	} {
 		if !strings.Contains(out, text) {
 			t.Fatalf("expected %q in removal suggestion, got:\n%s", text, out)
@@ -377,12 +377,12 @@ func TestUnmodifiedMutableLocalSuggestsRemovingModifier(t *testing.T) {
 			continue
 		}
 		if len(item.Extras) == 0 {
-			t.Fatalf("expected W0013 code replacement, got: %#v", item.Extras)
+			t.Fatalf("expected W0013 help with a fix, got: %#v", item.Extras)
 		}
-		hint := item.Extras[0].CodeHint
-		if len(hint.Lines) != 2 || hint.Lines[0].Prefix != "-" || hint.Lines[0].Code != "mut" ||
-			hint.Lines[1].Prefix != "+" || hint.Lines[1].Code != "" {
-			t.Fatalf("unexpected W0013 code replacement: %#v", hint.Lines)
+		fixes := item.Extras[0].Text.Fixes
+		if len(fixes) != 1 || fixes[0].NewText != "" ||
+			fixes[0].Location.End.Column-fixes[0].Location.Start.Column != len("mut") {
+			t.Fatalf("expected one fix removing exactly `mut`, got: %#v", fixes)
 		}
 		return
 	}
@@ -400,12 +400,12 @@ func TestUnmodifiedMutableCommentAdjacentSuggestionUsesModifierSpan(t *testing.T
 			continue
 		}
 		if len(item.Extras) == 0 {
-			t.Fatalf("expected W0013 code replacement, got: %#v", item.Extras)
+			t.Fatalf("expected W0013 help with a fix, got: %#v", item.Extras)
 		}
-		hint := item.Extras[0].CodeHint
-		if len(hint.Lines) != 2 || hint.Lines[0].Prefix != "-" || hint.Lines[0].Code != "mut" ||
-			hint.Lines[1].Prefix != "+" || hint.Lines[1].Code != "" {
-			t.Fatalf("unexpected W0013 code replacement: %#v", hint.Lines)
+		fixes := item.Extras[0].Text.Fixes
+		if len(fixes) != 1 || fixes[0].NewText != "" ||
+			fixes[0].Location.End.Column-fixes[0].Location.Start.Column != len("mut") {
+			t.Fatalf("expected one fix removing exactly `mut`, got: %#v", fixes)
 		}
 		return
 	}

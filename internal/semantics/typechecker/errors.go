@@ -17,8 +17,8 @@ func explicitBoolCastRequiredError(expr ast.Expr, message string) *diagnostics.D
 	e := diagnostics.NewError(message).
 		WithPrimaryLabel(ast.LocOf(expr), "").
 		WithCode(diagnostics.ErrInvalidOperation).
-		WithNote("condition is a boolean type. It either can be `true` or `false`").
-		WithHelp("use `as bool` for explicit conversion")
+		Note("condition is a boolean type. It either can be `true` or `false`").
+		Help("use `as bool` for explicit conversion")
 	return e
 }
 

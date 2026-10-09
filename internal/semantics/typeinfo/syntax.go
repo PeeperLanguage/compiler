@@ -22,6 +22,7 @@ const (
 	SyntaxInvalidArrayLength
 	SyntaxInvalidApplication
 	SyntaxAnonymousInterface
+	SyntaxUnknownName
 )
 
 type SyntaxIssue struct {
@@ -304,7 +305,8 @@ func resolveTypeName(node ast.TypeExpr, context SyntaxContext) Type {
 	if signed, bits, ok := token.ParseIntegerBuiltin(name, context.Target); ok {
 		return &IntegerType{IsSigned: signed, Bits: bits}
 	}
-	return &NamedType{Name: name}
+	context.recordIssue(SyntaxUnknownName, node, name, 0, 0)
+	return &InvalidType{Name: name}
 }
 
 func applyTypeArguments(node ast.TypeExpr, base Type, arguments []Type, context SyntaxContext) Type {

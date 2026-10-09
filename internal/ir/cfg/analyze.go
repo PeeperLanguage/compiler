@@ -78,8 +78,8 @@ func reportMissingReturn(fn *ControlFlowGraph, diag *diagnostics.DiagnosticBag) 
 			diagnostic.WithSecondaryLabel(branch.Location, "this branch does not return a value")
 		}
 	}
-	diagnostic.WithNote("some branch completes without a `return`, execution can fall off end of function")
-	diagnostic.WithHelp("fulfill the return or add a fallback return on parent scope")
+	diagnostic.Note("some branch completes without a `return`, execution can fall off end of function")
+	diagnostic.Help("fulfill the return or add a fallback return on parent scope")
 	diag.Add(diagnostic)
 }
 

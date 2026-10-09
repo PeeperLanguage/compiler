@@ -1,0 +1,8 @@
+name = "negative_missing_token_at_known_spot"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["expected ','\n  --> ", "  = help: add missing `,`\n  | \n1 | fn Add(left: i32, right: i32) -> i32 {\n", "expected ':' before the type", "  = help: add missing `:`\n  | \n6 |     let first: i32 = 1;\n", "expected '=' before the value", "  = help: add missing `=`\n  | \n7 |     let second = 2;\n", "  = help: add missing `,`\n  | \n8 |     return Add(first, second);\n", "Compilation failed with 4 error(s)"]
+stderr_excludes = ["\n\n\n", "unknown identifier", "used before"]

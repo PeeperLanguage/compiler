@@ -1,0 +1,25 @@
+fn Add(first: i32, second: i32, third: i32) -> i32 {
+    return first + second + third;
+}
+
+fn Same(value: bool) -> bool {
+    return value;
+}
+
+fn main() -> i32 {
+    let count = 1;
+    let ready = true;
+    let twice = count count;
+    if Same(ready !ready) {
+        return 1;
+    }
+    let total = Add(
+        1,
+        2,
+        3
+    ;
+    let near = Add(1, 2, 3;
+    let next = Add(1,
+        2, 3;
+    return total + near + next + twice;
+}

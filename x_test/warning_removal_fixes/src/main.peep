@@ -1,0 +1,12 @@
+struct Point {
+    x: i32,,
+    y: i32,
+}
+
+fn Pick(value: ??i32) -> i32 {
+    return 00_7;;;
+}
+
+fn main() -> i32 {
+    return Pick(1);
+}

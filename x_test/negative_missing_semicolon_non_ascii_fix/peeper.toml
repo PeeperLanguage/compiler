@@ -1,0 +1,8 @@
+name = "negative_missing_semicolon_non_ascii_fix"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["  = help: add missing `;`\n  | \n2 |     let greeting: str = \"café 日本語\";\n"]
+stderr_excludes = ["\n\n\n"]
