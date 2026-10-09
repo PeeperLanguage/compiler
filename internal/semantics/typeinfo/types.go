@@ -18,7 +18,12 @@ type Type interface {
 	VisitRuntimeType(RuntimeTypeVisitor)
 }
 
-type InvalidType struct{}
+// InvalidType stands for a type whose error was already reported, so checks
+// that meet it stay silent. Name is the type name as written when the error
+// was an unknown name; it is kept only so the type can still be shown.
+type InvalidType struct {
+	Name string
+}
 
 type UnknownType struct{}
 
@@ -211,7 +216,12 @@ type EnumType struct {
 	Cases []VariantCase
 }
 
-func (*InvalidType) Text() string { return "<invalid>" }
+func (t *InvalidType) Text() string {
+	if t.Name != "" {
+		return t.Name
+	}
+	return "<invalid>"
+}
 func (*UnknownType) Text() string { return "<unknown>" }
 
 func (t *IntegerType) Text() string {

@@ -1,0 +1,8 @@
+name = "negative_unknown_names"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["unknown identifier `missing_value`", "unknown identifier `MissingFn`", "unknown member `z`", "unknown method `total`", "unknown variant `C` in enum `Kind`", "unknown struct literal field `w`", "unknown member `q`", "Compilation failed with 7 error(s)"]
+stderr_excludes = ["\n\n\n", "panic:"]

@@ -2,6 +2,7 @@ package typeresolution
 
 import (
 	"fmt"
+	"slices"
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
@@ -55,7 +56,7 @@ func (r *Resolver) Query(mod *module.Module, node ast.TypeExpr, context Context)
 	result := QueryResult{Status: QueryAvailable}
 	syntax := syntaxResolver{resolver: r, module: mod, query: &result}
 	result.Type = typeinfo.TypeFromSyntax(node, syntax.context(context, r.compilerTarget(), nil))
-	if typeinfo.ContainsInvalid(result.Type) {
+	if typeinfo.ContainsMalformed(result.Type) {
 		result.Status = QueryInvalid
 	}
 	if result.Status == QueryLoading {
@@ -72,7 +73,14 @@ func (r *Resolver) ResolveFunction(diag *diagnostics.DiagnosticBag, mod *module.
 	syntax := syntaxResolver{resolver: r, module: mod, diag: diag}
 	compilerTarget := r.compilerTarget()
 	fnType := typeinfo.FuncTypeFromDecl(fn, syntax.context(context, compilerTarget, &issues))
-	reportSyntaxIssues(diag, compilerTarget.IndexBits, issues)
+	// A function's own type parameters are not bound to types yet. Their
+	// uses keep the name placeholder, which the signature checks reject.
+	issues = slices.DeleteFunc(issues, func(issue typeinfo.SyntaxIssue) bool {
+		return issue.Kind == typeinfo.SyntaxUnknownName && slices.ContainsFunc(fn.TypeParams, func(param ast.TypeParam) bool {
+			return param.Name != nil && param.Name.Name == issue.Name
+		})
+	})
+	reportSyntaxIssues(diag, mod, compilerTarget.IndexBits, issues)
 	return fnType
 }
 
@@ -81,7 +89,7 @@ func (r *Resolver) resolve(diag *diagnostics.DiagnosticBag, mod *module.Module, 
 	issues := make([]typeinfo.SyntaxIssue, 0, 1)
 	compilerTarget := r.compilerTarget()
 	typ := typeinfo.TypeFromSyntax(node, syntax.context(context, compilerTarget, &issues))
-	reportSyntaxIssues(diag, compilerTarget.IndexBits, issues)
+	reportSyntaxIssues(diag, mod, compilerTarget.IndexBits, issues)
 	return typ
 }
 
@@ -92,7 +100,7 @@ func (r *Resolver) compilerTarget() target.Info {
 	return target.Host()
 }
 
-func reportSyntaxIssues(diag *diagnostics.DiagnosticBag, indexBits int, issues []typeinfo.SyntaxIssue) {
+func reportSyntaxIssues(diag *diagnostics.DiagnosticBag, mod *module.Module, indexBits int, issues []typeinfo.SyntaxIssue) {
 	if diag == nil {
 		return
 	}
@@ -113,12 +121,32 @@ func reportSyntaxIssues(diag *diagnostics.DiagnosticBag, indexBits int, issues [
 			diag.AddError(diagnostics.ErrInvalidType,
 				fmt.Sprintf("type `%s` expects %d type %s, got %d", issue.Name, issue.Want, word, issue.Got),
 				ast.LocOf(issue.Node), "use exact explicit type arguments")
+		case typeinfo.SyntaxUnknownName:
+			unknown := diag.AddError(diagnostics.ErrUndefinedSymbol, "unknown type `"+issue.Name+"`", ast.LocOf(issue.Node), "")
+			if match, ok := diagnostics.NearestName(issue.Name, declaredTypeNames(mod)); ok {
+				unknown.Help("did you mean `" + match + "`?")
+			}
 		case typeinfo.SyntaxAnonymousInterface:
 			diag.AddError(diagnostics.ErrInvalidType,
 				"anonymous interface types are not supported yet", ast.LocOf(issue.Node),
 				"declare a named interface and use &Name, &mut Name, or *Name")
 		}
 	}
+}
+
+// declaredTypeNames lists the type names an unqualified name in mod can
+// resolve to, for suggesting the one a misspelled name was meant to be.
+func declaredTypeNames(mod *module.Module) []string {
+	if mod == nil || mod.ModuleScope == nil {
+		return nil
+	}
+	var names []string
+	for _, sym := range mod.ModuleScope.Symbols() {
+		if sym != nil && sym.Kind == symbols.SymbolType {
+			names = append(names, sym.Name)
+		}
+	}
+	return names
 }
 
 func (r syntaxResolver) context(context Context, compilerTarget target.Info, issues *[]typeinfo.SyntaxIssue) typeinfo.SyntaxContext {

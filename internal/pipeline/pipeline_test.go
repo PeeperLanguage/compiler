@@ -446,7 +446,6 @@ func TestPipelineRequiresBuildEntrypoint(t *testing.T) {
 fn main() -> ExitCode { return 0; }`},
 		{name: "extern", src: `#[extern]
 fn main();`},
-		{name: "generic", src: `fn main<T>() {}`},
 		{name: "method", src: `struct App {}
 fn (self: App) main() {}`},
 	}

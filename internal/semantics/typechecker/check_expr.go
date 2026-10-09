@@ -954,7 +954,7 @@ func (c *checker) typeArrayLit(scope *symbols.Scope, node *ast.ArrayLit) typeinf
 		return &typeinfo.InvalidType{}
 	}
 	arrayType := c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, node.Type, typeresolution.Context{})
-	if typeinfo.IsInvalidOrUnknown(arrayType) {
+	if typeinfo.IsInvalidOrUnknown(arrayType) || typeinfo.ContainsInvalid(arrayType) {
 		return &typeinfo.InvalidType{}
 	}
 	array, ok := typeinfo.Underlying(arrayType).(*typeinfo.ArrayType)

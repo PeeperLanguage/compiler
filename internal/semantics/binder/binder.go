@@ -1,6 +1,7 @@
 package binder
 
 import (
+	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/graph"
 	"compiler/internal/module"
@@ -59,6 +60,10 @@ func (b *binder) bindModule() {
 func (b *binder) bindFunctionDecl(fn *ast.FnDecl) {
 	if b == nil || b.module == nil || fn == nil || fn.Name == nil {
 		return
+	}
+	if len(fn.TypeParams) > 0 {
+		b.ctx.Diagnostics.AddError(diagnostics.ErrInvalidDeclaration,
+			"functions cannot take type parameters yet", fn.TypeParams[0].Location, "")
 	}
 	fnType := b.ctx.TypeResolver.ResolveFunction(b.ctx.Diagnostics, b.module, fn, typeresolution.Context{})
 	sym := b.module.SymbolIndex.Symbol(fn.Name)

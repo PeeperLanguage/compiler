@@ -179,6 +179,16 @@ func ContainsInvalid(t Type) bool {
 	})
 }
 
+// ContainsMalformed reports whether t has an invalid part other than an
+// unknown type name. A type whose only fault is such a name can still be
+// shown as written.
+func ContainsMalformed(t Type) bool {
+	return containsType(t, typeTraversal{followDefined: true, followCallable: true}, func(candidate Type, _ bool) bool {
+		invalid, ok := candidate.(*InvalidType)
+		return ok && invalid.Name == ""
+	})
+}
+
 func ContainsReference(t Type) bool {
 	return containsType(t, typeTraversal{followDefined: true}, func(candidate Type, _ bool) bool {
 		_, ok := candidate.(*RefType)

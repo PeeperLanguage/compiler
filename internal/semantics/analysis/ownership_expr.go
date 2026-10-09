@@ -186,7 +186,9 @@ func ownershipTrackedSymbol(sym *symbols.Symbol) bool {
 }
 
 func ownershipTrackedType(t typeinfo.Type) bool {
-	if t == nil || typeinfo.OwnershipCapabilityOf(t).Copy == typeinfo.CopyImplicit {
+	// A type with an invalid part was already reported; anything ownership
+	// says about its values would only repeat that.
+	if t == nil || typeinfo.ContainsInvalid(t) || typeinfo.OwnershipCapabilityOf(t).Copy == typeinfo.CopyImplicit {
 		return false
 	}
 	return true

@@ -810,6 +810,11 @@ func (c *checker) rejectUnsizedType(typ typeinfo.Type, site ast.Node, context st
 	if typeinfo.IsSizedType(typ) {
 		return false
 	}
+	// A type with an invalid part is rejected by the error already reported
+	// for that part; saying it has no size would only repeat it.
+	if typeinfo.ContainsInvalid(typ) {
+		return true
+	}
 	diagnostic := invalidTypeError(site,
 		fmt.Sprintf("%s requires a sized type; %s is unsized", context, typeinfo.TypeText(typ)))
 	if _, ok := typeinfo.Underlying(typ).(*typeinfo.InterfaceType); ok {

@@ -1,0 +1,43 @@
+struct Point {
+    x: i32,
+    y: i32
+}
+
+struct Holder {
+    inner: Missing,
+    count: i32
+}
+
+struct Later {
+    value: i32
+}
+
+const origin: Holder = .{ inner = 1, count = 2 };
+
+fn Read(source: Later) -> i32 {
+    return source.value;
+}
+
+fn Take(input: Absent) -> i32 {
+    return 0;
+}
+
+fn Give() -> Pont {
+    return .{ x = 1, y = 2 };
+}
+
+fn Keep<T>(value: T) -> T {
+    return value;
+}
+
+fn main() -> i32 {
+    let first: Nope = 1;
+    let next = first + 1;
+    let second: ?Gone = none;
+    let third: [2]Lost;
+    let holder: Holder = .{ inner = 1, count = 2 };
+    let moved = holder;
+    let again = holder;
+    let known: Later = .{ value = 1 };
+    return Read(known) - 1;
+}
