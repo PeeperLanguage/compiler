@@ -1,0 +1,32 @@
+fn left(count: u5) -> u32 {
+    return 1u32 << count;
+}
+
+fn right(count: u5) -> u32 {
+    return 2147483648u32 >> count;
+}
+
+fn signed_right(count: u5) -> i32 {
+    return -2147483648i32 >> count;
+}
+
+fn signed_count(count: i5) -> u32 {
+    return 1u32 << count;
+}
+
+fn odd_width(count: u2) -> u3 {
+    return 1u3 << count;
+}
+
+fn main() -> i32 {
+    if left(0u5) != 1u32 { return 1; }
+    if left(1u5) != 2u32 { return 2; }
+    if left(31u5) != 2147483648u32 { return 3; }
+    if right(0u5) != 2147483648u32 { return 4; }
+    if right(31u5) != 1u32 { return 5; }
+    if signed_right(31u5) != -1i32 { return 6; }
+    if signed_count(0i5) != 1u32 { return 7; }
+    if signed_count(15i5) != 32768u32 { return 8; }
+    if odd_width(2u2) != 4u3 { return 9; }
+    return 0;
+}

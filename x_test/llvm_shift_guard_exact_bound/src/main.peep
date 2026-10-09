@@ -1,0 +1,9 @@
+fn shift(count: u6) -> u32 {
+    return 1u32 << count;
+}
+
+fn main() -> i32 {
+    let result = shift(32u6);
+    if result == 0u32 { return 0; }
+    return 0;
+}

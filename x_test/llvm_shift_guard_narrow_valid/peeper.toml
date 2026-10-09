@@ -1,0 +1,6 @@
+name = "llvm_shift_guard_narrow_valid"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "success"
