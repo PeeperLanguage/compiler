@@ -67,7 +67,7 @@ scan:
 	p.diag.Add(diagnostics.NewError(message).
 		WithCode(diagnostics.ErrInvalidExpression).
 		WithPrimaryLabel(source.NewLocation(p.filePath, open.Start, open.End), "missing literal introducer").
-		WithHelp(help))
+		Help(help))
 	p.pos = end
 	return reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, start, p.prev().End)})
 }

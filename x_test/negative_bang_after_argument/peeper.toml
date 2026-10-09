@@ -1,0 +1,8 @@
+name = "negative_bang_after_argument"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["expected ')'", "Compilation failed with 1 error(s)"]
+stderr_excludes = ["expected ','", "= help: add missing", "wrong number of arguments"]

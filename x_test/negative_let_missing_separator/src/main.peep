@@ -1,0 +1,12 @@
+const Limit 5;
+const Width i32 = 6;
+const Depth: i32 7;
+
+fn main() -> i32 {
+    let first: i32 5;
+    let second 5 + 3;
+    let third i32 = 1;
+    let values [3]i32{1, 2, 3};
+    let target &first;
+    return first + second + third + values[0] + Limit + Width + Depth;
+}

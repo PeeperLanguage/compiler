@@ -1,0 +1,24 @@
+struct Pair<T U> {
+    first: T,
+    second: U
+}
+
+type Combine = fn(i32 i32) -> i32;
+
+fn Scale(value i32, factor: i32) -> i32 {
+    return value * factor;
+}
+
+fn Sum(first: i32, second: i32, third: i32) -> i32 {
+    return first + second + third;
+}
+
+fn main() -> i32 {
+    let total = Sum(1 2 3);
+    let spread = Sum(
+        1
+        2
+        3
+    );
+    return Scale(total, spread);
+}

@@ -358,7 +358,7 @@ func (a *analyzer) mergeState(nodeID cfg.SiteID, dst, src ownershipState, hasExi
 		a.reportedJoin[nodeID] = true
 		a.diagnostics.AddError(diagnostics.ErrInvalidAssignment,
 			"ownership state differs across control-flow paths", node.cfgSite.Location, "").
-			WithHelp("move or reinitialize ownership-tracked values on every path")
+			Help("move or reinitialize ownership-tracked values on every path")
 	}
 	for sym, site := range src.moved {
 		if _, ok := dst.moved[sym]; ok {

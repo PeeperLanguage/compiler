@@ -138,7 +138,7 @@ func (l *moduleLoader) resolveImports(mod *module.Module, diag *diagnostics.Diag
 			diag.Add(diagnostics.NewInfo("`"+rawPath+"` is imported automatically").
 				WithCode(diagnostics.InfoRedundantPreludeImport).
 				WithPrimaryLabel(ast.LocOf(imp), "remove this import").
-				WithNote("global symbols are always in scope without an import"))
+				Note("global symbols are always in scope without an import"))
 		}
 		resolvedImport := *resolved
 		resolvedImport.Decl = imp

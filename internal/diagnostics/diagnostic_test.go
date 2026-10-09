@@ -41,10 +41,10 @@ func TestWithSecondaryLabelRequiresPrimary(t *testing.T) {
 	}
 }
 
-func TestWithHelpCarriesItsFixes(t *testing.T) {
+func TestHelpCarriesItsFixes(t *testing.T) {
 	d := NewError("immutable")
 	loc := testLoc("main"+peeper.SourceExt, 2, 5)
-	d.WithHelp("declare it mutable", Fix.Replace(loc, "mut maybe"))
+	d.Help("declare it mutable", Fix.Replace(loc, "mut maybe"))
 
 	if len(d.Extras) != 1 {
 		t.Fatalf("expected 1 extra entry, got %d", len(d.Extras))
@@ -102,7 +102,7 @@ func TestEmitterAlignsHeaderAndHelpWithGutter(t *testing.T) {
 	diag := NewError("bad").
 		WithCode("P0005").
 		WithPrimaryLabel(loc, "bad").
-		WithHelp("use const instead")
+		Help("use const instead")
 
 	emitter.Emit(diag)
 	text := out.String()
@@ -130,7 +130,7 @@ func emitFixForTest(t *testing.T, format colors.LogFormat, sourceText string, fi
 	emitter.Emit(NewError("broken").
 		WithCode("P9999").
 		WithPrimaryLabel(fixes[0].Location, "").
-		WithHelp("apply the fix", fixes...))
+		Help("apply the fix", fixes...))
 	return out.String()
 }
 
@@ -292,7 +292,7 @@ func TestEmitterSizesMarginForFixLines(t *testing.T) {
 	emitter.Emit(NewError("broken").
 		WithCode("P9999").
 		WithPrimaryLabel(fixLocForTest(9, 1, 5), "").
-		WithNote("continue on the next line", Fix.Insert(fixLocForTest(10, 4, 4), ";")))
+		Note("continue on the next line", Fix.Insert(fixLocForTest(10, 4, 4), ";")))
 	got := out.String()
 	if !strings.Contains(got, "\n 9 | nine\n") || !strings.Contains(got, "  = note: continue on the next line\n   | \n10 | ten;\n") {
 		t.Fatalf("expected a two-digit margin and the fix under its note, got:\n%s", got)
@@ -342,11 +342,33 @@ func TestEmitterSeparatesAFixedLineFromTheNextText(t *testing.T) {
 	emitter.cache.AddSource("sample"+peeper.SourceExt, "let total = 5\n")
 	at := fixLocForTest(1, 14, 14)
 	emitter.Emit(NewError("broken").WithCode("P9999").WithPrimaryLabel(at, "").
-		WithHelp("first", Fix.Insert(at, ";")).
-		WithNote("second").
-		WithNote("third"))
+		Help("first", Fix.Insert(at, ";")).
+		Note("second").
+		Note("third"))
 	want := "  = help: first\n  | \n1 | let total = 5;\n  | \n  = note: second\n  = note: third\n\n"
 	if !strings.HasSuffix(out.String(), want) {
 		t.Fatalf("expected one margin line after the fixed line and none between plain notes, got:\n%s", out.String())
+	}
+}
+
+func TestHelpWithChoicesAddsOneHelpAndOneInsertionPerChoice(t *testing.T) {
+	loc := testLoc("main"+peeper.SourceExt, 2, 10)
+	d := NewError("expected ':' or '=' after the name").HelpWithChoices(loc,
+		Choice{If: "`b` is a type", Insert: ":"},
+		Choice{If: "`b` is a value", Insert: " ="})
+
+	want := []struct{ help, insert string }{
+		{"if `b` is a type, add `:`", ":"},
+		{"if `b` is a value, add `=`", " ="},
+	}
+	if len(d.Extras) != len(want) {
+		t.Fatalf("expected %d help lines, got %d", len(want), len(d.Extras))
+	}
+	for i, extra := range d.Extras {
+		fixes := extra.Text.Fixes
+		if extra.Text.Kind != "help" || extra.Text.Message != want[i].help || len(fixes) != 1 ||
+			fixes[0].NewText != want[i].insert || *fixes[0].Location.Start != *loc.Start || *fixes[0].Location.End != *loc.Start {
+			t.Errorf("choice %d: unexpected help %#v", i, extra.Text)
+		}
 	}
 }

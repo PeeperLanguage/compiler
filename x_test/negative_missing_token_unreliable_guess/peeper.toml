@@ -1,0 +1,8 @@
+name = "negative_missing_token_unreliable_guess"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["expected ']' after array literal length", "add missing `]` here"]
+stderr_excludes = ["= help: add missing", "\n\n\n"]

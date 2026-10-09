@@ -1,0 +1,45 @@
+struct Point {
+    x: i32,
+    y: i32
+}
+
+enum Kind {
+    Empty,
+    Full: { value: i32 }
+}
+
+fn Take(point: Point) -> i32 {
+    return point.x;
+}
+
+fn Width() i32 {
+    return 0;
+}
+
+fn Add(first: i32, second: i32 -> i32 {
+    return first + second;
+}
+
+fn Read(kind: Kind) -> i32 {
+    match kind {
+        Kind::Empty {
+            return 0;
+        }
+        Kind::Full with { value = inner } => {
+            return inner;
+        }
+    }
+}
+
+fn main() -> i32 {
+    let count = 1;
+    let slots [3]i32;
+    let maybe ?i32;
+    let first: Point = .{ x: 1, y: 2 };
+    let second: Point = .{ x = 1 y = 2 };
+    let taken = Take(.{ x = 1, y = 2 );
+    if count = 1 {
+        return 1;
+    }
+    return Add(taken, Width(),) + first.x + second.x;
+}

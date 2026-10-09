@@ -69,7 +69,7 @@ func (r *Resolver) instantiateType(diag *diagnostics.DiagnosticBag, base *typein
 				WithCode(diagnostics.ErrInvalidType).
 				WithPrimaryLabel(ast.LocOf(node), "`"+applicationText+"` changes recursive arguments").
 				WithSecondaryLabel(ast.LocOf(origin.node), "`"+origin.applicationText+"` started this instantiation").
-				WithHelp("use the same canonical type arguments at every recursive reference")
+				Help("use the same canonical type arguments at every recursive reference")
 			diag.Add(diagnostic)
 		}
 		return &typeinfo.InvalidType{}

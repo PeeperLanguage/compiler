@@ -1,0 +1,8 @@
+name = "negative_missing_closers"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["  = help: add missing `]`\n   | \n11 |     let first = values[0];\n", "  = help: add missing `]`\n   | \n12 |     let second = Double(values[1]);\n", "  = help: add missing `)`\n   | \n13 |     let third = (first + second);\n", "  = help: add missing `)`\n   | \n14 |     let total = Sum(first, second)\n", "  = help: add missing `)`\n   | \n16 |     Double(total)\n", "cannot assign to immutable binding `count`", "Compilation failed with 6 error(s)"]
+stderr_excludes = ["\n\n\n", "expected ','", "wrong number of arguments", "unknown identifier", "used before"]

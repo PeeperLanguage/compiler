@@ -100,7 +100,7 @@ func (p *Parser) reportInvalidModuleStmt(loc *source.Location, msg, help string)
 		WithCode(diagnostics.ErrInvalidDeclaration).
 		WithPrimaryLabel(loc, msg)
 	if help != "" {
-		diag = diag.WithHelp(help)
+		diag = diag.Help(help)
 	}
 	p.diag.Add(diag)
 }
@@ -217,12 +217,23 @@ func (p *Parser) parseFnSignature() (name *ast.Ident, typeParams []ast.TypeParam
 	lparenPos := p.stream[p.pos-1].Start
 	params = p.parseParams()
 	p.expectClose(lparenPos, token.RPAREN, "(")
-	if p.match(token.ARROW) {
-		returnType = p.parseTypeExpr()
-		// nil is OK - type-checker validates return types
-	}
+	returnType = p.parseReturnType()
 	returnOrigins = p.parseReturnOriginClause()
 	return name, typeParams, params, returnType, returnOrigins, true
+}
+
+// parseReturnType reads `-> Type` after a parameter list; nil means no return
+// value, or a type that failed to parse and was reported. A type written on
+// that line without its arrow is reported and read, so the body still parses.
+func (p *Parser) parseReturnType() ast.TypeExpr {
+	if p.match(token.ARROW) {
+		return p.parseTypeExpr()
+	}
+	if isTypeStart(p.current().Kind) && p.isOnLineOfPrev() {
+		p.diag.Add(insertionError("expected '->' before the return type", p.prev().End, p.filePath, "->", " ->"))
+		return p.parseTypeExpr()
+	}
+	return nil
 }
 
 func (p *Parser) parseReturnOriginClause() *ast.ReturnOriginClause {
@@ -233,6 +244,7 @@ func (p *Parser) parseReturnOriginClause() *ast.ReturnOriginClause {
 	sources := make([]*ast.Ident, 0, 1)
 	end := start.End
 	if p.match(token.LPAREN) {
+		var missingCommas []diagnostics.CodeFix
 		for !p.at(token.RPAREN) && !p.at(token.EOF) {
 			sourceName := p.parseIdent()
 			if sourceName == nil {
@@ -240,10 +252,11 @@ func (p *Parser) parseReturnOriginClause() *ast.ReturnOriginClause {
 			}
 			sources = append(sources, sourceName)
 			end = ast.EndOf(sourceName)
-			if !p.match(token.COMMA) {
+			if !p.listContinues(p.at(token.IDENT), &missingCommas) {
 				break
 			}
 		}
+		p.reportMissingCommas(missingCommas)
 		if close := p.consume(token.RPAREN, "expected ')' after reference return origins"); close != nil {
 			end = close.End
 		}
@@ -349,22 +362,110 @@ func (p *Parser) parseBindingFields() (name *ast.Ident, ty ast.TypeExpr, value a
 	if p.match(token.COLON) {
 		ty = p.parseTypeExpr()
 		// ty may be nil if type parsing failed; continue with name and value
+	} else if p.isLoneNameAfterBindingName() {
+		// `let a b;`: `b` reads as the type or as the value, and only what it
+		// names can tell. Both repairs are shown, and the binding keeps an
+		// unknown value so later uses of it stay quiet.
+		at := source.NewLocation(p.filePath, p.prev().End, p.prev().End)
+		word := p.advance()
+		p.diag.Add(diagnostics.NewError("expected ':' or '=' after the name").
+			WithCode(diagnostics.ErrExpectedToken).
+			WithPrimaryLabel(at, "").
+			HelpWithChoices(at,
+				diagnostics.Choice{If: "`" + word.Literal + "` is a type", Insert: ":"},
+				diagnostics.Choice{If: "`" + word.Literal + "` is a value", Insert: " ="}))
+		value = reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, word.Start, word.End)})
+	} else if p.isTypeWithoutColon() {
+		// `let a i32 = 1;`: reading the type here keeps the rest of the
+		// statement from producing errors of its own.
+		p.diag.Add(insertionError("expected ':' before the type", p.prev().End, p.filePath, ":", ":"))
+		ty = p.parseTypeExpr()
 	}
 	if p.match(token.ASSIGN) {
 		value = p.parseExpr(precLowest, token.SEMICOLON)
+	} else if p.startsValue() && p.isOnLineOfPrev() && !p.hasBeforeStatementEnd(token.ASSIGN) {
+		// `let a 5;`: a value on the same line with no `=` anywhere before the
+		// statement ends. Reading the value keeps the binding usable. The fix
+		// is only shown when the statement ends right after that value;
+		// otherwise more than the `=` is wrong.
+		at := p.prev().End
+		value = p.parseExpr(precLowest, token.SEMICOLON)
+		if p.at(token.SEMICOLON) || !p.isOnLineOfPrev() {
+			p.diag.Add(insertionError("expected '=' before the value", at, p.filePath, "=", " ="))
+		} else {
+			p.diag.Add(diagnostics.NewError("expected '=' before the value").
+				WithCode(diagnostics.ErrExpectedToken).
+				WithPrimaryLabel(source.NewLocation(p.filePath, at, at), "add missing `=` here"))
+		}
 	}
 	end = p.consume(token.SEMICOLON, "expected ';' after statement")
 	if end == nil {
-		insertPos := ast.EndOf(value)
-		if insertPos.IsZero() {
-			insertPos = ast.EndOf(ty)
-		}
-		if insertPos.IsZero() {
-			insertPos = ast.EndOf(name)
-		}
-		end = &token.Token{Kind: token.SEMICOLON, End: insertPos}
+		// The statement ends where its last token does.
+		end = &token.Token{Kind: token.SEMICOLON, End: p.prev().End}
 	}
 	return name, ty, value, end, true
+}
+
+// isLoneNameAfterBindingName reports whether the binding name is followed on
+// its line by one more name that ends the statement or the line.
+func (p *Parser) isLoneNameAfterBindingName() bool {
+	if !p.isOnLineOfPrev() || !p.at(token.IDENT) {
+		return false
+	}
+	next := p.next()
+	return next.Kind == token.SEMICOLON || next.Kind == token.EOF || next.Start.Line > p.current().End.Line
+}
+
+// isTypeWithoutColon reports whether the tokens after a binding name are its
+// type with the colon left out. They must begin a type, and then one of these
+// holds: an `=` still follows in the statement (`let a &T = x;`); no value
+// can begin that way (`let a ?T;`); or it is an array type with no `{` after
+// it, which an array literal would need (`let a [3]T;`).
+func (p *Parser) isTypeWithoutColon() bool {
+	if !p.isOnLineOfPrev() || !isTypeStart(p.current().Kind) {
+		return false
+	}
+	return p.hasBeforeStatementEnd(token.ASSIGN) || !p.startsValue() ||
+		p.at(token.LBRACK) && !p.hasBeforeStatementEnd(token.LBRACE)
+}
+
+// isOnLineOfPrev reports whether the current token sits on the line where the
+// previous one ended.
+func (p *Parser) isOnLineOfPrev() bool {
+	return !p.at(token.EOF) && p.current().Start.Line == p.prev().End.Line
+}
+
+// hasBeforeStatementEnd looks ahead on the current line for a token of kind
+// outside brackets before the statement's `;`.
+func (p *Parser) hasBeforeStatementEnd(kind token.Kind) bool {
+	depth := 0
+	for i := p.pos; i < len(p.stream) && p.stream[i].Start.Line == p.current().Start.Line; i++ {
+		if depth <= 0 && p.stream[i].Kind == kind {
+			return true
+		}
+		switch p.stream[i].Kind {
+		case token.LPAREN, token.LBRACK, token.LBRACE:
+			depth++
+		case token.RPAREN, token.RBRACK, token.RBRACE:
+			depth--
+		case token.SEMICOLON:
+			if depth <= 0 {
+				return false
+			}
+		}
+	}
+	return false
+}
+
+// insertionError is the diagnostic for a token known to be missing at a point:
+// an empty marker there, and a help line whose fix inserts text. shown is the
+// token as named in the help; text may carry the spacing the insertion needs.
+func insertionError(msg string, at source.Position, filePath, shown, text string) *diagnostics.Diagnostic {
+	loc := source.NewLocation(filePath, at, at)
+	return diagnostics.NewError(msg).
+		WithCode(diagnostics.ErrExpectedToken).
+		WithPrimaryLabel(loc, "").
+		Help("add missing `"+shown+"`", diagnostics.Fix.Insert(loc, text))
 }
 
 func (p *Parser) parseStructDecl() ast.Decl {
@@ -482,15 +583,17 @@ func (p *Parser) parseAttributes() []ast.Attribute {
 			attrEnd = nameTok.End
 		)
 		if p.match(token.LPAREN) {
+			var missingCommas []diagnostics.CodeFix
 			for !p.at(token.RPAREN) && !p.at(token.EOF) {
 				arg := p.parseExpr(precLowest, token.RPAREN)
 				if arg != nil {
 					args = append(args, arg)
 				}
-				if !p.match(token.COMMA) {
+				if !p.listContinues(arg != nil && p.startsArgument(), &missingCommas) {
 					break
 				}
 			}
+			p.reportMissingCommas(missingCommas)
 			if end := p.consume(token.RPAREN, "expected ')' after attribute arguments"); end != nil {
 				attrEnd = end.End
 			} else if len(args) > 0 {
@@ -599,7 +702,12 @@ func (p *Parser) expectClose(openPos source.Position, kind token.Kind, name stri
 	}
 	prev := p.prev()
 	loc := source.NewLocation(p.filePath, prev.End, prev.End)
-	p.diag.Add(missingTokenError(fmt.Sprintf("expected '%s'", string(kind)), kind, loc))
+	p.diag.Add(p.missingTokenError(fmt.Sprintf("expected '%s'", string(kind)), kind, loc))
+	if p.isMissingTokenLikely(kind, loc) {
+		// The closer belongs right here, so the tokens after it are not part
+		// of the bracket; skipping ahead to find one would drop them.
+		return nil
+	}
 	p.synchronize(kind)
 	if p.current().Kind == kind {
 		return p.advance()
@@ -636,7 +744,7 @@ func (p *Parser) consumeRedundant(kind token.Kind, code string, noun string, isF
 		// A fixed line can only be shown for a run that sits on one line; a
 		// longer run keeps the advice beside the marker.
 		if first.Start.Line == last.End.Line {
-			d.WithPrimaryLabel(loc, "").WithHelp(advice, diagnostics.Fix.Remove(removed))
+			d.WithPrimaryLabel(loc, "").Help(advice, diagnostics.Fix.Remove(removed))
 		} else {
 			d.WithPrimaryLabel(loc, advice)
 		}
@@ -648,6 +756,7 @@ func parseBracedItemList[T any](
 	p *Parser,
 	openerMsg string,
 	itemMsg string,
+	isExpression bool,
 	parseItem func() (T, bool),
 ) ([]T, *token.Token, bool) {
 	lbrace := p.consume(token.LBRACE, openerMsg)
@@ -660,6 +769,8 @@ func parseBracedItemList[T any](
 	// The comma that follows an item is consumed with any extra ones at the top
 	// of the next round, so only a run before the first item is all redundant.
 	isAfterItem := false
+	isClosedEarly := false
+	var wrongSeparators, missingCommas []diagnostics.CodeFix
 	for !p.at(token.RBRACE) && !p.at(token.EOF) {
 		for p.at(token.DOC_COMMENT) {
 			p.advance()
@@ -680,17 +791,49 @@ func parseBracedItemList[T any](
 		}
 		if p.at(token.COMMA) {
 			if p.next().Kind == token.RBRACE {
-				loc := source.NewLocation(p.filePath, p.current().Start, p.current().End)
-				p.diag.Add(diagnostics.NewInfo("trailing comma is unnecessary").
-					WithCode(diagnostics.InfoTrailingComma).
-					WithPrimaryLabel(loc, "").
-					WithHelp("remove this comma", diagnostics.Fix.Remove(loc)))
+				p.reportTrailingComma(p.current())
 			}
 			continue
 		}
+		if p.at(token.SEMICOLON) {
+			if !isExpression || p.isSemicolonForComma() {
+				// `.{ x = 1; y = 2 }`: the `;` stands where a `,` belongs. One
+				// before the closing brace separates nothing and is removed.
+				loc := source.NewLocation(p.filePath, p.current().Start, p.current().End)
+				if p.next().Kind == token.RBRACE {
+					wrongSeparators = append(wrongSeparators, diagnostics.Fix.Remove(loc))
+				} else {
+					wrongSeparators = append(wrongSeparators, diagnostics.Fix.Replace(loc, ","))
+				}
+				p.advance()
+				continue
+			}
+			// `[3]i32{1, 2, 3;`: the statement ended where the list should
+			// have closed. Leaving the `;` for the statement keeps the rest of
+			// the block from being read as values.
+			p.diag.Add(insertionError(itemMsg, p.prev().End, p.filePath, "}", "}"))
+			isClosedEarly = true
+			break
+		}
+		if p.at(token.RPAREN) || p.at(token.RBRACK) {
+			// `f(.{ x = 1 );`: the closer of a bracket around the list can
+			// only follow the list's own `}`.
+			p.diag.Add(insertionError(itemMsg, p.prev().End, p.filePath, "}", "}"))
+			isClosedEarly = true
+			break
+		}
+		// A token that begins an item right after a good one means only the
+		// comma is missing. On a later line of a value list it may instead
+		// begin the statement after a list left unclosed, so there the old
+		// report stays. After a failed item the skip below must run, or a
+		// token no item accepts would be offered again without end.
+		startsItem := ok && (p.at(token.IDENT) || p.at(token.FN) || isExpression && p.startsValue())
+		if p.listContinues(startsItem && (p.isOnLineOfPrev() || !isExpression), &missingCommas) {
+			continue
+		}
 		if !p.at(token.RBRACE) {
-			prev := p.stream[p.pos-1]
-			p.diag.Add(missingTokenError(itemMsg, token.COMMA, source.NewLocation(p.filePath, prev.End, prev.End)))
+			prev := p.prev()
+			p.diag.Add(p.missingTokenError("expected ','", token.COMMA, source.NewLocation(p.filePath, prev.End, prev.End)))
 			// Recovery must always consume or skip the unexpected separator token.
 			// Without this, inputs like `foo();` inside a braced item list keep
 			// reporting the same missing-comma diagnostic forever.
@@ -701,7 +844,17 @@ func parseBracedItemList[T any](
 			continue
 		}
 	}
-	end := p.expectClose(lbraceStart, token.RBRACE, "{")
+	p.reportMissingCommas(missingCommas)
+	if len(wrongSeparators) > 0 {
+		p.diag.Add(diagnostics.NewError("expected ',' between items, found ';'").
+			WithCode(diagnostics.ErrExpectedToken).
+			WithPrimaryLabel(wrongSeparators[0].Location, "").
+			Help("separate items with `,`", wrongSeparators...))
+	}
+	var end *token.Token
+	if !isClosedEarly {
+		end = p.expectClose(lbraceStart, token.RBRACE, "{")
+	}
 	var endPos source.Position
 	if end != nil {
 		endPos = end.End
@@ -723,23 +876,165 @@ func (p *Parser) consume(kind token.Kind, msg string) *token.Token {
 	}
 	prev := p.stream[p.pos-1]
 	loc := source.NewLocation(p.filePath, prev.End, prev.End)
-	p.diag.Add(missingTokenError(msg, kind, loc))
+	p.diag.Add(p.missingTokenError(msg, kind, loc))
 	return nil
 }
 
-// missingTokenError reports a token that should follow loc. Separators and
-// closing delimiters are spelled exactly as their kind, so the diagnostic can
-// show the line with the token inserted. Other kinds name a category
-// ("identifier") or need spacing a blind insertion would get wrong, so they
-// only say what is missing.
-func missingTokenError(msg string, kind token.Kind, loc *source.Location) *diagnostics.Diagnostic {
-	d := diagnostics.NewError(msg).WithCode(diagnostics.ErrExpectedToken)
-	switch kind {
-	case token.SEMICOLON, token.COMMA, token.RPAREN, token.RBRACK, token.RBRACE, token.GT:
-		return d.WithPrimaryLabel(loc, "").
-			WithHelp(fmt.Sprintf("add missing `%s`", string(kind)), diagnostics.Fix.Insert(loc, string(kind)))
+// missingTokenError reports a token that should follow loc. Where the guess
+// is reliable the diagnostic shows the line with the token inserted; elsewhere
+// it only says what is missing, because the real mistake is often a different
+// token between the two pieces of code on that line.
+func (p *Parser) missingTokenError(msg string, kind token.Kind, loc *source.Location) *diagnostics.Diagnostic {
+	if p.isMissingTokenLikely(kind, loc) {
+		return insertionError(msg, *loc.Start, p.filePath, string(kind), string(kind))
 	}
-	return d.WithPrimaryLabel(loc, fmt.Sprintf("add missing `%s` here", string(kind)))
+	return diagnostics.NewError(msg).
+		WithCode(diagnostics.ErrExpectedToken).
+		WithPrimaryLabel(loc, fmt.Sprintf("add missing `%s` here", string(kind)))
+}
+
+// isMissingTokenLikely reports whether inserting kind at loc is very probably
+// what the author meant, judged by the unexpected token that follows. A
+// separator is trusted when the line ends there; a statement also ends before
+// a closing brace; a closing delimiter is also trusted before another closing
+// delimiter, or before a semicolon that itself ends the line. Nothing is
+// trusted right after a semicolon or an opening delimiter, where the parser
+// has already skipped past the real mistake. Kinds that name a category, such
+// as an identifier, cannot be inserted as text at all.
+func (p *Parser) isMissingTokenLikely(kind token.Kind, loc *source.Location) bool {
+	switch p.prev().Kind {
+	case token.SEMICOLON, token.LPAREN, token.LBRACK, token.LBRACE:
+		return false
+	}
+	next := p.current()
+	endsLine := func(tok token.Token) bool { return tok.Kind == token.EOF || tok.Start.Line > loc.Start.Line }
+	isCloser := func(k token.Kind) bool {
+		return k == token.RPAREN || k == token.RBRACK || k == token.RBRACE || k == token.GT
+	}
+	switch {
+	case kind == token.SEMICOLON:
+		return endsLine(next) || next.Kind == token.RBRACE
+	case kind == token.COMMA:
+		return endsLine(next)
+	case isCloser(kind):
+		after := p.next()
+		// An arrow only follows the `)` of a parameter list.
+		return endsLine(next) || isCloser(next.Kind) || kind == token.RPAREN && next.Kind == token.ARROW ||
+			next.Kind == token.SEMICOLON && (endsLine(after) || isCloser(after.Kind))
+	}
+	return false
+}
+
+// listContinues reports whether another list item follows the one just read:
+// either a comma was there, or startsItem says the next token begins an item,
+// which means the comma between the two is missing. Each missing comma is
+// added to missing; reportMissingCommas turns them into one diagnostic once
+// the list is read, so `f(1 2 3)` shows a single line with both commas.
+func (p *Parser) listContinues(startsItem bool, missing *[]diagnostics.CodeFix) bool {
+	if p.match(token.COMMA) {
+		// A comma right before the closer separates nothing.
+		if p.at(token.RPAREN) || p.at(token.GT) {
+			p.reportTrailingComma(p.prev())
+			return false
+		}
+		return true
+	}
+	if !startsItem {
+		return false
+	}
+	at := p.prev().End
+	*missing = append(*missing, diagnostics.Fix.Insert(source.NewLocation(p.filePath, at, at), ","))
+	return true
+}
+
+func (p *Parser) reportTrailingComma(comma token.Token) {
+	loc := source.NewLocation(p.filePath, comma.Start, comma.End)
+	p.diag.Add(diagnostics.NewInfo("trailing comma is unnecessary").
+		WithCode(diagnostics.InfoTrailingComma).
+		WithPrimaryLabel(loc, "").
+		Help("remove this comma", diagnostics.Fix.Remove(loc)))
+}
+
+func (p *Parser) reportMissingCommas(missing []diagnostics.CodeFix) {
+	if len(missing) == 0 {
+		return
+	}
+	help := "add missing `,`"
+	if len(missing) > 1 {
+		help = "add the missing commas"
+	}
+	p.diag.Add(diagnostics.NewError("expected ','").
+		WithCode(diagnostics.ErrExpectedToken).
+		WithPrimaryLabel(missing[0].Location, "").
+		Help(help, missing...))
+}
+
+// startsArgument reports whether the current token begins another argument of
+// the list being read. On the line of the previous argument any value does. On
+// a later line it may be the statement after a call left unclosed, so it
+// counts only when the `)` of the list is still ahead.
+func (p *Parser) startsArgument() bool {
+	if !p.startsValue() {
+		return false
+	}
+	if p.isOnLineOfPrev() {
+		return true
+	}
+	closer := p.closerAhead(p.pos)
+	return closer >= 0 && p.stream[closer].Kind == token.RPAREN
+}
+
+// isSemicolonForComma reports whether the `;` at the current token of a value
+// list was typed for a `,`. It was when the list still closes with its own
+// `}`, which shows in what follows that brace: the end of the statement or of
+// an enclosing list. A `}` followed by anything else closes the block around
+// the statement, so the list's own brace is the one missing.
+func (p *Parser) isSemicolonForComma() bool {
+	closer := p.closerAhead(p.pos)
+	if closer < 0 || p.stream[closer].Kind != token.RBRACE || closer+1 >= len(p.stream) {
+		return false
+	}
+	switch p.stream[closer+1].Kind {
+	case token.SEMICOLON, token.COMMA, token.RPAREN:
+		return true
+	}
+	return false
+}
+
+// closerAhead returns the index of the token that closes the bracket the
+// token at from sits in, skipping brackets that open and close on the way, or
+// -1 when the file ends first.
+func (p *Parser) closerAhead(from int) int {
+	depth := 0
+	for i := from; i < len(p.stream); i++ {
+		switch p.stream[i].Kind {
+		case token.LPAREN, token.LBRACK, token.LBRACE:
+			depth++
+		case token.RPAREN, token.RBRACK, token.RBRACE:
+			if depth == 0 {
+				return i
+			}
+			depth--
+		}
+	}
+	return -1
+}
+
+// startsValue reports whether the current token can begin an expression. A
+// `!` is left out: after a value it is as likely a mistyped `!=` as a new one.
+func (p *Parser) startsValue() bool {
+	_, ok := nudLookup[p.current().Kind]
+	return ok && !p.at(token.BANG)
+}
+
+// isTypeStart reports whether kind can begin a type.
+func isTypeStart(kind token.Kind) bool {
+	switch kind {
+	case token.IDENT, token.AMP, token.QUESTION, token.QQ, token.ASTERISK, token.RAWPTR,
+		token.LBRACK, token.FN, token.STRUCT, token.IFACE, token.ENUM:
+		return true
+	}
+	return false
 }
 
 // advances token if matched

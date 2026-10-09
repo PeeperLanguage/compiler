@@ -1,0 +1,8 @@
+name = "negative_parameter_without_type"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["expected a name and a type after `mut`\n  --> ", "1 | fn Scale(mut value, factor: i32) -> i32 {\n  |          ^^^^^^^^^ write `mut name: Type`\n", "expected a type after parameter name\n  --> ", "5 | fn Shift(value amount: i32) -> i32 {\n  |               ^ add `: Type` here\n", "`mut` is repeated", "  = help: remove the extra `mut`\n  | \n9 | fn Count(mut total: i32) -> i32 {\n", "14 | fn Keep(mut i32) -> i32 {\n   |         ^^^^^^^ write `mut name: Type`\n", "Compilation failed with 4 error(s)"]
+stderr_excludes = ["\n\n\n", "is unsized", "unknown identifier", "missing parameter binding", "expected ','", "expected ')'"]

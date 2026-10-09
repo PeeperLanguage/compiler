@@ -96,7 +96,7 @@ func Analyze(diag *diagnostics.DiagnosticBag, module *module.Module, preludeID m
 				}
 				diag.AddWarning(diagnostics.WarnUnmodifiedMutable,
 					fmt.Sprintf("mutable binding `%s` is never modified", sym.Name), sym.MutableLocation, "").
-					WithHelp("remove unnecessary `mut`", diagnostics.Fix.Remove(sym.MutableLocation))
+					Help("remove unnecessary `mut`", diagnostics.Fix.Remove(sym.MutableLocation))
 			}
 		})
 	}

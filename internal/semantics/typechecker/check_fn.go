@@ -159,7 +159,8 @@ func (c *checker) checkFunctionShape(decl *ast.FnDecl, fnType *typeinfo.FuncType
 			continue
 		}
 		paramType := fnType.Params[index]
-		if typeinfo.ContainsInvalid(paramType) {
+		// A parameter without a written type was reported by the parser.
+		if param.Type == nil || typeinfo.ContainsInvalid(paramType) {
 			continue
 		}
 		if c.rejectUnsizedType(paramType, param.Type, "parameter") {
@@ -344,6 +345,10 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 		}
 		context := c.typeContextForDecl(decl)
 		for _, param := range method.Params {
+			// A parameter without a written type was reported by the parser.
+			if param.Type == nil {
+				continue
+			}
 			paramType := c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, param.Type, context)
 			if c.rejectUnsizedType(paramType, param.Type, "interface method parameter") {
 				continue
@@ -614,8 +619,8 @@ func (c *checker) checkDeclAttributes(decl ast.Decl) {
 		case ast.AttributeExtern:
 			if fn != nil && fn.Body != nil {
 				d := invalidAttributeError(attr, "attribute `#[extern]` requires a body-less function declaration")
-				d.WithHelp("remove body to declare extern function")
-				d.WithHelp("remove `#[extern]` to keep local definition")
+				d.Help("remove body to declare extern function")
+				d.Help("remove `#[extern]` to keep local definition")
 				c.ctx.Diagnostics.Add(d)
 			}
 		}

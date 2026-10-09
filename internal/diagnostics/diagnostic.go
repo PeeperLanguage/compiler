@@ -209,12 +209,30 @@ func (d *Diagnostic) WithText(kind, message string, color colors.COLOR, fixes ..
 	return d
 }
 
-func (d *Diagnostic) WithNote(message string, fixes ...CodeFix) *Diagnostic {
+func (d *Diagnostic) Note(message string, fixes ...CodeFix) *Diagnostic {
 	return d.WithText("note", message, colors.CYAN, fixes...)
 }
 
-func (d *Diagnostic) WithHelp(help string, fixes ...CodeFix) *Diagnostic {
+func (d *Diagnostic) Help(help string, fixes ...CodeFix) *Diagnostic {
 	return d.WithText("help", help, colors.GREEN, fixes...)
+}
+
+// Choice is one of several texts that would each repair the code when
+// inserted at the same place, and the condition that makes it the right one.
+type Choice struct {
+	If     string
+	Insert string
+}
+
+// HelpWithChoices adds a help line for each choice, with the line as that
+// choice would leave it. It is for code that is wrong where the author's
+// intent cannot be told, so no single fix may be offered as the answer.
+// Insert may carry the spacing the insertion needs; the help names it bare.
+func (d *Diagnostic) HelpWithChoices(at *source.Location, choices ...Choice) *Diagnostic {
+	for _, choice := range choices {
+		d.Help("if "+choice.If+", add `"+strings.TrimSpace(choice.Insert)+"`", Fix.Insert(at, choice.Insert))
+	}
+	return d
 }
 
 const internalCompilerFailureMessage = "internal compiler failure"

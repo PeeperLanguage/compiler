@@ -201,7 +201,7 @@ func reportUninitializedAccess(at effectPlace, location *source.Location, curren
 	diag.Add(diagnostics.NewError(msg).
 		WithCode(diagnostics.ErrUninitializedVariable).
 		WithPrimaryLabel(location, msg).
-		WithHelp(help))
+		Help(help))
 }
 
 func copyInitState(current initState) initState {

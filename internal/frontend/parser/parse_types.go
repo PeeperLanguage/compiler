@@ -174,8 +174,8 @@ func (p *Parser) parseOptionalTypeExpr() ast.TypeExpr {
 		p.diag.Add(diagnostics.NewInfo("redundant optional marker").
 			WithCode(diagnostics.InfoRedundantOptional).
 			WithPrimaryLabel(loc, "").
-			WithHelp("remove redundant `?`", diagnostics.Fix.Remove(loc)).
-			WithNote("nested optional types are the same as a single optional type"))
+			Help("remove redundant `?`", diagnostics.Fix.Remove(loc)).
+			Note("nested optional types are the same as a single optional type"))
 	}
 	return inner
 }
@@ -276,6 +276,7 @@ func (p *Parser) parseFuncTypeExpr() ast.TypeExpr {
 	lparenPos := p.stream[p.pos-1].Start
 	var params []ast.Param
 	if !p.at(token.RPAREN) {
+		var missingCommas []diagnostics.CodeFix
 		for {
 			var name *ast.Ident
 			if p.at(token.IDENT) && p.next().Kind == token.COLON {
@@ -291,10 +292,11 @@ func (p *Parser) parseFuncTypeExpr() ast.TypeExpr {
 				startPos = ast.StartOf(name)
 			}
 			params = append(params, ast.Param{Name: name, Type: param, Location: source.NewLocation(p.filePath, startPos, ast.EndOf(param))})
-			if !p.match(token.COMMA) {
+			if !p.listContinues(isTypeStart(p.current().Kind), &missingCommas) {
 				break
 			}
 		}
+		p.reportMissingCommas(missingCommas)
 	}
 	p.expectClose(lparenPos, token.RPAREN, "(")
 	var ret ast.TypeExpr
@@ -348,7 +350,7 @@ func (p *Parser) parseEnumTypeExpr() ast.TypeExpr {
 // --- Shared type body parsers ---
 
 func (p *Parser) parseTypeFields(openerMsg, itemMsg string) ([]ast.TypeField, *token.Token, bool) {
-	return parseBracedItemList(p, openerMsg, itemMsg,
+	return parseBracedItemList(p, openerMsg, itemMsg, false,
 		func() (ast.TypeField, bool) {
 			name := p.parseIdent()
 			if name == nil {
@@ -366,7 +368,7 @@ func (p *Parser) parseTypeFields(openerMsg, itemMsg string) ([]ast.TypeField, *t
 }
 
 func (p *Parser) parseInterfaceMethods() ([]ast.TypeMethod, *token.Token, bool) {
-	return parseBracedItemList(p, "expected '{' after iface", "expected '}' after iface methods",
+	return parseBracedItemList(p, "expected '{' after iface", "expected '}' after iface methods", false,
 		func() (ast.TypeMethod, bool) {
 			if p.consume(token.FN, "expected 'fn' before interface method") == nil {
 				return ast.TypeMethod{}, false
@@ -397,11 +399,7 @@ func (p *Parser) parseInterfaceMethods() ([]ast.TypeMethod, *token.Token, bool) 
 				p.diag.AddError(diagnostics.ErrInvalidDeclaration,
 					"interface method defaults are not supported", ast.LocOf(param.Default), "")
 			}
-			var ret ast.TypeExpr
-			if p.match(token.ARROW) {
-				ret = p.parseTypeExpr()
-				// nil is OK - type-checker validates return types
-			}
+			ret := p.parseReturnType()
 			returnOrigins := p.parseReturnOriginClause()
 			endPos := ast.EndOf(ret)
 			if returnOrigins != nil && returnOrigins.Location != nil {
@@ -426,7 +424,7 @@ func (p *Parser) parseInterfaceMethods() ([]ast.TypeMethod, *token.Token, bool) 
 }
 
 func (p *Parser) parseEnumVariants() ([]ast.EnumVariant, *token.Token, bool) {
-	return parseBracedItemList(p, "expected '{' after enum", "expected '}' after enum variants",
+	return parseBracedItemList(p, "expected '{' after enum", "expected '}' after enum variants", false,
 		func() (ast.EnumVariant, bool) {
 			name := p.parseIdent()
 			if name == nil {
@@ -475,16 +473,18 @@ func (p *Parser) parseOptionalTypeParams() []ast.TypeParam {
 	}
 	langlePos := p.stream[p.pos-1].Start
 	var params []ast.TypeParam
+	var missingCommas []diagnostics.CodeFix
 	for {
 		name := p.parseIdent()
 		if name == nil {
 			break
 		}
 		params = append(params, ast.TypeParam{Name: name, Location: name.Location})
-		if !p.match(token.COMMA) {
+		if !p.listContinues(p.at(token.IDENT), &missingCommas) {
 			break
 		}
 	}
+	p.reportMissingCommas(missingCommas)
 	p.expectClose(langlePos, token.GT, "<")
 	return params
 }
@@ -494,38 +494,95 @@ func (p *Parser) parseParams() []ast.Param {
 	if p.at(token.RPAREN) {
 		return params
 	}
+	var missingCommas []diagnostics.CodeFix
 	for {
 		param, ok := p.parseParam()
 		if !ok {
 			break
 		}
 		params = append(params, param)
-		if !p.match(token.COMMA) {
+		// `mut` or a name with its type can only begin another parameter.
+		if !p.listContinues(p.at(token.MUT) || p.startsNamedParam(false), &missingCommas) {
 			break
 		}
 	}
+	p.reportMissingCommas(missingCommas)
 	return params
 }
 
-func (p *Parser) parseParam() (ast.Param, bool) {
-	var (
-		mutableLocation *source.Location
-		modifierStart   source.Position
-	)
-	if p.at(token.MUT) {
-		tok := p.advance()
-		mutableLocation = source.NewLocation(p.filePath, tok.Start, tok.End)
-		modifierStart = tok.Start
+// startsNamedParam reports whether the current token is a parameter name:
+// followed by `:`, or by a token that begins its type when the colon is left
+// out. A name followed by anything else is an unnamed parameter's type, unless
+// a modifier came before it: only a named parameter takes one.
+func (p *Parser) startsNamedParam(hasModifier bool) bool {
+	if !p.at(token.IDENT) {
+		return false
 	}
-	if p.at(token.IDENT) && p.pos+1 < len(p.stream) && p.stream[p.pos+1].Kind == token.COLON {
+	switch next := p.next(); next.Kind {
+	case token.COLON:
+		return true
+	case token.IDENT, token.AMP, token.ASTERISK, token.QUESTION, token.QQ, token.RAWPTR, token.FN:
+		if next.Start.Line == p.current().Start.Line {
+			return true
+		}
+	}
+	return hasModifier
+}
+
+// parseParamModifiers reads the modifier keywords written before a parameter
+// and returns where `mut` stood, or nil without one. A modifier written twice
+// is reported and counted once.
+func (p *Parser) parseParamModifiers() *source.Location {
+	var mutableLocation *source.Location
+	for p.at(token.MUT) {
+		tok := p.advance()
+		if mutableLocation == nil {
+			mutableLocation = source.NewLocation(p.filePath, tok.Start, tok.End)
+			continue
+		}
+		// The fix takes the space after the keyword with it.
+		removedEnd := tok.End
+		if p.isOnLineOfPrev() {
+			removedEnd = p.current().Start
+		}
+		p.diag.Add(diagnostics.NewError("`mut` is repeated").
+			WithCode(diagnostics.ErrInvalidDeclaration).
+			WithPrimaryLabel(source.NewLocation(p.filePath, tok.Start, tok.End), "").
+			Help("remove the extra `mut`", diagnostics.Fix.Remove(source.NewLocation(p.filePath, tok.Start, removedEnd))))
+	}
+	return mutableLocation
+}
+
+func (p *Parser) parseParam() (ast.Param, bool) {
+	mutableLocation := p.parseParamModifiers()
+	if p.startsNamedParam(mutableLocation != nil) {
 		name := p.parseIdent()
 		if name == nil {
 			return ast.Param{}, false
 		}
-		if p.consume(token.COLON, "expected ':' after parameter name") == nil {
-			return ast.Param{}, false
+		var ty ast.TypeExpr
+		isNextParam := p.at(token.IDENT) && p.next().Kind == token.COLON
+		switch {
+		case p.match(token.COLON):
+			ty = p.parseTypeExpr()
+		case isTypeStart(p.current().Kind) && p.isOnLineOfPrev() && !isNextParam:
+			// `fn f(a i32)`: two names in a row can only be a name and its type.
+			p.diag.Add(insertionError("expected ':' after parameter name", p.prev().End, p.filePath, ":", ":"))
+			ty = p.parseTypeExpr()
+		case isNextParam:
+			// `fn f(a b: i32)`: the name stands alone. Keeping it as a
+			// parameter lets the rest of the list and the body be checked.
+			at := p.prev().End
+			p.diag.Add(diagnostics.NewError("expected a type after parameter name").
+				WithCode(diagnostics.ErrExpectedToken).
+				WithPrimaryLabel(source.NewLocation(p.filePath, at, at), "add `: Type` here"))
+		default:
+			// `fn f(mut a)`, `fn f(mut i32)`: one word after the modifier is
+			// the name without its type or the type without its name.
+			p.diag.Add(diagnostics.NewError("expected a name and a type after `mut`").
+				WithCode(diagnostics.ErrExpectedToken).
+				WithPrimaryLabel(source.NewLocation(p.filePath, *mutableLocation.Start, p.prev().End), "write `mut name: Type`"))
 		}
-		ty := p.parseTypeExpr()
 		// ty may be nil if type parsing failed; continue with name
 		endPos := ast.EndOf(name)
 		if ty != nil {
@@ -540,7 +597,7 @@ func (p *Parser) parseParam() (ast.Param, bool) {
 		}
 		startPos := ast.StartOf(name)
 		if mutableLocation != nil {
-			startPos = modifierStart
+			startPos = *mutableLocation.Start
 		}
 		return ast.Param{IsMutable: mutableLocation != nil, MutableLocation: mutableLocation, Name: name, Type: ty, Default: defaultValue, Location: source.NewLocation(p.filePath, startPos, endPos)}, true
 	}
@@ -551,7 +608,7 @@ func (p *Parser) parseParam() (ast.Param, bool) {
 	if mutableLocation != nil {
 		p.diag.Add(diagnostics.NewError("mutable parameter requires a named binding").
 			WithCode(diagnostics.ErrInvalidDeclaration).
-			WithPrimaryLabel(source.NewLocation(p.filePath, modifierStart, p.prev().End), "add a parameter name after the modifier"))
+			WithPrimaryLabel(source.NewLocation(p.filePath, *mutableLocation.Start, p.prev().End), "add a parameter name after the modifier"))
 		return ast.Param{}, false
 	}
 	return ast.Param{Type: ty, Location: ast.LocOf(ty)}, true

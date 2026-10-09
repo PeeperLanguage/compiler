@@ -1,0 +1,19 @@
+fn Double(value: i32) -> i32 {
+    return value * 2;
+}
+
+fn Sum(first: i32, second: i32) -> i32 {
+    return first + second;
+}
+
+fn main() -> i32 {
+    let values = [3]i32{1, 2, 3};
+    let first = values[0;
+    let second = Double(values[1);
+    let third = (first + second;
+    let total = Sum(first, second
+    let count = 3;
+    Double(total
+    count = 4;
+    return third;
+}

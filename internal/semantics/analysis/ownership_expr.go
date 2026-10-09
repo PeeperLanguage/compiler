@@ -177,7 +177,7 @@ func (a *analyzer) reportPointerEscape(expr thir.Expr, origin *symbols.Symbol) {
 	if origin.Location != nil {
 		diag.WithSecondaryLabel(origin.Location, "local storage declared here")
 	}
-	diag.WithHelp("allocate the value with an explicit allocator before returning a pointer to it")
+	diag.Help("allocate the value with an explicit allocator before returning a pointer to it")
 }
 
 func ownershipTrackedSymbol(sym *symbols.Symbol) bool {

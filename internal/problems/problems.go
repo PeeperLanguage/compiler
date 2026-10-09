@@ -21,7 +21,7 @@ func UnreachableCode(loc *source.Location) *diagnostics.Diagnostic {
 	return diagnostics.NewWarning("unreachable code").
 		WithCode(diagnostics.WarnUnreachableCode).
 		WithPrimaryLabel(loc, "this code is unreachable").
-		WithHelp("remove this code or restructure control flow")
+		Help("remove this code or restructure control flow")
 }
 
 func Redeclaration(message string, current, previous *source.Location) *diagnostics.Diagnostic {
