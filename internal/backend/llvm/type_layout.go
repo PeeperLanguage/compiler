@@ -1,7 +1,6 @@
 package llvm
 
 import (
-	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -335,8 +334,10 @@ func (e *llvmEmitter) variantLayout(typ ir.Type) (*llvmLayout, bool) {
 	return layout, true
 }
 
+// namedLLVMTypeName names a named composite by its display name, the same
+// text the MIR and THIR dumps use for it.
 func namedLLVMTypeName(types *ir.TypeTable, id ir.TypeID) string {
-	return "%peeper.type." + hex.EncodeToString([]byte(types.ABIKey(id)))
+	return `%"` + llvmEscapeString(types.DisplayName(id)) + `"`
 }
 
 func (e *llvmEmitter) emitNamedTypeDefinitions(out *strings.Builder) bool {

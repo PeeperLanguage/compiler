@@ -914,6 +914,8 @@ func (e *Cast) TypeID() TypeID {
 	return e.Type
 }
 
+// SignatureText formats a signature for compiler dumps, naming types by
+// TypeTable.DisplayName.
 func SignatureText(types *TypeTable, params []Param, returnType TypeID) string {
 	if types == nil {
 		panic("formatting IR signature without a type table")
@@ -930,12 +932,12 @@ func SignatureText(types *TypeTable, params []Param, returnType TypeID) string {
 				b.WriteString(": ")
 			}
 		}
-		b.WriteString(types.Text(param.Type))
+		b.WriteString(types.DisplayName(param.Type))
 	}
 	b.WriteString(")")
-	if returnType != InvalidType && types.Text(returnType) != "void" {
+	if returnType != InvalidType && types.DisplayName(returnType) != "void" {
 		b.WriteString(" -> ")
-		b.WriteString(types.Text(returnType))
+		b.WriteString(types.DisplayName(returnType))
 	}
 	return b.String()
 }

@@ -924,6 +924,7 @@ func isFloatType(types *ir.TypeTable, id ir.TypeID) bool {
 	return ok && typ.Kind == ir.TypeFloat
 }
 
+// llvmEscapeString escapes bytes for an LLVM quoted string or name.
 func llvmEscapeString(s string) string {
 	var sb strings.Builder
 	for i := range len(s) {
@@ -938,7 +939,6 @@ func llvmEscapeString(s string) string {
 			fmt.Fprintf(&sb, "\\%02X", b)
 		}
 	}
-	sb.WriteString(`\00`)
 	return sb.String()
 }
 

@@ -49,3 +49,58 @@ func TestFunctionIdentityUsesModuleAndDeclarationSurface(t *testing.T) {
 		t.Fatal("negative declaration occurrence produced function identity")
 	}
 }
+
+func TestParseTypeIdentityReversesTypeIdentity(t *testing.T) {
+	owner := ID{Origin: "core", Namespace: "core", ImportPath: "global"}
+	gotOwner, gotName, ok := ParseTypeIdentity(TypeIdentity(owner, "Str"))
+	if !ok || gotOwner != owner || gotName != "Str" {
+		t.Fatalf("ParseTypeIdentity = %#v, %q, %v", gotOwner, gotName, ok)
+	}
+	instance := TypeIdentity(owner, "Box") + "<" + Frame("integer", "i32") + ">"
+	if _, name, ok := ParseTypeIdentity(instance); !ok || name != "Box" {
+		t.Fatalf("instance name = %q, %v; want Box", name, ok)
+	}
+	for _, identity := range []string{"", "Counter", "5_6c6f63616c_::Counter", TypeIdentity(owner, "")} {
+		if _, _, ok := ParseTypeIdentity(identity); ok {
+			t.Fatalf("ParseTypeIdentity(%q) accepted a non-module identity", identity)
+		}
+	}
+}
+
+func TestDisplayTextSkipsEmptyPartsAndEscapesSeparators(t *testing.T) {
+	tests := []struct {
+		id   ID
+		want string
+	}{
+		{ID{Origin: "local", ImportPath: "app/alpha"}, "local:app/alpha"},
+		{ID{Origin: "core", Namespace: "core", ImportPath: "global"}, "core:core@global"},
+		{ID{Origin: "dependency", Namespace: "ns", Dependency: "dep", ImportPath: "a/b"}, "dependency:ns@dep+a/b"},
+		{ID{Origin: "local", ImportPath: "app/my:dir/a b"}, "local:app/my%3Adir/a%20b"},
+	}
+	for _, test := range tests {
+		if got := test.id.DisplayText(); got != test.want {
+			t.Fatalf("DisplayText(%#v) = %q, want %q", test.id, got, test.want)
+		}
+	}
+}
+
+func TestDisplayTextKeepsDistinctIdentitiesDistinct(t *testing.T) {
+	ids := []ID{
+		{Origin: "local", ImportPath: "a/b"},
+		{Origin: "local", Namespace: "a", ImportPath: "b"},
+		{Origin: "local", Dependency: "a", ImportPath: "b"},
+		{Origin: "local", ImportPath: "a@b"},
+		{Origin: "local", ImportPath: "a+b"},
+		{Origin: "local", ImportPath: "a%2Fb"},
+		{Origin: "local", ImportPath: "a:b"},
+		{Origin: "local:a", ImportPath: "b"},
+	}
+	seen := make(map[string]ID)
+	for _, id := range ids {
+		text := id.DisplayText()
+		if previous, ok := seen[text]; ok {
+			t.Fatalf("%#v and %#v share display text %q", previous, id, text)
+		}
+		seen[text] = id
+	}
+}

@@ -1604,8 +1604,8 @@ fn main() -> i32 {
 	if !ok || got == nil {
 		t.Fatalf("expected myval type")
 	}
-	if got.Text() != "i32" {
-		t.Fatalf("myval type = %q, want i32", got.Text())
+	if typeinfo.TypeText(got) != "i32" {
+		t.Fatalf("myval type = %q, want i32", typeinfo.TypeText(got))
 	}
 }
 
@@ -1633,8 +1633,8 @@ fn main() -> i32 {
 	if !ok || got == nil {
 		t.Fatalf("expected myval type")
 	}
-	if got.Text() != "bool" {
-		t.Fatalf("myval type = %q, want bool", got.Text())
+	if typeinfo.TypeText(got) != "bool" {
+		t.Fatalf("myval type = %q, want bool", typeinfo.TypeText(got))
 	}
 }
 

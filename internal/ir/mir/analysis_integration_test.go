@@ -141,7 +141,7 @@ fn Invoke(callback: fn(i32) -> i32, value: i32) -> i32 { return callback(value);
 				if !ok || assignment.Name != firstArg.Name {
 					continue
 				}
-				if move, ok := assignment.Value.(*mir.Move); ok && move.Src.Text() == addressedRoot.Text() {
+				if move, ok := assignment.Value.(*mir.Move); ok && move.Src.Text(nil) == addressedRoot.Text(nil) {
 					return
 				}
 			}

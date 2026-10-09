@@ -50,7 +50,7 @@ func (r *Resolver) instantiateType(diag *diagnostics.DiagnosticBag, base *typein
 		return base
 	}
 	identity := typeInstanceIdentity(base, canonicalArguments)
-	applicationText := (&typeinfo.DefinedType{Name: base.Name, TypeArguments: canonicalArguments}).Text()
+	applicationText := typeinfo.TypeText(&typeinfo.DefinedType{Name: base.Name, TypeArguments: canonicalArguments})
 	for _, origin := range chain {
 		if origin.declarationIdentity != base.Identity {
 			continue
@@ -102,7 +102,7 @@ func (r *Resolver) instantiateType(diag *diagnostics.DiagnosticBag, base *typein
 		r.mu.Unlock()
 		if diag != nil {
 			diag.AddError(diagnostics.ErrInvalidType,
-				"generic type declaration is unavailable for `"+base.Text()+"`", ast.LocOf(node), "recompile declaration module")
+				"generic type declaration is unavailable for `"+typeinfo.TypeText(base)+"`", ast.LocOf(node), "recompile declaration module")
 		}
 		return &typeinfo.InvalidType{}
 	}
@@ -193,7 +193,7 @@ func (r *Resolver) CompleteTypeInstances(diag *diagnostics.DiagnosticBag, bases 
 		chain := []typeInstantiationFrame{{
 			declarationIdentity: cached.base.Identity,
 			applicationIdentity: identity,
-			applicationText:     cached.typ.Text(),
+			applicationText:     typeinfo.TypeText(cached.typ),
 			node:                declaration.Syntax.UnderlyingType(),
 		}}
 		underlying := r.typeInstanceUnderlying(diag, declarationModule, declaration, cached.typ, chain)

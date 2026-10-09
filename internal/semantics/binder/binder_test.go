@@ -238,7 +238,7 @@ fn Use(box: Box<i32>, again: Box<i32>, other: Box<i64>, nested: Box<Box<i32>>, n
 		t.Fatalf("Use type = %#v", use.Type)
 	}
 	box, ok := fn.Params[0].(*typeinfo.DefinedType)
-	if !ok || box.Text() != "Box<i32>" {
+	if !ok || typeinfo.TypeText(box) != "Box<i32>" {
 		t.Fatalf("Box<i32> instance = %#v", fn.Params[0])
 	}
 	if fn.Params[1] != box {
@@ -277,7 +277,7 @@ fn Use(box: Box<i32>, again: Box<i32>, other: Box<i64>, nested: Box<Box<i32>>, n
 		t.Fatalf("Reader<i32> payload = %#v", fn.Params[6])
 	}
 	choice, ok := fn.Params[7].(*typeinfo.DefinedType)
-	if !ok || choice.Text() != "Choice<i32>" {
+	if !ok || typeinfo.TypeText(choice) != "Choice<i32>" {
 		t.Fatalf("Choice<i32> instance = %#v", fn.Params[7])
 	}
 	choiceDescriptor, ok := typeinfo.VariantDescriptorOf(choice)

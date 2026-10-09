@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"compiler/internal/module"
+	"compiler/internal/moduleid"
 	"compiler/internal/project"
 )
 
@@ -91,22 +92,12 @@ func identityComponent(value string) string {
 	if value == "" {
 		return emptyIdentityComponent
 	}
-	var encoded strings.Builder
-	for i := 0; i < len(value); i++ {
-		c := value[i]
-		// Escape a leading '.' so "." and ".." cannot form dot segments, and
-		// escape a lone "_" so it cannot collide with the empty marker.
-		if i == 0 && (c == '.' || (c == '_' && len(value) == 1)) {
-			fmt.Fprintf(&encoded, "%%%02X", c)
-			continue
-		}
-		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' {
-			encoded.WriteByte(c)
-			continue
-		}
-		fmt.Fprintf(&encoded, "%%%02X", c)
+	// Escape a leading '.' so "." and ".." cannot form dot segments, and
+	// escape a lone "_" so it cannot collide with the empty marker.
+	if c := value[0]; c == '.' || value == emptyIdentityComponent {
+		return fmt.Sprintf("%%%02X", c) + moduleid.EscapeComponent(value[1:])
 	}
-	return encoded.String()
+	return moduleid.EscapeComponent(value)
 }
 
 func replacePath(stage, target string) error {

@@ -3,11 +3,14 @@ package typeinfo
 import (
 	"strconv"
 	"strings"
+
+	"compiler/internal/moduleid"
 )
 
 type Type interface {
-	// Text returns source-like text for diagnostics and other human-facing output.
-	Text() string
+	// text returns source-like text; qualified prefixes named types with their
+	// declaring module so compiler dumps can tell same-named types apart.
+	text(qualified bool) string
 	// structure returns immediate compiler-facing metadata and child relationships.
 	structure() typeStructure
 	isLowerable(*lowerQuery, bool) bool
@@ -216,15 +219,15 @@ type EnumType struct {
 	Cases []VariantCase
 }
 
-func (t *InvalidType) Text() string {
+func (t *InvalidType) text(qualified bool) string {
 	if t.Name != "" {
 		return t.Name
 	}
 	return "<invalid>"
 }
-func (*UnknownType) Text() string { return "<unknown>" }
+func (*UnknownType) text(qualified bool) string { return "<unknown>" }
 
-func (t *IntegerType) Text() string {
+func (t *IntegerType) text(qualified bool) string {
 	if t == nil {
 		return ""
 	}
@@ -234,42 +237,42 @@ func (t *IntegerType) Text() string {
 	return "u" + strconv.Itoa(t.Bits)
 }
 
-func (*ByteType) Text() string { return "byte" }
+func (*ByteType) text(qualified bool) string { return "byte" }
 
-func (*CharType) Text() string { return "char" }
+func (*CharType) text(qualified bool) string { return "char" }
 
-func (t *FloatType) Text() string {
+func (t *FloatType) text(qualified bool) string {
 	if t == nil {
 		return ""
 	}
 	return "f" + strconv.Itoa(t.Bits)
 }
 
-func (*BoolType) Text() string { return "bool" }
+func (*BoolType) text(qualified bool) string { return "bool" }
 
-func (*CStrType) Text() string { return "cstr" }
+func (*CStrType) text(qualified bool) string { return "cstr" }
 
-func (*StringType) Text() string { return "str" }
+func (*StringType) text(qualified bool) string { return "str" }
 
-func (*NoneType) Text() string { return "none" }
+func (*NoneType) text(qualified bool) string { return "none" }
 
-func (*AllocatorType) Text() string { return "Allocator" }
+func (*AllocatorType) text(qualified bool) string { return "Allocator" }
 
-func (t *NamedType) Text() string {
+func (t *NamedType) text(qualified bool) string {
 	if t == nil {
 		return ""
 	}
 	return t.Name
 }
 
-func (t *TypeParameterType) Text() string {
+func (t *TypeParameterType) text(qualified bool) string {
 	if t == nil {
 		return ""
 	}
 	return t.Name
 }
 
-func (t *DefinedType) Text() string {
+func (t *DefinedType) text(qualified bool) string {
 	if t == nil {
 		return ""
 	}
@@ -280,14 +283,20 @@ func (t *DefinedType) Text() string {
 			arguments[index] = parameter
 		}
 	}
+	name := t.Name
+	if qualified {
+		if owner, declared, ok := moduleid.ParseTypeIdentity(t.Identity); ok {
+			name = owner.DisplayText() + "::" + declared
+		}
+	}
 	if len(arguments) == 0 {
-		return t.Name
+		return name
 	}
 	parts := make([]string, len(arguments))
 	for index, argument := range arguments {
-		parts[index] = TypeText(argument)
+		parts[index] = typeText(argument, qualified)
 	}
-	return t.Name + "<" + strings.Join(parts, ", ") + ">"
+	return name + "<" + strings.Join(parts, ", ") + ">"
 }
 
 // TypeParameterBindings is the canonical substitution environment for one
@@ -417,21 +426,21 @@ func (t *EnumType) variantDescriptor() (VariantDescriptor, bool) {
 	}, true
 }
 
-func (t *OwnedPtrType) Text() string {
+func (t *OwnedPtrType) text(qualified bool) string {
 	if t == nil {
 		return ""
 	}
-	return "*" + TypeText(t.Target)
+	return "*" + typeText(t.Target, qualified)
 }
 
-func (t *RawPtrType) Text() string {
+func (t *RawPtrType) text(qualified bool) string {
 	if t == nil {
 		return ""
 	}
 	return "rawptr"
 }
 
-func (t *RefType) Text() string {
+func (t *RefType) text(qualified bool) string {
 	if t == nil {
 		return ""
 	}
@@ -439,33 +448,33 @@ func (t *RefType) Text() string {
 	if t.IsMutable {
 		prefix = "&mut "
 	}
-	return prefix + TypeText(t.Target)
+	return prefix + typeText(t.Target, qualified)
 }
 
-func (t *OptionalType) Text() string {
+func (t *OptionalType) text(qualified bool) string {
 	if t == nil {
 		return ""
 	}
-	return "?" + TypeText(t.Inner)
+	return "?" + typeText(t.Inner, qualified)
 }
 
-func (t *ArrayType) Text() string {
+func (t *ArrayType) text(qualified bool) string {
 	if t == nil {
 		return ""
 	}
 	switch t.Shape {
 	case ArrayOwner:
-		return "[]" + TypeText(t.Elem)
+		return "[]" + typeText(t.Elem, qualified)
 	case ArraySlice:
-		return "[..]" + TypeText(t.Elem)
+		return "[..]" + typeText(t.Elem, qualified)
 	}
 	if t.Len == "" {
-		return "[" + TypeText(t.Elem) + "]"
+		return "[" + typeText(t.Elem, qualified) + "]"
 	}
-	return "[" + t.Len + "]" + TypeText(t.Elem)
+	return "[" + t.Len + "]" + typeText(t.Elem, qualified)
 }
 
-func (t *FuncType) Text() string {
+func (t *FuncType) text(qualified bool) string {
 	if t == nil {
 		return ""
 	}
@@ -475,10 +484,10 @@ func (t *FuncType) Text() string {
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		b.WriteString(TypeText(param))
+		b.WriteString(typeText(param, qualified))
 	}
 	b.WriteString(")")
-	if ret := TypeText(t.Return); ret != "" {
+	if ret := typeText(t.Return, qualified); ret != "" {
 		b.WriteString(" -> ")
 		b.WriteString(ret)
 	}
@@ -511,7 +520,7 @@ func (t *FuncType) ReturnOriginText() string {
 	return ""
 }
 
-func (t *StructType) Text() string {
+func (t *StructType) text(qualified bool) string {
 	if t == nil {
 		return ""
 	}
@@ -523,13 +532,13 @@ func (t *StructType) Text() string {
 		}
 		b.WriteString(field.Name)
 		b.WriteString(": ")
-		b.WriteString(TypeText(field.Type))
+		b.WriteString(typeText(field.Type, qualified))
 	}
 	b.WriteString("}")
 	return b.String()
 }
 
-func (t *InterfaceType) Text() string {
+func (t *InterfaceType) text(qualified bool) string {
 	if t == nil {
 		return ""
 	}
@@ -541,17 +550,17 @@ func (t *InterfaceType) Text() string {
 		}
 		b.WriteString(method.Name)
 		b.WriteString("(self: ")
-		b.WriteString(TypeText(method.Receiver.typeFor(&NamedType{Name: "Self"})))
+		b.WriteString(typeText(method.Receiver.typeFor(&NamedType{Name: "Self"}), qualified))
 		for _, param := range method.Params {
 			b.WriteString(", ")
 			b.WriteString(param.Name)
 			if param.Name != "" {
 				b.WriteString(": ")
 			}
-			b.WriteString(TypeText(param.Type))
+			b.WriteString(typeText(param.Type, qualified))
 		}
 		b.WriteString(")")
-		if ret := TypeText(method.Return); ret != "" {
+		if ret := typeText(method.Return, qualified); ret != "" {
 			b.WriteString(": ")
 			b.WriteString(ret)
 		}
@@ -560,7 +569,7 @@ func (t *InterfaceType) Text() string {
 	return b.String()
 }
 
-func (t *EnumType) Text() string {
+func (t *EnumType) text(qualified bool) string {
 	if t == nil {
 		return ""
 	}
@@ -568,15 +577,26 @@ func (t *EnumType) Text() string {
 	for index, variant := range t.Cases {
 		cases[index] = variant.Name
 		if variant.Payload != nil {
-			cases[index] += ": " + TypeText(variant.Payload)
+			cases[index] += ": " + typeText(variant.Payload, qualified)
 		}
 	}
 	return "enum{" + strings.Join(cases, ", ") + "}"
 }
 
+// TypeText returns source-like text for diagnostics and other human-facing output.
 func TypeText(typ Type) string {
+	return typeText(typ, false)
+}
+
+// QualifiedTypeText is TypeText with named types written as their declaring
+// module's display text and name, e.g. local:app/alpha::Counter<i32>.
+func QualifiedTypeText(typ Type) string {
+	return typeText(typ, true)
+}
+
+func typeText(typ Type, qualified bool) string {
 	if typ == nil {
 		return ""
 	}
-	return typ.Text()
+	return typ.text(qualified)
 }

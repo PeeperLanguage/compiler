@@ -77,13 +77,13 @@ type Block struct {
 // cannot be outflanked by a node declared elsewhere.
 type Instr interface {
 	instrNode()
-	Text() string
+	Text(types *ir.TypeTable) string
 	SourceLocation() *source.Location
 }
 
 type Terminator interface {
 	termNode()
-	Text() string
+	Text(types *ir.TypeTable) string
 	SourceLocation() *source.Location
 }
 
@@ -141,14 +141,14 @@ type Drop struct {
 type ValueExpr interface {
 	valueExprNode()
 	TypeID() ir.TypeID
-	Text() string
+	Text(types *ir.TypeTable) string
 	SourceLocation() *source.Location
 }
 
 type ValueRef interface {
 	valueRefNode()
 	TypeID() ir.TypeID
-	Text() string
+	Text(types *ir.TypeTable) string
 	SourceLocation() *source.Location
 }
 
@@ -348,45 +348,45 @@ type InterfaceCall struct {
 	Location     *source.Location
 }
 
-func (i *Assign) Text() string {
-	return fmt.Sprintf("%s = %s", i.Name, i.Value.Text())
+func (i *Assign) Text(types *ir.TypeTable) string {
+	return fmt.Sprintf("%s = %s", i.Name, i.Value.Text(types))
 }
 
-func (i *Store) Text() string {
-	return fmt.Sprintf("store %s, %s", i.Place.Text(), i.Value.Text())
+func (i *Store) Text(types *ir.TypeTable) string {
+	return fmt.Sprintf("store %s, %s", i.Place.Text(types), i.Value.Text(types))
 }
 
-func (i *Print) Text() string {
-	return "print " + i.Value.Text()
+func (i *Print) Text(types *ir.TypeTable) string {
+	return "print " + i.Value.Text(types)
 }
 
-func (i *Drop) Text() string {
-	return "drop " + i.Value.Text()
+func (i *Drop) Text(types *ir.TypeTable) string {
+	return "drop " + i.Value.Text(types)
 }
 
-func (i *Jump) Text() string {
+func (i *Jump) Text(types *ir.TypeTable) string {
 	return fmt.Sprintf("jmp b%d", i.TargetID)
 }
 
-func (i *Branch) Text() string {
-	return fmt.Sprintf("br %s, b%d, b%d", i.Cond.Text(), i.ThenID, i.ElseID)
+func (i *Branch) Text(types *ir.TypeTable) string {
+	return fmt.Sprintf("br %s, b%d, b%d", i.Cond.Text(types), i.ThenID, i.ElseID)
 }
 
-func (i *SwitchVariant) Text() string {
+func (i *SwitchVariant) Text(types *ir.TypeTable) string {
 	var b strings.Builder
 	b.WriteString("switch-variant ")
-	b.WriteString(i.Value.Text())
+	b.WriteString(i.Value.Text(types))
 	for _, target := range i.Targets {
 		fmt.Fprintf(&b, ", case %d: b%d", target.Case, target.TargetID)
 	}
 	return b.String()
 }
 
-func (i *Ret) Text() string {
+func (i *Ret) Text(types *ir.TypeTable) string {
 	if i == nil || i.Value == nil {
 		return "ret"
 	}
-	return "ret " + i.Value.Text()
+	return "ret " + i.Value.Text(types)
 }
 
 func (*Assign) instrNode()         {}
@@ -491,27 +491,33 @@ func (v *VariantIs) SourceLocation() *source.Location         { return v.Locatio
 func (v *InterfaceMake) SourceLocation() *source.Location     { return v.Location }
 func (v *InterfaceCall) SourceLocation() *source.Location     { return v.Location }
 
-func (r *RefConst) Text() string { return r.Value }
-func (r *RefName) Text() string  { return r.Name }
-func (v *StringLiteral) Text() string {
+func (r *RefConst) Text(types *ir.TypeTable) string { return r.Value }
+func (r *RefName) Text(types *ir.TypeTable) string  { return r.Name }
+func (v *StringLiteral) Text(types *ir.TypeTable) string {
 	if v == nil {
 		return "string-literal"
 	}
 	return v.Name
 }
-func (v *Move) Text() string   { return v.Src.Text() }
-func (v *Unary) Text() string  { return fmt.Sprintf("%s %s", v.Op, v.Arg.Text()) }
-func (v *Binary) Text() string { return fmt.Sprintf("%s %s, %s", v.Op, v.Left.Text(), v.Right.Text()) }
-func (v *StringConcat) Text() string {
-	return fmt.Sprintf("concat %s, %s", v.Left.Text(), v.Right.Text())
+func (v *Move) Text(types *ir.TypeTable) string { return v.Src.Text(types) }
+func (v *Unary) Text(types *ir.TypeTable) string {
+	return fmt.Sprintf("%s %s", v.Op, v.Arg.Text(types))
 }
-func (v *Cast) Text() string { return fmt.Sprintf("cast %s to type#%d", v.Arg.Text(), v.Type) }
-func (p *Place) Text() string {
+func (v *Binary) Text(types *ir.TypeTable) string {
+	return fmt.Sprintf("%s %s, %s", v.Op, v.Left.Text(types), v.Right.Text(types))
+}
+func (v *StringConcat) Text(types *ir.TypeTable) string {
+	return fmt.Sprintf("concat %s, %s", v.Left.Text(types), v.Right.Text(types))
+}
+func (v *Cast) Text(types *ir.TypeTable) string {
+	return fmt.Sprintf("cast %s to %s", v.Arg.Text(types), types.DisplayName(v.Type))
+}
+func (p *Place) Text(types *ir.TypeTable) string {
 	if p == nil || p.Root == nil {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString(p.Root.Text())
+	b.WriteString(p.Root.Text(types))
 	for _, projection := range p.Projections {
 		switch projection.Kind {
 		case PlaceProjectionDeref:
@@ -525,7 +531,7 @@ func (p *Place) Text() string {
 		case PlaceProjectionIndex:
 			b.WriteString("[")
 			if projection.Index != nil {
-				b.WriteString(projection.Index.Text())
+				b.WriteString(projection.Index.Text(types))
 			}
 			b.WriteString("]")
 		case PlaceProjectionVariantPayload:
@@ -535,125 +541,127 @@ func (p *Place) Text() string {
 	return b.String()
 }
 
-func (v *AddrOf) Text() string { return fmt.Sprintf("addr %s", v.Place.Text()) }
-func (v *SliceView) Text() string {
-	return fmt.Sprintf("view %s", v.Source.Text())
+func (v *AddrOf) Text(types *ir.TypeTable) string { return fmt.Sprintf("addr %s", v.Place.Text(types)) }
+func (v *SliceView) Text(types *ir.TypeTable) string {
+	return fmt.Sprintf("view %s", v.Source.Text(types))
 }
-func (v *Load) Text() string { return fmt.Sprintf("load %s", v.Place.Text()) }
-func (v *Len) Text() string  { return fmt.Sprintf("len %s", v.Value.Text()) }
-func (v *StringChars) Text() string {
-	return fmt.Sprintf("chars %s", v.Value.Text())
+func (v *Load) Text(types *ir.TypeTable) string { return fmt.Sprintf("load %s", v.Place.Text(types)) }
+func (v *Len) Text(types *ir.TypeTable) string  { return fmt.Sprintf("len %s", v.Value.Text(types)) }
+func (v *StringChars) Text(types *ir.TypeTable) string {
+	return fmt.Sprintf("chars %s", v.Value.Text(types))
 }
-func (v *StringFromBytes) Text() string {
+func (v *StringFromBytes) Text(types *ir.TypeTable) string {
 	if v.Allocator != nil {
-		return fmt.Sprintf("from_bytes %s, %s", v.Bytes.Text(), v.Allocator.Text())
+		return fmt.Sprintf("from_bytes %s, %s", v.Bytes.Text(types), v.Allocator.Text(types))
 	}
-	return "from_bytes " + v.Bytes.Text()
+	return "from_bytes " + v.Bytes.Text(types)
 }
-func (v *Field) Text() string { return fmt.Sprintf("field %s, %d", v.Base.Text(), v.Index) }
+func (v *Field) Text(types *ir.TypeTable) string {
+	return fmt.Sprintf("field %s, %d", v.Base.Text(types), v.Index)
+}
 
-func (v *StructLit) Text() string {
+func (v *StructLit) Text(types *ir.TypeTable) string {
 	var b strings.Builder
 	b.WriteString("struct(")
 	for i, field := range v.Fields {
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		b.WriteString(field.Text())
+		b.WriteString(field.Text(types))
 	}
 	b.WriteString(")")
 	return b.String()
 }
 
-func (v *ArrayLit) Text() string {
+func (v *ArrayLit) Text(types *ir.TypeTable) string {
 	var b strings.Builder
 	b.WriteString("array(")
 	for i, value := range v.Values {
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		b.WriteString(value.Text())
+		b.WriteString(value.Text(types))
 	}
 	b.WriteString(")")
 	return b.String()
 }
 
-func (v *DynamicArrayAlloc) Text() string {
+func (v *DynamicArrayAlloc) Text(types *ir.TypeTable) string {
 	if v == nil {
 		return ""
 	}
 	if v.Allocator != nil {
-		return fmt.Sprintf("allocarray %d, %s", v.Length, v.Allocator.Text())
+		return fmt.Sprintf("allocarray %d, %s", v.Length, v.Allocator.Text(types))
 	}
 	return fmt.Sprintf("allocarray %d", v.Length)
 }
 
-func (v *DynamicArrayOp) Text() string {
+func (v *DynamicArrayOp) Text(types *ir.TypeTable) string {
 	if v == nil {
 		return ""
 	}
-	args := []string{v.Array.Text()}
+	args := []string{v.Array.Text(types)}
 	if v.Length != nil {
-		args = append(args, v.Length.Text())
+		args = append(args, v.Length.Text(types))
 	}
 	if v.Value != nil {
-		args = append(args, v.Value.Text())
+		args = append(args, v.Value.Text(types))
 	}
 	return string(v.Op) + " " + strings.Join(args, ", ")
 }
 
-func (v *Alloc) Text() string {
+func (v *Alloc) Text(types *ir.TypeTable) string {
 	if v == nil {
 		return ""
 	}
 	if v.Allocator != nil {
-		return "alloc " + v.Value.Text() + ", " + v.Allocator.Text()
+		return "alloc " + v.Value.Text(types) + ", " + v.Allocator.Text(types)
 	}
-	return "alloc " + v.Value.Text()
+	return "alloc " + v.Value.Text(types)
 }
 
-func (v *ZeroValue) Text() string {
+func (v *ZeroValue) Text(types *ir.TypeTable) string {
 	if v == nil || v.Type == ir.InvalidType {
 		return "zero"
 	}
 	return "zero"
 }
-func (v *VariantMake) Text() string {
+func (v *VariantMake) Text(types *ir.TypeTable) string {
 	if v == nil {
 		return "variant(<nil>)"
 	}
 	if v.Payload == nil {
 		return fmt.Sprintf("variant %d", v.Case)
 	}
-	return fmt.Sprintf("variant %d, %s", v.Case, v.Payload.Text())
+	return fmt.Sprintf("variant %d, %s", v.Case, v.Payload.Text(types))
 }
-func (v *VariantIs) Text() string {
+func (v *VariantIs) Text(types *ir.TypeTable) string {
 	if v == nil || v.Value == nil {
 		return "is-variant(<nil>)"
 	}
-	return fmt.Sprintf("is-variant %s, %d", v.Value.Text(), v.Case)
+	return fmt.Sprintf("is-variant %s, %d", v.Value.Text(types), v.Case)
 }
 
-func (v *InterfaceMake) Text() string {
+func (v *InterfaceMake) Text(types *ir.TypeTable) string {
 	if v == nil {
 		return "iface()"
 	}
-	return "iface(" + v.Value.Text() + ")"
+	return "iface(" + v.Value.Text(types) + ")"
 }
 
-func (v *InterfaceCall) Text() string {
+func (v *InterfaceCall) Text(types *ir.TypeTable) string {
 	if v == nil {
 		return "ifacecall()"
 	}
 	var b strings.Builder
 	b.WriteString("ifacecall ")
-	b.WriteString(v.Base.Text())
+	b.WriteString(v.Base.Text(types))
 	b.WriteString("(")
 	for i, arg := range v.Args {
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		b.WriteString(arg.Text())
+		b.WriteString(arg.Text(types))
 	}
 	b.WriteString(")")
 	return b.String()
@@ -670,16 +678,16 @@ type Call struct {
 func (c *Call) valueExprNode()                   {}
 func (c *Call) TypeID() ir.TypeID                { return c.Type }
 func (c *Call) SourceLocation() *source.Location { return c.Location }
-func (c *Call) Text() string {
+func (c *Call) Text(types *ir.TypeTable) string {
 	var b strings.Builder
 	b.WriteString("call ")
-	b.WriteString(c.Callee.Text())
+	b.WriteString(c.Callee.Text(types))
 	b.WriteString("(")
 	for i, arg := range c.Args {
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		b.WriteString(arg.Text())
+		b.WriteString(arg.Text(types))
 	}
 	b.WriteString(")")
 	return b.String()
@@ -695,10 +703,10 @@ func (m *Module) Text() string {
 	b.WriteString("\n")
 	for _, data := range m.StaticData {
 		if data.Constant != nil {
-			fmt.Fprintf(&b, "%s = constant type#%d %q\n", data.Name, data.Type, data.Constant.TypeText())
+			fmt.Fprintf(&b, "%s = constant %s %q\n", data.Name, m.Types.DisplayName(data.Type), data.Constant.TypeText())
 			continue
 		}
-		fmt.Fprintf(&b, "%s = constant type#%d %q, align %d\n", data.Name, data.Type, data.Bytes, data.Align)
+		fmt.Fprintf(&b, "%s = constant %s %q, align %d\n", data.Name, m.Types.DisplayName(data.Type), data.Bytes, data.Align)
 	}
 	if len(m.StaticData) > 0 {
 		b.WriteString("\n")
@@ -726,12 +734,12 @@ func (m *Module) Text() string {
 				b.WriteString(":\n")
 				for _, instr := range block.Instrs {
 					b.WriteString("    ")
-					b.WriteString(instr.Text())
+					b.WriteString(instr.Text(m.Types))
 					b.WriteString("\n")
 				}
 				if block.Term != nil {
 					b.WriteString("    ")
-					b.WriteString(block.Term.Text())
+					b.WriteString(block.Term.Text(m.Types))
 					b.WriteString("\n")
 				}
 			}

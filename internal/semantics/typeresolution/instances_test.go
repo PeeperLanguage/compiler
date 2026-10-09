@@ -41,7 +41,7 @@ func TestQueryTypeQualifiedSyntaxWithoutModuleDoesNotPanic(t *testing.T) {
 	}}
 
 	got := New(target.Host(), nil).Query(nil, node, Context{})
-	if got.Status != QueryAvailable || got.Type == nil || got.Type.Text() != "dep::Thing" {
+	if got.Status != QueryAvailable || got.Type == nil || typeinfo.TypeText(got.Type) != "dep::Thing" {
 		t.Fatalf("qualified query result = %#v, want available unresolved qualified name", got)
 	}
 }

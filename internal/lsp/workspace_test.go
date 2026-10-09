@@ -20,6 +20,7 @@ import (
 	"compiler/internal/module"
 	"compiler/internal/phase"
 	"compiler/internal/project"
+	"compiler/internal/semantics/typeinfo"
 	"compiler/pkg/manifest"
 	"compiler/pkg/peeper"
 )
@@ -760,7 +761,7 @@ func TestServerStateInvalidatesDependentWhenInferredExportTypeChanges(t *testing
 	}
 	if state.LastMetrics.ModulesDowngraded == 0 {
 		t.Fatalf("dependent retained compiled phases after inferred export type changed: semantic %q -> %q, type %s -> %s",
-			beforeFingerprint, afterUtil.SemanticExportFingerprint, beforeType.Type.Text(), afterType.Type.Text())
+			beforeFingerprint, afterUtil.SemanticExportFingerprint, typeinfo.TypeText(beforeType.Type), typeinfo.TypeText(afterType.Type))
 	}
 	after := state.modules[project.CanonicalPath(fileMain)]
 	if after == nil {

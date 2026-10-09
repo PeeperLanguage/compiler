@@ -2,6 +2,7 @@ package typeinfo
 
 import (
 	"compiler/internal/frontend/ast"
+	"compiler/internal/moduleid"
 	"compiler/internal/target"
 	"slices"
 	"testing"
@@ -123,22 +124,22 @@ func TestPointerTypeTextAndEquality(t *testing.T) {
 	array := &ArrayType{Len: "4", Elem: &IntegerType{IsSigned: true, Bits: 32}}
 	dynArray := &ArrayType{Shape: ArrayOwner, Elem: &StringType{}}
 
-	if got := ownedA.Text(); got != "*i32" {
+	if got := TypeText(ownedA); got != "*i32" {
 		t.Fatalf("owned pointer text: got %q want %q", got, "*i32")
 	}
-	if got := rawPtr.Text(); got != "rawptr" {
+	if got := TypeText(rawPtr); got != "rawptr" {
 		t.Fatalf("raw pointer text: got %q want %q", got, "rawptr")
 	}
-	if got := ref.Text(); got != "&[..]str" {
+	if got := TypeText(ref); got != "&[..]str" {
 		t.Fatalf("reference text: got %q want %q", got, "&[..]str")
 	}
-	if got := opt.Text(); got != "?i32" {
+	if got := TypeText(opt); got != "?i32" {
 		t.Fatalf("optional text: got %q want %q", got, "?i32")
 	}
-	if got := array.Text(); got != "[4]i32" {
+	if got := TypeText(array); got != "[4]i32" {
 		t.Fatalf("array text: got %q want %q", got, "[4]i32")
 	}
-	if got := dynArray.Text(); got != "[]str" {
+	if got := TypeText(dynArray); got != "[]str" {
 		t.Fatalf("dynamic array text: got %q want %q", got, "[]str")
 	}
 	if !IsSameType(ownedA, ownedB) {
@@ -395,7 +396,7 @@ func TestFuncTypeTextIncludesParams(t *testing.T) {
 	fn := &FuncType{
 		Params: []Type{&NamedType{Name: "Buffer"}},
 	}
-	if got := fn.Text(); got != "fn(Buffer)" {
+	if got := TypeText(fn); got != "fn(Buffer)" {
 		t.Fatalf("func text: got %q want %q", got, "fn(Buffer)")
 	}
 }
@@ -440,7 +441,7 @@ func TestTypeFromSyntaxPreservesFuncTypeParams(t *testing.T) {
 	fn := TypeFromSyntax(&ast.FuncType{
 		Params: []ast.Param{{Type: &ast.NamedType{Name: "Buffer"}}},
 	}, SyntaxContext{}).(*FuncType)
-	if got := fn.Text(); got != "fn(Buffer)" {
+	if got := TypeText(fn); got != "fn(Buffer)" {
 		t.Fatalf("func text: got %q want %q", got, "fn(Buffer)")
 	}
 }
@@ -454,7 +455,7 @@ func TestTypeFromSyntaxPreservesReferenceReturnContract(t *testing.T) {
 	if fn.ReturnOrigins == nil || !slices.Equal(fn.ReturnOrigins.Sources, []int{0}) {
 		t.Fatalf("return origins: %#v", fn.ReturnOrigins)
 	}
-	if got := fn.Text(); got != "fn(&i32) -> &i32 from value" {
+	if got := TypeText(fn); got != "fn(&i32) -> &i32 from value" {
 		t.Fatalf("function text: got %q", got)
 	}
 }
@@ -481,7 +482,7 @@ func TestTypeFromSyntaxAllowsAbstractSelf(t *testing.T) {
 	fn := TypeFromSyntax(&ast.FuncType{
 		Params: []ast.Param{{Type: &ast.NamedType{Name: "Self"}}},
 	}, SyntaxContext{AllowAbstractSelf: true}).(*FuncType)
-	if got := fn.Text(); got != "fn(Self)" {
+	if got := TypeText(fn); got != "fn(Self)" {
 		t.Fatalf("func text: got %q want %q", got, "fn(Self)")
 	}
 }
@@ -830,5 +831,37 @@ func TestOptionalLayerUtilities(t *testing.T) {
 	}
 	if !IsOptional(nested) || IsOptional(i32) {
 		t.Fatal("optional classification mismatch")
+	}
+}
+
+func TestQualifiedTypeTextNamesDeclaringModule(t *testing.T) {
+	alpha := moduleid.ID{Origin: "local", ImportPath: "app/alpha"}
+	core := moduleid.ID{Origin: "core", Namespace: "core", ImportPath: "global"}
+	i32 := &IntegerType{IsSigned: true, Bits: 32}
+	counter := &DefinedType{Name: "Counter", Identity: moduleid.TypeIdentity(alpha, "Counter"), Kind: DefinedKindStruct, Underlying: &StructType{}}
+	status := &DefinedType{
+		Name:          "Status",
+		Identity:      moduleid.TypeIdentity(core, "Status") + "<" + moduleid.Frame("integer", "i32") + ">",
+		Kind:          DefinedKindEnum,
+		TypeArguments: []Type{i32},
+	}
+	tests := []struct {
+		typ           Type
+		text          string
+		qualifiedText string
+	}{
+		{i32, "i32", "i32"},
+		{counter, "Counter", "local:app/alpha::Counter"},
+		{&OptionalType{Inner: &RefType{IsMutable: true, Target: counter}}, "?&mut Counter", "?&mut local:app/alpha::Counter"},
+		{status, "Status<i32>", "core:core@global::Status<i32>"},
+		{&DefinedType{Name: "Prelude"}, "Prelude", "Prelude"},
+	}
+	for _, test := range tests {
+		if got := TypeText(test.typ); got != test.text {
+			t.Fatalf("TypeText = %q, want %q", got, test.text)
+		}
+		if got := QualifiedTypeText(test.typ); got != test.qualifiedText {
+			t.Fatalf("QualifiedTypeText = %q, want %q", got, test.qualifiedText)
+		}
 	}
 }

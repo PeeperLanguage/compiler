@@ -119,7 +119,7 @@ func (e *llvmEmitter) emitNamedDropHelpers(out *strings.Builder) {
 	ids := e.mod.Types.NamedTypeIDs()
 	for _, id := range ids {
 		if typeNeedsDrop(e.mod.Types, id) {
-			e.dropHelpers[id] = "@peeper_drop_" + strings.TrimPrefix(e.layout(id).Text, "%peeper.type.")
+			e.dropHelpers[id] = `@"peeper_drop_` + llvmEscapeString(e.mod.Types.DisplayName(id)) + `"`
 		}
 	}
 	if len(e.dropHelpers) == 0 {

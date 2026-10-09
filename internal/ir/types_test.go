@@ -139,7 +139,7 @@ func TestTypeTablePreservesInterfaceReceiverIdentity(t *testing.T) {
 func TestTypeTableReservesAndCompletesRecursiveNamedComposite(t *testing.T) {
 	types := NewTypeTable()
 	nodeShell := Type{Kind: TypeStruct, Name: "Node", Identity: "test::Node"}
-	nodeID, err := types.ReserveNamed(nodeShell)
+	nodeID, err := types.ReserveNamed(nodeShell, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +149,7 @@ func TestTypeTableReservesAndCompletesRecursiveNamedComposite(t *testing.T) {
 	if got := types.ABIKey(nodeID); got != "struct:test::Node" {
 		t.Fatalf("reserved recursive ABI key = %q, want struct:test::Node", got)
 	}
-	if repeated, err := types.ReserveNamed(nodeShell); err != nil || repeated != nodeID {
+	if repeated, err := types.ReserveNamed(nodeShell, nil); err != nil || repeated != nodeID {
 		t.Fatalf("repeated reservation = (%d, %v), want (%d, nil)", repeated, err, nodeID)
 	}
 	ownedNode := types.Intern(Type{Kind: TypeOwnedPtr, Elem: nodeID})
@@ -216,4 +216,86 @@ func TestTypeTableInternsTaggedVariantIdentityAndCases(t *testing.T) {
 	if types.ABIKey(resultID) == types.ABIKey(otherID) {
 		t.Fatal("nominally distinct variants shared one ABI key")
 	}
+}
+
+func reserveDisplayedStruct(t *testing.T, types *TypeTable, name, display string) TypeID {
+	t.Helper()
+	shell := Type{Kind: TypeStruct, Name: name, Identity: "test::" + display}
+	id, err := types.ReserveNamed(shell, func() string { return display })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := types.CompleteNamed(id, shell); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func TestNamedTypeIDsFollowDisplayNameNotInternOrder(t *testing.T) {
+	names := []string{"local:app/zeta::Z", "core:core@global::Str", "local:app/alpha::Counter", "local:app/beta::Counter"}
+	var orders [][]string
+	for _, order := range [][]string{names, {names[3], names[2], names[1], names[0]}} {
+		types := NewTypeTable()
+		for _, display := range order {
+			reserveDisplayedStruct(t, types, "T", display)
+		}
+		var got []string
+		for _, id := range types.NamedTypeIDs() {
+			got = append(got, types.DisplayName(id))
+		}
+		orders = append(orders, got)
+	}
+	want := fmt.Sprint([]string{"core:core@global::Str", "local:app/alpha::Counter", "local:app/beta::Counter", "local:app/zeta::Z"})
+	for _, got := range orders {
+		if fmt.Sprint(got) != want {
+			t.Fatalf("NamedTypeIDs display order = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestDisplayNameQualifiesNestedNamedTypes(t *testing.T) {
+	types := NewTypeTable()
+	counter := reserveDisplayedStruct(t, types, "Counter", "local:app/alpha::Counter")
+	ref := types.Intern(Type{Kind: TypeReference, IsMutable: true, Elem: counter})
+	optional := types.Intern(OptionalVariant(ref))
+	if got := types.DisplayName(optional); got != "?&mut local:app/alpha::Counter" {
+		t.Fatalf("DisplayName = %q", got)
+	}
+	if got := types.Text(optional); got != "?&mut Counter" {
+		t.Fatalf("Text = %q, want unqualified diagnostics text", got)
+	}
+}
+
+func TestReserveNamedBuildsDisplayNameOnlyForNewTypes(t *testing.T) {
+	types := NewTypeTable()
+	calls := 0
+	shell := Type{Kind: TypeStruct, Name: "Counter", Identity: "test::Counter"}
+	for range 3 {
+		if _, err := types.ReserveNamed(shell, func() string { calls++; return "local:app/alpha::Counter" }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("display name built %d times, want 1", calls)
+	}
+}
+
+func TestNamedTypeIDsRejectSharedDisplayName(t *testing.T) {
+	types := NewTypeTable()
+	for _, identity := range []string{"test::a", "test::b"} {
+		shell := Type{Kind: TypeStruct, Name: "T", Identity: identity}
+		id, err := types.ReserveNamed(shell, func() string { return "local:app::T" })
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := types.CompleteNamed(id, shell); err != nil {
+			t.Fatal(err)
+		}
+	}
+	defer func() {
+		if recover() == nil {
+			t.Fatal("NamedTypeIDs accepted two named types with one display name")
+		}
+	}()
+	types.NamedTypeIDs()
 }

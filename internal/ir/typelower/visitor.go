@@ -54,7 +54,7 @@ func (v *runtimeTypeVisitor) VisitEnum(t *typeinfo.EnumType) {
 		return
 	}
 	shell := ir.Type{Kind: ir.TypeVariant, Family: ir.VariantFamilyNamed, Name: v.defined.Name, Identity: descriptor.Identity}
-	v.result = v.lowerer.internNamed(shell, func() (ir.Type, bool) {
+	v.result = v.lowerer.internNamed(v.defined, shell, func() (ir.Type, bool) {
 		cases := make([]ir.VariantCase, len(descriptor.Cases))
 		valid := true
 		for index, variantCase := range descriptor.Cases {
@@ -125,7 +125,7 @@ func (v *runtimeTypeVisitor) VisitStruct(t *typeinfo.StructType) {
 			identity = v.defined.Name
 		}
 		shell := ir.Type{Kind: ir.TypeStruct, Name: v.defined.Name, Identity: identity}
-		v.result = v.lowerer.internNamed(shell, func() (ir.Type, bool) {
+		v.result = v.lowerer.internNamed(v.defined, shell, func() (ir.Type, bool) {
 			fields := make([]ir.TypeField, 0, len(t.Fields))
 			valid := true
 			for _, field := range t.Fields {

@@ -699,7 +699,7 @@ func hoverTypeLabel(typ typeinfo.Type) (string, bool) {
 		if t == nil {
 			return "", false
 		}
-		return t.Text(), true
+		return typeinfo.TypeText(t), true
 	case *typeinfo.StructType, *typeinfo.InterfaceType, *typeinfo.EnumType:
 		return "", false
 	default:

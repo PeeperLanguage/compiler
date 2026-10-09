@@ -516,6 +516,44 @@ func TestGenerateLLVMIRDeclaresExternalsInUseOrder(t *testing.T) {
 	}
 }
 
+func TestGenerateLLVMIRNamesNamedTypesByDisplayName(t *testing.T) {
+	fixture := newLLVMTypeFixture(target.Bits64)
+	types := fixture.table
+	var ids []ir.TypeID
+	for _, display := range []string{"local:app/zeta::Z", `local:app/my"dir::Q`, "local:app/alpha::Counter"} {
+		shell := ir.Type{Kind: ir.TypeStruct, Name: "T", Identity: "test::" + display}
+		id, err := types.ReserveNamed(shell, func() string { return display })
+		if err != nil {
+			t.Fatal(err)
+		}
+		shell.Fields = []ir.TypeField{{Name: "value", Type: fixture.i32}}
+		if err := types.CompleteNamed(id, shell); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	mod := &mir.Module{
+		Name: "named", Types: types,
+		Funcs: []*mir.Function{{
+			Name:       "main",
+			ReturnType: fixture.i32,
+			Blocks:     []*mir.Block{{ID: 0, Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: fixture.i32}}}},
+		}},
+	}
+
+	irText := GenerateLLVMIR(mod, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
+	var defined []string
+	for _, line := range strings.Split(irText, "\n") {
+		if strings.HasSuffix(line, " = type { i32 }") {
+			defined = append(defined, strings.TrimSuffix(line, " = type { i32 }"))
+		}
+	}
+	want := []string{`%"local:app/alpha::Counter"`, `%"local:app/my\22dir::Q"`, `%"local:app/zeta::Z"`}
+	if !slices.Equal(defined, want) {
+		t.Fatalf("named type lines = %v, want %v; got:\n%s", defined, want, irText)
+	}
+}
+
 func TestGenerateLLVMIRRejectsNumericBooleanConstants(t *testing.T) {
 	for _, value := range []string{"0", "1"} {
 		t.Run(value, func(t *testing.T) {
@@ -1439,7 +1477,7 @@ func TestGenerateLLVMIRLowersRecursiveNamedTypesAndDrop(t *testing.T) {
 		types.SetIndexType(usize)
 
 		nodeShell := ir.Type{Kind: ir.TypeStruct, Name: "Node", Identity: "test::Node"}
-		nodeID, err := types.ReserveNamed(nodeShell)
+		nodeID, err := types.ReserveNamed(nodeShell, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1450,7 +1488,7 @@ func TestGenerateLLVMIRLowersRecursiveNamedTypesAndDrop(t *testing.T) {
 		}
 
 		chainShell := ir.Type{Kind: ir.TypeVariant, Family: ir.VariantFamilyNamed, Name: "Chain", Identity: "test::Chain"}
-		chainID, err := types.ReserveNamed(chainShell)
+		chainID, err := types.ReserveNamed(chainShell, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1482,7 +1520,7 @@ func TestGenerateLLVMIRLowersRecursiveNamedTypesAndDrop(t *testing.T) {
 			!strings.Contains(out, namedLLVMTypeName(types, chainID)+" = type { i8,") {
 			t.Fatalf("recursive identified layouts missing for %s:\n%s", compilerTarget.Arch, out)
 		}
-		if strings.Count(out, "define private void @peeper_drop_") != 2 || strings.Count(out, "call void @peeper_drop_") < 4 {
+		if strings.Count(out, `define private void @"peeper_drop_`) != 2 || strings.Count(out, `call void @"peeper_drop_`) < 4 {
 			t.Fatalf("recursive drop helpers missing for %s:\n%s", compilerTarget.Arch, out)
 		}
 		clang, err := exec.LookPath("clang")
@@ -1502,7 +1540,7 @@ func TestGenerateLLVMIRRejectsIncompleteNamedType(t *testing.T) {
 	void := types.Intern(ir.Type{Kind: ir.TypeVoid})
 	usize := types.Intern(ir.Type{Kind: ir.TypeInteger, Bits: 64})
 	types.SetIndexType(usize)
-	pending, err := types.ReserveNamed(ir.Type{Kind: ir.TypeStruct, Name: "Pending", Identity: "test::Pending"})
+	pending, err := types.ReserveNamed(ir.Type{Kind: ir.TypeStruct, Name: "Pending", Identity: "test::Pending"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3688,7 +3726,7 @@ func TestGenerateLLVMIRLowersNamedVariantOperationsAndDrop(t *testing.T) {
 		"i32 0, i32 2",
 		"switch i8",
 		"extractvalue " + carrier + " %value, 2",
-		"call void @peeper_drop_",
+		`call void @"peeper_drop_`,
 	} {
 		if !strings.Contains(out, expected) {
 			t.Fatalf("missing %q in named variant LLVM:\n%s", expected, out)

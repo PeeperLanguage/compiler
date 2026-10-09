@@ -2,6 +2,7 @@ package ir
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -93,6 +94,10 @@ type Type struct {
 	Family    VariantFamily
 	Identity  string
 	Cases     []VariantCase
+	// DisplayName is the module-qualified name of a named composite, written
+	// in compiler dumps. It derives from Identity, so it is not part of type
+	// identity or descriptor equality.
+	DisplayName string
 }
 
 // OptionalVariant owns optional's fixed case order. Flow facts, lowering, and
@@ -159,8 +164,9 @@ func (t *TypeTable) Intern(typ Type) TypeID {
 
 // ReserveNamed allocates stable identity before named composite children are
 // interned. Recursive child paths reuse this TypeID until CompleteNamed fills
-// the descriptor.
-func (t *TypeTable) ReserveNamed(shell Type) (TypeID, error) {
+// the descriptor. displayName runs only when the type is new, so repeated
+// lowering of a known type does not rebuild its name; nil keeps the identity.
+func (t *TypeTable) ReserveNamed(shell Type, displayName func() string) (TypeID, error) {
 	if t == nil {
 		return InvalidType, fmt.Errorf("reserving named IR type without a type table")
 	}
@@ -172,6 +178,9 @@ func (t *TypeTable) ReserveNamed(shell Type) (TypeID, error) {
 	defer t.mu.Unlock()
 	if id, found := t.ids[key]; found {
 		return id, nil
+	}
+	if displayName != nil {
+		shell.DisplayName = displayName()
 	}
 	id := TypeID(len(t.types))
 	t.types = append(t.types, cloneType(shell))
@@ -205,6 +214,7 @@ func (t *TypeTable) CompleteNamed(id TypeID, typ Type) error {
 		}
 		return nil
 	}
+	typ.DisplayName = t.types[id].DisplayName
 	t.types[id] = cloneType(typ)
 	t.isComplete[id] = true
 	return nil
@@ -275,8 +285,10 @@ func (t *TypeTable) interfaceType(id TypeID) (Type, bool) {
 	return typ, ok && typ.Kind == TypeInterface
 }
 
-// NamedTypeIDs returns completed identified composites in stable TypeID order.
-// Backends use this to declare recursive aggregate shells before all uses.
+// NamedTypeIDs returns completed identified composites ordered by display
+// name. TypeIDs follow intern order, which parallel module lowering makes
+// differ between runs; the display name derives from identity, so output
+// built in this order is the same every run.
 func (t *TypeTable) NamedTypeIDs() []TypeID {
 	if t == nil {
 		return nil
@@ -292,6 +304,14 @@ func (t *TypeTable) NamedTypeIDs() []TypeID {
 			ids = append(ids, TypeID(index))
 		}
 	}
+	slices.SortFunc(ids, func(left, right TypeID) int {
+		return strings.Compare(namedText(t.types[left], true), namedText(t.types[right], true))
+	})
+	for index := 1; index < len(ids); index++ {
+		if name := namedText(t.types[ids[index]], true); name == namedText(t.types[ids[index-1]], true) {
+			panic("named IR types share display name " + name)
+		}
+	}
 	return ids
 }
 
@@ -301,12 +321,24 @@ func (t *TypeTable) Text(id TypeID) string {
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	return t.textLocked(id)
+	return t.textLocked(id, false)
+}
+
+// DisplayName is Text with named types written by their DisplayName, so the
+// same type reads the same in every compiler dump.
+func (t *TypeTable) DisplayName(id TypeID) string {
+	if t == nil {
+		return "<invalid>"
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.textLocked(id, true)
 }
 
 // textLocked keeps recursive formatting under one read or write lock. Calling
 // public Type or Text here would deadlock when Intern holds the write lock.
-func (t *TypeTable) textLocked(id TypeID) string {
+// qualified writes named types by DisplayName instead of their bare Name.
+func (t *TypeTable) textLocked(id TypeID, qualified bool) string {
 	if id == InvalidType || int(id) >= len(t.types) {
 		return "<invalid>"
 	}
@@ -336,33 +368,33 @@ func (t *TypeTable) textLocked(id TypeID) string {
 	case TypeRawPtr:
 		return "rawptr"
 	case TypeOwnedPtr:
-		return "*" + t.textLocked(typ.Elem)
+		return "*" + t.textLocked(typ.Elem, qualified)
 	case TypeReference:
 		prefix := "&"
 		if typ.IsMutable {
 			prefix = "&mut "
 		}
-		return prefix + t.textLocked(typ.Elem)
+		return prefix + t.textLocked(typ.Elem, qualified)
 	case TypeVariant:
 		if payload, isOptional := typ.OptionalPayload(); isOptional {
-			return "?" + t.textLocked(payload)
+			return "?" + t.textLocked(payload, qualified)
 		}
 		if typ.Family == VariantFamilyNamed && typ.Name != "" {
-			return typ.Name
+			return namedText(typ, qualified)
 		}
 		return "<invalid>"
 	case TypeArray:
 		if typ.Length == "" {
-			return "[]" + t.textLocked(typ.Elem)
+			return "[]" + t.textLocked(typ.Elem, qualified)
 		}
-		return "[" + typ.Length + "]" + t.textLocked(typ.Elem)
+		return "[" + typ.Length + "]" + t.textLocked(typ.Elem, qualified)
 	case TypeSlice:
-		return "[..]" + t.textLocked(typ.Elem)
+		return "[..]" + t.textLocked(typ.Elem, qualified)
 	case TypeStruct:
 		if typ.Name != "" && typ.Identity != "" {
-			return typ.Name
+			return namedText(typ, qualified)
 		}
-		return "struct{" + t.fieldsTextLocked(typ.Fields, ';') + "}"
+		return "struct{" + t.fieldsTextLocked(typ.Fields, ';', qualified) + "}"
 	case TypeInterface:
 		methods := make([]string, 0, len(typ.Methods))
 		for _, method := range typ.Methods {
@@ -376,11 +408,11 @@ func (t *TypeTable) textLocked(id TypeID) string {
 				params = append(params, "&mut Self")
 			}
 			for _, param := range method.Params {
-				params = append(params, param.Name+": "+t.textLocked(param.Type))
+				params = append(params, param.Name+": "+t.textLocked(param.Type, qualified))
 			}
 			text := method.Name + "(" + strings.Join(params, ", ") + ")"
-			if method.Return != InvalidType && t.textLocked(method.Return) != "void" {
-				text += " -> " + t.textLocked(method.Return)
+			if method.Return != InvalidType && t.textLocked(method.Return, qualified) != "void" {
+				text += " -> " + t.textLocked(method.Return, qualified)
 			}
 			methods = append(methods, text)
 		}
@@ -388,11 +420,11 @@ func (t *TypeTable) textLocked(id TypeID) string {
 	case TypeFunction:
 		params := make([]string, 0, len(typ.Params))
 		for _, param := range typ.Params {
-			params = append(params, t.textLocked(param))
+			params = append(params, t.textLocked(param, qualified))
 		}
 		text := "fn(" + strings.Join(params, ", ") + ")"
-		if typ.Return != InvalidType && t.textLocked(typ.Return) != "void" {
-			text += " -> " + t.textLocked(typ.Return)
+		if typ.Return != InvalidType && t.textLocked(typ.Return, qualified) != "void" {
+			text += " -> " + t.textLocked(typ.Return, qualified)
 		}
 		return text
 	default:
@@ -414,7 +446,7 @@ func (t *TypeTable) ABIKey(id TypeID) string {
 	if key, ok := identifiedTypeKey(t.types[id]); ok {
 		return key
 	}
-	return t.textLocked(id)
+	return t.textLocked(id, false)
 }
 
 func (t *TypeTable) key(typ Type) string {
@@ -460,12 +492,24 @@ func descriptorKey(typ Type) string {
 	return b.String()
 }
 
-func (t *TypeTable) fieldsTextLocked(fields []TypeField, separator byte) string {
+func (t *TypeTable) fieldsTextLocked(fields []TypeField, separator byte, qualified bool) string {
 	parts := make([]string, 0, len(fields))
 	for _, field := range fields {
-		parts = append(parts, field.Name+": "+t.textLocked(field.Type))
+		parts = append(parts, field.Name+": "+t.textLocked(field.Type, qualified))
 	}
 	return strings.Join(parts, string(separator)+" ")
+}
+
+// namedText is the text of a named composite. A named type without a
+// DisplayName shows its identity, which is just as unique and stable.
+func namedText(typ Type, qualified bool) string {
+	if !qualified {
+		return typ.Name
+	}
+	if typ.DisplayName != "" {
+		return typ.DisplayName
+	}
+	return typ.Identity
 }
 
 func cloneType(typ Type) Type {

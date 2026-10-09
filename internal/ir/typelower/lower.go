@@ -46,8 +46,8 @@ func (l *runtimeTypeInterner) intern(t typeinfo.Type) ir.TypeID {
 	return visitor.result
 }
 
-func (l *runtimeTypeInterner) internNamed(shell ir.Type, descriptor func() (ir.Type, bool)) ir.TypeID {
-	id, err := l.ctx.types.ReserveNamed(shell)
+func (l *runtimeTypeInterner) internNamed(defined *typeinfo.DefinedType, shell ir.Type, descriptor func() (ir.Type, bool)) ir.TypeID {
+	id, err := l.ctx.types.ReserveNamed(shell, func() string { return typeinfo.QualifiedTypeText(defined) })
 	if err != nil {
 		return l.invalid(err.Error())
 	}

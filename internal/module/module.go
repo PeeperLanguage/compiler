@@ -72,7 +72,7 @@ func (m *Module) TypeDeclarationIdentity(name string) string {
 	if m == nil || !m.ID.IsValid() || name == "" {
 		return name
 	}
-	return m.ID.String() + "::" + name
+	return moduleid.TypeIdentity(m.ID, name)
 }
 
 // RecordTypeDeclaration retains collection evidence needed to instantiate and

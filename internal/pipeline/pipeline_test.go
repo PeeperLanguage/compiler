@@ -2485,7 +2485,7 @@ fn main() -> i32 {
 					continue
 				}
 				drop, ok := block.Instrs[index+1].(*mir.Drop)
-				if ok && drop.Value.Text() == load.Place.Root.Text() {
+				if ok && drop.Value.Text(nil) == load.Place.Root.Text(nil) {
 					found = true
 				}
 			}

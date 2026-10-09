@@ -138,7 +138,7 @@ func (e *llvmEmitter) emitStaticData(b *strings.Builder) {
 	for _, entry := range e.mod.StaticData {
 		if entry.Constant == nil {
 			escaped := llvmEscapeString(entry.Bytes)
-			fmt.Fprintf(b, "%s = private unnamed_addr constant [%d x i8] c\"%s\", align %d\n", entry.Name, len(entry.Bytes)+1, escaped, entry.Align)
+			fmt.Fprintf(b, "%s = private unnamed_addr constant [%d x i8] c\"%s\\00\", align %d\n", entry.Name, len(entry.Bytes)+1, escaped, entry.Align)
 			continue
 		}
 		value, ok := e.staticConstant(entry.Constant, entry.Type)
