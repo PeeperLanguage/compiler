@@ -1,5 +1,5 @@
 enum Resource {
-    Pointer: { value: rawptr }
+    Pointer: struct { value: rawptr }
 }
 
 const global: i32 = 1;
@@ -11,7 +11,8 @@ fn Invalid(chooseLocal: bool) -> rawptr {
         resource = Resource::Pointer with .{ value = @local };
     }
     match resource {
-        Resource::Pointer with { value = pointer } => {
+        Resource::Pointer => {
+            let .{ value = pointer } = resource;
             return pointer;
         }
     }

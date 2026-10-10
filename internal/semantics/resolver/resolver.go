@@ -148,6 +148,12 @@ func (r *resolver) resolveStmt(scope *symbols.Scope, stmt ast.Stmt) {
 		r.resolveLocalBinding(scope, node.Name, symbols.SymbolVar, node.Value, node, node.Location)
 	case *ast.ConstDecl:
 		r.resolveLocalBinding(scope, node.Name, symbols.SymbolConst, node.Value, node, node.Location)
+	case *ast.DestructureStmt:
+		// The value cannot name the locals it is taken apart into.
+		r.resolveExpr(scope, node.Value)
+		for _, field := range node.Fields {
+			r.resolveLocalBinding(scope, field.Binding, symbols.SymbolVar, nil, field.Binding, field.Location)
+		}
 	case *ast.ReturnStmt:
 		if node.Value != nil {
 			r.resolveExpr(scope, node.Value)
@@ -188,20 +194,12 @@ func (r *resolver) resolveStmt(scope *symbols.Scope, stmt ast.Stmt) {
 	case *ast.MatchStmt:
 		r.resolveExpr(scope, node.Subject)
 		for _, arm := range node.Arms {
-			if !r.resolveVariantPath(scope, arm.Case) {
-				r.resolveScopeResolution(arm.Case, false)
-			}
-			armScope := symbols.NewScope(scope)
-			if arm.Binding != nil && !arm.IsDiscard {
-				r.resolveLocalBinding(armScope, arm.Binding, symbols.SymbolVar, nil, arm.Binding, arm.Location)
-			}
-			for _, field := range arm.Fields {
-				if field.IsDiscard {
-					continue
+			for _, casePath := range []*ast.ScopeResolution{arm.Case, arm.PayloadCase} {
+				if casePath != nil && !r.resolveVariantPath(scope, casePath) {
+					r.resolveScopeResolution(casePath, false)
 				}
-				r.resolveLocalBinding(armScope, field.Binding, symbols.SymbolVar, nil, field.Binding, field.Location)
 			}
-			r.resolveBlock(armScope, arm.Body)
+			r.resolveBlock(symbols.NewScope(scope), arm.Body)
 		}
 	case *ast.ExprStmt:
 		r.resolveExpr(scope, node.Expr)

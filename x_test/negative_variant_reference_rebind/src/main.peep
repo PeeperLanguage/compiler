@@ -1,6 +1,6 @@
-enum Resource { Borrowed: { value: &i32, sibling: &i32 }, Empty }
-enum Optional { Borrowed: { value: ?&i32 }, Empty }
-enum Mutable { Borrowed: { value: &mut i32 }, Empty }
+enum Resource { Borrowed: struct { value: &i32, sibling: &i32 }, Empty }
+enum Optional { Borrowed: struct { value: ?&i32 }, Empty }
+enum Mutable { Borrowed: struct { value: &mut i32 }, Empty }
 fn Read(_: &i32) {}
 fn ReadOptional(_: ?&i32) {}
 fn Write(_: &mut i32) {}

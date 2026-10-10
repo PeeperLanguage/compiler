@@ -79,12 +79,12 @@ struct B { a: A }`,
 		},
 		{
 			name:      "enum value recursion",
-			source:    `enum Node { Next: { value: Node } }`,
+			source:    `enum Node { Next: struct { value: Node } }`,
 			wantCycle: true,
 		},
 		{
 			name:   "enum pointer recursion",
-			source: `enum Node { Next: { value: *Node }, End }`,
+			source: `enum Node { Next: struct { value: *Node }, End }`,
 		},
 	}
 	for _, test := range tests {
@@ -212,7 +212,7 @@ func TestBindInstantiatesGenericNamedTypes(t *testing.T) {
 struct Node<T> { next: *Node<T> }
 type Maybe<T> = ?T;
 iface Reader<T> { fn (&Self) read() -> T }
-enum Choice<T> { Left: { value: T }, Right }
+enum Choice<T> { Left: struct { value: T }, Right }
 fn Use(box: Box<i32>, again: Box<i32>, other: Box<i64>, nested: Box<Box<i32>>, node: Node<i32>, maybe: Maybe<i32>, reader: Reader<i32>, choice: Choice<i32>) {}`
 	diag := diagnostics.NewDiagnosticBag()
 	ctx := project.New(".", peeper.SourceExt, diag)

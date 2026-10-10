@@ -444,7 +444,7 @@ func TestCompletionQualifiedEnumListsVariants(t *testing.T) {
 	state := NewServerState()
 	state.RootDir = root
 	source := `enum Result<T> {
-	Ok: { value: T },
+	Ok: struct { value: T },
 	Pending,
 }
 fn main() {
@@ -467,7 +467,7 @@ func TestCompletionImportedQualifiedEnumListsVariants(t *testing.T) {
 	writeWorkspaceProjectConfig(t, root, "app")
 	mainPath := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
 	resultPath := filepath.Join(root, peeper.SourceDirName, "result"+peeper.SourceExt)
-	writeWorkspaceFile(t, resultPath, "enum Result<T> { Ok: { value: T }, Pending }\n")
+	writeWorkspaceFile(t, resultPath, "enum Result<T> { Ok: struct { value: T }, Pending }\n")
 	state := NewServerState()
 	state.RootDir = root
 	items := completionAtSource(t, state, mainPath, `import "app/result";
@@ -486,7 +486,7 @@ func TestCompletionAliasQualifiedEnumListsCanonicalVariants(t *testing.T) {
 	state := NewServerState()
 	state.RootDir = root
 	items := completionAtSource(t, state, filePath, `enum Result<T> {
-	Ok: { value: T },
+	Ok: struct { value: T },
 	Pending
 }
 type Alias<T> = Result<T>;
@@ -505,7 +505,7 @@ func TestCompletionImportedAliasQualifiedEnumListsCanonicalVariants(t *testing.T
 	writeWorkspaceProjectConfig(t, root, "app")
 	mainPath := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
 	resultPath := filepath.Join(root, peeper.SourceDirName, "result"+peeper.SourceExt)
-	writeWorkspaceFile(t, resultPath, "enum Result<T> { Ok: { value: T }, Pending }\ntype Alias<T> = Result<T>;\n")
+	writeWorkspaceFile(t, resultPath, "enum Result<T> { Ok: struct { value: T }, Pending }\ntype Alias<T> = Result<T>;\n")
 	state := NewServerState()
 	state.RootDir = root
 	items := completionAtSource(t, state, mainPath, `import "app/result";
@@ -524,13 +524,13 @@ func TestCompletionMatchListsOnlyMissingArms(t *testing.T) {
 	state := NewServerState()
 	state.RootDir = root
 	items := completionAtSource(t, state, filePath, `enum Result {
-	Ok: { value: i32 },
-	Error: { message: cstr },
+	Ok: struct { value: i32 },
+	Error: struct { message: cstr },
 	Pending,
 }
 fn inspect(value: Result) {
 	match value {
-		Result::Ok with { value = _ } => {}
+		Result::Ok => {}
 		__CURSOR__
 	}
 }
@@ -545,7 +545,7 @@ func TestCompletionImportedEmptyMatchUsesSourceQualifier(t *testing.T) {
 	writeWorkspaceProjectConfig(t, root, "app")
 	mainPath := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
 	resultPath := filepath.Join(root, peeper.SourceDirName, "result"+peeper.SourceExt)
-	writeWorkspaceFile(t, resultPath, "enum Result<T> { Ok: { value: T }, Pending }\ntype Alias<T> = Result<T>;\n")
+	writeWorkspaceFile(t, resultPath, "enum Result<T> { Ok: struct { value: T }, Pending }\ntype Alias<T> = Result<T>;\n")
 	state := NewServerState()
 	state.RootDir = root
 	items := completionAtSource(t, state, mainPath, `import "app/result";
@@ -568,25 +568,25 @@ func TestCompletionMatchDeclinesNonInsertionPositions(t *testing.T) {
 		{
 			name: "subject",
 			marked: `match __CURSOR__value {
-		Result::Ok with {} => {}
+		Result::Ok => {}
 	}`,
 		},
 		{
-			name: "pattern",
+			name: "case",
 			marked: `match value {
-		__CURSOR__Result::Ok with {} => {}
+		__CURSOR__Result::Ok => {}
 	}`,
 		},
 		{
 			name: "arrow",
 			marked: `match value {
-		Result::Ok with {} __CURSOR__=> {}
+		Result::Ok __CURSOR__=> {}
 	}`,
 		},
 		{
 			name: "exhaustive",
 			marked: `match value {
-		Result::Ok with {} => {}
+		Result::Ok => {}
 		Result::Pending => {}
 		__CURSOR__
 	}`,
@@ -598,7 +598,7 @@ func TestCompletionMatchDeclinesNonInsertionPositions(t *testing.T) {
 			state := NewServerState()
 			state.RootDir = root
 			source := `enum Result {
-	Ok: { value: i32 },
+	Ok: struct { value: i32 },
 	Pending,
 }
 fn inspect(value: Result) {

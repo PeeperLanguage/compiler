@@ -16,6 +16,7 @@ import (
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/source"
 	"compiler/pkg/numeric"
 )
 
@@ -58,7 +59,7 @@ func LowerImplicitReference(ctx Context, expr thir.Expr, result typeinfo.Type) i
 		return &ir.InvalidExpr{Message: "nil reference expression", Type: ir.InvalidType}
 	}
 	l := &lowerer{ctx: ctx}
-	if _, _, isReference := typeinfo.ReferenceTarget(typeinfo.Underlying(l.effectiveType(expr))); isReference {
+	if _, _, isReference := typeinfo.ReferenceTarget(typeinfo.Underlying(expr.ExprType())); isReference {
 		return l.lower(expr, nil, true)
 	}
 	return ir.WithOrigin(l.referenceValue(expr, result), expr.SourceInfo())
@@ -69,7 +70,7 @@ func (l *lowerer) lower(expr thir.Expr, expected typeinfo.Type, applyConversions
 		return &ir.InvalidExpr{Message: "nil expression", Type: ir.InvalidType}
 	}
 	origin := expr.SourceInfo()
-	resolved := l.effectiveType(expr)
+	resolved := expr.ExprType()
 	if l.ctx.Analysis != nil {
 		// Case tests are control-flow facts, not ordinary value expressions.
 		// Lower the published subject once, then materialize membership as a
@@ -84,9 +85,8 @@ func (l *lowerer) lower(expr thir.Expr, expected typeinfo.Type, applyConversions
 		}
 	}
 	if applyConversions {
-		// Apply both base-typechecker conversions and late flow conversions
-		// before taking a payload place-load. Returning the load earlier would
-		// bypass a conversion published after enum-case refinement.
+		// Apply the type checker's conversion before taking a payload
+		// place-load; returning the load first would skip it.
 		if converted := l.conversion(expr, expected, resolved); converted != nil {
 			return ir.WithOrigin(converted, origin)
 		}
@@ -111,11 +111,6 @@ func (l *lowerer) conversion(expr thir.Expr, expected, resolved typeinfo.Type) i
 		return nil
 	}
 	conversion := expr.Conversion()
-	if conversion == nil && l.ctx.Analysis != nil {
-		if late, ok := l.ctx.Analysis.ImplicitConversion(expr.SourceInfo().NodeID); ok {
-			conversion = &late
-		}
-	}
 	if conversion != nil && conversion.Compatibility == typeinfo.Compatible && conversion.Kind == typeinfo.ConversionOptional {
 		optional, ok := typeinfo.Underlying(expected).(*typeinfo.OptionalType)
 		if ok && optional != nil && optional.Inner != nil && !isNone(expr) && typeinfo.IsSameType(optional.Inner, resolved) {
@@ -137,14 +132,6 @@ func (l *lowerer) conversion(expr thir.Expr, expected, resolved typeinfo.Type) i
 	return nil
 }
 
-func (l *lowerer) effectiveType(expr thir.Expr) typeinfo.Type {
-	if l.ctx.Analysis != nil {
-		if typ := l.ctx.Analysis.ExprType(expr.SourceInfo().NodeID); typ != nil {
-			return typ
-		}
-	}
-	return expr.ExprType()
-}
 func (l *lowerer) typeID(t typeinfo.Type) ir.TypeID {
 	return typelower.Type(l.ctx.Types, l.ctx.Diagnostics, t)
 }
@@ -156,7 +143,7 @@ func (l *lowerer) LowerInvalidExpr(e *thir.InvalidExpr) ir.Expr {
 	return &ir.InvalidExpr{Message: e.Message, Type: ir.InvalidType}
 }
 func (l *lowerer) LowerNumberLiteral(e *thir.NumberLiteral) ir.Expr {
-	t := l.effectiveType(e)
+	t := e.ExprType()
 	if typeinfo.IsInvalidOrUnknown(t) {
 		return &ir.InvalidExpr{Message: "number literal missing resolved type evidence", Type: ir.InvalidType}
 	}
@@ -176,23 +163,23 @@ func (l *lowerer) LowerNumberLiteral(e *thir.NumberLiteral) ir.Expr {
 	return &ir.IntLit{Value: value, Type: l.typeID(t)}
 }
 func (l *lowerer) LowerStringLiteral(e *thir.StringLiteral) ir.Expr {
-	return &ir.StringLit{Value: e.Value, Type: l.typeID(l.effectiveType(e))}
+	return &ir.StringLit{Value: e.Value, Type: l.typeID(e.ExprType())}
 }
 func (l *lowerer) LowerByteLiteral(e *thir.ByteLiteral) ir.Expr {
 	if e.Value == "" {
 		return &ir.InvalidExpr{Message: "empty byte literal", Type: ir.InvalidType}
 	}
-	return &ir.IntLit{Value: fmt.Sprintf("%d", e.Value[0]), Type: l.typeID(l.effectiveType(e))}
+	return &ir.IntLit{Value: fmt.Sprintf("%d", e.Value[0]), Type: l.typeID(e.ExprType())}
 }
 func (l *lowerer) LowerCharLiteral(e *thir.CharLiteral) ir.Expr {
 	value, _ := utf8.DecodeRuneInString(e.Value)
-	return &ir.IntLit{Value: fmt.Sprintf("%d", value), Type: l.typeID(l.effectiveType(e))}
+	return &ir.IntLit{Value: fmt.Sprintf("%d", value), Type: l.typeID(e.ExprType())}
 }
 func (l *lowerer) LowerBoolLiteral(e *thir.BoolLiteral) ir.Expr {
-	return &ir.BoolLit{Value: e.Value, Type: l.typeID(l.effectiveType(e))}
+	return &ir.BoolLit{Value: e.Value, Type: l.typeID(e.ExprType())}
 }
 func (l *lowerer) LowerNoneLiteral(e *thir.NoneLiteral) ir.Expr {
-	id := l.typeID(l.effectiveType(e))
+	id := l.typeID(e.ExprType())
 	if typ, ok := l.ctx.Types.Type(id); ok {
 		if _, isOptional := typ.OptionalPayload(); isOptional {
 			return &ir.VariantMake{Case: ir.OptionalAbsentCase, Type: id}
@@ -201,10 +188,10 @@ func (l *lowerer) LowerNoneLiteral(e *thir.NoneLiteral) ir.Expr {
 	return &ir.InvalidExpr{Message: "`none` requires optional context", Type: ir.InvalidType}
 }
 func (l *lowerer) LowerIdent(e *thir.Ident) ir.Expr {
-	return l.ident(e.Symbol, e.Name, l.effectiveType(e))
+	return l.ident(e.Symbol, e.Name, e.ExprType())
 }
 func (l *lowerer) LowerQualifiedIdent(e *thir.QualifiedIdent) ir.Expr {
-	return l.ident(e.Symbol, e.Name, l.effectiveType(e))
+	return l.ident(e.Symbol, e.Name, e.ExprType())
 }
 func (l *lowerer) ident(sym *symbols.Symbol, name string, typ typeinfo.Type) ir.Expr {
 	if sym == nil {
@@ -213,15 +200,15 @@ func (l *lowerer) ident(sym *symbols.Symbol, name string, typ typeinfo.Type) ir.
 	return &ir.Ident{Name: SymbolName(l.ctx.ModuleID, l.ctx.IsEntryModule, sym), Type: l.typeID(typ), SymbolID: sym.ID}
 }
 func (l *lowerer) LowerUnary(e *thir.Unary) ir.Expr {
-	return &ir.Unary{Op: e.Op, Arg: l.lower(e.Value, l.expected, true), Type: l.typeID(l.effectiveType(e))}
+	return &ir.Unary{Op: e.Op, Arg: l.lower(e.Value, l.expected, true), Type: l.typeID(e.ExprType())}
 }
 func (l *lowerer) LowerBinary(e *thir.Binary) ir.Expr {
 	if e.IsStringConcatenation {
-		return &ir.StringConcat{Left: l.lower(e.Left, &typeinfo.StringType{}, true), Right: l.lower(e.Right, &typeinfo.RefType{Target: &typeinfo.StringType{}}, true), Type: l.typeID(l.effectiveType(e))}
+		return &ir.StringConcat{Left: l.lower(e.Left, &typeinfo.StringType{}, true), Right: l.lower(e.Right, &typeinfo.RefType{Target: &typeinfo.StringType{}}, true), Type: l.typeID(e.ExprType())}
 	}
-	leftType := l.effectiveType(e.Left)
-	rightType := l.effectiveType(e.Right)
-	leftExpected, rightExpected := l.effectiveType(e), l.effectiveType(e)
+	leftType := e.Left.ExprType()
+	rightType := e.Right.ExprType()
+	leftExpected, rightExpected := e.ExprType(), e.ExprType()
 	switch e.Op {
 	case "<<", ">>":
 		leftExpected = leftType
@@ -236,10 +223,10 @@ func (l *lowerer) LowerBinary(e *thir.Binary) ir.Expr {
 			rightExpected = leftType
 		}
 	}
-	return &ir.Binary{Op: e.Op, Left: l.lower(e.Left, leftExpected, true), Right: l.lower(e.Right, rightExpected, true), Type: l.typeID(l.effectiveType(e))}
+	return &ir.Binary{Op: e.Op, Left: l.lower(e.Left, leftExpected, true), Right: l.lower(e.Right, rightExpected, true), Type: l.typeID(e.ExprType())}
 }
 func (l *lowerer) LowerVariant(e *thir.Variant) ir.Expr {
-	out := &ir.VariantMake{Case: e.Case, Type: l.typeID(l.effectiveType(e))}
+	out := &ir.VariantMake{Case: e.Case, Type: l.typeID(e.ExprType())}
 	if e.Payload != nil {
 		out.Payload = l.lower(e.Payload, e.PayloadType, true)
 	}
@@ -247,7 +234,7 @@ func (l *lowerer) LowerVariant(e *thir.Variant) ir.Expr {
 }
 func (l *lowerer) LowerStructLiteral(e *thir.StructLiteral) ir.Expr {
 	fields := make([]ir.Expr, 0, len(e.Fields))
-	semantic, _ := typeinfo.Underlying(l.effectiveType(e)).(*typeinfo.StructType)
+	semantic, _ := typeinfo.Underlying(e.ExprType()).(*typeinfo.StructType)
 	for i, field := range e.Fields {
 		var expected typeinfo.Type
 		if semantic != nil && i < len(semantic.Fields) {
@@ -255,10 +242,10 @@ func (l *lowerer) LowerStructLiteral(e *thir.StructLiteral) ir.Expr {
 		}
 		fields = append(fields, l.lower(field.Value, expected, true))
 	}
-	return &ir.StructLit{Fields: fields, Type: l.typeID(l.effectiveType(e))}
+	return &ir.StructLit{Fields: fields, Type: l.typeID(e.ExprType())}
 }
 func (l *lowerer) LowerArrayLiteral(e *thir.ArrayLiteral) ir.Expr {
-	array, _ := typeinfo.Underlying(l.effectiveType(e)).(*typeinfo.ArrayType)
+	array, _ := typeinfo.Underlying(e.ExprType()).(*typeinfo.ArrayType)
 	if array == nil {
 		return &ir.InvalidExpr{Message: "array literal type missing", Type: ir.InvalidType}
 	}
@@ -266,14 +253,14 @@ func (l *lowerer) LowerArrayLiteral(e *thir.ArrayLiteral) ir.Expr {
 	for _, value := range e.Values {
 		values = append(values, l.lower(value, array.Elem, true))
 	}
-	return &ir.ArrayLit{Values: values, IsDynamic: array.Shape == typeinfo.ArrayOwner, Type: l.typeID(l.effectiveType(e))}
+	return &ir.ArrayLit{Values: values, IsDynamic: array.Shape == typeinfo.ArrayOwner, Type: l.typeID(e.ExprType())}
 }
 func (l *lowerer) LowerField(e *thir.Field) ir.Expr {
 	if e.ExprPlace() != nil {
 		return &ir.Load{Place: l.place(e)}
 	}
 	if e.Access != nil {
-		return &ir.Field{Base: l.lower(e.Base, nil, true), Index: e.Access.Field, Type: l.typeID(l.effectiveType(e))}
+		return &ir.Field{Base: l.lower(e.Base, nil, true), Index: e.Access.Field, Type: l.typeID(e.ExprType())}
 	}
 	return &ir.InvalidExpr{Message: "selector lowering not implemented", Type: ir.InvalidType}
 }
@@ -288,9 +275,9 @@ func (l *lowerer) LowerRange(*thir.Range) ir.Expr {
 }
 func (l *lowerer) LowerAddress(e *thir.Address) ir.Expr {
 	if e.Mode == thir.AddressRaw {
-		return &ir.AddrOf{Place: l.place(e.Value), Type: l.typeID(l.effectiveType(e))}
+		return &ir.AddrOf{Place: l.place(e.Value), Type: l.typeID(e.ExprType())}
 	}
-	return l.referenceValue(e.Value, l.effectiveType(e))
+	return l.referenceValue(e.Value, e.ExprType())
 }
 func (l *lowerer) LowerIs(*thir.Is) ir.Expr {
 	return &ir.InvalidExpr{Message: "enum case-test evidence missing", Type: ir.InvalidType}
@@ -302,7 +289,7 @@ func (l *lowerer) LowerPrint(e *thir.Print) ir.Expr {
 	return &ir.Print{Value: l.lower(e.Value, nil, true), AppendsNewline: e.AppendsNewline}
 }
 func (l *lowerer) LowerCast(e *thir.Cast) ir.Expr {
-	return &ir.Cast{Expr: l.lower(e.Value, l.expected, true), Type: l.typeID(l.effectiveType(e))}
+	return &ir.Cast{Expr: l.lower(e.Value, l.expected, true), Type: l.typeID(e.ExprType())}
 }
 
 func (l *lowerer) LowerCall(e *thir.Call) ir.Expr {
@@ -321,7 +308,7 @@ func (l *lowerer) LowerCall(e *thir.Call) ir.Expr {
 		}
 		args = append(args, l.argument(arg, expected))
 	}
-	resultType := l.typeID(l.effectiveType(e))
+	resultType := l.typeID(e.ExprType())
 	if resultType == ir.InvalidType && fn != nil {
 		resultType = l.returnType(fn.Return)
 	}
@@ -334,7 +321,7 @@ func (l *lowerer) argument(e thir.Expr, expected typeinfo.Type) ir.Expr {
 	return l.lower(e, expected, true)
 }
 func (l *lowerer) methodCall(call *thir.Call, field *thir.Field) ir.Expr {
-	baseType := l.effectiveType(field.Base)
+	baseType := field.Base.ExprType()
 	if iface, slot, ok := lookupInterfaceMethod(baseType, field.Name); ok {
 		method, _ := l.ctx.Types.InterfaceMethod(l.typeID(baseType), slot)
 		args := make([]ir.Expr, 0, len(call.Args))
@@ -379,7 +366,7 @@ func (l *lowerer) alloc(call *thir.Call) ir.Expr {
 	if len(call.Args) < 1 || len(call.Args) > 2 {
 		return &ir.InvalidExpr{Message: "alloc requires 1 or 2 effective arguments", Type: ir.InvalidType}
 	}
-	out := &ir.AllocExpr{Value: l.lower(call.Args[0], nil, true), Type: l.typeID(l.effectiveType(call))}
+	out := &ir.AllocExpr{Value: l.lower(call.Args[0], nil, true), Type: l.typeID(call.ExprType())}
 	if len(call.Args) == 2 {
 		out.Allocator = l.lower(call.Args[1], &typeinfo.AllocatorType{}, true)
 	}
@@ -471,7 +458,7 @@ func (l *lowerer) slice(index *thir.Index, r *thir.Range) ir.Expr {
 	if r.End != nil {
 		end = l.lower(r.End, typeinfo.DefaultIntegerType(), true)
 	}
-	resultType := l.effectiveType(index)
+	resultType := index.ExprType()
 	source := l.place(index.Base)
 	if target, _, isReference := typeinfo.ReferenceTarget(typeinfo.Underlying(resultType)); isReference {
 		if _, stringRange := typeinfo.Underlying(target).(*typeinfo.StringType); stringRange {
@@ -486,7 +473,7 @@ func (l *lowerer) place(expr thir.Expr) *ir.Place {
 	if p == nil {
 		return &ir.Place{
 			Root:     l.lower(expr, nil, false),
-			Type:     l.typeID(l.effectiveType(expr)),
+			Type:     l.typeID(expr.ExprType()),
 			Location: expr.SourceInfo().Location,
 		}
 	}
@@ -498,7 +485,7 @@ func (l *lowerer) place(expr thir.Expr) *ir.Place {
 		rootType = p.Root.Type
 	} else {
 		root = l.lower(p.Temporary, nil, true)
-		rootType = l.effectiveType(p.Temporary)
+		rootType = p.Temporary.ExprType()
 	}
 	out := &ir.Place{Root: root, Type: l.typeID(rootType), Location: expr.SourceInfo().Location}
 	for _, projection := range p.Projections {
@@ -509,17 +496,9 @@ func (l *lowerer) place(expr thir.Expr) *ir.Place {
 				Kind: ir.PlaceProjectionDeref, Type: out.Type, Location: projection.BaseSource.Location,
 			})
 		}
-		fieldIndex := projection.Field
-		projectionType := projection.Type
-		if l.ctx.Analysis != nil && projection.Kind == thir.PlaceField {
-			if access, found := l.ctx.Analysis.VariantField(projection.Source.NodeID); found {
-				fieldIndex = access.Field
-				projectionType = access.Type
-			}
-		}
 		item := ir.PlaceProjection{
-			FieldIndex: fieldIndex,
-			Type:       l.typeID(projectionType),
+			FieldIndex: projection.Field,
+			Type:       l.typeID(projection.Type),
 			Location:   projection.Source.Location,
 		}
 		switch projection.Kind {
@@ -552,8 +531,14 @@ func (l *lowerer) appendPayloadProjections(place *ir.Place, source ir.SourceInfo
 	if !payload.AppliesTo(l.ctx.Analysis.StorageOrigins(id)) {
 		return
 	}
-	for _, caseIndex := range payload.Cases {
-		variant, ok := l.ctx.Types.Type(place.Type)
+	AppendPayloadProjections(l.ctx.Types, place, payload.Cases, source.Location)
+}
+
+// AppendPayloadProjections extends place into the payload reached through
+// cases, one variant level per case.
+func AppendPayloadProjections(types *ir.TypeTable, place *ir.Place, cases []int, location *source.Location) {
+	for _, caseIndex := range cases {
+		variant, ok := types.Type(place.Type)
 		if !ok {
 			break
 		}
@@ -564,7 +549,7 @@ func (l *lowerer) appendPayloadProjections(place *ir.Place, source ir.SourceInfo
 		place.Type = variantCase.Payload
 		place.Projections = append(place.Projections, ir.PlaceProjection{
 			Kind: ir.PlaceProjectionVariantPayload, Case: caseIndex,
-			Type: place.Type, Location: source.Location,
+			Type: place.Type, Location: location,
 		})
 	}
 }
@@ -574,7 +559,7 @@ func (l *lowerer) interfaceValue(expr thir.Expr, expected typeinfo.Type) ir.Expr
 	if !ok {
 		return nil
 	}
-	resolved := l.effectiveType(expr)
+	resolved := expr.ExprType()
 	if _, already := typeinfo.InterfaceTypeOf(resolved); already {
 		return nil
 	}

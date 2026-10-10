@@ -2,10 +2,16 @@ package typechecker
 
 import (
 	"fmt"
+	"maps"
+	"slices"
+	"strings"
 
 	"compiler/internal/constvalue"
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/frontend/token"
+	"compiler/internal/ir"
+	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -39,6 +45,8 @@ func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt, returnType type
 		c.checkBinding(scope, node, false)
 	case *ast.ConstDecl:
 		c.checkBinding(scope, node, true)
+	case *ast.DestructureStmt:
+		c.checkDestructure(scope, node)
 	case *ast.ReturnStmt:
 		if node.Value == nil {
 			if returnType != nil {
@@ -76,8 +84,10 @@ func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt, returnType type
 		if condType != nil && !typeinfo.IsInvalidOrUnknown(condType) && !typeinfo.IsCondition(condType) {
 			c.ctx.Diagnostics.Add(explicitBoolCastRequiredError(node.Cond, "if condition must be bool"))
 		}
-		c.checkBlock(scope, node.Then, returnType)
-		c.checkStmt(scope, node.Else, returnType)
+		entered := c.narrowed
+		thenEnd := c.checkBranch(scope, node.Then, returnType, c.narrowedBy(entered, node.Cond, true))
+		elseEnd := c.checkBranch(scope, node.Else, returnType, c.narrowedBy(entered, node.Cond, false))
+		c.narrowed = joinNarrowing(thenEnd, elseEnd)
 	case *ast.ForStmt:
 		if node.Iterable != nil {
 			c.checkForInStmt(scope, node, returnType)
@@ -90,7 +100,9 @@ func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt, returnType type
 			}
 		}
 		c.loopDepth++
-		c.checkBlock(scope, node.Body, returnType)
+		entered := c.narrowed
+		// The body may not run at all.
+		c.narrowed = joinNarrowing(entered, c.checkBranch(scope, node.Body, returnType, c.narrowedBy(entered, node.Cond, true)))
 		c.loopDepth--
 	case *ast.BreakStmt, *ast.ContinueStmt:
 		if c.loopDepth == 0 {
@@ -120,6 +132,64 @@ func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt, returnType type
 	}
 }
 
+// checkDestructure types each new local as the struct field it takes. Without
+// a rest marker every field must be named, so a field added to the struct
+// later is never dropped unnoticed.
+func (c *checker) checkDestructure(scope *symbols.Scope, node *ast.DestructureStmt) {
+	valueType := c.requireValueType(node.Value, c.typeExpr(scope, node.Value, nil), "destructure value")
+	if typeinfo.IsInvalidOrUnknown(valueType) {
+		return
+	}
+	strct, isStruct := typeinfo.Underlying(valueType).(*typeinfo.StructType)
+	if !isStruct {
+		c.ctx.Diagnostics.Add(invalidOperationError(node.Value,
+			"destructure value must be a struct, got "+typeinfo.TypeText(valueType)))
+		return
+	}
+	named := make(map[string]*ast.Ident, len(node.Fields))
+	for _, item := range node.Fields {
+		field, fieldIndex, found := typeinfo.LookupStructField(strct, item.Name.Name)
+		if !found {
+			c.ctx.Diagnostics.AddError(diagnostics.ErrFieldNotFound,
+				"unknown field `"+item.Name.Name+"`", ast.LocOf(item.Name), "")
+			continue
+		}
+		if previous := named[field.Name]; previous != nil {
+			c.ctx.Diagnostics.Add(diagnostics.NewError("duplicate destructure field `"+field.Name+"`").
+				WithCode(diagnostics.ErrDuplicateField).
+				WithPrimaryLabel(ast.LocOf(item.Name), "duplicate field").
+				WithSecondaryLabel(ast.LocOf(previous), "first listed here"))
+			continue
+		}
+		named[field.Name] = item.Name
+		c.evidence.RecordStructField(item.Name.ID(), StructFieldAccess{Field: fieldIndex, Type: field.Type})
+		if binding := c.module.SymbolIndex.Symbol(item.Binding); binding != nil {
+			binding.BindType(field.Type)
+		}
+	}
+	if node.HasRest {
+		return
+	}
+	for _, field := range strct.Fields {
+		if named[field.Name] == nil {
+			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingField,
+				"destructure leaves out field `"+field.Name+"`", ast.LocOf(node), "name it or end the list with `_`")
+		}
+	}
+}
+
+// checkBranch checks stmt on a control path that starts with the narrowing in
+// start. It returns the narrowing that holds after stmt, or nil when control
+// never runs past it.
+func (c *checker) checkBranch(scope *symbols.Scope, stmt ast.Stmt, returnType typeinfo.Type, start map[narrowedPlace][]int) map[narrowedPlace][]int {
+	c.narrowed = start
+	c.checkStmt(scope, stmt, returnType)
+	if alwaysLeaves(stmt) {
+		return nil
+	}
+	return c.narrowed
+}
+
 func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, returnType typeinfo.Type) {
 	if c == nil || scope == nil || node == nil || node.Subject == nil {
 		return
@@ -140,127 +210,208 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, retu
 			"ownership-bearing match subject must be a named place").
 			Help("bind subject to a local before matching it"))
 	}
-	evidence := Match{
-		SubjectID: node.Subject.ID(),
-		EnumType:  subjectType,
-		CaseCount: len(descriptor.Cases),
-		Arms:      make([]MatchArm, 0, len(node.Arms)),
-	}
-	seenCases := make(map[int]ast.Node, len(node.Arms))
-	for _, arm := range node.Arms {
-		if arm == nil || arm.Case == nil {
+	evidence := Match{EnumType: subjectType, CaseCount: len(descriptor.Cases)}
+	seen := make(map[thir.ArmCase]ast.Node, len(node.Arms))
+	// tested holds, per case, the first arm that tests its payload.
+	tested := make(map[int]ast.Node)
+	entered := c.narrowed
+	var armEnds []map[narrowedPlace][]int
+	// reportMissing is off once a `_` arm takes the rest, or an arm's payload
+	// test is wrong and what it covers cannot be told.
+	reportMissing := true
+	for index, arm := range node.Arms {
+		if arm == nil || arm.Case == nil && !arm.IsFallback {
 			evidenceComplete = false
 			continue
 		}
-		armEvidence := MatchArm{ArmID: arm.ID(), Case: -1}
-		if arm.Body != nil {
-			armEvidence.BodyID = arm.Body.ID()
+		if arm.IsFallback {
+			reportMissing = false
+			rest := uncoveredArmCases(descriptor, seen, tested)
+			switch {
+			case index != len(node.Arms)-1:
+				// The arms after it decide what is left, so it selects nothing here.
+				evidenceComplete = false
+				rest = nil
+				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement,
+					"the `_` arm must be the last arm", ast.LocOf(arm), "it handles every case the arms before it do not")
+			case len(rest) == 0:
+				evidenceComplete = false
+				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement,
+					"the `_` arm handles nothing", ast.LocOf(arm), "every case already has an arm")
+			}
+			armEnds = append(armEnds, c.checkBranch(scope, arm.Body, returnType, c.narrowedToArm(entered, node.Subject, rest)))
+			evidence.ArmCases = append(evidence.ArmCases, rest)
+			continue
 		}
 		resolved, pathOK := c.resolveNamedVariant(arm.Case)
 		if !pathOK {
 			evidenceComplete = false
-			c.checkBlock(scope, arm.Body, returnType)
+			c.checkBranch(scope, arm.Body, returnType, maps.Clone(entered))
 			continue
 		}
 		if typeinfo.IsInvalidOrUnknown(resolved.EnumType) {
 			evidenceComplete = false
-			c.checkBlock(scope, arm.Body, returnType)
+			c.checkBranch(scope, arm.Body, returnType, maps.Clone(entered))
 			continue
 		}
 		if !typeinfo.IsSameType(subjectType, resolved.EnumType) {
 			evidenceComplete = false
 			c.ctx.Diagnostics.Add(typeMismatchError(arm.Case,
 				fmt.Sprintf("match arm requires %s, got %s", typeinfo.TypeText(subjectType), typeinfo.TypeText(resolved.EnumType))))
-			c.checkBlock(scope, arm.Body, returnType)
+			c.checkBranch(scope, arm.Body, returnType, maps.Clone(entered))
 			continue
 		}
-		armEvidence.Case = resolved.CaseIndex
-		if previous := seenCases[resolved.CaseIndex]; previous != nil {
+		armCase := thir.ArmCase{Case: resolved.CaseIndex, TestsPayload: arm.PayloadOp != ""}
+		if armCase.TestsPayload {
+			payloadCase, isValid := c.armPayloadCase(node.Subject, arm, resolved.Case)
+			if !isValid {
+				evidenceComplete, reportMissing = false, false
+				c.checkBranch(scope, arm.Body, returnType, maps.Clone(entered))
+				continue
+			}
+			armCase.PayloadCase = payloadCase
+		}
+		// An arm repeats an earlier one that selects the same thing, the whole
+		// case, or (for a whole-case arm) part of it.
+		previous := seen[armCase]
+		if previous == nil {
+			previous = seen[thir.ArmCase{Case: armCase.Case}]
+		}
+		if previous == nil && !armCase.TestsPayload {
+			previous = tested[armCase.Case]
+		}
+		if previous != nil {
+			// Two arms for one case cannot become one switch.
+			evidenceComplete = false
 			c.ctx.Diagnostics.Add(diagnostics.NewError("duplicate match arm for `"+resolved.CaseName.Name+"`").
 				WithCode(diagnostics.ErrInvalidStatement).
 				WithPrimaryLabel(ast.LocOf(arm.Case), "duplicate case").
 				WithSecondaryLabel(ast.LocOf(previous), "first matched here"))
-		} else {
-			seenCases[resolved.CaseIndex] = arm.Case
 		}
-		if resolved.Case.Payload == nil {
-			if arm.HasData {
-				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement,
-					"payloadless match case `"+resolved.CaseName.Name+"` does not accept a payload", ast.LocOf(arm), "remove `with` and its pattern")
-			}
-		} else {
-			armEvidence.Payload = resolved.Case.Payload
-			if !arm.HasData {
-				c.ctx.Diagnostics.AddError(diagnostics.ErrMissingInitializer,
-					"data match case `"+resolved.CaseName.Name+"` requires a payload pattern", ast.LocOf(arm), "add `with <binding>` or `with _`")
-			} else if arm.Binding != nil || arm.IsDiscard {
-				fieldEvidence := MatchBinding{Projection: MatchWholePayload, Type: resolved.Case.Payload, IsDiscard: arm.IsDiscard}
-				if arm.Binding != nil {
-					fieldEvidence.Binding = c.module.SymbolIndex.Symbol(arm.Binding)
-					if fieldEvidence.Binding != nil {
-						fieldEvidence.Binding.BindType(resolved.Case.Payload)
-					}
-				}
-				armEvidence.Bindings = append(armEvidence.Bindings, fieldEvidence)
-			} else {
-				payload, payloadOK := typeinfo.Underlying(resolved.Case.Payload).(*typeinfo.StructType)
-				if !payloadOK || payload == nil {
-					c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement,
-						"field pattern requires a struct payload", ast.LocOf(arm), "write `with <binding>` or `with _`")
-				} else {
-					seenFields := make(map[string]ast.Node, len(arm.Fields))
-					for _, pattern := range arm.Fields {
-						if pattern.Name == nil {
-							continue
-						}
-						name := pattern.Name.Name
-						if previous := seenFields[name]; previous != nil {
-							c.ctx.Diagnostics.Add(diagnostics.NewError("duplicate match pattern field `"+name+"`").
-								WithCode(diagnostics.ErrDuplicateField).
-								WithPrimaryLabel(ast.LocOf(pattern.Name), "duplicate field").
-								WithSecondaryLabel(ast.LocOf(previous), "first listed here"))
-							continue
-						}
-						seenFields[name] = pattern.Name
-						field, fieldIndex, fieldFound := typeinfo.LookupStructField(payload, name)
-						if !fieldFound {
-							c.ctx.Diagnostics.AddError(diagnostics.ErrFieldNotFound,
-								"unknown match pattern field `"+name+"`", ast.LocOf(pattern.Name), "")
-							continue
-						}
-						fieldEvidence := MatchBinding{Projection: MatchPayloadField, Field: fieldIndex, Type: field.Type, IsDiscard: pattern.IsDiscard}
-						if !pattern.IsDiscard && pattern.Binding != nil {
-							fieldEvidence.Binding = c.module.SymbolIndex.Symbol(pattern.Binding)
-							if fieldEvidence.Binding != nil {
-								fieldEvidence.Binding.BindType(field.Type)
-							}
-						}
-						armEvidence.Bindings = append(armEvidence.Bindings, fieldEvidence)
-					}
-				}
-			}
+		if seen[armCase] == nil {
+			seen[armCase] = arm.Case
 		}
-		carrierUse := typeinfo.UseRead
-		for _, field := range armEvidence.Bindings {
-			if typeinfo.OwnershipCapabilityOf(field.Type).Copy != typeinfo.CopyImplicit {
-				carrierUse = typeinfo.UseMove
-				break
-			}
+		if armCase.TestsPayload && tested[armCase.Case] == nil {
+			tested[armCase.Case] = arm.Case
 		}
-		armEvidence.CarrierUse = carrierUse
-		evidence.Arms = append(evidence.Arms, armEvidence)
-		c.checkBlock(scope, arm.Body, returnType)
+		evidence.ArmCases = append(evidence.ArmCases, []thir.ArmCase{armCase})
+		armEnds = append(armEnds, c.checkBranch(scope, arm.Body, returnType, c.narrowedToArm(entered, node.Subject, []thir.ArmCase{armCase})))
 	}
-	for caseIndex, variant := range descriptor.Cases {
-		if seenCases[caseIndex] != nil {
-			continue
+	c.narrowed = joinNarrowing(armEnds...)
+	var missing []string
+	if reportMissing {
+		for _, armCase := range uncoveredArmCases(descriptor, seen, tested) {
+			name := descriptor.Cases[armCase.Case].Name
+			if armCase.TestsPayload {
+				payload, _ := typeinfo.VariantDescriptorOf(descriptor.Cases[armCase.Case].Payload)
+				switch {
+				case payload.Family != typeinfo.VariantFamilyOptional:
+					name += " is " + payload.Cases[armCase.PayloadCase].Name
+				case armCase.PayloadCase == ir.OptionalPresentCase:
+					name += " != none"
+				default:
+					name += " == none"
+				}
+			}
+			missing = append(missing, "`"+name+"`")
+		}
+	}
+	// One error names every missing case: the bag keeps one error per place.
+	if len(missing) > 0 {
+		noun := "case"
+		if len(missing) > 1 {
+			noun = "cases"
 		}
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement,
-			"match is missing case `"+variant.Name+"`", ast.LocOf(node), "add one arm for every enum case")
+			"match is missing "+noun+" "+strings.Join(missing, ", "), ast.LocOf(node), "add an arm for each, or a `_` arm for every case left")
 	}
-	if evidenceComplete && len(evidence.Arms) == len(node.Arms) {
+	if evidenceComplete && len(evidence.ArmCases) == len(node.Arms) {
 		c.evidence.RecordMatch(node.ID(), evidence)
 	}
+}
+
+// uncoveredArmCases lists what no arm selects yet: whole cases, and for a case
+// whose payload some arm tests, the payload cases still open.
+func uncoveredArmCases(descriptor typeinfo.VariantDescriptor, seen map[thir.ArmCase]ast.Node, tested map[int]ast.Node) []thir.ArmCase {
+	var rest []thir.ArmCase
+	for caseIndex, variant := range descriptor.Cases {
+		switch {
+		case seen[thir.ArmCase{Case: caseIndex}] != nil:
+		case tested[caseIndex] == nil:
+			rest = append(rest, thir.ArmCase{Case: caseIndex})
+		default:
+			payload, _ := typeinfo.VariantDescriptorOf(variant.Payload)
+			for payloadCase := range payload.Cases {
+				armCase := thir.ArmCase{Case: caseIndex, TestsPayload: true, PayloadCase: payloadCase}
+				if seen[armCase] == nil {
+					rest = append(rest, armCase)
+				}
+			}
+		}
+	}
+	return rest
+}
+
+// narrowedToArm returns the narrowing in known with subject restricted to the
+// cases a match arm selects: its payload too when the arm selects within one
+// case. known is left as it was.
+func (c *checker) narrowedToArm(known map[narrowedPlace][]int, subject ast.Expr, cases []thir.ArmCase) map[narrowedPlace][]int {
+	result := maps.Clone(known)
+	matched, isPlace := c.narrowedPlaceOf(subject)
+	if !isPlace {
+		return result
+	}
+	var subjectCases, payloadCases []int
+	for _, armCase := range cases {
+		if !slices.Contains(subjectCases, armCase.Case) {
+			subjectCases = append(subjectCases, armCase.Case)
+		}
+		if armCase.TestsPayload {
+			payloadCases = append(payloadCases, armCase.PayloadCase)
+		}
+	}
+	result[matched] = subjectCases
+	if len(subjectCases) == 1 && len(payloadCases) > 0 {
+		matched.path += payloadStep
+		result[matched] = payloadCases
+	}
+	return result
+}
+
+// armPayloadCase resolves the payload test of a match arm (`!= none`,
+// `== none`, `is Enum::Inner`) to a case of the payload variant holds.
+func (c *checker) armPayloadCase(subject ast.Expr, arm *ast.MatchArm, variant typeinfo.VariantCase) (int, bool) {
+	if !place.IsPlaceExpr(subject) {
+		c.ctx.Diagnostics.Add(invalidOperationError(subject,
+			"a match arm can test a payload only when the subject is a named place").
+			Help("bind subject to a local before matching it"))
+		return 0, false
+	}
+	holds := "has no payload"
+	if variant.Payload != nil {
+		holds = "holds " + typeinfo.TypeText(variant.Payload)
+	}
+	if arm.PayloadOp != string(token.IS) {
+		if !typeinfo.IsOptional(variant.Payload) {
+			c.ctx.Diagnostics.Add(invalidOperationError(arm.Case,
+				fmt.Sprintf("`%s none` needs an optional payload, but `%s` %s", arm.PayloadOp, variant.Name, holds)))
+			return 0, false
+		}
+		if arm.PayloadOp == string(token.NEQ) {
+			return ir.OptionalPresentCase, true
+		}
+		return ir.OptionalAbsentCase, true
+	}
+	resolved, isCase := c.resolveNamedVariant(arm.PayloadCase)
+	if !isCase {
+		return 0, false
+	}
+	if variant.Payload == nil || !typeinfo.IsSameType(variant.Payload, resolved.EnumType) {
+		c.ctx.Diagnostics.Add(typeMismatchError(arm.PayloadCase,
+			fmt.Sprintf("`is %s` does not fit: `%s` %s", typeinfo.TypeText(resolved.EnumType), variant.Name, holds)))
+		return 0, false
+	}
+	return resolved.CaseIndex, true
 }
 
 func (c *checker) checkAssign(scope *symbols.Scope, node *ast.AssignStmt) {
@@ -268,30 +419,24 @@ func (c *checker) checkAssign(scope *symbols.Scope, node *ast.AssignStmt) {
 		return
 	}
 	targetType := c.typeWholeCarrierExpr(scope, node.Target)
-	if targetType == nil || typeinfo.IsInvalid(targetType) {
+	if targetType == nil || typeinfo.IsInvalidOrUnknown(targetType) {
 		return
 	}
-	// Conflicting enum payload fields are resolved by flow. Check the RHS and
-	// write capability now; only compatibility depends on the selected case.
-	expected := targetType
-	if typeinfo.IsUnknown(expected) {
-		expected = nil
-	}
-	valueType := c.typeExpr(scope, node.Value, expected)
+	valueType := c.typeExpr(scope, node.Value, targetType)
 	valueType = c.requireValueType(node.Value, valueType, "assignment")
-	deferredTarget := typeinfo.IsUnknown(targetType)
-	if typeinfo.IsInvalid(valueType) || (typeinfo.IsUnknown(valueType) && !deferredTarget) {
+	if typeinfo.IsInvalidOrUnknown(valueType) {
 		return
 	}
 	if c.rejectTemporaryBorrowEscape(scope, node.Value, "assignment") {
 		return
 	}
-	if !deferredTarget && !typeinfo.IsUnknown(valueType) && !c.isAssignable(targetType, valueType, node.Value) {
+	if !c.isAssignable(targetType, valueType, node.Value) {
 		c.ctx.Diagnostics.Add(typeMismatchError(node.Value,
 			fmt.Sprintf("cannot assign %s to %s",
 				typeinfo.TypeText(valueType), typeinfo.TypeText(targetType))))
 		return
 	}
+	c.forgetNarrowing(node.Target)
 	switch target := node.Target.(type) {
 	case *ast.Ident:
 		var sym *symbols.Symbol
@@ -501,6 +646,13 @@ func (c *checker) checkBinding(scope *symbols.Scope, node ast.Stmt, requireIniti
 	} else {
 		sym.BindType(valType)
 	}
+	// A reference copied from a place names the same storage, so a test of
+	// one narrows reads through the other.
+	if _, _, isReference := typeinfo.ReferenceTarget(typeinfo.Underlying(valType)); isReference {
+		if target, isPlace := c.narrowedPlaceOf(value); isPlace {
+			c.aliases[sym] = target
+		}
+	}
 }
 
 // checkForInStmt types a `for x in iterable` loop over a range, indexable
@@ -601,7 +753,9 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 		c.evidence.RecordForIteration(node.ID(), evidence)
 	}
 	c.loopDepth++
-	c.checkBlock(scope, node.Body, returnType)
+	entered := c.narrowed
+	// The body may not run at all.
+	c.narrowed = joinNarrowing(entered, c.checkBranch(scope, node.Body, returnType, maps.Clone(entered)))
 	c.loopDepth--
 }
 

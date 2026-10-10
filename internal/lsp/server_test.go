@@ -559,8 +559,8 @@ func TestHoverShowsExactCaseFieldType(t *testing.T) {
 	root := t.TempDir()
 	filePath := filepath.Join(root, "main"+peeper.SourceExt)
 	src := `enum Choice {
-	Number: { value: i32 },
-	Text: { value: cstr },
+	Number: struct { value: i32 },
+	Text: struct { value: cstr },
 }
 fn read(choice: Choice) -> cstr {
 	if choice is Choice::Text {
@@ -572,8 +572,8 @@ fn read(choice: Choice) -> cstr {
 	state := NewServerState()
 	state.RootDir = root
 	hover := hoverAtSource(t, state, filePath, src)
-	if hover == nil || !strings.Contains(hover.Contents.Value, "(expr): cstr") {
-		t.Fatalf("exact-case field hover = %#v, want cstr", hover)
+	if hover == nil || !strings.Contains(hover.Contents.Value, "(field) value: cstr") {
+		t.Fatalf("exact-case field hover = %#v, want cstr field", hover)
 	}
 }
 
@@ -1378,7 +1378,7 @@ func TestHoverShowsInterfaceTypeWithMultilineMethods(t *testing.T) {
 func TestHoverShowsEnumTypeWithMultilineVariants(t *testing.T) {
 	root := t.TempDir()
 	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
-	src := "__CURSOR__enum Color {\n\tRgb: { red: u8, green: u8, blue: u8 },\n\tTransparent,\n}\n"
+	src := "__CURSOR__enum Color {\n\tRgb: struct { red: u8, green: u8, blue: u8 },\n\tTransparent,\n}\n"
 
 	state := NewServerState()
 	state.RootDir = root
@@ -1386,7 +1386,7 @@ func TestHoverShowsEnumTypeWithMultilineVariants(t *testing.T) {
 	if hover == nil {
 		t.Fatalf("expected hover result, got nil")
 	}
-	if !strings.Contains(hover.Contents.Value, "enum {\n  Rgb: {red: u8, green: u8, blue: u8},\n  Transparent,\n}") {
+	if !strings.Contains(hover.Contents.Value, "enum {\n  Rgb: struct{red: u8; green: u8; blue: u8},\n  Transparent,\n}") {
 		t.Fatalf("unexpected hover contents: %q", hover.Contents.Value)
 	}
 }

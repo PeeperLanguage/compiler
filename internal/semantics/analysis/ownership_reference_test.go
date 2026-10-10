@@ -12,7 +12,7 @@ import (
 )
 
 func TestProjectedEnumReferenceState(t *testing.T) {
-	result := checkOwnershipSource(t, `enum Resource { Borrowed: { value: &i32, sibling: &i32 }, Empty }
+	result := checkOwnershipSource(t, `enum Resource { Borrowed: struct { value: &i32, sibling: &i32 }, Empty }
 fn Read(_: &i32) {}
 fn probe(mut first: i32, mut second: i32) {
 	let reference = &first;
@@ -21,7 +21,7 @@ fn probe(mut first: i32, mut second: i32) {
 		resource.value = &second;
 		resource.value = resource.value;
 		match resource {
-			Resource::Borrowed with { value = value, sibling = sibling } => { Read(value); Read(sibling); }
+			Resource::Borrowed => { let .{ value = value, sibling = sibling } = resource; Read(value); Read(sibling); }
 			Resource::Empty => {}
 		}
 	}
@@ -32,8 +32,9 @@ fn probe(mut first: i32, mut second: i32) {
 	analysis := inspectFunctionAnalysis(t, result, "probe")
 	fn := result.module.AST.Stmts[2].(*ast.FnDecl)
 	branch := fn.Body.Stmts[2].(*ast.IfStmt)
-	assign := branch.Then.Stmts[0].(*ast.AssignStmt)
-	match := branch.Then.Stmts[2].(*ast.MatchStmt)
+	block := branch.Then
+	assign := block.Stmts[0].(*ast.AssignStmt)
+	match := block.Stmts[2].(*ast.MatchStmt)
 	node := analysisNodeForStmt(t, analysis, match)
 	resource, _ := analysis.FunctionScope.Lookup("resource")
 	first, _ := analysis.FunctionScope.Lookup("first")
@@ -65,13 +66,14 @@ fn probe(mut first: i32, mut second: i32) {
 	}) {
 		t.Fatalf("assignment storage = %#v", storage)
 	}
-	binding := match.Arms[0].Fields[0].Binding
-	typedMatch := result.module.THIR.Node(match.ID()).(*thir.Match)
-	if source := typedMatch.Arms[0].Bindings[0].Source; source.NodeID != binding.ID() || source.Location != ast.LocOf(binding) {
-		t.Fatalf("match binding THIR source = %#v, want binding identity and location", source)
+	destructure := match.Arms[0].Body.Stmts[0].(*ast.DestructureStmt)
+	binding := destructure.Fields[0].Binding
+	typed := result.module.THIR.Node(destructure.ID()).(*thir.Destructure)
+	if source := typed.Bindings[0].Source; source.NodeID != binding.ID() || source.Location != ast.LocOf(binding) {
+		t.Fatalf("destructure binding THIR source = %#v, want binding identity and location", source)
 	}
 	if got := result.module.Analysis.ValueOrigins(binding.ID()); !place.AreSameOrigins(got, []place.Origin{{Root: second}}) {
-		t.Fatalf("match value origins = %#v, want second", got)
+		t.Fatalf("destructured value origins = %#v, want second", got)
 	}
 }
 
@@ -98,18 +100,18 @@ resource.sibling = &second;
 first = 3;
 Read(resource.value);
 Read(resource.sibling);`},
-		{name: "carrier copy retains old loan", body: `let duplicate = resource;
+		{name: "carrier copy retains old loan", body: `let duplicate: Resource = resource;
 resource.value = &second;
 first = 3;
 match duplicate {
-Resource::Borrowed with { value = reference } => { Read(reference); }
+Resource::Borrowed => { Read(duplicate.value); }
 Resource::Empty => {}
 }`, code: diagnostics.ErrBorrowConflict},
 		{name: "field copy retains old loan", body: `let duplicate = resource.value;
 resource.value = &second;
 first = 3;
 Read(duplicate);`, code: diagnostics.ErrBorrowConflict},
-		{name: "independent copies release independently", body: `let mut duplicate = resource;
+		{name: "independent copies release independently", body: `let mut duplicate: Resource = resource;
 resource.value = &second;
 if duplicate is Resource::Borrowed {
 duplicate.value = &second;
@@ -137,14 +139,14 @@ Write(resource.value);`},
 		{name: "mutable replacement protects new loan", fields: "value: &mut i32", setup: `let mut resource = Resource::Borrowed with .{ value = &mut first };`, body: `resource.value = &mut second;
 second = 3;
 match resource {
-Resource::Borrowed with { value = reference } => { Write(reference); }
+Resource::Borrowed => { let .{ value = reference } = resource; Write(reference); }
 Resource::Empty => {}
 }`, code: diagnostics.ErrBorrowConflict},
 		{name: "mutable moved carrier retains new loan", fields: "value: &mut i32", setup: `let mut resource = Resource::Borrowed with .{ value = &mut first };`, body: `resource.value = &mut second;
-let moved = resource;
+let moved: Resource = resource;
 second = 3;
 match moved {
-Resource::Borrowed with { value = reference } => { Write(reference); }
+Resource::Borrowed => { let .{ value = reference } = moved; Write(reference); }
 Resource::Empty => {}
 }`, code: diagnostics.ErrBorrowConflict},
 		{name: "both branches release old loan", body: `if flag { resource.value = &second; } else { resource.value = &third; }
@@ -176,7 +178,7 @@ Read(resource.value);`},
 			if test.setup == "" {
 				test.setup = "let mut resource = Resource::Borrowed with .{ value = &first };"
 			}
-			src := fmt.Sprintf(`enum Resource { Borrowed: { %s }, Empty }
+			src := fmt.Sprintf(`enum Resource { Borrowed: struct { %s }, Empty }
 fn Read(_: &i32) {}
 fn ReadOptional(_: ?&i32) {}
 fn Write(_: &mut i32) {}

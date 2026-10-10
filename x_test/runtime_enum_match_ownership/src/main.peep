@@ -1,11 +1,12 @@
 enum Resource {
-    Owned: { selected: *i32, omitted: *i32 },
+    Owned: struct { selected: *i32, omitted: *i32 },
     Pending
 }
 
 fn Consume(resource: Resource) {
     match resource {
-        Resource::Owned with { selected = selected } => {
+        Resource::Owned => {
+            let .{ selected = selected, _ } = resource;
             free(selected);
             return;
         }
@@ -15,14 +16,22 @@ fn Consume(resource: Resource) {
     }
 }
 
-fn ResetAndConsume(mut resource: Resource) {
+// A state change returns the new value, so every path hands back a whole enum.
+fn Reset(resource: Resource) -> Resource {
     match resource {
-        Resource::Owned with { selected = selected } => {
+        Resource::Owned => {
+            let .{ selected = selected, _ } = resource;
             free(selected);
-            resource = Resource::Pending;
+            return Resource::Pending;
         }
-        Resource::Pending => {}
+        Resource::Pending => {
+            return resource;
+        }
     }
+}
+
+fn ResetAndConsume(mut resource: Resource) {
+    resource = Reset(resource);
     Consume(resource);
 }
 

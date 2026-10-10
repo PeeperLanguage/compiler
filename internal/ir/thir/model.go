@@ -126,6 +126,7 @@ type Node interface {
 type ControlFlowBuilder interface {
 	BuildBlock(*Block)
 	BuildBinding(*Binding)
+	BuildDestructure(*Destructure)
 	BuildExprStmt(*ExprStmt)
 	BuildAssign(*Assign)
 	BuildReturn(*Return)
@@ -143,6 +144,7 @@ type ControlFlowBuilder interface {
 type EffectBuilder interface {
 	BuildBlockEffects(*Block)
 	BuildBindingEffects(*Binding)
+	BuildDestructureEffects(*Destructure)
 	BuildExprStmtEffects(*ExprStmt)
 	BuildAssignEffects(*Assign)
 	BuildReturnEffects(*Return)
@@ -181,6 +183,7 @@ type EffectBuilder interface {
 type FlowAnalyzer interface {
 	AnalyzeBlock(*Block)
 	AnalyzeBinding(*Binding)
+	AnalyzeDestructure(*Destructure)
 	AnalyzeExprStmt(*ExprStmt)
 	AnalyzeAssign(*Assign)
 	AnalyzeReturn(*Return)
@@ -191,29 +194,29 @@ type FlowAnalyzer interface {
 	AnalyzeMatch(*Match)
 	AnalyzeInvalidStmt(*InvalidStmt)
 
-	AnalyzeInvalidExpr(*InvalidExpr) typeinfo.Type
-	AnalyzeNumberLiteral(*NumberLiteral) typeinfo.Type
-	AnalyzeStringLiteral(*StringLiteral) typeinfo.Type
-	AnalyzeByteLiteral(*ByteLiteral) typeinfo.Type
-	AnalyzeCharLiteral(*CharLiteral) typeinfo.Type
-	AnalyzeBoolLiteral(*BoolLiteral) typeinfo.Type
-	AnalyzeNoneLiteral(*NoneLiteral) typeinfo.Type
-	AnalyzeIdent(*Ident) typeinfo.Type
-	AnalyzeQualifiedIdent(*QualifiedIdent) typeinfo.Type
-	AnalyzeField(*Field) typeinfo.Type
-	AnalyzeIndex(*Index) typeinfo.Type
-	AnalyzeRange(*Range) typeinfo.Type
-	AnalyzeStructLiteral(*StructLiteral) typeinfo.Type
-	AnalyzeVariant(*Variant) typeinfo.Type
-	AnalyzeArrayLiteral(*ArrayLiteral) typeinfo.Type
-	AnalyzeAddress(*Address) typeinfo.Type
-	AnalyzeUnary(*Unary) typeinfo.Type
-	AnalyzeBinary(*Binary) typeinfo.Type
-	AnalyzeIs(*Is) typeinfo.Type
-	AnalyzeCall(*Call) typeinfo.Type
-	AnalyzeFree(*Free) typeinfo.Type
-	AnalyzePrint(*Print) typeinfo.Type
-	AnalyzeCast(*Cast) typeinfo.Type
+	AnalyzeInvalidExpr(*InvalidExpr)
+	AnalyzeNumberLiteral(*NumberLiteral)
+	AnalyzeStringLiteral(*StringLiteral)
+	AnalyzeByteLiteral(*ByteLiteral)
+	AnalyzeCharLiteral(*CharLiteral)
+	AnalyzeBoolLiteral(*BoolLiteral)
+	AnalyzeNoneLiteral(*NoneLiteral)
+	AnalyzeIdent(*Ident)
+	AnalyzeQualifiedIdent(*QualifiedIdent)
+	AnalyzeField(*Field)
+	AnalyzeIndex(*Index)
+	AnalyzeRange(*Range)
+	AnalyzeStructLiteral(*StructLiteral)
+	AnalyzeVariant(*Variant)
+	AnalyzeArrayLiteral(*ArrayLiteral)
+	AnalyzeAddress(*Address)
+	AnalyzeUnary(*Unary)
+	AnalyzeBinary(*Binary)
+	AnalyzeIs(*Is)
+	AnalyzeCall(*Call)
+	AnalyzeFree(*Free)
+	AnalyzePrint(*Print)
+	AnalyzeCast(*Cast)
 }
 
 type Stmt interface {
@@ -229,13 +232,14 @@ type Expr interface {
 	exprNode()
 	ExprType() typeinfo.Type
 	ExprPlace() *Place
+	CaseCarrierType() typeinfo.Type
 	Conversion() *typeinfo.Conversion
 	ImplicitReferenceType() typeinfo.Type
 	InterfaceImplementations() []InterfaceImplementation
 	UseKind() (typeinfo.UseKind, bool)
 	ReferenceArgInfo() (bool, bool)
 	LowerExpression(ExpressionLowerer) ir.Expr
-	AnalyzeFlow(FlowAnalyzer) typeinfo.Type
+	AnalyzeFlow(FlowAnalyzer)
 	BuildEffects(EffectBuilder)
 }
 
@@ -248,8 +252,12 @@ func (s StmtInfo) stmtNode()                 {}
 func (s StmtInfo) SourceInfo() ir.SourceInfo { return s.Source }
 
 type ExprInfo struct {
-	Source                     ir.SourceInfo
-	Type                       typeinfo.Type
+	Source ir.SourceInfo
+	Type   typeinfo.Type
+	// CaseCarrier is set when the expression names a place narrowed to one
+	// enum case: Type is that case's payload and CaseCarrier the place's own
+	// type. Flow analysis verifies the case at this use.
+	CaseCarrier                typeinfo.Type
 	ConversionInfo             *typeinfo.Conversion
 	Use                        typeinfo.UseKind
 	HasUse                     bool
@@ -265,8 +273,18 @@ func (e ExprInfo) exprNode()                            {}
 func (e ExprInfo) SourceInfo() ir.SourceInfo            { return e.Source }
 func (e ExprInfo) ExprType() typeinfo.Type              { return e.Type }
 func (e ExprInfo) ExprPlace() *Place                    { return e.Place }
+func (e ExprInfo) CaseCarrierType() typeinfo.Type       { return e.CaseCarrier }
 func (e ExprInfo) Conversion() *typeinfo.Conversion     { return e.ConversionInfo }
 func (e ExprInfo) ImplicitReferenceType() typeinfo.Type { return e.ImplicitReference }
+
+// StoredType is the type of the storage the expression names: the carrier
+// when the expression reads a narrowed place as its payload.
+func (e ExprInfo) StoredType() typeinfo.Type {
+	if e.CaseCarrier != nil {
+		return e.CaseCarrier
+	}
+	return e.Type
+}
 func (e ExprInfo) InterfaceImplementations() []InterfaceImplementation {
 	return e.Implementations
 }
@@ -329,6 +347,21 @@ type Binding struct {
 	Value      Expr
 }
 
+// Destructure moves Value whole and defines one local per binding. Fields of
+// Value without a binding are discarded.
+type Destructure struct {
+	StmtInfo
+	Value    Expr
+	Bindings []DestructureBinding
+}
+
+type DestructureBinding struct {
+	Source ir.SourceInfo
+	Field  int
+	Type   typeinfo.Type
+	Symbol *symbols.Symbol
+}
+
 type ExprStmt struct {
 	StmtInfo
 	Value Expr
@@ -376,39 +409,21 @@ type Match struct {
 	Arms      []MatchArm
 }
 
-// Arm returns the arm that handles caseIndex, or nil when no arm does.
-func (s *Match) Arm(caseIndex int) *MatchArm {
-	for index := range s.Arms {
-		if s.Arms[index].Case == caseIndex {
-			return &s.Arms[index]
-		}
-	}
-	return nil
+// ArmCase is what a match arm selects: one case of the subject and, when
+// TestsPayload, one case of that case's payload (`Case != none`,
+// `Case is Enum::Inner`).
+type ArmCase struct {
+	Case         int
+	TestsPayload bool
+	PayloadCase  int
 }
 
+// MatchArm runs Body for each of Cases: one for a named arm, everything no
+// other arm selects for the fallback arm `_`.
 type MatchArm struct {
-	Source     ir.SourceInfo
-	Case       int
-	Payload    typeinfo.Type
-	CarrierUse typeinfo.UseKind
-	Bindings   []MatchBinding
-	Body       *Block
-}
-
-type MatchProjection uint8
-
-const (
-	MatchPayloadField MatchProjection = iota
-	MatchWholePayload
-)
-
-type MatchBinding struct {
-	Source     ir.SourceInfo
-	Projection MatchProjection
-	Field      int
-	Type       typeinfo.Type
-	Symbol     *symbols.Symbol
-	IsDiscard  bool
+	Source ir.SourceInfo
+	Cases  []ArmCase
+	Body   *Block
 }
 
 type InvalidStmt struct {

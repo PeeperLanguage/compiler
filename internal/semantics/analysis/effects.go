@@ -84,33 +84,6 @@ func (b *thirBuilder) buildSite(block *cfg.Block, site *cfg.Site) {
 	default:
 		panic(fmt.Sprintf("effect: unhandled CFG terminator %T", block.Terminator))
 	}
-	if terminator, ok := block.Terminator.(*cfg.SwitchVariant); ok {
-		b.buildMatchBindings(terminator)
-	}
-}
-
-func (b *thirBuilder) buildMatchBindings(terminator *cfg.SwitchVariant) {
-	match, _ := b.source.Node(terminator.NodeID).(*thir.Match)
-	if match == nil {
-		return
-	}
-	for _, edge := range b.graph.SiteEdges.OutEdges(b.site) {
-		if edge.Kind != cfg.EdgeVariantCase {
-			continue
-		}
-		for _, arm := range match.Arms {
-			if arm.Case != edge.Case {
-				continue
-			}
-			for _, binding := range arm.Bindings {
-				if binding.Symbol != nil {
-					b.ops[edge.To] = append(b.ops[edge.To], effectDefine{
-						Symbol: binding.Symbol, Source: match, Node: terminator.NodeID, IsInitialized: true, IsOnEntry: true,
-					})
-				}
-			}
-		}
-	}
 }
 
 func (b *thirBuilder) BuildBlockEffects(*thir.Block)             {}
@@ -123,6 +96,14 @@ func (b *thirBuilder) BuildBindingEffects(statement *thir.Binding) {
 	if statement.Symbol != nil {
 		value := exprNodeID(statement.Value)
 		b.emit(effectDefine{Symbol: statement.Symbol, Source: statement, Node: statement.Source.NodeID, Value: value, ValueExpr: statement.Value, IsInitialized: statement.Value != nil})
+	}
+}
+
+func (b *thirBuilder) BuildDestructureEffects(statement *thir.Destructure) {
+	b.expression(statement.Value, typeinfo.UseMove)
+	value := exprNodeID(statement.Value)
+	for _, binding := range statement.Bindings {
+		b.emit(effectDefine{Symbol: binding.Symbol, Source: statement, Node: statement.Source.NodeID, Value: value, ValueExpr: statement.Value, IsInitialized: true})
 	}
 }
 

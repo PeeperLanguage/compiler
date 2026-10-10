@@ -1,0 +1,38 @@
+struct Box { value: i32 }
+enum Slot { Owned: ?*Box, Plain: i32, Free }
+
+// The arm that frees the box consumes the enum; `_` discards it on the other paths.
+fn Take(slot: Slot) -> i32 {
+    match slot {
+        Slot::Owned != none => {
+            let value = slot.value;
+            free(slot);
+            return value;
+        }
+        _ => { let _ = slot; return -1; }
+    }
+}
+
+// Reading a payload that copies leaves the owning enum whole; it is dropped
+// once, after the match.
+fn Keep(slot: Slot) -> i32 {
+    let mut total = 0;
+    match slot {
+        Slot::Owned != none => { total = slot.value; }
+        Slot::Owned == none => { total = -1; }
+        Slot::Plain => { total = slot; }
+        _ => { total = -2; }
+    }
+    return total;
+}
+
+fn main() -> i32 {
+    if Take(Slot::Owned with alloc(Box.{ value = 7 })) != 7 { return 1; }
+    if Take(Slot::Owned with none) != -1 { return 2; }
+    if Take(Slot::Plain with 3) != -1 { return 3; }
+    if Keep(Slot::Owned with alloc(Box.{ value = 9 })) != 9 { return 4; }
+    if Keep(Slot::Owned with none) != -1 { return 5; }
+    if Keep(Slot::Plain with 3) != 3 { return 6; }
+    if Keep(Slot::Free) != -2 { return 7; }
+    return 0;
+}

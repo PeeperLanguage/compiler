@@ -160,10 +160,13 @@ type VariantTarget struct {
 	Target *Block
 }
 
+// SwitchVariant branches on the case of a match subject or, when Path is not
+// empty, of the payload reached from the subject through those cases.
 type SwitchVariant struct {
 	NodeID   source.NodeID
 	ScopeID  source.NodeID
 	Location *source.Location
+	Path     []int
 	Targets  []VariantTarget
 }
 

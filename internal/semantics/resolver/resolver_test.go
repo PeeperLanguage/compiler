@@ -155,7 +155,7 @@ func TestResolvePublishesAssignmentTargetSymbol(t *testing.T) {
 
 func TestResolveEnumVariantPathsToChildSymbols(t *testing.T) {
 	module, diag := checkResolveSource(t, `enum Result<T> {
-	Ok: { value: T },
+	Ok: struct { value: T },
 	Pending,
 }
 fn main() {
@@ -185,7 +185,7 @@ fn main() {
 
 func TestResolveAliasVariantNamespaceToCanonicalSymbol(t *testing.T) {
 	module, diag := checkResolveSource(t, `enum Result<T> {
-	Ok: { value: T },
+	Ok: struct { value: T },
 	Pending
 }
 type Alias<T> = Result<T>;
@@ -235,15 +235,16 @@ func TestResolveRejectsUnknownPayloadVariantQualifier(t *testing.T) {
 	}
 }
 
-func TestResolveMatchPatternBindingsInsideArmScope(t *testing.T) {
+func TestResolveDestructureBindingsInsideArmScope(t *testing.T) {
 	module, diag := checkResolveSource(t, `enum Result {
-	Ok: { value: i32 },
+	Ok: struct { value: i32 },
 	Pending
 }
 
 fn Read(result: Result) -> i32 {
 	match result {
-		Result::Ok with { value = payload } => {
+		Result::Ok => {
+			let .{ value = payload } = result;
 			return payload;
 		}
 		Result::Pending => {
@@ -256,13 +257,13 @@ fn Read(result: Result) -> i32 {
 	}
 	fn := module.AST.Stmts[1].(*ast.FnDecl)
 	match := fn.Body.Stmts[0].(*ast.MatchStmt)
-	binding := match.Arms[0].Fields[0].Binding
-	use := match.Arms[0].Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.Ident)
+	binding := match.Arms[0].Body.Stmts[0].(*ast.DestructureStmt).Fields[0].Binding
+	use := match.Arms[0].Body.Stmts[1].(*ast.ReturnStmt).Value.(*ast.Ident)
 	bindingSymbol := module.SymbolIndex.Symbol(binding)
 	if bindingSymbol == nil || module.SymbolIndex.Symbol(use) != bindingSymbol {
-		t.Fatalf("pattern binding = %#v, use = %#v", bindingSymbol, module.SymbolIndex.Symbol(use))
+		t.Fatalf("destructure binding = %#v, use = %#v", bindingSymbol, module.SymbolIndex.Symbol(use))
 	}
 	if _, found := module.SymbolIndex.Scope(match.Arms[0].Body).Lookup("payload"); !found {
-		t.Fatal("pattern binding missing from arm body scope")
+		t.Fatal("destructure binding missing from arm body scope")
 	}
 }

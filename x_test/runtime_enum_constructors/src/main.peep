@@ -7,8 +7,8 @@ fn ReadImported(value: result::Alias<i32>) -> i32 {
         return 0;
     }
     match value {
-        result::Alias<i32>::Ok with { value = payload } => {
-            return payload;
+        result::Alias<i32>::Ok => {
+            return value.value;
         }
         result::Alias<i32>::Pending => {
             return 0;

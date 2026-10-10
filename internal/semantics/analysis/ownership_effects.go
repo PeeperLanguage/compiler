@@ -189,7 +189,7 @@ func (a *analyzer) applyWriteEffect(
 			return
 		}
 		a.checkStorageAccess(target, loans, storageMutate)
-		if op.Owner.IsValid() && typeinfo.OwnershipCapabilityOf(a.exprType(target)).NeedsDrop {
+		if op.Owner.IsValid() && typeinfo.OwnershipCapabilityOf(target.ExprType()).NeedsDrop {
 			a.cleanup.BeforeAssign[op.Owner] = struct{}{}
 		}
 		if op.Value.IsValid() {
@@ -278,7 +278,7 @@ func (a *analyzer) applyWholeUse(op effectUse, st ownershipState, loans *loanCon
 		return
 	}
 	if syntax != nil {
-		a.checkStorageAccess(syntax, loans, storageAccessForUse(a.exprType(syntax), op.Kind))
+		a.checkStorageAccess(syntax, loans, storageAccessForUse(syntax.ExprType(), op.Kind))
 	}
 	if referenceHoldingSymbol(sym) {
 		loans.useReference(sym)
@@ -299,8 +299,8 @@ func (a *analyzer) applyProjectedUse(op effectUse, loans *loanContext, syntax th
 			loans.useReference(sym)
 		}
 	}
-	a.checkStorageAccess(syntax, loans, storageAccessForUse(a.exprType(syntax), op.Kind))
-	if op.Kind == typeinfo.UseRead || !ownershipTrackedType(a.exprType(syntax)) {
+	a.checkStorageAccess(syntax, loans, storageAccessForUse(syntax.ExprType(), op.Kind))
+	if op.Kind == typeinfo.UseRead || !ownershipTrackedType(syntax.ExprType()) {
 		return
 	}
 	if a.partialVariantPayloadMove(op.Node) {
@@ -410,7 +410,10 @@ func (a *analyzer) applyUseKind(sym *symbols.Symbol, op effectUse, st ownershipS
 		a.diagnostics.AddError(diagnostics.ErrInvalidCopy,
 			"copy of move-only value requires a consuming context", op.Location, "")
 	case typeinfo.UseMove:
-		st.moved[sym] = syntax.SourceInfo()
-		delete(st.live, sym)
+		// A narrowed read of a payload that copies leaves its carrier whole.
+		if ownershipTrackedType(syntax.ExprType()) {
+			st.moved[sym] = syntax.SourceInfo()
+			delete(st.live, sym)
+		}
 	}
 }

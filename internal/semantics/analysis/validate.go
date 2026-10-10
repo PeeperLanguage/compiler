@@ -18,30 +18,18 @@ import (
 // reports a readable sample instead of one line per node in the module.
 const maxAnalysisValidationProblems = 10
 
-func (m *Module) validate(source *thir.Module, symbolIndex *symbols.Index, graphs *cfg.Module) error {
+func (m *Module) validate(source *thir.Module, graphs *cfg.Module) error {
 	if m == nil {
 		return errors.New("analysis produced no artifact")
 	}
 	if err := validationError(validateExpressionEvidence(m.expressions, source)); err != nil {
 		return err
 	}
-	return m.cleanup.validate(source, symbolIndex, graphs)
+	return m.cleanup.validate(source, graphs)
 }
 
 func validateExpressionEvidence(evidence expressionEvidence, source *thir.Module) []string {
 	problems := make([]string, 0)
-	for id, typ := range evidence.types {
-		problems = append(problems, validateExpressionNode(source, id, "type refinement")...)
-		if typ == nil {
-			problems = append(problems, fmt.Sprintf("node %v has a nil type refinement", id))
-		}
-	}
-	for id, conversion := range evidence.conversions {
-		problems = append(problems, validateExpressionNode(source, id, "implicit conversion")...)
-		if conversion.Compatibility != typeinfo.Compatible || conversion.Kind == typeinfo.ConversionIdentity || conversion.Kind == typeinfo.ConversionNone {
-			problems = append(problems, fmt.Sprintf("node %v has non-materializing implicit conversion %v", id, conversion.Kind))
-		}
-	}
 	for id, payload := range evidence.payloads {
 		problems = append(problems, validateExpressionNode(source, id, "payload refinement")...)
 		if len(payload.Cases) == 0 {
@@ -63,19 +51,6 @@ func validateExpressionEvidence(evidence expressionEvidence, source *thir.Module
 			if caseIndex < 0 {
 				problems = append(problems, fmt.Sprintf("node %v has negative payload-path case %v", id, caseIndex))
 			}
-		}
-	}
-	for id, field := range evidence.variantFields {
-		problems = append(problems, validateExpressionNode(source, id, "variant field")...)
-		problems = append(problems, validateExpressionNode(source, field.Carrier, "variant-field carrier")...)
-		if field.Case < 0 {
-			problems = append(problems, fmt.Sprintf("node %v selects negative variant case %v", id, field.Case))
-		}
-		if field.Payload == nil || field.Field < 0 || field.Field >= len(field.Payload.Fields) {
-			problems = append(problems, fmt.Sprintf("node %v selects invalid variant field %v", id, field.Field))
-		}
-		if field.Type == nil {
-			problems = append(problems, fmt.Sprintf("node %v has a nil variant-field type", id))
 		}
 	}
 	for id := range evidence.origins {
@@ -128,12 +103,12 @@ func validationError(problems []string) error {
 // that is the analysis ownership already performs, and repeating it here would
 // make the validator a second implementation of the thing it checks rather than
 // a check on stored shape.
-func (r cleanupPlans) validate(source *thir.Module, symbolIndex *symbols.Index, graphs *cfg.Module) error {
+func (r cleanupPlans) validate(source *thir.Module, graphs *cfg.Module) error {
 	if len(r) == 0 && graphs == nil {
 		return nil
 	}
-	if source == nil || symbolIndex == nil || graphs == nil {
-		return errors.New("ownership published a cleanup plan without typechecking, binding, or CFG evidence")
+	if source == nil || graphs == nil {
+		return errors.New("ownership published a cleanup plan without typechecking or CFG evidence")
 	}
 
 	problems := make([]string, 0)
@@ -147,7 +122,7 @@ func (r cleanupPlans) validate(source *thir.Module, symbolIndex *symbols.Index, 
 	}
 	problems = append(problems, validateValueUses(source)...)
 	for fnID, plan := range r {
-		problems = append(problems, validatePlan(fnID, plan, source, symbolIndex, graphs)...)
+		problems = append(problems, validatePlan(fnID, plan, source, graphs)...)
 	}
 	return validationError(problems)
 }
@@ -197,7 +172,7 @@ func validateValueUses(source *thir.Module) []string {
 
 // validatePlan checks one function's cleanup plan against its CFG and the
 // program points each map is keyed by.
-func validatePlan(fnID moduleid.FunctionID, plan *cleanupPlan, typed *thir.Module, symbolIndex *symbols.Index, graphs *cfg.Module) []string {
+func validatePlan(fnID moduleid.FunctionID, plan *cleanupPlan, typed *thir.Module, graphs *cfg.Module) []string {
 	if plan == nil {
 		return []string{fmt.Sprintf("function %s has a nil cleanup plan", fnID)}
 	}
@@ -247,17 +222,6 @@ func validatePlan(fnID moduleid.FunctionID, plan *cleanupPlan, typed *thir.Modul
 	for nodeID := range plan.ProjectionBase {
 		problems = append(problems, validateTypedNode(typed, fnID, "projection base", nodeID)...)
 	}
-	for nodeID := range plan.MatchWholePayloadDrops {
-		problems = append(problems, validateArmBody(symbolIndex, fnID, "match payload drop", nodeID)...)
-	}
-	for nodeID, fields := range plan.MatchFieldDrops {
-		problems = append(problems, validateArmBody(symbolIndex, fnID, "match field drop", nodeID)...)
-		for _, field := range fields {
-			if field < 0 {
-				problems = append(problems, fmt.Sprintf("function %s drops match field %v at %v", fnID, field, nodeID))
-			}
-		}
-	}
 	return problems
 }
 
@@ -281,11 +245,4 @@ func validateTypedNode(typed *thir.Module, fnID moduleid.FunctionID, where strin
 		}
 	}
 	return []string{fmt.Sprintf("function %s plans a %s at node %v with no expression type", fnID, where, nodeID)}
-}
-
-func validateArmBody(symbolIndex *symbols.Index, fnID moduleid.FunctionID, where string, nodeID source.NodeID) []string {
-	if symbolIndex.ScopeID(nodeID) != nil {
-		return nil
-	}
-	return []string{fmt.Sprintf("function %s plans a %s at node %v, which is not a block", fnID, where, nodeID)}
 }

@@ -2,7 +2,7 @@ import "runtime_enum_constants/left";
 import "runtime_enum_constants/right";
 
 enum Result {
-    Ok: {
+    Ok: struct {
         value: i32,
         enabled: bool,
     },
@@ -10,7 +10,7 @@ enum Result {
 }
 
 enum WideResult {
-    Value: {
+    Value: struct {
         number: f64,
     },
     Pending,

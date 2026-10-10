@@ -1,5 +1,5 @@
 enum Status {
-    Ready: {
+    Ready: struct {
         code: i32,
     },
     Waiting,

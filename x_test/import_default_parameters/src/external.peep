@@ -15,7 +15,7 @@ fn Borrow(pointer: &i32 = &value) -> &i32 from pointer {
 fn Read(_: &i32) {}
 
 enum Status<T> {
-    Ready: {
+    Ready: struct {
         value: T,
     },
     Pending,
@@ -25,8 +25,8 @@ type State<T> = Status<T>;
 
 fn StateCode(status: State<i32> = State<i32>::Ready with .{ value = 42 }) -> i32 {
     match status {
-        State<i32>::Ready with { value = value } => {
-            return value;
+        State<i32>::Ready => {
+            return status.value;
         }
         State<i32>::Pending => {
             return 0;

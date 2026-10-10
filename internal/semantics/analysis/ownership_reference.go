@@ -329,7 +329,7 @@ func (a *analyzer) referenceValueForTHIR(expr thir.Expr, st ownershipState) ([]r
 		return []referenceLoan{}, false
 	}
 	id := expr.SourceInfo().NodeID
-	if _, isMutable, ok := typeinfo.ReferenceValueTarget(a.exprType(expr)); ok {
+	if _, isMutable, ok := typeinfo.ReferenceValueTarget(expr.ExprType()); ok {
 		if _, projected := expr.(*thir.Field); projected {
 			var value []referenceLoan
 			for _, storage := range a.input.Analysis.StorageOrigins(id) {
@@ -372,7 +372,7 @@ func (a *analyzer) referenceValueForTHIR(expr thir.Expr, st ownershipState) ([]r
 // enum reference fields are direct/optional; nested reference aggregates remain
 // rejected by typechecking. Other holders and sibling slots retain their loans.
 func (a *analyzer) replaceReferenceField(target thir.Expr, value storedReference, st ownershipState) {
-	if _, _, isReference := typeinfo.ReferenceValueTarget(a.exprType(target)); !isReference || a.input.Analysis == nil {
+	if _, _, isReference := typeinfo.ReferenceValueTarget(target.ExprType()); !isReference || a.input.Analysis == nil {
 		return
 	}
 	storage := a.input.Analysis.StorageOrigins(target.SourceInfo().NodeID)
@@ -407,7 +407,7 @@ func (a *analyzer) validateReferenceReturn(stmt *thir.Return, st ownershipState)
 	if a == nil || a.function == nil || stmt == nil || stmt.Value == nil {
 		return
 	}
-	if _, _, isReference := typeinfo.ReferenceValueTarget(a.exprType(stmt.Value)); !isReference {
+	if _, _, isReference := typeinfo.ReferenceValueTarget(stmt.Value.ExprType()); !isReference {
 		return
 	}
 	value, found := a.referenceValueForTHIR(stmt.Value, st)

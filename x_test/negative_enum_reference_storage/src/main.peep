@@ -1,9 +1,9 @@
 enum Direct {
-    Borrowed: { values: [1]&i32 }
+    Borrowed: struct { values: [1]&i32 }
 }
 
 enum Resource<T> {
-    Borrowed: { value: T }
+    Borrowed: struct { value: T }
 }
 
 fn Invalid(source: &i32) {

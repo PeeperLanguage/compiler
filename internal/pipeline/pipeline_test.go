@@ -1221,7 +1221,7 @@ func TestTypecheckedPhaseFinalizesNamedVariantConstants(t *testing.T) {
 	diag := diagnostics.NewDiagnosticBag()
 	const entryPath = "entry" + peeper.SourceExt
 	entry := parseModuleSource(entryPath, `enum Status {
-	Ready: { code: i32, enabled: bool },
+	Ready: struct { code: i32, enabled: bool },
 	Waiting,
 }
 const Ready: Status = Status::Ready with .{ code = 7, enabled = true };
@@ -1505,8 +1505,8 @@ func TestPipelineAnalyzedInitializationIgnoresTerminatingPredecessor(t *testing.
 
 func TestPipelineLowersCaseRefinedFieldWithConflictingSchemaTypes(t *testing.T) {
 	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt}, "", `enum Choice {
-	Number: { value: i32 },
-	Flag: { value: bool }
+	Number: struct { value: i32 },
+	Flag: struct { value: bool }
 }
 
 fn Read(choice: Choice) -> bool {
@@ -2034,7 +2034,7 @@ fn main() -> i32 {
 
 func TestPipelineLowersReferenceRecursiveEnumOnSupportedWidths(t *testing.T) {
 	const src = `enum Node {
-	Next: { next: &Node },
+	Next: struct { next: &Node },
 	End
 }
 
@@ -2045,8 +2045,8 @@ fn main() -> i32 {
 	let node = Node::Next with .{ next = &end };
 	let mut result = 1;
 	match node {
-		Node::Next with { next = next } => {
-			Read(next);
+		Node::Next => {
+			Read(node.next);
 			result = 0;
 		}
 		Node::End => {}
@@ -2316,7 +2316,7 @@ fn main() -> i32 {
 	}
 	return runtime::Read();
 }`, `enum Status<T> {
-	Ready: { value: T },
+	Ready: struct { value: T },
 	Pending,
 }
 
@@ -2324,7 +2324,7 @@ type State<T> = Status<T>;
 
 fn Read(status: State<i32> = State<i32>::Ready with .{ value = 42 }) -> i32 {
 	match status {
-		State<i32>::Ready with { value = value } => { return value; }
+		State<i32>::Ready => { return status.value; }
 		State<i32>::Pending => { return 0; }
 	}
 }

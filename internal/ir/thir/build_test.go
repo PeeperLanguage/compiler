@@ -153,10 +153,10 @@ fn main() -> i32 {
 
 func TestBuildPublishesMatchAndRangeIterationPlans(t *testing.T) {
 	mod := buildTypedModule(t, `
-enum Result { Ok: { value: i32 }, Pending }
+enum Result { Ok: struct { value: i32 }, Pending }
 fn read(result: Result) -> i32 {
     match result {
-        Result::Ok with { value = value } => { return value; }
+        Result::Ok => { return result.value; }
         Result::Pending => { return 0; }
     }
 }
@@ -184,11 +184,12 @@ fn main() -> i32 {
 			return true
 		})
 	}
-	if match == nil || match.CaseCount != 2 || len(match.Arms) != 2 || len(match.Arms[0].Bindings) != 1 {
+	if match == nil || match.CaseCount != 2 || len(match.Arms) != 2 || match.Arms[0].Cases[0].Case != 0 || match.Arms[1].Cases[0].Case != 1 {
 		t.Fatalf("match evidence = %#v", match)
 	}
-	if match.Arms[0].Bindings[0].Symbol == nil || match.Arms[0].Bindings[0].Symbol.Name != "value" {
-		t.Fatalf("match binding = %#v", match.Arms[0].Bindings[0])
+	narrowed, _ := match.Arms[0].Body.Stmts[0].(*thir.Return).Value.(*thir.Field).Base.(*thir.Ident)
+	if narrowed == nil || typeinfo.TypeText(narrowed.CaseCarrier) != "Result" || typeinfo.TypeText(narrowed.Type) != "struct{value: i32}" {
+		t.Fatalf("arm subject = %#v, want case payload", narrowed)
 	}
 	rangePlan, ok := loop.Iteration.(*thir.RangeIteration)
 	if loop == nil || !ok || rangePlan.Cursor == nil || rangePlan.Limit == nil || loop.Index == nil || loop.Value == nil {
@@ -196,31 +197,24 @@ fn main() -> i32 {
 	}
 }
 
-func TestBuildValidatesDiscardedMatchPayload(t *testing.T) {
+func TestBuildPublishesAndValidatesDestructureBindings(t *testing.T) {
 	mod := buildTypedModule(t, `
-enum Result { Value: i32, Empty }
-fn read(result: Result) -> i32 {
-    match result {
-        Result::Value with _ => { return 1; }
-        Result::Empty => { return 0; }
-    }
+struct Pair { count: i32, name: str }
+fn read(pair: Pair) -> i32 {
+    let .{ count = count, _ } = pair;
+    return count;
 }`)
-	match, ok := mod.THIR.Functions[0].Body.Stmts[0].(*thir.Match)
-	if !ok || len(match.Arms[0].Bindings) != 1 {
-		t.Fatalf("discarded match evidence = %#v", match)
+	destructure, ok := mod.THIR.Functions[0].Body.Stmts[0].(*thir.Destructure)
+	if !ok || len(destructure.Bindings) != 1 {
+		t.Fatalf("destructure evidence = %#v", mod.THIR.Functions[0].Body.Stmts[0])
 	}
-	binding := &match.Arms[0].Bindings[0]
-	if !binding.IsDiscard || binding.Symbol != nil || binding.Type == nil {
-		t.Fatalf("discarded binding = %#v", binding)
+	binding := &destructure.Bindings[0]
+	if binding.Field != 0 || binding.Symbol == nil || binding.Symbol.Name != "count" || typeinfo.TypeText(binding.Type) != "i32" {
+		t.Fatalf("destructure binding = %#v", binding)
 	}
-	binding.IsDiscard = false
+	binding.Symbol = nil
 	if err := mod.THIR.Validate(); err == nil {
-		t.Fatal("missing non-discard symbol was accepted")
-	}
-	binding.IsDiscard = true
-	binding.Type = nil
-	if err := mod.THIR.Validate(); err == nil {
-		t.Fatal("missing discard type was accepted")
+		t.Fatal("destructure binding without a symbol was accepted")
 	}
 }
 

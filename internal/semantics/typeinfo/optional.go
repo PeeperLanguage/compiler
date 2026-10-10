@@ -19,18 +19,6 @@ func OptionalLayerCount(typ Type) int {
 	}
 }
 
-// UnwrapOptionalLayers removes at most depth optional layers from typ.
-func UnwrapOptionalLayers(typ Type, depth int) Type {
-	for range depth {
-		optional, ok := Underlying(typ).(*OptionalType)
-		if !ok || optional == nil || optional.Inner == nil {
-			break
-		}
-		typ = optional.Inner
-	}
-	return typ
-}
-
 // OptionalPayloadDepthForExpected returns the number of optional payload layers
 // required before src is assignable to a non-optional expected type.
 func OptionalPayloadDepthForExpected(src, expected Type) int {

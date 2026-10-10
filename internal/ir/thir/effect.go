@@ -5,6 +5,7 @@ package thir
 // implementation before the compiler can build effects.
 func (s *Block) BuildEffects(builder EffectBuilder)       { builder.BuildBlockEffects(s) }
 func (s *Binding) BuildEffects(builder EffectBuilder)     { builder.BuildBindingEffects(s) }
+func (s *Destructure) BuildEffects(builder EffectBuilder) { builder.BuildDestructureEffects(s) }
 func (s *ExprStmt) BuildEffects(builder EffectBuilder)    { builder.BuildExprStmtEffects(s) }
 func (s *Assign) BuildEffects(builder EffectBuilder)      { builder.BuildAssignEffects(s) }
 func (s *Return) BuildEffects(builder EffectBuilder)      { builder.BuildReturnEffects(s) }

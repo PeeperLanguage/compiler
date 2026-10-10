@@ -820,12 +820,6 @@ func TestOptionalLayerUtilities(t *testing.T) {
 	if got := OptionalLayerCount(nested); got != 2 {
 		t.Fatalf("optional depth = %d, want 2", got)
 	}
-	if got := TypeText(UnwrapOptionalLayers(nested, 1)); got != "?i32" {
-		t.Fatalf("one-layer unwrap = %s, want ?i32", got)
-	}
-	if got := TypeText(UnwrapOptionalLayers(nested, 2)); got != "i32" {
-		t.Fatalf("two-layer unwrap = %s, want i32", got)
-	}
 	if got := OptionalPayloadDepthForExpected(nested, i32); got != 2 {
 		t.Fatalf("payload depth = %d, want 2", got)
 	}

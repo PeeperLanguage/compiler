@@ -1,12 +1,13 @@
 enum Resource {
-    Owned: { value: *i32 }
+    Owned: struct { value: *i32 }
 }
 
 fn Consume(_: Resource) {}
 
 fn Invalid(resource: Resource) {
     match resource {
-        Resource::Owned with { value = value } => {
+        Resource::Owned => {
+            let .{ value = value } = resource;
             free(value);
         }
     }

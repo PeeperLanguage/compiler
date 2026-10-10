@@ -1,7 +1,7 @@
 struct Box { value: i32 }
-enum Resource { Borrowed: { value: &Box, sibling: &Box }, Empty }
-enum Optional { Borrowed: { value: ?&Box }, Empty }
-enum Mutable { Borrowed: { value: &mut Box }, Empty }
+enum Resource { Borrowed: struct { value: &Box, sibling: &Box }, Empty }
+enum Optional { Borrowed: struct { value: ?&Box }, Empty }
+enum Mutable { Borrowed: struct { value: &mut Box }, Empty }
 
 fn Read(reference: &Box) -> i32 { return reference.value; }
 fn Write(reference: &mut Box) { reference.value = 30; }
@@ -12,12 +12,12 @@ fn main() -> i32 {
     let reference = &first;
     let mut resource = Resource::Borrowed with .{ value = reference, sibling = reference };
     if resource is Resource::Borrowed {
-        let duplicate = resource;
+        let duplicate: Resource = resource;
         resource.value = resource.value;
         resource.value = &second;
         if Read(resource.value) != 20 || Read(resource.sibling) != 10 { return 1; }
         match duplicate {
-            Resource::Borrowed with { value = old } => { if Read(old) != 10 { return 2; } }
+            Resource::Borrowed => { if Read(duplicate.value) != 10 { return 2; } }
             Resource::Empty => { return 3; }
         }
         resource.sibling = &second;
@@ -28,8 +28,8 @@ fn main() -> i32 {
         resource.value = &second;
         first.value = 12;
         match resource {
-            Resource::Borrowed with { value = current, sibling = sibling } => {
-                if Read(current) != 20 || Read(sibling) != 20 { return 4; }
+            Resource::Borrowed => {
+                if Read(resource.value) != 20 || Read(resource.sibling) != 20 { return 4; }
             }
             Resource::Empty => { return 5; }
         }

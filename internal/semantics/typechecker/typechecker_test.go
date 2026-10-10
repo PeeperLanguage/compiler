@@ -315,38 +315,6 @@ fn main() -> i32 {
 	}
 }
 
-func TestCheckMatchPublishesCarrierUse(t *testing.T) {
-	module, diag := checkTypeModule(t, `struct Box { value: i32 }
-enum Resource {
-	Owned: { box: Box },
-	Free,
-}
-fn main() -> i32 {
-	let resource = Resource::Owned with .{ box = Box. { value = 1 } };
-	match resource {
-		Resource::Owned with { box = b } => { return b.value; }
-		Resource::Free => { return 0; }
-	}
-}`)
-	if diag.HasErrors() {
-		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
-	}
-	main := module.AST.Stmts[2].(*ast.FnDecl)
-	matchStmt := main.Body.Stmts[1].(*ast.MatchStmt)
-	match, found := testEvidence(module).Match(matchStmt.ID())
-	if !found {
-		t.Fatal("match evidence was not published")
-	}
-	for _, arm := range match.Arms {
-		if arm.Case == 0 && arm.CarrierUse != typeinfo.UseMove {
-			t.Fatalf("owned-payload arm carrier use = %v, want UseMove", arm.CarrierUse)
-		}
-		if arm.Case == 1 && arm.CarrierUse != typeinfo.UseRead {
-			t.Fatalf("payloadless arm carrier use = %v, want UseRead", arm.CarrierUse)
-		}
-	}
-}
-
 func checkTypeSource(t *testing.T, src string) *diagnostics.DiagnosticBag {
 	t.Helper()
 	const filePath = "typechecker_test" + peeper.SourceExt
@@ -663,10 +631,11 @@ func TestEnumDeclarationValidation(t *testing.T) {
 	}{
 		{name: "empty enum", source: `enum Empty {}`, want: "enum requires at least one variant"},
 		{name: "lowercase variant", source: `enum Status { ready }`, want: "variant name must be PascalCase"},
-		{name: "duplicate field", source: `enum Result { Ok: { value: i32, value: i64 } }`, want: "variant field `value` already declared"},
-		{name: "unsized field", source: `iface Reader { fn (&Self) read() -> i32 } enum Event { Read: { reader: Reader } }`, want: "enum variant field requires a sized type"},
-		{name: "nested reference storage", source: `enum Resource { Borrowed: { values: [1]&i32 } }`, want: "references cannot be stored in enum variant fields in v1"},
-		{name: "method field collision", source: `enum Result { Ok: { value: i32 } } fn (self: Result) value() {}`, want: "method `value` conflicts with enum variant data field"},
+		{name: "empty data", source: `enum Result { Ok: struct {}, Pending }`, want: "variant data requires at least one field"},
+		{name: "duplicate field", source: `enum Result { Ok: struct { value: i32, value: i64 } }`, want: "variant field `value` already declared"},
+		{name: "unsized field", source: `iface Reader { fn (&Self) read() -> i32 } enum Event { Read: struct { reader: Reader } }`, want: "enum variant field requires a sized type"},
+		{name: "nested reference storage", source: `enum Resource { Borrowed: struct { values: [1]&i32 } }`, want: "references cannot be stored in enum variant fields in v1"},
+		{name: "method field collision", source: `enum Result { Ok: struct { value: i32 } } fn (self: Result) value() {}`, want: "method `value` conflicts with enum variant data field"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -680,7 +649,7 @@ func TestEnumDeclarationValidation(t *testing.T) {
 
 func TestEnumConstructorsRecordOrderedSemanticEvidence(t *testing.T) {
 	module, diag := checkTypeModule(t, `enum Result<T> {
-	Ok: { value: T, code: i32 },
+	Ok: struct { value: T, code: i32 },
 	Pending,
 }
 fn main() {
@@ -707,14 +676,14 @@ fn main() {
 
 func TestDirectEnumPayloadConstructionAndMatch(t *testing.T) {
 	diag := checkTypeSource(t, `enum Result<T> {
-	Ok: { value: T },
+	Ok: struct { value: T },
 	Failed: str,
 	Pending,
 }
 fn Read(result: Result<i32>) -> i32 {
 	match result {
-		Result<i32>::Ok with { value = payload } => { return payload; }
-		Result<i32>::Failed with message => { println(message); return 1; }
+		Result<i32>::Ok => { return result.value; }
+		Result<i32>::Failed => { println(result); return 1; }
 		Result<i32>::Pending => { return 0; }
 	}
 }
@@ -738,7 +707,7 @@ func TestWithVariantPayloadDiagnostics(t *testing.T) {
 		{name: "missing payload", source: `enum Result { Failed: str } fn main() { let value = Result::Failed; }`, want: "requires"},
 		{name: "payloadless value", source: `enum Result { Pending } fn main() { let value = Result::Pending with 1; }`, want: "does not accept a payload"},
 		{name: "wrong direct type", source: `enum Result { Failed: str } fn main() { let value = Result::Failed with 404; }`, want: "cannot be used as str"},
-		{name: "brace-only payload", source: `enum Result { Ok: { value: i32 } } fn main() { let value = Result::Ok{ value = 1 }; }`, want: "literal requires '.' or 'with'"},
+		{name: "brace-only payload", source: `enum Result { Ok: struct { value: i32 } } fn main() { let value = Result::Ok{ value = 1 }; }`, want: "literal requires '.' or 'with'"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -776,12 +745,12 @@ func TestEnumConstructorDiagnostics(t *testing.T) {
 		source string
 		want   string
 	}{
-		{name: "missing field", source: `enum Result { Ok: { value: i32 } } fn main() { let value = Result::Ok with .{}; }`, want: "missing struct literal field `value`"},
-		{name: "duplicate field", source: `enum Result { Ok: { value: i32 } } fn main() { let value = Result::Ok with .{ value = 1, value = 2 }; }`, want: "duplicate struct literal field `value`"},
-		{name: "unknown field", source: `enum Result { Ok: { value: i32 } } fn main() { let value = Result::Ok with .{ item = 1 }; }`, want: "unknown struct literal field `item`"},
+		{name: "missing field", source: `enum Result { Ok: struct { value: i32 } } fn main() { let value = Result::Ok with .{}; }`, want: "missing struct literal field `value`"},
+		{name: "duplicate field", source: `enum Result { Ok: struct { value: i32 } } fn main() { let value = Result::Ok with .{ value = 1, value = 2 }; }`, want: "duplicate struct literal field `value`"},
+		{name: "unknown field", source: `enum Result { Ok: struct { value: i32 } } fn main() { let value = Result::Ok with .{ item = 1 }; }`, want: "unknown struct literal field `item`"},
 		{name: "payloadless payload", source: `enum Result { Pending } fn main() { let value = Result::Pending with 1; }`, want: "payloadless enum variant `Pending` does not accept a payload"},
-		{name: "data without payload", source: `enum Result { Ok: { value: i32 } } fn main() { let value = Result::Ok; }`, want: "data enum variant `Ok` requires a payload"},
-		{name: "data without payload before blocks", source: `enum Result { Ok: { value: i32 } } fn main(result: Result) { if result == Result::Ok { let value = 1; } {} }`, want: "data enum variant `Ok` requires a payload"},
+		{name: "data without payload", source: `enum Result { Ok: struct { value: i32 } } fn main() { let value = Result::Ok; }`, want: "data enum variant `Ok` requires a payload"},
+		{name: "data without payload before blocks", source: `enum Result { Ok: struct { value: i32 } } fn main(result: Result) { if result == Result::Ok { let value = 1; } {} }`, want: "data enum variant `Ok` requires a payload"},
 		{name: "missing generic arguments", source: `enum Result<T> { Pending } fn main() { let value = Result::Pending; }`, want: "expects 1 type argument, got 0"},
 		{name: "variant call", source: `enum Result { Pending } fn main() { Result::Pending(); }`, want: "enum variants are not callable"},
 		{name: "variant type", source: `enum Result { Pending } fn Read(value: Result::Pending) {}`, want: "not lowerable"},
@@ -824,17 +793,17 @@ fn GreaterEqual(left: Status, right: Status) -> bool {
 
 func TestNamedEnumMatchRecordsExhaustiveArmEvidence(t *testing.T) {
 	module, diag := checkTypeModule(t, `enum Result {
-	Ok: { value: i32, code: i32 },
-	Error: { message: str },
+	Ok: struct { value: i32, code: i32 },
+	Error: struct { message: str },
 	Pending
 }
 
 fn Read(result: Result) -> i32 {
 	match result {
-		Result::Ok with { value = payload } => {
-			return payload;
+		Result::Ok => {
+			return result.value;
 		}
-		Result::Error with { message = _ } => {
+		Result::Error => {
 			return 1;
 		}
 		Result::Pending => {
@@ -848,16 +817,85 @@ fn Read(result: Result) -> i32 {
 	fn := module.AST.Stmts[1].(*ast.FnDecl)
 	match := fn.Body.Stmts[0].(*ast.MatchStmt)
 	evidence, found := testEvidence(module).Match(match.ID())
-	if !found || evidence.SubjectID != match.Subject.ID() || typeinfo.TypeText(evidence.EnumType) != "Result" || len(evidence.Arms) != 3 {
+	if !found || typeinfo.TypeText(evidence.EnumType) != "Result" || evidence.CaseCount != 3 || !slices.Equal(slices.Concat(evidence.ArmCases...), []thir.ArmCase{{Case: 0}, {Case: 1}, {Case: 2}}) {
 		t.Fatalf("match evidence = %#v", evidence)
 	}
-	if evidence.CaseCount != 3 || evidence.Arms[0].Case != 0 || len(evidence.Arms[0].Bindings) != 1 ||
-		evidence.Arms[0].Bindings[0].Projection != MatchPayloadField ||
-		evidence.Arms[0].Bindings[0].Field != 0 || evidence.Arms[0].Bindings[0].Binding == nil {
-		t.Fatalf("Ok arm evidence = %#v", evidence.Arms[0])
+	// Inside the Ok arm the subject is the case payload.
+	narrowed := match.Arms[0].Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.SelectorExpr).Expr
+	if got := typeinfo.TypeText(testEvidence(module).ExprType(narrowed.ID())); got != "struct{value: i32; code: i32}" {
+		t.Fatalf("narrowed subject type = %s", got)
 	}
-	if evidence.Arms[1].Case != 1 || !evidence.Arms[1].Bindings[0].IsDiscard || evidence.Arms[2].Case != 2 {
-		t.Fatalf("remaining arm evidence = %#v", evidence.Arms[1:])
+}
+
+func TestMatchArmPayloadTestNarrowsTwoLevels(t *testing.T) {
+	module, diag := checkTypeModule(t, `enum Shape { Circle: struct { radius: i32 }, Empty }
+enum Slot { Value: ?i32, Inner: Shape, Free }
+
+fn Read(slot: Slot) -> i32 {
+	match slot {
+		Slot::Value != none => { return slot; }
+		Slot::Value == none => { return 0; }
+		Slot::Inner is Shape::Circle => { return slot.radius; }
+		Slot::Inner is Shape::Empty => { return 0; }
+		Slot::Free => { return 0; }
+	}
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	match := module.AST.Stmts[2].(*ast.FnDecl).Body.Stmts[0].(*ast.MatchStmt)
+	evidence, _ := testEvidence(module).Match(match.ID())
+	want := []thir.ArmCase{
+		{Case: 0, TestsPayload: true, PayloadCase: 1},
+		{Case: 0, TestsPayload: true, PayloadCase: 0},
+		{Case: 1, TestsPayload: true, PayloadCase: 0},
+		{Case: 1, TestsPayload: true, PayloadCase: 1},
+		{Case: 2},
+	}
+	if !slices.Equal(slices.Concat(evidence.ArmCases...), want) {
+		t.Fatalf("arm cases = %#v", evidence.ArmCases)
+	}
+	present := match.Arms[0].Body.Stmts[0].(*ast.ReturnStmt).Value
+	if got := typeinfo.TypeText(testEvidence(module).ExprType(present.ID())); got != "i32" {
+		t.Fatalf("subject in `!= none` arm = %s, want i32", got)
+	}
+	circle := match.Arms[2].Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.SelectorExpr).Expr
+	if got := typeinfo.TypeText(testEvidence(module).ExprType(circle.ID())); got != "struct{radius: i32}" {
+		t.Fatalf("subject in `is Shape::Circle` arm = %s", got)
+	}
+}
+
+func TestMatchFallbackArmTakesEveryCaseLeft(t *testing.T) {
+	module, diag := checkTypeModule(t, `enum Slot { Value: ?i32, Count: i32, Free }
+
+fn Read(slot: Slot) -> i32 {
+	match slot {
+		Slot::Value != none => { return slot; }
+		Slot::Free => { return 0; }
+		_ => { return 1; }
+	}
+}
+fn Last(slot: Slot) -> i32 {
+	match slot {
+		Slot::Value => { return 0; }
+		Slot::Free => { return 0; }
+		_ => { return slot; }
+	}
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	read := module.AST.Stmts[1].(*ast.FnDecl).Body.Stmts[0].(*ast.MatchStmt)
+	evidence, _ := testEvidence(module).Match(read.ID())
+	want := []thir.ArmCase{{Case: 0, TestsPayload: true, PayloadCase: 0}, {Case: 1}}
+	if len(evidence.ArmCases) != 3 || !slices.Equal(evidence.ArmCases[2], want) {
+		t.Fatalf("fallback cases = %#v", evidence.ArmCases)
+	}
+	// One case is left in Last, so the subject is its payload in the `_` arm.
+	last := module.AST.Stmts[2].(*ast.FnDecl).Body.Stmts[0].(*ast.MatchStmt)
+	subject := last.Arms[2].Body.Stmts[0].(*ast.ReturnStmt).Value
+	if got := typeinfo.TypeText(testEvidence(module).ExprType(subject.ID())); got != "i32" {
+		t.Fatalf("subject in `_` arm = %s, want i32", got)
 	}
 }
 
@@ -869,11 +907,6 @@ func TestNamedEnumMatchDiagnostics(t *testing.T) {
 	}{
 		{name: "missing case", source: `enum Result { Ok, Pending } fn Read(value: Result) { match value { Result::Ok => {} } }`, want: "match is missing case `Pending`"},
 		{name: "duplicate case", source: `enum Result { Ok, Pending } fn Read(value: Result) { match value { Result::Ok => {} Result::Ok => {} Result::Pending => {} } }`, want: "duplicate match arm for `Ok`"},
-		{name: "data without pattern", source: `enum Result { Ok: { value: i32 } } fn Read(value: Result) { match value { Result::Ok => {} } }`, want: "data match case `Ok` requires a payload pattern"},
-		{name: "payloadless pattern", source: `enum Result { Pending } fn Read(value: Result) { match value { Result::Pending with _ => {} } }`, want: "payloadless match case `Pending` does not accept a payload"},
-		{name: "duplicate field", source: `enum Result { Ok: { value: i32 } } fn Read(value: Result) { match value { Result::Ok with { value = first, value = second } => {} } }`, want: "duplicate match pattern field `value`"},
-		{name: "unknown field", source: `enum Result { Ok: { value: i32 } } fn Read(value: Result) { match value { Result::Ok with { missing = item } => {} } }`, want: "unknown match pattern field `missing`"},
-		{name: "field pattern on scalar payload", source: `enum Result { Failed: str } fn Read(value: Result) { match value { Result::Failed with { value = item } => { missing(); } } }`, want: "field pattern requires a struct payload"},
 		{name: "foreign case", source: `enum Result { Ok } enum Other { Ok } fn Read(value: Result) { match value { Other::Ok => {} } }`, want: "match arm requires Result, got Other"},
 	}
 	for _, test := range tests {
@@ -883,21 +916,6 @@ func TestNamedEnumMatchDiagnostics(t *testing.T) {
 				t.Fatalf("expected %q diagnostic, got:\n%s", test.want, out)
 			}
 		})
-	}
-}
-
-func TestInvalidEnumFieldPatternStillChecksArmBody(t *testing.T) {
-	diag := checkTypeSource(t, `enum Result { Failed: str }
-fn Read(value: Result) {
-	match value {
-		Result::Failed with { value = item } => { missing(); }
-	}
-}`)
-	out := diag.EmitAllToString()
-	for _, want := range []string{"field pattern requires a struct payload", "unknown identifier `missing`"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("expected %q diagnostic, got:\n%s", want, out)
-		}
 	}
 }
 
@@ -3037,14 +3055,14 @@ fn StoreReferences(_: []&Box) {
 }
 
 func TestNamedEnumReferenceStorageKeepsNarrowLocalBoundary(t *testing.T) {
-	accepted := checkTypeSource(t, `enum Resource { Borrowed: { value: &i32 } }
+	accepted := checkTypeSource(t, `enum Resource { Borrowed: struct { value: &i32 } }
 fn valid(source: &i32) {
 	let resource = Resource::Borrowed with .{ value = source };
 }`)
 	if accepted.HasErrors() {
 		t.Fatalf("unexpected local enum reference diagnostics:\n%s", accepted.EmitAllToString())
 	}
-	generic := checkTypeSource(t, `enum Resource<T> { Borrowed: { value: T } }
+	generic := checkTypeSource(t, `enum Resource<T> { Borrowed: struct { value: T } }
 fn invalid(source: &i32) {
 	let resource = Resource<[1]&i32>::Borrowed with .{ value = [_]&i32{source} };
 }`)
@@ -3052,7 +3070,7 @@ fn invalid(source: &i32) {
 		t.Fatalf("expected substituted nested reference-storage diagnostic, got:\n%s", emitted)
 	}
 
-	rejected := checkTypeSource(t, `enum Resource { Borrowed: { value: &i32 } }
+	rejected := checkTypeSource(t, `enum Resource { Borrowed: struct { value: &i32 } }
 const Global: Resource = none;
 fn Parameter(_: Resource) {}
 fn Return() -> Resource;
@@ -3675,7 +3693,7 @@ func TestUnknownTypeNameIsReportedWhereverItIsWritten(t *testing.T) {
 		"parameter":        "fn f(a: Nope) {}",
 		"return":           "fn f() -> Nope {}",
 		"struct field":     "struct S { a: Nope }",
-		"enum payload":     "enum E { A: { v: Nope }, B }",
+		"enum payload":     "enum E { A: struct { v: Nope }, B }",
 		"alias":            "type A = Nope;",
 		"optional":         "fn main() { let a: ?Nope = none; }",
 		"array element":    "fn main() { let a: [2]Nope; }",
@@ -3740,5 +3758,41 @@ func TestFunctionTypeParametersAreRejectedOnce(t *testing.T) {
 	items := diag.Diagnostics()
 	if len(items) != 1 || items[0].Message != "functions cannot take type parameters yet" {
 		t.Fatalf("expected only the type parameter diagnostic, got:\n%s", diag.EmitAllToString())
+	}
+}
+
+func TestDestructureTypesLocalsAsFields(t *testing.T) {
+	module, diag := checkTypeModule(t, `struct Pair { count: i32, name: str }
+fn Read(pair: Pair) {
+	let .{ count = c, name = n } = pair;
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	statement := module.AST.Stmts[1].(*ast.FnDecl).Body.Stmts[0].(*ast.DestructureStmt)
+	for index, want := range []string{"i32", "str"} {
+		field := statement.Fields[index]
+		symbol := module.SymbolIndex.Symbol(field.Binding)
+		if symbol == nil || typeinfo.TypeText(symbol.Type) != want {
+			t.Fatalf("local `%s` = %#v, want type %s", field.Binding.Name, symbol, want)
+		}
+	}
+}
+
+func TestDestructureDiagnostics(t *testing.T) {
+	tests := []struct{ name, source, want string }{
+		{name: "left out field", source: `struct Pair { a: i32, b: i32 } fn f(p: Pair) { let .{ a = x } = p; }`, want: "destructure leaves out field `b`"},
+		{name: "unknown field", source: `struct Pair { a: i32, b: i32 } fn f(p: Pair) { let .{ c = x, _ } = p; }`, want: "unknown field `c`"},
+		{name: "duplicate field", source: `struct Pair { a: i32, b: i32 } fn f(p: Pair) { let .{ a = x, a = y, _ } = p; }`, want: "duplicate destructure field `a`"},
+		{name: "non-struct", source: `fn f(n: i32) { let .{ a = x, _ } = n; }`, want: "destructure value must be a struct, got i32"},
+		{name: "reference", source: `struct Pair { a: i32 } fn f(p: &Pair) { let .{ a = x } = p; }`, want: "destructure value must be a struct, got &Pair"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			diag := checkTypeSource(t, test.source)
+			if out := diag.EmitAllToString(); !diag.HasErrors() || !strings.Contains(out, test.want) {
+				t.Fatalf("expected %q diagnostic, got:\n%s", test.want, out)
+			}
+		})
 	}
 }

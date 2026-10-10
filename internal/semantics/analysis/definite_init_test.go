@@ -215,15 +215,16 @@ fn choose() -> i32 {
 	}
 }
 
-func TestInitializationDefinesMatchPatternBindingOnCaseEdge(t *testing.T) {
+func TestInitializationDefinesDestructureBindings(t *testing.T) {
 	diag := analyzeInitializationSource(t, `enum Result {
-	Ok: { value: i32 },
+	Ok: struct { value: i32 },
 	Pending,
 }
 
 fn choose(result: Result) -> i32 {
 	match result {
-		Result::Ok with { value = payload } => {
+		Result::Ok => {
+			let .{ value = payload } = result;
 			return payload;
 		}
 		Result::Pending => {
@@ -254,7 +255,7 @@ func hasDiagnosticCode(diag *diagnostics.DiagnosticBag, code string) bool {
 // read closed the gap, and this analysis learned nothing about matches to get it.
 func TestInitializationChecksMatchSubject(t *testing.T) {
 	diag := analyzeInitializationSource(t, `enum Outcome {
-	Ok: { value: i32 },
+	Ok: struct { value: i32 },
 	Pending,
 }
 
@@ -264,8 +265,8 @@ fn choose(flag: bool) -> i32 {
 		outcome = Outcome::Pending;
 	}
 	match outcome {
-		Outcome::Ok with { value = payload } => {
-			return payload;
+		Outcome::Ok => {
+			return outcome.value;
 		}
 		Outcome::Pending => {
 			return 0;

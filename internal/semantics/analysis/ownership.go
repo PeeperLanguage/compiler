@@ -34,20 +34,19 @@ type ownershipInput struct {
 }
 
 type analyzer struct {
-	diagnostics            *diagnostics.DiagnosticBag
-	input                  ownershipInput
-	graph                  *cfg.ControlFlowGraph
-	sites                  map[cfg.SiteID]*site
-	order                  []cfg.SiteID
-	effects                effectSiteOps
-	cleanup                *cleanupPlan
-	function               *thir.Function
-	functionScope          *symbols.Scope
-	reportedJoin           map[cfg.SiteID]bool
-	inStates               map[cfg.SiteID]ownershipState
-	symbolLiveIn           map[cfg.SiteID]map[*symbols.Symbol]ir.SourceInfo
-	symbolLiveOut          map[cfg.SiteID]map[*symbols.Symbol]ir.SourceInfo
-	deadMatchCarrierAtExit map[cfg.SiteID]*symbols.Symbol
+	diagnostics   *diagnostics.DiagnosticBag
+	input         ownershipInput
+	graph         *cfg.ControlFlowGraph
+	sites         map[cfg.SiteID]*site
+	order         []cfg.SiteID
+	effects       effectSiteOps
+	cleanup       *cleanupPlan
+	function      *thir.Function
+	functionScope *symbols.Scope
+	reportedJoin  map[cfg.SiteID]bool
+	inStates      map[cfg.SiteID]ownershipState
+	symbolLiveIn  map[cfg.SiteID]map[*symbols.Symbol]ir.SourceInfo
+	symbolLiveOut map[cfg.SiteID]map[*symbols.Symbol]ir.SourceInfo
 }
 
 type ownershipState struct {
@@ -80,13 +79,11 @@ func checkOwnership(diag *diagnostics.DiagnosticBag, input ownershipInput) clean
 			continue
 		}
 		plan := &cleanupPlan{
-			AfterScope:             make(map[cfg.SiteID][]symbols.SymbolID),
-			BeforeReturn:           make(map[source.NodeID][]symbols.SymbolID),
-			BeforeAssign:           make(map[source.NodeID]struct{}),
-			DiscardedValue:         make(map[source.NodeID]struct{}),
-			ProjectionBase:         make(map[source.NodeID]struct{}),
-			MatchFieldDrops:        make(map[source.NodeID][]int),
-			MatchWholePayloadDrops: make(map[source.NodeID]struct{}),
+			AfterScope:     make(map[cfg.SiteID][]symbols.SymbolID),
+			BeforeReturn:   make(map[source.NodeID][]symbols.SymbolID),
+			BeforeAssign:   make(map[source.NodeID]struct{}),
+			DiscardedValue: make(map[source.NodeID]struct{}),
+			ProjectionBase: make(map[source.NodeID]struct{}),
 		}
 		fn := input.Source.FunctionByID(graph.FunctionID)
 		if fn != nil && fn.Symbol != nil && fn.Body != nil {
@@ -157,7 +154,6 @@ func (a *analyzer) run() {
 		return
 	}
 	a.computeSymbolLiveness()
-	a.planDeadMatchCarrierCleanup()
 	entryState := newOwnershipState()
 	for _, parameter := range a.function.Params {
 		sym := parameter.Symbol
@@ -208,9 +204,6 @@ func (a *analyzer) run() {
 				continue
 			}
 			edgeState := copyOwnershipState(next)
-			if edge.Kind == cfg.EdgeVariantCase {
-				a.applyMatchEdge(node, edge, edgeState)
-			}
 			current, exists := a.inStates[succ]
 			merged, changed := a.mergeState(succ, current, edgeState, exists)
 			if !changed {
@@ -218,79 +211,6 @@ func (a *analyzer) run() {
 			}
 			a.inStates[succ] = merged
 			work.Add(succ)
-		}
-	}
-}
-
-func (a *analyzer) planDeadMatchCarrierCleanup() {
-	a.deadMatchCarrierAtExit = make(map[cfg.SiteID]*symbols.Symbol)
-	scopeExits := make(map[source.NodeID][]*site)
-	for _, node := range a.sites {
-		if node != nil && node.cfgSite != nil && node.cfgSite.Kind == cfg.SiteScopeExit && node.block != nil {
-			scopeExits[node.block.SourceInfo().NodeID] = append(scopeExits[node.block.SourceInfo().NodeID], node)
-		}
-	}
-
-	for _, node := range a.sites {
-		if node == nil || node.cfgSite == nil || node.cfgSite.Kind != cfg.SiteTerminator {
-			continue
-		}
-		match, _ := a.input.Source.Node(node.cfgSite.NodeID).(*thir.Match)
-		if match == nil {
-			continue
-		}
-		_, carrier := matchSubjectCarrier(match)
-		if carrier == nil {
-			continue
-		}
-
-		exitsByJoin := make(map[cfg.SiteID][]*site)
-		movesByJoin := make(map[cfg.SiteID]bool)
-		armsByJoin := make(map[cfg.SiteID]map[source.NodeID]struct{})
-		for _, arm := range match.Arms {
-			bodyID := arm.Body.SourceInfo().NodeID
-			for _, exit := range scopeExits[bodyID] {
-				if exit == nil || exit.cfgSite == nil {
-					continue
-				}
-				edges := a.graph.SiteEdges.OutEdges(exit.cfgSite.ID)
-				if len(edges) != 1 {
-					continue
-				}
-				join := edges[0].To
-				for {
-					joinNode := a.sites[join]
-					if joinNode == nil || joinNode.cfgSite == nil {
-						break
-					}
-					if joinNode.cfgSite.Kind != cfg.SiteScopeExit {
-						exitsByJoin[join] = append(exitsByJoin[join], exit)
-						if armsByJoin[join] == nil {
-							armsByJoin[join] = make(map[source.NodeID]struct{})
-						}
-						armsByJoin[join][bodyID] = struct{}{}
-						movesByJoin[join] = movesByJoin[join] || arm.CarrierUse == typeinfo.UseMove
-						break
-					}
-					edges = a.graph.SiteEdges.OutEdges(joinNode.cfgSite.ID)
-					if len(edges) != 1 {
-						break
-					}
-					join = edges[0].To
-				}
-			}
-		}
-
-		for join, arms := range armsByJoin {
-			if len(arms) < 2 || !movesByJoin[join] {
-				continue
-			}
-			if _, live := a.symbolLiveIn[join][carrier]; live {
-				continue
-			}
-			for _, exit := range exitsByJoin[join] {
-				a.deadMatchCarrierAtExit[exit.cfgSite.ID] = carrier
-			}
 		}
 	}
 }
@@ -396,17 +316,6 @@ func (a *analyzer) applyBlockExit(node *site, st ownershipState, loans *loanCont
 	a.checkScopeDestruction(node.scope, node.block.SourceInfo(), loans)
 	delete(a.cleanup.AfterScope, node.cfgSite.ID)
 	cleanup := cleanupSymbols(node.scope, st)
-	if carrier := a.deadMatchCarrierAtExit[node.cfgSite.ID]; carrier != nil {
-		if _, live := st.live[carrier]; live {
-			a.reportLoanConflict([]place.Origin{{Root: carrier}}, nil, storageDestroy, node.block.SourceInfo(), loans)
-			if typ, ok := symbols.GetSymbolType(carrier); ok && typeinfo.OwnershipCapabilityOf(typ).NeedsDrop {
-				cleanup = append(cleanup, carrier)
-			}
-			st.moved[carrier] = node.block.SourceInfo()
-			delete(st.live, carrier)
-			delete(st.references, carrier)
-		}
-	}
 	if len(cleanup) > 0 {
 		a.cleanup.AfterScope[node.cfgSite.ID] = symbolIDs(cleanup)
 	}
@@ -493,7 +402,7 @@ func (a *analyzer) planDiscardedDrops(node *site) {
 		if !isDiscard || discard.Place.Root != nil {
 			continue
 		}
-		if typeinfo.OwnershipCapabilityOf(a.exprType(discard.Source)).NeedsDrop {
+		if typeinfo.OwnershipCapabilityOf(discard.Source.ExprType()).NeedsDrop {
 			a.cleanup.DiscardedValue[discard.Node] = struct{}{}
 		}
 	}
@@ -526,97 +435,6 @@ func (a *analyzer) applyStmt(node *site, st ownershipState) {
 		releaseIterationLoans(st, loans, source.NodeID{})
 		a.cleanupBeforeReturn(scope, s, st, loans)
 	}
-}
-
-func (a *analyzer) applyMatchEdge(node *site, edge cfg.Edge, st ownershipState) {
-	if a == nil || node == nil || node.cfgSite == nil || edge.Kind != cfg.EdgeVariantCase {
-		return
-	}
-	match, _ := a.input.Source.Node(node.cfgSite.NodeID).(*thir.Match)
-	if match == nil {
-		return
-	}
-	arm := match.Arm(edge.Case)
-	if arm == nil || arm.Payload == nil {
-		return
-	}
-	subject, carrier := matchSubjectCarrier(match)
-	if subject == nil {
-		return
-	}
-	movesCarrier := arm.CarrierUse == typeinfo.UseMove
-	listed := make(map[int]bool, len(arm.Bindings))
-	for _, field := range arm.Bindings {
-		switch field.Projection {
-		case thir.MatchPayloadField:
-			listed[field.Field] = field.IsDiscard
-		case thir.MatchWholePayload:
-		default:
-			panic("ownership: invalid match binding projection")
-		}
-	}
-	if movesCarrier && carrier == nil {
-		a.diagnostics.AddError(diagnostics.ErrInvalidCopy,
-			"move-only variant payload cannot be moved from partial place; borrow it instead", subject.SourceInfo().Location, "")
-	}
-	if movesCarrier && carrier != nil {
-		moveSite := subject
-		a.reportLoanConflict(a.originsForExpr(subject), nil, storageConsume, moveSite.SourceInfo(), a.newLoanContext(node, st))
-		st.moved[carrier] = moveSite.SourceInfo()
-		delete(st.live, carrier)
-		delete(st.references, carrier)
-		if len(arm.Bindings) == 1 && arm.Bindings[0].Projection == thir.MatchWholePayload {
-			if arm.Bindings[0].IsDiscard && typeinfo.OwnershipCapabilityOf(arm.Bindings[0].Type).NeedsDrop {
-				a.cleanup.MatchWholePayloadDrops[arm.Body.SourceInfo().NodeID] = struct{}{}
-			}
-		} else if payload, payloadFound := typeinfo.Underlying(arm.Payload).(*typeinfo.StructType); payloadFound && payload != nil {
-			drops := make([]int, 0)
-			for fieldIndex := len(payload.Fields) - 1; fieldIndex >= 0; fieldIndex-- {
-				field := payload.Fields[fieldIndex]
-				discarded, selected := listed[fieldIndex]
-				if typeinfo.OwnershipCapabilityOf(field.Type).NeedsDrop && (!selected || discarded) {
-					drops = append(drops, fieldIndex)
-				}
-			}
-			if len(drops) > 0 {
-				a.cleanup.MatchFieldDrops[arm.Body.SourceInfo().NodeID] = drops
-			}
-		}
-	}
-	for _, field := range arm.Bindings {
-		binding := field.Symbol
-		if binding == nil {
-			continue
-		}
-		if ownershipTrackedSymbol(binding) {
-			delete(st.moved, binding)
-			st.live[binding] = struct{}{}
-		}
-		if !field.Source.NodeID.IsValid() || a.input.Analysis == nil {
-			continue
-		}
-		origins := place.CloneOrigins(a.input.Analysis.ValueOrigins(field.Source.NodeID))
-		if isMutable, isReference := referenceMutability(binding); isReference && len(origins) > 0 {
-			st.references[binding] = []referenceLoan{{
-				id: loanID{node: field.Source.NodeID}, origins: origins, isMutable: isMutable, site: field.Source,
-			}}
-		}
-	}
-}
-
-func matchSubjectCarrier(match *thir.Match) (thir.Expr, *symbols.Symbol) {
-	if match == nil || match.Subject == nil {
-		return nil, nil
-	}
-	ident, isIdent := match.Subject.(*thir.Ident)
-	if !isIdent || ident == nil {
-		return match.Subject, nil
-	}
-	carrier := ident.Symbol
-	if carrier == nil || (carrier.Kind != symbols.SymbolVar && carrier.Kind != symbols.SymbolConst && carrier.Kind != symbols.SymbolParam) {
-		return match.Subject, nil
-	}
-	return match.Subject, carrier
 }
 
 func symbolIDs(values []*symbols.Symbol) []symbols.SymbolID {

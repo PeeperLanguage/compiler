@@ -1,7 +1,6 @@
 package analysis
 
 import (
-	"compiler/internal/ir"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 )
@@ -49,24 +48,15 @@ func copyFlowState(src flowState) flowState {
 }
 
 func provenVariantCase(facts []variantStateFact, origins []place.Origin, caseCount int) (int, bool) {
+	if caseCount == 1 {
+		// A single-case enum is always in its only case; no fact is kept for it.
+		return 0, true
+	}
 	fact, found := variantFact(facts, origins)
 	if !found || fact.caseCount != caseCount || len(fact.cases) != 1 {
 		return 0, false
 	}
 	return fact.cases[0], true
-}
-
-func provenOptionalPayloadCases(facts []variantStateFact, origins []place.Origin) []int {
-	path := make([]int, 0)
-	current := place.CloneOrigins(origins)
-	for {
-		fact, found := variantFact(facts, current)
-		if !found || !caseSetsEqual(fact.cases, []int{ir.OptionalPresentCase}) {
-			return path
-		}
-		path = append(path, ir.OptionalPresentCase)
-		current = place.VariantPayloadOrigins(current, []int{ir.OptionalPresentCase})
-	}
 }
 
 func restrictVariantFact(st *flowState, added variantStateFact) {

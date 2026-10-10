@@ -75,20 +75,18 @@ func validationExpr(id source.NodeID, typ typeinfo.Type, use typeinfo.UseKind, h
 
 func emptyPlan() *cleanupPlan {
 	return &cleanupPlan{
-		AfterScope:             make(map[cfg.SiteID][]symbols.SymbolID),
-		BeforeReturn:           make(map[source.NodeID][]symbols.SymbolID),
-		BeforeAssign:           make(map[source.NodeID]struct{}),
-		DiscardedValue:         make(map[source.NodeID]struct{}),
-		ProjectionBase:         make(map[source.NodeID]struct{}),
-		MatchFieldDrops:        make(map[source.NodeID][]int),
-		MatchWholePayloadDrops: make(map[source.NodeID]struct{}),
+		AfterScope:     make(map[cfg.SiteID][]symbols.SymbolID),
+		BeforeReturn:   make(map[source.NodeID][]symbols.SymbolID),
+		BeforeAssign:   make(map[source.NodeID]struct{}),
+		DiscardedValue: make(map[source.NodeID]struct{}),
+		ProjectionBase: make(map[source.NodeID]struct{}),
 	}
 }
 
 func TestValidateAcceptsConsistentEvidence(t *testing.T) {
 	graphs, fnID := buildGraph(t, validationGraphSource)
 	plans := cleanupPlans{fnID: emptyPlan()}
-	if err := plans.validate(validationSource(), symbols.NewIndex(), graphs); err != nil {
+	if err := plans.validate(validationSource(), graphs); err != nil {
 		t.Fatalf("consistent evidence rejected: %v", err)
 	}
 }
@@ -101,16 +99,13 @@ func TestValidateRejectsMalformedDurableFlowEvidence(t *testing.T) {
 		publish    func(*Module)
 	}{
 		{name: "unknown expression", want: "no typed expression", publish: func(module *Module) {
-			module.recordExprType(source.ParsedNodeID(9999), &typeinfo.BoolType{})
+			module.recordPayload(source.ParsedNodeID(9999), PayloadAccess{Cases: []int{0}})
 		}},
 		{name: "empty payload", want: "empty payload refinement", publish: func(module *Module) {
 			module.recordPayload(id, PayloadAccess{})
 		}},
 		{name: "invalid case", want: "tests case 2 of 1", publish: func(module *Module) {
 			module.recordCaseTest(id, CaseTest{SubjectID: id, Case: 2, CaseCount: 1})
-		}},
-		{name: "invalid variant field", want: "invalid variant field", publish: func(module *Module) {
-			module.recordVariantField(id, VariantFieldAccess{Carrier: id, Case: 0, Payload: &typeinfo.StructType{}, Field: 1, Type: &typeinfo.BoolType{}})
 		}},
 	}
 	for _, test := range tests {
@@ -143,7 +138,6 @@ func TestValidateRejectsEvidenceGaps(t *testing.T) {
 		}},
 		{name: "unidentified drop target", want: "unidentified", typed: validationSource(), mutate: func(plan *cleanupPlan) { plan.BeforeReturn[source.ParsedNodeID(9999)] = []symbols.SymbolID{{}} }},
 		{name: "projection base with no type", want: "no expression type", typed: validationSource(), mutate: func(plan *cleanupPlan) { plan.ProjectionBase[source.ParsedNodeID(8888)] = struct{}{} }},
-		{name: "match drop outside a block", want: "not a block", typed: validationSource(), mutate: func(plan *cleanupPlan) { plan.MatchWholePayloadDrops[source.ParsedNodeID(7777)] = struct{}{} }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -151,7 +145,7 @@ func TestValidateRejectsEvidenceGaps(t *testing.T) {
 			if tt.mutate != nil {
 				tt.mutate(plan)
 			}
-			err := cleanupPlans{fnID: plan}.validate(tt.typed, symbols.NewIndex(), graphs)
+			err := cleanupPlans{fnID: plan}.validate(tt.typed, graphs)
 			if err == nil {
 				t.Fatal("inconsistent evidence accepted")
 			}
@@ -164,7 +158,7 @@ func TestValidateRejectsEvidenceGaps(t *testing.T) {
 
 func TestValidateRejectsPlanWithoutCFG(t *testing.T) {
 	graphs, _ := buildGraph(t, validationGraphSource)
-	err := cleanupPlans{moduleid.FunctionID("missing-function"): emptyPlan()}.validate(validationSource(), symbols.NewIndex(), graphs)
+	err := cleanupPlans{moduleid.FunctionID("missing-function"): emptyPlan()}.validate(validationSource(), graphs)
 	if err == nil || !strings.Contains(err.Error(), "no CFG") {
 		t.Fatalf("error = %v, want a missing-CFG report", err)
 	}
@@ -176,14 +170,14 @@ fn second() {}`)
 	if len(graphs.Functions) != 2 {
 		t.Fatalf("CFG functions = %d, want 2", len(graphs.Functions))
 	}
-	if err := (cleanupPlans{firstID: emptyPlan()}).validate(validationSource(), symbols.NewIndex(), graphs); err == nil || !strings.Contains(err.Error(), "no published cleanup plan") {
+	if err := (cleanupPlans{firstID: emptyPlan()}).validate(validationSource(), graphs); err == nil || !strings.Contains(err.Error(), "no published cleanup plan") {
 		t.Fatalf("error = %v, want missing-function evidence error", err)
 	}
 }
 
 func TestValidateRejectsNilPlan(t *testing.T) {
 	graphs, fnID := buildGraph(t, validationGraphSource)
-	err := cleanupPlans{fnID: nil}.validate(validationSource(), symbols.NewIndex(), graphs)
+	err := cleanupPlans{fnID: nil}.validate(validationSource(), graphs)
 	if err == nil || !strings.Contains(err.Error(), "nil cleanup plan") {
 		t.Fatalf("error = %v, want a nil-plan report", err)
 	}
@@ -202,7 +196,7 @@ func TestValidateReportsProblemsDeterministically(t *testing.T) {
 			exprs = append(exprs, validationExpr(id, nil, typeinfo.UseMove, true))
 			plan.ProjectionBase[id] = struct{}{}
 		}
-		err := cleanupPlans{fnID: plan}.validate(validationSource(exprs...), symbols.NewIndex(), graphs)
+		err := cleanupPlans{fnID: plan}.validate(validationSource(exprs...), graphs)
 		if err == nil {
 			t.Fatal("inconsistent evidence accepted")
 		}

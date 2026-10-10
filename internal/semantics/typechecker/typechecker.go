@@ -17,10 +17,13 @@ type checker struct {
 	evidence     *evidence
 	constantEval *constantEvaluator
 
-	payloadContext      int
-	optionalTestContext int
-	wholeCarrierExpr    ast.Expr
-	loopDepth           int
+	wholeCarrierExpr ast.Expr
+	loopDepth        int
+	// narrowed holds, for each tested place, the cases it can still hold at
+	// this point in the function body being checked.
+	narrowed map[narrowedPlace][]int
+	// aliases maps a local reference to the place it was copied from.
+	aliases map[*symbols.Symbol]narrowedPlace
 	// reusedCall is the already-checked source call embedded at the root of a
 	// generated producer loop. Nested calls and flow visits still check normally.
 	reusedCall *ast.CallExpr

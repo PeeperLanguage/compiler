@@ -1,0 +1,7 @@
+name = "negative_match_payload_test"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["match is missing case `Value == none`", "match is missing case `Inner is Empty`", "duplicate match arm for `Value`", "`!= none` needs an optional payload, but `Inner` holds Shape", "`== none` needs an optional payload, but `Free` has no payload", "`is Shape` does not fit: `Value` holds ?i32", "a match arm can test a payload only when the subject is a named place"]

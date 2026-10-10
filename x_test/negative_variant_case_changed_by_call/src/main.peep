@@ -1,0 +1,18 @@
+enum State {
+    Running: struct { ticks: i32 },
+    Idle
+}
+
+struct Machine { state: State }
+
+fn Reset(machine: &mut Machine) {
+    machine.state = State::Idle;
+}
+
+fn Ticks(mut machine: Machine) -> i32 {
+    if machine.state is State::Running {
+        Reset(&mut machine);
+        return machine.state.ticks;
+    }
+    return 0;
+}

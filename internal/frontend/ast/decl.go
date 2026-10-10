@@ -353,19 +353,7 @@ func (t *EnumType) TypeText() string {
 		if variant.Name != nil {
 			b.WriteString(variant.Name.Name)
 		}
-		if payload, ok := variant.Payload.(*StructType); ok {
-			b.WriteString(": ")
-			b.WriteByte('{')
-			for fieldIndex, field := range payload.Fields {
-				if fieldIndex > 0 {
-					b.WriteString(", ")
-				}
-				b.WriteString(identText(field.Name))
-				b.WriteString(": ")
-				b.WriteString(TypeText(field.Type))
-			}
-			b.WriteByte('}')
-		} else if variant.Payload != nil {
+		if variant.Payload != nil {
 			b.WriteString(": ")
 			b.WriteString(TypeText(variant.Payload))
 		}

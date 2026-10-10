@@ -1,12 +1,12 @@
 enum Bad {
-    ready: {
+    ready: struct {
         value: i32,
         value: i64,
     },
 }
 
 enum InlinePayload {
-    Value: { inlineValue: i32 },
+    Value: struct { inlineValue: i32 },
 }
 
 struct NamedPayload {

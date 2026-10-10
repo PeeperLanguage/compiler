@@ -1,5 +1,5 @@
 enum Resource {
-    Owned: { value: *i32 }
+    Owned: *i32
 }
 
 struct Holder {
@@ -8,8 +8,8 @@ struct Holder {
 
 fn Invalid(holder: Holder) {
     match holder.resource {
-        Resource::Owned with { value = value } => {
-            free(value);
+        Resource::Owned => {
+            free(holder.resource);
         }
     }
 }

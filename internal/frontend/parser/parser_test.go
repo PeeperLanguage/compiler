@@ -3146,7 +3146,7 @@ func TestSingleRepairDiagnostics(t *testing.T) {
 	}{
 		{"return type without arrow", "fn f() i32 { return 0; }", "expected '->' before the return type", " ->"},
 		{"parameter list closed before the arrow", "fn f(a: i32 -> i32 { return a; }", "expected ')'", ")"},
-		{"match arm without arrow", "fn f(e: E) { match e { E::A { return; } } }", "expected '=>' after match pattern", " =>"},
+		{"match arm without arrow", "fn f(e: E) { match e { E::A { return; } } }", "expected '=>' after match case", " =>"},
 		{"array type without colon", "fn main() { let a [3]i32; }", "expected ':' before the type", ":"},
 		{"optional type without colon", "fn main() { let a ?i32; }", "expected ':' before the type", ":"},
 		{"colon in a struct literal", "fn main() { let p = P.{ x: 1, y: 2 }; }", "expected '=' after struct literal field name", " ="},

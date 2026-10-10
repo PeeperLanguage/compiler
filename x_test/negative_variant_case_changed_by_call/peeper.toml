@@ -1,0 +1,7 @@
+name = "negative_variant_case_changed_by_call"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["enum case is not proven here", "the value may have changed since it was tested"]

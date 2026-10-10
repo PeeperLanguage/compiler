@@ -110,7 +110,7 @@ func TestCollectedDefinedTypeKeepsDeclaringModuleIdentity(t *testing.T) {
 func TestCollectedEnumOwnsOrderedVariantSymbols(t *testing.T) {
 	const filePath = "collector_enum_variants_test" + peeper.SourceExt
 	const src = `enum Result<T> {
-	Ok: { value: T },
+	Ok: struct { value: T },
 	Pending,
 }
 type Alias = Result<i32>;`

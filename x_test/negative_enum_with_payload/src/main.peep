@@ -11,7 +11,8 @@ fn Check() {
 
 fn Inspect(result: Result) {
     match result {
-        Result::Failed with { value = payload } => {
+        Result::Failed => {
+            let .{ value = payload } = result;
             println(payload);
         }
         Result::Pending => {}

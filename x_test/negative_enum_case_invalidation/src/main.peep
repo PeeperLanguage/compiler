@@ -1,8 +1,8 @@
 enum Choice {
-    Left: {
+    Left: struct {
         value: i32,
     },
-    Right: {
+    Right: struct {
         value: i32,
     },
 }

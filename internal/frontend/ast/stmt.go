@@ -43,6 +43,33 @@ func (s *AssignStmt) forEachChild(visit func(Node)) {
 }
 func (s *AssignStmt) loc() *source.Location { return s.Location }
 
+// DestructureStmt moves a struct value whole and gives each named field its
+// own local. HasRest records a trailing `_`, which discards the other fields.
+type DestructureStmt struct {
+	NodeIDHolder
+	Documented
+	Fields   []DestructureField
+	HasRest  bool
+	Value    Expr
+	Location *source.Location
+}
+
+type DestructureField struct {
+	Name     *Ident
+	Binding  *Ident
+	Location *source.Location
+}
+
+func (*DestructureStmt) stmtNode() {}
+func (s *DestructureStmt) forEachChild(visit func(Node)) {
+	for _, field := range s.Fields {
+		visit(field.Name)
+		visit(field.Binding)
+	}
+	visit(s.Value)
+}
+func (s *DestructureStmt) loc() *source.Location { return s.Location }
+
 type ReturnStmt struct {
 	NodeIDHolder
 	Documented
@@ -119,30 +146,26 @@ func (*ContinueStmt) stmtNode()                 {}
 func (s *ContinueStmt) forEachChild(func(Node)) {}
 func (s *ContinueStmt) loc() *source.Location   { return s.Location }
 
-type MatchPatternField struct {
-	Name      *Ident
-	Binding   *Ident
-	IsDiscard bool
-	Location  *source.Location
-}
-
+// MatchArm is `Case => body`. An arm may also test the case's payload, in the
+// words of an `if` test: `Case != none`, `Case == none`, `Case is Enum::Inner`.
+// The fallback arm `_ => body` has no Case and handles whatever is left.
 type MatchArm struct {
 	NodeIDHolder
-	Case      *ScopeResolution
-	Binding   *Ident
-	IsDiscard bool
-	Fields    []MatchPatternField
-	HasData   bool
-	Body      *BlockStmt
-	Location  *source.Location
+	IsFallback bool
+	Case       *ScopeResolution
+	// PayloadOp is "", "!=", "==" or "is"; PayloadCase is the path after "is".
+	PayloadOp   string
+	PayloadCase *ScopeResolution
+	Body        *BlockStmt
+	Location    *source.Location
 }
 
 func (a *MatchArm) forEachChild(visit func(Node)) {
-	visit(a.Case)
-	visit(a.Binding)
-	for _, field := range a.Fields {
-		visit(field.Name)
-		visit(field.Binding)
+	if a.Case != nil {
+		visit(a.Case)
+	}
+	if a.PayloadCase != nil {
+		visit(a.PayloadCase)
 	}
 	visit(a.Body)
 }

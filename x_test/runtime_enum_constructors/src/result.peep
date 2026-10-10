@@ -1,5 +1,5 @@
 enum Result<T> {
-    Ok: {
+    Ok: struct {
         value: T,
     },
     Pending,

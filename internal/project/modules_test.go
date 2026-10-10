@@ -258,31 +258,23 @@ func TestModuleExprTypeEvidenceFollowsPhaseLifecycle(t *testing.T) {
 	if base == nil {
 		t.Fatal("typechecked module has no base expression type")
 	}
-	if got := module.EffectiveExprType(source.ParsedNodeID(1)); got != base {
-		t.Fatalf("effective type with empty analysis = %#v, want base type %#v", got, base)
-	}
-
-	module.Analysis = nil
-	if got := module.EffectiveExprType(source.ParsedNodeID(1)); got != base {
-		t.Fatalf("effective type without flow = %#v, want base type %#v", got, base)
-	}
 	module.ResetToPhase(phase.Typechecked)
 	if module.BaseExprType(source.ParsedNodeID(1)) != base {
 		t.Fatal("typechecked reset discarded base expression type")
 	}
 	module.ResetToPhase(phase.Parsed)
-	if module.BaseExprType(source.ParsedNodeID(1)) != nil || module.EffectiveExprType(source.ParsedNodeID(1)) != nil {
+	if module.BaseExprType(source.ParsedNodeID(1)) != nil {
 		t.Fatal("parsed reset retained expression type evidence")
 	}
 }
 
 func TestModuleExprTypeEvidenceHandlesMissingTHIR(t *testing.T) {
 	var mod *module.Module
-	if mod.BaseExprType(source.ParsedNodeID(1)) != nil || mod.EffectiveExprType(source.ParsedNodeID(1)) != nil {
+	if mod.BaseExprType(source.ParsedNodeID(1)) != nil {
 		t.Fatal("nil module returned expression type evidence")
 	}
 	mod = &module.Module{}
-	if mod.BaseExprType(source.ParsedNodeID(1)) != nil || mod.EffectiveExprType(source.ParsedNodeID(1)) != nil {
+	if mod.BaseExprType(source.ParsedNodeID(1)) != nil {
 		t.Fatal("module without THIR returned expression type evidence")
 	}
 }

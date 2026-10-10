@@ -25,7 +25,7 @@ func Run(diag *diagnostics.DiagnosticBag, input Input) *Module {
 		Scope: input.Scope, SymbolIndex: input.SymbolIndex,
 	})
 	if !diag.HasErrors() {
-		if err := result.validate(input.Source, input.SymbolIndex, input.CFG); err != nil {
+		if err := result.validate(input.Source, input.CFG); err != nil {
 			diag.AddError(diagnostics.ErrInvalidEvidence,
 				"analysis evidence is inconsistent: "+err.Error(), nil, "")
 		}

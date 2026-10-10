@@ -354,20 +354,18 @@ func TestBuildPublishesBranchConditionAtTerminatorSite(t *testing.T) {
 	}
 }
 
-// An arm's payload binding is derived before that arm body's own effects,
-// because the body may read the payload it binds. The binding is placed at
-// the arm block's first site rather than on the case edge, which is equivalent
-// because CFG construction gives every arm a fresh block reached only by its
-// own case edge.
-func TestBuildPublishesArmBindingBeforeArmBodyEvaluationEvents(t *testing.T) {
+// A destructure moves its value, then defines each new local, so the locals
+// exist before the statements that read them.
+func TestBuildPublishesDestructureAsMoveThenDefines(t *testing.T) {
 	result, module := buildEffectsForTest(t, `enum Result {
-	Ok: { value: i32 },
+	Ok: struct { value: i32 },
 	Pending,
 }
 
 fn choose(outcome: Result) -> i32 {
 	match outcome {
-		Result::Ok with { value = payload } => {
+		Result::Ok => {
+			let .{ value = payload } = outcome;
 			return payload;
 		}
 		Result::Pending => {
@@ -381,6 +379,7 @@ fn choose(outcome: Result) -> i32 {
 	// initialization never checked a match subject for initialization.
 	want := []string{
 		"define outcome",
+		"use outcome",
 		"use outcome",
 		"define payload", "use payload",
 	}

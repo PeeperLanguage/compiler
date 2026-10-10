@@ -1,15 +1,15 @@
 enum Result {
-    Ok: { value: i32, code: i32 },
-    Error: { message: str },
+    Ok: struct { value: i32, code: i32 },
+    Error: struct { message: str },
     Pending
 }
 
 fn Read(result: Result) -> i32 {
     match result {
-        Result::Ok with { value = payload } => {
-            return payload;
+        Result::Ok => {
+            return result.value;
         }
-        Result::Error with { message = _ } => {
+        Result::Error => {
             return 1;
         }
         Result::Pending => {

@@ -5,6 +5,7 @@ package thir
 // cannot silently omit control-flow behavior.
 func (s *Block) BuildControlFlow(builder ControlFlowBuilder)       { builder.BuildBlock(s) }
 func (s *Binding) BuildControlFlow(builder ControlFlowBuilder)     { builder.BuildBinding(s) }
+func (s *Destructure) BuildControlFlow(builder ControlFlowBuilder) { builder.BuildDestructure(s) }
 func (s *ExprStmt) BuildControlFlow(builder ControlFlowBuilder)    { builder.BuildExprStmt(s) }
 func (s *Assign) BuildControlFlow(builder ControlFlowBuilder)      { builder.BuildAssign(s) }
 func (s *Return) BuildControlFlow(builder ControlFlowBuilder)      { builder.BuildReturn(s) }

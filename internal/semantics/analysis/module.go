@@ -41,14 +41,6 @@ type CaseTest struct {
 	PayloadPath     []int
 }
 
-type VariantFieldAccess struct {
-	Carrier source.NodeID
-	Case    int
-	Payload *typeinfo.StructType
-	Field   int
-	Type    typeinfo.Type
-}
-
 // OriginResolution is one flow-resolved place result. Storage and value
 // origins are published together because they share syntax identity, lifetime,
 // and invalidation rules.
@@ -66,13 +58,10 @@ type AggregateSlot struct {
 }
 
 type expressionEvidence struct {
-	types         map[source.NodeID]typeinfo.Type
-	conversions   map[source.NodeID]typeinfo.Conversion
-	payloads      map[source.NodeID]PayloadAccess
-	caseTests     map[source.NodeID]CaseTest
-	variantFields map[source.NodeID]VariantFieldAccess
-	origins       map[source.NodeID]OriginResolution
-	aggregates    map[source.NodeID][]AggregateSlot
+	payloads   map[source.NodeID]PayloadAccess
+	caseTests  map[source.NodeID]CaseTest
+	origins    map[source.NodeID]OriginResolution
+	aggregates map[source.NodeID][]AggregateSlot
 }
 
 // Module owns durable post-CFG semantic evidence for one generation. Backing maps
@@ -84,37 +73,11 @@ type Module struct {
 
 func newModule() *Module {
 	return &Module{expressions: expressionEvidence{
-		types:         make(map[source.NodeID]typeinfo.Type),
-		conversions:   make(map[source.NodeID]typeinfo.Conversion),
-		payloads:      make(map[source.NodeID]PayloadAccess),
-		caseTests:     make(map[source.NodeID]CaseTest),
-		variantFields: make(map[source.NodeID]VariantFieldAccess),
-		origins:       make(map[source.NodeID]OriginResolution),
-		aggregates:    make(map[source.NodeID][]AggregateSlot),
+		payloads:   make(map[source.NodeID]PayloadAccess),
+		caseTests:  make(map[source.NodeID]CaseTest),
+		origins:    make(map[source.NodeID]OriginResolution),
+		aggregates: make(map[source.NodeID][]AggregateSlot),
 	}}
-}
-
-func (r *Module) recordExprType(id source.NodeID, typ typeinfo.Type) {
-	if r != nil && id.IsValid() && typ != nil {
-		r.expressions.types[id] = typ
-	}
-}
-
-func (r *Module) ExprType(id source.NodeID) typeinfo.Type {
-	if r == nil || !id.IsValid() {
-		return nil
-	}
-	return r.expressions.types[id]
-}
-
-// ImplicitConversion supplies conversions whose destination was unknown until
-// flow resolved an enum payload field. Base conversions remain owned by THIR.
-func (r *Module) ImplicitConversion(id source.NodeID) (typeinfo.Conversion, bool) {
-	if r == nil || !id.IsValid() {
-		return typeinfo.Conversion{}, false
-	}
-	conversion, ok := r.expressions.conversions[id]
-	return conversion, ok
 }
 
 func (r *Module) recordPayload(id source.NodeID, payload PayloadAccess) {
@@ -160,20 +123,6 @@ func (r *Module) CaseTest(id source.NodeID) (CaseTest, bool) {
 func cloneCaseTest(test CaseTest) CaseTest {
 	test.PayloadPath = append([]int(nil), test.PayloadPath...)
 	return test
-}
-
-func (r *Module) recordVariantField(id source.NodeID, field VariantFieldAccess) {
-	if r != nil && id.IsValid() {
-		r.expressions.variantFields[id] = field
-	}
-}
-
-func (r *Module) VariantField(id source.NodeID) (VariantFieldAccess, bool) {
-	if r == nil || !id.IsValid() {
-		return VariantFieldAccess{}, false
-	}
-	field, ok := r.expressions.variantFields[id]
-	return field, ok
 }
 
 func (r *Module) recordOrigins(id source.NodeID, storage, value []place.Origin) {
@@ -279,20 +228,5 @@ func (m *Module) ProjectionBase(fn moduleid.FunctionID, id source.NodeID) bool {
 		return false
 	}
 	_, ok := m.cleanup[fn].ProjectionBase[id]
-	return ok
-}
-
-func (m *Module) MatchFieldDrops(fn moduleid.FunctionID, id source.NodeID) []int {
-	if m == nil || m.cleanup == nil || m.cleanup[fn] == nil {
-		return nil
-	}
-	return append([]int(nil), m.cleanup[fn].MatchFieldDrops[id]...)
-}
-
-func (m *Module) MatchWholePayloadDrop(fn moduleid.FunctionID, id source.NodeID) bool {
-	if m == nil || m.cleanup == nil || m.cleanup[fn] == nil {
-		return false
-	}
-	_, ok := m.cleanup[fn].MatchWholePayloadDrops[id]
 	return ok
 }

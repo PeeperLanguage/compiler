@@ -1,5 +1,5 @@
 enum Result {
-    Ok: {
+    Ok: struct {
         value: i32,
     },
     Failed: str,
@@ -14,11 +14,11 @@ const SelectedCode: Code = Code::Value with 7;
 
 fn Show(result: Result) {
     match result {
-        Result::Ok with { value = payload } => {
-            println(payload);
+        Result::Ok => {
+            println(result.value);
         }
-        Result::Failed with message => {
-            println(message);
+        Result::Failed => {
+            println(result);
         }
         Result::Pending => {
             println("pending");
@@ -28,8 +28,8 @@ fn Show(result: Result) {
 
 fn ShowCode() {
     match SelectedCode {
-        Code::Value with value => {
-            println(value);
+        Code::Value => {
+            println(SelectedCode);
         }
     }
 }

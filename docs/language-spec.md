@@ -187,26 +187,12 @@ wrapping an optional function result silently canonicalizes to `?T`. Assigning
 or passing a whole optional to an explicit optional destination preserves its
 carrier type instead of reading its payload.
 
-Comparing a stable optional place with `none` establishes presence on one CFG
-edge. `x != none` proves presence on the true edge; `x == none` proves presence
-on the false edge. Reversed operands have identical meaning. Each proof unwraps
-the optional carrier; redundant optional markers do not require extra proofs.
-A proven ordinary value use has payload type `T`; an unproven use retains `?T` and cannot
-stand in for `T`.
-
-Stable places are variables, field and nested-field projections, constant-folded
-indexes, and direct resolved integral binding indexes. Other computed indexes
-are unstable. Assigning a carrier or ancestor, mutating overlapping storage
-through an alias, changing a binding used as an index, or calling code that may
-mutate overlapping storage invalidates affected facts. Unknown raw-pointer
-effects invalidate all potentially reachable facts; calls also invalidate
-mutable module-global facts. Payload-descendant mutation preserves presence of
-the containing optional.
-
-Facts survive terminating guards, intersect at joins, and reach a fixed point
-through loops. Logical `&&` and `||` are eager: their right operands receive no
-short-circuit proof, though the completed boolean result may refine its outgoing
-CFG edge.
+An optional narrows by the same rule as a named enum (see "Case narrowing"
+below): it has two cases, `none` and present, and a test against `none` is its
+case test. `x != none` keeps the present case when true; `x == none` keeps it
+when false. Reversed operands mean the same. A place proven present reads as
+`T`; an unproven use keeps `?T` and cannot stand in for `T` ("optional payload
+use requires a presence proof").
 
 Presence checks never consume. Reading a copyable payload, including a shared
 reference payload, preserves the carrier. Moving a move-only payload from a
@@ -222,16 +208,16 @@ current language surface. Niche layout remains separate future work.
 ## Named Enums
 
 Named enums declare ordered PascalCase variants. Each data variant owns one
-payload type. A braced payload declaration is shorthand for an anonymous struct
-type; that struct type is not source-visible by name. A payloadless variant has
-no payload:
+payload type, written as a full type after `:`, such as `struct { ... }` or
+`str`. A struct payload needs at least one field. A payloadless variant has no
+payload:
 
 ```peep
 enum Result<T> {
-    Ok: {
+    Ok: struct {
         value: T,
     },
-    Error: {
+    Error: struct {
         message: cstr,
     },
     Failed: str,
@@ -268,29 +254,97 @@ target struct's declaration order. Named structs have declaration identity;
 anonymous struct types have ordered field identity. Distinct struct types do
 not implicitly convert or cast with `as`, even when their fields match.
 
+A destructure statement takes a struct value apart. It moves the whole value and
+gives each named field its own local:
+
+```peep
+let .{ first = head, tag = tag, _ } = pair;
+```
+
+`field = name` moves that field into a new local `name`. A trailing `_` discards
+every other field; owned ones are dropped there, last field first. Without `_`,
+every field must be named. The value is any struct value: a local, a temporary,
+or a case-narrowed payload variable, where it consumes the enum. A value behind a
+reference is rejected. This is the only way to give fields separate owners:
+values are always moved whole, and `value.field` never moves a move-only field
+out on its own.
+
 `value is Result<i32>::Ok` is a nonconsuming nominal case-membership test.
 Named-enum equality and ordering are not supported; use `is` or `match` to
 inspect cases.
-Stable subjects gain case-set facts on CFG edges: true keeps tested case, false
-removes it, joins union possible cases, and an empty set makes an edge
-unreachable. When one struct-payload case remains, its fields are available
-through enum value (`value.field`). Same-named fields across cases stay
-inaccessible until one exact case is proven. Optional `none` tests use same
-internal case-set flow while preserving `?T` and `none` source syntax.
+Case narrowing has one rule:
+
+> A stable place proven to hold exactly one case reads as that case's payload.
+> It is the whole enum where the context asks for the enum: the subject of a
+> test or `match`, the target of an assignment, or a destination whose expected
+> type is the enum.
+
+A place is a local or parameter, or a path of fields and indexes from one. An
+index is a constant or a variable; any other computed index is not a stable
+place. A local reference copied from a place (`let alias = holder;`) names the
+same place.
+
+The type checker reads the proof from the block structure:
+
+1. the block a test guards (`if`, `else if`, `for` condition);
+2. the `else` block, for the cases the test ruled out;
+3. a `match` arm;
+4. after an `if` or `match`, what its branches agree on: a case stays possible
+   if any branch that reaches the end leaves it possible. A branch that always
+   leaves (`return`, `break`, `continue`) does not count, so a guard that
+   returns proves the rest of the block. After a loop, only what held before
+   it and still holds at the end of its body.
+
+Each test removes cases from the set still possible; the payload is visible when
+one case is left. `!` flips a test. `a && b` being true, or `a || b` being
+false, applies both tests to the guarded block. Both operands are still
+evaluated eagerly, so the right operand itself gets no proof from the left.
+
+```peep
+match shape {
+    Shape::Circle => { return shape.radius; }   // shape: struct { radius: i32 }
+    Shape::Code => { return shape + 1; }        // shape: i32
+    Shape::Empty => { return 0; }
+}
+
+if state is State::Idle { return 0; }
+if state is State::Failed { return state; }     // state: i32
+return state.ticks;                             // only Running is left
+
+if machine.state is State::Running { machine.state.ticks = 0; }
+```
+
+Reads, borrows, and field writes reach the payload in place. Because an
+assignment target is the whole enum, `state = State::Idle;` is valid inside a
+narrowed block, and a plain payload is rewritten as
+`count = Count::Code with count + 1;`. `return state;`, a call argument, and
+`let copy: State = state;` take the whole enum when the destination type is the
+enum; `let copy = state;` takes the payload.
+
+Assigning to a place, or to a place it is stored in, ends its narrowing. Flow
+analysis then checks every narrowed read against what can really happen: if the
+place may have changed since the test (an assignment through an alias, a changed
+index variable, a call that could write through a mutable reference or a raw
+pointer, a loop), the read is rejected with "enum case is not proven here" (for
+an optional, "optional payload use requires a presence proof"); test the place
+again. Writing inside the payload keeps the case. Moving a move-only payload consumes
+the whole enum; moving one field of it follows the partial-move rule for structs
+and is rejected. Same-named fields in different cases never conflict, because a
+field is only reachable through one proven case.
 
 `match` is an exhaustive statement. Subject evaluates once; every variant must
-appear exactly once, with fully named paths, `=>`, and block bodies:
+appear exactly once, with a fully named path, `=>`, and a block body, unless a
+final `_` arm handles the rest. An arm
+names its case and has no binding or pattern syntax. A place subject is
+the case's payload inside the arm, as described above:
 
 ```peep
 match result {
-    Result<i32>::Ok with { value = payload } => {
-        use(payload)
+    Result<i32>::Ok => {
+        use(result.value)
     }
-    Result<i32>::Error with { message = message } => {
-        report(message)
-    }
-    Result<i32>::Failed with message => {
-        report(message)
+    Result<i32>::Failed => {
+        report(result)
     }
     Result<i32>::Pending => {
         wait()
@@ -298,20 +352,55 @@ match result {
 }
 ```
 
-Any payload may use `with local` or `with _` to bind or discard whole payload.
-Struct payloads additionally support `with { ... }`: fields may be omitted,
-`field = local` creates an arm-scoped binding, and `field = _` explicitly
-discards that field. Wildcards, guards, alternatives, nested patterns, shorthand
-bindings, fallthrough, and value-producing matches are not supported.
+An arm may also test its case's payload, in the words of an `if` test:
+`Case != none` and `Case == none` for an optional payload, `Case is Enum::Inner`
+for an enum payload. The test never binds anything; inside the arm the subject
+reads through both levels:
+
+```peep
+match slot {
+    Slot::Value != none => { return slot; }              // slot: i32
+    Slot::Value == none => { return 0; }                 // slot: ?i32
+    Slot::Inner is Shape::Circle => { return slot.radius; }
+    Slot::Inner is Shape::Empty => { return 0; }
+    Slot::Free => { return 0; }
+}
+```
+
+A case is handled either by one arm for the whole case or by arms that together
+cover every case of its payload; mixing the two for one case is a duplicate. The
+subject must be a named place. A test goes one level deep; match the narrowed
+subject again, or bind it, to go deeper.
+
+The fallback arm `_ => { ... }` handles every case, and every payload case of
+a tested case, that no arm before it handles. It must be the last arm and must
+handle something. Inside it the subject keeps the cases that are left; when
+exactly one is left, the subject reads as that case's payload. Without `_`, a
+missing case is an error, so adding a case to an enum points at every `match`
+that did not ask to ignore the rest.
+
+```peep
+match slot {
+    Slot::Value != none => { return slot; }
+    _ => { return 0; }
+}
+```
+
+To give payload fields separate owners, destructure the narrowed variable:
+`let .{ value = owned, _ } = result;`. Guards, alternatives, nested
+patterns, fallthrough, and value-producing matches are not supported.
 Ownership-bearing temporary subjects must first be bound to a named place.
 
-An enum copies only when every payload field in every case copies. Copyable and
-shared-reference pattern reads preserve carrier. Moving or discarding a
-move-only whole payload, or move-only struct payload fields, from a direct named
-local or parameter consumes whole carrier. Struct patterns drop omitted owned
-fields on selected arm. Whole-carrier reinitialization remains valid. Partial
-moves from enum fields, indexes, pointees, temporaries, or other projected
-carriers are rejected.
+An enum copies only when every payload field in every case copies. Reading a
+copyable or shared-reference payload preserves the carrier. Moving the payload,
+or destructuring it, from a direct named local or parameter consumes the whole
+carrier. Partial moves from enum fields, indexes, pointees, temporaries, or other
+projected carriers are rejected.
+
+Arms follow the rule every branch follows: paths that join must leave an owned
+value in one state. An arm that does not consume a carrier another arm consumed
+discards it with `let _ = carrier;`. A state change is an assignment to the
+subject (`state = State::Idle;`), or a whole enum handed back with `return`.
 
 Copyable enum constructions are valid constants, and constant `is` tests fold.
 Named enums are rejected anywhere inside foreign `#[extern]` parameter or return

@@ -1,0 +1,7 @@
+name = "negative_destructure_non_struct"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["destructure value must be a struct, got i32", "destructure value must be a struct, got &Pair"]

@@ -1,16 +1,18 @@
 enum TransferResource {
-    Owned: { value: *i32 },
+    Owned: struct { value: *i32 },
     Pending
 }
 
 fn BreakMatch(resource: TransferResource) {
     for i in 0..1 {
         match resource {
-            TransferResource::Owned with { value = owned } => {
+            TransferResource::Owned => {
+                let .{ value = owned } = resource;
                 free(owned);
                 break;
             }
             TransferResource::Pending => {
+                let _ = resource;
                 break;
             }
         }
@@ -21,7 +23,8 @@ fn ContinueMatch() {
     for i in 0..2 {
         let resource = TransferResource::Owned with .{ value = alloc(i) };
         match resource {
-            TransferResource::Owned with { value = owned } => {
+            TransferResource::Owned => {
+                let .{ value = owned } = resource;
                 free(owned);
                 continue;
             }
@@ -37,7 +40,8 @@ fn NestedBreakMatch() {
         for inner in 0..2 {
             let resource = TransferResource::Owned with .{ value = alloc(outer + inner) };
             match resource {
-                TransferResource::Owned with { value = owned } => {
+                TransferResource::Owned => {
+                    let .{ value = owned } = resource;
                     free(owned);
                     break;
                 }

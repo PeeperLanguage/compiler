@@ -2,6 +2,7 @@ package typechecker
 
 import (
 	"compiler/internal/frontend/ast"
+	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -22,41 +23,14 @@ type CaseTest struct {
 	Family          typeinfo.VariantFamily
 }
 
-// Match records typechecker-owned case and binding evidence consumed by CFG
+// Match records typechecker-owned case evidence consumed by CFG
 // and later semantic phases without resolving source paths again.
 type Match struct {
-	SubjectID source.NodeID
 	EnumType  typeinfo.Type
 	CaseCount int
-	Arms      []MatchArm
-}
-
-type MatchProjection uint8
-
-const (
-	MatchProjectionInvalid MatchProjection = iota
-	MatchPayloadField
-	MatchWholePayload
-)
-
-type MatchArm struct {
-	ArmID    source.NodeID
-	BodyID   source.NodeID
-	Case     int
-	Payload  typeinfo.Type
-	Bindings []MatchBinding
-	// CarrierUse is the published use kind applied to the match subject
-	// carrier when this arm is selected: UseMove when the arm binds any
-	// move-only payload part, UseRead when everything binds by copy.
-	CarrierUse typeinfo.UseKind
-}
-
-type MatchBinding struct {
-	Projection MatchProjection
-	Field      int
-	Type       typeinfo.Type
-	Binding    *symbols.Symbol
-	IsDiscard  bool
+	// ArmCases is what each arm selects, in source order: one case for a
+	// named arm, every case left over for the fallback arm.
+	ArmCases [][]thir.ArmCase
 }
 
 // ForIteration records typechecker-owned loop lowering and CFG evidence.
@@ -150,6 +124,7 @@ type evidence struct {
 type expressionEvidence struct {
 	types                    map[source.NodeID]typeinfo.Type
 	expandedDefaultBindings  map[source.NodeID]struct{}
+	caseCarriers             map[source.NodeID]typeinfo.Type
 	interfaceImplementations map[source.NodeID][]InterfaceImplementation
 	implicitConversions      map[source.NodeID]typeinfo.Conversion
 	stringConcatenations     map[source.NodeID]struct{}
@@ -179,6 +154,7 @@ func newEvidence() *evidence {
 		expressions: expressionEvidence{
 			types:                    make(map[source.NodeID]typeinfo.Type),
 			expandedDefaultBindings:  make(map[source.NodeID]struct{}),
+			caseCarriers:             make(map[source.NodeID]typeinfo.Type),
 			interfaceImplementations: make(map[source.NodeID][]InterfaceImplementation),
 			implicitConversions:      make(map[source.NodeID]typeinfo.Conversion),
 			stringConcatenations:     make(map[source.NodeID]struct{}),
@@ -221,6 +197,21 @@ func (r *evidence) MarkExpandedDefaultBinding(id source.NodeID) {
 	if r != nil && id.IsValid() {
 		r.expressions.expandedDefaultBindings[id] = struct{}{}
 	}
+}
+
+// MarkCasePayload records that an expression reads the payload of a narrowed
+// place whose own type is carrier.
+func (r *evidence) MarkCasePayload(id source.NodeID, carrier typeinfo.Type) {
+	if r != nil && id.IsValid() {
+		r.expressions.caseCarriers[id] = carrier
+	}
+}
+
+func (r *evidence) CaseCarrier(id source.NodeID) typeinfo.Type {
+	if r == nil || !id.IsValid() {
+		return nil
+	}
+	return r.expressions.caseCarriers[id]
 }
 
 func (r *evidence) ExpandedDefaultBinding(id source.NodeID) bool {

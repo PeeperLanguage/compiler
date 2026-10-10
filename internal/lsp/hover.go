@@ -337,13 +337,13 @@ func resolveSelectorHoverSubject(cc *cursorContext) *hoverSubject {
 			Decl:     documentedDeclAncestor(ident, cc.parents),
 			Location: ast.LocOf(ident),
 			Symbol:   sym,
-			ExprType: cc.module.EffectiveExprType(sel.ID()),
+			ExprType: cc.module.BaseExprType(sel.ID()),
 		}
 	}
 	if subject := resolveInterfaceSelectorMethodHoverSubject(cc, sel, ident); subject != nil {
 		return subject
 	}
-	if exprType := cc.module.EffectiveExprType(sel.ID()); exprType != nil {
+	if exprType := cc.module.BaseExprType(sel.ID()); exprType != nil {
 		return &hoverSubject{
 			Kind:     hoverSubjectExpr,
 			Node:     ident,
@@ -399,7 +399,7 @@ func resolveSymbolHoverSubject(cc *cursorContext) *hoverSubject {
 		Decl:     documentedDeclAncestor(ident, cc.parents),
 		Location: ast.LocOf(ident),
 		Symbol:   sym,
-		ExprType: cc.module.EffectiveExprType(ident.ID()),
+		ExprType: cc.module.BaseExprType(ident.ID()),
 	}
 	if sym.Kind == symbols.SymbolType {
 		if typ, ok := symbols.GetSymbolType(sym); ok {
@@ -501,7 +501,7 @@ func resolveExprHoverSubject(cc *cursorContext) *hoverSubject {
 	if _, ok := cc.node.(ast.Expr); !ok {
 		return nil
 	}
-	exprType := cc.module.EffectiveExprType(cc.node.ID())
+	exprType := cc.module.BaseExprType(cc.node.ID())
 	if exprType == nil {
 		return nil
 	}
@@ -645,17 +645,9 @@ func formatHoverTypeBody(typ typeinfo.Type) string {
 		for _, variant := range t.Cases {
 			b.WriteString("  ")
 			b.WriteString(variant.Name)
-			if payload, ok := variant.Payload.(*typeinfo.StructType); ok && payload != nil {
-				b.WriteString(": {")
-				for index, field := range payload.Fields {
-					if index > 0 {
-						b.WriteString(", ")
-					}
-					b.WriteString(field.Name)
-					b.WriteString(": ")
-					b.WriteString(typeinfo.TypeText(field.Type))
-				}
-				b.WriteString("}")
+			if variant.Payload != nil {
+				b.WriteString(": ")
+				b.WriteString(typeinfo.TypeText(variant.Payload))
 			}
 			b.WriteString(",\n")
 		}

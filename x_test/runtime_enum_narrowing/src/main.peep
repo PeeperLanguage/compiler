@@ -1,25 +1,25 @@
 enum Choice {
-    Left: {
+    Left: struct {
         value: i32,
     },
-    Right: {
+    Right: struct {
         value: i32,
     },
     Pending,
 }
 
 enum Mixed {
-    Number: { value: i32 },
-    Flag: { value: bool }
+    Number: struct { value: i32 },
+    Flag: struct { value: bool }
 }
 
 enum Inner {
-    Left: { value: i32 },
+    Left: struct { value: i32 },
     Right
 }
 
 enum OuterChoice {
-    Wrapped: { inner: Inner },
+    Wrapped: struct { inner: Inner },
     Empty
 }
 

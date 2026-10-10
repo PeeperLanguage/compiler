@@ -209,7 +209,7 @@ func selectorBaseType(expr ast.Expr, parents map[source.NodeID]ast.Node, module 
 	if expr == nil || module == nil {
 		return nil, false
 	}
-	baseType, ok := normalizedSelectorBaseType(module.EffectiveExprType(expr.ID()))
+	baseType, ok := normalizedSelectorBaseType(module.BaseExprType(expr.ID()))
 	if ok {
 		return baseType, true
 	}

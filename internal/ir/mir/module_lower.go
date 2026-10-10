@@ -32,23 +32,16 @@ type LoweringInput struct {
 }
 
 type lowerer struct {
-	input           LoweringInput
-	module          *Module
-	fn              *Function
-	sourceFn        *thir.Function
-	tmp             int
-	current         *Block
-	location        *source.Location
-	temporaryDrops  []ValueRef
-	symbolValues    map[symbols.SymbolID]*RefName
-	constantEnv     map[string]constvalue.Value
-	variantEntries  map[*cfg.Block]variantEntry
-	variantSubjects map[source.NodeID]ValueRef
-}
-
-type variantEntry struct {
-	switchID source.NodeID
-	arm      *thir.MatchArm
+	input          LoweringInput
+	module         *Module
+	fn             *Function
+	sourceFn       *thir.Function
+	tmp            int
+	current        *Block
+	location       *source.Location
+	temporaryDrops []ValueRef
+	symbolValues   map[symbols.SymbolID]*RefName
+	constantEnv    map[string]constvalue.Value
 }
 
 func GenerateMIR(input LoweringInput) *Module {
@@ -160,10 +153,8 @@ func lowerCFGFunction(mod *Module, input LoweringInput, sourceFn *thir.Function,
 	fn := functionSignature(input, sourceFn, make([]*Block, 0, len(graph.Blocks)))
 	l := &lowerer{
 		input: input, module: mod, fn: fn, sourceFn: sourceFn,
-		symbolValues:    make(map[symbols.SymbolID]*RefName),
-		constantEnv:     make(map[string]constvalue.Value),
-		variantEntries:  make(map[*cfg.Block]variantEntry),
-		variantSubjects: make(map[source.NodeID]ValueRef),
+		symbolValues: make(map[symbols.SymbolID]*RefName),
+		constantEnv:  make(map[string]constvalue.Value),
 	}
 	for _, parameter := range fn.Params {
 		if parameter.SymbolID.IsValid() {
@@ -188,33 +179,12 @@ func lowerCFGFunction(mod *Module, input LoweringInput, sourceFn *thir.Function,
 	}
 
 	for _, sourceBlock := range graph.Blocks {
-		term, switched := sourceBlock.Terminator.(*cfg.SwitchVariant)
-		if !switched {
-			continue
-		}
-		match, ok := input.Source.Node(term.NodeID).(*thir.Match)
-		if !ok || len(match.Arms) != len(term.Targets) {
-			return nil, false
-		}
-		for index, target := range term.Targets {
-			arm := &match.Arms[index]
-			if blocks[target.Target] == nil || arm.Case != target.Case || arm.Body == nil {
-				return nil, false
-			}
-			l.variantEntries[target.Target] = variantEntry{switchID: term.NodeID, arm: arm}
-		}
-	}
-
-	for _, sourceBlock := range graph.Blocks {
 		block := blocks[sourceBlock]
 		if block == nil {
 			continue
 		}
 		l.current = block
 		l.location = sourceBlock.Location
-		if entry, found := l.variantEntries[sourceBlock]; found && !l.lowerVariantBindings(entry) {
-			return nil, false
-		}
 		if loop, ok := input.Source.Node(sourceBlock.NodeID).(*thir.For); ok {
 			if !l.lowerIterationSegment(loop, sourceBlock.Origin) {
 				return nil, false
@@ -370,82 +340,6 @@ func (l *lowerer) integerLiteral(value string, typ typeinfo.Type) ir.Expr {
 	return &ir.IntLit{Value: value, Type: typelower.Type(l.input.Types, l.input.Diagnostics, typ), SourceInfo: ir.SourceInfo{Location: l.location}}
 }
 
-func (l *lowerer) lowerVariantBindings(entry variantEntry) bool {
-	if l == nil || l.current == nil || entry.arm == nil || entry.arm.Body == nil {
-		return false
-	}
-	subject := l.variantSubjects[entry.switchID]
-	if subject == nil {
-		return false
-	}
-	arm := entry.arm
-	payloadType := typelower.Type(l.input.Types, l.input.Diagnostics, arm.Payload)
-	var drops []int
-	payloadDrop := false
-	if l.input.Analysis != nil {
-		bodyID := arm.Body.Source.NodeID
-		drops = l.input.Analysis.MatchFieldDrops(l.sourceFn.Identity, bodyID)
-		payloadDrop = l.input.Analysis.MatchWholePayloadDrop(l.sourceFn.Identity, bodyID)
-	}
-	if len(arm.Bindings) == 0 && len(drops) == 0 && !payloadDrop {
-		return true
-	}
-	if payloadType == ir.InvalidType {
-		return false
-	}
-	for _, binding := range arm.Bindings {
-		if binding.Symbol == nil || binding.IsDiscard {
-			continue
-		}
-		bindingType := typelower.Type(l.input.Types, l.input.Diagnostics, binding.Type)
-		place := variantPayloadPlace(subject, arm.Case, payloadType, arm.Body.Source.Location)
-		if binding.Projection == thir.MatchPayloadField {
-			place = variantFieldPlace(subject, arm.Case, payloadType, binding.Field, bindingType, arm.Body.Source.Location)
-		}
-		name := exprlower.SymbolName(l.input.ModuleID, l.input.IsEntryModule, binding.Symbol)
-		l.symbolValues[binding.Symbol.ID] = &RefName{Name: name, Type: bindingType, Location: arm.Body.Source.Location}
-		value := l.load(&l.current.Instrs, place, bindingType, arm.Body.Source.Location)
-		l.appendInstr(&l.current.Instrs, &Assign{Name: name, Value: asValueExpr(value)})
-	}
-	if payloadDrop {
-		place := variantPayloadPlace(subject, arm.Case, payloadType, arm.Body.Source.Location)
-		value := l.load(&l.current.Instrs, place, payloadType, arm.Body.Source.Location)
-		l.appendInstr(&l.current.Instrs, &Drop{Value: value})
-	}
-	if len(drops) == 0 {
-		return true
-	}
-	payload, ok := l.module.Types.Type(payloadType)
-	if !ok || payload.Kind != ir.TypeStruct {
-		return false
-	}
-	for _, fieldIndex := range drops {
-		if fieldIndex < 0 || fieldIndex >= len(payload.Fields) {
-			return false
-		}
-		fieldType := payload.Fields[fieldIndex].Type
-		place := variantFieldPlace(subject, arm.Case, payloadType, fieldIndex, fieldType, arm.Body.Source.Location)
-		value := l.load(&l.current.Instrs, place, fieldType, arm.Body.Source.Location)
-		l.appendInstr(&l.current.Instrs, &Drop{Value: value})
-	}
-	return true
-}
-
-func variantFieldPlace(subject ValueRef, caseIndex int, payloadType ir.TypeID, fieldIndex int, fieldType ir.TypeID, location *source.Location) *Place {
-	place := variantPayloadPlace(subject, caseIndex, payloadType, location)
-	place.Projections = append(place.Projections, PlaceProjection{Kind: PlaceProjectionField, FieldIndex: fieldIndex, Type: fieldType, Location: location})
-	place.Type = fieldType
-	return place
-}
-
-func variantPayloadPlace(subject ValueRef, caseIndex int, payloadType ir.TypeID, location *source.Location) *Place {
-	return &Place{
-		Root:        subject,
-		Projections: []PlaceProjection{{Kind: PlaceProjectionVariantPayload, Case: caseIndex, Type: payloadType, Location: location}},
-		Type:        payloadType, Location: location,
-	}
-}
-
 func internConstantStrings(module *Module, value constvalue.Value) {
 	if module == nil || value == nil {
 		return
@@ -491,6 +385,31 @@ func (l *lowerer) lowerCFGStmt(node thir.Node) bool {
 		}
 		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
 		return true
+	case *thir.Destructure:
+		temporaryMark := len(l.temporaryDrops)
+		valueType := statement.Value.ExprType()
+		value := l.lowerExpr(l.sourceExpr(statement.Value, valueType), &l.current.Instrs)
+		take := func(name string, index int, fieldType typeinfo.Type) *RefName {
+			typ := typelower.Type(l.input.Types, l.input.Diagnostics, fieldType)
+			l.appendInstr(&l.current.Instrs, &Assign{Name: name, Value: &Field{Base: value, Index: index, Type: typ, Location: l.location}})
+			return &RefName{Name: name, Type: typ, Location: l.location}
+		}
+		strct, _ := typeinfo.Underlying(valueType).(*typeinfo.StructType)
+		taken := make([]bool, len(strct.Fields))
+		for _, binding := range statement.Bindings {
+			taken[binding.Field] = true
+			name := exprlower.SymbolName(l.input.ModuleID, l.input.IsEntryModule, binding.Symbol)
+			l.symbolValues[binding.Symbol.ID] = take(name, binding.Field, binding.Type)
+		}
+		// The value was taken whole, so its unnamed owned fields end here,
+		// last field first like any struct drop.
+		for index := len(strct.Fields) - 1; index >= 0; index-- {
+			if field := strct.Fields[index]; !taken[index] && typeinfo.OwnershipCapabilityOf(field.Type).NeedsDrop {
+				l.appendInstr(&l.current.Instrs, &Drop{Value: take(l.nextTemp(), index, field.Type)})
+			}
+		}
+		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
+		return true
 	case *thir.Return:
 		// Return value lowers with terminator so cleanup runs after evaluation.
 		return true
@@ -501,13 +420,7 @@ func (l *lowerer) lowerCFGStmt(node thir.Node) bool {
 			return false
 		}
 		temporaryMark := len(l.temporaryDrops)
-		targetType := statement.Target.ExprType()
-		if l.input.Analysis != nil {
-			if refined := l.input.Analysis.ExprType(statement.Target.SourceInfo().NodeID); refined != nil {
-				targetType = refined
-			}
-		}
-		value := l.lowerExpr(l.sourceExpr(statement.Value, targetType), &l.current.Instrs)
+		value := l.lowerExpr(l.sourceExpr(statement.Value, statement.Target.ExprType()), &l.current.Instrs)
 		target := l.sourcePlace(statement.Target)
 		if target == nil || target.Root == nil {
 			return false
@@ -637,22 +550,29 @@ func (l *lowerer) lowerCFGTerminator(sourceBlock, exit *cfg.Block, blocks map[*c
 		return true
 	case *cfg.SwitchVariant:
 		match, ok := l.input.Source.Node(term.NodeID).(*thir.Match)
-		if !ok || len(match.Arms) != len(term.Targets) || len(term.Targets) == 0 {
+		if !ok || len(term.Targets) == 0 {
 			return false
 		}
 		l.location = match.Source.Location
 		targets := make([]VariantTarget, len(term.Targets))
 		for index, target := range term.Targets {
 			block := blocks[target.Target]
-			if block == nil || match.Arms[index].Case != target.Case {
+			if block == nil {
 				return false
 			}
 			targets[index] = VariantTarget{Case: target.Case, TargetID: block.ID}
 		}
 		temporaryMark := len(l.temporaryDrops)
-		value := l.lowerExpr(l.sourceExpr(match.Subject, match.EnumType), &l.current.Instrs)
+		switched := l.sourceExpr(match.Subject, match.EnumType)
+		if len(term.Path) > 0 {
+			// A payload switch reads the payload in place; the type checker
+			// made sure the subject is a place.
+			payload := l.sourcePlace(match.Subject)
+			exprlower.AppendPayloadProjections(l.input.Types, payload, term.Path, match.Source.Location)
+			switched = &ir.Load{Place: payload}
+		}
+		value := l.lowerExpr(switched, &l.current.Instrs)
 		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
-		l.variantSubjects[term.NodeID] = value
 		l.setBlockTerm(l.current, &SwitchVariant{Value: value, Targets: targets})
 		return true
 	case *cfg.Return:

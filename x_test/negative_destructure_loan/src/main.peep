@@ -1,0 +1,15 @@
+struct Box { value: i32 }
+enum Resource { Borrowed: struct { value: &Box, tag: i32 }, Empty }
+fn Read(box: &Box) -> i32 { return box.value; }
+fn Run() -> i32 {
+    let mut target: Box = .{ value = 1 };
+    let resource = Resource::Borrowed with .{ value = &target, tag = 2 };
+    match resource {
+        Resource::Borrowed => {
+            let .{ value = view, _ } = resource;
+            target.value = 9;
+            return Read(view);
+        }
+        Resource::Empty => { return 0; }
+    }
+}

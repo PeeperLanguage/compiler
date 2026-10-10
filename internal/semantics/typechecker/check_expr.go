@@ -19,24 +19,40 @@ import (
 	"compiler/pkg/numeric"
 )
 
-// typeExpr records canonical base typing, then applies syntax-context optional
-// unwrapping needed while checking payload operations. Path-sensitive
-// refinement runs later over THIR and never re-enters this checker.
+// typeExpr types expr and records the type it reads as: the payload when expr
+// names a place narrowed to one case, its declared type otherwise. Flow
+// analysis later verifies every narrowed read and never re-enters this checker.
 func (c *checker) typeExpr(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) typeinfo.Type {
 	base := c.typeExprBase(scope, expr, expected)
 	if base == nil || expr == nil {
 		return base
 	}
+	if payload := c.casePayload(expr, base, expected); payload != nil {
+		base = payload
+	}
 	if c.module != nil && c.evidence != nil {
 		c.evidence.RecordExprType(expr.ID(), base)
 	}
-	return c.effectiveExpressionType(expr, base, expected)
+	if typeinfo.OptionalPayloadDepthForExpected(base, expected) > 0 {
+		return c.requirePayload(expr, base)
+	}
+	return base
 }
 
+// typePayloadExpr types an operand that is used through its value: a field or
+// index base, a callee, an operator operand.
 func (c *checker) typePayloadExpr(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) typeinfo.Type {
-	c.payloadContext++
-	defer func() { c.payloadContext-- }()
-	return c.typeExpr(scope, expr, expected)
+	return c.requirePayload(expr, c.typeExpr(scope, expr, expected))
+}
+
+// requirePayload rejects an optional used where its payload is needed: nothing
+// narrowed it here.
+func (c *checker) requirePayload(expr ast.Expr, typ typeinfo.Type) typeinfo.Type {
+	if !typeinfo.IsOptional(typ) {
+		return typ
+	}
+	c.ctx.Diagnostics.Add(problems.OptionalPayloadProof(ast.LocOf(expr)))
+	return &typeinfo.InvalidType{}
 }
 
 func (c *checker) typeWholeCarrierExpr(scope *symbols.Scope, expr ast.Expr) typeinfo.Type {
@@ -44,21 +60,6 @@ func (c *checker) typeWholeCarrierExpr(scope *symbols.Scope, expr ast.Expr) type
 	c.wholeCarrierExpr = expr
 	defer func() { c.wholeCarrierExpr = previous }()
 	return c.typeExpr(scope, expr, nil)
-}
-
-func (c *checker) effectiveExpressionType(expr ast.Expr, base, expected typeinfo.Type) typeinfo.Type {
-	if c == nil || expr == nil || base == nil || c.wholeCarrierExpr == expr || !typeinfo.IsOptional(base) {
-		return base
-	}
-	_, explicitCarrier := typeinfo.Underlying(expected).(*typeinfo.OptionalType)
-	required := typeinfo.OptionalPayloadDepthForExpected(base, expected)
-	if c.payloadContext > 0 && required == 0 && !explicitCarrier {
-		required = typeinfo.OptionalLayerCount(base)
-	}
-	if c.optionalTestContext > 0 || explicitCarrier || required == 0 {
-		return base
-	}
-	return typeinfo.UnwrapOptionalLayers(base, required)
 }
 
 func (c *checker) recordCaseTest(node ast.Expr, subject ast.Expr, caseIndex, caseCount int, caseWhenTrue bool, family typeinfo.VariantFamily) {
@@ -286,13 +287,6 @@ func (c *checker) typeAddressExpr(scope *symbols.Scope, node *ast.AddressExpr, e
 
 func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, expected typeinfo.Type) typeinfo.Type {
 	optionalTest := (node.Op == "==" || node.Op == "!=") && isNoneExpr(node.Left) != isNoneExpr(node.Right)
-	if optionalTest {
-		c.optionalTestContext++
-		defer func() { c.optionalTestContext-- }()
-	} else {
-		c.payloadContext++
-		defer func() { c.payloadContext-- }()
-	}
 	operandExpected := expected
 	if binaryResultIsBool(node.Op) {
 		operandExpected = nil
@@ -307,7 +301,7 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 		}
 		right = c.typeExpr(scope, node.Right, rightExpected)
 	} else if isNoneExpr(node.Left) && !isNoneExpr(node.Right) {
-		right = c.typeExpr(scope, node.Right, operandExpected)
+		right = c.typeWholeCarrierExpr(scope, node.Right)
 		left = c.typeExpr(scope, node.Left, optionalOperandExpected(right))
 	} else if leftNumber, leftLiteral := node.Left.(*ast.NumberLit); leftLiteral {
 		if rightNumber, rightLiteral := node.Right.(*ast.NumberLit); !rightLiteral {
@@ -328,7 +322,7 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 		right = c.typeExpr(scope, node.Right, left)
 	} else {
 		if isNoneExpr(node.Right) {
-			left = c.typeExpr(scope, node.Left, operandExpected)
+			left = c.typeWholeCarrierExpr(scope, node.Left)
 			right = c.typeExpr(scope, node.Right, optionalOperandExpected(left))
 		} else {
 			left = c.typeExpr(scope, node.Left, operandExpected)
@@ -356,24 +350,15 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 			return &typeinfo.InvalidType{}
 		}
 	}
-	leftBase, rightBase := left, right
-	if c.module != nil {
-		if typ := c.exprType(node.Left.ID()); typ != nil {
-			leftBase = typ
-		}
-		if typ := c.exprType(node.Right.ID()); typ != nil {
-			rightBase = typ
-		}
-	}
-	if (node.Op == "==" || node.Op == "!=") && typeinfo.IsOptional(leftBase) && typeinfo.IsOptional(rightBase) &&
+	if (node.Op == "==" || node.Op == "!=") && typeinfo.IsOptional(left) && typeinfo.IsOptional(right) &&
 		!isNoneExpr(node.Left) && !isNoneExpr(node.Right) {
 		c.ctx.Diagnostics.Add(invalidOperationError(node,
 			"optional equality currently requires `none` on one side"))
 		return &typeinfo.InvalidType{}
 	}
 	if node.Op == "==" || node.Op == "!=" || node.Op == "<" || node.Op == "<=" || node.Op == ">" || node.Op == ">=" {
-		leftVariant, leftIsVariant := typeinfo.VariantDescriptorOf(leftBase)
-		rightVariant, rightIsVariant := typeinfo.VariantDescriptorOf(rightBase)
+		leftVariant, leftIsVariant := typeinfo.VariantDescriptorOf(left)
+		rightVariant, rightIsVariant := typeinfo.VariantDescriptorOf(right)
 		if leftIsVariant && leftVariant.Family == typeinfo.VariantFamilyNamed ||
 			rightIsVariant && rightVariant.Family == typeinfo.VariantFamilyNamed {
 			c.ctx.Diagnostics.Add(invalidOperationError(node,
@@ -387,6 +372,12 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 			subject = node.Right
 		}
 		c.recordCaseTest(node, subject, ir.OptionalPresentCase, 2, node.Op == "!=", typeinfo.VariantFamilyOptional)
+	} else {
+		left = c.requirePayload(node.Left, left)
+		right = c.requirePayload(node.Right, right)
+		if typeinfo.IsInvalid(left) || typeinfo.IsInvalid(right) {
+			return &typeinfo.InvalidType{}
+		}
 	}
 
 	if node.Op == "<<" || node.Op == ">>" {
@@ -585,27 +576,6 @@ func (c *checker) typeSelectorExpr(scope *symbols.Scope, node *ast.SelectorExpr)
 			c.module.SymbolIndex.Bind(node.Name, method.Symbol)
 		}
 		return method.Type
-	}
-	descriptor, isVariant := typeinfo.VariantDescriptorOf(baseType)
-	if isVariant && descriptor.Family == typeinfo.VariantFamilyNamed {
-		var deferred typeinfo.Type
-		conflictingTypes := false
-		for _, variantCase := range descriptor.Cases {
-			payload, _ := typeinfo.Underlying(variantCase.Payload).(*typeinfo.StructType)
-			if field, _, found := typeinfo.LookupStructField(payload, node.Name.Name); found {
-				if deferred == nil {
-					deferred = field.Type
-				} else if !typeinfo.IsSameType(deferred, field.Type) {
-					conflictingTypes = true
-				}
-			}
-		}
-		if deferred != nil {
-			if conflictingTypes {
-				return &typeinfo.UnknownType{}
-			}
-			return deferred
-		}
 	}
 	d := diagnostics.NewError(fmt.Sprintf("unknown member `%s`", node.Name.Name)).
 		WithCode(diagnostics.ErrFieldNotFound).

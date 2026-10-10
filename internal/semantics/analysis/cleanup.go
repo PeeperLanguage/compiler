@@ -27,12 +27,10 @@ type cleanupPlan struct {
 	AfterScope map[cfg.SiteID][]symbols.SymbolID
 	// BeforeReturn drops every scope a return unwinds, after its value is
 	// computed. Keyed by the return statement, which is the event, not a site.
-	BeforeReturn           map[source.NodeID][]symbols.SymbolID
-	BeforeAssign           map[source.NodeID]struct{}
-	DiscardedValue         map[source.NodeID]struct{}
-	ProjectionBase         map[source.NodeID]struct{}
-	MatchFieldDrops        map[source.NodeID][]int
-	MatchWholePayloadDrops map[source.NodeID]struct{}
+	BeforeReturn   map[source.NodeID][]symbols.SymbolID
+	BeforeAssign   map[source.NodeID]struct{}
+	DiscardedValue map[source.NodeID]struct{}
+	ProjectionBase map[source.NodeID]struct{}
 }
 
 // cleanupPlans stores private cleanup decisions by stable THIR function identity.

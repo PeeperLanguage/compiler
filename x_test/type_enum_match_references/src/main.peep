@@ -1,13 +1,13 @@
 enum SharedResource {
-    Borrowed: { value: &i32 }
+    Borrowed: struct { value: &i32 }
 }
 
 enum MutableResource {
-    Borrowed: { value: &mut i32 }
+    Borrowed: struct { value: &mut i32 }
 }
 
 enum RawResource {
-    Pointer: { value: rawptr }
+    Pointer: struct { value: rawptr }
 }
 
 const global: i32 = 1;
@@ -18,13 +18,13 @@ fn Write(_: &mut i32) {}
 fn Shared(source: &i32) {
     let resource = SharedResource::Borrowed with .{ value = source };
     match resource {
-        SharedResource::Borrowed with { value = value } => {
-            Read(value);
+        SharedResource::Borrowed => {
+            Read(resource.value);
         }
     }
     match resource {
-        SharedResource::Borrowed with { value = value } => {
-            Read(value);
+        SharedResource::Borrowed => {
+            Read(resource.value);
         }
     }
 }
@@ -32,7 +32,8 @@ fn Shared(source: &i32) {
 fn Mutable(source: &mut i32) {
     let resource = MutableResource::Borrowed with .{ value = source };
     match resource {
-        MutableResource::Borrowed with { value = value } => {
+        MutableResource::Borrowed => {
+            let .{ value = value } = resource;
             Write(value);
         }
     }
@@ -41,8 +42,8 @@ fn Mutable(source: &mut i32) {
 fn GlobalPointer() -> rawptr {
     let resource = RawResource::Pointer with .{ value = @global };
     match resource {
-        RawResource::Pointer with { value = pointer } => {
-            return pointer;
+        RawResource::Pointer => {
+            return resource.value;
         }
     }
 }

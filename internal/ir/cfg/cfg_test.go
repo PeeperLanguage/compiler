@@ -284,8 +284,8 @@ func TestBuildModuleCreatesSemanticVariantSwitchAndSharedJoin(t *testing.T) {
 	semanticMatch.EnumType = &typeinfo.NamedType{Name: "Status"}
 	semanticMatch.CaseCount = 2
 	semanticMatch.Arms = []thir.MatchArm{
-		{Source: ir.SourceInfo{NodeID: source.ParsedNodeID(32)}, Case: 1, Body: &thir.Block{StmtInfo: thir.StmtInfo{Source: ir.SourceInfo{NodeID: source.ParsedNodeID(33)}}}},
-		{Source: ir.SourceInfo{NodeID: source.ParsedNodeID(34)}, Case: 0, Body: &thir.Block{StmtInfo: thir.StmtInfo{Source: ir.SourceInfo{NodeID: source.ParsedNodeID(35)}}}},
+		{Source: ir.SourceInfo{NodeID: source.ParsedNodeID(32)}, Cases: []thir.ArmCase{{Case: 1}}, Body: &thir.Block{StmtInfo: thir.StmtInfo{Source: ir.SourceInfo{NodeID: source.ParsedNodeID(33)}}}},
+		{Source: ir.SourceInfo{NodeID: source.ParsedNodeID(34)}, Cases: []thir.ArmCase{{Case: 0}}, Body: &thir.Block{StmtInfo: thir.StmtInfo{Source: ir.SourceInfo{NodeID: source.ParsedNodeID(35)}}}},
 	}
 	graph := BuildModule(module).Functions[0]
 	switchTerm, ok := graph.Entry.Terminator.(*SwitchVariant)

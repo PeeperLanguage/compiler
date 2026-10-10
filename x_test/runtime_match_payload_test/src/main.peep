@@ -1,0 +1,61 @@
+enum Shape {
+    Circle: struct { radius: i32 },
+    Code: i32,
+    Empty
+}
+
+enum Slot {
+    Value: ?i32,
+    Inner: Shape,
+    Free
+}
+
+// An arm can test its case's payload in the words of an `if` test.
+fn Read(slot: Slot) -> i32 {
+    match slot {
+        Slot::Value != none => { return slot; }
+        Slot::Value == none => { return -1; }
+        Slot::Inner is Shape::Circle => { return slot.radius; }
+        Slot::Inner is Shape::Code => { return slot + 100; }
+        Slot::Inner is Shape::Empty => { return -2; }
+        Slot::Free => { return -3; }
+    }
+}
+
+// Whole-case arms and payload tests mix freely between cases.
+fn Mixed(slot: Slot) -> i32 {
+    match slot {
+        Slot::Inner => { return 1; }
+        Slot::Value == none => { return 2; }
+        Slot::Free => { return 3; }
+        Slot::Value != none => { return slot * 2; }
+    }
+}
+
+struct Holder { slot: Slot }
+
+fn Bump(mut holder: Holder) -> i32 {
+    match holder.slot {
+        Slot::Inner is Shape::Circle => { holder.slot.radius = holder.slot.radius + 1; }
+        Slot::Inner is Shape::Code => { holder.slot = Slot::Free; }
+        Slot::Inner is Shape::Empty => {}
+        Slot::Value => {}
+        Slot::Free => {}
+    }
+    return Read(holder.slot);
+}
+
+fn main() -> i32 {
+    if Read(Slot::Value with 7) != 7 { return 1; }
+    if Read(Slot::Value with none) != -1 { return 2; }
+    if Read(Slot::Inner with Shape::Circle with .{ radius = 4 }) != 4 { return 3; }
+    if Read(Slot::Inner with Shape::Code with 5) != 105 { return 4; }
+    if Read(Slot::Inner with Shape::Empty) != -2 { return 5; }
+    if Read(Slot::Free) != -3 { return 6; }
+    if Mixed(Slot::Value with 21) != 42 { return 7; }
+    if Mixed(Slot::Value with none) != 2 { return 8; }
+    if Mixed(Slot::Inner with Shape::Empty) != 1 { return 9; }
+    if Bump(Holder.{ slot = Slot::Inner with Shape::Circle with .{ radius = 1 } }) != 2 { return 10; }
+    if Bump(Holder.{ slot = Slot::Inner with Shape::Code with 1 }) != -3 { return 11; }
+    return 0;
+}

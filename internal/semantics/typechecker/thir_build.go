@@ -102,6 +102,17 @@ func (b *thirBuilder) statement(statement ast.Stmt) thir.Stmt {
 		return &thir.Binding{StmtInfo: stmtInfo(node), Symbol: b.symbol(node.Name), IsInferred: node.Type == nil, Value: b.expression(node.Value)}
 	case *ast.ConstDecl:
 		return &thir.Binding{StmtInfo: stmtInfo(node), Symbol: b.symbol(node.Name), IsConstant: true, IsInferred: node.Type == nil, Value: b.expression(node.Value)}
+	case *ast.DestructureStmt:
+		statement := &thir.Destructure{StmtInfo: stmtInfo(node), Value: b.expression(node.Value)}
+		for _, field := range node.Fields {
+			// A field the checker rejected has no evidence and defines nothing.
+			if access, ok := b.typing.StructField(field.Name.ID()); ok {
+				statement.Bindings = append(statement.Bindings, thir.DestructureBinding{
+					Source: sourceInfo(field.Binding), Field: access.Field, Type: access.Type, Symbol: b.symbol(field.Binding),
+				})
+			}
+		}
+		return statement
 	case *ast.ExprStmt:
 		return &thir.ExprStmt{StmtInfo: stmtInfo(node), Value: b.expression(node.Expr)}
 	case *ast.AssignStmt:
@@ -180,30 +191,14 @@ func (b *thirBuilder) matchStatement(source *ast.MatchStmt) thir.Stmt {
 	}
 	match.EnumType = evidence.EnumType
 	match.CaseCount = evidence.CaseCount
-	for index, arm := range evidence.Arms {
+	for index, armCases := range evidence.ArmCases {
 		if index >= len(source.Arms) || source.Arms[index] == nil {
 			break
 		}
 		sourceArm := source.Arms[index]
-		lowered := thir.MatchArm{
-			Source: sourceInfo(sourceArm), Case: arm.Case, Payload: arm.Payload,
-			CarrierUse: arm.CarrierUse, Body: b.block(sourceArm.Body),
-		}
-		for _, binding := range arm.Bindings {
-			var bindingSource ir.SourceInfo
-			if binding.Binding != nil {
-				bindingSource = sourceInfo(binding.Binding.ASTNode)
-			}
-			projection := thir.MatchPayloadField
-			if binding.Projection == MatchWholePayload {
-				projection = thir.MatchWholePayload
-			}
-			lowered.Bindings = append(lowered.Bindings, thir.MatchBinding{
-				Source: bindingSource, Projection: projection, Field: binding.Field, Type: binding.Type,
-				Symbol: binding.Binding, IsDiscard: binding.IsDiscard,
-			})
-		}
-		match.Arms = append(match.Arms, lowered)
+		match.Arms = append(match.Arms, thir.MatchArm{
+			Source: sourceInfo(sourceArm), Cases: armCases, Body: b.block(sourceArm.Body),
+		})
 	}
 	return match
 }
@@ -336,7 +331,7 @@ func (b *thirBuilder) fieldExpression(source *ast.SelectorExpr, info thir.ExprIn
 		field.ExprInfo.Place = projectPlace(field.Base, thir.PlaceProjection{
 			Source: field.Source, BaseSource: field.Base.SourceInfo(),
 			Kind: thir.PlaceField, Name: projection.Step.Field, Field: fieldIndex,
-			DereferenceType: dereferenceType, Type: field.ExprInfo.Type,
+			DereferenceType: dereferenceType, Type: field.StoredType(),
 		}, field.ExprInfo.Type)
 	}
 	return field
@@ -353,7 +348,7 @@ func (b *thirBuilder) indexExpression(source *ast.IndexExpr, info thir.ExprInfo)
 		if _, projected := place.Project(source); projected {
 			index.ExprInfo.Place = projectPlace(index.Base, thir.PlaceProjection{
 				Source: index.Source, BaseSource: index.Base.SourceInfo(),
-				Kind: thir.PlaceIndex, Index: index.Index, ConstantIndex: index.Constant, Type: index.ExprInfo.Type,
+				Kind: thir.PlaceIndex, Index: index.Index, ConstantIndex: index.Constant, Type: index.StoredType(),
 			}, index.ExprInfo.Type)
 		}
 	}
@@ -405,6 +400,7 @@ func (b *thirBuilder) expressionInfo(expression ast.Expr) thir.ExprInfo {
 		return info
 	}
 	info.Type = b.typing.ExprType(expression.ID())
+	info.CaseCarrier = b.typing.CaseCarrier(expression.ID())
 	if conversion, found := b.typing.ImplicitConversion(expression.ID()); found {
 		copied := conversion
 		info.ConversionInfo = &copied

@@ -5,7 +5,7 @@ struct Point {
 
 enum Kind {
     Empty,
-    Full: { value: i32 }
+    Full: struct { value: i32 }
 }
 
 fn Take(point: Point) -> i32 {
@@ -25,8 +25,8 @@ fn Read(kind: Kind) -> i32 {
         Kind::Empty {
             return 0;
         }
-        Kind::Full with { value = inner } => {
-            return inner;
+        Kind::Full => {
+            return kind.value;
         }
     }
 }

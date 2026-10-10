@@ -1,0 +1,63 @@
+enum Shape {
+    Circle: struct { radius: i32 },
+    Empty
+}
+
+enum Slot {
+    Value: ?i32,
+    Inner: Shape,
+    Free
+}
+
+fn MissingNone(slot: Slot) -> i32 {
+    match slot {
+        Slot::Value != none => { return slot; }
+        Slot::Inner => { return 0; }
+        Slot::Free => { return 0; }
+    }
+}
+
+fn MissingInnerCase(slot: Slot) -> i32 {
+    match slot {
+        Slot::Value => { return 0; }
+        Slot::Inner is Shape::Circle => { return slot.radius; }
+        Slot::Free => { return 0; }
+    }
+}
+
+fn WholeAfterTested(slot: Slot) -> i32 {
+    match slot {
+        Slot::Value != none => { return slot; }
+        Slot::Value => { return 0; }
+        Slot::Inner => { return 0; }
+        Slot::Free => { return 0; }
+    }
+}
+
+fn TestedAfterWhole(slot: Slot) -> i32 {
+    match slot {
+        Slot::Value => { return 0; }
+        Slot::Value == none => { return 0; }
+        Slot::Inner => { return 0; }
+        Slot::Free => { return 0; }
+    }
+}
+
+fn WrongTests(slot: Slot) -> i32 {
+    match slot {
+        Slot::Inner != none => { return 0; }
+        Slot::Free == none => { return 0; }
+        Slot::Value is Shape::Empty => { return 0; }
+    }
+}
+
+fn Make() -> Slot { return Slot::Free; }
+
+fn TemporarySubject() -> i32 {
+    match Make() {
+        Slot::Value != none => { return 1; }
+        Slot::Value == none => { return 2; }
+        Slot::Inner => { return 3; }
+        Slot::Free => { return 4; }
+    }
+}

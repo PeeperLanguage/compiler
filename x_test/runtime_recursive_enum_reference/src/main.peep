@@ -1,5 +1,5 @@
 enum Node {
-    Next: { next: &Node },
+    Next: struct { next: &Node },
     End
 }
 
@@ -10,8 +10,8 @@ fn main() -> i32 {
     let node = Node::Next with .{ next = &end };
     let mut result = 1;
     match node {
-        Node::Next with { next = next } => {
-            Read(next);
+        Node::Next => {
+            Read(node.next);
             result = 0;
         }
         Node::End => {}

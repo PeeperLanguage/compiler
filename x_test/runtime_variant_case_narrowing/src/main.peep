@@ -1,0 +1,71 @@
+struct Box { value: i32 }
+
+enum Shape {
+    Circle: struct { radius: i32 },
+    Code: i32,
+    Owned: *Box,
+    Empty
+}
+
+fn Area(shape: Shape) -> i32 {
+    match shape {
+        Shape::Circle => { return 3 * shape.radius * shape.radius; }
+        Shape::Code => { return shape + 1; }
+        Shape::Owned => { return 0; }
+        Shape::Empty => { return 0; }
+    }
+}
+
+fn Branch(shape: Shape) -> i32 {
+    if shape is Shape::Code {
+        return shape * 2;
+    } else if shape is Shape::Circle {
+        return shape.radius;
+    } else {
+        return 100;
+    }
+}
+
+fn Take(shape: Shape) -> i32 {
+    match shape {
+        Shape::Owned => {
+            let value = shape.value;
+            free(shape);
+            return value;
+        }
+        Shape::Circle => { return -1; }
+        Shape::Code => { return -1; }
+        Shape::Empty => { return -1; }
+    }
+}
+
+fn main() -> i32 {
+    if Area(Shape::Circle with .{ radius = 2 }) != 12 { return 1; }
+    if Area(Shape::Code with 4) != 5 { return 2; }
+    if Branch(Shape::Code with 4) != 8 { return 3; }
+    if Branch(Shape::Circle with .{ radius = 3 }) != 3 { return 4; }
+    if Branch(Shape::Empty) != 100 { return 5; }
+
+    let mut counter = Shape::Code with 0;
+    for counter is Shape::Code {
+        if counter == 5 { break; }
+        counter = Shape::Code with counter + 1;
+    }
+    if counter is Shape::Code {
+        if counter != 5 { return 6; }
+    } else {
+        return 7;
+    }
+
+    let mut circle = Shape::Circle with .{ radius = 1 };
+    match circle {
+        Shape::Circle => { circle.radius = 9; }
+        Shape::Code => { return 8; }
+        Shape::Owned => { return 8; }
+        Shape::Empty => { return 8; }
+    }
+    if Area(circle) != 243 { return 9; }
+
+    if Take(Shape::Owned with alloc(Box.{ value = 42 })) != 42 { return 10; }
+    return 0;
+}

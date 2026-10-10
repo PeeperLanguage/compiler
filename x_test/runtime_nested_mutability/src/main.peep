@@ -1,5 +1,5 @@
 struct Box { value: i32, values: [2]i32 }
-enum Value { Integer: { item: i32 }, Flag: { item: bool } }
+enum Value { Integer: struct { item: i32 }, Flag: struct { item: bool } }
 
 fn Update(view: ?&mut Box) {
     if view != none {

@@ -22,28 +22,16 @@ func (a *analyzer) planProjectionBaseDrop(projection, base thir.Expr) bool {
 	if storage := base.ExprPlace(); storage != nil && storage.Root != nil {
 		return false
 	}
-	if !typeinfo.OwnershipCapabilityOf(a.exprType(base)).NeedsDrop {
+	if !typeinfo.OwnershipCapabilityOf(base.ExprType()).NeedsDrop {
 		return false
 	}
-	if typeinfo.OwnershipCapabilityOf(a.exprType(projection)).NeedsDrop {
+	if typeinfo.OwnershipCapabilityOf(projection.ExprType()).NeedsDrop {
 		a.diagnostics.AddError(diagnostics.ErrInvalidCopy,
 			"ownership-bearing projection from temporary must be bound before use", projection.SourceInfo().Location, "")
 		return true
 	}
 	a.cleanup.ProjectionBase[projection.SourceInfo().NodeID] = struct{}{}
 	return false
-}
-
-func (a *analyzer) exprType(expr thir.Expr) typeinfo.Type {
-	if a == nil || a.input.Source == nil || expr == nil {
-		return nil
-	}
-	if a.input.Analysis != nil {
-		if typ := a.input.Analysis.ExprType(expr.SourceInfo().NodeID); typ != nil {
-			return typ
-		}
-	}
-	return expr.ExprType()
 }
 
 func (a *analyzer) partialVariantPayloadMove(id source.NodeID) bool {
@@ -99,11 +87,13 @@ func (a *analyzer) pointerOrigin(scope *symbols.Scope, expr thir.Expr, st owners
 			return nil
 		}
 		return a.localPointerRoot(scope, e.Value)
-	case *thir.Ident:
+	case *thir.Ident, *thir.Field:
+		// A pointer read from a variable or a field has the origins flow
+		// recorded for that place.
 		if scope == nil {
 			return nil
 		}
-		if _, isRaw := typeinfo.Underlying(a.exprType(e)).(*typeinfo.RawPtrType); !isRaw {
+		if _, isRaw := typeinfo.Underlying(e.ExprType()).(*typeinfo.RawPtrType); !isRaw {
 			return nil
 		}
 		if a.input.Source != nil && a.input.Analysis != nil {
@@ -122,9 +112,13 @@ func (a *analyzer) pointerOrigin(scope *symbols.Scope, expr thir.Expr, st owners
 				return nil
 			}
 		}
-		sym := e.Symbol
+		ident, isIdent := e.(*thir.Ident)
+		if !isIdent {
+			return nil
+		}
+		sym := ident.Symbol
 		if sym == nil {
-			sym, _ = scope.Lookup(e.Name)
+			sym, _ = scope.Lookup(ident.Name)
 		}
 		return st.pointers[sym]
 	default:
@@ -157,11 +151,11 @@ func (a *analyzer) localPointerRoot(scope *symbols.Scope, expr thir.Expr) *symbo
 			}
 		}
 	case *thir.Field:
-		if _, isPointer := typeinfo.PointerTarget(typeinfo.Underlying(a.exprType(e.Base))); !isPointer {
+		if _, isPointer := typeinfo.PointerTarget(typeinfo.Underlying(e.Base.ExprType())); !isPointer {
 			return a.localPointerRoot(scope, e.Base)
 		}
 	case *thir.Index:
-		if _, isPointer := typeinfo.PointerTarget(typeinfo.Underlying(a.exprType(e.Base))); !isPointer {
+		if _, isPointer := typeinfo.PointerTarget(typeinfo.Underlying(e.Base.ExprType())); !isPointer {
 			return a.localPointerRoot(scope, e.Base)
 		}
 	}

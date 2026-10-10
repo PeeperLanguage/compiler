@@ -9,8 +9,8 @@ import (
 	"compiler/internal/semantics/typeinfo"
 )
 
-func TestDeferredEnumFieldAssignment(t *testing.T) {
-	const declaration = `enum Value { Integer: { item: i32 }, Flag: { item: bool } }
+func TestEnumPayloadFieldAssignment(t *testing.T) {
+	const declaration = `enum Value { Integer: struct { item: i32 }, Flag: struct { item: bool } }
 `
 	for _, test := range []struct {
 		name string
@@ -72,7 +72,7 @@ func TestDeferredEnumFieldAssignment(t *testing.T) {
 			if !ok || rhs.ExprType() == nil || typeinfo.IsInvalidOrUnknown(rhs.ExprType()) {
 				t.Fatalf("RHS lacks base type: %#v", rhs)
 			}
-			if got := mod.EffectiveExprType(assignment.Target.ID()); !typeinfo.IsSameType(got, rhs.ExprType()) {
+			if got := mod.BaseExprType(assignment.Target.ID()); !typeinfo.IsSameType(got, rhs.ExprType()) {
 				t.Fatalf("target type = %s, RHS type = %s", typeinfo.TypeText(got), typeinfo.TypeText(rhs.ExprType()))
 			}
 		})

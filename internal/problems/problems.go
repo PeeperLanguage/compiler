@@ -24,6 +24,15 @@ func UnreachableCode(loc *source.Location) *diagnostics.Diagnostic {
 		Help("remove this code or restructure control flow")
 }
 
+// OptionalPayloadProof reports a use of an optional's payload where nothing
+// proves the optional is present.
+func OptionalPayloadProof(loc *source.Location) *diagnostics.Diagnostic {
+	return diagnostics.NewError("optional payload use requires a presence proof").
+		WithPrimaryLabel(loc, "payload is not proven present here").
+		WithCode(diagnostics.ErrOptionalPayloadProof).
+		Help("guard this stable place with `value != none` or return after `value == none`")
+}
+
 func Redeclaration(message string, current, previous *source.Location) *diagnostics.Diagnostic {
 	d := diagnostics.NewError(message).
 		WithCode(diagnostics.ErrRedeclaredSymbol).

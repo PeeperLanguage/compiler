@@ -10,7 +10,7 @@ import (
 	"compiler/internal/semantics/typeinfo"
 )
 
-func TestDeferredEnumAssignmentConversions(t *testing.T) {
+func TestEnumPayloadFieldAssignmentConversions(t *testing.T) {
 	for _, test := range []struct {
 		name, target, body string
 		kind               typeinfo.ConversionKind
@@ -18,10 +18,6 @@ func TestDeferredEnumAssignmentConversions(t *testing.T) {
 		{
 			name: "integer widening", target: "i64", kind: typeinfo.ConversionNumeric,
 			body: `fn Replace(mut value: Value, replacement: i32) { if value is Value::Integer { value.item = replacement; } }`,
-		},
-		{
-			name: "literal widening", target: "i64", kind: typeinfo.ConversionNumeric,
-			body: `fn Replace(mut value: Value) { if value is Value::Integer { value.item = 7; } }`,
 		},
 		{
 			name: "float widening", target: "f64", kind: typeinfo.ConversionNumeric,
@@ -33,7 +29,7 @@ func TestDeferredEnumAssignmentConversions(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			mod, diag := buildTypedExprModule(t, "enum Value { Integer: { item: "+test.target+" }, Flag: { item: bool } }\n"+test.body)
+			mod, diag := buildTypedExprModule(t, "enum Value { Integer: struct { item: "+test.target+" }, Flag: struct { item: bool } }\n"+test.body)
 			var assignment *thir.Assign
 			thir.Inspect(mod.THIR.Functions[0].Body, func(node thir.Node) bool {
 				if assign, ok := node.(*thir.Assign); ok {
@@ -44,15 +40,12 @@ func TestDeferredEnumAssignmentConversions(t *testing.T) {
 			if assignment == nil {
 				t.Fatal("missing assignment")
 			}
-			conversion, ok := mod.Analysis.ImplicitConversion(assignment.Value.SourceInfo().NodeID)
-			if !ok || conversion.Kind != test.kind || conversion.Compatibility != typeinfo.Compatible {
-				t.Fatalf("late conversion = %#v, %v", conversion, ok)
-			}
-			if assignment.Value.Conversion() != nil {
-				t.Fatal("flow mutated base conversion evidence")
+			conversion := assignment.Value.Conversion()
+			if conversion == nil || conversion.Kind != test.kind || conversion.Compatibility != typeinfo.Compatible {
+				t.Fatalf("conversion = %#v", conversion)
 			}
 			types := ir.NewTypeTable()
-			target := mod.EffectiveExprType(assignment.Target.SourceInfo().NodeID)
+			target := mod.BaseExprType(assignment.Target.SourceInfo().NodeID)
 			lowered := exprlower.Lower(exprlower.Context{Types: types, Diagnostics: diag, Source: mod.THIR, Analysis: mod.Analysis, ModuleID: mod.ID}, assignment.Value, target)
 			if got := types.Text(lowered.TypeID()); got != test.target {
 				t.Fatalf("lowered RHS type = %s, want %s", got, test.target)

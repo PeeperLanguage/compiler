@@ -9,8 +9,8 @@ import (
 
 func TestParseEnumVariantDataSchemas(t *testing.T) {
 	mod, diag := parseTestModule(`enum Result<T> {
-	Ok: { value: T, },
-	Error: { message: str, },
+	Ok: struct { value: T, },
+	Error: struct { message: str, },
 	Pending,
 }`)
 	if diag.HasErrors() {
@@ -29,14 +29,14 @@ func TestParseEnumVariantDataSchemas(t *testing.T) {
 	if enumType.Variants[2].Payload != nil {
 		t.Fatalf("Pending should be payloadless: %#v", enumType.Variants[2])
 	}
-	if got := ast.TypeText(enumType); got != "enum {Ok: {value: T}, Error: {message: str}, Pending}" {
+	if got := ast.TypeText(enumType); got != "enum {Ok: struct {value: T}, Error: struct {message: str}, Pending}" {
 		t.Fatalf("enum text = %q", got)
 	}
 }
 
 func TestParseDirectEnumPayloadWithConstructionAndMatch(t *testing.T) {
 	mod, diag := parseTestModule(`enum Result {
-	Ok: { value: i32 },
+	Ok: struct { value: i32 },
 	Failed: str,
 	Pending,
 }
@@ -44,8 +44,8 @@ fn inspect(result: Result) {
 	let failed = Result::Failed with "not found";
 	let ok = Result::Ok with .{ value = 42 };
 	match result {
-		Result::Ok with { value = payload } => { println(payload); }
-		Result::Failed with message => { println(message); }
+		Result::Ok => { println(result.value); }
+		Result::Failed => { println(result); }
 		Result::Pending => {}
 	}
 }`)
@@ -66,7 +66,7 @@ fn inspect(result: Result) {
 		t.Fatalf("Ok payload = %#v", ok)
 	}
 	match := body.Stmts[2].(*ast.MatchStmt)
-	if match.Arms[1].Binding == nil || match.Arms[1].Binding.Name != "message" || match.Arms[1].IsDiscard {
+	if len(match.Arms) != 3 || ast.ExprText(match.Arms[1].Case) != "Result::Failed" || match.Arms[1].Body == nil {
 		t.Fatalf("Failed arm = %#v", match.Arms[1])
 	}
 }
@@ -91,15 +91,15 @@ func TestParseWithConsumesFullPayloadExpression(t *testing.T) {
 }
 
 func TestEnumVariantDataSchemaChangesExportFingerprint(t *testing.T) {
-	valueI32, diag := parseTestModule(`enum Result { Ok: { value: i32, }, Pending, }`)
+	valueI32, diag := parseTestModule(`enum Result { Ok: struct { value: i32, }, Pending, }`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
-	valueBool, diag := parseTestModule(`enum Result { Ok: { value: bool, }, Pending, }`)
+	valueBool, diag := parseTestModule(`enum Result { Ok: struct { value: bool, }, Pending, }`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
-	itemI32, diag := parseTestModule(`enum Result { Ok: { item: i32, }, Pending, }`)
+	itemI32, diag := parseTestModule(`enum Result { Ok: struct { item: i32, }, Pending, }`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -115,16 +115,6 @@ func TestEnumVariantDataSchemaChangesExportFingerprint(t *testing.T) {
 	}
 	if got := payloadless.Stmts[0].(*ast.EnumDecl).GetDeclSurface(); got != "enum:Result:Pending" {
 		t.Fatalf("payloadless surface = %q", got)
-	}
-}
-
-func TestParseRejectsEmptyEnumVariantDataSchema(t *testing.T) {
-	_, diag := parseTestModule(`enum Result { Ok: {}, Pending, }`)
-	if !diag.HasErrors() {
-		t.Fatal("expected empty data schema diagnostic")
-	}
-	if output := diag.EmitAllToString(); !strings.Contains(output, "variant data requires at least one field") {
-		t.Fatalf("unexpected diagnostics:\n%s", output)
 	}
 }
 
@@ -176,8 +166,8 @@ func TestParseIsAtEqualityPrecedence(t *testing.T) {
 func TestParseStatementMatch(t *testing.T) {
 	mod, diag := parseTestModule(`fn inspect(result: Result<i32>) {
 	match result {
-		Result<i32>::Ok with { value = payload } => { println(payload); }
-		Result<i32>::Error with { message = _, code = code } => { println(code); }
+		Result<i32>::Ok => { println(result.value); }
+		Result<i32>::Error => { println(result.code); }
 		Result<i32>::Pending => { println("wait"); }
 	}
 }`)
@@ -193,16 +183,10 @@ func TestParseStatementMatch(t *testing.T) {
 		match.ArmListLocation.End.Index <= ast.EndOf(match.Arms[len(match.Arms)-1]).Index {
 		t.Fatalf("match arm-list location = %#v", match.ArmListLocation)
 	}
-	ok := match.Arms[0]
-	if !ok.HasData || len(ok.Fields) != 1 || ok.Fields[0].Binding.Name != "payload" {
-		t.Fatalf("Ok arm = %#v", ok)
-	}
-	errorArm := match.Arms[1]
-	if !errorArm.Fields[0].IsDiscard || errorArm.Fields[0].Binding != nil || errorArm.Fields[1].Binding.Name != "code" {
-		t.Fatalf("Error fields = %#v", errorArm.Fields)
-	}
-	if match.Arms[2].HasData {
-		t.Fatalf("Pending arm should be payloadless: %#v", match.Arms[2])
+	for index, want := range []string{"Result<i32>::Ok", "Result<i32>::Error", "Result<i32>::Pending"} {
+		if arm := match.Arms[index]; ast.ExprText(arm.Case) != want || arm.Body == nil {
+			t.Fatalf("arm %d = %#v, want case %s", index, arm, want)
+		}
 	}
 }
 
@@ -245,5 +229,48 @@ func TestParseQualifiedControlHeadersBeforeStandaloneBlocks(t *testing.T) {
 				t.Fatalf("following statement = %#v, want separate block", body.Stmts[1])
 			}
 		})
+	}
+}
+
+func TestParseMatchArmPayloadTest(t *testing.T) {
+	mod, diag := parseTestModule(`fn inspect(slot: Slot) {
+	match slot {
+		Slot::Value != none => {}
+		Slot::Value == none => {}
+		Slot::Inner is Shape::Circle => {}
+		Slot::Free => {}
+	}
+}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	arms := mod.Stmts[0].(*ast.FnDecl).Body.Stmts[0].(*ast.MatchStmt).Arms
+	for index, want := range []struct{ op, payloadCase string }{{"!=", ""}, {"==", ""}, {"is", "Shape::Circle"}, {"", ""}} {
+		arm := arms[index]
+		payloadCase := ""
+		if arm.PayloadCase != nil {
+			payloadCase = ast.ExprText(arm.PayloadCase)
+		}
+		if arm.PayloadOp != want.op || payloadCase != want.payloadCase || arm.Body == nil {
+			t.Fatalf("arm %d = %q %q, want %q %q", index, arm.PayloadOp, payloadCase, want.op, want.payloadCase)
+		}
+	}
+}
+
+func TestParseMatchFallbackArm(t *testing.T) {
+	mod, diag := parseTestModule(`fn inspect(slot: Slot) { match slot { Slot::Free => {} _ => {} } }`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	arms := mod.Stmts[0].(*ast.FnDecl).Body.Stmts[0].(*ast.MatchStmt).Arms
+	if len(arms) != 2 || arms[0].IsFallback || !arms[1].IsFallback || arms[1].Case != nil || arms[1].Body == nil {
+		t.Fatalf("arms = %#v", arms)
+	}
+}
+
+func TestParseRejectsMatchArmPattern(t *testing.T) {
+	_, diag := parseTestModule(`fn inspect(result: Result) { match result { Result::Ok with { value = v } => {} } }`)
+	if out := diag.EmitAllToString(); !diag.HasErrors() || !strings.Contains(out, "expected '=>' after match case") {
+		t.Fatalf("expected arm pattern to be rejected, got:\n%s", out)
 	}
 }

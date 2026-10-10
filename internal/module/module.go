@@ -147,20 +147,6 @@ func (m *Module) BaseExprType(id source.NodeID) typeinfo.Type {
 	return nil
 }
 
-// EffectiveExprType returns per-use flow refinement when available and falls
-// back to the canonical base type published in THIR.
-func (m *Module) EffectiveExprType(id source.NodeID) typeinfo.Type {
-	if m == nil {
-		return nil
-	}
-	if m.Analysis != nil {
-		if typ := m.Analysis.ExprType(id); typ != nil {
-			return typ
-		}
-	}
-	return m.BaseExprType(id)
-}
-
 // ResetToPhase retains artifacts through retained and invalidates later data.
 func (m *Module) ResetToPhase(retained phase.Phase) {
 	if m == nil {

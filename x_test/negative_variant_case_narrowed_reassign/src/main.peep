@@ -1,0 +1,9 @@
+enum Count { Some: i32, Empty }
+
+fn Reset(mut count: Count) -> i32 {
+    if count is Count::Some {
+        count = Count::Empty;
+        return count + 1;
+    }
+    return 0;
+}

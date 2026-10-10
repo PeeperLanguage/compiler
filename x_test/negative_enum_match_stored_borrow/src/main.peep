@@ -1,5 +1,5 @@
 enum Resource {
-    Borrowed: { value: &i32 }
+    Borrowed: struct { value: &i32 }
 }
 
 fn Read(_: &i32) {}
@@ -9,8 +9,8 @@ fn Invalid(mut source: i32) {
     let duplicate = resource;
     source = 2;
     match duplicate {
-        Resource::Borrowed with { value = value } => {
-            Read(value);
+        Resource::Borrowed => {
+            Read(duplicate.value);
         }
     }
 }
@@ -19,9 +19,9 @@ fn InvalidSelfAssignment(mut source: i32) {
     let mut resource = Resource::Borrowed with .{ value = &source };
     resource = resource;
     match resource {
-        Resource::Borrowed with { value = value } => {
+        Resource::Borrowed => {
             source = 2;
-            Read(value);
+            Read(resource.value);
         }
     }
 }

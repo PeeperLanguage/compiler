@@ -92,28 +92,22 @@ func TestCleanupQueriesReturnDetachedSlices(t *testing.T) {
 	fn := moduleid.FunctionID("test::cleanup")
 	site := cfg.SiteID{Block: 1, Index: 2}
 	returnID := source.ParsedNodeID(3)
-	matchID := source.ParsedNodeID(4)
 	first := symbols.ProjectedSymbolID(symbols.SymbolVar, "first")
 	second := symbols.ProjectedSymbolID(symbols.SymbolVar, "second")
 	m := newModule()
 	m.cleanup = cleanupPlans{fn: {
-		AfterScope:      map[cfg.SiteID][]symbols.SymbolID{site: {first, second}},
-		BeforeReturn:    map[source.NodeID][]symbols.SymbolID{returnID: {first, second}},
-		MatchFieldDrops: map[source.NodeID][]int{matchID: {1, 2}},
+		AfterScope:   map[cfg.SiteID][]symbols.SymbolID{site: {first, second}},
+		BeforeReturn: map[source.NodeID][]symbols.SymbolID{returnID: {first, second}},
 	}}
 
 	afterScope := m.DropsAfterSite(fn, site)
 	beforeReturn := m.DropsBeforeReturn(fn, returnID)
-	matchFields := m.MatchFieldDrops(fn, matchID)
-	afterScope[0], beforeReturn[0], matchFields[0] = second, second, 9
+	afterScope[0], beforeReturn[0] = second, second
 
 	if got := m.DropsAfterSite(fn, site); got[0] != first {
 		t.Fatalf("scope drops shared backing storage: %v", got)
 	}
 	if got := m.DropsBeforeReturn(fn, returnID); got[0] != first {
 		t.Fatalf("return drops shared backing storage: %v", got)
-	}
-	if got := m.MatchFieldDrops(fn, matchID); got[0] != 1 {
-		t.Fatalf("match field drops shared backing storage: %v", got)
 	}
 }

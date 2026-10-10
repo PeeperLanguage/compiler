@@ -1,0 +1,4 @@
+enum Shape {
+    Circle: { radius: i32 },
+    Empty,
+}

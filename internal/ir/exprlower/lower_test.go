@@ -202,7 +202,7 @@ fn main() -> i32 {
 	}
 }
 
-func TestLowerUsesAnalysisRefinedOptionalType(t *testing.T) {
+func TestLowerReadsNarrowedOptionalPayload(t *testing.T) {
 	mod, diag := buildTypedExprModule(t, `
 fn read(value: ?i32) -> i32 {
 	if value == none { return 0; }
@@ -215,14 +215,14 @@ fn read(value: ?i32) -> i32 {
 	if !ok || expr == nil {
 		t.Fatalf("return value missing from THIR: %#v", ret.Value)
 	}
-	if got := typeinfo.TypeText(mod.Analysis.ExprType(ret.Value.ID())); got != "i32" {
-		t.Fatalf("analysis type = %s, want i32", got)
+	if got := typeinfo.TypeText(expr.ExprType()); got != "i32" {
+		t.Fatalf("narrowed type = %s, want i32", got)
 	}
 	types := ir.NewTypeTable()
 	lowered := exprlower.Lower(exprlower.Context{
 		Types: types, Diagnostics: diag, Source: mod.THIR, Analysis: mod.Analysis, ModuleID: mod.ID,
 	}, expr, nil)
 	if got := types.Text(lowered.TypeID()); got != "i32" {
-		t.Fatalf("lowered refined type = %s, want i32", got)
+		t.Fatalf("lowered type = %s, want i32", got)
 	}
 }

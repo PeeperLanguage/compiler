@@ -17,8 +17,9 @@ func (s *Block) forEachChild(visit func(Node)) {
 		visit(statement)
 	}
 }
-func (s *Binding) forEachChild(visit func(Node))  { visit(s.Value) }
-func (s *ExprStmt) forEachChild(visit func(Node)) { visit(s.Value) }
+func (s *Binding) forEachChild(visit func(Node))     { visit(s.Value) }
+func (s *Destructure) forEachChild(visit func(Node)) { visit(s.Value) }
+func (s *ExprStmt) forEachChild(visit func(Node))    { visit(s.Value) }
 func (s *Assign) forEachChild(visit func(Node)) {
 	visit(s.Target)
 	visit(s.Value)

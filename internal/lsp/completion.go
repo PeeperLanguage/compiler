@@ -549,7 +549,7 @@ func matchArmCompletionItems(ctx *project.CompilerContext, module *module.Module
 	if match == nil || match.Subject == nil {
 		return nil, false
 	}
-	subjectType := module.EffectiveExprType(match.Subject.ID())
+	subjectType := module.BaseExprType(match.Subject.ID())
 	descriptor, ok := typeinfo.VariantDescriptorOf(subjectType)
 	if !ok || descriptor.Family != typeinfo.VariantFamilyNamed {
 		return nil, false

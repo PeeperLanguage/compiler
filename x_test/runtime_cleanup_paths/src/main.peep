@@ -4,7 +4,7 @@ struct Box {
 }
 
 enum Carrier {
-    Owned: { held: *i32 },
+    Owned: struct { held: *i32 },
     Empty
 }
 
@@ -39,10 +39,10 @@ fn NestedOwned() {
     println("nested");
 }
 
-// A payload the arm does not bind is dropped on that arm's edge.
+// A payload the arm leaves in place is dropped with its carrier.
 fn MatchCarrier(carrier: Carrier) {
     match carrier {
-        Carrier::Owned with { held = _ } => {
+        Carrier::Owned => {
             println("match");
         }
         Carrier::Empty => {

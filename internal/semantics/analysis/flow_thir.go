@@ -1,27 +1,17 @@
 package analysis
 
 import (
-	"fmt"
-
 	"compiler/internal/diagnostics"
 	graphcore "compiler/internal/graph"
 	"compiler/internal/ir"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/thir"
+	"compiler/internal/problems"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
 	"compiler/pkg/typednil"
-)
-
-type flowDemand uint8
-
-const (
-	flowDefault flowDemand = iota
-	flowPayload
-	flowCarrier
-	flowOptionalTest
 )
 
 type flowCallEvent struct {
@@ -47,12 +37,9 @@ type flowAnalyzer struct {
 	graph         *cfg.ControlFlowGraph
 	result        *Module
 	inStates      map[cfg.SiteID]flowState
-	bindingTypes  map[*symbols.Symbol]typeinfo.Type
 
-	state    *flowState
-	events   *flowEvents
-	expected typeinfo.Type
-	demand   flowDemand
+	state  *flowState
+	events *flowEvents
 }
 
 func runFlow(diag *diagnostics.DiagnosticBag, input Input, result *Module) {
@@ -71,7 +58,7 @@ func runFlow(diag *diagnostics.DiagnosticBag, input Input, result *Module) {
 		analyzer := &flowAnalyzer{
 			diagnostics: diag, moduleScope: moduleScope, source: source, function: function,
 			functionScope: function.Symbol.Scope, graph: graph, result: result,
-			inStates: make(map[cfg.SiteID]flowState), bindingTypes: make(map[*symbols.Symbol]typeinfo.Type),
+			inStates: make(map[cfg.SiteID]flowState),
 		}
 		analyzer.run()
 	}
@@ -192,71 +179,25 @@ func (a *flowAnalyzer) applySite(site *cfg.Site, state *flowState) *flowEvents {
 	return events
 }
 
-func (a *flowAnalyzer) analyze(expr thir.Expr, expected typeinfo.Type, demand flowDemand) typeinfo.Type {
+// analyze runs flow analysis for expr and, when the type checker typed it as
+// the payload of a narrowed place, verifies that read.
+func (a *flowAnalyzer) analyze(expr thir.Expr) {
 	if typednil.IsNil(expr) {
-		return nil
+		return
 	}
 	a.result.forgetPayload(expr.SourceInfo().NodeID)
-	previousExpected, previousDemand := a.expected, a.demand
-	a.expected, a.demand = expected, demand
-	typ := expr.AnalyzeFlow(a)
-	a.expected, a.demand = previousExpected, previousDemand
-	return typ
+	expr.AnalyzeFlow(a)
+	if carrier := expr.CaseCarrierType(); carrier != nil {
+		a.casePayload(expr, carrier)
+	}
 }
 
-func (a *flowAnalyzer) finish(expr thir.Expr, base typeinfo.Type) typeinfo.Type {
-	if typednil.IsNil(expr) || base == nil {
-		return base
+// finish records where expr's value lives. Payload reads of a narrowed place
+// are settled by casePayload afterwards.
+func (a *flowAnalyzer) finish(expr thir.Expr) {
+	if !typednil.IsNil(expr) && expr.ExprType() != nil {
+		a.recordResolution(expr, a.resolve(expr, *a.state))
 	}
-	id := expr.SourceInfo().NodeID
-	resolution := a.resolve(expr, *a.state)
-	if a.demand == flowCarrier {
-		a.recordResolution(expr, resolution)
-		return base
-	}
-	if !typeinfo.IsOptional(base) {
-		a.recordResolution(expr, resolution)
-		return base
-	}
-	_, explicitCarrier := typeinfo.Underlying(a.expected).(*typeinfo.OptionalType)
-	required := typeinfo.OptionalPayloadDepthForExpected(base, a.expected)
-	if a.demand == flowPayload && required == 0 && !explicitCarrier {
-		required = typeinfo.OptionalLayerCount(base)
-	}
-	payloadCases := provenOptionalPayloadCases(a.state.variants, resolution.StorageOrigins)
-	resolved := typeinfo.UnwrapOptionalLayers(base, len(payloadCases))
-	applied := typeinfo.OptionalLayerCount(base) - typeinfo.OptionalLayerCount(resolved)
-	payloadCases = payloadCases[:applied]
-	if a.demand != flowOptionalTest && explicitCarrier {
-		a.recordResolution(expr, resolution)
-		return base
-	}
-	if applied > 0 {
-		a.recordPayload(expr, resolution, payloadCases)
-	}
-	if _, _, isReference := typeinfo.ReferenceValueTarget(resolved); isReference {
-		resolution.ValueOrigins = place.CloneOrigins(resolution.ValueOrigins)
-	} else if _, isRaw := typeinfo.Underlying(resolved).(*typeinfo.RawPtrType); !isRaw {
-		resolution.ValueOrigins = place.VariantPayloadOrigins(resolution.StorageOrigins, payloadCases)
-	}
-	a.recordResolution(expr, resolution)
-	if a.demand != flowOptionalTest && required > applied {
-		if expr.ExprPlace() != nil && !resolution.IsStable {
-			a.diagnostics.Add(unstableOptionalNarrowingAt(expr.SourceInfo().Location))
-		} else {
-			a.diagnostics.Add(optionalPayloadProofAt(expr.SourceInfo().Location))
-		}
-		resolved = typeinfo.UnwrapOptionalLayers(base, required)
-	}
-	a.result.recordExprType(id, resolved)
-	return resolved
-}
-
-func optionalPayloadProofAt(location *source.Location) *diagnostics.Diagnostic {
-	return diagnostics.NewError("optional payload use requires a presence proof").
-		WithPrimaryLabel(location, "payload is not proven present here").
-		WithCode(diagnostics.ErrOptionalPayloadProof).
-		Help("guard this stable place with `value != none` or return after `value == none`")
 }
 
 func unstableOptionalNarrowingAt(location *source.Location) *diagnostics.Diagnostic {
@@ -273,273 +214,233 @@ func (a *flowAnalyzer) AnalyzeInvalidStmt(*thir.InvalidStmt) {}
 
 func (a *flowAnalyzer) AnalyzeBinding(statement *thir.Binding) {
 	typ, _ := symbols.GetSymbolType(statement.Symbol)
-	expected := typ
-	if statement.IsInferred {
-		expected = nil
-	}
-	valueType := a.analyze(statement.Value, expected, flowDefault)
-	if statement.IsInferred && valueType != nil {
-		typ = valueType
-		a.bindingTypes[statement.Symbol] = valueType
-	}
+	a.analyze(statement.Value)
 	if statement.Symbol != nil {
 		a.updateOriginPlace([]place.Origin{{Root: statement.Symbol}}, typ, statement.Value, copyFlowState(*a.state), a.state)
 	}
 }
 
+func (a *flowAnalyzer) AnalyzeDestructure(statement *thir.Destructure) {
+	a.analyze(statement.Value)
+	strct, _ := typeinfo.Underlying(statement.Value.ExprType()).(*typeinfo.StructType)
+	origins := a.projectedBaseOrigins(a.resolve(statement.Value, *a.state), statement.Value)
+	for _, binding := range statement.Bindings {
+		// The new local holds whatever reference or raw pointer its field held.
+		fieldOrigins := place.FieldOrigins(origins, strct.Fields[binding.Field].Name)
+		storage := []place.Origin{{Root: binding.Symbol}}
+		valueOrigins := fieldOrigins
+		var held *[]originStateFact
+		if _, _, isReference := typeinfo.ReferenceValueTarget(binding.Type); isReference {
+			held = &a.state.references
+		} else if _, isRaw := typeinfo.Underlying(binding.Type).(*typeinfo.RawPtrType); isRaw {
+			held = &a.state.rawPointers
+		}
+		if held != nil {
+			if targets := originValues(*held, fieldOrigins); len(targets) > 0 {
+				valueOrigins = targets
+			}
+			*held = setOriginFact(*held, storage, valueOrigins)
+		}
+		a.result.mergeOrigins(binding.Source.NodeID, storage, valueOrigins)
+	}
+}
+
 func (a *flowAnalyzer) AnalyzeExprStmt(statement *thir.ExprStmt) {
-	a.analyze(statement.Value, nil, flowDefault)
+	a.analyze(statement.Value)
 }
 
 func (a *flowAnalyzer) AnalyzeAssign(statement *thir.Assign) {
-	// Resolve target type using current variant-flow facts.
-	targetType := a.analyze(statement.Target, nil, flowCarrier)
+	a.analyze(statement.Target)
 	// Preserve state before the write for origin and ownership updates.
 	sourceState := copyFlowState(*a.state)
 	// Resolve the destination storage place.
 	resolution := a.resolve(statement.Target, *a.state)
+	// The value is evaluated before the write, so it still sees what the
+	// destination held.
+	a.analyze(statement.Value)
 	// Invalidate refinements invalidated by writing to the destination.
 	invalidateVariantOrigins(a.state, resolution.StorageOrigins)
-	// Typecheck the RHS against the flow-resolved target type.
-	valueType := a.analyze(statement.Value, targetType, flowDefault)
-	// Complete assignments whose target type was unknown during base typing.
-	if typeinfo.IsUnknown(statement.Target.ExprType()) {
-		id := statement.Value.SourceInfo().NodeID
-		// Remove stale conversion evidence before recomputing this path.
-		delete(a.result.expressions.conversions, id)
-		// Validate deferred compatibility only when both types are known.
-		if targetType != nil && valueType != nil && !typeinfo.IsInvalidOrUnknown(targetType) && !typeinfo.IsInvalidOrUnknown(valueType) {
-			conversion := typeinfo.CheckCompatibility(targetType, valueType)
-			if conversion.Compatibility != typeinfo.Compatible {
-				a.diagnostics.AddError(diagnostics.ErrTypeMismatch,
-					fmt.Sprintf("cannot assign %s to %s", typeinfo.TypeText(valueType), typeinfo.TypeText(targetType)),
-					statement.Value.SourceInfo().Location, "")
-			} else if conversion.Kind != typeinfo.ConversionIdentity {
-				// Publish late conversion evidence because THIR is already immutable.
-				a.result.expressions.conversions[id] = conversion
-			}
-		}
-	}
-	// Publish the destination's refined type and post-write origin state.
-	a.updateOriginPlace(resolution.StorageOrigins, targetType, statement.Value, sourceState, a.state)
+	// Publish the destination's post-write origin state.
+	a.updateOriginPlace(resolution.StorageOrigins, statement.Target.ExprType(), statement.Value, sourceState, a.state)
 }
 
 func (a *flowAnalyzer) AnalyzeReturn(statement *thir.Return) {
-	a.analyze(statement.Value, a.function.ReturnType, flowDefault)
+	a.analyze(statement.Value)
 }
 
 func (a *flowAnalyzer) AnalyzeIf(statement *thir.If) {
-	a.analyze(statement.Condition, nil, flowDefault)
+	a.analyze(statement.Condition)
 }
 
 func (a *flowAnalyzer) AnalyzeFor(statement *thir.For) {
 	if statement.Checked != nil {
 		return
 	}
-	a.analyze(statement.Iterable, nil, flowDefault)
-	a.analyze(statement.Condition, nil, flowDefault)
+	a.analyze(statement.Iterable)
+	a.analyze(statement.Condition)
 }
 
 func (a *flowAnalyzer) AnalyzeMatch(statement *thir.Match) {
-	a.analyze(statement.Subject, nil, flowCarrier)
+	a.analyze(statement.Subject)
 }
 
-func (a *flowAnalyzer) AnalyzeInvalidExpr(expr *thir.InvalidExpr) typeinfo.Type {
-	return a.finish(expr, expr.ExprType())
+func (a *flowAnalyzer) AnalyzeInvalidExpr(expr *thir.InvalidExpr) {
+	a.finish(expr)
 }
-func (a *flowAnalyzer) AnalyzeNumberLiteral(expr *thir.NumberLiteral) typeinfo.Type {
-	return a.finish(expr, expr.ExprType())
+func (a *flowAnalyzer) AnalyzeNumberLiteral(expr *thir.NumberLiteral) {
+	a.finish(expr)
 }
-func (a *flowAnalyzer) AnalyzeStringLiteral(expr *thir.StringLiteral) typeinfo.Type {
-	return a.finish(expr, expr.ExprType())
+func (a *flowAnalyzer) AnalyzeStringLiteral(expr *thir.StringLiteral) {
+	a.finish(expr)
 }
-func (a *flowAnalyzer) AnalyzeByteLiteral(expr *thir.ByteLiteral) typeinfo.Type {
-	return a.finish(expr, expr.ExprType())
+func (a *flowAnalyzer) AnalyzeByteLiteral(expr *thir.ByteLiteral) {
+	a.finish(expr)
 }
-func (a *flowAnalyzer) AnalyzeCharLiteral(expr *thir.CharLiteral) typeinfo.Type {
-	return a.finish(expr, expr.ExprType())
+func (a *flowAnalyzer) AnalyzeCharLiteral(expr *thir.CharLiteral) {
+	a.finish(expr)
 }
-func (a *flowAnalyzer) AnalyzeBoolLiteral(expr *thir.BoolLiteral) typeinfo.Type {
-	return a.finish(expr, expr.ExprType())
+func (a *flowAnalyzer) AnalyzeBoolLiteral(expr *thir.BoolLiteral) {
+	a.finish(expr)
 }
-func (a *flowAnalyzer) AnalyzeNoneLiteral(expr *thir.NoneLiteral) typeinfo.Type {
-	return a.finish(expr, expr.ExprType())
+func (a *flowAnalyzer) AnalyzeNoneLiteral(expr *thir.NoneLiteral) {
+	a.finish(expr)
 }
-func (a *flowAnalyzer) AnalyzeIdent(expr *thir.Ident) typeinfo.Type {
-	typ, refined := a.bindingTypes[expr.Symbol]
-	if typ == nil {
-		typ, _ = symbols.GetSymbolType(expr.Symbol)
-	}
-	if typ == nil {
-		typ = expr.ExprType()
-	}
-	resolved := a.finish(expr, typ)
-	if refined {
-		a.result.recordExprType(expr.SourceInfo().NodeID, resolved)
-	}
-	return resolved
-}
-func (a *flowAnalyzer) AnalyzeQualifiedIdent(expr *thir.QualifiedIdent) typeinfo.Type {
-	typ, _ := symbols.GetSymbolType(expr.Symbol)
-	if typ == nil {
-		typ = expr.ExprType()
-	}
-	return a.finish(expr, typ)
-}
+func (a *flowAnalyzer) AnalyzeIdent(expr *thir.Ident) { a.finish(expr) }
 
-func (a *flowAnalyzer) AnalyzeField(expr *thir.Field) typeinfo.Type {
-	a.analyze(expr.Base, nil, flowPayload)
-	baseType := expr.Base.ExprType()
-	if ident, ok := expr.Base.(*thir.Ident); ok && ident.Symbol != nil {
-		baseType, _ = symbols.GetSymbolType(ident.Symbol)
-	}
-	descriptor, isVariant := typeinfo.VariantDescriptorOf(baseType)
-	if !isVariant || descriptor.Family != typeinfo.VariantFamilyNamed {
-		return a.finish(expr, expr.ExprType())
-	}
-	resolution := a.resolve(expr.Base, *a.state)
-	caseIndex, exact := provenVariantCase(a.state.variants, resolution.StorageOrigins, len(descriptor.Cases))
-	if exact {
-		payload, _ := typeinfo.Underlying(descriptor.Cases[caseIndex].Payload).(*typeinfo.StructType)
-		if field, fieldIndex, found := typeinfo.LookupStructField(payload, expr.Name); found {
-			a.recordPayload(expr.Base, resolution, []int{caseIndex})
-			a.result.recordPayload(expr.Source.NodeID, PayloadAccess{
-				CarrierOrigins: place.CloneOrigins(resolution.StorageOrigins), Cases: []int{caseIndex},
-			})
-			a.result.recordVariantField(expr.Source.NodeID, VariantFieldAccess{
-				Carrier: expr.Base.SourceInfo().NodeID, Case: caseIndex,
-				Payload: payload, Field: fieldIndex, Type: field.Type,
-			})
-			a.result.recordExprType(expr.Source.NodeID, field.Type)
-			return a.finish(expr, field.Type)
+// casePayload verifies a read the type checker typed as the payload of a
+// narrowed place: the place must hold exactly that case here. The read is then
+// recorded as a payload access, which lowering turns into an in-place load.
+func (a *flowAnalyzer) casePayload(expr thir.Expr, carrier typeinfo.Type) {
+	payloadType := expr.ExprType()
+	resolved := a.resolve(expr, *a.state)
+	storage := resolved.StorageOrigins
+	// The read goes through one payload per narrowed level until it reaches
+	// the type the checker gave it.
+	var cases []int
+	for read := carrier; !typeinfo.IsSameType(read, payloadType); {
+		descriptor, _ := typeinfo.VariantDescriptorOf(read)
+		caseIndex, exact := provenVariantCase(a.state.variants, place.VariantPayloadOrigins(storage, cases), len(descriptor.Cases))
+		if !exact || descriptor.Cases[caseIndex].Payload == nil {
+			location := expr.SourceInfo().Location
+			switch {
+			case descriptor.Family != typeinfo.VariantFamilyOptional:
+				a.diagnostics.AddError(diagnostics.ErrInvalidExpression,
+					"enum case is not proven here", location, "the value may have changed since it was tested").
+					Help("test it again, or bind what you need before changing it")
+			case expr.ExprPlace() != nil && !resolved.IsStable:
+				a.diagnostics.Add(unstableOptionalNarrowingAt(location))
+			default:
+				a.diagnostics.Add(problems.OptionalPayloadProof(location))
+			}
+			return
 		}
+		cases = append(cases, caseIndex)
+		read = descriptor.Cases[caseIndex].Payload
 	}
-	a.diagnostics.AddError(diagnostics.ErrFieldNotFound,
-		"unknown member `"+expr.Name+"`", expr.Source.Location, "")
-	return a.finish(expr, &typeinfo.InvalidType{})
+	payload := place.VariantPayloadOrigins(storage, cases)
+	resolution := place.Resolution{StorageOrigins: storage, IsStable: true}
+	resolution.ValueOrigins = a.resolveStored(payloadType, place.Resolution{
+		StorageOrigins: payload, ValueOrigins: place.CloneOrigins(payload),
+	}, *a.state).ValueOrigins
+	a.recordPayload(expr, resolution, cases)
+	a.recordResolution(expr, resolution)
 }
 
-func (a *flowAnalyzer) AnalyzeIndex(expr *thir.Index) typeinfo.Type {
-	a.analyze(expr.Base, nil, flowPayload)
-	a.analyze(expr.Index, typeinfo.DefaultIntegerType(), flowDefault)
-	return a.finish(expr, expr.ExprType())
+func (a *flowAnalyzer) AnalyzeQualifiedIdent(expr *thir.QualifiedIdent) { a.finish(expr) }
+
+func (a *flowAnalyzer) AnalyzeField(expr *thir.Field) {
+	a.analyze(expr.Base)
+	a.finish(expr)
 }
 
-func (a *flowAnalyzer) AnalyzeRange(expr *thir.Range) typeinfo.Type {
+func (a *flowAnalyzer) AnalyzeIndex(expr *thir.Index) {
+	a.analyze(expr.Base)
+	a.analyze(expr.Index)
+	a.finish(expr)
+}
+
+func (a *flowAnalyzer) AnalyzeRange(expr *thir.Range) {
 	if !typednil.IsNil(expr.Start) {
-		a.analyze(expr.Start, expr.Start.ExprType(), flowDefault)
+		a.analyze(expr.Start)
 	}
 	if !typednil.IsNil(expr.End) {
-		a.analyze(expr.End, expr.End.ExprType(), flowDefault)
+		a.analyze(expr.End)
 	}
-	return a.finish(expr, expr.ExprType())
+	a.finish(expr)
 }
 
-func (a *flowAnalyzer) AnalyzeStructLiteral(expr *thir.StructLiteral) typeinfo.Type {
-	semantic, _ := typeinfo.Underlying(expr.ExprType()).(*typeinfo.StructType)
+func (a *flowAnalyzer) AnalyzeStructLiteral(expr *thir.StructLiteral) {
 	for _, field := range expr.Fields {
-		var expected typeinfo.Type
-		if semantic != nil && field.Index >= 0 && field.Index < len(semantic.Fields) {
-			expected = semantic.Fields[field.Index].Type
-		}
-		a.analyze(field.Value, expected, flowDefault)
+		a.analyze(field.Value)
 	}
-	return a.finish(expr, expr.ExprType())
+	a.finish(expr)
 }
 
-func (a *flowAnalyzer) AnalyzeVariant(expr *thir.Variant) typeinfo.Type {
-	var expected typeinfo.Type
-	if descriptor, ok := typeinfo.VariantDescriptorOf(expr.ExprType()); ok && expr.Case >= 0 && expr.Case < len(descriptor.Cases) {
-		expected = descriptor.Cases[expr.Case].Payload
-	}
-	a.analyze(expr.Payload, expected, flowDefault)
-	return a.finish(expr, expr.ExprType())
+func (a *flowAnalyzer) AnalyzeVariant(expr *thir.Variant) {
+	a.analyze(expr.Payload)
+	a.finish(expr)
 }
 
-func (a *flowAnalyzer) AnalyzeArrayLiteral(expr *thir.ArrayLiteral) typeinfo.Type {
-	var expected typeinfo.Type
-	if array, ok := typeinfo.Underlying(expr.ExprType()).(*typeinfo.ArrayType); ok {
-		expected = array.Elem
-	}
+func (a *flowAnalyzer) AnalyzeArrayLiteral(expr *thir.ArrayLiteral) {
 	for _, value := range expr.Values {
-		a.analyze(value, expected, flowDefault)
+		a.analyze(value)
 	}
-	return a.finish(expr, expr.ExprType())
+	a.finish(expr)
 }
 
-func (a *flowAnalyzer) AnalyzeAddress(expr *thir.Address) typeinfo.Type {
-	demand := flowDefault
-	var expected typeinfo.Type
-	if expr.Mode == thir.AddressRaw {
-		demand = flowCarrier
-	} else if target, _, isReference := typeinfo.ReferenceValueTarget(typeinfo.Underlying(a.expected)); isReference {
-		expected = target
-	}
-	a.analyze(expr.Value, expected, demand)
-	return a.finish(expr, expr.ExprType())
+func (a *flowAnalyzer) AnalyzeAddress(expr *thir.Address) {
+	a.analyze(expr.Value)
+	a.finish(expr)
 }
 
-func (a *flowAnalyzer) AnalyzeUnary(expr *thir.Unary) typeinfo.Type {
-	a.analyze(expr.Value, nil, flowPayload)
-	return a.finish(expr, expr.ExprType())
+func (a *flowAnalyzer) AnalyzeUnary(expr *thir.Unary) {
+	a.analyze(expr.Value)
+	a.finish(expr)
 }
 
-func (a *flowAnalyzer) AnalyzeBinary(expr *thir.Binary) typeinfo.Type {
-	demand := flowPayload
-	if expr.Test != nil {
-		demand = flowOptionalTest
-	}
-	a.analyze(expr.Left, nil, demand)
-	a.analyze(expr.Right, nil, demand)
+func (a *flowAnalyzer) AnalyzeBinary(expr *thir.Binary) {
+	a.analyze(expr.Left)
+	a.analyze(expr.Right)
 	if expr.Test != nil {
 		a.recordCaseTest(expr, expr.Test)
 	}
-	return a.finish(expr, expr.ExprType())
+	a.finish(expr)
 }
 
-func (a *flowAnalyzer) AnalyzeIs(expr *thir.Is) typeinfo.Type {
-	a.analyze(expr.Value, nil, flowCarrier)
+func (a *flowAnalyzer) AnalyzeIs(expr *thir.Is) {
+	a.analyze(expr.Value)
 	if expr.Test != nil {
 		a.recordCaseTest(expr, expr.Test)
 	}
-	return a.finish(expr, expr.ExprType())
+	a.finish(expr)
 }
 
-func (a *flowAnalyzer) AnalyzeCall(expr *thir.Call) typeinfo.Type {
-	calleeType := a.analyze(expr.Callee, nil, flowPayload)
-	fn, _ := typeinfo.Underlying(calleeType).(*typeinfo.FuncType)
-	offset := 0
-	if _, isMethod := expr.Callee.(*thir.Field); isMethod {
-		offset = 1
-	}
-	for index, argument := range expr.Args {
-		var expected typeinfo.Type
-		if fn != nil && index+offset < len(fn.Params) {
-			expected = fn.Params[index+offset]
-		}
-		a.analyze(argument, expected, flowDefault)
+func (a *flowAnalyzer) AnalyzeCall(expr *thir.Call) {
+	a.analyze(expr.Callee)
+	for _, argument := range expr.Args {
+		a.analyze(argument)
 	}
 	a.invalidateCall(expr, a.state)
 	if a.events != nil {
 		a.events.next++
 		a.events.calls = append(a.events.calls, flowCallEvent{order: a.events.next, call: expr})
 	}
-	return a.finish(expr, expr.ExprType())
+	a.finish(expr)
 }
 
-func (a *flowAnalyzer) AnalyzeFree(expr *thir.Free) typeinfo.Type {
-	a.analyze(expr.Value, nil, flowPayload)
-	return a.finish(expr, expr.ExprType())
+func (a *flowAnalyzer) AnalyzeFree(expr *thir.Free) {
+	a.analyze(expr.Value)
+	a.finish(expr)
 }
 
-func (a *flowAnalyzer) AnalyzePrint(expr *thir.Print) typeinfo.Type {
-	a.analyze(expr.Value, nil, flowPayload)
-	return a.finish(expr, expr.ExprType())
+func (a *flowAnalyzer) AnalyzePrint(expr *thir.Print) {
+	a.analyze(expr.Value)
+	a.finish(expr)
 }
 
-func (a *flowAnalyzer) AnalyzeCast(expr *thir.Cast) typeinfo.Type {
-	a.analyze(expr.Value, nil, flowPayload)
-	return a.finish(expr, expr.ExprType())
+func (a *flowAnalyzer) AnalyzeCast(expr *thir.Cast) {
+	a.analyze(expr.Value)
+	a.finish(expr)
 }
 
 func (a *flowAnalyzer) recordCaseTest(expr thir.Expr, test *thir.CaseTest) {
@@ -578,16 +479,6 @@ func (a *flowAnalyzer) recordResolution(expr thir.Expr, resolution place.Resolut
 	a.result.recordOrigins(expr.SourceInfo().NodeID, resolution.StorageOrigins, resolution.ValueOrigins)
 }
 
-func (a *flowAnalyzer) expressionType(expr thir.Expr) typeinfo.Type {
-	if typednil.IsNil(expr) {
-		return nil
-	}
-	if typ := a.result.ExprType(expr.SourceInfo().NodeID); typ != nil {
-		return typ
-	}
-	return expr.ExprType()
-}
-
 func (a *flowAnalyzer) resolve(expr thir.Expr, state flowState) place.Resolution {
 	if typednil.IsNil(expr) {
 		return place.Resolution{}
@@ -606,7 +497,7 @@ func (a *flowAnalyzer) resolve(expr thir.Expr, state flowState) place.Resolution
 	case *thir.Field:
 		base := a.resolve(node.Base, state)
 		origins := a.projectedBaseOrigins(base, node.Base)
-		origins = appendIndirectOrigins(origins, a.expressionType(node.Base))
+		origins = appendIndirectOrigins(origins, node.Base.ExprType())
 		origins = place.FieldOrigins(origins, node.Name)
 		return a.resolveStored(node.ExprType(), place.Resolution{
 			StorageOrigins: origins, ValueOrigins: place.CloneOrigins(origins),
@@ -614,7 +505,7 @@ func (a *flowAnalyzer) resolve(expr thir.Expr, state flowState) place.Resolution
 		}, state)
 	case *thir.Index:
 		base := a.resolve(node.Base, state)
-		origins := appendIndirectOrigins(a.projectedBaseOrigins(base, node.Base), a.expressionType(node.Base))
+		origins := appendIndirectOrigins(a.projectedBaseOrigins(base, node.Base), node.Base.ExprType())
 		dependencies := append([]*symbols.Symbol(nil), base.Dependencies...)
 		isStable := base.IsStable
 		switch {
@@ -650,9 +541,6 @@ func (a *flowAnalyzer) resolveSymbol(symbol *symbols.Symbol, typ typeinfo.Type, 
 	if symbol == nil {
 		return place.Resolution{}
 	}
-	if inferred := a.bindingTypes[symbol]; inferred != nil {
-		typ = inferred
-	}
 	origins := []place.Origin{{Root: symbol}}
 	return a.resolveStored(typ, place.Resolution{StorageOrigins: origins, ValueOrigins: place.CloneOrigins(origins), IsStable: true}, state)
 }
@@ -668,7 +556,7 @@ func (a *flowAnalyzer) resolveStored(typ typeinfo.Type, resolution place.Resolut
 
 func (a *flowAnalyzer) projectedBaseOrigins(base place.Resolution, expr thir.Expr) []place.Origin {
 	origins := base.ValueOrigins
-	if _, _, isReference := typeinfo.ReferenceTarget(typeinfo.Underlying(a.expressionType(expr))); isReference {
+	if _, _, isReference := typeinfo.ReferenceTarget(typeinfo.Underlying(expr.ExprType())); isReference {
 		return origins
 	}
 	if payload, ok := a.result.Payload(expr.SourceInfo().NodeID); ok {
@@ -716,7 +604,7 @@ func (a *flowAnalyzer) callOrigins(call *thir.Call, state flowState) []place.Ori
 	if call == nil || typednil.IsNil(call.Callee) {
 		return nil
 	}
-	fn, _ := typeinfo.Underlying(a.expressionType(call.Callee)).(*typeinfo.FuncType)
+	fn, _ := typeinfo.Underlying(call.Callee.ExprType()).(*typeinfo.FuncType)
 	if fn == nil || fn.ReturnOrigins == nil {
 		return nil
 	}
@@ -846,7 +734,7 @@ func (a *flowAnalyzer) invalidateCall(call *thir.Call, state *flowState) {
 	if call == nil || typednil.IsNil(call.Callee) || state == nil {
 		return
 	}
-	fn, _ := typeinfo.Underlying(a.expressionType(call.Callee)).(*typeinfo.FuncType)
+	fn, _ := typeinfo.Underlying(call.Callee.ExprType()).(*typeinfo.FuncType)
 	args := append([]thir.Expr(nil), call.Args...)
 	if field, isMethod := call.Callee.(*thir.Field); isMethod {
 		args = append([]thir.Expr{field.Base}, args...)
@@ -883,53 +771,21 @@ func (a *flowAnalyzer) applyVariantCaseEdge(site *cfg.Site, edge cfg.Edge, state
 	if match == nil || typednil.IsNil(match.Subject) {
 		return
 	}
+	// A payload switch decides the case of the payload its path leads to.
+	term, _ := a.graph.Blocks[site.ID.Block].Terminator.(*cfg.SwitchVariant)
+	switched := match.EnumType
+	for _, caseIndex := range term.Path {
+		descriptor, _ := typeinfo.VariantDescriptorOf(switched)
+		switched = descriptor.Cases[caseIndex].Payload
+	}
+	descriptor, _ := typeinfo.VariantDescriptorOf(switched)
 	resolution := a.resolve(match.Subject, *state)
 	if resolution.IsStable && len(resolution.StorageOrigins) > 0 {
 		restrictVariantFact(state, variantStateFact{
-			origins: resolution.StorageOrigins, cases: []int{edge.Case}, caseCount: match.CaseCount,
+			origins: place.VariantPayloadOrigins(resolution.StorageOrigins, term.Path),
+			cases:   []int{edge.Case}, caseCount: len(descriptor.Cases),
 			dependencies: append([]*symbols.Symbol(nil), resolution.Dependencies...),
 		})
-	}
-	selected := match.Arm(edge.Case)
-	if selected == nil || selected.Payload == nil {
-		return
-	}
-	payloadOrigins := place.VariantPayloadOrigins(resolution.ValueOrigins, []int{edge.Case})
-	for _, binding := range selected.Bindings {
-		fieldOrigins := payloadOrigins
-		switch binding.Projection {
-		case thir.MatchPayloadField:
-			payload, ok := typeinfo.Underlying(selected.Payload).(*typeinfo.StructType)
-			if !ok || binding.Field < 0 || binding.Field >= len(payload.Fields) {
-				continue
-			}
-			fieldOrigins = place.FieldOrigins(payloadOrigins, payload.Fields[binding.Field].Name)
-		case thir.MatchWholePayload:
-		default:
-			panic("flow typing: invalid match binding projection")
-		}
-		if binding.Symbol == nil {
-			continue
-		}
-		storage := []place.Origin{{Root: binding.Symbol}}
-		valueOrigins := fieldOrigins
-		if _, _, isReference := typeinfo.ReferenceValueTarget(binding.Type); isReference {
-			valueOrigins = originValues(state.references, fieldOrigins)
-			if len(valueOrigins) == 0 {
-				valueOrigins = fieldOrigins
-			}
-			state.references = setOriginFact(state.references, storage, valueOrigins)
-		}
-		if _, isRaw := typeinfo.Underlying(binding.Type).(*typeinfo.RawPtrType); isRaw {
-			valueOrigins = originValues(state.rawPointers, fieldOrigins)
-			if len(valueOrigins) == 0 {
-				valueOrigins = fieldOrigins
-			}
-			state.rawPointers = setOriginFact(state.rawPointers, storage, valueOrigins)
-		}
-		if binding.Source.NodeID.IsValid() {
-			a.result.mergeOrigins(binding.Source.NodeID, storage, valueOrigins)
-		}
 	}
 }
 

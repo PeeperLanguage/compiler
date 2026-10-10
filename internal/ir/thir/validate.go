@@ -139,6 +139,18 @@ func (s *Block) validateSelf() error {
 	return nil
 }
 
+func (s *Destructure) validateSelf() error {
+	if err := s.StmtInfo.validateSelf(); err != nil {
+		return err
+	}
+	for _, binding := range s.Bindings {
+		if binding.Symbol == nil {
+			return fmt.Errorf("destructure binding has no symbol")
+		}
+	}
+	return nil
+}
+
 func (s *Binding) validateSelf() error {
 	if err := s.StmtInfo.validateSelf(); err != nil {
 		return err
@@ -216,12 +228,12 @@ func (s *Match) validateSelf() error {
 		return fmt.Errorf("match evidence is incomplete")
 	}
 	for index, arm := range s.Arms {
-		if arm.Case < 0 || arm.Case >= s.CaseCount || arm.Body == nil {
+		if len(arm.Cases) == 0 || arm.Body == nil {
 			return fmt.Errorf("match arm %d is incomplete", index)
 		}
-		for bindingIndex, binding := range arm.Bindings {
-			if binding.Type == nil || (!binding.IsDiscard && binding.Symbol == nil) {
-				return fmt.Errorf("match arm %d binding %d is incomplete", index, bindingIndex)
+		for _, armCase := range arm.Cases {
+			if armCase.Case < 0 || armCase.Case >= s.CaseCount || armCase.PayloadCase < 0 {
+				return fmt.Errorf("match arm %d selects an invalid case", index)
 			}
 		}
 	}

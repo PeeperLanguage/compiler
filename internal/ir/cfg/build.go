@@ -115,6 +115,10 @@ func (b *builder) BuildBinding(statement *thir.Binding) {
 	b.appendStatement(statement.Source)
 }
 
+func (b *builder) BuildDestructure(statement *thir.Destructure) {
+	b.appendStatement(statement.Source)
+}
+
 func (b *builder) BuildExprStmt(statement *thir.ExprStmt) {
 	b.appendStatement(statement.Source)
 }
@@ -259,7 +263,10 @@ func (b *builder) BuildFor(statement *thir.For) {
 func (b *builder) BuildMatch(statement *thir.Match) {
 	valid := statement.EnumType != nil && statement.CaseCount > 0 && len(statement.Arms) > 0
 	for _, arm := range statement.Arms {
-		valid = valid && arm.Case >= 0 && arm.Case < statement.CaseCount && arm.Body != nil
+		valid = valid && len(arm.Cases) > 0 && arm.Body != nil
+		for _, armCase := range arm.Cases {
+			valid = valid && armCase.Case >= 0 && armCase.Case < statement.CaseCount
+		}
 	}
 	if !valid {
 		// Invalid source may not have complete semantic evidence. Preserve one
@@ -271,11 +278,27 @@ func (b *builder) BuildMatch(statement *thir.Match) {
 	scopeID := b.currentScopeID()
 	entry := b.current
 	join := b.newBlock(BlockNormal, statement.Source.Location)
-	targets := make([]VariantTarget, 0, len(statement.Arms))
+	subject := &SwitchVariant{NodeID: statement.Source.NodeID, ScopeID: scopeID, Location: statement.Source.Location}
+	// Arms that test one case's payload share a second switch on that payload.
+	payloads := make(map[int]*SwitchVariant)
 	fallsThrough := false
 	for _, arm := range statement.Arms {
 		armBlock := b.newBlock(BlockNormal, arm.Source.Location)
-		targets = append(targets, VariantTarget{Case: arm.Case, Target: armBlock})
+		for _, armCase := range arm.Cases {
+			if !armCase.TestsPayload {
+				subject.Targets = append(subject.Targets, VariantTarget{Case: armCase.Case, Target: armBlock})
+				continue
+			}
+			payload := payloads[armCase.Case]
+			if payload == nil {
+				payload = &SwitchVariant{NodeID: subject.NodeID, ScopeID: scopeID, Location: arm.Source.Location, Path: []int{armCase.Case}}
+				payloads[armCase.Case] = payload
+				payloadBlock := b.newBlock(BlockNormal, arm.Source.Location)
+				payloadBlock.Terminator = payload
+				subject.Targets = append(subject.Targets, VariantTarget{Case: armCase.Case, Target: payloadBlock})
+			}
+			payload.Targets = append(payload.Targets, VariantTarget{Case: armCase.PayloadCase, Target: armBlock})
+		}
 		b.current = armBlock
 		b.buildBlockBody(arm.Body)
 		if b.current != nil {
@@ -285,10 +308,7 @@ func (b *builder) BuildMatch(statement *thir.Match) {
 			}
 		}
 	}
-	entry.Terminator = &SwitchVariant{
-		NodeID: statement.Source.NodeID, ScopeID: scopeID,
-		Location: statement.Source.Location, Targets: targets,
-	}
+	entry.Terminator = subject
 	if fallsThrough {
 		b.current = join
 	} else {
