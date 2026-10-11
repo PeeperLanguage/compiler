@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"compiler/internal/ir/thir"
 	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
@@ -189,6 +190,32 @@ func TestSaveIRsSeparatesIdentitiesDifferingOnlyByDependency(t *testing.T) {
 		}
 		if string(content) != dependency {
 			t.Fatalf("artifact %s = %q, want %q", path, content, dependency)
+		}
+	}
+}
+
+func TestSaveIRsWritesTHIRNextToMIRAndLLVM(t *testing.T) {
+	ctx := project.NewWithConfig(project.Config{RootDir: t.TempDir()}, nil)
+	ctx.AddModule(&module.Module{
+		ID:       moduleid.ID{Origin: string(project.ModuleOriginLocal), ImportPath: "app/main"},
+		FilePath: "/main.peep", LLVMIR: "llvm",
+		THIR: thir.NewModule("app/main", "/main.peep", nil),
+	})
+	target := filepath.Join(t.TempDir(), "_gen")
+	if err := saveIRs(ctx, target); err != nil {
+		t.Fatalf("saveIRs: %v", err)
+	}
+	base := filepath.Join(target, "local", "_", "_", "app", "main")
+	content, err := os.ReadFile(base + ".thir")
+	if err != nil {
+		t.Fatalf("missing THIR artifact: %v", err)
+	}
+	if string(content) != "; thir module app/main\n" {
+		t.Fatalf("THIR artifact = %q", content)
+	}
+	for _, extension := range []string{".mir", ".ll"} {
+		if _, err := os.Stat(base + extension); err != nil {
+			t.Fatalf("missing %s artifact: %v", extension, err)
 		}
 	}
 }

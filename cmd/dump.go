@@ -42,6 +42,13 @@ func saveIRs(ctx *project.CompilerContext, dir string) error {
 		if err := os.MkdirAll(filepath.Dir(base), 0o755); err != nil {
 			return err
 		}
+		thirText := ""
+		if module.THIR != nil {
+			thirText = module.THIR.Text()
+		}
+		if err := os.WriteFile(base+".thir", []byte(thirText), 0o644); err != nil {
+			return err
+		}
 		mirText := ""
 		if module.MIR != nil {
 			mirText = module.MIR.Text()
