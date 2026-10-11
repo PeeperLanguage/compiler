@@ -43,14 +43,6 @@ func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt, returnType type
 	if stmt == nil {
 		return
 	}
-	outer := c.hasOrElse
-	c.hasOrElse = false
-	defer func() {
-		if c.hasOrElse {
-			c.checkOrElseOrder(stmt)
-		}
-		c.hasOrElse = outer
-	}()
 	switch node := stmt.(type) {
 	case *ast.BlockStmt:
 		c.checkBlock(scope, node, returnType)
@@ -556,7 +548,6 @@ func (c *checker) bindPayloadName(owner ast.Node, payload typeinfo.Type, borrow 
 // payload of the optional value. The fallback has that type; the block must
 // leave.
 func (c *checker) typeOrElse(scope *symbols.Scope, node *ast.OrElseExpr) typeinfo.Type {
-	c.hasOrElse = true
 	if scope == c.module.ModuleScope {
 		c.ctx.Diagnostics.Add(invalidOperationError(node, "`orelse` is only allowed inside a function"))
 		return &typeinfo.InvalidType{}
@@ -583,52 +574,6 @@ func (c *checker) typeOrElse(scope *symbols.Scope, node *ast.OrElseExpr) typeinf
 			fmt.Sprintf("fallback must be %s, got %s", typeinfo.TypeText(payload), typeinfo.TypeText(fallbackType))))
 	}
 	return payload
-}
-
-// checkOrElseOrder rejects an `orelse` in stmt that could not run where it is
-// written. The compiler runs every `orelse` of a statement before the rest of
-// the statement, so a call written before one would run after it; and a loop
-// header runs on every pass.
-func (c *checker) checkOrElseOrder(stmt ast.Stmt) {
-	_, isLoop := stmt.(*ast.ForStmt)
-	var open []ast.Node
-	hasCall, depth := false, 0
-	ast.Inspect(stmt, func(node ast.Node) bool {
-		if node == nil {
-			closed := open[len(open)-1]
-			open = open[:len(open)-1]
-			switch closed.(type) {
-			case *ast.OrElseExpr:
-				depth--
-			case *ast.CallExpr, *ast.FreeExpr, *ast.PrintExpr:
-				// A call inside an `orelse` runs with it, in order.
-				hasCall = hasCall || depth == 0
-			}
-			return true
-		}
-		// Nested statements and arms are checked on their own.
-		if _, isArm := node.(*ast.MatchArm); isArm {
-			return false
-		}
-		if _, isStmt := node.(ast.Stmt); isStmt && node != ast.Node(stmt) {
-			return false
-		}
-		open = append(open, node)
-		if orElse, isOrElse := node.(*ast.OrElseExpr); isOrElse {
-			switch {
-			case isLoop:
-				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
-					"`orelse` cannot be part of a loop header", ast.LocOf(orElse), "the header runs on every pass").
-					Help("move it into the loop body")
-			case hasCall && depth == 0:
-				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
-					"`orelse` comes after a call in the same statement and would run before it", ast.LocOf(orElse), "").
-					Help("give the call's result a name first, with `let`")
-			}
-			depth++
-		}
-		return true
-	})
 }
 
 func (c *checker) checkAssign(scope *symbols.Scope, node *ast.AssignStmt) {

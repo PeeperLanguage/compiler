@@ -36,7 +36,69 @@ fn Borrowed(item: ?Item) -> i32 {
     return (&item orelse { return -1; }).value;
 }
 
+struct Counter { n: i32 }
+
+fn Next(counter: &mut Counter) -> i32 { counter.n = counter.n + 1; return counter.n; }
+fn Bump(counter: &mut Counter) -> i32 { counter.n = 100; return 1; }
+fn Size(counter: &Counter, extra: i32) -> i32 { return counter.n + extra; }
+fn Eat(item: Item, extra: i32) -> i32 { return item.value + extra; }
+fn Wrap(first: ?i32, second: i32) -> i32 { return (first orelse 0) + second; }
+
+// What is written before an `orelse` runs before it: a read sees the value
+// from before, and a call runs first.
+fn ReadFirst() -> i32 {
+    let mut counter = Counter.{ n = 5 };
+    return counter.n + (Find(0) orelse Bump(&mut counter));
+}
+
+fn CallFirst() -> i32 {
+    let mut counter = Counter.{ n = 0 };
+    return Add(Next(&mut counter) * 10, Find(0) orelse Next(&mut counter));
+}
+
+// The value before the `orelse` keeps what its use needs: a conversion, a
+// borrow made by the call, a move.
+fn Converted(first: i32) -> i32 { return Wrap(first, Find(0) orelse 2); }
+
+fn BorrowedByCall() -> i32 {
+    let counter = Counter.{ n = 4 };
+    return Size(&counter, Find(0) orelse 1);
+}
+
+fn Moved() -> i32 {
+    let item = Item.{ value = 6 };
+    return Eat(item, Find(0) orelse 1);
+}
+
+// A value that is only looked at stays where it is.
+fn Compared(text: str, other: ?str) -> bool { return text == (other orelse "x"); }
+
+fn InList(first: i32) -> i32 {
+    let values = [_]i32{first, Find(0) orelse 2};
+    return values[Find(0) orelse 1] + values[0];
+}
+
+// A loop header runs on every pass, and so does an `orelse` in it.
+fn InHeader() -> i32 {
+    let mut counter = Counter.{ n = 0 };
+    let mut odd = 0;
+    // Find gives none for 0, so the fallback counts the passes: 1, 2, 3, 4.
+    for (Find(0) orelse Next(&mut counter)) < 4 {
+        if counter.n == 2 { continue; }
+        odd = odd + counter.n;
+    }
+    return odd * 10 + counter.n;
+}
+
 fn main() -> i32 {
+    if InHeader() != 44 { return 27; }
+    if ReadFirst() != 6 { return 20; }
+    if !Compared("x", none) { return 25; }
+    if InList(5) != 7 { return 26; }
+    if CallFirst() != 12 { return 21; }
+    if Converted(3) != 5 { return 22; }
+    if BorrowedByCall() != 5 { return 23; }
+    if Moved() != 7 { return 24; }
     if Value(2) != 4 { return 1; }
     if Value(0) != 0 { return 2; }
     if InCall(1) != 6 { return 3; }

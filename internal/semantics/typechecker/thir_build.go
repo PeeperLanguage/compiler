@@ -29,7 +29,7 @@ func (c *checker) buildTHIR() *thir.Module {
 		truth := value != nil && value.Truthy()
 		return &truth, pending.Diagnostics()
 	}
-	builder := &thirBuilder{symbolIndex: c.module.SymbolIndex, typing: c.evidence, constantCondition: constantCondition}
+	builder := &thirBuilder{symbolIndex: c.module.SymbolIndex, typing: c.evidence, constantCondition: constantCondition, diagnostics: c.ctx.Diagnostics}
 	functions := make([]*thir.Function, 0)
 	ast.ForEachDecl(c.module.AST, func(declaration ast.Decl) bool {
 		function, ok := declaration.(*ast.FnDecl)
@@ -50,7 +50,8 @@ type thirBuilder struct {
 	enclosing *symbols.Scope
 	// hoisted holds what the `orelse` expressions of the statement being built
 	// must run before it.
-	hoisted hoist
+	hoisted     hoist
+	diagnostics *diagnostics.DiagnosticBag
 }
 
 // hoist is the statements that run before the one that contains their
@@ -115,6 +116,78 @@ func (b *thirBuilder) block(source *ast.BlockStmt) *thir.Block {
 	defer func() { b.enclosing = outer }()
 	b.statements(block, source.Stmts)
 	return block
+}
+
+// operands builds values that are evaluated in the order given. A later one
+// that hoists an `orelse` would run before the earlier ones, so those are
+// stored in hidden locals in front of it and read from there.
+func (b *thirBuilder) operands(sources ...ast.Expr) []thir.Expr {
+	built := make([]thir.Expr, len(sources))
+	var stored []bool
+	for index, source := range sources {
+		mark := len(b.hoisted.stmts)
+		built[index] = b.expression(source)
+		if len(b.hoisted.stmts) == mark {
+			continue
+		}
+		if stored == nil {
+			stored = make([]bool, len(sources))
+		}
+		// One left in place earlier is looked at again: this operand may be the
+		// one that changes it.
+		for earlier := range index {
+			if stored[earlier] {
+				continue
+			}
+			if store, read := b.storeFirst(sources[earlier], built[earlier], source); store != nil {
+				b.hoisted.stmts = slices.Insert(b.hoisted.stmts, mark, thir.Stmt(store))
+				built[earlier], stored[earlier] = read, true
+				mark++
+			}
+		}
+	}
+	return built
+}
+
+// storeFirst stores value, built from source, in a hidden local, so that it is
+// evaluated before later, which hoists an `orelse`: it returns the statement
+// that does and the read that stands in for value. It returns nothing for a
+// value that reads the same after later has run: a literal, a constant, a
+// function.
+func (b *thirBuilder) storeFirst(source ast.Expr, value thir.Expr, later ast.Expr) (*thir.Binding, thir.Expr) {
+	if value == nil || typeinfo.IsInvalidOrUnknown(value.ExprType()) {
+		return nil, nil
+	}
+	switch value.(type) {
+	case *thir.NumberLiteral, *thir.StringLiteral, *thir.ByteLiteral, *thir.CharLiteral, *thir.BoolLiteral, *thir.NoneLiteral:
+		return nil, nil
+	case *thir.Ident, *thir.QualifiedIdent:
+		if value.ExprPlace() == nil {
+			return nil, nil
+		}
+	}
+	typ := value.ExprType()
+	// Storing a value that is only looked at would move it out of its place.
+	// It stays where it is; only code that names its variable can change it.
+	if use, known := value.UseKind(); value.ExprPlace() != nil && typeinfo.IsMoveTracked(typ) && !(known && use == typeinfo.UseMove) {
+		ast.Inspect(later, func(node ast.Node) bool {
+			if name, isName := node.(*ast.Ident); isName && b.symbol(name).Variable() == value.ExprPlace().Root {
+				b.diagnostics.Add(invalidOperationError(source, "this value is read before an `orelse` that uses `"+name.Name+"` and runs first").
+					Help("give the `orelse` a name first, with `let`"))
+				return false
+			}
+			return true
+		})
+		return nil, nil
+	}
+	carrier := &caseCarrier{statement: source, slot: storedOperandSlot, index: b.symbolIndex, enclosing: b.enclosing}
+	local := carrier.local("$value", typ)
+	// The read keeps what the use needs from the value: its conversion and how it is used.
+	info := b.expressionInfo(source)
+	info.Source, info.Type, info.CaseCarrier, info.CasePath = carrier.source(), typ, nil, nil
+	info.Place = &thir.Place{Root: local, Type: typ}
+	return &thir.Binding{StmtInfo: thir.StmtInfo{Source: carrier.source()}, Symbol: local, Value: value},
+		&thir.Ident{ExprInfo: info, Name: local.Name, Symbol: local}
 }
 
 // statements builds stmts into block. A guard the resolver gave the rest of
@@ -213,8 +286,20 @@ func (b *thirBuilder) forStatement(source *ast.ForStmt) *thir.For {
 	loop.Index = b.symbol(source.Index)
 	loop.Value = b.symbol(source.Value)
 	loop.Iterable = b.expression(source.Iterable)
+	// The condition runs on every pass, so what it hoists belongs to the
+	// body: `for { <hoisted>; if cond {} else { break; } body }`.
+	outer, outerScope := b.hoisted, b.enclosing
+	b.hoisted, b.enclosing = hoist{}, b.scope(source.Body)
 	loop.Condition = b.expression(source.Cond)
+	header := b.hoisted
+	b.hoisted, b.enclosing = outer, outerScope
 	loop.Body = b.block(source.Body)
+	if len(header.stmts) > 0 {
+		leave := header.carrier.block(&thir.Break{StmtInfo: thir.StmtInfo{Source: header.carrier.source()}})
+		test := &thir.If{StmtInfo: thir.StmtInfo{Source: header.carrier.source()}, Condition: loop.Condition, Then: header.carrier.block(), Else: leave}
+		loop.Body.Stmts = append(append(header.stmts, test), loop.Body.Stmts...)
+		loop.Condition = nil
+	}
 	if b.typing == nil {
 		return loop
 	}
@@ -446,8 +531,15 @@ type caseCarrier struct {
 
 	index     *symbols.Index
 	enclosing *symbols.Scope
-	ordinal   uint64
+	// slot keeps the nodes built for one statement by different carriers apart.
+	slot    uint64
+	ordinal uint64
 }
+
+// storedOperandSlot is the slot of what storeFirst builds: the statement of a
+// stored operand may be an `orelse` with a carrier of its own (slot 0), or a
+// guard (slot 1, see statements).
+const storedOperandSlot = 2
 
 // caseCarrier returns how statement takes subject apart (borrow is set when
 // it is tested through a reference), or nil when the checker could not type
@@ -505,7 +597,7 @@ func (b *thirBuilder) payloadsOf(statement *ast.MatchStmt, variable *ast.Ident) 
 func (c *caseCarrier) source() ir.SourceInfo {
 	c.ordinal++
 	return ir.SourceInfo{
-		NodeID:   sourceid.GeneratedNodeID(c.statement.ID(), sourceid.GeneratedCaseBinding, 0, c.ordinal),
+		NodeID:   sourceid.GeneratedNodeID(c.statement.ID(), sourceid.GeneratedCaseBinding, c.slot, c.ordinal),
 		Location: ast.LocOf(c.statement),
 	}
 }
@@ -701,17 +793,14 @@ func (b *thirBuilder) expression(expression ast.Expr) thir.Expr {
 	case *ast.IndexExpr:
 		result = b.indexExpression(node, info)
 	case *ast.RangeExpr:
-		result = &thir.Range{ExprInfo: info, Start: b.expression(node.Start), End: b.expression(node.End), IsEndExclusive: node.IsEndExclusive}
+		ends := b.operands(node.Start, node.End)
+		result = &thir.Range{ExprInfo: info, Start: ends[0], End: ends[1], IsEndExclusive: node.IsEndExclusive}
 	case *ast.StructLit:
 		result = b.structLiteral(node, info)
 	case *ast.VariantLit:
 		result = &thir.InvalidExpr{ExprInfo: info, Message: "variant construction missing semantic evidence"}
 	case *ast.ArrayLit:
-		values := make([]thir.Expr, 0, len(node.Values))
-		for _, value := range node.Values {
-			values = append(values, b.expression(value))
-		}
-		result = &thir.ArrayLiteral{ExprInfo: info, Values: values}
+		result = &thir.ArrayLiteral{ExprInfo: info, Values: b.operands(node.Values...)}
 	case *ast.AddressExpr:
 		mode := thir.AddressRaw
 		switch node.Mode {
@@ -733,9 +822,10 @@ func (b *thirBuilder) expression(expression ast.Expr) thir.Expr {
 		} else if test != nil {
 			left = subject
 		}
+		sides := b.operands(left, right)
 		result = &thir.Binary{
-			ExprInfo: info, Left: b.expression(left), Op: node.Op,
-			Right: b.expression(right), IsStringConcatenation: isStringConcatenation, Test: test,
+			ExprInfo: info, Left: sides[0], Op: node.Op,
+			Right: sides[1], IsStringConcatenation: isStringConcatenation, Test: test,
 		}
 	case *ast.OrElseExpr:
 		result = b.orElse(node, info)
@@ -828,12 +918,12 @@ func (b *thirBuilder) structLiteral(source *ast.StructLit, info thir.ExprInfo) t
 	}
 	fields := make([]thir.StructField, 0, len(values))
 	semantic, _ := typeinfo.Underlying(info.Type).(*typeinfo.StructType)
-	for index, value := range values {
+	for index, value := range b.operands(values...) {
 		name := ""
 		if semantic != nil && index < len(semantic.Fields) {
 			name = semantic.Fields[index].Name
 		}
-		fields = append(fields, thir.StructField{Name: name, Index: index, Value: b.expression(value)})
+		fields = append(fields, thir.StructField{Name: name, Index: index, Value: value})
 	}
 	return &thir.StructLiteral{ExprInfo: info, Fields: fields}
 }
@@ -847,9 +937,7 @@ func (b *thirBuilder) callExpression(source *ast.CallExpr, info thir.ExprInfo) t
 			call.CompilerCall = &thir.CompilerCall{Operation: compilerCall.Operation, Kind: compilerCall.Kind}
 		}
 	}
-	for _, argument := range arguments {
-		call.Args = append(call.Args, b.expression(argument))
-	}
+	call.Args = b.operands(arguments...)
 	return call
 }
 

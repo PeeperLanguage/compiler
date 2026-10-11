@@ -206,11 +206,13 @@ return add(find(a) orelse 1, find(b) orelse { return -1; });
 right (`a orelse b orelse 0`). The fallback is evaluated only when needed. A
 plain optional is moved or copied into the result like any value. A borrowed
 one (`&maybe orelse ...`, `&mut maybe orelse ...`) is left in place, and the
-result is a reference to its value. A statement runs each of its `orelse`
-expressions first, in order, before the rest of the statement. A call written
-before an `orelse` in the same statement would therefore run after it and is
-rejected; give its result a name with `let`. `orelse` is not allowed in a loop
-header, which runs on every pass, or at module level.
+result is a reference to its value. What is written before an `orelse` in a
+statement is evaluated before it, as everywhere else: in
+`total + (find() orelse reset(&mut total))`, `total` is read first. One case is
+rejected: a value that is only looked at and cannot be copied, written before
+an `orelse` that uses the same variable; give the `orelse` a name with `let`
+first. In a loop condition an `orelse` runs on every pass, like the rest of the
+condition. `orelse` is not allowed at module level.
 
 Presence checks never consume. Reading a copyable payload, including a shared
 reference payload, preserves the carrier. Moving a move-only payload from a

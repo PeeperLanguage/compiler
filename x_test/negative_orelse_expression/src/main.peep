@@ -1,17 +1,13 @@
 fn Find(id: i32) -> ?i32 { return none; }
-fn Count(id: i32) -> i32 { return id; }
-fn Add(a: i32, b: i32) -> i32 { return a + b; }
 
-// Every `orelse` of a statement runs before the rest of the statement, so a
-// call written before one would run after it.
-fn AfterCall(id: i32) -> i32 {
-    return Add(Count(id), Find(id) orelse 0);
-}
+fn Rename(text: &mut str) -> str { return "x"; }
 
-fn LoopHeader(id: i32) -> i32 {
-    let mut total = 0;
-    for total < (Find(id) orelse 3) { total = total + 1; }
-    return total;
+// What is written before an `orelse` runs first. A value that is only looked
+// at, and that moving would take away, cannot be kept aside while the `orelse`
+// changes its variable.
+fn ChangedBefore(text: str, other: ?str) -> bool {
+    let mut mine = text;
+    return mine == (other orelse Rename(&mut mine));
 }
 
 fn DefaultLeaves(id: i32 = Find(1) orelse { return 0; }) -> i32 { return id; }

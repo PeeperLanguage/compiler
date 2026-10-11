@@ -21,9 +21,6 @@ type checker struct {
 	loopDepth        int
 	// returnType is the return type of the function being checked.
 	returnType typeinfo.Type
-	// hasOrElse is set when the statement being checked contains an `orelse`
-	// outside its nested statements (checkOrElseOrder).
-	hasOrElse bool
 	// reusedCall is the already-checked source call embedded at the root of a
 	// generated producer loop. Nested calls and flow visits still check normally.
 	reusedCall *ast.CallExpr
