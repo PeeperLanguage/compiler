@@ -1,0 +1,26 @@
+// The code after a guard that leaves is still the same block: a name of the
+// block cannot be declared again there.
+fn AfterGuard(maybe: ?i32) -> i32 {
+    let count = 1;
+    if maybe == none { return -1; }
+    let count = 20;
+    return maybe + count;
+}
+
+// The same holds after a second guard.
+fn AfterTwoGuards(first: ?i32, second: ?i32) -> i32 {
+    let total = 1;
+    if first == none { return -1; }
+    if second == none { return -2; }
+    let total = 2;
+    return first + second + total;
+}
+
+// After the guard the tested name reads the payload; it cannot be declared
+// again either.
+fn TestedName() -> i32 {
+    let maybe: ?i32 = 4;
+    if maybe == none { return -1; }
+    let maybe = 5;
+    return maybe;
+}

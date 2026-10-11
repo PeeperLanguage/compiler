@@ -158,6 +158,9 @@ func (r *resolver) resolveBlock(scope *symbols.Scope, block *ast.BlockStmt) {
 		if subject, _, otherwise := r.testedPayloads(guard.Cond); otherwise {
 			rest := symbols.NewScope(scope)
 			if r.declarePayloadName(scope, rest, guard, subject) {
+				// Declared first: the payload name is the one name that may
+				// repeat a name of the block.
+				rest.ContinueParent()
 				r.module.SymbolIndex.SetScope(guard, rest)
 				scope = rest
 			}

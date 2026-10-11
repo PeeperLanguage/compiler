@@ -1,0 +1,7 @@
+name = "negative_redeclare_after_guard"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["`count` already exists in this scope", "`total` already exists in this scope", "`maybe` already exists in this scope"]

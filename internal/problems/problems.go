@@ -49,7 +49,7 @@ func ReportRedeclaration(diag *diagnostics.DiagnosticBag, scope *symbols.Scope, 
 	}
 	var previous *source.Location
 	if scope != nil {
-		oldSym, _ := scope.LookupLocal(name)
+		oldSym, _ := scope.Declared(name)
 		if oldSym != nil {
 			previous = oldSym.Location
 		}
