@@ -56,6 +56,16 @@ type Symbol struct {
 	MutableLocation  *source.Location
 	ASTNode          ast.Node
 	Scope            *Scope
+	// IsPayloadName marks the name a case test declares for the block it
+	// guards: there the subject's name reads the payload. For a tested
+	// variable, AliasOf is that variable and the name reads the payload in
+	// place; for a borrowed subject (`&place`) it is nil and the name is a
+	// local reference into the payload.
+	IsPayloadName bool
+	AliasOf       *Symbol
+	// PayloadPath is, for a name with AliasOf, the case read through at each
+	// level from what AliasOf reads to the payload this name reads.
+	PayloadPath []int
 }
 
 func New(id SymbolID, name string, kind Kind, node ast.Node, location *source.Location) *Symbol {
@@ -80,6 +90,15 @@ func New(id SymbolID, name string, kind Kind, node ast.Node, location *source.Lo
 		}
 	}
 	return sym
+}
+
+// Variable returns the variable s stands for: s itself, or for a name that
+// reads a payload in place the variable holding it.
+func (s *Symbol) Variable() *Symbol {
+	for s != nil && s.AliasOf != nil {
+		s = s.AliasOf
+	}
+	return s
 }
 
 func (s *Symbol) BindType(typ typeinfo.Type) {

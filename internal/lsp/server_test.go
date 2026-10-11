@@ -1517,19 +1517,13 @@ func TestRetainedAnalysisDiagnosticsRefreshAfterEdit(t *testing.T) {
 }`,
 		},
 		{
-			name: "unstable index",
-			code: diagnostics.ErrUnstableNarrowing,
+			name: "element",
+			code: diagnostics.ErrOptionalPayloadProof,
 			invalid: `fn read(values: [2]?i32, index: usize) -> i32 {
-	if values[index + 1] == none {
-		return 0;
-	}
-	return values[index + 1];
+	return values[index];
 }`,
 			valid: `fn read(values: [2]?i32, index: usize) -> i32 {
-	if values[index] == none {
-		return 0;
-	}
-	return values[index];
+	return values[index] orelse 0;
 }`,
 		},
 	}
@@ -2350,5 +2344,28 @@ func TestDiagnosticNotificationsHideInternalCompilerDetail(t *testing.T) {
 	}
 	if !strings.Contains(published.Message, "internal compiler failure") {
 		t.Fatalf("LSP message = %q, want generic ICE text", published.Message)
+	}
+}
+
+// Inside a guarded block the variable's name reads its payload; it is still
+// the same variable to rename.
+func TestRenameReachesPayloadReadsOfVariable(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main"+peeper.SourceExt)
+	state := NewServerState()
+	state.RootDir = root
+	src := `fn read(maybe: ?i32) -> i32 {
+	if maybe != none {
+		return __CURSOR__maybe;
+	}
+	if maybe == none { return 0; }
+	return maybe + 1;
+}`
+	edit := renameAtSource(t, state, mainPath, src, "value")
+	if edit == nil {
+		t.Fatal("rename returned no edit")
+	}
+	if edits := edit.Changes[DocumentURI(pathToURI(mainPath))]; len(edits) != 5 {
+		t.Fatalf("rename edits = %d, want the parameter and its four uses: %#v", len(edits), edits)
 	}
 }

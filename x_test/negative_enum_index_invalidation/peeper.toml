@@ -1,7 +1,0 @@
-name = "negative_enum_index_invalidation"
-build = "lib"
-
-[test]
-mode = "check"
-outcome = "failure"
-stderr_contains = ["enum case is not proven here", "the value may have changed since it was tested"]

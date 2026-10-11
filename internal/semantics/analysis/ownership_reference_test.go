@@ -21,7 +21,7 @@ fn probe(mut first: i32, mut second: i32) {
 		resource.value = &second;
 		resource.value = resource.value;
 		match resource {
-			Resource::Borrowed => { let .{ value = value, sibling = sibling } = resource; Read(value); Read(sibling); }
+			Resource::Borrowed => { let .{ value, sibling } = resource; Read(value); Read(sibling); }
 			Resource::Empty => {}
 		}
 	}
@@ -139,14 +139,14 @@ Write(resource.value);`},
 		{name: "mutable replacement protects new loan", fields: "value: &mut i32", setup: `let mut resource = Resource::Borrowed with .{ value = &mut first };`, body: `resource.value = &mut second;
 second = 3;
 match resource {
-Resource::Borrowed => { let .{ value = reference } = resource; Write(reference); }
+Resource::Borrowed => { let .{ value as reference } = resource; Write(reference); }
 Resource::Empty => {}
 }`, code: diagnostics.ErrBorrowConflict},
 		{name: "mutable moved carrier retains new loan", fields: "value: &mut i32", setup: `let mut resource = Resource::Borrowed with .{ value = &mut first };`, body: `resource.value = &mut second;
 let moved: Resource = resource;
 second = 3;
 match moved {
-Resource::Borrowed => { let .{ value = reference } = moved; Write(reference); }
+Resource::Borrowed => { let .{ value as reference } = moved; Write(reference); }
 Resource::Empty => {}
 }`, code: diagnostics.ErrBorrowConflict},
 		{name: "both branches release old loan", body: `if flag { resource.value = &second; } else { resource.value = &third; }

@@ -110,11 +110,7 @@ fn ConsumeOptionalOwner(owner: ?*OwnedBox) -> i32 {
 }
 
 fn ReadThroughAlias(holder: &Holder) -> i32 {
-    let alias = holder;
-    if alias.field == none {
-        return 0;
-    }
-    return holder.field;
+    return holder.field orelse 0;
 }
 
 fn main() -> i32 {
@@ -152,26 +148,25 @@ fn main() -> i32 {
     }
 
     let holder = Holder.{field = Some(9), items = [2]?i32{Some(11), none}};
-    if holder.field != none {
-        if holder.field != 9 {
+    // A field is read under a name of its own.
+    let field = holder.field;
+    if field != none {
+        if field != 9 {
             return 5;
         }
     }
     let nestedOuter = Outer.{inner = Holder.{field = Some(9), items = [2]?i32{none, none}}};
-    if nestedOuter.inner.field != none {
-        if nestedOuter.inner.field != 9 {
-            return 5;
-        }
+    if (nestedOuter.inner.field orelse 0) != 9 {
+        return 5;
     }
     const index: usize = 0;
-    if holder.items[index] != none {
-        if holder.items[index] != 11 {
-            return 6;
-        }
+    if (holder.items[index] orelse 0) != 11 {
+        return 6;
     }
     let bindingIndex: usize = 0;
-    if holder.items[bindingIndex] != none {
-        if holder.items[bindingIndex] != 11 {
+    let item = holder.items[bindingIndex];
+    if item != none {
+        if item != 11 {
             return 6;
         }
     }
@@ -212,11 +207,13 @@ fn main() -> i32 {
     }
 
     let mut reproved = Some(43);
-    if reproved != none && TouchOptional(&mut reproved) && reproved != none {
-        if reproved != 43 {
-            return 11;
-        }
-    } else {
+    if reproved == none || !TouchOptional(&mut reproved) {
+        return 11;
+    }
+    if reproved == none {
+        return 11;
+    }
+    if reproved != 43 {
         return 11;
     }
 

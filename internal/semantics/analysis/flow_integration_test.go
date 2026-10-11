@@ -51,7 +51,7 @@ func TestRunPublishesVariantRefinementEvidence(t *testing.T) {
 	Pending,
 }
 fn read(choice: Choice) -> i32 {
-	if choice is Choice::Left {} else { return 0; }
+	if !(choice is Choice::Left) { return 0; }
 	return choice.value;
 }`)
 	if diag.HasErrors() {
@@ -59,7 +59,7 @@ fn read(choice: Choice) -> i32 {
 	}
 	fn := mod.AST.Stmts[1].(*ast.FnDecl)
 	branch := fn.Body.Stmts[0].(*ast.IfStmt)
-	test := branch.Cond.(*ast.IsExpr)
+	test := branch.Cond.(*ast.UnaryExpr).Expr.(*ast.IsExpr)
 	// After the guard leaves on every other case, choice reads as the payload.
 	field := fn.Body.Stmts[1].(*ast.ReturnStmt).Value.(*ast.SelectorExpr)
 
@@ -139,7 +139,7 @@ func TestRunPreservesVariantFactsAcrossStableCFGPaths(t *testing.T) {
 	_, diag := checkAnalysisSource(t, `enum Choice { Left: struct { value: i32 }, Right: struct { value: i32 } }
 struct Holder { choice: Choice }
 fn field(holder: Holder) -> i32 {
-	if holder.choice is Choice::Left { return holder.choice.value; }
+	if &holder.choice is Choice::Left { return choice.value; }
 	return 0;
 }
 fn loop(choice: Choice) -> i32 {

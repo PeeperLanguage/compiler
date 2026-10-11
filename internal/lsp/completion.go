@@ -389,7 +389,8 @@ func lexicalCompletionItems(module *module.Module, cursor source.Position, prefi
 	localScope := scope != module.ModuleScope
 	for current := scope; current != nil; current = current.Parent() {
 		for _, sym := range current.Symbols() {
-			if sym == nil || sym.Name == "_" || !strings.HasPrefix(sym.Name, prefix) {
+			// `_` and the compiler's own `$` locals are not names to offer.
+			if sym == nil || sym.Name == "_" || strings.HasPrefix(sym.Name, "$") || !strings.HasPrefix(sym.Name, prefix) {
 				continue
 			}
 			if localScope && isDeclaredAfterCursor(sym, cursor) {
@@ -411,6 +412,15 @@ func lexicalCompletionItems(module *module.Module, cursor source.Position, prefi
 func completionScope(module *module.Module, line, col int) *symbols.Scope {
 	scope := module.ModuleScope
 	walkModuleAST(module, func(node ast.Node, _ ast.Node) bool {
+		// The code after a guard has a scope of its own, kept under the guard.
+		if guard, isGuard := node.(*ast.IfStmt); isGuard {
+			rest := module.SymbolIndex.Scope(guard)
+			end := ast.LocOf(guard).End
+			if rest != nil && rest.Parent() == scope && end != nil && (end.Line < line || end.Line == line && end.Column <= col) {
+				scope = rest
+			}
+			return true
+		}
 		block, ok := node.(*ast.BlockStmt)
 		if !ok || !locContains(ast.LocOf(block), line, col) {
 			return true

@@ -1,0 +1,76 @@
+struct Box { value: i32 }
+struct Item { value: i32 }
+struct Circle { radius: i32 }
+enum Shape { Round: Circle, Count: i32, Empty }
+enum Slot { Owned: struct { box: *Box }, Plain: i32, Free }
+struct Holder { shape: Shape, slot: Slot }
+
+// A borrowed subject is matched in place; its name is a reference into the payload.
+fn Grow(holder: &mut Holder) {
+    match &mut holder.shape {
+        Shape::Round => { shape.radius = shape.radius + 10; }
+        _ => { }
+    }
+}
+
+fn ReadOwned(holder: &Holder) -> i32 {
+    if &holder.slot is Slot::Owned {
+        return slot.box.value;
+    }
+    return -1;
+}
+
+// Only a payload read borrows, so an arm without one may replace the subject.
+fn Reset(shape: Shape) -> Shape {
+    let mut s = shape;
+    match &s {
+        Shape::Round => { if s.radius > 3 { return Shape::Empty; } }
+        _ => { s = Shape::Empty; }
+    }
+    return s;
+}
+
+fn Opt(maybe: ?Item) -> i32 {
+    if &maybe != none { return maybe.value; }
+    return -1;
+}
+
+fn OptElse(maybe: ?Item) -> i32 {
+    let w = &maybe orelse { return -1; };
+    return w.value;
+}
+
+// A reference returned from one arm does not block the code after the match.
+fn RoundOf(holder: &mut Holder) -> &mut Circle from holder {
+    match &mut holder.shape {
+        Shape::Round => { return shape; }
+        _ => { }
+    }
+    holder.shape = Shape::Round with Circle.{ radius = 1 };
+    return RoundOf(holder);
+}
+
+fn main() -> i32 {
+    let mut holder = Holder.{ shape = Shape::Round with Circle.{ radius = 1 }, slot = Slot::Owned with .{ box = alloc(Box.{ value = 4 }) } };
+    Grow(&mut holder);
+    if &holder.shape is Shape::Round {
+        if shape.radius != 11 { return 1; }
+    } else {
+        return 2;
+    }
+    if ReadOwned(&holder) != 4 { return 3; }
+    if Opt(Item.{ value = 5 }) != 5 { return 4; }
+    if Opt(none) != -1 { return 5; }
+    if OptElse(Item.{ value = 6 }) != 6 { return 6; }
+    if OptElse(none) != -1 { return 7; }
+    if Reset(Shape::Count with 2) is Shape::Count { return 8; }
+    holder.shape = Shape::Empty;
+    let round = RoundOf(&mut holder);
+    round.radius = round.radius + 4;
+    if &holder.shape is Shape::Round {
+        if shape.radius != 5 { return 9; }
+    } else {
+        return 10;
+    }
+    return 0;
+}

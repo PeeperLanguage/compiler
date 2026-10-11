@@ -7,11 +7,11 @@ fn Clear(_: &mut Slot) {}
 
 fn Read(mut slot: Slot) -> i32 {
     match slot {
-        Slot::Value != none => {
+        Slot::Value with none => { return 0; }
+        Slot::Value => {
             Clear(&mut slot);
             return slot;
         }
-        Slot::Value == none => { return 0; }
         Slot::Free => { return 0; }
     }
 }

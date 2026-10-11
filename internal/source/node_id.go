@@ -21,6 +21,7 @@ const (
 	GeneratedNodeInvalid GeneratedNodeKind = iota
 	GeneratedDefaultArgument
 	GeneratedCheckedIteration
+	GeneratedCaseBinding
 )
 
 // NodeID identifies one source or generated syntax node. Parsed IDs are
@@ -53,7 +54,7 @@ func GeneratedNodeID(owner NodeID, kind GeneratedNodeKind, slot, ordinal uint64)
 		return NodeID{}
 	}
 	switch kind {
-	case GeneratedDefaultArgument, GeneratedCheckedIteration:
+	case GeneratedDefaultArgument, GeneratedCheckedIteration, GeneratedCaseBinding:
 	default:
 		return NodeID{}
 	}

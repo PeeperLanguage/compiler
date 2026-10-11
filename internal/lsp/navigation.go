@@ -90,6 +90,11 @@ func (s *ServerState) HandleRename(params RenameParams) (*WorkspaceEdit, error) 
 	if targetSym == nil || targetSym.Location == nil {
 		return nil, nil
 	}
+	// The name of a borrowed payload is the last field of the tested place;
+	// it has no declaration of its own to rename.
+	if targetSym.IsPayloadName {
+		return &WorkspaceEdit{Changes: map[DocumentURI][]TextEdit{}}, nil
+	}
 
 	changes := make(map[DocumentURI][]TextEdit)
 	for _, mod := range ctx.Modules() {

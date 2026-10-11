@@ -682,6 +682,44 @@ func (e *BinaryExpr) copyExpr(substitutions map[string]Expr, newID func(source.N
 	return &BinaryExpr{NodeIDHolder: NodeIDHolder{NodeID: id}, Left: e.Left.copyExpr(substitutions, newID, fromArgument), Op: e.Op, Right: e.Right.copyExpr(substitutions, newID, fromArgument), Location: e.Location}
 }
 
+// OrElseExpr is `value orelse fallback` or `value orelse { ... }`: the payload
+// of the optional Value, or when it holds none the Fallback value, or the
+// Block, which must leave.
+type OrElseExpr struct {
+	NodeIDHolder
+	Value    Expr
+	Fallback Expr
+	Block    *BlockStmt
+	Location *source.Location
+}
+
+func (*OrElseExpr) exprNode() {}
+func (e *OrElseExpr) forEachChild(visit func(Node)) {
+	visit(e.Value)
+	visit(e.Fallback)
+	visit(e.Block)
+}
+func (e *OrElseExpr) loc() *source.Location { return e.Location }
+func (e *OrElseExpr) exprText() string {
+	if e == nil {
+		return ""
+	}
+	return "(" + ExprText(e.Value) + " orelse " + ExprText(e.Fallback) + ")"
+}
+
+// copyExpr copies a default argument value. The resolver rejects a Block
+// there, so only Value and Fallback are copied.
+func (e *OrElseExpr) copyExpr(substitutions map[string]Expr, newID func(source.NodeID, bool) source.NodeID, fromArgument bool) Expr {
+	if e == nil {
+		return nil
+	}
+	copied := &OrElseExpr{NodeIDHolder: NodeIDHolder{NodeID: newID(e.ID(), fromArgument)}, Value: e.Value.copyExpr(substitutions, newID, fromArgument), Location: e.Location}
+	if e.Fallback != nil {
+		copied.Fallback = e.Fallback.copyExpr(substitutions, newID, fromArgument)
+	}
+	return copied
+}
+
 type CallExpr struct {
 	NodeIDHolder
 	Callee   Expr

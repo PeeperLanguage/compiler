@@ -42,15 +42,15 @@ fn ReadRight(choice: Choice) -> i32 {
 }
 
 fn ReadField(holder: Holder) -> i32 {
-    if holder.choice is Choice::Left {
-        return holder.choice.value;
+    if &holder.choice is Choice::Left {
+        return choice.value;
     }
     return 0;
 }
 
 fn ReadIndex(values: [1]Choice) -> i32 {
-    if values[0] is Choice::Right {
-        return values[0].value;
+    if &values[0] is Choice::Right {
+        return values.value;
     }
     return 0;
 }
@@ -65,8 +65,8 @@ fn ReadFlag(choice: Mixed) -> bool {
 
 fn ReadNested(outer: OuterChoice) -> i32 {
     if outer is OuterChoice::Wrapped {
-        if outer.inner is Inner::Left {
-            return outer.inner.value;
+        if &outer.inner is Inner::Left {
+            return inner.value;
         }
     }
     return 0;

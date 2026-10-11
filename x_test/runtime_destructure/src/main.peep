@@ -19,7 +19,7 @@ fn Read(box: &Box) -> i32 { return box.value; }
 fn Take(resource: Resource) -> i32 {
     match resource {
         Resource::Owned => {
-            let .{ value = owned, _ } = resource;
+            let .{ value as owned, _ } = resource;
             let n = owned.value;
             free(owned);
             return n;
@@ -29,23 +29,23 @@ fn Take(resource: Resource) -> i32 {
 }
 
 fn main() -> i32 {
-    let .{ x = a, z = c, _ } = Point.{ x = 1, y = 2, z = 3 };
+    let .{ x as a, z as c, _ } = Point.{ x = 1, y = 2, z = 3 };
     if a + c != 4 { return 1; }
 
     let mut total: i32 = 0;
     for i in 0..100 {
         let pair = MakePair(i);
-        let .{ first = head, _ } = pair;
+        let .{ first as head, _ } = pair;
         total = total + head.value - i;
         free(head);
-        let .{ second = tail, tag = tag, _ } = MakePair(i);
+        let .{ second as tail, tag, _ } = MakePair(i);
         total = total + tail.value - i - 1 + tag - 7;
     }
     if total != 0 { return 2; }
 
     let owned = Resource::Owned with .{ value = alloc(Box.{ value = 5 }), extra = alloc(Box.{ value = 9 }) };
     if owned is Resource::Owned {
-        let .{ value = v, extra = e } = owned;
+        let .{ value as v, extra as e } = owned;
         if v.value + e.value != 14 { return 3; }
     } else {
         return 4;
@@ -56,7 +56,7 @@ fn main() -> i32 {
     let borrowed = View::Borrowed with .{ value = &target, tag = 2 };
     match borrowed {
         View::Borrowed => {
-            let .{ value = view, tag = tag } = borrowed;
+            let .{ value as view, tag } = borrowed;
             if Read(view) + tag != 6 { return 6; }
             target.value = 9;
         }

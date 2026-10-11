@@ -97,8 +97,9 @@ fn main() {
 		if sourceBodyScope == nil || sourceBodyScope.Parent() == expansionScope || sourceBodyScope.Parent() == checkedScope {
 			t.Fatal("checked iteration mutated source body scope parent")
 		}
-		result := checked.Body.Stmts[0].(*ast.LetDecl)
-		call := result.Value.(*ast.CallExpr)
+		// The loop body starts with `let item = producer() orelse { break; };`.
+		item := checked.Body.Stmts[0].(*ast.LetDecl)
+		call := item.Value.(*ast.OrElseExpr).Value.(*ast.CallExpr)
 		selector := call.Callee.(*ast.SelectorExpr)
 		if module.SymbolIndex.Symbol(selector.Name) == nil {
 			t.Fatal("missing static method evidence")
@@ -106,7 +107,6 @@ fn main() {
 		if mutable, found := testEvidence(module).ReferenceArgument(selector.Expr.ID()); !found || !mutable {
 			t.Fatal("generated receiver missing ordinary mutable-reference evidence")
 		}
-		item := checked.Body.Stmts[2].(*ast.LetDecl)
 		if item.Name == sourceLoop.Value || item.Name.ID() == sourceLoop.Value.ID() {
 			t.Fatal("checked iteration reused source binding syntax")
 		}

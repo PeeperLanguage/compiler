@@ -102,6 +102,7 @@ const (
 	PANIC    Kind = "panic"
 	RELEASE  Kind = "release"
 	CATCH    Kind = "catch"
+	ORELSE   Kind = "orelse"
 	NONE     Kind = "none"
 	TRUE     Kind = "true"
 	FALSE    Kind = "false"

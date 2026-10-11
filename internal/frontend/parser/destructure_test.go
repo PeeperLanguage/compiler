@@ -8,7 +8,7 @@ import (
 )
 
 func TestParseDestructureStmt(t *testing.T) {
-	mod, diag := parseTestModule(`fn main() { let .{ first = a, second = b, _ } = make(); let .{ x = c } = point; }`)
+	mod, diag := parseTestModule(`fn main() { let .{ first as a, second as b, _ } = make(); let .{ x as c } = point; }`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
@@ -29,7 +29,7 @@ func TestParseDestructureStmt(t *testing.T) {
 }
 
 func TestParseDestructureRejectsMisplacedRest(t *testing.T) {
-	_, diag := parseTestModule(`fn main() { let .{ _, x = a } = point; }`)
+	_, diag := parseTestModule(`fn main() { let .{ _, x as a } = point; }`)
 	if out := diag.EmitAllToString(); !strings.Contains(out, "`_` must be the last destructure item") {
 		t.Fatalf("expected misplaced rest diagnostic, got:\n%s", out)
 	}

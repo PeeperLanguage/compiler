@@ -7,7 +7,7 @@ fn BreakMatch(resource: TransferResource) {
     for i in 0..1 {
         match resource {
             TransferResource::Owned => {
-                let .{ value = owned } = resource;
+                let .{ value as owned } = resource;
                 free(owned);
                 break;
             }
@@ -24,7 +24,7 @@ fn ContinueMatch() {
         let resource = TransferResource::Owned with .{ value = alloc(i) };
         match resource {
             TransferResource::Owned => {
-                let .{ value = owned } = resource;
+                let .{ value as owned } = resource;
                 free(owned);
                 continue;
             }
@@ -41,7 +41,7 @@ fn NestedBreakMatch() {
             let resource = TransferResource::Owned with .{ value = alloc(outer + inner) };
             match resource {
                 TransferResource::Owned => {
-                    let .{ value = owned } = resource;
+                    let .{ value as owned } = resource;
                     free(owned);
                     break;
                 }

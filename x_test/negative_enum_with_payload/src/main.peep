@@ -12,7 +12,7 @@ fn Check() {
 fn Inspect(result: Result) {
     match result {
         Result::Failed => {
-            let .{ value = payload } = result;
+            let .{ value as payload } = result;
             println(payload);
         }
         Result::Pending => {}

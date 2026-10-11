@@ -233,6 +233,7 @@ type Expr interface {
 	ExprType() typeinfo.Type
 	ExprPlace() *Place
 	CaseCarrierType() typeinfo.Type
+	PayloadPath() []int
 	Conversion() *typeinfo.Conversion
 	ImplicitReferenceType() typeinfo.Type
 	InterfaceImplementations() []InterfaceImplementation
@@ -254,10 +255,12 @@ func (s StmtInfo) SourceInfo() ir.SourceInfo { return s.Source }
 type ExprInfo struct {
 	Source ir.SourceInfo
 	Type   typeinfo.Type
-	// CaseCarrier is set when the expression names a place narrowed to one
-	// enum case: Type is that case's payload and CaseCarrier the place's own
-	// type. Flow analysis verifies the case at this use.
+	// CaseCarrier is set when the expression reads the payload of a place
+	// that holds one case: Type is that payload, CaseCarrier the place's own
+	// type, and CasePath the case read through at each level from one to the
+	// other. Flow analysis verifies the cases at this use.
 	CaseCarrier                typeinfo.Type
+	CasePath                   []int
 	ConversionInfo             *typeinfo.Conversion
 	Use                        typeinfo.UseKind
 	HasUse                     bool
@@ -274,6 +277,7 @@ func (e ExprInfo) SourceInfo() ir.SourceInfo            { return e.Source }
 func (e ExprInfo) ExprType() typeinfo.Type              { return e.Type }
 func (e ExprInfo) ExprPlace() *Place                    { return e.Place }
 func (e ExprInfo) CaseCarrierType() typeinfo.Type       { return e.CaseCarrier }
+func (e ExprInfo) PayloadPath() []int                   { return e.CasePath }
 func (e ExprInfo) Conversion() *typeinfo.Conversion     { return e.ConversionInfo }
 func (e ExprInfo) ImplicitReferenceType() typeinfo.Type { return e.ImplicitReference }
 
@@ -317,8 +321,11 @@ const (
 )
 
 type PlaceProjection struct {
-	Source          ir.SourceInfo
-	BaseSource      ir.SourceInfo
+	Source     ir.SourceInfo
+	BaseSource ir.SourceInfo
+	// BasePath is the payload path of the base: the projection starts inside
+	// the payload the base reads.
+	BasePath        []int
 	Kind            PlaceProjectionKind
 	Name            string
 	Field           int
@@ -416,6 +423,20 @@ type ArmCase struct {
 	Case         int
 	TestsPayload bool
 	PayloadCase  int
+}
+
+// PayloadPath is the case to read through at each level to reach the payload
+// of what an arm with these cases selects: its case, and the payload case too
+// when it selects exactly one.
+func PayloadPath(cases []ArmCase) []int {
+	if len(cases) == 0 {
+		return nil
+	}
+	path := []int{cases[0].Case}
+	if len(cases) == 1 && cases[0].TestsPayload {
+		path = append(path, cases[0].PayloadCase)
+	}
+	return path
 }
 
 // MatchArm runs Body for each of Cases: one for a named arm, everything no

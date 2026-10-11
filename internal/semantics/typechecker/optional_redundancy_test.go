@@ -25,8 +25,7 @@ func TestOptionalForwardGenericField(t *testing.T) {
 				source := strings.Join([]string{declarations[first], declarations[second], declarations[3-first-second]}, "\n")
 				_, diag := checkFlowSource(t, source+`
 fn Read(box: &Early) -> i32 {
- if box.value == none { return 0; }
- return box.value;
+ return box.value orelse 0;
 }`)
 				if diag.HasErrors() {
 					t.Fatalf("forward generic field must need one proof:\n%s", diag.EmitAllToString())

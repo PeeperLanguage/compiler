@@ -3,16 +3,12 @@ enum State {
     Idle
 }
 
-struct Machine { state: State }
+fn Reset(_: &mut State) {}
 
-fn Reset(machine: &mut Machine) {
-    machine.state = State::Idle;
-}
-
-fn Ticks(mut machine: Machine) -> i32 {
-    if machine.state is State::Running {
-        Reset(&mut machine);
-        return machine.state.ticks;
+fn Ticks(mut state: State) -> i32 {
+    if state is State::Running {
+        Reset(&mut state);
+        return state.ticks;
     }
     return 0;
 }

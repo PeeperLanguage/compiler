@@ -6,8 +6,7 @@ struct Box<T> { value: ?Later }
 type Later = ?i32;
 
 fn Read(box: &Early) -> i32 {
-    if box.value == none { return 0; }
-    return box.value;
+    return box.value orelse 0;
 }
 
 type Linked = Node<i32>;

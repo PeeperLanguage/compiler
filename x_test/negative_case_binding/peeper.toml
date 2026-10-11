@@ -1,0 +1,7 @@
+name = "negative_case_binding"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["cannot be used as Shape", "optional payload use requires a presence proof", "`orelse` needs an optional value, got i32", "the block after `orelse` must leave", "fallback must be i32, got bool"]

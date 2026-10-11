@@ -1,0 +1,6 @@
+name = "runtime_deferred_init_match"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "success"

@@ -39,8 +39,7 @@ func (c *checker) checkFunction(sym *symbols.Symbol, fn *ast.FnDecl) {
 	}
 	c.checkDefaultParameters(funcScope, fn, fnType)
 	if fn.Body != nil {
-		c.narrowed = make(map[narrowedPlace][]int)
-		c.aliases = make(map[*symbols.Symbol]narrowedPlace)
+		c.returnType = fnType.Return
 		c.checkBlock(funcScope, fn.Body, fnType.Return)
 	}
 }

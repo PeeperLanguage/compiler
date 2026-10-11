@@ -369,6 +369,12 @@ func (l *lowerer) lowerCFGStmt(node thir.Node) bool {
 	switch statement := node.(type) {
 	case *thir.Binding:
 		if statement.Value == nil {
+			// A local declared without a value still gets storage here: its
+			// first assignment may sit in a block that is written out after a
+			// block that reads it.
+			if statement.Symbol != nil {
+				l.assignSymbol(statement.Symbol, &ir.ZeroValue{Type: typelower.Type(l.input.Types, l.input.Diagnostics, statement.Symbol.Type)})
+			}
 			return true
 		}
 		if discardBinding(l.input.SymbolIndex, statement) {

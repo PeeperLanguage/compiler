@@ -224,7 +224,7 @@ func TestInitializationDefinesDestructureBindings(t *testing.T) {
 fn choose(result: Result) -> i32 {
 	match result {
 		Result::Ok => {
-			let .{ value = payload } = result;
+			let .{ value as payload } = result;
 			return payload;
 		}
 		Result::Pending => {

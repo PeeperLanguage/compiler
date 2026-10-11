@@ -1,7 +1,9 @@
 package typechecker
 
 import (
+	"cmp"
 	"fmt"
+	"slices"
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
@@ -44,6 +46,30 @@ type thirBuilder struct {
 	symbolIndex       *symbols.Index
 	typing            *evidence
 	constantCondition func(ast.Expr) (*bool, []*diagnostics.Diagnostic)
+	// enclosing is the scope of the innermost block being built.
+	enclosing *symbols.Scope
+	// hoisted holds what the `orelse` expressions of the statement being built
+	// must run before it.
+	hoisted hoist
+}
+
+// hoist is the statements that run before the one that contains their
+// `orelse` expressions, and the carrier of the last of those, which builds
+// the block that keeps them together.
+type hoist struct {
+	stmts   []thir.Stmt
+	carrier *caseCarrier
+}
+
+// endHoist closes the hoist of built, the statement just built, restores
+// outer, and returns built behind what it hoisted.
+func (b *thirBuilder) endHoist(outer hoist, built thir.Stmt) thir.Stmt {
+	hoisted := b.hoisted
+	b.hoisted = outer
+	if len(hoisted.stmts) == 0 || built == nil {
+		return built
+	}
+	return hoisted.carrier.block(append(hoisted.stmts, built)...)
 }
 
 func (b *thirBuilder) function(source *ast.FnDecl) *thir.Function {
@@ -84,15 +110,62 @@ func (b *thirBuilder) block(source *ast.BlockStmt) *thir.Block {
 		return nil
 	}
 	block := &thir.Block{StmtInfo: stmtInfo(source), Scope: b.scope(source), Stmts: make([]thir.Stmt, 0, len(source.Stmts))}
-	for _, statement := range source.Stmts {
+	outer := b.enclosing
+	b.enclosing = block.Scope
+	defer func() { b.enclosing = outer }()
+	b.statements(block, source.Stmts)
+	return block
+}
+
+// statements builds stmts into block. A guard the resolver gave the rest of
+// the block to (a scope of its own, kept under the guard) is built with that
+// rest as one inner block.
+func (b *thirBuilder) statements(block *thir.Block, stmts []ast.Stmt) {
+	for index, statement := range stmts {
+		guard, isIf := statement.(*ast.IfStmt)
+		if rest := b.scope(guard); isIf && rest != nil {
+			source := ir.SourceInfo{NodeID: sourceid.GeneratedNodeID(guard.ID(), sourceid.GeneratedCaseBinding, 1, 1), Location: ast.LocOf(guard)}
+			guarded := &thir.Block{StmtInfo: thir.StmtInfo{Source: source}, Scope: rest}
+			b.symbolIndex.SetScopeID(source.NodeID, rest)
+			outer := b.enclosing
+			b.enclosing = rest
+			outerHoist := b.hoisted
+			b.hoisted = hoist{}
+			guarded.Stmts = append(guarded.Stmts, b.endHoist(outerHoist, b.ifStatement(guard, b.payloadName(guard))))
+			b.statements(guarded, stmts[index+1:])
+			b.enclosing = outer
+			block.Stmts = append(block.Stmts, guarded)
+			return
+		}
 		if lowered := b.statement(statement); lowered != nil {
 			block.Stmts = append(block.Stmts, lowered)
 		}
 	}
-	return block
 }
 
+// payloadName returns the reference the resolver declared for owner (an arm,
+// a guarded block, or a guard for the rest of its block) to name the payload
+// of a borrowed subject, when the code uses it; an unused one is never built.
+// A name that reads a variable's payload in place needs nothing built.
+func (b *thirBuilder) payloadName(owner ast.Node) *symbols.Symbol {
+	name := b.symbol(owner)
+	if name == nil || !name.IsPayloadName || name.AliasOf != nil || !b.symbolIndex.IsUsed(name) {
+		return nil
+	}
+	if typ, typed := symbols.GetSymbolType(name); !typed || typeinfo.IsInvalidOrUnknown(typ) {
+		return nil
+	}
+	return name
+}
+
+// statement builds one statement, behind what its `orelse` expressions hoist.
 func (b *thirBuilder) statement(statement ast.Stmt) thir.Stmt {
+	outer := b.hoisted
+	b.hoisted = hoist{}
+	return b.endHoist(outer, b.plainStatement(statement))
+}
+
+func (b *thirBuilder) plainStatement(statement ast.Stmt) thir.Stmt {
 	switch node := statement.(type) {
 	case nil:
 		return nil
@@ -103,16 +176,7 @@ func (b *thirBuilder) statement(statement ast.Stmt) thir.Stmt {
 	case *ast.ConstDecl:
 		return &thir.Binding{StmtInfo: stmtInfo(node), Symbol: b.symbol(node.Name), IsConstant: true, IsInferred: node.Type == nil, Value: b.expression(node.Value)}
 	case *ast.DestructureStmt:
-		statement := &thir.Destructure{StmtInfo: stmtInfo(node), Value: b.expression(node.Value)}
-		for _, field := range node.Fields {
-			// A field the checker rejected has no evidence and defines nothing.
-			if access, ok := b.typing.StructField(field.Name.ID()); ok {
-				statement.Bindings = append(statement.Bindings, thir.DestructureBinding{
-					Source: sourceInfo(field.Binding), Field: access.Field, Type: access.Type, Symbol: b.symbol(field.Binding),
-				})
-			}
-		}
-		return statement
+		return &thir.Destructure{StmtInfo: stmtInfo(node), Value: b.expression(node.Value), Bindings: b.destructureBindings(node.Fields)}
 	case *ast.ExprStmt:
 		return &thir.ExprStmt{StmtInfo: stmtInfo(node), Value: b.expression(node.Expr)}
 	case *ast.AssignStmt:
@@ -120,13 +184,7 @@ func (b *thirBuilder) statement(statement ast.Stmt) thir.Stmt {
 	case *ast.ReturnStmt:
 		return &thir.Return{StmtInfo: stmtInfo(node), Value: b.expression(node.Value)}
 	case *ast.IfStmt:
-		statement := &thir.If{StmtInfo: stmtInfo(node), Condition: b.expression(node.Cond)}
-		if b.constantCondition != nil {
-			statement.ConstantCondition, statement.ConditionDiagnostics = b.constantCondition(node.Cond)
-		}
-		statement.Then = b.block(node.Then)
-		statement.Else = b.statement(node.Else)
-		return statement
+		return b.ifStatement(node, nil)
 	case *ast.ForStmt:
 		return b.forStatement(node)
 	case *ast.BreakStmt:
@@ -180,27 +238,411 @@ func (b *thirBuilder) forStatement(source *ast.ForStmt) *thir.For {
 	return loop
 }
 
-func (b *thirBuilder) matchStatement(source *ast.MatchStmt) thir.Stmt {
-	match := &thir.Match{StmtInfo: stmtInfo(source), Subject: b.expression(source.Subject)}
-	if b.typing == nil {
-		return match
+// ifStatement builds an `if`. When a block it guards uses its payload name
+// (rest is the one for the code after a guard), the test becomes a match that
+// defines the names.
+func (b *thirBuilder) ifStatement(source *ast.IfStmt, rest *symbols.Symbol) thir.Stmt {
+	then := b.payloadName(source.Then)
+	var otherwise *symbols.Symbol
+	elseBlock, hasElseBlock := source.Else.(*ast.BlockStmt)
+	if hasElseBlock {
+		otherwise = b.payloadName(elseBlock)
 	}
-	evidence, found := b.typing.Match(source.ID())
+	if then != nil || otherwise != nil || rest != nil {
+		return b.boundIfStatement(source, then, otherwise, rest)
+	}
+	statement := &thir.If{StmtInfo: stmtInfo(source), Condition: b.expression(source.Cond)}
+	if b.constantCondition != nil {
+		statement.ConstantCondition, statement.ConditionDiagnostics = b.constantCondition(source.Cond)
+	}
+	statement.Then = b.block(source.Then)
+	statement.Else = b.statement(source.Else)
+	return statement
+}
+
+// destructureBindings builds the locals of `.{ field, field as name }`.
+func (b *thirBuilder) destructureBindings(fields []ast.DestructureField) []thir.DestructureBinding {
+	var bindings []thir.DestructureBinding
+	for _, field := range fields {
+		// A field the checker rejected has no evidence and defines nothing.
+		if access, ok := b.typing.StructField(field.Name.ID()); ok {
+			bindings = append(bindings, thir.DestructureBinding{
+				Source: sourceInfo(field.Binding), Field: access.Field, Type: access.Type, Symbol: b.symbol(field.Binding),
+			})
+		}
+	}
+	return bindings
+}
+
+func (b *thirBuilder) matchStatement(source *ast.MatchStmt) thir.Stmt {
+	match := &thir.Match{StmtInfo: stmtInfo(source)}
+	var evidence Match
+	found := false
+	if b.typing != nil {
+		evidence, found = b.typing.Match(source.ID())
+	}
 	if !found {
+		match.Subject = b.expression(source.Subject)
 		return match
 	}
 	match.EnumType = evidence.EnumType
 	match.CaseCount = evidence.CaseCount
-	for index, armCases := range evidence.ArmCases {
-		if index >= len(source.Arms) || source.Arms[index] == nil {
-			break
+	// An arm that names a payload starts with a statement that takes it, which
+	// the carrier builds; so does a match with no place to read payloads from.
+	arms := source.Arms[:min(len(source.Arms), len(evidence.ArmCases))]
+	var carrier *caseCarrier
+	if evidence.Spills || slices.ContainsFunc(arms, func(arm *ast.MatchArm) bool {
+		return arm.Pattern.Taking() != nil || b.payloadName(arm) != nil
+	}) {
+		if variable, isVariable := evidence.Subject.(*ast.Ident); isVariable && evidence.Borrow == nil {
+			carrier = b.payloadsOf(source, variable)
+		} else {
+			carrier = b.caseCarrier(source, evidence.Subject, evidence.Borrow)
 		}
-		sourceArm := source.Arms[index]
+	}
+	if carrier != nil {
+		match.Subject = carrier.subject
+	} else {
+		match.Subject = b.expression(evidence.Subject)
+	}
+	for index, arm := range arms {
 		match.Arms = append(match.Arms, thir.MatchArm{
-			Source: sourceInfo(sourceArm), Cases: armCases, Body: b.block(sourceArm.Body),
+			Source: sourceInfo(arm), Cases: evidence.ArmCases[index], Body: b.block(arm.Body),
 		})
 	}
-	return match
+	if carrier == nil {
+		return match
+	}
+	for index, arm := range arms {
+		switch taking := arm.Pattern.Taking(); {
+		case taking == nil:
+			carrier.startArm(&match.Arms[index], b.payloadName(arm), false)
+		case taking.Name != nil:
+			carrier.startArm(&match.Arms[index], b.symbol(taking.Name), false)
+		default:
+			payload := evidence.ArmPayloads[index]
+			carrier.prepend(&match.Arms[index], &thir.Destructure{
+				StmtInfo: thir.StmtInfo{Source: carrier.source()}, Value: carrier.take(payload, match.Arms[index].Cases), Bindings: b.destructureBindings(taking.Fields),
+			}, payload)
+		}
+	}
+	return carrier.wrap(match)
+}
+
+// boundIfStatement builds an `if` whose test names a payload as a match on
+// the tested value: one arm for the then block, one for the rest. then and
+// otherwise are the payload names of the two blocks; rest is the name for the
+// code after the statement, set in the arm that does not leave.
+func (b *thirBuilder) boundIfStatement(source *ast.IfStmt, then, otherwise, rest *symbols.Symbol) thir.Stmt {
+	test, tested := b.typing.CaseTest(source.Cond.ID())
+	if !tested {
+		return &thir.InvalidStmt{StmtInfo: stmtInfo(source), Message: "invalid case test"}
+	}
+	carrier := b.caseCarrier(source, test.Subject, test.Borrow)
+	if carrier == nil {
+		return &thir.InvalidStmt{StmtInfo: stmtInfo(source), Message: "invalid case test"}
+	}
+	descriptor, _ := typeinfo.VariantDescriptorOf(carrier.typ)
+	var held, others []thir.ArmCase
+	for caseIndex := range descriptor.Cases {
+		if caseIndex == test.Case {
+			held = append(held, thir.ArmCase{Case: caseIndex})
+		} else {
+			others = append(others, thir.ArmCase{Case: caseIndex})
+		}
+	}
+	if !test.MatchesWhenTrue {
+		held, others = others, held
+	}
+	var elseBody *thir.Block
+	switch elseStmt := source.Else.(type) {
+	case *ast.BlockStmt:
+		elseBody = b.block(elseStmt)
+	case *ast.IfStmt:
+		elseBody = carrier.block(b.statement(elseStmt))
+	default:
+		elseBody = carrier.block()
+	}
+	match := &thir.Match{
+		StmtInfo: stmtInfo(source), Subject: carrier.subject, EnumType: carrier.typ, CaseCount: len(descriptor.Cases),
+		Arms: []thir.MatchArm{
+			{Source: sourceInfo(source.Then), Cases: held, Body: b.block(source.Then)},
+			{Source: elseBody.Source, Cases: others, Body: elseBody},
+		},
+	}
+	carrier.startArm(&match.Arms[0], then, false)
+	if rest == nil {
+		carrier.startArm(&match.Arms[1], otherwise, false)
+		return carrier.wrap(match)
+	}
+	carrier.startArm(&match.Arms[1], rest, true)
+	return carrier.wrap(match, &thir.Binding{StmtInfo: thir.StmtInfo{Source: carrier.source()}, Symbol: rest})
+}
+
+// orElse builds `value orelse fallback` as statements that run before the one
+// it is part of: a hidden local is declared; when value holds none it gets the
+// fallback, or the fallback block leaves; otherwise it gets the payload. The
+// expression is then a read of that local.
+func (b *thirBuilder) orElse(source *ast.OrElseExpr, info thir.ExprInfo) thir.Expr {
+	test, tested := b.typing.CaseTest(source.ID())
+	if !tested || info.Type == nil || typeinfo.IsInvalidOrUnknown(info.Type) {
+		return &thir.InvalidExpr{ExprInfo: info, Message: "invalid orelse"}
+	}
+	carrier := b.caseCarrier(source, test.Subject, test.Borrow)
+	if carrier == nil {
+		return &thir.InvalidExpr{ExprInfo: info, Message: "invalid orelse"}
+	}
+	result := carrier.local("$orelse", info.Type)
+	var none *thir.Block
+	if source.Block != nil {
+		none = b.block(source.Block)
+	} else {
+		// The fallback runs only when needed, and so does what it hoists.
+		outer := b.hoisted
+		b.hoisted = hoist{}
+		fallback := carrier.assign(result, b.expression(source.Fallback))
+		none = carrier.block(b.endHoist(outer, fallback))
+	}
+	present := carrier.block()
+	match := &thir.Match{
+		StmtInfo: thir.StmtInfo{Source: carrier.source()}, Subject: carrier.subject, EnumType: carrier.typ, CaseCount: 2,
+		Arms: []thir.MatchArm{
+			{Source: none.Source, Cases: []thir.ArmCase{{Case: ir.OptionalAbsentCase}}, Body: none},
+			{Source: present.Source, Cases: []thir.ArmCase{{Case: ir.OptionalPresentCase}}, Body: present},
+		},
+	}
+	carrier.prepend(&match.Arms[0], nil, nil)
+	carrier.startArm(&match.Arms[1], result, true)
+	if carrier.spill != nil {
+		b.hoisted.stmts = append(b.hoisted.stmts, carrier.spill)
+	}
+	b.hoisted.stmts = append(b.hoisted.stmts, &thir.Binding{StmtInfo: thir.StmtInfo{Source: carrier.source()}, Symbol: result}, match)
+	b.hoisted.carrier = carrier
+	info.Place = &thir.Place{Root: result, Type: info.Type}
+	return &thir.Ident{ExprInfo: info, Name: result.Name, Symbol: result}
+}
+
+// caseCarrier builds every statement that reads a case's payload under a name
+// (a pattern's name, the name of a borrowed payload, or the one `orelse`
+// defines) in one shape: a match selects the case, and a name is set from the
+// payload only in the arm that selects that case. A variable is matched where
+// it is and names take the payload out of it. Any other value is first moved
+// or copied into a hidden local, the carrier, and names are taken out of
+// that. A borrowed subject (`&place`) is matched in place, and names are
+// references into it.
+type caseCarrier struct {
+	statement ast.Node
+	// typ is the type of the value matched: the enum or the optional.
+	typ typeinfo.Type
+	// subject is what the match reads whole: the carrier, or the place.
+	subject thir.Expr
+	// symbol is the carrier, and spill stores the subject in it. Both are nil
+	// when the payload is read where it is: from variable, or for a borrowed
+	// subject through references, mode saying which kind.
+	symbol   *symbols.Symbol
+	spill    *thir.Binding
+	variable *symbols.Symbol
+	mode     thir.AddressMode
+
+	index     *symbols.Index
+	enclosing *symbols.Scope
+	ordinal   uint64
+}
+
+// caseCarrier returns how statement takes subject apart (borrow is set when
+// it is tested through a reference), or nil when the checker could not type
+// the subject.
+func (b *thirBuilder) caseCarrier(statement ast.Node, subject ast.Expr, borrow *typeinfo.RefType) *caseCarrier {
+	c := &caseCarrier{statement: statement, index: b.symbolIndex, enclosing: b.enclosing, typ: b.typing.ExprType(subject.ID())}
+	if typeinfo.IsInvalidOrUnknown(c.typ) {
+		return nil
+	}
+	if borrow != nil {
+		c.subject, c.mode = b.expression(subject), thir.AddressShared
+		if borrow.IsMutable {
+			c.mode = thir.AddressMutable
+		}
+		return c
+	}
+	c.symbol = c.local("$case", c.typ)
+	source := c.source()
+	value := b.expression(subject)
+	c.spill = &thir.Binding{StmtInfo: thir.StmtInfo{Source: ir.SourceInfo{NodeID: source.NodeID, Location: value.SourceInfo().Location}}, Symbol: c.symbol, Value: value}
+	c.subject = c.ident(c.symbol, c.typ)
+	return c
+}
+
+// local declares a hidden local of the scope the statement is in. A rebuild
+// of the same scope finds the one declared before.
+func (c *caseCarrier) local(prefix string, typ typeinfo.Type) *symbols.Symbol {
+	name := fmt.Sprintf("%s.%v", prefix, c.statement.ID())
+	if existing, found := c.enclosing.LookupLocal(name); found {
+		return existing
+	}
+	local := symbols.New(symbols.SourceSymbolID(c.source().NodeID), name, symbols.SymbolVar, c.statement, ast.LocOf(c.statement))
+	local.BindType(typ)
+	c.index.MarkUsed(local)
+	if err := c.enclosing.Declare(local); err != nil {
+		panic(err)
+	}
+	return local
+}
+
+// payloadsOf returns how a match takes payloads out of the variable it
+// matches, where the variable is, or nil when the checker could not type it.
+func (b *thirBuilder) payloadsOf(statement *ast.MatchStmt, variable *ast.Ident) *caseCarrier {
+	typ := b.typing.ExprType(variable.ID())
+	if typeinfo.IsInvalidOrUnknown(typ) {
+		return nil
+	}
+	return &caseCarrier{
+		statement: statement, index: b.symbolIndex, enclosing: b.enclosing,
+		typ: typ, variable: b.symbol(variable).Variable(), subject: b.expression(variable),
+	}
+}
+
+// source identifies one node built for the statement.
+func (c *caseCarrier) source() ir.SourceInfo {
+	c.ordinal++
+	return ir.SourceInfo{
+		NodeID:   sourceid.GeneratedNodeID(c.statement.ID(), sourceid.GeneratedCaseBinding, 0, c.ordinal),
+		Location: ast.LocOf(c.statement),
+	}
+}
+
+// block is a built block inside the statement's scope. Its own scope holds
+// at most a dropped carrier; the carrier and the names belong to the scopes
+// the resolver gave them.
+func (c *caseCarrier) block(stmts ...thir.Stmt) *thir.Block {
+	block := &thir.Block{StmtInfo: thir.StmtInfo{Source: c.source()}, Scope: symbols.NewScope(c.enclosing), Stmts: stmts}
+	c.index.SetScopeID(block.Source.NodeID, block.Scope)
+	return block
+}
+
+func (c *caseCarrier) ident(symbol *symbols.Symbol, typ typeinfo.Type) *thir.Ident {
+	info := thir.ExprInfo{Source: c.source(), Type: typ, Place: &thir.Place{Root: symbol, Type: typ}}
+	return &thir.Ident{ExprInfo: info, Name: symbol.Name, Symbol: symbol}
+}
+
+// take reads the payload of what an arm with cases selects, as a name of type
+// nameType gets it: out of the carrier or the variable, or borrowed from the
+// place.
+func (c *caseCarrier) take(nameType typeinfo.Type, cases []thir.ArmCase) thir.Expr {
+	path := append(slices.Clone(c.subject.PayloadPath()), thir.PayloadPath(cases)...)
+	if c.symbol != nil || c.variable != nil {
+		read := c.ident(cmp.Or(c.symbol, c.variable), nameType)
+		read.CaseCarrier, _ = symbols.GetSymbolType(read.Symbol)
+		read.CasePath = path
+		return read
+	}
+	payload, _, _ := typeinfo.ReferenceTarget(nameType)
+	read := c.reread(c.subject, payload, path)
+	return &thir.Address{ExprInfo: thir.ExprInfo{Source: c.source(), Type: nameType}, Mode: c.mode, Value: read}
+}
+
+// reread reads the borrowed place (a variable, its fields, and elements picked
+// by a number or a variable) again; the match read it first. With payload set,
+// it reads the payload reached through path.
+func (c *caseCarrier) reread(place thir.Expr, payload typeinfo.Type, path []int) thir.Expr {
+	// retarget gives a read its own identity and, with payload set, makes it
+	// read the payload; base and index are its rereads, nil for a variable.
+	retarget := func(info *thir.ExprInfo, base, index thir.Expr) {
+		original := *info
+		info.Source = c.source()
+		if payload != nil {
+			info.Type, info.CaseCarrier, info.CasePath = payload, original.StoredType(), path
+		}
+		if base == nil {
+			info.Place = &thir.Place{Root: original.Place.Root, Type: info.Type}
+			return
+		}
+		step := original.Place.Projections[len(original.Place.Projections)-1]
+		step.Source, step.BaseSource = info.Source, base.SourceInfo()
+		if index != nil {
+			step.Index = index
+		}
+		info.Place = projectPlace(base, step, info.Type)
+	}
+	switch original := place.(type) {
+	case *thir.Ident:
+		read := *original
+		retarget(&read.ExprInfo, nil, nil)
+		return &read
+	case *thir.Field:
+		read := *original
+		read.Base = c.reread(original.Base, nil, nil)
+		retarget(&read.ExprInfo, read.Base, nil)
+		return &read
+	case *thir.Index:
+		read := *original
+		read.Base = c.reread(original.Base, nil, nil)
+		if index, isVariable := original.Index.(*thir.Ident); isVariable {
+			read.Index = c.reread(index, nil, nil)
+		} else {
+			number := *original.Index.(*thir.NumberLiteral)
+			number.Source = c.source()
+			read.Index = &number
+		}
+		retarget(&read.ExprInfo, read.Base, read.Index)
+		return &read
+	default:
+		panic(fmt.Sprintf("borrowed subject %T cannot be read twice", place))
+	}
+}
+
+func (c *caseCarrier) assign(target *symbols.Symbol, value thir.Expr) *thir.Assign {
+	typ, _ := symbols.GetSymbolType(target)
+	return &thir.Assign{StmtInfo: thir.StmtInfo{Source: c.source()}, Target: c.ident(target, typ), Value: value}
+}
+
+// startArm starts arm by setting name from the payload: defining it, or with
+// declared, assigning it (it is declared outside the match). A nil name, or
+// one the checker could not type, gets nothing.
+func (c *caseCarrier) startArm(arm *thir.MatchArm, name *symbols.Symbol, declared bool) {
+	nameType, typed := symbols.GetSymbolType(name)
+	if !typed || typeinfo.IsInvalidOrUnknown(nameType) {
+		c.prepend(arm, nil, nil)
+		return
+	}
+	var set thir.Stmt
+	if declared {
+		set = c.assign(name, c.take(nameType, arm.Cases))
+	} else {
+		set = &thir.Binding{StmtInfo: thir.StmtInfo{Source: c.source()}, Symbol: name, Value: c.take(nameType, arm.Cases)}
+	}
+	c.prepend(arm, set, nameType)
+}
+
+// prepend puts take (a statement that takes the payload as type taken, or
+// nil) at the start of arm. A carrier that take did not move is then dropped,
+// so every arm leaves an owning carrier consumed and the arms agree where
+// they join.
+func (c *caseCarrier) prepend(arm *thir.MatchArm, take thir.Stmt, taken typeinfo.Type) {
+	var prologue []thir.Stmt
+	if take != nil {
+		prologue = append(prologue, take)
+	}
+	if c.symbol != nil && !typeinfo.IsMoveTracked(taken) && typeinfo.IsMoveTracked(c.typ) {
+		// `let _ = carrier;`: the arm's scope drops it.
+		source := c.source()
+		discard := symbols.New(symbols.SourceSymbolID(source.NodeID), "_", symbols.SymbolVar, c.statement, source.Location)
+		discard.BindType(c.typ)
+		if err := arm.Body.Scope.Declare(discard); err != nil {
+			panic(err)
+		}
+		prologue = append(prologue, &thir.Binding{StmtInfo: thir.StmtInfo{Source: source}, Symbol: discard, Value: c.ident(c.symbol, c.typ)})
+	}
+	arm.Body.Stmts = append(prologue, arm.Body.Stmts...)
+}
+
+// wrap keeps the statements together: storing the subject in the carrier,
+// the declared ones, then match. The block declares nothing itself.
+func (c *caseCarrier) wrap(match *thir.Match, declared ...thir.Stmt) *thir.Block {
+	var stmts []thir.Stmt
+	if c.spill != nil {
+		stmts = append(stmts, c.spill)
+	}
+	return c.block(append(append(stmts, declared...), match)...)
 }
 
 func (b *thirBuilder) expression(expression ast.Expr) thir.Expr {
@@ -235,7 +677,9 @@ func (b *thirBuilder) expression(expression ast.Expr) thir.Expr {
 	case *ast.NoneLit:
 		result = &thir.NoneLiteral{ExprInfo: info}
 	case *ast.Ident:
-		symbol := b.symbol(node)
+		// A payload name stands for its variable; the use is marked as a
+		// payload read (CaseCarrier).
+		symbol := b.symbol(node).Variable()
 		if info.Type == nil && symbol != nil {
 			info.Type, _ = symbols.GetSymbolType(symbol)
 		}
@@ -281,12 +725,25 @@ func (b *thirBuilder) expression(expression ast.Expr) thir.Expr {
 		result = &thir.Unary{ExprInfo: info, Op: node.Op, Value: b.expression(node.Expr)}
 	case *ast.BinaryExpr:
 		isStringConcatenation := b.typing != nil && b.typing.StringConcatenation(node.ID())
-		result = &thir.Binary{
-			ExprInfo: info, Left: b.expression(node.Left), Op: node.Op,
-			Right: b.expression(node.Right), IsStringConcatenation: isStringConcatenation, Test: b.caseTest(node.ID()),
+		left, right := node.Left, node.Right
+		// A `none` test reads its subject in place, borrowed or not.
+		if test, tested := b.typing.CaseTest(node.ID()); tested && isNoneExpr(left) {
+			right = test.Subject
+		} else if tested {
+			left = test.Subject
 		}
+		result = &thir.Binary{
+			ExprInfo: info, Left: b.expression(left), Op: node.Op,
+			Right: b.expression(right), IsStringConcatenation: isStringConcatenation, Test: b.caseTest(node.ID()),
+		}
+	case *ast.OrElseExpr:
+		result = b.orElse(node, info)
 	case *ast.IsExpr:
-		result = &thir.Is{ExprInfo: info, Value: b.expression(node.Value), Test: b.caseTest(node.ID())}
+		value := node.Value
+		if test, tested := b.typing.CaseTest(node.ID()); tested {
+			value = test.Subject
+		}
+		result = &thir.Is{ExprInfo: info, Value: b.expression(value), Test: b.caseTest(node.ID())}
 	case *ast.CallExpr:
 		result = b.callExpression(node, info)
 	case *ast.FreeExpr:
@@ -401,6 +858,7 @@ func (b *thirBuilder) expressionInfo(expression ast.Expr) thir.ExprInfo {
 	}
 	info.Type = b.typing.ExprType(expression.ID())
 	info.CaseCarrier = b.typing.CaseCarrier(expression.ID())
+	info.CasePath = b.typing.CasePath(expression.ID())
 	if conversion, found := b.typing.ImplicitConversion(expression.ID()); found {
 		copied := conversion
 		info.ConversionInfo = &copied
@@ -431,7 +889,7 @@ func (b *thirBuilder) caseTest(id sourceid.NodeID) *thir.CaseTest {
 		return nil
 	}
 	return &thir.CaseTest{
-		SubjectID: test.SubjectID, Case: test.Case, MatchesWhenTrue: test.MatchesWhenTrue,
+		SubjectID: test.Subject.ID(), Case: test.Case, MatchesWhenTrue: test.MatchesWhenTrue,
 		CaseCount: test.CaseCount, Family: test.Family,
 	}
 }
@@ -440,6 +898,7 @@ func projectPlace(base thir.Expr, projection thir.PlaceProjection, typ typeinfo.
 	if base == nil {
 		return nil
 	}
+	projection.BasePath = base.PayloadPath()
 	if existing := base.ExprPlace(); existing != nil {
 		projected := &thir.Place{
 			Root: existing.Root, Temporary: existing.Temporary, Type: typ,

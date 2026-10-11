@@ -9,7 +9,7 @@ import (
 )
 
 func storageAccessForUse(typ typeinfo.Type, use typeinfo.UseKind) storageAccess {
-	if use == typeinfo.UseMove && ownershipTrackedType(typ) {
+	if use == typeinfo.UseMove && typeinfo.IsMoveTracked(typ) {
 		return storageConsume
 	}
 	return storageRead
@@ -176,14 +176,5 @@ func (a *analyzer) reportPointerEscape(expr thir.Expr, origin *symbols.Symbol) {
 
 func ownershipTrackedSymbol(sym *symbols.Symbol) bool {
 	typ, ok := symbols.GetSymbolType(sym)
-	return ok && ownershipTrackedType(typ)
-}
-
-func ownershipTrackedType(t typeinfo.Type) bool {
-	// A type with an invalid part was already reported; anything ownership
-	// says about its values would only repeat that.
-	if t == nil || typeinfo.ContainsInvalid(t) || typeinfo.OwnershipCapabilityOf(t).Copy == typeinfo.CopyImplicit {
-		return false
-	}
-	return true
+	return ok && typeinfo.IsMoveTracked(typ)
 }

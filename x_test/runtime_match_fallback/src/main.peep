@@ -18,26 +18,26 @@ fn Radius(shape: Shape) -> i32 {
     }
 }
 
-// When one case is left, the subject is that case's payload in the `_` arm.
+// `_` names no case, so it reads no payload: name the case to read it.
 fn LastCase(shape: Shape) -> i32 {
     match shape {
         Shape::Circle => { return 0; }
         Shape::Empty => { return 0; }
-        _ => { return shape + 1; }
+        Shape::Code => { return shape + 1; }
     }
 }
 
 // `_` also takes the payload cases a tested case leaves open.
 fn Present(slot: Slot) -> i32 {
     match slot {
-        Slot::Value != none => { return slot; }
+        Slot::Value with value => { return value; }
         _ => { return -1; }
     }
 }
 
 fn OnlyNoneLeft(slot: Slot) -> i32 {
     match slot {
-        Slot::Value != none => { return slot; }
+        Slot::Value with value => { return value; }
         Slot::Inner => { return -2; }
         Slot::Free => { return -3; }
         _ => { return -1; }

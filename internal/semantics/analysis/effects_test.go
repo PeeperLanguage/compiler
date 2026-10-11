@@ -365,7 +365,7 @@ func TestBuildPublishesDestructureAsMoveThenDefines(t *testing.T) {
 fn choose(outcome: Result) -> i32 {
 	match outcome {
 		Result::Ok => {
-			let .{ value = payload } = outcome;
+			let .{ value as payload } = outcome;
 			return payload;
 		}
 		Result::Pending => {

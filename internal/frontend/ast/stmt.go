@@ -43,8 +43,9 @@ func (s *AssignStmt) forEachChild(visit func(Node)) {
 }
 func (s *AssignStmt) loc() *source.Location { return s.Location }
 
-// DestructureStmt moves a struct value whole and gives each named field its
-// own local. HasRest records a trailing `_`, which discards the other fields.
+// DestructureStmt moves a struct value whole and gives each listed field its
+// own local: `let .{ field, field as name, _ } = value;`. HasRest records a
+// trailing `_`, which discards the other fields.
 type DestructureStmt struct {
 	NodeIDHolder
 	Documented
@@ -54,6 +55,8 @@ type DestructureStmt struct {
 	Location *source.Location
 }
 
+// DestructureField is one listed field. Binding is the local it becomes: the
+// name after `as`, or one with the field's own name.
 type DestructureField struct {
 	Name     *Ident
 	Binding  *Ident
@@ -146,27 +149,82 @@ func (*ContinueStmt) stmtNode()                 {}
 func (s *ContinueStmt) forEachChild(func(Node)) {}
 func (s *ContinueStmt) loc() *source.Location   { return s.Location }
 
-// MatchArm is `Case => body`. An arm may also test the case's payload, in the
-// words of an `if` test: `Case != none`, `Case == none`, `Case is Enum::Inner`.
-// The fallback arm `_ => body` has no Case and handles whatever is left.
+// Pattern is what a match arm does with the payload of its case, written after
+// `with`. It has one form:
+//
+//	none                       the payload is an optional holding nothing
+//	name                       name is the payload
+//	.{ field, field as name }  a local per field of a struct payload
+//	Enum::Case                 the payload is an enum holding Case, with an
+//	                           optional pattern of its own for that payload
+type Pattern struct {
+	NodeIDHolder
+	IsNone bool
+	Name   *Ident
+	// IsStruct marks the `.{ ... }` form; HasRest records its trailing `_`.
+	IsStruct bool
+	Fields   []DestructureField
+	HasRest  bool
+	Case     *ScopeResolution
+	Inner    *Pattern
+	Location *source.Location
+}
+
+func (p *Pattern) forEachChild(visit func(Node)) {
+	visit(p.Name)
+	for _, field := range p.Fields {
+		visit(field.Name)
+		visit(field.Binding)
+	}
+	visit(p.Case)
+	visit(p.Inner)
+}
+func (p *Pattern) loc() *source.Location { return p.Location }
+
+// Taking returns the part of the pattern that names things: p itself, or for
+// a case of an enum payload the pattern after it. It is nil when the pattern
+// only tests.
+func (p *Pattern) Taking() *Pattern {
+	if p != nil && p.Case != nil {
+		p = p.Inner
+	}
+	if p == nil || p.Name == nil && !p.IsStruct {
+		return nil
+	}
+	return p
+}
+
+// Bindings lists the names the pattern declares.
+func (p *Pattern) Bindings() []*Ident {
+	taking := p.Taking()
+	if taking == nil {
+		return nil
+	}
+	if taking.Name != nil {
+		return []*Ident{taking.Name}
+	}
+	names := make([]*Ident, len(taking.Fields))
+	for index, field := range taking.Fields {
+		names[index] = field.Binding
+	}
+	return names
+}
+
+// MatchArm is `Case => body`, or with a Pattern for the case's payload
+// `Case with pattern => body`. The fallback arm `_ => body` has no Case and
+// handles whatever is left.
 type MatchArm struct {
 	NodeIDHolder
 	IsFallback bool
 	Case       *ScopeResolution
-	// PayloadOp is "", "!=", "==" or "is"; PayloadCase is the path after "is".
-	PayloadOp   string
-	PayloadCase *ScopeResolution
-	Body        *BlockStmt
-	Location    *source.Location
+	Pattern    *Pattern
+	Body       *BlockStmt
+	Location   *source.Location
 }
 
 func (a *MatchArm) forEachChild(visit func(Node)) {
-	if a.Case != nil {
-		visit(a.Case)
-	}
-	if a.PayloadCase != nil {
-		visit(a.PayloadCase)
-	}
+	visit(a.Case)
+	visit(a.Pattern)
 	visit(a.Body)
 }
 func (a *MatchArm) loc() *source.Location { return a.Location }

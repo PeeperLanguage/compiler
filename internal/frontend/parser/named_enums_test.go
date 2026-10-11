@@ -232,12 +232,14 @@ func TestParseQualifiedControlHeadersBeforeStandaloneBlocks(t *testing.T) {
 	}
 }
 
-func TestParseMatchArmPayloadTest(t *testing.T) {
+func TestParseMatchArmPatterns(t *testing.T) {
 	mod, diag := parseTestModule(`fn inspect(slot: Slot) {
 	match slot {
-		Slot::Value != none => {}
-		Slot::Value == none => {}
-		Slot::Inner is Shape::Circle => {}
+		Slot::Value with none => {}
+		Slot::Value with value => {}
+		Slot::Pair with .{ left, right as other, _ } => {}
+		Slot::Inner with Shape::Circle with .{ radius } => {}
+		Slot::Inner with Shape::Empty => {}
 		Slot::Free => {}
 	}
 }`)
@@ -245,15 +247,21 @@ func TestParseMatchArmPayloadTest(t *testing.T) {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 	arms := mod.Stmts[0].(*ast.FnDecl).Body.Stmts[0].(*ast.MatchStmt).Arms
-	for index, want := range []struct{ op, payloadCase string }{{"!=", ""}, {"==", ""}, {"is", "Shape::Circle"}, {"", ""}} {
-		arm := arms[index]
-		payloadCase := ""
-		if arm.PayloadCase != nil {
-			payloadCase = ast.ExprText(arm.PayloadCase)
-		}
-		if arm.PayloadOp != want.op || payloadCase != want.payloadCase || arm.Body == nil {
-			t.Fatalf("arm %d = %q %q, want %q %q", index, arm.PayloadOp, payloadCase, want.op, want.payloadCase)
-		}
+	if !arms[0].Pattern.IsNone || arms[1].Pattern.Name.Name != "value" || arms[5].Pattern != nil {
+		t.Fatalf("none, name and plain arms = %#v, %#v, %#v", arms[0].Pattern, arms[1].Pattern, arms[5].Pattern)
+	}
+	pair := arms[2].Pattern
+	if !pair.IsStruct || !pair.HasRest || len(pair.Fields) != 2 ||
+		pair.Fields[0].Name.Name != "left" || pair.Fields[0].Binding.Name != "left" || pair.Fields[0].Binding == pair.Fields[0].Name ||
+		pair.Fields[1].Name.Name != "right" || pair.Fields[1].Binding.Name != "other" {
+		t.Fatalf("struct pattern = %#v", pair)
+	}
+	circle := arms[3].Pattern
+	if ast.ExprText(circle.Case) != "Shape::Circle" || circle.Taking() != circle.Inner || len(circle.Bindings()) != 1 || circle.Bindings()[0].Name != "radius" {
+		t.Fatalf("nested pattern = %#v", circle)
+	}
+	if empty := arms[4].Pattern; ast.ExprText(empty.Case) != "Shape::Empty" || empty.Taking() != nil {
+		t.Fatalf("case-only pattern = %#v", empty)
 	}
 }
 
@@ -268,9 +276,39 @@ func TestParseMatchFallbackArm(t *testing.T) {
 	}
 }
 
-func TestParseRejectsMatchArmPattern(t *testing.T) {
-	_, diag := parseTestModule(`fn inspect(result: Result) { match result { Result::Ok with { value = v } => {} } }`)
-	if out := diag.EmitAllToString(); !diag.HasErrors() || !strings.Contains(out, "expected '=>' after match case") {
-		t.Fatalf("expected arm pattern to be rejected, got:\n%s", out)
+func TestParseRejectsMalformedPatterns(t *testing.T) {
+	for source, want := range map[string]string{
+		`fn inspect(result: Result) { match result { Result::Ok with { value } => {} } }`:      "expected a pattern after `with`",
+		`fn inspect(result: Result) { match result { Result::Ok with .{ value = v } => {} } }`: "a destructure field is renamed with `as`",
+	} {
+		_, diag := parseTestModule(source)
+		if out := diag.EmitAllToString(); !diag.HasErrors() || !strings.Contains(out, want) {
+			t.Fatalf("%s: want %q, got:\n%s", source, want, out)
+		}
+	}
+}
+
+func TestParseOrElse(t *testing.T) {
+	mod, diag := parseTestModule(`fn inspect(maybe: ?i32, other: ?i32) -> i32 {
+		let a = maybe orelse 0;
+		let b = maybe orelse { return 1; };
+		return use(maybe orelse other orelse 2) + a + b;
+	}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
+	}
+	body := mod.Stmts[0].(*ast.FnDecl).Body.Stmts
+	value := body[0].(*ast.LetDecl).Value.(*ast.OrElseExpr)
+	if value.Fallback == nil || value.Block != nil || value.Value.(*ast.Ident).Name != "maybe" {
+		t.Fatalf("orelse value = %#v", value)
+	}
+	if block := body[1].(*ast.LetDecl).Value.(*ast.OrElseExpr); block.Fallback != nil || block.Block == nil {
+		t.Fatalf("orelse block = %#v", block)
+	}
+	// It binds looser than `+`, and a chain groups to the right.
+	sum := body[2].(*ast.ReturnStmt).Value.(*ast.BinaryExpr)
+	chain := sum.Left.(*ast.BinaryExpr).Left.(*ast.CallExpr).Args[0].(*ast.OrElseExpr)
+	if inner, isChain := chain.Fallback.(*ast.OrElseExpr); !isChain || inner.Value.(*ast.Ident).Name != "other" {
+		t.Fatalf("orelse chain = %#v", chain)
 	}
 }

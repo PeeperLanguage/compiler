@@ -6,21 +6,25 @@ enum State {
 
 struct Machine { state: State }
 
-// Else side: the only case left is the payload.
+// A test names the payload of the case it finds. With three cases, what is
+// left after two tests is not known from a test: `match` names each case.
 fn ElseSide(state: State) -> i32 {
     if state is State::Idle {
         return 0;
     } else if state is State::Failed {
         return state;
-    } else {
-        return state.ticks;
+    }
+    match state {
+        State::Running => { return state.ticks; }
+        _ => { return -1; }
     }
 }
 
-// After guards that always leave, the remaining case is proven.
+// After a guard that always leaves, the name is the payload of the case the
+// guard let through.
 fn AfterGuards(state: State) -> i32 {
     if state is State::Idle { return 0; }
-    if state is State::Failed { return state; }
+    if !(state is State::Running) { return -1; }
     return state.ticks;
 }
 
@@ -29,16 +33,16 @@ fn AfterNegatedGuard(state: State) -> i32 {
     return state + 1;
 }
 
-// A field place narrows like a variable.
+// A field is tested through a reference; the name is its last field.
 fn FieldPlace(mut machine: Machine) -> i32 {
-    if machine.state is State::Running {
-        machine.state.ticks = machine.state.ticks + 1;
-        return machine.state.ticks;
+    if &mut machine.state is State::Running {
+        state.ticks = state.ticks + 1;
+        return state.ticks;
     }
     return -1;
 }
 
-// The carrier is still there where the context asks for it.
+// The whole value is still there where the code asks for it.
 fn Step(mut state: State) -> State {
     match state {
         State::Running => {
@@ -66,26 +70,16 @@ fn Code(state: State) -> i32 {
     }
 }
 
-// A condition joined with `&&` narrows its block.
+// Only a test that is the whole condition names a payload.
 fn Both(state: State, enabled: bool) -> i32 {
-    if state is State::Running && enabled { return state.ticks; }
+    if state is State::Running {
+        if enabled { return state.ticks; }
+    }
     return -1;
 }
 
-// Where branches join, a case stays possible if either branch leaves it possible.
-fn Joined(state: State, strict: bool) -> i32 {
-    if strict {
-        if !(state is State::Failed) { return -1; }
-    } else {
-        if !(state is State::Failed) { return -2; }
-    }
-    return state;
-}
-
-// A copied reference names the same storage.
-fn ThroughAlias(machine: &Machine) -> i32 {
-    let alias = machine;
-    if alias.state is State::Running { return machine.state.ticks; }
+fn ThroughReference(machine: &Machine) -> i32 {
+    if &machine.state is State::Running { return state.ticks; }
     return -1;
 }
 
@@ -93,7 +87,7 @@ fn main() -> i32 {
     if ElseSide(State::Idle) != 0 { return 1; }
     if ElseSide(State::Failed with 7) != 7 { return 2; }
     if ElseSide(State::Running with .{ ticks = 4 }) != 4 { return 3; }
-    if AfterGuards(State::Failed with 7) != 7 { return 4; }
+    if AfterGuards(State::Failed with 7) != -1 { return 4; }
     if AfterGuards(State::Running with .{ ticks = 4 }) != 4 { return 5; }
     if AfterNegatedGuard(State::Failed with 1) != 2 { return 6; }
     if AfterNegatedGuard(State::Idle) != -1 { return 7; }
@@ -111,9 +105,7 @@ fn main() -> i32 {
     if Code(State::Running with .{ ticks = 9 }) != 9 { return 12; }
     if Both(State::Running with .{ ticks = 6 }, true) != 6 { return 13; }
     if Both(State::Running with .{ ticks = 6 }, false) != -1 { return 14; }
-    if Joined(State::Failed with 8, true) != 8 { return 15; }
-    if Joined(State::Idle, false) != -2 { return 16; }
     let machine = Machine.{ state = State::Running with .{ ticks = 5 } };
-    if ThroughAlias(&machine) != 5 { return 17; }
+    if ThroughReference(&machine) != 5 { return 17; }
     return 0;
 }

@@ -2,6 +2,8 @@ package resolver
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
@@ -9,6 +11,7 @@ import (
 	"compiler/internal/problems"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
 )
 
@@ -16,6 +19,10 @@ type resolver struct {
 	ctx             *project.CompilerContext
 	module          *module.Module
 	pendingBindings map[symbols.SymbolID]struct{}
+	// assigned holds the payload names assigned on the way to the statement
+	// being resolved: the assignment went to the variable, and from there on
+	// the name reads the variable too. Nil until a name is assigned.
+	assigned map[*symbols.Symbol]struct{}
 }
 
 func (r *resolver) resolveModule() {
@@ -95,6 +102,13 @@ func (r *resolver) resolveFunction(fn *ast.FnDecl) {
 		// receiver and earlier parameters visible while rejecting self and
 		// later-parameter references at the declaration boundary.
 		if param.Default != nil {
+			ast.Inspect(param.Default, func(node ast.Node) bool {
+				if fallback, isOrElse := node.(*ast.OrElseExpr); isOrElse && fallback.Block != nil {
+					r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
+						"a default value cannot leave the function", ast.LocOf(fallback.Block), "give `orelse` a fallback value")
+				}
+				return true
+			})
 			r.resolveExpr(funcScope, param.Default)
 		}
 		paramSym := symbols.New(symbols.SourceSymbolID(param.Name.ID()), param.Name.Name, symbols.SymbolParam, param.Name, ast.LocOf(param.Name))
@@ -134,6 +148,20 @@ func (r *resolver) resolveBlock(scope *symbols.Scope, block *ast.BlockStmt) {
 	r.module.SymbolIndex.SetScope(block, scope)
 	for _, stmt := range block.Stmts {
 		r.resolveStmt(scope, stmt)
+		// After a guard that leaves when its subject holds no payload, the rest
+		// of the block reads the payload under the subject's name. The rest gets
+		// its own scope, kept under the guard, for that name to live in.
+		guard, isIf := stmt.(*ast.IfStmt)
+		if !isIf || guard.Else != nil || !alwaysLeaves(guard.Then) {
+			continue
+		}
+		if subject, _, otherwise := r.testedPayloads(guard.Cond); otherwise {
+			rest := symbols.NewScope(scope)
+			if r.declarePayloadName(scope, rest, guard, subject) {
+				r.module.SymbolIndex.SetScope(guard, rest)
+				scope = rest
+			}
+		}
 	}
 }
 
@@ -164,14 +192,27 @@ func (r *resolver) resolveStmt(scope *symbols.Scope, stmt ast.Stmt) {
 			return
 		}
 		r.resolveExpr(scope, node.Cond)
-		r.resolveBlock(symbols.NewScope(scope), node.Then)
-		if elseBlock, ok := node.Else.(*ast.BlockStmt); ok {
-			r.resolveBlock(symbols.NewScope(scope), elseBlock)
-			return
+		subject, then, otherwise := r.testedPayloads(node.Cond)
+		thenScope := symbols.NewScope(scope)
+		if then {
+			r.declarePayloadName(scope, thenScope, node.Then, subject)
 		}
-		if node.Else != nil {
-			r.resolveStmt(scope, node.Else)
-		}
+		r.resolveBranches(2, func(branch int) {
+			if branch == 0 {
+				r.resolveBlock(thenScope, node.Then)
+				return
+			}
+			elseBlock, ok := node.Else.(*ast.BlockStmt)
+			if !ok {
+				r.resolveStmt(scope, node.Else)
+				return
+			}
+			elseScope := symbols.NewScope(scope)
+			if otherwise {
+				r.declarePayloadName(scope, elseScope, elseBlock, subject)
+			}
+			r.resolveBlock(elseScope, elseBlock)
+		})
 	case *ast.ForStmt:
 		if node.Iterable != nil {
 			r.resolveExpr(scope, node.Iterable)
@@ -185,33 +226,224 @@ func (r *resolver) resolveStmt(scope *symbols.Scope, stmt ast.Stmt) {
 			r.resolveBlock(bodyScope, node.Body)
 			return
 		}
+		bodyScope := symbols.NewScope(scope)
 		if node.Cond != nil {
 			r.resolveExpr(scope, node.Cond)
+			// Each pass runs after the test, so the body reads a tested
+			// variable's payload. (A borrowed subject would need a reference
+			// made on every pass; write the test inside the loop for that.)
+			subject, then, _ := r.testedPayloads(node.Cond)
+			if _, borrowed := subject.(*ast.AddressExpr); then && !borrowed && node.Body != nil {
+				r.declarePayloadName(scope, bodyScope, node.Body, subject)
+			}
 		}
-		r.resolveBlock(symbols.NewScope(scope), node.Body)
+		r.resolveBlock(bodyScope, node.Body)
 	case *ast.BreakStmt, *ast.ContinueStmt:
 		// Legality (inside a loop) is diagnosed by the typechecker.
 	case *ast.MatchStmt:
 		r.resolveExpr(scope, node.Subject)
-		for _, arm := range node.Arms {
-			for _, casePath := range []*ast.ScopeResolution{arm.Case, arm.PayloadCase} {
+		r.resolveBranches(len(node.Arms), func(index int) {
+			arm := node.Arms[index]
+			casePaths := []*ast.ScopeResolution{arm.Case}
+			if arm.Pattern != nil {
+				casePaths = append(casePaths, arm.Pattern.Case)
+			}
+			for _, casePath := range casePaths {
 				if casePath != nil && !r.resolveVariantPath(scope, casePath) {
 					r.resolveScopeResolution(casePath, false)
 				}
 			}
-			r.resolveBlock(symbols.NewScope(scope), arm.Body)
-		}
+			// An arm reads the payload under the names its pattern declares,
+			// or with none under the subject's name.
+			armScope := symbols.NewScope(scope)
+			names := arm.Pattern.Bindings()
+			for _, name := range names {
+				r.resolveLocalBinding(armScope, name, symbols.SymbolVar, nil, name, ast.LocOf(name))
+			}
+			if len(names) == 0 && r.armHasPayload(arm) {
+				r.declarePayloadName(scope, armScope, arm, node.Subject)
+			}
+			r.resolveBlock(armScope, arm.Body)
+		})
 	case *ast.ExprStmt:
 		r.resolveExpr(scope, node.Expr)
 	case *ast.AssignStmt:
-		r.resolveAssignTarget(scope, node.Target)
+		// The value is read before the target is written: it still sees a
+		// payload name that the assignment ends.
 		r.resolveExpr(scope, node.Value)
+		r.resolveAssignTarget(scope, node.Target)
 	case *ast.BadStmt, *ast.BadDecl, *ast.ImportDecl, *ast.FnDecl,
 		*ast.TypeAliasDecl, *ast.StructDecl, *ast.InterfaceDecl, *ast.EnumDecl:
 		r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement, "unsupported statement", ast.LocOf(node), "")
 	default:
 		panic(fmt.Sprintf("resolver: unhandled statement %T", stmt))
 	}
+}
+
+// alwaysLeaves reports whether control never reaches the end of stmt: it ends
+// in `return`, `break` or `continue` on every path.
+func alwaysLeaves(stmt ast.Stmt) bool {
+	switch node := stmt.(type) {
+	case *ast.ReturnStmt, *ast.BreakStmt, *ast.ContinueStmt:
+		return true
+	case *ast.BlockStmt:
+		return node != nil && len(node.Stmts) > 0 && alwaysLeaves(node.Stmts[len(node.Stmts)-1])
+	case *ast.IfStmt:
+		return node.Else != nil && alwaysLeaves(node.Then) && alwaysLeaves(node.Else)
+	case *ast.MatchStmt:
+		if len(node.Arms) == 0 {
+			return false
+		}
+		for _, arm := range node.Arms {
+			if !alwaysLeaves(arm.Body) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+// resolveBranches resolves the count branches of one statement. Each starts
+// from the payload names assigned before the statement; after it, a name
+// assigned in any branch counts as assigned.
+func (r *resolver) resolveBranches(count int, resolve func(branch int)) {
+	before := r.assigned
+	after := maps.Clone(before)
+	for branch := range count {
+		r.assigned = maps.Clone(before)
+		resolve(branch)
+		if len(r.assigned) > len(before) {
+			if after == nil {
+				after = make(map[*symbols.Symbol]struct{})
+			}
+			maps.Copy(after, r.assigned)
+		}
+	}
+	r.assigned = after
+}
+
+// declarePayloadName declares the name under which a block reads the payload
+// of subject, for a block that runs only when subject holds one case. scope
+// is where the test stands, into the block's scope, and owner what the name
+// is bound to: the arm, the block, or for the rest of a block the guard.
+//
+// A tested constant or local variable is read in place under its own name; flow analysis
+// verifies each such read, as the block can still change the variable (by
+// assigning the name, or by handing the whole variable to a call). A borrowed
+// subject (`&place`) gets a reference named after its last field. Any other
+// subject gets no name.
+func (r *resolver) declarePayloadName(scope, into *symbols.Scope, owner ast.Node, subject ast.Expr) bool {
+	// The name is the subject's own, or the last one on its path:
+	// `&holder.items[0]` gives `items`.
+	address, borrowed := subject.(*ast.AddressExpr)
+	if borrowed {
+		subject = address.Expr
+	}
+	var name *ast.Ident
+	for part := subject; name == nil; {
+		switch named := part.(type) {
+		case *ast.Ident:
+			name = named
+		case *ast.SelectorExpr:
+			name = named.Name
+		case *ast.IndexExpr:
+			part = named.Expr
+		default:
+			return false
+		}
+	}
+	outside, _ := scope.Lookup(name.Name)
+	if _, isVariable := subject.(*ast.Ident); !borrowed && (!isVariable || !r.keepsItsCase(outside)) {
+		return false
+	}
+	sym := symbols.New(symbols.SourceSymbolID(owner.ID()), name.Name, symbols.SymbolVar, owner, ast.LocOf(name))
+	sym.IsPayloadName = true
+	if !borrowed {
+		// It is the same variable under a narrower type.
+		sym.AliasOf, sym.Kind, sym.AllowsMutation = outside, outside.Kind, outside.AllowsMutation
+	}
+	if err := into.Declare(sym); err != nil {
+		panic(err)
+	}
+	r.module.SymbolIndex.Bind(owner, sym)
+	return true
+}
+
+// keepsItsCase reports whether only the function being resolved can change
+// sym between a test and a read: a constant, or a variable or parameter of the
+// function. A module variable can be changed by any call.
+func (r *resolver) keepsItsCase(sym *symbols.Symbol) bool {
+	if sym == nil || sym.Kind != symbols.SymbolVar && sym.Kind != symbols.SymbolParam {
+		return sym != nil && sym.Kind == symbols.SymbolConst
+	}
+	global, isGlobal := r.module.ModuleScope.LookupLocal(sym.Name)
+	return !isGlobal || global != sym
+}
+
+// testedPayloads reads a condition that tests which case its subject holds
+// (`subject is Enum::Case`, `subject != none`, `subject == none`) and reports
+// whether the subject holds a payload when the test is true (then) and when
+// it is false (otherwise). Any other condition has no subject.
+func (r *resolver) testedPayloads(cond ast.Expr) (subject ast.Expr, then, otherwise bool) {
+	isNegated := false
+	for not, isNot := cond.(*ast.UnaryExpr); isNot && not.Op == "!"; not, isNot = cond.(*ast.UnaryExpr) {
+		cond, isNegated = not.Expr, !isNegated
+	}
+	switch test := cond.(type) {
+	case *ast.IsExpr:
+		subject = test.Value
+		then, otherwise = r.casePayloads(test.Case)
+	case *ast.BinaryExpr:
+		_, leftIsNone := test.Left.(*ast.NoneLit)
+		_, rightIsNone := test.Right.(*ast.NoneLit)
+		if leftIsNone == rightIsNone || test.Op != "==" && test.Op != "!=" {
+			return nil, false, false
+		}
+		subject = test.Left
+		if leftIsNone {
+			subject = test.Right
+		}
+		then, otherwise = test.Op == "!=", test.Op == "=="
+	}
+	if isNegated {
+		then, otherwise = otherwise, then
+	}
+	return subject, then, otherwise
+}
+
+// armHasPayload reports whether what arm selects carries a payload: its case,
+// or with a pattern that tests the payload the payload case tested.
+func (r *resolver) armHasPayload(arm *ast.MatchArm) bool {
+	switch {
+	case arm.Pattern == nil:
+		has, _ := r.casePayloads(arm.Case)
+		return has
+	case arm.Pattern.Case != nil:
+		has, _ := r.casePayloads(arm.Pattern.Case)
+		return has
+	default:
+		return false
+	}
+}
+
+// casePayloads reports whether the enum case path names carries a payload,
+// and whether the only other case of a two-case enum does.
+func (r *resolver) casePayloads(path *ast.ScopeResolution) (has, otherHas bool) {
+	if path == nil {
+		return false, false
+	}
+	variant := r.module.SymbolIndex.Symbol(path)
+	if variant == nil || variant.Kind != symbols.SymbolVariant {
+		return false, false
+	}
+	descriptor, _ := typeinfo.VariantDescriptorOf(variant.Type)
+	index := slices.IndexFunc(descriptor.Cases, func(candidate typeinfo.VariantCase) bool { return candidate.Name == variant.Name })
+	if index < 0 {
+		return false, false
+	}
+	return descriptor.Cases[index].Payload != nil, len(descriptor.Cases) == 2 && descriptor.Cases[1-index].Payload != nil
 }
 
 func (r *resolver) resolveLocalBinding(scope *symbols.Scope, name *ast.Ident, kind symbols.Kind, value ast.Expr, node ast.Node, loc *source.Location) {
@@ -247,6 +479,14 @@ func (r *resolver) resolveExpr(scope *symbols.Scope, expr ast.Expr) {
 		return
 	case *ast.Ident:
 		sym, ok := scope.Lookup(node.Name)
+		// Once assigned, the name reads the variable again, not the payload
+		// the variable held before.
+		for ok && sym != nil && sym.AliasOf != nil {
+			if _, assigned := r.assigned[sym]; !assigned {
+				break
+			}
+			sym = sym.AliasOf
+		}
 		if ok && sym != nil {
 			r.module.SymbolIndex.Bind(node, sym)
 			r.module.SymbolIndex.MarkUsed(sym)
@@ -308,6 +548,14 @@ func (r *resolver) resolveExpr(scope *symbols.Scope, expr ast.Expr) {
 	case *ast.BinaryExpr:
 		r.resolveExpr(scope, node.Left)
 		r.resolveExpr(scope, node.Right)
+	case *ast.OrElseExpr:
+		r.resolveExpr(scope, node.Value)
+		r.resolveExpr(scope, node.Fallback)
+		r.resolveBlock(symbols.NewScope(scope), node.Block)
+		if node.Block != nil && !alwaysLeaves(node.Block) {
+			r.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement,
+				"the block after `orelse` must leave", ast.LocOf(node.Block), "end it with `return`, `break` or `continue`")
+		}
 	case *ast.IsExpr:
 		r.resolveExpr(scope, node.Value)
 		if !r.resolveVariantPath(scope, node.Case) {
@@ -343,6 +591,15 @@ func (r *resolver) resolveAssignTarget(scope *symbols.Scope, expr ast.Expr) {
 	switch node := expr.(type) {
 	case *ast.Ident:
 		sym, ok := scope.Lookup(node.Name)
+		// Assigning a payload name assigns its variable, and ends the name:
+		// the new value may hold another case.
+		for ok && sym != nil && sym.AliasOf != nil {
+			if r.assigned == nil {
+				r.assigned = make(map[*symbols.Symbol]struct{})
+			}
+			r.assigned[sym] = struct{}{}
+			sym = sym.AliasOf
+		}
 		if ok && sym != nil {
 			r.module.SymbolIndex.Bind(node, sym)
 			r.module.SymbolIndex.MarkUsed(sym)

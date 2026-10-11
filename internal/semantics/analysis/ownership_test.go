@@ -88,7 +88,7 @@ func TestCallIterationUsesOrdinaryCallGuards(t *testing.T) {
 		{name: "mutable receiver", receiver: "&mut Cursor"},
 		{name: "shared receiver", receiver: "&Cursor"},
 		{name: "body access between advances", receiver: "&mut Cursor", body: "cursor.value = item;"},
-		{name: "consuming backedge", receiver: "Cursor", diagnostic: "moved"},
+		{name: "consuming backedge", receiver: "Cursor", diagnostic: "ownership state differs across control-flow paths"},
 		{name: "consuming single attempt", receiver: "Cursor", body: "break;"},
 		{name: "moved source", receiver: "&mut Cursor", before: "Consume(cursor);", diagnostic: "moved"},
 		{name: "body move before backedge", receiver: "&mut Cursor", body: "Consume(cursor);", diagnostic: "moved"},
@@ -96,7 +96,7 @@ func TestCallIterationUsesOrdinaryCallGuards(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			for _, implicit := range []bool{false, true} {
-				loop := "for { let result = cursor.Next(); if result == none { break; } let item: i32 = result; " + test.body + " }"
+				loop := "for { let item: i32 = cursor.Next() orelse { break; }; " + test.body + " }"
 				if implicit {
 					loop = "for item in cursor.Next() { " + test.body + " }"
 				}
@@ -153,7 +153,12 @@ fn main() { `+loop+` }`)
 					if !ok || checked.Body == nil || len(checked.Body.Stmts) == 0 {
 						t.Fatal("checked iteration missing repeated producer loop")
 					}
-					binding, ok := checked.Body.Stmts[0].(*thir.Binding)
+					// The item statement starts by keeping the producer call's result.
+					hoisted, _ := checked.Body.Stmts[0].(*thir.Block)
+					if hoisted == nil || len(hoisted.Stmts) == 0 {
+						t.Fatal("checked iteration missing the item statement")
+					}
+					binding, ok := hoisted.Stmts[0].(*thir.Binding)
 					if !ok || binding.Value == nil || binding.Value.SourceInfo().NodeID != sourceLoop.Iterable.ID() {
 						t.Fatal("producer call replaced instead of checked unchanged")
 					}
@@ -835,16 +840,14 @@ func TestMoveOnlyOptionalPartialPlacesAreRejected(t *testing.T) {
 	diag := checkOwnershipSource(t, `struct Token { value: i32 }
 struct Holder { field: ?Token, items: [1]?Token }
 fn Consume(_: Token) {}
-fn bad(holder: Holder) {
-	if holder.field != none {
-		Consume(holder.field);
-	}
-	if holder.items[0] != none {
-		Consume(holder.items[0]);
-	}
+fn field(holder: Holder) {
+	Consume(holder.field orelse { return; });
+}
+fn element(holder: Holder) {
+	Consume(holder.items[0] orelse { return; });
 }`)
 	out := diag.EmitAllToString()
-	if count := strings.Count(out, "move-only variant payload"); count != 2 {
+	if count := strings.Count(out, "[T0035]"); count != 2 {
 		t.Fatalf("expected two optional partial-move diagnostics, got %v:\n%s", count, out)
 	}
 }
@@ -857,7 +860,7 @@ fn Consume(_: Resource) {}
 fn bad(resource: Resource) {
 	match resource {
 		Resource::Owned => {
-			let .{ value = owned } = resource;
+			let .{ value as owned } = resource;
 			free(owned);
 		}
 	}
@@ -876,7 +879,7 @@ fn Consume(_: Resource) {}
 fn valid(mut resource: Resource) {
 	match resource {
 		Resource::Owned => {
-			let .{ value = owned } = resource;
+			let .{ value as owned } = resource;
 			free(owned);
 		}
 	}
@@ -906,7 +909,7 @@ func TestMatchArmsMustLeaveCarrierInOneState(t *testing.T) {
 }
 fn probe(resource: Resource) {
 	match resource {
-		Resource::Owned => { let .{ value = owned } = resource; free(owned); }
+		Resource::Owned => { let .{ value as owned } = resource; free(owned); }
 		Resource::Pending => { `+test.pending+` }
 	}
 }`)
@@ -928,7 +931,7 @@ fn valid(resource: Resource) {
 	for i in 0..1 {
 		match resource {
 			Resource::Owned => {
-				let .{ value = owned } = resource;
+				let .{ value as owned } = resource;
 				free(owned);
 				break;
 			}
@@ -962,7 +965,7 @@ fn invalid(resource: Resource`+test.params+`) {
 	for i in `+test.header+` {
 		match resource {
 			Resource::Owned => {
-				let .{ value = owned } = resource;
+				let .{ value as owned } = resource;
 				free(owned);
 				break;
 			}
@@ -996,7 +999,7 @@ fn valid() {
 		let resource = Resource::Owned with .{ value = alloc(i) };
 		match resource {
 			Resource::Owned => {
-				let .{ value = owned } = resource;
+				let .{ value as owned } = resource;
 				free(owned);
 				`+transfer+`;
 			}
@@ -1024,7 +1027,7 @@ fn valid() {
 			let resource = Resource::Owned with .{ value = alloc(outer + inner) };
 			match resource {
 				Resource::Owned => {
-					let .{ value = owned } = resource;
+					let .{ value as owned } = resource;
 					free(owned);
 					break;
 				}
@@ -1048,7 +1051,7 @@ func TestLiveMatchCarrierMustConverge(t *testing.T) {
 fn Consume(_: Resource) {}
 fn invalid(resource: Resource) {
 	match resource {
-		Resource::Owned => { let .{ value = owned } = resource; free(owned); }
+		Resource::Owned => { let .{ value as owned } = resource; free(owned); }
 		Resource::Pending => {}
 	}
 	Consume(resource);
@@ -1066,7 +1069,7 @@ func TestMatchCarrierAssignmentAfterJoinMustConverge(t *testing.T) {
 }
 fn invalid(mut resource: Resource) {
 	match resource {
-		Resource::Owned => { let .{ value = owned } = resource; free(owned); }
+		Resource::Owned => { let .{ value as owned } = resource; free(owned); }
 		Resource::Pending => {}
 	}
 	resource = Resource::Pending;
@@ -1086,7 +1089,7 @@ fn Write(_: &mut i32) {}
 fn valid(source: &mut i32) {
 	let mut resource = Resource::Borrowed with .{ value = source };
 	match resource {
-		Resource::Borrowed => { let .{ value = value } = resource; Write(value); }
+		Resource::Borrowed => { let .{ value } = resource; Write(value); }
 		Resource::Pending => { let _ = resource; }
 	}
 	resource = Resource::Pending;
@@ -1108,7 +1111,7 @@ fn Consume(_: Resource) {}
 fn Next(resource: Resource) -> Resource {
 	match resource {
 		Resource::Owned => {
-			let .{ value = owned } = resource;
+			let .{ value as owned } = resource;
 			free(owned);
 			return Resource::Pending;
 		}
@@ -1134,7 +1137,7 @@ fn Consume(_: Resource) {}
 fn valid(resource: Resource) {
 	match resource {
 		Resource::Owned => {
-			let .{ value = owned } = resource;
+			let .{ value as owned } = resource;
 			free(owned);
 			return;
 		}
@@ -1216,16 +1219,16 @@ func TestPayloadFieldMoveFromPartialCarrierRejected(t *testing.T) {
 		"field": `enum Resource { Owned: struct { value: *i32 } }
 struct Holder { resource: Resource }
 fn bad(holder: Holder) {
-	match holder.resource { Resource::Owned => { free(holder.resource.value); } }
+	match &holder.resource { Resource::Owned => { free(resource.value); } }
 }`,
 		"index": `enum Resource { Owned: struct { value: *i32 } }
 fn bad(resources: [1]Resource) {
-	match resources[0] { Resource::Owned => { free(resources[0].value); } }
+	match &resources[0] { Resource::Owned => { free(resources.value); } }
 }`,
 		"pointee": `enum Resource { Owned: struct { value: *i32 } }
 struct Holder { resource: Resource }
 fn bad(holder: *Holder) {
-	match holder.resource { Resource::Owned => { free(holder.resource.value); } }
+	match &holder.resource { Resource::Owned => { free(resource.value); } }
 }`,
 		"narrowed variable": `enum Resource { Owned: struct { value: *i32 } }
 fn bad(resource: Resource) {
@@ -1260,7 +1263,7 @@ func TestDestructuredMutableReferenceTransfersCarrier(t *testing.T) {
 fn Write(_: &mut i32) {}
 fn invalid(source: &mut i32) {
 	let resource = Resource::Borrowed with .{ value = source };
-	match resource { Resource::Borrowed => { let .{ value = value } = resource; Write(value); } }
+	match resource { Resource::Borrowed => { let .{ value } = resource; Write(value); } }
 	match resource { Resource::Borrowed => {} }
 }`)
 	if !hasOwnershipCode(result, diagnostics.ErrUseAfterMove) {
@@ -1318,7 +1321,7 @@ func TestDestructureConflictsWithLiveCarrierBorrow(t *testing.T) {
 fn Read(_: &Resource) {}
 fn invalid(resource: Resource) {
 	let reference = &resource;
-	match resource { Resource::Owned => { let .{ value = value } = resource; free(value); } }
+	match resource { Resource::Owned => { let .{ value } = resource; free(value); } }
 	Read(reference);
 }`)
 	if !hasOwnershipCode(result, diagnostics.ErrBorrowConflict) {
@@ -1332,7 +1335,7 @@ func TestDestructureOwnsNamedFieldAndConsumesCarrier(t *testing.T) {
 }
 fn consume(resource: Resource) {
 	match resource {
-		Resource::Owned => { let .{ first = selected, _ } = resource; }
+		Resource::Owned => { let .{ first as selected, _ } = resource; }
 	}
 }`)
 	if result.HasErrors() {
@@ -2366,7 +2369,7 @@ fn bad() -> rawptr {
 	let resource = Resource::Pointer with .{ value = @value };
 	match resource {
 		Resource::Pointer => {
-			let .{ value = pointer } = resource;
+			let .{ value as pointer } = resource;
 			return pointer;
 		}
 	}
@@ -2383,7 +2386,7 @@ fn get() -> rawptr {
 	let resource = Resource::Pointer with .{ value = @global };
 	match resource {
 		Resource::Pointer => {
-			let .{ value = pointer } = resource;
+			let .{ value as pointer } = resource;
 			return pointer;
 		}
 	}
@@ -2404,7 +2407,7 @@ fn bad(chooseLocal: bool) -> rawptr {
 	}
 	match resource {
 		Resource::Pointer => {
-			let .{ value = pointer } = resource;
+			let .{ value as pointer } = resource;
 			return pointer;
 		}
 	}

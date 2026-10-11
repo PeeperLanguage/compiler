@@ -73,7 +73,7 @@ func Analyze(diag *diagnostics.DiagnosticBag, module *module.Module, preludeID m
 	if module.SymbolIndex != nil {
 		module.SymbolIndex.ForEachScope(func(scope *symbols.Scope) {
 			for _, sym := range scope.Symbols() {
-				if sym.Name == "_" {
+				if sym.Name == "_" || sym.IsPayloadName {
 					continue
 				}
 				if _, used := usedSymbols[sym.ID]; !used {

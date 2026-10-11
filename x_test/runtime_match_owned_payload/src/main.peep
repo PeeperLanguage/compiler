@@ -1,12 +1,12 @@
 struct Box { value: i32 }
 enum Slot { Owned: ?*Box, Plain: i32, Free }
 
-// The arm that frees the box consumes the enum; `_` discards it on the other paths.
+// The arm that takes the box out consumes the enum; `_` discards it on the other paths.
 fn Take(slot: Slot) -> i32 {
     match slot {
-        Slot::Owned != none => {
-            let value = slot.value;
-            free(slot);
+        Slot::Owned with box => {
+            let value = box.value;
+            free(box);
             return value;
         }
         _ => { let _ = slot; return -1; }
@@ -18,8 +18,8 @@ fn Take(slot: Slot) -> i32 {
 fn Keep(slot: Slot) -> i32 {
     let mut total = 0;
     match slot {
-        Slot::Owned != none => { total = slot.value; }
-        Slot::Owned == none => { total = -1; }
+        Slot::Owned with none => { total = -1; }
+        Slot::Owned => { total = slot.value; }
         Slot::Plain => { total = slot; }
         _ => { total = -2; }
     }

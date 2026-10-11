@@ -6,7 +6,7 @@ enum Resource {
 fn Consume(resource: Resource) {
     match resource {
         Resource::Owned => {
-            let .{ selected = selected, _ } = resource;
+            let .{ selected, _ } = resource;
             free(selected);
             return;
         }
@@ -20,7 +20,7 @@ fn Consume(resource: Resource) {
 fn Reset(resource: Resource) -> Resource {
     match resource {
         Resource::Owned => {
-            let .{ selected = selected, _ } = resource;
+            let .{ selected, _ } = resource;
             free(selected);
             return Resource::Pending;
         }

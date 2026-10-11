@@ -46,6 +46,14 @@ const (
 	UseMove
 )
 
+// IsMoveTracked reports whether ownership analysis follows values of t: a
+// use may move them, and a moved value is dead. A type with an invalid part was
+// already reported; anything ownership says about its values would only repeat
+// that.
+func IsMoveTracked(t Type) bool {
+	return t != nil && !ContainsInvalid(t) && OwnershipCapabilityOf(t).Copy != CopyImplicit
+}
+
 // OwnershipCapabilityOf classifies a type's ownership behavior in one traversal.
 func OwnershipCapabilityOf(t Type) OwnershipCapability {
 	return (&ownershipQuery{visiting: make(map[Type]bool)}).check(t, false)

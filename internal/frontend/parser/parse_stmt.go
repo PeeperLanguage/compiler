@@ -313,8 +313,8 @@ func (p *Parser) parseMatchStmt() ast.Stmt {
 			p.advance()
 		}
 		armStart := p.current().Start
-		var casePath, payloadCase *ast.ScopeResolution
-		var payloadOp string
+		var casePath *ast.ScopeResolution
+		var pattern *ast.Pattern
 		isFallback := p.at(token.IDENT) && p.current().Literal == "_"
 		if isFallback {
 			p.advance()
@@ -327,12 +327,8 @@ func (p *Parser) parseMatchStmt() ast.Stmt {
 				}
 				continue
 			}
-			if p.match(token.NEQ) || p.match(token.EQ) {
-				payloadOp = string(p.prev().Kind)
-				p.consume(token.NONE, "expected `none` after '"+payloadOp+"' in match case")
-			} else if p.match(token.IS) {
-				payloadOp = string(token.IS)
-				payloadCase = p.parseVariantCasePath()
+			if p.match(token.WITH) {
+				pattern = p.parsePattern()
 			}
 		}
 		endPos := p.prev().End
@@ -348,7 +344,7 @@ func (p *Parser) parseMatchStmt() ast.Stmt {
 			endPos = ast.EndOf(body)
 		}
 		arms = append(arms, reg(p, &ast.MatchArm{
-			IsFallback: isFallback, Case: casePath, PayloadOp: payloadOp, PayloadCase: payloadCase, Body: body,
+			IsFallback: isFallback, Case: casePath, Pattern: pattern, Body: body,
 			Location: source.NewLocation(p.filePath, armStart, endPos),
 		}))
 		if p.match(token.COMMA) {
@@ -377,10 +373,40 @@ func (p *Parser) parseMatchStmt() ast.Stmt {
 	})
 }
 
-// parseDestructureStmt reads `let .{ field = name, _ } = value;`. A lone `_`
-// is the rest marker and is only valid as the last item.
-func (p *Parser) parseDestructureStmt() ast.Stmt {
-	start := p.advance()
+// parsePattern reads what follows `with` in a match arm (ast.Pattern).
+func (p *Parser) parsePattern() *ast.Pattern {
+	start := p.current()
+	switch {
+	case p.match(token.NONE):
+		return reg(p, &ast.Pattern{IsNone: true, Location: source.NewLocation(p.filePath, start.Start, start.End)})
+	case p.at(token.DOT) && p.next().Kind == token.LBRACE:
+		fields, hasRest, _ := p.parseDestructureFields()
+		return reg(p, &ast.Pattern{IsStruct: true, Fields: fields, HasRest: hasRest, Location: source.NewLocation(p.filePath, start.Start, p.prev().End)})
+	case p.at(token.IDENT) && p.next().Kind != token.DCOLON && p.next().Kind != token.LT:
+		name := p.parseIdent()
+		return reg(p, &ast.Pattern{Name: name, Location: name.Location})
+	case p.at(token.IDENT):
+		casePath := p.parseVariantCasePath()
+		if casePath == nil {
+			return nil
+		}
+		pattern := &ast.Pattern{Case: casePath}
+		if p.match(token.WITH) {
+			pattern.Inner = p.parsePattern()
+		}
+		pattern.Location = source.NewLocation(p.filePath, start.Start, p.prev().End)
+		return reg(p, pattern)
+	}
+	p.diag.Add(diagnostics.NewError("expected a pattern after `with`").
+		WithCode(diagnostics.ErrExpectedToken).
+		WithPrimaryLabel(source.NewLocation(p.filePath, start.Start, start.End), "").
+		Help("write `none`, a name, `.{ field }`, or a case of the payload's enum"))
+	return nil
+}
+
+// parseDestructureFields reads `.{ field, field as name, _ }`. A lone `_` is
+// the rest marker and is only valid as the last item.
+func (p *Parser) parseDestructureFields() (fields []ast.DestructureField, hasRest, ok bool) {
 	p.advance()
 	items, _, ok := parseBracedItemList(p, "expected '{' after '.'", "expected '}' after destructure fields", false,
 		func() (ast.DestructureField, bool) {
@@ -388,12 +414,22 @@ func (p *Parser) parseDestructureStmt() ast.Stmt {
 			if name == nil {
 				return ast.DestructureField{}, false
 			}
-			if name.Name == "_" && !p.at(token.ASSIGN) {
+			if name.Name == "_" {
 				return ast.DestructureField{Name: name, Location: name.Location}, true
 			}
-			if p.consume(token.ASSIGN, "expected '=' after destructure field") == nil {
-				return ast.DestructureField{}, false
+			if p.at(token.ASSIGN) {
+				rename := p.current()
+				location := source.NewLocation(p.filePath, rename.Start, rename.End)
+				p.diag.Add(diagnostics.NewError("a destructure field is renamed with `as`").
+					WithCode(diagnostics.ErrExpectedToken).
+					WithPrimaryLabel(location, "").
+					Help("write `"+name.Name+" as name`", diagnostics.Fix.Replace(location, "as")))
+			} else if !p.at(token.AS) {
+				// `field`: the local takes the field's name.
+				binding := reg(p, &ast.Ident{Name: name.Name, Location: name.Location})
+				return ast.DestructureField{Name: name, Binding: binding, Location: name.Location}, true
 			}
+			p.advance()
 			binding := p.parseIdent()
 			if binding == nil {
 				return ast.DestructureField{}, false
@@ -403,11 +439,6 @@ func (p *Parser) parseDestructureStmt() ast.Stmt {
 				Location: source.NewLocation(p.filePath, ast.StartOf(name), ast.EndOf(binding)),
 			}, true
 		})
-	if !ok || p.consume(token.ASSIGN, "expected '=' after destructure fields") == nil {
-		return nil
-	}
-	fields := make([]ast.DestructureField, 0, len(items))
-	hasRest := false
 	for index, item := range items {
 		if item.Binding != nil {
 			fields = append(fields, item)
@@ -417,6 +448,16 @@ func (p *Parser) parseDestructureStmt() ast.Stmt {
 		if index != len(items)-1 {
 			p.diag.AddError(diagnostics.ErrExpectedToken, "`_` must be the last destructure item", item.Location, "")
 		}
+	}
+	return fields, hasRest, ok
+}
+
+// parseDestructureStmt reads `let .{ field, field as name, _ } = value;`.
+func (p *Parser) parseDestructureStmt() ast.Stmt {
+	start := p.advance()
+	fields, hasRest, ok := p.parseDestructureFields()
+	if !ok || p.consume(token.ASSIGN, "expected '=' after destructure fields") == nil {
+		return nil
 	}
 	value := p.parseExpr(precLowest, token.SEMICOLON)
 	end := p.consume(token.SEMICOLON, "expected ';' after destructure")

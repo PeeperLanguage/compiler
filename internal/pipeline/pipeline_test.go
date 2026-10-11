@@ -3453,33 +3453,6 @@ fn reverseNe(value: ?i32) -> i32 {
 }`,
 		},
 		{
-			name: "field and stable indexes",
-			src: `struct Holder {
-	field: ?i32,
-	items: [2]?i32
-}
-
-struct Outer {
-	inner: Holder
-}
-
-fn fields(outer: Outer, holder: Holder, index: usize) -> i32 {
-	if outer.inner.field != none {
-		return outer.inner.field;
-	}
-	if holder.field != none {
-		return holder.field;
-	}
-	if holder.items[0] != none {
-		return holder.items[0];
-	}
-	if holder.items[index] != none {
-		return holder.items[index];
-	}
-	return 0;
-}`,
-		},
-		{
 			name:          "redundant optional needs one proof",
 			redundantInfo: true,
 			src: `fn nested(value: ? ?i32) -> i32 {
@@ -3522,68 +3495,6 @@ fn shadowed(value: ?i32) -> i32 {
 		}
 	}
 	return value;
-}`,
-		},
-		{
-			name: "join loop and eager result facts",
-			src: `fn joined(value: ?i32, choose: bool) -> i32 {
-	if choose {
-		if value == none {
-			return 0;
-		}
-	} else {
-		if value == none {
-			return 0;
-		}
-	}
-	return value;
-}
-
-fn looped(value: ?i32) -> i32 {
-	for value != none {
-		return value;
-	}
-	return 0;
-}
-
-fn eager(value: ?i32) -> i32 {
-	if value != none && true {
-		return value;
-	}
-	if value == none || false {
-		return 0;
-	}
-	return value;
-}`,
-		},
-		{
-			name: "payload descendant and disjoint mutation",
-			src: `struct Payload {
-	value: i32
-}
-
-struct Holder {
-	maybe: ?i32,
-	other: i32
-}
-
-fn Write(_: &mut i32) {}
-
-fn descendant(mut value: ?Payload) -> i32 {
-	if value == none {
-		return 0;
-	}
-	value.value = 7;
-	return value.value;
-}
-
-fn disjoint(mut holder: Holder) -> i32 {
-	if holder.maybe == none {
-		return 0;
-	}
-	holder.other = 1;
-	Write(&mut holder.other);
-	return holder.maybe;
 }`,
 		},
 		{
@@ -3662,54 +3573,6 @@ fn valid(value: ?Holder) -> i32 {
 	}
 	let result: ?i32 = callable();
 	return result;
-}`,
-		},
-		{
-			name: "eager call ordering preserves fresh and disjoint proofs",
-			src: `struct Holder {
-	maybe: ?i32,
-	other: i32
-}
-
-fn Mutate(_: &mut Holder) -> bool { return true; }
-
-fn Touch(_: &mut i32) -> bool { return true; }
-
-fn fresh(holder: &mut Holder) -> i32 {
-	if Mutate(holder) && holder.maybe != none {
-		return holder.maybe;
-	}
-	return 0;
-}
-
-fn disjoint(holder: &mut Holder) -> i32 {
-	if holder.maybe != none && Touch(&mut holder.other) {
-		return holder.maybe;
-	}
-	return 0;
-}`,
-		},
-		{
-			name: "eager later test restores invalidated proof",
-			src: `fn Touch(_: &mut ?i32) -> bool { return true; }
-
-fn valid(mut value: ?i32) -> i32 {
-	if value != none && Touch(&mut value) && value != none {
-		return value;
-	}
-	return 0;
-}`,
-		},
-		{
-			name: "reference alias shares presence proof",
-			src: `struct Holder { maybe: ?i32 }
-
-fn valid(holder: &Holder) -> i32 {
-	let alias = holder;
-	if alias.maybe == none {
-		return 0;
-	}
-	return holder.maybe;
 }`,
 		},
 		{

@@ -33,7 +33,7 @@ fn Mutable(source: &mut i32) {
     let resource = MutableResource::Borrowed with .{ value = source };
     match resource {
         MutableResource::Borrowed => {
-            let .{ value = value } = resource;
+            let .{ value } = resource;
             Write(value);
         }
     }

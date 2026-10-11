@@ -8,7 +8,7 @@ fn Consume(_: Resource) {}
 fn Invalid(resource: Resource) {
     match resource {
         Resource::Owned => {
-            let .{ value = value } = resource;
+            let .{ value } = resource;
             free(value);
         }
         Resource::Pending => {}

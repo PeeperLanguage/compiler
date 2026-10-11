@@ -10,35 +10,37 @@ enum Slot {
     Free
 }
 
-// An arm can test its case's payload in the words of an `if` test.
+// A pattern after `with` tests the payload of its case and names what it
+// takes. An arm without a name reads what it selects under the subject's name.
 fn Read(slot: Slot) -> i32 {
     match slot {
-        Slot::Value != none => { return slot; }
-        Slot::Value == none => { return -1; }
-        Slot::Inner is Shape::Circle => { return slot.radius; }
-        Slot::Inner is Shape::Code => { return slot + 100; }
-        Slot::Inner is Shape::Empty => { return -2; }
+        Slot::Value with value => { return value; }
+        Slot::Value with none => { return -1; }
+        Slot::Inner with Shape::Circle => { return slot.radius; }
+        Slot::Inner with Shape::Code with code => { return code + 100; }
+        Slot::Inner with Shape::Empty => { return -2; }
         Slot::Free => { return -3; }
     }
 }
 
-// Whole-case arms and payload tests mix freely between cases.
+// Whole-case arms and patterns mix freely between cases. A whole-case arm
+// after a pattern selects what the pattern left: here the value.
 fn Mixed(slot: Slot) -> i32 {
     match slot {
         Slot::Inner => { return 1; }
-        Slot::Value == none => { return 2; }
+        Slot::Value with none => { return 2; }
         Slot::Free => { return 3; }
-        Slot::Value != none => { return slot * 2; }
+        Slot::Value => { return slot * 2; }
     }
 }
 
 struct Holder { slot: Slot }
 
 fn Bump(mut holder: Holder) -> i32 {
-    match holder.slot {
-        Slot::Inner is Shape::Circle => { holder.slot.radius = holder.slot.radius + 1; }
-        Slot::Inner is Shape::Code => { holder.slot = Slot::Free; }
-        Slot::Inner is Shape::Empty => {}
+    match &mut holder.slot {
+        Slot::Inner with Shape::Circle => { slot.radius = slot.radius + 1; }
+        Slot::Inner with Shape::Code => { holder.slot = Slot::Free; }
+        Slot::Inner with Shape::Empty => {}
         Slot::Value => {}
         Slot::Free => {}
     }

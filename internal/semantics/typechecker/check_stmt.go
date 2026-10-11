@@ -2,14 +2,12 @@ package typechecker
 
 import (
 	"fmt"
-	"maps"
 	"slices"
 	"strings"
 
 	"compiler/internal/constvalue"
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/frontend/token"
 	"compiler/internal/ir"
 	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/place"
@@ -17,6 +15,7 @@ import (
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/semantics/typeresolution"
 	"compiler/internal/source"
+	"compiler/pkg/typednil"
 )
 
 func (c *checker) checkBlock(parentScope *symbols.Scope, block *ast.BlockStmt, returnType typeinfo.Type) {
@@ -31,6 +30,12 @@ func (c *checker) checkBlock(parentScope *symbols.Scope, block *ast.BlockStmt, r
 	}
 	for _, stmt := range block.Stmts {
 		c.checkStmt(scope, stmt, returnType)
+		// The rest of a block after a guard has its own scope (resolver).
+		if guard, isIf := stmt.(*ast.IfStmt); isIf {
+			if rest := c.module.SymbolIndex.Scope(guard); rest != nil {
+				scope = rest
+			}
+		}
 	}
 }
 
@@ -38,6 +43,14 @@ func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt, returnType type
 	if stmt == nil {
 		return
 	}
+	outer := c.hasOrElse
+	c.hasOrElse = false
+	defer func() {
+		if c.hasOrElse {
+			c.checkOrElseOrder(stmt)
+		}
+		c.hasOrElse = outer
+	}()
 	switch node := stmt.(type) {
 	case *ast.BlockStmt:
 		c.checkBlock(scope, node, returnType)
@@ -84,10 +97,10 @@ func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt, returnType type
 		if condType != nil && !typeinfo.IsInvalidOrUnknown(condType) && !typeinfo.IsCondition(condType) {
 			c.ctx.Diagnostics.Add(explicitBoolCastRequiredError(node.Cond, "if condition must be bool"))
 		}
-		entered := c.narrowed
-		thenEnd := c.checkBranch(scope, node.Then, returnType, c.narrowedBy(entered, node.Cond, true))
-		elseEnd := c.checkBranch(scope, node.Else, returnType, c.narrowedBy(entered, node.Cond, false))
-		c.narrowed = joinNarrowing(thenEnd, elseEnd)
+		elseBlock, _ := node.Else.(*ast.BlockStmt)
+		c.bindPayloadNames(node.Cond, node.Then, elseBlock, node)
+		c.checkStmt(scope, node.Then, returnType)
+		c.checkStmt(scope, node.Else, returnType)
 	case *ast.ForStmt:
 		if node.Iterable != nil {
 			c.checkForInStmt(scope, node, returnType)
@@ -98,11 +111,10 @@ func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt, returnType type
 			if condType != nil && !typeinfo.IsInvalidOrUnknown(condType) && !typeinfo.IsCondition(condType) {
 				c.ctx.Diagnostics.Add(explicitBoolCastRequiredError(node.Cond, "for condition must be bool"))
 			}
+			c.bindPayloadNames(node.Cond, node.Body, nil, nil)
 		}
 		c.loopDepth++
-		entered := c.narrowed
-		// The body may not run at all.
-		c.narrowed = joinNarrowing(entered, c.checkBranch(scope, node.Body, returnType, c.narrowedBy(entered, node.Cond, true)))
+		c.checkStmt(scope, node.Body, returnType)
 		c.loopDepth--
 	case *ast.BreakStmt, *ast.ContinueStmt:
 		if c.loopDepth == 0 {
@@ -146,8 +158,14 @@ func (c *checker) checkDestructure(scope *symbols.Scope, node *ast.DestructureSt
 			"destructure value must be a struct, got "+typeinfo.TypeText(valueType)))
 		return
 	}
-	named := make(map[string]*ast.Ident, len(node.Fields))
-	for _, item := range node.Fields {
+	c.checkDestructureFields(node.Fields, node.HasRest, strct, node)
+}
+
+// checkDestructureFields types the locals that `.{ field, field as name, _ }`
+// (a destructure statement or a match pattern at site) makes from strct.
+func (c *checker) checkDestructureFields(fields []ast.DestructureField, hasRest bool, strct *typeinfo.StructType, site ast.Node) {
+	named := make(map[string]*ast.Ident, len(fields))
+	for _, item := range fields {
 		field, fieldIndex, found := typeinfo.LookupStructField(strct, item.Name.Name)
 		if !found {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrFieldNotFound,
@@ -167,34 +185,23 @@ func (c *checker) checkDestructure(scope *symbols.Scope, node *ast.DestructureSt
 			binding.BindType(field.Type)
 		}
 	}
-	if node.HasRest {
+	if hasRest {
 		return
 	}
 	for _, field := range strct.Fields {
 		if named[field.Name] == nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingField,
-				"destructure leaves out field `"+field.Name+"`", ast.LocOf(node), "name it or end the list with `_`")
+				"destructure leaves out field `"+field.Name+"`", ast.LocOf(site), "name it or end the list with `_`")
 		}
 	}
-}
-
-// checkBranch checks stmt on a control path that starts with the narrowing in
-// start. It returns the narrowing that holds after stmt, or nil when control
-// never runs past it.
-func (c *checker) checkBranch(scope *symbols.Scope, stmt ast.Stmt, returnType typeinfo.Type, start map[narrowedPlace][]int) map[narrowedPlace][]int {
-	c.narrowed = start
-	c.checkStmt(scope, stmt, returnType)
-	if alwaysLeaves(stmt) {
-		return nil
-	}
-	return c.narrowed
 }
 
 func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, returnType typeinfo.Type) {
 	if c == nil || scope == nil || node == nil || node.Subject == nil {
 		return
 	}
-	subjectType := c.requireValueType(node.Subject, c.typeWholeCarrierExpr(scope, node.Subject), "match subject")
+	subject := c.caseSubject(scope, node.Subject, "match subject")
+	subjectType, borrow := subject.typ, subject.borrow
 	if typeinfo.IsInvalidOrUnknown(subjectType) {
 		return
 	}
@@ -205,17 +212,19 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, retu
 		return
 	}
 	evidenceComplete := true
-	if typeinfo.OwnershipCapabilityOf(subjectType).NeedsDrop && !place.IsPlaceExpr(node.Subject) {
+	_, isVariable := subject.place.(*ast.Ident)
+	spills := !isVariable && borrow == nil && slices.ContainsFunc(node.Arms, func(arm *ast.MatchArm) bool {
+		return arm != nil && arm.Pattern != nil
+	})
+	if typeinfo.OwnershipCapabilityOf(subjectType).NeedsDrop && !place.IsPlaceExpr(subject.place) && !spills {
 		c.ctx.Diagnostics.Add(invalidOperationError(node.Subject,
 			"ownership-bearing match subject must be a named place").
 			Help("bind subject to a local before matching it"))
 	}
-	evidence := Match{EnumType: subjectType, CaseCount: len(descriptor.Cases)}
+	evidence := Match{EnumType: subjectType, CaseCount: len(descriptor.Cases), Subject: subject.place, Borrow: borrow, Spills: spills}
 	seen := make(map[thir.ArmCase]ast.Node, len(node.Arms))
 	// tested holds, per case, the first arm that tests its payload.
 	tested := make(map[int]ast.Node)
-	entered := c.narrowed
-	var armEnds []map[narrowedPlace][]int
 	// reportMissing is off once a `_` arm takes the rest, or an arm's payload
 	// test is wrong and what it covers cannot be told.
 	reportMissing := true
@@ -239,46 +248,58 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, retu
 				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement,
 					"the `_` arm handles nothing", ast.LocOf(arm), "every case already has an arm")
 			}
-			armEnds = append(armEnds, c.checkBranch(scope, arm.Body, returnType, c.narrowedToArm(entered, node.Subject, rest)))
+			c.checkStmt(scope, arm.Body, returnType)
 			evidence.ArmCases = append(evidence.ArmCases, rest)
+			evidence.ArmPayloads = append(evidence.ArmPayloads, nil)
 			continue
 		}
 		resolved, pathOK := c.resolveNamedVariant(arm.Case)
 		if !pathOK {
 			evidenceComplete = false
-			c.checkBranch(scope, arm.Body, returnType, maps.Clone(entered))
+			c.checkStmt(scope, arm.Body, returnType)
 			continue
 		}
 		if typeinfo.IsInvalidOrUnknown(resolved.EnumType) {
 			evidenceComplete = false
-			c.checkBranch(scope, arm.Body, returnType, maps.Clone(entered))
+			c.checkStmt(scope, arm.Body, returnType)
 			continue
 		}
 		if !typeinfo.IsSameType(subjectType, resolved.EnumType) {
 			evidenceComplete = false
 			c.ctx.Diagnostics.Add(typeMismatchError(arm.Case,
 				fmt.Sprintf("match arm requires %s, got %s", typeinfo.TypeText(subjectType), typeinfo.TypeText(resolved.EnumType))))
-			c.checkBranch(scope, arm.Body, returnType, maps.Clone(entered))
+			c.checkStmt(scope, arm.Body, returnType)
 			continue
 		}
-		armCase := thir.ArmCase{Case: resolved.CaseIndex, TestsPayload: arm.PayloadOp != ""}
-		if armCase.TestsPayload {
-			payloadCase, isValid := c.armPayloadCase(node.Subject, arm, resolved.Case)
-			if !isValid {
-				evidenceComplete, reportMissing = false, false
-				c.checkBranch(scope, arm.Body, returnType, maps.Clone(entered))
-				continue
+		// What the arm selects: one payload case when its pattern tests the
+		// payload; otherwise the whole case, or what earlier arms left of it.
+		whole := thir.ArmCase{Case: resolved.CaseIndex}
+		var selects []thir.ArmCase
+		payloadCase, testsPayload, isValid := c.patternPayloadCase(arm.Pattern, resolved.Case)
+		switch {
+		case !isValid:
+			evidenceComplete, reportMissing = false, false
+			c.checkStmt(scope, arm.Body, returnType)
+			continue
+		case testsPayload:
+			selects = []thir.ArmCase{{Case: whole.Case, TestsPayload: true, PayloadCase: payloadCase}}
+		case tested[whole.Case] != nil:
+			for _, left := range uncoveredArmCases(descriptor, seen, tested) {
+				if left.Case == whole.Case {
+					selects = append(selects, left)
+				}
 			}
-			armCase.PayloadCase = payloadCase
+		default:
+			selects = []thir.ArmCase{whole}
 		}
-		// An arm repeats an earlier one that selects the same thing, the whole
-		// case, or (for a whole-case arm) part of it.
-		previous := seen[armCase]
-		if previous == nil {
-			previous = seen[thir.ArmCase{Case: armCase.Case}]
+		// An arm repeats an earlier one that took the whole case, the same
+		// payload case, or everything that was left of the case.
+		previous := seen[whole]
+		if previous == nil && len(selects) == 0 {
+			previous = tested[whole.Case]
 		}
-		if previous == nil && !armCase.TestsPayload {
-			previous = tested[armCase.Case]
+		if previous == nil && testsPayload {
+			previous = seen[selects[0]]
 		}
 		if previous != nil {
 			// Two arms for one case cannot become one switch.
@@ -288,16 +309,26 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, retu
 				WithPrimaryLabel(ast.LocOf(arm.Case), "duplicate case").
 				WithSecondaryLabel(ast.LocOf(previous), "first matched here"))
 		}
-		if seen[armCase] == nil {
-			seen[armCase] = arm.Case
+		for _, selected := range selects {
+			if seen[selected] == nil {
+				seen[selected] = arm.Case
+			}
 		}
-		if armCase.TestsPayload && tested[armCase.Case] == nil {
-			tested[armCase.Case] = arm.Case
+		if testsPayload && tested[whole.Case] == nil {
+			tested[whole.Case] = arm.Case
 		}
-		evidence.ArmCases = append(evidence.ArmCases, []thir.ArmCase{armCase})
-		armEnds = append(armEnds, c.checkBranch(scope, arm.Body, returnType, c.narrowedToArm(entered, node.Subject, []thir.ArmCase{armCase})))
+		// The arm's names read the payload of what it selects.
+		payload := resolved.Case.Payload
+		if len(selects) == 1 && selects[0].TestsPayload {
+			inner, _ := typeinfo.VariantDescriptorOf(payload)
+			payload = inner.Cases[selects[0].PayloadCase].Payload
+		}
+		c.bindPayloadName(arm, payload, borrow, thir.PayloadPath(selects))
+		c.bindPattern(arm.Pattern.Taking(), resolved.Case.Name, payload, borrow)
+		evidence.ArmCases = append(evidence.ArmCases, selects)
+		evidence.ArmPayloads = append(evidence.ArmPayloads, payload)
+		c.checkStmt(scope, arm.Body, returnType)
 	}
-	c.narrowed = joinNarrowing(armEnds...)
 	var missing []string
 	if reportMissing {
 		for _, armCase := range uncoveredArmCases(descriptor, seen, tested) {
@@ -306,11 +337,11 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, retu
 				payload, _ := typeinfo.VariantDescriptorOf(descriptor.Cases[armCase.Case].Payload)
 				switch {
 				case payload.Family != typeinfo.VariantFamilyOptional:
-					name += " is " + payload.Cases[armCase.PayloadCase].Name
+					name += " with " + typeinfo.TypeText(descriptor.Cases[armCase.Case].Payload) + "::" + payload.Cases[armCase.PayloadCase].Name
 				case armCase.PayloadCase == ir.OptionalPresentCase:
-					name += " != none"
+					name += " (holding a value)"
 				default:
-					name += " == none"
+					name += " with none"
 				}
 			}
 			missing = append(missing, "`"+name+"`")
@@ -352,66 +383,254 @@ func uncoveredArmCases(descriptor typeinfo.VariantDescriptor, seen map[thir.ArmC
 	return rest
 }
 
-// narrowedToArm returns the narrowing in known with subject restricted to the
-// cases a match arm selects: its payload too when the arm selects within one
-// case. known is left as it was.
-func (c *checker) narrowedToArm(known map[narrowedPlace][]int, subject ast.Expr, cases []thir.ArmCase) map[narrowedPlace][]int {
-	result := maps.Clone(known)
-	matched, isPlace := c.narrowedPlaceOf(subject)
-	if !isPlace {
-		return result
+// patternPayloadCase resolves the test a pattern makes on the payload of
+// variant (`none`, a case of the payload's enum, or taking the value out of
+// an optional payload) to a case of that payload. tests is false for a
+// pattern that only names things.
+func (c *checker) patternPayloadCase(pattern *ast.Pattern, variant typeinfo.VariantCase) (payloadCase int, tests, isValid bool) {
+	if pattern == nil {
+		return 0, false, true
 	}
-	var subjectCases, payloadCases []int
-	for _, armCase := range cases {
-		if !slices.Contains(subjectCases, armCase.Case) {
-			subjectCases = append(subjectCases, armCase.Case)
-		}
-		if armCase.TestsPayload {
-			payloadCases = append(payloadCases, armCase.PayloadCase)
-		}
-	}
-	result[matched] = subjectCases
-	if len(subjectCases) == 1 && len(payloadCases) > 0 {
-		matched.path += payloadStep
-		result[matched] = payloadCases
-	}
-	return result
-}
-
-// armPayloadCase resolves the payload test of a match arm (`!= none`,
-// `== none`, `is Enum::Inner`) to a case of the payload variant holds.
-func (c *checker) armPayloadCase(subject ast.Expr, arm *ast.MatchArm, variant typeinfo.VariantCase) (int, bool) {
-	if !place.IsPlaceExpr(subject) {
-		c.ctx.Diagnostics.Add(invalidOperationError(subject,
-			"a match arm can test a payload only when the subject is a named place").
-			Help("bind subject to a local before matching it"))
-		return 0, false
+	if !pattern.IsNone && pattern.Case == nil {
+		// As in construction, `Case with value` on an optional payload is the
+		// payload holding a value: the pattern takes that value.
+		return ir.OptionalPresentCase, typeinfo.IsOptional(variant.Payload), true
 	}
 	holds := "has no payload"
 	if variant.Payload != nil {
 		holds = "holds " + typeinfo.TypeText(variant.Payload)
 	}
-	if arm.PayloadOp != string(token.IS) {
+	if pattern.IsNone {
 		if !typeinfo.IsOptional(variant.Payload) {
-			c.ctx.Diagnostics.Add(invalidOperationError(arm.Case,
-				fmt.Sprintf("`%s none` needs an optional payload, but `%s` %s", arm.PayloadOp, variant.Name, holds)))
-			return 0, false
+			c.ctx.Diagnostics.Add(invalidOperationError(pattern,
+				fmt.Sprintf("`with none` needs an optional payload, but `%s` %s", variant.Name, holds)))
+			return 0, false, false
 		}
-		if arm.PayloadOp == string(token.NEQ) {
-			return ir.OptionalPresentCase, true
-		}
-		return ir.OptionalAbsentCase, true
+		return ir.OptionalAbsentCase, true, true
 	}
-	resolved, isCase := c.resolveNamedVariant(arm.PayloadCase)
+	resolved, isCase := c.resolveNamedVariant(pattern.Case)
 	if !isCase {
-		return 0, false
+		return 0, false, false
 	}
 	if variant.Payload == nil || !typeinfo.IsSameType(variant.Payload, resolved.EnumType) {
-		c.ctx.Diagnostics.Add(typeMismatchError(arm.PayloadCase,
-			fmt.Sprintf("`is %s` does not fit: `%s` %s", typeinfo.TypeText(resolved.EnumType), variant.Name, holds)))
-		return 0, false
+		c.ctx.Diagnostics.Add(typeMismatchError(pattern.Case,
+			fmt.Sprintf("`with %s` does not fit: `%s` %s", typeinfo.TypeText(resolved.EnumType), variant.Name, holds)))
+		return 0, false, false
 	}
-	return resolved.CaseIndex, true
+	if inner := pattern.Inner; inner != nil && (inner.IsNone || inner.Case != nil) {
+		c.ctx.Diagnostics.Add(invalidOperationError(inner, "a pattern tests one level below its case").
+			Help("name the payload and test it in the arm"))
+		return 0, false, false
+	}
+	return resolved.CaseIndex, true, true
+}
+
+// bindPattern types the names a pattern declares for payload, the payload of
+// what its arm selects in the case named caseName: one name for the whole
+// payload, or a local per field of a struct payload. With a borrowed subject
+// a name is a reference; fields cannot be taken out of a borrowed value.
+func (c *checker) bindPattern(taking *ast.Pattern, caseName string, payload typeinfo.Type, borrow *typeinfo.RefType) {
+	switch {
+	case taking == nil:
+	case payload == nil:
+		c.ctx.Diagnostics.Add(invalidOperationError(taking, "`"+caseName+"` has no payload to name"))
+	case taking.Name != nil:
+		c.module.SymbolIndex.Symbol(taking.Name).BindType(caseNameType(payload, borrow))
+	case borrow != nil:
+		c.ctx.Diagnostics.Add(invalidOperationError(taking, "a `.{ }` pattern takes the fields out of the value, which a borrowed subject keeps").
+			Help("leave the pattern out and read the fields through the subject's name"))
+	default:
+		strct, isStruct := typeinfo.Underlying(payload).(*typeinfo.StructType)
+		if !isStruct {
+			c.ctx.Diagnostics.Add(invalidOperationError(taking, "a `.{ }` pattern needs a struct payload, got "+typeinfo.TypeText(payload)))
+			return
+		}
+		c.checkDestructureFields(taking.Fields, taking.HasRest, strct, taking)
+	}
+}
+
+// testedSubject is what a case test, a match or `orelse` reads: the value
+// tested and its type. For `&place` and `&mut place` that is the place, and
+// borrow is the reference a payload name becomes.
+type testedSubject struct {
+	place  ast.Expr
+	typ    typeinfo.Type
+	borrow *typeinfo.RefType
+}
+
+// caseSubject types the subject of a case test, a match or `orelse`.
+func (c *checker) caseSubject(scope *symbols.Scope, subject ast.Expr, what string) testedSubject {
+	tested := testedSubject{place: subject}
+	address, isAddress := subject.(*ast.AddressExpr)
+	if isAddress && address.Mode != ast.AddressRaw {
+		tested.place = address.Expr
+	}
+	// Testing a payload name again tests the value it was read from.
+	previous := c.wholeCarrierExpr
+	c.wholeCarrierExpr = tested.place
+	tested.typ = c.requireValueType(subject, c.typeExpr(scope, subject, nil), what)
+	c.wholeCarrierExpr = previous
+	if tested.place == subject || typeinfo.IsInvalidOrUnknown(tested.typ) {
+		return tested
+	}
+	// Names read the payload through the place again, so the place must be one
+	// that reads the same twice: a variable, its fields, and elements picked
+	// by a number or a variable.
+	for borrowed := tested.place; ; {
+		switch part := borrowed.(type) {
+		case *ast.SelectorExpr:
+			borrowed = part.Expr
+			continue
+		case *ast.IndexExpr:
+			_, isNumber := part.Index.(*ast.NumberLit)
+			_, isVariable := part.Index.(*ast.Ident)
+			if isNumber || isVariable {
+				borrowed = part.Expr
+				continue
+			}
+		case *ast.Ident:
+			target, isMutable, _ := typeinfo.ReferenceTarget(tested.typ)
+			tested.typ, tested.borrow = target, &typeinfo.RefType{IsMutable: isMutable}
+			return tested
+		}
+		c.ctx.Diagnostics.Add(invalidOperationError(tested.place, "a borrowed subject must be a variable, a field or an element of one").
+			Help("bind the value to a local first"))
+		tested.typ = &typeinfo.InvalidType{}
+		return tested
+	}
+}
+
+// caseNameType is the type of a name given to payload: the payload itself, or
+// a reference to it when the subject is borrowed.
+func caseNameType(payload typeinfo.Type, borrow *typeinfo.RefType) typeinfo.Type {
+	if borrow == nil {
+		return payload
+	}
+	return &typeinfo.RefType{IsMutable: borrow.IsMutable, Target: payload}
+}
+
+// bindPayloadNames types the payload names the resolver declared for the
+// blocks a test guards: then (an `if` block or a loop body), otherwise (an
+// else block), and rest (the guard, for the code after an `if` whose block
+// always leaves). An owner that is nil or has no name is skipped.
+func (c *checker) bindPayloadNames(cond ast.Expr, then, otherwise *ast.BlockStmt, rest *ast.IfStmt) {
+	test, tested := c.evidence.CaseTest(cond.ID())
+	if !tested {
+		return
+	}
+	descriptor, _ := typeinfo.VariantDescriptorOf(c.evidence.ExprType(test.Subject.ID()))
+	if test.Case >= len(descriptor.Cases) {
+		return
+	}
+	borrow := test.Borrow
+	// held is the case when the test is true, other when it is false: known
+	// only for a value with two cases.
+	held, other := test.Case, -1
+	if len(descriptor.Cases) == 2 {
+		other = 1 - test.Case
+	}
+	if !test.MatchesWhenTrue {
+		held, other = other, held
+	}
+	if held >= 0 {
+		c.bindPayloadName(then, descriptor.Cases[held].Payload, borrow, []int{held})
+	}
+	if other >= 0 {
+		c.bindPayloadName(otherwise, descriptor.Cases[other].Payload, borrow, []int{other})
+		c.bindPayloadName(rest, descriptor.Cases[other].Payload, borrow, []int{other})
+	}
+}
+
+// bindPayloadName types the payload name the resolver bound to owner, if it
+// declared one and the case has a payload; path is the case read through at
+// each level to reach that payload.
+func (c *checker) bindPayloadName(owner ast.Node, payload typeinfo.Type, borrow *typeinfo.RefType, path []int) {
+	if typednil.IsNil(owner) {
+		return
+	}
+	if name := c.module.SymbolIndex.Symbol(owner); name != nil && name.IsPayloadName && payload != nil {
+		name.BindType(caseNameType(payload, borrow))
+		name.PayloadPath = path
+	}
+}
+
+// typeOrElse types `value orelse fallback` or `value orelse { ... }`: the
+// payload of the optional value. The fallback has that type; the block must
+// leave.
+func (c *checker) typeOrElse(scope *symbols.Scope, node *ast.OrElseExpr) typeinfo.Type {
+	c.hasOrElse = true
+	if scope == c.module.ModuleScope {
+		c.ctx.Diagnostics.Add(invalidOperationError(node, "`orelse` is only allowed inside a function"))
+		return &typeinfo.InvalidType{}
+	}
+	tested := c.caseSubject(scope, node.Value, "`orelse` value")
+	if typeinfo.IsInvalidOrUnknown(tested.typ) {
+		return &typeinfo.InvalidType{}
+	}
+	descriptor, _ := typeinfo.VariantDescriptorOf(tested.typ)
+	if descriptor.Family != typeinfo.VariantFamilyOptional {
+		c.ctx.Diagnostics.Add(typeMismatchError(node.Value, "`orelse` needs an optional value, got "+typeinfo.TypeText(tested.typ)))
+		return &typeinfo.InvalidType{}
+	}
+	// `orelse` tests its value for none.
+	c.recordCaseTest(node, tested, ir.OptionalPresentCase, len(descriptor.Cases), true, descriptor.Family)
+	payload := caseNameType(descriptor.Cases[ir.OptionalPresentCase].Payload, tested.borrow)
+	if node.Block != nil {
+		c.checkStmt(scope, node.Block, c.returnType)
+		return payload
+	}
+	fallbackType := c.typeExpr(scope, node.Fallback, payload)
+	if !typeinfo.IsInvalidOrUnknown(fallbackType) && !c.isAssignable(payload, fallbackType, node.Fallback) {
+		c.ctx.Diagnostics.Add(typeMismatchError(node.Fallback,
+			fmt.Sprintf("fallback must be %s, got %s", typeinfo.TypeText(payload), typeinfo.TypeText(fallbackType))))
+	}
+	return payload
+}
+
+// checkOrElseOrder rejects an `orelse` in stmt that could not run where it is
+// written. The compiler runs every `orelse` of a statement before the rest of
+// the statement, so a call written before one would run after it; and a loop
+// header runs on every pass.
+func (c *checker) checkOrElseOrder(stmt ast.Stmt) {
+	_, isLoop := stmt.(*ast.ForStmt)
+	var open []ast.Node
+	hasCall, depth := false, 0
+	ast.Inspect(stmt, func(node ast.Node) bool {
+		if node == nil {
+			closed := open[len(open)-1]
+			open = open[:len(open)-1]
+			switch closed.(type) {
+			case *ast.OrElseExpr:
+				depth--
+			case *ast.CallExpr, *ast.FreeExpr, *ast.PrintExpr:
+				// A call inside an `orelse` runs with it, in order.
+				hasCall = hasCall || depth == 0
+			}
+			return true
+		}
+		// Nested statements and arms are checked on their own.
+		if _, isArm := node.(*ast.MatchArm); isArm {
+			return false
+		}
+		if _, isStmt := node.(ast.Stmt); isStmt && node != ast.Node(stmt) {
+			return false
+		}
+		open = append(open, node)
+		if orElse, isOrElse := node.(*ast.OrElseExpr); isOrElse {
+			switch {
+			case isLoop:
+				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
+					"`orelse` cannot be part of a loop header", ast.LocOf(orElse), "the header runs on every pass").
+					Help("move it into the loop body")
+			case hasCall && depth == 0:
+				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
+					"`orelse` comes after a call in the same statement and would run before it", ast.LocOf(orElse), "").
+					Help("give the call's result a name first, with `let`")
+			}
+			depth++
+		}
+		return true
+	})
 }
 
 func (c *checker) checkAssign(scope *symbols.Scope, node *ast.AssignStmt) {
@@ -436,7 +655,6 @@ func (c *checker) checkAssign(scope *symbols.Scope, node *ast.AssignStmt) {
 				typeinfo.TypeText(valueType), typeinfo.TypeText(targetType))))
 		return
 	}
-	c.forgetNarrowing(node.Target)
 	switch target := node.Target.(type) {
 	case *ast.Ident:
 		var sym *symbols.Symbol
@@ -646,13 +864,6 @@ func (c *checker) checkBinding(scope *symbols.Scope, node ast.Stmt, requireIniti
 	} else {
 		sym.BindType(valType)
 	}
-	// A reference copied from a place names the same storage, so a test of
-	// one narrows reads through the other.
-	if _, _, isReference := typeinfo.ReferenceTarget(typeinfo.Underlying(valType)); isReference {
-		if target, isPlace := c.narrowedPlaceOf(value); isPlace {
-			c.aliases[sym] = target
-		}
-	}
 }
 
 // checkForInStmt types a `for x in iterable` loop over a range, indexable
@@ -753,9 +964,7 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 		c.evidence.RecordForIteration(node.ID(), evidence)
 	}
 	c.loopDepth++
-	entered := c.narrowed
-	// The body may not run at all.
-	c.narrowed = joinNarrowing(entered, c.checkBranch(scope, node.Body, returnType, maps.Clone(entered)))
+	c.checkStmt(scope, node.Body, returnType)
 	c.loopDepth--
 }
 
@@ -859,93 +1068,41 @@ func (c *checker) checkCallIteration(scope *symbols.Scope, node *ast.ForStmt, it
 func (c *checker) expandCallIteration(scope *symbols.Scope, node *ast.ForStmt) {
 	location := ast.LocOf(node)
 	var generatedOrdinal uint64
-	nextGeneratedID := func() source.NodeID {
+	nextGeneratedID := func() ast.NodeIDHolder {
 		generatedOrdinal++
 		id := source.GeneratedNodeID(node.ID(), source.GeneratedCheckedIteration, 0, generatedOrdinal)
 		if !id.IsValid() {
 			panic("checked iteration produced invalid generated identity")
 		}
-		return id
+		return ast.NodeIDHolder{NodeID: id}
 	}
-	expansion := &ast.BlockStmt{
-		NodeIDHolder: ast.NodeIDHolder{NodeID: nextGeneratedID()},
+	// for { let item = producer() orelse { break; }; body }
+	stop := &ast.BlockStmt{
+		NodeIDHolder: nextGeneratedID(),
+		Stmts:        []ast.Stmt{&ast.BreakStmt{NodeIDHolder: nextGeneratedID(), Location: location}},
 		Location:     location,
 	}
-	resultName := fmt.Sprintf("$for.result.%v", node.ID())
-	result := &ast.LetDecl{
-		NodeIDHolder: ast.NodeIDHolder{NodeID: nextGeneratedID()},
-		Name: &ast.Ident{
-			NodeIDHolder: ast.NodeIDHolder{NodeID: nextGeneratedID()},
-			Name:         resultName,
-			Location:     location,
-		},
-		Value:    node.Iterable,
-		Location: location,
-	}
-	stop := &ast.IfStmt{
-		NodeIDHolder: ast.NodeIDHolder{NodeID: nextGeneratedID()},
-		Cond: &ast.BinaryExpr{
-			NodeIDHolder: ast.NodeIDHolder{NodeID: nextGeneratedID()},
-			Left: &ast.Ident{
-				NodeIDHolder: ast.NodeIDHolder{NodeID: nextGeneratedID()},
-				Name:         resultName,
-				Location:     location,
-			},
-			Op: "==",
-			Right: &ast.NoneLit{
-				NodeIDHolder: ast.NodeIDHolder{NodeID: nextGeneratedID()},
-				Location:     location,
-			},
-			Location: location,
-		},
-		Then: &ast.BlockStmt{
-			NodeIDHolder: ast.NodeIDHolder{NodeID: nextGeneratedID()},
-			Stmts: []ast.Stmt{&ast.BreakStmt{
-				NodeIDHolder: ast.NodeIDHolder{NodeID: nextGeneratedID()},
-				Location:     location,
-			}},
-			Location: location,
-		},
-		Location: location,
-	}
 	item := &ast.LetDecl{
-		NodeIDHolder: ast.NodeIDHolder{NodeID: nextGeneratedID()},
-		Name: &ast.Ident{
-			NodeIDHolder: ast.NodeIDHolder{NodeID: nextGeneratedID()},
-			Name:         node.Value.Name,
-			Location:     location,
-		},
-		Value: &ast.Ident{
-			NodeIDHolder: ast.NodeIDHolder{NodeID: nextGeneratedID()},
-			Name:         resultName,
-			Location:     location,
-		},
-		Location: location,
+		NodeIDHolder: nextGeneratedID(),
+		Name:         &ast.Ident{NodeIDHolder: nextGeneratedID(), Name: node.Value.Name, Location: location},
+		Value:        &ast.OrElseExpr{NodeIDHolder: nextGeneratedID(), Value: node.Iterable, Block: stop, Location: location},
+		Location:     location,
 	}
 	checked := &ast.ForStmt{
-		NodeIDHolder: ast.NodeIDHolder{NodeID: nextGeneratedID()},
+		NodeIDHolder: nextGeneratedID(),
 		Body: &ast.BlockStmt{
-			NodeIDHolder: ast.NodeIDHolder{NodeID: nextGeneratedID()},
-			Stmts:        []ast.Stmt{result, stop, item, node.Body},
+			NodeIDHolder: nextGeneratedID(),
+			Stmts:        []ast.Stmt{item, node.Body},
 			Location:     location,
 		},
 		Location: location,
 	}
-	expansion.Stmts = append(expansion.Stmts, checked)
+	expansion := &ast.BlockStmt{NodeIDHolder: nextGeneratedID(), Stmts: []ast.Stmt{checked}, Location: location}
 	expansionScope := symbols.NewScope(scope)
 	c.module.SymbolIndex.SetScope(expansion, expansionScope)
 	iterationScope := symbols.NewScope(expansionScope)
-
 	c.module.SymbolIndex.SetScope(checked.Body, iterationScope)
-	c.module.SymbolIndex.SetScope(stop.Then, symbols.NewScope(iterationScope))
-	resultSymbol := symbols.New(symbols.SourceSymbolID(result.ID()), resultName, symbols.SymbolVar, result, location)
-	c.module.SymbolIndex.MarkUsed(resultSymbol)
-	if err := iterationScope.Declare(resultSymbol); err != nil {
-		panic(err)
-	}
-	c.module.SymbolIndex.Bind(result.Name, resultSymbol)
-	c.module.SymbolIndex.Bind(stop.Cond.(*ast.BinaryExpr).Left, resultSymbol)
-	c.module.SymbolIndex.Bind(item.Value, resultSymbol)
+	c.module.SymbolIndex.SetScope(stop, symbols.NewScope(iterationScope))
 	c.module.SymbolIndex.Bind(item.Name, c.module.SymbolIndex.Symbol(node.Value))
 
 	c.evidence.RecordCheckedIteration(node.ID(), expansion)

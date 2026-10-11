@@ -201,7 +201,7 @@ func TestBuildPublishesAndValidatesDestructureBindings(t *testing.T) {
 	mod := buildTypedModule(t, `
 struct Pair { count: i32, name: str }
 fn read(pair: Pair) -> i32 {
-    let .{ count = count, _ } = pair;
+    let .{ count, _ } = pair;
     return count;
 }`)
 	destructure, ok := mod.THIR.Functions[0].Body.Stmts[0].(*thir.Destructure)
@@ -291,5 +291,62 @@ func TestModuleResetDropsTHIRBelowTypechecked(t *testing.T) {
 	mod.ResetToPhase(phase.Resolved)
 	if mod.THIR != nil {
 		t.Fatal("THIR survived reset below Typechecked")
+	}
+}
+
+func TestBuildReadsTestedVariablePayloadInPlace(t *testing.T) {
+	mod := buildTypedModule(t, `
+struct Box { value: i32 }
+enum Slot { Owned: *Box, Plain: i32 }
+fn Take(slot: Slot) -> i32 {
+    match slot {
+        Slot::Owned => { free(slot); return 1; }
+        Slot::Plain => { return slot; }
+    }
+}`)
+	// No hidden local: the match reads the variable, and each use of its name
+	// in an arm is a payload read of that variable.
+	match, ok := mod.THIR.Functions[0].Body.Stmts[0].(*thir.Match)
+	if !ok || match.Subject.(*thir.Ident).Name != "slot" {
+		t.Fatalf("statement = %#v, want a match on slot", mod.THIR.Functions[0].Body.Stmts[0])
+	}
+	subject := match.Subject.(*thir.Ident)
+	plain, _ := match.Arms[1].Body.Stmts[0].(*thir.Return).Value.(*thir.Ident)
+	if plain == nil || plain.Symbol != subject.Symbol || typeinfo.TypeText(plain.Type) != "i32" || typeinfo.TypeText(plain.CaseCarrier) != "Slot" {
+		t.Fatalf("plain arm read = %#v, want the i32 payload of slot", plain)
+	}
+}
+
+func TestBuildMatchesBorrowedSubjectInPlace(t *testing.T) {
+	mod := buildTypedModule(t, `
+enum Shape { Round: struct { radius: i32 }, Empty }
+struct Holder { shape: Shape }
+fn Grow(holder: &mut Holder) {
+    match &mut holder.shape {
+        Shape::Round => { shape.radius = 2; }
+        Shape::Empty => { }
+    }
+}`)
+	wrapper := mod.THIR.Functions[0].Body.Stmts[0].(*thir.Block)
+	// No carrier: the match reads the place itself.
+	match, _ := wrapper.Stmts[0].(*thir.Match)
+	if len(wrapper.Stmts) != 1 || match == nil {
+		t.Fatalf("statement = %#v, want only the match", wrapper.Stmts)
+	}
+	subject, _ := match.Subject.(*thir.Field)
+	if subject == nil || subject.Name != "shape" || subject.CaseCarrierType() != nil {
+		t.Fatalf("subject = %#v, want the whole field", match.Subject)
+	}
+	shape, _ := match.Arms[0].Body.Stmts[0].(*thir.Binding)
+	address, _ := shape.Value.(*thir.Address)
+	if shape == nil || address == nil || address.Mode != thir.AddressMutable || typeinfo.TypeText(shape.Symbol.Type) != "&mut struct{radius: i32}" {
+		t.Fatalf("payload name = %#v", shape)
+	}
+	payload, _ := address.Value.(*thir.Field)
+	if payload == nil || payload == subject || payload.SourceInfo().NodeID == subject.SourceInfo().NodeID || payload.CaseCarrierType() == nil {
+		t.Fatalf("borrowed payload = %#v, want a second read of the field", address.Value)
+	}
+	if len(match.Arms[1].Body.Stmts) != 0 {
+		t.Fatalf("empty arm = %#v, want nothing dropped", match.Arms[1].Body.Stmts)
 	}
 }

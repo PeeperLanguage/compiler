@@ -1,0 +1,6 @@
+name = "runtime_match_patterns"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "success"

@@ -9,7 +9,5 @@ struct Holder {
 fn Consume(_: Token) {}
 
 fn PartialMove(holder: Holder) {
-    if holder.token != none {
-        Consume(holder.token);
-    }
+    Consume(holder.token orelse { return; });
 }

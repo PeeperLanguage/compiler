@@ -300,7 +300,7 @@ func (a *analyzer) applyProjectedUse(op effectUse, loans *loanContext, syntax th
 		}
 	}
 	a.checkStorageAccess(syntax, loans, storageAccessForUse(syntax.ExprType(), op.Kind))
-	if op.Kind == typeinfo.UseRead || !ownershipTrackedType(syntax.ExprType()) {
+	if op.Kind == typeinfo.UseRead || !typeinfo.IsMoveTracked(syntax.ExprType()) {
 		return
 	}
 	if a.partialVariantPayloadMove(op.Node) {
@@ -411,7 +411,7 @@ func (a *analyzer) applyUseKind(sym *symbols.Symbol, op effectUse, st ownershipS
 			"copy of move-only value requires a consuming context", op.Location, "")
 	case typeinfo.UseMove:
 		// A narrowed read of a payload that copies leaves its carrier whole.
-		if ownershipTrackedType(syntax.ExprType()) {
+		if typeinfo.IsMoveTracked(syntax.ExprType()) {
 			st.moved[sym] = syntax.SourceInfo()
 			delete(st.live, sym)
 		}

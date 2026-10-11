@@ -1,0 +1,25 @@
+enum Side { Left: i32, Right: i32 }
+
+// The first test rules Left out, so the Left arm can never run. It is still
+// ordinary code: it must compile, and it reads the payload it names.
+fn Read(side: Side) -> i32 {
+    if side is Side::Left { return 0; }
+    match side {
+        Side::Left => { return side + 1; }
+        Side::Right => { return side + 2; }
+    }
+}
+
+fn Present(maybe: ?i32) -> i32 {
+    if maybe != none { return maybe; }
+    if maybe == none { return 0; }
+    return maybe + 1;
+}
+
+fn main() -> i32 {
+    if Read(Side::Right with 4) != 6 { return 1; }
+    if Read(Side::Left with 4) != 0 { return 2; }
+    if Present(3) != 3 { return 3; }
+    if Present(none) != 0 { return 4; }
+    return 0;
+}

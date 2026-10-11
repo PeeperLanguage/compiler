@@ -71,6 +71,15 @@ func (r *Index) SetScope(node ast.Node, scope *Scope) {
 	r.blockScopes[node.ID()] = scope
 }
 
+// SetScopeID is SetScope for generated syntax whose node identity is
+// already in hand.
+func (r *Index) SetScopeID(id source.NodeID, scope *Scope) {
+	if r == nil || !id.IsValid() || scope == nil {
+		return
+	}
+	r.blockScopes[id] = scope
+}
+
 func (r *Index) Scope(node ast.Node) *Scope {
 	if r == nil || node == nil {
 		return nil

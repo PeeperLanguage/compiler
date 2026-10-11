@@ -12,7 +12,7 @@ fn Invalid(chooseLocal: bool) -> rawptr {
     }
     match resource {
         Resource::Pointer => {
-            let .{ value = pointer } = resource;
+            let .{ value as pointer } = resource;
             return pointer;
         }
     }

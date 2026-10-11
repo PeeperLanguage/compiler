@@ -1,0 +1,80 @@
+struct Box { value: i32 }
+enum Shape { Circle: struct { radius: i32, scale: i32 }, Code: i32, Empty }
+enum Slot { Value: ?i32, Inner: Shape, Owned: struct { box: *Box }, Free }
+struct Holder { slot: Slot }
+
+fn MakeSlot(value: i32) -> Slot { return Slot::Value with value; }
+
+// A pattern looks like the expression that builds the value: `with none`,
+// `with value`, a case of the payload's enum, `.{ fields }`.
+fn Read(slot: Slot) -> i32 {
+    match slot {
+        Slot::Value with none => { return -1; }
+        Slot::Value with value => { return value; }
+        Slot::Inner with Shape::Circle with .{ radius, scale as factor } => { return radius * factor; }
+        Slot::Inner with Shape::Code with code => { return code; }
+        Slot::Inner => { return -2; }
+        Slot::Owned with .{ box } => {
+            let value = box.value;
+            free(box);
+            return value;
+        }
+        Slot::Free => { return 0; }
+    }
+}
+
+// A whole-case arm after a pattern selects what the pattern left of the case.
+fn Rest(slot: Slot) -> i32 {
+    match slot {
+        Slot::Value with none => { return -1; }
+        Slot::Value => { return slot + 1; }
+        _ => { return 0; }
+    }
+}
+
+// A subject that is not a variable is kept in a hidden local.
+fn FromCall(value: i32) -> i32 {
+    match MakeSlot(value) {
+        Slot::Value with made => { return made; }
+        _ => { return 0; }
+    }
+}
+
+// With a borrowed subject a name is a reference into the payload.
+fn Borrowed(holder: &mut Holder) -> i32 {
+    match &mut holder.slot {
+        Slot::Owned with owned => {
+            owned.box.value = owned.box.value + 1;
+            return owned.box.value;
+        }
+        _ => { return 0; }
+    }
+}
+
+// The destructure statement lists fields the same way.
+fn Statement(shape: Shape) -> i32 {
+    match shape {
+        Shape::Circle => {
+            let .{ radius, scale as factor } = shape;
+            return radius + factor;
+        }
+        _ => { return 0; }
+    }
+}
+
+fn main() -> i32 {
+    if Read(Slot::Value with none) != -1 { return 1; }
+    if Read(Slot::Value with 7) != 7 { return 2; }
+    if Read(Slot::Inner with Shape::Circle with .{ radius = 3, scale = 4 }) != 12 { return 3; }
+    if Read(Slot::Inner with Shape::Code with 9) != 9 { return 4; }
+    if Read(Slot::Inner with Shape::Empty) != -2 { return 5; }
+    if Read(Slot::Owned with .{ box = alloc(Box.{ value = 5 }) }) != 5 { return 6; }
+    if Read(Slot::Free) != 0 { return 7; }
+    if Rest(Slot::Value with 4) != 5 { return 8; }
+    if Rest(Slot::Value with none) != -1 { return 9; }
+    if FromCall(6) != 6 { return 10; }
+    let mut holder = Holder.{ slot = Slot::Owned with .{ box = alloc(Box.{ value = 1 }) } };
+    if Borrowed(&mut holder) != 2 { return 11; }
+    if Statement(Shape::Circle with .{ radius = 2, scale = 5 }) != 7 { return 12; }
+    return 0;
+}

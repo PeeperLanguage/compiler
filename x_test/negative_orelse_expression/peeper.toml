@@ -1,0 +1,7 @@
+name = "negative_orelse_expression"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["`orelse` comes after a call in the same statement and would run before it", "`orelse` cannot be part of a loop header", "a default value cannot leave the function"]

@@ -91,13 +91,11 @@ func (l *lowerer) lower(expr thir.Expr, expected typeinfo.Type, applyConversions
 			return ir.WithOrigin(converted, origin)
 		}
 	}
-	if l.ctx.Analysis != nil {
-		// Refined payload fields retain source-place identity. Once conversions
-		// have been handled, load that physical place instead of re-lowering the
-		// source syntax and rediscovering its projection.
-		if payload, _ := l.ctx.Analysis.Payload(origin.NodeID); len(payload.Cases) > 0 && expr.ExprPlace() != nil {
-			return ir.WithOrigin(&ir.Load{Place: l.place(expr)}, origin)
-		}
+	// A payload read keeps source-place identity. Once conversions have been
+	// handled, load that physical place instead of re-lowering the source
+	// syntax and rediscovering its projection.
+	if len(expr.PayloadPath()) > 0 && expr.ExprPlace() != nil {
+		return ir.WithOrigin(&ir.Load{Place: l.place(expr)}, origin)
 	}
 	previous := l.expected
 	l.expected = expected
@@ -489,7 +487,7 @@ func (l *lowerer) place(expr thir.Expr) *ir.Place {
 	}
 	out := &ir.Place{Root: root, Type: l.typeID(rootType), Location: expr.SourceInfo().Location}
 	for _, projection := range p.Projections {
-		l.appendPayloadProjections(out, projection.BaseSource)
+		AppendPayloadProjections(l.ctx.Types, out, projection.BasePath, projection.BaseSource.Location)
 		if projection.DereferenceType != nil {
 			out.Type = l.typeID(projection.DereferenceType)
 			out.Projections = append(out.Projections, ir.PlaceProjection{
@@ -518,20 +516,8 @@ func (l *lowerer) place(expr thir.Expr) *ir.Place {
 		out.Type = item.Type
 		out.Projections = append(out.Projections, item)
 	}
-	l.appendPayloadProjections(out, expr.SourceInfo())
+	AppendPayloadProjections(l.ctx.Types, out, expr.PayloadPath(), expr.SourceInfo().Location)
 	return out
-}
-
-func (l *lowerer) appendPayloadProjections(place *ir.Place, source ir.SourceInfo) {
-	if l.ctx.Analysis == nil || place == nil || !source.NodeID.IsValid() {
-		return
-	}
-	id := source.NodeID
-	payload, _ := l.ctx.Analysis.Payload(id)
-	if !payload.AppliesTo(l.ctx.Analysis.StorageOrigins(id)) {
-		return
-	}
-	AppendPayloadProjections(l.ctx.Types, place, payload.Cases, source.Location)
 }
 
 // AppendPayloadProjections extends place into the payload reached through

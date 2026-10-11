@@ -6,7 +6,7 @@ fn Run() -> i32 {
     let resource = Resource::Borrowed with .{ value = &target, tag = 2 };
     match resource {
         Resource::Borrowed => {
-            let .{ value = view, _ } = resource;
+            let .{ value as view, _ } = resource;
             target.value = 9;
             return Read(view);
         }

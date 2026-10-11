@@ -1,0 +1,7 @@
+name = "negative_case_binding_borrowed"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["cannot mutate storage while it is borrowed", "mutable reference requires mutable addressable storage", "a borrowed subject must be a variable, a field or an element of one"]

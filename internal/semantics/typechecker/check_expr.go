@@ -3,6 +3,7 @@ package typechecker
 import (
 	"fmt"
 	"math/big"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -19,16 +20,13 @@ import (
 	"compiler/pkg/numeric"
 )
 
-// typeExpr types expr and records the type it reads as: the payload when expr
-// names a place narrowed to one case, its declared type otherwise. Flow
-// analysis later verifies every narrowed read and never re-enters this checker.
+// typeExpr types expr and records the type it reads as. A use of a payload
+// name reads the payload (typePayloadName); flow analysis later verifies every
+// such read and never re-enters this checker.
 func (c *checker) typeExpr(scope *symbols.Scope, expr ast.Expr, expected typeinfo.Type) typeinfo.Type {
 	base := c.typeExprBase(scope, expr, expected)
 	if base == nil || expr == nil {
 		return base
-	}
-	if payload := c.casePayload(expr, base, expected); payload != nil {
-		base = payload
 	}
 	if c.module != nil && c.evidence != nil {
 		c.evidence.RecordExprType(expr.ID(), base)
@@ -37,6 +35,39 @@ func (c *checker) typeExpr(scope *symbols.Scope, expr ast.Expr, expected typeinf
 		return c.requirePayload(expr, base)
 	}
 	return base
+}
+
+// typePayloadName types a use of a name that reads a variable's payload in
+// place (resolver.declarePayloadName) and marks it as a payload read of that
+// variable, which is what later phases see. Where the whole variable is
+// expected or tested again (or, for a test inside a test, an outer payload)
+// the use reads that; reading the payload is the default.
+func (c *checker) typePayloadName(node *ast.Ident, name *symbols.Symbol, expected typeinfo.Type) typeinfo.Type {
+	// The subject of a test or match is the nearest value that has cases.
+	isSubject := c.wholeCarrierExpr == ast.Expr(node)
+	read := name
+	for level := name; level != nil; level = level.AliasOf {
+		typ, _ := symbols.GetSymbolType(level)
+		_, hasCases := typeinfo.VariantDescriptorOf(typ)
+		if isSubject && hasCases || !isSubject && expected != nil && typeinfo.IsSameType(typ, expected) {
+			read = level
+			break
+		}
+	}
+	typ, typed := symbols.GetSymbolType(read)
+	if !typed || typ == nil {
+		return &typeinfo.UnknownType{}
+	}
+	var carrier typeinfo.Type
+	var path []int
+	if read.AliasOf != nil {
+		carrier, _ = symbols.GetSymbolType(name.Variable())
+		for level := read; level.AliasOf != nil; level = level.AliasOf {
+			path = append(slices.Clone(level.PayloadPath), path...)
+		}
+	}
+	c.evidence.MarkCasePayload(node.ID(), carrier, path)
+	return typ
 }
 
 // typePayloadExpr types an operand that is used through its value: a field or
@@ -62,13 +93,13 @@ func (c *checker) typeWholeCarrierExpr(scope *symbols.Scope, expr ast.Expr) type
 	return c.typeExpr(scope, expr, nil)
 }
 
-func (c *checker) recordCaseTest(node ast.Expr, subject ast.Expr, caseIndex, caseCount int, caseWhenTrue bool, family typeinfo.VariantFamily) {
-	if c == nil || c.module == nil || c.evidence == nil || node == nil || subject == nil {
+func (c *checker) recordCaseTest(node ast.Expr, subject testedSubject, caseIndex, caseCount int, caseWhenTrue bool, family typeinfo.VariantFamily) {
+	if c == nil || c.module == nil || c.evidence == nil || node == nil || subject.place == nil {
 		return
 	}
 	c.evidence.RecordCaseTest(node.ID(), CaseTest{
-		SubjectID: subject.ID(), Case: caseIndex, MatchesWhenTrue: caseWhenTrue,
-		CaseCount: caseCount, Family: family,
+		Case: caseIndex, MatchesWhenTrue: caseWhenTrue,
+		CaseCount: caseCount, Family: family, Subject: subject.place, Borrow: subject.borrow,
 	})
 }
 
@@ -121,6 +152,9 @@ func (c *checker) typeExprBase(scope *symbols.Scope, expr ast.Expr, expected typ
 				fmt.Sprintf("compiler operation `%s` must be called directly", node.Name)))
 			return &typeinfo.InvalidType{}
 		}
+		if sym.AliasOf != nil {
+			return c.typePayloadName(node, sym, expected)
+		}
 		t, ok := symbols.GetSymbolType(sym)
 		if !ok || t == nil {
 			return &typeinfo.UnknownType{}
@@ -158,6 +192,9 @@ func (c *checker) typeExprBase(scope *symbols.Scope, expr ast.Expr, expected typ
 
 	case *ast.IsExpr:
 		return c.typeIsExpr(scope, node)
+
+	case *ast.OrElseExpr:
+		return c.typeOrElse(scope, node)
 
 	case *ast.CallExpr:
 		return c.typeCallExpr(scope, node)
@@ -208,6 +245,11 @@ func (c *checker) typeUnaryExpr(scope *symbols.Scope, node *ast.UnaryExpr, expec
 		if !typeinfo.IsSameType(argType, &typeinfo.BoolType{}) {
 			c.ctx.Diagnostics.Add(explicitBoolCastRequiredError(node.Expr, "`!` operand must be bool"))
 			return nil
+		}
+		// `!` of a case test is the same test with the other answer.
+		if test, tested := c.evidence.CaseTest(node.Expr.ID()); tested {
+			test.MatchesWhenTrue = !test.MatchesWhenTrue
+			c.evidence.RecordCaseTest(node.ID(), test)
 		}
 		return &typeinfo.BoolType{}
 	}
@@ -293,6 +335,7 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 	}
 
 	var left, right typeinfo.Type
+	var tested testedSubject
 	if node.Op == "<<" || node.Op == ">>" {
 		left = c.typeExpr(scope, node.Left, operandExpected)
 		rightExpected := typeinfo.Type(nil)
@@ -301,7 +344,8 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 		}
 		right = c.typeExpr(scope, node.Right, rightExpected)
 	} else if isNoneExpr(node.Left) && !isNoneExpr(node.Right) {
-		right = c.typeWholeCarrierExpr(scope, node.Right)
+		tested = c.caseSubject(scope, node.Right, "right operand")
+		right = tested.typ
 		left = c.typeExpr(scope, node.Left, optionalOperandExpected(right))
 	} else if leftNumber, leftLiteral := node.Left.(*ast.NumberLit); leftLiteral {
 		if rightNumber, rightLiteral := node.Right.(*ast.NumberLit); !rightLiteral {
@@ -322,7 +366,8 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 		right = c.typeExpr(scope, node.Right, left)
 	} else {
 		if isNoneExpr(node.Right) {
-			left = c.typeWholeCarrierExpr(scope, node.Left)
+			tested = c.caseSubject(scope, node.Left, "left operand")
+			left = tested.typ
 			right = c.typeExpr(scope, node.Right, optionalOperandExpected(left))
 		} else {
 			left = c.typeExpr(scope, node.Left, operandExpected)
@@ -367,11 +412,7 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 		}
 	}
 	if optionalTest {
-		subject := node.Left
-		if isNoneExpr(subject) {
-			subject = node.Right
-		}
-		c.recordCaseTest(node, subject, ir.OptionalPresentCase, 2, node.Op == "!=", typeinfo.VariantFamilyOptional)
+		c.recordCaseTest(node, tested, ir.OptionalPresentCase, 2, node.Op == "!=", typeinfo.VariantFamilyOptional)
 	} else {
 		left = c.requirePayload(node.Left, left)
 		right = c.requirePayload(node.Right, right)
@@ -469,7 +510,8 @@ func (c *checker) typeIsExpr(scope *symbols.Scope, node *ast.IsExpr) typeinfo.Ty
 	if node == nil || node.Value == nil || node.Case == nil {
 		return &typeinfo.InvalidType{}
 	}
-	valueType := c.requireValueType(node.Value, c.typeWholeCarrierExpr(scope, node.Value), "case-test subject")
+	tested := c.caseSubject(scope, node.Value, "case-test subject")
+	valueType := tested.typ
 	if typeinfo.IsInvalidOrUnknown(valueType) {
 		return &typeinfo.InvalidType{}
 	}
@@ -483,7 +525,7 @@ func (c *checker) typeIsExpr(scope *symbols.Scope, node *ast.IsExpr) typeinfo.Ty
 			fmt.Sprintf("case test requires %s, got %s", typeinfo.TypeText(resolved.EnumType), typeinfo.TypeText(valueType))))
 		return &typeinfo.InvalidType{}
 	}
-	c.recordCaseTest(node, node.Value, resolved.CaseIndex, len(resolved.Descriptor.Cases), true, typeinfo.VariantFamilyNamed)
+	c.recordCaseTest(node, tested, resolved.CaseIndex, len(resolved.Descriptor.Cases), true, typeinfo.VariantFamilyNamed)
 	return &typeinfo.BoolType{}
 }
 

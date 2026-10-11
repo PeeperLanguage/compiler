@@ -165,6 +165,30 @@ func TestCompletionLexicalScopeAndDeclarationOrder(t *testing.T) {
 	}
 }
 
+// The code after a guard that leaves is resolved in a scope of its own, and a
+// statement that takes a value apart keeps it in a hidden local.
+func TestCompletionOffersLocalsAfterGuardAndHidesCompilerLocals(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "main"+peeper.SourceExt)
+	source := "fn find() -> ?i32 { return none; }\n" +
+		"fn run(maybe: ?i32) -> i32 {\n" +
+		"\tif maybe == none { return 0; }\n" +
+		"\tlet afterGuard: i32 = find() orelse 1;\n" +
+		"\t__CURSOR__\n" +
+		"\treturn afterGuard;\n" +
+		"}\n"
+
+	state := NewServerState()
+	state.RootDir = root
+	labels := completionLabels(completionAtSource(t, state, filePath, source))
+	if !slices.Contains(labels, "afterGuard") || !slices.Contains(labels, "maybe") {
+		t.Fatalf("completion labels = %v, want afterGuard and maybe", labels)
+	}
+	if index := slices.IndexFunc(labels, func(label string) bool { return strings.HasPrefix(label, "$") }); index >= 0 {
+		t.Fatalf("completion offers compiler local %q", labels[index])
+	}
+}
+
 func TestCompletionAndHoverUseSameFunctionHeader(t *testing.T) {
 	root := t.TempDir()
 	filePath := filepath.Join(root, "main"+peeper.SourceExt)

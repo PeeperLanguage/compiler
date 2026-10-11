@@ -12,9 +12,9 @@ fn Clear(holder: &mut Holder) {
 }
 
 fn Read(mut holder: Holder) -> i32 {
-    if holder.choice is Choice::Left {
+    if &holder.choice is Choice::Left {
         Clear(&mut holder);
-        return holder.choice.value;
+        return choice.value;
     }
     return 0;
 }

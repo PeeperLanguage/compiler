@@ -676,7 +676,12 @@ func (a *flowAnalyzer) updateOriginPlace(storage []place.Origin, typ typeinfo.Ty
 		a.updateOriginPlace(place.VariantPayloadOrigins(storage, []int{expression.Case}), payloadType, expression.Payload, sourceState, state)
 	default:
 		source := a.resolve(value, sourceState)
-		a.copyStoredOriginPlace(storage, source.ValueOrigins, typ, sourceState, state)
+		origins := source.ValueOrigins
+		// A payload read copies what the payload stores, not what its carrier does.
+		if payload, isPayload := a.result.Payload(value.SourceInfo().NodeID); isPayload {
+			origins = place.VariantPayloadOrigins(source.StorageOrigins, payload.Cases)
+		}
+		a.copyStoredOriginPlace(storage, origins, typ, sourceState, state)
 	}
 }
 
@@ -693,6 +698,12 @@ func (a *flowAnalyzer) copyStoredOriginPlace(destination, source []place.Origin,
 	if _, isRaw := typeinfo.Underlying(typ).(*typeinfo.RawPtrType); isRaw {
 		if value := originValues(sourceState.rawPointers, source); len(value) > 0 {
 			state.rawPointers = setOriginFact(state.rawPointers, destination, value)
+		}
+		return
+	}
+	if strct, isStruct := typeinfo.Underlying(typ).(*typeinfo.StructType); isStruct && strct != nil {
+		for _, field := range strct.Fields {
+			a.copyStoredOriginPlace(place.FieldOrigins(destination, field.Name), place.FieldOrigins(source, field.Name), field.Type, sourceState, state)
 		}
 		return
 	}

@@ -20,6 +20,7 @@ import (
 
 const (
 	precLowest uint8 = iota
+	precOrElse
 	precPipe
 	precLogicalOr
 	precLogicalAnd
@@ -116,6 +117,7 @@ func init() {
 	nud(token.LBRACK, func(p *Parser, _ token.Kind) ast.Expr { return p.parseArrayLiteral() })
 
 	// logical
+	led(token.ORELSE, precOrElse, parseOrElseExpr)
 	led(token.PIPE_ARROW, precPipe, parsePipeExpr)
 	led(token.OROR, precLogicalOr, parseBinaryExpr)
 	led(token.ANDAND, precLogicalAnd, parseBinaryExpr)
@@ -363,6 +365,20 @@ func parseBinaryExpr(p *Parser, left ast.Expr, prec uint8, boundary token.Kind) 
 		Right:    right,
 		Location: source.NewLocation(p.filePath, ast.StartOf(left), ast.EndOf(right)),
 	})
+}
+
+// parseOrElseExpr reads what follows `value orelse`: a block, or a fallback
+// value, which may itself end in `orelse`.
+func parseOrElseExpr(p *Parser, left ast.Expr, _ uint8, boundary token.Kind) ast.Expr {
+	p.advance()
+	node := &ast.OrElseExpr{Value: left}
+	if p.at(token.LBRACE) {
+		node.Block = p.parseBlock()
+	} else if node.Fallback = p.parseExpr(precLowest, boundary); node.Fallback == nil {
+		node.Fallback = reg(p, &ast.BadExpr{Location: source.NewLocation(p.filePath, p.prev().Start, p.prev().End)})
+	}
+	node.Location = source.NewLocation(p.filePath, ast.StartOf(left), p.prev().End)
+	return reg(p, node)
 }
 
 func parseIsExpr(p *Parser, left ast.Expr, _ uint8, _ token.Kind) ast.Expr {

@@ -93,8 +93,9 @@ func resolveIdentSymbol(ident *ast.Ident, parents map[source.NodeID]ast.Node, mo
 		return nil
 	}
 	if module.SymbolIndex != nil {
+		// A name that reads a variable's payload is that variable.
 		if sym := module.SymbolIndex.Symbol(ident); sym != nil {
-			return sym
+			return sym.Variable()
 		}
 	}
 	parent := parents[ident.ID()]

@@ -827,16 +827,16 @@ fn Read(result: Result) -> i32 {
 	}
 }
 
-func TestMatchArmPayloadTestNarrowsTwoLevels(t *testing.T) {
+func TestMatchArmPatternSelectsTwoLevels(t *testing.T) {
 	module, diag := checkTypeModule(t, `enum Shape { Circle: struct { radius: i32 }, Empty }
 enum Slot { Value: ?i32, Inner: Shape, Free }
 
 fn Read(slot: Slot) -> i32 {
 	match slot {
-		Slot::Value != none => { return slot; }
-		Slot::Value == none => { return 0; }
-		Slot::Inner is Shape::Circle => { return slot.radius; }
-		Slot::Inner is Shape::Empty => { return 0; }
+		Slot::Value with none => { return 0; }
+		Slot::Value => { return slot; }
+		Slot::Inner with Shape::Circle => { return slot.radius; }
+		Slot::Inner with Shape::Empty => { return 0; }
 		Slot::Free => { return 0; }
 	}
 }`)
@@ -846,8 +846,8 @@ fn Read(slot: Slot) -> i32 {
 	match := module.AST.Stmts[2].(*ast.FnDecl).Body.Stmts[0].(*ast.MatchStmt)
 	evidence, _ := testEvidence(module).Match(match.ID())
 	want := []thir.ArmCase{
-		{Case: 0, TestsPayload: true, PayloadCase: 1},
 		{Case: 0, TestsPayload: true, PayloadCase: 0},
+		{Case: 0, TestsPayload: true, PayloadCase: 1},
 		{Case: 1, TestsPayload: true, PayloadCase: 0},
 		{Case: 1, TestsPayload: true, PayloadCase: 1},
 		{Case: 2},
@@ -855,13 +855,14 @@ fn Read(slot: Slot) -> i32 {
 	if !slices.Equal(slices.Concat(evidence.ArmCases...), want) {
 		t.Fatalf("arm cases = %#v", evidence.ArmCases)
 	}
-	present := match.Arms[0].Body.Stmts[0].(*ast.ReturnStmt).Value
+	// The whole-case arm after `with none` selects the value that is left.
+	present := match.Arms[1].Body.Stmts[0].(*ast.ReturnStmt).Value
 	if got := typeinfo.TypeText(testEvidence(module).ExprType(present.ID())); got != "i32" {
-		t.Fatalf("subject in `!= none` arm = %s, want i32", got)
+		t.Fatalf("subject in the arm after `with none` = %s, want i32", got)
 	}
 	circle := match.Arms[2].Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.SelectorExpr).Expr
 	if got := typeinfo.TypeText(testEvidence(module).ExprType(circle.ID())); got != "struct{radius: i32}" {
-		t.Fatalf("subject in `is Shape::Circle` arm = %s", got)
+		t.Fatalf("subject in `with Shape::Circle` arm = %s", got)
 	}
 }
 
@@ -870,16 +871,9 @@ func TestMatchFallbackArmTakesEveryCaseLeft(t *testing.T) {
 
 fn Read(slot: Slot) -> i32 {
 	match slot {
-		Slot::Value != none => { return slot; }
+		Slot::Value with value => { return value; }
 		Slot::Free => { return 0; }
 		_ => { return 1; }
-	}
-}
-fn Last(slot: Slot) -> i32 {
-	match slot {
-		Slot::Value => { return 0; }
-		Slot::Free => { return 0; }
-		_ => { return slot; }
 	}
 }`)
 	if diag.HasErrors() {
@@ -890,12 +884,6 @@ fn Last(slot: Slot) -> i32 {
 	want := []thir.ArmCase{{Case: 0, TestsPayload: true, PayloadCase: 0}, {Case: 1}}
 	if len(evidence.ArmCases) != 3 || !slices.Equal(evidence.ArmCases[2], want) {
 		t.Fatalf("fallback cases = %#v", evidence.ArmCases)
-	}
-	// One case is left in Last, so the subject is its payload in the `_` arm.
-	last := module.AST.Stmts[2].(*ast.FnDecl).Body.Stmts[0].(*ast.MatchStmt)
-	subject := last.Arms[2].Body.Stmts[0].(*ast.ReturnStmt).Value
-	if got := typeinfo.TypeText(testEvidence(module).ExprType(subject.ID())); got != "i32" {
-		t.Fatalf("subject in `_` arm = %s, want i32", got)
 	}
 }
 
@@ -3764,7 +3752,7 @@ func TestFunctionTypeParametersAreRejectedOnce(t *testing.T) {
 func TestDestructureTypesLocalsAsFields(t *testing.T) {
 	module, diag := checkTypeModule(t, `struct Pair { count: i32, name: str }
 fn Read(pair: Pair) {
-	let .{ count = c, name = n } = pair;
+	let .{ count as c, name as n } = pair;
 }`)
 	if diag.HasErrors() {
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
@@ -3781,11 +3769,11 @@ fn Read(pair: Pair) {
 
 func TestDestructureDiagnostics(t *testing.T) {
 	tests := []struct{ name, source, want string }{
-		{name: "left out field", source: `struct Pair { a: i32, b: i32 } fn f(p: Pair) { let .{ a = x } = p; }`, want: "destructure leaves out field `b`"},
-		{name: "unknown field", source: `struct Pair { a: i32, b: i32 } fn f(p: Pair) { let .{ c = x, _ } = p; }`, want: "unknown field `c`"},
-		{name: "duplicate field", source: `struct Pair { a: i32, b: i32 } fn f(p: Pair) { let .{ a = x, a = y, _ } = p; }`, want: "duplicate destructure field `a`"},
-		{name: "non-struct", source: `fn f(n: i32) { let .{ a = x, _ } = n; }`, want: "destructure value must be a struct, got i32"},
-		{name: "reference", source: `struct Pair { a: i32 } fn f(p: &Pair) { let .{ a = x } = p; }`, want: "destructure value must be a struct, got &Pair"},
+		{name: "left out field", source: `struct Pair { a: i32, b: i32 } fn f(p: Pair) { let .{ a as x } = p; }`, want: "destructure leaves out field `b`"},
+		{name: "unknown field", source: `struct Pair { a: i32, b: i32 } fn f(p: Pair) { let .{ c as x, _ } = p; }`, want: "unknown field `c`"},
+		{name: "duplicate field", source: `struct Pair { a: i32, b: i32 } fn f(p: Pair) { let .{ a as x, a as y, _ } = p; }`, want: "duplicate destructure field `a`"},
+		{name: "non-struct", source: `fn f(n: i32) { let .{ a as x, _ } = n; }`, want: "destructure value must be a struct, got i32"},
+		{name: "reference", source: `struct Pair { a: i32 } fn f(p: &Pair) { let .{ a as x } = p; }`, want: "destructure value must be a struct, got &Pair"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

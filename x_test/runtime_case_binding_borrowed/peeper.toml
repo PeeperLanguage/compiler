@@ -1,0 +1,6 @@
+name = "runtime_case_binding_borrowed"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "success"
