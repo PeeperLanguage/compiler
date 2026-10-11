@@ -321,7 +321,11 @@ The name reads the payload in:
    the case the test ruled in: the value of an optional, or the other case of
    an enum with two cases. `!(test)` swaps the two sides.
 
-Only a test that is the whole condition counts: `a && b` names nothing. Use a
+4. the right side of `test && ...`, and of `test || ...` for the case the
+   test ruled in: `maybe != none && maybe > 3`, `maybe == none || maybe < 3`.
+
+For a block, only a test that is the whole condition counts: after
+`if a != none && b != none`, neither name reads its payload in the block. Use a
 nested `if`, or `match` for an enum with more cases.
 
 The payload is read where it is: nothing is copied, reading takes nothing, and
@@ -555,6 +559,12 @@ Expression precedence, highest to lowest, is:
 12. logical AND `&&`
 13. logical OR `||`
 14. fallback `orelse` (groups to the right)
+
+`&&` and `||` evaluate their left side first. The right side of `&&` is
+evaluated only when the left side is true, and the right side of `||` only when
+it is false: `index < count && items[index] > 0` never reads past the end. A
+value moved on the right side is moved on one path only, which the ownership
+rules for branches reject; move it before the condition.
 
 Compound bitwise assignments are not part of current operator surface.
 

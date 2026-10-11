@@ -550,6 +550,17 @@ func (r *resolver) resolveExpr(scope *symbols.Scope, expr ast.Expr) {
 		r.resolveExpr(scope, node.Expr)
 	case *ast.BinaryExpr:
 		r.resolveExpr(scope, node.Left)
+		// The right side of `&&` runs only when the left side is true, and
+		// that of `||` only when it is false: there it reads the payload of a
+		// variable the left side tested. (A borrowed subject would need a
+		// reference made inside the expression; test it in an `if` for that.)
+		if subject, then, otherwise := r.testedPayloads(node.Left); node.Op == "&&" && then || node.Op == "||" && otherwise {
+			if _, borrowed := subject.(*ast.AddressExpr); !borrowed {
+				right := symbols.NewScope(scope)
+				r.declarePayloadName(scope, right, node, subject)
+				scope = right
+			}
+		}
 		r.resolveExpr(scope, node.Right)
 	case *ast.OrElseExpr:
 		r.resolveExpr(scope, node.Value)

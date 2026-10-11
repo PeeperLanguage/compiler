@@ -374,6 +374,14 @@ func (c *checker) typeBinaryExpr(scope *symbols.Scope, node *ast.BinaryExpr, exp
 			right = c.typeExpr(scope, node.Right, optionalOperandExpected(left))
 		} else {
 			left = c.typeExpr(scope, node.Left, operandExpected)
+			// The right side runs only where the left side's test held (`&&`)
+			// or failed (`||`).
+			switch node.Op {
+			case "&&":
+				c.bindPayloadNames(node.Left, node, nil, nil)
+			case "||":
+				c.bindPayloadNames(node.Left, nil, node, nil)
+			}
 			right = c.typeExpr(scope, node.Right, operandExpected)
 		}
 	}

@@ -1,0 +1,6 @@
+name = "runtime_short_circuit"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "success"

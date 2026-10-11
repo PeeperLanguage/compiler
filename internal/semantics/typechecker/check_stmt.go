@@ -499,11 +499,12 @@ func caseNameType(payload typeinfo.Type, borrow *typeinfo.RefType) typeinfo.Type
 	return &typeinfo.RefType{IsMutable: borrow.IsMutable, Target: payload}
 }
 
-// bindPayloadNames types the payload names the resolver declared for the
-// blocks a test guards: then (an `if` block or a loop body), otherwise (an
-// else block), and rest (the guard, for the code after an `if` whose block
-// always leaves). An owner that is nil or has no name is skipped.
-func (c *checker) bindPayloadNames(cond ast.Expr, then, otherwise *ast.BlockStmt, rest *ast.IfStmt) {
+// bindPayloadNames types the payload names the resolver declared for what a
+// test guards: then (an `if` block, a loop body, or the `&&` whose right side
+// it guards), otherwise (an else block, or such an `||`), and rest (the guard,
+// for the code after an `if` whose block always leaves). An owner that is nil
+// or has no name is skipped.
+func (c *checker) bindPayloadNames(cond ast.Expr, then, otherwise, rest ast.Node) {
 	test, tested := c.evidence.CaseTest(cond.ID())
 	if !tested {
 		return

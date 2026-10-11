@@ -3833,10 +3833,10 @@ fn invalid(value: i32) {
 }`,
 		},
 		{
-			name: "eager right operand has no proof",
+			name: "right operand of the wrong test has no proof",
 			code: "T0041",
 			src: `fn invalid(value: ?i32) -> bool {
-	return value != none && value > 0;
+	return value == none && value > 0;
 }`,
 		},
 		{

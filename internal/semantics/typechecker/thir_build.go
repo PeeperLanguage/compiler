@@ -507,6 +507,69 @@ func (b *thirBuilder) orElse(source *ast.OrElseExpr, info thir.ExprInfo) thir.Ex
 	return &thir.Ident{ExprInfo: info, Name: result.Name, Symbol: result}
 }
 
+// shortCircuit builds `left && right` or `left || right` whose right side must
+// not run when the left side decides the result, as statements that run
+// before the one it is part of: a hidden local gets the right side in one
+// branch of an `if` on the left side, and the known result in the other. The
+// expression is then a read of that local.
+func (b *thirBuilder) shortCircuit(source *ast.BinaryExpr, info thir.ExprInfo) thir.Expr {
+	if typeinfo.IsInvalidOrUnknown(info.Type) {
+		return &thir.InvalidExpr{ExprInfo: info, Message: "invalid condition"}
+	}
+	carrier := &caseCarrier{statement: source, index: b.symbolIndex, enclosing: b.enclosing}
+	result := carrier.local("$either", info.Type)
+	test := &thir.If{StmtInfo: thir.StmtInfo{Source: carrier.source()}, Condition: b.expression(source.Left)}
+	// The right side runs only when needed, and so does what it hoists.
+	outer := b.hoisted
+	b.hoisted = hoist{}
+	right := carrier.assign(result, b.expression(source.Right))
+	needed := carrier.block(b.endHoist(outer, right))
+	decided := carrier.block(carrier.assign(result, &thir.BoolLiteral{
+		ExprInfo: thir.ExprInfo{Source: carrier.source(), Type: info.Type}, Value: source.Op == "||",
+	}))
+	test.Then, test.Else = needed, decided
+	if source.Op == "||" {
+		test.Then, test.Else = decided, needed
+	}
+	b.hoisted.stmts = append(b.hoisted.stmts, &thir.Binding{StmtInfo: thir.StmtInfo{Source: carrier.source()}, Symbol: result}, test)
+	b.hoisted.carrier = carrier
+	info.Place = &thir.Place{Root: result, Type: info.Type}
+	return &thir.Ident{ExprInfo: info, Name: result.Name, Symbol: result}
+}
+
+// isPlain reports whether evaluating expr can be noticed: it cannot fail and
+// changes nothing. A plain right side of `&&` or `||` may run when it is not
+// needed, which costs no hidden local and no branch.
+func (b *thirBuilder) isPlain(expr ast.Expr) bool {
+	switch node := expr.(type) {
+	case *ast.NumberLit, *ast.StringLit, *ast.ByteLit, *ast.CharLit, *ast.BoolLit, *ast.NoneLit, *ast.ScopeResolution:
+		return true
+	case *ast.Ident:
+		// A payload read is only valid where its test held.
+		symbol := b.symbol(node)
+		return symbol == nil || symbol.AliasOf == nil
+	case *ast.UnaryExpr:
+		return node.Op == "!" && b.isPlain(node.Expr)
+	case *ast.IsExpr:
+		return b.isPlain(node.Value)
+	case *ast.SelectorExpr:
+		// A field read through a raw pointer can fail; one through a
+		// reference cannot.
+		access, isField := b.typing.StructField(node.ID())
+		if !isField || !b.isPlain(node.Expr) {
+			return false
+		}
+		_, _, isReference := typeinfo.ReferenceTarget(typeinfo.Underlying(b.typing.ExprType(node.Expr.ID())))
+		return access.DereferenceType == nil || isReference
+	case *ast.BinaryExpr:
+		switch node.Op {
+		case "==", "!=", "<", "<=", ">", ">=", "&&", "||":
+			return b.isPlain(node.Left) && b.isPlain(node.Right)
+		}
+	}
+	return false
+}
+
 // caseCarrier builds every statement that reads a case's payload under a name
 // (a pattern's name, the name of a borrowed payload, or the one `orelse`
 // defines) in one shape: a match selects the case, and a name is set from the
@@ -813,6 +876,9 @@ func (b *thirBuilder) expression(expression ast.Expr) thir.Expr {
 	case *ast.UnaryExpr:
 		result = &thir.Unary{ExprInfo: info, Op: node.Op, Value: b.expression(node.Expr)}
 	case *ast.BinaryExpr:
+		if (node.Op == "&&" || node.Op == "||") && !b.isPlain(node.Right) {
+			return b.shortCircuit(node, info)
+		}
 		isStringConcatenation := b.typing != nil && b.typing.StringConcatenation(node.ID())
 		left, right := node.Left, node.Right
 		// A `none` test reads its subject in place, borrowed or not.

@@ -1,0 +1,63 @@
+struct Counter { n: i32 }
+
+fn Hit(counter: &mut Counter) -> bool { counter.n = counter.n + 1; return true; }
+
+// The right side of `&&` runs only when the left side is true, and the right
+// side of `||` only when the left side is false.
+fn Skipped(no: bool, yes: bool) -> i32 {
+    let mut counter = Counter.{ n = 0 };
+    if no && Hit(&mut counter) { return -1; }
+    if yes || Hit(&mut counter) { return counter.n; }
+    return -2;
+}
+
+fn Runs(no: bool, yes: bool) -> i32 {
+    let mut counter = Counter.{ n = 0 };
+    let both = yes && Hit(&mut counter);
+    let either = no || Hit(&mut counter);
+    if both && either { return counter.n; }
+    return -1;
+}
+
+// A right side that would fail is never reached.
+fn Divides(x: i32) -> bool { return x != 0 && 10 / x > 1; }
+
+fn Holds(index: i32) -> bool {
+    let values = [_]i32{1, 2};
+    return index < 2 && values[index] > 1;
+}
+
+// A chain stops at the first part that decides it.
+fn Chain(no: bool) -> i32 {
+    let mut counter = Counter.{ n = 0 };
+    if Hit(&mut counter) && no && Hit(&mut counter) { return -1; }
+    if no || Hit(&mut counter) || Hit(&mut counter) { return counter.n; }
+    return -2;
+}
+
+// A loop condition is tested on every pass.
+fn InLoop() -> i32 {
+    let mut counter = Counter.{ n = 0 };
+    let mut index = 0;
+    for index < 3 && Hit(&mut counter) { index = index + 1; }
+    return counter.n;
+}
+
+// The right side reads the payload of what the left side tested.
+fn Above(maybe: ?i32, limit: i32) -> bool { return maybe != none && maybe > limit; }
+
+fn MissingOrSmall(maybe: ?i32) -> bool { return maybe == none || maybe < 3; }
+
+fn main() -> i32 {
+    if !Above(5, 3) || Above(none, 3) || Above(2, 3) { return 9; }
+    if !MissingOrSmall(none) || !MissingOrSmall(1) || MissingOrSmall(7) { return 10; }
+    if Skipped(false, true) != 0 { return 1; }
+    if Runs(false, true) != 2 { return 2; }
+    if Divides(0) { return 3; }
+    if !Divides(2) { return 4; }
+    if Holds(5) { return 5; }
+    if !Holds(1) { return 6; }
+    if Chain(false) != 2 { return 7; }
+    if InLoop() != 3 { return 8; }
+    return 0;
+}
