@@ -62,7 +62,10 @@ func (c *checker) typePayloadName(node *ast.Ident, name *symbols.Symbol, expecte
 	var path []int
 	if read.AliasOf != nil {
 		carrier, _ = symbols.GetSymbolType(name.Variable())
-		for level := read; level.AliasOf != nil; level = level.AliasOf {
+		// One level is the usual case and shares the name's own path; no
+		// reader changes a path.
+		path = read.PayloadPath
+		for level := read.AliasOf; level.AliasOf != nil; level = level.AliasOf {
 			path = append(slices.Clone(level.PayloadPath), path...)
 		}
 	}

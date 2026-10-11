@@ -228,48 +228,38 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, retu
 	// reportMissing is off once a `_` arm takes the rest, or an arm's payload
 	// test is wrong and what it covers cannot be told.
 	reportMissing := true
-	for index, arm := range node.Arms {
-		if arm == nil || arm.Case == nil && !arm.IsFallback {
-			evidenceComplete = false
-			continue
-		}
+	// selectArm records what arm selects and types the names it reads the
+	// payload under. It reports whether the arm is one the match can be built
+	// from.
+	selectArm := func(index int, arm *ast.MatchArm) bool {
 		if arm.IsFallback {
 			reportMissing = false
 			rest := uncoveredArmCases(descriptor, seen, tested)
+			isValid := true
 			switch {
 			case index != len(node.Arms)-1:
 				// The arms after it decide what is left, so it selects nothing here.
-				evidenceComplete = false
+				isValid = false
 				rest = nil
 				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement,
 					"the `_` arm must be the last arm", ast.LocOf(arm), "it handles every case the arms before it do not")
 			case len(rest) == 0:
-				evidenceComplete = false
+				isValid = false
 				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement,
 					"the `_` arm handles nothing", ast.LocOf(arm), "every case already has an arm")
 			}
-			c.checkStmt(scope, arm.Body, returnType)
 			evidence.ArmCases = append(evidence.ArmCases, rest)
 			evidence.ArmPayloads = append(evidence.ArmPayloads, nil)
-			continue
+			return isValid
 		}
 		resolved, pathOK := c.resolveNamedVariant(arm.Case)
-		if !pathOK {
-			evidenceComplete = false
-			c.checkStmt(scope, arm.Body, returnType)
-			continue
-		}
-		if typeinfo.IsInvalidOrUnknown(resolved.EnumType) {
-			evidenceComplete = false
-			c.checkStmt(scope, arm.Body, returnType)
-			continue
+		if !pathOK || typeinfo.IsInvalidOrUnknown(resolved.EnumType) {
+			return false
 		}
 		if !typeinfo.IsSameType(subjectType, resolved.EnumType) {
-			evidenceComplete = false
 			c.ctx.Diagnostics.Add(typeMismatchError(arm.Case,
 				fmt.Sprintf("match arm requires %s, got %s", typeinfo.TypeText(subjectType), typeinfo.TypeText(resolved.EnumType))))
-			c.checkStmt(scope, arm.Body, returnType)
-			continue
+			return false
 		}
 		// What the arm selects: one payload case when its pattern tests the
 		// payload; otherwise the whole case, or what earlier arms left of it.
@@ -278,9 +268,8 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, retu
 		payloadCase, testsPayload, isValid := c.patternPayloadCase(arm.Pattern, resolved.Case)
 		switch {
 		case !isValid:
-			evidenceComplete, reportMissing = false, false
-			c.checkStmt(scope, arm.Body, returnType)
-			continue
+			reportMissing = false
+			return false
 		case testsPayload:
 			selects = []thir.ArmCase{{Case: whole.Case, TestsPayload: true, PayloadCase: payloadCase}}
 		case tested[whole.Case] != nil:
@@ -303,7 +292,6 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, retu
 		}
 		if previous != nil {
 			// Two arms for one case cannot become one switch.
-			evidenceComplete = false
 			c.ctx.Diagnostics.Add(diagnostics.NewError("duplicate match arm for `"+resolved.CaseName.Name+"`").
 				WithCode(diagnostics.ErrInvalidStatement).
 				WithPrimaryLabel(ast.LocOf(arm.Case), "duplicate case").
@@ -327,6 +315,16 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, retu
 		c.bindPattern(arm.Pattern.Taking(), resolved.Case.Name, payload, borrow)
 		evidence.ArmCases = append(evidence.ArmCases, selects)
 		evidence.ArmPayloads = append(evidence.ArmPayloads, payload)
+		return previous == nil
+	}
+	for index, arm := range node.Arms {
+		if arm == nil || arm.Case == nil && !arm.IsFallback {
+			evidenceComplete = false
+			continue
+		}
+		if !selectArm(index, arm) {
+			evidenceComplete = false
+		}
 		c.checkStmt(scope, arm.Body, returnType)
 	}
 	var missing []string

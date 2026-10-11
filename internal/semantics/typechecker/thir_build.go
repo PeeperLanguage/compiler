@@ -727,23 +727,25 @@ func (b *thirBuilder) expression(expression ast.Expr) thir.Expr {
 		isStringConcatenation := b.typing != nil && b.typing.StringConcatenation(node.ID())
 		left, right := node.Left, node.Right
 		// A `none` test reads its subject in place, borrowed or not.
-		if test, tested := b.typing.CaseTest(node.ID()); tested && isNoneExpr(left) {
-			right = test.Subject
-		} else if tested {
-			left = test.Subject
+		test, subject := b.caseTest(node.ID())
+		if test != nil && isNoneExpr(left) {
+			right = subject
+		} else if test != nil {
+			left = subject
 		}
 		result = &thir.Binary{
 			ExprInfo: info, Left: b.expression(left), Op: node.Op,
-			Right: b.expression(right), IsStringConcatenation: isStringConcatenation, Test: b.caseTest(node.ID()),
+			Right: b.expression(right), IsStringConcatenation: isStringConcatenation, Test: test,
 		}
 	case *ast.OrElseExpr:
 		result = b.orElse(node, info)
 	case *ast.IsExpr:
 		value := node.Value
-		if test, tested := b.typing.CaseTest(node.ID()); tested {
-			value = test.Subject
+		test, subject := b.caseTest(node.ID())
+		if test != nil {
+			value = subject
 		}
-		result = &thir.Is{ExprInfo: info, Value: b.expression(value), Test: b.caseTest(node.ID())}
+		result = &thir.Is{ExprInfo: info, Value: b.expression(value), Test: test}
 	case *ast.CallExpr:
 		result = b.callExpression(node, info)
 	case *ast.FreeExpr:
@@ -880,18 +882,17 @@ func (b *thirBuilder) expressionInfo(expression ast.Expr) thir.ExprInfo {
 	return info
 }
 
-func (b *thirBuilder) caseTest(id sourceid.NodeID) *thir.CaseTest {
-	if b.typing == nil {
-		return nil
-	}
+// caseTest returns the case test the checker recorded for expression id and
+// the subject it reads, or nil for an expression that is not one.
+func (b *thirBuilder) caseTest(id sourceid.NodeID) (*thir.CaseTest, ast.Expr) {
 	test, found := b.typing.CaseTest(id)
 	if !found {
-		return nil
+		return nil, nil
 	}
 	return &thir.CaseTest{
 		SubjectID: test.Subject.ID(), Case: test.Case, MatchesWhenTrue: test.MatchesWhenTrue,
 		CaseCount: test.CaseCount, Family: test.Family,
-	}
+	}, test.Subject
 }
 
 func projectPlace(base thir.Expr, projection thir.PlaceProjection, typ typeinfo.Type) *thir.Place {
