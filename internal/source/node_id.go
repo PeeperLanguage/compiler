@@ -2,6 +2,7 @@ package source
 
 import (
 	"strconv"
+	"strings"
 
 	"compiler/internal/moduleid"
 )
@@ -89,6 +90,20 @@ func (id NodeID) Function() moduleid.FunctionID {
 		return ""
 	}
 	return id.function
+}
+
+// Local is the id without its function: what tells one node of a function
+// from another, in letters a symbol name may hold. It is empty for a node
+// outside a function.
+func (id NodeID) Local() string {
+	switch id.domain {
+	case nodeIDFunction:
+		return strconv.FormatUint(id.ordinal, 10)
+	case nodeIDGenerated:
+		return strings.ReplaceAll(id.generation, "/", "_") + "_" + strconv.FormatUint(id.ordinal, 10)
+	default:
+		return ""
+	}
 }
 
 func (id NodeID) String() string {

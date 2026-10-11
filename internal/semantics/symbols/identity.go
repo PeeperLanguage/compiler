@@ -97,6 +97,20 @@ func (id SymbolID) IsValid() bool {
 	}
 }
 
+// Local is the id of a symbol declared inside a function, without that
+// function: unique among the function's symbols. It is empty for any other
+// symbol.
+func (id SymbolID) Local() string {
+	switch id.domain {
+	case symbolIDSource:
+		return id.source.Local()
+	case symbolIDGenerated:
+		return id.source.Local() + "g" + strconv.FormatUint(uint64(id.role), 10)
+	default:
+		return ""
+	}
+}
+
 func (id SymbolID) String() string {
 	switch id.domain {
 	case symbolIDSource:

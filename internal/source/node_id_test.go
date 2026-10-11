@@ -51,3 +51,16 @@ func TestGeneratedNodeIDRejectsUnownedContext(t *testing.T) {
 		t.Fatalf("unknown generation kind produced identity %v", id)
 	}
 }
+
+func TestNodeIDLocalLeavesOutTheFunction(t *testing.T) {
+	owner := FunctionNodeID(moduleid.FunctionID("fn"), 7)
+	generated := GeneratedNodeID(owner, GeneratedCaseBinding, 0, 2)
+	nested := GeneratedNodeID(generated, GeneratedCaseBinding, 1, 1)
+	for id, want := range map[NodeID]string{
+		owner: "7", generated: "7_3_0_2", nested: "7_3_0_2_3_1_1", ParsedNodeID(4): "",
+	} {
+		if got := id.Local(); got != want {
+			t.Fatalf("%v local = %q, want %q", id, got, want)
+		}
+	}
+}

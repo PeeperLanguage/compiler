@@ -475,7 +475,7 @@ func (b *thirBuilder) caseCarrier(statement ast.Node, subject ast.Expr, borrow *
 // local declares a hidden local of the scope the statement is in. A rebuild
 // of the same scope finds the one declared before.
 func (c *caseCarrier) local(prefix string, typ typeinfo.Type) *symbols.Symbol {
-	name := fmt.Sprintf("%s.%v", prefix, c.statement.ID())
+	name := prefix + "." + c.statement.ID().Local()
 	if existing, found := c.enclosing.LookupLocal(name); found {
 		return existing
 	}

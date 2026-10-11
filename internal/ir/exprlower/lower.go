@@ -601,6 +601,11 @@ func SymbolName(module moduleid.ID, isEntryModule bool, sym *symbols.Symbol) str
 		name, _ := CallableName(module, isEntryModule, sym)
 		return name
 	}
+	// A local is named apart from the others of its function only; the full
+	// id would repeat the function in every name.
+	if local := sym.ID.Local(); local != "" {
+		return sym.Name + "$" + local
+	}
 	return fmt.Sprintf("%s$%s", sym.Name, sym.ID.String())
 }
 func CallableName(module moduleid.ID, isEntryModule bool, sym *symbols.Symbol) (string, bool) {
