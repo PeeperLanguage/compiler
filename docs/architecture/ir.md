@@ -111,8 +111,6 @@ not folding, owns branches and loops.
 - shared runtime type table and diagnostics;
 - THIR module;
 - finalized CFG module;
-- the ownership cleanup plan, through the `mir.CleanupPlan` interface that
-  `analysis.Module` implements, so `mir` does not import the analysis;
 - module scope and published constants;
 - module identity and entrypoint status.
 
@@ -126,8 +124,12 @@ rebuilt:
 
 - loop init/body/latch operations come from THIR iteration plans plus CFG block origin;
 - match targets come from CFG while payload bindings come from THIR match arms;
-- return, assignment, discarded-value, scope-exit, and match cleanup come only from
-  ownership plans;
+- return, assignment, discarded-value, scope-exit, and projection-base cleanup come
+  only from ownership plans: lowering leaves a `DropPoint` at each such event, and
+  `mir.ResolveDrops` replaces it with the drops the plan decides once the checks
+  have run. The plan arrives through the `mir.CleanupPlan` interface that
+  `analysis.Module` implements, so `mir` does not import the analysis, and MIR can
+  be lowered before the checks;
 - expression trees lower through `exprlower`, then existing shared-IR-to-MIR logic.
 
 External functions and body-backed functions share THIR signature lowering.

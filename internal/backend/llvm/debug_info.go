@@ -151,7 +151,7 @@ func (e *llvmEmitter) declareLocals(b *llvmBuilder, fn *mir.Function) {
 		declared[local.SourceName]++
 	}
 	for _, local := range fn.Locals {
-		if declared[local.SourceName] > 1 {
+		if local.SourceName == "" || declared[local.SourceName] > 1 {
 			continue
 		}
 		slot, ok := b.localPtrs[local.Name]

@@ -23,22 +23,10 @@ type LoweringInput struct {
 	Diagnostics   *diagnostics.DiagnosticBag
 	Source        *thir.Module
 	CFG           *cfg.Module
-	Cleanup       CleanupPlan
 	Scope         *symbols.Scope
 	SymbolIndex   *symbols.Index
 	ModuleID      moduleid.ID
 	IsEntryModule bool
-}
-
-// CleanupPlan answers where source values are dropped; analysis.Module is
-// the plan. Lowering asks through this interface so MIR does not import the
-// analysis, which leaves the analysis free to read MIR.
-type CleanupPlan interface {
-	DropsAfterSite(fn moduleid.FunctionID, site cfg.SiteID) []symbols.SymbolID
-	DropsBeforeReturn(fn moduleid.FunctionID, id source.NodeID) []symbols.SymbolID
-	DropsBeforeAssign(fn moduleid.FunctionID, id source.NodeID) bool
-	DiscardedValue(fn moduleid.FunctionID, id source.NodeID) bool
-	ProjectionBase(fn moduleid.FunctionID, id source.NodeID) bool
 }
 
 type lowerer struct {
@@ -151,6 +139,7 @@ func functionSignature(input LoweringInput, sourceFn *thir.Function, blocks []*B
 		ReturnType: typelower.ReturnType(input.Types, input.Diagnostics, sourceFn.ReturnType),
 		Blocks:     blocks,
 		Location:   sourceFn.Source.Location,
+		Identity:   sourceFn.Identity,
 	}
 }
 
@@ -208,10 +197,8 @@ func lowerCFGFunction(mod *Module, input LoweringInput, sourceFn *thir.Function,
 					return nil, false
 				}
 			case cfg.SiteScopeExit:
-				if l.input.Cleanup != nil {
-					l.location = site.Location
-					l.appendPlannedDrops(l.input.Cleanup.DropsAfterSite(graph.FunctionID, site.ID), &block.Instrs)
-				}
+				l.location = site.Location
+				l.appendInstr(&block.Instrs, &DropPoint{Kind: DropAfterSite, Site: site.ID})
 			}
 		}
 		if !l.lowerCFGTerminator(sourceBlock, graph.Exit, blocks) {
@@ -337,14 +324,17 @@ func (l *lowerer) assignSymbol(symbol *symbols.Symbol, value ir.Expr) {
 	l.appendInstr(&l.current.Instrs, &Assign{Name: name, Value: asValueExpr(ref)})
 }
 
-// declareLocal lists a source variable in the function's locals the first
-// time it gets a value; a variable assigned again is listed once. A `_`
-// parameter has no name to show.
+// declareLocal lists a variable in the function's locals the first time it
+// gets a value; a variable assigned again is listed once.
 func (l *lowerer) declareLocal(symbol *symbols.Symbol, name string, typ ir.TypeID, arg int) {
-	if _, seen := l.symbolValues[symbol.ID]; seen || symbol.IsHidden() || symbol.Name == "_" {
+	if _, seen := l.symbolValues[symbol.ID]; seen {
 		return
 	}
-	l.fn.Locals = append(l.fn.Locals, Local{Name: name, SourceName: symbol.Name, Type: typ, Arg: arg, Location: symbol.Location})
+	sourceName := symbol.Name
+	if symbol.IsHidden() || sourceName == "_" {
+		sourceName = ""
+	}
+	l.fn.Locals = append(l.fn.Locals, Local{Name: name, SourceName: sourceName, Symbol: symbol.ID, Type: typ, Arg: arg, Location: symbol.Location})
 }
 
 func (l *lowerer) incrementSymbol(symbol *symbols.Symbol) {
@@ -455,19 +445,16 @@ func (l *lowerer) lowerCFGStmt(node thir.Node) bool {
 		if target == nil || target.Root == nil {
 			return false
 		}
-		shouldDropTarget := l.input.Cleanup != nil && l.input.Cleanup.DropsBeforeAssign(l.sourceFn.Identity, statement.Source.NodeID)
+		node := statement.Source.NodeID
 		if ident, isIdent := target.Root.(*ir.Ident); isIdent && len(target.Projections) == 0 {
-			if shouldDropTarget {
-				l.appendInstr(&l.current.Instrs, &Drop{Value: &RefName{Name: ident.Name, Type: target.TypeID(), Location: ident.Origin().Location}})
-			}
+			old := &RefName{Name: ident.Name, Type: target.TypeID(), Location: ident.Origin().Location}
+			l.appendInstr(&l.current.Instrs, &DropPoint{Kind: DropBeforeAssign, Node: node, Value: old})
 			l.appendInstr(&l.current.Instrs, &Assign{Name: ident.Name, Value: asValueExpr(value)})
 			l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
 			return true
 		}
 		place := l.lowerPlace(target, &l.current.Instrs)
-		if shouldDropTarget {
-			l.appendInstr(&l.current.Instrs, &Drop{Value: l.load(&l.current.Instrs, place, target.TypeID(), target.Location)})
-		}
+		l.appendInstr(&l.current.Instrs, &DropPoint{Kind: DropBeforeAssign, Node: node, Place: place, Temporary: l.nextTemp()})
 		l.appendInstr(&l.current.Instrs, &Store{Place: place, Value: value})
 		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
 		return true
@@ -496,33 +483,12 @@ func (l *lowerer) lowerExprStatement(expr thir.Expr) bool {
 		return false
 	}
 	temporaryMark := len(l.temporaryDrops)
-	lowered := l.sourceExpr(expr, nil)
-	if l.input.Cleanup != nil {
-		if drop := l.input.Cleanup.DiscardedValue(l.sourceFn.Identity, expr.SourceInfo().NodeID); drop {
-			value := l.lowerExpr(lowered, &l.current.Instrs)
-			l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
-			if value != nil {
-				l.appendInstr(&l.current.Instrs, &Drop{Value: value})
-			}
-			return true
-		}
-	}
-	if l.lowerDiscardedExpr(lowered, &l.current.Instrs) {
-		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
-		return true
-	}
-	l.lowerExpr(lowered, &l.current.Instrs)
+	value := l.lowerExpr(l.sourceExpr(expr, nil), &l.current.Instrs)
 	l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
-	return true
-}
-
-func (l *lowerer) appendPlannedDrops(ids []symbols.SymbolID, out *[]Instr) {
-	for _, id := range ids {
-		ref := l.symbolValues[id]
-		if ref != nil {
-			l.appendInstr(out, &Drop{Value: &RefName{Name: ref.Name, Type: ref.Type, Location: ref.Location}})
-		}
+	if value != nil {
+		l.appendInstr(&l.current.Instrs, &DropPoint{Kind: DropDiscarded, Node: expr.SourceInfo().NodeID, Value: value})
 	}
+	return true
 }
 
 func (l *lowerer) flushTemporaryDrops(out *[]Instr, mark int) {
@@ -617,9 +583,7 @@ func (l *lowerer) lowerCFGTerminator(sourceBlock, exit *cfg.Block, blocks map[*c
 			value = l.lowerExpr(l.sourceExpr(statement.Value, l.sourceFn.ReturnType), &l.current.Instrs)
 		}
 		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
-		if l.input.Cleanup != nil {
-			l.appendPlannedDrops(l.input.Cleanup.DropsBeforeReturn(l.sourceFn.Identity, term.NodeID), &l.current.Instrs)
-		}
+		l.appendInstr(&l.current.Instrs, &DropPoint{Kind: DropBeforeReturn, Node: term.NodeID})
 		l.setBlockTerm(l.current, &Ret{Value: value})
 		return true
 	case nil:

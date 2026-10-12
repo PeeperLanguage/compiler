@@ -6,6 +6,8 @@ import (
 
 	"compiler/internal/constvalue"
 	"compiler/internal/ir"
+	"compiler/internal/ir/cfg"
+	"compiler/internal/moduleid"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/source"
 )
@@ -61,16 +63,21 @@ type Function struct {
 	EntryID    int
 	Blocks     []*Block
 	Location   *source.Location
-	// Locals lists the variables the source declares, parameters first, in
-	// declaration order. Locals the compiler makes up are not listed.
+	// Identity keys the cleanup plan's answers for this function.
+	Identity moduleid.FunctionID
+	// Locals lists the function's variables, parameters first, in declaration
+	// order. A MIR name not listed here is a temporary.
 	Locals []Local
 }
 
-// Local ties a MIR name to the variable the user wrote, so the debugger can
-// show it by its source name.
+// Local ties a MIR name to the variable it stores, so a drop names it by
+// symbol and the debugger shows it by source name.
 type Local struct {
-	Name       string
+	Name string
+	// SourceName is empty for a variable with no name to show: one the
+	// compiler made up, or a `_` parameter.
 	SourceName string
+	Symbol     symbols.SymbolID
 	Type       ir.TypeID
 	// Arg is the 1-based parameter position, or 0 for a local binding.
 	Arg      int
@@ -150,6 +157,34 @@ type Print struct {
 type Drop struct {
 	Value    ValueRef
 	Location *source.Location
+}
+
+// DropPointKind names the source event a DropPoint stands for. Each kind
+// matches one question of CleanupPlan.
+type DropPointKind uint8
+
+const (
+	DropAfterSite DropPointKind = iota
+	DropBeforeReturn
+	DropBeforeAssign
+	DropDiscarded
+	DropProjectionBase
+)
+
+// DropPoint marks where lowering may drop source values. Lowering does not
+// know the cleanup plan; ResolveDrops turns each point into the drops the plan
+// decides, or removes it, before MIR is validated.
+type DropPoint struct {
+	Kind DropPointKind
+	Site cfg.SiteID
+	Node source.NodeID
+	// Value is what a before-assign, discarded or projection-base drop drops.
+	Value ValueRef
+	// Place, for a before-assign drop through a projection, is loaded into
+	// Temporary and the loaded value dropped.
+	Place     *Place
+	Temporary string
+	Location  *source.Location
 }
 
 type ValueExpr interface {
@@ -378,6 +413,10 @@ func (i *Drop) Text(types *ir.TypeTable) string {
 	return "drop " + i.Value.Text(types)
 }
 
+func (i *DropPoint) Text(types *ir.TypeTable) string {
+	return fmt.Sprintf("droppoint %d", i.Kind)
+}
+
 func (i *Jump) Text(types *ir.TypeTable) string {
 	return fmt.Sprintf("jmp b%d", i.TargetID)
 }
@@ -407,6 +446,7 @@ func (*Assign) instrNode()         {}
 func (*Store) instrNode()          {}
 func (*Print) instrNode()          {}
 func (*Drop) instrNode()           {}
+func (*DropPoint) instrNode()      {}
 func (*DynamicArrayOp) instrNode() {}
 func (*Call) instrNode()           {}
 func (*InterfaceCall) instrNode()  {}
@@ -475,6 +515,7 @@ func (i *Assign) SourceLocation() *source.Location            { return i.Locatio
 func (i *Store) SourceLocation() *source.Location             { return i.Location }
 func (i *Print) SourceLocation() *source.Location             { return i.Location }
 func (i *Drop) SourceLocation() *source.Location              { return i.Location }
+func (i *DropPoint) SourceLocation() *source.Location         { return i.Location }
 func (i *Jump) SourceLocation() *source.Location              { return i.Location }
 func (i *Branch) SourceLocation() *source.Location            { return i.Location }
 func (i *SwitchVariant) SourceLocation() *source.Location     { return i.Location }

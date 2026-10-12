@@ -477,8 +477,10 @@ func TestGenerateLLVMIRLowersBooleanCallArguments(t *testing.T) {
 // A debug build describes source variables it can lay out and skips the rest:
 // a struct needs field offsets, so it gets no record rather than a wrong one,
 // and a reference to it points at an undescribed type. A name declared twice
-// gets no record either, since one record would cover both.
+// gets no record either, since one record would cover both, and neither does
+// a local with no source name.
 func TestGenerateLLVMIRDescribesSourceVariablesInDebugBuilds(t *testing.T) {
+	variable := func(name string) symbols.SymbolID { return symbols.ProjectedSymbolID(symbols.SymbolVar, name) }
 	at := func(line int) *source.Location {
 		return &source.Location{Start: &source.Position{Line: line, Column: 5}}
 	}
@@ -490,11 +492,12 @@ func TestGenerateLLVMIRDescribesSourceVariablesInDebugBuilds(t *testing.T) {
 			ReturnType: llvmTypes.i32,
 			Location:   at(1),
 			Locals: []mir.Local{
-				{Name: "count$1", SourceName: "count", Type: llvmTypes.i32, Arg: 1, Location: at(1)},
-				{Name: "box$2", SourceName: "box", Type: llvmTypes.refValueStruct, Arg: 2, Location: at(1)},
-				{Name: "value$3", SourceName: "value", Type: llvmTypes.valueStruct, Location: at(2)},
-				{Name: "item$4", SourceName: "item", Type: llvmTypes.i32, Location: at(2)},
-				{Name: "item$5", SourceName: "item", Type: llvmTypes.i32, Location: at(3)},
+				{Name: "count$1", SourceName: "count", Symbol: variable("count$1"), Type: llvmTypes.i32, Arg: 1, Location: at(1)},
+				{Name: "box$2", SourceName: "box", Symbol: variable("box$2"), Type: llvmTypes.refValueStruct, Arg: 2, Location: at(1)},
+				{Name: "value$3", SourceName: "value", Symbol: variable("value$3"), Type: llvmTypes.valueStruct, Location: at(2)},
+				{Name: "item$4", SourceName: "item", Symbol: variable("item$4"), Type: llvmTypes.i32, Location: at(2)},
+				{Name: "item$5", SourceName: "item", Symbol: variable("item$5"), Type: llvmTypes.i32, Location: at(3)},
+				{Name: "$either$6", Symbol: variable("$either$6"), Type: llvmTypes.i32, Location: at(3)},
 			},
 			Blocks: []*mir.Block{{
 				ID: 0,
@@ -502,6 +505,8 @@ func TestGenerateLLVMIRDescribesSourceVariablesInDebugBuilds(t *testing.T) {
 					&mir.Assign{Name: "value$3", Value: &mir.ZeroValue{Type: llvmTypes.valueStruct}, Location: at(2)},
 					&mir.Assign{Name: "item$4", Value: &mir.ZeroValue{Type: llvmTypes.i32}, Location: at(2)},
 					&mir.Assign{Name: "item$5", Value: &mir.ZeroValue{Type: llvmTypes.i32}, Location: at(3)},
+					&mir.Assign{Name: "$either$6", Value: &mir.ZeroValue{Type: llvmTypes.i32}, Location: at(3)},
+					&mir.Assign{Name: "$either$6", Value: &mir.ZeroValue{Type: llvmTypes.i32}, Location: at(3)},
 				},
 				Term: &mir.Ret{Value: &mir.RefName{Name: "count$1", Type: llvmTypes.i32}, Location: at(3)},
 			}},
@@ -523,6 +528,9 @@ func TestGenerateLLVMIRDescribesSourceVariablesInDebugBuilds(t *testing.T) {
 	}
 	if strings.Contains(debug, `name: "value"`) {
 		t.Fatalf("struct variable described without field offsets:\n%s", debug)
+	}
+	if strings.Contains(debug, `name: ""`) {
+		t.Fatalf("hidden local described:\n%s", debug)
 	}
 	if strings.Contains(debug, `name: "item"`) {
 		t.Fatalf("name declared twice described for the whole function:\n%s", debug)
