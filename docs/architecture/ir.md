@@ -92,7 +92,7 @@ recursive named layouts without permitting illegal direct by-value recursion.
 - aggregates and variants;
 - borrowing and temporary-borrow lifetime markers;
 - callable/symbol names;
-- flow-refined case tests and payload projections;
+- case tests published on THIR `Binary`/`Is` nodes, and payload projections;
 - source origins.
 
 THIR places retain each projection's source and base source identity. Lowering
@@ -111,7 +111,8 @@ not folding, owns branches and loops.
 - shared runtime type table and diagnostics;
 - THIR module;
 - finalized CFG module;
-- flow and ownership evidence;
+- the ownership cleanup plan, through the `mir.CleanupPlan` interface that
+  `analysis.Module` implements, so `mir` does not import the analysis;
 - module scope and published constants;
 - module identity and entrypoint status.
 

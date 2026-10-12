@@ -58,7 +58,7 @@ func TestEnumPayloadFieldAssignmentConversions(t *testing.T) {
 				t.Fatalf("lowered RHS = %T, want optional construction", lowered)
 			}
 			out := mir.GenerateMIR(mir.LoweringInput{
-				Types: types, Diagnostics: diag, Source: mod.THIR, CFG: mod.CFG, Analysis: mod.Analysis,
+				Types: types, Diagnostics: diag, Source: mod.THIR, CFG: mod.CFG, Cleanup: mod.Analysis,
 				Scope: mod.ModuleScope, SymbolIndex: mod.SymbolIndex, ModuleID: mod.ID,
 			})
 			if out == nil || diag.HasErrors() {
