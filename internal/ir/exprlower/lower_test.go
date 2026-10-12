@@ -220,7 +220,7 @@ fn read(value: ?i32) -> i32 {
 	}
 	types := ir.NewTypeTable()
 	lowered := exprlower.Lower(exprlower.Context{
-		Types: types, Diagnostics: diag, Source: mod.THIR, Analysis: mod.Analysis, ModuleID: mod.ID,
+		Types: types, Diagnostics: diag, Source: mod.THIR, ModuleID: mod.ID,
 	}, expr, nil)
 	if got := types.Text(lowered.TypeID()); got != "i32" {
 		t.Fatalf("lowered type = %s, want i32", got)

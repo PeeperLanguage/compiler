@@ -46,7 +46,7 @@ func TestEnumPayloadFieldAssignmentConversions(t *testing.T) {
 			}
 			types := ir.NewTypeTable()
 			target := mod.BaseExprType(assignment.Target.SourceInfo().NodeID)
-			lowered := exprlower.Lower(exprlower.Context{Types: types, Diagnostics: diag, Source: mod.THIR, Analysis: mod.Analysis, ModuleID: mod.ID}, assignment.Value, target)
+			lowered := exprlower.Lower(exprlower.Context{Types: types, Diagnostics: diag, Source: mod.THIR, ModuleID: mod.ID}, assignment.Value, target)
 			if got := types.Text(lowered.TypeID()); got != test.target {
 				t.Fatalf("lowered RHS type = %s, want %s", got, test.target)
 			}
