@@ -12,7 +12,6 @@ import (
 	"compiler/internal/ir/thir"
 	"compiler/internal/ir/typelower"
 	"compiler/internal/moduleid"
-	"compiler/internal/semantics/analysis"
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -26,7 +25,6 @@ type Context struct {
 	Types         *ir.TypeTable
 	Diagnostics   *diagnostics.DiagnosticBag
 	Source        *thir.Module
-	Analysis      *analysis.Module
 	ModuleID      moduleid.ID
 	IsEntryModule bool
 }
@@ -71,18 +69,23 @@ func (l *lowerer) lower(expr thir.Expr, expected typeinfo.Type, applyConversions
 	}
 	origin := expr.SourceInfo()
 	resolved := expr.ExprType()
-	if l.ctx.Analysis != nil {
-		// Case tests are control-flow facts, not ordinary value expressions.
-		// Lower the published subject once, then materialize membership as a
-		// boolean MIR value for the CFG branch.
-		if test, ok := l.ctx.Analysis.CaseTest(origin.NodeID); ok {
-			subject, _ := l.ctx.Source.Node(test.SubjectID).(thir.Expr)
-			membership := &ir.VariantIs{Value: l.lower(subject, nil, true), Case: test.Case, Type: l.typeID(&typeinfo.BoolType{})}
-			if test.MatchesWhenTrue {
-				return ir.WithOrigin(membership, origin)
-			}
-			return ir.WithOrigin(&ir.Unary{Op: "!", Arg: membership, Type: membership.Type}, origin)
+	// Case tests are control-flow facts, not ordinary value expressions.
+	// Lower the published subject once, then materialize membership as a
+	// boolean MIR value for the CFG branch.
+	var test *thir.CaseTest
+	switch tested := expr.(type) {
+	case *thir.Binary:
+		test = tested.Test
+	case *thir.Is:
+		test = tested.Test
+	}
+	if test != nil {
+		subject, _ := l.ctx.Source.Node(test.SubjectID).(thir.Expr)
+		membership := &ir.VariantIs{Value: l.lower(subject, nil, true), Case: test.Case, Type: l.typeID(&typeinfo.BoolType{})}
+		if test.MatchesWhenTrue {
+			return ir.WithOrigin(membership, origin)
 		}
+		return ir.WithOrigin(&ir.Unary{Op: "!", Arg: membership, Type: membership.Type}, origin)
 	}
 	if applyConversions {
 		// Apply the type checker's conversion before taking a payload

@@ -214,7 +214,7 @@ func lowerCFGFunction(mod *Module, input LoweringInput, sourceFn *thir.Function,
 func (l *lowerer) expressionContext() exprlower.Context {
 	return exprlower.Context{
 		Types: l.input.Types, Diagnostics: l.input.Diagnostics, Source: l.input.Source,
-		Analysis: l.input.Analysis, ModuleID: l.input.ModuleID, IsEntryModule: l.input.IsEntryModule,
+		ModuleID: l.input.ModuleID, IsEntryModule: l.input.IsEntryModule,
 	}
 }
 
