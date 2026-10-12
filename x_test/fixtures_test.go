@@ -31,6 +31,25 @@ type fixtureExpectation struct {
 }
 
 func TestFixtureContracts(t *testing.T) {
+	manifests := fixtureManifests(t)
+	expectations := make([]fixtureExpectation, 0, len(manifests))
+	for _, manifestPath := range manifests {
+		expectations = append(expectations, readFixtureExpectation(t, manifestPath))
+	}
+
+	binary := fixtureBinary(t)
+	if binary == "" {
+		t.Skip("PEEPER_BIN not set; fixture manifests validated without execution")
+	}
+	for _, expectation := range expectations {
+		t.Run(expectation.Name, func(t *testing.T) {
+			runFixture(t, binary, expectation)
+		})
+	}
+}
+
+func fixtureManifests(t *testing.T) []string {
+	t.Helper()
 	manifests, err := filepath.Glob(filepath.Join("*", "peeper.toml"))
 	if err != nil {
 		t.Fatalf("discover fixtures: %v", err)
@@ -39,25 +58,21 @@ func TestFixtureContracts(t *testing.T) {
 	if len(manifests) == 0 {
 		t.Fatal("no fixture manifests found")
 	}
+	return manifests
+}
 
-	expectations := make([]fixtureExpectation, 0, len(manifests))
-	for _, manifestPath := range manifests {
-		expectations = append(expectations, readFixtureExpectation(t, manifestPath))
-	}
-
+// fixtureBinary returns the absolute PEEPER_BIN path, or "" when it is not set.
+func fixtureBinary(t *testing.T) string {
+	t.Helper()
 	binary := os.Getenv("PEEPER_BIN")
 	if binary == "" {
-		t.Skip("PEEPER_BIN not set; fixture manifests validated without execution")
+		return ""
 	}
-	binary, err = filepath.Abs(binary)
+	binary, err := filepath.Abs(binary)
 	if err != nil {
 		t.Fatalf("resolve PEEPER_BIN: %v", err)
 	}
-	for _, expectation := range expectations {
-		t.Run(expectation.Name, func(t *testing.T) {
-			runFixture(t, binary, expectation)
-		})
-	}
+	return binary
 }
 
 func readFixtureExpectation(t *testing.T, manifestPath string) fixtureExpectation {
