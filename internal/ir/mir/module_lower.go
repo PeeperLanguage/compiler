@@ -11,7 +11,6 @@ import (
 	"compiler/internal/ir/thir"
 	"compiler/internal/ir/typelower"
 	"compiler/internal/moduleid"
-	"compiler/internal/semantics/analysis"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
@@ -24,11 +23,22 @@ type LoweringInput struct {
 	Diagnostics   *diagnostics.DiagnosticBag
 	Source        *thir.Module
 	CFG           *cfg.Module
-	Analysis      *analysis.Module
+	Cleanup       CleanupPlan
 	Scope         *symbols.Scope
 	SymbolIndex   *symbols.Index
 	ModuleID      moduleid.ID
 	IsEntryModule bool
+}
+
+// CleanupPlan answers where source values are dropped; analysis.Module is
+// the plan. Lowering asks through this interface so MIR does not import the
+// analysis, which leaves the analysis free to read MIR.
+type CleanupPlan interface {
+	DropsAfterSite(fn moduleid.FunctionID, site cfg.SiteID) []symbols.SymbolID
+	DropsBeforeReturn(fn moduleid.FunctionID, id source.NodeID) []symbols.SymbolID
+	DropsBeforeAssign(fn moduleid.FunctionID, id source.NodeID) bool
+	DiscardedValue(fn moduleid.FunctionID, id source.NodeID) bool
+	ProjectionBase(fn moduleid.FunctionID, id source.NodeID) bool
 }
 
 type lowerer struct {
@@ -198,9 +208,9 @@ func lowerCFGFunction(mod *Module, input LoweringInput, sourceFn *thir.Function,
 					return nil, false
 				}
 			case cfg.SiteScopeExit:
-				if l.input.Analysis != nil {
+				if l.input.Cleanup != nil {
 					l.location = site.Location
-					l.appendPlannedDrops(l.input.Analysis.DropsAfterSite(graph.FunctionID, site.ID), &block.Instrs)
+					l.appendPlannedDrops(l.input.Cleanup.DropsAfterSite(graph.FunctionID, site.ID), &block.Instrs)
 				}
 			}
 		}
@@ -445,7 +455,7 @@ func (l *lowerer) lowerCFGStmt(node thir.Node) bool {
 		if target == nil || target.Root == nil {
 			return false
 		}
-		shouldDropTarget := l.input.Analysis != nil && l.input.Analysis.DropsBeforeAssign(l.sourceFn.Identity, statement.Source.NodeID)
+		shouldDropTarget := l.input.Cleanup != nil && l.input.Cleanup.DropsBeforeAssign(l.sourceFn.Identity, statement.Source.NodeID)
 		if ident, isIdent := target.Root.(*ir.Ident); isIdent && len(target.Projections) == 0 {
 			if shouldDropTarget {
 				l.appendInstr(&l.current.Instrs, &Drop{Value: &RefName{Name: ident.Name, Type: target.TypeID(), Location: ident.Origin().Location}})
@@ -487,8 +497,8 @@ func (l *lowerer) lowerExprStatement(expr thir.Expr) bool {
 	}
 	temporaryMark := len(l.temporaryDrops)
 	lowered := l.sourceExpr(expr, nil)
-	if l.input.Analysis != nil {
-		if drop := l.input.Analysis.DiscardedValue(l.sourceFn.Identity, expr.SourceInfo().NodeID); drop {
+	if l.input.Cleanup != nil {
+		if drop := l.input.Cleanup.DiscardedValue(l.sourceFn.Identity, expr.SourceInfo().NodeID); drop {
 			value := l.lowerExpr(lowered, &l.current.Instrs)
 			l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
 			if value != nil {
@@ -607,8 +617,8 @@ func (l *lowerer) lowerCFGTerminator(sourceBlock, exit *cfg.Block, blocks map[*c
 			value = l.lowerExpr(l.sourceExpr(statement.Value, l.sourceFn.ReturnType), &l.current.Instrs)
 		}
 		l.flushTemporaryDrops(&l.current.Instrs, temporaryMark)
-		if l.input.Analysis != nil {
-			l.appendPlannedDrops(l.input.Analysis.DropsBeforeReturn(l.sourceFn.Identity, term.NodeID), &l.current.Instrs)
+		if l.input.Cleanup != nil {
+			l.appendPlannedDrops(l.input.Cleanup.DropsBeforeReturn(l.sourceFn.Identity, term.NodeID), &l.current.Instrs)
 		}
 		l.setBlockTerm(l.current, &Ret{Value: value})
 		return true

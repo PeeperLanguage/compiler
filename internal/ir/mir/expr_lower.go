@@ -199,7 +199,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		place := l.lowerPlace(e.Place, out)
 		value := l.load(out, place, e.TypeID(), e.Origin().Location)
 		shouldDropRoot := e.DropsRoot
-		if l.input.Analysis != nil && l.input.Analysis.ProjectionBase(l.sourceFn.Identity, e.NodeID) {
+		if l.input.Cleanup != nil && l.input.Cleanup.ProjectionBase(l.sourceFn.Identity, e.NodeID) {
 			shouldDropRoot = true
 		}
 		if shouldDropRoot {
@@ -270,7 +270,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: &Field{Base: base, Index: e.Index, Type: e.TypeID(), Location: e.Origin().Location}})
 		shouldDropBase := e.DropsBase
-		if l.input.Analysis != nil && l.input.Analysis.ProjectionBase(l.sourceFn.Identity, e.NodeID) {
+		if l.input.Cleanup != nil && l.input.Cleanup.ProjectionBase(l.sourceFn.Identity, e.NodeID) {
 			shouldDropBase = true
 		}
 		if shouldDropBase {

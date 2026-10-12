@@ -174,7 +174,7 @@ func lowerMainInstructions(t *testing.T, name, source string) []mir.Instr {
 	}
 
 	out := mir.GenerateMIR(mir.LoweringInput{
-		Types: ctx.Types, Source: mod.THIR, CFG: mod.CFG, Analysis: mod.Analysis,
+		Types: ctx.Types, Source: mod.THIR, CFG: mod.CFG, Cleanup: mod.Analysis,
 		Scope: mod.ModuleScope, SymbolIndex: mod.SymbolIndex, ModuleID: mod.ID, IsEntryModule: true,
 	})
 	if out == nil {
