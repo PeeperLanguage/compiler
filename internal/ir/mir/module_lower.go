@@ -156,8 +156,9 @@ func lowerCFGFunction(mod *Module, input LoweringInput, sourceFn *thir.Function,
 		symbolValues: make(map[symbols.SymbolID]*RefName),
 		constantEnv:  make(map[string]constvalue.Value),
 	}
-	for _, parameter := range fn.Params {
-		if parameter.SymbolID.IsValid() {
+	for index, parameter := range fn.Params {
+		if symbol := sourceFn.Params[index].Symbol; symbol != nil && parameter.SymbolID.IsValid() {
+			l.declareLocal(symbol, parameter.Name, parameter.Type, index+1)
 			l.symbolValues[parameter.SymbolID] = &RefName{Name: parameter.Name, Type: parameter.Type}
 		}
 	}
@@ -317,12 +318,23 @@ func (l *lowerer) assignSymbol(symbol *symbols.Symbol, value ir.Expr) {
 	}
 	name := exprlower.SymbolName(l.input.ModuleID, l.input.IsEntryModule, symbol)
 	typ := typelower.Type(l.input.Types, l.input.Diagnostics, symbol.Type)
+	l.declareLocal(symbol, name, typ, 0)
 	l.symbolValues[symbol.ID] = &RefName{Name: name, Type: typ, Location: l.location}
 	ref := l.lowerExpr(value, &l.current.Instrs)
 	if existing, ok := ref.(*RefName); ok && existing.Name == name {
 		return
 	}
 	l.appendInstr(&l.current.Instrs, &Assign{Name: name, Value: asValueExpr(ref)})
+}
+
+// declareLocal lists a source variable in the function's locals the first
+// time it gets a value; a variable assigned again is listed once. A `_`
+// parameter has no name to show.
+func (l *lowerer) declareLocal(symbol *symbols.Symbol, name string, typ ir.TypeID, arg int) {
+	if _, seen := l.symbolValues[symbol.ID]; seen || symbol.IsHidden() || symbol.Name == "_" {
+		return
+	}
+	l.fn.Locals = append(l.fn.Locals, Local{Name: name, SourceName: symbol.Name, Type: typ, Arg: arg, Location: symbol.Location})
 }
 
 func (l *lowerer) incrementSymbol(symbol *symbols.Symbol) {
@@ -405,7 +417,9 @@ func (l *lowerer) lowerCFGStmt(node thir.Node) bool {
 		for _, binding := range statement.Bindings {
 			taken[binding.Field] = true
 			name := exprlower.SymbolName(l.input.ModuleID, l.input.IsEntryModule, binding.Symbol)
-			l.symbolValues[binding.Symbol.ID] = take(name, binding.Field, binding.Type)
+			value := take(name, binding.Field, binding.Type)
+			l.declareLocal(binding.Symbol, name, value.Type, 0)
+			l.symbolValues[binding.Symbol.ID] = value
 		}
 		// The value was taken whole, so its unnamed owned fields end here,
 		// last field first like any struct drop.

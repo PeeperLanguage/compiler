@@ -1,0 +1,8 @@
+name = "runtime_debug_locals"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 42
+compiler_args = ["-debug"]

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -15,6 +16,8 @@ import (
 var updateDiagnostics = flag.Bool("update", false, "rewrite testdata/diagnostics.golden from the current compiler")
 
 const diagnosticsGolden = "testdata/diagnostics.golden"
+
+var trailingSpaces = regexp.MustCompile(`(?m) +$`)
 
 // TestDiagnosticSnapshot pins the full `peeper check` output of every fixture,
 // so a change to any message text, position, or count is seen in review.
@@ -47,17 +50,10 @@ func TestDiagnosticSnapshot(t *testing.T) {
 	for _, manifestPath := range manifests {
 		dir := filepath.Dir(manifestPath)
 		stdout, stderr, exitCode := executeFixtureProcess(t, ctx, binary, "check", "-logformat", "normal", dir)
-		fmt.Fprintf(&snapshot, "=== %s (exit %d)\n", dir, exitCode)
-		output := strings.TrimSuffix(paths.Replace(stdout+stderr), "\n")
-		if output == "" {
-			continue
-		}
 		// Trailing spaces on gutter lines are not part of what a message says,
 		// and keeping them would fail `git diff --check` on the golden file.
-		for _, line := range strings.Split(output, "\n") {
-			snapshot.WriteString(strings.TrimRight(line, " "))
-			snapshot.WriteByte('\n')
-		}
+		output := trailingSpaces.ReplaceAllString(paths.Replace(stdout+stderr), "")
+		fmt.Fprintf(&snapshot, "=== %s (exit %d)\n%s", dir, exitCode, output)
 	}
 	got := snapshot.String()
 

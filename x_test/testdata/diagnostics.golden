@@ -5299,6 +5299,7 @@ Compilation succeeded with 2 warning(s)
 
 Compilation succeeded with 8 warning(s)
 === runtime_cstr (exit 0)
+=== runtime_debug_locals (exit 0)
 === runtime_default_range_clone (exit 0)
 === runtime_deferred_init_match (exit 0)
 === runtime_destructure (exit 0)

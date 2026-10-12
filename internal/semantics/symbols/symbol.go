@@ -1,6 +1,7 @@
 package symbols
 
 import (
+	"strings"
 	"unicode"
 	"unicode/utf8"
 
@@ -99,6 +100,12 @@ func (s *Symbol) Variable() *Symbol {
 		s = s.AliasOf
 	}
 	return s
+}
+
+// IsHidden reports a local the compiler made up (`$for.cursor`, `$either`):
+// it has no source name, so it is never offered or shown to the user.
+func (s *Symbol) IsHidden() bool {
+	return strings.HasPrefix(s.Name, "$")
 }
 
 func (s *Symbol) BindType(typ typeinfo.Type) {

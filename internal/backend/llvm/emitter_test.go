@@ -474,6 +474,66 @@ func TestGenerateLLVMIRLowersBooleanCallArguments(t *testing.T) {
 	}
 }
 
+// A debug build describes source variables it can lay out and skips the rest:
+// a struct needs field offsets, so it gets no record rather than a wrong one,
+// and a reference to it points at an undescribed type. A name declared twice
+// gets no record either, since one record would cover both.
+func TestGenerateLLVMIRDescribesSourceVariablesInDebugBuilds(t *testing.T) {
+	at := func(line int) *source.Location {
+		return &source.Location{Start: &source.Position{Line: line, Column: 5}}
+	}
+	module := &mir.Module{
+		Name: "test", Types: llvmTypes.table,
+		Funcs: []*mir.Function{{
+			Name:       "main",
+			Params:     []ir.Param{{Name: "count$1", Type: llvmTypes.i32}, {Name: "box$2", Type: llvmTypes.refValueStruct}},
+			ReturnType: llvmTypes.i32,
+			Location:   at(1),
+			Locals: []mir.Local{
+				{Name: "count$1", SourceName: "count", Type: llvmTypes.i32, Arg: 1, Location: at(1)},
+				{Name: "box$2", SourceName: "box", Type: llvmTypes.refValueStruct, Arg: 2, Location: at(1)},
+				{Name: "value$3", SourceName: "value", Type: llvmTypes.valueStruct, Location: at(2)},
+				{Name: "item$4", SourceName: "item", Type: llvmTypes.i32, Location: at(2)},
+				{Name: "item$5", SourceName: "item", Type: llvmTypes.i32, Location: at(3)},
+			},
+			Blocks: []*mir.Block{{
+				ID: 0,
+				Instrs: []mir.Instr{
+					&mir.Assign{Name: "value$3", Value: &mir.ZeroValue{Type: llvmTypes.valueStruct}, Location: at(2)},
+					&mir.Assign{Name: "item$4", Value: &mir.ZeroValue{Type: llvmTypes.i32}, Location: at(2)},
+					&mir.Assign{Name: "item$5", Value: &mir.ZeroValue{Type: llvmTypes.i32}, Location: at(3)},
+				},
+				Term: &mir.Ret{Value: &mir.RefName{Name: "count$1", Type: llvmTypes.i32}, Location: at(3)},
+			}},
+		}},
+	}
+
+	debug := GenerateLLVMIR(module, diagnostics.NewDiagnosticBag(), testLinuxAMD64, true)
+	for _, want := range []string{
+		`!DILocalVariable(name: "count", arg: 1,`,
+		`!DIBasicType(name: "i32", size: 32, encoding: DW_ATE_signed)`,
+		`!DILocalVariable(name: "box", arg: 2,`,
+		`baseType: null, size: 64)`,
+		"call void @llvm.dbg.declare(metadata i32* ",
+		"declare void @llvm.dbg.declare(metadata, metadata, metadata)",
+	} {
+		if !strings.Contains(debug, want) {
+			t.Fatalf("debug LLVM IR missing %q:\n%s", want, debug)
+		}
+	}
+	if strings.Contains(debug, `name: "value"`) {
+		t.Fatalf("struct variable described without field offsets:\n%s", debug)
+	}
+	if strings.Contains(debug, `name: "item"`) {
+		t.Fatalf("name declared twice described for the whole function:\n%s", debug)
+	}
+
+	plain := GenerateLLVMIR(module, diagnostics.NewDiagnosticBag(), testLinuxAMD64, false)
+	if strings.Contains(plain, "dbg") || strings.Contains(plain, "alloca { i32 }") {
+		t.Fatalf("plain build carries debug-only output:\n%s", plain)
+	}
+}
+
 func TestGenerateLLVMIRDeclaresExternalsInUseOrder(t *testing.T) {
 	callees := []string{"zeta", "alpha", "mid", "omega", "beta", "alpha", "kappa", "delta", "zeta", "gamma"}
 	instrs := make([]mir.Instr, 0, len(callees))
