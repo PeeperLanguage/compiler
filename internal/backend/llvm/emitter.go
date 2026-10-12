@@ -851,7 +851,9 @@ func stackLocalSlots(typeTable *ir.TypeTable, fn *mir.Function, isDebug bool) []
 	if isDebug {
 		// The debugger reads a source variable through its address.
 		for _, local := range fn.Locals {
-			addressName(local.Name)
+			if local.SourceName != "" {
+				addressName(local.Name)
+			}
 		}
 	}
 	for _, block := range fn.Blocks {

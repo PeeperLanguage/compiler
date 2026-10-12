@@ -27,6 +27,8 @@ func (l *lowerer) appendInstr(out *[]Instr, instr Instr) {
 		node.Location = l.location
 	case *Drop:
 		node.Location = l.location
+	case *DropPoint:
+		node.Location = l.location
 	}
 	*out = append(*out, instr)
 }
@@ -198,13 +200,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 	case *ir.Load:
 		place := l.lowerPlace(e.Place, out)
 		value := l.load(out, place, e.TypeID(), e.Origin().Location)
-		shouldDropRoot := e.DropsRoot
-		if l.input.Cleanup != nil && l.input.Cleanup.ProjectionBase(l.sourceFn.Identity, e.NodeID) {
-			shouldDropRoot = true
-		}
-		if shouldDropRoot {
-			l.appendInstr(out, &Drop{Value: place.Root, Location: e.Place.Root.Origin().Location})
-		}
+		l.dropProjectionBase(out, e.DropsRoot, e.NodeID, place.Root)
 		return value
 	case *ir.Len:
 		value := l.lowerExpr(e.Value, out)
@@ -269,13 +265,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		base := l.lowerExpr(e.Base, out)
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: &Field{Base: base, Index: e.Index, Type: e.TypeID(), Location: e.Origin().Location}})
-		shouldDropBase := e.DropsBase
-		if l.input.Cleanup != nil && l.input.Cleanup.ProjectionBase(l.sourceFn.Identity, e.NodeID) {
-			shouldDropBase = true
-		}
-		if shouldDropBase {
-			l.appendInstr(out, &Drop{Value: base, Location: e.Base.Origin().Location})
-		}
+		l.dropProjectionBase(out, e.DropsBase, e.NodeID, base)
 		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.StructLit:
 		fields := make([]ValueRef, 0, len(e.Fields))
@@ -379,20 +369,14 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 	}
 }
 
-func (l *lowerer) lowerDiscardedExpr(expr ir.Expr, out *[]Instr) bool {
-	if l == nil || out == nil || expr == nil {
-		return false
+// dropProjectionBase drops the base a projection read out of: always when
+// lowering decided it, else where the cleanup plan decides.
+func (l *lowerer) dropProjectionBase(out *[]Instr, drops bool, node source.NodeID, base ValueRef) {
+	if drops {
+		l.appendInstr(out, &Drop{Value: base})
+		return
 	}
-	switch e := expr.(type) {
-	case *ir.Call:
-		l.appendInstr(out, l.lowerCall(e, out))
-		return true
-	case *ir.InterfaceCall:
-		l.appendInstr(out, l.lowerInterfaceCall(e, out))
-		return true
-	default:
-		return false
-	}
+	l.appendInstr(out, &DropPoint{Kind: DropProjectionBase, Node: node, Value: base})
 }
 
 func interfaceDataType(types *ir.TypeTable, id ir.TypeID) ir.TypeID {

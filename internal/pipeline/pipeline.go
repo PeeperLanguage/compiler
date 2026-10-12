@@ -473,13 +473,14 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 		}
 		module.MIR = mir.GenerateMIR(mir.LoweringInput{
 			Types: ctx.Types, Diagnostics: phaseDiag, Source: module.THIR,
-			CFG: module.CFG, Cleanup: module.Analysis,
+			CFG:   module.CFG,
 			Scope: module.ModuleScope, SymbolIndex: module.SymbolIndex,
 			ModuleID: module.ID, IsEntryModule: module.IsEntry,
 		})
 		if module.MIR == nil {
 			return false
 		}
+		mir.ResolveDrops(module.MIR, module.Analysis)
 		if err := module.MIR.Validate(); err != nil {
 			phaseDiag.AddError(diagnostics.ErrInvalidEvidence,
 				"lowered MIR is malformed: "+err.Error(), nil, "")

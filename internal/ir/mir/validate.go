@@ -88,7 +88,16 @@ func validateFunction(types *ir.TypeTable, fn *Function) []string {
 			}
 		}
 	}
+	listed := make(map[string]bool, len(fn.Locals))
 	for _, local := range fn.Locals {
+		// Drops find a variable by its MIR name, so a name is listed once.
+		if listed[local.Name] {
+			problems = append(problems, fmt.Sprintf("function %s lists local %s twice", fn.Name, local.Name))
+		}
+		listed[local.Name] = true
+		if !local.Symbol.IsValid() {
+			problems = append(problems, fmt.Sprintf("function %s local %s has no symbol", fn.Name, local.Name))
+		}
 		if _, ok := types.Type(local.Type); types != nil && !ok {
 			problems = append(problems, fmt.Sprintf("function %s local %s has invalid type#%d", fn.Name, local.Name, local.Type))
 		}
@@ -150,6 +159,8 @@ func validateInstruction(types *ir.TypeTable, fn *Function, block *Block, index 
 		return validateValueRef(types, node.Value, where+" print value")
 	case *Drop:
 		return validateValueRef(types, node.Value, where+" drop value")
+	case *DropPoint:
+		return []string{where + " is a drop point ResolveDrops never resolved"}
 	case *DynamicArrayOp:
 		problems := validateKnownType(types, node.ArrayType, where+" dynamic-array type")
 		problems = append(problems, validateValueRef(types, node.Array, where+" dynamic-array value")...)

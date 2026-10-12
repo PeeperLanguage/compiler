@@ -1061,17 +1061,25 @@ fn main() -> i32 {
 	if !strings.Contains(entry.LLVMIR, "!llvm.dbg.cu") {
 		t.Fatalf("expected debug metadata in LLVM IR, got:\n%s", entry.LLVMIR)
 	}
-	// Source variables are listed, parameters with their position; the
-	// loop's hidden cursor and limit are not.
-	listed := make(map[string]int)
+	// Every variable is listed with its symbol, parameters with their
+	// position; the loop's hidden cursor and limit have no name to show.
+	named := make(map[string]int)
+	unnamed := 0
 	for _, function := range entry.MIR.Funcs {
 		for _, local := range function.Locals {
-			listed[local.SourceName] = local.Arg
+			if !local.Symbol.IsValid() {
+				t.Fatalf("%s lists %s without a symbol", function.Name, local.Name)
+			}
+			if local.SourceName == "" {
+				unnamed++
+				continue
+			}
+			named[local.SourceName] = local.Arg
 		}
 	}
 	want := map[string]int{"left": 1, "right": 2, "total": 0, "sum": 0, "value": 0}
-	if !maps.Equal(listed, want) {
-		t.Fatalf("MIR locals = %v, want %v", listed, want)
+	if !maps.Equal(named, want) || unnamed != 2 {
+		t.Fatalf("MIR locals = %v and %d unnamed, want %v and 2", named, unnamed, want)
 	}
 	for _, record := range []string{
 		`!DILocalVariable(name: "left", arg: 1,`,

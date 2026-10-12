@@ -174,12 +174,13 @@ func lowerMainInstructions(t *testing.T, name, source string) []mir.Instr {
 	}
 
 	out := mir.GenerateMIR(mir.LoweringInput{
-		Types: ctx.Types, Source: mod.THIR, CFG: mod.CFG, Cleanup: mod.Analysis,
+		Types: ctx.Types, Source: mod.THIR, CFG: mod.CFG,
 		Scope: mod.ModuleScope, SymbolIndex: mod.SymbolIndex, ModuleID: mod.ID, IsEntryModule: true,
 	})
 	if out == nil {
 		t.Fatal("MIR lowering returned nil")
 	}
+	mir.ResolveDrops(out, mod.Analysis)
 	for _, fn := range out.Funcs {
 		if fn.Name == "main" && len(fn.Blocks) > 0 {
 			return fn.Blocks[0].Instrs
