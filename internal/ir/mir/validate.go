@@ -88,6 +88,14 @@ func validateFunction(types *ir.TypeTable, fn *Function) []string {
 			}
 		}
 	}
+	for _, local := range fn.Locals {
+		if _, ok := types.Type(local.Type); types != nil && !ok {
+			problems = append(problems, fmt.Sprintf("function %s local %s has invalid type#%d", fn.Name, local.Name, local.Type))
+		}
+		if local.Arg > 0 && (local.Arg > len(fn.Params) || fn.Params[local.Arg-1].Name != local.Name) {
+			problems = append(problems, fmt.Sprintf("function %s local %s is not parameter %d", fn.Name, local.Name, local.Arg))
+		}
+	}
 	if fn.Blocks == nil {
 		return problems
 	}

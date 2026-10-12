@@ -308,7 +308,7 @@ func (e *llvmEmitter) emitFunctionDefinition(b *strings.Builder, fn *mir.Functio
 	}
 	b.WriteString(" {\n")
 	lb := newLLVMBuilder(b, e, debugScopeID)
-	stackSlots := stackLocalSlots(e.mod.Types, fn)
+	stackSlots := stackLocalSlots(e.mod.Types, fn, e.debug.isEnabled)
 	for _, param := range fn.Params {
 		lb.locals[param.Name] = lb.value("%"+param.Name, e.layout(param.Type))
 	}
@@ -325,6 +325,7 @@ func (e *llvmEmitter) emitBlock(lb *llvmBuilder, fn *mir.Function, block *mir.Bl
 	lb.label(block.ID)
 	if block.ID == fn.EntryID {
 		emitStackLocalSlots(lb, stackSlots)
+		e.declareLocals(lb, fn)
 	}
 	for _, instr := range block.Instrs {
 		if instr == nil {
@@ -813,7 +814,11 @@ type stackLocalSlot struct {
 	Type ir.TypeID
 }
 
-func stackLocalSlots(typeTable *ir.TypeTable, fn *mir.Function) []stackLocalSlot {
+// stackLocalSlots picks the locals that live in memory: those assigned more
+// than once, parameters, and those whose address is taken. A debug build gives
+// every source variable a slot, as clang does without optimization, so the
+// debugger can read it anywhere in the function.
+func stackLocalSlots(typeTable *ir.TypeTable, fn *mir.Function, isDebug bool) []stackLocalSlot {
 	if fn == nil {
 		return nil
 	}
@@ -826,6 +831,13 @@ func stackLocalSlots(typeTable *ir.TypeTable, fn *mir.Function) []stackLocalSlot
 	addressed := make(map[string]bool)
 	order := make([]string, 0)
 	seen := make(map[string]bool)
+	addressName := func(name string) {
+		addressed[name] = true
+		if !seen[name] {
+			seen[name] = true
+			order = append(order, name)
+		}
+	}
 	recordPlace := func(place *mir.Place) {
 		if !placeNeedsRootAddr(typeTable, place) {
 			return
@@ -834,10 +846,12 @@ func stackLocalSlots(typeTable *ir.TypeTable, fn *mir.Function) []stackLocalSlot
 		if !ok || root == nil || root.Name == "" {
 			return
 		}
-		addressed[root.Name] = true
-		if !seen[root.Name] {
-			seen[root.Name] = true
-			order = append(order, root.Name)
+		addressName(root.Name)
+	}
+	if isDebug {
+		// The debugger reads a source variable through its address.
+		for _, local := range fn.Locals {
+			addressName(local.Name)
 		}
 	}
 	for _, block := range fn.Blocks {

@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1019,8 +1020,17 @@ func TestPipelineRunReplacesStaleFinalizeDiagnostics(t *testing.T) {
 
 func TestPipelineDebugBuildEmitsLLVMMetadata(t *testing.T) {
 	preludeSrc := ``
-	entrySrc := `fn main() -> i32 {
-	return 0;
+	entrySrc := `fn Add(left: i32, right: i32) -> i32 {
+	let total = left + right;
+	return total;
+}
+
+fn main() -> i32 {
+	let mut sum: i32 = 0;
+	for value in 0..3 {
+		sum = sum + value;
+	}
+	return Add(sum, 1) - 4;
 }`
 
 	cfg := project.Config{
@@ -1051,6 +1061,34 @@ func TestPipelineDebugBuildEmitsLLVMMetadata(t *testing.T) {
 	if !strings.Contains(entry.LLVMIR, "!llvm.dbg.cu") {
 		t.Fatalf("expected debug metadata in LLVM IR, got:\n%s", entry.LLVMIR)
 	}
+	// Source variables are listed, parameters with their position; the
+	// loop's hidden cursor and limit are not.
+	listed := make(map[string]int)
+	for _, function := range entry.MIR.Funcs {
+		for _, local := range function.Locals {
+			listed[local.SourceName] = local.Arg
+		}
+	}
+	want := map[string]int{"left": 1, "right": 2, "total": 0, "sum": 0, "value": 0}
+	if !maps.Equal(listed, want) {
+		t.Fatalf("MIR locals = %v, want %v", listed, want)
+	}
+	for _, record := range []string{
+		`!DILocalVariable(name: "left", arg: 1,`,
+		`!DILocalVariable(name: "right", arg: 2,`,
+		`!DILocalVariable(name: "total",`,
+		`!DILocalVariable(name: "sum",`,
+		`!DILocalVariable(name: "value",`,
+		"declare void @llvm.dbg.declare(metadata, metadata, metadata)",
+	} {
+		if !strings.Contains(entry.LLVMIR, record) {
+			t.Fatalf("debug LLVM IR missing %q:\n%s", record, entry.LLVMIR)
+		}
+	}
+	if strings.Contains(entry.LLVMIR, `name: "$`) {
+		t.Fatalf("debug LLVM IR names a hidden local:\n%s", entry.LLVMIR)
+	}
+	assertLLVMCompiles(t, ctx.Target, entry.LLVMIR)
 }
 
 func TestAdvancePublishesAnalyzedArtifact(t *testing.T) {

@@ -42,6 +42,16 @@ func TestValidateReportsDefects(t *testing.T) {
 		want   string
 	}{
 		{
+			name:   "local claims a parameter the function does not have",
+			damage: func(m *Module) { m.Funcs[0].Locals = []Local{{Name: "value", Type: m.Funcs[0].ReturnType, Arg: 1}} },
+			want:   "local value is not parameter 1",
+		},
+		{
+			name:   "local with an unknown type",
+			damage: func(m *Module) { m.Funcs[0].Locals = []Local{{Name: "value", Type: 999}} },
+			want:   "local value has invalid type#999",
+		},
+		{
 			name:   "block without a terminator",
 			damage: func(m *Module) { m.Funcs[0].Blocks[1].Term = nil },
 			want:   "block b1 has no terminator",

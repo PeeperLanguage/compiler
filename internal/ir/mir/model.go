@@ -61,6 +61,20 @@ type Function struct {
 	EntryID    int
 	Blocks     []*Block
 	Location   *source.Location
+	// Locals lists the variables the source declares, parameters first, in
+	// declaration order. Locals the compiler makes up are not listed.
+	Locals []Local
+}
+
+// Local ties a MIR name to the variable the user wrote, so the debugger can
+// show it by its source name.
+type Local struct {
+	Name       string
+	SourceName string
+	Type       ir.TypeID
+	// Arg is the 1-based parameter position, or 0 for a local binding.
+	Arg      int
+	Location *source.Location
 }
 
 type Block struct {

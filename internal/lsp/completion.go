@@ -390,7 +390,7 @@ func lexicalCompletionItems(module *module.Module, cursor source.Position, prefi
 	for current := scope; current != nil; current = current.Parent() {
 		for _, sym := range current.Symbols() {
 			// `_` and the compiler's own `$` locals are not names to offer.
-			if sym == nil || sym.Name == "_" || strings.HasPrefix(sym.Name, "$") || !strings.HasPrefix(sym.Name, prefix) {
+			if sym == nil || sym.Name == "_" || sym.IsHidden() || !strings.HasPrefix(sym.Name, prefix) {
 				continue
 			}
 			if localScope && isDeclaredAfterCursor(sym, cursor) {
