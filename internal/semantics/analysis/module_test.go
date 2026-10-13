@@ -28,35 +28,28 @@ func TestOriginsArePublishedAndMergedAtomically(t *testing.T) {
 	}
 }
 
-func TestPayloadAndCaseTestReturnDetachedSlices(t *testing.T) {
+func TestPayloadReturnsDetachedSlices(t *testing.T) {
 	m := newModule()
 	payloadID := source.ParsedNodeID(1)
-	testID := source.ParsedNodeID(2)
 	root := &symbols.Symbol{Name: "value"}
 	payload := PayloadAccess{
 		CarrierOrigins: []place.Origin{{Root: root, Projections: []place.OriginProjection{{Kind: place.OriginVariantPayload, Case: 0}}}},
 		Cases:          []int{0},
 	}
-	test := CaseTest{SubjectID: payloadID, Case: 0, CaseCount: 1, PayloadPath: []int{0}}
 	m.recordPayload(payloadID, payload)
-	m.recordCaseTest(testID, test)
 
 	payload.CarrierOrigins[0].Root = nil
 	payload.Cases[0] = 9
-	test.PayloadPath[0] = 9
 	publishedPayload, _ := m.Payload(payloadID)
-	publishedTest, _ := m.CaseTest(testID)
-	if publishedPayload.CarrierOrigins[0].Root != root || publishedPayload.Cases[0] != 0 || publishedTest.PayloadPath[0] != 0 {
-		t.Fatalf("producer retained mutable analysis storage: payload=%#v test=%#v", publishedPayload, publishedTest)
+	if publishedPayload.CarrierOrigins[0].Root != root || publishedPayload.Cases[0] != 0 {
+		t.Fatalf("producer retained mutable analysis storage: payload=%#v", publishedPayload)
 	}
 
 	publishedPayload.CarrierOrigins[0].Root = nil
 	publishedPayload.Cases[0] = 9
-	publishedTest.PayloadPath[0] = 9
 	publishedPayload, _ = m.Payload(payloadID)
-	publishedTest, _ = m.CaseTest(testID)
-	if publishedPayload.CarrierOrigins[0].Root != root || publishedPayload.Cases[0] != 0 || publishedTest.PayloadPath[0] != 0 {
-		t.Fatalf("queries returned mutable analysis storage: payload=%#v test=%#v", publishedPayload, publishedTest)
+	if publishedPayload.CarrierOrigins[0].Root != root || publishedPayload.Cases[0] != 0 {
+		t.Fatalf("queries returned mutable analysis storage: payload=%#v", publishedPayload)
 	}
 }
 

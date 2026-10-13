@@ -9,6 +9,7 @@ import (
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/ir/cfg"
+	"compiler/internal/ir/thir"
 	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/project"
@@ -63,9 +64,10 @@ fn read(choice: Choice) -> i32 {
 	// After the guard leaves on every other case, choice reads as the payload.
 	field := fn.Body.Stmts[1].(*ast.ReturnStmt).Value.(*ast.SelectorExpr)
 
-	caseTest, ok := mod.Analysis.CaseTest(test.ID())
-	if !ok || caseTest.Case != 0 || caseTest.SubjectID != test.Value.ID() || caseTest.CaseCount != 3 {
-		t.Fatalf("case-test evidence = %#v, %v", caseTest, ok)
+	tested, _ := mod.THIR.Node(test.ID()).(thir.Expr)
+	caseTest := thir.CaseTestOf(tested)
+	if caseTest == nil || caseTest.Case != 0 || caseTest.SubjectID != test.Value.ID() || caseTest.CaseCount != 3 {
+		t.Fatalf("case-test evidence = %#v", caseTest)
 	}
 	payload, ok := mod.Analysis.Payload(field.Expr.ID())
 	if !ok || len(payload.Cases) != 1 || payload.Cases[0] != 0 {

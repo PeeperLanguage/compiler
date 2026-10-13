@@ -41,18 +41,6 @@ func validateExpressionEvidence(evidence expressionEvidence, source *thir.Module
 			}
 		}
 	}
-	for id, test := range evidence.caseTests {
-		problems = append(problems, validateExpressionNode(source, id, "case test")...)
-		problems = append(problems, validateExpressionNode(source, test.SubjectID, "case-test subject")...)
-		if test.CaseCount <= 0 || test.Case < 0 || test.Case >= test.CaseCount {
-			problems = append(problems, fmt.Sprintf("node %v tests case %v of %v", id, test.Case, test.CaseCount))
-		}
-		for _, caseIndex := range test.PayloadPath {
-			if caseIndex < 0 {
-				problems = append(problems, fmt.Sprintf("node %v has negative payload-path case %v", id, caseIndex))
-			}
-		}
-	}
 	for id := range evidence.origins {
 		if !id.IsValid() {
 			problems = append(problems, "origin resolution published with no source identity")

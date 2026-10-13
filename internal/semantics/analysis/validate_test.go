@@ -104,9 +104,6 @@ func TestValidateRejectsMalformedDurableFlowEvidence(t *testing.T) {
 		{name: "empty payload", want: "empty payload refinement", publish: func(module *Module) {
 			module.recordPayload(id, PayloadAccess{})
 		}},
-		{name: "invalid case", want: "tests case 2 of 1", publish: func(module *Module) {
-			module.recordCaseTest(id, CaseTest{SubjectID: id, Case: 2, CaseCount: 1})
-		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

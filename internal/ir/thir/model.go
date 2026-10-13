@@ -637,6 +637,18 @@ type CaseTest struct {
 	Family          typeinfo.VariantFamily
 }
 
+// CaseTestOf returns the case test expr makes, or nil for one that tests no
+// case. Binary and Is are the only expressions that carry one.
+func CaseTestOf(expr Expr) *CaseTest {
+	switch tested := expr.(type) {
+	case *Binary:
+		return tested.Test
+	case *Is:
+		return tested.Test
+	}
+	return nil
+}
+
 type Call struct {
 	ExprInfo
 	Callee       Expr

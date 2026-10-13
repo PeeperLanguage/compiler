@@ -401,17 +401,13 @@ func (a *flowAnalyzer) AnalyzeUnary(expr *thir.Unary) {
 func (a *flowAnalyzer) AnalyzeBinary(expr *thir.Binary) {
 	a.analyze(expr.Left)
 	a.analyze(expr.Right)
-	if expr.Test != nil {
-		a.recordCaseTest(expr, expr.Test)
-	}
+	a.recordCaseTest(expr)
 	a.finish(expr)
 }
 
 func (a *flowAnalyzer) AnalyzeIs(expr *thir.Is) {
 	a.analyze(expr.Value)
-	if expr.Test != nil {
-		a.recordCaseTest(expr, expr.Test)
-	}
+	a.recordCaseTest(expr)
 	a.finish(expr)
 }
 
@@ -443,22 +439,17 @@ func (a *flowAnalyzer) AnalyzeCast(expr *thir.Cast) {
 	a.finish(expr)
 }
 
-func (a *flowAnalyzer) recordCaseTest(expr thir.Expr, test *thir.CaseTest) {
+// recordCaseTest notes the payload path a case test reads its subject
+// through, and orders the test among the site's events.
+func (a *flowAnalyzer) recordCaseTest(expr thir.Expr) {
+	test := thir.CaseTestOf(expr)
 	if test == nil {
 		return
 	}
-	refined := CaseTest{
-		SubjectID: test.SubjectID, Case: test.Case, MatchesWhenTrue: test.MatchesWhenTrue,
-		CaseCount: test.CaseCount, Family: test.Family,
-	}
-	if payload, ok := a.result.Payload(test.SubjectID); ok {
-		storage := a.result.StorageOrigins(test.SubjectID)
-		if payload.AppliesTo(storage) {
-			refined.PayloadPath = append([]int(nil), payload.Cases...)
-		}
-	}
 	id := expr.SourceInfo().NodeID
-	a.result.recordCaseTest(id, refined)
+	if payload, ok := a.result.Payload(test.SubjectID); ok && payload.AppliesTo(a.result.StorageOrigins(test.SubjectID)) {
+		a.result.expressions.testPaths[id] = payload.Cases
+	}
 	if a.events != nil {
 		a.events.next++
 		a.events.tests[id] = a.events.next
@@ -836,7 +827,7 @@ func (a *flowAnalyzer) impliedVariants(expr thir.Expr, truth bool, state flowSta
 	if typednil.IsNil(expr) {
 		return nil
 	}
-	if test, found := a.result.CaseTest(expr.SourceInfo().NodeID); found {
+	if test := thir.CaseTestOf(expr); test != nil {
 		subject, _ := a.source.Node(test.SubjectID).(thir.Expr)
 		resolution := a.resolve(subject, state)
 		if !resolution.IsStable || len(resolution.StorageOrigins) == 0 {
@@ -854,7 +845,7 @@ func (a *flowAnalyzer) impliedVariants(expr thir.Expr, truth bool, state flowSta
 			order = events.tests[expr.SourceInfo().NodeID]
 		}
 		return []edgeVariantFact{{variant: variantStateFact{
-			origins: place.VariantPayloadOrigins(resolution.StorageOrigins, test.PayloadPath),
+			origins: place.VariantPayloadOrigins(resolution.StorageOrigins, a.result.expressions.testPaths[expr.SourceInfo().NodeID]),
 			cases:   cases, caseCount: test.CaseCount,
 			dependencies: append([]*symbols.Symbol(nil), resolution.Dependencies...),
 		}, order: order}}

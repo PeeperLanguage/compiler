@@ -1,6 +1,7 @@
 package thir_test
 
 import (
+	"strings"
 	"testing"
 
 	"compiler/internal/diagnostics"
@@ -348,5 +349,29 @@ fn Grow(holder: &mut Holder) {
 	}
 	if len(match.Arms[1].Body.Stmts) != 0 {
 		t.Fatalf("empty arm = %#v, want nothing dropped", match.Arms[1].Body.Stmts)
+	}
+}
+
+func TestValidateRejectsCaseTestOutsideItsCases(t *testing.T) {
+	mod := buildTypedModule(t, `
+fn read(value: ?i32) -> i32 {
+    if value == none {
+        return 0;
+    }
+    return 1;
+}`)
+	var test *thir.CaseTest
+	thir.Inspect(mod.THIR.Functions[0].Body, func(node thir.Node) bool {
+		if expr, isExpr := node.(thir.Expr); isExpr && test == nil {
+			test = thir.CaseTestOf(expr)
+		}
+		return test == nil
+	})
+	if test == nil {
+		t.Fatal("`value == none` carries no case test")
+	}
+	test.Case = test.CaseCount
+	if err := mod.THIR.Validate(); err == nil || !strings.Contains(err.Error(), "tests case 2 of 2") {
+		t.Fatalf("Validate() = %v, want a case outside the tested cases rejected", err)
 	}
 }

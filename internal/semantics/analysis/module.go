@@ -9,7 +9,6 @@ import (
 	"compiler/internal/moduleid"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
 )
 
 // Input supplies the immutable artifacts required for post-CFG semantic analysis.
@@ -32,15 +31,6 @@ func (p PayloadAccess) AppliesTo(storage []place.Origin) bool {
 	return len(p.Cases) > 0 && place.AreSameOrigins(p.CarrierOrigins, storage)
 }
 
-type CaseTest struct {
-	SubjectID       source.NodeID
-	Case            int
-	MatchesWhenTrue bool
-	CaseCount       int
-	Family          typeinfo.VariantFamily
-	PayloadPath     []int
-}
-
 // OriginResolution is one flow-resolved place result. Storage and value
 // origins are published together because they share syntax identity, lifetime,
 // and invalidation rules.
@@ -58,8 +48,10 @@ type AggregateSlot struct {
 }
 
 type expressionEvidence struct {
-	payloads   map[source.NodeID]PayloadAccess
-	caseTests  map[source.NodeID]CaseTest
+	payloads map[source.NodeID]PayloadAccess
+	// testPaths holds, for a case test whose subject is itself a narrowed
+	// payload, the cases read through to reach that subject.
+	testPaths  map[source.NodeID][]int
 	origins    map[source.NodeID]OriginResolution
 	aggregates map[source.NodeID][]AggregateSlot
 }
@@ -74,7 +66,7 @@ type Module struct {
 func newModule() *Module {
 	return &Module{expressions: expressionEvidence{
 		payloads:   make(map[source.NodeID]PayloadAccess),
-		caseTests:  make(map[source.NodeID]CaseTest),
+		testPaths:  make(map[source.NodeID][]int),
 		origins:    make(map[source.NodeID]OriginResolution),
 		aggregates: make(map[source.NodeID][]AggregateSlot),
 	}}
@@ -104,25 +96,6 @@ func (r *Module) forgetPayload(id source.NodeID) {
 	if r != nil {
 		delete(r.expressions.payloads, id)
 	}
-}
-
-func (r *Module) recordCaseTest(id source.NodeID, test CaseTest) {
-	if r != nil && id.IsValid() {
-		r.expressions.caseTests[id] = cloneCaseTest(test)
-	}
-}
-
-func (r *Module) CaseTest(id source.NodeID) (CaseTest, bool) {
-	if r == nil || !id.IsValid() {
-		return CaseTest{}, false
-	}
-	test, ok := r.expressions.caseTests[id]
-	return cloneCaseTest(test), ok
-}
-
-func cloneCaseTest(test CaseTest) CaseTest {
-	test.PayloadPath = append([]int(nil), test.PayloadPath...)
-	return test
 }
 
 func (r *Module) recordOrigins(id source.NodeID, storage, value []place.Origin) {

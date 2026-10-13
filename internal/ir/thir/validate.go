@@ -44,7 +44,11 @@ func (m *Module) Validate() error {
 		}
 		var validationError error
 		Inspect(function.Body, func(node Node) bool {
-			if err := node.validateSelf(); err != nil {
+			err := node.validateSelf()
+			if expr, isExpr := node.(Expr); isExpr && err == nil {
+				err = m.validateCaseTest(CaseTestOf(expr))
+			}
+			if err != nil {
 				validationError = fmt.Errorf("%T at node %v: %w", node, node.SourceInfo().NodeID, err)
 				return false
 			}
@@ -66,6 +70,19 @@ func (m *Module) Validate() error {
 	}
 	if len(m.functionIndex) != len(m.Functions) {
 		return fmt.Errorf("stable function index has %d entries for %d functions", len(m.functionIndex), len(m.Functions))
+	}
+	return nil
+}
+
+func (m *Module) validateCaseTest(test *CaseTest) error {
+	if test == nil {
+		return nil
+	}
+	if _, isExpr := m.byNodeID[test.SubjectID].(Expr); !isExpr {
+		return fmt.Errorf("case-test subject %v is not an expression", test.SubjectID)
+	}
+	if test.CaseCount <= 0 || test.Case < 0 || test.Case >= test.CaseCount {
+		return fmt.Errorf("tests case %v of %v", test.Case, test.CaseCount)
 	}
 	return nil
 }

@@ -72,14 +72,7 @@ func (l *lowerer) lower(expr thir.Expr, expected typeinfo.Type, applyConversions
 	// Case tests are control-flow facts, not ordinary value expressions.
 	// Lower the published subject once, then materialize membership as a
 	// boolean MIR value for the CFG branch.
-	var test *thir.CaseTest
-	switch tested := expr.(type) {
-	case *thir.Binary:
-		test = tested.Test
-	case *thir.Is:
-		test = tested.Test
-	}
-	if test != nil {
+	if test := thir.CaseTestOf(expr); test != nil {
 		subject, _ := l.ctx.Source.Node(test.SubjectID).(thir.Expr)
 		membership := &ir.VariantIs{Value: l.lower(subject, nil, true), Case: test.Case, Type: l.typeID(&typeinfo.BoolType{})}
 		if test.MatchesWhenTrue {
