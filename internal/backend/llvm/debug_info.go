@@ -12,24 +12,20 @@ import (
 	"compiler/pkg/peeper"
 )
 
+// llvmDebugEmitter collects a debug build's metadata; it is nil when the
+// build has no debug info, and every method then does nothing.
 type llvmDebugEmitter struct {
-	isEnabled      bool
-	fileID         int
-	compileUnitID  int
-	emptyTupleID   int
-	subroutineID   int
-	debugFlagID    int
-	platformFlagID int
-	nextID         int
-	defs           []string
-	subprograms    map[*mir.Function]int
-	locations      map[string]int
-	types          map[ir.TypeID]int
+	fileID        int
+	compileUnitID int
+	subroutineID  int
+	defs          []string
+	locations     map[string]int
+	types         map[ir.TypeID]int
 }
 
-func newLLVMDebugEmitter(mod *mir.Module, targetOS string, enabled bool) *llvmDebugEmitter {
+func newLLVMDebugEmitter(mod *mir.Module, enabled bool) *llvmDebugEmitter {
 	if !enabled {
-		return &llvmDebugEmitter{}
+		return nil
 	}
 	filePath := ""
 	if mod != nil {
@@ -44,30 +40,20 @@ func newLLVMDebugEmitter(mod *mir.Module, targetOS string, enabled bool) *llvmDe
 		dir = ""
 	}
 	d := &llvmDebugEmitter{
-		isEnabled:   true,
-		subprograms: make(map[*mir.Function]int),
-		locations:   make(map[string]int),
-		types:       make(map[ir.TypeID]int),
+		locations: make(map[string]int),
+		types:     make(map[ir.TypeID]int),
 	}
 	d.fileID = d.define(`!DIFile(filename: %q, directory: %q)`, fileName, dir)
 	d.compileUnitID = d.define(`distinct !DICompileUnit(language: DW_LANG_C, file: !%d, producer: %q, isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)`, d.fileID, "PeeperCompiler")
-	d.emptyTupleID = d.define("!{}")
-	d.subroutineID = d.define("!DISubroutineType(types: !%d)", d.emptyTupleID)
-	d.debugFlagID = d.define(`!{i32 2, !"Debug Info Version", i32 3}`)
-	if targetOS == "windows" {
-		d.platformFlagID = d.define(`!{i32 2, !"CodeView", i32 1}`)
-	} else {
-		d.platformFlagID = d.define(`!{i32 7, !"Dwarf Version", i32 4}`)
-	}
+	d.subroutineID = d.define("!DISubroutineType(types: !%d)", d.define("!{}"))
 	return d
 }
 
 func (d *llvmDebugEmitter) define(format string, args ...any) int {
-	if d == nil || !d.isEnabled {
+	if d == nil {
 		return -1
 	}
-	id := d.nextID
-	d.nextID++
+	id := len(d.defs)
 	text := format
 	if len(args) > 0 {
 		text = fmt.Sprintf(format, args...)
@@ -77,14 +63,11 @@ func (d *llvmDebugEmitter) define(format string, args ...any) int {
 }
 
 func (d *llvmDebugEmitter) functionID(fn *mir.Function) int {
-	if d == nil || !d.isEnabled || fn == nil || fn.Location == nil {
+	if d == nil || fn == nil || fn.Location == nil {
 		return -1
 	}
-	if id, ok := d.subprograms[fn]; ok {
-		return id
-	}
 	line, _ := locationLineCol(fn.Location)
-	id := d.define(`distinct !DISubprogram(name: %q, linkageName: %q, scope: !%d, file: !%d, line: %d, type: !%d, scopeLine: %d, spFlags: DISPFlagDefinition, unit: !%d)`,
+	return d.define(`distinct !DISubprogram(name: %q, linkageName: %q, scope: !%d, file: !%d, line: %d, type: !%d, scopeLine: %d, spFlags: DISPFlagDefinition, unit: !%d)`,
 		fn.Name,
 		ir.SanitizeSymbolName(fn.Name),
 		d.fileID,
@@ -94,12 +77,10 @@ func (d *llvmDebugEmitter) functionID(fn *mir.Function) int {
 		line,
 		d.compileUnitID,
 	)
-	d.subprograms[fn] = id
-	return id
 }
 
 func (d *llvmDebugEmitter) locationID(loc *source.Location, scopeID int) int {
-	if d == nil || !d.isEnabled || scopeID < 0 || loc == nil {
+	if d == nil || scopeID < 0 || loc == nil {
 		return -1
 	}
 	line, col := locationLineCol(loc)
@@ -112,19 +93,19 @@ func (d *llvmDebugEmitter) locationID(loc *source.Location, scopeID int) int {
 	return id
 }
 
-func (d *llvmDebugEmitter) appendModuleMetadata(b *strings.Builder) {
-	if d == nil || !d.isEnabled || b == nil {
+func (d *llvmDebugEmitter) appendModuleMetadata(b *strings.Builder, targetOS string) {
+	if d == nil || b == nil {
 		return
 	}
+	debugFlag := d.define(`!{i32 2, !"Debug Info Version", i32 3}`)
+	platform := `!{i32 7, !"Dwarf Version", i32 4}`
+	if targetOS == "windows" {
+		platform = `!{i32 2, !"CodeView", i32 1}`
+	}
+	platformFlag := d.define(platform)
 	b.WriteString("\ndeclare void @llvm.dbg.declare(metadata, metadata, metadata)\n")
-	b.WriteString("\n!llvm.dbg.cu = !{!")
-	fmt.Fprintf(b, "%d", d.compileUnitID)
-	b.WriteString("}\n")
-	b.WriteString("!llvm.module.flags = !{!")
-	fmt.Fprintf(b, "%d", d.platformFlagID)
-	b.WriteString(", !")
-	fmt.Fprintf(b, "%d", d.debugFlagID)
-	b.WriteString("}\n")
+	fmt.Fprintf(b, "\n!llvm.dbg.cu = !{!%d}\n", d.compileUnitID)
+	fmt.Fprintf(b, "!llvm.module.flags = !{!%d, !%d}\n", platformFlag, debugFlag)
 	for _, def := range d.defs {
 		b.WriteString(def)
 		b.WriteString("\n")
@@ -135,7 +116,7 @@ func (d *llvmDebugEmitter) appendModuleMetadata(b *strings.Builder) {
 // build gives every listed variable a stack slot (see stackLocalSlots), so one
 // dbg.declare per variable holds for the whole function.
 func (e *llvmEmitter) declareLocals(b *llvmBuilder, fn *mir.Function) {
-	if !e.debug.isEnabled || b.debugScopeID < 0 {
+	if e.debug == nil || b.debugScopeID < 0 {
 		return
 	}
 	// shortcut: a record covers the whole function, so a name declared twice

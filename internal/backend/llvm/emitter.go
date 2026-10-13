@@ -47,7 +47,7 @@ func GenerateLLVMIR(mod *mir.Module, diag *diagnostics.DiagnosticBag, targetInfo
 		diag:     diag,
 		target:   targetInfo,
 		badTypes: make(map[string]struct{}),
-		debug:    newLLVMDebugEmitter(mod, targetInfo.OS, isDebugBuild),
+		debug:    newLLVMDebugEmitter(mod, isDebugBuild),
 	}
 	var b strings.Builder
 	b.WriteString("source_filename = \"")
@@ -308,7 +308,7 @@ func (e *llvmEmitter) emitFunctionDefinition(b *strings.Builder, fn *mir.Functio
 	}
 	b.WriteString(" {\n")
 	lb := newLLVMBuilder(b, e, debugScopeID)
-	stackSlots := stackLocalSlots(e.mod.Types, fn, e.debug.isEnabled)
+	stackSlots := stackLocalSlots(e.mod.Types, fn, e.debug != nil)
 	for _, param := range fn.Params {
 		lb.locals[param.Name] = lb.value("%"+param.Name, e.layout(param.Type))
 	}
@@ -790,7 +790,7 @@ func finalLLVMText(b *strings.Builder, emitter *llvmEmitter) string {
 		}
 	}
 	if emitter != nil && emitter.debug != nil {
-		emitter.debug.appendModuleMetadata(b)
+		emitter.debug.appendModuleMetadata(b, emitter.target.OS)
 	}
 	return b.String()
 }
