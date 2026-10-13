@@ -83,7 +83,7 @@ func (c *checker) typeCallExpr(scope *symbols.Scope, node *ast.CallExpr) typeinf
 			if !found {
 				panic(fmt.Sprintf("missing intrinsic definition for compiler operation %q", sym.CompilerOp))
 			}
-			c.evidence.RecordCompilerCall(node.ID(), CompilerCall{Operation: definition.Operation, Kind: definition.Kind})
+			c.evidence.RecordCompilerCall(node.ID(), thir.CompilerCall{Operation: definition.Operation, Kind: definition.Kind})
 			switch definition.Kind {
 			case intrinsics.FunctionAlloc:
 				return c.typeAllocCall(scope, node)
@@ -628,14 +628,7 @@ func (c *checker) copyExpressionEvidence(src *module.Module, dstID, srcID source
 	if typ := expr.ExprType(); typ != nil {
 		c.evidence.RecordExprType(dstID, typ)
 	}
-	implementations := expr.InterfaceImplementations()
-	if len(implementations) != 0 {
-		copied := make([]InterfaceImplementation, 0, len(implementations))
-		for _, implementation := range implementations {
-			copied = append(copied, InterfaceImplementation{Symbol: implementation.Symbol, CallableType: implementation.CallableType})
-		}
-		c.evidence.RecordInterfaceImplementations(dstID, copied)
-	}
+	c.evidence.RecordInterfaceImplementations(dstID, expr.InterfaceImplementations())
 	if conversion := expr.Conversion(); conversion != nil {
 		c.evidence.RecordImplicitConversion(dstID, *conversion)
 	}

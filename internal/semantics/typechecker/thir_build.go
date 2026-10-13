@@ -936,7 +936,7 @@ func (b *thirBuilder) indexExpression(source *ast.IndexExpr, info thir.ExprInfo)
 	index := &thir.Index{ExprInfo: info, Base: b.expression(source.Expr), Index: b.expression(source.Index)}
 	if b.typing != nil {
 		if constant, found := b.typing.ConstantIndex(source.ID()); found {
-			index.Constant = &thir.ConstantIndex{Text: constant.Text, Type: constant.Type}
+			index.Constant = &constant
 		}
 	}
 	if _, ranged := source.Index.(*ast.RangeExpr); !ranged && index.Index != nil {
@@ -980,7 +980,7 @@ func (b *thirBuilder) callExpression(source *ast.CallExpr, info thir.ExprInfo) t
 	if b.typing != nil {
 		arguments = b.typing.CallArgumentsOrSource(source)
 		if compilerCall, found := b.typing.CompilerCall(source.ID()); found {
-			call.CompilerCall = &thir.CompilerCall{Operation: compilerCall.Operation, Kind: compilerCall.Kind}
+			call.CompilerCall = &compilerCall
 		}
 	}
 	call.Args = b.operands(arguments...)
@@ -1008,11 +1008,7 @@ func (b *thirBuilder) expressionInfo(expression ast.Expr) thir.ExprInfo {
 		info.IsReferenceArgumentMutable = isMutable
 	}
 	info.ImplicitReference = b.typing.ImplicitCallArgument(expression.ID())
-	for _, implementation := range b.typing.InterfaceImplementations(expression.ID()) {
-		info.Implementations = append(info.Implementations, thir.InterfaceImplementation{
-			Symbol: implementation.Symbol, CallableType: implementation.CallableType,
-		})
-	}
+	info.Implementations = b.typing.InterfaceImplementations(expression.ID())
 	return info
 }
 

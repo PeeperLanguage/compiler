@@ -6,6 +6,7 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
@@ -54,7 +55,7 @@ func (c *checker) recordImplicitConversion(expr ast.Expr, conversion typeinfo.Co
 	c.evidence.RecordImplicitConversion(expr.ID(), conversion)
 }
 
-func (c *checker) resolveInterfaceImplementations(iface *typeinfo.InterfaceType, src typeinfo.Type) ([]InterfaceImplementation, []string, bool) {
+func (c *checker) resolveInterfaceImplementations(iface *typeinfo.InterfaceType, src typeinfo.Type) ([]thir.InterfaceImplementation, []string, bool) {
 	if c == nil || iface == nil || src == nil {
 		return nil, nil, false
 	}
@@ -66,7 +67,7 @@ func (c *checker) resolveInterfaceImplementations(iface *typeinfo.InterfaceType,
 		}
 		return nil, missing, false
 	}
-	implementations := make([]InterfaceImplementation, 0, len(iface.Methods))
+	implementations := make([]thir.InterfaceImplementation, 0, len(iface.Methods))
 	missing := make([]string, 0)
 	for _, required := range iface.Methods {
 		fnType := required.CallableTypeFor(owner)
@@ -90,14 +91,14 @@ func (c *checker) resolveInterfaceImplementations(iface *typeinfo.InterfaceType,
 			missing = append(missing, required.Name)
 			continue
 		}
-		implementations = append(implementations, InterfaceImplementation{
+		implementations = append(implementations, thir.InterfaceImplementation{
 			Symbol: actual.Symbol, CallableType: actualType,
 		})
 	}
 	return implementations, missing, len(missing) == 0
 }
 
-func (c *checker) storeInterfaceImplementations(expr ast.Expr, implementations []InterfaceImplementation) {
+func (c *checker) storeInterfaceImplementations(expr ast.Expr, implementations []thir.InterfaceImplementation) {
 	if c == nil || c.module == nil || c.evidence == nil || expr == nil {
 		return
 	}

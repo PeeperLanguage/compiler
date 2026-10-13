@@ -11,6 +11,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir"
+	"compiler/internal/ir/thir"
 	"compiler/internal/problems"
 
 	"compiler/internal/semantics/place"
@@ -682,7 +683,7 @@ func (c *checker) typeIndexExpr(scope *symbols.Scope, node *ast.IndexExpr) typei
 	if !ok || indexConst == nil {
 		return elem
 	}
-	c.evidence.RecordConstantIndex(node.ID(), ConstantIndex{
+	c.evidence.RecordConstantIndex(node.ID(), thir.ConstantIndex{
 		Text: indexConst.Text(),
 		Type: indexType,
 	})

@@ -3,17 +3,10 @@ package typechecker
 import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir/thir"
-	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
 )
-
-// InterfaceImplementation proves that one declared method materializes an interface slot.
-type InterfaceImplementation struct {
-	Symbol       *symbols.Symbol
-	CallableType *typeinfo.FuncType
-}
 
 type CaseTest struct {
 	Case            int
@@ -53,24 +46,11 @@ type VariantConstruction struct {
 	Value    ast.Expr
 }
 
-// ConstantIndex records the typechecked value of a fixed-array index so lowering
-// does not invoke constant evaluation again.
-type ConstantIndex struct {
-	Text string
-	Type typeinfo.Type
-}
-
 // StructFieldAccess records ordinary field selection after pointer/reference normalization.
 type StructFieldAccess struct {
 	Field           int
 	Type            typeinfo.Type
 	DereferenceType typeinfo.Type
-}
-
-// CompilerCall records intrinsic dispatch selected by typechecking.
-type CompilerCall struct {
-	Operation symbols.CompilerOp
-	Kind      intrinsics.FunctionKind
 }
 
 // evidence is temporary typechecker scratch used to publish canonical THIR.
@@ -87,11 +67,11 @@ type expressionEvidence struct {
 	expandedDefaultBindings  map[source.NodeID]struct{}
 	caseCarriers             map[source.NodeID]typeinfo.Type
 	casePaths                map[source.NodeID][]int
-	interfaceImplementations map[source.NodeID][]InterfaceImplementation
+	interfaceImplementations map[source.NodeID][]thir.InterfaceImplementation
 	implicitConversions      map[source.NodeID]typeinfo.Conversion
 	stringConcatenations     map[source.NodeID]struct{}
 	structFields             map[source.NodeID]StructFieldAccess
-	constantIndexes          map[source.NodeID]ConstantIndex
+	constantIndexes          map[source.NodeID]thir.ConstantIndex
 	structLiteralFields      map[source.NodeID][]ast.Expr
 	variantConstructions     map[source.NodeID]VariantConstruction
 	valueUses                map[source.NodeID]typeinfo.UseKind
@@ -101,7 +81,7 @@ type expressionEvidence struct {
 type callEvidence struct {
 	effectiveArguments map[source.NodeID][]ast.Expr
 	implicitArguments  map[source.NodeID]typeinfo.Type
-	compilerCalls      map[source.NodeID]CompilerCall
+	compilerCalls      map[source.NodeID]thir.CompilerCall
 }
 
 type controlEvidence struct {
@@ -120,11 +100,11 @@ func newEvidence() *evidence {
 			expandedDefaultBindings:  make(map[source.NodeID]struct{}),
 			caseCarriers:             make(map[source.NodeID]typeinfo.Type),
 			casePaths:                make(map[source.NodeID][]int),
-			interfaceImplementations: make(map[source.NodeID][]InterfaceImplementation),
+			interfaceImplementations: make(map[source.NodeID][]thir.InterfaceImplementation),
 			implicitConversions:      make(map[source.NodeID]typeinfo.Conversion),
 			stringConcatenations:     make(map[source.NodeID]struct{}),
 			structFields:             make(map[source.NodeID]StructFieldAccess),
-			constantIndexes:          make(map[source.NodeID]ConstantIndex),
+			constantIndexes:          make(map[source.NodeID]thir.ConstantIndex),
 			structLiteralFields:      make(map[source.NodeID][]ast.Expr),
 			variantConstructions:     make(map[source.NodeID]VariantConstruction),
 			valueUses:                make(map[source.NodeID]typeinfo.UseKind),
@@ -133,7 +113,7 @@ func newEvidence() *evidence {
 		calls: callEvidence{
 			effectiveArguments: make(map[source.NodeID][]ast.Expr),
 			implicitArguments:  make(map[source.NodeID]typeinfo.Type),
-			compilerCalls:      make(map[source.NodeID]CompilerCall),
+			compilerCalls:      make(map[source.NodeID]thir.CompilerCall),
 		},
 		control: controlEvidence{
 			caseTests:         make(map[source.NodeID]CaseTest),
@@ -198,14 +178,14 @@ func (r *evidence) ExpandedDefaultBinding(id source.NodeID) bool {
 	return ok
 }
 
-func (r *evidence) RecordInterfaceImplementations(id source.NodeID, implementations []InterfaceImplementation) {
+func (r *evidence) RecordInterfaceImplementations(id source.NodeID, implementations []thir.InterfaceImplementation) {
 	if r == nil || !id.IsValid() || len(implementations) == 0 {
 		return
 	}
 	r.expressions.interfaceImplementations[id] = implementations
 }
 
-func (r *evidence) InterfaceImplementations(id source.NodeID) []InterfaceImplementation {
+func (r *evidence) InterfaceImplementations(id source.NodeID) []thir.InterfaceImplementation {
 	if r == nil || !id.IsValid() {
 		return nil
 	}
@@ -256,16 +236,16 @@ func (r *evidence) StructField(id source.NodeID) (StructFieldAccess, bool) {
 	return access, ok
 }
 
-func (r *evidence) RecordConstantIndex(id source.NodeID, value ConstantIndex) {
+func (r *evidence) RecordConstantIndex(id source.NodeID, value thir.ConstantIndex) {
 	if r == nil || !id.IsValid() || value.Text == "" || value.Type == nil {
 		return
 	}
 	r.expressions.constantIndexes[id] = value
 }
 
-func (r *evidence) ConstantIndex(id source.NodeID) (ConstantIndex, bool) {
+func (r *evidence) ConstantIndex(id source.NodeID) (thir.ConstantIndex, bool) {
 	if r == nil || !id.IsValid() {
-		return ConstantIndex{}, false
+		return thir.ConstantIndex{}, false
 	}
 	value, ok := r.expressions.constantIndexes[id]
 	return value, ok
@@ -374,15 +354,15 @@ func (r *evidence) ImplicitCallArgument(id source.NodeID) typeinfo.Type {
 	return r.calls.implicitArguments[id]
 }
 
-func (r *evidence) RecordCompilerCall(id source.NodeID, call CompilerCall) {
+func (r *evidence) RecordCompilerCall(id source.NodeID, call thir.CompilerCall) {
 	if r != nil && id.IsValid() {
 		r.calls.compilerCalls[id] = call
 	}
 }
 
-func (r *evidence) CompilerCall(id source.NodeID) (CompilerCall, bool) {
+func (r *evidence) CompilerCall(id source.NodeID) (thir.CompilerCall, bool) {
 	if r == nil || !id.IsValid() {
-		return CompilerCall{}, false
+		return thir.CompilerCall{}, false
 	}
 	call, ok := r.calls.compilerCalls[id]
 	return call, ok
