@@ -39,8 +39,8 @@ func (c *checker) checkFunction(sym *symbols.Symbol, fn *ast.FnDecl) {
 	}
 	c.checkDefaultParameters(funcScope, fn, fnType)
 	if fn.Body != nil {
-		c.returnType = fnType.Return
-		c.checkBlock(funcScope, fn.Body, fnType.Return)
+		c.fn, c.returnType = fn, fnType.Return
+		c.checkBlock(funcScope, fn.Body)
 	}
 }
 

@@ -6,7 +6,6 @@ import (
 	"compiler/internal/ir/thir"
 	"compiler/internal/module"
 	"compiler/internal/project"
-	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -18,7 +17,8 @@ type checker struct {
 
 	wholeCarrierExpr ast.Expr
 	loopDepth        int
-	// returnType is the return type of the function being checked.
+	// fn is the function being checked and returnType its return type.
+	fn         *ast.FnDecl
 	returnType typeinfo.Type
 	// reusedCall is the already-checked source call embedded at the root of a
 	// generated producer loop. Nested calls and flow visits still check normally.
@@ -28,24 +28,6 @@ type checker struct {
 // Concrete references convert to satisfied interface borrows, while owned
 // concrete pointers erase by adopting their existing allocation.
 const allowImplicitInterfaceConversion = true
-
-// enclosingFnDecl walks up the scope chain and returns the FnDecl of the
-// enclosing function, or nil if not inside a function body.
-func (c *checker) enclosingFnDecl(scope *symbols.Scope) *ast.FnDecl {
-	if c == nil || c.module == nil || c.module.ModuleScope == nil {
-		return nil
-	}
-	for s := scope; s != nil && s != c.module.ModuleScope; s = s.Parent() {
-		for _, sym := range c.module.ModuleScope.Symbols() {
-			if (sym.Kind == symbols.SymbolFunc || sym.Kind == symbols.SymbolMethod) && sym.Scope == s {
-				if fn, ok := sym.ASTNode.(*ast.FnDecl); ok {
-					return fn
-				}
-			}
-		}
-	}
-	return nil
-}
 
 // exprType returns the type already recorded for expr; it matches
 // place.ExprTypeFunc, so place queries read types instead of re-checking.

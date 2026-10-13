@@ -18,7 +18,7 @@ import (
 	"compiler/pkg/typednil"
 )
 
-func (c *checker) checkBlock(parentScope *symbols.Scope, block *ast.BlockStmt, returnType typeinfo.Type) {
+func (c *checker) checkBlock(parentScope *symbols.Scope, block *ast.BlockStmt) {
 	if block == nil {
 		return
 	}
@@ -29,7 +29,7 @@ func (c *checker) checkBlock(parentScope *symbols.Scope, block *ast.BlockStmt, r
 		}
 	}
 	for _, stmt := range block.Stmts {
-		c.checkStmt(scope, stmt, returnType)
+		c.checkStmt(scope, stmt)
 		// The rest of a block after a guard has its own scope (resolver).
 		if guard, isIf := stmt.(*ast.IfStmt); isIf {
 			if rest := c.module.SymbolIndex.Scope(guard); rest != nil {
@@ -39,13 +39,13 @@ func (c *checker) checkBlock(parentScope *symbols.Scope, block *ast.BlockStmt, r
 	}
 }
 
-func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt, returnType typeinfo.Type) {
+func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt) {
 	if stmt == nil {
 		return
 	}
 	switch node := stmt.(type) {
 	case *ast.BlockStmt:
-		c.checkBlock(scope, node, returnType)
+		c.checkBlock(scope, node)
 	case *ast.LetDecl:
 		c.checkBinding(scope, node, false)
 	case *ast.ConstDecl:
@@ -54,31 +54,31 @@ func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt, returnType type
 		c.checkDestructure(scope, node)
 	case *ast.ReturnStmt:
 		if node.Value == nil {
-			if returnType != nil {
+			if c.returnType != nil {
 				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn, "return value required", ast.LocOf(node), "")
 			}
 			return
 		}
-		if returnType == nil {
+		if c.returnType == nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn, "cannot return a value from function with no return type", ast.LocOf(node.Value), "")
 			return
 		}
-		retType := c.requireValueType(node.Value, c.typeExpr(scope, node.Value, returnType), "return")
+		retType := c.requireValueType(node.Value, c.typeExpr(scope, node.Value, c.returnType), "return")
 		if typeinfo.IsInvalidOrUnknown(retType) {
 			return
 		}
 		if c.rejectTemporaryBorrowEscape(scope, node.Value, "return") {
 			return
 		}
-		if !c.isAssignable(returnType, retType, node.Value) {
+		if !c.isAssignable(c.returnType, retType, node.Value) {
 			d := typeMismatchError(node.Value,
 				fmt.Sprintf("cannot return %s from function returning %s",
-					typeinfo.TypeText(retType), typeinfo.TypeText(returnType)))
-			if fn := c.enclosingFnDecl(scope); fn != nil && fn.ReturnType != nil {
-				d.WithSecondaryLabel(ast.LocOf(fn.ReturnType),
-					fmt.Sprintf("expected %s here", typeinfo.TypeText(returnType)))
+					typeinfo.TypeText(retType), typeinfo.TypeText(c.returnType)))
+			if c.fn.ReturnType != nil {
+				d.WithSecondaryLabel(ast.LocOf(c.fn.ReturnType),
+					fmt.Sprintf("expected %s here", typeinfo.TypeText(c.returnType)))
 			}
-			c.addInterfaceHint(d, returnType, retType)
+			c.addInterfaceHint(d, c.returnType, retType)
 			c.ctx.Diagnostics.Add(d)
 		}
 	case *ast.IfStmt:
@@ -91,11 +91,11 @@ func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt, returnType type
 		}
 		elseBlock, _ := node.Else.(*ast.BlockStmt)
 		c.bindPayloadNames(node.Cond, node.Then, elseBlock, node)
-		c.checkStmt(scope, node.Then, returnType)
-		c.checkStmt(scope, node.Else, returnType)
+		c.checkStmt(scope, node.Then)
+		c.checkStmt(scope, node.Else)
 	case *ast.ForStmt:
 		if node.Iterable != nil {
-			c.checkForInStmt(scope, node, returnType)
+			c.checkForInStmt(scope, node)
 			return
 		}
 		if node.Cond != nil {
@@ -106,7 +106,7 @@ func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt, returnType type
 			c.bindPayloadNames(node.Cond, node.Body, nil, nil)
 		}
 		c.loopDepth++
-		c.checkStmt(scope, node.Body, returnType)
+		c.checkStmt(scope, node.Body)
 		c.loopDepth--
 	case *ast.BreakStmt, *ast.ContinueStmt:
 		if c.loopDepth == 0 {
@@ -118,7 +118,7 @@ func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt, returnType type
 				jump+" outside loop", ast.LocOf(stmt), "`"+jump+"` exits or restarts the innermost for loop")
 		}
 	case *ast.MatchStmt:
-		c.checkMatchStmt(scope, node, returnType)
+		c.checkMatchStmt(scope, node)
 	case *ast.ExprStmt:
 		if node.Expr == nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidStatement,
@@ -188,7 +188,7 @@ func (c *checker) checkDestructureFields(fields []ast.DestructureField, hasRest 
 	}
 }
 
-func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, returnType typeinfo.Type) {
+func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt) {
 	if c == nil || scope == nil || node == nil || node.Subject == nil {
 		return
 	}
@@ -317,7 +317,7 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt, retu
 		if !selectArm(index, arm) {
 			evidenceComplete = false
 		}
-		c.checkStmt(scope, arm.Body, returnType)
+		c.checkStmt(scope, arm.Body)
 	}
 	var missing []string
 	if reportMissing {
@@ -566,7 +566,7 @@ func (c *checker) typeOrElse(scope *symbols.Scope, node *ast.OrElseExpr) typeinf
 	c.recordCaseTest(node, tested, ir.OptionalPresentCase, len(descriptor.Cases), true, descriptor.Family)
 	payload := caseNameType(descriptor.Cases[ir.OptionalPresentCase].Payload, tested.borrow)
 	if node.Block != nil {
-		c.checkStmt(scope, node.Block, c.returnType)
+		c.checkStmt(scope, node.Block)
 		return payload
 	}
 	fallbackType := c.typeExpr(scope, node.Fallback, payload)
@@ -813,7 +813,7 @@ func (c *checker) checkBinding(scope *symbols.Scope, node ast.Stmt, requireIniti
 // checkForInStmt types a `for x in iterable` loop over a range, indexable
 // sequence, or optional-producing call. Strings require an explicit
 // as_bytes/as_chars view.
-func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, returnType typeinfo.Type) {
+func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt) {
 	indexType := typeinfo.DefaultIntegerType()
 	valid := node.Value != nil && node.Value.Name != "" && c.module.SymbolIndex.Symbol(node.Value) != nil
 	if node.Index != nil && (node.Index.Name == "" || c.module.SymbolIndex.Symbol(node.Index) == nil) {
@@ -861,7 +861,7 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 				carrierType = iterableType
 			}
 		} else {
-			if valid && c.checkCallIteration(scope, node, iterableType, returnType) {
+			if valid && c.checkCallIteration(scope, node, iterableType) {
 				return
 			}
 			valid = false
@@ -899,7 +899,7 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 		}
 	}
 	c.loopDepth++
-	c.checkStmt(scope, node.Body, returnType)
+	c.checkStmt(scope, node.Body)
 	c.loopDepth--
 }
 
@@ -969,7 +969,7 @@ func (c *checker) checkRangeIteration(scope *symbols.Scope, rangeExpr *ast.Range
 // checkCallIteration handles `for item in producer()`. It reports true when it
 // expanded the loop and checked the expansion, so the caller has nothing left
 // to do; false means the iterable is not a usable producer call.
-func (c *checker) checkCallIteration(scope *symbols.Scope, node *ast.ForStmt, iterableType, returnType typeinfo.Type) bool {
+func (c *checker) checkCallIteration(scope *symbols.Scope, node *ast.ForStmt, iterableType typeinfo.Type) bool {
 	call, isCallExpression := node.Iterable.(*ast.CallExpr)
 	optional, isOptionalResultType := typeinfo.Underlying(iterableType).(*typeinfo.OptionalType)
 	switch {
@@ -990,7 +990,7 @@ func (c *checker) checkCallIteration(scope *symbols.Scope, node *ast.ForStmt, it
 		c.bindLoopVariable(node.Value, optional.Inner)
 		previous := c.reusedCall
 		c.reusedCall = call
-		c.checkStmt(scope, checked, returnType)
+		c.checkStmt(scope, checked)
 		c.reusedCall = previous
 		return true
 	}
