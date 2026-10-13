@@ -171,7 +171,7 @@ func TestFoldExprFoldsEveryCompositeExpression(t *testing.T) {
 		{name: "interface call", expr: &InterfaceCall{Base: foldable(), Slot: 2, Args: []Expr{foldable()}, ConsumesBase: true, Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
 		{name: "field", expr: &Field{Base: foldable(), Index: 3, Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
 		{name: "struct", expr: &StructLit{Fields: []Expr{foldable()}, Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
-		{name: "array", expr: &ArrayLit{Values: []Expr{foldable()}, IsDynamic: true, Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
+		{name: "array", expr: &ArrayLit{Values: []Expr{foldable()}, Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
 		{name: "dynamic array operation", expr: &DynamicArrayOp{Array: foldable(), Length: foldable(), Value: foldable(), ArrayType: i32, Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
 		{name: "allocation", expr: &AllocExpr{Value: foldable(), Allocator: foldable(), Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
 		{name: "cast", expr: &Cast{Expr: foldable(), Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
@@ -223,7 +223,7 @@ func TestFoldExprPreservesCompositeMetadata(t *testing.T) {
 			return node.Slot == 3 && node.SlotType == i32 && node.ConsumesBase
 		}},
 		{name: "field", expr: &Field{Base: value, Index: 4}, check: func(expr Expr) bool { node := expr.(*Field); return node.Index == 4 }},
-		{name: "array", expr: &ArrayLit{Values: []Expr{value}, IsDynamic: true}, check: func(expr Expr) bool { return expr.(*ArrayLit).IsDynamic }},
+		{name: "array", expr: &ArrayLit{Values: []Expr{value}, Type: i32}, check: func(expr Expr) bool { return expr.(*ArrayLit).Type == i32 }},
 		{name: "print", expr: &Print{Value: value, AppendsNewline: true}, check: func(expr Expr) bool { return expr.(*Print).AppendsNewline }},
 	}
 	for _, test := range tests {

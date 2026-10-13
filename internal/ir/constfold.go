@@ -123,7 +123,7 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 	case *StructLit:
 		return &StructLit{Fields: foldExprs(types, node.Fields, env), Type: node.Type, SourceInfo: node.SourceInfo}
 	case *ArrayLit:
-		return &ArrayLit{Values: foldExprs(types, node.Values, env), IsDynamic: node.IsDynamic, Type: node.Type, SourceInfo: node.SourceInfo}
+		return &ArrayLit{Values: foldExprs(types, node.Values, env), Type: node.Type, SourceInfo: node.SourceInfo}
 	case *DynamicArrayOp:
 		return &DynamicArrayOp{
 			Op:         node.Op,

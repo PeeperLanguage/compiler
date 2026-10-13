@@ -254,7 +254,7 @@ func (l *lowerer) LowerArrayLiteral(e *thir.ArrayLiteral) ir.Expr {
 	for _, value := range e.Values {
 		values = append(values, l.lower(value, array.Elem, true))
 	}
-	return &ir.ArrayLit{Values: values, IsDynamic: array.Shape == typeinfo.ArrayOwner, Type: l.typeID(e.ExprType())}
+	return &ir.ArrayLit{Values: values, Type: l.typeID(e.ExprType())}
 }
 func (l *lowerer) LowerField(e *thir.Field) ir.Expr {
 	if e.ExprPlace() != nil {

@@ -239,9 +239,8 @@ type StructLit struct {
 
 type ArrayLit struct {
 	SourceInfo
-	Values    []Expr
-	IsDynamic bool
-	Type      TypeID
+	Values []Expr
+	Type   TypeID
 }
 
 type DynamicArrayOp struct {

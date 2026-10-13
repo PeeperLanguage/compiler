@@ -267,7 +267,8 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		}
 		return l.storeInTemp(out, e, &StructLit{Fields: fields, Type: e.TypeID(), Location: e.Origin().Location})
 	case *ir.ArrayLit:
-		if e.IsDynamic {
+		// An array type with no length is a dynamic array, built in place.
+		if arrayType, _ := l.module.Types.Type(e.TypeID()); arrayType.Kind == ir.TypeArray && arrayType.Length == "" {
 			name := l.nextTemp()
 			l.appendInstr(out, &Assign{Name: name, Value: &DynamicArrayAlloc{
 				Length:   len(e.Values),
@@ -275,10 +276,6 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 				Location: e.Origin().Location,
 			}})
 			array := &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
-			arrayType, ok := l.module.Types.Type(e.TypeID())
-			if !ok || arrayType.Kind != ir.TypeArray || arrayType.Length != "" {
-				panic("dynamic array literal has invalid type")
-			}
 			for index, valueExpr := range e.Values {
 				value := l.lowerExpr(valueExpr, out)
 				indexRef := &RefConst{Value: fmt.Sprintf("%d", index), Type: l.module.Types.IndexType(), Location: valueExpr.Origin().Location}
