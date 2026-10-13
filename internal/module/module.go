@@ -167,10 +167,9 @@ func (m *Module) ResetToPhase(retained phase.Phase) {
 	if retained < phase.CFG {
 		m.CFG = nil
 	}
+	// MIR is lowered in the Analyzed step, before the checks that read it.
 	if retained < phase.Analyzed {
 		m.Analysis = nil
-	}
-	if retained < phase.MIR {
 		m.MIR = nil
 	}
 	if retained < phase.Backend {

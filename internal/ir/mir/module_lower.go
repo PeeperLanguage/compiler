@@ -191,6 +191,7 @@ func lowerCFGFunction(mod *Module, input LoweringInput, sourceFn *thir.Function,
 			}
 		}
 		for _, site := range sourceBlock.Sites {
+			block.Sites = append(block.Sites, SiteStart{ID: site.ID, Start: len(block.Instrs)})
 			switch site.Kind {
 			case cfg.SiteStatement:
 				if !l.lowerCFGStmt(input.Source.Node(site.NodeID)) {

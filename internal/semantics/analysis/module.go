@@ -4,6 +4,7 @@ import (
 	"compiler/internal/source"
 
 	"compiler/internal/ir/cfg"
+	"compiler/internal/ir/mir"
 
 	"compiler/internal/ir/thir"
 	"compiler/internal/moduleid"
@@ -14,8 +15,11 @@ import (
 
 // Input supplies the immutable artifacts required for post-CFG semantic analysis.
 type Input struct {
-	Source      *thir.Module
-	CFG         *cfg.Module
+	Source *thir.Module
+	CFG    *cfg.Module
+	// MIR is the function bodies lowered before the checks, with drops still
+	// unresolved. Checks that read it skip a module MIR could not lower.
+	MIR         *mir.Module
 	Scope       *symbols.Scope
 	SymbolIndex *symbols.Index
 }
