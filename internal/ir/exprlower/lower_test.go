@@ -67,7 +67,7 @@ func TestLowerImplicitReferenceRetainsTemporaryOnlyForValues(t *testing.T) {
 	symbol := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "value"), "value", symbols.SymbolVar, nil, nil)
 	symbol.Type = integer
 	ident := &thir.Ident{ExprInfo: thir.ExprInfo{
-		Source: ir.SourceInfo{NodeID: source.ParsedNodeID(2)}, Type: integer, Place: &thir.Place{Root: symbol, Type: integer},
+		Source: ir.SourceInfo{NodeID: source.ParsedNodeID(2)}, Type: integer, Place: &thir.Place{Root: symbol},
 	}, Symbol: symbol, Name: symbol.Name}
 	address, ok := exprlower.LowerImplicitReference(ctx, ident, borrow).(*ir.AddrOf)
 	if !ok || address.Place == nil || address.Origin().NodeID != source.ParsedNodeID(2) {

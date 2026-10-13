@@ -42,7 +42,7 @@ func (p *textPrinter) function(function *Function) {
 		}
 		p.b.WriteString(symbolName(param.Symbol))
 		p.b.WriteString(": ")
-		p.b.WriteString(typeinfo.QualifiedTypeText(param.Type))
+		p.b.WriteString(typeinfo.QualifiedTypeText(param.Type()))
 	}
 	p.b.WriteString(")")
 	if function.HasReturnValue {
@@ -286,7 +286,7 @@ func (p *textPrinter) expr(expr Expr) string {
 		}
 		return "print(" + p.expr(e.Value) + ")"
 	case *Cast:
-		return "(" + p.expr(e.Value) + " as " + typeinfo.QualifiedTypeText(e.TargetType) + ")"
+		return "(" + p.expr(e.Value) + " as " + typeinfo.QualifiedTypeText(e.Type) + ")"
 	default:
 		panic(fmt.Sprintf("unhandled THIR expression %T", expr))
 	}

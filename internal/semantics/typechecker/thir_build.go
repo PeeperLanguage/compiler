@@ -96,11 +96,7 @@ func (b *thirBuilder) function(source *ast.FnDecl) *thir.Function {
 		}
 	}
 	for _, parameter := range source.ParamsWithReceiver() {
-		param := thir.Param{Source: sourceInfo(parameter.Name), Symbol: b.symbol(parameter.Name)}
-		if param.Symbol != nil {
-			param.Type, _ = symbols.GetSymbolType(param.Symbol)
-		}
-		function.Params = append(function.Params, param)
+		function.Params = append(function.Params, thir.Param{Source: sourceInfo(parameter.Name), Symbol: b.symbol(parameter.Name)})
 	}
 	function.Body = b.block(source.Body)
 	return function
@@ -185,7 +181,7 @@ func (b *thirBuilder) storeFirst(source ast.Expr, value thir.Expr, later ast.Exp
 	// The read keeps what the use needs from the value: its conversion and how it is used.
 	info := b.expressionInfo(source)
 	info.Source, info.Type, info.CaseCarrier, info.CasePath = carrier.source(), typ, nil, nil
-	info.Place = &thir.Place{Root: local, Type: typ}
+	info.Place = &thir.Place{Root: local}
 	return &thir.Binding{StmtInfo: thir.StmtInfo{Source: carrier.source()}, Symbol: local, Value: value},
 		&thir.Ident{ExprInfo: info, Name: local.Name, Symbol: local}
 }
@@ -503,7 +499,7 @@ func (b *thirBuilder) orElse(source *ast.OrElseExpr, info thir.ExprInfo) thir.Ex
 	}
 	b.hoisted.stmts = append(b.hoisted.stmts, &thir.Binding{StmtInfo: thir.StmtInfo{Source: carrier.source()}, Symbol: result}, match)
 	b.hoisted.carrier = carrier
-	info.Place = &thir.Place{Root: result, Type: info.Type}
+	info.Place = &thir.Place{Root: result}
 	return &thir.Ident{ExprInfo: info, Name: result.Name, Symbol: result}
 }
 
@@ -533,7 +529,7 @@ func (b *thirBuilder) shortCircuit(source *ast.BinaryExpr, info thir.ExprInfo) t
 	}
 	b.hoisted.stmts = append(b.hoisted.stmts, &thir.Binding{StmtInfo: thir.StmtInfo{Source: carrier.source()}, Symbol: result}, test)
 	b.hoisted.carrier = carrier
-	info.Place = &thir.Place{Root: result, Type: info.Type}
+	info.Place = &thir.Place{Root: result}
 	return &thir.Ident{ExprInfo: info, Name: result.Name, Symbol: result}
 }
 
@@ -675,7 +671,7 @@ func (c *caseCarrier) block(stmts ...thir.Stmt) *thir.Block {
 }
 
 func (c *caseCarrier) ident(symbol *symbols.Symbol, typ typeinfo.Type) *thir.Ident {
-	info := thir.ExprInfo{Source: c.source(), Type: typ, Place: &thir.Place{Root: symbol, Type: typ}}
+	info := thir.ExprInfo{Source: c.source(), Type: typ, Place: &thir.Place{Root: symbol}}
 	return &thir.Ident{ExprInfo: info, Name: symbol.Name, Symbol: symbol}
 }
 
@@ -708,7 +704,7 @@ func (c *caseCarrier) reread(place thir.Expr, payload typeinfo.Type, path []int)
 			info.Type, info.CaseCarrier, info.CasePath = payload, original.StoredType(), path
 		}
 		if base == nil {
-			info.Place = &thir.Place{Root: original.Place.Root, Type: info.Type}
+			info.Place = &thir.Place{Root: original.Place.Root}
 			return
 		}
 		step := original.Place.Projections[len(original.Place.Projections)-1]
@@ -716,7 +712,7 @@ func (c *caseCarrier) reread(place thir.Expr, payload typeinfo.Type, path []int)
 		if index != nil {
 			step.Index = index
 		}
-		info.Place = projectPlace(base, step, info.Type)
+		info.Place = projectPlace(base, step)
 	}
 	switch original := place.(type) {
 	case *thir.Ident:
@@ -839,7 +835,7 @@ func (b *thirBuilder) expression(expression ast.Expr) thir.Expr {
 			info.Type, _ = symbols.GetSymbolType(symbol)
 		}
 		if isStorageSymbol(symbol) {
-			info.Place = &thir.Place{Root: symbol, Type: info.Type}
+			info.Place = &thir.Place{Root: symbol}
 		}
 		result = &thir.Ident{ExprInfo: info, Name: node.Name, Symbol: symbol, IsExpandedDefaultBinding: b.typing != nil && b.typing.ExpandedDefaultBinding(node.ID())}
 	case *ast.ScopeResolution:
@@ -848,7 +844,7 @@ func (b *thirBuilder) expression(expression ast.Expr) thir.Expr {
 			info.Type, _ = symbols.GetSymbolType(symbol)
 		}
 		if isStorageSymbol(symbol) {
-			info.Place = &thir.Place{Root: symbol, Type: info.Type}
+			info.Place = &thir.Place{Root: symbol}
 		}
 		result = &thir.QualifiedIdent{ExprInfo: info, Name: node.TypeText(), Symbol: symbol}
 	case *ast.SelectorExpr:
@@ -909,7 +905,7 @@ func (b *thirBuilder) expression(expression ast.Expr) thir.Expr {
 	case *ast.PrintExpr:
 		result = &thir.Print{ExprInfo: info, Value: b.expression(node.Expr), AppendsNewline: node.AppendsNewline}
 	case *ast.AsExpr:
-		result = &thir.Cast{ExprInfo: info, Value: b.expression(node.Expr), TargetType: info.Type}
+		result = &thir.Cast{ExprInfo: info, Value: b.expression(node.Expr)}
 	case *ast.BadExpr:
 		result = &thir.InvalidExpr{ExprInfo: info, Message: "invalid source expression"}
 	default:
@@ -947,7 +943,7 @@ func (b *thirBuilder) fieldExpression(source *ast.SelectorExpr, info thir.ExprIn
 			Source: field.Source, BaseSource: field.Base.SourceInfo(),
 			Kind: thir.PlaceField, Name: projection.Step.Field, Field: fieldIndex,
 			DereferenceType: dereferenceType, Type: field.StoredType(),
-		}, field.ExprInfo.Type)
+		})
 	}
 	return field
 }
@@ -964,7 +960,7 @@ func (b *thirBuilder) indexExpression(source *ast.IndexExpr, info thir.ExprInfo)
 			index.ExprInfo.Place = projectPlace(index.Base, thir.PlaceProjection{
 				Source: index.Source, BaseSource: index.Base.SourceInfo(),
 				Kind: thir.PlaceIndex, Index: index.Index, ConstantIndex: index.Constant, Type: index.StoredType(),
-			}, index.ExprInfo.Type)
+			})
 		}
 	}
 	return index
@@ -1049,20 +1045,20 @@ func (b *thirBuilder) caseTest(id sourceid.NodeID) (*thir.CaseTest, ast.Expr) {
 	}, test.Subject
 }
 
-func projectPlace(base thir.Expr, projection thir.PlaceProjection, typ typeinfo.Type) *thir.Place {
+func projectPlace(base thir.Expr, projection thir.PlaceProjection) *thir.Place {
 	if base == nil {
 		return nil
 	}
 	projection.BasePath = base.PayloadPath()
 	if existing := base.ExprPlace(); existing != nil {
 		projected := &thir.Place{
-			Root: existing.Root, Temporary: existing.Temporary, Type: typ,
+			Root: existing.Root, Temporary: existing.Temporary,
 			Projections: append([]thir.PlaceProjection(nil), existing.Projections...),
 		}
 		projected.Projections = append(projected.Projections, projection)
 		return projected
 	}
-	return &thir.Place{Temporary: base, Projections: []thir.PlaceProjection{projection}, Type: typ}
+	return &thir.Place{Temporary: base, Projections: []thir.PlaceProjection{projection}}
 }
 
 func (b *thirBuilder) symbol(node ast.Node) *symbols.Symbol {

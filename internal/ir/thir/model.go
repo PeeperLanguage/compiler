@@ -107,8 +107,15 @@ type Function struct {
 
 type Param struct {
 	Symbol *symbols.Symbol
-	Type   typeinfo.Type
 	Source ir.SourceInfo
+}
+
+// Type is the parameter's semantic type, held by its symbol.
+func (p Param) Type() typeinfo.Type {
+	if p.Symbol == nil {
+		return nil
+	}
+	return p.Symbol.Type
 }
 
 // Node is sealed so every THIR kind must declare traversal and validation
@@ -310,7 +317,6 @@ type Place struct {
 	Root        *symbols.Symbol
 	Temporary   Expr
 	Projections []PlaceProjection
-	Type        typeinfo.Type
 }
 
 type PlaceProjectionKind uint8
@@ -653,6 +659,5 @@ type Print struct {
 
 type Cast struct {
 	ExprInfo
-	Value      Expr
-	TargetType typeinfo.Type
+	Value Expr
 }

@@ -127,7 +127,7 @@ func functionSignature(input LoweringInput, sourceFn *thir.Function, blocks []*B
 		if parameter.Symbol != nil {
 			name = exprlower.SymbolName(input.ModuleID, input.IsEntryModule, parameter.Symbol)
 		}
-		params = append(params, ir.Param{Name: name, Type: typelower.Type(input.Types, input.Diagnostics, parameter.Type)})
+		params = append(params, ir.Param{Name: name, Type: typelower.Type(input.Types, input.Diagnostics, parameter.Type())})
 	}
 	name, _ := exprlower.CallableName(input.ModuleID, input.IsEntryModule, sourceFn.Symbol)
 	return &Function{

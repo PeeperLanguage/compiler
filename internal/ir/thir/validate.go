@@ -35,7 +35,7 @@ func (m *Module) Validate() error {
 			return fmt.Errorf("function %v has no symbol", function.Source.NodeID)
 		}
 		for paramIndex, parameter := range function.Params {
-			if parameter.Symbol == nil || parameter.Type == nil {
+			if parameter.Type() == nil {
 				return fmt.Errorf("function %v parameter %v is incomplete", function.Source.NodeID, paramIndex)
 			}
 		}
@@ -105,9 +105,6 @@ func (p *Place) validate() error {
 	}
 	if (p.Root == nil) == typednil.IsNil(p.Temporary) {
 		return fmt.Errorf("place must have exactly one symbol or temporary root")
-	}
-	if p.Type == nil {
-		return fmt.Errorf("place has no semantic type")
 	}
 	for index, projection := range p.Projections {
 		if projection.Type == nil {
