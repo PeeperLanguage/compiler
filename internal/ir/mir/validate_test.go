@@ -16,7 +16,7 @@ func wellFormed() *Module {
 	return &Module{
 		Name: "probe", Types: types,
 		Funcs: []*Function{{
-			Name: "choose", ReturnType: voidType, EntryID: 0,
+			Name: "choose", ReturnType: voidType,
 			Blocks: []*Block{
 				{ID: 0, Term: &Branch{Cond: &RefConst{Value: "true", Type: boolType}, ThenID: 1, ElseID: 2}},
 				{ID: 1, Term: &Jump{TargetID: 3}},
@@ -71,11 +71,7 @@ func TestValidateReportsDefects(t *testing.T) {
 			damage: func(m *Module) { m.Funcs[0].Blocks[2].ID = 1 },
 			want:   "declares block b1 twice",
 		},
-		{
-			name:   "entry naming a block the function does not contain",
-			damage: func(m *Module) { m.Funcs[0].EntryID = 7 },
-			want:   "enters at b7, which it does not contain",
-		},
+
 		{
 			name:   "nil instruction",
 			damage: func(m *Module) { m.Funcs[0].Blocks[0].Instrs = []Instr{nil} },

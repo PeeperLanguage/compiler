@@ -177,7 +177,7 @@ func mirBlockOps(fn *mir.Function, types *ir.TypeTable) map[int][]string {
 	defined := make(map[string]bool)
 	for _, parameter := range fn.Params {
 		if name, ok := sourceName(parameter.Name); ok {
-			ops[fn.EntryID] = append(ops[fn.EntryID], "define "+name)
+			ops[fn.Blocks[0].ID] = append(ops[fn.Blocks[0].ID], "define "+name)
 			defined[parameter.Name] = true
 		}
 	}

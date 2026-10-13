@@ -2091,7 +2091,6 @@ func TestGenerateLLVMIRReturnsStringSliceViewByValue(t *testing.T) {
 			Name:       "Prefix",
 			Params:     []ir.Param{{Name: "text", Type: refString}},
 			ReturnType: refString,
-			EntryID:    0,
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{&mir.Assign{Name: "view", Value: &mir.SliceView{
@@ -2133,7 +2132,6 @@ func TestGenerateLLVMIRLowersBoundedStringSliceViewFor32BitTarget(t *testing.T) 
 			Name:       "Prefix",
 			Params:     []ir.Param{{Name: "text", Type: refString}},
 			ReturnType: refString,
-			EntryID:    0,
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{&mir.Assign{Name: "view", Value: &mir.SliceView{
@@ -2180,7 +2178,6 @@ func TestGenerateLLVMIRLowersDynamicArraySliceViewAcrossTargets(t *testing.T) {
 			Name:       "borrow",
 			Params:     []ir.Param{{Name: "xs", Type: llvmTypes.dynamicI32}},
 			ReturnType: llvmTypes.i32,
-			EntryID:    0,
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{&mir.Assign{Name: "view", Value: &mir.SliceView{
@@ -2278,7 +2275,6 @@ func TestGenerateLLVMIRLowersCheckedInclusiveFixedArraySlice(t *testing.T) {
 			Name:       "slice",
 			Params:     []ir.Param{{Name: "xs", Type: llvmTypes.mutRefFixed4I32}},
 			ReturnType: llvmTypes.i32,
-			EntryID:    0,
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{&mir.Assign{Name: "view", Value: &mir.SliceView{
@@ -2352,7 +2348,6 @@ func TestGenerateLLVMIRLowersZeroValueOptionals(t *testing.T) {
 			{
 				Name:       "tagged",
 				ReturnType: llvmTypes.optionalI32,
-				EntryID:    0,
 				Blocks: []*mir.Block{{
 					ID: 0,
 					Instrs: []mir.Instr{
@@ -2364,7 +2359,6 @@ func TestGenerateLLVMIRLowersZeroValueOptionals(t *testing.T) {
 			{
 				Name:       "tagged_ptr",
 				ReturnType: llvmTypes.optionalOwnedI32,
-				EntryID:    0,
 				Blocks: []*mir.Block{{
 					ID: 0,
 					Instrs: []mir.Instr{
@@ -2400,7 +2394,6 @@ func TestGenerateLLVMIRLowersVariantMake(t *testing.T) {
 			{
 				Name:       "tagged",
 				ReturnType: llvmTypes.optionalI32,
-				EntryID:    0,
 				Blocks: []*mir.Block{{
 					ID: 0,
 					Instrs: []mir.Instr{
@@ -2413,7 +2406,6 @@ func TestGenerateLLVMIRLowersVariantMake(t *testing.T) {
 				Name:       "tagged_ptr",
 				Params:     []ir.Param{{Name: "p", Type: llvmTypes.ownedI32}},
 				ReturnType: llvmTypes.optionalOwnedI32,
-				EntryID:    0,
 				Blocks: []*mir.Block{{
 					ID: 0,
 					Instrs: []mir.Instr{
@@ -2449,7 +2441,6 @@ func TestGenerateLLVMIRReadsTaggedOptionalPresence(t *testing.T) {
 			{
 				Name:       "main",
 				ReturnType: llvmTypes.i32,
-				EntryID:    0,
 				Blocks: []*mir.Block{{
 					ID: 0,
 					Instrs: []mir.Instr{
@@ -2479,7 +2470,7 @@ func TestGenerateLLVMIRLoadsTaggedOptionalPayload(t *testing.T) {
 	mod := &mir.Module{
 		Name: "test", Types: llvmTypes.table, FilePath: unixTestPath,
 		Funcs: []*mir.Function{{
-			Name: "payload", Params: []ir.Param{{Name: "value", Type: llvmTypes.optionalI32}}, ReturnType: llvmTypes.i32, EntryID: 0,
+			Name: "payload", Params: []ir.Param{{Name: "value", Type: llvmTypes.optionalI32}}, ReturnType: llvmTypes.i32,
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{&mir.Assign{Name: "payload", Value: &mir.Load{
@@ -2515,7 +2506,6 @@ func TestGenerateLLVMIRLoopMutationUsesStackSlot(t *testing.T) {
 			{
 				Name:       "main",
 				ReturnType: llvmTypes.i32,
-				EntryID:    0,
 				Blocks: []*mir.Block{
 					{
 						ID: 0,
@@ -2577,7 +2567,6 @@ func TestGenerateLLVMIRVoidMainUsesIntExitABI(t *testing.T) {
 			{
 				Name:       "main",
 				ReturnType: llvmTypes.void,
-				EntryID:    0,
 				Location:   source.NewLocation(unixTestPath, source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 10}),
 				Blocks: []*mir.Block{
 					{
@@ -2617,7 +2606,6 @@ func TestGenerateLLVMIRDeclaresDiscardedDirectCall(t *testing.T) {
 			{
 				Name:       "main",
 				ReturnType: llvmTypes.i32,
-				EntryID:    0,
 				Location:   source.NewLocation(windowsTestPath, source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 10}),
 				Blocks: []*mir.Block{
 					{
@@ -2657,7 +2645,6 @@ func TestGenerateLLVMIRDebugMetadata(t *testing.T) {
 			{
 				Name:       "main",
 				ReturnType: llvmTypes.i32,
-				EntryID:    0,
 				Location:   source.NewLocation(unixTestPath, source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 10}),
 				Blocks: []*mir.Block{
 					{
@@ -2703,7 +2690,6 @@ func TestGenerateLLVMIRDebugMetadataPreservesNestedExpressionLines(t *testing.T)
 			{
 				Name:       "main",
 				ReturnType: llvmTypes.i32,
-				EntryID:    0,
 				Location:   source.NewLocation(unixTestPath, source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 10}),
 				Blocks: []*mir.Block{
 					{
@@ -2760,7 +2746,6 @@ func TestGenerateLLVMIRExplicitBoolCastUsesCompare(t *testing.T) {
 			{
 				Name:       "main",
 				ReturnType: llvmTypes.i32,
-				EntryID:    0,
 				Location:   source.NewLocation(unixTestPath, source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 10}),
 				Blocks: []*mir.Block{
 					{
@@ -2824,7 +2809,6 @@ func TestGenerateLLVMIRLowersIndirectFieldPlaceWithoutTempAlloca(t *testing.T) {
 						Name:       "main",
 						Params:     []ir.Param{{Name: "box", Type: tt.typeID}},
 						ReturnType: llvmTypes.i32,
-						EntryID:    0,
 						Blocks: []*mir.Block{
 							{
 								ID: 0,
@@ -2880,7 +2864,6 @@ func TestGenerateLLVMIRLowersProjectedFieldRawAddressDirectly(t *testing.T) {
 			Name:       "main",
 			Params:     []ir.Param{{Name: "box", Type: mutableStruct}},
 			ReturnType: llvmTypes.i32,
-			EntryID:    0,
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{
@@ -2918,7 +2901,6 @@ func TestGenerateLLVMIRLowersOwnedStringStorageRawAddress(t *testing.T) {
 			Name:       "address",
 			Params:     []ir.Param{{Name: "text", Type: llvmTypes.stringType}},
 			ReturnType: llvmTypes.rawptr,
-			EntryID:    0,
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{&mir.Assign{Name: "raw", Value: &mir.AddrOf{
@@ -2947,7 +2929,6 @@ func TestGenerateLLVMIRLowersBorrowedStringLengthWithoutDataExtraction(t *testin
 			Name:       "length",
 			Params:     []ir.Param{{Name: "text", Type: refString}},
 			ReturnType: llvmTypes.usize,
-			EntryID:    0,
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{&mir.Assign{Name: "length", Value: &mir.Len{
@@ -2991,7 +2972,6 @@ func indexReadMIRModule(baseType ir.TypeID, index mir.ValueRef) *mir.Module {
 				Name:       "first",
 				Params:     params,
 				ReturnType: llvmTypes.i32,
-				EntryID:    0,
 				Blocks: []*mir.Block{
 					{
 						ID: 0,
@@ -3022,7 +3002,6 @@ func indexStoreMIRModule(baseType ir.TypeID, index mir.ValueRef) *mir.Module {
 					{Name: "value", Type: llvmTypes.i32},
 				},
 				ReturnType: llvmTypes.i32,
-				EntryID:    0,
 				Blocks: []*mir.Block{
 					{
 						ID: 0,
@@ -3142,7 +3121,6 @@ func TestGenerateLLVMIRLowersArrayLiteral(t *testing.T) {
 			{
 				Name:       "make",
 				ReturnType: llvmTypes.fixed3I32,
-				EntryID:    0,
 				Blocks: []*mir.Block{
 					{
 						ID: 0,
@@ -3416,7 +3394,7 @@ func TestGenerateLLVMIRLowersDeepMixedPlace(t *testing.T) {
 	}
 	mod := &mir.Module{Name: "test", Types: llvmTypes.table, Funcs: []*mir.Function{{
 		Name: "read", Params: []ir.Param{{Name: "bucket", Type: borrowedBucket}, {Name: "index", Type: llvmTypes.usize}},
-		ReturnType: llvmTypes.i32, EntryID: 0,
+		ReturnType: llvmTypes.i32,
 		Blocks: []*mir.Block{{
 			ID:     0,
 			Instrs: []mir.Instr{&mir.Assign{Name: "value", Value: &mir.Load{Place: place, Type: llvmTypes.i32}}},
@@ -3443,7 +3421,7 @@ func TestGenerateLLVMIRAllocatesPlaceRootBeforeBranches(t *testing.T) {
 		Type: llvmTypes.i32,
 	}
 	mod := &mir.Module{Name: "test", Types: llvmTypes.table, Funcs: []*mir.Function{{
-		Name: "choose", Params: []ir.Param{{Name: "cond", Type: llvmTypes.boolType}}, ReturnType: llvmTypes.i32, EntryID: 0,
+		Name: "choose", Params: []ir.Param{{Name: "cond", Type: llvmTypes.boolType}}, ReturnType: llvmTypes.i32,
 		Blocks: []*mir.Block{
 			{ID: 0, Instrs: []mir.Instr{&mir.Assign{Name: "box", Value: &mir.StructLit{Fields: []mir.ValueRef{&mir.RefConst{Value: "0", Type: llvmTypes.i32}}, Type: boxType}}}, Term: &mir.Branch{Cond: &mir.RefName{Name: "cond", Type: llvmTypes.boolType}, ThenID: 1, ElseID: 2}},
 			{ID: 1, Instrs: []mir.Instr{&mir.Store{Place: place, Value: &mir.RefConst{Value: "1", Type: llvmTypes.i32}}}, Term: &mir.Jump{TargetID: 3}},
@@ -3674,7 +3652,7 @@ func TestGenerateLLVMIRLowersSwitchVariant(t *testing.T) {
 	mod := &mir.Module{
 		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{{
-			Name: "select", Params: []ir.Param{{Name: "status", Type: status}}, ReturnType: llvmTypes.i32, EntryID: 0,
+			Name: "select", Params: []ir.Param{{Name: "status", Type: status}}, ReturnType: llvmTypes.i32,
 			Blocks: []*mir.Block{
 				{ID: 0, Term: &mir.SwitchVariant{Value: &mir.RefName{Name: "status", Type: status}, Targets: []mir.VariantTarget{{Case: 0, TargetID: 1}, {Case: 1, TargetID: 2}}}},
 				{ID: 1, Term: &mir.Ret{Value: &mir.RefConst{Value: "1", Type: llvmTypes.i32}}},
@@ -3697,7 +3675,7 @@ func TestGenerateLLVMIRRejectsIncompleteVariantSwitch(t *testing.T) {
 	mod := &mir.Module{
 		Name: "test", Types: llvmTypes.table,
 		Funcs: []*mir.Function{{
-			Name: "select", Params: []ir.Param{{Name: "status", Type: status}}, ReturnType: llvmTypes.i32, EntryID: 0,
+			Name: "select", Params: []ir.Param{{Name: "status", Type: status}}, ReturnType: llvmTypes.i32,
 			Blocks: []*mir.Block{
 				{ID: 0, Term: &mir.SwitchVariant{Value: &mir.RefName{Name: "status", Type: status}, Targets: []mir.VariantTarget{{Case: 0, TargetID: 1}}}},
 				{ID: 1, Term: &mir.Ret{Value: &mir.RefConst{Value: "1", Type: llvmTypes.i32}}},

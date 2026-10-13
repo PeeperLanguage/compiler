@@ -166,9 +166,6 @@ func lowerCFGFunction(mod *Module, input LoweringInput, sourceFn *thir.Function,
 		block := &Block{ID: sourceBlock.ID, Instrs: make([]Instr, 0)}
 		blocks[sourceBlock] = block
 		fn.Blocks = append(fn.Blocks, block)
-		if sourceBlock == graph.Entry {
-			fn.EntryID = block.ID
-		}
 	}
 	if blocks[graph.Entry] == nil {
 		return nil, false

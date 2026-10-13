@@ -123,9 +123,6 @@ func validateFunction(types *ir.TypeTable, fn *Function) []string {
 	if len(problems) > 0 {
 		return problems
 	}
-	if len(fn.Blocks) > 0 && !blocks[fn.EntryID] {
-		problems = append(problems, fmt.Sprintf("function %s enters at b%d, which it does not contain", fn.Name, fn.EntryID))
-	}
 	for _, block := range fn.Blocks {
 		for index, instr := range block.Instrs {
 			if typednil.IsNil(instr) {

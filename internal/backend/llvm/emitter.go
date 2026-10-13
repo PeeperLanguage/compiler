@@ -323,7 +323,7 @@ func (e *llvmEmitter) emitFunctionDefinition(b *strings.Builder, fn *mir.Functio
 
 func (e *llvmEmitter) emitBlock(lb *llvmBuilder, fn *mir.Function, block *mir.Block, stackSlots []stackLocalSlot) {
 	lb.label(block.ID)
-	if block.ID == fn.EntryID {
+	if block == fn.Blocks[0] {
 		emitStackLocalSlots(lb, stackSlots)
 		e.declareLocals(lb, fn)
 	}

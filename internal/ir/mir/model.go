@@ -60,8 +60,7 @@ type Function struct {
 	Name       string
 	Params     []ir.Param
 	ReturnType ir.TypeID
-	EntryID    int
-	Blocks     []*Block
+	Blocks     []*Block // Blocks[0] is the entry: lowering keeps the CFG order.
 	Location   *source.Location
 	// Identity keys the cleanup plan's answers for this function.
 	Identity moduleid.FunctionID

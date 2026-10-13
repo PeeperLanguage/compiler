@@ -871,7 +871,7 @@ func TestPipelineStopsBeforeBackendWhenEmitterRejectsMalformedMIR(t *testing.T) 
 	broken := &mir.Module{
 		Name: "broken", Types: types,
 		Funcs: []*mir.Function{{
-			Name: "broken", ReturnType: voidType, EntryID: 0,
+			Name: "broken", ReturnType: voidType,
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{&mir.Store{
