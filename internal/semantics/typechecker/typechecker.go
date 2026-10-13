@@ -8,7 +8,6 @@ import (
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
-	"compiler/internal/source"
 )
 
 type checker struct {
@@ -48,11 +47,13 @@ func (c *checker) enclosingFnDecl(scope *symbols.Scope) *ast.FnDecl {
 	return nil
 }
 
-func (c *checker) exprType(id source.NodeID) typeinfo.Type {
-	if c == nil || c.evidence == nil {
+// exprType returns the type already recorded for expr; it matches
+// place.ExprTypeFunc, so place queries read types instead of re-checking.
+func (c *checker) exprType(expr ast.Expr) typeinfo.Type {
+	if c == nil || c.evidence == nil || expr == nil {
 		return nil
 	}
-	return c.evidence.ExprType(id)
+	return c.evidence.ExprType(expr.ID())
 }
 
 func (c *checker) requireValueType(expr ast.Expr, typ typeinfo.Type, context string) typeinfo.Type {

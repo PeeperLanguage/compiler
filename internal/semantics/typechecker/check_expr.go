@@ -290,12 +290,9 @@ func (c *checker) typeAddressExpr(scope *symbols.Scope, node *ast.AddressExpr, e
 	if typeinfo.IsInvalidOrUnknown(valueType) {
 		return &typeinfo.InvalidType{}
 	}
-	exprType := func(expr ast.Expr) typeinfo.Type {
-		return c.exprType(expr.ID())
-	}
-	isAddressable := place.IsAddressable(scope, node.Expr, exprType, c.expandedDefaultBinding)
+	isAddressable := place.IsAddressable(scope, node.Expr, c.exprType, c.expandedDefaultBinding)
 	if node.Mode == ast.AddressMutable {
-		isMutable, sharedReference, mutableBinding := place.MutableAddressable(scope, node.Expr, exprType, c.expandedDefaultBinding)
+		isMutable, sharedReference, mutableBinding := place.MutableAddressable(scope, node.Expr, c.exprType, c.expandedDefaultBinding)
 		if isAddressable && !isMutable {
 			diagnostic := c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidExpression,
 				"mutable reference requires mutable addressable storage", ast.LocOf(node.Expr), "")
@@ -714,11 +711,8 @@ func (c *checker) typeRangeIndexExpr(scope *symbols.Scope, node *ast.IndexExpr, 
 	}
 	c.checkRangeBound(scope, rangeIndex.Start, typeinfo.DefaultIntegerType())
 	c.checkRangeBound(scope, rangeIndex.End, typeinfo.DefaultIntegerType())
-	exprType := func(expr ast.Expr) typeinfo.Type {
-		return c.typeExpr(scope, expr, nil)
-	}
 	if shape == indexableFixedArray || shape == indexableDynamicArray {
-		if !place.IsAddressable(scope, node.Expr, exprType, c.expandedDefaultBinding) {
+		if !place.IsAddressable(scope, node.Expr, c.exprType, c.expandedDefaultBinding) {
 			c.ctx.Diagnostics.Add(invalidExpressionError(node.Expr,
 				"slicing requires addressable array storage"))
 			return &typeinfo.InvalidType{}
@@ -727,7 +721,7 @@ func (c *checker) typeRangeIndexExpr(scope *symbols.Scope, node *ast.IndexExpr, 
 	isMutable := shape == indexableMutableSliceView
 	var mutableBinding *symbols.Symbol
 	if shape == indexableFixedArray || shape == indexableDynamicArray {
-		isMutable, _, mutableBinding = place.MutableAddressable(scope, node.Expr, exprType, c.expandedDefaultBinding)
+		isMutable, _, mutableBinding = place.MutableAddressable(scope, node.Expr, c.exprType, c.expandedDefaultBinding)
 	}
 	if mutableBinding != nil {
 		c.module.SymbolIndex.RequireMutable(mutableBinding)

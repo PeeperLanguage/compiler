@@ -667,7 +667,7 @@ func (c *checker) checkIndexAssignmentTarget(scope *symbols.Scope, target *ast.I
 	if typeinfo.IsInvalidOrUnknown(targetType) {
 		return true
 	}
-	baseType := c.exprType(target.Expr.ID())
+	baseType := c.exprType(target.Expr)
 	if typeinfo.IsInvalidOrUnknown(baseType) {
 		return true
 	}
@@ -851,10 +851,7 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 		} else if elem, shape, ok := indexableSequence(iterableType); ok {
 			elemType = elem
 			if shape == indexableFixedArray || shape == indexableDynamicArray {
-				exprType := func(expr ast.Expr) typeinfo.Type {
-					return c.typeExpr(scope, expr, nil)
-				}
-				if !place.IsAddressable(scope, node.Iterable, exprType, c.expandedDefaultBinding) {
+				if !place.IsAddressable(scope, node.Iterable, c.exprType, c.expandedDefaultBinding) {
 					valid = false
 					c.ctx.Diagnostics.Add(invalidExpressionError(node.Iterable,
 						"for-in requires addressable array storage"))
@@ -1138,30 +1135,24 @@ func (c *checker) temporaryBorrowSource(scope *symbols.Scope, expr ast.Expr) ast
 	if c == nil || c.module == nil || expr == nil {
 		return nil
 	}
-	exprType := func(node ast.Expr) typeinfo.Type {
-		if node == nil {
-			return nil
-		}
-		return c.exprType(node.ID())
-	}
-	if _, _, isReference := typeinfo.ReferenceValueTarget(exprType(expr)); !isReference {
+	if _, _, isReference := typeinfo.ReferenceValueTarget(c.exprType(expr)); !isReference {
 		return nil
 	}
 	switch node := expr.(type) {
 	case *ast.AddressExpr:
-		if node == nil || node.Expr == nil || node.Mode == ast.AddressRaw || place.IsAddressable(scope, node.Expr, exprType, c.expandedDefaultBinding) {
+		if node == nil || node.Expr == nil || node.Mode == ast.AddressRaw || place.IsAddressable(scope, node.Expr, c.exprType, c.expandedDefaultBinding) {
 			return nil
 		}
 		return node
 	case *ast.CallExpr:
-		fn, _ := typeinfo.Underlying(exprType(node.Callee)).(*typeinfo.FuncType)
+		fn, _ := typeinfo.Underlying(c.exprType(node.Callee)).(*typeinfo.FuncType)
 		args := c.evidence.CallArgumentsOrSource(node)
 		for _, source := range typeinfo.ReturnOriginSources(node, args, fn) {
 			if temporary := c.temporaryBorrowSource(scope, source); temporary != nil {
 				return temporary
 			}
-			if c.evidence.ImplicitCallArgument(source.ID()) != nil && !place.IsAddressable(scope, source, exprType, c.expandedDefaultBinding) {
-				if _, _, isReference := typeinfo.ReferenceValueTarget(exprType(source)); !isReference {
+			if c.evidence.ImplicitCallArgument(source.ID()) != nil && !place.IsAddressable(scope, source, c.exprType, c.expandedDefaultBinding) {
+				if _, _, isReference := typeinfo.ReferenceValueTarget(c.exprType(source)); !isReference {
 					return source
 				}
 			}
@@ -1172,14 +1163,14 @@ func (c *checker) temporaryBorrowSource(scope *symbols.Scope, expr ast.Expr) ast
 		if temporary := c.temporaryBorrowSource(scope, node.Expr); temporary != nil {
 			return temporary
 		}
-		if !place.IsAddressable(scope, node.Expr, exprType, c.expandedDefaultBinding) {
+		if !place.IsAddressable(scope, node.Expr, c.exprType, c.expandedDefaultBinding) {
 			return node
 		}
 	case *ast.IndexExpr:
 		if temporary := c.temporaryBorrowSource(scope, node.Expr); temporary != nil {
 			return temporary
 		}
-		if !place.IsAddressable(scope, node.Expr, exprType, c.expandedDefaultBinding) {
+		if !place.IsAddressable(scope, node.Expr, c.exprType, c.expandedDefaultBinding) {
 			return node
 		}
 	}

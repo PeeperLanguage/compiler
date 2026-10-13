@@ -241,9 +241,7 @@ func (c *checker) mutableAddressableExpr(scope *symbols.Scope, expr ast.Expr) (b
 	if c == nil {
 		return false, nil, nil
 	}
-	return place.MutableAddressable(scope, expr, func(e ast.Expr) typeinfo.Type {
-		return c.typeExpr(scope, e, nil)
-	}, c.expandedDefaultBinding)
+	return place.MutableAddressable(scope, expr, c.exprType, c.expandedDefaultBinding)
 }
 
 func (c *checker) mutableImplicitArgumentDiagnostic(scope *symbols.Scope, expr ast.Expr) (ast.Node, string, bool) {

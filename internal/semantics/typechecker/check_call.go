@@ -468,9 +468,7 @@ func (c *checker) acceptImplicitCallArgument(scope *symbols.Scope, expr ast.Expr
 	if !isReference || !c.matchesImplicitCallTarget(refTarget, argType) {
 		return false
 	}
-	isAddressable := place.IsAddressable(scope, expr, func(e ast.Expr) typeinfo.Type {
-		return c.typeExpr(scope, e, nil)
-	}, c.expandedDefaultBinding)
+	isAddressable := place.IsAddressable(scope, expr, c.exprType, c.expandedDefaultBinding)
 	var mutableBinding *symbols.Symbol
 	if isMutable {
 		isAddressable, _, mutableBinding = c.mutableAddressableExpr(scope, expr)
