@@ -328,11 +328,17 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 
 		slots := make([]ValueRef, 0, len(e.Slots))
 		for index, slot := range e.Slots {
-			wrapperName := ir.InterfaceThunkName(l.module.Types.ABIKey(slot.InterfaceType), l.module.Types.ABIKey(dataType), slot.MethodName, index)
-			slot.WrapperName = wrapperName
-			slot.DataType = dataType
-			l.registerInterfaceThunk(slot, index)
-			slots = append(slots, &RefName{Name: wrapperName, Type: slot.SlotType})
+			thunk := &InterfaceThunk{
+				Name:          ir.InterfaceThunkName(l.module.Types.ABIKey(e.TypeID()), l.module.Types.ABIKey(dataType), slot.MethodName, index),
+				InterfaceType: e.TypeID(),
+				Slot:          index,
+				SlotType:      slot.SlotType,
+				FuncName:      slot.FuncName,
+				FuncType:      slot.FuncType,
+				DataType:      dataType,
+			}
+			l.registerInterfaceThunk(thunk)
+			slots = append(slots, &RefName{Name: thunk.Name, Type: slot.SlotType})
 		}
 		return l.storeInTemp(out, e, &InterfaceMake{
 			Value:    value,
@@ -370,23 +376,12 @@ func interfaceDataType(types *ir.TypeTable, id ir.TypeID) ir.TypeID {
 	return id
 }
 
-func (l *lowerer) registerInterfaceThunk(slot ir.InterfaceSlot, index int) {
-	if l == nil || l.module == nil || slot.WrapperName == "" {
-		return
-	}
-	for _, w := range l.module.InterfaceThunks {
-		if w.Name == slot.WrapperName {
+// registerInterfaceThunk adds thunk unless one of its name is already there.
+func (l *lowerer) registerInterfaceThunk(thunk *InterfaceThunk) {
+	for _, existing := range l.module.InterfaceThunks {
+		if existing.Name == thunk.Name {
 			return
 		}
-	}
-	thunk := &InterfaceThunk{
-		Name:          slot.WrapperName,
-		InterfaceType: slot.InterfaceType,
-		Slot:          index,
-		SlotType:      slot.SlotType,
-		FuncName:      slot.FuncName,
-		FuncType:      slot.FuncType,
-		DataType:      slot.DataType,
 	}
 	l.module.InterfaceThunks = append(l.module.InterfaceThunks, thunk)
 }

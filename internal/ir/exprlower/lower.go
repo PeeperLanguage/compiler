@@ -542,12 +542,6 @@ func (l *lowerer) interfaceValue(expr thir.Expr, expected typeinfo.Type) ir.Expr
 	if _, already := typeinfo.InterfaceTypeOf(resolved); already {
 		return nil
 	}
-	data := typeinfo.Underlying(resolved)
-	if target, _, isReference := typeinfo.ReferenceTarget(data); isReference {
-		data = target
-	} else if target, isPointer := typeinfo.PointerTarget(data); isPointer {
-		data = target
-	}
 	interfaceID := l.typeID(expected)
 	implementations := expr.InterfaceImplementations()
 	if len(implementations) != len(iface.Methods) {
@@ -562,12 +556,10 @@ func (l *lowerer) interfaceValue(expr thir.Expr, expected typeinfo.Type) ir.Expr
 			return &ir.InvalidExpr{Message: "missing interface method implementation", Type: ir.InvalidType}
 		}
 		slots = append(slots, ir.InterfaceSlot{
-			InterfaceType: interfaceID,
-			MethodName:    method.Name,
-			SlotType:      lowered.SlotType,
-			FuncName:      SymbolName(l.ctx.ModuleID, l.ctx.IsEntryModule, implementation.Symbol),
-			FuncType:      l.typeID(implementation.CallableType),
-			DataType:      l.typeID(data),
+			MethodName: method.Name,
+			SlotType:   lowered.SlotType,
+			FuncName:   SymbolName(l.ctx.ModuleID, l.ctx.IsEntryModule, implementation.Symbol),
+			FuncType:   l.typeID(implementation.CallableType),
 		})
 	}
 	return &ir.InterfaceMake{Value: l.lower(expr, nil, false), Slots: slots, Type: interfaceID}

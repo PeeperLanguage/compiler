@@ -198,13 +198,10 @@ type SliceView struct {
 }
 
 type InterfaceSlot struct {
-	InterfaceType TypeID
-	MethodName    string
-	WrapperName   string
-	SlotType      TypeID
-	FuncName      string
-	FuncType      TypeID
-	DataType      TypeID
+	MethodName string
+	SlotType   TypeID
+	FuncName   string
+	FuncType   TypeID
 }
 
 type InterfaceMake struct {
