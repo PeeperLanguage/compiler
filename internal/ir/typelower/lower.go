@@ -15,8 +15,10 @@ func Type(types *ir.TypeTable, diagnostics *diagnostics.DiagnosticBag, t typeinf
 	if types == nil || t == nil {
 		return ir.InvalidType
 	}
-	interner := runtimeTypeInterner{ctx: &context{types: types, diagnostics: diagnostics}, active: make(map[string]ir.TypeID)}
-	return interner.intern(t)
+	return types.Lower(t, func() ir.TypeID {
+		interner := runtimeTypeInterner{ctx: &context{types: types, diagnostics: diagnostics}, active: make(map[string]ir.TypeID)}
+		return interner.intern(t)
+	})
 }
 
 func ReturnType(types *ir.TypeTable, diagnostics *diagnostics.DiagnosticBag, t typeinfo.Type) ir.TypeID {
