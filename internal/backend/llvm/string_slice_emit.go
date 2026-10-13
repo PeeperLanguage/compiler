@@ -130,7 +130,7 @@ func emitSliceView(b *llvmBuilder, view *mir.SliceView) llvmValue {
 	if view.Source == nil {
 		return b.zero(resultLayout)
 	}
-	sourceTypeID := view.Source.Type
+	sourceTypeID := view.Source.TypeID()
 	targetTypeID := sourceTypeID
 	if sourceType, ok := b.emitter.mod.Types.Type(sourceTypeID); ok && sourceType.Kind == ir.TypeReference {
 		targetTypeID = sourceType.Elem
@@ -384,7 +384,7 @@ func emitStringSliceView(b *llvmBuilder, view *mir.SliceView) llvmValue {
 	if view.Source == nil {
 		return b.zero(resultLayout)
 	}
-	_, ok := b.emitter.mod.Types.Type(view.Source.Type)
+	_, ok := b.emitter.mod.Types.Type(view.Source.TypeID())
 	if !ok {
 		b.emitter.markInvalid("string slice view has invalid source type")
 		return b.zero(resultLayout)
@@ -788,9 +788,9 @@ func sliceViewUsesPlacePtr(types *ir.TypeTable, source *mir.Place) bool {
 	if len(source.Projections) > 0 {
 		return true
 	}
-	if typ, ok := types.Type(source.Type); ok && typ.Kind == ir.TypeReference {
+	if typ, ok := types.Type(source.TypeID()); ok && typ.Kind == ir.TypeReference {
 		return false
 	}
-	typ, ok := types.Type(source.Type)
+	typ, ok := types.Type(source.TypeID())
 	return ok && typ.Kind == ir.TypeArray && typ.Length != ""
 }

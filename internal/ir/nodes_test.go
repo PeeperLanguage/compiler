@@ -57,12 +57,11 @@ func TestPlaceText(t *testing.T) {
 		Projections: []PlaceProjection{
 			{Kind: PlaceProjectionIndex, Index: &IntLit{Value: "0", Type: i32}, Type: i32},
 		},
-		Type: i32,
 	}
 	if got := place.String(); got != "xs[0]" {
 		t.Fatalf("place string = %q, want xs[0]", got)
 	}
-	if got := types.Text(place.Type); got != "i32" {
+	if got := types.Text(place.TypeID()); got != "i32" {
 		t.Fatalf("place type = %q, want i32", got)
 	}
 }

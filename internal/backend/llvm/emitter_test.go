@@ -2094,7 +2094,7 @@ func TestGenerateLLVMIRReturnsStringSliceViewByValue(t *testing.T) {
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{&mir.Assign{Name: "view", Value: &mir.SliceView{
-					Source:         &mir.Place{Root: &mir.RefName{Name: "text", Type: refString}, Type: refString},
+					Source:         &mir.Place{Root: &mir.RefName{Name: "text", Type: refString}},
 					Start:          &mir.RefConst{Value: "0", Type: llvmTypes.i32},
 					End:            &mir.RefConst{Value: "1", Type: llvmTypes.i32},
 					IsEndExclusive: true,
@@ -2135,7 +2135,7 @@ func TestGenerateLLVMIRLowersBoundedStringSliceViewFor32BitTarget(t *testing.T) 
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{&mir.Assign{Name: "view", Value: &mir.SliceView{
-					Source:         &mir.Place{Root: &mir.RefName{Name: "text", Type: refString}, Type: refString},
+					Source:         &mir.Place{Root: &mir.RefName{Name: "text", Type: refString}},
 					Start:          &mir.RefConst{Value: "0", Type: types.i32},
 					End:            &mir.RefConst{Value: "2", Type: types.i32},
 					IsEndExclusive: true,
@@ -2181,7 +2181,7 @@ func TestGenerateLLVMIRLowersDynamicArraySliceViewAcrossTargets(t *testing.T) {
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{&mir.Assign{Name: "view", Value: &mir.SliceView{
-					Source: &mir.Place{Root: &mir.RefName{Name: "xs", Type: llvmTypes.dynamicI32}, Type: llvmTypes.dynamicI32},
+					Source: &mir.Place{Root: &mir.RefName{Name: "xs", Type: llvmTypes.dynamicI32}},
 					Type:   llvmTypes.refSliceI32,
 				}}},
 				Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: llvmTypes.i32}},
@@ -2237,7 +2237,7 @@ func TestGenerateLLVMIRLowersBorrowedDynamicArraySliceViewAcrossTargets(t *testi
 						Blocks: []*mir.Block{{
 							ID: 0,
 							Instrs: []mir.Instr{&mir.Assign{Name: "view", Value: &mir.SliceView{
-								Source: &mir.Place{Root: &mir.RefName{Name: "xs", Type: sourceType}, Type: sourceType},
+								Source: &mir.Place{Root: &mir.RefName{Name: "xs", Type: sourceType}},
 								Type:   types.refSliceI32,
 							}}},
 							Term: &mir.Ret{Value: &mir.RefConst{Value: "0", Type: types.i32}},
@@ -2278,7 +2278,7 @@ func TestGenerateLLVMIRLowersCheckedInclusiveFixedArraySlice(t *testing.T) {
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{&mir.Assign{Name: "view", Value: &mir.SliceView{
-					Source: &mir.Place{Root: &mir.RefName{Name: "xs", Type: llvmTypes.mutRefFixed4I32}, Type: llvmTypes.mutRefFixed4I32},
+					Source: &mir.Place{Root: &mir.RefName{Name: "xs", Type: llvmTypes.mutRefFixed4I32}},
 					Start:  &mir.RefConst{Value: "1", Type: llvmTypes.i32},
 					End:    &mir.RefConst{Value: "2", Type: llvmTypes.i32},
 					Type:   llvmTypes.mutRefSliceI32,
@@ -2313,7 +2313,7 @@ func TestGenerateLLVMIRReslicesSharedViewWithoutCapacity(t *testing.T) {
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{&mir.Assign{Name: "view", Value: &mir.SliceView{
-					Source:         &mir.Place{Root: &mir.RefName{Name: "xs", Type: llvmTypes.refSliceI32}, Type: llvmTypes.refSliceI32},
+					Source:         &mir.Place{Root: &mir.RefName{Name: "xs", Type: llvmTypes.refSliceI32}},
 					End:            &mir.RefConst{Value: "2", Type: llvmTypes.u8},
 					IsEndExclusive: true,
 					Type:           llvmTypes.refSliceI32,
@@ -2479,7 +2479,6 @@ func TestGenerateLLVMIRLoadsTaggedOptionalPayload(t *testing.T) {
 						Projections: []mir.PlaceProjection{
 							{Kind: mir.PlaceProjectionVariantPayload, Case: ir.OptionalPresentCase, Type: llvmTypes.i32},
 						},
-						Type: llvmTypes.i32,
 					},
 					Type: llvmTypes.i32,
 				}}},
@@ -2822,7 +2821,6 @@ func TestGenerateLLVMIRLowersIndirectFieldPlaceWithoutTempAlloca(t *testing.T) {
 													{Kind: mir.PlaceProjectionDeref, Type: llvmTypes.valueStruct},
 													{Kind: mir.PlaceProjectionField, FieldIndex: 0, Type: llvmTypes.i32},
 												},
-												Type: llvmTypes.i32,
 											},
 											Type: llvmTypes.mutRefI32,
 										},
@@ -2876,7 +2874,6 @@ func TestGenerateLLVMIRLowersProjectedFieldRawAddressDirectly(t *testing.T) {
 									{Kind: mir.PlaceProjectionDeref, Type: llvmTypes.valueStruct},
 									{Kind: mir.PlaceProjectionField, FieldIndex: 0, Type: llvmTypes.i32},
 								},
-								Type: llvmTypes.i32,
 							},
 							Type: llvmTypes.rawptr,
 						},
@@ -2904,7 +2901,7 @@ func TestGenerateLLVMIRLowersOwnedStringStorageRawAddress(t *testing.T) {
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{&mir.Assign{Name: "raw", Value: &mir.AddrOf{
-					Place: &mir.Place{Root: &mir.RefName{Name: "text", Type: llvmTypes.stringType}, Type: llvmTypes.stringType},
+					Place: &mir.Place{Root: &mir.RefName{Name: "text", Type: llvmTypes.stringType}},
 					Type:  llvmTypes.rawptr,
 				}}},
 				Term: &mir.Ret{Value: &mir.RefName{Name: "raw", Type: llvmTypes.rawptr}},
@@ -2954,7 +2951,6 @@ func indexedMIRPlace(baseType ir.TypeID, index mir.ValueRef) *mir.Place {
 		Projections: []mir.PlaceProjection{
 			{Kind: mir.PlaceProjectionIndex, Index: index, Type: llvmTypes.i32},
 		},
-		Type: llvmTypes.i32,
 	}
 }
 
@@ -3390,7 +3386,6 @@ func TestGenerateLLVMIRLowersDeepMixedPlace(t *testing.T) {
 			{Kind: mir.PlaceProjectionIndex, Index: &mir.RefName{Name: "index", Type: llvmTypes.usize}, Type: tokenType},
 			{Kind: mir.PlaceProjectionField, FieldIndex: 0, Type: llvmTypes.i32},
 		},
-		Type: llvmTypes.i32,
 	}
 	mod := &mir.Module{Name: "test", Types: llvmTypes.table, Funcs: []*mir.Function{{
 		Name: "read", Params: []ir.Param{{Name: "bucket", Type: borrowedBucket}, {Name: "index", Type: llvmTypes.usize}},
@@ -3418,7 +3413,6 @@ func TestGenerateLLVMIRAllocatesPlaceRootBeforeBranches(t *testing.T) {
 		Projections: []mir.PlaceProjection{
 			{Kind: mir.PlaceProjectionField, FieldIndex: 0, Type: llvmTypes.i32},
 		},
-		Type: llvmTypes.i32,
 	}
 	mod := &mir.Module{Name: "test", Types: llvmTypes.table, Funcs: []*mir.Function{{
 		Name: "choose", Params: []ir.Param{{Name: "cond", Type: llvmTypes.boolType}}, ReturnType: llvmTypes.i32,
@@ -3750,7 +3744,6 @@ func TestGenerateLLVMIRLowersNamedVariantOperationsAndDrop(t *testing.T) {
 					Name: "payload", Value: &mir.Load{Place: &mir.Place{
 						Root:        &mir.RefName{Name: "result", Type: result},
 						Projections: []mir.PlaceProjection{{Kind: mir.PlaceProjectionVariantPayload, Case: 1, Type: llvmTypes.ownedI32}},
-						Type:        llvmTypes.ownedI32,
 					}, Type: llvmTypes.ownedI32},
 				}}, Term: &mir.Ret{Value: &mir.RefName{Name: "payload", Type: llvmTypes.ownedI32}}}},
 			},
@@ -3810,7 +3803,6 @@ func TestGenerateLLVMIRDropsNamedVariantPayloadFieldAcrossTargetWidths(t *testin
 									{Kind: mir.PlaceProjectionVariantPayload, Case: 0, Type: payload},
 									{Kind: mir.PlaceProjectionField, FieldIndex: 0, Type: types.ownedI32},
 								},
-								Type: types.ownedI32,
 							}, Type: types.ownedI32}},
 							&mir.Drop{Value: &mir.RefName{Name: "owned", Type: types.ownedI32}},
 						},

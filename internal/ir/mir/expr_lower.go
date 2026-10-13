@@ -75,7 +75,6 @@ func (l *lowerer) lowerPlace(place *ir.Place, out *[]Instr) *Place {
 	return &Place{
 		Root:        root,
 		Projections: projections,
-		Type:        place.TypeID(),
 		Location:    place.Location,
 	}
 }
@@ -230,7 +229,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		if value == nil {
 			panic("temporary borrow requires value expression")
 		}
-		place := &Place{Root: value, Type: e.Value.TypeID(), Location: e.Value.Origin().Location}
+		place := &Place{Root: value, Location: e.Value.Origin().Location}
 		l.temporaryDrops = append(l.temporaryDrops, value)
 		name := l.nextTemp()
 		if e.IsSlice {
@@ -295,7 +294,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 					Projections: []PlaceProjection{{
 						Kind: PlaceProjectionIndex, Index: indexRef, Type: arrayType.Elem, Location: valueExpr.Origin().Location,
 					}},
-					Type: arrayType.Elem, Location: valueExpr.Origin().Location,
+					Location: valueExpr.Origin().Location,
 				}
 				l.appendInstr(out, &Store{Place: place, Value: value, Location: valueExpr.Origin().Location})
 			}

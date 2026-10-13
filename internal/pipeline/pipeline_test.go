@@ -875,7 +875,7 @@ func TestPipelineStopsBeforeBackendWhenEmitterRejectsMalformedMIR(t *testing.T) 
 			Blocks: []*mir.Block{{
 				ID: 0,
 				Instrs: []mir.Instr{&mir.Store{
-					Place: &mir.Place{Root: &mir.RefName{Type: i32}, Type: i32}, Value: value,
+					Place: &mir.Place{Root: &mir.RefName{Type: i32}}, Value: value,
 				}},
 				Term: &mir.Ret{},
 			}},

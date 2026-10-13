@@ -112,7 +112,6 @@ func TestFoldExprPreservesLoadIdentity(t *testing.T) {
 				},
 				Type: i32,
 			}},
-			Type: i32,
 		},
 		SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(42), Location: loc},
 	}
@@ -151,7 +150,6 @@ func TestFoldExprFoldsEveryCompositeExpression(t *testing.T) {
 				Index: foldable(),
 				Type:  i32,
 			}},
-			Type:     i32,
 			Location: loc,
 		}
 	}

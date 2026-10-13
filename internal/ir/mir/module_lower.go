@@ -270,7 +270,7 @@ func (l *lowerer) lowerIterationSegment(loop *thir.For, origin cfg.BlockOrigin) 
 				Projections: []ir.PlaceProjection{{
 					Kind: ir.PlaceProjectionIndex, Index: l.symbolRef(plan.Cursor), Type: elementType, Location: l.location,
 				}},
-				Type: elementType, Location: l.location,
+				Location: l.location,
 			}}
 			l.assignSymbol(loop.Value, value)
 		case cfg.BlockLoopLatch:

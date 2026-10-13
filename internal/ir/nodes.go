@@ -146,7 +146,6 @@ type PlaceProjection struct {
 type Place struct {
 	Root        Expr
 	Projections []PlaceProjection
-	Type        TypeID
 	Location    *source.Location
 }
 
@@ -647,11 +646,15 @@ func (p *Place) String() string {
 	return b.String()
 }
 
+// TypeID is the type the last projection reaches, or the root's type.
 func (p *Place) TypeID() TypeID {
-	if p == nil {
+	if p == nil || typednil.IsNil(p.Root) {
 		return InvalidType
 	}
-	return p.Type
+	if count := len(p.Projections); count > 0 {
+		return p.Projections[count-1].Type
+	}
+	return p.Root.TypeID()
 }
 
 func (e *Load) String() string {

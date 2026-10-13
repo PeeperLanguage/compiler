@@ -10,6 +10,7 @@ import (
 	"compiler/internal/moduleid"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/source"
+	"compiler/pkg/typednil"
 )
 
 type Module struct {
@@ -273,8 +274,18 @@ type PlaceProjection struct {
 type Place struct {
 	Root        ValueRef
 	Projections []PlaceProjection
-	Type        ir.TypeID
 	Location    *source.Location
+}
+
+// TypeID is the type the last projection reaches, or the root's type.
+func (p *Place) TypeID() ir.TypeID {
+	if p == nil || typednil.IsNil(p.Root) {
+		return ir.InvalidType
+	}
+	if count := len(p.Projections); count > 0 {
+		return p.Projections[count-1].Type
+	}
+	return p.Root.TypeID()
 }
 
 type AddrOf struct {

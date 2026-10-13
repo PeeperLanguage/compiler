@@ -35,7 +35,7 @@ func TestResolveDropsFollowsThePlan(t *testing.T) {
 	fnType := types.Intern(ir.Type{Kind: ir.TypeFunction, Return: i32})
 	item := symbols.ProjectedSymbolID(symbols.SymbolVar, "item")
 	at := &source.Location{Start: &source.Position{Line: 4, Column: 1}}
-	place := &Place{Root: &RefName{Name: "pair$2", Type: i32}, Type: i32}
+	place := &Place{Root: &RefName{Name: "pair$2", Type: i32}}
 	block := func() []Instr {
 		return []Instr{
 			&DropPoint{Kind: DropAfterSite, Location: at},

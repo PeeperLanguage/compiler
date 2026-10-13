@@ -148,8 +148,8 @@ func validateInstruction(types *ir.TypeTable, fn *Function, block *Block, index 
 	case *Store:
 		problems := validatePlace(types, node.Place, where+" store")
 		problems = append(problems, validateValueRef(types, node.Value, where+" store value")...)
-		if node.Place != nil && !typednil.IsNil(node.Value) && node.Place.Type != node.Value.TypeID() {
-			problems = append(problems, fmt.Sprintf("%s stores type#%d into place type#%d", where, node.Value.TypeID(), node.Place.Type))
+		if node.Place != nil && !typednil.IsNil(node.Value) && node.Place.TypeID() != node.Value.TypeID() {
+			problems = append(problems, fmt.Sprintf("%s stores type#%d into place type#%d", where, node.Value.TypeID(), node.Place.TypeID()))
 		}
 		return problems
 	case *Print:
@@ -331,8 +331,8 @@ func validateValueExpr(types *ir.TypeTable, expr ValueExpr, where string) []stri
 		}
 	case *Load:
 		problems = append(problems, validatePlace(types, node.Place, where+" load place")...)
-		if node.Place != nil && node.Place.Type != node.Type {
-			problems = append(problems, fmt.Sprintf("%s loads place type#%d as type#%d", where, node.Place.Type, node.Type))
+		if node.Place != nil && node.Place.TypeID() != node.Type {
+			problems = append(problems, fmt.Sprintf("%s loads place type#%d as type#%d", where, node.Place.TypeID(), node.Type))
 		}
 	case *Len:
 		problems = append(problems, validateValueRef(types, node.Value, where+" length value")...)
@@ -586,7 +586,6 @@ func validatePlace(types *ir.TypeTable, place *Place, where string) []string {
 		return []string{where + " place is nil"}
 	}
 	problems := validateValueRef(types, place.Root, where+" root")
-	problems = append(problems, validateKnownType(types, place.Type, where+" result type")...)
 	if types == nil || typednil.IsNil(place.Root) {
 		return problems
 	}
@@ -638,9 +637,6 @@ func validatePlace(types *ir.TypeTable, place *Place, where string) []string {
 			problems = append(problems, fmt.Sprintf("%s has unknown projection kind %d", projectionWhere, projection.Kind))
 		}
 		current = projection.Type
-	}
-	if current != place.Type {
-		problems = append(problems, fmt.Sprintf("%s ends at type#%d, not declared type#%d", where, current, place.Type))
 	}
 	return problems
 }

@@ -383,7 +383,7 @@ func (l *lowerer) collection(call *thir.Call) ir.Expr {
 	case symbols.CompilerOpLen:
 		return &ir.Len{Value: value, Type: l.returnType(fn.Return)}
 	case symbols.CompilerOpAsBytes:
-		return &ir.SliceView{Place: &ir.Place{Root: value, Type: value.TypeID()}, Type: l.returnType(fn.Return)}
+		return &ir.SliceView{Place: &ir.Place{Root: value}, Type: l.returnType(fn.Return)}
 	case symbols.CompilerOpAsChars:
 		return &ir.StringChars{Value: value, Type: l.returnType(fn.Return)}
 	}
@@ -464,7 +464,7 @@ func (l *lowerer) slice(index *thir.Index, r *thir.Range) ir.Expr {
 	if target, _, isReference := typeinfo.ReferenceTarget(typeinfo.Underlying(resultType)); isReference {
 		if _, stringRange := typeinfo.Underlying(target).(*typeinfo.StringType); stringRange {
 			root := l.referenceValue(index.Base, resultType)
-			source = &ir.Place{Root: root, Type: root.TypeID(), Location: index.Base.SourceInfo().Location}
+			source = &ir.Place{Root: root, Location: index.Base.SourceInfo().Location}
 		}
 	}
 	return &ir.SliceView{Place: source, Start: start, End: end, IsEndExclusive: r.IsEndExclusive, Type: l.typeID(resultType)}
@@ -472,29 +472,21 @@ func (l *lowerer) slice(index *thir.Index, r *thir.Range) ir.Expr {
 func (l *lowerer) place(expr thir.Expr) *ir.Place {
 	p := expr.ExprPlace()
 	if p == nil {
-		return &ir.Place{
-			Root:     l.lower(expr, nil, false),
-			Type:     l.typeID(expr.ExprType()),
-			Location: expr.SourceInfo().Location,
-		}
+		return &ir.Place{Root: l.lower(expr, nil, false), Location: expr.SourceInfo().Location}
 	}
 
 	var root ir.Expr
-	var rootType typeinfo.Type
 	if p.Root != nil {
 		root = l.ident(p.Root, p.Root.Name, p.Root.Type)
-		rootType = p.Root.Type
 	} else {
 		root = l.lower(p.Temporary, nil, true)
-		rootType = p.Temporary.ExprType()
 	}
-	out := &ir.Place{Root: root, Type: l.typeID(rootType), Location: expr.SourceInfo().Location}
+	out := &ir.Place{Root: root, Location: expr.SourceInfo().Location}
 	for _, projection := range p.Projections {
 		AppendPayloadProjections(l.ctx.Types, out, projection.BasePath, projection.BaseSource.Location)
 		if projection.DereferenceType != nil {
-			out.Type = l.typeID(projection.DereferenceType)
 			out.Projections = append(out.Projections, ir.PlaceProjection{
-				Kind: ir.PlaceProjectionDeref, Type: out.Type, Location: projection.BaseSource.Location,
+				Kind: ir.PlaceProjectionDeref, Type: l.typeID(projection.DereferenceType), Location: projection.BaseSource.Location,
 			})
 		}
 		item := ir.PlaceProjection{
@@ -516,7 +508,6 @@ func (l *lowerer) place(expr thir.Expr) *ir.Place {
 				item.Index = l.lower(projection.Index, typeinfo.DefaultIntegerType(), true)
 			}
 		}
-		out.Type = item.Type
 		out.Projections = append(out.Projections, item)
 	}
 	AppendPayloadProjections(l.ctx.Types, out, expr.PayloadPath(), expr.SourceInfo().Location)
@@ -527,7 +518,7 @@ func (l *lowerer) place(expr thir.Expr) *ir.Place {
 // cases, one variant level per case.
 func AppendPayloadProjections(types *ir.TypeTable, place *ir.Place, cases []int, location *source.Location) {
 	for _, caseIndex := range cases {
-		variant, ok := types.Type(place.Type)
+		variant, ok := types.Type(place.TypeID())
 		if !ok {
 			break
 		}
@@ -535,10 +526,9 @@ func AppendPayloadProjections(types *ir.TypeTable, place *ir.Place, cases []int,
 		if !ok {
 			break
 		}
-		place.Type = variantCase.Payload
 		place.Projections = append(place.Projections, ir.PlaceProjection{
 			Kind: ir.PlaceProjectionVariantPayload, Case: caseIndex,
-			Type: place.Type, Location: location,
+			Type: variantCase.Payload, Location: location,
 		})
 	}
 }

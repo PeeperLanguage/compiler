@@ -177,7 +177,6 @@ func FoldPlace(types *TypeTable, place *Place, env map[string]constvalue.Value) 
 	return &Place{
 		Root:        place.Root,
 		Projections: projections,
-		Type:        place.Type,
 		Location:    place.Location,
 	}
 }

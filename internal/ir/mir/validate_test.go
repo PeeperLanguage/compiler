@@ -115,7 +115,7 @@ func TestValidateReportsDefects(t *testing.T) {
 				i32 := m.Types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
 				boolean := m.Types.Intern(ir.Type{Kind: ir.TypeBool})
 				m.Funcs[0].Blocks[0].Instrs = []Instr{&Store{
-					Place: &Place{Root: &RefName{Name: "slot", Type: i32}, Type: i32},
+					Place: &Place{Root: &RefName{Name: "slot", Type: i32}},
 					Value: &RefConst{Value: "true", Type: boolean},
 				}}
 			},
@@ -170,7 +170,6 @@ func TestValidateReportsDefects(t *testing.T) {
 						Projections: []PlaceProjection{{
 							Kind: PlaceProjectionIndex, Index: &RefConst{Value: "0", Type: i32}, Type: boolean,
 						}},
-						Type: boolean,
 					},
 					Type: boolean,
 				}}}
@@ -254,7 +253,7 @@ func TestValidateRejectsNestedTypedNilValues(t *testing.T) {
 				module := wellFormed()
 				i32 := module.Types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
 				module.Funcs[0].Blocks[0].Instrs = []Instr{&Store{
-					Place: &Place{Root: &RefName{Name: "slot", Type: i32}, Type: i32},
+					Place: &Place{Root: &RefName{Name: "slot", Type: i32}},
 					Value: typedNilValueRef(),
 				}}
 				return module
@@ -437,7 +436,7 @@ func TestValidateRejectsNestedTypedNilValues(t *testing.T) {
 			module: func() *Module {
 				module := wellFormed()
 				i32 := module.Types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
-				module.Funcs[0].Blocks[0].Instrs = []Instr{&Assign{Value: &Load{Place: &Place{Root: typedNilValueRef(), Type: i32}, Type: i32}}}
+				module.Funcs[0].Blocks[0].Instrs = []Instr{&Assign{Value: &Load{Place: &Place{Root: typedNilValueRef()}, Type: i32}}}
 				return module
 			},
 			want: "load place root is nil",
@@ -451,7 +450,7 @@ func TestValidateRejectsNestedTypedNilValues(t *testing.T) {
 				module.Funcs[0].Blocks[0].Instrs = []Instr{&Assign{Value: &Load{Place: &Place{
 					Root: &RefName{Name: "values", Type: array}, Projections: []PlaceProjection{{
 						Kind: PlaceProjectionIndex, Index: typedNilValueRef(), Type: i32,
-					}}, Type: i32,
+					}},
 				}, Type: i32}}}
 				return module
 			},
