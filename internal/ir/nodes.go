@@ -27,9 +27,8 @@ func (info *SourceInfo) setOrigin(origin SourceInfo) {
 }
 
 type Param struct {
-	Name     string
-	Type     TypeID
-	SymbolID symbols.SymbolID
+	Name string
+	Type TypeID
 }
 
 type Expr interface {

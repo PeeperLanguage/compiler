@@ -124,14 +124,10 @@ func functionSignature(input LoweringInput, sourceFn *thir.Function, blocks []*B
 	params := make([]ir.Param, 0, len(sourceFn.Params))
 	for _, parameter := range sourceFn.Params {
 		name := ""
-		var symbolID symbols.SymbolID
 		if parameter.Symbol != nil {
 			name = exprlower.SymbolName(input.ModuleID, input.IsEntryModule, parameter.Symbol)
-			symbolID = parameter.Symbol.ID
 		}
-		params = append(params, ir.Param{
-			Name: name, Type: typelower.Type(input.Types, input.Diagnostics, parameter.Type), SymbolID: symbolID,
-		})
+		params = append(params, ir.Param{Name: name, Type: typelower.Type(input.Types, input.Diagnostics, parameter.Type)})
 	}
 	name, _ := exprlower.CallableName(input.ModuleID, input.IsEntryModule, sourceFn.Symbol)
 	return &Function{
@@ -157,7 +153,7 @@ func lowerCFGFunction(mod *Module, input LoweringInput, sourceFn *thir.Function,
 		constantEnv: make(map[string]constvalue.Value),
 	}
 	for index, parameter := range fn.Params {
-		if symbol := sourceFn.Params[index].Symbol; symbol != nil && parameter.SymbolID.IsValid() {
+		if symbol := sourceFn.Params[index].Symbol; symbol != nil && symbol.ID.IsValid() {
 			l.declareLocal(symbol, parameter.Name, parameter.Type, index+1)
 		}
 	}
