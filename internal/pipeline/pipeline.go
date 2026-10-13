@@ -457,8 +457,21 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 		return false
 	}
 	if module.Phase < phase.Analyzed {
+		// The checks read MIR, so it is lowered first, before drops are known.
+		// Lowering reports its own errors only while the project has none:
+		// on a broken program they would follow from earlier ones.
+		lowerDiag := phaseDiag
+		if diag != nil && diag.HasErrors() {
+			lowerDiag = diagnostics.NewDiagnosticBag()
+		}
+		module.MIR = mir.GenerateMIR(mir.LoweringInput{
+			Types: ctx.Types, Diagnostics: lowerDiag, Source: module.THIR,
+			CFG:   module.CFG,
+			Scope: module.ModuleScope, SymbolIndex: module.SymbolIndex,
+			ModuleID: module.ID, IsEntryModule: module.IsEntry,
+		})
 		module.Analysis = analysis.Run(phaseDiag, analysis.Input{
-			Source: module.THIR, CFG: module.CFG, Scope: module.ModuleScope, SymbolIndex: module.SymbolIndex,
+			Source: module.THIR, CFG: module.CFG, MIR: module.MIR, Scope: module.ModuleScope, SymbolIndex: module.SymbolIndex,
 		})
 		module.Phase = phase.Analyzed
 		ctx.Metrics.AddPhaseAdvance()
@@ -468,16 +481,7 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 		return false
 	}
 	if module.Phase < phase.MIR {
-		if diag != nil && diag.HasErrors() {
-			return false
-		}
-		module.MIR = mir.GenerateMIR(mir.LoweringInput{
-			Types: ctx.Types, Diagnostics: phaseDiag, Source: module.THIR,
-			CFG:   module.CFG,
-			Scope: module.ModuleScope, SymbolIndex: module.SymbolIndex,
-			ModuleID: module.ID, IsEntryModule: module.IsEntry,
-		})
-		if module.MIR == nil {
+		if diag != nil && diag.HasErrors() || module.MIR == nil {
 			return false
 		}
 		mir.ResolveDrops(module.MIR, module.Analysis)

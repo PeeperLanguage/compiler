@@ -19,7 +19,7 @@ func Run(diag *diagnostics.DiagnosticBag, input Input) *Module {
 				"derived semantic effects are malformed: "+err.Error(), nil, "")
 		}
 	}
-	checkInitialization(input.CFG, effects, diag)
+	checkInitialization(input.CFG, effectsFromMIR(input.MIR, input.Source, input.SymbolIndex), diag)
 	result.cleanup = checkOwnership(diag, ownershipInput{
 		Source: input.Source, CFG: input.CFG, Analysis: result, Ops: effects,
 		Scope: input.Scope, SymbolIndex: input.SymbolIndex,

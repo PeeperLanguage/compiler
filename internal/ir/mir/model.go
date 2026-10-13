@@ -88,6 +88,15 @@ type Block struct {
 	ID     int
 	Instrs []Instr
 	Term   Terminator
+	// Sites says where each of the block's CFG sites starts in Instrs, in
+	// site order. Instructions before the first start, such as a loop's
+	// cursor steps, belong to the first site; the terminator to the last.
+	Sites []SiteStart
+}
+
+type SiteStart struct {
+	ID    cfg.SiteID
+	Start int
 }
 
 // Instr and Terminator are sealed by their marker methods. Without them the two
