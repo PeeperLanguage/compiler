@@ -425,7 +425,7 @@ fn main(input: i32) {
 		if box == nil || !found {
 			t.Fatal("missing collected symbol or range iteration evidence")
 		}
-		rangePlan, ok := iteration.Plan.(*RangeIteration)
+		rangePlan, ok := iteration.(*thir.RangeIteration)
 		if !ok || rangePlan == nil || rangePlan.Limit == nil || rangePlan.Ordinal == nil {
 			t.Fatalf("range iteration = %#v", iteration)
 		}
@@ -436,7 +436,7 @@ fn main(input: i32) {
 			module.SymbolIndex.Symbol(local.Name),
 			module.SymbolIndex.Symbol(loop.Index),
 			module.SymbolIndex.Symbol(loop.Value),
-			iteration.Cursor,
+			rangePlan.Cursor,
 			rangePlan.Limit,
 			rangePlan.Ordinal,
 		}

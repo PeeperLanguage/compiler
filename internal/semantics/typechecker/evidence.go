@@ -45,57 +45,6 @@ type Match struct {
 	Spills  bool
 }
 
-// ForIteration records typechecker-owned loop lowering and CFG evidence.
-// Generated symbols carry hidden loop state; source bindings remain body-scoped.
-//
-// Evidence is published only for a loop that typed cleanly, so a record that
-// exists is complete: Cursor, Value and ElementType are always set, and Plan
-// carries exactly one iteration kind. Consumers switch on the plan and read its
-// fields; they must not re-check them, because a nil there would be a compiler
-// bug rather than a shape the source can produce.
-type ForIteration struct {
-	HasGuaranteedEntry bool
-
-	ElementType typeinfo.Type
-	Cursor      *symbols.Symbol
-	Value       *symbols.Symbol
-	// Index is nil unless the source binds an index name.
-	Index *symbols.Symbol
-
-	// Plan carries the iteration kind and that kind's state as one value.
-	// There is no separate kind tag to disagree with the state, and no way to
-	// hold both kinds at once.
-	Plan IterationPlan
-}
-
-// IterationPlan is the state one iteration kind needs. The interface is closed
-// by its unexported method: only the two plans below implement it, so a
-// consumer's type switch over both is exhaustive and a third kind cannot be
-// introduced outside this package.
-type IterationPlan interface {
-	iterationPlan()
-}
-
-// RangeIteration is the state of a `for i in a..b` loop. Limit holds the
-// evaluated exclusive upper bound; Ordinal counts iterations and is non-nil
-// exactly when ForIteration.Index is.
-type RangeIteration struct {
-	Limit   *symbols.Symbol
-	Ordinal *symbols.Symbol
-}
-
-func (*RangeIteration) iterationPlan() {}
-
-// SequenceIteration is the state of a `for v in seq` loop. Carrier holds the
-// iterated storage for the loop's lifetime, borrowed when CarrierType is a
-// reference; the cursor indexes through it.
-type SequenceIteration struct {
-	Carrier     *symbols.Symbol
-	CarrierType typeinfo.Type
-}
-
-func (*SequenceIteration) iterationPlan() {}
-
 // VariantConstruction records resolved enum construction without later path or field resolution.
 type VariantConstruction struct {
 	EnumType typeinfo.Type
@@ -156,9 +105,11 @@ type callEvidence struct {
 }
 
 type controlEvidence struct {
-	caseTests         map[source.NodeID]CaseTest
-	matches           map[source.NodeID]Match
-	forIterations     map[source.NodeID]ForIteration
+	caseTests map[source.NodeID]CaseTest
+	matches   map[source.NodeID]Match
+	// forIterations holds the plan of each for-in loop that typed cleanly, so
+	// a plan that exists is complete.
+	forIterations     map[source.NodeID]thir.IterationPlan
 	checkedIterations map[source.NodeID]*ast.BlockStmt
 }
 
@@ -187,7 +138,7 @@ func newEvidence() *evidence {
 		control: controlEvidence{
 			caseTests:         make(map[source.NodeID]CaseTest),
 			matches:           make(map[source.NodeID]Match),
-			forIterations:     make(map[source.NodeID]ForIteration),
+			forIterations:     make(map[source.NodeID]thir.IterationPlan),
 			checkedIterations: make(map[source.NodeID]*ast.BlockStmt),
 		},
 	}
@@ -465,7 +416,7 @@ func (r *evidence) Match(id source.NodeID) (Match, bool) {
 	return match, ok
 }
 
-func (r *evidence) RecordForIteration(id source.NodeID, iteration ForIteration) {
+func (r *evidence) RecordForIteration(id source.NodeID, iteration thir.IterationPlan) {
 	if r != nil && id.IsValid() {
 		r.control.forIterations[id] = iteration
 	}
@@ -477,9 +428,9 @@ func (r *evidence) ForgetForIteration(id source.NodeID) {
 	}
 }
 
-func (r *evidence) ForIteration(id source.NodeID) (ForIteration, bool) {
+func (r *evidence) ForIteration(id source.NodeID) (thir.IterationPlan, bool) {
 	if r == nil || !id.IsValid() {
-		return ForIteration{}, false
+		return nil, false
 	}
 	iteration, ok := r.control.forIterations[id]
 	return iteration, ok

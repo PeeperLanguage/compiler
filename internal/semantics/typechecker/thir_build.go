@@ -299,23 +299,7 @@ func (b *thirBuilder) forStatement(source *ast.ForStmt) *thir.For {
 	if b.typing == nil {
 		return loop
 	}
-	evidence, found := b.typing.ForIteration(source.ID())
-	if !found {
-		return loop
-	}
-	switch plan := evidence.Plan.(type) {
-	case *RangeIteration:
-		loop.Iteration = &thir.RangeIteration{
-			ElementType: evidence.ElementType, Cursor: evidence.Cursor, Limit: plan.Limit,
-			Ordinal: plan.Ordinal, HasGuaranteedEntry: evidence.HasGuaranteedEntry,
-		}
-	case *SequenceIteration:
-		loop.Iteration = &thir.SequenceIteration{
-			ElementType: evidence.ElementType, Cursor: evidence.Cursor, Value: evidence.Value,
-			Index: evidence.Index, Carrier: plan.Carrier, CarrierType: plan.CarrierType,
-			HasGuaranteedEntry: evidence.HasGuaranteedEntry,
-		}
-	}
+	loop.Iteration, _ = b.typing.ForIteration(source.ID())
 	return loop
 }
 

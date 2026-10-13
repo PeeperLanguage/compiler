@@ -208,7 +208,7 @@ func (s *For) validateSelf() error {
 			return fmt.Errorf("range iteration plan is incomplete")
 		}
 	case *SequenceIteration:
-		if plan.ElementType == nil || plan.Cursor == nil || plan.Value == nil || plan.Carrier == nil || plan.CarrierType == nil {
+		if plan.ElementType == nil || plan.Cursor == nil || s.Value == nil || plan.Carrier == nil || plan.CarrierType == nil {
 			return fmt.Errorf("sequence iteration plan is incomplete")
 		}
 	default:

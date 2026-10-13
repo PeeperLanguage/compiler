@@ -815,24 +815,17 @@ func (c *checker) checkBinding(scope *symbols.Scope, node ast.Stmt, requireIniti
 // as_bytes/as_chars view.
 func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, returnType typeinfo.Type) {
 	indexType := typeinfo.DefaultIntegerType()
-	evidence := ForIteration{}
-	if node.Index != nil {
-		evidence.Index = c.module.SymbolIndex.Symbol(node.Index)
-	}
-	if node.Value != nil {
-		evidence.Value = c.module.SymbolIndex.Symbol(node.Value)
-	}
-	valid := node.Value != nil && node.Value.Name != "" && evidence.Value != nil
-	if node.Index != nil && (node.Index.Name == "" || evidence.Index == nil) {
+	valid := node.Value != nil && node.Value.Name != "" && c.module.SymbolIndex.Symbol(node.Value) != nil
+	if node.Index != nil && (node.Index.Name == "" || c.module.SymbolIndex.Symbol(node.Index) == nil) {
 		valid = false
 	}
 
 	var elemType typeinfo.Type
 	var carrierType typeinfo.Type
+	var hasGuaranteedEntry bool
 	rangeExpr, isRange := node.Iterable.(*ast.RangeExpr)
 	if isRange {
-		elemType, valid, evidence.HasGuaranteedEntry = c.checkRangeIteration(scope, rangeExpr, valid)
-		evidence.ElementType = elemType
+		elemType, valid, hasGuaranteedEntry = c.checkRangeIteration(scope, rangeExpr, valid)
 	} else {
 		var ok bool
 		indexType, ok = typeinfo.NumericTypeFromName("usize", c.ctx.Target)
@@ -867,7 +860,6 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 			} else {
 				carrierType = iterableType
 			}
-			evidence.ElementType = elem
 		} else {
 			if valid && c.checkCallIteration(scope, node, iterableType, returnType) {
 				return
@@ -884,10 +876,11 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 	c.evidence.ForgetForIteration(node.ID())
 	if valid && elemType != nil && !typeinfo.IsInvalidOrUnknown(elemType) {
 		location := ast.LocOf(node)
-		evidence.Cursor = symbols.New(symbols.GeneratedSymbolID(node.ID(), symbols.GeneratedForCursor), "$for.cursor", symbols.SymbolVar, nil, location)
+		cursor := symbols.New(symbols.GeneratedSymbolID(node.ID(), symbols.GeneratedForCursor), "$for.cursor", symbols.SymbolVar, nil, location)
 		if isRange {
-			evidence.Cursor.BindType(elemType)
-			plan := &RangeIteration{
+			cursor.BindType(elemType)
+			plan := &thir.RangeIteration{
+				ElementType: elemType, Cursor: cursor, HasGuaranteedEntry: hasGuaranteedEntry,
 				Limit: symbols.New(symbols.GeneratedSymbolID(node.ID(), symbols.GeneratedForRangeLimit), "$for.end", symbols.SymbolVar, nil, location),
 			}
 			plan.Limit.BindType(elemType)
@@ -895,14 +888,15 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt, return
 				plan.Ordinal = symbols.New(symbols.GeneratedSymbolID(node.ID(), symbols.GeneratedForRangeOrdinal), "$for.ordinal", symbols.SymbolVar, nil, location)
 				plan.Ordinal.BindType(indexType)
 			}
-			evidence.Plan = plan
+			c.evidence.RecordForIteration(node.ID(), plan)
 		} else {
-			evidence.Cursor.BindType(indexType)
+			cursor.BindType(indexType)
 			carrier := symbols.New(symbols.GeneratedSymbolID(node.ID(), symbols.GeneratedForSequenceCarrier), "$for.carrier", symbols.SymbolVar, nil, location)
 			carrier.BindType(carrierType)
-			evidence.Plan = &SequenceIteration{Carrier: carrier, CarrierType: carrierType}
+			c.evidence.RecordForIteration(node.ID(), &thir.SequenceIteration{
+				ElementType: elemType, Cursor: cursor, Carrier: carrier, CarrierType: carrierType, HasGuaranteedEntry: hasGuaranteedEntry,
+			})
 		}
-		c.evidence.RecordForIteration(node.ID(), evidence)
 	}
 	c.loopDepth++
 	c.checkStmt(scope, node.Body, returnType)

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"compiler/internal/frontend/ast"
+	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
 	"compiler/internal/target"
@@ -345,22 +346,19 @@ return total;
 	if !ok {
 		t.Fatal("missing range iteration evidence")
 	}
-	plan, isRange := evidence.Plan.(*RangeIteration)
+	plan, isRange := evidence.(*thir.RangeIteration)
 	if !isRange {
 		t.Fatalf("range iteration evidence = %#v", evidence)
 	}
-	if evidence.Cursor == nil || plan.Limit == nil || plan.Ordinal == nil {
+	if plan.Cursor == nil || plan.Limit == nil || plan.Ordinal == nil {
 		t.Fatalf("range iteration evidence is incomplete = %#v", evidence)
 	}
-	if evidence.Index != module.SymbolIndex.Symbol(loop.Index) || evidence.Value != module.SymbolIndex.Symbol(loop.Value) {
-		t.Fatal("range evidence does not preserve source binding symbols")
-	}
 	for name, symbol := range map[string]string{
-		"cursor":  typeinfo.TypeText(evidence.Cursor.Type),
+		"cursor":  typeinfo.TypeText(plan.Cursor.Type),
 		"end":     typeinfo.TypeText(plan.Limit.Type),
 		"ordinal": typeinfo.TypeText(plan.Ordinal.Type),
-		"index":   typeinfo.TypeText(evidence.Index.Type),
-		"value":   typeinfo.TypeText(evidence.Value.Type),
+		"index":   typeinfo.TypeText(module.SymbolIndex.Symbol(loop.Index).Type),
+		"value":   typeinfo.TypeText(module.SymbolIndex.Symbol(loop.Value).Type),
 	} {
 		if symbol != "i32" {
 			t.Fatalf("%s type = %s, want i32", name, symbol)
@@ -388,16 +386,16 @@ func TestCheckForInRangeTypeIsBoundOrderIndependent(t *testing.T) {
 				t.Fatal("missing range iteration evidence")
 			}
 			for name, typ := range map[string]typeinfo.Type{
-				"element": evidence.ElementType,
-				"cursor":  evidence.Cursor.Type,
-				"end":     evidence.Plan.(*RangeIteration).Limit.Type,
-				"value":   evidence.Value.Type,
+				"element": evidence.(*thir.RangeIteration).ElementType,
+				"cursor":  evidence.(*thir.RangeIteration).Cursor.Type,
+				"end":     evidence.(*thir.RangeIteration).Limit.Type,
+				"value":   module.SymbolIndex.Symbol(loop.Value).Type,
 			} {
 				if got := typeinfo.TypeText(typ); got != "i64" {
 					t.Fatalf("%s type = %s, want i64", name, got)
 				}
 			}
-			if !evidence.HasGuaranteedEntry {
+			if !evidence.IsGuaranteedEntry() {
 				t.Fatal("ascending constant range lost guaranteed-entry proof")
 			}
 		})
@@ -419,10 +417,10 @@ return 0i64;
 	loop := fn.Body.Stmts[0].(*ast.ForStmt)
 	evidence, _ := testEvidence(module).ForIteration(loop.ID())
 	for name, typ := range map[string]typeinfo.Type{
-		"element": evidence.ElementType,
-		"cursor":  evidence.Cursor.Type,
-		"end":     evidence.Plan.(*RangeIteration).Limit.Type,
-		"value":   evidence.Value.Type,
+		"element": evidence.(*thir.RangeIteration).ElementType,
+		"cursor":  evidence.(*thir.RangeIteration).Cursor.Type,
+		"end":     evidence.(*thir.RangeIteration).Limit.Type,
+		"value":   module.SymbolIndex.Symbol(loop.Value).Type,
 	} {
 		if got := typeinfo.TypeText(typ); got != "i64" {
 			t.Fatalf("%s type = %s, want i64", name, got)
@@ -452,8 +450,8 @@ func TestCheckForInRecordsGuaranteedRangeEntry(t *testing.T) {
 			if !found {
 				t.Fatal("missing range iteration evidence")
 			}
-			if evidence.HasGuaranteedEntry != test.guaranteed {
-				t.Fatalf("guaranteed entry = %v, want %v", evidence.HasGuaranteedEntry, test.guaranteed)
+			if evidence.IsGuaranteedEntry() != test.guaranteed {
+				t.Fatalf("guaranteed entry = %v, want %v", evidence.IsGuaranteedEntry(), test.guaranteed)
 			}
 		})
 	}
@@ -478,21 +476,21 @@ return total;
 	if !ok {
 		t.Fatal("missing sequence iteration evidence")
 	}
-	plan, isSequence := evidence.Plan.(*SequenceIteration)
+	plan, isSequence := evidence.(*thir.SequenceIteration)
 	if !isSequence {
 		t.Fatalf("sequence iteration evidence = %#v", evidence)
 	}
-	if evidence.Cursor == nil || plan.Carrier == nil {
+	if plan.Cursor == nil || plan.Carrier == nil {
 		t.Fatalf("sequence iteration evidence is incomplete = %#v", evidence)
 	}
 	if got := typeinfo.TypeText(plan.Carrier.Type); got != "&[3]i32" {
 		t.Fatalf("carrier type = %s, want &[3]i32", got)
 	}
 	wantCursor, ok := typeinfo.NumericTypeFromName("usize", target.Host())
-	if !ok || !typeinfo.IsSameType(evidence.Cursor.Type, wantCursor) {
-		t.Fatalf("cursor type = %s, want target usize", typeinfo.TypeText(evidence.Cursor.Type))
+	if !ok || !typeinfo.IsSameType(plan.Cursor.Type, wantCursor) {
+		t.Fatalf("cursor type = %s, want target usize", typeinfo.TypeText(plan.Cursor.Type))
 	}
-	if got := typeinfo.TypeText(evidence.ElementType); got != "i32" {
+	if got := typeinfo.TypeText(plan.ElementType); got != "i32" {
 		t.Fatalf("element type = %s, want i32", got)
 	}
 }

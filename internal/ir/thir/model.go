@@ -465,6 +465,9 @@ type IterationPlan interface {
 	IsGuaranteedEntry() bool
 }
 
+// RangeIteration is the state of a `for i in a..b` loop. Limit holds the
+// evaluated exclusive upper bound; Ordinal counts iterations and is set
+// exactly when the loop binds an index name.
 type RangeIteration struct {
 	ElementType        typeinfo.Type
 	Cursor             *symbols.Symbol
@@ -478,11 +481,12 @@ func (p *RangeIteration) IsGuaranteedEntry() bool {
 	return p != nil && p.HasGuaranteedEntry
 }
 
+// SequenceIteration is the state of a `for v in seq` loop. Carrier holds the
+// iterated storage for the loop's lifetime, borrowed when CarrierType is a
+// reference; the cursor indexes through it.
 type SequenceIteration struct {
 	ElementType        typeinfo.Type
 	Cursor             *symbols.Symbol
-	Value              *symbols.Symbol
-	Index              *symbols.Symbol
 	Carrier            *symbols.Symbol
 	CarrierType        typeinfo.Type
 	HasGuaranteedEntry bool
