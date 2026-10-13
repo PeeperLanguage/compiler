@@ -161,7 +161,8 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 	case *ir.Ident:
 		ref := identifierRef(e)
 		// Direct symbols retain linkage names; callable storage is captured too.
-		if typ, ok := l.module.Types.Type(e.TypeID()); ok && typ.Kind == ir.TypeFunction && l.symbolValues[e.SymbolID] == nil {
+		_, isLocal := l.declared[e.SymbolID]
+		if typ, ok := l.module.Types.Type(e.TypeID()); ok && typ.Kind == ir.TypeFunction && !isLocal {
 			return ref
 		}
 		// MIR Move captures a value; semantic consumption remains analysis-owned.

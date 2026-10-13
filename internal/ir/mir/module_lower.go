@@ -38,8 +38,9 @@ type lowerer struct {
 	current        *Block
 	location       *source.Location
 	temporaryDrops []ValueRef
-	symbolValues   map[symbols.SymbolID]*RefName
-	constantEnv    map[string]constvalue.Value
+	// declared holds the symbols listed in fn.Locals.
+	declared    map[symbols.SymbolID]struct{}
+	constantEnv map[string]constvalue.Value
 }
 
 func GenerateMIR(input LoweringInput) *Module {
@@ -152,13 +153,12 @@ func lowerCFGFunction(mod *Module, input LoweringInput, sourceFn *thir.Function,
 	fn := functionSignature(input, sourceFn, make([]*Block, 0, len(graph.Blocks)))
 	l := &lowerer{
 		input: input, module: mod, fn: fn, sourceFn: sourceFn,
-		symbolValues: make(map[symbols.SymbolID]*RefName),
-		constantEnv:  make(map[string]constvalue.Value),
+		declared:    make(map[symbols.SymbolID]struct{}),
+		constantEnv: make(map[string]constvalue.Value),
 	}
 	for index, parameter := range fn.Params {
 		if symbol := sourceFn.Params[index].Symbol; symbol != nil && parameter.SymbolID.IsValid() {
 			l.declareLocal(symbol, parameter.Name, parameter.Type, index+1)
-			l.symbolValues[parameter.SymbolID] = &RefName{Name: parameter.Name, Type: parameter.Type}
 		}
 	}
 
@@ -316,7 +316,6 @@ func (l *lowerer) assignSymbol(symbol *symbols.Symbol, value ir.Expr) {
 	name := exprlower.SymbolName(l.input.ModuleID, l.input.IsEntryModule, symbol)
 	typ := typelower.Type(l.input.Types, l.input.Diagnostics, symbol.Type)
 	l.declareLocal(symbol, name, typ, 0)
-	l.symbolValues[symbol.ID] = &RefName{Name: name, Type: typ, Location: l.location}
 	ref := l.lowerExpr(value, &l.current.Instrs)
 	if existing, ok := ref.(*RefName); ok && existing.Name == name {
 		return
@@ -327,9 +326,10 @@ func (l *lowerer) assignSymbol(symbol *symbols.Symbol, value ir.Expr) {
 // declareLocal lists a variable in the function's locals the first time it
 // gets a value; a variable assigned again is listed once.
 func (l *lowerer) declareLocal(symbol *symbols.Symbol, name string, typ ir.TypeID, arg int) {
-	if _, seen := l.symbolValues[symbol.ID]; seen {
+	if _, seen := l.declared[symbol.ID]; seen {
 		return
 	}
+	l.declared[symbol.ID] = struct{}{}
 	sourceName := symbol.Name
 	if symbol.IsHidden() || sourceName == "_" {
 		sourceName = ""
@@ -417,9 +417,7 @@ func (l *lowerer) lowerCFGStmt(node thir.Node) bool {
 		for _, binding := range statement.Bindings {
 			taken[binding.Field] = true
 			name := exprlower.SymbolName(l.input.ModuleID, l.input.IsEntryModule, binding.Symbol)
-			value := take(name, binding.Field, binding.Type)
-			l.declareLocal(binding.Symbol, name, value.Type, 0)
-			l.symbolValues[binding.Symbol.ID] = value
+			l.declareLocal(binding.Symbol, name, take(name, binding.Field, binding.Type).Type, 0)
 		}
 		// The value was taken whole, so its unnamed owned fields end here,
 		// last field first like any struct drop.
