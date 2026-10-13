@@ -152,8 +152,7 @@ type Place struct {
 
 type Load struct {
 	SourceInfo
-	Place     *Place
-	DropsRoot bool
+	Place *Place
 }
 
 type AddrOf struct {
@@ -228,10 +227,9 @@ type InterfaceCall struct {
 
 type Field struct {
 	SourceInfo
-	Base      Expr
-	Index     int
-	DropsBase bool
-	Type      TypeID
+	Base  Expr
+	Index int
+	Type  TypeID
 }
 
 type StructLit struct {

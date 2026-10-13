@@ -114,7 +114,6 @@ func TestFoldExprPreservesLoadIdentity(t *testing.T) {
 			}},
 			Type: i32,
 		},
-		DropsRoot:  true,
 		SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(42), Location: loc},
 	}
 
@@ -122,8 +121,8 @@ func TestFoldExprPreservesLoadIdentity(t *testing.T) {
 	if !ok {
 		t.Fatalf("folded expression = %#v, want load", folded)
 	}
-	if folded.NodeID != expr.NodeID || !folded.DropsRoot || folded.Location != loc || folded.Place.Root != root {
-		t.Fatalf("folded load identity = %#v, want NodeID, drop root, location, and place root preserved", folded)
+	if folded.NodeID != expr.NodeID || folded.Location != loc || folded.Place.Root != root {
+		t.Fatalf("folded load identity = %#v, want NodeID, location, and place root preserved", folded)
 	}
 	index, ok := folded.Place.Projections[0].Index.(*IntLit)
 	if !ok || index.Value != "2" {
@@ -164,7 +163,7 @@ func TestFoldExprFoldsEveryCompositeExpression(t *testing.T) {
 		{name: "unary", expr: &Unary{Op: "opaque", Arg: foldable(), Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
 		{name: "binary", expr: &Binary{Op: "opaque", Left: foldable(), Right: foldable(), Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
 		{name: "call", expr: &Call{Callee: foldable(), Args: []Expr{foldable()}, Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
-		{name: "load", expr: &Load{Place: place(), DropsRoot: true, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
+		{name: "load", expr: &Load{Place: place(), SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
 		{name: "address", expr: &AddrOf{Place: place(), Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
 		{name: "temporary borrow", expr: &TempBorrow{Value: foldable(), IsSlice: true, Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
 		{name: "length", expr: &Len{Value: foldable(), Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
@@ -172,7 +171,7 @@ func TestFoldExprFoldsEveryCompositeExpression(t *testing.T) {
 		{name: "slice", expr: &SliceView{Place: place(), Start: foldable(), End: foldable(), IsEndExclusive: true, Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
 		{name: "interface make", expr: &InterfaceMake{Value: foldable(), Slots: []InterfaceSlot{{MethodName: "method"}}, Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
 		{name: "interface call", expr: &InterfaceCall{Base: foldable(), Slot: 2, Args: []Expr{foldable()}, ConsumesBase: true, Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
-		{name: "field", expr: &Field{Base: foldable(), Index: 3, DropsBase: true, Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
+		{name: "field", expr: &Field{Base: foldable(), Index: 3, Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
 		{name: "struct", expr: &StructLit{Fields: []Expr{foldable()}, Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
 		{name: "array", expr: &ArrayLit{Values: []Expr{foldable()}, IsDynamic: true, Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
 		{name: "dynamic array operation", expr: &DynamicArrayOp{Array: foldable(), Length: foldable(), Value: foldable(), ArrayType: i32, Type: i32, SourceInfo: SourceInfo{NodeID: source.ParsedNodeID(9), Location: loc}}},
@@ -225,7 +224,7 @@ func TestFoldExprPreservesCompositeMetadata(t *testing.T) {
 			node := expr.(*InterfaceCall)
 			return node.Slot == 3 && node.SlotType == i32 && node.ConsumesBase
 		}},
-		{name: "field", expr: &Field{Base: value, Index: 4, DropsBase: true}, check: func(expr Expr) bool { node := expr.(*Field); return node.Index == 4 && node.DropsBase }},
+		{name: "field", expr: &Field{Base: value, Index: 4}, check: func(expr Expr) bool { node := expr.(*Field); return node.Index == 4 }},
 		{name: "array", expr: &ArrayLit{Values: []Expr{value}, IsDynamic: true}, check: func(expr Expr) bool { return expr.(*ArrayLit).IsDynamic }},
 		{name: "print", expr: &Print{Value: value, AppendsNewline: true}, check: func(expr Expr) bool { return expr.(*Print).AppendsNewline }},
 	}

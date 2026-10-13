@@ -201,7 +201,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 	case *ir.Load:
 		place := l.lowerPlace(e.Place, out)
 		value := l.load(out, place, e.TypeID(), e.Origin().Location)
-		l.dropProjectionBase(out, e.DropsRoot, e.NodeID, place.Root)
+		l.appendInstr(out, &DropPoint{Kind: DropProjectionBase, Node: e.NodeID, Value: place.Root})
 		return value
 	case *ir.Len:
 		value := l.lowerExpr(e.Value, out)
@@ -266,7 +266,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		base := l.lowerExpr(e.Base, out)
 		name := l.nextTemp()
 		l.appendInstr(out, &Assign{Name: name, Value: &Field{Base: base, Index: e.Index, Type: e.TypeID(), Location: e.Origin().Location}})
-		l.dropProjectionBase(out, e.DropsBase, e.NodeID, base)
+		l.appendInstr(out, &DropPoint{Kind: DropProjectionBase, Node: e.NodeID, Value: base})
 		return &RefName{Name: name, Type: e.TypeID(), Location: e.Origin().Location}
 	case *ir.StructLit:
 		fields := make([]ValueRef, 0, len(e.Fields))
@@ -368,16 +368,6 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 	default:
 		panic(fmt.Sprintf("MIR lowering: unhandled IR expression %T", expr))
 	}
-}
-
-// dropProjectionBase drops the base a projection read out of: always when
-// lowering decided it, else where the cleanup plan decides.
-func (l *lowerer) dropProjectionBase(out *[]Instr, drops bool, node source.NodeID, base ValueRef) {
-	if drops {
-		l.appendInstr(out, &Drop{Value: base})
-		return
-	}
-	l.appendInstr(out, &DropPoint{Kind: DropProjectionBase, Node: node, Value: base})
 }
 
 func interfaceDataType(types *ir.TypeTable, id ir.TypeID) ir.TypeID {

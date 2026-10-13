@@ -71,7 +71,7 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 			SourceInfo: node.SourceInfo,
 		}
 	case *Load:
-		return &Load{Place: FoldPlace(types, node.Place, env), DropsRoot: node.DropsRoot, SourceInfo: node.SourceInfo}
+		return &Load{Place: FoldPlace(types, node.Place, env), SourceInfo: node.SourceInfo}
 	case *AddrOf:
 		return &AddrOf{Place: FoldPlace(types, node.Place, env), Type: node.Type, SourceInfo: node.SourceInfo}
 	case *TempBorrow:
@@ -117,7 +117,6 @@ func FoldExpr(types *TypeTable, expr Expr, env map[string]constvalue.Value) Expr
 		return &Field{
 			Base:       FoldExpr(types, node.Base, env),
 			Index:      node.Index,
-			DropsBase:  node.DropsBase,
 			Type:       node.Type,
 			SourceInfo: node.SourceInfo,
 		}
