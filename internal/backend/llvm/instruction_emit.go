@@ -682,7 +682,7 @@ func emitValueExpr(b *llvmBuilder, expr mir.ValueExpr) llvmValue {
 		case *mir.Load:
 			ptr, ok := emitPlacePtr(b, e.Place)
 			if !ok {
-				return b.value("0", b.emitter.layout(e.Type))
+				return b.value("0", b.emitter.layout(e.TypeID()))
 			}
 			return b.load(ptr)
 		case *mir.Field:

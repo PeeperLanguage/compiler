@@ -86,7 +86,7 @@ func resolveDropPoint(out []Instr, fn *Function, point *DropPoint, plan CleanupP
 		if assigned == nil {
 			assigned = point.Location
 		}
-		load := &Load{Place: point.Place, Type: point.Place.TypeID(), Location: location}
+		load := &Load{Place: point.Place, Location: location}
 		out = append(out, &Assign{Name: point.Temporary, Value: load, Location: assigned})
 		return drop(&RefName{Name: point.Temporary, Type: point.Place.TypeID(), Location: location})
 	case DropDiscarded:

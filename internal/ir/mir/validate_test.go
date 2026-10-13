@@ -171,7 +171,6 @@ func TestValidateReportsDefects(t *testing.T) {
 							Kind: PlaceProjectionIndex, Index: &RefConst{Value: "0", Type: i32}, Type: boolean,
 						}},
 					},
-					Type: boolean,
 				}}}
 			},
 			want: "indexes incompatible type#",
@@ -435,8 +434,7 @@ func TestValidateRejectsNestedTypedNilValues(t *testing.T) {
 			name: "place root",
 			module: func() *Module {
 				module := wellFormed()
-				i32 := module.Types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: true, Bits: 32})
-				module.Funcs[0].Blocks[0].Instrs = []Instr{&Assign{Value: &Load{Place: &Place{Root: typedNilValueRef()}, Type: i32}}}
+				module.Funcs[0].Blocks[0].Instrs = []Instr{&Assign{Value: &Load{Place: &Place{Root: typedNilValueRef()}}}}
 				return module
 			},
 			want: "load place root is nil",
@@ -451,7 +449,7 @@ func TestValidateRejectsNestedTypedNilValues(t *testing.T) {
 					Root: &RefName{Name: "values", Type: array}, Projections: []PlaceProjection{{
 						Kind: PlaceProjectionIndex, Index: typedNilValueRef(), Type: i32,
 					}},
-				}, Type: i32}}}
+				}}}}
 				return module
 			},
 			want: "projection 0 index is nil",

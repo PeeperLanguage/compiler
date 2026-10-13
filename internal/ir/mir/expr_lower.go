@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"compiler/internal/ir"
-	"compiler/internal/source"
 )
 
 func (l *lowerer) appendInstr(out *[]Instr, instr Instr) {
@@ -31,12 +30,6 @@ func (l *lowerer) appendInstr(out *[]Instr, instr Instr) {
 		node.Location = l.location
 	}
 	*out = append(*out, instr)
-}
-
-func (l *lowerer) load(out *[]Instr, place *Place, typ ir.TypeID, loc *source.Location) ValueRef {
-	name := l.nextTemp()
-	l.appendInstr(out, &Assign{Name: name, Value: &Load{Place: place, Type: typ, Location: loc}})
-	return &RefName{Name: name, Type: typ, Location: loc}
 }
 
 func identifierRef(expr *ir.Ident) *RefName {
@@ -199,7 +192,7 @@ func (l *lowerer) lowerExpr(expr ir.Expr, out *[]Instr) ValueRef {
 		return nil
 	case *ir.Load:
 		place := l.lowerPlace(e.Place, out)
-		value := l.load(out, place, e.TypeID(), e.Origin().Location)
+		value := l.storeInTemp(out, e, &Load{Place: place, Location: e.Origin().Location})
 		l.appendInstr(out, &DropPoint{Kind: DropProjectionBase, Node: e.NodeID, Value: place.Root})
 		return value
 	case *ir.Len:

@@ -2480,7 +2480,6 @@ func TestGenerateLLVMIRLoadsTaggedOptionalPayload(t *testing.T) {
 							{Kind: mir.PlaceProjectionVariantPayload, Case: ir.OptionalPresentCase, Type: llvmTypes.i32},
 						},
 					},
-					Type: llvmTypes.i32,
 				}}},
 				Term: &mir.Ret{Value: &mir.RefName{Name: "payload", Type: llvmTypes.i32}},
 			}},
@@ -2974,7 +2973,7 @@ func indexReadMIRModule(baseType ir.TypeID, index mir.ValueRef) *mir.Module {
 						Instrs: []mir.Instr{
 							&mir.Assign{
 								Name:  "item",
-								Value: &mir.Load{Place: indexedMIRPlace(baseType, index), Type: llvmTypes.i32},
+								Value: &mir.Load{Place: indexedMIRPlace(baseType, index)},
 							},
 						},
 						Term: &mir.Ret{Value: &mir.RefName{Name: "item", Type: llvmTypes.i32}},
@@ -3392,7 +3391,7 @@ func TestGenerateLLVMIRLowersDeepMixedPlace(t *testing.T) {
 		ReturnType: llvmTypes.i32,
 		Blocks: []*mir.Block{{
 			ID:     0,
-			Instrs: []mir.Instr{&mir.Assign{Name: "value", Value: &mir.Load{Place: place, Type: llvmTypes.i32}}},
+			Instrs: []mir.Instr{&mir.Assign{Name: "value", Value: &mir.Load{Place: place}}},
 			Term:   &mir.Ret{Value: &mir.RefName{Name: "value", Type: llvmTypes.i32}},
 		}},
 	}}}
@@ -3420,7 +3419,7 @@ func TestGenerateLLVMIRAllocatesPlaceRootBeforeBranches(t *testing.T) {
 			{ID: 0, Instrs: []mir.Instr{&mir.Assign{Name: "box", Value: &mir.StructLit{Fields: []mir.ValueRef{&mir.RefConst{Value: "0", Type: llvmTypes.i32}}, Type: boxType}}}, Term: &mir.Branch{Cond: &mir.RefName{Name: "cond", Type: llvmTypes.boolType}, ThenID: 1, ElseID: 2}},
 			{ID: 1, Instrs: []mir.Instr{&mir.Store{Place: place, Value: &mir.RefConst{Value: "1", Type: llvmTypes.i32}}}, Term: &mir.Jump{TargetID: 3}},
 			{ID: 2, Instrs: []mir.Instr{&mir.Store{Place: place, Value: &mir.RefConst{Value: "2", Type: llvmTypes.i32}}}, Term: &mir.Jump{TargetID: 3}},
-			{ID: 3, Instrs: []mir.Instr{&mir.Assign{Name: "value", Value: &mir.Load{Place: place, Type: llvmTypes.i32}}}, Term: &mir.Ret{Value: &mir.RefName{Name: "value", Type: llvmTypes.i32}}},
+			{ID: 3, Instrs: []mir.Instr{&mir.Assign{Name: "value", Value: &mir.Load{Place: place}}}, Term: &mir.Ret{Value: &mir.RefName{Name: "value", Type: llvmTypes.i32}}},
 		},
 	}}}
 
@@ -3744,7 +3743,7 @@ func TestGenerateLLVMIRLowersNamedVariantOperationsAndDrop(t *testing.T) {
 					Name: "payload", Value: &mir.Load{Place: &mir.Place{
 						Root:        &mir.RefName{Name: "result", Type: result},
 						Projections: []mir.PlaceProjection{{Kind: mir.PlaceProjectionVariantPayload, Case: 1, Type: llvmTypes.ownedI32}},
-					}, Type: llvmTypes.ownedI32},
+					}},
 				}}, Term: &mir.Ret{Value: &mir.RefName{Name: "payload", Type: llvmTypes.ownedI32}}}},
 			},
 			{
@@ -3803,7 +3802,7 @@ func TestGenerateLLVMIRDropsNamedVariantPayloadFieldAcrossTargetWidths(t *testin
 									{Kind: mir.PlaceProjectionVariantPayload, Case: 0, Type: payload},
 									{Kind: mir.PlaceProjectionField, FieldIndex: 0, Type: types.ownedI32},
 								},
-							}, Type: types.ownedI32}},
+							}}},
 							&mir.Drop{Value: &mir.RefName{Name: "owned", Type: types.ownedI32}},
 						},
 						Term: &mir.Ret{},

@@ -331,9 +331,6 @@ func validateValueExpr(types *ir.TypeTable, expr ValueExpr, where string) []stri
 		}
 	case *Load:
 		problems = append(problems, validatePlace(types, node.Place, where+" load place")...)
-		if node.Place != nil && node.Place.TypeID() != node.Type {
-			problems = append(problems, fmt.Sprintf("%s loads place type#%d as type#%d", where, node.Place.TypeID(), node.Type))
-		}
 	case *Len:
 		problems = append(problems, validateValueRef(types, node.Value, where+" length value")...)
 	case *StringChars:

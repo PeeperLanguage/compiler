@@ -305,7 +305,6 @@ type SliceView struct {
 
 type Load struct {
 	Place    *Place
-	Type     ir.TypeID
 	Location *source.Location
 }
 
@@ -506,7 +505,7 @@ func (v *StringConcat) TypeID() ir.TypeID      { return v.Type }
 func (v *Cast) TypeID() ir.TypeID              { return v.Type }
 func (v *AddrOf) TypeID() ir.TypeID            { return v.Type }
 func (v *SliceView) TypeID() ir.TypeID         { return v.Type }
-func (v *Load) TypeID() ir.TypeID              { return v.Type }
+func (v *Load) TypeID() ir.TypeID              { return v.Place.TypeID() }
 func (v *Len) TypeID() ir.TypeID               { return v.Type }
 func (v *StringChars) TypeID() ir.TypeID       { return v.Type }
 func (v *StringFromBytes) TypeID() ir.TypeID   { return v.Type }
