@@ -439,17 +439,12 @@ func (a *flowAnalyzer) AnalyzeCast(expr *thir.Cast) {
 	a.finish(expr)
 }
 
-// recordCaseTest notes the payload path a case test reads its subject
-// through, and orders the test among the site's events.
+// recordCaseTest orders a case test among the site's events.
 func (a *flowAnalyzer) recordCaseTest(expr thir.Expr) {
-	test := thir.CaseTestOf(expr)
-	if test == nil {
+	if thir.CaseTestOf(expr) == nil {
 		return
 	}
 	id := expr.SourceInfo().NodeID
-	if payload, ok := a.result.Payload(test.SubjectID); ok && payload.AppliesTo(a.result.StorageOrigins(test.SubjectID)) {
-		a.result.expressions.testPaths[id] = payload.Cases
-	}
 	if a.events != nil {
 		a.events.next++
 		a.events.tests[id] = a.events.next
@@ -844,8 +839,14 @@ func (a *flowAnalyzer) impliedVariants(expr thir.Expr, truth bool, state flowSta
 		if events != nil {
 			order = events.tests[expr.SourceInfo().NodeID]
 		}
+		// A subject that is itself a narrowed payload is reached through the
+		// cases flow proved for it; read them now, so they are the latest.
+		var path []int
+		if payload, ok := a.result.Payload(test.SubjectID); ok && payload.AppliesTo(a.result.StorageOrigins(test.SubjectID)) {
+			path = payload.Cases
+		}
 		return []edgeVariantFact{{variant: variantStateFact{
-			origins: place.VariantPayloadOrigins(resolution.StorageOrigins, a.result.expressions.testPaths[expr.SourceInfo().NodeID]),
+			origins: place.VariantPayloadOrigins(resolution.StorageOrigins, path),
 			cases:   cases, caseCount: test.CaseCount,
 			dependencies: append([]*symbols.Symbol(nil), resolution.Dependencies...),
 		}, order: order}}

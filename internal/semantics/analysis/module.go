@@ -48,10 +48,7 @@ type AggregateSlot struct {
 }
 
 type expressionEvidence struct {
-	payloads map[source.NodeID]PayloadAccess
-	// testPaths holds, for a case test whose subject is itself a narrowed
-	// payload, the cases read through to reach that subject.
-	testPaths  map[source.NodeID][]int
+	payloads   map[source.NodeID]PayloadAccess
 	origins    map[source.NodeID]OriginResolution
 	aggregates map[source.NodeID][]AggregateSlot
 }
@@ -66,7 +63,6 @@ type Module struct {
 func newModule() *Module {
 	return &Module{expressions: expressionEvidence{
 		payloads:   make(map[source.NodeID]PayloadAccess),
-		testPaths:  make(map[source.NodeID][]int),
 		origins:    make(map[source.NodeID]OriginResolution),
 		aggregates: make(map[source.NodeID][]AggregateSlot),
 	}}
