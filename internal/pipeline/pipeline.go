@@ -437,17 +437,26 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 				"control-flow topology is malformed: "+err.Error(), nil, "")
 		}
 		cfg.Analyze(module.CFG, phaseDiag, func(branch *cfg.Branch) (bool, bool) {
-			statement, ok := module.THIR.Node(branch.NodeID).(*thir.If)
-			if !ok || statement == nil {
+			var constant *bool
+			switch statement := module.THIR.Node(branch.NodeID).(type) {
+			case *thir.If:
+				if statement == nil {
+					return false, false
+				}
+				for _, pending := range statement.ConditionDiagnostics {
+					phaseDiag.Add(pending)
+				}
+				constant = statement.ConstantCondition
+			case *thir.For:
+				if statement == nil {
+					return false, false
+				}
+				constant = statement.ConstantCondition
+			}
+			if constant == nil {
 				return false, false
 			}
-			for _, pending := range statement.ConditionDiagnostics {
-				phaseDiag.Add(pending)
-			}
-			if statement.ConstantCondition == nil {
-				return false, false
-			}
-			return *statement.ConstantCondition, true
+			return *constant, true
 		})
 		module.Phase = phase.CFG
 		ctx.Metrics.AddPhaseAdvance()

@@ -29,9 +29,9 @@ func analyzeFunction(fn *ControlFlowGraph, diag *diagnostics.DiagnosticBag, cons
 			if block == nil {
 				continue
 			}
-			if branch, ok := block.Terminator.(*Branch); ok && block.Origin != BlockLoop && constantCondition != nil {
+			if branch, ok := block.Terminator.(*Branch); ok && constantCondition != nil {
 				if value, found := constantCondition(branch); found {
-					reportConstantCondition(branch, value, diag)
+					reportConstantCondition(branch, value, block.Origin == BlockLoop, diag)
 				}
 			}
 			if block.IsReachable {
@@ -49,7 +49,7 @@ func analyzeFunction(fn *ControlFlowGraph, diag *diagnostics.DiagnosticBag, cons
 	}
 }
 
-func reportConstantCondition(branch *Branch, value bool, diag *diagnostics.DiagnosticBag) {
+func reportConstantCondition(branch *Branch, value, isLoop bool, diag *diagnostics.DiagnosticBag) {
 	if branch == nil || diag == nil {
 		return
 	}
@@ -64,7 +64,11 @@ func reportConstantCondition(branch *Branch, value bool, diag *diagnostics.Diagn
 	if location == nil {
 		location = branch.Location
 	}
-	diag.Add(diagnostics.NewWarning(msg).WithCode(code).WithPrimaryLabel(location, msg))
+	warning := diagnostics.NewWarning(msg).WithCode(code).WithPrimaryLabel(location, msg)
+	if isLoop && value {
+		warning.Help("write `for` with no condition for a loop that never ends")
+	}
+	diag.Add(warning)
 }
 
 // missingReturnCause is one path that reaches the end of a function without

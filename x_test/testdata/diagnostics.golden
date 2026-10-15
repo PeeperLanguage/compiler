@@ -189,6 +189,66 @@ Compilation succeeded with 1 warning(s)
 
 Compilation succeeded with 3 warning(s)
 === for_range_loop (exit 0)
+=== for_true_endless_loop (exit 0)
+[W0018]: `for true` is an endless loop
+   --> for_true_endless_loop/src/main.peep:10:9
+   |
+ 9 | fn ForTrueAtEnd(a: i32) -> i32 {
+10 |     for true {
+   |         ^^^^ this condition is always true
+   |
+   = help: write `for` with no condition
+   |
+10 |     for {
+
+[W0018]: `for true` is an endless loop
+   --> for_true_endless_loop/src/main.peep:17:9
+   |
+16 | fn ForTrueThenCode(a: i32) -> i32 {
+17 |     for true {
+   |         ^^^^ this condition is always true
+   |
+   = help: write `for` with no condition
+   |
+17 |     for {
+
+[W0001]: unreachable code
+   --> for_true_endless_loop/src/main.peep:20:5
+   |
+19 |     }
+20 |     return 1;
+   |     ^^^^^^^^^ this code is unreachable
+   |
+   = help: remove this code or restructure control flow
+
+[W0018]: `for true` is an endless loop
+   --> for_true_endless_loop/src/main.peep:25:9
+   |
+24 | fn ForTrueWithBreak(a: i32) -> i32 {
+25 |     for true {
+   |         ^^^^ this condition is always true
+   |
+   = help: write `for` with no condition
+   |
+25 |     for {
+
+[W0002]: condition is always true
+   --> for_true_endless_loop/src/main.peep:43:9
+   |
+42 | fn NamedTrue(a: i32) -> i32 {
+43 |     for Always {
+   |         ^^^^^^ condition is always true
+   |
+   = help: write `for` with no condition for a loop that never ends
+
+[W0003]: condition is always false
+   --> for_true_endless_loop/src/main.peep:50:9
+   |
+49 | fn NamedFalse(a: i32) -> i32 {
+50 |     for Never {
+   |         ^^^^^ condition is always false
+
+Compilation succeeded with 6 warning(s)
 === import_basic (exit 0)
 === import_default_parameters (exit 0)
 [S0001]: trailing comma is unnecessary

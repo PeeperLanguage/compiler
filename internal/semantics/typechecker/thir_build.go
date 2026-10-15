@@ -296,6 +296,13 @@ func (b *thirBuilder) forStatement(source *ast.ForStmt) *thir.For {
 		loop.Body.Stmts = append(append(header.stmts, test), loop.Body.Stmts...)
 		loop.Condition = nil
 	}
+	switch {
+	case loop.ConditionIsTrueLiteral():
+		b.diagnostics.Add(endlessLoopWarning(loop.Condition.SourceInfo().Location))
+	case loop.Condition != nil && b.constantCondition != nil:
+		// Only the value is kept: what evaluating it reports is the checker's.
+		loop.ConstantCondition, _ = b.constantCondition(source.Cond)
+	}
 	if b.typing == nil {
 		return loop
 	}

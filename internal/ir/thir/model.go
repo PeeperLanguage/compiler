@@ -406,9 +406,18 @@ type For struct {
 	Value     *symbols.Symbol
 	Iterable  Expr
 	Condition Expr
-	Body      *Block
-	Iteration IterationPlan
-	Checked   *Block
+	// ConstantCondition is the value of a condition known at compile time.
+	ConstantCondition *bool
+	Body              *Block
+	Iteration         IterationPlan
+	Checked           *Block
+}
+
+// ConditionIsTrueLiteral reports a loop written `for true`, which is the
+// endless loop `for` with a longer spelling: it has no way to finish.
+func (s *For) ConditionIsTrueLiteral() bool {
+	literal, ok := s.Condition.(*BoolLiteral)
+	return ok && literal.Value
 }
 
 type Break struct{ StmtInfo }

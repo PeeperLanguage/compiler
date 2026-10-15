@@ -228,7 +228,7 @@ func (b *builder) BuildFor(statement *thir.For) {
 	b.current.Terminator = &Jump{Target: init}
 
 	latchTarget := bodyBlock
-	if !typednil.IsNil(statement.Condition) || !typednil.IsNil(statement.Iterable) {
+	if (!typednil.IsNil(statement.Condition) && !statement.ConditionIsTrueLiteral()) || !typednil.IsNil(statement.Iterable) {
 		header := b.newBlock(BlockLoop, source.Location)
 		header.NodeID = source.NodeID
 		conditionID := sourceid.NodeID{}

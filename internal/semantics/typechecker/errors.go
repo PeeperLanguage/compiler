@@ -5,6 +5,7 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/source"
 )
 
 func invalidExpressionError(node ast.Node, message string) *diagnostics.Diagnostic {
@@ -56,4 +57,21 @@ func wrongArgumentCountError(node ast.Node, got, want int) *diagnostics.Diagnost
 	return diagnostics.NewError(fmt.Sprintf("wrong number of arguments: got %d, want %d", got, want)).
 		WithPrimaryLabel(ast.LocOf(node), "").
 		WithCode(diagnostics.ErrWrongArgumentCount)
+}
+
+// endlessLoopWarning suggests the plain `for` for a `for true`, with the edit
+// that removes the condition and the space before it.
+func endlessLoopWarning(condition *source.Location) *diagnostics.Diagnostic {
+	warning := diagnostics.NewWarning("`for true` is an endless loop").
+		WithCode(diagnostics.WarnEndlessLoopCondition).
+		WithPrimaryLabel(condition, "this condition is always true")
+	if condition == nil || condition.Filename == nil || condition.Start == nil || condition.End == nil {
+		return warning.Help("write `for` with no condition")
+	}
+	start := *condition.Start
+	if start.Column > 1 {
+		start.Column--
+		start.Index--
+	}
+	return warning.Help("write `for` with no condition", diagnostics.Fix.Remove(source.NewLocation(*condition.Filename, start, *condition.End)))
 }

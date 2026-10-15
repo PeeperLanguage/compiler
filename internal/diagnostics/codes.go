@@ -114,4 +114,5 @@ const (
 	WarnNonSelfReceiverName    = "W0014"
 	WarnIgnoredTargetOS        = "W0015"
 	WarnLeadingZeroDecimal     = "W0017"
+	WarnEndlessLoopCondition   = "W0018"
 )

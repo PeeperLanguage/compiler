@@ -410,7 +410,7 @@ func TestBuildModuleUsesGuaranteedLoopEntryEvidence(t *testing.T) {
 func TestBuildModuleContinueTargetsLatchAndPreservesUnreachableBody(t *testing.T) {
 	loop := &ast.ForStmt{
 		NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(30)},
-		Cond:         &ast.BoolLit{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(31)}, Value: true},
+		Cond:         &ast.Ident{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(31)}, Name: "again"},
 		Body: &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(32)}, Stmts: []ast.Stmt{
 			&ast.ContinueStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(40)}},
 			&ast.ExprStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(41)}, Expr: &ast.NumberLit{Value: "1"}},
@@ -625,22 +625,53 @@ func TestAnalyzeReportsConstantIfCondition(t *testing.T) {
 	}
 }
 
-func TestAnalyzeDoesNotReportConstantLoopCondition(t *testing.T) {
-	location := source.NewLocation("cfg_test.peep", source.Position{Line: 2, Column: 1}, source.Position{Line: 4, Column: 2})
-	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(10)}, Stmts: []ast.Stmt{&ast.ForStmt{
+// A loop whose condition is known at compile time is reported like an if,
+// once, at the condition.
+func TestAnalyzeReportsConstantLoopCondition(t *testing.T) {
+	condition := source.NewLocation("cfg_test.peep", source.Position{Line: 2, Column: 5}, source.Position{Line: 2, Column: 10})
+	loop := &ast.ForStmt{
 		NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(30)},
-		Cond:         &ast.BoolLit{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(31)}, Value: false, Location: location},
+		Cond:         &ast.BoolLit{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(31)}, Value: false, Location: condition},
 		Body:         &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(32)}},
-		Location:     location,
-	}}}
+	}
 	diag := diagnostics.NewDiagnosticBag()
 	queries := 0
-	Analyze(BuildModule(testModule(body, nil)), diag, func(*Branch) (bool, bool) {
+	Analyze(BuildModule(testModule(&ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(10)}, Stmts: []ast.Stmt{loop}}, nil)), diag, func(*Branch) (bool, bool) {
 		queries++
 		return false, true
 	})
-	if queries != 0 || hasDiagnosticCode(diag, diagnostics.WarnConstantConditionFalse) {
-		t.Fatalf("loop condition produced if-only diagnostic: queries=%v diagnostics=%#v", queries, diag.Diagnostics())
+	reported := diag.Diagnostics()
+	if queries != 1 || len(reported) != 1 || reported[0].Code != diagnostics.WarnConstantConditionFalse {
+		t.Fatalf("queries=%d diagnostics=%#v, want one constant-false warning", queries, reported)
+	}
+	if label := reported[0].Labels[0]; label.Location.Start.Line != 2 || label.Location.Start.Column != 5 {
+		t.Fatalf("warning points at %v, want the condition", label.Location.Start)
+	}
+}
+
+// `for true` is `for` spelled longer: no header, no way to finish, and nothing
+// to report from the constant-condition check.
+func TestBuildModuleTreatsForTrueAsAnEndlessLoop(t *testing.T) {
+	loop := &ast.ForStmt{
+		NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(30)},
+		Cond:         &ast.BoolLit{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(31)}, Value: true},
+		Body:         &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(32)}},
+	}
+	returnType := &ast.NamedType{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(11)}, Name: "i32"}
+	module := BuildModule(testModule(&ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(10)}, Stmts: []ast.Stmt{loop}}, returnType))
+	graph := module.Functions[0]
+	for _, block := range graph.Blocks {
+		if block.Origin == BlockLoop {
+			t.Fatalf("for true has a loop header %#v", block)
+		}
+	}
+	if graph.Exit.IsReachable {
+		t.Fatal("the end of the function is reachable after for true with no break")
+	}
+	diag := diagnostics.NewDiagnosticBag()
+	Analyze(module, diag, func(*Branch) (bool, bool) { return true, true })
+	if len(diag.Diagnostics()) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diag.Diagnostics())
 	}
 }
 

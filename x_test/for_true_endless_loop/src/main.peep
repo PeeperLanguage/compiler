@@ -1,0 +1,54 @@
+const Always: bool = true;
+const Never: bool = false;
+
+fn Touch(_: i32) {}
+
+// `for true` is the endless loop `for` spelled longer: it has no way to finish,
+// so a function that ends with it needs no return, and the compiler suggests
+// the plain `for`.
+fn ForTrueAtEnd(a: i32) -> i32 {
+    for true {
+        Touch(a);
+    }
+}
+
+// Code after an endless loop can never run.
+fn ForTrueThenCode(a: i32) -> i32 {
+    for true {
+        Touch(a);
+    }
+    return 1;
+}
+
+// A `break` is a way out, so the code after the loop is reachable.
+fn ForTrueWithBreak(a: i32) -> i32 {
+    for true {
+        if a > 0 {
+            break;
+        }
+    }
+    return 1;
+}
+
+// The plain form says the same without a warning.
+fn Plain(a: i32) -> i32 {
+    for {
+        Touch(a);
+    }
+}
+
+// Other constants are reported like the condition of an `if`, and the loop
+// still counts as one that can finish.
+fn NamedTrue(a: i32) -> i32 {
+    for Always {
+        Touch(a);
+    }
+    return 1;
+}
+
+fn NamedFalse(a: i32) -> i32 {
+    for Never {
+        Touch(a);
+    }
+    return 1;
+}
