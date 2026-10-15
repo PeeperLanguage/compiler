@@ -3,6 +3,7 @@ package typeresolution
 import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/module"
+	"compiler/internal/moduleid"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 )
@@ -53,8 +54,8 @@ func (r *Resolver) CanonicalEnumDeclaration(typ typeinfo.Type) (*module.Module, 
 		return nil, nil, false
 	}
 
-	qualifierOwner := r.typeOwner(qualified)
-	declarationOwner := r.typeOwner(canonical)
+	qualifierOwner := r.typeOwner(qualified.Identity)
+	declarationOwner := r.typeOwner(canonical.Identity)
 	if qualifierOwner == nil || declarationOwner == nil || declarationOwner.ModuleScope == nil {
 		return nil, nil, false
 	}
@@ -68,23 +69,17 @@ func (r *Resolver) CanonicalEnumDeclaration(typ typeinfo.Type) (*module.Module, 
 	return qualifierOwner, declaration, true
 }
 
-// typeOwner reads resolver state before consulting project module identity.
-// Keeping lock acquisition in this order lets project registration update its
-// module registry and derived resolver index atomically without lock inversion.
-func (r *Resolver) typeOwner(defined *typeinfo.DefinedType) *module.Module {
-	if r == nil || defined == nil {
+// typeOwner returns the module that declares the type with this identity. A
+// type identity names its declaring module, and a generic instance keeps that
+// prefix, so no resolver index is needed.
+func (r *Resolver) typeOwner(identity string) *module.Module {
+	if r == nil || r.modules == nil {
 		return nil
 	}
-	r.mu.RLock()
-	owner := r.declarations[defined.Identity]
-	instance, found := r.instances[defined.Identity]
-	r.mu.RUnlock()
-	if owner != nil {
-		return owner
-	}
-	if !found || instance.typ != defined || !instance.isComplete || r.modules == nil {
+	ownerID, _, ok := moduleid.ParseTypeIdentity(identity)
+	if !ok {
 		return nil
 	}
-	owner, _ = r.modules.ModuleByID(instance.ownerModuleID)
+	owner, _ := r.modules.ModuleByID(ownerID)
 	return owner
 }

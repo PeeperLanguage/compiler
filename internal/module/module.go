@@ -1,8 +1,6 @@
 package module
 
 import (
-	"slices"
-
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/mir"
@@ -94,20 +92,6 @@ func (m *Module) TypeDeclaration(identity string) (TypeDeclaration, bool) {
 	}
 	declaration, ok := m.typeDeclarations[identity]
 	return declaration, ok
-}
-
-// TypeDeclarationIdentities returns retained declaration identities without
-// exposing the module's artifact storage.
-func (m *Module) TypeDeclarationIdentities() []string {
-	if m == nil {
-		return nil
-	}
-	identities := make([]string, 0, len(m.typeDeclarations))
-	for identity := range m.typeDeclarations {
-		identities = append(identities, identity)
-	}
-	slices.Sort(identities)
-	return identities
 }
 
 // RecordImportedUse publishes usage only after a source semantic phase has

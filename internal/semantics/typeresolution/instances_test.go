@@ -7,7 +7,6 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/module"
 	"compiler/internal/moduleid"
-	"compiler/internal/phase"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/target"
@@ -171,21 +170,17 @@ func TestResetModulePurgesOnlyOwnedNamedTypeInstances(t *testing.T) {
 	resolver := New(target.Host(), nil)
 	ownerID := moduleid.ID{Origin: "local", ImportPath: "owner"}
 	otherID := moduleid.ID{Origin: "local", ImportPath: "other"}
-	resolver.instances["owner::Box<i32>"] = namedTypeInstance{
-		ownerModuleID: ownerID,
-		typ:           &typeinfo.DefinedType{Name: "Box", Identity: "owner::Box<i32>"},
-	}
-	resolver.instances["other::Box<i32>"] = namedTypeInstance{
-		ownerModuleID: otherID,
-		typ:           &typeinfo.DefinedType{Name: "Box", Identity: "other::Box<i32>"},
-	}
+	ownerBox := moduleid.TypeIdentity(ownerID, "Box") + "<i32>"
+	otherBox := moduleid.TypeIdentity(otherID, "Box") + "<i32>"
+	resolver.instances[ownerBox] = namedTypeInstance{typ: &typeinfo.DefinedType{Name: "Box", Identity: ownerBox}}
+	resolver.instances[otherBox] = namedTypeInstance{typ: &typeinfo.DefinedType{Name: "Box", Identity: otherBox}}
 
-	resolver.ResetModule(&module.Module{ID: ownerID}, phase.Parsed)
+	resolver.ResetModule(&module.Module{ID: ownerID})
 
-	if _, found := resolver.instances["owner::Box<i32>"]; found {
+	if _, found := resolver.instances[ownerBox]; found {
 		t.Fatal("reset retained instance owned by reset module")
 	}
-	if _, found := resolver.instances["other::Box<i32>"]; !found {
+	if _, found := resolver.instances[otherBox]; !found {
 		t.Fatal("reset removed instance owned by another module")
 	}
 }
@@ -198,9 +193,10 @@ func genericQueryContext(t *testing.T) (*Resolver, *diagnostics.DiagnosticBag, *
 		ModuleScope: symbols.NewScope(nil),
 		SymbolIndex: symbols.NewIndex(),
 	}
+	identity := mod.TypeDeclarationIdentity("Box")
 	base := &typeinfo.DefinedType{
-		Name: "Box", Identity: "main::Box", Kind: typeinfo.DefinedKindStruct,
-		TypeParameters: []*typeinfo.TypeParameterType{{Name: "T", OwnerIdentity: "main::Box", Index: 0}},
+		Name: "Box", Identity: identity, Kind: typeinfo.DefinedKindStruct,
+		TypeParameters: []*typeinfo.TypeParameterType{{Name: "T", OwnerIdentity: identity, Index: 0}},
 	}
 	symbol := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolType, "Box"), "Box", symbols.SymbolType, nil, nil)
 	symbol.BindType(base)
@@ -209,4 +205,24 @@ func genericQueryContext(t *testing.T) (*Resolver, *diagnostics.DiagnosticBag, *
 	}
 	modules := testModules{mod.ID: mod}
 	return New(target.Host(), modules), diag, mod, base
+}
+
+func TestTypeOwnerReadsTheDeclaringModuleFromTheIdentity(t *testing.T) {
+	resolver, _, mod, base := genericQueryContext(t)
+	unregistered := moduleid.ID{Origin: "local", ImportPath: "elsewhere"}
+	for _, test := range []struct {
+		name     string
+		identity string
+		want     *module.Module
+	}{
+		{"declaration", base.Identity, mod},
+		{"generic instance", base.Identity + "<i32>", mod},
+		{"module that is not registered", moduleid.TypeIdentity(unregistered, "Box"), nil},
+		{"identity of no module", "Box", nil},
+		{"empty identity", "", nil},
+	} {
+		if got := resolver.typeOwner(test.identity); got != test.want {
+			t.Errorf("%s: owner = %p, want %p", test.name, got, test.want)
+		}
+	}
 }

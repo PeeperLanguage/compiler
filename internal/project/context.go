@@ -190,7 +190,7 @@ func (ctx *CompilerContext) ResetModule(module *module.Module, retained phase.Ph
 		return
 	}
 	if ctx.TypeResolver != nil {
-		ctx.TypeResolver.ResetModule(module, retained)
+		ctx.TypeResolver.ResetModule(module)
 	}
 	module.ResetToPhase(retained)
 	if ctx.Diagnostics != nil && module.ID.IsValid() {

@@ -7,16 +7,14 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/module"
-	"compiler/internal/moduleid"
 	"compiler/internal/semantics/typeinfo"
 )
 
 type namedTypeInstance struct {
-	ownerModuleID moduleid.ID
-	base          *typeinfo.DefinedType
-	typ           *typeinfo.DefinedType
-	ready         chan struct{}
-	isComplete    bool
+	base       *typeinfo.DefinedType
+	typ        *typeinfo.DefinedType
+	ready      chan struct{}
+	isComplete bool
 }
 
 type typeInstantiationFrame struct {
@@ -34,7 +32,6 @@ func (r *Resolver) RegisterTypeDeclaration(owner *module.Module, declaration ast
 	}
 	r.mu.Lock()
 	owner.RecordTypeDeclaration(base.Identity, module.TypeDeclaration{Syntax: declaration, Base: base})
-	r.declarations[base.Identity] = owner
 	r.mu.Unlock()
 }
 
@@ -92,13 +89,13 @@ func (r *Resolver) instantiateType(diag *diagnostics.DiagnosticBag, base *typein
 		}
 		return &typeinfo.InvalidType{}
 	}
-	declarationModule, ok := r.declarations[base.Identity]
+	declarationModule := r.typeOwner(base.Identity)
 	declaration := module.TypeDeclaration{}
 	declarationOK := false
 	if declarationModule != nil {
 		declaration, declarationOK = declarationModule.TypeDeclaration(base.Identity)
 	}
-	if !ok || declarationModule == nil || !declarationOK || declaration.Syntax == nil || declaration.Base != base {
+	if declarationModule == nil || !declarationOK || declaration.Syntax == nil || declaration.Base != base {
 		r.mu.Unlock()
 		if diag != nil {
 			diag.AddError(diagnostics.ErrInvalidType,
@@ -116,10 +113,9 @@ func (r *Resolver) instantiateType(diag *diagnostics.DiagnosticBag, base *typein
 	// Cache provisional shell before substitution. Recursive pointer/reference
 	// applications resolve back to this exact object.
 	r.instances[identity] = namedTypeInstance{
-		ownerModuleID: declarationModule.ID,
-		base:          base,
-		typ:           instance,
-		ready:         make(chan struct{}),
+		base:  base,
+		typ:   instance,
+		ready: make(chan struct{}),
 	}
 	r.mu.Unlock()
 
@@ -180,7 +176,7 @@ func (r *Resolver) CompleteTypeInstances(diag *diagnostics.DiagnosticBag, bases 
 	for _, identity := range identities {
 		r.mu.RLock()
 		cached := r.instances[identity]
-		declarationModule := r.declarations[cached.base.Identity]
+		declarationModule := r.typeOwner(cached.base.Identity)
 		declaration := module.TypeDeclaration{}
 		declarationOK := false
 		if declarationModule != nil {

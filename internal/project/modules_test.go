@@ -313,15 +313,16 @@ func TestCompilerContextResetModuleDiscardsOnlyDownstreamDiagnostics(t *testing.
 	}
 }
 
-func TestCompilerContextReindexesCollectedTypeDeclarations(t *testing.T) {
+func TestCompilerContextResolvesRetainedTypeDeclarations(t *testing.T) {
 	mod := &module.Module{
 		ID:          moduleid.ID{Origin: string(ModuleOriginLocal), ImportPath: "owner"},
 		Phase:       phase.Collected,
 		ModuleScope: symbols.NewScope(nil),
 	}
+	identity := mod.TypeDeclarationIdentity("Box")
 	base := &typeinfo.DefinedType{
-		Name: "Box", Identity: "owner::Box", Kind: typeinfo.DefinedKindStruct,
-		TypeParameters: []*typeinfo.TypeParameterType{{Name: "T", OwnerIdentity: "owner::Box", Index: 0}},
+		Name: "Box", Identity: identity, Kind: typeinfo.DefinedKindStruct,
+		TypeParameters: []*typeinfo.TypeParameterType{{Name: "T", OwnerIdentity: identity, Index: 0}},
 	}
 	declaration := &ast.StructDecl{Name: &ast.Ident{Name: "Box"}, Type: &ast.StructType{}}
 	symbol := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolType, "Box"), "Box", symbols.SymbolType, declaration, nil)
@@ -339,7 +340,7 @@ func TestCompilerContextReindexesCollectedTypeDeclarations(t *testing.T) {
 		TypeArgs: []ast.TypeExpr{&ast.NamedType{Name: "i32"}},
 	}, typeresolution.Context{})
 	if typeinfo.IsInvalid(resolved) {
-		t.Fatalf("retained generic declaration did not reindex: %#v", resolved)
+		t.Fatalf("retained generic declaration did not resolve in a fresh context: %#v", resolved)
 	}
 
 	fresh.ResetModule(mod, phase.Parsed)

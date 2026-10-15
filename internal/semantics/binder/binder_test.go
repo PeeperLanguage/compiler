@@ -37,6 +37,7 @@ fn Alpha(value: Value, extra: i32) {}`
 		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
 		Imports:  make(map[string]module.ResolvedImport),
 	}
+	ctx.AddModule(module)
 	collector.Collect(ctx, module)
 	Bind(ctx, module)
 	if diag.HasErrors() {
@@ -99,6 +100,7 @@ struct B { a: A }`,
 				AST:      parser.New(filePath, lexer.New(filePath, test.source, diag).Tokenize(), diag).ParseModule(),
 				Imports:  make(map[string]module.ResolvedImport),
 			}
+			ctx.AddModule(module)
 			collector.Collect(ctx, module)
 			Bind(ctx, module)
 
@@ -135,6 +137,7 @@ struct B { a: A }`
 		AST:      parser.New(filePath, lexer.New(filePath, firstSource, diag).Tokenize(), diag).ParseModule(),
 		Imports:  make(map[string]module.ResolvedImport),
 	}
+	ctx.AddModule(module)
 	collector.Collect(ctx, module)
 	Bind(ctx, module)
 	if diag.HasErrors() {
@@ -195,6 +198,7 @@ fn Use(value: Local) {}`
 			"dep": {ID: dependency.ID, FilePath: dependency.FilePath},
 		},
 	}
+	ctx.AddModule(consumer)
 	collector.Collect(ctx, consumer)
 	Bind(ctx, consumer)
 	if diag.HasErrors() {
@@ -223,6 +227,7 @@ fn Use(box: Box<i32>, again: Box<i32>, other: Box<i64>, nested: Box<Box<i32>>, n
 		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
 		Imports:  make(map[string]module.ResolvedImport),
 	}
+	ctx.AddModule(module)
 	collector.Collect(ctx, module)
 	Bind(ctx, module)
 	if diag.HasErrors() {
@@ -306,6 +311,7 @@ fn Use(alias: Choice<MyInt>, canonical: Choice<i32>) {}`
 		AST:      parser.New(filePath, lexer.New(filePath, src, diag).Tokenize(), diag).ParseModule(),
 		Imports:  make(map[string]module.ResolvedImport),
 	}
+	ctx.AddModule(module)
 	collector.Collect(ctx, module)
 	Bind(ctx, module)
 	if diag.HasErrors() {
@@ -345,6 +351,7 @@ func TestBindCompletesGenericArgumentDependencies(t *testing.T) {
 				AST:     parser.New(filePath, lexer.New(filePath, source, diag).Tokenize(), diag).ParseModule(),
 				Imports: make(map[string]module.ResolvedImport),
 			}
+			ctx.AddModule(module)
 			collector.Collect(ctx, module)
 			Bind(ctx, module)
 			if diag.HasErrors() {
@@ -415,6 +422,7 @@ fn Use(value: &Swap<i32, str>) {}`,
 				AST:      parser.New(filePath, lexer.New(filePath, test.source, diag).Tokenize(), diag).ParseModule(),
 				Imports:  make(map[string]module.ResolvedImport),
 			}
+			ctx.AddModule(module)
 			collector.Collect(ctx, module)
 			Bind(ctx, module)
 			out := diag.EmitAllToString()
@@ -461,6 +469,7 @@ func TestBindRequiresExactNamedTypeArguments(t *testing.T) {
 				AST:      parser.New(filePath, lexer.New(filePath, test.source, diag).Tokenize(), diag).ParseModule(),
 				Imports:  make(map[string]module.ResolvedImport),
 			}
+			ctx.AddModule(module)
 			collector.Collect(ctx, module)
 			Bind(ctx, module)
 			if !diag.HasErrors() || !strings.Contains(diag.EmitAllToString(), test.want) {

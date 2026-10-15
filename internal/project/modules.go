@@ -120,12 +120,6 @@ func (ctx *CompilerContext) AddModule(module *compilation.Module) *diagnostics.D
 		delete(ctx.fileIndex, previous.FilePath)
 	}
 
-	// Fresh LSP/compiler contexts re-register retained module snapshots. Their
-	// collected declarations are authoritative artifacts; this derived index must
-	// therefore be rebuilt even when collection does not run again.
-	if ctx.TypeResolver != nil {
-		ctx.TypeResolver.RegisterModule(module)
-	}
 	ctx.mu.Unlock()
 	return nil
 }
