@@ -787,8 +787,7 @@ Compilation failed with 1 error(s)
   |
 8 |     let value: Box = .{value = 1};
 9 |     bad(value);
-  |         ^^^^^
-  |         ----- moved here
+  |         ^^^^^ moved here
 
 Compilation failed with 2 error(s)
 === negative_deferred_enum_assignment (exit 1)
@@ -1715,7 +1714,7 @@ Compilation failed with 5 error(s)
 1 | struct Loop<T> {
 2 |     next: *Loop<Loop<T>>
   |            ^^^^^^^^^^^^^ `Loop<Loop<Loop<T>>>` changes recursive arguments
-  |            ------------- `Loop<Loop<T>>` started this instantiation
+  |                          `Loop<Loop<T>>` started this instantiation
   |
   = help: use the same canonical type arguments at every recursive reference
 
@@ -2444,22 +2443,17 @@ Compilation failed with 2 error(s)
    |
  7 | fn NotLast(shape: Shape) -> i32 {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   | ---------------------------------
  8 |     match shape {
    | ^^^^^^^^^^^^^^^^^
-   | -----------------
  9 |         _ => { return 0; }
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^
-   | --------------------------
 10 |         Shape::Circle => { return 1; }
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   | --------------------------------------
 11 |     }
    | ^^^^^
-   | -----
 12 | }
    | ^ not all control paths return a value
-   | - expected `i32` here
+   |   expected `i32` here
    |
    = note: some branch completes without a `return`, execution can fall off end of function
    = help: fulfill the return or add a fallback return on parent scope
@@ -2476,28 +2470,21 @@ Compilation failed with 2 error(s)
    |
 14 | fn HandlesNothing(shape: Shape) -> i32 {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   | ----------------------------------------
 15 |     match shape {
    | ^^^^^^^^^^^^^^^^^
-   | -----------------
 16 |         Shape::Circle => { return 1; }
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   | --------------------------------------
 17 |         Shape::Code => { return 2; }
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   | ------------------------------------
 18 |         Shape::Empty => { return 3; }
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   | -------------------------------------
 19 |         _ => { return 0; }
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^
-   | --------------------------
 20 |     }
    | ^^^^^
-   | -----
 21 | }
    | ^ not all control paths return a value
-   | - expected `i32` here
+   |   expected `i32` here
    |
    = note: some branch completes without a `return`, execution can fall off end of function
    = help: fulfill the return or add a fallback return on parent scope
@@ -2566,28 +2553,21 @@ Compilation failed with 6 error(s)
    |
 28 | fn TestedAfterWhole(slot: Slot) -> i32 {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   | ----------------------------------------
 29 |     match slot {
    | ^^^^^^^^^^^^^^^^
-   | ----------------
 30 |         Slot::Value => { return 0; }
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   | ------------------------------------
 31 |         Slot::Value with none => { return 0; }
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   | ----------------------------------------------
 32 |         Slot::Inner => { return 0; }
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   | ------------------------------------
 33 |         Slot::Free => { return 0; }
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   | -----------------------------------
 34 |     }
    | ^^^^^
-   | -----
 35 | }
    | ^ not all control paths return a value
-   | - expected `i32` here
+   |   expected `i32` here
    |
    = note: some branch completes without a `return`, execution can fall off end of function
    = help: fulfill the return or add a fallback return on parent scope
@@ -2606,25 +2586,19 @@ Compilation failed with 6 error(s)
    |
 37 | fn WrongTests(slot: Slot) -> i32 {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   | ----------------------------------
 38 |     match slot {
    | ^^^^^^^^^^^^^^^^
-   | ----------------
 39 |         Slot::Inner with none => { return 0; }
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   | ----------------------------------------------
 40 |         Slot::Free with none => { return 0; }
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   | ---------------------------------------------
 41 |         Slot::Value with Shape::Empty => { return 0; }
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   | ------------------------------------------------------
 42 |     }
    | ^^^^^
-   | -----
 43 | }
    | ^ not all control paths return a value
-   | - expected `i32` here
+   |   expected `i32` here
    |
    = note: some branch completes without a `return`, execution can fall off end of function
    = help: fulfill the return or add a fallback return on parent scope
@@ -2669,22 +2643,17 @@ Compilation failed with 6 error(s)
    |
 53 | fn TooDeep(slot: Slot) -> i32 {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   | -------------------------------
 54 |     match slot {
    | ^^^^^^^^^^^^^^^^
-   | ----------------
 55 |         Slot::Inner with Shape::Circle with none => { return 0; }
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   | -----------------------------------------------------------------
 56 |         _ => { return 0; }
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^
-   | --------------------------
 57 |     }
    | ^^^^^
-   | -----
 58 | }
    | ^ not all control paths return a value
-   | - expected `i32` here
+   |   expected `i32` here
    |
    = note: some branch completes without a `return`, execution can fall off end of function
    = help: fulfill the return or add a fallback return on parent scope
@@ -3220,8 +3189,7 @@ Compilation failed with 1 error(s)
   |
 8 | fn Borrow(mut view: ?&Box) {
 9 |     if view != none { Touch(&mut view.value); }
-  |                                  ^^^^^^^^^^
-  |                                  ---------- value is behind an immutable reference
+  |                                  ^^^^^^^^^^ value is behind an immutable reference
 
 [T0007]: index assignment requires mutable array or slice binding
    --> negative_optional_shared_mutation/src/main.peep:12:23
@@ -3466,18 +3434,13 @@ Compilation failed with 1 error(s)
 4 |     for value in values::One..values::One {
   | -------------------------------------------
   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  |     ---------------------------------------
-  |     ---------------------------------------
 5 |         return value;
   | ^^^^^^^^^^^^^^^^^^^^^
-  | ---------------------
-  | ---------------------
-  | ---------------------
 6 |     }
   | ^^^^^ this branch does not return a value
+  |       this branch does not return a value
+  |       this branch does not return a value
   | -----
-  | ----- this branch does not return a value
-  | ----- this branch does not return a value
 7 | }
   | - expected `i32` here
   |
@@ -3492,18 +3455,13 @@ Compilation failed with 1 error(s)
 10 |     for value in values::One..values::Zero {
    | --------------------------------------------
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   |     ----------------------------------------
-   |     ----------------------------------------
 11 |         return value;
    | ^^^^^^^^^^^^^^^^^^^^^
-   | ---------------------
-   | ---------------------
-   | ---------------------
 12 |     }
    | ^^^^^ this branch does not return a value
+   |       this branch does not return a value
+   |       this branch does not return a value
    | -----
-   | ----- this branch does not return a value
-   | ----- this branch does not return a value
 13 | }
    | - expected `i32` here
    |
@@ -3518,18 +3476,13 @@ Compilation failed with 1 error(s)
 16 |     for value in start..values::One {
    | -------------------------------------
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   |     ---------------------------------
-   |     ---------------------------------
 17 |         return value;
    | ^^^^^^^^^^^^^^^^^^^^^
-   | ---------------------
-   | ---------------------
-   | ---------------------
 18 |     }
    | ^^^^^ this branch does not return a value
+   |       this branch does not return a value
+   |       this branch does not return a value
    | -----
-   | ----- this branch does not return a value
-   | ----- this branch does not return a value
 19 | }
    | - expected `i32` here
    |
@@ -3874,8 +3827,7 @@ Compilation failed with 7 error(s)
   |
 5 | fn Invalid(values: &[]Token) {
 6 |     let _ = &mut values[0];
-  |                  ^^^^^^^^^
-  |                  --------- value is behind an immutable reference
+  |                  ^^^^^^^^^ value is behind an immutable reference
 
 Compilation failed with 1 error(s)
 === negative_shared_owner_assignment (exit 1)
@@ -3895,8 +3847,7 @@ Compilation failed with 1 error(s)
   |
 6 | fn Corrupt(outer: &Outer) {
 7 |     Accept(&mut outer.child.value);
-  |                 ^^^^^^^^^^^^^^^^^
-  |                 ----------------- value is behind an immutable reference
+  |                 ^^^^^^^^^^^^^^^^^ value is behind an immutable reference
 
 Compilation failed with 1 error(s)
 === negative_shared_reference_mutation (exit 1)

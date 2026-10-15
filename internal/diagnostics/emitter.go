@@ -342,7 +342,9 @@ type snippetMark struct {
 	startColumn int
 	endColumn   int // 0 when the label runs on past the end of the line
 	style       LabelStyle
-	message     string
+	// messages are the texts of the labels on this span, in order; a label
+	// without text adds none.
+	messages []string
 }
 
 type snippetLine struct {
@@ -395,7 +397,9 @@ func snippetFiles(diag *Diagnostic) []snippetFile {
 				mark.startColumn = start.Column
 			}
 			if number == end.Line {
-				mark.message = label.Message
+				if label.Message != "" {
+					mark.messages = []string{label.Message}
+				}
 				if label.Location.End != nil {
 					mark.endColumn = end.Column
 				}
@@ -411,13 +415,15 @@ func snippetFiles(diag *Diagnostic) []snippetFile {
 	for index := range files {
 		file := &files[index]
 		slices.SortFunc(file.lines, func(a, b snippetLine) int { return a.number - b.number })
-		for _, line := range file.lines {
+		for lineIndex := range file.lines {
+			line := &file.lines[lineIndex]
 			slices.SortStableFunc(line.marks, func(a, b snippetMark) int {
 				if a.startColumn != b.startColumn {
 					return a.startColumn - b.startColumn
 				}
 				return int(a.style) - int(b.style)
 			})
+			line.marks = mergeSameSpan(line.marks)
 		}
 		if file.headerLine == 0 {
 			file.headerLine, file.headerColumn = file.lines[0].number, file.lines[0].marks[0].startColumn
@@ -433,6 +439,27 @@ func snippetFiles(diag *Diagnostic) []snippetFile {
 		return strings.Compare(a.path, b.path)
 	})
 	return files
+}
+
+// mergeSameSpan draws labels on exactly the same span once: the mark takes the
+// strongest style and keeps every message. Marks of
+// different spans stay apart, in the order they came.
+func mergeSameSpan(marks []snippetMark) []snippetMark {
+	merged := marks[:0]
+	for _, mark := range marks {
+		index := slices.IndexFunc(merged, func(kept snippetMark) bool {
+			return kept.startColumn == mark.startColumn && kept.endColumn == mark.endColumn
+		})
+		if index < 0 {
+			merged = append(merged, mark)
+			continue
+		}
+		if mark.style == Primary {
+			merged[index].style = Primary
+		}
+		merged[index].messages = append(merged[index].messages, mark.messages...)
+	}
+	return merged
 }
 
 // printSnippetLine prints one source line and, beneath it, a row for each
@@ -468,8 +495,14 @@ func (e *Emitter) printSnippetLine(filepath string, line snippetLine, severity S
 
 		fmt.Fprint(e.writer, strings.Repeat(" ", padding))
 		e.logger.Fprint(e.writer, underlineColor, strings.Repeat(underlineChar, length))
-		if mark.message != "" {
-			e.logger.Fprintf(e.writer, underlineColor, " %s", mark.message)
+		for index, message := range mark.messages {
+			if index > 0 {
+				// Further texts of the same span line up under the first.
+				fmt.Fprintln(e.writer)
+				e.printBlankGutter()
+				fmt.Fprint(e.writer, strings.Repeat(" ", padding+length))
+			}
+			e.logger.Fprintf(e.writer, underlineColor, " %s", message)
 		}
 		fmt.Fprintln(e.writer)
 	}

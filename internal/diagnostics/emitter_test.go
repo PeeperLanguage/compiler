@@ -86,7 +86,7 @@ func TestEmitterPrintsEachSourceLineOnce(t *testing.T) {
 			primary:   spanLoc(path, 3, 1, 4, 5),
 			secondary: spanLoc(path, 3, 1, 4, 5),
 			want: "[X]: bad\n  --> " + path + ":3:1\n  | \n" +
-				"2 | two\n3 | three\n  | ^^^^^\n  | -----\n4 | four\n  | ^^^^ here\n  | ---- context\n\n",
+				"2 | two\n3 | three\n  | ^^^^^\n4 | four\n  | ^^^^ here\n  |      context\n\n",
 		},
 		{
 			name:      "secondary label above the primary keeps the primary in the header",
@@ -180,5 +180,49 @@ func TestLabelToTheEndOfALineCountsCharactersNotBytes(t *testing.T) {
 	got := emitPlain(t, map[string]string{path: "éé\nb"}, diag)
 	if !strings.Contains(got, "1 | éé\n  | ^^\n2 | b\n") {
 		t.Fatalf("expected a two-cell underline beneath the first line, got:\n%s", got)
+	}
+}
+
+// Labels on exactly the same span are drawn once, with their texts one under
+// the other; labels on different spans keep a row each.
+func TestEmitterMergesLabelsOnTheSameSpan(t *testing.T) {
+	path := "main" + peeper.SourceExt
+	same := spanLoc(path, 3, 1, 3, 6)
+	for _, test := range []struct {
+		name string
+		diag *Diagnostic
+		want string
+	}{
+		{
+			name: "a primary without text and a secondary with text",
+			diag: NewError("bad").WithCode("X").WithPrimaryLabel(same, "").WithSecondaryLabel(same, "moved here"),
+			want: "[X]: bad\n  --> " + path + ":3:1\n  | \n2 | two\n3 | three\n  | ^^^^^ moved here\n\n",
+		},
+		{
+			name: "two texts on one span",
+			diag: NewError("bad").WithCode("X").WithPrimaryLabel(same, "changed").WithSecondaryLabel(same, "started"),
+			want: "[X]: bad\n  --> " + path + ":3:1\n  | \n2 | two\n3 | three\n  | ^^^^^ changed\n  |       started\n\n",
+		},
+		{
+			name: "secondary labels on one span keep the secondary style",
+			diag: NewError("bad").WithCode("X").WithPrimaryLabel(spanLoc(path, 4, 1, 4, 5), "here").WithSecondaryLabel(same, "context").WithSecondaryLabel(same, "also"),
+			want: "[X]: bad\n  --> " + path + ":4:1\n  | \n2 | two\n3 | three\n  | ----- context\n  |       also\n4 | four\n  | ^^^^ here\n\n",
+		},
+		{
+			name: "a label of another span between two of the same span",
+			diag: NewError("bad").WithCode("X").WithPrimaryLabel(same, "first").WithSecondaryLabel(spanLoc(path, 3, 1, 3, 3), "short").WithSecondaryLabel(same, "second"),
+			want: "[X]: bad\n  --> " + path + ":3:1\n  | \n2 | two\n3 | three\n  | ^^^^^ first\n  |       second\n  | -- short\n\n",
+		},
+		{
+			name: "different spans on one line stay apart",
+			diag: NewError("bad").WithCode("X").WithPrimaryLabel(spanLoc(path, 3, 1, 3, 3), "left").WithSecondaryLabel(spanLoc(path, 3, 1, 3, 6), "whole"),
+			want: "[X]: bad\n  --> " + path + ":3:1\n  | \n2 | two\n3 | three\n  | ^^ left\n  | ----- whole\n\n",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := emitPlain(t, map[string]string{path: snippetSource}, test.diag); got != test.want {
+				t.Fatalf("got:\n%s\nwant:\n%s", got, test.want)
+			}
+		})
 	}
 }
