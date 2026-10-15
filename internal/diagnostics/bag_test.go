@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"compiler/internal/phase"
+	"compiler/internal/source"
 	"compiler/pkg/colors"
 )
 
@@ -224,4 +225,52 @@ func captureEmitErrors(bag *DiagnosticBag) string {
 		return diag != nil && diag.Severity == Error
 	}, nil)
 	return sb.String()
+}
+
+func TestEnterFunctionBlocksOnlyOnNonIsolatedErrors(t *testing.T) {
+	file := "a.peep"
+	at := func(line int) *source.Location {
+		return source.NewLocation(file, source.Position{Line: line, Column: 1}, source.Position{Line: line, Column: 2})
+	}
+	for _, test := range []struct {
+		name string
+		add  func(*DiagnosticBag)
+		want bool
+	}{
+		{"error", func(bag *DiagnosticBag) { bag.AddError("T", "e", at(5), "") }, true},
+		{"error without a location", func(bag *DiagnosticBag) { bag.AddError("T", "e", nil, "") }, true},
+		{"isolated error", func(bag *DiagnosticBag) { bag.Add(NewError("e").WithPrimaryLabel(at(5), "").Isolate()) }, false},
+		{"error isolated after it was added", func(bag *DiagnosticBag) { bag.AddError("T", "e", at(5), "").Isolate() }, false},
+		{"error with its label in another function", func(bag *DiagnosticBag) { bag.AddError("T", "e", at(90), "") }, true},
+		{"warning", func(bag *DiagnosticBag) { bag.Add(NewWarning("w").WithPrimaryLabel(at(5), "")) }, false},
+		{"nothing", func(*DiagnosticBag) {}, false},
+	} {
+		bag := NewDiagnosticBag()
+		writer := bag.BeginPhase(phase.Typechecked, "m")
+		end := writer.EnterFunction(at(1))
+		test.add(writer)
+		end()
+		if got := bag.Blocked("m", at(1)); got != test.want {
+			t.Errorf("%s: got %v, want %v", test.name, got, test.want)
+		}
+		if bag.Blocked("m", at(2)) || bag.Blocked("other", at(1)) {
+			t.Errorf("%s: another function or module is blocked", test.name)
+		}
+	}
+}
+
+func TestBlockedFunctionsFollowTheirPhaseGroup(t *testing.T) {
+	where := source.NewLocation("a.peep", source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 2})
+	bag := NewDiagnosticBag()
+	writer := bag.BeginPhase(phase.Typechecked, "m")
+	end := writer.EnterFunction(where)
+	writer.AddError("T", "e", where, "")
+	end()
+	if !bag.Blocked("m", where) {
+		t.Fatal("function is not blocked")
+	}
+	bag.BeginPhase(phase.Typechecked, "m")
+	if bag.Blocked("m", where) {
+		t.Error("a re-run phase kept the old block")
+	}
 }

@@ -690,7 +690,7 @@ func (c *checker) typeIndexExpr(scope *symbols.Scope, node *ast.IndexExpr) typei
 	length, lengthErr := numeric.StringToBigInt(array.Len)
 	indexValue := indexConst.Int()
 	if lengthErr == nil && (indexValue == nil || indexValue.Sign() < 0 || indexValue.Cmp(length) >= 0) {
-		c.ctx.Diagnostics.Add(problems.ArrayIndexOutOfBounds(indexConst.Text(), array.Len, ast.LocOf(node.Index)))
+		c.ctx.Diagnostics.Add(problems.ArrayIndexOutOfBounds(indexConst.Text(), array.Len, ast.LocOf(node.Index)).Isolate())
 	}
 	return elem
 }
@@ -797,7 +797,7 @@ func (c *checker) checkRangeBound(scope *symbols.Scope, expr ast.Expr, expected 
 	}
 	if !typeinfo.IsIntegral(boundType) {
 		c.ctx.Diagnostics.Add(invalidOperationError(expr,
-			"range bound must be an integer"))
+			"range bound must be an integer").Isolate())
 	}
 	return boundType
 }
@@ -994,7 +994,7 @@ func (c *checker) typeArrayLit(scope *symbols.Scope, node *ast.ArrayLit) typeinf
 	if !node.HasInferredLength {
 		if nodeLen, err := strconv.Atoi(array.Len); err == nil && nodeLen != len(node.Values) {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrTypeMismatch,
-				fmt.Sprintf("array literal has %d values but length is %d", len(node.Values), nodeLen), ast.LocOf(node), "")
+				fmt.Sprintf("array literal has %d values but length is %d", len(node.Values), nodeLen), ast.LocOf(node), "").Isolate()
 		}
 	}
 	for _, value := range node.Values {
@@ -1006,7 +1006,7 @@ func (c *checker) typeArrayLit(scope *symbols.Scope, node *ast.ArrayLit) typeinf
 		if !c.isAssignable(array.Elem, valueType, value) {
 			c.ctx.Diagnostics.Add(typeMismatchError(value,
 				fmt.Sprintf("cannot assign %s to array element of type %s",
-					typeinfo.TypeText(valueType), typeinfo.TypeText(array.Elem))))
+					typeinfo.TypeText(valueType), typeinfo.TypeText(array.Elem))).Isolate())
 		}
 	}
 	return arrayType

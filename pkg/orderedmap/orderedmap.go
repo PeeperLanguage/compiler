@@ -29,6 +29,29 @@ func (m *Map[K, V]) Set(key K, value V) {
 	m.values = append(m.values, value)
 }
 
+// Get returns the value stored under key.
+func (m *Map[K, V]) Get(key K) (V, bool) {
+	position, ok := m.index[key]
+	if !ok {
+		var zero V
+		return zero, false
+	}
+	return m.values[position], true
+}
+
+// Flatten yields the elements of every slice in m, key by key in first-insertion order.
+func Flatten[K comparable, E any](m *Map[K, []E]) iter.Seq[E] {
+	return func(yield func(E) bool) {
+		for list := range m.Values() {
+			for _, element := range list {
+				if !yield(element) {
+					return
+				}
+			}
+		}
+	}
+}
+
 // Len reports the number of keys.
 func (m *Map[K, V]) Len() int {
 	return len(m.keys)

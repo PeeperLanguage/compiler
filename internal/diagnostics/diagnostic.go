@@ -104,6 +104,9 @@ type Diagnostic struct {
 	FilePath string
 	Labels   []Label
 	Extras   []DiagnosticExtra
+	// Isolated marks an error that leaves its function's typed code usable, so
+	// later checks of that function still run and report their own errors.
+	Isolated bool
 }
 
 const internalCompilerErrorCode = "ICE0001"
@@ -122,6 +125,12 @@ func NewInfo(message string) *Diagnostic {
 
 func (d *Diagnostic) WithCode(code string) *Diagnostic {
 	d.Code = code
+	return d
+}
+
+// Isolate marks the error as isolated: it does not hide later errors of its function.
+func (d *Diagnostic) Isolate() *Diagnostic {
+	d.Isolated = true
 	return d
 }
 

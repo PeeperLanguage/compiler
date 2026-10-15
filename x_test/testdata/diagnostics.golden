@@ -604,15 +604,6 @@ Compilation failed with 1 error(s)
 25 |     let v = x orelse 0;
    |             ^
 
-[T0039]: symbol `$orelse.9` used before it's initialized
-   --> negative_case_binding/src/main.peep:30:13
-   |
-29 | fn OrElseStays(id: i32) -> i32 {
-30 |     let v = Find(id) orelse { println(1); };
-   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ symbol `$orelse.9` used before it's initialized
-   |
-   = help: assign a value before reading this symbol
-
 [P0004]: the block after `orelse` must leave
    --> negative_case_binding/src/main.peep:30:29
    |
@@ -627,7 +618,7 @@ Compilation failed with 1 error(s)
 35 |     let v = Find(id) orelse true;
    |                             ^^^^
 
-Compilation failed with 6 error(s)
+Compilation failed with 5 error(s)
 === negative_case_binding_borrowed (exit 1)
 [T0037]: cannot mutate storage while it is borrowed
    --> negative_case_binding_borrowed/src/main.peep:10:13
@@ -1048,6 +1039,50 @@ Compilation failed with 1 error(s)
   |             ^^^^^^
 
 Compilation failed with 2 error(s)
+=== negative_earlier_error_hides_later_checks (exit 1)
+[T0001]: literal `1` cannot be used as bool
+  --> negative_earlier_error_hides_later_checks/src/main.peep:4:19
+  |
+3 | fn Broken(a: i32) -> i32 {
+4 |     let x: bool = 1;
+  |                   ^
+
+[T0017]: not all control paths return a value
+   --> negative_earlier_error_hides_later_checks/src/main.peep:11:8
+   |
+10 | fn Other(a: i32) -> i32 {
+11 |     if a > 0 {
+   |        ^^^^^ if this is false, nothing is returned
+...
+13 |     }
+14 | }
+   | - function ends without returning `i32`
+   |
+   = note: execution can reach the end of the function without a `return`
+   = help: add a `return` at the end of the function, or make each path shown return a value
+
+[T0009]: array index out of bounds: index 5 for length 2
+   --> negative_earlier_error_hides_later_checks/src/main.peep:20:28
+   |
+19 |     let values: [2]i32 = [2]i32{1, 2};
+20 |     let item: i32 = values[5];
+   |                            ^ array index out of bounds: index 5 for length 2
+
+[T0017]: not all control paths return a value
+   --> negative_earlier_error_hides_later_checks/src/main.peep:21:8
+   |
+20 |     let item: i32 = values[5];
+21 |     if a > 0 {
+   |        ^^^^^ if this is false, nothing is returned
+...
+23 |     }
+24 | }
+   | - function ends without returning `i32`
+   |
+   = note: execution can reach the end of the function without a `return`
+   = help: add a `return` at the end of the function, or make each path shown return a value
+
+Compilation failed with 4 error(s)
 === negative_entrypoint_extern (exit 0)
 === negative_entrypoint_imported (exit 0)
 [W0007]: unused import `external`
@@ -1729,30 +1764,6 @@ Compilation failed with 2 error(s)
 9 |     let wrong = Result::Failed with 404;
   |                                     ^^^
 
-[T0007]: ownership state differs across control-flow paths
-   --> negative_enum_with_payload/src/main.peep:12:28
-   |
-12 | fn Inspect(result: Result) {
-   |                            ^
-13 |     match result {
-   | ^^^^^^^^^^^^^^^^^^
-14 |         Result::Failed => {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-15 |             let .{ value as payload } = result;
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-16 |             println(payload);
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-17 |         }
-   | ^^^^^^^^^
-18 |         Result::Pending => {}
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-19 |     }
-   | ^^^^^
-20 | }
-   | ^
-   |
-   = help: move or reinitialize ownership-tracked values on every path
-
 [T0004]: destructure value must be a struct, got str
    --> negative_enum_with_payload/src/main.peep:15:41
    |
@@ -1760,7 +1771,7 @@ Compilation failed with 2 error(s)
 15 |             let .{ value as payload } = result;
    |                                         ^^^^^^
 
-Compilation failed with 5 error(s)
+Compilation failed with 4 error(s)
 === negative_expanding_generic_recursion (exit 1)
 [T0021]: recursive generic applications must preserve exact type arguments
   --> negative_expanding_generic_recursion/src/main.peep:2:12
@@ -2499,32 +2510,12 @@ Compilation failed with 2 error(s)
 9 |         _ => { return 0; }
   |         ^^^^^^^^^^^^^^^^^^ it handles every case the arms before it do not
 
-[T0017]: not all control paths return a value
-   --> negative_match_fallback/src/main.peep:12:1
-   |
-11 |     }
-12 | }
-   | ^ function ends without returning `i32`
-   |
-   = note: execution can reach the end of the function without a `return`
-   = help: add a `return` at the end of the function
-
 [P0004]: the `_` arm handles nothing
    --> negative_match_fallback/src/main.peep:19:9
    |
 18 |         Shape::Empty => { return 3; }
 19 |         _ => { return 0; }
    |         ^^^^^^^^^^^^^^^^^^ every case already has an arm
-
-[T0017]: not all control paths return a value
-   --> negative_match_fallback/src/main.peep:21:1
-   |
-20 |     }
-21 | }
-   | ^ function ends without returning `i32`
-   |
-   = note: execution can reach the end of the function without a `return`
-   = help: add a `return` at the end of the function
 
 [P0004]: match is missing case `Empty`
    --> negative_match_fallback/src/main.peep:24:5
@@ -2546,7 +2537,7 @@ Compilation failed with 2 error(s)
 34 |         _ => { return shape.radius; }
    |                             ^^^^^^
 
-Compilation failed with 6 error(s)
+Compilation failed with 4 error(s)
 === negative_match_payload_test (exit 1)
 [P0004]: match is missing case `Value with none`
    --> negative_match_payload_test/src/main.peep:13:5
@@ -2587,16 +2578,6 @@ Compilation failed with 6 error(s)
 31 |         Slot::Value with none => { return 0; }
    |         ^^^^^^^^^^^ duplicate case
 
-[T0017]: not all control paths return a value
-   --> negative_match_payload_test/src/main.peep:35:1
-   |
-34 |     }
-35 | }
-   | ^ function ends without returning `i32`
-   |
-   = note: execution can reach the end of the function without a `return`
-   = help: add a `return` at the end of the function
-
 [T0004]: `with none` needs an optional payload, but `Inner` holds Shape
    --> negative_match_payload_test/src/main.peep:39:26
    |
@@ -2617,16 +2598,6 @@ Compilation failed with 6 error(s)
 40 |         Slot::Free with none => { return 0; }
 41 |         Slot::Value with Shape::Empty => { return 0; }
    |                          ^^^^^^^^^^^^
-
-[T0017]: not all control paths return a value
-   --> negative_match_payload_test/src/main.peep:43:1
-   |
-42 |     }
-43 | }
-   | ^ function ends without returning `i32`
-   |
-   = note: execution can reach the end of the function without a `return`
-   = help: add a `return` at the end of the function
 
 [T0004]: `Free` has no payload to name
    --> negative_match_payload_test/src/main.peep:47:25
@@ -2651,16 +2622,6 @@ Compilation failed with 6 error(s)
    |
    = help: name the payload and test it in the arm
 
-[T0017]: not all control paths return a value
-   --> negative_match_payload_test/src/main.peep:58:1
-   |
-57 |     }
-58 | }
-   | ^ function ends without returning `i32`
-   |
-   = note: execution can reach the end of the function without a `return`
-   = help: add a `return` at the end of the function
-
 [T0004]: a `.{ }` pattern takes the fields out of the value, which a borrowed subject keeps
    --> negative_match_payload_test/src/main.peep:64:28
    |
@@ -2670,7 +2631,7 @@ Compilation failed with 6 error(s)
    |
    = help: leave the pattern out and read the fields through the subject's name
 
-Compilation failed with 13 error(s)
+Compilation failed with 10 error(s)
 === negative_match_payload_test_changed (exit 1)
 [P0003]: enum case is not proven here
    --> negative_match_payload_test_changed/src/main.peep:13:20

@@ -3,6 +3,7 @@ package pipeline
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 
@@ -428,6 +429,13 @@ func advanceModulePhase(ctx *project.CompilerContext, module *module.Module, dia
 	}
 	if module.Phase < phase.CFG {
 		module.CFG = cfg.BuildModule(module.THIR)
+		if diag != nil && diag.HasErrors() {
+			// A function with an earlier error is not checked further: its later
+			// errors only follow from the earlier one. THIR keeps it for the editor.
+			module.CFG.Functions = slices.DeleteFunc(module.CFG.Functions, func(graph *cfg.ControlFlowGraph) bool {
+				return diag.Blocked(module.ID.String(), graph.Location)
+			})
+		}
 		// Structure is checkable regardless of source validity: CFG construction
 		// promises the same topology for a program that will not compile, and a
 		// malformed graph misleads every phase that reads it, including Analyze

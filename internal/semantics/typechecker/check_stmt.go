@@ -55,7 +55,7 @@ func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt) {
 	case *ast.ReturnStmt:
 		if node.Value == nil {
 			if c.returnType != nil {
-				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn, "return value required", ast.LocOf(node), "")
+				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn, "return value required", ast.LocOf(node), "").Isolate()
 			}
 			return
 		}
@@ -88,7 +88,7 @@ func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt) {
 		}
 		condType := c.typeExpr(scope, node.Cond, nil)
 		if condType != nil && !typeinfo.IsInvalidOrUnknown(condType) && !typeinfo.IsCondition(condType) {
-			c.ctx.Diagnostics.Add(explicitBoolCastRequiredError(node.Cond, "if condition must be bool"))
+			c.ctx.Diagnostics.Add(explicitBoolCastRequiredError(node.Cond, "if condition must be bool").Isolate())
 		}
 		elseBlock, _ := node.Else.(*ast.BlockStmt)
 		c.bindPayloadNames(node.Cond, node.Then, elseBlock, node)
@@ -102,7 +102,7 @@ func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt) {
 		if node.Cond != nil {
 			condType := c.typeExpr(scope, node.Cond, nil)
 			if condType != nil && !typeinfo.IsInvalidOrUnknown(condType) && !typeinfo.IsCondition(condType) {
-				c.ctx.Diagnostics.Add(explicitBoolCastRequiredError(node.Cond, "for condition must be bool"))
+				c.ctx.Diagnostics.Add(explicitBoolCastRequiredError(node.Cond, "for condition must be bool").Isolate())
 			}
 			c.bindPayloadNames(node.Cond, node.Body, nil, nil)
 		}
@@ -184,7 +184,7 @@ func (c *checker) checkDestructureFields(fields []ast.DestructureField, hasRest 
 	for _, field := range strct.Fields {
 		if named[field.Name] == nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingField,
-				"destructure leaves out field `"+field.Name+"`", ast.LocOf(site), "name it or end the list with `_`")
+				"destructure leaves out field `"+field.Name+"`", ast.LocOf(site), "name it or end the list with `_`").Isolate()
 		}
 	}
 }
@@ -615,7 +615,7 @@ func (c *checker) checkAssign(scope *symbols.Scope, node *ast.AssignStmt) {
 		case symbols.SymbolConst:
 			c.ctx.Diagnostics.AddError(diagnostics.ErrConstantReassignment,
 				"cannot assign to const `"+target.Name+"`", ast.LocOf(target), "").
-				WithSecondaryLabel(sym.Location, "declared as const here")
+				WithSecondaryLabel(sym.Location, "declared as const here").Isolate()
 			return
 		case symbols.SymbolVar, symbols.SymbolParam:
 			if !sym.IsMutable() {
@@ -624,7 +624,7 @@ func (c *checker) checkAssign(scope *symbols.Scope, node *ast.AssignStmt) {
 					"modification to immutable symbol",
 					ast.LocOf(target),
 					"cannot assign to immutable binding `"+target.Name+"`",
-				).WithSecondaryLabel(sym.Location, "make this binding mutable")
+				).WithSecondaryLabel(sym.Location, "make this binding mutable").Isolate()
 				return
 			}
 			c.module.SymbolIndex.RequireMutable(sym)
@@ -648,7 +648,7 @@ func (c *checker) checkAssign(scope *symbols.Scope, node *ast.AssignStmt) {
 			return
 		}
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
-			"field assignment requires a mutable pointer, reference, or local binding", ast.LocOf(target), "")
+			"field assignment requires a mutable pointer, reference, or local binding", ast.LocOf(target), "").Isolate()
 		return
 	case *ast.IndexExpr:
 		if c.checkIndexAssignmentTarget(scope, target, targetType) {
@@ -690,7 +690,7 @@ func (c *checker) checkIndexAssignmentTarget(scope *symbols.Scope, target *ast.I
 		return true
 	}
 	c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
-		"index assignment requires mutable array or slice binding", ast.LocOf(target), "")
+		"index assignment requires mutable array or slice binding", ast.LocOf(target), "").Isolate()
 	return false
 }
 

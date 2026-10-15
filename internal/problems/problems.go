@@ -30,7 +30,8 @@ func OptionalPayloadProof(loc *source.Location) *diagnostics.Diagnostic {
 	return diagnostics.NewError("optional payload use requires a presence proof").
 		WithPrimaryLabel(loc, "payload is not proven present here").
 		WithCode(diagnostics.ErrOptionalPayloadProof).
-		Help("guard this stable place with `value != none` or return after `value == none`")
+		Help("guard this stable place with `value != none` or return after `value == none`").
+		Isolate()
 }
 
 func Redeclaration(message string, current, previous *source.Location) *diagnostics.Diagnostic {

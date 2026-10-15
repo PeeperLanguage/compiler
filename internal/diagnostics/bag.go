@@ -5,6 +5,7 @@ import (
 	"compiler/internal/phase"
 	"compiler/internal/source"
 	"compiler/pkg/colors"
+	"compiler/pkg/orderedmap"
 	"fmt"
 	"io"
 	"os"
@@ -30,10 +31,15 @@ type DiagnosticBag struct {
 	// identity is spelled, so callers pass moduleid.ID.String() and the bag
 	// only ever compares and sorts it.
 	moduleScope string
+	// function keys the diagnostics this writer adds to the function it is
+	// working on (see EnterFunction); "" outside functions.
+	function string
 }
 
+// diagnosticGroup holds one phase's diagnostics for one module, filed under the
+// function the phase was working on ("" for everything outside a function).
 type diagnosticGroup struct {
-	diagnostics []*Diagnostic
+	diagnostics orderedmap.Map[string, []*Diagnostic]
 	isActive    bool
 }
 
@@ -97,10 +103,11 @@ func (db *DiagnosticBag) CopyModuleRange(source *DiagnosticBag, moduleScope stri
 			continue
 		}
 		if group, ok := modules[moduleScope]; ok {
-			copiedGroups[producingPhase] = diagnosticGroup{
-				diagnostics: append([]*Diagnostic(nil), group.diagnostics...),
-				isActive:    active,
+			copied := diagnosticGroup{isActive: active}
+			for function, list := range group.diagnostics.All() {
+				copied.diagnostics.Set(function, slices.Clone(list))
 			}
+			copiedGroups[producingPhase] = copied
 		}
 	}
 	source.mu.Unlock()
@@ -168,7 +175,7 @@ func (db *DiagnosticBag) Add(diag *Diagnostic) {
 					if !group.isActive {
 						continue
 					}
-					for _, existing := range group.diagnostics {
+					for existing := range orderedmap.Flatten(&group.diagnostics) {
 						if existing.Severity != Error || len(existing.Labels) == 0 {
 							continue
 						}
@@ -191,7 +198,8 @@ func (db *DiagnosticBag) Add(diag *Diagnostic) {
 		db.groups[db.phase] = make(map[string]diagnosticGroup)
 	}
 	group := db.groups[db.phase][db.moduleScope]
-	group.diagnostics = append(group.diagnostics, diag)
+	list, _ := group.diagnostics.Get(db.function)
+	group.diagnostics.Set(db.function, append(list, diag))
 	group.isActive = true
 	db.groups[db.phase][db.moduleScope] = group
 }
@@ -221,6 +229,57 @@ func (db *DiagnosticBag) HasErrors() bool {
 	return db.ErrorCount() > 0
 }
 
+// EnterFunction files the diagnostics this writer adds under the function that
+// starts at where, until the returned function is called. A phase calls it when
+// it starts working on a function, so the bag can tell which functions had errors.
+func (db *DiagnosticBag) EnterFunction(where *source.Location) (leave func()) {
+	key, ok := functionKey(where)
+	if db == nil || !ok {
+		return func() {}
+	}
+	db.mu.Lock()
+	previous := db.function
+	db.function = key
+	db.mu.Unlock()
+	return func() {
+		db.mu.Lock()
+		db.function = previous
+		db.mu.Unlock()
+	}
+}
+
+// Blocked reports whether a phase of the module reported a non-isolated error
+// while working on the function that starts at where. The later checks skip a
+// blocked function: their errors would only follow from the earlier one.
+func (db *DiagnosticBag) Blocked(moduleScope string, where *source.Location) bool {
+	key, ok := functionKey(where)
+	if db == nil || !ok {
+		return false
+	}
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	for _, modules := range db.groups {
+		group := modules[moduleScope]
+		if !group.isActive {
+			continue
+		}
+		list, _ := group.diagnostics.Get(key)
+		if slices.ContainsFunc(list, func(d *Diagnostic) bool { return d.Severity == Error && !d.Isolated }) {
+			return true
+		}
+	}
+	return false
+}
+
+// functionKey names a function by the position it starts at, which every phase
+// knows: the parser, the resolver, the typechecker and the control-flow graph.
+func functionKey(where *source.Location) (string, bool) {
+	if where == nil || where.Filename == nil || where.Start == nil {
+		return "", false
+	}
+	return fmt.Sprintf("%s:%d:%d", *where.Filename, where.Start.Line, where.Start.Column), true
+}
+
 // ErrorCount returns the number of errors
 func (db *DiagnosticBag) ErrorCount() int {
 	db.mu.Lock()
@@ -242,7 +301,7 @@ func (db *DiagnosticBag) countLocked(severity Severity) int {
 			if !group.isActive {
 				continue
 			}
-			for _, diagnostic := range group.diagnostics {
+			for diagnostic := range orderedmap.Flatten(&group.diagnostics) {
 				if diagnostic != nil && diagnostic.Severity == severity {
 					count++
 				}
@@ -272,7 +331,7 @@ func (db *DiagnosticBag) Diagnostics() []*Diagnostic {
 		for _, moduleScope := range moduleScopes {
 			group := modules[moduleScope]
 			if group.isActive {
-				result = append(result, group.diagnostics...)
+				result = slices.AppendSeq(result, orderedmap.Flatten(&group.diagnostics))
 			}
 		}
 	}

@@ -157,6 +157,7 @@ func (p *Parser) parseFnDecl() ast.Decl {
 	if start == nil {
 		return nil
 	}
+	defer p.diag.EnterFunction(source.NewLocation(p.filePath, start.Start, start.Start))()
 	var receiver *ast.Param
 	if p.at(token.LPAREN) {
 		receiver = p.parseReceiver()

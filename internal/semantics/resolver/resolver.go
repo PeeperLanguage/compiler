@@ -84,6 +84,7 @@ func (r *resolver) resolveFunction(fn *ast.FnDecl) {
 	if r == nil || r.module == nil || fn == nil {
 		return
 	}
+	defer r.ctx.Diagnostics.EnterFunction(ast.LocOf(fn))()
 	sym := r.module.SymbolIndex.Symbol(fn.Name)
 	if sym == nil || sym.Scope == nil {
 		return

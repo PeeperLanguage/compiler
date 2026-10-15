@@ -17,6 +17,7 @@ func (c *checker) checkFunction(sym *symbols.Symbol, fn *ast.FnDecl) {
 	if c == nil || sym == nil || fn == nil {
 		return
 	}
+	defer c.ctx.Diagnostics.EnterFunction(ast.LocOf(fn))()
 	fnType, ok := sym.Type.(*typeinfo.FuncType)
 	if !ok || fnType == nil {
 		return
@@ -275,6 +276,9 @@ func (c *checker) checkCallableReturn(typeNode ast.TypeExpr, fallback ast.Node, 
 
 func (c *checker) checkFunctionTypeContracts() {
 	ast.ForEachDecl(c.module.AST, func(decl ast.Decl) bool {
+		if fn, ok := decl.(*ast.FnDecl); ok {
+			defer c.ctx.Diagnostics.EnterFunction(ast.LocOf(fn))()
+		}
 		context := typeresolution.Context{}
 		allowTypeParameters := false
 		if typeDecl, ok := decl.(ast.TypeDecl); ok && len(typeDecl.DeclarationTypeParams()) > 0 {

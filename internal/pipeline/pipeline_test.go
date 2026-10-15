@@ -1465,7 +1465,7 @@ func TestPipelineReportsConstantConditionsInCFGPhase(t *testing.T) {
 	}
 }
 
-func TestPipelineDefersConstantEvaluationCycleToCFG(t *testing.T) {
+func TestPipelineSkipsCFGChecksOfFunctionWithEarlierError(t *testing.T) {
 	diag := diagnostics.NewDiagnosticBag()
 	entry := parseModuleSource("entry"+peeper.SourceExt, `fn main() {
 		const First: bool = First;
@@ -1488,12 +1488,19 @@ func TestPipelineDefersConstantEvaluationCycleToCFG(t *testing.T) {
 	if !advanceModulePhase(ctx, entry, diag) {
 		t.Fatal("CFG phase requires AST")
 	}
+	// main already has the "used before it's defined" error, so its constant
+	// cycle is not reported on top of it.
 	for _, item := range diag.Diagnostics() {
 		if item.Code == diagnostics.ErrCircularDependency {
+			t.Fatalf("constant evaluation cycle reported for a function with an earlier error:\n%s", diag.EmitAllToString())
+		}
+	}
+	for _, item := range diag.Diagnostics() {
+		if item.Code == diagnostics.ErrUseBeforeDecl {
 			return
 		}
 	}
-	t.Fatalf("missing constant evaluation cycle: %s", diag.EmitAllToString())
+	t.Fatalf("missing earlier error: %s", diag.EmitAllToString())
 }
 
 func TestPhaseReadinessRequiresSyntaxThroughTypingAndTHIRAfterward(t *testing.T) {

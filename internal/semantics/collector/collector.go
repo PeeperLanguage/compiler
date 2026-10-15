@@ -63,6 +63,7 @@ func (c *collector) collectFnDecl(fn *ast.FnDecl) {
 	if c == nil || c.module == nil || fn == nil {
 		return
 	}
+	defer c.ctx.Diagnostics.EnterFunction(ast.LocOf(fn))()
 	if fn.Name == nil || fn.Name.Name == "" {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrMissingIdentifier, "function name required", ast.LocOf(fn), "")
 		return

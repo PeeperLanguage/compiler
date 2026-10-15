@@ -71,3 +71,31 @@ func TestIterationStopsWhenYieldReturnsFalse(t *testing.T) {
 		t.Fatalf("All() before break = %v, want %v", keys, want)
 	}
 }
+
+func TestGetFindsStoredValuesOnly(t *testing.T) {
+	var m Map[string, int]
+	if _, ok := m.Get("a"); ok {
+		t.Fatal("Get on the zero value found a key")
+	}
+	m.Set("a", 1)
+	m.Set("a", 2)
+	if got, ok := m.Get("a"); !ok || got != 2 {
+		t.Fatalf("Get(a) = %d, %v, want 2, true", got, ok)
+	}
+	if got, ok := m.Get("b"); ok || got != 0 {
+		t.Fatalf("Get(b) = %d, %v, want 0, false", got, ok)
+	}
+}
+
+func TestFlattenFollowsKeyOrderThenSliceOrder(t *testing.T) {
+	var m Map[string, []int]
+	m.Set("b", []int{3, 4})
+	m.Set("a", []int{1})
+	m.Set("b", []int{3, 4, 5})
+	if got, want := slices.Collect(Flatten(&m)), []int{3, 4, 5, 1}; !slices.Equal(got, want) {
+		t.Fatalf("Flatten = %v, want %v", got, want)
+	}
+	for range Flatten(&m) {
+		break // a consumer that stops early must not make the iterator panic
+	}
+}

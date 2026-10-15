@@ -1,0 +1,24 @@
+// A function with an earlier error is not checked further: its missing return
+// would only follow from the type error. Another function is still checked.
+fn Broken(a: i32) -> i32 {
+    let x: bool = 1;
+    if a > 0 {
+        return 1;
+    }
+}
+
+fn Other(a: i32) -> i32 {
+    if a > 0 {
+        return 1;
+    }
+}
+
+// An error that leaves the function's code whole does not hide the later checks:
+// both the out-of-bounds index and the missing return are reported.
+fn Isolated(a: i32) -> i32 {
+    let values: [2]i32 = [2]i32{1, 2};
+    let item: i32 = values[5];
+    if a > 0 {
+        return item;
+    }
+}

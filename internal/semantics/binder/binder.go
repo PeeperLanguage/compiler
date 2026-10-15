@@ -61,6 +61,7 @@ func (b *binder) bindFunctionDecl(fn *ast.FnDecl) {
 	if b == nil || b.module == nil || fn == nil || fn.Name == nil {
 		return
 	}
+	defer b.ctx.Diagnostics.EnterFunction(ast.LocOf(fn))()
 	if len(fn.TypeParams) > 0 {
 		b.ctx.Diagnostics.AddError(diagnostics.ErrInvalidDeclaration,
 			"functions cannot take type parameters yet", fn.TypeParams[0].Location, "")
