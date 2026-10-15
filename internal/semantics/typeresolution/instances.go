@@ -7,6 +7,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/module"
+	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/types"
 )
 
@@ -24,15 +25,16 @@ type typeInstantiationFrame struct {
 	node                ast.TypeExpr
 }
 
-// RegisterTypeDeclaration records collection's reusable declaration artifact
-// and indexes it for concrete substitution in the current context.
-func (r *Resolver) RegisterTypeDeclaration(owner *module.Module, declaration ast.TypeDecl, base *types.DefinedType) {
-	if r == nil || owner == nil || declaration == nil || base == nil || base.Identity == "" {
-		return
+func typeDeclaration(owner *module.Module, base *types.DefinedType) (ast.TypeDecl, bool) {
+	if owner == nil || owner.ModuleScope == nil || base == nil {
+		return nil, false
 	}
-	r.mu.Lock()
-	owner.RecordTypeDeclaration(base.Identity, module.TypeDeclaration{Syntax: declaration, Base: base})
-	r.mu.Unlock()
+	symbol, found := owner.ModuleScope.LookupLocal(base.Name)
+	if !found || symbol.Kind != symbols.SymbolType || symbol.Type != base {
+		return nil, false
+	}
+	declaration, ok := symbol.ASTNode.(ast.TypeDecl)
+	return declaration, ok && declaration != nil
 }
 
 func (r *Resolver) instantiateType(diag *diagnostics.DiagnosticBag, base *types.DefinedType, arguments []types.Type, node ast.TypeExpr, chain []typeInstantiationFrame) types.Type {
@@ -90,12 +92,8 @@ func (r *Resolver) instantiateType(diag *diagnostics.DiagnosticBag, base *types.
 		return &types.InvalidType{}
 	}
 	declarationModule := r.typeOwner(base.Identity)
-	declaration := module.TypeDeclaration{}
-	declarationOK := false
-	if declarationModule != nil {
-		declaration, declarationOK = declarationModule.TypeDeclaration(base.Identity)
-	}
-	if declarationModule == nil || !declarationOK || declaration.Syntax == nil || declaration.Base != base {
+	declaration, declarationOK := typeDeclaration(declarationModule, base)
+	if !declarationOK {
 		r.mu.Unlock()
 		if diag != nil {
 			diag.AddError(diagnostics.ErrInvalidType,
@@ -125,7 +123,7 @@ func (r *Resolver) instantiateType(diag *diagnostics.DiagnosticBag, base *types.
 		applicationText:     applicationText,
 		node:                node,
 	})
-	instance.Underlying = r.typeInstanceUnderlying(diag, declarationModule, declaration, instance, chain)
+	instance.Underlying = r.typeInstanceUnderlying(diag, declarationModule, declaration, base, instance, chain)
 	valid := !types.ContainsInvalid(instance.Underlying)
 	r.finishTypeInstance(identity, instance, valid)
 	if !valid {
@@ -134,13 +132,13 @@ func (r *Resolver) instantiateType(diag *diagnostics.DiagnosticBag, base *types.
 	return instance
 }
 
-func (r *Resolver) typeInstanceUnderlying(diag *diagnostics.DiagnosticBag, declarationModule *module.Module, declaration module.TypeDeclaration, instance *types.DefinedType, chain []typeInstantiationFrame) types.Type {
-	syntax := declaration.Syntax.UnderlyingType()
+func (r *Resolver) typeInstanceUnderlying(diag *diagnostics.DiagnosticBag, declarationModule *module.Module, declaration ast.TypeDecl, base, instance *types.DefinedType, chain []typeInstantiationFrame) types.Type {
+	syntax := declaration.UnderlyingType()
 	context := Context{
 		AllowAbstractSelf: true,
-		TypeParameters:    types.TypeParameterBindings(declaration.Base.TypeParameters, instance.TypeArguments),
+		TypeParameters:    types.TypeParameterBindings(base.TypeParameters, instance.TypeArguments),
 	}
-	if _, ok := declaration.Syntax.(*ast.InterfaceDecl); ok {
+	if _, ok := declaration.(*ast.InterfaceDecl); ok {
 		context.NamedInterfaceRoot = syntax
 	}
 	return r.resolve(diag, declarationModule, syntax, context, chain)
@@ -177,22 +175,18 @@ func (r *Resolver) CompleteTypeInstances(diag *diagnostics.DiagnosticBag, bases 
 		r.mu.RLock()
 		cached := r.instances[identity]
 		declarationModule := r.typeOwner(cached.base.Identity)
-		declaration := module.TypeDeclaration{}
-		declarationOK := false
-		if declarationModule != nil {
-			declaration, declarationOK = declarationModule.TypeDeclaration(cached.base.Identity)
-		}
+		declaration, declarationOK := typeDeclaration(declarationModule, cached.base)
 		r.mu.RUnlock()
-		if declarationModule == nil || !declarationOK || declaration.Syntax == nil || declaration.Base != cached.base {
+		if !declarationOK {
 			continue
 		}
 		chain := []typeInstantiationFrame{{
 			declarationIdentity: cached.base.Identity,
 			applicationIdentity: identity,
 			applicationText:     types.TypeText(cached.typ),
-			node:                declaration.Syntax.UnderlyingType(),
+			node:                declaration.UnderlyingType(),
 		}}
-		underlying := r.typeInstanceUnderlying(diag, declarationModule, declaration, cached.typ, chain)
+		underlying := r.typeInstanceUnderlying(diag, declarationModule, declaration, cached.base, cached.typ, chain)
 		if !types.ContainsInvalid(underlying) {
 			cached.typ.Underlying = underlying
 		}

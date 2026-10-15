@@ -148,7 +148,6 @@ func (c *collector) collectConcreteTypeDecl(decl ast.TypeDecl) {
 			}
 		}
 	}
-	c.ctx.TypeResolver.RegisterTypeDeclaration(c.module, decl, defined)
 }
 
 func (c *collector) collectModuleBinding(name *ast.Ident, kind symbols.Kind, node ast.Node) {

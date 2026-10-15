@@ -136,12 +136,12 @@ be discarded. Backing maps remain private.
   parameter name, owner identity, and declaration index.
 - Type aliases, structs, interfaces, and enums receive distinct
   `types.DefinedKind` values.
-- The symbol's `Type` is a `*types.DefinedType` shell.
+- The symbol's `ASTNode` is the source `ast.TypeDecl`, and its `Type` is a
+  `*types.DefinedType` shell.
 - Enum declarations get a separate child scope with `SymbolVariant` entries.
 - Each variant symbol points at the enum defined type.
 - Variant declaration identifiers are published through `SymbolIndex.Bind` immediately.
-- `ctx.RegisterTypeDeclaration` retains declaration syntax and shell for generic
-  substitution.
+- Generic substitution retrieves both through the type symbol in `ModuleScope`.
 - Underlying type structure is intentionally not completed by collection.
 
 ## Binding
@@ -201,10 +201,13 @@ be discarded. Backing maps remain private.
 
 ## Generic type cache
 
-`internal/project/generic_types.go` owns generic declaration registration and
-instantiation. It is part of binding/type construction, not resolver lookup.
+`internal/semantics/typeresolution/instances.go` owns generic instantiation and its
+concrete-instance cache.
 
-- `RegisterTypeDeclaration` records declaration syntax by base nominal identity.
+- `typeDeclaration` reads the declaration syntax from the type symbol and requires
+  the symbol's shell to be the requested base object.
+- Instantiation finds the declaring module from base nominal identity and looks up
+  the base name in that module's `ModuleScope`.
 - `instantiateType` requires argument count equal to parameter count.
 - Each argument is canonicalized with `types.Unalias`.
 - Invalid arguments reject the instance.
@@ -213,8 +216,8 @@ instantiation. It is part of binding/type construction, not resolver lookup.
   identities.
 - Defined types use their own identity; parameters use owner, index, and text;
   other types use the semantic type key.
-- The cache stores `namedTypeInstance` entries with base, instance, readiness,
-  owner module, and completion state.
+- The cache stores `namedTypeInstance` entries with base, instance, readiness, and
+  completion state.
 - A provisional `DefinedType` shell is cached before substituting its underlying
   type.
 - Recursive pointer/reference applications can therefore resolve to the same
@@ -491,8 +494,8 @@ false.
 ## End-to-end data flow
 
 1. Parser creates AST nodes with stable `NodeID` values.
-2. Collector creates module scope, declaration symbols, type shells, enum variant
-   symbols, and generic declaration registry entries.
+2. Collector creates module scope, declaration symbols, type shells, and enum variant
+   symbols.
 3. Binder orders named type declarations, detects illegal value cycles, fills
    underlying types and function/value signatures, and completes legal generic
    cache cycles.

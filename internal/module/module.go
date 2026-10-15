@@ -20,14 +20,6 @@ type ResolvedImport struct {
 	FilePath string
 }
 
-// TypeDeclaration is collection's reusable syntax and semantic shell for one
-// named type. Retained modules keep this artifact so fresh incremental compiler
-// contexts can rebuild derived cross-module indexes without recollecting syntax.
-type TypeDeclaration struct {
-	Syntax ast.TypeDecl
-	Base   *types.DefinedType
-}
-
 // Module is one source unit and its reusable compiler artifacts.
 type Module struct {
 	// Canonical semantic, import, graph, and ownership identity.
@@ -57,8 +49,6 @@ type Module struct {
 	LLVMIR   string
 	// Top-level names visible in module.
 	ModuleScope *symbols.Scope
-	// Generic declaration syntax and semantic shells produced by collection.
-	typeDeclarations map[string]TypeDeclaration
 	// Symbol lookups, activity, and published symbol facts for the current semantic generation.
 	SymbolIndex *symbols.Index
 	// Import alias -> resolved module import.
@@ -71,27 +61,6 @@ func (m *Module) TypeDeclarationIdentity(name string) string {
 		return name
 	}
 	return moduleid.TypeIdentity(m.ID, name)
-}
-
-// RecordTypeDeclaration retains collection evidence needed to instantiate and
-// reindex named types across incremental compiler contexts.
-func (m *Module) RecordTypeDeclaration(identity string, declaration TypeDeclaration) {
-	if m == nil || identity == "" || declaration.Syntax == nil || declaration.Base == nil {
-		return
-	}
-	if m.typeDeclarations == nil {
-		m.typeDeclarations = make(map[string]TypeDeclaration)
-	}
-	m.typeDeclarations[identity] = declaration
-}
-
-// TypeDeclaration returns retained collection evidence for identity.
-func (m *Module) TypeDeclaration(identity string) (TypeDeclaration, bool) {
-	if m == nil {
-		return TypeDeclaration{}, false
-	}
-	declaration, ok := m.typeDeclarations[identity]
-	return declaration, ok
 }
 
 // RecordImportedUse publishes usage only after a source semantic phase has
@@ -140,9 +109,6 @@ func (m *Module) ResetToPhase(retained phase.Phase) {
 	if retained <= phase.Parsed {
 		m.ModuleScope = nil
 		m.SymbolIndex = nil
-	}
-	if retained < phase.Collected {
-		m.typeDeclarations = nil
 	}
 	if retained < phase.Typechecked {
 		m.THIR = nil

@@ -217,7 +217,7 @@ func TestServerStateDoesNotReuseModulesAcrossCompilerInputs(t *testing.T) {
 	}
 }
 
-func TestServerStateReindexesReusedGenericDeclarations(t *testing.T) {
+func TestServerStateReusesGenericDeclarationSymbols(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceProjectConfig(t, root, "app")
 	entry := filepath.Join(root, peeper.SourceDirName, peeper.MainFileName)
@@ -244,7 +244,7 @@ fn main() { let body_only = 1; }`
 		t.Fatal("incremental generic compile returned nil")
 	}
 	if ctx.Diagnostics.HasErrors() {
-		t.Fatalf("incremental generic compile lost declaration registry:\n%s", ctx.Diagnostics.EmitAllToString())
+		t.Fatalf("incremental generic compile lost declaration symbol:\n%s", ctx.Diagnostics.EmitAllToString())
 	}
 }
 

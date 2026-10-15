@@ -330,9 +330,6 @@ func TestCompilerContextResolvesRetainedTypeDeclarations(t *testing.T) {
 	if err := mod.ModuleScope.Declare(symbol); err != nil {
 		t.Fatalf("declare retained generic type: %v", err)
 	}
-	original := New(".", ".peep", nil)
-	original.TypeResolver.RegisterTypeDeclaration(mod, declaration, base)
-
 	fresh := New(".", ".peep", nil)
 	fresh.AddModule(mod)
 	resolved := fresh.TypeResolver.Resolve(fresh.Diagnostics, mod, &ast.AppliedType{
@@ -341,11 +338,6 @@ func TestCompilerContextResolvesRetainedTypeDeclarations(t *testing.T) {
 	}, typeresolution.Context{})
 	if types.IsInvalid(resolved) {
 		t.Fatalf("retained generic declaration did not resolve in a fresh context: %#v", resolved)
-	}
-
-	fresh.ResetModule(mod, phase.Parsed)
-	if _, retained := mod.TypeDeclaration(base.Identity); retained {
-		t.Fatal("reset below collection retained module declaration artifact")
 	}
 }
 

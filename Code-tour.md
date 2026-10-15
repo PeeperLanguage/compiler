@@ -179,7 +179,6 @@ cannot leave stale evidence behind:
 func (m *Module) ResetToPhase(retained phase.Phase) {
     m.Phase = retained
     if retained <= phase.Parsed { m.ModuleScope = nil; m.SymbolIndex = nil }
-    if retained < phase.Collected { m.typeDeclarations = nil }
     if retained < phase.Typechecked { m.THIR = nil; m.SemanticExportFingerprint = "" }
     if retained < phase.CFG { m.CFG = nil }
     if retained < phase.Analyzed { m.Analysis = nil }

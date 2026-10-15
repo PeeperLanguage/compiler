@@ -86,8 +86,8 @@ func (ctx *CompilerContext) NewModuleForFile(filePath, content string) *compilat
 }
 
 // AddModule registers a module in shared compiler state. Identity conflict
-// validation, file indexing, and retained type-declaration reindexing are one
-// atomic operation so rejected or replaced modules cannot leave stale indexes.
+// validation and file indexing are one atomic operation so rejected or replaced
+// modules cannot leave stale indexes.
 func (ctx *CompilerContext) AddModule(module *compilation.Module) *diagnostics.Diagnostic {
 	if ctx == nil || module == nil || !module.ID.IsValid() {
 		return nil

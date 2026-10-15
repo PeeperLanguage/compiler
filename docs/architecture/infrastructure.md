@@ -47,7 +47,7 @@ runtime jobs or production data flow.
 - optional `CompileMetrics`;
 - module and canonical-file indexes;
 - semantic-export baselines supplied by an incremental client;
-- generic declaration and concrete-instance indexes;
+- semantic type resolution and its concrete-instance cache;
 - the shared import `graph.DependencyGraph`;
 - `*sync.RWMutex`, guarding module indexes and related context maps.
 
@@ -85,9 +85,8 @@ both directions of conflict before touching indexes:
 - one identity already associated with another file.
 
 A conflict creates `ErrAmbiguousImport`. A clean registration updates `modules` and
-`fileIndex`. A pathless replacement removes a stale file index. Registration also
-reindexes collected generic declarations, because fresh incremental contexts may
-reuse module artifacts while their derived context index starts empty.
+`fileIndex`. A pathless replacement removes a stale file index. Reused collected
+modules retain their declaration symbols in `ModuleScope`.
 
 `ModuleByID`, `ModuleByFile`, and `Modules` use read locking. `Modules` returns a
 slice snapshot of module pointers; it does not deep-copy modules or impose order.
@@ -111,10 +110,10 @@ Its durable phase artifacts are:
 
 - `Phase`;
 - `AST`;
-- `ModuleScope` and `SymbolIndex`, including finalized symbol-owned constants;
+- `ModuleScope` and `SymbolIndex`, including type declaration syntax, semantic type
+  shells, and finalized symbol-owned constants;
 - `Imports`, mapping aliases to `ResolvedImport`;
-- `THIR`, `CFG`, `Analysis`, `MIR`, and emitted `LLVMIR`;
-- collected generic declaration syntax and semantic shells.
+- `THIR`, `CFG`, `Analysis`, `MIR`, and emitted `LLVMIR`.
 
 `BaseExprType` reads canonical expression types from THIR. `EffectiveExprType` prefers a flow-refined type from `Analysis` and falls back to THIR.
 
@@ -126,17 +125,15 @@ Its durable phase artifacts are:
 artifacts through `retained` and clears downstream artifacts:
 
 - at or below `Parsed`: scope and generation-owned symbol state;
-- below `Collected`: generic declaration index;
 - below `Typechecked`: THIR and semantic export fingerprint;
 - below `CFG`: CFG;
 - below `Analyzed`: Analysis;
 - below `MIR`: MIR;
 - below `Backend`: LLVM IR.
 
-`CompilerContext.ResetModule` calls that reset, removes owned generic instances, and
-removes declaration-index entries when resetting below `Collected`. It then calls
-`DiagnosticBag.DiscardModuleAfter`, removing diagnostics produced after the retained
-phase. Incomplete generic-instance wait channels are closed during removal.
+`CompilerContext.ResetModule` calls that reset and removes owned generic instances. It
+then calls `DiagnosticBag.DiscardModuleAfter`, removing diagnostics produced after the
+retained phase. Incomplete generic-instance wait channels are closed during removal.
 
 The reset is a snapshot downgrade, not a source reload. Existing AST/fingerprints
 can survive a parse-only reset; later pipeline phases rebuild dependent artifacts.
@@ -387,9 +384,10 @@ mechanism but retain their own lattice, join, transfer, direction, and diagnosti
 
 ## Lock discipline
 
-- `CompilerContext.mu` protects module/file indexes, semantic baselines, declaration
-  indexes, and generic-instance maps. Use `RLock` for lookups/snapshots and `Lock`
-  for registration, baseline updates, and invalidation-related map mutation.
+- `CompilerContext.mu` protects module/file indexes and semantic baselines. Use
+  `RLock` for lookups/snapshots and `Lock` for registration, baseline updates, and
+  invalidation-related map mutation. `typeresolution.Resolver.mu` protects generic
+  instance construction and cache mutation.
 - `DiagnosticBag.mu` protects phase/module groups, active flags, counts, snapshots,
   and source-cache access where applicable. Scoped writers share the same mutex and
   group maps; callers do not hold context locks while emitting diagnostics.

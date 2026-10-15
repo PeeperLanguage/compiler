@@ -138,11 +138,7 @@ func TestQueryTypeReturnsCompleteCachedGenericInstance(t *testing.T) {
 }
 
 func TestResolveTypeCreatesGenericInstance(t *testing.T) {
-	resolver, diag, mod, base := genericQueryContext(t)
-	resolver.RegisterTypeDeclaration(mod, &ast.StructDecl{
-		Name: &ast.Ident{Name: "Box"},
-		Type: &ast.StructType{},
-	}, base)
+	resolver, diag, mod, _ := genericQueryContext(t)
 	node := &ast.AppliedType{
 		Name: &ast.Ident{Name: "Box"},
 		TypeArgs: []ast.TypeExpr{
@@ -163,6 +159,30 @@ func TestResolveTypeCreatesGenericInstance(t *testing.T) {
 	}
 	if diag.HasErrors() {
 		t.Fatalf("source resolution emitted diagnostics: %s", diag.EmitAllToString())
+	}
+}
+
+func TestInstantiateTypeRejectsDeclarationForDifferentBase(t *testing.T) {
+	resolver, diag, mod, base := genericQueryContext(t)
+	symbol, found := mod.ModuleScope.LookupLocal("Box")
+	if !found {
+		t.Fatal("generic type symbol missing")
+	}
+	replacement := *base
+	symbol.BindType(&replacement)
+
+	got := resolver.instantiateType(diag, base, []types.Type{
+		&types.IntegerType{IsSigned: true, Bits: 32},
+	}, &ast.AppliedType{Name: &ast.Ident{Name: "Box"}}, nil)
+
+	if !types.IsInvalid(got) {
+		t.Fatalf("mismatched declaration base resolved to %#v, want invalid", got)
+	}
+	if !diag.HasErrors() {
+		t.Fatal("mismatched declaration base emitted no diagnostic")
+	}
+	if len(resolver.instances) != 0 {
+		t.Fatalf("mismatched declaration base cached %d instances", len(resolver.instances))
 	}
 }
 
@@ -198,7 +218,8 @@ func genericQueryContext(t *testing.T) (*Resolver, *diagnostics.DiagnosticBag, *
 		Name: "Box", Identity: identity, Kind: types.DefinedKindStruct,
 		TypeParameters: []*types.TypeParameterType{{Name: "T", OwnerIdentity: identity, Index: 0}},
 	}
-	symbol := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolType, "Box"), "Box", symbols.SymbolType, nil, nil)
+	declaration := &ast.StructDecl{Name: &ast.Ident{Name: "Box"}, Type: &ast.StructType{}}
+	symbol := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolType, "Box"), "Box", symbols.SymbolType, declaration, nil)
 	symbol.BindType(base)
 	if err := mod.ModuleScope.Declare(symbol); err != nil {
 		t.Fatalf("declare generic type: %v", err)
