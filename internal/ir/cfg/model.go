@@ -35,9 +35,12 @@ type ControlFlowGraph struct {
 	Location       *source.Location
 	ReturnTypeText string
 	HasReturnValue bool
-	Entry          *Block
-	Exit           *Block
-	Blocks         []*Block
+	// BodyScopeID names the function body's own scope, so a statement can be
+	// told apart from one nested in a branch or loop.
+	BodyScopeID source.NodeID
+	Entry       *Block
+	Exit        *Block
+	Blocks      []*Block
 	// SiteEdges is the canonical ordered site topology. Edge values retain CFG
 	// branch meaning; the shared graph kernel owns forward/reverse adjacency.
 	SiteEdges *graphcore.Directed[SiteID, Edge]
@@ -121,6 +124,11 @@ const (
 	// here. Before it existed, exiting a loop was identified by the absence of a
 	// role plus a NodeID that happened to name one.
 	BlockLoopExit
+	// BlockImplicitElse is the path an `if` with no `else` takes when its
+	// condition is false: a block with no source text of its own.
+	BlockImplicitElse
+	// BlockArm is the body of one `match` arm.
+	BlockArm
 )
 
 type Block struct {
@@ -147,8 +155,12 @@ type Branch struct {
 	ConditionID source.NodeID
 	ScopeID     source.NodeID
 	Location    *source.Location
-	TrueTarget  *Block
-	FalseTarget *Block
+	// ConditionLocation is the tested expression: the `if` or `for` condition,
+	// or the iterable of a `for ... in`. It is where a diagnostic about the
+	// false path points, since Location spans the whole statement.
+	ConditionLocation *source.Location
+	TrueTarget        *Block
+	FalseTarget       *Block
 }
 
 type Return struct {

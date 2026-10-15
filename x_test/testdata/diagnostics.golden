@@ -2438,26 +2438,6 @@ Compilation failed with 2 error(s)
 
 Compilation failed with 2 error(s)
 === negative_match_fallback (exit 1)
-[T0017]: not all control paths return a value
-   --> negative_match_fallback/src/main.peep:7:1
-   |
- 7 | fn NotLast(shape: Shape) -> i32 {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
- 8 |     match shape {
-   | ^^^^^^^^^^^^^^^^^
- 9 |         _ => { return 0; }
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^
-10 |         Shape::Circle => { return 1; }
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-11 |     }
-   | ^^^^^
-12 | }
-   | ^ not all control paths return a value
-   |   expected `i32` here
-   |
-   = note: some branch completes without a `return`, execution can fall off end of function
-   = help: fulfill the return or add a fallback return on parent scope
-
 [P0004]: the `_` arm must be the last arm
   --> negative_match_fallback/src/main.peep:9:9
   |
@@ -2466,28 +2446,14 @@ Compilation failed with 2 error(s)
   |         ^^^^^^^^^^^^^^^^^^ it handles every case the arms before it do not
 
 [T0017]: not all control paths return a value
-   --> negative_match_fallback/src/main.peep:14:1
+   --> negative_match_fallback/src/main.peep:12:1
    |
-14 | fn HandlesNothing(shape: Shape) -> i32 {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-15 |     match shape {
-   | ^^^^^^^^^^^^^^^^^
-16 |         Shape::Circle => { return 1; }
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-17 |         Shape::Code => { return 2; }
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-18 |         Shape::Empty => { return 3; }
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-19 |         _ => { return 0; }
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^
-20 |     }
-   | ^^^^^
-21 | }
-   | ^ not all control paths return a value
-   |   expected `i32` here
+11 |     }
+12 | }
+   | ^ function ends without returning `i32`
    |
-   = note: some branch completes without a `return`, execution can fall off end of function
-   = help: fulfill the return or add a fallback return on parent scope
+   = note: execution can reach the end of the function without a `return`
+   = help: add a `return` at the end of the function
 
 [P0004]: the `_` arm handles nothing
    --> negative_match_fallback/src/main.peep:19:9
@@ -2495,6 +2461,16 @@ Compilation failed with 2 error(s)
 18 |         Shape::Empty => { return 3; }
 19 |         _ => { return 0; }
    |         ^^^^^^^^^^^^^^^^^^ every case already has an arm
+
+[T0017]: not all control paths return a value
+   --> negative_match_fallback/src/main.peep:21:1
+   |
+20 |     }
+21 | }
+   | ^ function ends without returning `i32`
+   |
+   = note: execution can reach the end of the function without a `return`
+   = help: add a `return` at the end of the function
 
 [P0004]: match is missing case `Empty`
    --> negative_match_fallback/src/main.peep:24:5
@@ -2548,30 +2524,6 @@ Compilation failed with 6 error(s)
 25 |     }
    | ^^^^^ add an arm for each, or a `_` arm for every case left
 
-[T0017]: not all control paths return a value
-   --> negative_match_payload_test/src/main.peep:28:1
-   |
-28 | fn TestedAfterWhole(slot: Slot) -> i32 {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-29 |     match slot {
-   | ^^^^^^^^^^^^^^^^
-30 |         Slot::Value => { return 0; }
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-31 |         Slot::Value with none => { return 0; }
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-32 |         Slot::Inner => { return 0; }
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-33 |         Slot::Free => { return 0; }
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-34 |     }
-   | ^^^^^
-35 | }
-   | ^ not all control paths return a value
-   |   expected `i32` here
-   |
-   = note: some branch completes without a `return`, execution can fall off end of function
-   = help: fulfill the return or add a fallback return on parent scope
-
 [P0004]: duplicate match arm for `Value`
    --> negative_match_payload_test/src/main.peep:31:9
    |
@@ -2582,26 +2534,14 @@ Compilation failed with 6 error(s)
    |         ^^^^^^^^^^^ duplicate case
 
 [T0017]: not all control paths return a value
-   --> negative_match_payload_test/src/main.peep:37:1
+   --> negative_match_payload_test/src/main.peep:35:1
    |
-37 | fn WrongTests(slot: Slot) -> i32 {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-38 |     match slot {
-   | ^^^^^^^^^^^^^^^^
-39 |         Slot::Inner with none => { return 0; }
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-40 |         Slot::Free with none => { return 0; }
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-41 |         Slot::Value with Shape::Empty => { return 0; }
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-42 |     }
-   | ^^^^^
-43 | }
-   | ^ not all control paths return a value
-   |   expected `i32` here
+34 |     }
+35 | }
+   | ^ function ends without returning `i32`
    |
-   = note: some branch completes without a `return`, execution can fall off end of function
-   = help: fulfill the return or add a fallback return on parent scope
+   = note: execution can reach the end of the function without a `return`
+   = help: add a `return` at the end of the function
 
 [T0004]: `with none` needs an optional payload, but `Inner` holds Shape
    --> negative_match_payload_test/src/main.peep:39:26
@@ -2624,6 +2564,16 @@ Compilation failed with 6 error(s)
 41 |         Slot::Value with Shape::Empty => { return 0; }
    |                          ^^^^^^^^^^^^
 
+[T0017]: not all control paths return a value
+   --> negative_match_payload_test/src/main.peep:43:1
+   |
+42 |     }
+43 | }
+   | ^ function ends without returning `i32`
+   |
+   = note: execution can reach the end of the function without a `return`
+   = help: add a `return` at the end of the function
+
 [T0004]: `Free` has no payload to name
    --> negative_match_payload_test/src/main.peep:47:25
    |
@@ -2638,26 +2588,6 @@ Compilation failed with 6 error(s)
 48 |         Slot::Inner with .{ radius } => { return radius; }
    |                          ^^^^^^^^^^^
 
-[T0017]: not all control paths return a value
-   --> negative_match_payload_test/src/main.peep:53:1
-   |
-53 | fn TooDeep(slot: Slot) -> i32 {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-54 |     match slot {
-   | ^^^^^^^^^^^^^^^^
-55 |         Slot::Inner with Shape::Circle with none => { return 0; }
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-56 |         _ => { return 0; }
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^
-57 |     }
-   | ^^^^^
-58 | }
-   | ^ not all control paths return a value
-   |   expected `i32` here
-   |
-   = note: some branch completes without a `return`, execution can fall off end of function
-   = help: fulfill the return or add a fallback return on parent scope
-
 [T0004]: a pattern tests one level below its case
    --> negative_match_payload_test/src/main.peep:55:45
    |
@@ -2666,6 +2596,16 @@ Compilation failed with 6 error(s)
    |                                             ^^^^
    |
    = help: name the payload and test it in the arm
+
+[T0017]: not all control paths return a value
+   --> negative_match_payload_test/src/main.peep:58:1
+   |
+57 |     }
+58 | }
+   | ^ function ends without returning `i32`
+   |
+   = note: execution can reach the end of the function without a `return`
+   = help: add a `return` at the end of the function
 
 [T0004]: a `.{ }` pattern takes the fields out of the value, which a borrowed subject keeps
    --> negative_match_payload_test/src/main.peep:64:28
@@ -2853,6 +2793,423 @@ Compilation failed with 2 error(s)
 20 |         2,
 
 Compilation failed with 5 error(s)
+=== negative_missing_return_causes (exit 1)
+[T0017]: not all control paths return a value
+   --> negative_missing_return_causes/src/main.peep:55:1
+   |
+54 |     Touch(a);
+55 | }
+   | ^ function ends without returning `i32`
+   |
+   = note: execution can reach the end of the function without a `return`
+   = help: add a `return` at the end of the function
+
+[T0017]: not all control paths return a value
+   --> negative_missing_return_causes/src/main.peep:58:1
+   |
+57 | fn EmptyBody() -> i32 {
+58 | }
+   | ^ function ends without returning `i32`
+   |
+   = note: execution can reach the end of the function without a `return`
+   = help: add a `return` at the end of the function
+
+[T0017]: not all control paths return a value
+   --> negative_missing_return_causes/src/main.peep:67:1
+   |
+66 |     Touch(a);
+67 | }
+   | ^ function ends without returning `i32`
+   |
+   = note: execution can reach the end of the function without a `return`
+   = help: add a `return` at the end of the function
+
+[T0017]: not all control paths return a value
+   --> negative_missing_return_causes/src/main.peep:76:1
+   |
+75 |     Touch(3);
+76 | }
+   | ^ function ends without returning `i32`
+   |
+   = note: execution can reach the end of the function without a `return`
+   = help: add a `return` at the end of the function
+
+[T0017]: not all control paths return a value
+   --> negative_missing_return_causes/src/main.peep:80:8
+   |
+79 | fn IfWithoutElse(a: i32) -> i32 {
+80 |     if a > 0 {
+   |        ^^^^^ if this is false, nothing is returned
+...
+82 |     }
+83 | }
+   | - function ends without returning `i32`
+   |
+   = note: execution can reach the end of the function without a `return`
+   = help: add a `return` at the end of the function, or make each path shown return a value
+
+[T0017]: not all control paths return a value
+   --> negative_missing_return_causes/src/main.peep:89:9
+   |
+88 |     } else {
+89 |         Touch(a);
+   |         ^^^^^^^^^ this path ends without returning
+90 |     }
+91 | }
+   | - function ends without returning `i32`
+   |
+   = note: execution can reach the end of the function without a `return`
+   = help: add a `return` at the end of the function, or make each path shown return a value
+
+[T0017]: not all control paths return a value
+   --> negative_missing_return_causes/src/main.peep:96:15
+   |
+95 |         return 1;
+96 |     } else if a < 0 {
+   |               ^^^^^ if this is false, nothing is returned
+...
+98 |     }
+99 | }
+   | - function ends without returning `i32`
+   |
+   = note: execution can reach the end of the function without a `return`
+   = help: add a `return` at the end of the function, or make each path shown return a value
+
+[T0017]: not all control paths return a value
+    --> negative_missing_return_causes/src/main.peep:103:12
+    |
+102 |     if a > 0 {
+103 |         if b > 0 {
+    |            ^^^^^ if this is false, nothing is returned
+...
+108 |     }
+109 | }
+    | - function ends without returning `i32`
+    |
+    = note: execution can reach the end of the function without a `return`
+    = help: add a `return` at the end of the function, or make each path shown return a value
+
+[T0017]: not all control paths return a value
+    --> negative_missing_return_causes/src/main.peep:112:8
+    |
+111 | fn InnerThenFalls(a: i32, b: i32) -> i32 {
+112 |     if a > 0 {
+    |        ^^^^^ if this is false, nothing is returned
+...
+115 |         }
+116 |         Touch(b);
+    |         --------- this path ends without returning
+117 |     }
+118 | }
+    | - function ends without returning `i32`
+    |
+    = note: execution can reach the end of the function without a `return`
+    = help: add a `return` at the end of the function, or make each path shown return a value
+
+[T0017]: not all control paths return a value
+    --> negative_missing_return_causes/src/main.peep:124:8
+    |
+123 |     }
+124 |     if b > 0 {
+    |        ^^^^^ if this is false, nothing is returned
+125 |         Touch(2);
+    |         --------- this path ends without returning
+126 |     }
+127 | }
+    | - function ends without returning `i32`
+    |
+    = note: execution can reach the end of the function without a `return`
+    = help: add a `return` at the end of the function, or make each path shown return a value
+
+[T0017]: not all control paths return a value
+    --> negative_missing_return_causes/src/main.peep:130:8
+    |
+129 | fn EmptyBranch(a: i32) -> i32 {
+130 |     if a > 0 {
+    |        ^^^^^ if this is true, nothing is returned
+    |              if this is false, nothing is returned
+131 |     }
+132 | }
+    | - function ends without returning `i32`
+    |
+    = note: execution can reach the end of the function without a `return`
+    = help: add a `return` at the end of the function, or make each path shown return a value
+
+[T0017]: not all control paths return a value
+    --> negative_missing_return_causes/src/main.peep:136:9
+    |
+135 |     if a > 0 {
+136 |         Touch(1);
+    |         ^^^^^^^^^ this path ends without returning
+137 |     } else if b > 0 {
+138 |         Touch(2);
+    |         --------- this path ends without returning
+139 |     } else if c > 0 {
+140 |         Touch(3);
+    |         --------- this path ends without returning
+...
+143 |     }
+144 | }
+    | - function ends without returning `i32`
+    |
+    = note: execution can reach the end of the function without a `return`
+    = note: 2 more path(s) like these are not shown
+    = help: add a `return` at the end of the function, or make each path shown return a value
+
+[T0017]: not all control paths return a value
+    --> negative_missing_return_causes/src/main.peep:147:14
+    |
+146 | fn LoopMayEndEmpty(n: i32) -> i32 {
+147 |     for i in 0..n {
+    |              ^^^^ when this loop finishes, nothing is returned
+...
+149 |     }
+150 | }
+    | - function ends without returning `i32`
+    |
+    = note: execution can reach the end of the function without a `return`
+    = help: add a `return` at the end of the function, or make each path shown return a value
+
+[T0017]: not all control paths return a value
+    --> negative_missing_return_causes/src/main.peep:153:14
+    |
+152 | fn LoopWithContinue(n: i32) -> i32 {
+153 |     for i in 0..n {
+    |              ^^^^ when this loop finishes, nothing is returned
+...
+158 |     }
+159 | }
+    | - function ends without returning `i32`
+    |
+    = note: execution can reach the end of the function without a `return`
+    = help: add a `return` at the end of the function, or make each path shown return a value
+
+[T0017]: not all control paths return a value
+    --> negative_missing_return_causes/src/main.peep:163:9
+    |
+162 |     let mut b = a;
+163 |     for b > 0 {
+    |         ^^^^^ when this loop finishes, nothing is returned
+...
+165 |     }
+166 | }
+    | - function ends without returning `i32`
+    |
+    = note: execution can reach the end of the function without a `return`
+    = help: add a `return` at the end of the function, or make each path shown return a value
+
+[T0017]: not all control paths return a value
+    --> negative_missing_return_causes/src/main.peep:171:13
+    |
+170 |         if a > 0 {
+171 |             break;
+    |             ^^^^^ this `break` leaves the loop without returning
+...
+174 |     }
+175 | }
+    | - function ends without returning `i32`
+    |
+    = note: execution can reach the end of the function without a `return`
+    = help: add a `return` at the end of the function, or make each path shown return a value
+
+[T0017]: not all control paths return a value
+    --> negative_missing_return_causes/src/main.peep:179:18
+    |
+178 |     if a > 0 {
+179 |         for i in 0..n {
+    |                  ^^^^ when this loop finishes, nothing is returned
+...
+184 |     }
+185 | }
+    | - function ends without returning `i32`
+    |
+    = note: execution can reach the end of the function without a `return`
+    = help: add a `return` at the end of the function, or make each path shown return a value
+
+[T0017]: not all control paths return a value
+    --> negative_missing_return_causes/src/main.peep:190:22
+    |
+189 |         Mode::A => { return 1; }
+190 |         Mode::B => { Touch(2); }
+    |                      ^^^^^^^^^ this path ends without returning
+...
+192 |     }
+193 | }
+    | - function ends without returning `i32`
+    |
+    = note: execution can reach the end of the function without a `return`
+    = help: add a `return` at the end of the function, or make each path shown return a value
+
+[T0017]: not all control paths return a value
+    --> negative_missing_return_causes/src/main.peep:197:22
+    |
+196 |     match mode {
+197 |         Mode::A => { Touch(1); }
+    |                      ^^^^^^^^^ this path ends without returning
+198 |         Mode::B => { Touch(2); }
+    |                      --------- this path ends without returning
+...
+200 |     }
+201 | }
+    | - function ends without returning `i32`
+    |
+    = note: execution can reach the end of the function without a `return`
+    = help: add a `return` at the end of the function, or make each path shown return a value
+
+[W0003]: condition is always false
+    --> negative_missing_return_causes/src/main.peep:204:5
+    |
+203 | fn ConstantCondition() -> i32 {
+204 |     if false {
+    |     ^^^^^^^^^^
+205 |         return 1;
+    | ^^^^^^^^^^^^^^^^^
+206 |     }
+    | ^^^^^ condition is always false
+
+[T0017]: not all control paths return a value
+    --> negative_missing_return_causes/src/main.peep:204:8
+    |
+203 | fn ConstantCondition() -> i32 {
+204 |     if false {
+    |        ^^^^^ if this is false, nothing is returned
+...
+206 |     }
+207 | }
+    | - function ends without returning `i32`
+    |
+    = note: execution can reach the end of the function without a `return`
+    = help: add a `return` at the end of the function, or make each path shown return a value
+
+[T0017]: not all control paths return a value
+    --> negative_missing_return_causes/src/main.peep:210:8
+    |
+209 | fn (self: &Counter) Read() -> i32 {
+210 |     if self.total > 0 {
+    |        ^^^^^^^^^^^^^^ if this is false, nothing is returned
+...
+212 |     }
+213 | }
+    | - function ends without returning `i32`
+    |
+    = note: execution can reach the end of the function without a `return`
+    = help: add a `return` at the end of the function, or make each path shown return a value
+
+[T0017]: not all control paths return a value
+    --> negative_missing_return_causes/src/main.peep:217:8
+    |
+216 | fn EmptyThenAndNoElse(a: i32) -> i32 {
+217 |     if a > 0 {
+    |        ^^^^^ if this is true, nothing is returned
+    |              if this is false, nothing is returned
+218 |     }
+219 | }
+    | - function ends without returning `i32`
+    |
+    = note: execution can reach the end of the function without a `return`
+    = help: add a `return` at the end of the function, or make each path shown return a value
+
+[T0017]: not all control paths return a value
+    --> negative_missing_return_causes/src/main.peep:222:8
+    |
+221 | fn EmptyThenOnly(a: i32) -> i32 {
+222 |     if a > 0 {
+    |        ^^^^^ if this is true, nothing is returned
+...
+225 |     }
+226 | }
+    | - function ends without returning `i32`
+    |
+    = note: execution can reach the end of the function without a `return`
+    = help: add a `return` at the end of the function, or make each path shown return a value
+
+[T0017]: not all control paths return a value
+    --> negative_missing_return_causes/src/main.peep:229:8
+    |
+228 | fn EmptyElse(a: i32) -> i32 {
+229 |     if a > 0 {
+    |        ^^^^^ if this is false, nothing is returned
+...
+232 |     }
+233 | }
+    | - function ends without returning `i32`
+    |
+    = note: execution can reach the end of the function without a `return`
+    = help: add a `return` at the end of the function, or make each path shown return a value
+
+[T0017]: not all control paths return a value
+    --> negative_missing_return_causes/src/main.peep:237:9
+    |
+236 |     match mode {
+237 |         Mode::A => {}
+    |         ^^^^^^^^^^^^^ this path ends without returning
+...
+240 |     }
+241 | }
+    | - function ends without returning `i32`
+    |
+    = note: execution can reach the end of the function without a `return`
+    = help: add a `return` at the end of the function, or make each path shown return a value
+
+[T0017]: not all control paths return a value
+    --> negative_missing_return_causes/src/main.peep:246:9
+    |
+245 |     match mode {
+246 |         Mode::A => {}
+    |         ^^^^^^^^^^^^^ this path ends without returning
+...
+249 |     }
+250 | }
+    | - function ends without returning `i32`
+    |
+    = note: execution can reach the end of the function without a `return`
+    = help: add a `return` at the end of the function, or make each path shown return a value
+
+[T0017]: not all control paths return a value
+    --> negative_missing_return_causes/src/main.peep:256:13
+    |
+255 |         match mode {
+256 |             Mode::A => {}
+    |             ^^^^^^^^^^^^^ this path ends without returning
+...
+262 |     }
+263 | }
+    | - function ends without returning `i32`
+    |
+    = note: execution can reach the end of the function without a `return`
+    = help: add a `return` at the end of the function, or make each path shown return a value
+
+[T0017]: not all control paths return a value
+    --> negative_missing_return_causes/src/main.peep:274:5
+    |
+273 | fn CallIteration(cursor: &mut Cursor) -> i32 {
+274 |     for item in cursor.Next() {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+275 |         if item > 2 { return item; }
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+276 |     }
+    | ^^^^^ when this loop finishes, nothing is returned
+277 | }
+    | - function ends without returning `i32`
+    |
+    = note: execution can reach the end of the function without a `return`
+    = help: add a `return` at the end of the function, or make each path shown return a value
+
+[T0017]: not all control paths return a value
+    --> negative_missing_return_causes/src/main.peep:282:9
+    |
+281 | fn ShortCircuitLoop(a: i32, b: i32) -> i32 {
+282 |     for a > 0 && b > 0 {
+    |         ^^^^^^^^^^^^^^ when this loop finishes, nothing is returned
+...
+284 |     }
+285 | }
+    | - function ends without returning `i32`
+    |
+    = note: execution can reach the end of the function without a `return`
+    = help: add a `return` at the end of the function, or make each path shown return a value
+
+Compilation failed with 29 error(s) and 1 warning(s)
 === negative_missing_semicolon_fix (exit 1)
 [P0002]: expected ';' after statement
   --> negative_missing_semicolon_fix/src/main.peep:2:23
@@ -3427,67 +3784,46 @@ Compilation failed with 5 error(s)
 Compilation failed with 1 error(s)
 === negative_qualified_range_return (exit 1)
 [T0017]: not all control paths return a value
-  --> negative_qualified_range_return/src/main.peep:4:5
+  --> negative_qualified_range_return/src/main.peep:4:18
   |
 3 | fn Equal() -> i32 {
-  | -------------------
 4 |     for value in values::One..values::One {
-  | -------------------------------------------
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-5 |         return value;
-  | ^^^^^^^^^^^^^^^^^^^^^
+  |                  ^^^^^^^^^^^^^^^^^^^^^^^^ when this loop finishes, nothing is returned
+...
 6 |     }
-  | ^^^^^ this branch does not return a value
-  |       this branch does not return a value
-  |       this branch does not return a value
-  | -----
 7 | }
-  | - expected `i32` here
+  | - function ends without returning `i32`
   |
-  = note: some branch completes without a `return`, execution can fall off end of function
-  = help: fulfill the return or add a fallback return on parent scope
+  = note: execution can reach the end of the function without a `return`
+  = help: add a `return` at the end of the function, or make each path shown return a value
 
 [T0017]: not all control paths return a value
-   --> negative_qualified_range_return/src/main.peep:10:5
+   --> negative_qualified_range_return/src/main.peep:10:18
    |
  9 | fn Reversed() -> i32 {
-   | ----------------------
 10 |     for value in values::One..values::Zero {
-   | --------------------------------------------
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-11 |         return value;
-   | ^^^^^^^^^^^^^^^^^^^^^
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^ when this loop finishes, nothing is returned
+...
 12 |     }
-   | ^^^^^ this branch does not return a value
-   |       this branch does not return a value
-   |       this branch does not return a value
-   | -----
 13 | }
-   | - expected `i32` here
+   | - function ends without returning `i32`
    |
-   = note: some branch completes without a `return`, execution can fall off end of function
-   = help: fulfill the return or add a fallback return on parent scope
+   = note: execution can reach the end of the function without a `return`
+   = help: add a `return` at the end of the function, or make each path shown return a value
 
 [T0017]: not all control paths return a value
-   --> negative_qualified_range_return/src/main.peep:16:5
+   --> negative_qualified_range_return/src/main.peep:16:18
    |
 15 | fn Runtime(start: i32) -> i32 {
-   | -------------------------------
 16 |     for value in start..values::One {
-   | -------------------------------------
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-17 |         return value;
-   | ^^^^^^^^^^^^^^^^^^^^^
+   |                  ^^^^^^^^^^^^^^^^^^ when this loop finishes, nothing is returned
+...
 18 |     }
-   | ^^^^^ this branch does not return a value
-   |       this branch does not return a value
-   |       this branch does not return a value
-   | -----
 19 | }
-   | - expected `i32` here
+   | - function ends without returning `i32`
    |
-   = note: some branch completes without a `return`, execution can fall off end of function
-   = help: fulfill the return or add a fallback return on parent scope
+   = note: execution can reach the end of the function without a `return`
+   = help: add a `return` at the end of the function, or make each path shown return a value
 
 Compilation failed with 3 error(s)
 === negative_range_address (exit 1)

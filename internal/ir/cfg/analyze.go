@@ -1,6 +1,10 @@
 package cfg
 
 import (
+	"cmp"
+	"fmt"
+	"slices"
+
 	"compiler/internal/diagnostics"
 	"compiler/internal/problems"
 	"compiler/internal/source"
@@ -58,99 +62,160 @@ func reportConstantCondition(branch *Branch, value bool, diag *diagnostics.Diagn
 	diag.Add(diagnostics.NewWarning(msg).WithCode(code).WithPrimaryLabel(branch.Location, msg))
 }
 
+// missingReturnCause is one path that reaches the end of a function without
+// returning, with the label that names it.
+type missingReturnCause struct {
+	label    string
+	location *source.Location
+}
+
+// maxMissingReturnCauses keeps the message short when many paths fall off.
+const maxMissingReturnCauses = 3
+
+// reportMissingReturn explains how execution reaches the end of fn. A branch
+// that does not return is no error while code after it does, so only paths
+// that arrive at the end are named, and only when nothing separates them from
+// it: if statements come between, the end of the function is the cause, since
+// one `return` there fixes every path.
 func reportMissingReturn(fn *ControlFlowGraph, diag *diagnostics.DiagnosticBag) {
 	if fn == nil || diag == nil {
 		return
 	}
-	msg := "not all control paths return a value"
-	diagnostic := diagnostics.NewError(msg).WithCode(diagnostics.ErrMissingReturn)
-	branches := filterMostSpecificBranches(findMissingReturnBranches(fn))
-	if len(branches) > 0 && branches[0] != nil && branches[0].Location != nil {
-		diagnostic.WithPrimaryLabel(branches[0].Location, "this branch does not return a value")
-	} else if fn.Location != nil {
-		diagnostic.WithPrimaryLabel(fn.Location, msg)
+	diagnostic := diagnostics.NewError("not all control paths return a value").WithCode(diagnostics.ErrMissingReturn)
+	end := closingBrace(fn.Location)
+	if end == nil {
+		end = fn.Location
 	}
-	if fn.Location != nil {
-		diagnostic.WithSecondaryLabel(fn.Location, "expected `"+fn.ReturnTypeText+"` here")
-	}
-	for _, branch := range branches {
-		if branch != nil && branch.Location != nil {
-			diagnostic.WithSecondaryLabel(branch.Location, "this branch does not return a value")
+	endLabel := "function ends without returning `" + fn.ReturnTypeText + "`"
+	help := "add a `return` at the end of the function"
+	causes, endsAfterStatements := findMissingReturnCauses(fn)
+	hidden := 0
+	if endsAfterStatements || len(causes) == 0 {
+		diagnostic.WithPrimaryLabel(end, endLabel)
+	} else {
+		slices.SortFunc(causes, func(left, right missingReturnCause) int { return compareLocations(left.location, right.location) })
+		hidden = max(len(causes)-maxMissingReturnCauses, 0)
+		for index, cause := range causes[:len(causes)-hidden] {
+			if index == 0 {
+				diagnostic.WithPrimaryLabel(cause.location, cause.label)
+			} else {
+				diagnostic.WithSecondaryLabel(cause.location, cause.label)
+			}
 		}
+		diagnostic.WithSecondaryLabel(end, endLabel)
+		help += ", or make each path shown return a value"
 	}
-	diagnostic.Note("some branch completes without a `return`, execution can fall off end of function")
-	diagnostic.Help("fulfill the return or add a fallback return on parent scope")
+	diagnostic.Note("execution can reach the end of the function without a `return`")
+	if hidden > 0 {
+		diagnostic.Note(fmt.Sprintf("%d more path(s) like these are not shown", hidden))
+	}
+	diagnostic.Help(help)
 	diag.Add(diagnostic)
 }
 
-func findMissingReturnBranches(fn *ControlFlowGraph) []*Block {
-	if fn == nil || fn.Entry == nil || fn.Exit == nil {
+// findMissingReturnCauses walks back from the exit through blocks that hold no
+// statement. The first thing it meets on each path is the cause. It reports
+// whether some path arrives after statements of the function body itself.
+func findMissingReturnCauses(fn *ControlFlowGraph) (causes []missingReturnCause, endsAfterStatements bool) {
+	if fn == nil || fn.Exit == nil {
+		return nil, false
+	}
+	visited := map[*Block]bool{fn.Exit: true}
+	add := func(label string, location *source.Location) {
+		if location != nil {
+			causes = append(causes, missingReturnCause{label, location})
+		}
+	}
+	var walk func(*Block)
+	walk = func(block *Block) {
+		for _, pred := range predecessorBlocks(fn, block) {
+			// Code after a `return` is unreachable and may still jump to the exit.
+			if pred == nil || !pred.IsReachable || visited[pred] {
+				continue
+			}
+			visited[pred] = true
+			statement := lastStatement(pred)
+			switch {
+			case pred.Origin == BlockLoop:
+				add(loopFinishLabel, conditionLocation(pred))
+			case statement != nil && block.Origin == BlockLoopExit && statement.NodeID.IsGenerated():
+				// A call iteration leaves its loop through a break the compiler
+				// wrote, so the loop is what to point at.
+				add(loopFinishLabel, statement.Location)
+			case statement != nil && block.Origin == BlockLoopExit:
+				add("this `break` leaves the loop without returning", statement.Location)
+			case pred.Origin == BlockImplicitElse || pred.Origin == BlockElse && statement == nil:
+				add(ifFalseLabel, conditionOf(fn, pred))
+			case pred.Origin == BlockThen && statement == nil:
+				add(ifTrueLabel, conditionOf(fn, pred))
+			case statement != nil && statement.ScopeID == fn.BodyScopeID:
+				endsAfterStatements = true
+			case statement != nil:
+				add(branchEndLabel, statement.Location)
+			case pred.Origin == BlockArm:
+				add(branchEndLabel, pred.Location)
+			case pred == fn.Entry:
+				endsAfterStatements = true
+			default:
+				walk(pred)
+			}
+		}
+	}
+	walk(fn.Exit)
+	return causes, endsAfterStatements
+}
+
+const (
+	loopFinishLabel = "when this loop finishes, nothing is returned"
+	branchEndLabel  = "this path ends without returning"
+	ifTrueLabel     = "if this is true, nothing is returned"
+	ifFalseLabel    = "if this is false, nothing is returned"
+)
+
+func lastStatement(block *Block) *Site {
+	for index := len(block.Sites) - 1; index >= 0; index-- {
+		if block.Sites[index].Kind == SiteStatement {
+			return block.Sites[index]
+		}
+	}
+	return nil
+}
+
+func conditionLocation(block *Block) *source.Location {
+	if branch, ok := block.Terminator.(*Branch); ok {
+		return branch.ConditionLocation
+	}
+	return nil
+}
+
+// conditionOf is the condition of the branch whose edge enters block.
+func conditionOf(fn *ControlFlowGraph, block *Block) *source.Location {
+	for _, pred := range predecessorBlocks(fn, block) {
+		if branch, ok := pred.Terminator.(*Branch); ok && (branch.TrueTarget == block || branch.FalseTarget == block) {
+			return branch.ConditionLocation
+		}
+	}
+	return nil
+}
+
+// closingBrace is the last character of a function's span, where the end of
+// the function is.
+func closingBrace(location *source.Location) *source.Location {
+	if location == nil || location.Filename == nil || location.End == nil || location.End.Column <= 1 {
 		return nil
 	}
-	visited := make(map[*Block]bool)
-	reachesExit := make(map[*Block]bool)
-	var walk func(*Block) bool
-	walk = func(block *Block) bool {
-		if block == nil {
-			return false
-		}
-		if block == fn.Exit {
-			return true
-		}
-		if _, returns := block.Terminator.(*Return); returns {
-			return false
-		}
-		if done, ok := visited[block]; ok {
-			return done
-		}
-		visited[block] = false
-		hitsExit := false
-		if block.Terminator != nil {
-			for _, successor := range block.Terminator.Successors() {
-				if walk(successor) {
-					hitsExit = true
-				}
-			}
-		}
-		visited[block] = hitsExit
-		if hitsExit {
-			reachesExit[block] = true
-		}
-		return hitsExit
-	}
-	_ = walk(fn.Entry)
+	end := *location.End
+	start := end
+	start.Column--
+	start.Index--
+	return source.NewLocation(*location.Filename, start, end)
+}
 
-	found := make([]*Block, 0)
-	seen := make(map[*Block]bool)
-	for block := range reachesExit {
-		if isStructuredControl(block.Origin) {
-			if !seen[block] {
-				found = append(found, block)
-				seen[block] = true
-			}
-			continue
-		}
-		queue := predecessorBlocks(fn, block)
-		traceSeen := make(map[*Block]bool)
-		for len(queue) > 0 {
-			current := queue[0]
-			queue = queue[1:]
-			if current == nil || traceSeen[current] {
-				continue
-			}
-			traceSeen[current] = true
-			if isStructuredControl(current.Origin) {
-				if !seen[current] {
-					found = append(found, current)
-					seen[current] = true
-				}
-				continue
-			}
-			queue = append(queue, predecessorBlocks(fn, current)...)
-		}
+func compareLocations(left, right *source.Location) int {
+	if left == nil || left.Start == nil || right == nil || right.Start == nil {
+		return 0
 	}
-	sortMissingBranches(found)
-	return found
+	return cmp.Or(cmp.Compare(left.Start.Line, right.Start.Line), cmp.Compare(left.Start.Column, right.Start.Column))
 }
 
 func predecessorBlocks(fn *ControlFlowGraph, block *Block) []*Block {
@@ -165,93 +230,4 @@ func predecessorBlocks(fn *ControlFlowGraph, block *Block) []*Block {
 		}
 	}
 	return blocks
-}
-
-// isStructuredControl reports whether a block is part of a structured construct
-// rather than a plain continuation. Missing-return reporting walks back to the
-// nearest such block to name the branch that falls through. A loop exit is a
-// continuation despite carrying a loop role: the code after the loop lives
-// there, and reporting it would name the wrong branch.
-func isStructuredControl(origin BlockOrigin) bool {
-	switch origin {
-	case BlockNormal, BlockLoopExit:
-		return false
-	case BlockThen, BlockElse, BlockLoopInit, BlockLoop, BlockLoopBody, BlockLoopLatch:
-		return true
-	}
-	return true
-}
-
-func filterMostSpecificBranches(blocks []*Block) []*Block {
-	if len(blocks) <= 1 {
-		return blocks
-	}
-	out := make([]*Block, 0, len(blocks))
-	for index, block := range blocks {
-		if block == nil || block.Location == nil {
-			continue
-		}
-		outer := false
-		for otherIndex, other := range blocks {
-			if index == otherIndex || other == nil || other.Location == nil {
-				continue
-			}
-			if locContains(block.Location, other.Location) && !locContains(other.Location, block.Location) {
-				outer = true
-				break
-			}
-		}
-		if !outer {
-			out = append(out, block)
-		}
-	}
-	sortMissingBranches(out)
-	return out
-}
-
-func locContains(outer, inner *source.Location) bool {
-	if outer == nil || inner == nil || outer.Start == nil || outer.End == nil || inner.Start == nil || inner.End == nil {
-		return false
-	}
-	outerFile, innerFile := "", ""
-	if outer.Filename != nil {
-		outerFile = *outer.Filename
-	}
-	if inner.Filename != nil {
-		innerFile = *inner.Filename
-	}
-	return outerFile == innerFile && !isPositionBefore(inner.Start, outer.Start) && !isPositionBefore(outer.End, inner.End)
-}
-
-func isPositionBefore(left, right *source.Position) bool {
-	if left == nil || right == nil {
-		return false
-	}
-	if left.Line != right.Line {
-		return left.Line < right.Line
-	}
-	return left.Column < right.Column
-}
-
-func sortMissingBranches(blocks []*Block) {
-	for index := range blocks {
-		for other := index + 1; other < len(blocks); other++ {
-			if blocks[index] != nil && blocks[other] != nil && isLaterLocation(blocks[other].Location, blocks[index].Location) {
-				blocks[index], blocks[other] = blocks[other], blocks[index]
-			}
-		}
-	}
-}
-
-func isLaterLocation(left, right *source.Location) bool {
-	if left == nil || left.Start == nil {
-		return false
-	}
-	if right == nil || right.Start == nil {
-		return true
-	}
-	if left.Start.Line != right.Start.Line {
-		return left.Start.Line > right.Start.Line
-	}
-	return left.Start.Column > right.Start.Column
 }

@@ -1,0 +1,8 @@
+name = "negative_missing_return_causes"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["function ends without returning `i32`", "if this is false, nothing is returned", "if this is true, nothing is returned", "this path ends without returning", "when this loop finishes, nothing is returned", "this `break` leaves the loop without returning", "more path(s) like these are not shown", "add a `return` at the end of the function, or make each path shown return a value"]
+stderr_excludes = ["P0002", "P0003", "unused local"]

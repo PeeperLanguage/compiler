@@ -670,28 +670,3 @@ func hasDiagnosticCode(diag *diagnostics.DiagnosticBag, code string) bool {
 	}
 	return false
 }
-
-// Missing-return reporting walks back to the nearest structured-control block
-// to name the branch that falls through, so this classification decides which
-// span a user sees. A loop exit carries a loop role but is a continuation: the
-// code after the loop lives there.
-func TestStructuredControlClassifiesEveryBlockOrigin(t *testing.T) {
-	for _, test := range []struct {
-		origin BlockOrigin
-		name   string
-		want   bool
-	}{
-		{BlockNormal, "normal", false},
-		{BlockLoopExit, "loop exit", false},
-		{BlockThen, "then", true},
-		{BlockElse, "else", true},
-		{BlockLoopInit, "loop init", true},
-		{BlockLoop, "loop header", true},
-		{BlockLoopBody, "loop body", true},
-		{BlockLoopLatch, "loop latch", true},
-	} {
-		if got := isStructuredControl(test.origin); got != test.want {
-			t.Errorf("structuredControl(%s) = %t, want %t", test.name, got, test.want)
-		}
-	}
-}

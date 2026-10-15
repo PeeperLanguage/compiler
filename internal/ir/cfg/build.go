@@ -56,6 +56,7 @@ func buildFunction(source *thir.Function) *ControlFlowGraph {
 		Location:       source.Source.Location,
 		ReturnTypeText: source.ReturnTypeText,
 		HasReturnValue: source.HasReturnValue,
+		BodyScopeID:    source.Body.Source.NodeID,
 		Blocks:         make([]*Block, 0),
 	}
 	b := &builder{fn: fn}
@@ -163,20 +164,27 @@ func (b *builder) buildLoopJump(source ir.SourceInfo, breaking bool) {
 func (b *builder) BuildIf(statement *thir.If) {
 	source := statement.Source
 	scopeID := b.currentScopeID()
+	elseOrigin := BlockElse
+	if typednil.IsNil(statement.Else) {
+		elseOrigin = BlockImplicitElse
+	}
 	thenBlock := b.newBlock(BlockThen, source.Location)
-	elseBlock := b.newBlock(BlockElse, source.Location)
+	elseBlock := b.newBlock(elseOrigin, source.Location)
 	join := b.newBlock(BlockNormal, source.Location)
 	conditionID := sourceid.NodeID{}
+	var conditionLocation *sourceid.Location
 	if !typednil.IsNil(statement.Condition) {
 		conditionID = statement.Condition.SourceInfo().NodeID
+		conditionLocation = statement.Condition.SourceInfo().Location
 	}
 	b.current.Terminator = &Branch{
-		NodeID:      source.NodeID,
-		ConditionID: conditionID,
-		ScopeID:     scopeID,
-		Location:    source.Location,
-		TrueTarget:  thenBlock,
-		FalseTarget: elseBlock,
+		NodeID:            source.NodeID,
+		ConditionID:       conditionID,
+		ScopeID:           scopeID,
+		Location:          source.Location,
+		ConditionLocation: conditionLocation,
+		TrueTarget:        thenBlock,
+		FalseTarget:       elseBlock,
 	}
 
 	b.current = thenBlock
@@ -224,8 +232,12 @@ func (b *builder) BuildFor(statement *thir.For) {
 		header := b.newBlock(BlockLoop, source.Location)
 		header.NodeID = source.NodeID
 		conditionID := sourceid.NodeID{}
+		var conditionLocation *sourceid.Location
 		if !typednil.IsNil(statement.Condition) {
 			conditionID = statement.Condition.SourceInfo().NodeID
+			conditionLocation = statement.Condition.SourceInfo().Location
+		} else if !typednil.IsNil(statement.Iterable) {
+			conditionLocation = statement.Iterable.SourceInfo().Location
 		}
 		initTarget := header
 		if statement.Iteration != nil && statement.Iteration.IsGuaranteedEntry() {
@@ -233,12 +245,13 @@ func (b *builder) BuildFor(statement *thir.For) {
 		}
 		init.Terminator = &Jump{Target: initTarget}
 		header.Terminator = &Branch{
-			NodeID:      source.NodeID,
-			ConditionID: conditionID,
-			ScopeID:     scopeID,
-			Location:    source.Location,
-			TrueTarget:  bodyBlock,
-			FalseTarget: exit,
+			NodeID:            source.NodeID,
+			ConditionID:       conditionID,
+			ScopeID:           scopeID,
+			Location:          source.Location,
+			ConditionLocation: conditionLocation,
+			TrueTarget:        bodyBlock,
+			FalseTarget:       exit,
 		}
 		latchTarget = header
 	} else {
@@ -283,7 +296,7 @@ func (b *builder) BuildMatch(statement *thir.Match) {
 	payloads := make(map[int]*SwitchVariant)
 	fallsThrough := false
 	for _, arm := range statement.Arms {
-		armBlock := b.newBlock(BlockNormal, arm.Source.Location)
+		armBlock := b.newBlock(BlockArm, arm.Source.Location)
 		for _, armCase := range arm.Cases {
 			if !armCase.TestsPayload {
 				subject.Targets = append(subject.Targets, VariantTarget{Case: armCase.Case, Target: armBlock})
