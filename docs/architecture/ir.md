@@ -128,8 +128,8 @@ rebuilt:
   only from ownership plans: lowering leaves a `DropPoint` at each such event, and
   `mir.ResolveDrops` replaces it with the drops the plan decides once the checks
   have run. The plan arrives through the `mir.CleanupPlan` interface that
-  `analysis.Module` implements, so `mir` does not import the analysis, and MIR can
-  be lowered before the checks;
+  `analysis.Module` implements, so `mir` does not import the analysis. The
+  pipeline currently lowers MIR after the checks have run;
 - expression trees lower through `exprlower`, then existing shared-IR-to-MIR logic.
 
 External functions and body-backed functions share THIR signature lowering.
@@ -155,7 +155,11 @@ signed indexes also reject negative values independently of unsigned length.
 - `cfg.Module.Validate` rejects malformed topology.
 - effect and ownership result validators reject inconsistent analysis evidence.
 - `mir.Module.Validate` rejects invalid runtime types, places, instructions,
-  terminators, calls, and return shapes before backend emission.
+  terminators, calls, and return shapes before backend emission. A place's type
+  is the type of its last projection (or its root's), so the validator checks
+  each projection step and that a store's value fits its place, but nothing
+  compares a place's type with the type THIR expected for the expression: only
+  lowering can get that wrong.
 - The pipeline validates MIR before entering backend phase, and LLVM emission
   revalidates at its direct entry boundary so callers that bypass the pipeline
   receive diagnostics instead of sending malformed MIR into lowering.

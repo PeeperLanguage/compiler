@@ -152,8 +152,10 @@ func NewTypeTable() *TypeTable {
 }
 
 // Lower returns the ID semantic was lowered to before, or runs lower and
-// remembers a valid result. An invalid one is not kept, so its diagnostics are
-// reported again where it is asked for again.
+// remembers a valid result. A type that lowers to InvalidType is not kept, so
+// it is reported again where it is asked for again. A composite whose child
+// failed still gets a valid ID and is kept, so the child's error is reported
+// once, not once per use.
 func (t *TypeTable) Lower(semantic typeinfo.Type, lower func() TypeID) TypeID {
 	t.mu.RLock()
 	id, found := t.lowered[semantic]
