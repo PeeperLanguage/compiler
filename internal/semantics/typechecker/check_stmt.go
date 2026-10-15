@@ -76,7 +76,7 @@ func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt) {
 					typeinfo.TypeText(retType), typeinfo.TypeText(c.returnType)))
 			if c.fn.ReturnType != nil {
 				d.WithSecondaryLabel(ast.LocOf(c.fn.ReturnType),
-					fmt.Sprintf("expected %s here", typeinfo.TypeText(c.returnType)))
+					fmt.Sprintf("return type is %s", typeinfo.TypeText(c.returnType)))
 			}
 			c.addInterfaceHint(d, c.returnType, retType)
 			c.ctx.Diagnostics.Add(d)

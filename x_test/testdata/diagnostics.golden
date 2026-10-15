@@ -2699,6 +2699,25 @@ Compilation failed with 13 error(s)
    = help: test it again, or bind what you need before changing it
 
 Compilation failed with 1 error(s)
+=== negative_method_return_mismatch (exit 1)
+[T0001]: cannot return bool from function returning i32
+  --> negative_method_return_mismatch/src/main.peep:8:12
+  |
+6 | // the same way it does inside a plain function.
+7 | fn (self: &Counter) read() -> i32 {
+  |                               --- return type is i32
+8 |     return true;
+  |            ^^^^
+
+[T0001]: cannot return str from function returning i32
+   --> negative_method_return_mismatch/src/main.peep:12:12
+   |
+11 | fn Plain() -> i32 {
+   |               --- return type is i32
+12 |     return "text";
+   |            ^^^^^^
+
+Compilation failed with 2 error(s)
 === negative_missing_closers (exit 1)
 [P0002]: expected ']'
    --> negative_missing_closers/src/main.peep:11:25
