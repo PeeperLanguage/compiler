@@ -1,11 +1,10 @@
 # Peeper Backlog
 
-Baseline: `main` at `03a32726f8a356a2b61c53232f4fecb28adc3350`  
-Reviewed: 2026-10-06  
+Baseline: `origin/main` at `9e0fe281`  
+Reviewed: 2026-10-15 (GitHub issue state and source checked; items not re-checked are marked)  
 Source of truth: current source, tests, architecture docs, and GitHub issue state.
 
-This file is the durable, tracked backlog. Historical review journals and ignored
-local plans are evidence, not task status.
+This file is the durable, tracked backlog. Ignored local plans and notes are evidence, not task status.
 
 Status markers:
 
@@ -16,67 +15,24 @@ Status markers:
 
 ## Current state
 
-- `main` and `origin/main` match at `03a3272`.
-- PR #156 merged at `05092be`.
-- PR #158 merged at `57e7995`.
-- Post-merge native-Clang ABI test fix is merged in `03a3272`.
-- Latest main CI passes Unit, Race, Quality, and native target jobs.
-- No open pull requests.
-- Roadmap project read is blocked by the GitHub token's missing `read:project` scope.
-- Existing untracked `.bugfix.md`, `.nightmare.md`, and `todo.txt` files are local
-  historical material. Do not treat them as canonical backlog or delete them without
-  explicit cleanup approval.
+- `origin/main` is at `9e0fe281` (PRs #159-#164 merged since the old baseline).
+- Open work branch: `feature/checks-on-mir-baseline` (checks-on-MIR migration plus
+  diagnostics cleanup). It is not merged; its progress is in the ignored local file
+  `branch-review.localplan.md`.
+- No open pull requests when last checked (2026-10-15).
+- Untracked `*.md` notes in the repo root are the author's local notes, not backlog.
 
 ## Now
-
-### [ ] #157 — Qualified range endpoints before loop bodies
-
-Type: implementation  
-Owner: `internal/frontend/parser` and affected range semantic tests  
-Issue: https://github.com/PeeperLanguage/compiler/issues/157  
-Evidence: `internal/frontend/parser/parse_stmt.go`, `parse_expr.go`
-
-Parse a bare qualified range endpoint such as `values::Zero..values::One` without
-consuming the loop-body `{` as a legacy enum payload.
-
-Acceptance:
-
-- Parse bare qualified endpoints and retain endpoint bindings/source locations.
-- Cover ascending, equal, reversed, and runtime ranges.
-- Preserve explicit enum construction and malformed payload diagnostics outside
-  control headers.
-- Add focused parser/semantic tests and applicable `x_test/` fixtures.
-- Validate with rebuilt `build/bin/peeper`.
-
-### [ ] MIR typed-nil validation hardening
-
-Type: implementation; no GitHub issue currently linked  
-Owner: `internal/ir/mir/validate.go`  
-Evidence: `constant-binding-identity.localplan.md` Step 5;
-`internal/ir/mir/validate.go:182-184,397-413,562-624`
-
-Replace nested plain-nil checks that call `TypeID()` on possible typed-nil MIR
-values. Use the existing typed-nil contract at the canonical validator boundary.
-
-Acceptance:
-
-- Nested typed-nil branch conditions, call values, place roots/projections,
-  interface bases/arguments, and expression operands return validation errors.
-- No validator path panics on typed-nil values.
-- Valid MIR shapes retain current diagnostics and lowering behavior.
-- Add focused malformed-MIR tests and positive controls.
-- Confirm pipeline refuses emission after validation failure.
 
 ### [ ] Backend-independent MIR invariant validation
 
 Type: implementation; no GitHub issue currently linked  
 Owner: `internal/ir/mir/validate.go` and pipeline validation boundary  
-Evidence: `internal/pipeline/pipeline.go:470-500`,
-`internal/ir/mir/validate.go:501-516`,
-`constant-binding-identity.localplan.md` Step 6
+Evidence: `internal/pipeline/pipeline.go`, `validateArrayLiteral` in
+`internal/ir/mir/validate.go` (checked 2026-10-15)
 
-Complete validation before backend emission. Current gap: fixed-array literals
-validate element types but do not compare value count with declared array length.
+Complete validation before backend emission. Current gap, still open: fixed-array
+literals validate element types but do not compare value count with declared array length.
 Decide explicitly whether direct `llvm.GenerateLLVMIR` callers also require a
 validation boundary or whether pipeline ownership is sufficient.
 
@@ -92,7 +48,7 @@ Acceptance:
 
 Type: language-design decision before implementation  
 Owner: `internal/semantics/typechecker/check_call.go`  
-Evidence: `check_call.go:525-612`, `docs/default-parameters.md:73-95,244-257`
+Evidence: `check_call.go` (default-argument substitution), `docs/default-parameters.md` ("Deferred Work")
 
 Decide whether omitted defaults observe staged, once-per-call values of earlier
 arguments or continue using source-expression substitution. Current code rejects
@@ -105,8 +61,7 @@ defaults, and full-arity ABI semantics are explicitly selected and covered by te
 
 Type: release/security policy decision before implementation  
 Owner: release workflow, manifest, `scripts/install.sh`, `scripts/install.ps1`  
-Evidence: `review-followups.localplan.md:1782-1801`,
-`.github/workflows/release.yml:123-180`,
+Evidence: `.github/workflows/release.yml`,
 `pkg/distribution/release.go`, installer scripts
 
 Choose checksum-only acceptance or signed release-manifest verification. Current
@@ -120,19 +75,12 @@ No signing implementation is authorized by this backlog item alone.
 Type: documentation  
 Owner: each document's live source owner
 
-Correct only concrete contradictions found during review:
+Correct only concrete contradictions (rechecked 2026-10-15; the others listed earlier are fixed):
 
-- `docs/default-parameters.md` says compiler behavior is unimplemented while
-  trailing defaults already compile; retain explicit deferred staged semantics.
-- `docs/architecture/cli-and-packages.md` describes signed release metadata while
-  current workflow publishes unsigned metadata plus `SHA256SUMS`.
-- `docs/compiler-architecture.md:265-268` assigns usage state to `symbols.Symbol`,
-  while current owner is `symbols.Index`; align with
-  `docs/architecture/semantics-bindings.md`.
-- `Code-tour.md` contains stale path/function references such as `cfg.BuildQueries`;
-  reconcile against current source before editing it.
-- Mark `docs/end-to-end-code-review.md` as historical remediation scope rather than
-  a claim that every later audit finding is resolved.
+- `docs/architecture/cli-and-packages.md` says `pkg/distribution` defines "signed release
+  metadata" while the current workflow publishes unsigned metadata plus `SHA256SUMS`.
+- `Code-tour.md` shows `cfg.BuildQueries` (around line 309); no such type exists in source.
+  Reconcile the tour against current source before editing it.
 
 Each edit needs source/path verification and documentation diff validation.
 
@@ -146,18 +94,19 @@ Run `install.ps1` on a Windows runner and record actual release/install behavior
 ### [ ] Remove redundant origin copies after measurement
 
 Type: measured cleanup  
-Evidence: `internal/semantics/analysis/module.go:179-220`,
-`internal/semantics/analysis/flow_thir.go:238-242,567-574`,
-`internal/semantics/analysis/ownership.go:604-608`
+Evidence: origin copies in `internal/semantics/analysis` (`module.go`, `flow_thir.go`,
+`ownership.go`); the old line numbers no longer match, re-find them before starting.
 
 Prove alias isolation first, measure allocation/copy cost, then remove only copies
 that are not required by detached-storage ownership.
 
 ### [ ] Simplify the `Check`/`runCheck` test boundary
 
+(`runCheck` still exists on main, 2026-10-15.)
+
 Type: test-boundary cleanup  
-Evidence: `internal/semantics/typechecker/typechecker.go:120-135`,
-`internal/semantics/typechecker/typechecker_test.go:29-92`
+Evidence: `internal/semantics/typechecker/typechecker.go:103-108`,
+`internal/semantics/typechecker/typechecker_test.go`
 
 Remove the test-only evidence bridge only if tests can assert durable THIR/public
 results without exposing private production evidence or creating a second checking
@@ -216,29 +165,17 @@ field rules.
 - [x] PR #156 — Binding identity repair.
 - [x] PR #158 — Numeric publication and fixed-array/GEP repairs.
 - [x] Native-Clang system-ABI test fix (`03a3272`).
-- [x] Workspace/LSP remediation recorded in `internal/lsp/workspace.go.bugfix.md`.
+- [x] Workspace/LSP remediation.
+- [x] #157 — Qualified range endpoints (PR #159).
+- [x] MIR typed-nil validation hardening (PR #160).
+- [x] PRs #161, #162 (clean-code audit, code-hint target name); #163, #164 (toolchain automation).
 - [x] TypeTable detached-copy ownership boundary; historical finding no longer open.
 - [x] Workspace rebuild-cost measurement; no function-level reuse justified by current
   measurements.
 
-## Historical sources, not active status
-
-- `constant-binding-identity.localplan.md`
-- `constant-numeric-publication.localplan.md`
-- `peeper-code-review.localplan.md`
-- `review-followups.localplan.md`
-- `high-bit-gep.localplan.md`
-- `task.md`
-- `docs/end-to-end-code-review.md`
-- `internal/semantics/typechecker/constant_eval.go.bugfix.md`
-- `internal/semantics/typechecker/constant_eval.go.nightmare.md`
-
-When a historical file conflicts with this backlog, re-check current source and
-GitHub metadata before changing status.
-
 ## Fresh-session start
 
-1. Read `TODO.md`, `RULES.md`, `AGENTS.md`, and the selected issue.
+1. Read `TODO.md`, `RULES.md`, `AGENTS.md`, and the selected issue. If the ignored local file `branch-review.localplan.md` is present, read it first: it holds the current branch's state and decisions.
 2. Check `git status --short --branch`, `HEAD`, and `origin/main`.
 3. Re-read source evidence named by selected item; do not trust old plan status.
 4. Work one item only; record validation and stop at its review condition.
