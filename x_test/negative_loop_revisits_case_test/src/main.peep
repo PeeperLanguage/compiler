@@ -1,0 +1,19 @@
+enum Inner { A: i32, B }
+enum Outer { Wrap: Inner, Empty }
+
+// The loop's back edge brings back a state where `o` was changed, so the
+// test of `o` inside the loop proves nothing on the second pass. Both the
+// test and the read after it must be rejected, not use a proof left over
+// from the first pass.
+fn F(mut o: Outer) -> i32 {
+    let mut total = 0;
+    if o is Outer::Wrap {
+        for i in 0..3 {
+            if o is Inner::A {
+                total = total + o;
+            }
+            o = Outer::Empty;
+        }
+    }
+    return total;
+}

@@ -2418,6 +2418,26 @@ Compilation failed with 2 error(s)
    = help: if constructing a struct, insert '.' before '{'
 
 Compilation failed with 2 error(s)
+=== negative_loop_revisits_case_test (exit 1)
+[P0003]: enum case is not proven here
+   --> negative_loop_revisits_case_test/src/main.peep:12:16
+   |
+11 |         for i in 0..3 {
+12 |             if o is Inner::A {
+   |                ^ the value may have changed since it was tested
+   |
+   = help: test it again, or bind what you need before changing it
+
+[P0003]: enum case is not proven here
+   --> negative_loop_revisits_case_test/src/main.peep:13:33
+   |
+12 |             if o is Inner::A {
+13 |                 total = total + o;
+   |                                 ^ the value may have changed since it was tested
+   |
+   = help: test it again, or bind what you need before changing it
+
+Compilation failed with 2 error(s)
 === negative_match_fallback (exit 1)
 [T0017]: not all control paths return a value
    --> negative_match_fallback/src/main.peep:7:1

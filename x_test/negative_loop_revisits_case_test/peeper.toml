@@ -1,0 +1,7 @@
+name = "negative_loop_revisits_case_test"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["enum case is not proven here", "12 |             if o is Inner::A {\n   |                ^ the value may have changed since it was tested", "13 |                 total = total + o;\n   |                                 ^ the value may have changed since it was tested", "Compilation failed with 2 error(s)"]
