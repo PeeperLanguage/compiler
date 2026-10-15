@@ -4,4 +4,4 @@ build = "program"
 [test]
 mode = "check"
 outcome = "failure"
-stderr_contains = ["7 | fn (self: &Counter) read() -> i32 {\n  |                               --- return type is i32\n8 |     return true;", "11 | fn Plain() -> i32 {\n   |               --- return type is i32\n12 |     return \"text\";", "Compilation failed with 2 error(s)"]
+stderr_contains = ["7 | fn (self: &Counter) read() -> i32 {\n  |                               --- return type is i32\n8 |     return true;\n  |            ^^^^ you returned bool", "11 | fn Plain() -> i32 {\n   |               --- return type is i32\n12 |     return \"text\";\n   |            ^^^^^^ you returned str", "Compilation failed with 2 error(s)"]

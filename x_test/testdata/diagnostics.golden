@@ -2707,7 +2707,7 @@ Compilation failed with 1 error(s)
 7 | fn (self: &Counter) read() -> i32 {
   |                               --- return type is i32
 8 |     return true;
-  |            ^^^^
+  |            ^^^^ you returned bool
 
 [T0001]: cannot return str from function returning i32
    --> negative_method_return_mismatch/src/main.peep:12:12
@@ -2715,7 +2715,7 @@ Compilation failed with 1 error(s)
 11 | fn Plain() -> i32 {
    |               --- return type is i32
 12 |     return "text";
-   |            ^^^^^^
+   |            ^^^^^^ you returned str
 
 Compilation failed with 2 error(s)
 === negative_missing_closers (exit 1)

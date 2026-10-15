@@ -71,9 +71,10 @@ func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt) {
 			return
 		}
 		if !c.isAssignable(c.returnType, retType, node.Value) {
+			returned := typeinfo.TypeText(retType)
 			d := typeMismatchError(node.Value,
-				fmt.Sprintf("cannot return %s from function returning %s",
-					typeinfo.TypeText(retType), typeinfo.TypeText(c.returnType)))
+				fmt.Sprintf("cannot return %s from function returning %s", returned, typeinfo.TypeText(c.returnType))).
+				WithPrimaryLabel(ast.LocOf(node.Value), "you returned "+returned)
 			if c.fn.ReturnType != nil {
 				d.WithSecondaryLabel(ast.LocOf(c.fn.ReturnType),
 					fmt.Sprintf("return type is %s", typeinfo.TypeText(c.returnType)))
