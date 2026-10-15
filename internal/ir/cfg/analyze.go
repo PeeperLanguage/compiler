@@ -59,7 +59,12 @@ func reportConstantCondition(branch *Branch, value bool, diag *diagnostics.Diagn
 		msg = "condition is always true"
 		code = diagnostics.WarnConstantConditionTrue
 	}
-	diag.Add(diagnostics.NewWarning(msg).WithCode(code).WithPrimaryLabel(branch.Location, msg))
+	// The warning is about the condition, not the whole statement it guards.
+	location := branch.ConditionLocation
+	if location == nil {
+		location = branch.Location
+	}
+	diag.Add(diagnostics.NewWarning(msg).WithCode(code).WithPrimaryLabel(location, msg))
 }
 
 // missingReturnCause is one path that reaches the end of a function without

@@ -710,17 +710,11 @@ Compilation failed with 10 error(s)
    = help: move or reinitialize ownership-tracked values on every path
 
 [W0003]: condition is always false
-   --> negative_constant_branch_move/src/main.peep:8:5
-   |
- 7 | fn invalid(point: Point) {
- 8 |     if false {
-   |     ^^^^^^^^^^
- 9 |         let moved = point;
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^
-10 |         consume(point);
-   | ^^^^^^^^^^^^^^^^^^^^^^^
-11 |     }
-   | ^^^^^ condition is always false
+  --> negative_constant_branch_move/src/main.peep:8:8
+  |
+7 | fn invalid(point: Point) {
+8 |     if false {
+  |        ^^^^^ condition is always false
 
 [T0034]: value used after move
    --> negative_constant_branch_move/src/main.peep:10:17
@@ -3057,15 +3051,11 @@ Compilation failed with 5 error(s)
     = help: add a `return` at the end of the function, or make each path shown return a value
 
 [W0003]: condition is always false
-    --> negative_missing_return_causes/src/main.peep:204:5
+    --> negative_missing_return_causes/src/main.peep:204:8
     |
 203 | fn ConstantCondition() -> i32 {
 204 |     if false {
-    |     ^^^^^^^^^^
-205 |         return 1;
-    | ^^^^^^^^^^^^^^^^^
-206 |     }
-    | ^^^^^ condition is always false
+    |        ^^^^^ condition is always false
 
 [T0017]: not all control paths return a value
     --> negative_missing_return_causes/src/main.peep:204:8
@@ -5344,64 +5334,56 @@ Compilation failed with 1 error(s)
 === runtime_alloc_nested (exit 0)
 === runtime_bitwise_operators (exit 0)
 [W0003]: condition is always false
-   --> runtime_bitwise_operators/src/main.peep:71:5
+   --> runtime_bitwise_operators/src/main.peep:71:8
    |
 70 |     }
 71 |     if Mask != 255u8 {
-   |     ^^^^^^^^^^^^^^^^^^
-72 |         return 9;
-   | ^^^^^^^^^^^^^^^^^
-73 |     }
-   | ^^^^^ condition is always false
+   |        ^^^^^^^^^^^^^ condition is always false
 
 [W0003]: condition is always false
-   --> runtime_bitwise_operators/src/main.peep:74:5
+   --> runtime_bitwise_operators/src/main.peep:74:8
    |
 73 |     }
 74 |     if WrappedShift != 1u8 {
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^
-75 |         return 10;
-   | ^^^^^^^^^^^^^^^^^^
-76 |     }
-   | ^^^^^ condition is always false
+   |        ^^^^^^^^^^^^^^^^^^^ condition is always false
 
 Compilation succeeded with 2 warning(s)
 === runtime_bitwise_shift_negative (exit 0)
 === runtime_bitwise_shift_widths (exit 0)
 [W0003]: condition is always false
-   --> runtime_bitwise_shift_widths/src/main.peep:34:5
+   --> runtime_bitwise_shift_widths/src/main.peep:34:8
    |
 33 |     if shift_u64(6u6) != 64u64 { return 4; }
 34 |     if Shifted != 32u8 { return 5; }
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ condition is always false
+   |        ^^^^^^^^^^^^^^^ condition is always false
 
 [W0003]: condition is always false
-   --> runtime_bitwise_shift_widths/src/main.peep:35:5
+   --> runtime_bitwise_shift_widths/src/main.peep:35:8
    |
 34 |     if Shifted != 32u8 { return 5; }
 35 |     if Truncated != 32u8 { return 6; }
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ condition is always false
+   |        ^^^^^^^^^^^^^^^^^ condition is always false
 
 [W0003]: condition is always false
-   --> runtime_bitwise_shift_widths/src/main.peep:36:5
+   --> runtime_bitwise_shift_widths/src/main.peep:36:8
    |
 35 |     if Truncated != 32u8 { return 6; }
 36 |     if Wrapped != 1u8 { return 7; }
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ condition is always false
+   |        ^^^^^^^^^^^^^^ condition is always false
 
 [W0003]: condition is always false
-   --> runtime_bitwise_shift_widths/src/main.peep:37:5
+   --> runtime_bitwise_shift_widths/src/main.peep:37:8
    |
 36 |     if Wrapped != 1u8 { return 7; }
 37 |     if Nested != 4u8 { return 8; }
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ condition is always false
+   |        ^^^^^^^^^^^^^ condition is always false
 
 [W0003]: condition is always false
-   --> runtime_bitwise_shift_widths/src/main.peep:38:5
+   --> runtime_bitwise_shift_widths/src/main.peep:38:8
    |
 37 |     if Nested != 4u8 { return 8; }
 38 |     if SourceOverflow != 1u8 { return 9; }
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ condition is always false
+   |        ^^^^^^^^^^^^^^^^^^^^^ condition is always false
 
 Compilation succeeded with 5 warning(s)
 === runtime_borrow_conflicts (exit 0)
@@ -5427,95 +5409,91 @@ Compilation succeeded with 2 warning(s)
 === runtime_collection_len (exit 0)
 === runtime_comparison_semantics (exit 0)
 [W0003]: condition is always false
-   --> runtime_comparison_semantics/src/main.peep:44:5
+   --> runtime_comparison_semantics/src/main.peep:44:8
    |
 43 |     println(true == true);
 44 |     if true != true {
-   |     ^^^^^^^^^^^^^^^^^
-45 |         return 8;
-   | ^^^^^^^^^^^^^^^^^
-46 |     }
-   | ^^^^^ condition is always false
+   |        ^^^^^^^^^^^^ condition is always false
 
 Compilation succeeded with 1 warning(s)
 === runtime_const_address_identity (exit 0)
 === runtime_constant_conversions (exit 0)
 [W0003]: condition is always false
-   --> runtime_constant_conversions/src/main.peep:18:5
+   --> runtime_constant_conversions/src/main.peep:18:8
    |
 17 |     if ReadWide(numbers::Total) != 3i64 { return 1; }
 18 |     if numbers::Ratio != 1.25f32 { return 2; }
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ condition is always false
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^ condition is always false
 
 [W0003]: condition is always false
-   --> runtime_constant_conversions/src/main.peep:20:5
+   --> runtime_constant_conversions/src/main.peep:20:8
    |
 19 |     if ReadWide(numbers::Wide) != 2i64 { return 3; }
 20 |     if numbers::SourceOverflow != -128i64 { return 4; }
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ condition is always false
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ condition is always false
 
 [W0003]: condition is always false
-   --> runtime_constant_conversions/src/main.peep:21:5
+   --> runtime_constant_conversions/src/main.peep:21:8
    |
 20 |     if numbers::SourceOverflow != -128i64 { return 4; }
 21 |     if numbers::NestedOverflow != -127i64 { return 5; }
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ condition is always false
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ condition is always false
 
 [W0003]: condition is always false
-   --> runtime_constant_conversions/src/main.peep:22:5
+   --> runtime_constant_conversions/src/main.peep:22:8
    |
 21 |     if numbers::NestedOverflow != -127i64 { return 5; }
 22 |     if numbers::UnaryOverflow != -128i64 { return 6; }
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ condition is always false
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ condition is always false
 
 [W0003]: condition is always false
-   --> runtime_constant_conversions/src/main.peep:23:5
+   --> runtime_constant_conversions/src/main.peep:23:8
    |
 22 |     if numbers::UnaryOverflow != -128i64 { return 6; }
 23 |     if numbers::RoundedWide != 16777216f64 { return 7; }
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ condition is always false
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ condition is always false
 
 [W0003]: condition is always false
-   --> runtime_constant_conversions/src/main.peep:24:5
+   --> runtime_constant_conversions/src/main.peep:24:8
    |
 23 |     if numbers::RoundedWide != 16777216f64 { return 7; }
 24 |     if numbers::FloatOverflow != 16777216f64 { return 8; }
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ condition is always false
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ condition is always false
 
 [W0003]: condition is always false
-   --> runtime_constant_conversions/src/main.peep:25:5
+   --> runtime_constant_conversions/src/main.peep:25:8
    |
 24 |     if numbers::FloatOverflow != 16777216f64 { return 8; }
 25 |     if numbers::ConvertedFloat != -3f32 { return 9; }
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ condition is always false
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ condition is always false
 
 [W0003]: condition is always false
-   --> runtime_constant_conversions/src/main.peep:26:5
+   --> runtime_constant_conversions/src/main.peep:26:8
    |
 25 |     if numbers::ConvertedFloat != -3f32 { return 9; }
 26 |     if numbers::ConvertedInteger != -3i8 { return 10; }
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ condition is always false
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ condition is always false
 
 [W0003]: condition is always false
-   --> runtime_constant_conversions/src/main.peep:32:5
+   --> runtime_constant_conversions/src/main.peep:32:8
    |
 31 |     if numbers::IntegerInfinity != infinity { return 13; }
 32 |     if numbers::IntegerInfinity != (1f64 / 0f64) { return 14; }
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ condition is always false
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ condition is always false
 
 [W0003]: condition is always false
-   --> runtime_constant_conversions/src/main.peep:33:5
+   --> runtime_constant_conversions/src/main.peep:33:8
    |
 32 |     if numbers::IntegerInfinity != (1f64 / 0f64) { return 14; }
 33 |     if ImportedInteger != -3i64 { return 15; }
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ condition is always false
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^ condition is always false
 
 [W0003]: condition is always false
-   --> runtime_constant_conversions/src/main.peep:34:5
+   --> runtime_constant_conversions/src/main.peep:34:8
    |
 33 |     if ImportedInteger != -3i64 { return 15; }
 34 |     if ImportedRounded != 9223373136366403584f64 { return 16; }
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ condition is always false
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ condition is always false
 
 Compilation succeeded with 11 warning(s)
 === runtime_constant_shadow (exit 0)
@@ -5536,92 +5514,60 @@ Compilation succeeded with 11 warning(s)
 Compilation succeeded with 2 warning(s)
 === runtime_constvalue_folding (exit 0)
 [W0003]: condition is always false
-   --> runtime_constvalue_folding/src/main.peep:14:5
+   --> runtime_constvalue_folding/src/main.peep:14:8
    |
 13 | fn main() -> i32 {
 14 |     if AddWrap != -128i8 {
-   |     ^^^^^^^^^^^^^^^^^^^^^^
-15 |         return 1;
-   | ^^^^^^^^^^^^^^^^^
-16 |     }
-   | ^^^^^ condition is always false
+   |        ^^^^^^^^^^^^^^^^^ condition is always false
 
 [W0003]: condition is always false
-   --> runtime_constvalue_folding/src/main.peep:17:5
+   --> runtime_constvalue_folding/src/main.peep:17:8
    |
 16 |     }
 17 |     if SubWrap != 127i8 {
-   |     ^^^^^^^^^^^^^^^^^^^^^
-18 |         return 2;
-   | ^^^^^^^^^^^^^^^^^
-19 |     }
-   | ^^^^^ condition is always false
+   |        ^^^^^^^^^^^^^^^^ condition is always false
 
 [W0003]: condition is always false
-   --> runtime_constvalue_folding/src/main.peep:20:5
+   --> runtime_constvalue_folding/src/main.peep:20:8
    |
 19 |     }
 20 |     if MulWrap != -128i8 {
-   |     ^^^^^^^^^^^^^^^^^^^^^^
-21 |         return 3;
-   | ^^^^^^^^^^^^^^^^^
-22 |     }
-   | ^^^^^ condition is always false
+   |        ^^^^^^^^^^^^^^^^^ condition is always false
 
 [W0003]: condition is always false
-   --> runtime_constvalue_folding/src/main.peep:23:5
+   --> runtime_constvalue_folding/src/main.peep:23:8
    |
 22 |     }
 23 |     if NegWrap != -128i8 {
-   |     ^^^^^^^^^^^^^^^^^^^^^^
-24 |         return 4;
-   | ^^^^^^^^^^^^^^^^^
-25 |     }
-   | ^^^^^ condition is always false
+   |        ^^^^^^^^^^^^^^^^^ condition is always false
 
 [W0003]: condition is always false
-   --> runtime_constvalue_folding/src/main.peep:26:5
+   --> runtime_constvalue_folding/src/main.peep:26:8
    |
 25 |     }
 26 |     if Quotient != -2i32 {
-   |     ^^^^^^^^^^^^^^^^^^^^^^
-27 |         return 5;
-   | ^^^^^^^^^^^^^^^^^
-28 |     }
-   | ^^^^^ condition is always false
+   |        ^^^^^^^^^^^^^^^^^ condition is always false
 
 [W0003]: condition is always false
-   --> runtime_constvalue_folding/src/main.peep:29:5
+   --> runtime_constvalue_folding/src/main.peep:29:8
    |
 28 |     }
 29 |     if AliasAddWrap != -128i8 {
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-30 |         return 6;
-   | ^^^^^^^^^^^^^^^^^
-31 |     }
-   | ^^^^^ condition is always false
+   |        ^^^^^^^^^^^^^^^^^^^^^^ condition is always false
 
 [W0003]: condition is always false
-   --> runtime_constvalue_folding/src/main.peep:32:5
+   --> runtime_constvalue_folding/src/main.peep:32:8
    |
 31 |     }
 32 |     if AliasSubWrap != 127i8 {
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
-33 |         return 7;
-   | ^^^^^^^^^^^^^^^^^
-34 |     }
-   | ^^^^^ condition is always false
+   |        ^^^^^^^^^^^^^^^^^^^^^ condition is always false
 
 [W0003]: condition is always false
-   --> runtime_constvalue_folding/src/main.peep:35:5
+   --> runtime_constvalue_folding/src/main.peep:35:8
    |
 34 |     }
 35 |     if InferredWide != 2147483649i64 {
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-36 |         return 8;
-   | ^^^^^^^^^^^^^^^^^
-37 |     }
-   | ^^^^^ condition is always false
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ condition is always false
 
 Compilation succeeded with 8 warning(s)
 === runtime_cstr (exit 0)
@@ -5669,15 +5615,11 @@ Compilation succeeded with 8 warning(s)
 9 |     code = 20
 
 [W0002]: condition is always true
-   --> runtime_enum_constants/src/left.peep:13:5
+   --> runtime_enum_constants/src/left.peep:13:8
    |
 12 | fn Read() -> i32 {
 13 |     if Selected is Status::Ready {
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-14 |         return Selected.code;
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-15 |     }
-   | ^^^^^ condition is always true
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^ condition is always true
 
 [S0001]: trailing comma is unnecessary
   --> runtime_enum_constants/src/main.peep:7:22
@@ -5746,30 +5688,18 @@ Compilation succeeded with 8 warning(s)
 26 |     number = 42.0
 
 [W0002]: condition is always true
-   --> runtime_enum_constants/src/main.peep:30:5
+   --> runtime_enum_constants/src/main.peep:30:8
    |
 29 | fn ReadWide() -> i32 {
 30 |     if WideSelected is WideResult::Value {
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-31 |         if WideSelected.number == 42.0 {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-32 |             return 1;
-   | ^^^^^^^^^^^^^^^^^^^^^
-33 |         }
-   | ^^^^^^^^^
-34 |     }
-   | ^^^^^ condition is always true
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ condition is always true
 
 [W0002]: condition is always true
-   --> runtime_enum_constants/src/main.peep:39:5
+   --> runtime_enum_constants/src/main.peep:39:8
    |
 38 | fn main() -> i32 {
 39 |     if SelectedIsOk && (Selected is Result::Ok) {
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-40 |         return left::Read() + right::Read() + ReadWide();
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-41 |     }
-   | ^^^^^ condition is always true
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ condition is always true
 
 [S0001]: trailing comma is unnecessary
   --> runtime_enum_constants/src/right.peep:3:22
@@ -5805,19 +5735,11 @@ Compilation succeeded with 8 warning(s)
 9 |     enabled = true
 
 [W0002]: condition is always true
-   --> runtime_enum_constants/src/right.peep:13:5
+   --> runtime_enum_constants/src/right.peep:13:8
    |
 12 | fn Read() -> i32 {
 13 |     if Selected is Status::Ready {
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-14 |         if Selected.enabled {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-15 |             return 22;
-   | ^^^^^^^^^^^^^^^^^^^^^^
-16 |         }
-   | ^^^^^^^^^
-17 |     }
-   | ^^^^^ condition is always true
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^ condition is always true
 
 Compilation succeeded with 4 warning(s)
 === runtime_enum_constructors (exit 0)
