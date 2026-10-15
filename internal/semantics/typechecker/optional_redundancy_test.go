@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"compiler/internal/diagnostics"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 )
 
 func TestOptionalForwardGenericField(t *testing.T) {
@@ -78,16 +78,16 @@ fn Read() -> i32 {
 			if !ok {
 				t.Fatal("missing Wrap symbol")
 			}
-			fn, ok := typeinfo.Unalias(wrap.Type).(*typeinfo.FuncType)
+			fn, ok := types.Unalias(wrap.Type).(*types.FuncType)
 			if !ok {
 				t.Fatalf("Wrap type = %T", wrap.Type)
 			}
-			optional, ok := typeinfo.Unalias(fn.Return).(*typeinfo.OptionalType)
-			if !ok || typeinfo.TypeText(optional.Inner) != "i32" {
-				t.Fatalf("return type = %s, want one optional i32 carrier", typeinfo.TypeText(fn.Return))
+			optional, ok := types.Unalias(fn.Return).(*types.OptionalType)
+			if !ok || types.TypeText(optional.Inner) != "i32" {
+				t.Fatalf("return type = %s, want one optional i32 carrier", types.TypeText(fn.Return))
 			}
-			descriptor, ok := typeinfo.VariantDescriptorOf(fn.Return)
-			if !ok || len(descriptor.Cases) != 2 || typeinfo.TypeText(descriptor.Cases[1].Payload) != "i32" {
+			descriptor, ok := types.VariantDescriptorOf(fn.Return)
+			if !ok || len(descriptor.Cases) != 2 || types.TypeText(descriptor.Cases[1].Payload) != "i32" {
 				t.Fatalf("optional representation = %#v", descriptor)
 			}
 		})

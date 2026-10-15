@@ -8,7 +8,7 @@ unrelated properties.*
 
 This document is the inventory that line was drawn against. It exists so the
 decisions below are not re-litigated by the next person who notices that two
-functions in `typeinfo` look similar.
+functions in `types` look similar.
 
 ## The one consolidation that happened
 
@@ -97,7 +97,7 @@ recurses over types and asks about drops, which reads at a glance like a second
 implementation of the source-level obligation. It is not, and the difference is
 structural rather than a matter of trust:
 
-- It reads `ir.TypeTable`, the **lowered** type universe, not `typeinfo.Type`.
+- It reads `ir.TypeTable`, the **lowered** type universe, not `types.Type`.
   It can see representation choices no source type mentions, and it cannot see
   source policy such as the explicit-copy class.
 - It never decides *whether* a value is dropped. That decision arrives already

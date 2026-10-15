@@ -5,14 +5,14 @@ import (
 
 	"compiler/internal/frontend/ast"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 )
 
 func TestRenderSymbolKinds(t *testing.T) {
-	i32 := &typeinfo.IntegerType{Bits: 32, IsSigned: true}
-	point := &typeinfo.NamedType{Name: "Point"}
-	function := &typeinfo.FuncType{Params: []typeinfo.Type{i32}, ParamNames: []string{"value"}, Return: i32}
-	method := &typeinfo.FuncType{Params: []typeinfo.Type{point}, ParamNames: []string{"self"}, Return: i32}
+	i32 := &types.IntegerType{Bits: 32, IsSigned: true}
+	point := &types.NamedType{Name: "Point"}
+	function := &types.FuncType{Params: []types.Type{i32}, ParamNames: []string{"value"}, Return: i32}
+	method := &types.FuncType{Params: []types.Type{point}, ParamNames: []string{"self"}, Return: i32}
 	cases := []struct {
 		name    string
 		symbol  *symbols.Symbol
@@ -42,8 +42,8 @@ func TestRenderSymbolKinds(t *testing.T) {
 }
 
 func TestRenderSymbolUsesSemanticTypesAndASTDecorations(t *testing.T) {
-	i32 := &typeinfo.IntegerType{Bits: 32, IsSigned: true}
-	typ := &typeinfo.NamedType{Name: "Resolved"}
+	i32 := &types.IntegerType{Bits: 32, IsSigned: true}
+	typ := &types.NamedType{Name: "Resolved"}
 	decl := &ast.FnDecl{
 		TypeParams: []ast.TypeParam{{Name: &ast.Ident{Name: "T"}}},
 		Params: []ast.Param{
@@ -55,8 +55,8 @@ func TestRenderSymbolUsesSemanticTypesAndASTDecorations(t *testing.T) {
 		Name:    "choose",
 		Kind:    symbols.SymbolFunc,
 		ASTNode: decl,
-		Type: &typeinfo.FuncType{
-			Params:     []typeinfo.Type{typ, i32},
+		Type: &types.FuncType{
+			Params:     []types.Type{typ, i32},
 			ParamNames: []string{"value", "fallback"},
 			Return:     typ,
 		},

@@ -7,12 +7,12 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/module"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 )
 
 type namedTypeInstance struct {
-	base       *typeinfo.DefinedType
-	typ        *typeinfo.DefinedType
+	base       *types.DefinedType
+	typ        *types.DefinedType
 	ready      chan struct{}
 	isComplete bool
 }
@@ -26,7 +26,7 @@ type typeInstantiationFrame struct {
 
 // RegisterTypeDeclaration records collection's reusable declaration artifact
 // and indexes it for concrete substitution in the current context.
-func (r *Resolver) RegisterTypeDeclaration(owner *module.Module, declaration ast.TypeDecl, base *typeinfo.DefinedType) {
+func (r *Resolver) RegisterTypeDeclaration(owner *module.Module, declaration ast.TypeDecl, base *types.DefinedType) {
 	if r == nil || owner == nil || declaration == nil || base == nil || base.Identity == "" {
 		return
 	}
@@ -35,19 +35,19 @@ func (r *Resolver) RegisterTypeDeclaration(owner *module.Module, declaration ast
 	r.mu.Unlock()
 }
 
-func (r *Resolver) instantiateType(diag *diagnostics.DiagnosticBag, base *typeinfo.DefinedType, arguments []typeinfo.Type, node ast.TypeExpr, chain []typeInstantiationFrame) typeinfo.Type {
+func (r *Resolver) instantiateType(diag *diagnostics.DiagnosticBag, base *types.DefinedType, arguments []types.Type, node ast.TypeExpr, chain []typeInstantiationFrame) types.Type {
 	if r == nil {
-		return &typeinfo.InvalidType{}
+		return &types.InvalidType{}
 	}
 	canonicalArguments, declarationArguments, ok := canonicalTypeApplication(base, arguments)
 	if !ok {
-		return &typeinfo.InvalidType{}
+		return &types.InvalidType{}
 	}
 	if declarationArguments {
 		return base
 	}
 	identity := typeInstanceIdentity(base, canonicalArguments)
-	applicationText := typeinfo.TypeText(&typeinfo.DefinedType{Name: base.Name, TypeArguments: canonicalArguments})
+	applicationText := types.TypeText(&types.DefinedType{Name: base.Name, TypeArguments: canonicalArguments})
 	for _, origin := range chain {
 		if origin.declarationIdentity != base.Identity {
 			continue
@@ -59,7 +59,7 @@ func (r *Resolver) instantiateType(diag *diagnostics.DiagnosticBag, base *typein
 			if ok && cached.typ != nil {
 				return cached.typ
 			}
-			return &typeinfo.InvalidType{}
+			return &types.InvalidType{}
 		}
 		if diag != nil {
 			diagnostic := diagnostics.NewError("recursive generic applications must preserve exact type arguments").
@@ -69,7 +69,7 @@ func (r *Resolver) instantiateType(diag *diagnostics.DiagnosticBag, base *typein
 				Help("use the same canonical type arguments at every recursive reference")
 			diag.Add(diagnostic)
 		}
-		return &typeinfo.InvalidType{}
+		return &types.InvalidType{}
 	}
 
 	r.mu.Lock()
@@ -87,7 +87,7 @@ func (r *Resolver) instantiateType(diag *diagnostics.DiagnosticBag, base *typein
 		if ok && cached.typ != nil && cached.isComplete {
 			return cached.typ
 		}
-		return &typeinfo.InvalidType{}
+		return &types.InvalidType{}
 	}
 	declarationModule := r.typeOwner(base.Identity)
 	declaration := module.TypeDeclaration{}
@@ -99,11 +99,11 @@ func (r *Resolver) instantiateType(diag *diagnostics.DiagnosticBag, base *typein
 		r.mu.Unlock()
 		if diag != nil {
 			diag.AddError(diagnostics.ErrInvalidType,
-				"generic type declaration is unavailable for `"+typeinfo.TypeText(base)+"`", ast.LocOf(node), "recompile declaration module")
+				"generic type declaration is unavailable for `"+types.TypeText(base)+"`", ast.LocOf(node), "recompile declaration module")
 		}
-		return &typeinfo.InvalidType{}
+		return &types.InvalidType{}
 	}
-	instance := &typeinfo.DefinedType{
+	instance := &types.DefinedType{
 		Name:           base.Name,
 		Identity:       identity,
 		Kind:           base.Kind,
@@ -126,19 +126,19 @@ func (r *Resolver) instantiateType(diag *diagnostics.DiagnosticBag, base *typein
 		node:                node,
 	})
 	instance.Underlying = r.typeInstanceUnderlying(diag, declarationModule, declaration, instance, chain)
-	valid := !typeinfo.ContainsInvalid(instance.Underlying)
+	valid := !types.ContainsInvalid(instance.Underlying)
 	r.finishTypeInstance(identity, instance, valid)
 	if !valid {
-		return &typeinfo.InvalidType{}
+		return &types.InvalidType{}
 	}
 	return instance
 }
 
-func (r *Resolver) typeInstanceUnderlying(diag *diagnostics.DiagnosticBag, declarationModule *module.Module, declaration module.TypeDeclaration, instance *typeinfo.DefinedType, chain []typeInstantiationFrame) typeinfo.Type {
+func (r *Resolver) typeInstanceUnderlying(diag *diagnostics.DiagnosticBag, declarationModule *module.Module, declaration module.TypeDeclaration, instance *types.DefinedType, chain []typeInstantiationFrame) types.Type {
 	syntax := declaration.Syntax.UnderlyingType()
 	context := Context{
 		AllowAbstractSelf: true,
-		TypeParameters:    typeinfo.TypeParameterBindings(declaration.Base.TypeParameters, instance.TypeArguments),
+		TypeParameters:    types.TypeParameterBindings(declaration.Base.TypeParameters, instance.TypeArguments),
 	}
 	if _, ok := declaration.Syntax.(*ast.InterfaceDecl); ok {
 		context.NamedInterfaceRoot = syntax
@@ -149,11 +149,11 @@ func (r *Resolver) typeInstanceUnderlying(diag *diagnostics.DiagnosticBag, decla
 // CompleteTypeInstances rebuilds cached instances in place after binder fills
 // every shell in a legal declaration cycle. Pointer identity remains stable for
 // recursive references and existing cache consumers.
-func (r *Resolver) CompleteTypeInstances(diag *diagnostics.DiagnosticBag, bases []*typeinfo.DefinedType) {
+func (r *Resolver) CompleteTypeInstances(diag *diagnostics.DiagnosticBag, bases []*types.DefinedType) {
 	if r == nil || len(bases) == 0 {
 		return
 	}
-	selected := make(map[*typeinfo.DefinedType]bool, len(bases))
+	selected := make(map[*types.DefinedType]bool, len(bases))
 	for _, base := range bases {
 		if base != nil && len(base.TypeParameters) > 0 {
 			selected[base] = true
@@ -189,11 +189,11 @@ func (r *Resolver) CompleteTypeInstances(diag *diagnostics.DiagnosticBag, bases 
 		chain := []typeInstantiationFrame{{
 			declarationIdentity: cached.base.Identity,
 			applicationIdentity: identity,
-			applicationText:     typeinfo.TypeText(cached.typ),
+			applicationText:     types.TypeText(cached.typ),
 			node:                declaration.Syntax.UnderlyingType(),
 		}}
 		underlying := r.typeInstanceUnderlying(diag, declarationModule, declaration, cached.typ, chain)
-		if !typeinfo.ContainsInvalid(underlying) {
+		if !types.ContainsInvalid(underlying) {
 			cached.typ.Underlying = underlying
 		}
 	}
@@ -201,7 +201,7 @@ func (r *Resolver) CompleteTypeInstances(diag *diagnostics.DiagnosticBag, bases 
 
 // finishTypeInstance publishes or removes one provisional cache entry and
 // wakes any concurrent application waiting on the same semantic identity.
-func (r *Resolver) finishTypeInstance(identity string, instance *typeinfo.DefinedType, valid bool) {
+func (r *Resolver) finishTypeInstance(identity string, instance *types.DefinedType, valid bool) {
 	r.mu.Lock()
 	cached, ok := r.instances[identity]
 	if !ok || cached.typ != instance {
@@ -218,14 +218,14 @@ func (r *Resolver) finishTypeInstance(identity string, instance *typeinfo.Define
 	r.mu.Unlock()
 }
 
-func canonicalTypeApplication(base *typeinfo.DefinedType, arguments []typeinfo.Type) (canonical []typeinfo.Type, declarationArguments, ok bool) {
+func canonicalTypeApplication(base *types.DefinedType, arguments []types.Type) (canonical []types.Type, declarationArguments, ok bool) {
 	if base == nil || len(arguments) != len(base.TypeParameters) {
 		return nil, false, false
 	}
-	canonical = make([]typeinfo.Type, len(arguments))
+	canonical = make([]types.Type, len(arguments))
 	for index, argument := range arguments {
-		canonical[index] = typeinfo.Unalias(argument)
-		if typeinfo.IsInvalid(canonical[index]) {
+		canonical[index] = types.Unalias(argument)
+		if types.IsInvalid(canonical[index]) {
 			return nil, false, false
 		}
 	}
@@ -239,7 +239,7 @@ func canonicalTypeApplication(base *typeinfo.DefinedType, arguments []typeinfo.T
 	return canonical, declarationArguments, true
 }
 
-func typeInstanceIdentity(base *typeinfo.DefinedType, arguments []typeinfo.Type) string {
+func typeInstanceIdentity(base *types.DefinedType, arguments []types.Type) string {
 	argumentKeys := make([]string, len(arguments))
 	for index, argument := range arguments {
 		argumentKeys[index] = typeArgumentIdentity(argument)
@@ -250,13 +250,13 @@ func typeInstanceIdentity(base *typeinfo.DefinedType, arguments []typeinfo.Type)
 // lookupTypeInstance performs an observational cache lookup. Loading means no
 // complete instance is available yet; unlike instantiateType, this operation
 // never creates a shell, waits for completion, emits diagnostics, or mutates state.
-func (r *Resolver) lookupTypeInstance(base *typeinfo.DefinedType, arguments []typeinfo.Type) QueryResult {
+func (r *Resolver) lookupTypeInstance(base *types.DefinedType, arguments []types.Type) QueryResult {
 	if r == nil {
-		return QueryResult{Type: &typeinfo.InvalidType{}, Status: QueryInvalid}
+		return QueryResult{Type: &types.InvalidType{}, Status: QueryInvalid}
 	}
 	canonicalArguments, declarationArguments, ok := canonicalTypeApplication(base, arguments)
 	if !ok {
-		return QueryResult{Type: &typeinfo.InvalidType{}, Status: QueryInvalid}
+		return QueryResult{Type: &types.InvalidType{}, Status: QueryInvalid}
 	}
 	if declarationArguments {
 		return QueryResult{Type: base, Status: QueryAvailable}
@@ -271,12 +271,12 @@ func (r *Resolver) lookupTypeInstance(base *typeinfo.DefinedType, arguments []ty
 	return QueryResult{Type: cached.typ, Status: QueryAvailable}
 }
 
-func typeArgumentIdentity(typ typeinfo.Type) string {
+func typeArgumentIdentity(typ types.Type) string {
 	switch value := typ.(type) {
-	case *typeinfo.DefinedType:
+	case *types.DefinedType:
 		if value != nil && value.Identity != "" {
 			return "defined:" + value.Identity
 		}
 	}
-	return typeinfo.SemanticKey(typ)
+	return types.SemanticKey(typ)
 }

@@ -14,7 +14,7 @@ import (
 	"compiler/internal/project"
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/pkg/peeper"
 )
 
@@ -97,7 +97,7 @@ func TestCollectedDefinedTypeKeepsDeclaringModuleIdentity(t *testing.T) {
 	if !ok || sym == nil {
 		t.Fatal("collected enum type missing")
 	}
-	defined, ok := sym.Type.(*typeinfo.DefinedType)
+	defined, ok := sym.Type.(*types.DefinedType)
 	if !ok || defined == nil {
 		t.Fatalf("collected enum type = %T, want DefinedType", sym.Type)
 	}

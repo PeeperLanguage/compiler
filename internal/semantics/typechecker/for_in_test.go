@@ -7,7 +7,7 @@ import (
 
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir/thir"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/internal/source"
 	"compiler/internal/target"
 )
@@ -258,12 +258,12 @@ fn main() {
 	if sym == nil {
 		t.Fatal("missing source iterator binding symbol")
 	}
-	if got := typeinfo.TypeText(sym.Type); got != "Item" {
+	if got := types.TypeText(sym.Type); got != "Item" {
 		t.Fatalf("source iterator binding type = %s, want Item", got)
 	}
 	body := loop.Body.Stmts[0].(*ast.LetDecl)
 	selector := body.Value.(*ast.SelectorExpr)
-	if got := typeinfo.TypeText(module.BaseExprType(selector.Expr.ID())); got != "Item" {
+	if got := types.TypeText(module.BaseExprType(selector.Expr.ID())); got != "Item" {
 		t.Fatalf("source iterator occurrence type = %s, want Item", got)
 	}
 }
@@ -310,7 +310,7 @@ return total;
 	if binding == nil {
 		t.Fatal("missing resolved loop binding")
 	}
-	if got := typeinfo.TypeText(binding.Type); got != "i32" {
+	if got := types.TypeText(binding.Type); got != "i32" {
 		t.Fatalf("loop binding type = %s, want i32", got)
 	}
 	var reference *ast.Ident
@@ -354,11 +354,11 @@ return total;
 		t.Fatalf("range iteration evidence is incomplete = %#v", evidence)
 	}
 	for name, symbol := range map[string]string{
-		"cursor":  typeinfo.TypeText(plan.Cursor.Type),
-		"end":     typeinfo.TypeText(plan.Limit.Type),
-		"ordinal": typeinfo.TypeText(plan.Ordinal.Type),
-		"index":   typeinfo.TypeText(module.SymbolIndex.Symbol(loop.Index).Type),
-		"value":   typeinfo.TypeText(module.SymbolIndex.Symbol(loop.Value).Type),
+		"cursor":  types.TypeText(plan.Cursor.Type),
+		"end":     types.TypeText(plan.Limit.Type),
+		"ordinal": types.TypeText(plan.Ordinal.Type),
+		"index":   types.TypeText(module.SymbolIndex.Symbol(loop.Index).Type),
+		"value":   types.TypeText(module.SymbolIndex.Symbol(loop.Value).Type),
 	} {
 		if symbol != "i32" {
 			t.Fatalf("%s type = %s, want i32", name, symbol)
@@ -385,13 +385,13 @@ func TestCheckForInRangeTypeIsBoundOrderIndependent(t *testing.T) {
 			if !found {
 				t.Fatal("missing range iteration evidence")
 			}
-			for name, typ := range map[string]typeinfo.Type{
+			for name, typ := range map[string]types.Type{
 				"element": evidence.(*thir.RangeIteration).ElementType,
 				"cursor":  evidence.(*thir.RangeIteration).Cursor.Type,
 				"end":     evidence.(*thir.RangeIteration).Limit.Type,
 				"value":   module.SymbolIndex.Symbol(loop.Value).Type,
 			} {
-				if got := typeinfo.TypeText(typ); got != "i64" {
+				if got := types.TypeText(typ); got != "i64" {
 					t.Fatalf("%s type = %s, want i64", name, got)
 				}
 			}
@@ -416,13 +416,13 @@ return 0i64;
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	loop := fn.Body.Stmts[0].(*ast.ForStmt)
 	evidence, _ := testEvidence(module).ForIteration(loop.ID())
-	for name, typ := range map[string]typeinfo.Type{
+	for name, typ := range map[string]types.Type{
 		"element": evidence.(*thir.RangeIteration).ElementType,
 		"cursor":  evidence.(*thir.RangeIteration).Cursor.Type,
 		"end":     evidence.(*thir.RangeIteration).Limit.Type,
 		"value":   module.SymbolIndex.Symbol(loop.Value).Type,
 	} {
-		if got := typeinfo.TypeText(typ); got != "i64" {
+		if got := types.TypeText(typ); got != "i64" {
 			t.Fatalf("%s type = %s, want i64", name, got)
 		}
 	}
@@ -483,14 +483,14 @@ return total;
 	if plan.Cursor == nil || plan.Carrier == nil {
 		t.Fatalf("sequence iteration evidence is incomplete = %#v", evidence)
 	}
-	if got := typeinfo.TypeText(plan.Carrier.Type); got != "&[3]i32" {
+	if got := types.TypeText(plan.Carrier.Type); got != "&[3]i32" {
 		t.Fatalf("carrier type = %s, want &[3]i32", got)
 	}
-	wantCursor, ok := typeinfo.NumericTypeFromName("usize", target.Host())
-	if !ok || !typeinfo.IsSameType(plan.Cursor.Type, wantCursor) {
-		t.Fatalf("cursor type = %s, want target usize", typeinfo.TypeText(plan.Cursor.Type))
+	wantCursor, ok := types.NumericTypeFromName("usize", target.Host())
+	if !ok || !types.IsSameType(plan.Cursor.Type, wantCursor) {
+		t.Fatalf("cursor type = %s, want target usize", types.TypeText(plan.Cursor.Type))
 	}
-	if got := typeinfo.TypeText(plan.ElementType); got != "i32" {
+	if got := types.TypeText(plan.ElementType); got != "i32" {
 		t.Fatalf("element type = %s, want i32", got)
 	}
 }

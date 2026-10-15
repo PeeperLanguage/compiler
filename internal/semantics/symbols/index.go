@@ -6,7 +6,7 @@ import (
 
 	"compiler/internal/constvalue"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/internal/source"
 )
 
@@ -108,11 +108,11 @@ func (r *Index) ForEachScope(fn func(*Scope)) {
 // RegisterMethod publishes one resolved receiver method. Method ownership is
 // keyed by semantic declaration identity, never display text. It returns the
 // existing same-name method when registration would be a redeclaration.
-func (r *Index) RegisterMethod(receiver typeinfo.Type, method *Symbol) *Symbol {
+func (r *Index) RegisterMethod(receiver types.Type, method *Symbol) *Symbol {
 	if r == nil || method == nil {
 		return nil
 	}
-	key, ok := typeinfo.ReceiverIdentity(receiver)
+	key, ok := types.ReceiverIdentity(receiver)
 	if !ok {
 		return nil
 	}
@@ -125,11 +125,11 @@ func (r *Index) RegisterMethod(receiver typeinfo.Type, method *Symbol) *Symbol {
 	return nil
 }
 
-func (r *Index) Methods(receiver typeinfo.Type) []*Symbol {
+func (r *Index) Methods(receiver types.Type) []*Symbol {
 	if r == nil {
 		return nil
 	}
-	key, ok := typeinfo.ReceiverIdentity(receiver)
+	key, ok := types.ReceiverIdentity(receiver)
 	if !ok {
 		return nil
 	}

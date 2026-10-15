@@ -4,11 +4,11 @@ import (
 	"slices"
 
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/internal/target"
 )
 
-type signatureFactory func(symbols.CompilerOp, typeinfo.Type, target.Info) *typeinfo.FuncType
+type signatureFactory func(symbols.CompilerOp, types.Type, target.Info) *types.FuncType
 
 type FunctionKind uint8
 
@@ -55,7 +55,7 @@ func PredeclaredSymbols(compilerTarget target.Info) []*symbols.Symbol {
 	return result
 }
 
-func ApplicableFunctionSymbols(baseType typeinfo.Type, compilerTarget target.Info) []*symbols.Symbol {
+func ApplicableFunctionSymbols(baseType types.Type, compilerTarget target.Info) []*symbols.Symbol {
 	result := make([]*symbols.Symbol, 0, len(definitions))
 	for _, definition := range definitions {
 		if fnType := definition.Signature(baseType, compilerTarget); fnType != nil {
@@ -74,14 +74,14 @@ func LookupFunction(op symbols.CompilerOp) (FunctionDefinition, bool) {
 	return FunctionDefinition{}, false
 }
 
-func (definition FunctionDefinition) Signature(baseType typeinfo.Type, compilerTarget target.Info) *typeinfo.FuncType {
+func (definition FunctionDefinition) Signature(baseType types.Type, compilerTarget target.Info) *types.FuncType {
 	if definition.signature == nil || definition.Operation == "" {
 		return nil
 	}
 	return definition.signature(definition.Operation, baseType, compilerTarget)
 }
 
-func (definition FunctionDefinition) symbolWithType(fnType *typeinfo.FuncType) *symbols.Symbol {
+func (definition FunctionDefinition) symbolWithType(fnType *types.FuncType) *symbols.Symbol {
 	name := string(definition.Operation)
 	sym := symbols.New(symbols.CompilerSymbolID(symbols.SymbolFunc, "intrinsic:"+name), name, symbols.SymbolFunc, nil, nil)
 	sym.CompilerOp = definition.Operation
@@ -90,28 +90,28 @@ func (definition FunctionDefinition) symbolWithType(fnType *typeinfo.FuncType) *
 	return sym
 }
 
-func dynamicArraySignature(op symbols.CompilerOp, baseType typeinfo.Type, compilerTarget target.Info) *typeinfo.FuncType {
-	var elementType typeinfo.Type = &typeinfo.NamedType{Name: "T"}
-	var arrayType typeinfo.Type = &typeinfo.ArrayType{Shape: typeinfo.ArrayOwner, Elem: elementType}
+func dynamicArraySignature(op symbols.CompilerOp, baseType types.Type, compilerTarget target.Info) *types.FuncType {
+	var elementType types.Type = &types.NamedType{Name: "T"}
+	var arrayType types.Type = &types.ArrayType{Shape: types.ArrayOwner, Elem: elementType}
 	if baseType != nil {
-		if targetType, isMutable, referenced := typeinfo.ReferenceTarget(typeinfo.Underlying(baseType)); referenced {
+		if targetType, isMutable, referenced := types.ReferenceTarget(types.Underlying(baseType)); referenced {
 			if !isMutable {
 				return nil
 			}
 			baseType = targetType
 		}
-		array, ok := typeinfo.Underlying(baseType).(*typeinfo.ArrayType)
-		if !ok || array == nil || array.Shape != typeinfo.ArrayOwner || array.Elem == nil {
+		array, ok := types.Underlying(baseType).(*types.ArrayType)
+		if !ok || array == nil || array.Shape != types.ArrayOwner || array.Elem == nil {
 			return nil
 		}
 		elementType = array.Elem
 		arrayType = baseType
 	}
-	sizeType, ok := typeinfo.NumericTypeFromName("usize", compilerTarget)
+	sizeType, ok := types.NumericTypeFromName("usize", compilerTarget)
 	if !ok {
 		panic("missing builtin usize type")
 	}
-	params := []typeinfo.Type{&typeinfo.RefType{Target: arrayType, IsMutable: true}, sizeType}
+	params := []types.Type{&types.RefType{Target: arrayType, IsMutable: true}, sizeType}
 	paramNames := []string{"values", "size"}
 	switch op {
 	case symbols.CompilerOpAppend:
@@ -126,61 +126,61 @@ func dynamicArraySignature(op symbols.CompilerOp, baseType typeinfo.Type, compil
 	default:
 		panic("missing dynamic array intrinsic signature")
 	}
-	return &typeinfo.FuncType{Params: params, ParamNames: paramNames}
+	return &types.FuncType{Params: params, ParamNames: paramNames}
 }
 
-func allocSignature(op symbols.CompilerOp, baseType typeinfo.Type, _ target.Info) *typeinfo.FuncType {
+func allocSignature(op symbols.CompilerOp, baseType types.Type, _ target.Info) *types.FuncType {
 	if op != symbols.CompilerOpAlloc {
 		panic("missing alloc intrinsic signature")
 	}
-	if baseType != nil && typeinfo.ContainsStoredReference(baseType) {
+	if baseType != nil && types.ContainsStoredReference(baseType) {
 		return nil
 	}
 	valueType := baseType
 	if valueType == nil {
-		valueType = &typeinfo.NamedType{Name: "T"}
+		valueType = &types.NamedType{Name: "T"}
 	}
-	return &typeinfo.FuncType{
-		Params:     []typeinfo.Type{valueType, &typeinfo.AllocatorType{}},
+	return &types.FuncType{
+		Params:     []types.Type{valueType, &types.AllocatorType{}},
 		ParamNames: []string{"value", "allocator"},
-		Return:     &typeinfo.OwnedPtrType{Target: valueType},
+		Return:     &types.OwnedPtrType{Target: valueType},
 	}
 }
 
-func fromBytesSignature(op symbols.CompilerOp, baseType typeinfo.Type, _ target.Info) *typeinfo.FuncType {
+func fromBytesSignature(op symbols.CompilerOp, baseType types.Type, _ target.Info) *types.FuncType {
 	if op != symbols.CompilerOpFromBytes {
 		panic("missing from_bytes intrinsic signature")
 	}
-	bytes := &typeinfo.RefType{Target: &typeinfo.ArrayType{Shape: typeinfo.ArraySlice, Elem: &typeinfo.ByteType{}}}
-	if baseType != nil && !typeinfo.IsSameType(baseType, bytes) {
+	bytes := &types.RefType{Target: &types.ArrayType{Shape: types.ArraySlice, Elem: &types.ByteType{}}}
+	if baseType != nil && !types.IsSameType(baseType, bytes) {
 		return nil
 	}
-	return &typeinfo.FuncType{
-		Params:     []typeinfo.Type{bytes, &typeinfo.AllocatorType{}},
+	return &types.FuncType{
+		Params:     []types.Type{bytes, &types.AllocatorType{}},
 		ParamNames: []string{"bytes", "allocator"},
-		Return:     &typeinfo.StringType{},
+		Return:     &types.StringType{},
 	}
 }
 
-func collectionSignature(op symbols.CompilerOp, baseType typeinfo.Type, compilerTarget target.Info) *typeinfo.FuncType {
+func collectionSignature(op symbols.CompilerOp, baseType types.Type, compilerTarget target.Info) *types.FuncType {
 	valueType := baseType
 	if valueType == nil {
-		valueType = &typeinfo.NamedType{Name: "T"}
-	} else if targetType, _, referenced := typeinfo.ReferenceTarget(typeinfo.Underlying(valueType)); referenced {
+		valueType = &types.NamedType{Name: "T"}
+	} else if targetType, _, referenced := types.ReferenceTarget(types.Underlying(valueType)); referenced {
 		valueType = targetType
 	}
 
-	base := typeinfo.Underlying(valueType)
+	base := types.Underlying(valueType)
 	if baseType != nil {
 		switch op {
 		case symbols.CompilerOpLen:
 			switch base.(type) {
-			case *typeinfo.StringType, *typeinfo.ArrayType:
+			case *types.StringType, *types.ArrayType:
 			default:
 				return nil
 			}
 		case symbols.CompilerOpAsBytes, symbols.CompilerOpAsChars:
-			if _, stringValue := base.(*typeinfo.StringType); !stringValue {
+			if _, stringValue := base.(*types.StringType); !stringValue {
 				return nil
 			}
 		default:
@@ -188,22 +188,22 @@ func collectionSignature(op symbols.CompilerOp, baseType typeinfo.Type, compiler
 		}
 	}
 
-	fnType := &typeinfo.FuncType{
-		Params:     []typeinfo.Type{&typeinfo.RefType{Target: valueType}},
+	fnType := &types.FuncType{
+		Params:     []types.Type{&types.RefType{Target: valueType}},
 		ParamNames: []string{"value"},
 	}
 	switch op {
 	case symbols.CompilerOpLen:
-		sizeType, ok := typeinfo.NumericTypeFromName("usize", compilerTarget)
+		sizeType, ok := types.NumericTypeFromName("usize", compilerTarget)
 		if !ok {
 			panic("missing builtin usize type")
 		}
 		fnType.Return = sizeType
 	case symbols.CompilerOpAsBytes:
-		fnType.Return = &typeinfo.RefType{Target: &typeinfo.ArrayType{Shape: typeinfo.ArraySlice, Elem: &typeinfo.ByteType{}}}
-		fnType.ReturnOrigins = &typeinfo.ReturnOriginContract{Sources: []int{0}}
+		fnType.Return = &types.RefType{Target: &types.ArrayType{Shape: types.ArraySlice, Elem: &types.ByteType{}}}
+		fnType.ReturnOrigins = &types.ReturnOriginContract{Sources: []int{0}}
 	case symbols.CompilerOpAsChars:
-		fnType.Return = &typeinfo.ArrayType{Shape: typeinfo.ArrayOwner, Elem: &typeinfo.CharType{}}
+		fnType.Return = &types.ArrayType{Shape: types.ArrayOwner, Elem: &types.CharType{}}
 	default:
 		panic("missing collection intrinsic signature")
 	}

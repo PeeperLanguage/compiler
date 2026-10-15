@@ -11,7 +11,7 @@ import (
 	"compiler/internal/moduleid"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/internal/source"
 )
 
@@ -106,7 +106,7 @@ type effectUse struct {
 	// Kind is what happens to the value here: observed, duplicated, or
 	// consumed. The producer decides it from the position the value occupies
 	// and, for a call argument, from the typechecker's recorded decision.
-	Kind typeinfo.UseKind
+	Kind types.UseKind
 }
 
 // effectBorrow takes a reference to a place rather than reading its value. Mutable

@@ -17,7 +17,7 @@ import (
 	"compiler/internal/project"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/pkg/peeper"
 )
 
@@ -205,7 +205,7 @@ fn Use(value: Local) {}`
 		t.Fatalf("unexpected diagnostics:\n%s", diag.EmitAllToString())
 	}
 	local, ok := consumer.ModuleScope.LookupLocal("Local")
-	if !ok || local == nil || !typeinfo.IsSameType(typeinfo.Unalias(local.Type), &typeinfo.IntegerType{IsSigned: true, Bits: 32}) {
+	if !ok || local == nil || !types.IsSameType(types.Unalias(local.Type), &types.IntegerType{IsSigned: true, Bits: 32}) {
 		t.Fatalf("imported alias resolved as %#v, want i32", local)
 	}
 }
@@ -238,60 +238,60 @@ fn Use(box: Box<i32>, again: Box<i32>, other: Box<i64>, nested: Box<Box<i32>>, n
 	if !ok || use == nil || use.Kind != symbols.SymbolFunc {
 		t.Fatal("missing Use function")
 	}
-	fn, ok := use.Type.(*typeinfo.FuncType)
+	fn, ok := use.Type.(*types.FuncType)
 	if !ok || len(fn.Params) != 8 {
 		t.Fatalf("Use type = %#v", use.Type)
 	}
-	box, ok := fn.Params[0].(*typeinfo.DefinedType)
-	if !ok || typeinfo.TypeText(box) != "Box<i32>" {
+	box, ok := fn.Params[0].(*types.DefinedType)
+	if !ok || types.TypeText(box) != "Box<i32>" {
 		t.Fatalf("Box<i32> instance = %#v", fn.Params[0])
 	}
 	if fn.Params[1] != box {
 		t.Fatal("repeated Box<i32> applications must reuse one cached instance")
 	}
-	other, ok := fn.Params[2].(*typeinfo.DefinedType)
+	other, ok := fn.Params[2].(*types.DefinedType)
 	if !ok || other == box || other.Identity == box.Identity {
 		t.Fatalf("Box<i64> instance = %#v, want distinct semantic identity", fn.Params[2])
 	}
-	nested, ok := fn.Params[3].(*typeinfo.DefinedType)
+	nested, ok := fn.Params[3].(*types.DefinedType)
 	if !ok {
 		t.Fatalf("nested Box instance = %#v", fn.Params[3])
 	}
-	nestedStruct, ok := typeinfo.Underlying(nested).(*typeinfo.StructType)
+	nestedStruct, ok := types.Underlying(nested).(*types.StructType)
 	if !ok || len(nestedStruct.Fields) != 1 || nestedStruct.Fields[0].Type != box {
 		t.Fatalf("nested Box payload = %#v, want cached Box<i32>", nestedStruct)
 	}
-	node, ok := fn.Params[4].(*typeinfo.DefinedType)
+	node, ok := fn.Params[4].(*types.DefinedType)
 	if !ok {
 		t.Fatalf("Node<i32> instance = %#v", fn.Params[4])
 	}
-	nodeStruct, ok := typeinfo.Underlying(node).(*typeinfo.StructType)
+	nodeStruct, ok := types.Underlying(node).(*types.StructType)
 	if !ok || len(nodeStruct.Fields) != 1 {
 		t.Fatalf("Node<i32> payload = %#v", nodeStruct)
 	}
-	next, ok := nodeStruct.Fields[0].Type.(*typeinfo.OwnedPtrType)
+	next, ok := nodeStruct.Fields[0].Type.(*types.OwnedPtrType)
 	if !ok || next.Target != node {
 		t.Fatalf("recursive Node<i32> target = %#v, want provisional instance", nodeStruct.Fields[0].Type)
 	}
-	maybe, ok := typeinfo.Underlying(fn.Params[5]).(*typeinfo.OptionalType)
-	if !ok || !typeinfo.IsSameType(maybe.Inner, &typeinfo.IntegerType{IsSigned: true, Bits: 32}) {
+	maybe, ok := types.Underlying(fn.Params[5]).(*types.OptionalType)
+	if !ok || !types.IsSameType(maybe.Inner, &types.IntegerType{IsSigned: true, Bits: 32}) {
 		t.Fatalf("Maybe<i32> payload = %#v", fn.Params[5])
 	}
-	reader, ok := typeinfo.Underlying(fn.Params[6]).(*typeinfo.InterfaceType)
-	if !ok || len(reader.Methods) != 1 || !typeinfo.IsSameType(reader.Methods[0].Return, &typeinfo.IntegerType{IsSigned: true, Bits: 32}) {
+	reader, ok := types.Underlying(fn.Params[6]).(*types.InterfaceType)
+	if !ok || len(reader.Methods) != 1 || !types.IsSameType(reader.Methods[0].Return, &types.IntegerType{IsSigned: true, Bits: 32}) {
 		t.Fatalf("Reader<i32> payload = %#v", fn.Params[6])
 	}
-	choice, ok := fn.Params[7].(*typeinfo.DefinedType)
-	if !ok || typeinfo.TypeText(choice) != "Choice<i32>" {
+	choice, ok := fn.Params[7].(*types.DefinedType)
+	if !ok || types.TypeText(choice) != "Choice<i32>" {
 		t.Fatalf("Choice<i32> instance = %#v", fn.Params[7])
 	}
-	choiceDescriptor, ok := typeinfo.VariantDescriptorOf(choice)
+	choiceDescriptor, ok := types.VariantDescriptorOf(choice)
 	if !ok || len(choiceDescriptor.Cases) != 2 || choiceDescriptor.Cases[0].Name != "Left" {
 		t.Fatalf("Choice<i32> descriptor = %#v", choiceDescriptor)
 	}
-	payload, ok := choiceDescriptor.Cases[0].Payload.(*typeinfo.StructType)
+	payload, ok := choiceDescriptor.Cases[0].Payload.(*types.StructType)
 	if !ok || len(payload.Fields) != 1 || payload.Fields[0].Name != "value" ||
-		!typeinfo.IsSameType(payload.Fields[0].Type, &typeinfo.IntegerType{IsSigned: true, Bits: 32}) {
+		!types.IsSameType(payload.Fields[0].Type, &types.IntegerType{IsSigned: true, Bits: 32}) {
 		t.Fatalf("Choice<i32>::Left payload = %#v, want value: i32", choiceDescriptor.Cases[0].Payload)
 	}
 }
@@ -322,7 +322,7 @@ fn Use(alias: Choice<MyInt>, canonical: Choice<i32>) {}`
 	if !ok || use == nil {
 		t.Fatal("missing Use function")
 	}
-	fn, ok := use.Type.(*typeinfo.FuncType)
+	fn, ok := use.Type.(*types.FuncType)
 	if !ok || len(fn.Params) != 2 {
 		t.Fatalf("Use type = %#v", use.Type)
 	}
@@ -361,28 +361,28 @@ func TestBindCompletesGenericArgumentDependencies(t *testing.T) {
 			if !ok {
 				t.Fatal("missing Use function")
 			}
-			fn := use.Type.(*typeinfo.FuncType)
-			if typeinfo.Unalias(fn.Params[0]) != fn.Params[1] {
+			fn := use.Type.(*types.FuncType)
+			if types.Unalias(fn.Params[0]) != fn.Params[1] {
 				t.Fatal("forward alias split canonical generic instance")
 			}
-			field := typeinfo.Underlying(fn.Params[0]).(*typeinfo.StructType).Fields[0].Type
-			optional, ok := typeinfo.Unalias(field).(*typeinfo.OptionalType)
-			if !ok || typeinfo.TypeText(optional.Inner) != "i32" {
-				t.Fatalf("field = %s, want one optional i32", typeinfo.TypeText(field))
+			field := types.Underlying(fn.Params[0]).(*types.StructType).Fields[0].Type
+			optional, ok := types.Unalias(field).(*types.OptionalType)
+			if !ok || types.TypeText(optional.Inner) != "i32" {
+				t.Fatalf("field = %s, want one optional i32", types.TypeText(field))
 			}
-			seen := make(map[typeinfo.Type]bool)
-			var check func(typeinfo.Type)
-			check = func(typ typeinfo.Type) {
+			seen := make(map[types.Type]bool)
+			var check func(types.Type)
+			check = func(typ types.Type) {
 				if typ == nil || seen[typ] {
 					return
 				}
 				seen[typ] = true
-				if optional, ok := typ.(*typeinfo.OptionalType); ok {
-					if _, nested := typeinfo.Unalias(optional.Inner).(*typeinfo.OptionalType); nested {
+				if optional, ok := typ.(*types.OptionalType); ok {
+					if _, nested := types.Unalias(optional.Inner).(*types.OptionalType); nested {
 						t.Error("completed type retains nested optional carriers")
 					}
 				}
-				typeinfo.ForEachChild(typ, func(child typeinfo.TypeChild) bool {
+				types.ForEachChild(typ, func(child types.TypeChild) bool {
 					check(child.Type)
 					return true
 				})

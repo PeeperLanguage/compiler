@@ -18,7 +18,7 @@ import (
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/typechecker"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/pkg/peeper"
 )
 
@@ -73,7 +73,7 @@ fn read(choice: Choice) -> i32 {
 	if !ok || len(payload.Cases) != 1 || payload.Cases[0] != 0 {
 		t.Fatalf("payload evidence = %#v, %v", payload, ok)
 	}
-	if got := typeinfo.TypeText(mod.BaseExprType(field.ID())); got != "i32" {
+	if got := types.TypeText(mod.BaseExprType(field.ID())); got != "i32" {
 		t.Fatalf("effective field type = %s, want i32", got)
 	}
 	origins, ok := mod.Analysis.Origins(field.ID())
@@ -117,7 +117,7 @@ fn read(choice: Choice) -> i32 {
 		if !ok || len(payload.Cases) != 1 || payload.Cases[0] != test.caseIdx || !payload.IsDirect {
 			t.Fatalf("payload evidence for case %d = %#v, %v", test.caseIdx, payload, ok)
 		}
-		if got := typeinfo.TypeText(mod.BaseExprType(test.ident.ID())); got != test.wantType {
+		if got := types.TypeText(mod.BaseExprType(test.ident.ID())); got != test.wantType {
 			t.Fatalf("narrowed variable type = %s, want %s", got, test.wantType)
 		}
 	}

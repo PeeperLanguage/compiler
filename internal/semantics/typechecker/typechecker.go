@@ -6,7 +6,7 @@ import (
 	"compiler/internal/ir/thir"
 	"compiler/internal/module"
 	"compiler/internal/project"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 )
 
 type checker struct {
@@ -19,7 +19,7 @@ type checker struct {
 	loopDepth        int
 	// fn is the function being checked and returnType its return type.
 	fn         *ast.FnDecl
-	returnType typeinfo.Type
+	returnType types.Type
 	// reusedCall is the already-checked source call embedded at the root of a
 	// generated producer loop. Nested calls and flow visits still check normally.
 	reusedCall *ast.CallExpr
@@ -31,21 +31,21 @@ const allowImplicitInterfaceConversion = true
 
 // exprType returns the type already recorded for expr; it matches
 // place.ExprTypeFunc, so place queries read types instead of re-checking.
-func (c *checker) exprType(expr ast.Expr) typeinfo.Type {
+func (c *checker) exprType(expr ast.Expr) types.Type {
 	if c == nil || c.evidence == nil || expr == nil {
 		return nil
 	}
 	return c.evidence.ExprType(expr.ID())
 }
 
-func (c *checker) requireValueType(expr ast.Expr, typ typeinfo.Type, context string) typeinfo.Type {
+func (c *checker) requireValueType(expr ast.Expr, typ types.Type, context string) types.Type {
 	if typ != nil {
 		return typ
 	}
 	if c != nil && c.ctx != nil {
 		c.ctx.Diagnostics.Add(invalidExpressionError(expr, context+" requires a value-producing expression"))
 	}
-	return &typeinfo.InvalidType{}
+	return &types.InvalidType{}
 }
 
 func (c *checker) checkModule() {
@@ -117,7 +117,7 @@ func runCheck(ctx *project.CompilerContext, module *module.Module) (*thir.Module
 	return c.buildTHIR(), evidence
 }
 
-func (c *checker) evaluateConstant(ctx *project.CompilerContext, expr ast.Expr, expected typeinfo.Type) (constvalue.Value, bool) {
+func (c *checker) evaluateConstant(ctx *project.CompilerContext, expr ast.Expr, expected types.Type) (constvalue.Value, bool) {
 	if c == nil || c.module == nil || expr == nil {
 		return nil, false
 	}
@@ -131,7 +131,7 @@ func (c *checker) evaluateConstant(ctx *project.CompilerContext, expr ast.Expr, 
 // CanAdaptFirstCallArgument reports whether argType can occupy a function's
 // first parameter through ordinary assignment or method/pipe adaptation.
 // Addressability and mutability remain call-site checks, not discovery filters.
-func CanAdaptFirstCallArgument(ctx *project.CompilerContext, module *module.Module, paramType, argType typeinfo.Type) bool {
+func CanAdaptFirstCallArgument(ctx *project.CompilerContext, module *module.Module, paramType, argType types.Type) bool {
 	if ctx == nil || module == nil || paramType == nil || argType == nil {
 		return false
 	}
@@ -139,6 +139,6 @@ func CanAdaptFirstCallArgument(ctx *project.CompilerContext, module *module.Modu
 	if checker.isAssignable(paramType, argType, nil) {
 		return true
 	}
-	target, _, isReference := typeinfo.ReferenceTarget(typeinfo.Underlying(paramType))
+	target, _, isReference := types.ReferenceTarget(types.Underlying(paramType))
 	return isReference && checker.matchesImplicitCallTarget(target, argType)
 }

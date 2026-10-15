@@ -90,9 +90,9 @@ AST nodes own child shape through `forEachChild`. Generic consumers use
 
 Under current AST contract, each node declares children once. Semantic stages may still dispatch on node kind when behavior genuinely differs.
 
-### Semantic types: `typeinfo.ForEachChild`
+### Semantic types: `types.ForEachChild`
 
-`typeinfo.Type` is sealed inside `typeinfo` and requires explicit intrinsic
+`types.Type` is sealed inside `types` and requires explicit intrinsic
 operations:
 
 - `structure` — local semantic identity plus ordered child slots and their
@@ -100,14 +100,14 @@ operations:
 - `isSameType`, `isSized`, `isLowerable`, and `ownership` — operation-specific
   behavior that new types must implement.
 
-`typeinfo.ForEachChild` projects present children from `structure`; semantic
+`types.ForEachChild` projects present children from `structure`; semantic
 fingerprinting consumes the same structure, including absent slots.
 `ForEachChild` is the semantic-type equivalent of `ast.Inspect`.
 Containment and ownership capability queries consume this structure. Sizing and
 lowerability intentionally keep separate recursion policies because recursive
 cycles mean different things to those queries.
 
-Consequence: adding a semantic type cannot satisfy `typeinfo.Type` until it
+Consequence: adding a semantic type cannot satisfy `types.Type` until it
 declares structure, equality, representation, and ownership behavior. Required
 methods enforce presence; behavioral tests still prove each implementation's policy.
 
@@ -314,7 +314,7 @@ Under current design, new syntax does not require new effect kind when existing 
 
 ## Current semantic-type extension path
 
-Under current sealed interface, new type first satisfies `typeinfo.Type`:
+Under current sealed interface, new type first satisfies `types.Type`:
 
 1. `Text` for human-facing rendering;
 2. `structure` with semantic attributes and correct `TypeChildRelation` for every
@@ -327,7 +327,7 @@ Then make explicit decisions only where another owner genuinely differs:
 - MIR/backend type lowering;
 - syntax conversion if source has new type syntax.
 
-Focused typeinfo/IR tests guard the remaining type-kind extension
+Focused types/IR tests guard the remaining type-kind extension
 points rather than generic containment or ownership traversal.
 
 ## Current graph-backed analysis path
@@ -341,7 +341,7 @@ Different mistakes are caught at different boundaries:
 | Mistake | Guard |
 | --- | --- |
 | AST child omitted | AST traversal tests + source fixtures |
-| semantic type child/ownership method omitted | sealed `typeinfo.Type` compile-time contract |
+| semantic type child/ownership method omitted | sealed `types.Type` compile-time contract |
 | incorrect child relation or capability composition | structural tests + capability golden/cycle tests |
 | semantic type missing representation decision | sealed type methods + focused representation tests |
 | malformed graph topology | CFG/graph validators and tests |
@@ -379,7 +379,7 @@ Potential regressions under current design include:
 Required Go version is declared in [`go.mod`](../go.mod).
 
 ```bash
-go test -count=1 ./internal/semantics/typeinfo ./internal/project ./internal/ir/thir ./internal/ir/mir
+go test -count=1 ./internal/semantics/types ./internal/project ./internal/ir/thir ./internal/ir/mir
 go test -count=1 ./...
 go vet ./...
 go test -race -count=1 ./internal/graph ./internal/project ./internal/pipeline

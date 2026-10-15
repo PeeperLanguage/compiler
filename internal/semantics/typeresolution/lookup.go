@@ -5,7 +5,7 @@ import (
 	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 )
 
 // ImportedSymbol bundles import, module, and symbol so consumers do not repeat
@@ -41,16 +41,16 @@ func (r *Resolver) LookupImportedSymbol(current *module.Module, alias, symbolNam
 
 // CanonicalEnumDeclaration resolves transparent aliases while retaining both
 // qualifier ownership and the declaration-owned variant scope.
-func (r *Resolver) CanonicalEnumDeclaration(typ typeinfo.Type) (*module.Module, *symbols.Symbol, bool) {
+func (r *Resolver) CanonicalEnumDeclaration(typ types.Type) (*module.Module, *symbols.Symbol, bool) {
 	if r == nil || typ == nil {
 		return nil, nil, false
 	}
-	qualified, ok := typ.(*typeinfo.DefinedType)
+	qualified, ok := typ.(*types.DefinedType)
 	if !ok || qualified == nil || qualified.Identity == "" {
 		return nil, nil, false
 	}
-	canonical, ok := typeinfo.Unalias(typ).(*typeinfo.DefinedType)
-	if !ok || canonical == nil || canonical.Kind != typeinfo.DefinedKindEnum || canonical.Identity == "" {
+	canonical, ok := types.Unalias(typ).(*types.DefinedType)
+	if !ok || canonical == nil || canonical.Kind != types.DefinedKindEnum || canonical.Identity == "" {
 		return nil, nil, false
 	}
 

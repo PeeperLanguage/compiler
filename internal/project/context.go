@@ -16,8 +16,8 @@ import (
 	"compiler/internal/phase"
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/semantics/typeresolution"
+	"compiler/internal/semantics/types"
 	"compiler/internal/target"
 	"compiler/pkg/manifest"
 	"compiler/pkg/peeper"
@@ -274,7 +274,7 @@ func predeclaredScope(compilerTarget target.Info) *symbols.Scope {
 	declarePredeclaredConst(scope, "true")
 	declarePredeclaredConst(scope, "false")
 	declarePredeclaredConst(scope, "none")
-	declarePredeclaredType(scope, "Allocator", &typeinfo.AllocatorType{})
+	declarePredeclaredType(scope, "Allocator", &types.AllocatorType{})
 
 	for _, sym := range intrinsics.PredeclaredSymbols(compilerTarget) {
 		if err := scope.Declare(sym); err != nil {
@@ -292,11 +292,11 @@ func declarePredeclaredConst(scope *symbols.Scope, name string) {
 	sym := symbols.New(symbols.CompilerSymbolID(symbols.SymbolConst, name), name, symbols.SymbolConst, nil, ast.LocOf(nil))
 	switch name {
 	case "true", "false":
-		sym.BindType(&typeinfo.BoolType{})
+		sym.BindType(&types.BoolType{})
 	case "none":
-		sym.BindType(&typeinfo.NoneType{})
+		sym.BindType(&types.NoneType{})
 	default:
-		sym.BindType(&typeinfo.UnknownType{})
+		sym.BindType(&types.UnknownType{})
 	}
 	sym.IsPub = true
 	if err := scope.Declare(sym); err != nil {
@@ -305,7 +305,7 @@ func declarePredeclaredConst(scope *symbols.Scope, name string) {
 	}
 }
 
-func declarePredeclaredType(scope *symbols.Scope, name string, typ typeinfo.Type) {
+func declarePredeclaredType(scope *symbols.Scope, name string, typ types.Type) {
 	if scope == nil || name == "" || typ == nil {
 		return
 	}

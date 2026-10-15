@@ -10,8 +10,8 @@ import (
 	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/semantics/typeresolution"
+	"compiler/internal/semantics/types"
 	"compiler/pkg/manifest"
 	"compiler/pkg/peeper"
 )
@@ -23,7 +23,7 @@ func TestQualifiedTypeQueryIsObservationalAndSourceResolutionPublishesUse(t *tes
 	dependency := &module.Module{ID: dependencyID, ModuleScope: symbols.NewScope(nil)}
 	target := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolType, "Thing"), "Thing", symbols.SymbolType, nil, nil)
 	target.IsPub = false
-	target.BindType(&typeinfo.DefinedType{Name: "Thing", Identity: "dep::Thing", Kind: typeinfo.DefinedKindStruct})
+	target.BindType(&types.DefinedType{Name: "Thing", Identity: "dep::Thing", Kind: types.DefinedKindStruct})
 	if err := dependency.ModuleScope.Declare(target); err != nil {
 		t.Fatalf("declare imported type: %v", err)
 	}

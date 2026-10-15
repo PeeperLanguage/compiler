@@ -5,7 +5,7 @@ import (
 	"compiler/internal/module"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/internal/source"
 )
 
@@ -206,7 +206,7 @@ func resolveSelectorMemberSymbol(sel *ast.SelectorExpr, ident *ast.Ident, parent
 	return nil
 }
 
-func selectorBaseType(expr ast.Expr, parents map[source.NodeID]ast.Node, module *module.Module, ctx *project.CompilerContext) (typeinfo.Type, bool) {
+func selectorBaseType(expr ast.Expr, parents map[source.NodeID]ast.Node, module *module.Module, ctx *project.CompilerContext) (types.Type, bool) {
 	if expr == nil || module == nil {
 		return nil, false
 	}
@@ -229,24 +229,24 @@ func selectorBaseType(expr ast.Expr, parents map[source.NodeID]ast.Node, module 
 	return normalizedSelectorBaseType(symType)
 }
 
-func normalizedSelectorBaseType(baseType typeinfo.Type) (typeinfo.Type, bool) {
+func normalizedSelectorBaseType(baseType types.Type) (types.Type, bool) {
 	if baseType == nil {
 		return nil, false
 	}
-	if typeinfo.IsInvalidOrUnknown(baseType) {
+	if types.IsInvalidOrUnknown(baseType) {
 		return nil, false
 	}
-	if target, ok := typeinfo.PointerTarget(baseType); ok {
+	if target, ok := types.PointerTarget(baseType); ok {
 		baseType = target
 	}
 	return baseType, true
 }
 
-func lookupStructFieldSymbol(baseType typeinfo.Type, fieldName string, ctx *project.CompilerContext) *symbols.Symbol {
+func lookupStructFieldSymbol(baseType types.Type, fieldName string, ctx *project.CompilerContext) *symbols.Symbol {
 	if baseType == nil || fieldName == "" || ctx == nil {
 		return nil
 	}
-	field, _, ok := typeinfo.LookupStructField(baseType, fieldName)
+	field, _, ok := types.LookupStructField(baseType, fieldName)
 	if !ok {
 		return nil
 	}
@@ -258,7 +258,7 @@ func lookupStructFieldSymbol(baseType typeinfo.Type, fieldName string, ctx *proj
 		}
 		for _, stmt := range module.AST.Stmts {
 			structDecl, ok := stmt.(*ast.StructDecl)
-			if !ok || structDecl == nil || structDecl.Name == nil || structDecl.Name.Name != typeinfo.TypeText(baseType) {
+			if !ok || structDecl == nil || structDecl.Name == nil || structDecl.Name.Name != types.TypeText(baseType) {
 				continue
 			}
 			structType, ok := structDecl.Type.(*ast.StructType)
@@ -275,7 +275,7 @@ func lookupStructFieldSymbol(baseType typeinfo.Type, fieldName string, ctx *proj
 			break
 		}
 	}
-	identity := symbols.ProjectedSymbolID(symbols.SymbolField, typeinfo.SemanticKey(baseType)+"::"+fieldName)
+	identity := symbols.ProjectedSymbolID(symbols.SymbolField, types.SemanticKey(baseType)+"::"+fieldName)
 	fieldSym := symbols.New(identity, fieldName, symbols.SymbolField, fieldNode, location)
 	fieldSym.BindType(field.Type)
 	return fieldSym

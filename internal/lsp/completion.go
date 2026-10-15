@@ -14,7 +14,7 @@ import (
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typechecker"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/internal/source"
 	"compiler/pkg/ascii"
 )
@@ -560,15 +560,15 @@ func matchArmCompletionItems(ctx *project.CompilerContext, module *module.Module
 		return nil, false
 	}
 	subjectType := module.BaseExprType(match.Subject.ID())
-	descriptor, ok := typeinfo.VariantDescriptorOf(subjectType)
-	if !ok || descriptor.Family != typeinfo.VariantFamilyNamed {
+	descriptor, ok := types.VariantDescriptorOf(subjectType)
+	if !ok || descriptor.Family != types.VariantFamilyNamed {
 		return nil, false
 	}
 	owner, enumSymbol, ok := ctx.TypeResolver.CanonicalEnumDeclaration(subjectType)
 	if !ok {
 		return nil, false
 	}
-	qualifier := typeinfo.TypeText(subjectType)
+	qualifier := types.TypeText(subjectType)
 	if owner != module {
 		aliases := make([]string, 0)
 		for alias, imported := range module.Imports {
@@ -608,7 +608,7 @@ func matchArmCompletionItems(ctx *project.CompilerContext, module *module.Module
 		}
 		label := qualifier + "::" + variantCase.Name
 		newText := label
-		if payload, data := typeinfo.Underlying(variantCase.Payload).(*typeinfo.StructType); data && payload != nil {
+		if payload, data := types.Underlying(variantCase.Payload).(*types.StructType); data && payload != nil {
 			fields := make([]string, len(payload.Fields))
 			for index, field := range payload.Fields {
 				fields[index] = fmt.Sprintf("%s = ${%d:%s}", field.Name, index+1, field.Name)
@@ -665,12 +665,12 @@ func operationCompletionItems(ctx *project.CompilerContext, module *module.Modul
 	var items []CompletionItem
 	if !isPipeCall {
 		fieldType := baseType
-		if target, ok := typeinfo.PointerTarget(fieldType); ok {
+		if target, ok := types.PointerTarget(fieldType); ok {
 			fieldType = target
-		} else if target, _, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(fieldType)); ok {
+		} else if target, _, ok := types.ReferenceTarget(types.Underlying(fieldType)); ok {
 			fieldType = target
 		}
-		if strct, ok := typeinfo.Underlying(fieldType).(*typeinfo.StructType); ok && strct != nil {
+		if strct, ok := types.Underlying(fieldType).(*types.StructType); ok && strct != nil {
 			for _, field := range strct.Fields {
 				if !strings.HasPrefix(field.Name, prefix) {
 					continue
@@ -686,7 +686,7 @@ func operationCompletionItems(ctx *project.CompilerContext, module *module.Modul
 			}
 		}
 	}
-	if iface, ok := typeinfo.InterfaceTypeOf(baseType); ok {
+	if iface, ok := types.InterfaceTypeOf(baseType); ok {
 		for _, method := range iface.Methods {
 			if method.Name == "" || !strings.HasPrefix(method.Name, prefix) {
 				continue
@@ -700,20 +700,20 @@ func operationCompletionItems(ctx *project.CompilerContext, module *module.Modul
 		if method == nil {
 			continue
 		}
-		fnType, isCallable := method.Type.(*typeinfo.FuncType)
+		fnType, isCallable := method.Type.(*types.FuncType)
 		if isCallable && strings.HasPrefix(method.Name, prefix) {
 			items = appendOperationCompletion(items, seen, method, method.Name, fnType, replacement, rewrite, isPipeCall, preserveArguments)
 		}
 	}
 
 	for _, function := range intrinsics.ApplicableFunctionSymbols(baseType, ctx.Target) {
-		fnType, isCallable := function.Type.(*typeinfo.FuncType)
+		fnType, isCallable := function.Type.(*types.FuncType)
 		if isCallable && strings.HasPrefix(function.Name, prefix) {
 			items = appendOperationCompletion(items, seen, function, function.Name, fnType, replacement, rewrite, isPipeCall, preserveArguments)
 		}
 	}
 	for _, function := range operationFunctionsWithPrefix(module.SymbolIndex.OperationFunctions(), prefix) {
-		fnType, isCallable := function.Type.(*typeinfo.FuncType)
+		fnType, isCallable := function.Type.(*types.FuncType)
 		if !isCallable {
 			continue
 		}
@@ -727,7 +727,7 @@ func operationCompletionItems(ctx *project.CompilerContext, module *module.Modul
 			continue
 		}
 		for _, function := range operationFunctionsWithPrefix(imported.SymbolIndex.OperationFunctions(), prefix) {
-			fnType, isCallable := function.Type.(*typeinfo.FuncType)
+			fnType, isCallable := function.Type.(*types.FuncType)
 			if !function.IsPub || !isCallable {
 				continue
 			}
@@ -751,12 +751,12 @@ func operationFunctionsWithPrefix(functions []*symbols.Symbol, prefix string) []
 	return functions[start:end]
 }
 
-func appendOperationCompletion(items []CompletionItem, seen map[string]struct{}, sym *symbols.Symbol, name string, fnType *typeinfo.FuncType, replacement, rewrite Range, isPipeCall, preserveArguments bool) []CompletionItem {
+func appendOperationCompletion(items []CompletionItem, seen map[string]struct{}, sym *symbols.Symbol, name string, fnType *types.FuncType, replacement, rewrite Range, isPipeCall, preserveArguments bool) []CompletionItem {
 	if fnType == nil || len(fnType.Params) == 0 {
 		return items
 	}
 	kind := completionItemKind(sym.Kind)
-	key := fmt.Sprintf("%d|%s|%s", kind, name, typeinfo.TypeText(fnType))
+	key := fmt.Sprintf("%d|%s|%s", kind, name, types.TypeText(fnType))
 	if _, duplicate := seen[key]; duplicate {
 		return items
 	}
@@ -790,7 +790,7 @@ func appendOperationCompletion(items []CompletionItem, seen map[string]struct{},
 	})
 }
 
-func completionCallText(name string, fnType *typeinfo.FuncType) string {
+func completionCallText(name string, fnType *types.FuncType) string {
 	var arguments []string
 	for i := 1; i < len(fnType.Params); i++ {
 		parameter := "arg"

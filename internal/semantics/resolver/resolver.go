@@ -11,7 +11,7 @@ import (
 	"compiler/internal/problems"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/internal/source"
 )
 
@@ -442,8 +442,8 @@ func (r *resolver) casePayloads(path *ast.ScopeResolution) (has, otherHas bool) 
 	if variant == nil || variant.Kind != symbols.SymbolVariant {
 		return false, false
 	}
-	descriptor, _ := typeinfo.VariantDescriptorOf(variant.Type)
-	index := slices.IndexFunc(descriptor.Cases, func(candidate typeinfo.VariantCase) bool { return candidate.Name == variant.Name })
+	descriptor, _ := types.VariantDescriptorOf(variant.Type)
+	index := slices.IndexFunc(descriptor.Cases, func(candidate types.VariantCase) bool { return candidate.Name == variant.Name })
 	if index < 0 {
 		return false, false
 	}

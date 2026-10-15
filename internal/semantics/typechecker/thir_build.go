@@ -11,7 +11,7 @@ import (
 	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	sourceid "compiler/internal/source"
 	"compiler/pkg/typednil"
 )
@@ -22,7 +22,7 @@ func (c *checker) buildTHIR() *thir.Module {
 	}
 	constantCondition := func(expr ast.Expr) (*bool, []*diagnostics.Diagnostic) {
 		pending := diagnostics.NewDiagnosticBag()
-		value, ok := c.evaluateConstant(c.ctx.WithDiagnostics(pending), expr, &typeinfo.BoolType{})
+		value, ok := c.evaluateConstant(c.ctx.WithDiagnostics(pending), expr, &types.BoolType{})
 		if !ok {
 			return nil, pending.Diagnostics()
 		}
@@ -90,7 +90,7 @@ func (b *thirBuilder) function(source *ast.FnDecl) *thir.Function {
 	}
 	if function.Symbol != nil {
 		if typ, ok := symbols.GetSymbolType(function.Symbol); ok {
-			if callable, ok := typ.(*typeinfo.FuncType); ok && callable != nil {
+			if callable, ok := typ.(*types.FuncType); ok && callable != nil {
 				function.ReturnType = callable.Return
 			}
 		}
@@ -151,7 +151,7 @@ func (b *thirBuilder) operands(sources ...ast.Expr) []thir.Expr {
 // value that reads the same after later has run: a literal, a constant, a
 // function.
 func (b *thirBuilder) storeFirst(source ast.Expr, value thir.Expr, later ast.Expr) (*thir.Binding, thir.Expr) {
-	if value == nil || typeinfo.IsInvalidOrUnknown(value.ExprType()) {
+	if value == nil || types.IsInvalidOrUnknown(value.ExprType()) {
 		return nil, nil
 	}
 	switch value.(type) {
@@ -165,7 +165,7 @@ func (b *thirBuilder) storeFirst(source ast.Expr, value thir.Expr, later ast.Exp
 	typ := value.ExprType()
 	// Storing a value that is only looked at would move it out of its place.
 	// It stays where it is; only code that names its variable can change it.
-	if use, known := value.UseKind(); value.ExprPlace() != nil && typeinfo.IsMoveTracked(typ) && !(known && use == typeinfo.UseMove) {
+	if use, known := value.UseKind(); value.ExprPlace() != nil && types.IsMoveTracked(typ) && !(known && use == types.UseMove) {
 		ast.Inspect(later, func(node ast.Node) bool {
 			if name, isName := node.(*ast.Ident); isName && b.symbol(name).Variable() == value.ExprPlace().Root {
 				b.diagnostics.Add(invalidOperationError(source, "this value is read before an `orelse` that uses `"+name.Name+"` and runs first").
@@ -221,7 +221,7 @@ func (b *thirBuilder) payloadName(owner ast.Node) *symbols.Symbol {
 	if name == nil || !name.IsPayloadName || name.AliasOf != nil || !b.symbolIndex.IsUsed(name) {
 		return nil
 	}
-	if typ, typed := symbols.GetSymbolType(name); !typed || typeinfo.IsInvalidOrUnknown(typ) {
+	if typ, typed := symbols.GetSymbolType(name); !typed || types.IsInvalidOrUnknown(typ) {
 		return nil
 	}
 	return name
@@ -414,7 +414,7 @@ func (b *thirBuilder) boundIfStatement(source *ast.IfStmt, then, otherwise, rest
 	if carrier == nil {
 		return &thir.InvalidStmt{StmtInfo: stmtInfo(source), Message: "invalid case test"}
 	}
-	descriptor, _ := typeinfo.VariantDescriptorOf(carrier.typ)
+	descriptor, _ := types.VariantDescriptorOf(carrier.typ)
 	var held, others []thir.ArmCase
 	for caseIndex := range descriptor.Cases {
 		if caseIndex == test.Case {
@@ -457,7 +457,7 @@ func (b *thirBuilder) boundIfStatement(source *ast.IfStmt, then, otherwise, rest
 // expression is then a read of that local.
 func (b *thirBuilder) orElse(source *ast.OrElseExpr, info thir.ExprInfo) thir.Expr {
 	test, tested := b.typing.CaseTest(source.ID())
-	if !tested || info.Type == nil || typeinfo.IsInvalidOrUnknown(info.Type) {
+	if !tested || info.Type == nil || types.IsInvalidOrUnknown(info.Type) {
 		return &thir.InvalidExpr{ExprInfo: info, Message: "invalid orelse"}
 	}
 	carrier := b.caseCarrier(source, test.Subject, test.Borrow)
@@ -500,7 +500,7 @@ func (b *thirBuilder) orElse(source *ast.OrElseExpr, info thir.ExprInfo) thir.Ex
 // branch of an `if` on the left side, and the known result in the other. The
 // expression is then a read of that local.
 func (b *thirBuilder) shortCircuit(source *ast.BinaryExpr, info thir.ExprInfo) thir.Expr {
-	if typeinfo.IsInvalidOrUnknown(info.Type) {
+	if types.IsInvalidOrUnknown(info.Type) {
 		return &thir.InvalidExpr{ExprInfo: info, Message: "invalid condition"}
 	}
 	carrier := &caseCarrier{statement: source, index: b.symbolIndex, enclosing: b.enclosing}
@@ -546,7 +546,7 @@ func (b *thirBuilder) isPlain(expr ast.Expr) bool {
 		if !isField || !b.isPlain(node.Expr) {
 			return false
 		}
-		_, _, isReference := typeinfo.ReferenceTarget(typeinfo.Underlying(b.typing.ExprType(node.Expr.ID())))
+		_, _, isReference := types.ReferenceTarget(types.Underlying(b.typing.ExprType(node.Expr.ID())))
 		return access.DereferenceType == nil || isReference
 	case *ast.BinaryExpr:
 		switch node.Op {
@@ -568,7 +568,7 @@ func (b *thirBuilder) isPlain(expr ast.Expr) bool {
 type caseCarrier struct {
 	statement ast.Node
 	// typ is the type of the value matched: the enum or the optional.
-	typ typeinfo.Type
+	typ types.Type
 	// subject is what the match reads whole: the carrier, or the place.
 	subject thir.Expr
 	// symbol is the carrier, and spill stores the subject in it. Both are nil
@@ -594,9 +594,9 @@ const storedOperandSlot = 2
 // caseCarrier returns how statement takes subject apart (borrow is set when
 // it is tested through a reference), or nil when the checker could not type
 // the subject.
-func (b *thirBuilder) caseCarrier(statement ast.Node, subject ast.Expr, borrow *typeinfo.RefType) *caseCarrier {
+func (b *thirBuilder) caseCarrier(statement ast.Node, subject ast.Expr, borrow *types.RefType) *caseCarrier {
 	c := &caseCarrier{statement: statement, index: b.symbolIndex, enclosing: b.enclosing, typ: b.typing.ExprType(subject.ID())}
-	if typeinfo.IsInvalidOrUnknown(c.typ) {
+	if types.IsInvalidOrUnknown(c.typ) {
 		return nil
 	}
 	if borrow != nil {
@@ -616,7 +616,7 @@ func (b *thirBuilder) caseCarrier(statement ast.Node, subject ast.Expr, borrow *
 
 // local declares a hidden local of the scope the statement is in. A rebuild
 // of the same scope finds the one declared before.
-func (c *caseCarrier) local(prefix string, typ typeinfo.Type) *symbols.Symbol {
+func (c *caseCarrier) local(prefix string, typ types.Type) *symbols.Symbol {
 	name := prefix + "." + c.statement.ID().Local()
 	if existing, found := c.enclosing.LookupLocal(name); found {
 		return existing
@@ -634,7 +634,7 @@ func (c *caseCarrier) local(prefix string, typ typeinfo.Type) *symbols.Symbol {
 // matches, where the variable is, or nil when the checker could not type it.
 func (b *thirBuilder) payloadsOf(statement *ast.MatchStmt, variable *ast.Ident) *caseCarrier {
 	typ := b.typing.ExprType(variable.ID())
-	if typeinfo.IsInvalidOrUnknown(typ) {
+	if types.IsInvalidOrUnknown(typ) {
 		return nil
 	}
 	return &caseCarrier{
@@ -661,7 +661,7 @@ func (c *caseCarrier) block(stmts ...thir.Stmt) *thir.Block {
 	return block
 }
 
-func (c *caseCarrier) ident(symbol *symbols.Symbol, typ typeinfo.Type) *thir.Ident {
+func (c *caseCarrier) ident(symbol *symbols.Symbol, typ types.Type) *thir.Ident {
 	info := thir.ExprInfo{Source: c.source(), Type: typ, Place: &thir.Place{Root: symbol}}
 	return &thir.Ident{ExprInfo: info, Name: symbol.Name, Symbol: symbol}
 }
@@ -669,7 +669,7 @@ func (c *caseCarrier) ident(symbol *symbols.Symbol, typ typeinfo.Type) *thir.Ide
 // take reads the payload of what an arm with cases selects, as a name of type
 // nameType gets it: out of the carrier or the variable, or borrowed from the
 // place.
-func (c *caseCarrier) take(nameType typeinfo.Type, cases []thir.ArmCase) thir.Expr {
+func (c *caseCarrier) take(nameType types.Type, cases []thir.ArmCase) thir.Expr {
 	path := append(slices.Clone(c.subject.PayloadPath()), thir.PayloadPath(cases)...)
 	if c.symbol != nil || c.variable != nil {
 		read := c.ident(cmp.Or(c.symbol, c.variable), nameType)
@@ -677,7 +677,7 @@ func (c *caseCarrier) take(nameType typeinfo.Type, cases []thir.ArmCase) thir.Ex
 		read.CasePath = path
 		return read
 	}
-	payload, _, _ := typeinfo.ReferenceTarget(nameType)
+	payload, _, _ := types.ReferenceTarget(nameType)
 	read := c.reread(c.subject, payload, path)
 	return &thir.Address{ExprInfo: thir.ExprInfo{Source: c.source(), Type: nameType}, Mode: c.mode, Value: read}
 }
@@ -685,7 +685,7 @@ func (c *caseCarrier) take(nameType typeinfo.Type, cases []thir.ArmCase) thir.Ex
 // reread reads the borrowed place (a variable, its fields, and elements picked
 // by a number or a variable) again; the match read it first. With payload set,
 // it reads the payload reached through path.
-func (c *caseCarrier) reread(place thir.Expr, payload typeinfo.Type, path []int) thir.Expr {
+func (c *caseCarrier) reread(place thir.Expr, payload types.Type, path []int) thir.Expr {
 	// retarget gives a read its own identity and, with payload set, makes it
 	// read the payload; base and index are its rereads, nil for a variable.
 	retarget := func(info *thir.ExprInfo, base, index thir.Expr) {
@@ -742,7 +742,7 @@ func (c *caseCarrier) assign(target *symbols.Symbol, value thir.Expr) *thir.Assi
 // one the checker could not type, gets nothing.
 func (c *caseCarrier) startArm(arm *thir.MatchArm, name *symbols.Symbol, declared bool) {
 	nameType, typed := symbols.GetSymbolType(name)
-	if !typed || typeinfo.IsInvalidOrUnknown(nameType) {
+	if !typed || types.IsInvalidOrUnknown(nameType) {
 		c.prepend(arm, nil, nil)
 		return
 	}
@@ -759,12 +759,12 @@ func (c *caseCarrier) startArm(arm *thir.MatchArm, name *symbols.Symbol, declare
 // nil) at the start of arm. A carrier that take did not move is then dropped,
 // so every arm leaves an owning carrier consumed and the arms agree where
 // they join.
-func (c *caseCarrier) prepend(arm *thir.MatchArm, take thir.Stmt, taken typeinfo.Type) {
+func (c *caseCarrier) prepend(arm *thir.MatchArm, take thir.Stmt, taken types.Type) {
 	var prologue []thir.Stmt
 	if take != nil {
 		prologue = append(prologue, take)
 	}
-	if c.symbol != nil && !typeinfo.IsMoveTracked(taken) && typeinfo.IsMoveTracked(c.typ) {
+	if c.symbol != nil && !types.IsMoveTracked(taken) && types.IsMoveTracked(c.typ) {
 		// `let _ = carrier;`: the arm's scope drops it.
 		source := c.source()
 		discard := symbols.New(symbols.SourceSymbolID(source.NodeID), "_", symbols.SymbolVar, c.statement, source.Location)
@@ -925,7 +925,7 @@ func (b *thirBuilder) fieldExpression(source *ast.SelectorExpr, info thir.ExprIn
 	}
 	if projection, projected := place.Project(source); projected {
 		fieldIndex := -1
-		var dereferenceType typeinfo.Type
+		var dereferenceType types.Type
 		if field.Access != nil {
 			fieldIndex = field.Access.Field
 			dereferenceType = field.Access.DereferenceType
@@ -970,7 +970,7 @@ func (b *thirBuilder) structLiteral(source *ast.StructLit, info thir.ExprInfo) t
 		}
 	}
 	fields := make([]thir.StructField, 0, len(values))
-	semantic, _ := typeinfo.Underlying(info.Type).(*typeinfo.StructType)
+	semantic, _ := types.Underlying(info.Type).(*types.StructType)
 	for index, value := range b.operands(values...) {
 		name := ""
 		if semantic != nil && index < len(semantic.Fields) {

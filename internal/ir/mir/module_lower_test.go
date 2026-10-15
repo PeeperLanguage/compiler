@@ -12,7 +12,7 @@ import (
 	"compiler/internal/ir/thir"
 	"compiler/internal/moduleid"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/internal/source"
 )
 
@@ -65,7 +65,7 @@ func TestFunctionSignatureMatchesCallableReferences(t *testing.T) {
 }
 
 func TestGenerateMIREmitsStaticConstantFromSymbolIndex(t *testing.T) {
-	integer := &typeinfo.IntegerType{IsSigned: true, Bits: 32}
+	integer := &types.IntegerType{IsSigned: true, Bits: 32}
 	sym := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolConst, "Value"), "Value", symbols.SymbolConst, nil, nil)
 	sym.Type = integer
 	scope := symbols.NewScope(nil)
@@ -102,7 +102,7 @@ func TestGenerateMIRRejectsUnmaterializableModuleConstants(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			symbol := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolConst, "Value"), "Value", symbols.SymbolConst, nil, nil)
-			symbol.BindType(&typeinfo.IntegerType{IsSigned: true, Bits: 64})
+			symbol.BindType(&types.IntegerType{IsSigned: true, Bits: 64})
 			symbol.Location = source.NewLocation("test.peep", source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 6})
 			scope := symbols.NewScope(nil)
 			if err := scope.Declare(symbol); err != nil {

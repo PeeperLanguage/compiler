@@ -21,7 +21,7 @@ import (
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typechecker"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/pkg/peeper"
 )
 
@@ -56,8 +56,8 @@ func buildTypedExprModule(t *testing.T, source string) (*module.Module, *diagnos
 }
 
 func TestLowerImplicitReferenceRetainsTemporaryOnlyForValues(t *testing.T) {
-	integer := &typeinfo.IntegerType{IsSigned: true, Bits: 32}
-	borrow := &typeinfo.RefType{Target: integer}
+	integer := &types.IntegerType{IsSigned: true, Bits: 32}
+	borrow := &types.RefType{Target: integer}
 	ctx := exprlower.Context{Types: ir.NewTypeTable()}
 	literal := &thir.NumberLiteral{ExprInfo: thir.ExprInfo{Source: ir.SourceInfo{NodeID: source.ParsedNodeID(1)}, Type: integer}, Value: "3"}
 	temporary, ok := exprlower.LowerImplicitReference(ctx, literal, borrow).(*ir.TempBorrow)
@@ -183,9 +183,9 @@ fn main() -> i32 {
 	if call == nil || len(call.Args) != 1 {
 		t.Fatalf("interface call = %#v", call)
 	}
-	fn, ok := call.Callee.ExprType().(*typeinfo.FuncType)
+	fn, ok := call.Callee.ExprType().(*types.FuncType)
 	if !ok || len(fn.Params) != 1 {
-		t.Fatalf("callee type = %s, want one interface parameter", typeinfo.TypeText(call.Callee.ExprType()))
+		t.Fatalf("callee type = %s, want one interface parameter", types.TypeText(call.Callee.ExprType()))
 	}
 	ctx := exprlower.Context{Types: ir.NewTypeTable(), Diagnostics: diag, Source: mod.THIR, ModuleID: mod.ID}
 	lowered, ok := exprlower.Lower(ctx, call.Args[0], fn.Params[0]).(*ir.InterfaceMake)
@@ -195,7 +195,7 @@ fn main() -> i32 {
 	if lowered.Slots[0].MethodName != "sum" || lowered.Slots[0].FuncName == "" || lowered.Slots[0].SlotType == ir.InvalidType {
 		t.Fatalf("published interface slot = %#v", lowered.Slots[0])
 	}
-	missing := &thir.NumberLiteral{ExprInfo: thir.ExprInfo{Source: ir.SourceInfo{NodeID: source.ParsedNodeID(10)}, Type: &typeinfo.IntegerType{IsSigned: true, Bits: 32}}, Value: "1"}
+	missing := &thir.NumberLiteral{ExprInfo: thir.ExprInfo{Source: ir.SourceInfo{NodeID: source.ParsedNodeID(10)}, Type: &types.IntegerType{IsSigned: true, Bits: 32}}, Value: "1"}
 	invalid, ok := exprlower.Lower(ctx, missing, fn.Params[0]).(*ir.InvalidExpr)
 	if !ok || invalid.Message != "missing interface implementation evidence" {
 		t.Fatalf("conversion without evidence = %#v, want missing evidence", invalid)
@@ -215,7 +215,7 @@ fn read(value: ?i32) -> i32 {
 	if !ok || expr == nil {
 		t.Fatalf("return value missing from THIR: %#v", ret.Value)
 	}
-	if got := typeinfo.TypeText(expr.ExprType()); got != "i32" {
+	if got := types.TypeText(expr.ExprType()); got != "i32" {
 		t.Fatalf("narrowed type = %s, want i32", got)
 	}
 	types := ir.NewTypeTable()

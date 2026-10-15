@@ -1,4 +1,4 @@
-package typeinfo
+package types
 
 import "compiler/pkg/typednil"
 

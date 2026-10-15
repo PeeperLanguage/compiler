@@ -21,7 +21,7 @@ create or consume safe owners.
 
 Current source model already has correct ownership timing:
 
-- `typeinfo.NeedsDrop` classifies values requiring cleanup.
+- `types.NeedsDrop` classifies values requiring cleanup.
 - ownership analysis decides when moves invalidate values and where `Drop`
   actions occur.
 - THIR/MIR lowering carries explicit `Drop` operations.

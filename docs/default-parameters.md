@@ -158,7 +158,7 @@ parameter type as expected type. Move-only parameter reuse is rejected at this
 declaration boundary; call-site ownership then validates substituted arguments
 with normal move and borrow rules.
 
-Do not add default expressions to `typeinfo.FuncType`. Declaration symbol already
+Do not add default expressions to `types.FuncType`. Declaration symbol already
 owns AST node and therefore default metadata.
 
 ### Call argument plan

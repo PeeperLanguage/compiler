@@ -297,7 +297,7 @@ const (
 // typeNeedsDrop is not a second implementation of the source-level drop
 // obligation, and it must not become one.
 //
-// typeinfo.OwnershipCapabilityOf decides *whether a value is dropped at all*.
+// types.OwnershipCapabilityOf decides *whether a value is dropped at all*.
 // That decision reaches here already made, as a mir.Drop instruction; emitDrop
 // is only ever entered from one, and every other call below is this function
 // recursing into a drop that was already ordered. What it answers is narrower:

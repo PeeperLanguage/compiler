@@ -6,11 +6,11 @@ import (
 	"strings"
 
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 )
 
 // Text renders the module for compiler dumps. Types use
-// typeinfo.QualifiedTypeText, the same names the MIR and LLVM dumps use.
+// types.QualifiedTypeText, the same names the MIR and LLVM dumps use.
 func (m *Module) Text() string {
 	if m == nil {
 		return ""
@@ -42,12 +42,12 @@ func (p *textPrinter) function(function *Function) {
 		}
 		p.b.WriteString(symbolName(param.Symbol))
 		p.b.WriteString(": ")
-		p.b.WriteString(typeinfo.QualifiedTypeText(param.Type()))
+		p.b.WriteString(types.QualifiedTypeText(param.Type()))
 	}
 	p.b.WriteString(")")
 	if function.HasReturnValue {
 		p.b.WriteString(" -> ")
-		p.b.WriteString(typeinfo.QualifiedTypeText(function.ReturnType))
+		p.b.WriteString(types.QualifiedTypeText(function.ReturnType))
 	}
 	if function.Body == nil {
 		p.b.WriteString("\n")
@@ -95,19 +95,23 @@ func (p *textPrinter) stmt(stmt Stmt) {
 		p.b.WriteString(symbolName(s.Symbol))
 		if s.Symbol != nil {
 			p.b.WriteString(": ")
-			p.b.WriteString(typeinfo.QualifiedTypeText(s.Symbol.Type))
+			p.b.WriteString(types.QualifiedTypeText(s.Symbol.Type))
 		}
 		if s.Value != nil {
 			p.b.WriteString(" = ")
 			p.b.WriteString(p.expr(s.Value))
 		}
 	case *Destructure:
-		strct, _ := typeinfo.Underlying(s.Value.ExprType()).(*typeinfo.StructType)
+		strct, _ := types.Underlying(s.Value.ExprType()).(*types.StructType)
 		fields := make([]string, len(s.Bindings))
 		for index, binding := range s.Bindings {
-			fields[index] = strct.Fields[binding.Field].Name + " as " + symbolName(binding.Symbol) + ": " + typeinfo.QualifiedTypeText(binding.Type)
+			fields[index] = strct.Fields[binding.Field].Name + " as " + symbolName(binding.Symbol) + ": " + types.QualifiedTypeText(binding.Type)
 		}
-		p.b.WriteString("let .{" + strings.Join(fields, ", ") + "} = " + p.expr(s.Value))
+
+		p.b.WriteString("let .{")
+		p.b.WriteString(strings.Join(fields, ", "))
+		p.b.WriteString("} = ")
+		p.b.WriteString(p.expr(s.Value))
 	case *ExprStmt:
 		p.b.WriteString(p.expr(s.Value))
 	case *Assign:
@@ -193,8 +197,9 @@ func (p *textPrinter) match(s *Match) {
 			}
 			p.b.WriteString(caseName(s.EnumType, armCase.Case))
 			if armCase.TestsPayload {
-				descriptor, _ := typeinfo.VariantDescriptorOf(s.EnumType)
-				p.b.WriteString(" is " + caseName(descriptor.Cases[armCase.Case].Payload, armCase.PayloadCase))
+				descriptor, _ := types.VariantDescriptorOf(s.EnumType)
+				p.b.WriteString(" is ")
+				p.b.WriteString(caseName(descriptor.Cases[armCase.Case].Payload, armCase.PayloadCase))
 			}
 		}
 		p.b.WriteString(" => ")
@@ -246,9 +251,9 @@ func (p *textPrinter) expr(expr Expr) string {
 		for index, field := range e.Fields {
 			fields[index] = field.Name + ": " + p.expr(field.Value)
 		}
-		return typeinfo.QualifiedTypeText(e.Type) + "{" + strings.Join(fields, ", ") + "}"
+		return types.QualifiedTypeText(e.Type) + "{" + strings.Join(fields, ", ") + "}"
 	case *Variant:
-		text := typeinfo.QualifiedTypeText(e.Type) + "." + caseName(e.Type, e.Case)
+		text := types.QualifiedTypeText(e.Type) + "." + caseName(e.Type, e.Case)
 		if e.Payload != nil {
 			text += "(" + p.expr(e.Payload) + ")"
 		}
@@ -274,7 +279,7 @@ func (p *textPrinter) expr(expr Expr) string {
 		return p.expr(e.Value) + " is " + caseName(e.Value.ExprType(), e.Test.Case)
 	case *Call:
 		text := p.expr(e.Callee) + "(" + p.exprList(e.Args) + ")"
-		if result := typeinfo.QualifiedTypeText(e.Type); result != "" {
+		if result := types.QualifiedTypeText(e.Type); result != "" {
 			text += ": " + result
 		}
 		return text
@@ -286,7 +291,7 @@ func (p *textPrinter) expr(expr Expr) string {
 		}
 		return "print(" + p.expr(e.Value) + ")"
 	case *Cast:
-		return "(" + p.expr(e.Value) + " as " + typeinfo.QualifiedTypeText(e.Type) + ")"
+		return "(" + p.expr(e.Value) + " as " + types.QualifiedTypeText(e.Type) + ")"
 	default:
 		panic(fmt.Sprintf("unhandled THIR expression %T", expr))
 	}
@@ -309,8 +314,8 @@ func symbolName(symbol *symbols.Symbol) string {
 
 // caseName names a variant case of typ, falling back to its index when typ
 // carries no case list.
-func caseName(typ typeinfo.Type, index int) string {
-	if descriptor, ok := typeinfo.VariantDescriptorOf(typ); ok && index >= 0 && index < len(descriptor.Cases) {
+func caseName(typ types.Type, index int) string {
+	if descriptor, ok := types.VariantDescriptorOf(typ); ok && index >= 0 && index < len(descriptor.Cases) {
 		return descriptor.Cases[index].Name
 	}
 	return "case#" + strconv.Itoa(index)

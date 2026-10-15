@@ -340,7 +340,7 @@ type Place struct {
 
 type Define  struct{ Symbol *symbols.Symbol; Initialized, OnEntry bool }
 type Write   struct{ Place Place }
-type Use     struct{ Place Place; Kind typeinfo.UseKind }
+type Use     struct{ Place Place; Kind types.UseKind }
 type Borrow  struct{ Place Place; Mutable, Argument, Raw bool }
 type Discard struct{ Place Place }
 type CallBegin struct{ Node source.NodeID }
@@ -351,7 +351,7 @@ The producer is the only code that reads syntax to decide meaning:
 
 ```go
 // internal/semantics/analysis/effects.go (simplified)
-func (b *builder) value(site cfg.SiteID, expr ast.Expr, kind typeinfo.UseKind) {
+func (b *builder) value(site cfg.SiteID, expr ast.Expr, kind types.UseKind) {
     switch node := expr.(type) {
     case *ast.Ident:
         if sym := b.queries.Symbols[node.ID()]; sym != nil {
@@ -359,15 +359,15 @@ func (b *builder) value(site cfg.SiteID, expr ast.Expr, kind typeinfo.UseKind) {
         }
     case *ast.BinaryExpr:
         if b.queries.StringConcatenation(node.ID()) {    // decided by the typechecker
-            b.value(site, node.Left, typeinfo.UseMove)   // concat consumes its left
-            b.value(site, node.Right, typeinfo.UseRead)
+            b.value(site, node.Left, types.UseMove)   // concat consumes its left
+            b.value(site, node.Right, types.UseRead)
             return
         }
-        b.value(site, node.Left, typeinfo.UseRead)
-        b.value(site, node.Right, typeinfo.UseRead)
+        b.value(site, node.Left, types.UseRead)
+        b.value(site, node.Right, types.UseRead)
     case *ast.CallExpr:
         b.emit(site, CallBegin{Node: node.ID()})
-        b.value(site, node.Callee, typeinfo.UseRead)
+        b.value(site, node.Callee, types.UseRead)
         for _, arg := range b.queries.CallArguments(node) {
             b.argument(site, arg)                        // borrows if the parameter is a reference
         }

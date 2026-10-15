@@ -27,7 +27,7 @@ flowchart TD
     Lexer --> Parser[parser]
     Parser --> AST[frontend/ast]
     AST --> Bind[collector/binder/resolver]
-    Bind --> Types[typeinfo and symbols]
+    Bind --> Types[types and symbols]
     Types --> Check[typechecker operation]
     Check --> THIR[THIR]
     THIR --> CFG[cfg]

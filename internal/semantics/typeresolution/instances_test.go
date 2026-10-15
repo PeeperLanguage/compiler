@@ -8,7 +8,7 @@ import (
 	"compiler/internal/module"
 	"compiler/internal/moduleid"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/internal/target"
 )
 
@@ -20,14 +20,14 @@ func (m testModules) ModuleByID(id moduleid.ID) (*module.Module, bool) {
 }
 
 func TestTypeArgumentIdentityUsesCanonicalParameterKey(t *testing.T) {
-	parameter := &typeinfo.TypeParameterType{Name: "T", OwnerIdentity: "pkg::Box", Index: 1}
-	if got, want := typeArgumentIdentity(parameter), typeinfo.SemanticKey(parameter); got != want {
+	parameter := &types.TypeParameterType{Name: "T", OwnerIdentity: "pkg::Box", Index: 1}
+	if got, want := typeArgumentIdentity(parameter), types.SemanticKey(parameter); got != want {
 		t.Fatalf("parameter identity = %q, want semantic key %q", got, want)
 	}
 }
 
 func TestTypeArgumentIdentityKeepsNominalDefinedIdentity(t *testing.T) {
-	defined := &typeinfo.DefinedType{Name: "Box", Identity: "pkg::Box", Kind: typeinfo.DefinedKindStruct}
+	defined := &types.DefinedType{Name: "Box", Identity: "pkg::Box", Kind: types.DefinedKindStruct}
 	if got, want := typeArgumentIdentity(defined), "defined:pkg::Box"; got != want {
 		t.Fatalf("defined identity = %q, want %q", got, want)
 	}
@@ -40,7 +40,7 @@ func TestQueryTypeQualifiedSyntaxWithoutModuleDoesNotPanic(t *testing.T) {
 	}}
 
 	got := New(target.Host(), nil).Query(nil, node, Context{})
-	if got.Status != QueryAvailable || got.Type == nil || typeinfo.TypeText(got.Type) != "dep::Thing" {
+	if got.Status != QueryAvailable || got.Type == nil || types.TypeText(got.Type) != "dep::Thing" {
 		t.Fatalf("qualified query result = %#v, want available unresolved qualified name", got)
 	}
 }
@@ -50,7 +50,7 @@ func TestQueryTypeKeepsInvalidGenericApplicationDistinctFromLoading(t *testing.T
 	node := &ast.NamedType{Name: "Box"}
 
 	got := resolver.Query(mod, node, Context{})
-	if got.Status != QueryInvalid || !typeinfo.IsInvalid(got.Type) {
+	if got.Status != QueryInvalid || !types.IsInvalid(got.Type) {
 		t.Fatalf("invalid generic query result = %#v, want invalid", got)
 	}
 }
@@ -85,16 +85,16 @@ func TestQueryTypeDoesNotCreateOrDiagnoseGenericInstance(t *testing.T) {
 
 func TestQueryTypeDoesNotReturnIncompleteCachedGenericInstance(t *testing.T) {
 	resolver, _, mod, base := genericQueryContext(t)
-	argument := &typeinfo.IntegerType{IsSigned: true, Bits: 32}
-	identity := typeInstanceIdentity(base, []typeinfo.Type{argument})
+	argument := &types.IntegerType{IsSigned: true, Bits: 32}
+	identity := typeInstanceIdentity(base, []types.Type{argument})
 	resolver.instances[identity] = namedTypeInstance{
 		base: base,
-		typ: &typeinfo.DefinedType{
+		typ: &types.DefinedType{
 			Name:           base.Name,
 			Identity:       identity,
 			Kind:           base.Kind,
 			TypeParameters: base.TypeParameters,
-			TypeArguments:  []typeinfo.Type{argument},
+			TypeArguments:  []types.Type{argument},
 		},
 		ready: make(chan struct{}),
 	}
@@ -112,14 +112,14 @@ func TestQueryTypeDoesNotReturnIncompleteCachedGenericInstance(t *testing.T) {
 
 func TestQueryTypeReturnsCompleteCachedGenericInstance(t *testing.T) {
 	resolver, diag, mod, base := genericQueryContext(t)
-	argument := &typeinfo.IntegerType{IsSigned: true, Bits: 32}
-	identity := typeInstanceIdentity(base, []typeinfo.Type{argument})
-	cached := &typeinfo.DefinedType{
+	argument := &types.IntegerType{IsSigned: true, Bits: 32}
+	identity := typeInstanceIdentity(base, []types.Type{argument})
+	cached := &types.DefinedType{
 		Name:           base.Name,
 		Identity:       identity,
 		Kind:           base.Kind,
 		TypeParameters: base.TypeParameters,
-		TypeArguments:  []typeinfo.Type{argument},
+		TypeArguments:  []types.Type{argument},
 	}
 	resolver.instances[identity] = namedTypeInstance{base: base, typ: cached, isComplete: true}
 	node := &ast.AppliedType{
@@ -151,7 +151,7 @@ func TestResolveTypeCreatesGenericInstance(t *testing.T) {
 	}
 
 	got := resolver.Resolve(diag, mod, node, Context{})
-	if typeinfo.IsInvalid(got) {
+	if types.IsInvalid(got) {
 		t.Fatalf("source type resolution returned invalid type: %#v", got)
 	}
 	if len(resolver.instances) != 1 {
@@ -172,8 +172,8 @@ func TestResetModulePurgesOnlyOwnedNamedTypeInstances(t *testing.T) {
 	otherID := moduleid.ID{Origin: "local", ImportPath: "other"}
 	ownerBox := moduleid.TypeIdentity(ownerID, "Box") + "<i32>"
 	otherBox := moduleid.TypeIdentity(otherID, "Box") + "<i32>"
-	resolver.instances[ownerBox] = namedTypeInstance{typ: &typeinfo.DefinedType{Name: "Box", Identity: ownerBox}}
-	resolver.instances[otherBox] = namedTypeInstance{typ: &typeinfo.DefinedType{Name: "Box", Identity: otherBox}}
+	resolver.instances[ownerBox] = namedTypeInstance{typ: &types.DefinedType{Name: "Box", Identity: ownerBox}}
+	resolver.instances[otherBox] = namedTypeInstance{typ: &types.DefinedType{Name: "Box", Identity: otherBox}}
 
 	resolver.ResetModule(&module.Module{ID: ownerID})
 
@@ -185,7 +185,7 @@ func TestResetModulePurgesOnlyOwnedNamedTypeInstances(t *testing.T) {
 	}
 }
 
-func genericQueryContext(t *testing.T) (*Resolver, *diagnostics.DiagnosticBag, *module.Module, *typeinfo.DefinedType) {
+func genericQueryContext(t *testing.T) (*Resolver, *diagnostics.DiagnosticBag, *module.Module, *types.DefinedType) {
 	t.Helper()
 	diag := diagnostics.NewDiagnosticBag()
 	mod := &module.Module{
@@ -194,9 +194,9 @@ func genericQueryContext(t *testing.T) (*Resolver, *diagnostics.DiagnosticBag, *
 		SymbolIndex: symbols.NewIndex(),
 	}
 	identity := mod.TypeDeclarationIdentity("Box")
-	base := &typeinfo.DefinedType{
-		Name: "Box", Identity: identity, Kind: typeinfo.DefinedKindStruct,
-		TypeParameters: []*typeinfo.TypeParameterType{{Name: "T", OwnerIdentity: identity, Index: 0}},
+	base := &types.DefinedType{
+		Name: "Box", Identity: identity, Kind: types.DefinedKindStruct,
+		TypeParameters: []*types.TypeParameterType{{Name: "T", OwnerIdentity: identity, Index: 0}},
 	}
 	symbol := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolType, "Box"), "Box", symbols.SymbolType, nil, nil)
 	symbol.BindType(base)

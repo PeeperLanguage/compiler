@@ -5,17 +5,17 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/ir"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 )
 
 func TestTypeLowersTheSameSemanticTypeToOneID(t *testing.T) {
-	types := ir.NewTypeTable()
+	typeTable := ir.NewTypeTable()
 	bag := diagnostics.NewDiagnosticBag()
-	i32 := &typeinfo.IntegerType{IsSigned: true, Bits: 32}
+	i32 := &types.IntegerType{IsSigned: true, Bits: 32}
 
-	first := Type(types, bag, i32)
-	second := Type(types, bag, i32)
-	other := Type(types, bag, &typeinfo.IntegerType{IsSigned: true, Bits: 32})
+	first := Type(typeTable, bag, i32)
+	second := Type(typeTable, bag, i32)
+	other := Type(typeTable, bag, &types.IntegerType{IsSigned: true, Bits: 32})
 	if first == ir.InvalidType || second != first || other != first {
 		t.Fatalf("ids = %d, %d, %d; want one valid id for the same type", first, second, other)
 	}
@@ -23,15 +23,15 @@ func TestTypeLowersTheSameSemanticTypeToOneID(t *testing.T) {
 
 // A type that cannot lower is not kept, so each use reports it.
 func TestTypeReportsAnInvalidTypeOnEveryUse(t *testing.T) {
-	types := ir.NewTypeTable()
+	typeTable := ir.NewTypeTable()
 	bag := diagnostics.NewDiagnosticBag()
-	unresolved := &typeinfo.NamedType{Name: "Missing"}
+	unresolved := &types.NamedType{Name: "Missing"}
 
-	if id := Type(types, bag, unresolved); id != ir.InvalidType {
+	if id := Type(typeTable, bag, unresolved); id != ir.InvalidType {
 		t.Fatalf("unresolved type lowered to %d, want the invalid type", id)
 	}
 	first := bag.ErrorCount()
-	Type(types, bag, unresolved)
+	Type(typeTable, bag, unresolved)
 	if first == 0 || bag.ErrorCount() != 2*first {
 		t.Fatalf("errors after one use = %d, after two = %d; want the error reported again", first, bag.ErrorCount())
 	}
@@ -40,13 +40,13 @@ func TestTypeReportsAnInvalidTypeOnEveryUse(t *testing.T) {
 // A composite whose element failed still gets an ID and is kept, so the
 // element's error is reported once, not once per use. This pins that choice.
 func TestTypeReportsAFailedElementOnce(t *testing.T) {
-	types := ir.NewTypeTable()
+	typeTable := ir.NewTypeTable()
 	bag := diagnostics.NewDiagnosticBag()
-	slice := &typeinfo.ArrayType{Shape: typeinfo.ArraySlice, Elem: &typeinfo.NamedType{Name: "Missing"}}
+	slice := &types.ArrayType{Shape: types.ArraySlice, Elem: &types.NamedType{Name: "Missing"}}
 
-	first := Type(types, bag, slice)
+	first := Type(typeTable, bag, slice)
 	reported := bag.ErrorCount()
-	second := Type(types, bag, slice)
+	second := Type(typeTable, bag, slice)
 	if reported == 0 || bag.ErrorCount() != reported || second != first {
 		t.Fatalf("errors %d then %d, ids %d then %d; want one report and one id", reported, bag.ErrorCount(), first, second)
 	}

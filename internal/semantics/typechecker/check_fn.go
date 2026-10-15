@@ -8,8 +8,8 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/problems"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/semantics/typeresolution"
+	"compiler/internal/semantics/types"
 	"compiler/internal/source"
 )
 
@@ -18,7 +18,7 @@ func (c *checker) checkFunction(sym *symbols.Symbol, fn *ast.FnDecl) {
 		return
 	}
 	defer c.ctx.Diagnostics.EnterFunction(ast.LocOf(fn))()
-	fnType, ok := sym.Type.(*typeinfo.FuncType)
+	fnType, ok := sym.Type.(*types.FuncType)
 	if !ok || fnType == nil {
 		return
 	}
@@ -45,7 +45,7 @@ func (c *checker) checkFunction(sym *symbols.Symbol, fn *ast.FnDecl) {
 	}
 }
 
-func (c *checker) checkDefaultParameters(scope *symbols.Scope, fn *ast.FnDecl, fnType *typeinfo.FuncType) {
+func (c *checker) checkDefaultParameters(scope *symbols.Scope, fn *ast.FnDecl, fnType *types.FuncType) {
 	if c == nil || scope == nil || fn == nil {
 		return
 	}
@@ -75,15 +75,15 @@ func (c *checker) checkDefaultParameters(scope *symbols.Scope, fn *ast.FnDecl, f
 		}
 		defaultType := c.typeExpr(scope, param.Default, paramType)
 		defaultType = c.requireValueType(param.Default, defaultType, "default value")
-		if !typeinfo.IsInvalidOrUnknown(defaultType) && !c.isAssignable(paramType, defaultType, param.Default) {
+		if !types.IsInvalidOrUnknown(defaultType) && !c.isAssignable(paramType, defaultType, param.Default) {
 			c.ctx.Diagnostics.Add(typeMismatchError(param.Default,
-				fmt.Sprintf("cannot implicitly convert %s to %s", typeinfo.TypeText(defaultType), typeinfo.TypeText(paramType))))
+				fmt.Sprintf("cannot implicitly convert %s to %s", types.TypeText(defaultType), types.TypeText(paramType))))
 		}
 		c.rejectOwnedParameterReferences(scope, fn, fnType, i, param.Default)
 	}
 }
 
-func (c *checker) rejectOwnedParameterReferences(scope *symbols.Scope, fn *ast.FnDecl, fnType *typeinfo.FuncType, current int, expr ast.Expr) {
+func (c *checker) rejectOwnedParameterReferences(scope *symbols.Scope, fn *ast.FnDecl, fnType *types.FuncType, current int, expr ast.Expr) {
 	if c == nil || c.module == nil || c.module.SymbolIndex == nil || fn == nil || expr == nil {
 		return
 	}
@@ -111,10 +111,10 @@ func (c *checker) rejectOwnedParameterReferences(scope *symbols.Scope, fn *ast.F
 			return true
 		}
 		paramType := fnType.Params[index]
-		if typeinfo.OwnershipCapabilityOf(paramType).Copy == typeinfo.CopyImplicit {
+		if types.OwnershipCapabilityOf(paramType).Copy == types.CopyImplicit {
 			return true
 		}
-		if _, _, isReference := typeinfo.ReferenceValueTarget(paramType); isReference {
+		if _, _, isReference := types.ReferenceValueTarget(paramType); isReference {
 			return true
 		}
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidCopy,
@@ -123,18 +123,18 @@ func (c *checker) rejectOwnedParameterReferences(scope *symbols.Scope, fn *ast.F
 	})
 }
 
-func (c *checker) checkFunctionShape(decl *ast.FnDecl, fnType *typeinfo.FuncType) {
+func (c *checker) checkFunctionShape(decl *ast.FnDecl, fnType *types.FuncType) {
 	if decl == nil || fnType == nil {
 		return
 	}
 	if _, isExternal := ast.FunctionLinkName(decl, ""); isExternal {
 		type externTypeSite struct {
-			typ  typeinfo.Type
+			typ  types.Type
 			site ast.Node
 		}
-		types := make([]externTypeSite, 0, len(fnType.Params)+1)
+		typelist := make([]externTypeSite, 0, len(fnType.Params)+1)
 		if fnType.Return != nil {
-			types = append(types, externTypeSite{typ: fnType.Return, site: decl.ReturnType})
+			typelist = append(typelist, externTypeSite{typ: fnType.Return, site: decl.ReturnType})
 		}
 		params := decl.ParamsWithReceiver()
 		for index, typ := range fnType.Params {
@@ -142,10 +142,10 @@ func (c *checker) checkFunctionShape(decl *ast.FnDecl, fnType *typeinfo.FuncType
 			if index < len(params) && params[index].Type != nil {
 				site = params[index].Type
 			}
-			types = append(types, externTypeSite{typ: typ, site: site})
+			typelist = append(typelist, externTypeSite{typ: typ, site: site})
 		}
-		for _, entry := range types {
-			if !typeinfo.ContainsNamedEnum(entry.typ) {
+		for _, entry := range typelist {
+			if !types.ContainsNamedEnum(entry.typ) {
 				continue
 			}
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidType,
@@ -162,7 +162,7 @@ func (c *checker) checkFunctionShape(decl *ast.FnDecl, fnType *typeinfo.FuncType
 		}
 		paramType := fnType.Params[index]
 		// A parameter without a written type was reported by the parser.
-		if param.Type == nil || typeinfo.ContainsInvalid(paramType) {
+		if param.Type == nil || types.ContainsInvalid(paramType) {
 			continue
 		}
 		if c.rejectUnsizedType(paramType, param.Type, "parameter") {
@@ -171,7 +171,7 @@ func (c *checker) checkFunctionShape(decl *ast.FnDecl, fnType *typeinfo.FuncType
 		if c.rejectReferenceStorage(paramType, param.Type, "parameter aggregate types", false) {
 			return
 		}
-		if !typeinfo.IsLowerableType(paramType) {
+		if !types.IsLowerableType(paramType) {
 			site := ast.Node(decl)
 			if param.Name != nil {
 				site = param.Name
@@ -183,7 +183,7 @@ func (c *checker) checkFunctionShape(decl *ast.FnDecl, fnType *typeinfo.FuncType
 	}
 }
 
-func (c *checker) checkCallableReturn(typeNode ast.TypeExpr, fallback ast.Node, fnType *typeinfo.FuncType, clause *ast.ReturnOriginClause, allowTypeParameters bool) bool {
+func (c *checker) checkCallableReturn(typeNode ast.TypeExpr, fallback ast.Node, fnType *types.FuncType, clause *ast.ReturnOriginClause, allowTypeParameters bool) bool {
 	if fnType == nil {
 		return false
 	}
@@ -192,7 +192,7 @@ func (c *checker) checkCallableReturn(typeNode ast.TypeExpr, fallback ast.Node, 
 	if site == nil {
 		site = ast.LocOf(fallback)
 	}
-	_, returnMutable, referenceReturn := typeinfo.ReferenceValueTarget(typ)
+	_, returnMutable, referenceReturn := types.ReferenceValueTarget(typ)
 	if typ == nil {
 		if clause != nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn,
@@ -201,7 +201,7 @@ func (c *checker) checkCallableReturn(typeNode ast.TypeExpr, fallback ast.Node, 
 		}
 		return true
 	}
-	if typeinfo.ContainsReference(typ) && !referenceReturn {
+	if types.ContainsReference(typ) && !referenceReturn {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn,
 			"reference return must be a direct reference or optional reference value", site, "")
 		return false
@@ -246,7 +246,7 @@ func (c *checker) checkCallableReturn(typeNode ast.TypeExpr, fallback ast.Node, 
 				continue
 			}
 			seen[slot] = struct{}{}
-			_, sourceMutable, isBorrowed := typeinfo.ReferenceValueTarget(fnType.Params[slot])
+			_, sourceMutable, isBorrowed := types.ReferenceValueTarget(fnType.Params[slot])
 			if !isBorrowed {
 				c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn,
 					"reference return source must be a borrowed parameter", sourceSite, "")
@@ -266,7 +266,7 @@ func (c *checker) checkCallableReturn(typeNode ast.TypeExpr, fallback ast.Node, 
 	if c.rejectUnsizedType(typ, typeNode, "function return") {
 		return false
 	}
-	if !typeinfo.IsLowerableType(typ) && !(allowTypeParameters && typeinfo.ContainsTypeParameter(typ)) {
+	if !types.IsLowerableType(typ) && !(allowTypeParameters && types.ContainsTypeParameter(typ)) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidReturn,
 			"function return type is not lowerable in current compiler stage", site, "")
 		return false
@@ -290,7 +290,7 @@ func (c *checker) checkFunctionTypeContracts() {
 			if !ok || fnTypeSyntax == nil {
 				return true
 			}
-			fnType, _ := c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, fnTypeSyntax, context).(*typeinfo.FuncType)
+			fnType, _ := c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, fnTypeSyntax, context).(*types.FuncType)
 			c.checkCallableReturn(fnTypeSyntax.Return, fnTypeSyntax, fnType, fnTypeSyntax.ReturnOrigins, allowTypeParameters)
 			return true
 		})
@@ -331,7 +331,7 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidTypeInParser, "interface declaration missing interface payload", ast.LocOf(decl), "")
 		return
 	}
-	resolvedIface, _ := c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, iface, c.typeContextForDecl(decl)).(*typeinfo.InterfaceType)
+	resolvedIface, _ := c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, iface, c.typeContextForDecl(decl)).(*types.InterfaceType)
 	allowTypeParameters := len(decl.DeclarationTypeParams()) > 0
 	for methodIndex, method := range iface.Methods {
 		if method.Name == nil || method.Name.Name == "" {
@@ -344,7 +344,7 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 			continue
 		}
 		if resolvedIface != nil && methodIndex < len(resolvedIface.Methods) &&
-			resolvedIface.Methods[methodIndex].Receiver == typeinfo.MethodReceiverInvalid {
+			resolvedIface.Methods[methodIndex].Receiver == types.MethodReceiverInvalid {
 			c.ctx.Diagnostics.Add(invalidTypeError(method.Receiver.Type,
 				"iface method receiver must be Self, &Self, or &mut Self"))
 		}
@@ -361,8 +361,8 @@ func (c *checker) checkInterfaceDecl(decl *ast.InterfaceDecl) {
 			if c.rejectReferenceStorage(paramType, param.Type, "interface parameter aggregate types", false) {
 				continue
 			}
-			if paramType != nil && !typeinfo.IsLowerableType(paramType) &&
-				!(allowTypeParameters && typeinfo.ContainsTypeParameter(paramType)) {
+			if paramType != nil && !types.IsLowerableType(paramType) &&
+				!(allowTypeParameters && types.ContainsTypeParameter(paramType)) {
 				site := ast.Node(decl)
 				if param.Name != nil {
 					site = param.Name
@@ -405,7 +405,7 @@ func (c *checker) checkEnumDecl(decl *ast.EnumDecl) {
 			continue
 		}
 		payloadType := c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, variant.Payload, context)
-		payload, isStruct := typeinfo.Underlying(payloadType).(*typeinfo.StructType)
+		payload, isStruct := types.Underlying(payloadType).(*types.StructType)
 		inlinePayload, inline := variant.Payload.(*ast.StructType)
 		if !isStruct {
 			c.checkEnumPayloadType(variant.Payload, context, allowTypeParameters, "enum variant payload")
@@ -471,7 +471,7 @@ func (c *checker) checkEnumPayloadType(syntax ast.TypeExpr, typeContext typereso
 	if c.rejectReferenceStorage(payloadType, syntax, context+"s", false) {
 		return
 	}
-	if !typeinfo.IsLowerableType(payloadType) && !(allowTypeParameters && typeinfo.ContainsTypeParameter(payloadType)) {
+	if !types.IsLowerableType(payloadType) && !(allowTypeParameters && types.ContainsTypeParameter(payloadType)) {
 		c.ctx.Diagnostics.Add(invalidTypeError(syntax, context+" type is not lowerable in current compiler stage"))
 	}
 }
@@ -488,9 +488,9 @@ func (c *checker) typeContextForDecl(decl ast.TypeDecl) typeresolution.Context {
 	if !ok || sym == nil {
 		return context
 	}
-	defined, ok := sym.Type.(*typeinfo.DefinedType)
+	defined, ok := sym.Type.(*types.DefinedType)
 	if ok && defined != nil {
-		context.TypeParameters = typeinfo.TypeParameterBindings(defined.TypeParameters, nil)
+		context.TypeParameters = types.TypeParameterBindings(defined.TypeParameters, nil)
 	}
 	return context
 }
@@ -505,15 +505,15 @@ func (c *checker) checkReceiverFunction(fn *ast.FnDecl) {
 		return
 	}
 	receiverType := c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, fn.Receiver.Type, typeresolution.Context{})
-	targetType, ok := typeinfo.ReceiverTarget(receiverType)
-	defined, isNamed := targetType.(*typeinfo.DefinedType)
+	targetType, ok := types.ReceiverTarget(receiverType)
+	defined, isNamed := targetType.(*types.DefinedType)
 	if !ok || !isNamed || defined == nil || !isValidReceiverType(receiverType, defined) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidMethodReceiver,
 			"receiver target must be a concrete named type declared in current module", ast.LocOf(fn.Receiver.Type), "")
 		return
 	}
 	sym, isLocal := c.module.ModuleScope.LookupLocal(defined.Name)
-	if !isLocal || sym == nil || !typeinfo.IsSameType(sym.Type, defined) {
+	if !isLocal || sym == nil || !types.IsSameType(sym.Type, defined) {
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidMethodReceiver,
 			"receiver target must be declared in current module", ast.LocOf(fn.Receiver.Type), "")
 		return
@@ -587,11 +587,11 @@ func (c *checker) checkDeclAttributes(decl ast.Decl) {
 			}
 			expectedType := c.ctx.TypeResolver.Resolve(c.ctx.Diagnostics, c.module, spec.Type, typeresolution.Context{AllowAbstractSelf: true})
 			argType := c.typeExpr(c.module.ModuleScope, arg, expectedType)
-			if typeinfo.IsInvalidOrUnknown(argType) {
+			if types.IsInvalidOrUnknown(argType) {
 				validArgs = false
 				break
 			}
-			if !typeinfo.IsSameType(argType, expectedType) &&
+			if !types.IsSameType(argType, expectedType) &&
 				!c.isAssignable(expectedType, argType, arg) &&
 				!c.isAssignable(argType, expectedType, arg) {
 				validArgs = false

@@ -1,4 +1,4 @@
-package typeinfo
+package types
 
 import (
 	"compiler/internal/frontend/ast"
@@ -8,7 +8,7 @@ import (
 )
 
 // SyntaxResolver supplies project-owned name lookup and generic instantiation
-// while typeinfo owns the single AST-to-semantic-type mapping.
+// while types owns the single AST-to-semantic-type mapping.
 type SyntaxResolver interface {
 	ResolveNamed(node ast.TypeExpr) (Type, bool)
 	ResolveQualified(node *ast.ScopeResolution) (Type, bool)

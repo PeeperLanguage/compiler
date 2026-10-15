@@ -9,7 +9,7 @@ import (
 	"compiler/internal/ir"
 	"compiler/internal/ir/thir"
 	"compiler/internal/moduleid"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/internal/source"
 )
 
@@ -281,7 +281,7 @@ func TestBuildModuleCreatesSemanticVariantSwitchAndSharedJoin(t *testing.T) {
 	body := &ast.BlockStmt{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(10)}, Stmts: []ast.Stmt{match, after}}
 	module := testModule(body, nil)
 	semanticMatch := module.Functions[0].Body.Stmts[0].(*thir.Match)
-	semanticMatch.EnumType = &typeinfo.NamedType{Name: "Status"}
+	semanticMatch.EnumType = &types.NamedType{Name: "Status"}
 	semanticMatch.CaseCount = 2
 	semanticMatch.Arms = []thir.MatchArm{
 		{Source: ir.SourceInfo{NodeID: source.ParsedNodeID(32)}, Cases: []thir.ArmCase{{Case: 1}}, Body: &thir.Block{StmtInfo: thir.StmtInfo{Source: ir.SourceInfo{NodeID: source.ParsedNodeID(33)}}}},

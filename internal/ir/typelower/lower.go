@@ -3,7 +3,7 @@ package typelower
 import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/ir"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 )
 
 type context struct {
@@ -11,7 +11,7 @@ type context struct {
 	diagnostics *diagnostics.DiagnosticBag
 }
 
-func Type(types *ir.TypeTable, diagnostics *diagnostics.DiagnosticBag, t typeinfo.Type) ir.TypeID {
+func Type(types *ir.TypeTable, diagnostics *diagnostics.DiagnosticBag, t types.Type) ir.TypeID {
 	if types == nil || t == nil {
 		return ir.InvalidType
 	}
@@ -21,7 +21,7 @@ func Type(types *ir.TypeTable, diagnostics *diagnostics.DiagnosticBag, t typeinf
 	})
 }
 
-func ReturnType(types *ir.TypeTable, diagnostics *diagnostics.DiagnosticBag, t typeinfo.Type) ir.TypeID {
+func ReturnType(types *ir.TypeTable, diagnostics *diagnostics.DiagnosticBag, t types.Type) ir.TypeID {
 	if types == nil {
 		return ir.InvalidType
 	}
@@ -39,7 +39,7 @@ type runtimeTypeInterner struct {
 	active map[string]ir.TypeID
 }
 
-func (l *runtimeTypeInterner) intern(t typeinfo.Type) ir.TypeID {
+func (l *runtimeTypeInterner) intern(t types.Type) ir.TypeID {
 	if l == nil || l.ctx == nil || l.ctx.types == nil || t == nil {
 		return ir.InvalidType
 	}
@@ -48,8 +48,8 @@ func (l *runtimeTypeInterner) intern(t typeinfo.Type) ir.TypeID {
 	return visitor.result
 }
 
-func (l *runtimeTypeInterner) internNamed(defined *typeinfo.DefinedType, shell ir.Type, descriptor func() (ir.Type, bool)) ir.TypeID {
-	id, err := l.ctx.types.ReserveNamed(shell, func() string { return typeinfo.QualifiedTypeText(defined) })
+func (l *runtimeTypeInterner) internNamed(defined *types.DefinedType, shell ir.Type, descriptor func() (ir.Type, bool)) ir.TypeID {
+	id, err := l.ctx.types.ReserveNamed(shell, func() string { return types.QualifiedTypeText(defined) })
 	if err != nil {
 		return l.invalid(err.Error())
 	}

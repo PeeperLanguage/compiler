@@ -11,8 +11,8 @@ import (
 	"compiler/internal/module"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/semantics/typeresolution"
+	"compiler/internal/semantics/types"
 	"compiler/pkg/peeper"
 )
 
@@ -60,9 +60,9 @@ func TestHoverAndCompletionDoNotConsumeUsageEvidence(t *testing.T) {
 func TestTypeHoverShowsInvalidInsteadOfDeclarationType(t *testing.T) {
 	ctx := project.New(".", peeper.SourceExt, nil)
 	module := &module.Module{ModuleScope: symbols.NewScope(nil), SymbolIndex: symbols.NewIndex()}
-	base := &typeinfo.DefinedType{
-		Name: "Box", Identity: "main::Box", Kind: typeinfo.DefinedKindStruct,
-		TypeParameters: []*typeinfo.TypeParameterType{{Name: "T", OwnerIdentity: "main::Box", Index: 0}},
+	base := &types.DefinedType{
+		Name: "Box", Identity: "main::Box", Kind: types.DefinedKindStruct,
+		TypeParameters: []*types.TypeParameterType{{Name: "T", OwnerIdentity: "main::Box", Index: 0}},
 	}
 	baseSymbol := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolType, "Box"), "Box", symbols.SymbolType, nil, nil)
 	baseSymbol.BindType(base)
@@ -74,7 +74,7 @@ func TestTypeHoverShowsInvalidInsteadOfDeclarationType(t *testing.T) {
 	name := &ast.Ident{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(2)}, Name: "Alias"}
 	declaration := &ast.TypeAliasDecl{NodeIDHolder: ast.NodeIDHolder{NodeID: source.ParsedNodeID(3)}, Name: name, Type: typeNode}
 	aliasSymbol := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolType, "Alias"), "Alias", symbols.SymbolType, declaration, nil)
-	aliasSymbol.BindType(&typeinfo.DefinedType{Name: "Alias", Identity: "main::Alias"})
+	aliasSymbol.BindType(&types.DefinedType{Name: "Alias", Identity: "main::Alias"})
 	module.SymbolIndex.Bind(name, aliasSymbol)
 
 	subject := resolveTypeHoverSubject(&cursorContext{
@@ -94,9 +94,9 @@ func TestTypeHoverShowsInvalidInsteadOfDeclarationType(t *testing.T) {
 func TestTypeHoverShowsLoadingForUnavailableGenericInstance(t *testing.T) {
 	ctx := project.New(".", peeper.SourceExt, nil)
 	module := &module.Module{ModuleScope: symbols.NewScope(nil)}
-	base := &typeinfo.DefinedType{
-		Name: "Box", Identity: "main::Box", Kind: typeinfo.DefinedKindStruct,
-		TypeParameters: []*typeinfo.TypeParameterType{{Name: "T", OwnerIdentity: "main::Box", Index: 0}},
+	base := &types.DefinedType{
+		Name: "Box", Identity: "main::Box", Kind: types.DefinedKindStruct,
+		TypeParameters: []*types.TypeParameterType{{Name: "T", OwnerIdentity: "main::Box", Index: 0}},
 	}
 	symbol := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolType, "Box"), "Box", symbols.SymbolType, nil, nil)
 	symbol.BindType(base)

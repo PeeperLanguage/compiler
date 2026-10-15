@@ -6,13 +6,13 @@ This document describes the vocabulary used by typechecking, unified semantic an
 
 ## Type capability
 
-`internal/semantics/typeinfo` owns compositional ownership capability. Each semantic type answers whether values are implicitly copied, explicitly copied, moved, and/or require destruction. Containers derive behavior from their children according to language rules.
+`internal/semantics/types` owns compositional ownership capability. Each semantic type answers whether values are implicitly copied, explicitly copied, moved, and/or require destruction. Containers derive behavior from their children according to language rules.
 
 The type capability describes a value class. It does not decide what one source occurrence does.
 
 ## Per-use classification
 
-`typeinfo.UseKind` classifies an individual typed expression use:
+`types.UseKind` classifies an individual typed expression use:
 
 - `UseRead`: observe or borrow without consuming the source value;
 - `UseCopy`: copy while leaving the source live;

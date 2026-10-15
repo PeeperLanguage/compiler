@@ -1,6 +1,6 @@
 # Semantics v2 Mock Programs
 
-These programs are design sketches, not compiler fixtures. They intentionally use future syntax so the pointer model can be judged before lexer/parser/typeinfo work starts.
+These programs are design sketches, not compiler fixtures. They intentionally use future syntax so the pointer model can be judged before lexer/parser/types work starts.
 
 ## 1. Heap Ownership Is Visible In APIs
 
@@ -121,7 +121,7 @@ fn callbacks() -> fn() -> &Player {      // error
 
 Effectiveness: this is the rule that keeps `&T` cheap. The ban must be structural, not textual. It must find borrows inside optionals, arrays, slices, function types, aliases, and future generic instantiations.
 
-Recommendation: implement a single semantic predicate like "type contains borrow" in typeinfo, then use it at storage boundaries. Do not scatter AST-only checks across parser/typechecker.
+Recommendation: implement a single semantic predicate like "type contains borrow" in types, then use it at storage boundaries. Do not scatter AST-only checks across parser/typechecker.
 
 ## 5. Local Borrows Are Useful But Need Scope Edges
 
@@ -287,7 +287,7 @@ Recommendation: define borrow-from-owned-pointer syntax early. It affects how us
 
 The model is effective if three constraints stay hard:
 
-1. `^T`, `&T`, and `*T` must be separate AST/typeinfo concepts from day one.
+1. `^T`, `&T`, and `*T` must be separate AST/types concepts from day one.
 2. Borrow bans must be semantic and structural, not parser-only.
 3. Raw pointers must stay uncomfortable enough that normal Peeper APIs prefer values, heap handles, or borrows.
 

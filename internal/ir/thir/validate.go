@@ -4,7 +4,7 @@ import (
 	"compiler/internal/source"
 	"fmt"
 
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/pkg/typednil"
 )
 
@@ -307,7 +307,7 @@ func (e *StructLiteral) validateSelf() error {
 	if err := e.ExprInfo.validateSelf(); err != nil {
 		return err
 	}
-	semantic, ok := typeinfo.Underlying(e.Type).(*typeinfo.StructType)
+	semantic, ok := types.Underlying(e.Type).(*types.StructType)
 	if !ok || semantic == nil || len(e.Fields) != len(semantic.Fields) {
 		return fmt.Errorf("struct literal fields do not match semantic type")
 	}
@@ -335,7 +335,7 @@ func (e *Call) validateSelf() error {
 		return fmt.Errorf("call has no callee")
 	}
 	if e.Type == nil {
-		callable, ok := typeinfo.Underlying(e.Callee.ExprType()).(*typeinfo.FuncType)
+		callable, ok := types.Underlying(e.Callee.ExprType()).(*types.FuncType)
 		if !ok || callable == nil || callable.Return != nil {
 			return fmt.Errorf("value-producing call has no semantic type")
 		}

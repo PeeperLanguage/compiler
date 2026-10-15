@@ -233,7 +233,7 @@ There are three source/semantic identity layers:
   syntax and resolved facts, and published constant values.
 
 `SemanticExportFingerprint` uses `SemanticExportFingerprint(ctx, module)`.
-`typeinfo` and `constvalue` own collision-safe semantic keys; recursive semantic
+`types` and `constvalue` own collision-safe semantic keys; recursive semantic
 types are guarded by a visiting set. Constants use defining-module values through
 `PublishedConstant`, so imported constant changes affect the fingerprint.
 

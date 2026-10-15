@@ -17,8 +17,8 @@ import (
 	"compiler/internal/phase"
 	"compiler/internal/semantics/analysis"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/semantics/typeresolution"
+	"compiler/internal/semantics/types"
 )
 
 func TestCompilerContextAddModuleCanonicalizesFilePath(t *testing.T) {
@@ -166,7 +166,7 @@ func TestCompilerContextModuleIDsKeepComponentsCollisionSafe(t *testing.T) {
 }
 
 func moduleWithArtifacts() *module.Module {
-	integer := typeinfo.DefaultIntegerType()
+	integer := types.DefaultIntegerType()
 	functionID := moduleid.FunctionID("test::main")
 	typed := thir.NewModule("test", "test.peep", []*thir.Function{{
 		Identity: functionID,
@@ -320,9 +320,9 @@ func TestCompilerContextResolvesRetainedTypeDeclarations(t *testing.T) {
 		ModuleScope: symbols.NewScope(nil),
 	}
 	identity := mod.TypeDeclarationIdentity("Box")
-	base := &typeinfo.DefinedType{
-		Name: "Box", Identity: identity, Kind: typeinfo.DefinedKindStruct,
-		TypeParameters: []*typeinfo.TypeParameterType{{Name: "T", OwnerIdentity: identity, Index: 0}},
+	base := &types.DefinedType{
+		Name: "Box", Identity: identity, Kind: types.DefinedKindStruct,
+		TypeParameters: []*types.TypeParameterType{{Name: "T", OwnerIdentity: identity, Index: 0}},
 	}
 	declaration := &ast.StructDecl{Name: &ast.Ident{Name: "Box"}, Type: &ast.StructType{}}
 	symbol := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolType, "Box"), "Box", symbols.SymbolType, declaration, nil)
@@ -339,7 +339,7 @@ func TestCompilerContextResolvesRetainedTypeDeclarations(t *testing.T) {
 		Name:     &ast.Ident{Name: "Box"},
 		TypeArgs: []ast.TypeExpr{&ast.NamedType{Name: "i32"}},
 	}, typeresolution.Context{})
-	if typeinfo.IsInvalid(resolved) {
+	if types.IsInvalid(resolved) {
 		t.Fatalf("retained generic declaration did not resolve in a fresh context: %#v", resolved)
 	}
 

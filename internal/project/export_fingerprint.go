@@ -9,7 +9,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/module"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 )
 
 // SemanticExportFingerprint identifies compiler-visible semantic facts exported by module.
@@ -24,7 +24,7 @@ func SemanticExportFingerprint(ctx *CompilerContext, module *module.Module) stri
 		if sym == nil || !sym.IsPub {
 			continue
 		}
-		part := string(sym.Kind) + ":" + sym.Name + ":" + typeinfo.SemanticKey(sym.Type)
+		part := string(sym.Kind) + ":" + sym.Name + ":" + types.SemanticKey(sym.Type)
 		if sym.Kind == symbols.SymbolVar {
 			part += fmt.Sprintf(":mutable=%t", sym.IsMutable())
 		}
@@ -40,7 +40,7 @@ func SemanticExportFingerprint(ctx *CompilerContext, module *module.Module) stri
 				return
 			}
 			parts = append(parts, "method:"+receiver+":"+method.Name+":"+
-				typeinfo.SemanticKey(method.Type)+semanticExportMetadata(ctx, module, method))
+				types.SemanticKey(method.Type)+semanticExportMetadata(ctx, module, method))
 		})
 	}
 	return fingerprint.Parts(parts)
@@ -85,7 +85,7 @@ func semanticExportMetadata(ctx *CompilerContext, module *module.Module, sym *sy
 			if resolved == nil {
 				return true
 			}
-			fact := resolved.Name + ":" + typeinfo.SemanticKey(resolved.Type)
+			fact := resolved.Name + ":" + types.SemanticKey(resolved.Type)
 			if resolved.Kind == symbols.SymbolConst {
 				fact += "=" + constvalue.SemanticKey(ctx.PublishedConstant(module, resolved))
 			}

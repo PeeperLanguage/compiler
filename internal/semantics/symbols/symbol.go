@@ -7,7 +7,7 @@ import (
 
 	"compiler/internal/frontend/ast"
 	"compiler/internal/moduleid"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/internal/source"
 )
 
@@ -46,7 +46,7 @@ type Symbol struct {
 	ID               SymbolID
 	Name             string
 	Kind             Kind
-	Type             typeinfo.Type
+	Type             types.Type
 	IsPub            bool
 	AllowsMutation   bool
 	IsReceiver       bool
@@ -108,7 +108,7 @@ func (s *Symbol) IsHidden() bool {
 	return strings.HasPrefix(s.Name, "$")
 }
 
-func (s *Symbol) BindType(typ typeinfo.Type) {
+func (s *Symbol) BindType(typ types.Type) {
 	if s == nil || typ == nil {
 		return
 	}
@@ -118,7 +118,7 @@ func (s *Symbol) BindType(typ typeinfo.Type) {
 // GetSymbolType returns semantic type stored on sym, or (nil, false) when sym
 // is nil or carries no type. It is a nil-safe accessor; phase ownership remains
 // with the code that publishes and consumes each symbol type.
-func GetSymbolType(sym *Symbol) (typeinfo.Type, bool) {
+func GetSymbolType(sym *Symbol) (types.Type, bool) {
 	if sym == nil || sym.Type == nil {
 		return nil, false
 	}

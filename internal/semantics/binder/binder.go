@@ -8,8 +8,8 @@ import (
 	"compiler/internal/problems"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/semantics/typeresolution"
+	"compiler/internal/semantics/types"
 )
 
 type binder struct {
@@ -35,7 +35,7 @@ func (b *binder) bindModule() {
 	for _, decl := range ordered {
 		b.bindTypeDecl(decl)
 	}
-	completed := make([]*typeinfo.DefinedType, 0, len(completionCycle))
+	completed := make([]*types.DefinedType, 0, len(completionCycle))
 	for _, decl := range completionCycle {
 		if defined := b.bindTypeDecl(decl); defined != nil {
 			completed = append(completed, defined)
@@ -77,8 +77,8 @@ func (b *binder) bindFunctionDecl(fn *ast.FnDecl) {
 			return
 		}
 		if previous := b.module.SymbolIndex.RegisterMethod(fnType.Params[0], sym); previous != nil {
-			target, _ := typeinfo.ReceiverTarget(fnType.Params[0])
-			message := "method `" + sym.Name + "` already declared for `" + typeinfo.TypeText(target) + "`"
+			target, _ := types.ReceiverTarget(fnType.Params[0])
+			message := "method `" + sym.Name + "` already declared for `" + types.TypeText(target) + "`"
 			b.ctx.Diagnostics.Add(problems.Redeclaration(message, sym.Location, previous.Location))
 		}
 		return
@@ -102,7 +102,7 @@ func (b *binder) bindModuleBinding(name *ast.Ident, typ ast.TypeExpr) {
 	}
 	if typ == nil {
 		if sym := b.moduleScopeSymbol(name.Name); sym != nil && sym.Type == nil {
-			sym.BindType(&typeinfo.UnknownType{})
+			sym.BindType(&types.UnknownType{})
 		}
 		return
 	}
@@ -114,7 +114,7 @@ func (b *binder) bindModuleBinding(name *ast.Ident, typ ast.TypeExpr) {
 
 // Bind named type declarations using one stable shell per symbol.
 // Recursive self-references must see same DefinedType object.
-func (b *binder) bindTypeDecl(decl ast.TypeDecl) *typeinfo.DefinedType {
+func (b *binder) bindTypeDecl(decl ast.TypeDecl) *types.DefinedType {
 	if b == nil || b.module == nil || decl == nil {
 		return nil
 	}
@@ -127,13 +127,13 @@ func (b *binder) bindTypeDecl(decl ast.TypeDecl) *typeinfo.DefinedType {
 	if sym == nil {
 		return nil
 	}
-	defined, ok := sym.Type.(*typeinfo.DefinedType)
+	defined, ok := sym.Type.(*types.DefinedType)
 	if ok && defined != nil {
 		// Reuse same shell so self-references keep same type identity.
 		defined.Name = name.Name
 		defined.Identity = b.module.TypeDeclarationIdentity(name.Name)
 	} else {
-		defined = &typeinfo.DefinedType{
+		defined = &types.DefinedType{
 			Name:     name.Name,
 			Identity: b.module.TypeDeclarationIdentity(name.Name),
 		}
@@ -141,7 +141,7 @@ func (b *binder) bindTypeDecl(decl ast.TypeDecl) *typeinfo.DefinedType {
 	}
 	context := typeresolution.Context{
 		AllowAbstractSelf: true,
-		TypeParameters:    typeinfo.TypeParameterBindings(defined.TypeParameters, nil),
+		TypeParameters:    types.TypeParameterBindings(defined.TypeParameters, nil),
 	}
 	if _, ok := decl.(*ast.InterfaceDecl); ok {
 		context.NamedInterfaceRoot = typ

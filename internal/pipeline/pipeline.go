@@ -25,7 +25,7 @@ import (
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typechecker"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/internal/semantics/usage"
 )
 
@@ -194,10 +194,10 @@ func validateProgramEntrypoint(entry *module.Module, diag *diagnostics.Diagnosti
 			}
 		}
 	}
-	fnType, typeOK := sym.Type.(*typeinfo.FuncType)
+	fnType, typeOK := sym.Type.(*types.FuncType)
 	validReturn := typeOK && fnType.Return == nil
 	if typeOK && fnType.Return != nil {
-		integer, ok := fnType.Return.(*typeinfo.IntegerType)
+		integer, ok := fnType.Return.(*types.IntegerType)
 		validReturn = ok && integer.IsSigned && integer.Bits == 32
 	}
 	if function == nil || !function.IsEntrypointShape || !typeOK || len(fnType.Params) != 0 || !validReturn {

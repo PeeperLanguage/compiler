@@ -5,7 +5,7 @@ import (
 
 	"compiler/internal/frontend/ast"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 )
 
 func TestPlaceExpressionProjectionGrammar(t *testing.T) {
@@ -76,15 +76,15 @@ func TestPlaceAddressabilityPointerAndReferenceBoundaries(t *testing.T) {
 	projection := &ast.SelectorExpr{Expr: base, Name: &ast.Ident{Name: "field"}}
 	tests := []struct {
 		name string
-		typ  typeinfo.Type
+		typ  types.Type
 		want bool
 	}{
-		{name: "owned pointer", typ: &typeinfo.OwnedPtrType{Target: typeinfo.DefaultIntegerType()}, want: true},
-		{name: "reference", typ: &typeinfo.RefType{Target: typeinfo.DefaultIntegerType()}, want: true},
+		{name: "owned pointer", typ: &types.OwnedPtrType{Target: types.DefaultIntegerType()}, want: true},
+		{name: "reference", typ: &types.RefType{Target: types.DefaultIntegerType()}, want: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			exprType := func(expr ast.Expr) typeinfo.Type {
+			exprType := func(expr ast.Expr) types.Type {
 				if expr == base {
 					return test.typ
 				}
@@ -96,27 +96,27 @@ func TestPlaceAddressabilityPointerAndReferenceBoundaries(t *testing.T) {
 		})
 	}
 
-	mutableReference := &typeinfo.RefType{IsMutable: true, Target: typeinfo.DefaultIntegerType()}
-	sharedReference := &typeinfo.RefType{Target: typeinfo.DefaultIntegerType()}
+	mutableReference := &types.RefType{IsMutable: true, Target: types.DefaultIntegerType()}
+	sharedReference := &types.RefType{Target: types.DefaultIntegerType()}
 	for _, test := range []struct {
 		name   string
-		typ    typeinfo.Type
+		typ    types.Type
 		want   bool
-		shared typeinfo.Type
+		shared types.Type
 	}{
-		{name: "raw pointer", typ: &typeinfo.RawPtrType{}, want: true},
+		{name: "raw pointer", typ: &types.RawPtrType{}, want: true},
 		{name: "mutable reference", typ: mutableReference, want: true},
-		{name: "shared reference", typ: sharedReference, shared: typeinfo.DefaultIntegerType()},
+		{name: "shared reference", typ: sharedReference, shared: types.DefaultIntegerType()},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			exprType := func(expr ast.Expr) typeinfo.Type {
+			exprType := func(expr ast.Expr) types.Type {
 				if expr == base {
 					return test.typ
 				}
 				return nil
 			}
 			mutable, shared, _ := MutableAddressable(scope, projection, exprType, nil)
-			if mutable != test.want || !typeinfo.IsSameType(shared, test.shared) {
+			if mutable != test.want || !types.IsSameType(shared, test.shared) {
 				t.Fatalf("MutableAddressable() = (%v, %v), want (%v, %v)", mutable, shared, test.want, test.shared)
 			}
 		})

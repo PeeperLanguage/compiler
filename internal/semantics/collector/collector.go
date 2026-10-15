@@ -7,7 +7,7 @@ import (
 	"compiler/internal/problems"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 )
 
 type collector struct {
@@ -28,7 +28,7 @@ func (c *collector) collectModule(mod *ast.Module) {
 		}
 		imp := c.module.Imports[alias]
 		impSym := symbols.New(c.nextModuleSymbolID(symbols.SymbolImport, alias), alias, symbols.SymbolImport, imp.Decl, ast.LocOf(imp.Decl))
-		impSym.BindType(&typeinfo.UnknownType{})
+		impSym.BindType(&types.UnknownType{})
 		if err := c.module.ModuleScope.Declare(impSym); err != nil {
 			if c.ctx != nil && c.ctx.Diagnostics != nil {
 				c.ctx.Diagnostics.Add(diagnostics.NewError(err.Error()).WithCode(diagnostics.ErrAmbiguousImport))
@@ -96,27 +96,27 @@ func (c *collector) collectConcreteTypeDecl(decl ast.TypeDecl) {
 		return
 	}
 	identity := c.module.TypeDeclarationIdentity(name.Name)
-	parameters := make([]*typeinfo.TypeParameterType, 0, len(decl.DeclarationTypeParams()))
+	parameters := make([]*types.TypeParameterType, 0, len(decl.DeclarationTypeParams()))
 	for index, parameter := range decl.DeclarationTypeParams() {
 		if parameter.Name != nil && parameter.Name.Name != "" {
-			parameters = append(parameters, &typeinfo.TypeParameterType{
+			parameters = append(parameters, &types.TypeParameterType{
 				Name: parameter.Name.Name, OwnerIdentity: identity, Index: index,
 			})
 		}
 	}
-	kind := typeinfo.DefinedKindInvalid
+	kind := types.DefinedKindInvalid
 	switch decl.(type) {
 	case *ast.TypeAliasDecl:
-		kind = typeinfo.DefinedKindAlias
+		kind = types.DefinedKindAlias
 	case *ast.StructDecl:
-		kind = typeinfo.DefinedKindStruct
+		kind = types.DefinedKindStruct
 	case *ast.InterfaceDecl:
-		kind = typeinfo.DefinedKindInterface
+		kind = types.DefinedKindInterface
 	case *ast.EnumDecl:
-		kind = typeinfo.DefinedKindEnum
+		kind = types.DefinedKindEnum
 	}
 	sym := symbols.New(c.nextModuleSymbolID(symbols.SymbolType, name.Name), name.Name, symbols.SymbolType, decl, ast.LocOf(name))
-	defined := &typeinfo.DefinedType{
+	defined := &types.DefinedType{
 		Name:           name.Name,
 		Identity:       identity,
 		Kind:           kind,
@@ -157,7 +157,7 @@ func (c *collector) collectModuleBinding(name *ast.Ident, kind symbols.Kind, nod
 	}
 	sym := symbols.New(c.nextModuleSymbolID(kind, name.Name), name.Name, kind, node, ast.LocOf(name))
 	sym.DefiningModule = c.module.ID
-	sym.BindType(&typeinfo.UnknownType{}) // binder fills real type
+	sym.BindType(&types.UnknownType{}) // binder fills real type
 	if err := c.module.ModuleScope.Declare(sym); err != nil {
 		problems.ReportRedeclaration(c.ctx.Diagnostics, c.module.ModuleScope, err.Error(), name.Name, name.Location)
 		return

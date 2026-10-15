@@ -4,7 +4,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/internal/source"
 )
 
@@ -189,7 +189,7 @@ func (a *analyzer) applyWriteEffect(
 			return
 		}
 		a.checkStorageAccess(target, loans, storageMutate)
-		if op.Owner.IsValid() && typeinfo.OwnershipCapabilityOf(target.ExprType()).NeedsDrop {
+		if op.Owner.IsValid() && types.OwnershipCapabilityOf(target.ExprType()).NeedsDrop {
 			a.cleanup.BeforeAssign[op.Owner] = struct{}{}
 		}
 		if op.Value.IsValid() {
@@ -202,7 +202,7 @@ func (a *analyzer) applyWriteEffect(
 	if _, referenceTarget := referenceMutability(sym); !referenceTarget {
 		a.checkStorageAccess(target, loans, storageMutate)
 	}
-	if typ, ok := symbols.GetSymbolType(sym); ok && typeinfo.OwnershipCapabilityOf(typ).NeedsDrop {
+	if typ, ok := symbols.GetSymbolType(sym); ok && types.OwnershipCapabilityOf(typ).NeedsDrop {
 		if _, live := st.live[sym]; live && op.Owner.IsValid() {
 			a.cleanup.BeforeAssign[op.Owner] = struct{}{}
 		}
@@ -300,7 +300,7 @@ func (a *analyzer) applyProjectedUse(op effectUse, loans *loanContext, syntax th
 		}
 	}
 	a.checkStorageAccess(syntax, loans, storageAccessForUse(syntax.ExprType(), op.Kind))
-	if op.Kind == typeinfo.UseRead || !typeinfo.IsMoveTracked(syntax.ExprType()) {
+	if op.Kind == types.UseRead || !types.IsMoveTracked(syntax.ExprType()) {
 		return
 	}
 	if a.partialVariantPayloadMove(op.Node) {
@@ -322,7 +322,7 @@ func (a *analyzer) applyProjectedUse(op effectUse, loans *loanContext, syntax th
 // take effect until the call it is an argument to actually starts.
 func (a *analyzer) applyBorrow(op effectBorrow, st ownershipState, loans *loanContext) {
 	if op.Place.Root != nil && a.reportUseAfterMove(op.Place.Root, st, effectUse{
-		Place: op.Place, Node: op.Node, Location: op.Location, Kind: typeinfo.UseRead,
+		Place: op.Place, Node: op.Node, Location: op.Location, Kind: types.UseRead,
 	}) {
 		return
 	}
@@ -399,9 +399,9 @@ func (a *analyzer) applyUseKind(sym *symbols.Symbol, op effectUse, st ownershipS
 		return
 	}
 	switch op.Kind {
-	case typeinfo.UseCopy:
+	case types.UseCopy:
 		if symType, typed := symbols.GetSymbolType(sym); typed {
-			if _, isMutable, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(symType)); ok && isMutable {
+			if _, isMutable, ok := types.ReferenceTarget(types.Underlying(symType)); ok && isMutable {
 				a.diagnostics.AddError(diagnostics.ErrInvalidCopy,
 					"mutable reference cannot be copied; pass it directly to transfer or reborrow", op.Location, "")
 				return
@@ -409,9 +409,9 @@ func (a *analyzer) applyUseKind(sym *symbols.Symbol, op effectUse, st ownershipS
 		}
 		a.diagnostics.AddError(diagnostics.ErrInvalidCopy,
 			"copy of move-only value requires a consuming context", op.Location, "")
-	case typeinfo.UseMove:
+	case types.UseMove:
 		// A narrowed read of a payload that copies leaves its carrier whole.
-		if typeinfo.IsMoveTracked(syntax.ExprType()) {
+		if types.IsMoveTracked(syntax.ExprType()) {
 			st.moved[sym] = syntax.SourceInfo()
 			delete(st.live, sym)
 		}

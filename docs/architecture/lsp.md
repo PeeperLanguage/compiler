@@ -276,7 +276,7 @@ imports, types, declarations, selectors, symbols, and expressions in that order.
 
 The normalized `hoverSubject` can represent a symbol, expression type, resolved
 type, declaration, import, or attribute. Type syntax is resolved through
-`typeinfo.TypeFromSyntax` with project/module syntax options. Effective expression
+`types.TypeFromSyntax` with project/module syntax options. Effective expression
 types come from the compiled module. Method sets are collected from module
 bindings for resolved types.
 

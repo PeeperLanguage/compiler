@@ -17,7 +17,7 @@ import (
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/resolver"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/pkg/peeper"
 )
 
@@ -224,7 +224,7 @@ func TestEvaluateIntegerToFloatRoundsAtDestinationWidth(t *testing.T) {
 
 func TestExpectedNumericConstValueRejectsInvalidIntegers(t *testing.T) {
 	for _, value := range []*constvalue.IntConst{nil, {}} {
-		for _, typ := range []typeinfo.Type{&typeinfo.FloatType{Bits: 32}, &typeinfo.IntegerType{IsSigned: true, Bits: 64}} {
+		for _, typ := range []types.Type{&types.FloatType{Bits: 32}, &types.IntegerType{IsSigned: true, Bits: 64}} {
 			if converted, ok := expectedNumericConstValue(value, typ); ok || converted != nil {
 				t.Fatalf("invalid integer converted to %#v", converted)
 			}
@@ -333,7 +333,7 @@ func TestFinalizeValuesRecomputesLazyConstantsWithFinalSymbolTypes(t *testing.T)
 	if module.SymbolIndex.ConstantValue(sym.ID) != nil {
 		t.Fatal("lazy query published authoritative module value before finalization")
 	}
-	sym.BindType(&typeinfo.IntegerType{IsSigned: true, Bits: 64})
+	sym.BindType(&types.IntegerType{IsSigned: true, Bits: 64})
 	evaluator.finalizeModuleValues()
 	assertIntConst(t, module, "Value", "1", "i64")
 	if _, found := evaluator.cache[sym.ID]; found {

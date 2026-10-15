@@ -132,11 +132,11 @@ be discarded. Backing maps remain private.
 - `collectConcreteTypeDecl` creates `SymbolType` in module scope.
 - It assigns module-qualified nominal identity through
   `Module.TypeDeclarationIdentity`.
-- Declaration parameters become `typeinfo.TypeParameterType` values carrying
+- Declaration parameters become `types.TypeParameterType` values carrying
   parameter name, owner identity, and declaration index.
 - Type aliases, structs, interfaces, and enums receive distinct
-  `typeinfo.DefinedKind` values.
-- The symbol's `Type` is a `*typeinfo.DefinedType` shell.
+  `types.DefinedKind` values.
+- The symbol's `Type` is a `*types.DefinedType` shell.
 - Enum declarations get a separate child scope with `SymbolVariant` entries.
 - Each variant symbol points at the enum defined type.
 - Variant declaration identifiers are published through `SymbolIndex.Bind` immediately.
@@ -160,7 +160,7 @@ be discarded. Backing maps remain private.
 
 ### Function and value types
 
-- `bindFunctionDecl` uses `typeinfo.FuncTypeFromDeclWithOptions`.
+- `bindFunctionDecl` uses `types.FuncTypeFromDeclWithOptions`.
 - Method and ordinary-function declarations resolve through the same `SymbolIndex.Symbol`
   declaration identity. Method signatures are bound before receiver registration.
 - Ordinary function signatures are written to the module-scope symbol.
@@ -206,7 +206,7 @@ instantiation. It is part of binding/type construction, not resolver lookup.
 
 - `RegisterTypeDeclaration` records declaration syntax by base nominal identity.
 - `instantiateType` requires argument count equal to parameter count.
-- Each argument is canonicalized with `typeinfo.Unalias`.
+- Each argument is canonicalized with `types.Unalias`.
 - Invalid arguments reject the instance.
 - Declaration-parameter arguments return the base shell directly.
 - Other arguments form a cache identity from base identity plus canonical argument
@@ -295,7 +295,7 @@ binding state or type construction.
 
 ## Type information
 
-`internal/semantics/typeinfo` is a sealed semantic type model. Its non-test files
+`internal/semantics/types` is a sealed semantic type model. Its non-test files
 are `types.go`, `syntax.go`, `relations.go`, `compatibility.go`, `lookup.go`,
 `structure.go`, `semantic_key.go`, `equality.go`, `representation.go`,
 `capabilities.go`, and `ownership.go`.

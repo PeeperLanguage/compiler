@@ -26,7 +26,7 @@ import (
 	"compiler/internal/project"
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/internal/target"
 	"compiler/pkg/manifest"
 	"compiler/pkg/peeper"
@@ -171,7 +171,7 @@ func assertCheckedConstantIndex(t *testing.T, entry *module.Module, wantValue, w
 				accesses++
 				checked := entry.THIR.Node(index.ID()).(*thir.Index)
 				if checked.Constant == nil || checked.Constant.Text != wantValue ||
-					!typeinfo.IsSameType(checked.Constant.Type, checked.Index.ExprType()) || typeinfo.TypeText(typeinfo.Underlying(checked.Constant.Type)) != wantType {
+					!types.IsSameType(checked.Constant.Type, checked.Index.ExprType()) || types.TypeText(types.Underlying(checked.Constant.Type)) != wantType {
 					t.Fatalf("THIR index = %#v, want %s %s", checked.Constant, wantType, wantValue)
 				}
 			}
@@ -2995,7 +2995,7 @@ func TestPipelineRecordsQualifiedRangeEntryAcrossTargets(t *testing.T) {
 					{rangeExpr.End, strings.TrimPrefix(test.end, "values::")},
 				} {
 					binding := entry.SymbolIndex.Symbol(endpoint.expr)
-					if binding == nil || binding.Name != endpoint.name || typeinfo.TypeText(binding.Type) != "i64" {
+					if binding == nil || binding.Name != endpoint.name || types.TypeText(binding.Type) != "i64" {
 						t.Fatalf("endpoint %q lost resolved i64 binding: %#v", ast.ExprText(endpoint.expr), binding)
 					}
 					if _, qualified := endpoint.expr.(*ast.ScopeResolution); qualified && binding.DefiningModule != entry.Imports["values"].ID {
@@ -3009,9 +3009,9 @@ func TestPipelineRecordsQualifiedRangeEntryAcrossTargets(t *testing.T) {
 				if plan.HasGuaranteedEntry != test.guaranteed {
 					t.Fatalf("range entry = %v, want %v", plan.HasGuaranteedEntry, test.guaranteed)
 				}
-				for name, typ := range map[string]typeinfo.Type{"element": plan.ElementType, "cursor": plan.Cursor.Type, "limit": plan.Limit.Type} {
-					if typeinfo.TypeText(typ) != "i64" {
-						t.Fatalf("%s type = %s, want i64", name, typeinfo.TypeText(typ))
+				for name, typ := range map[string]types.Type{"element": plan.ElementType, "cursor": plan.Cursor.Type, "limit": plan.Limit.Type} {
+					if types.TypeText(typ) != "i64" {
+						t.Fatalf("%s type = %s, want i64", name, types.TypeText(typ))
 					}
 				}
 				diag := ctx.Diagnostics

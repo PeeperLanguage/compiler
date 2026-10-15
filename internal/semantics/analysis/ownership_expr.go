@@ -4,12 +4,12 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/internal/source"
 )
 
-func storageAccessForUse(typ typeinfo.Type, use typeinfo.UseKind) storageAccess {
-	if use == typeinfo.UseMove && typeinfo.IsMoveTracked(typ) {
+func storageAccessForUse(typ types.Type, use types.UseKind) storageAccess {
+	if use == types.UseMove && types.IsMoveTracked(typ) {
 		return storageConsume
 	}
 	return storageRead
@@ -22,10 +22,10 @@ func (a *analyzer) planProjectionBaseDrop(projection, base thir.Expr) bool {
 	if storage := base.ExprPlace(); storage != nil && storage.Root != nil {
 		return false
 	}
-	if !typeinfo.OwnershipCapabilityOf(base.ExprType()).NeedsDrop {
+	if !types.OwnershipCapabilityOf(base.ExprType()).NeedsDrop {
 		return false
 	}
-	if typeinfo.OwnershipCapabilityOf(projection.ExprType()).NeedsDrop {
+	if types.OwnershipCapabilityOf(projection.ExprType()).NeedsDrop {
 		a.diagnostics.AddError(diagnostics.ErrInvalidCopy,
 			"ownership-bearing projection from temporary must be bound before use", projection.SourceInfo().Location, "")
 		return true
@@ -51,7 +51,7 @@ func (a *analyzer) updatePointerSymbol(sym *symbols.Symbol, scope *symbols.Scope
 		delete(st.pointers, sym)
 		return
 	}
-	if _, ok := typeinfo.Underlying(typ).(*typeinfo.RawPtrType); !ok {
+	if _, ok := types.Underlying(typ).(*types.RawPtrType); !ok {
 		delete(st.pointers, sym)
 		return
 	}
@@ -93,7 +93,7 @@ func (a *analyzer) pointerOrigin(scope *symbols.Scope, expr thir.Expr, st owners
 		if scope == nil {
 			return nil
 		}
-		if _, isRaw := typeinfo.Underlying(e.ExprType()).(*typeinfo.RawPtrType); !isRaw {
+		if _, isRaw := types.Underlying(e.ExprType()).(*types.RawPtrType); !isRaw {
 			return nil
 		}
 		if a.input.Source != nil && a.input.Analysis != nil {
@@ -151,11 +151,11 @@ func (a *analyzer) localPointerRoot(scope *symbols.Scope, expr thir.Expr) *symbo
 			}
 		}
 	case *thir.Field:
-		if _, isPointer := typeinfo.PointerTarget(typeinfo.Underlying(e.Base.ExprType())); !isPointer {
+		if _, isPointer := types.PointerTarget(types.Underlying(e.Base.ExprType())); !isPointer {
 			return a.localPointerRoot(scope, e.Base)
 		}
 	case *thir.Index:
-		if _, isPointer := typeinfo.PointerTarget(typeinfo.Underlying(e.Base.ExprType())); !isPointer {
+		if _, isPointer := types.PointerTarget(types.Underlying(e.Base.ExprType())); !isPointer {
 			return a.localPointerRoot(scope, e.Base)
 		}
 	}
@@ -176,5 +176,5 @@ func (a *analyzer) reportPointerEscape(expr thir.Expr, origin *symbols.Symbol) {
 
 func ownershipTrackedSymbol(sym *symbols.Symbol) bool {
 	typ, ok := symbols.GetSymbolType(sym)
-	return ok && typeinfo.IsMoveTracked(typ)
+	return ok && types.IsMoveTracked(typ)
 }

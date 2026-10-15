@@ -1,4 +1,4 @@
-package typeinfo
+package types
 
 // Compatibility indicates the type of conversion allowed between types
 type Compatibility int

@@ -20,7 +20,7 @@ import (
 	"compiler/internal/prelude"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/pkg/manifest"
 	"compiler/pkg/peeper"
 )
@@ -1180,13 +1180,13 @@ func TestHoverDoesNotShowCompilerFunctionsAsTypeMethods(t *testing.T) {
 
 func TestHoverSyntheticMethodUsesSemanticParameterNames(t *testing.T) {
 	sym := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolMethod, "contains"), "contains", symbols.SymbolMethod, nil, nil)
-	sym.Type = &typeinfo.FuncType{
-		Params: []typeinfo.Type{
-			&typeinfo.RefType{Target: &typeinfo.StringType{}},
-			&typeinfo.ByteType{},
+	sym.Type = &types.FuncType{
+		Params: []types.Type{
+			&types.RefType{Target: &types.StringType{}},
+			&types.ByteType{},
 		},
 		ParamNames: []string{"self", "needle"},
-		Return:     &typeinfo.BoolType{},
+		Return:     &types.BoolType{},
 	}
 
 	got := renderSymbol(sym, symbolRenderContext{IsEmbedded: true})

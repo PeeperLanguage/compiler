@@ -5,12 +5,12 @@ import (
 
 	"compiler/internal/frontend/ast"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 )
 
 type symbolRenderContext struct {
 	Name        string
-	Type        typeinfo.Type
+	Type        types.Type
 	ImportPath  string
 	Declaration ast.Node
 	IsEmbedded  bool
@@ -44,7 +44,7 @@ func renderSymbol(sym *symbols.Symbol, context symbolRenderContext) string {
 		return b.String()
 	}
 
-	callable, isCallable := typ.(*typeinfo.FuncType)
+	callable, isCallable := typ.(*types.FuncType)
 	if (sym.Kind == symbols.SymbolFunc || sym.Kind == symbols.SymbolMethod) && isCallable && callable != nil {
 		declaration := sym.ASTNode
 		if _, isInterfaceDeclaration := context.Declaration.(*ast.InterfaceDecl); isInterfaceDeclaration || declaration == nil {
@@ -96,7 +96,7 @@ func renderSymbol(sym *symbols.Symbol, context symbolRenderContext) string {
 				b.WriteString(": ")
 			}
 			if index < len(callable.Params) {
-				b.WriteString(typeinfo.TypeText(callable.Params[index]))
+				b.WriteString(types.TypeText(callable.Params[index]))
 			}
 			if source != nil && source.Default != nil {
 				b.WriteString(" = ")
@@ -141,7 +141,7 @@ func renderSymbol(sym *symbols.Symbol, context symbolRenderContext) string {
 			writeParam(i, source)
 		}
 		b.WriteString(")")
-		if result := typeinfo.TypeText(callable.Return); result != "" {
+		if result := types.TypeText(callable.Return); result != "" {
 			b.WriteString(" -> ")
 			b.WriteString(result)
 		}
@@ -155,7 +155,7 @@ func renderSymbol(sym *symbols.Symbol, context symbolRenderContext) string {
 	b.WriteString(name)
 	if sym.Kind != symbols.SymbolType && typ != nil {
 		b.WriteString(": ")
-		b.WriteString(typeinfo.TypeText(typ))
+		b.WriteString(types.TypeText(typ))
 	}
 	return b.String()
 }

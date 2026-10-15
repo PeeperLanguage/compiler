@@ -14,7 +14,7 @@ import (
 	"compiler/internal/moduleid"
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/internal/source"
 	"compiler/pkg/numeric"
 )
@@ -31,10 +31,10 @@ type Context struct {
 
 type lowerer struct {
 	ctx      Context
-	expected typeinfo.Type
+	expected types.Type
 }
 
-func Lower(ctx Context, expr thir.Expr, expected typeinfo.Type) ir.Expr {
+func Lower(ctx Context, expr thir.Expr, expected types.Type) ir.Expr {
 	if expr == nil {
 		return &ir.InvalidExpr{Message: "nil expression", Type: ir.InvalidType}
 	}
@@ -52,18 +52,18 @@ func LowerPlace(ctx Context, expr thir.Expr) *ir.Place {
 
 // LowerImplicitReference borrows addressable storage or creates a temporary
 // owner whose lifetime MIR extends through the containing expression.
-func LowerImplicitReference(ctx Context, expr thir.Expr, result typeinfo.Type) ir.Expr {
+func LowerImplicitReference(ctx Context, expr thir.Expr, result types.Type) ir.Expr {
 	if expr == nil {
 		return &ir.InvalidExpr{Message: "nil reference expression", Type: ir.InvalidType}
 	}
 	l := &lowerer{ctx: ctx}
-	if _, _, isReference := typeinfo.ReferenceTarget(typeinfo.Underlying(expr.ExprType())); isReference {
+	if _, _, isReference := types.ReferenceTarget(types.Underlying(expr.ExprType())); isReference {
 		return l.lower(expr, nil, true)
 	}
 	return ir.WithOrigin(l.referenceValue(expr, result), expr.SourceInfo())
 }
 
-func (l *lowerer) lower(expr thir.Expr, expected typeinfo.Type, applyConversions bool) ir.Expr {
+func (l *lowerer) lower(expr thir.Expr, expected types.Type, applyConversions bool) ir.Expr {
 	if expr == nil {
 		return &ir.InvalidExpr{Message: "nil expression", Type: ir.InvalidType}
 	}
@@ -74,7 +74,7 @@ func (l *lowerer) lower(expr thir.Expr, expected typeinfo.Type, applyConversions
 	// boolean MIR value for the CFG branch.
 	if test := thir.CaseTestOf(expr); test != nil {
 		subject, _ := l.ctx.Source.Node(test.SubjectID).(thir.Expr)
-		membership := &ir.VariantIs{Value: l.lower(subject, nil, true), Case: test.Case, Type: l.typeID(&typeinfo.BoolType{})}
+		membership := &ir.VariantIs{Value: l.lower(subject, nil, true), Case: test.Case, Type: l.typeID(&types.BoolType{})}
 		if test.MatchesWhenTrue {
 			return ir.WithOrigin(membership, origin)
 		}
@@ -100,25 +100,25 @@ func (l *lowerer) lower(expr thir.Expr, expected typeinfo.Type, applyConversions
 	return ir.WithOrigin(result, origin)
 }
 
-func (l *lowerer) conversion(expr thir.Expr, expected, resolved typeinfo.Type) ir.Expr {
+func (l *lowerer) conversion(expr thir.Expr, expected, resolved types.Type) ir.Expr {
 	if expected == nil || resolved == nil {
 		return nil
 	}
 	conversion := expr.Conversion()
-	if conversion != nil && conversion.Compatibility == typeinfo.Compatible && conversion.Kind == typeinfo.ConversionOptional {
-		optional, ok := typeinfo.Underlying(expected).(*typeinfo.OptionalType)
-		if ok && optional != nil && optional.Inner != nil && !isNone(expr) && typeinfo.IsSameType(optional.Inner, resolved) {
+	if conversion != nil && conversion.Compatibility == types.Compatible && conversion.Kind == types.ConversionOptional {
+		optional, ok := types.Underlying(expected).(*types.OptionalType)
+		if ok && optional != nil && optional.Inner != nil && !isNone(expr) && types.IsSameType(optional.Inner, resolved) {
 			return &ir.VariantMake{Case: ir.OptionalPresentCase, Payload: l.lower(expr, optional.Inner, false), Type: l.typeID(expected)}
 		}
 	}
-	if _, ok := typeinfo.InterfaceTypeOf(expected); ok {
+	if _, ok := types.InterfaceTypeOf(expected); ok {
 		return l.interfaceValue(expr, expected)
 	}
-	if conversion == nil || conversion.Compatibility != typeinfo.Compatible {
+	if conversion == nil || conversion.Compatibility != types.Compatible {
 		return nil
 	}
 	switch conversion.Kind {
-	case typeinfo.ConversionNumeric, typeinfo.ConversionReference:
+	case types.ConversionNumeric, types.ConversionReference:
 		if target, source := l.typeID(expected), l.typeID(resolved); target != source {
 			return &ir.Cast{Expr: l.lower(expr, nil, false), Type: target}
 		}
@@ -126,10 +126,10 @@ func (l *lowerer) conversion(expr thir.Expr, expected, resolved typeinfo.Type) i
 	return nil
 }
 
-func (l *lowerer) typeID(t typeinfo.Type) ir.TypeID {
+func (l *lowerer) typeID(t types.Type) ir.TypeID {
 	return typelower.Type(l.ctx.Types, l.ctx.Diagnostics, t)
 }
-func (l *lowerer) returnType(t typeinfo.Type) ir.TypeID {
+func (l *lowerer) returnType(t types.Type) ir.TypeID {
 	return typelower.ReturnType(l.ctx.Types, l.ctx.Diagnostics, t)
 }
 
@@ -138,7 +138,7 @@ func (l *lowerer) LowerInvalidExpr(e *thir.InvalidExpr) ir.Expr {
 }
 func (l *lowerer) LowerNumberLiteral(e *thir.NumberLiteral) ir.Expr {
 	t := e.ExprType()
-	if typeinfo.IsInvalidOrUnknown(t) {
+	if types.IsInvalidOrUnknown(t) {
 		return &ir.InvalidExpr{Message: "number literal missing resolved type evidence", Type: ir.InvalidType}
 	}
 	value := e.Value
@@ -147,8 +147,8 @@ func (l *lowerer) LowerNumberLiteral(e *thir.NumberLiteral) ir.Expr {
 			value = canonical
 		}
 	}
-	family, _, _ := typeinfo.NumericInfo(t)
-	if family == typeinfo.NumericFloat {
+	family, _, _ := types.NumericInfo(t)
+	if family == types.NumericFloat {
 		if !numeric.IsFloat(e.Value) {
 			value += ".0"
 		}
@@ -187,7 +187,7 @@ func (l *lowerer) LowerIdent(e *thir.Ident) ir.Expr {
 func (l *lowerer) LowerQualifiedIdent(e *thir.QualifiedIdent) ir.Expr {
 	return l.ident(e.Symbol, e.Name, e.ExprType())
 }
-func (l *lowerer) ident(sym *symbols.Symbol, name string, typ typeinfo.Type) ir.Expr {
+func (l *lowerer) ident(sym *symbols.Symbol, name string, typ types.Type) ir.Expr {
 	if sym == nil {
 		return &ir.InvalidExpr{Message: "unresolved identifier: " + name, Type: ir.InvalidType}
 	}
@@ -198,7 +198,7 @@ func (l *lowerer) LowerUnary(e *thir.Unary) ir.Expr {
 }
 func (l *lowerer) LowerBinary(e *thir.Binary) ir.Expr {
 	if e.IsStringConcatenation {
-		return &ir.StringConcat{Left: l.lower(e.Left, &typeinfo.StringType{}, true), Right: l.lower(e.Right, &typeinfo.RefType{Target: &typeinfo.StringType{}}, true), Type: l.typeID(e.ExprType())}
+		return &ir.StringConcat{Left: l.lower(e.Left, &types.StringType{}, true), Right: l.lower(e.Right, &types.RefType{Target: &types.StringType{}}, true), Type: l.typeID(e.ExprType())}
 	}
 	leftType := e.Left.ExprType()
 	rightType := e.Right.ExprType()
@@ -210,10 +210,10 @@ func (l *lowerer) LowerBinary(e *thir.Binary) ir.Expr {
 	case "==", "!=", "<", "<=", ">", ">=", "&&", "||":
 		leftExpected = leftType
 		rightExpected = rightType
-		if conversion := e.Left.Conversion(); conversion != nil && conversion.Compatibility == typeinfo.Compatible {
+		if conversion := e.Left.Conversion(); conversion != nil && conversion.Compatibility == types.Compatible {
 			leftExpected = rightType
 		}
-		if conversion := e.Right.Conversion(); conversion != nil && conversion.Compatibility == typeinfo.Compatible {
+		if conversion := e.Right.Conversion(); conversion != nil && conversion.Compatibility == types.Compatible {
 			rightExpected = leftType
 		}
 	}
@@ -228,9 +228,9 @@ func (l *lowerer) LowerVariant(e *thir.Variant) ir.Expr {
 }
 func (l *lowerer) LowerStructLiteral(e *thir.StructLiteral) ir.Expr {
 	fields := make([]ir.Expr, 0, len(e.Fields))
-	semantic, _ := typeinfo.Underlying(e.ExprType()).(*typeinfo.StructType)
+	semantic, _ := types.Underlying(e.ExprType()).(*types.StructType)
 	for i, field := range e.Fields {
-		var expected typeinfo.Type
+		var expected types.Type
 		if semantic != nil && i < len(semantic.Fields) {
 			expected = semantic.Fields[i].Type
 		}
@@ -239,7 +239,7 @@ func (l *lowerer) LowerStructLiteral(e *thir.StructLiteral) ir.Expr {
 	return &ir.StructLit{Fields: fields, Type: l.typeID(e.ExprType())}
 }
 func (l *lowerer) LowerArrayLiteral(e *thir.ArrayLiteral) ir.Expr {
-	array, _ := typeinfo.Underlying(e.ExprType()).(*typeinfo.ArrayType)
+	array, _ := types.Underlying(e.ExprType()).(*types.ArrayType)
 	if array == nil {
 		return &ir.InvalidExpr{Message: "array literal type missing", Type: ir.InvalidType}
 	}
@@ -293,10 +293,10 @@ func (l *lowerer) LowerCall(e *thir.Call) ir.Expr {
 	if field, ok := e.Callee.(*thir.Field); ok {
 		return l.methodCall(e, field)
 	}
-	fn, _ := typeinfo.Underlying(e.Callee.ExprType()).(*typeinfo.FuncType)
+	fn, _ := types.Underlying(e.Callee.ExprType()).(*types.FuncType)
 	args := make([]ir.Expr, 0, len(e.Args))
 	for i, arg := range e.Args {
-		var expected typeinfo.Type
+		var expected types.Type
 		if fn != nil && i < len(fn.Params) {
 			expected = fn.Params[i]
 		}
@@ -308,7 +308,7 @@ func (l *lowerer) LowerCall(e *thir.Call) ir.Expr {
 	}
 	return &ir.Call{Callee: l.lower(e.Callee, nil, true), Args: args, Type: resultType}
 }
-func (l *lowerer) argument(e thir.Expr, expected typeinfo.Type) ir.Expr {
+func (l *lowerer) argument(e thir.Expr, expected types.Type) ir.Expr {
 	if implicit := e.ImplicitReferenceType(); implicit != nil {
 		return l.referenceValue(e, implicit)
 	}
@@ -320,15 +320,15 @@ func (l *lowerer) methodCall(call *thir.Call, field *thir.Field) ir.Expr {
 		method, _ := l.ctx.Types.InterfaceMethod(l.typeID(baseType), slot)
 		args := make([]ir.Expr, 0, len(call.Args))
 		for i, arg := range call.Args {
-			var expected typeinfo.Type
+			var expected types.Type
 			if i < len(iface.Params) {
 				expected = iface.Params[i].Type
 			}
 			args = append(args, l.argument(arg, expected))
 		}
-		return &ir.InterfaceCall{Base: l.lower(field.Base, nil, true), Slot: slot, SlotType: method.SlotType, Args: args, ConsumesBase: iface.Receiver == typeinfo.MethodReceiverValue, Type: method.Return}
+		return &ir.InterfaceCall{Base: l.lower(field.Base, nil, true), Slot: slot, SlotType: method.SlotType, Args: args, ConsumesBase: iface.Receiver == types.MethodReceiverValue, Type: method.Return}
 	}
-	fn, _ := typeinfo.Underlying(field.ExprType()).(*typeinfo.FuncType)
+	fn, _ := types.Underlying(field.ExprType()).(*types.FuncType)
 	if field.Symbol == nil || fn == nil || len(fn.Params) == 0 {
 		return &ir.InvalidExpr{Message: "unsupported selector call lowering", Type: ir.InvalidType}
 	}
@@ -362,12 +362,12 @@ func (l *lowerer) alloc(call *thir.Call) ir.Expr {
 	}
 	out := &ir.AllocExpr{Value: l.lower(call.Args[0], nil, true), Type: l.typeID(call.ExprType())}
 	if len(call.Args) == 2 {
-		out.Allocator = l.lower(call.Args[1], &typeinfo.AllocatorType{}, true)
+		out.Allocator = l.lower(call.Args[1], &types.AllocatorType{}, true)
 	}
 	return out
 }
 func (l *lowerer) collection(call *thir.Call) ir.Expr {
-	fn, _ := typeinfo.Underlying(call.Callee.ExprType()).(*typeinfo.FuncType)
+	fn, _ := types.Underlying(call.Callee.ExprType()).(*types.FuncType)
 	if fn == nil || len(fn.Params) != 1 || len(call.Args) != 1 {
 		return &ir.InvalidExpr{Message: "collection function type or arguments missing", Type: ir.InvalidType}
 	}
@@ -383,7 +383,7 @@ func (l *lowerer) collection(call *thir.Call) ir.Expr {
 	return &ir.InvalidExpr{Message: "unsupported collection function lowering", Type: ir.InvalidType}
 }
 func (l *lowerer) dynamicArray(call *thir.Call) ir.Expr {
-	fn, _ := typeinfo.Underlying(call.Callee.ExprType()).(*typeinfo.FuncType)
+	fn, _ := types.Underlying(call.Callee.ExprType()).(*types.FuncType)
 	if fn == nil || len(fn.Params) != len(call.Args) || len(call.Args) < 2 {
 		return &ir.InvalidExpr{Message: "dynamic-array operation type or arguments missing", Type: ir.InvalidType}
 	}
@@ -391,7 +391,7 @@ func (l *lowerer) dynamicArray(call *thir.Call) ir.Expr {
 	for i, arg := range call.Args {
 		args[i] = l.argument(arg, fn.Params[i])
 	}
-	owner, _, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(fn.Params[0]))
+	owner, _, ok := types.ReferenceTarget(types.Underlying(fn.Params[0]))
 	if !ok {
 		return &ir.InvalidExpr{Message: "dynamic-array owner reference missing", Type: ir.InvalidType}
 	}
@@ -411,7 +411,7 @@ func (l *lowerer) dynamicArray(call *thir.Call) ir.Expr {
 	return out
 }
 func (l *lowerer) fromBytes(call *thir.Call) ir.Expr {
-	fn, _ := typeinfo.Underlying(call.Callee.ExprType()).(*typeinfo.FuncType)
+	fn, _ := types.Underlying(call.Callee.ExprType()).(*types.FuncType)
 	if fn == nil || len(call.Args) < 1 || len(call.Args) > 2 {
 		panic("validated from_bytes call missing intrinsic evidence")
 	}
@@ -422,18 +422,18 @@ func (l *lowerer) fromBytes(call *thir.Call) ir.Expr {
 	return out
 }
 
-func (l *lowerer) referenceValue(expr thir.Expr, result typeinfo.Type) ir.Expr {
+func (l *lowerer) referenceValue(expr thir.Expr, result types.Type) ir.Expr {
 	id := l.typeID(result)
-	target, _, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(result))
+	target, _, ok := types.ReferenceTarget(types.Underlying(result))
 	if !ok {
 		return &ir.InvalidExpr{Message: "reference lowering requires reference type", Type: ir.InvalidType}
 	}
 	isSlice := false
-	switch t := typeinfo.Underlying(target).(type) {
-	case *typeinfo.StringType:
+	switch t := types.Underlying(target).(type) {
+	case *types.StringType:
 		isSlice = true
-	case *typeinfo.ArrayType:
-		isSlice = t.Shape == typeinfo.ArraySlice
+	case *types.ArrayType:
+		isSlice = t.Shape == types.ArraySlice
 	}
 	if expr.ExprPlace() == nil {
 		return &ir.TempBorrow{Value: l.lower(expr, target, true), IsSlice: isSlice, Type: id}
@@ -447,15 +447,15 @@ func (l *lowerer) referenceValue(expr thir.Expr, result typeinfo.Type) ir.Expr {
 func (l *lowerer) slice(index *thir.Index, r *thir.Range) ir.Expr {
 	var start, end ir.Expr
 	if r.Start != nil {
-		start = l.lower(r.Start, typeinfo.DefaultIntegerType(), true)
+		start = l.lower(r.Start, types.DefaultIntegerType(), true)
 	}
 	if r.End != nil {
-		end = l.lower(r.End, typeinfo.DefaultIntegerType(), true)
+		end = l.lower(r.End, types.DefaultIntegerType(), true)
 	}
 	resultType := index.ExprType()
 	source := l.place(index.Base)
-	if target, _, isReference := typeinfo.ReferenceTarget(typeinfo.Underlying(resultType)); isReference {
-		if _, stringRange := typeinfo.Underlying(target).(*typeinfo.StringType); stringRange {
+	if target, _, isReference := types.ReferenceTarget(types.Underlying(resultType)); isReference {
+		if _, stringRange := types.Underlying(target).(*types.StringType); stringRange {
 			root := l.referenceValue(index.Base, resultType)
 			source = &ir.Place{Root: root, Location: index.Base.SourceInfo().Location}
 		}
@@ -498,7 +498,7 @@ func (l *lowerer) place(expr thir.Expr) *ir.Place {
 					Type:  l.typeID(projection.ConstantIndex.Type),
 				}
 			} else {
-				item.Index = l.lower(projection.Index, typeinfo.DefaultIntegerType(), true)
+				item.Index = l.lower(projection.Index, types.DefaultIntegerType(), true)
 			}
 		}
 		out.Projections = append(out.Projections, item)
@@ -526,13 +526,13 @@ func AppendPayloadProjections(types *ir.TypeTable, place *ir.Place, cases []int,
 	}
 }
 
-func (l *lowerer) interfaceValue(expr thir.Expr, expected typeinfo.Type) ir.Expr {
-	iface, ok := typeinfo.InterfaceTypeOf(expected)
+func (l *lowerer) interfaceValue(expr thir.Expr, expected types.Type) ir.Expr {
+	iface, ok := types.InterfaceTypeOf(expected)
 	if !ok {
 		return nil
 	}
 	resolved := expr.ExprType()
-	if _, already := typeinfo.InterfaceTypeOf(resolved); already {
+	if _, already := types.InterfaceTypeOf(resolved); already {
 		return nil
 	}
 	interfaceID := l.typeID(expected)
@@ -557,8 +557,8 @@ func (l *lowerer) interfaceValue(expr thir.Expr, expected typeinfo.Type) ir.Expr
 	}
 	return &ir.InterfaceMake{Value: l.lower(expr, nil, false), Slots: slots, Type: interfaceID}
 }
-func lookupInterfaceMethod(t typeinfo.Type, name string) (*typeinfo.Method, int, bool) {
-	iface, ok := typeinfo.InterfaceTypeOf(t)
+func lookupInterfaceMethod(t types.Type, name string) (*types.Method, int, bool) {
+	iface, ok := types.InterfaceTypeOf(t)
 	if !ok {
 		return nil, -1, false
 	}
@@ -598,9 +598,9 @@ func CallableName(module moduleid.ID, isEntryModule bool, sym *symbols.Symbol) (
 	}
 	receiver := ""
 	if typ, ok := symbols.GetSymbolType(sym); ok && sym.Kind == symbols.SymbolMethod {
-		if fn, ok := typ.(*typeinfo.FuncType); ok && len(fn.Params) > 0 {
-			if target, ok := typeinfo.ReceiverTarget(fn.Params[0]); ok {
-				receiver = typeinfo.TypeText(target)
+		if fn, ok := typ.(*types.FuncType); ok && len(fn.Params) > 0 {
+			if target, ok := types.ReceiverTarget(fn.Params[0]); ok {
+				receiver = types.TypeText(target)
 			}
 		}
 	}

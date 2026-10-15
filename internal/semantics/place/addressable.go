@@ -3,10 +3,10 @@ package place
 import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 )
 
-type ExprTypeFunc func(ast.Expr) typeinfo.Type
+type ExprTypeFunc func(ast.Expr) types.Type
 
 // BindingResolver supplies symbols for expressions that were resolved outside
 // the current scope tree (e.g. cloned defaults or qualified imports). When the
@@ -100,17 +100,17 @@ func IsAddressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFunc, r
 	}
 	base := projection.Base
 	if exprType != nil {
-		if _, ok := typeinfo.PointerTarget(typeinfo.Underlying(exprType(base))); ok {
+		if _, ok := types.PointerTarget(types.Underlying(exprType(base))); ok {
 			return true
 		}
-		if _, _, ok := typeinfo.ReferenceValueTarget(exprType(base)); ok {
+		if _, _, ok := types.ReferenceValueTarget(exprType(base)); ok {
 			return true
 		}
 	}
 	return IsAddressable(scope, projection.Base, exprType, resolve)
 }
 
-func MutableAddressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFunc, resolve BindingResolver) (isMutable bool, sharedReference typeinfo.Type, mutableBinding *symbols.Symbol) {
+func MutableAddressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFunc, resolve BindingResolver) (isMutable bool, sharedReference types.Type, mutableBinding *symbols.Symbol) {
 	if scope == nil || expr == nil {
 		return false, nil, nil
 	}
@@ -134,8 +134,8 @@ func MutableAddressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFu
 	base := projection.Base
 	isMutable, sharedReference, mutableBinding = MutableAddressable(scope, base, exprType, resolve)
 	if exprType != nil {
-		baseType := typeinfo.Underlying(exprType(base))
-		if _, ok := baseType.(*typeinfo.RawPtrType); ok {
+		baseType := types.Underlying(exprType(base))
+		if _, ok := baseType.(*types.RawPtrType); ok {
 			return true, nil, nil
 		}
 		// Ordinary projections, including owning-pointer dereferences, preserve
@@ -144,7 +144,7 @@ func MutableAddressable(scope *symbols.Scope, expr ast.Expr, exprType ExprTypeFu
 		if sharedReference != nil {
 			return false, sharedReference, nil
 		}
-		if target, isMutable, ok := typeinfo.ReferenceValueTarget(baseType); ok {
+		if target, isMutable, ok := types.ReferenceValueTarget(baseType); ok {
 			if isMutable {
 				return true, nil, nil
 			}

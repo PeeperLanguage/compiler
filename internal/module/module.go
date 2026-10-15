@@ -9,7 +9,7 @@ import (
 	"compiler/internal/phase"
 	"compiler/internal/semantics/analysis"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/internal/source"
 )
 
@@ -25,7 +25,7 @@ type ResolvedImport struct {
 // contexts can rebuild derived cross-module indexes without recollecting syntax.
 type TypeDeclaration struct {
 	Syntax ast.TypeDecl
-	Base   *typeinfo.DefinedType
+	Base   *types.DefinedType
 }
 
 // Module is one source unit and its reusable compiler artifacts.
@@ -119,7 +119,7 @@ func (m *Module) ResetSemanticData() {
 }
 
 // BaseExprType returns the canonical base type published in THIR when available.
-func (m *Module) BaseExprType(id source.NodeID) typeinfo.Type {
+func (m *Module) BaseExprType(id source.NodeID) types.Type {
 	if m == nil || !id.IsValid() {
 		return nil
 	}

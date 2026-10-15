@@ -12,7 +12,7 @@ import (
 	"compiler/internal/ir/typelower"
 	"compiler/internal/moduleid"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/internal/source"
 )
 
@@ -88,7 +88,7 @@ func GenerateMIR(input LoweringInput) *Module {
 			if abiKey != input.Types.ABIKey(typ) {
 				if input.Diagnostics != nil {
 					input.Diagnostics.AddError(diagnostics.ErrInvalidEvidence,
-						fmt.Sprintf("module constant `%s` has value type %s, want %s", symbol.Name, value.TypeText(), typeinfo.TypeText(semanticType)), symbol.Location, "")
+						fmt.Sprintf("module constant `%s` has value type %s, want %s", symbol.Name, value.TypeText(), types.TypeText(semanticType)), symbol.Location, "")
 				}
 				return nil
 			}
@@ -208,7 +208,7 @@ func (l *lowerer) expressionContext() exprlower.Context {
 	}
 }
 
-func (l *lowerer) sourceExpr(expr thir.Expr, expected typeinfo.Type) ir.Expr {
+func (l *lowerer) sourceExpr(expr thir.Expr, expected types.Type) ir.Expr {
 	return ir.FoldExpr(l.input.Types, exprlower.Lower(l.expressionContext(), expr, expected), l.constantEnv)
 }
 
@@ -284,9 +284,9 @@ func (l *lowerer) lowerIterationSegment(loop *thir.For, origin cfg.BlockOrigin) 
 
 func (l *lowerer) iterationCondition(loop *thir.For) ir.Expr {
 	if loop.Condition != nil {
-		return l.sourceExpr(loop.Condition, &typeinfo.BoolType{})
+		return l.sourceExpr(loop.Condition, &types.BoolType{})
 	}
-	boolType := typelower.Type(l.input.Types, l.input.Diagnostics, &typeinfo.BoolType{})
+	boolType := typelower.Type(l.input.Types, l.input.Diagnostics, &types.BoolType{})
 	switch plan := loop.Iteration.(type) {
 	case *thir.RangeIteration:
 		return &ir.Binary{Op: "<", Left: l.symbolRef(plan.Cursor), Right: l.symbolRef(plan.Limit), Type: boolType, SourceInfo: ir.SourceInfo{Location: l.location}}
@@ -341,7 +341,7 @@ func (l *lowerer) incrementSymbol(symbol *symbols.Symbol) {
 	})
 }
 
-func (l *lowerer) integerLiteral(value string, typ typeinfo.Type) ir.Expr {
+func (l *lowerer) integerLiteral(value string, typ types.Type) ir.Expr {
 	return &ir.IntLit{Value: value, Type: typelower.Type(l.input.Types, l.input.Diagnostics, typ), SourceInfo: ir.SourceInfo{Location: l.location}}
 }
 
@@ -400,12 +400,12 @@ func (l *lowerer) lowerCFGStmt(node thir.Node) bool {
 		temporaryMark := len(l.temporaryDrops)
 		valueType := statement.Value.ExprType()
 		value := l.lowerExpr(l.sourceExpr(statement.Value, valueType), &l.current.Instrs)
-		take := func(name string, index int, fieldType typeinfo.Type) *RefName {
+		take := func(name string, index int, fieldType types.Type) *RefName {
 			typ := typelower.Type(l.input.Types, l.input.Diagnostics, fieldType)
 			l.appendInstr(&l.current.Instrs, &Assign{Name: name, Value: &Field{Base: value, Index: index, Type: typ, Location: l.location}})
 			return &RefName{Name: name, Type: typ, Location: l.location}
 		}
-		strct, _ := typeinfo.Underlying(valueType).(*typeinfo.StructType)
+		strct, _ := types.Underlying(valueType).(*types.StructType)
 		taken := make([]bool, len(strct.Fields))
 		for _, binding := range statement.Bindings {
 			taken[binding.Field] = true
@@ -415,7 +415,7 @@ func (l *lowerer) lowerCFGStmt(node thir.Node) bool {
 		// The value was taken whole, so its unnamed owned fields end here,
 		// last field first like any struct drop.
 		for index := len(strct.Fields) - 1; index >= 0; index-- {
-			if field := strct.Fields[index]; !taken[index] && typeinfo.OwnershipCapabilityOf(field.Type).NeedsDrop {
+			if field := strct.Fields[index]; !taken[index] && types.OwnershipCapabilityOf(field.Type).NeedsDrop {
 				l.appendInstr(&l.current.Instrs, &Drop{Value: take(l.nextTemp(), index, field.Type)})
 			}
 		}
@@ -462,7 +462,7 @@ func discardBinding(symbolIndex *symbols.Index, binding *thir.Binding) bool {
 	if binding == nil || binding.Symbol == nil || symbolIndex.IsUsed(binding.Symbol) || binding.Value == nil {
 		return false
 	}
-	if typ, ok := symbols.GetSymbolType(binding.Symbol); ok && typeinfo.OwnershipCapabilityOf(typ).NeedsDrop {
+	if typ, ok := symbols.GetSymbolType(binding.Symbol); ok && types.OwnershipCapabilityOf(typ).NeedsDrop {
 		return false
 	}
 	_, isCall := binding.Value.(*thir.Call)
@@ -519,7 +519,7 @@ func (l *lowerer) lowerCFGTerminator(sourceBlock, exit *cfg.Block, blocks map[*c
 		var condition ir.Expr
 		switch statement := l.input.Source.Node(term.NodeID).(type) {
 		case *thir.If:
-			condition = l.sourceExpr(statement.Condition, &typeinfo.BoolType{})
+			condition = l.sourceExpr(statement.Condition, &types.BoolType{})
 			l.location = statement.Source.Location
 		case *thir.For:
 			condition = l.iterationCondition(statement)

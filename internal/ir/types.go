@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 )
 
 // TypeID identifies one runtime type in a compilation's TypeTable. IDs never
@@ -139,7 +139,7 @@ type TypeTable struct {
 	indexType  TypeID
 	// lowered remembers each semantic type's ID: lowering one walks the whole
 	// type, and every expression of that type asks again.
-	lowered map[typeinfo.Type]TypeID
+	lowered map[types.Type]TypeID
 }
 
 func NewTypeTable() *TypeTable {
@@ -147,7 +147,7 @@ func NewTypeTable() *TypeTable {
 		types:      []Type{{Name: "<invalid>"}},
 		ids:        make(map[string]TypeID),
 		isComplete: []bool{false},
-		lowered:    make(map[typeinfo.Type]TypeID),
+		lowered:    make(map[types.Type]TypeID),
 	}
 }
 
@@ -156,7 +156,7 @@ func NewTypeTable() *TypeTable {
 // it is reported again where it is asked for again. A composite whose child
 // failed still gets a valid ID and is kept, so the child's error is reported
 // once, not once per use.
-func (t *TypeTable) Lower(semantic typeinfo.Type, lower func() TypeID) TypeID {
+func (t *TypeTable) Lower(semantic types.Type, lower func() TypeID) TypeID {
 	t.mu.RLock()
 	id, found := t.lowered[semantic]
 	t.mu.RUnlock()

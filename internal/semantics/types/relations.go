@@ -1,4 +1,4 @@
-package typeinfo
+package types
 
 import (
 	"compiler/internal/frontend/token"
@@ -268,7 +268,7 @@ func traversedChildState(relation TypeChildRelation, stored bool, traversal type
 	case TypeChildTypeParameter, TypeChildTypeArgument:
 		return false, false
 	default:
-		panic("typeinfo: unknown semantic type child relation")
+		panic("types: unknown semantic type child relation")
 	}
 }
 
@@ -282,7 +282,7 @@ func IsUnknown(typ Type) bool {
 	return ok
 }
 
-// isInvalidOrUnknown replaces the repeated `typeinfo.IsInvalid(t) || typeinfo.IsUnknown(t)` pattern.
+// isInvalidOrUnknown replaces the repeated `types.IsInvalid(t) || types.IsUnknown(t)` pattern.
 func IsInvalidOrUnknown(t Type) bool {
 	return IsInvalid(t) || IsUnknown(t)
 }

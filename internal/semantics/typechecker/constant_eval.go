@@ -10,8 +10,8 @@ import (
 	"compiler/internal/module"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/semantics/typeresolution"
+	"compiler/internal/semantics/types"
 	"compiler/pkg/numeric"
 )
 
@@ -95,8 +95,8 @@ func (e *constantEvaluator) evalConstSymbol(sym *symbols.Symbol) (constvalue.Val
 		return nil, false
 	}
 	e.inProgress[sym.ID] = struct{}{}
-	expected := typeinfo.Type(nil)
-	if sym.Type != nil && !typeinfo.IsInvalidOrUnknown(sym.Type) {
+	expected := types.Type(nil)
+	if sym.Type != nil && !types.IsInvalidOrUnknown(sym.Type) {
 		expected = sym.Type
 	}
 	value, ok := e.evalExpr(decl.Value, expected)
@@ -115,18 +115,18 @@ func (e *constantEvaluator) evalConstSymbol(sym *symbols.Symbol) (constvalue.Val
 	return value, true
 }
 
-func (e *constantEvaluator) evalExpr(expr ast.Expr, expected typeinfo.Type) (value constvalue.Value, evaluated bool) {
+func (e *constantEvaluator) evalExpr(expr ast.Expr, expected types.Type) (value constvalue.Value, evaluated bool) {
 	if expr == nil {
 		return nil, false
 	}
-	var checkedType typeinfo.Type
+	var checkedType types.Type
 	if e.evidence != nil {
 		checkedType = e.evidence.ExprType(expr.ID())
 		if conversion, found := e.evidence.ImplicitConversion(expr.ID()); found && checkedType != nil &&
-			conversion.Kind == typeinfo.ConversionNumeric && conversion.Compatibility == typeinfo.Compatible {
+			conversion.Kind == types.ConversionNumeric && conversion.Compatibility == types.Compatible {
 			// Fold at the checked source width before converting to the context's
 			// destination. Widening earlier would change intermediate overflow.
-			defer func(destination typeinfo.Type) {
+			defer func(destination types.Type) {
 				if evaluated {
 					value, evaluated = expectedNumericConstValue(value, destination)
 				}
@@ -134,16 +134,16 @@ func (e *constantEvaluator) evalExpr(expr ast.Expr, expected typeinfo.Type) (val
 			expected = checkedType
 		}
 		if construction, ok := e.evidence.VariantConstruction(expr.ID()); ok {
-			if typeinfo.OwnershipCapabilityOf(construction.EnumType).Copy != typeinfo.CopyImplicit {
+			if types.OwnershipCapabilityOf(construction.EnumType).Copy != types.CopyImplicit {
 				return nil, false
 			}
-			descriptor, isVariant := typeinfo.VariantDescriptorOf(construction.EnumType)
+			descriptor, isVariant := types.VariantDescriptorOf(construction.EnumType)
 			if !isVariant || construction.Case < 0 || construction.Case >= len(descriptor.Cases) {
 				return nil, false
 			}
 			if construction.Value != nil {
 				if literal, ok := construction.Value.(*ast.StructLit); ok {
-					payload, isStructured := typeinfo.Underlying(construction.Payload).(*typeinfo.StructType)
+					payload, isStructured := types.Underlying(construction.Payload).(*types.StructType)
 					if !isStructured || payload == nil {
 						return nil, false
 					}
@@ -162,15 +162,15 @@ func (e *constantEvaluator) evalExpr(expr ast.Expr, expected typeinfo.Type) (val
 						}
 						fields[index] = value
 					}
-					return constvalue.NewVariant(descriptor.Identity, typeinfo.TypeText(construction.EnumType), construction.Case, fields)
+					return constvalue.NewVariant(descriptor.Identity, types.TypeText(construction.EnumType), construction.Case, fields)
 				}
 				value, ok := e.evalExpr(construction.Value, construction.Payload)
 				if !ok {
 					return nil, false
 				}
-				return constvalue.NewVariant(descriptor.Identity, typeinfo.TypeText(construction.EnumType), construction.Case, []constvalue.Value{value})
+				return constvalue.NewVariant(descriptor.Identity, types.TypeText(construction.EnumType), construction.Case, []constvalue.Value{value})
 			}
-			return constvalue.NewVariant(descriptor.Identity, typeinfo.TypeText(construction.EnumType), construction.Case, nil)
+			return constvalue.NewVariant(descriptor.Identity, types.TypeText(construction.EnumType), construction.Case, nil)
 		}
 	}
 	if node, ok := expr.(*ast.IsExpr); ok {
@@ -178,7 +178,7 @@ func (e *constantEvaluator) evalExpr(expr ast.Expr, expected typeinfo.Type) (val
 			return nil, false
 		}
 		test, found := e.evidence.CaseTest(node.ID())
-		if !found || test.Family != typeinfo.VariantFamilyNamed {
+		if !found || test.Family != types.VariantFamilyNamed {
 			return nil, false
 		}
 		value, ok := e.evalExpr(node.Value, e.evidence.ExprType(node.Value.ID()))
@@ -197,21 +197,21 @@ func (e *constantEvaluator) evalExpr(expr ast.Expr, expected typeinfo.Type) (val
 		if node.IsCString {
 			typText = "cstr"
 		}
-		switch typeinfo.Underlying(expected).(type) {
-		case *typeinfo.CStrType, *typeinfo.StringType:
-			typText = typeinfo.TypeText(expected)
+		switch types.Underlying(expected).(type) {
+		case *types.CStrType, *types.StringType:
+			typText = types.TypeText(expected)
 		}
 		return constvalue.NewString(node.Value, typText)
 	}
-	_, _, numericExpected := typeinfo.NumericInfo(expected)
+	_, _, numericExpected := types.NumericInfo(expected)
 	if expected != nil && !numericExpected {
 		expected = nil
 	}
 	switch node := expr.(type) {
 	case *ast.NumberLit:
-		typ := typeinfo.DefaultNumberType(node.Value)
+		typ := types.DefaultNumberType(node.Value)
 		if node.ExplicitType != "" {
-			if explicit, ok := typeinfo.NumericTypeFromName(node.ExplicitType, e.ctx.Target); ok {
+			if explicit, ok := types.NumericTypeFromName(node.ExplicitType, e.ctx.Target); ok {
 				typ = explicit
 			} else {
 				return nil, false
@@ -219,9 +219,9 @@ func (e *constantEvaluator) evalExpr(expr ast.Expr, expected typeinfo.Type) (val
 		} else if expected != nil {
 			typ = expected
 		}
-		typText := typeinfo.TypeText(typeinfo.Underlying(typ))
-		family, _, _ := typeinfo.NumericInfo(typ)
-		if family == typeinfo.NumericFloat {
+		typText := types.TypeText(types.Underlying(typ))
+		family, _, _ := types.NumericInfo(typ)
+		if family == types.NumericFloat {
 			return constvalue.NewFloatText(node.Value, typText)
 		}
 		value, err := numeric.CanonicalizeIntegerLiteral(node.Value)
@@ -244,14 +244,14 @@ func (e *constantEvaluator) evalExpr(expr ast.Expr, expected typeinfo.Type) (val
 		return expectedNumericConstValue(value, expected)
 	case *ast.AsExpr:
 		targetType := checkedType
-		var sourceType typeinfo.Type
+		var sourceType types.Type
 		if e.evidence != nil {
 			sourceType = e.evidence.ExprType(node.Expr.ID())
 		}
 		if targetType == nil {
 			targetType = e.ctx.TypeResolver.Query(e.module, node.TypeExpr, typeresolution.Context{}).Type
 		}
-		if _, _, numericTarget := typeinfo.NumericInfo(targetType); !numericTarget {
+		if _, _, numericTarget := types.NumericInfo(targetType); !numericTarget {
 			return nil, false
 		}
 		// Cast input keeps its own width; destination context must not change
@@ -264,7 +264,7 @@ func (e *constantEvaluator) evalExpr(expr ast.Expr, expected typeinfo.Type) (val
 		if !ok {
 			return nil, false
 		}
-		if typeinfo.IsSameType(targetType, expected) {
+		if types.IsSameType(targetType, expected) {
 			return converted, true
 		}
 		return expectedNumericConstValue(converted, expected)
@@ -283,7 +283,7 @@ func (e *constantEvaluator) evalExpr(expr ast.Expr, expected typeinfo.Type) (val
 				// numeric destination for comparisons.
 				operandType = e.evidence.ExprType(node.Left.ID())
 				if conversion, found := e.evidence.ImplicitConversion(node.Left.ID()); found &&
-					conversion.Kind == typeinfo.ConversionNumeric && conversion.Compatibility == typeinfo.Compatible {
+					conversion.Kind == types.ConversionNumeric && conversion.Compatibility == types.Compatible {
 					operandType = e.evidence.ExprType(node.Right.ID())
 				}
 			}
@@ -299,7 +299,7 @@ func (e *constantEvaluator) evalExpr(expr ast.Expr, expected typeinfo.Type) (val
 		if checkedType != nil || expected != nil {
 			return nil, false
 		}
-		commonType := typeinfo.CommonNumericType(&typeinfo.NamedType{Name: left.TypeText()}, &typeinfo.NamedType{Name: right.TypeText()})
+		commonType := types.CommonNumericType(&types.NamedType{Name: left.TypeText()}, &types.NamedType{Name: right.TypeText()})
 		if commonType == nil {
 			return nil, false
 		}
@@ -314,22 +314,22 @@ func (e *constantEvaluator) evalExpr(expr ast.Expr, expected typeinfo.Type) (val
 	}
 }
 
-func expectedNumericConstValue(value constvalue.Value, expected typeinfo.Type) (constvalue.Value, bool) {
+func expectedNumericConstValue(value constvalue.Value, expected types.Type) (constvalue.Value, bool) {
 	if expected == nil {
 		return value, true
 	}
-	family, bits, ok := typeinfo.NumericInfo(expected)
+	family, bits, ok := types.NumericInfo(expected)
 	if !ok {
 		return value, true
 	}
-	typeText := typeinfo.TypeText(typeinfo.Underlying(expected))
+	typeText := types.TypeText(types.Underlying(expected))
 	switch v := value.(type) {
 	case *constvalue.IntConst:
 		integer := v.Int()
 		if integer == nil {
 			return nil, false
 		}
-		if family == typeinfo.NumericFloat {
+		if family == types.NumericFloat {
 			// Round the exact integer directly to its destination. Routing f32
 			// through f64 can double-round, and text parsing rejects IEEE overflow.
 			number := new(big.Float).SetInt(integer)
@@ -345,7 +345,7 @@ func expectedNumericConstValue(value constvalue.Value, expected typeinfo.Type) (
 		if v == nil {
 			return nil, false
 		}
-		if family == typeinfo.NumericFloat {
+		if family == types.NumericFloat {
 			return constvalue.NewFloat(v.Float(), typeText)
 		}
 		if math.IsNaN(v.Float()) || math.IsInf(v.Float(), 0) {
@@ -354,7 +354,7 @@ func expectedNumericConstValue(value constvalue.Value, expected typeinfo.Type) (
 		integer, _ := big.NewFloat(v.Float()).Int(nil)
 		// LLVM float-to-integer conversion is undefined outside the destination
 		// range. Do not turn an unmaterializable cast into a wrapping integer.
-		if !numeric.FitsIntegerLiteral(integer.String(), bits, family == typeinfo.NumericSigned) {
+		if !numeric.FitsIntegerLiteral(integer.String(), bits, family == types.NumericSigned) {
 			return nil, false
 		}
 		return constvalue.NewInt(integer, typeText)

@@ -17,7 +17,7 @@ import (
 	"compiler/internal/semantics/binder"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/resolver"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/pkg/peeper"
 )
 
@@ -110,7 +110,7 @@ fn main() {
 		if item.Name == sourceLoop.Value || item.Name.ID() == sourceLoop.Value.ID() {
 			t.Fatal("checked iteration reused source binding syntax")
 		}
-		if got := typeinfo.TypeText(module.SymbolIndex.Symbol(item.Name).Type); got != "i32" {
+		if got := types.TypeText(module.SymbolIndex.Symbol(item.Name).Type); got != "i32" {
 			t.Fatalf("item type = %s", got)
 		}
 	})

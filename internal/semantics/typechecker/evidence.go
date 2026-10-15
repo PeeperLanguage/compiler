@@ -4,7 +4,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/internal/source"
 )
 
@@ -12,45 +12,45 @@ type CaseTest struct {
 	Case            int
 	MatchesWhenTrue bool
 	CaseCount       int
-	Family          typeinfo.VariantFamily
+	Family          types.VariantFamily
 	// Subject is the value tested and Borrow the reference a payload name
 	// becomes when the test is written on `&place`: Subject is then the place.
 	Subject ast.Expr
-	Borrow  *typeinfo.RefType
+	Borrow  *types.RefType
 }
 
 // Match records typechecker-owned case evidence consumed by CFG
 // and later semantic phases without resolving source paths again.
 type Match struct {
-	EnumType  typeinfo.Type
+	EnumType  types.Type
 	CaseCount int
 	// ArmCases is what each arm selects, in source order: one case for a
 	// named arm, every case left over for the fallback arm.
 	ArmCases [][]thir.ArmCase
 	// ArmPayloads is, per arm, the type of what the arm's names read: the
 	// payload of what it selects, nil for none.
-	ArmPayloads []typeinfo.Type
+	ArmPayloads []types.Type
 	// Subject and Borrow are as in CaseTest. Spills is set when the subject is
 	// kept in a hidden local: the arms have patterns and Subject is neither a
 	// variable nor borrowed, so there is no place to read a payload from.
 	Subject ast.Expr
-	Borrow  *typeinfo.RefType
+	Borrow  *types.RefType
 	Spills  bool
 }
 
 // VariantConstruction records resolved enum construction without later path or field resolution.
 type VariantConstruction struct {
-	EnumType typeinfo.Type
+	EnumType types.Type
 	Case     int
-	Payload  typeinfo.Type
+	Payload  types.Type
 	Value    ast.Expr
 }
 
 // StructFieldAccess records ordinary field selection after pointer/reference normalization.
 type StructFieldAccess struct {
 	Field           int
-	Type            typeinfo.Type
-	DereferenceType typeinfo.Type
+	Type            types.Type
+	DereferenceType types.Type
 }
 
 // evidence is temporary typechecker scratch used to publish canonical THIR.
@@ -63,24 +63,24 @@ type evidence struct {
 }
 
 type expressionEvidence struct {
-	types                    map[source.NodeID]typeinfo.Type
+	types                    map[source.NodeID]types.Type
 	expandedDefaultBindings  map[source.NodeID]struct{}
-	caseCarriers             map[source.NodeID]typeinfo.Type
+	caseCarriers             map[source.NodeID]types.Type
 	casePaths                map[source.NodeID][]int
 	interfaceImplementations map[source.NodeID][]thir.InterfaceImplementation
-	implicitConversions      map[source.NodeID]typeinfo.Conversion
+	implicitConversions      map[source.NodeID]types.Conversion
 	stringConcatenations     map[source.NodeID]struct{}
 	structFields             map[source.NodeID]StructFieldAccess
 	constantIndexes          map[source.NodeID]thir.ConstantIndex
 	structLiteralFields      map[source.NodeID][]ast.Expr
 	variantConstructions     map[source.NodeID]VariantConstruction
-	valueUses                map[source.NodeID]typeinfo.UseKind
+	valueUses                map[source.NodeID]types.UseKind
 	referenceArguments       map[source.NodeID]bool
 }
 
 type callEvidence struct {
 	effectiveArguments map[source.NodeID][]ast.Expr
-	implicitArguments  map[source.NodeID]typeinfo.Type
+	implicitArguments  map[source.NodeID]types.Type
 	compilerCalls      map[source.NodeID]thir.CompilerCall
 }
 
@@ -96,23 +96,23 @@ type controlEvidence struct {
 func newEvidence() *evidence {
 	return &evidence{
 		expressions: expressionEvidence{
-			types:                    make(map[source.NodeID]typeinfo.Type),
+			types:                    make(map[source.NodeID]types.Type),
 			expandedDefaultBindings:  make(map[source.NodeID]struct{}),
-			caseCarriers:             make(map[source.NodeID]typeinfo.Type),
+			caseCarriers:             make(map[source.NodeID]types.Type),
 			casePaths:                make(map[source.NodeID][]int),
 			interfaceImplementations: make(map[source.NodeID][]thir.InterfaceImplementation),
-			implicitConversions:      make(map[source.NodeID]typeinfo.Conversion),
+			implicitConversions:      make(map[source.NodeID]types.Conversion),
 			stringConcatenations:     make(map[source.NodeID]struct{}),
 			structFields:             make(map[source.NodeID]StructFieldAccess),
 			constantIndexes:          make(map[source.NodeID]thir.ConstantIndex),
 			structLiteralFields:      make(map[source.NodeID][]ast.Expr),
 			variantConstructions:     make(map[source.NodeID]VariantConstruction),
-			valueUses:                make(map[source.NodeID]typeinfo.UseKind),
+			valueUses:                make(map[source.NodeID]types.UseKind),
 			referenceArguments:       make(map[source.NodeID]bool),
 		},
 		calls: callEvidence{
 			effectiveArguments: make(map[source.NodeID][]ast.Expr),
-			implicitArguments:  make(map[source.NodeID]typeinfo.Type),
+			implicitArguments:  make(map[source.NodeID]types.Type),
 			compilerCalls:      make(map[source.NodeID]thir.CompilerCall),
 		},
 		control: controlEvidence{
@@ -124,14 +124,14 @@ func newEvidence() *evidence {
 	}
 }
 
-func (r *evidence) RecordExprType(id source.NodeID, typ typeinfo.Type) {
+func (r *evidence) RecordExprType(id source.NodeID, typ types.Type) {
 	if r == nil || !id.IsValid() || typ == nil {
 		return
 	}
 	r.expressions.types[id] = typ
 }
 
-func (r *evidence) ExprType(id source.NodeID) typeinfo.Type {
+func (r *evidence) ExprType(id source.NodeID) types.Type {
 	if r == nil || !id.IsValid() {
 		return nil
 	}
@@ -149,7 +149,7 @@ func (r *evidence) MarkExpandedDefaultBinding(id source.NodeID) {
 // MarkCasePayload records that expression id reads the payload reached from a
 // place of type carrier through path, one case per level. A nil carrier
 // records that it reads the place itself.
-func (r *evidence) MarkCasePayload(id source.NodeID, carrier typeinfo.Type, path []int) {
+func (r *evidence) MarkCasePayload(id source.NodeID, carrier types.Type, path []int) {
 	if r != nil && id.IsValid() {
 		r.expressions.caseCarriers[id] = carrier
 		r.expressions.casePaths[id] = path
@@ -163,7 +163,7 @@ func (r *evidence) CasePath(id source.NodeID) []int {
 	return r.expressions.casePaths[id]
 }
 
-func (r *evidence) CaseCarrier(id source.NodeID) typeinfo.Type {
+func (r *evidence) CaseCarrier(id source.NodeID) types.Type {
 	if r == nil || !id.IsValid() {
 		return nil
 	}
@@ -192,15 +192,15 @@ func (r *evidence) InterfaceImplementations(id source.NodeID) []thir.InterfaceIm
 	return r.expressions.interfaceImplementations[id]
 }
 
-func (r *evidence) RecordImplicitConversion(id source.NodeID, conversion typeinfo.Conversion) {
+func (r *evidence) RecordImplicitConversion(id source.NodeID, conversion types.Conversion) {
 	if r != nil && id.IsValid() {
 		r.expressions.implicitConversions[id] = conversion
 	}
 }
 
-func (r *evidence) ImplicitConversion(id source.NodeID) (typeinfo.Conversion, bool) {
+func (r *evidence) ImplicitConversion(id source.NodeID) (types.Conversion, bool) {
 	if r == nil || !id.IsValid() {
-		return typeinfo.Conversion{}, false
+		return types.Conversion{}, false
 	}
 	conversion, ok := r.expressions.implicitConversions[id]
 	return conversion, ok
@@ -280,7 +280,7 @@ func (r *evidence) VariantConstruction(id source.NodeID) (VariantConstruction, b
 	return construction, ok
 }
 
-func (r *evidence) RecordValueUse(id source.NodeID, use typeinfo.UseKind) {
+func (r *evidence) RecordValueUse(id source.NodeID, use types.UseKind) {
 	if r != nil && id.IsValid() {
 		r.expressions.valueUses[id] = use
 	}
@@ -289,9 +289,9 @@ func (r *evidence) RecordValueUse(id source.NodeID, use typeinfo.UseKind) {
 // ValueUse exposes the use kind the typechecker decided for one expression.
 // Coverage is call arguments today, so an absent answer is normal rather than
 // a missing decision.
-func (r *evidence) ValueUse(id source.NodeID) (typeinfo.UseKind, bool) {
+func (r *evidence) ValueUse(id source.NodeID) (types.UseKind, bool) {
 	if r == nil || !id.IsValid() {
-		return typeinfo.UseRead, false
+		return types.UseRead, false
 	}
 	kind, found := r.expressions.valueUses[id]
 	return kind, found
@@ -341,13 +341,13 @@ func (r *evidence) CallArgumentsOrSource(call *ast.CallExpr) []ast.Expr {
 	return call.Args
 }
 
-func (r *evidence) RecordImplicitCallArgument(id source.NodeID, typ typeinfo.Type) {
+func (r *evidence) RecordImplicitCallArgument(id source.NodeID, typ types.Type) {
 	if r != nil && id.IsValid() && typ != nil {
 		r.calls.implicitArguments[id] = typ
 	}
 }
 
-func (r *evidence) ImplicitCallArgument(id source.NodeID) typeinfo.Type {
+func (r *evidence) ImplicitCallArgument(id source.NodeID) types.Type {
 	if r == nil || !id.IsValid() {
 		return nil
 	}

@@ -1,4 +1,4 @@
-package typeinfo
+package types
 
 // RuntimeTypeVisitor is the operation-specific dispatch contract for runtime IR
 // type lowering. Implementations own lowering policy; semantic types only make

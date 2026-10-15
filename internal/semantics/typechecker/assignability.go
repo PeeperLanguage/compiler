@@ -9,21 +9,21 @@ import (
 	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 )
 
-func (c *checker) isAssignable(dst, src typeinfo.Type, site ast.Expr) bool {
+func (c *checker) isAssignable(dst, src types.Type, site ast.Expr) bool {
 	if c == nil {
-		return typeinfo.Assignable(dst, src)
+		return types.Assignable(dst, src)
 	}
-	conversion := typeinfo.CheckCompatibility(dst, src)
-	if conversion.Compatibility == typeinfo.Compatible {
+	conversion := types.CheckCompatibility(dst, src)
+	if conversion.Compatibility == types.Compatible {
 		c.recordImplicitConversion(site, conversion)
 		return true
 	}
-	if dstTarget, dstMutable, dstRef := typeinfo.ReferenceTarget(typeinfo.Underlying(dst)); dstRef {
-		srcTarget, srcMutable, srcRef := typeinfo.ReferenceTarget(typeinfo.Underlying(src))
-		iface, interfaceRef := typeinfo.InterfaceTypeOf(dstTarget)
+	if dstTarget, dstMutable, dstRef := types.ReferenceTarget(types.Underlying(dst)); dstRef {
+		srcTarget, srcMutable, srcRef := types.ReferenceTarget(types.Underlying(src))
+		iface, interfaceRef := types.InterfaceTypeOf(dstTarget)
 		if allowImplicitInterfaceConversion && srcRef && interfaceRef && (!dstMutable || srcMutable) {
 			implementations, _, ok := c.resolveInterfaceImplementations(iface, srcTarget)
 			if ok {
@@ -32,9 +32,9 @@ func (c *checker) isAssignable(dst, src typeinfo.Type, site ast.Expr) bool {
 			return ok
 		}
 	}
-	if dstTarget, dstOwned := typeinfo.PointerTarget(typeinfo.Underlying(dst)); dstOwned {
-		srcTarget, srcOwned := typeinfo.PointerTarget(typeinfo.Underlying(src))
-		iface, interfaceOwned := typeinfo.InterfaceTypeOf(dstTarget)
+	if dstTarget, dstOwned := types.PointerTarget(types.Underlying(dst)); dstOwned {
+		srcTarget, srcOwned := types.PointerTarget(types.Underlying(src))
+		iface, interfaceOwned := types.InterfaceTypeOf(dstTarget)
 		if allowImplicitInterfaceConversion && srcOwned && interfaceOwned {
 			implementations, _, ok := c.resolveInterfaceImplementations(iface, srcTarget)
 			if ok {
@@ -46,16 +46,16 @@ func (c *checker) isAssignable(dst, src typeinfo.Type, site ast.Expr) bool {
 	return false
 }
 
-func (c *checker) recordImplicitConversion(expr ast.Expr, conversion typeinfo.Conversion) {
+func (c *checker) recordImplicitConversion(expr ast.Expr, conversion types.Conversion) {
 	if c == nil || c.module == nil || c.evidence == nil || expr == nil ||
-		conversion.Kind == typeinfo.ConversionNone || conversion.Kind == typeinfo.ConversionRecovery ||
-		conversion.Kind == typeinfo.ConversionIdentity || conversion.Compatibility != typeinfo.Compatible {
+		conversion.Kind == types.ConversionNone || conversion.Kind == types.ConversionRecovery ||
+		conversion.Kind == types.ConversionIdentity || conversion.Compatibility != types.Compatible {
 		return
 	}
 	c.evidence.RecordImplicitConversion(expr.ID(), conversion)
 }
 
-func (c *checker) resolveInterfaceImplementations(iface *typeinfo.InterfaceType, src typeinfo.Type) ([]thir.InterfaceImplementation, []string, bool) {
+func (c *checker) resolveInterfaceImplementations(iface *types.InterfaceType, src types.Type) ([]thir.InterfaceImplementation, []string, bool) {
 	if c == nil || iface == nil || src == nil {
 		return nil, nil, false
 	}
@@ -72,8 +72,8 @@ func (c *checker) resolveInterfaceImplementations(iface *typeinfo.InterfaceType,
 	for _, required := range iface.Methods {
 		fnType := required.CallableTypeFor(owner)
 		actual, ok := c.lookupDeclaredCallableMember(owner, required.Name)
-		actualType, isCallable := actual.Type.(*typeinfo.FuncType)
-		if !ok || actual.Symbol == nil || !isCallable || actualType == nil || !typeinfo.IsSameType(fnType, actualType) {
+		actualType, isCallable := actual.Type.(*types.FuncType)
+		if !ok || actual.Symbol == nil || !isCallable || actualType == nil || !types.IsSameType(fnType, actualType) {
 			missing = append(missing, required.Name)
 			continue
 		}
@@ -82,12 +82,12 @@ func (c *checker) resolveInterfaceImplementations(iface *typeinfo.InterfaceType,
 			continue
 		}
 		receiver := fnType.Params[0]
-		if _, _, referenceReceiver := typeinfo.ReferenceTarget(typeinfo.Underlying(receiver)); referenceReceiver {
+		if _, _, referenceReceiver := types.ReferenceTarget(types.Underlying(receiver)); referenceReceiver {
 			if !isValidReceiverType(receiver, src) {
 				missing = append(missing, required.Name)
 				continue
 			}
-		} else if !typeinfo.Assignable(receiver, src) {
+		} else if !types.Assignable(receiver, src) {
 			missing = append(missing, required.Name)
 			continue
 		}
@@ -105,8 +105,8 @@ func (c *checker) storeInterfaceImplementations(expr ast.Expr, implementations [
 	c.evidence.RecordInterfaceImplementations(expr.ID(), implementations)
 }
 
-func (c *checker) addInterfaceHint(d *diagnostics.Diagnostic, dst, src typeinfo.Type) {
-	iface, ok := typeinfo.InterfaceTypeOf(dst)
+func (c *checker) addInterfaceHint(d *diagnostics.Diagnostic, dst, src types.Type) {
+	iface, ok := types.InterfaceTypeOf(dst)
 	if !ok || iface == nil {
 		return
 	}
@@ -116,51 +116,51 @@ func (c *checker) addInterfaceHint(d *diagnostics.Diagnostic, dst, src typeinfo.
 	}
 }
 
-func (c *checker) interfaceImplementorType(src typeinfo.Type) typeinfo.Type {
+func (c *checker) interfaceImplementorType(src types.Type) types.Type {
 	if src == nil {
 		return nil
 	}
-	if target, ok := typeinfo.PointerTarget(src); ok {
+	if target, ok := types.PointerTarget(src); ok {
 		return target
 	}
-	if target, _, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(src)); ok {
+	if target, _, ok := types.ReferenceTarget(types.Underlying(src)); ok {
 		return target
 	}
 	return src
 }
 
-func isValidReceiverType(paramType, selfType typeinfo.Type) bool {
+func isValidReceiverType(paramType, selfType types.Type) bool {
 	if paramType == nil || selfType == nil {
 		return false
 	}
-	if typeinfo.IsSameType(paramType, selfType) {
+	if types.IsSameType(paramType, selfType) {
 		return true
 	}
-	target, ok := typeinfo.PointerTarget(paramType)
+	target, ok := types.PointerTarget(paramType)
 	if ok {
-		return typeinfo.IsSameType(target, selfType)
+		return types.IsSameType(target, selfType)
 	}
-	target, _, ok = typeinfo.ReferenceTarget(typeinfo.Underlying(paramType))
-	return ok && typeinfo.IsSameType(target, selfType)
+	target, _, ok = types.ReferenceTarget(types.Underlying(paramType))
+	return ok && types.IsSameType(target, selfType)
 }
 
-func (c *checker) matchesReceiverTarget(target, arg typeinfo.Type) bool {
+func (c *checker) matchesReceiverTarget(target, arg types.Type) bool {
 	if c == nil || target == nil || arg == nil {
 		return false
 	}
-	return typeinfo.IsSameType(target, arg) || c.isAssignable(target, arg, nil) || c.isAssignable(arg, target, nil)
+	return types.IsSameType(target, arg) || c.isAssignable(target, arg, nil) || c.isAssignable(arg, target, nil)
 }
 
 type callableMember struct {
-	Type   typeinfo.Type
+	Type   types.Type
 	Symbol *symbols.Symbol
 }
 
-func (c *checker) lookupCallableMember(baseType typeinfo.Type, name string) (callableMember, bool) {
+func (c *checker) lookupCallableMember(baseType types.Type, name string) (callableMember, bool) {
 	if c == nil {
 		return callableMember{}, false
 	}
-	if iface, ok := typeinfo.InterfaceTypeOf(baseType); ok {
+	if iface, ok := types.InterfaceTypeOf(baseType); ok {
 		for _, method := range iface.Methods {
 			if method.Name != name {
 				continue
@@ -171,7 +171,7 @@ func (c *checker) lookupCallableMember(baseType typeinfo.Type, name string) (cal
 	return c.lookupDeclaredCallableMember(baseType, name)
 }
 
-func (c *checker) lookupDeclaredCallableMember(baseType typeinfo.Type, name string) (callableMember, bool) {
+func (c *checker) lookupDeclaredCallableMember(baseType types.Type, name string) (callableMember, bool) {
 	if c == nil || c.module == nil || c.module.SymbolIndex == nil {
 		return callableMember{}, false
 	}
@@ -188,12 +188,12 @@ func (c *checker) lookupDeclaredCallableMember(baseType typeinfo.Type, name stri
 }
 
 // availableMethods returns the names of all methods defined on baseType.
-func (c *checker) availableMethods(baseType typeinfo.Type) []string {
+func (c *checker) availableMethods(baseType types.Type) []string {
 	if c == nil {
 		return nil
 	}
 	var names []string
-	if iface, ok := typeinfo.InterfaceTypeOf(baseType); ok {
+	if iface, ok := types.InterfaceTypeOf(baseType); ok {
 		for _, m := range iface.Methods {
 			names = append(names, m.Name)
 		}
@@ -209,8 +209,8 @@ func (c *checker) availableMethods(baseType typeinfo.Type) []string {
 }
 
 // availableFields returns the names of all fields in a struct type.
-func availableFields(t typeinfo.Type) []string {
-	strct, ok := typeinfo.Underlying(t).(*typeinfo.StructType)
+func availableFields(t types.Type) []string {
+	strct, ok := types.Underlying(t).(*types.StructType)
 	if !ok || strct == nil {
 		return nil
 	}
@@ -221,24 +221,24 @@ func availableFields(t typeinfo.Type) []string {
 	return names
 }
 
-func (c *checker) boundInterfaceMethodType(method typeinfo.Method, receiverType typeinfo.Type) typeinfo.Type {
+func (c *checker) boundInterfaceMethodType(method types.Method, receiverType types.Type) types.Type {
 	selfType := receiverType
-	if target, _, ok := typeinfo.ReferenceTarget(typeinfo.Underlying(receiverType)); ok {
+	if target, _, ok := types.ReferenceTarget(types.Underlying(receiverType)); ok {
 		selfType = target
 	}
 	fnType := method.CallableTypeFor(selfType)
 	if len(fnType.Params) == 0 {
 		return fnType
 	}
-	if _, _, referenceReceiver := typeinfo.ReferenceTarget(typeinfo.Underlying(fnType.Params[0])); !referenceReceiver {
-		if _, _, borrowedCarrier := typeinfo.ReferenceTarget(typeinfo.Underlying(receiverType)); !borrowedCarrier {
+	if _, _, referenceReceiver := types.ReferenceTarget(types.Underlying(fnType.Params[0])); !referenceReceiver {
+		if _, _, borrowedCarrier := types.ReferenceTarget(types.Underlying(receiverType)); !borrowedCarrier {
 			fnType.Params[0] = receiverType
 		}
 	}
 	return fnType
 }
 
-func (c *checker) mutableAddressableExpr(scope *symbols.Scope, expr ast.Expr) (bool, typeinfo.Type, *symbols.Symbol) {
+func (c *checker) mutableAddressableExpr(scope *symbols.Scope, expr ast.Expr) (bool, types.Type, *symbols.Symbol) {
 	if c == nil {
 		return false, nil, nil
 	}
@@ -280,9 +280,9 @@ func (c *checker) mutableImplicitArgumentDiagnostic(scope *symbols.Scope, expr a
 // expression. Imported values such as functions must keep their bound type so
 // call analysis can derive argument and return types from the same canonical
 // symbol state used elsewhere in the pipeline.
-func (c *checker) qualifiedScopeType(scope *symbols.Scope, node *ast.ScopeResolution) typeinfo.Type {
+func (c *checker) qualifiedScopeType(scope *symbols.Scope, node *ast.ScopeResolution) types.Type {
 	if c == nil || node == nil {
-		return &typeinfo.InvalidType{}
+		return &types.InvalidType{}
 	}
 	var sym *symbols.Symbol
 	if c.module != nil && c.module.SymbolIndex != nil {
@@ -291,11 +291,11 @@ func (c *checker) qualifiedScopeType(scope *symbols.Scope, node *ast.ScopeResolu
 	if sym == nil {
 		qualifier, member, imported := node.ImportValueMember()
 		if !imported {
-			return &typeinfo.InvalidType{}
+			return &types.InvalidType{}
 		}
 		resolved, ok := c.ctx.TypeResolver.LookupImportedSymbol(c.module, qualifier.Name, member.Name)
 		if !ok || resolved.Symbol == nil {
-			return &typeinfo.InvalidType{}
+			return &types.InvalidType{}
 		}
 		sym = resolved.Symbol
 	}
@@ -307,7 +307,7 @@ func (c *checker) qualifiedScopeType(scope *symbols.Scope, node *ast.ScopeResolu
 	}
 	t, ok := symbols.GetSymbolType(sym)
 	if !ok || t == nil {
-		return &typeinfo.UnknownType{}
+		return &types.UnknownType{}
 	}
 	return t
 }

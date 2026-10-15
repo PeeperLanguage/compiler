@@ -5,22 +5,22 @@ import (
 
 	"compiler/internal/frontend/ast"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 )
 
 func TestMutableAddressablePreservesProjectionRestrictions(t *testing.T) {
-	value := typeinfo.DefaultIntegerType()
-	outer := &typeinfo.StructType{}
-	owner := &typeinfo.OwnedPtrType{Target: outer}
-	shared := &typeinfo.RefType{Target: outer}
-	mutable := &typeinfo.RefType{Target: outer, IsMutable: true}
+	value := types.DefaultIntegerType()
+	outer := &types.StructType{}
+	owner := &types.OwnedPtrType{Target: outer}
+	shared := &types.RefType{Target: outer}
+	mutable := &types.RefType{Target: outer, IsMutable: true}
 	for _, test := range []struct {
 		name        string
-		rootType    typeinfo.Type
-		childType   typeinfo.Type
+		rootType    types.Type
+		childType   types.Type
 		mutableRoot bool
 		wantMutable bool
-		wantShared  typeinfo.Type
+		wantShared  types.Type
 		wantBinding bool
 	}{
 		{name: "shared to owner", rootType: shared, childType: owner, wantShared: outer},
@@ -39,7 +39,7 @@ func TestMutableAddressablePreservesProjectionRestrictions(t *testing.T) {
 		{name: "mutable reference to value", rootType: mutable, childType: value, wantMutable: true},
 		{name: "immutable value to value", rootType: outer, childType: value},
 		{name: "mutable value to value", rootType: outer, childType: value, mutableRoot: true, wantMutable: true, wantBinding: true},
-		{name: "raw pointer cutoff", rootType: shared, childType: &typeinfo.RawPtrType{}, wantMutable: true},
+		{name: "raw pointer cutoff", rootType: shared, childType: &types.RawPtrType{}, wantMutable: true},
 	} {
 		for _, indexed := range []bool{false, true} {
 			name := test.name + "/field"
@@ -58,7 +58,7 @@ func TestMutableAddressablePreservesProjectionRestrictions(t *testing.T) {
 					child = &ast.IndexExpr{Expr: root, Index: &ast.NumberLit{Value: "0"}}
 				}
 				field := &ast.SelectorExpr{Expr: child, Name: &ast.Ident{Name: "value"}}
-				exprType := func(expr ast.Expr) typeinfo.Type {
+				exprType := func(expr ast.Expr) types.Type {
 					switch expr {
 					case root:
 						return test.rootType

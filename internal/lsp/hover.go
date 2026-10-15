@@ -8,8 +8,8 @@ import (
 	"compiler/internal/module"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/semantics/typeresolution"
+	"compiler/internal/semantics/types"
 	"compiler/internal/source"
 )
 
@@ -31,8 +31,8 @@ type hoverSubject struct {
 	Node            ast.Node
 	Location        *source.Location
 	Symbol          *symbols.Symbol
-	ExprType        typeinfo.Type
-	ResolvedType    typeinfo.Type
+	ExprType        types.Type
+	ResolvedType    types.Type
 	TypeQueryStatus typeresolution.QueryStatus
 	Decl            ast.Node
 	ResolvedImport  *module.ResolvedImport
@@ -359,7 +359,7 @@ func resolveInterfaceSelectorMethodHoverSubject(cc *cursorContext, sel *ast.Sele
 	if !ok {
 		return nil
 	}
-	iface, ok := typeinfo.InterfaceTypeOf(baseType)
+	iface, ok := types.InterfaceTypeOf(baseType)
 	if !ok || iface == nil {
 		return nil
 	}
@@ -442,7 +442,7 @@ func resolveInterfaceMethodNameSymbol(ident *ast.Ident, parents map[source.NodeI
 		return nil
 	}
 	declarationType, _ := symbols.GetSymbolType(module.SymbolIndex.Symbol(decl.Name))
-	resolved, _ := typeinfo.Underlying(declarationType).(*typeinfo.InterfaceType)
+	resolved, _ := types.Underlying(declarationType).(*types.InterfaceType)
 	if resolved == nil {
 		return nil
 	}
@@ -455,7 +455,7 @@ func resolveInterfaceMethodNameSymbol(ident *ast.Ident, parents map[source.NodeI
 	return nil
 }
 
-func interfaceMethodSymbol(ident *ast.Ident, method *typeinfo.Method) *symbols.Symbol {
+func interfaceMethodSymbol(ident *ast.Ident, method *types.Method) *symbols.Symbol {
 	if ident == nil || method == nil {
 		return nil
 	}
@@ -464,7 +464,7 @@ func interfaceMethodSymbol(ident *ast.Ident, method *typeinfo.Method) *symbols.S
 	return sym
 }
 
-func lookupMethodSet(ctx *project.CompilerContext, typ typeinfo.Type) []*symbols.Symbol {
+func lookupMethodSet(ctx *project.CompilerContext, typ types.Type) []*symbols.Symbol {
 	if ctx == nil || typ == nil {
 		return nil
 	}
@@ -480,7 +480,7 @@ func lookupMethodSet(ctx *project.CompilerContext, typ typeinfo.Type) []*symbols
 			}
 			signature := sym.Name
 			if methodType, ok := symbols.GetSymbolType(sym); ok && methodType != nil {
-				signature += "|" + typeinfo.TypeText(methodType)
+				signature += "|" + types.TypeText(methodType)
 			}
 			if sym.Location != nil && sym.Location.Filename != nil && sym.Location.Start != nil {
 				signature += fmt.Sprintf("|%s:%d:%d", *sym.Location.Filename, sym.Location.Start.Line, sym.Location.Start.Column)
@@ -534,7 +534,7 @@ func renderHoverSubject(subject *hoverSubject) string {
 		if subject.ExprType == nil {
 			return ""
 		}
-		text = fmt.Sprintf("(expr): %s", typeinfo.TypeText(subject.ExprType))
+		text = fmt.Sprintf("(expr): %s", types.TypeText(subject.ExprType))
 	case hoverSubjectType:
 		switch subject.TypeQueryStatus {
 		case typeresolution.QueryLoading:
@@ -581,7 +581,7 @@ func renderHoverSubject(subject *hoverSubject) string {
 	return fmt.Sprintf("```peeper\n%s\n```", text)
 }
 
-func renderTypeDetails(typ typeinfo.Type, methods []*symbols.Symbol) string {
+func renderTypeDetails(typ types.Type, methods []*symbols.Symbol) string {
 	body := formatHoverTypeBody(typ)
 	methodText := formatHoverMethods(methods)
 	switch {
@@ -596,17 +596,17 @@ func renderTypeDetails(typ typeinfo.Type, methods []*symbols.Symbol) string {
 	}
 }
 
-func formatHoverTypeBody(typ typeinfo.Type) string {
+func formatHoverTypeBody(typ types.Type) string {
 	switch t := typ.(type) {
-	case *typeinfo.DefinedType:
+	case *types.DefinedType:
 		if t == nil || t.Underlying == nil {
 			return ""
 		}
 		if body := formatHoverTypeBody(t.Underlying); body != "" {
 			return body
 		}
-		return typeinfo.TypeText(t.Underlying)
-	case *typeinfo.StructType:
+		return types.TypeText(t.Underlying)
+	case *types.StructType:
 		if t == nil {
 			return ""
 		}
@@ -616,12 +616,12 @@ func formatHoverTypeBody(typ typeinfo.Type) string {
 			b.WriteString("  ")
 			b.WriteString(field.Name)
 			b.WriteString(": ")
-			b.WriteString(typeinfo.TypeText(field.Type))
+			b.WriteString(types.TypeText(field.Type))
 			b.WriteString(",\n")
 		}
 		b.WriteString("}")
 		return b.String()
-	case *typeinfo.InterfaceType:
+	case *types.InterfaceType:
 		if t == nil {
 			return ""
 		}
@@ -636,7 +636,7 @@ func formatHoverTypeBody(typ typeinfo.Type) string {
 		}
 		b.WriteString("}")
 		return b.String()
-	case *typeinfo.EnumType:
+	case *types.EnumType:
 		if t == nil {
 			return ""
 		}
@@ -647,7 +647,7 @@ func formatHoverTypeBody(typ typeinfo.Type) string {
 			b.WriteString(variant.Name)
 			if variant.Payload != nil {
 				b.WriteString(": ")
-				b.WriteString(typeinfo.TypeText(variant.Payload))
+				b.WriteString(types.TypeText(variant.Payload))
 			}
 			b.WriteString(",\n")
 		}
@@ -677,25 +677,25 @@ func formatHoverMethods(methods []*symbols.Symbol) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-func hoverTypeLabel(typ typeinfo.Type) (string, bool) {
+func hoverTypeLabel(typ types.Type) (string, bool) {
 	if typ == nil {
 		return "", false
 	}
 	switch t := typ.(type) {
-	case *typeinfo.NamedType:
+	case *types.NamedType:
 		if t == nil {
 			return "", false
 		}
 		return t.Name, true
-	case *typeinfo.DefinedType:
+	case *types.DefinedType:
 		if t == nil {
 			return "", false
 		}
-		return typeinfo.TypeText(t), true
-	case *typeinfo.StructType, *typeinfo.InterfaceType, *typeinfo.EnumType:
+		return types.TypeText(t), true
+	case *types.StructType, *types.InterfaceType, *types.EnumType:
 		return "", false
 	default:
-		text := typeinfo.TypeText(typ)
+		text := types.TypeText(typ)
 		return text, text != ""
 	}
 }

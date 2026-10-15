@@ -9,7 +9,7 @@ import (
 	"compiler/internal/moduleid"
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/internal/source"
 )
 
@@ -97,7 +97,7 @@ type Function struct {
 	Symbol                *symbols.Symbol
 	IsEntrypointShape     bool
 	Params                []Param
-	ReturnType            typeinfo.Type
+	ReturnType            types.Type
 	ReturnOriginsLocation *source.Location
 	ReturnTypeText        string
 	HasReturnValue        bool
@@ -111,7 +111,7 @@ type Param struct {
 }
 
 // Type is the parameter's semantic type, held by its symbol.
-func (p Param) Type() typeinfo.Type {
+func (p Param) Type() types.Type {
 	if p.Symbol == nil {
 		return nil
 	}
@@ -237,14 +237,14 @@ type Stmt interface {
 type Expr interface {
 	Node
 	exprNode()
-	ExprType() typeinfo.Type
+	ExprType() types.Type
 	ExprPlace() *Place
-	CaseCarrierType() typeinfo.Type
+	CaseCarrierType() types.Type
 	PayloadPath() []int
-	Conversion() *typeinfo.Conversion
-	ImplicitReferenceType() typeinfo.Type
+	Conversion() *types.Conversion
+	ImplicitReferenceType() types.Type
 	InterfaceImplementations() []InterfaceImplementation
-	UseKind() (typeinfo.UseKind, bool)
+	UseKind() (types.UseKind, bool)
 	ReferenceArgInfo() (bool, bool)
 	LowerExpression(ExpressionLowerer) ir.Expr
 	AnalyzeFlow(FlowAnalyzer)
@@ -261,36 +261,36 @@ func (s StmtInfo) SourceInfo() ir.SourceInfo { return s.Source }
 
 type ExprInfo struct {
 	Source ir.SourceInfo
-	Type   typeinfo.Type
+	Type   types.Type
 	// CaseCarrier is set when the expression reads the payload of a place
 	// that holds one case: Type is that payload, CaseCarrier the place's own
 	// type, and CasePath the case read through at each level from one to the
 	// other. Flow analysis verifies the cases at this use.
-	CaseCarrier                typeinfo.Type
+	CaseCarrier                types.Type
 	CasePath                   []int
-	ConversionInfo             *typeinfo.Conversion
-	Use                        typeinfo.UseKind
+	ConversionInfo             *types.Conversion
+	Use                        types.UseKind
 	HasUse                     bool
 	HasReferenceArgument       bool
 	IsReferenceArgumentMutable bool
-	ImplicitReference          typeinfo.Type
+	ImplicitReference          types.Type
 	Implementations            []InterfaceImplementation
 	Place                      *Place
 }
 
-func (e ExprInfo) thirNode()                            {}
-func (e ExprInfo) exprNode()                            {}
-func (e ExprInfo) SourceInfo() ir.SourceInfo            { return e.Source }
-func (e ExprInfo) ExprType() typeinfo.Type              { return e.Type }
-func (e ExprInfo) ExprPlace() *Place                    { return e.Place }
-func (e ExprInfo) CaseCarrierType() typeinfo.Type       { return e.CaseCarrier }
-func (e ExprInfo) PayloadPath() []int                   { return e.CasePath }
-func (e ExprInfo) Conversion() *typeinfo.Conversion     { return e.ConversionInfo }
-func (e ExprInfo) ImplicitReferenceType() typeinfo.Type { return e.ImplicitReference }
+func (e ExprInfo) thirNode()                         {}
+func (e ExprInfo) exprNode()                         {}
+func (e ExprInfo) SourceInfo() ir.SourceInfo         { return e.Source }
+func (e ExprInfo) ExprType() types.Type              { return e.Type }
+func (e ExprInfo) ExprPlace() *Place                 { return e.Place }
+func (e ExprInfo) CaseCarrierType() types.Type       { return e.CaseCarrier }
+func (e ExprInfo) PayloadPath() []int                { return e.CasePath }
+func (e ExprInfo) Conversion() *types.Conversion     { return e.ConversionInfo }
+func (e ExprInfo) ImplicitReferenceType() types.Type { return e.ImplicitReference }
 
 // StoredType is the type of the storage the expression names: the carrier
 // when the expression reads a narrowed place as its payload.
-func (e ExprInfo) StoredType() typeinfo.Type {
+func (e ExprInfo) StoredType() types.Type {
 	if e.CaseCarrier != nil {
 		return e.CaseCarrier
 	}
@@ -299,7 +299,7 @@ func (e ExprInfo) StoredType() typeinfo.Type {
 func (e ExprInfo) InterfaceImplementations() []InterfaceImplementation {
 	return e.Implementations
 }
-func (e ExprInfo) UseKind() (typeinfo.UseKind, bool) {
+func (e ExprInfo) UseKind() (types.UseKind, bool) {
 	return e.Use, e.HasUse
 }
 func (e ExprInfo) ReferenceArgInfo() (bool, bool) {
@@ -308,7 +308,7 @@ func (e ExprInfo) ReferenceArgInfo() (bool, bool) {
 
 type InterfaceImplementation struct {
 	Symbol       *symbols.Symbol
-	CallableType *typeinfo.FuncType
+	CallableType *types.FuncType
 }
 
 // Place names addressable storage without retaining syntax. Temporary is set
@@ -337,13 +337,13 @@ type PlaceProjection struct {
 	Field           int
 	Index           Expr
 	ConstantIndex   *ConstantIndex
-	DereferenceType typeinfo.Type
-	Type            typeinfo.Type
+	DereferenceType types.Type
+	Type            types.Type
 }
 
 type ConstantIndex struct {
 	Text string
-	Type typeinfo.Type
+	Type types.Type
 }
 
 type Block struct {
@@ -371,7 +371,7 @@ type Destructure struct {
 type DestructureBinding struct {
 	Source ir.SourceInfo
 	Field  int
-	Type   typeinfo.Type
+	Type   types.Type
 	Symbol *symbols.Symbol
 }
 
@@ -426,7 +426,7 @@ type Continue struct{ StmtInfo }
 type Match struct {
 	StmtInfo
 	Subject   Expr
-	EnumType  typeinfo.Type
+	EnumType  types.Type
 	CaseCount int
 	Arms      []MatchArm
 }
@@ -478,7 +478,7 @@ type IterationPlan interface {
 // evaluated exclusive upper bound; Ordinal counts iterations and is set
 // exactly when the loop binds an index name.
 type RangeIteration struct {
-	ElementType        typeinfo.Type
+	ElementType        types.Type
 	Cursor             *symbols.Symbol
 	Limit              *symbols.Symbol
 	Ordinal            *symbols.Symbol
@@ -494,10 +494,10 @@ func (p *RangeIteration) IsGuaranteedEntry() bool {
 // iterated storage for the loop's lifetime, borrowed when CarrierType is a
 // reference; the cursor indexes through it.
 type SequenceIteration struct {
-	ElementType        typeinfo.Type
+	ElementType        types.Type
 	Cursor             *symbols.Symbol
 	Carrier            *symbols.Symbol
-	CarrierType        typeinfo.Type
+	CarrierType        types.Type
 	HasGuaranteedEntry bool
 }
 
@@ -563,7 +563,7 @@ type Field struct {
 
 type FieldAccess struct {
 	Field           int
-	DereferenceType typeinfo.Type
+	DereferenceType types.Type
 }
 
 type Index struct {
@@ -595,7 +595,7 @@ type Variant struct {
 	ExprInfo
 	Case        int
 	Payload     Expr
-	PayloadType typeinfo.Type
+	PayloadType types.Type
 }
 
 type ArrayLiteral struct {
@@ -643,7 +643,7 @@ type CaseTest struct {
 	Case            int
 	MatchesWhenTrue bool
 	CaseCount       int
-	Family          typeinfo.VariantFamily
+	Family          types.VariantFamily
 }
 
 // CaseTestOf returns the case test expr makes, or nil for one that tests no

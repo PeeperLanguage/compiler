@@ -8,7 +8,7 @@ import (
 	"compiler/internal/module"
 	"compiler/internal/project"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/internal/source"
 	"compiler/pkg/peeper"
 )
@@ -36,7 +36,7 @@ func TestQualifiedBindingBorrowMutability(t *testing.T) {
 				Segments:     []ast.PathSegment{{Name: &ast.Ident{Name: "external"}}, {Name: &ast.Ident{Name: "value"}}},
 			}
 			bound := symbols.New(symbols.ProjectedSymbolID(test.kind, "value"), "value", test.kind, &ast.LetDecl{IsMutable: test.mutable}, nil)
-			bound.BindType(typeinfo.DefaultIntegerType())
+			bound.BindType(types.DefaultIntegerType())
 			mod.SymbolIndex.Bind(path, bound)
 			scope := symbols.NewScope(nil)
 			shadow := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolVar, "shadow"), "value", symbols.SymbolVar, &ast.LetDecl{IsMutable: !test.mutable}, nil)

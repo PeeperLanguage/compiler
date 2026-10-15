@@ -12,7 +12,7 @@ change-path evidence.
 
 Peeper uses four complementary mechanisms:
 
-1. **Canonical structure** — `ast.Inspect`, `typeinfo.ForEachChild`,
+1. **Canonical structure** — `ast.Inspect`, `types.ForEachChild`,
    `place.Project`/`Decompose`, and `graph.Directed` ensure structural knowledge is
    written once.
 2. **Canonical semantic artifacts** — THIR, typed CFG edges/sites, `analysis.Module`, and symbol state prevent downstream rediscovery; the private effect visitor makes transient semantic operations exhaustive for consumers.
@@ -35,9 +35,9 @@ copy/drop behavior follows automatically.
 | Concern | API |
 | --- | --- |
 | AST recursion | `ast.Inspect` / node `forEachChild` |
-| semantic type structure | sealed `typeinfo.Type.structure` |
-| semantic type traversal | `typeinfo.ForEachChild` / `TypeChildRelation` |
-| type ownership composition | sealed `typeinfo.Type.ownership` |
+| semantic type structure | sealed `types.Type.structure` |
+| semantic type traversal | `types.ForEachChild` / `TypeChildRelation` |
+| type ownership composition | sealed `types.Type.ownership` |
 | place/projection grammar | `place.Project`, `place.Decompose` |
 | graph adjacency | `graph.Directed` |
 | fixed-point scheduling | `graph.Worklist` |

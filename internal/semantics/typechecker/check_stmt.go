@@ -12,8 +12,8 @@ import (
 	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/semantics/typeresolution"
+	"compiler/internal/semantics/types"
 	"compiler/internal/source"
 	"compiler/pkg/typednil"
 )
@@ -64,20 +64,20 @@ func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt) {
 			return
 		}
 		retType := c.requireValueType(node.Value, c.typeExpr(scope, node.Value, c.returnType), "return")
-		if typeinfo.IsInvalidOrUnknown(retType) {
+		if types.IsInvalidOrUnknown(retType) {
 			return
 		}
 		if c.rejectTemporaryBorrowEscape(scope, node.Value, "return") {
 			return
 		}
 		if !c.isAssignable(c.returnType, retType, node.Value) {
-			returned := typeinfo.TypeText(retType)
+			returned := types.TypeText(retType)
 			d := typeMismatchError(node.Value,
-				fmt.Sprintf("cannot return %s from function returning %s", returned, typeinfo.TypeText(c.returnType))).
+				fmt.Sprintf("cannot return %s from function returning %s", returned, types.TypeText(c.returnType))).
 				WithPrimaryLabel(ast.LocOf(node.Value), "you returned "+returned)
 			if c.fn.ReturnType != nil {
 				d.WithSecondaryLabel(ast.LocOf(c.fn.ReturnType),
-					fmt.Sprintf("return type is %s", typeinfo.TypeText(c.returnType)))
+					fmt.Sprintf("return type is %s", types.TypeText(c.returnType)))
 			}
 			c.addInterfaceHint(d, c.returnType, retType)
 			c.ctx.Diagnostics.Add(d)
@@ -87,7 +87,7 @@ func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt) {
 			return // resolver already diagnosed missing condition
 		}
 		condType := c.typeExpr(scope, node.Cond, nil)
-		if condType != nil && !typeinfo.IsInvalidOrUnknown(condType) && !typeinfo.IsCondition(condType) {
+		if condType != nil && !types.IsInvalidOrUnknown(condType) && !types.IsCondition(condType) {
 			c.ctx.Diagnostics.Add(explicitBoolCastRequiredError(node.Cond, "if condition must be bool").Isolate())
 		}
 		elseBlock, _ := node.Else.(*ast.BlockStmt)
@@ -101,7 +101,7 @@ func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt) {
 		}
 		if node.Cond != nil {
 			condType := c.typeExpr(scope, node.Cond, nil)
-			if condType != nil && !typeinfo.IsInvalidOrUnknown(condType) && !typeinfo.IsCondition(condType) {
+			if condType != nil && !types.IsInvalidOrUnknown(condType) && !types.IsCondition(condType) {
 				c.ctx.Diagnostics.Add(explicitBoolCastRequiredError(node.Cond, "for condition must be bool").Isolate())
 			}
 			c.bindPayloadNames(node.Cond, node.Body, nil, nil)
@@ -142,13 +142,13 @@ func (c *checker) checkStmt(scope *symbols.Scope, stmt ast.Stmt) {
 // later is never dropped unnoticed.
 func (c *checker) checkDestructure(scope *symbols.Scope, node *ast.DestructureStmt) {
 	valueType := c.requireValueType(node.Value, c.typeExpr(scope, node.Value, nil), "destructure value")
-	if typeinfo.IsInvalidOrUnknown(valueType) {
+	if types.IsInvalidOrUnknown(valueType) {
 		return
 	}
-	strct, isStruct := typeinfo.Underlying(valueType).(*typeinfo.StructType)
+	strct, isStruct := types.Underlying(valueType).(*types.StructType)
 	if !isStruct {
 		c.ctx.Diagnostics.Add(invalidOperationError(node.Value,
-			"destructure value must be a struct, got "+typeinfo.TypeText(valueType)))
+			"destructure value must be a struct, got "+types.TypeText(valueType)))
 		return
 	}
 	c.checkDestructureFields(node.Fields, node.HasRest, strct, node)
@@ -156,10 +156,10 @@ func (c *checker) checkDestructure(scope *symbols.Scope, node *ast.DestructureSt
 
 // checkDestructureFields types the locals that `.{ field, field as name, _ }`
 // (a destructure statement or a match pattern at site) makes from strct.
-func (c *checker) checkDestructureFields(fields []ast.DestructureField, hasRest bool, strct *typeinfo.StructType, site ast.Node) {
+func (c *checker) checkDestructureFields(fields []ast.DestructureField, hasRest bool, strct *types.StructType, site ast.Node) {
 	named := make(map[string]*ast.Ident, len(fields))
 	for _, item := range fields {
-		field, fieldIndex, found := typeinfo.LookupStructField(strct, item.Name.Name)
+		field, fieldIndex, found := types.LookupStructField(strct, item.Name.Name)
 		if !found {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrFieldNotFound,
 				"unknown field `"+item.Name.Name+"`", ast.LocOf(item.Name), "")
@@ -195,13 +195,13 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt) {
 	}
 	subject := c.caseSubject(scope, node.Subject, "match subject")
 	subjectType, borrow := subject.typ, subject.borrow
-	if typeinfo.IsInvalidOrUnknown(subjectType) {
+	if types.IsInvalidOrUnknown(subjectType) {
 		return
 	}
-	descriptor, isNamed := typeinfo.VariantDescriptorOf(subjectType)
-	if !isNamed || descriptor.Family != typeinfo.VariantFamilyNamed {
+	descriptor, isNamed := types.VariantDescriptorOf(subjectType)
+	if !isNamed || descriptor.Family != types.VariantFamilyNamed {
 		c.ctx.Diagnostics.Add(invalidOperationError(node.Subject,
-			"match subject must be a named enum, got "+typeinfo.TypeText(subjectType)))
+			"match subject must be a named enum, got "+types.TypeText(subjectType)))
 		return
 	}
 	evidenceComplete := true
@@ -209,7 +209,7 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt) {
 	spills := !isVariable && borrow == nil && slices.ContainsFunc(node.Arms, func(arm *ast.MatchArm) bool {
 		return arm != nil && arm.Pattern != nil
 	})
-	if typeinfo.OwnershipCapabilityOf(subjectType).NeedsDrop && !place.IsPlaceExpr(subject.place) && !spills {
+	if types.OwnershipCapabilityOf(subjectType).NeedsDrop && !place.IsPlaceExpr(subject.place) && !spills {
 		c.ctx.Diagnostics.Add(invalidOperationError(node.Subject,
 			"ownership-bearing match subject must be a named place").
 			Help("bind subject to a local before matching it"))
@@ -246,12 +246,12 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt) {
 			return isValid
 		}
 		resolved, pathOK := c.resolveNamedVariant(arm.Case)
-		if !pathOK || typeinfo.IsInvalidOrUnknown(resolved.EnumType) {
+		if !pathOK || types.IsInvalidOrUnknown(resolved.EnumType) {
 			return false
 		}
-		if !typeinfo.IsSameType(subjectType, resolved.EnumType) {
+		if !types.IsSameType(subjectType, resolved.EnumType) {
 			c.ctx.Diagnostics.Add(typeMismatchError(arm.Case,
-				fmt.Sprintf("match arm requires %s, got %s", typeinfo.TypeText(subjectType), typeinfo.TypeText(resolved.EnumType))))
+				fmt.Sprintf("match arm requires %s, got %s", types.TypeText(subjectType), types.TypeText(resolved.EnumType))))
 			return false
 		}
 		// What the arm selects: one payload case when its pattern tests the
@@ -301,7 +301,7 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt) {
 		// The arm's names read the payload of what it selects.
 		payload := resolved.Case.Payload
 		if len(selects) == 1 && selects[0].TestsPayload {
-			inner, _ := typeinfo.VariantDescriptorOf(payload)
+			inner, _ := types.VariantDescriptorOf(payload)
 			payload = inner.Cases[selects[0].PayloadCase].Payload
 		}
 		c.bindPayloadName(arm, payload, borrow, thir.PayloadPath(selects))
@@ -325,10 +325,10 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt) {
 		for _, armCase := range uncoveredArmCases(descriptor, seen, tested) {
 			name := descriptor.Cases[armCase.Case].Name
 			if armCase.TestsPayload {
-				payload, _ := typeinfo.VariantDescriptorOf(descriptor.Cases[armCase.Case].Payload)
+				payload, _ := types.VariantDescriptorOf(descriptor.Cases[armCase.Case].Payload)
 				switch {
-				case payload.Family != typeinfo.VariantFamilyOptional:
-					name += " with " + typeinfo.TypeText(descriptor.Cases[armCase.Case].Payload) + "::" + payload.Cases[armCase.PayloadCase].Name
+				case payload.Family != types.VariantFamilyOptional:
+					name += " with " + types.TypeText(descriptor.Cases[armCase.Case].Payload) + "::" + payload.Cases[armCase.PayloadCase].Name
 				case armCase.PayloadCase == ir.OptionalPresentCase:
 					name += " (holding a value)"
 				default:
@@ -354,7 +354,7 @@ func (c *checker) checkMatchStmt(scope *symbols.Scope, node *ast.MatchStmt) {
 
 // uncoveredArmCases lists what no arm selects yet: whole cases, and for a case
 // whose payload some arm tests, the payload cases still open.
-func uncoveredArmCases(descriptor typeinfo.VariantDescriptor, seen map[thir.ArmCase]ast.Node, tested map[int]ast.Node) []thir.ArmCase {
+func uncoveredArmCases(descriptor types.VariantDescriptor, seen map[thir.ArmCase]ast.Node, tested map[int]ast.Node) []thir.ArmCase {
 	var rest []thir.ArmCase
 	for caseIndex, variant := range descriptor.Cases {
 		switch {
@@ -362,7 +362,7 @@ func uncoveredArmCases(descriptor typeinfo.VariantDescriptor, seen map[thir.ArmC
 		case tested[caseIndex] == nil:
 			rest = append(rest, thir.ArmCase{Case: caseIndex})
 		default:
-			payload, _ := typeinfo.VariantDescriptorOf(variant.Payload)
+			payload, _ := types.VariantDescriptorOf(variant.Payload)
 			for payloadCase := range payload.Cases {
 				armCase := thir.ArmCase{Case: caseIndex, TestsPayload: true, PayloadCase: payloadCase}
 				if seen[armCase] == nil {
@@ -378,21 +378,21 @@ func uncoveredArmCases(descriptor typeinfo.VariantDescriptor, seen map[thir.ArmC
 // variant (`none`, a case of the payload's enum, or taking the value out of
 // an optional payload) to a case of that payload. tests is false for a
 // pattern that only names things.
-func (c *checker) patternPayloadCase(pattern *ast.Pattern, variant typeinfo.VariantCase) (payloadCase int, tests, isValid bool) {
+func (c *checker) patternPayloadCase(pattern *ast.Pattern, variant types.VariantCase) (payloadCase int, tests, isValid bool) {
 	if pattern == nil {
 		return 0, false, true
 	}
 	if !pattern.IsNone && pattern.Case == nil {
 		// As in construction, `Case with value` on an optional payload is the
 		// payload holding a value: the pattern takes that value.
-		return ir.OptionalPresentCase, typeinfo.IsOptional(variant.Payload), true
+		return ir.OptionalPresentCase, types.IsOptional(variant.Payload), true
 	}
 	holds := "has no payload"
 	if variant.Payload != nil {
-		holds = "holds " + typeinfo.TypeText(variant.Payload)
+		holds = "holds " + types.TypeText(variant.Payload)
 	}
 	if pattern.IsNone {
-		if !typeinfo.IsOptional(variant.Payload) {
+		if !types.IsOptional(variant.Payload) {
 			c.ctx.Diagnostics.Add(invalidOperationError(pattern,
 				fmt.Sprintf("`with none` needs an optional payload, but `%s` %s", variant.Name, holds)))
 			return 0, false, false
@@ -403,9 +403,9 @@ func (c *checker) patternPayloadCase(pattern *ast.Pattern, variant typeinfo.Vari
 	if !isCase {
 		return 0, false, false
 	}
-	if variant.Payload == nil || !typeinfo.IsSameType(variant.Payload, resolved.EnumType) {
+	if variant.Payload == nil || !types.IsSameType(variant.Payload, resolved.EnumType) {
 		c.ctx.Diagnostics.Add(typeMismatchError(pattern.Case,
-			fmt.Sprintf("`with %s` does not fit: `%s` %s", typeinfo.TypeText(resolved.EnumType), variant.Name, holds)))
+			fmt.Sprintf("`with %s` does not fit: `%s` %s", types.TypeText(resolved.EnumType), variant.Name, holds)))
 		return 0, false, false
 	}
 	if inner := pattern.Inner; inner != nil && (inner.IsNone || inner.Case != nil) {
@@ -420,7 +420,7 @@ func (c *checker) patternPayloadCase(pattern *ast.Pattern, variant typeinfo.Vari
 // what its arm selects in the case named caseName: one name for the whole
 // payload, or a local per field of a struct payload. With a borrowed subject
 // a name is a reference; fields cannot be taken out of a borrowed value.
-func (c *checker) bindPattern(taking *ast.Pattern, caseName string, payload typeinfo.Type, borrow *typeinfo.RefType) {
+func (c *checker) bindPattern(taking *ast.Pattern, caseName string, payload types.Type, borrow *types.RefType) {
 	switch {
 	case taking == nil:
 	case payload == nil:
@@ -431,9 +431,9 @@ func (c *checker) bindPattern(taking *ast.Pattern, caseName string, payload type
 		c.ctx.Diagnostics.Add(invalidOperationError(taking, "a `.{ }` pattern takes the fields out of the value, which a borrowed subject keeps").
 			Help("leave the pattern out and read the fields through the subject's name"))
 	default:
-		strct, isStruct := typeinfo.Underlying(payload).(*typeinfo.StructType)
+		strct, isStruct := types.Underlying(payload).(*types.StructType)
 		if !isStruct {
-			c.ctx.Diagnostics.Add(invalidOperationError(taking, "a `.{ }` pattern needs a struct payload, got "+typeinfo.TypeText(payload)))
+			c.ctx.Diagnostics.Add(invalidOperationError(taking, "a `.{ }` pattern needs a struct payload, got "+types.TypeText(payload)))
 			return
 		}
 		c.checkDestructureFields(taking.Fields, taking.HasRest, strct, taking)
@@ -445,8 +445,8 @@ func (c *checker) bindPattern(taking *ast.Pattern, caseName string, payload type
 // borrow is the reference a payload name becomes.
 type testedSubject struct {
 	place  ast.Expr
-	typ    typeinfo.Type
-	borrow *typeinfo.RefType
+	typ    types.Type
+	borrow *types.RefType
 }
 
 // caseSubject types the subject of a case test, a match or `orelse`.
@@ -461,7 +461,7 @@ func (c *checker) caseSubject(scope *symbols.Scope, subject ast.Expr, what strin
 	c.wholeCarrierExpr = tested.place
 	tested.typ = c.requireValueType(subject, c.typeExpr(scope, subject, nil), what)
 	c.wholeCarrierExpr = previous
-	if tested.place == subject || typeinfo.IsInvalidOrUnknown(tested.typ) {
+	if tested.place == subject || types.IsInvalidOrUnknown(tested.typ) {
 		return tested
 	}
 	// Names read the payload through the place again, so the place must be one
@@ -480,24 +480,24 @@ func (c *checker) caseSubject(scope *symbols.Scope, subject ast.Expr, what strin
 				continue
 			}
 		case *ast.Ident:
-			target, isMutable, _ := typeinfo.ReferenceTarget(tested.typ)
-			tested.typ, tested.borrow = target, &typeinfo.RefType{IsMutable: isMutable}
+			target, isMutable, _ := types.ReferenceTarget(tested.typ)
+			tested.typ, tested.borrow = target, &types.RefType{IsMutable: isMutable}
 			return tested
 		}
 		c.ctx.Diagnostics.Add(invalidOperationError(tested.place, "a borrowed subject must be a variable, a field or an element of one").
 			Help("bind the value to a local first"))
-		tested.typ = &typeinfo.InvalidType{}
+		tested.typ = &types.InvalidType{}
 		return tested
 	}
 }
 
 // caseNameType is the type of a name given to payload: the payload itself, or
 // a reference to it when the subject is borrowed.
-func caseNameType(payload typeinfo.Type, borrow *typeinfo.RefType) typeinfo.Type {
+func caseNameType(payload types.Type, borrow *types.RefType) types.Type {
 	if borrow == nil {
 		return payload
 	}
-	return &typeinfo.RefType{IsMutable: borrow.IsMutable, Target: payload}
+	return &types.RefType{IsMutable: borrow.IsMutable, Target: payload}
 }
 
 // bindPayloadNames types the payload names the resolver declared for what a
@@ -510,7 +510,7 @@ func (c *checker) bindPayloadNames(cond ast.Expr, then, otherwise, rest ast.Node
 	if !tested {
 		return
 	}
-	descriptor, _ := typeinfo.VariantDescriptorOf(c.evidence.ExprType(test.Subject.ID()))
+	descriptor, _ := types.VariantDescriptorOf(c.evidence.ExprType(test.Subject.ID()))
 	if test.Case >= len(descriptor.Cases) {
 		return
 	}
@@ -536,7 +536,7 @@ func (c *checker) bindPayloadNames(cond ast.Expr, then, otherwise, rest ast.Node
 // bindPayloadName types the payload name the resolver bound to owner, if it
 // declared one and the case has a payload; path is the case read through at
 // each level to reach that payload.
-func (c *checker) bindPayloadName(owner ast.Node, payload typeinfo.Type, borrow *typeinfo.RefType, path []int) {
+func (c *checker) bindPayloadName(owner ast.Node, payload types.Type, borrow *types.RefType, path []int) {
 	if typednil.IsNil(owner) {
 		return
 	}
@@ -549,19 +549,19 @@ func (c *checker) bindPayloadName(owner ast.Node, payload typeinfo.Type, borrow 
 // typeOrElse types `value orelse fallback` or `value orelse { ... }`: the
 // payload of the optional value. The fallback has that type; the block must
 // leave.
-func (c *checker) typeOrElse(scope *symbols.Scope, node *ast.OrElseExpr) typeinfo.Type {
+func (c *checker) typeOrElse(scope *symbols.Scope, node *ast.OrElseExpr) types.Type {
 	if scope == c.module.ModuleScope {
 		c.ctx.Diagnostics.Add(invalidOperationError(node, "`orelse` is only allowed inside a function"))
-		return &typeinfo.InvalidType{}
+		return &types.InvalidType{}
 	}
 	tested := c.caseSubject(scope, node.Value, "`orelse` value")
-	if typeinfo.IsInvalidOrUnknown(tested.typ) {
-		return &typeinfo.InvalidType{}
+	if types.IsInvalidOrUnknown(tested.typ) {
+		return &types.InvalidType{}
 	}
-	descriptor, _ := typeinfo.VariantDescriptorOf(tested.typ)
-	if descriptor.Family != typeinfo.VariantFamilyOptional {
-		c.ctx.Diagnostics.Add(typeMismatchError(node.Value, "`orelse` needs an optional value, got "+typeinfo.TypeText(tested.typ)))
-		return &typeinfo.InvalidType{}
+	descriptor, _ := types.VariantDescriptorOf(tested.typ)
+	if descriptor.Family != types.VariantFamilyOptional {
+		c.ctx.Diagnostics.Add(typeMismatchError(node.Value, "`orelse` needs an optional value, got "+types.TypeText(tested.typ)))
+		return &types.InvalidType{}
 	}
 	// `orelse` tests its value for none.
 	c.recordCaseTest(node, tested, ir.OptionalPresentCase, len(descriptor.Cases), true, descriptor.Family)
@@ -571,9 +571,9 @@ func (c *checker) typeOrElse(scope *symbols.Scope, node *ast.OrElseExpr) typeinf
 		return payload
 	}
 	fallbackType := c.typeExpr(scope, node.Fallback, payload)
-	if !typeinfo.IsInvalidOrUnknown(fallbackType) && !c.isAssignable(payload, fallbackType, node.Fallback) {
+	if !types.IsInvalidOrUnknown(fallbackType) && !c.isAssignable(payload, fallbackType, node.Fallback) {
 		c.ctx.Diagnostics.Add(typeMismatchError(node.Fallback,
-			fmt.Sprintf("fallback must be %s, got %s", typeinfo.TypeText(payload), typeinfo.TypeText(fallbackType))))
+			fmt.Sprintf("fallback must be %s, got %s", types.TypeText(payload), types.TypeText(fallbackType))))
 	}
 	return payload
 }
@@ -583,12 +583,12 @@ func (c *checker) checkAssign(scope *symbols.Scope, node *ast.AssignStmt) {
 		return
 	}
 	targetType := c.typeWholeCarrierExpr(scope, node.Target)
-	if targetType == nil || typeinfo.IsInvalidOrUnknown(targetType) {
+	if targetType == nil || types.IsInvalidOrUnknown(targetType) {
 		return
 	}
 	valueType := c.typeExpr(scope, node.Value, targetType)
 	valueType = c.requireValueType(node.Value, valueType, "assignment")
-	if typeinfo.IsInvalidOrUnknown(valueType) {
+	if types.IsInvalidOrUnknown(valueType) {
 		return
 	}
 	if c.rejectTemporaryBorrowEscape(scope, node.Value, "assignment") {
@@ -597,7 +597,7 @@ func (c *checker) checkAssign(scope *symbols.Scope, node *ast.AssignStmt) {
 	if !c.isAssignable(targetType, valueType, node.Value) {
 		c.ctx.Diagnostics.Add(typeMismatchError(node.Value,
 			fmt.Sprintf("cannot assign %s to %s",
-				typeinfo.TypeText(valueType), typeinfo.TypeText(targetType))))
+				types.TypeText(valueType), types.TypeText(targetType))))
 		return
 	}
 	switch target := node.Target.(type) {
@@ -644,7 +644,7 @@ func (c *checker) checkAssign(scope *symbols.Scope, node *ast.AssignStmt) {
 		if sharedReference != nil {
 			c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
 				"cannot assign through immutable reference", ast.LocOf(target), "").
-				Help(fmt.Sprintf("use `&mut %s` to modify referenced value", typeinfo.TypeText(sharedReference)))
+				Help(fmt.Sprintf("use `&mut %s` to modify referenced value", types.TypeText(sharedReference)))
 			return
 		}
 		c.ctx.Diagnostics.AddError(diagnostics.ErrInvalidAssignment,
@@ -661,15 +661,15 @@ func (c *checker) checkAssign(scope *symbols.Scope, node *ast.AssignStmt) {
 	}
 }
 
-func (c *checker) checkIndexAssignmentTarget(scope *symbols.Scope, target *ast.IndexExpr, targetType typeinfo.Type) bool {
+func (c *checker) checkIndexAssignmentTarget(scope *symbols.Scope, target *ast.IndexExpr, targetType types.Type) bool {
 	if c == nil || target == nil || target.Expr == nil {
 		return false
 	}
-	if typeinfo.IsInvalidOrUnknown(targetType) {
+	if types.IsInvalidOrUnknown(targetType) {
 		return true
 	}
 	baseType := c.exprType(target.Expr)
-	if typeinfo.IsInvalidOrUnknown(baseType) {
+	if types.IsInvalidOrUnknown(baseType) {
 		return true
 	}
 	_, shape, ok := indexableSequence(baseType)
@@ -699,7 +699,7 @@ func (c *checker) checkBinding(scope *symbols.Scope, node ast.Stmt, requireIniti
 		return
 	}
 	var (
-		declType typeinfo.Type
+		declType types.Type
 		typeNode ast.TypeExpr // AST node for the type annotation (for diagnostics)
 		name     *ast.Ident
 		value    ast.Expr
@@ -731,76 +731,76 @@ func (c *checker) checkBinding(scope *symbols.Scope, node ast.Stmt, requireIniti
 	// the binding type; the generated occurrence must check its initializer
 	// against that type instead of re-inferring and overwriting the symbol.
 	if declType == nil && sym.ASTNode != nil && sym.ASTNode != node {
-		if established, ok := symbols.GetSymbolType(sym); ok && established != nil && !typeinfo.IsInvalidOrUnknown(established) {
+		if established, ok := symbols.GetSymbolType(sym); ok && established != nil && !types.IsInvalidOrUnknown(established) {
 			declType = established
 		}
 	}
 	if declType != nil && c.rejectUnsizedType(declType, typeNode, "binding") {
-		sym.BindType(&typeinfo.InvalidType{})
+		sym.BindType(&types.InvalidType{})
 		return
 	}
 
 	if value == nil {
 		if requireInitializer {
-			sym.BindType(&typeinfo.InvalidType{})
+			sym.BindType(&types.InvalidType{})
 			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingInitializer,
 				"missing initializer for const declaration", ast.LocOf(node), "")
 			return
 		}
 		if declType == nil {
-			sym.BindType(&typeinfo.InvalidType{})
+			sym.BindType(&types.InvalidType{})
 			c.ctx.Diagnostics.AddError(diagnostics.ErrMissingType,
 				"let declaration needs type or initializer", ast.LocOf(node), "")
 			return
 		}
 		if c.rejectBindingReferenceStorage(scope, declType, typeNode) {
-			sym.BindType(&typeinfo.InvalidType{})
+			sym.BindType(&types.InvalidType{})
 			return
 		}
 		sym.BindType(declType)
 		return
 	}
 	if declType != nil && c.rejectBindingReferenceStorage(scope, declType, typeNode) {
-		sym.BindType(&typeinfo.InvalidType{})
+		sym.BindType(&types.InvalidType{})
 		return
 	}
 
 	valType := c.typeExpr(scope, value, declType)
 	valType = c.requireValueType(value, valType, "initializer")
-	if typeinfo.IsInvalidOrUnknown(valType) {
-		if declType != nil && !typeinfo.IsInvalidOrUnknown(declType) {
+	if types.IsInvalidOrUnknown(valType) {
+		if declType != nil && !types.IsInvalidOrUnknown(declType) {
 			sym.BindType(declType)
 		} else {
-			sym.BindType(&typeinfo.InvalidType{})
+			sym.BindType(&types.InvalidType{})
 		}
 		return
 	}
 	if c.rejectTemporaryBorrowEscape(scope, value, "binding") {
-		sym.BindType(&typeinfo.InvalidType{})
+		sym.BindType(&types.InvalidType{})
 		return
 	}
 	if declType == nil && c.rejectBindingReferenceStorage(scope, valType, node) {
-		sym.BindType(&typeinfo.InvalidType{})
+		sym.BindType(&types.InvalidType{})
 		return
 	}
 	if declType == nil && c.rejectUnsizedType(valType, node, "binding") {
-		sym.BindType(&typeinfo.InvalidType{})
+		sym.BindType(&types.InvalidType{})
 		return
 	}
 	if declType != nil && !c.isAssignable(declType, valType, value) {
 		d := typeMismatchError(value,
 			fmt.Sprintf("cannot assign %s to %s",
-				typeinfo.TypeText(valType), typeinfo.TypeText(declType)))
+				types.TypeText(valType), types.TypeText(declType)))
 		if typeNode != nil {
 			d.WithSecondaryLabel(ast.LocOf(typeNode),
-				fmt.Sprintf("expected %s because of this type annotation", typeinfo.TypeText(declType)))
+				fmt.Sprintf("expected %s because of this type annotation", types.TypeText(declType)))
 		}
 		c.addInterfaceHint(d, declType, valType)
 		c.ctx.Diagnostics.Add(d)
-		if !typeinfo.IsInvalidOrUnknown(declType) {
+		if !types.IsInvalidOrUnknown(declType) {
 			sym.BindType(declType)
 		} else {
-			sym.BindType(&typeinfo.InvalidType{})
+			sym.BindType(&types.InvalidType{})
 		}
 		return
 	}
@@ -815,28 +815,28 @@ func (c *checker) checkBinding(scope *symbols.Scope, node ast.Stmt, requireIniti
 // sequence, or optional-producing call. Strings require an explicit
 // as_bytes/as_chars view.
 func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt) {
-	indexType := typeinfo.DefaultIntegerType()
+	indexType := types.DefaultIntegerType()
 	valid := node.Value != nil && node.Value.Name != "" && c.module.SymbolIndex.Symbol(node.Value) != nil
 	if node.Index != nil && (node.Index.Name == "" || c.module.SymbolIndex.Symbol(node.Index) == nil) {
 		valid = false
 	}
 
-	var elemType typeinfo.Type
-	var carrierType typeinfo.Type
+	var elemType types.Type
+	var carrierType types.Type
 	var hasGuaranteedEntry bool
 	rangeExpr, isRange := node.Iterable.(*ast.RangeExpr)
 	if isRange {
 		elemType, valid, hasGuaranteedEntry = c.checkRangeIteration(scope, rangeExpr, valid)
 	} else {
 		var ok bool
-		indexType, ok = typeinfo.NumericTypeFromName("usize", c.ctx.Target)
+		indexType, ok = types.NumericTypeFromName("usize", c.ctx.Target)
 		if !ok {
 			panic("missing builtin usize type")
 		}
 		iterableType := c.typeExpr(scope, node.Iterable, nil)
 		iterableType = c.requireValueType(node.Iterable, iterableType, "iterable")
 
-		if typeinfo.IsInvalidOrUnknown(iterableType) {
+		if types.IsInvalidOrUnknown(iterableType) {
 			valid = false
 		} else if isStringSequence(iterableType) {
 			valid = false
@@ -851,13 +851,13 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt) {
 						"for-in requires addressable array storage"))
 				}
 			}
-			if typeinfo.OwnershipCapabilityOf(elem).Copy != typeinfo.CopyImplicit {
+			if types.OwnershipCapabilityOf(elem).Copy != types.CopyImplicit {
 				valid = false
 				c.ctx.Diagnostics.Add(invalidExpressionError(node.Iterable,
 					"for-in requires copyable sequence elements; iterate indexes and borrow move-only elements explicitly"))
 			}
-			if _, isArray := typeinfo.Underlying(iterableType).(*typeinfo.ArrayType); isArray {
-				carrierType = &typeinfo.RefType{Target: iterableType}
+			if _, isArray := types.Underlying(iterableType).(*types.ArrayType); isArray {
+				carrierType = &types.RefType{Target: iterableType}
 			} else {
 				carrierType = iterableType
 			}
@@ -875,7 +875,7 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt) {
 		c.bindLoopVariable(node.Value, elemType)
 	}
 	c.evidence.ForgetForIteration(node.ID())
-	if valid && elemType != nil && !typeinfo.IsInvalidOrUnknown(elemType) {
+	if valid && elemType != nil && !types.IsInvalidOrUnknown(elemType) {
 		location := ast.LocOf(node)
 		cursor := symbols.New(symbols.GeneratedSymbolID(node.ID(), symbols.GeneratedForCursor), "$for.cursor", symbols.SymbolVar, nil, location)
 		if isRange {
@@ -907,7 +907,7 @@ func (c *checker) checkForInStmt(scope *symbols.Scope, node *ast.ForStmt) {
 // checkRangeIteration types the bounds of `for x in a..b`. It returns the
 // element type, whether the loop is still valid, and whether constant bounds
 // prove the body runs at least once.
-func (c *checker) checkRangeIteration(scope *symbols.Scope, rangeExpr *ast.RangeExpr, valid bool) (elemType typeinfo.Type, stillValid, hasGuaranteedEntry bool) {
+func (c *checker) checkRangeIteration(scope *symbols.Scope, rangeExpr *ast.RangeExpr, valid bool) (elemType types.Type, stillValid, hasGuaranteedEntry bool) {
 	if !rangeExpr.IsEndExclusive {
 		valid = false
 		c.ctx.Diagnostics.Add(invalidExpressionError(rangeExpr, "for range requires an exclusive end; use `..` instead of `..=`"))
@@ -923,32 +923,32 @@ func (c *checker) checkRangeIteration(scope *symbols.Scope, rangeExpr *ast.Range
 		c.ctx.Diagnostics.Add(invalidExpressionError(rangeExpr, "range iteration requires an end bound"))
 	}
 
-	defaultType := typeinfo.DefaultIntegerType()
+	defaultType := types.DefaultIntegerType()
 	startNumber, startLiteral := rangeExpr.Start.(*ast.NumberLit)
 	endNumber, endLiteral := rangeExpr.End.(*ast.NumberLit)
 	startUntyped := startLiteral && startNumber.ExplicitType == ""
 	endUntyped := endLiteral && endNumber.ExplicitType == ""
-	var startType, endType typeinfo.Type
+	var startType, endType types.Type
 	if startUntyped && !endUntyped {
 		endType = c.checkRangeBound(scope, rangeExpr.End, defaultType)
 		startType = c.checkRangeBound(scope, rangeExpr.Start, endType)
 	} else {
 		startType = c.checkRangeBound(scope, rangeExpr.Start, defaultType)
 		endExpected := defaultType
-		if endUntyped && !typeinfo.IsInvalidOrUnknown(startType) {
+		if endUntyped && !types.IsInvalidOrUnknown(startType) {
 			endExpected = startType
 		}
 		endType = c.checkRangeBound(scope, rangeExpr.End, endExpected)
 	}
-	if typeinfo.IsInvalidOrUnknown(startType) || typeinfo.IsInvalidOrUnknown(endType) ||
-		!typeinfo.IsIntegral(startType) || !typeinfo.IsIntegral(endType) {
+	if types.IsInvalidOrUnknown(startType) || types.IsInvalidOrUnknown(endType) ||
+		!types.IsIntegral(startType) || !types.IsIntegral(endType) {
 		valid = false
 	} else {
-		elemType = typeinfo.CommonNumericType(startType, endType)
-		if elemType == nil || !typeinfo.IsIntegral(elemType) {
+		elemType = types.CommonNumericType(startType, endType)
+		if elemType == nil || !types.IsIntegral(elemType) {
 			valid = false
 			c.ctx.Diagnostics.Add(typeMismatchError(rangeExpr,
-				"range bounds of type "+typeinfo.TypeText(startType)+" and "+typeinfo.TypeText(endType)+" have no common integer type"))
+				"range bounds of type "+types.TypeText(startType)+" and "+types.TypeText(endType)+" have no common integer type"))
 		} else {
 			if !c.isAssignable(elemType, startType, rangeExpr.Start) || !c.isAssignable(elemType, endType, rangeExpr.End) {
 				valid = false
@@ -970,12 +970,12 @@ func (c *checker) checkRangeIteration(scope *symbols.Scope, rangeExpr *ast.Range
 // checkCallIteration handles `for item in producer()`. It reports true when it
 // expanded the loop and checked the expansion, so the caller has nothing left
 // to do; false means the iterable is not a usable producer call.
-func (c *checker) checkCallIteration(scope *symbols.Scope, node *ast.ForStmt, iterableType typeinfo.Type) bool {
+func (c *checker) checkCallIteration(scope *symbols.Scope, node *ast.ForStmt, iterableType types.Type) bool {
 	call, isCallExpression := node.Iterable.(*ast.CallExpr)
-	optional, isOptionalResultType := typeinfo.Underlying(iterableType).(*typeinfo.OptionalType)
+	optional, isOptionalResultType := types.Underlying(iterableType).(*types.OptionalType)
 	switch {
 	case !isCallExpression:
-		c.ctx.Diagnostics.Add(invalidExpressionError(node.Iterable, "cannot iterate over "+typeinfo.TypeText(iterableType)).
+		c.ctx.Diagnostics.Add(invalidExpressionError(node.Iterable, "cannot iterate over "+types.TypeText(iterableType)).
 			Help("use a range, array, slice, or an explicit call returning an optional item, such as `for item in producer()`").
 			Note("iterator calls, including arguments, are evaluated on every attempt; a bare optional value is not a producer"))
 	case !isOptionalResultType || optional.Inner == nil:
@@ -1044,7 +1044,7 @@ func (c *checker) expandCallIteration(scope *symbols.Scope, node *ast.ForStmt) {
 	c.evidence.RecordCheckedIteration(node.ID(), expansion)
 }
 
-func (c *checker) bindLoopVariable(name *ast.Ident, typ typeinfo.Type) {
+func (c *checker) bindLoopVariable(name *ast.Ident, typ types.Type) {
 	if typ == nil {
 		return
 	}
@@ -1053,30 +1053,30 @@ func (c *checker) bindLoopVariable(name *ast.Ident, typ typeinfo.Type) {
 	}
 }
 
-func (c *checker) rejectUnsizedType(typ typeinfo.Type, site ast.Node, context string) bool {
-	if typeinfo.IsSizedType(typ) {
+func (c *checker) rejectUnsizedType(typ types.Type, site ast.Node, context string) bool {
+	if types.IsSizedType(typ) {
 		return false
 	}
 	// A type with an invalid part is rejected by the error already reported
 	// for that part; saying it has no size would only repeat it.
-	if typeinfo.ContainsInvalid(typ) {
+	if types.ContainsInvalid(typ) {
 		return true
 	}
 	diagnostic := invalidTypeError(site,
-		fmt.Sprintf("%s requires a sized type; %s is unsized", context, typeinfo.TypeText(typ)))
-	if _, ok := typeinfo.Underlying(typ).(*typeinfo.InterfaceType); ok {
+		fmt.Sprintf("%s requires a sized type; %s is unsized", context, types.TypeText(typ)))
+	if _, ok := types.Underlying(typ).(*types.InterfaceType); ok {
 		diagnostic.Help("use &Interface, &mut Interface, or *Interface instead of a bare interface value")
 	}
 	c.ctx.Diagnostics.Add(diagnostic)
 	return true
 }
 
-func (c *checker) rejectBindingReferenceStorage(scope *symbols.Scope, typ typeinfo.Type, site ast.Node) bool {
+func (c *checker) rejectBindingReferenceStorage(scope *symbols.Scope, typ types.Type, site ast.Node) bool {
 	moduleBinding := c != nil && c.module != nil && scope == c.module.ModuleScope
 	if !moduleBinding {
-		if descriptor, isVariant := typeinfo.VariantDescriptorOf(typ); isVariant && descriptor.Family == typeinfo.VariantFamilyNamed {
+		if descriptor, isVariant := types.VariantDescriptorOf(typ); isVariant && descriptor.Family == types.VariantFamilyNamed {
 			for _, variantCase := range descriptor.Cases {
-				payload, _ := typeinfo.Underlying(variantCase.Payload).(*typeinfo.StructType)
+				payload, _ := types.Underlying(variantCase.Payload).(*types.StructType)
 				if payload == nil {
 					continue
 				}
@@ -1096,10 +1096,10 @@ func (c *checker) rejectBindingReferenceStorage(scope *symbols.Scope, typ typein
 	return c.rejectReferenceStorage(typ, site, context, moduleBinding)
 }
 
-func (c *checker) rejectReferenceStorage(typ typeinfo.Type, site ast.Node, context string, includeDirectReference bool) bool {
-	rejected := typeinfo.ContainsStoredReference(typ)
+func (c *checker) rejectReferenceStorage(typ types.Type, site ast.Node, context string, includeDirectReference bool) bool {
+	rejected := types.ContainsStoredReference(typ)
 	if includeDirectReference {
-		rejected = typeinfo.ContainsReference(typ)
+		rejected = types.ContainsReference(typ)
 	}
 	if !rejected {
 		return false
@@ -1130,7 +1130,7 @@ func (c *checker) temporaryBorrowSource(scope *symbols.Scope, expr ast.Expr) ast
 	if c == nil || c.module == nil || expr == nil {
 		return nil
 	}
-	if _, _, isReference := typeinfo.ReferenceValueTarget(c.exprType(expr)); !isReference {
+	if _, _, isReference := types.ReferenceValueTarget(c.exprType(expr)); !isReference {
 		return nil
 	}
 	switch node := expr.(type) {
@@ -1140,14 +1140,14 @@ func (c *checker) temporaryBorrowSource(scope *symbols.Scope, expr ast.Expr) ast
 		}
 		return node
 	case *ast.CallExpr:
-		fn, _ := typeinfo.Underlying(c.exprType(node.Callee)).(*typeinfo.FuncType)
+		fn, _ := types.Underlying(c.exprType(node.Callee)).(*types.FuncType)
 		args := c.evidence.CallArgumentsOrSource(node)
-		for _, source := range typeinfo.ReturnOriginSources(node, args, fn) {
+		for _, source := range types.ReturnOriginSources(node, args, fn) {
 			if temporary := c.temporaryBorrowSource(scope, source); temporary != nil {
 				return temporary
 			}
 			if c.evidence.ImplicitCallArgument(source.ID()) != nil && !place.IsAddressable(scope, source, c.exprType, c.expandedDefaultBinding) {
-				if _, _, isReference := typeinfo.ReferenceValueTarget(c.exprType(source)); !isReference {
+				if _, _, isReference := types.ReferenceValueTarget(c.exprType(source)); !isReference {
 					return source
 				}
 			}

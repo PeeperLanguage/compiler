@@ -4,12 +4,12 @@ import (
 	"testing"
 
 	"compiler/internal/constvalue"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 )
 
 func TestIndexCatalogSnapshotsProtectOwnedSlices(t *testing.T) {
 	index := NewIndex()
-	receiver := &typeinfo.DefinedType{Identity: "test::Receiver", Kind: typeinfo.DefinedKindStruct}
+	receiver := &types.DefinedType{Identity: "test::Receiver", Kind: types.DefinedKindStruct}
 	first := New(ProjectedSymbolID(SymbolMethod, "first"), "first", SymbolMethod, nil, nil)
 	second := New(ProjectedSymbolID(SymbolMethod, "second"), "second", SymbolMethod, nil, nil)
 	index.RegisterMethod(receiver, first)

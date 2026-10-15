@@ -14,7 +14,7 @@ import (
 	"compiler/internal/ir/thir"
 	"compiler/internal/moduleid"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 )
 
 const validationGraphSource = "fn main() -> i32 {\n\treturn 0;\n}\n"
@@ -69,7 +69,7 @@ func validationSource(exprs ...thir.Expr) *thir.Module {
 	return thir.NewModule("validation", "", []*thir.Function{{Identity: fnID, Name: "validation", Body: body, Source: ir.SourceInfo{NodeID: source.ParsedNodeID(899)}}})
 }
 
-func validationExpr(id source.NodeID, typ typeinfo.Type, use typeinfo.UseKind, hasUse bool) thir.Expr {
+func validationExpr(id source.NodeID, typ types.Type, use types.UseKind, hasUse bool) thir.Expr {
 	return &thir.NumberLiteral{ExprInfo: thir.ExprInfo{Source: ir.SourceInfo{NodeID: id}, Type: typ, Use: use, HasUse: hasUse}, Value: "1"}
 }
 
@@ -93,7 +93,7 @@ func TestValidateAcceptsConsistentEvidence(t *testing.T) {
 
 func TestValidateRejectsMalformedDurableFlowEvidence(t *testing.T) {
 	id := source.ParsedNodeID(7)
-	typed := validationSource(validationExpr(id, &typeinfo.IntegerType{IsSigned: true, Bits: 32}, typeinfo.UseRead, true))
+	typed := validationSource(validationExpr(id, &types.IntegerType{IsSigned: true, Bits: 32}, types.UseRead, true))
 	tests := []struct {
 		name, want string
 		publish    func(*Module)
@@ -124,9 +124,9 @@ func TestValidateRejectsEvidenceGaps(t *testing.T) {
 		typed      *thir.Module
 		mutate     func(*cleanupPlan)
 	}{
-		{name: "use kind without a type", want: "no expression type", typed: validationSource(validationExpr(source.ParsedNodeID(7), nil, typeinfo.UseMove, true))},
-		{name: "copy of a type with no copy operation", want: "no copy operation", typed: validationSource(validationExpr(source.ParsedNodeID(7), &typeinfo.StringType{}, typeinfo.UseCopy, true))},
-		{name: "call argument with no use kind", want: "no published use kind", typed: validationSource(&thir.Call{ExprInfo: thir.ExprInfo{Source: ir.SourceInfo{NodeID: source.ParsedNodeID(5)}, Type: &typeinfo.IntegerType{IsSigned: true, Bits: 32}}, Args: []thir.Expr{validationExpr(source.ParsedNodeID(41), &typeinfo.IntegerType{IsSigned: true, Bits: 32}, typeinfo.UseRead, false)}})},
+		{name: "use kind without a type", want: "no expression type", typed: validationSource(validationExpr(source.ParsedNodeID(7), nil, types.UseMove, true))},
+		{name: "copy of a type with no copy operation", want: "no copy operation", typed: validationSource(validationExpr(source.ParsedNodeID(7), &types.StringType{}, types.UseCopy, true))},
+		{name: "call argument with no use kind", want: "no published use kind", typed: validationSource(&thir.Call{ExprInfo: thir.ExprInfo{Source: ir.SourceInfo{NodeID: source.ParsedNodeID(5)}, Type: &types.IntegerType{IsSigned: true, Bits: 32}}, Args: []thir.Expr{validationExpr(source.ParsedNodeID(41), &types.IntegerType{IsSigned: true, Bits: 32}, types.UseRead, false)}})},
 		{name: "drop at a site that is not a scope exit", want: "not a scope exit", typed: validationSource(), mutate: func(plan *cleanupPlan) {
 			plan.AfterScope[cfg.SiteID{}] = []symbols.SymbolID{symbols.ProjectedSymbolID(symbols.SymbolVar, "value")}
 		}},
@@ -190,7 +190,7 @@ func TestValidateReportsProblemsDeterministically(t *testing.T) {
 		exprs := make([]thir.Expr, 0, 40)
 		for ordinal := uint64(1); ordinal <= 40; ordinal++ {
 			id := source.ParsedNodeID(ordinal)
-			exprs = append(exprs, validationExpr(id, nil, typeinfo.UseMove, true))
+			exprs = append(exprs, validationExpr(id, nil, types.UseMove, true))
 			plan.ProjectionBase[id] = struct{}{}
 		}
 		err := cleanupPlans{fnID: plan}.validate(validationSource(exprs...), graphs)

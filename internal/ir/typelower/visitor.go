@@ -2,53 +2,53 @@ package typelower
 
 import (
 	"compiler/internal/ir"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 )
 
 type runtimeTypeVisitor struct {
 	lowerer *runtimeTypeInterner
-	defined *typeinfo.DefinedType
+	defined *types.DefinedType
 	result  ir.TypeID
 }
 
-func (v *runtimeTypeVisitor) VisitInvalid(*typeinfo.InvalidType) { v.result = ir.InvalidType }
-func (v *runtimeTypeVisitor) VisitUnknown(*typeinfo.UnknownType) { v.result = ir.InvalidType }
-func (v *runtimeTypeVisitor) VisitTypeParameter(*typeinfo.TypeParameterType) {
+func (v *runtimeTypeVisitor) VisitInvalid(*types.InvalidType) { v.result = ir.InvalidType }
+func (v *runtimeTypeVisitor) VisitUnknown(*types.UnknownType) { v.result = ir.InvalidType }
+func (v *runtimeTypeVisitor) VisitTypeParameter(*types.TypeParameterType) {
 	v.result = ir.InvalidType
 }
-func (v *runtimeTypeVisitor) VisitByte(*typeinfo.ByteType) {
+func (v *runtimeTypeVisitor) VisitByte(*types.ByteType) {
 	v.result = v.lowerer.ctx.types.Intern(ir.Type{Kind: ir.TypeByte})
 }
-func (v *runtimeTypeVisitor) VisitChar(*typeinfo.CharType) {
+func (v *runtimeTypeVisitor) VisitChar(*types.CharType) {
 	v.result = v.lowerer.ctx.types.Intern(ir.Type{Kind: ir.TypeChar})
 }
-func (v *runtimeTypeVisitor) VisitBool(*typeinfo.BoolType) {
+func (v *runtimeTypeVisitor) VisitBool(*types.BoolType) {
 	v.result = v.lowerer.ctx.types.Intern(ir.Type{Kind: ir.TypeBool})
 }
-func (v *runtimeTypeVisitor) VisitCStr(*typeinfo.CStrType) {
+func (v *runtimeTypeVisitor) VisitCStr(*types.CStrType) {
 	v.result = v.lowerer.ctx.types.Intern(ir.Type{Kind: ir.TypeCStr})
 }
-func (v *runtimeTypeVisitor) VisitString(*typeinfo.StringType) {
+func (v *runtimeTypeVisitor) VisitString(*types.StringType) {
 	v.result = v.lowerer.ctx.types.Intern(ir.Type{Kind: ir.TypeString})
 }
-func (v *runtimeTypeVisitor) VisitNone(*typeinfo.NoneType) {
+func (v *runtimeTypeVisitor) VisitNone(*types.NoneType) {
 	v.result = v.lowerer.ctx.types.Intern(ir.Type{Kind: ir.TypeVoid})
 }
-func (v *runtimeTypeVisitor) VisitAllocator(*typeinfo.AllocatorType) {
+func (v *runtimeTypeVisitor) VisitAllocator(*types.AllocatorType) {
 	v.result = v.lowerer.ctx.types.Intern(ir.Type{Kind: ir.TypeAllocator})
 }
-func (v *runtimeTypeVisitor) VisitRawPointer(*typeinfo.RawPtrType) {
+func (v *runtimeTypeVisitor) VisitRawPointer(*types.RawPtrType) {
 	v.result = v.lowerer.ctx.types.Intern(ir.Type{Kind: ir.TypeRawPtr})
 }
-func (v *runtimeTypeVisitor) VisitNamed(*typeinfo.NamedType) {
+func (v *runtimeTypeVisitor) VisitNamed(*types.NamedType) {
 	v.result = v.lowerer.invalid("unresolved named type reached IR lowering")
 }
-func (v *runtimeTypeVisitor) VisitEnum(t *typeinfo.EnumType) {
+func (v *runtimeTypeVisitor) VisitEnum(t *types.EnumType) {
 	if t == nil || v.defined == nil {
 		v.result = v.lowerer.invalid("named variant reached IR lowering without declaration identity")
 		return
 	}
-	descriptor, ok := typeinfo.VariantDescriptorOf(v.defined)
+	descriptor, ok := types.VariantDescriptorOf(v.defined)
 	if !ok {
 		v.result = v.lowerer.invalid("invalid named variant reached IR lowering")
 		return
@@ -70,17 +70,17 @@ func (v *runtimeTypeVisitor) VisitEnum(t *typeinfo.EnumType) {
 	})
 }
 
-func (v *runtimeTypeVisitor) VisitInteger(t *typeinfo.IntegerType) {
+func (v *runtimeTypeVisitor) VisitInteger(t *types.IntegerType) {
 	if t != nil {
 		v.result = v.lowerer.ctx.types.Intern(ir.Type{Kind: ir.TypeInteger, IsSigned: t.IsSigned, Bits: t.Bits})
 	}
 }
-func (v *runtimeTypeVisitor) VisitFloat(t *typeinfo.FloatType) {
+func (v *runtimeTypeVisitor) VisitFloat(t *types.FloatType) {
 	if t != nil {
 		v.result = v.lowerer.ctx.types.Intern(ir.Type{Kind: ir.TypeFloat, Bits: t.Bits})
 	}
 }
-func (v *runtimeTypeVisitor) VisitDefined(t *typeinfo.DefinedType) {
+func (v *runtimeTypeVisitor) VisitDefined(t *types.DefinedType) {
 	if t == nil || t.Underlying == nil {
 		v.result = v.lowerer.invalid("incomplete named type reached IR lowering")
 		return
@@ -89,33 +89,33 @@ func (v *runtimeTypeVisitor) VisitDefined(t *typeinfo.DefinedType) {
 	t.Underlying.VisitRuntimeType(&nested)
 	v.result = nested.result
 }
-func (v *runtimeTypeVisitor) VisitOwnedPointer(t *typeinfo.OwnedPtrType) {
+func (v *runtimeTypeVisitor) VisitOwnedPointer(t *types.OwnedPtrType) {
 	if t != nil {
 		v.result = v.lowerer.ctx.types.Intern(ir.Type{Kind: ir.TypeOwnedPtr, Elem: v.lowerer.intern(t.Target)})
 	}
 }
-func (v *runtimeTypeVisitor) VisitReference(t *typeinfo.RefType) {
+func (v *runtimeTypeVisitor) VisitReference(t *types.RefType) {
 	if t != nil {
 		v.result = v.lowerer.ctx.types.Intern(ir.Type{Kind: ir.TypeReference, IsMutable: t.IsMutable, Elem: v.lowerer.intern(t.Target)})
 	}
 }
-func (v *runtimeTypeVisitor) VisitOptional(t *typeinfo.OptionalType) {
+func (v *runtimeTypeVisitor) VisitOptional(t *types.OptionalType) {
 	if t != nil {
 		v.result = v.lowerer.ctx.types.Intern(ir.OptionalVariant(v.lowerer.intern(t.Inner)))
 	}
 }
-func (v *runtimeTypeVisitor) VisitArray(t *typeinfo.ArrayType) {
+func (v *runtimeTypeVisitor) VisitArray(t *types.ArrayType) {
 	if t == nil {
 		return
 	}
 	elem := v.lowerer.intern(t.Elem)
-	if t.Shape == typeinfo.ArraySlice {
+	if t.Shape == types.ArraySlice {
 		v.result = v.lowerer.ctx.types.Intern(ir.Type{Kind: ir.TypeSlice, Elem: elem})
 		return
 	}
 	v.result = v.lowerer.ctx.types.Intern(ir.Type{Kind: ir.TypeArray, Length: t.Len, Elem: elem})
 }
-func (v *runtimeTypeVisitor) VisitStruct(t *typeinfo.StructType) {
+func (v *runtimeTypeVisitor) VisitStruct(t *types.StructType) {
 	if t == nil {
 		return
 	}
@@ -144,7 +144,7 @@ func (v *runtimeTypeVisitor) VisitStruct(t *typeinfo.StructType) {
 	}
 	v.result = v.lowerer.ctx.types.Intern(ir.Type{Kind: ir.TypeStruct, Fields: fields})
 }
-func (v *runtimeTypeVisitor) VisitInterface(t *typeinfo.InterfaceType) {
+func (v *runtimeTypeVisitor) VisitInterface(t *types.InterfaceType) {
 	if t == nil {
 		return
 	}
@@ -152,11 +152,11 @@ func (v *runtimeTypeVisitor) VisitInterface(t *typeinfo.InterfaceType) {
 	for _, method := range t.Methods {
 		receiver := ir.MethodReceiverInvalid
 		switch method.Receiver {
-		case typeinfo.MethodReceiverValue:
+		case types.MethodReceiverValue:
 			receiver = ir.MethodReceiverValue
-		case typeinfo.MethodReceiverShared:
+		case types.MethodReceiverShared:
 			receiver = ir.MethodReceiverShared
-		case typeinfo.MethodReceiverMutable:
+		case types.MethodReceiverMutable:
 			receiver = ir.MethodReceiverMutable
 		}
 		if receiver == ir.MethodReceiverInvalid {
@@ -183,7 +183,7 @@ func (v *runtimeTypeVisitor) VisitInterface(t *typeinfo.InterfaceType) {
 	}
 	v.result = v.lowerer.ctx.types.Intern(ir.Type{Kind: ir.TypeInterface, Methods: methods})
 }
-func (v *runtimeTypeVisitor) VisitFunction(t *typeinfo.FuncType) {
+func (v *runtimeTypeVisitor) VisitFunction(t *types.FuncType) {
 	if t == nil {
 		return
 	}

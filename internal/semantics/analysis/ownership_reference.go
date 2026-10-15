@@ -11,7 +11,7 @@ import (
 	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/internal/source"
 )
 
@@ -329,7 +329,7 @@ func (a *analyzer) referenceValueForTHIR(expr thir.Expr, st ownershipState) ([]r
 		return []referenceLoan{}, false
 	}
 	id := expr.SourceInfo().NodeID
-	if _, isMutable, ok := typeinfo.ReferenceValueTarget(expr.ExprType()); ok {
+	if _, isMutable, ok := types.ReferenceValueTarget(expr.ExprType()); ok {
 		if _, projected := expr.(*thir.Field); projected {
 			var value []referenceLoan
 			for _, storage := range a.input.Analysis.StorageOrigins(id) {
@@ -372,7 +372,7 @@ func (a *analyzer) referenceValueForTHIR(expr thir.Expr, st ownershipState) ([]r
 // enum reference fields are direct/optional; nested reference aggregates remain
 // rejected by typechecking. Other holders and sibling slots retain their loans.
 func (a *analyzer) replaceReferenceField(target thir.Expr, value storedReference, st ownershipState) {
-	if _, _, isReference := typeinfo.ReferenceValueTarget(target.ExprType()); !isReference || a.input.Analysis == nil {
+	if _, _, isReference := types.ReferenceValueTarget(target.ExprType()); !isReference || a.input.Analysis == nil {
 		return
 	}
 	storage := a.input.Analysis.StorageOrigins(target.SourceInfo().NodeID)
@@ -407,7 +407,7 @@ func (a *analyzer) validateReferenceReturn(stmt *thir.Return, st ownershipState)
 	if a == nil || a.function == nil || stmt == nil || stmt.Value == nil {
 		return
 	}
-	if _, _, isReference := typeinfo.ReferenceValueTarget(stmt.Value.ExprType()); !isReference {
+	if _, _, isReference := types.ReferenceValueTarget(stmt.Value.ExprType()); !isReference {
 		return
 	}
 	value, found := a.referenceValueForTHIR(stmt.Value, st)
@@ -415,7 +415,7 @@ func (a *analyzer) validateReferenceReturn(stmt *thir.Return, st ownershipState)
 		return
 	}
 	functionType, _ := symbols.GetSymbolType(a.function.Symbol)
-	fnType, _ := functionType.(*typeinfo.FuncType)
+	fnType, _ := functionType.(*types.FuncType)
 	if fnType == nil || fnType.ReturnOrigins == nil {
 		return
 	}
@@ -465,13 +465,13 @@ func referenceMutability(sym *symbols.Symbol) (bool, bool) {
 	if !ok {
 		return false, false
 	}
-	_, isMutable, isReference := typeinfo.ReferenceValueTarget(typ)
+	_, isMutable, isReference := types.ReferenceValueTarget(typ)
 	return isMutable, isReference
 }
 
 func referenceHoldingSymbol(sym *symbols.Symbol) bool {
 	typ, ok := symbols.GetSymbolType(sym)
-	return ok && typeinfo.ContainsReference(typ)
+	return ok && types.ContainsReference(typ)
 }
 
 func copyReferenceLoans(value []referenceLoan) []referenceLoan {
@@ -656,7 +656,7 @@ func (v *livenessEffectVisitor) visitWrite(op effectWrite) {
 		return
 	}
 	v.definitions[op.Place.Root] = struct{}{}
-	if typ, typed := symbols.GetSymbolType(op.Place.Root); typed && typeinfo.OwnershipCapabilityOf(typ).NeedsDrop {
+	if typ, typed := symbols.GetSymbolType(op.Place.Root); typed && types.OwnershipCapabilityOf(typ).NeedsDrop {
 		v.recordUse(op.Place.Root, ir.SourceInfo{NodeID: op.Node, Location: op.Location})
 	}
 }

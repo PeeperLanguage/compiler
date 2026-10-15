@@ -17,7 +17,7 @@ import (
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/typechecker"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/pkg/peeper"
 )
 
@@ -189,7 +189,7 @@ fn main() -> i32 {
 		t.Fatalf("match evidence = %#v", match)
 	}
 	narrowed, _ := match.Arms[0].Body.Stmts[0].(*thir.Return).Value.(*thir.Field).Base.(*thir.Ident)
-	if narrowed == nil || typeinfo.TypeText(narrowed.CaseCarrier) != "Result" || typeinfo.TypeText(narrowed.Type) != "struct{value: i32}" {
+	if narrowed == nil || types.TypeText(narrowed.CaseCarrier) != "Result" || types.TypeText(narrowed.Type) != "struct{value: i32}" {
 		t.Fatalf("arm subject = %#v, want case payload", narrowed)
 	}
 	rangePlan, ok := loop.Iteration.(*thir.RangeIteration)
@@ -210,7 +210,7 @@ fn read(pair: Pair) -> i32 {
 		t.Fatalf("destructure evidence = %#v", mod.THIR.Functions[0].Body.Stmts[0])
 	}
 	binding := &destructure.Bindings[0]
-	if binding.Field != 0 || binding.Symbol == nil || binding.Symbol.Name != "count" || typeinfo.TypeText(binding.Type) != "i32" {
+	if binding.Field != 0 || binding.Symbol == nil || binding.Symbol.Name != "count" || types.TypeText(binding.Type) != "i32" {
 		t.Fatalf("destructure binding = %#v", binding)
 	}
 	binding.Symbol = nil
@@ -275,10 +275,10 @@ fn make() -> Wide { return Wide::Value with 7i32; }
 	if variant == nil {
 		t.Fatal("variant construction missing from THIR")
 	}
-	if got := typeinfo.TypeText(variant.PayloadType); got != "i64" {
+	if got := types.TypeText(variant.PayloadType); got != "i64" {
 		t.Fatalf("variant payload expected type = %s, want i64", got)
 	}
-	if got := typeinfo.TypeText(variant.Payload.ExprType()); got != "i32" {
+	if got := types.TypeText(variant.Payload.ExprType()); got != "i32" {
 		t.Fatalf("variant payload source type = %s, want i32", got)
 	}
 }
@@ -313,7 +313,7 @@ fn Take(slot: Slot) -> i32 {
 	}
 	subject := match.Subject.(*thir.Ident)
 	plain, _ := match.Arms[1].Body.Stmts[0].(*thir.Return).Value.(*thir.Ident)
-	if plain == nil || plain.Symbol != subject.Symbol || typeinfo.TypeText(plain.Type) != "i32" || typeinfo.TypeText(plain.CaseCarrier) != "Slot" {
+	if plain == nil || plain.Symbol != subject.Symbol || types.TypeText(plain.Type) != "i32" || types.TypeText(plain.CaseCarrier) != "Slot" {
 		t.Fatalf("plain arm read = %#v, want the i32 payload of slot", plain)
 	}
 }
@@ -340,7 +340,7 @@ fn Grow(holder: &mut Holder) {
 	}
 	shape, _ := match.Arms[0].Body.Stmts[0].(*thir.Binding)
 	address, _ := shape.Value.(*thir.Address)
-	if shape == nil || address == nil || address.Mode != thir.AddressMutable || typeinfo.TypeText(shape.Symbol.Type) != "&mut struct{radius: i32}" {
+	if shape == nil || address == nil || address.Mode != thir.AddressMutable || types.TypeText(shape.Symbol.Type) != "&mut struct{radius: i32}" {
 		t.Fatalf("payload name = %#v", shape)
 	}
 	payload, _ := address.Value.(*thir.Field)

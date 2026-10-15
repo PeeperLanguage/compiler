@@ -11,7 +11,7 @@ import (
 	"compiler/internal/ir/thir"
 	"compiler/internal/moduleid"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 )
 
 // maxAnalysisValidationProblems bounds one internal error so a systematic evidence break
@@ -135,8 +135,8 @@ func validateValueUses(source *thir.Module) []string {
 					valueType := expr.ExprType()
 					if valueType == nil {
 						problems = append(problems, fmt.Sprintf("use kind published for node %v with no expression type", expr.SourceInfo().NodeID))
-					} else if use == typeinfo.UseCopy && typeinfo.OwnershipCapabilityOf(valueType).Copy == typeinfo.CopyNever {
-						problems = append(problems, fmt.Sprintf("node %v copies %s, which has no copy operation", expr.SourceInfo().NodeID, typeinfo.TypeText(valueType)))
+					} else if use == types.UseCopy && types.OwnershipCapabilityOf(valueType).Copy == types.CopyNever {
+						problems = append(problems, fmt.Sprintf("node %v copies %s, which has no copy operation", expr.SourceInfo().NodeID, types.TypeText(valueType)))
 					}
 				}
 			}

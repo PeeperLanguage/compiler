@@ -14,8 +14,8 @@ Before adding a switch or recursive walk, ask what fact you need and who already
 | Need | Canonical owner/API |
 | --- | --- |
 | AST children | node `forEachChild` + `ast.Inspect` |
-| semantic type children | `typeinfo.ForEachChild` |
-| copy/drop composition | sealed `typeinfo.Type.ownership` |
+| semantic type children | `types.ForEachChild` |
+| copy/drop composition | sealed `types.Type.ownership` |
 | storage projection | `place.Project` / `place.Decompose` |
 | graph adjacency | `graph.Directed` |
 | fixed-point scheduling | `graph.Worklist` |
@@ -65,8 +65,8 @@ search-and-remember exercise. It must never fall through as an accidental no-op.
 
 ## Path 2 — add a semantic type
 
-A semantic type is not complete until it satisfies the sealed `typeinfo.Type` contract.
-The first edits are therefore local to `internal/semantics/typeinfo`:
+A semantic type is not complete until it satisfies the sealed `types.Type` contract.
+The first edits are therefore local to `internal/semantics/types`:
 
 1. add human-facing `Text` behavior;
 2. declare semantic attributes and ordered child slots in `structure`, using correct
@@ -122,7 +122,7 @@ points:
 | --- | --- |
 | new AST field/node child | AST traversal completeness test |
 | new syntax kind at a syntax-aware closed site | dispatch contract / compiler failure |
-| new semantic type | sealed `typeinfo.Type` compile failure until structure/ownership declared |
+| new semantic type | sealed `types.Type` compile failure until structure/ownership declared |
 | new semantic type missing representation decision | type dispatch contract |
 | new effect operation | private visitor compile failure + transient evidence validator |
 | malformed CFG/analysis/MIR | artifact validator |

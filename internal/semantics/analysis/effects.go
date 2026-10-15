@@ -7,7 +7,7 @@ import (
 	"compiler/internal/ir/cfg"
 	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/place"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 )
 
 // buildEffects derives effects from canonical THIR and CFG. THIR owns source
@@ -38,7 +38,7 @@ type thirBuilder struct {
 	graph  *cfg.ControlFlowGraph
 	ops    effectSiteOps
 	site   cfg.SiteID
-	use    typeinfo.UseKind
+	use    types.UseKind
 }
 
 func (b *thirBuilder) emit(op effectOp) { b.ops[b.site] = append(b.ops[b.site], op) }
@@ -78,7 +78,7 @@ func (b *thirBuilder) buildSite(block *cfg.Block, site *cfg.Site) {
 	switch terminator := block.Terminator.(type) {
 	case *cfg.Branch:
 		if condition, ok := b.source.Node(terminator.ConditionID).(thir.Expr); ok {
-			b.expression(condition, typeinfo.UseRead)
+			b.expression(condition, types.UseRead)
 		}
 	case *cfg.SwitchVariant, *cfg.Jump, *cfg.Return:
 	default:
@@ -92,7 +92,7 @@ func (b *thirBuilder) BuildContinueEffects(*thir.Continue)       {}
 func (b *thirBuilder) BuildInvalidStmtEffects(*thir.InvalidStmt) {}
 
 func (b *thirBuilder) BuildBindingEffects(statement *thir.Binding) {
-	b.expression(statement.Value, typeinfo.UseMove)
+	b.expression(statement.Value, types.UseMove)
 	if statement.Symbol != nil {
 		value := exprNodeID(statement.Value)
 		b.emit(effectDefine{Symbol: statement.Symbol, Source: statement, Node: statement.Source.NodeID, Value: value, ValueExpr: statement.Value, IsInitialized: statement.Value != nil})
@@ -100,7 +100,7 @@ func (b *thirBuilder) BuildBindingEffects(statement *thir.Binding) {
 }
 
 func (b *thirBuilder) BuildDestructureEffects(statement *thir.Destructure) {
-	b.expression(statement.Value, typeinfo.UseMove)
+	b.expression(statement.Value, types.UseMove)
 	value := exprNodeID(statement.Value)
 	for _, binding := range statement.Bindings {
 		b.emit(effectDefine{Symbol: binding.Symbol, Source: statement, Node: statement.Source.NodeID, Value: value, ValueExpr: statement.Value, IsInitialized: true})
@@ -108,14 +108,14 @@ func (b *thirBuilder) BuildDestructureEffects(statement *thir.Destructure) {
 }
 
 func (b *thirBuilder) BuildExprStmtEffects(statement *thir.ExprStmt) {
-	b.expression(statement.Value, typeinfo.UseRead)
+	b.expression(statement.Value, types.UseRead)
 	if statement.Value != nil {
 		b.emit(effectDiscard{Source: statement.Value, Place: b.place(statement.Value), Node: statement.Value.SourceInfo().NodeID, Location: statement.Value.SourceInfo().Location})
 	}
 }
 
 func (b *thirBuilder) BuildAssignEffects(statement *thir.Assign) {
-	b.expression(statement.Value, typeinfo.UseMove)
+	b.expression(statement.Value, types.UseMove)
 	if statement.Target == nil {
 		return
 	}
@@ -124,7 +124,7 @@ func (b *thirBuilder) BuildAssignEffects(statement *thir.Assign) {
 }
 
 func (b *thirBuilder) BuildReturnEffects(statement *thir.Return) {
-	b.expression(statement.Value, typeinfo.UseMove)
+	b.expression(statement.Value, types.UseMove)
 }
 func (b *thirBuilder) BuildIfEffects(*thir.If) {}
 
@@ -132,13 +132,13 @@ func (b *thirBuilder) BuildForEffects(statement *thir.For) {
 	if statement.Checked != nil || statement.Iterable == nil {
 		return
 	}
-	b.expression(statement.Iterable, typeinfo.UseRead)
+	b.expression(statement.Iterable, types.UseRead)
 	if sequence, ok := statement.Iteration.(*thir.SequenceIteration); ok && sequence.Carrier != nil {
 		b.emit(effectIterate{Loop: statement.Source.NodeID, Place: b.place(statement.Iterable), Node: statement.Iterable.SourceInfo().NodeID, Source: statement.Iterable, Carrier: sequence.Carrier, Location: statement.Iterable.SourceInfo().Location})
 	}
 }
 func (b *thirBuilder) BuildMatchEffects(statement *thir.Match) {
-	b.expression(statement.Subject, typeinfo.UseRead)
+	b.expression(statement.Subject, types.UseRead)
 }
 
 func (b *thirBuilder) BuildInvalidExprEffects(*thir.InvalidExpr)       {}
@@ -169,20 +169,20 @@ func (b *thirBuilder) BuildIndexEffects(expr *thir.Index) {
 }
 
 func (b *thirBuilder) BuildRangeEffects(expr *thir.Range) {
-	b.expression(expr.Start, typeinfo.UseRead)
-	b.expression(expr.End, typeinfo.UseRead)
+	b.expression(expr.Start, types.UseRead)
+	b.expression(expr.End, types.UseRead)
 }
 func (b *thirBuilder) BuildStructLiteralEffects(expr *thir.StructLiteral) {
 	for _, field := range expr.Fields {
-		b.expression(field.Value, typeinfo.UseMove)
+		b.expression(field.Value, types.UseMove)
 	}
 }
 func (b *thirBuilder) BuildVariantEffects(expr *thir.Variant) {
-	b.expression(expr.Payload, typeinfo.UseMove)
+	b.expression(expr.Payload, types.UseMove)
 }
 func (b *thirBuilder) BuildArrayLiteralEffects(expr *thir.ArrayLiteral) {
 	for _, value := range expr.Values {
-		b.expression(value, typeinfo.UseMove)
+		b.expression(value, types.UseMove)
 	}
 }
 
@@ -194,30 +194,30 @@ func (b *thirBuilder) BuildAddressEffects(expr *thir.Address) {
 	b.borrow(expr, expr.Value, nil, expr.Mode == thir.AddressMutable, false)
 }
 
-func (b *thirBuilder) BuildUnaryEffects(expr *thir.Unary) { b.expression(expr.Value, typeinfo.UseRead) }
+func (b *thirBuilder) BuildUnaryEffects(expr *thir.Unary) { b.expression(expr.Value, types.UseRead) }
 func (b *thirBuilder) BuildBinaryEffects(expr *thir.Binary) {
-	b.expression(expr.Left, ternaryUse(expr.IsStringConcatenation, typeinfo.UseMove, typeinfo.UseRead))
-	b.expression(expr.Right, typeinfo.UseRead)
+	b.expression(expr.Left, ternaryUse(expr.IsStringConcatenation, types.UseMove, types.UseRead))
+	b.expression(expr.Right, types.UseRead)
 }
-func (b *thirBuilder) BuildIsEffects(expr *thir.Is) { b.expression(expr.Value, typeinfo.UseRead) }
+func (b *thirBuilder) BuildIsEffects(expr *thir.Is) { b.expression(expr.Value, types.UseRead) }
 
 func (b *thirBuilder) BuildCallEffects(expr *thir.Call) {
 	b.emit(effectCallBegin{Node: expr.SourceInfo().NodeID, Source: expr, Location: expr.SourceInfo().Location})
 	if field, isMethod := expr.Callee.(*thir.Field); isMethod {
 		b.argument(field.Base)
 	} else {
-		b.expression(expr.Callee, typeinfo.UseRead)
+		b.expression(expr.Callee, types.UseRead)
 	}
 	for _, argument := range expr.Args {
 		b.argument(argument)
 	}
 	b.emit(effectCallEnd{Node: expr.SourceInfo().NodeID})
 }
-func (b *thirBuilder) BuildFreeEffects(expr *thir.Free)   { b.expression(expr.Value, typeinfo.UseMove) }
-func (b *thirBuilder) BuildPrintEffects(expr *thir.Print) { b.expression(expr.Value, typeinfo.UseRead) }
-func (b *thirBuilder) BuildCastEffects(expr *thir.Cast)   { b.expression(expr.Value, typeinfo.UseMove) }
+func (b *thirBuilder) BuildFreeEffects(expr *thir.Free)   { b.expression(expr.Value, types.UseMove) }
+func (b *thirBuilder) BuildPrintEffects(expr *thir.Print) { b.expression(expr.Value, types.UseRead) }
+func (b *thirBuilder) BuildCastEffects(expr *thir.Cast)   { b.expression(expr.Value, types.UseMove) }
 
-func (b *thirBuilder) expression(expr thir.Expr, kind typeinfo.UseKind) {
+func (b *thirBuilder) expression(expr thir.Expr, kind types.UseKind) {
 	if expr == nil {
 		return
 	}
@@ -247,7 +247,7 @@ func (b *thirBuilder) argument(expr thir.Expr) {
 	b.expression(expr, use)
 }
 
-func (b *thirBuilder) project(expr thir.Expr, kind typeinfo.UseKind) {
+func (b *thirBuilder) project(expr thir.Expr, kind types.UseKind) {
 	b.placeOperands(expr)
 	b.emit(effectUse{Place: b.place(expr), Node: expr.SourceInfo().NodeID, Source: expr, Location: expr.SourceInfo().Location, Kind: kind})
 }
@@ -261,14 +261,14 @@ func (b *thirBuilder) placeOperands(expr thir.Expr) {
 		b.placeOperands(node.Base)
 	case *thir.Index:
 		b.placeOperands(node.Base)
-		b.expression(node.Index, typeinfo.UseRead)
+		b.expression(node.Index, types.UseRead)
 	default:
 		if place := expr.ExprPlace(); place != nil && place.Temporary != nil {
-			b.expression(place.Temporary, typeinfo.UseRead)
+			b.expression(place.Temporary, types.UseRead)
 			return
 		}
 		if _, isBinding := expr.(*thir.Ident); !isBinding {
-			b.expression(expr, typeinfo.UseRead)
+			b.expression(expr, types.UseRead)
 		}
 	}
 }
@@ -296,7 +296,7 @@ func (b *thirBuilder) place(expr thir.Expr) effectPlace {
 func (b *thirBuilder) borrow(expr thir.Expr, operand, bounds thir.Expr, isMutable, isRaw bool) {
 	b.placeOperands(operand)
 	if bounds != nil {
-		b.expression(bounds, typeinfo.UseRead)
+		b.expression(bounds, types.UseRead)
 	}
 	b.emit(effectBorrow{Place: b.place(operand), Source: expr, Node: expr.SourceInfo().NodeID, Operand: operand.SourceInfo().NodeID, OperandExpr: operand, Location: expr.SourceInfo().Location, IsMutable: isMutable, IsRaw: isRaw})
 }
@@ -305,11 +305,11 @@ func (b *thirBuilder) isMutableReference(expr thir.Expr) bool {
 	if expr == nil || expr.ExprType() == nil {
 		return false
 	}
-	_, isMutable, isReference := typeinfo.ReferenceTarget(typeinfo.Underlying(expr.ExprType()))
+	_, isMutable, isReference := types.ReferenceTarget(types.Underlying(expr.ExprType()))
 	return isReference && isMutable
 }
 
-func ternaryUse(isConditionTrue bool, yes, no typeinfo.UseKind) typeinfo.UseKind {
+func ternaryUse(isConditionTrue bool, yes, no types.UseKind) types.UseKind {
 	if isConditionTrue {
 		return yes
 	}

@@ -20,7 +20,7 @@ import (
 	"compiler/internal/semantics/intrinsics"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/internal/source"
 	"compiler/internal/target"
 	"compiler/pkg/peeper"
@@ -83,10 +83,10 @@ func TestRunCheckPublishesTHIRAndEvidenceFromOneOperation(t *testing.T) {
 	}
 	main := mod.AST.Stmts[0].(*ast.FnDecl)
 	ret := main.Body.Stmts[0].(*ast.ReturnStmt)
-	if got := typeinfo.TypeText(evidence.ExprType(ret.Value.ID())); got != "i32" {
+	if got := types.TypeText(evidence.ExprType(ret.Value.ID())); got != "i32" {
 		t.Fatalf("return expression evidence type = %q, want i32", got)
 	}
-	if typed, ok := source.Node(ret.Value.ID()).(thir.Expr); !ok || typeinfo.TypeText(typed.ExprType()) != "i32" {
+	if typed, ok := source.Node(ret.Value.ID()).(thir.Expr); !ok || types.TypeText(typed.ExprType()) != "i32" {
 		t.Fatalf("published THIR return expression = %#v, want i32 expression", source.Node(ret.Value.ID()))
 	}
 }
@@ -133,7 +133,7 @@ fn main() -> i32 {
 	if !ok || typedCall == nil {
 		t.Fatalf("call node = %#v, want *thir.Call", source.Node(call.ID()))
 	}
-	if got := typeinfo.TypeText(typedCall.ExprType()); got != "i32" {
+	if got := types.TypeText(typedCall.ExprType()); got != "i32" {
 		t.Fatalf("call type = %q, want i32", got)
 	}
 	if len(typedCall.Args) != 1 {
@@ -172,12 +172,12 @@ fn Read(value: Box, pointer: *Box, reference: &Box) -> i32 {
 		}
 		base := selector.Expr.(*ast.Ident).Name
 		access, published := testEvidence(module).StructField(selector.ID())
-		if !published || access.Field != 0 || typeinfo.TypeText(access.Type) != "i32" {
+		if !published || access.Field != 0 || types.TypeText(access.Type) != "i32" {
 			t.Fatalf("%s field evidence = %#v", base, access)
 		}
 		indirect := access.DereferenceType != nil
-		if indirect != (base != "value") || indirect && typeinfo.TypeText(access.DereferenceType) != "Box" {
-			t.Fatalf("%s dereference type = %s", base, typeinfo.TypeText(access.DereferenceType))
+		if indirect != (base != "value") || indirect && types.TypeText(access.DereferenceType) != "Box" {
+			t.Fatalf("%s dereference type = %s", base, types.TypeText(access.DereferenceType))
 		}
 		found[base] = true
 		return true
@@ -206,7 +206,7 @@ fn main() -> i32 {
 	}
 	type callUse struct {
 		param int
-		use   typeinfo.UseKind
+		use   types.UseKind
 		found bool
 	}
 	walk := func(visit func(ast.Node) bool) {
@@ -231,17 +231,17 @@ fn main() -> i32 {
 		return true
 	})
 	for _, arg := range uses["Read"] {
-		if !arg.found || arg.use != typeinfo.UseRead {
+		if !arg.found || arg.use != types.UseRead {
 			t.Fatalf("copyable parameter argument = %+v, want published UseRead", arg)
 		}
 	}
 	for _, arg := range uses["Take"] {
-		if !arg.found || arg.use != typeinfo.UseMove {
+		if !arg.found || arg.use != types.UseMove {
 			t.Fatalf("owned parameter argument = %+v, want published UseMove", arg)
 		}
 	}
 	for _, arg := range uses["Borrow"] {
-		if !arg.found || arg.use != typeinfo.UseRead {
+		if !arg.found || arg.use != types.UseRead {
 			t.Fatalf("reference parameter argument = %+v, want published UseRead", arg)
 		}
 	}
@@ -270,7 +270,7 @@ func TestCheckAllocPublishesConsumingUse(t *testing.T) {
 				return true
 			}
 			published++
-			if kind != typeinfo.UseMove {
+			if kind != types.UseMove {
 				t.Fatalf("alloc operand = %v, want UseMove", kind)
 			}
 			return true
@@ -304,7 +304,7 @@ fn main() -> i32 {
 				return true
 			}
 			published++
-			if kind != typeinfo.UseMove {
+			if kind != types.UseMove {
 				t.Fatalf("alloc operand = %v, want UseMove", kind)
 			}
 			return true
@@ -608,7 +608,7 @@ func TestFloatingRemainderTypes(t *testing.T) {
 			fn := mod.AST.Stmts[0].(*ast.FnDecl)
 			ret := fn.Body.Stmts[0].(*ast.ReturnStmt)
 			value := mod.THIR.Node(ret.Value.ID()).(thir.Expr)
-			if got := typeinfo.TypeText(value.ExprType()); got != test.result {
+			if got := types.TypeText(value.ExprType()); got != test.result {
 				t.Fatalf("remainder type = %s, want %s", got, test.result)
 			}
 		})
@@ -663,12 +663,12 @@ fn main() {
 	ok := fn.Body.Stmts[0].(*ast.LetDecl).Value
 	pending := fn.Body.Stmts[1].(*ast.LetDecl).Value
 	okEvidence, found := testEvidence(module).VariantConstruction(ok.ID())
-	if !found || typeinfo.TypeText(okEvidence.EnumType) != "Result<i32>" || okEvidence.Case != 0 ||
+	if !found || types.TypeText(okEvidence.EnumType) != "Result<i32>" || okEvidence.Case != 0 ||
 		okEvidence.Payload == nil || ast.ExprText(okEvidence.Value) != ".{code = 7, value = 42}" {
 		t.Fatalf("Ok construction evidence = %#v", okEvidence)
 	}
 	pendingEvidence, found := testEvidence(module).VariantConstruction(pending.ID())
-	if !found || typeinfo.TypeText(pendingEvidence.EnumType) != "Result<i32>" || pendingEvidence.Case != 1 ||
+	if !found || types.TypeText(pendingEvidence.EnumType) != "Result<i32>" || pendingEvidence.Case != 1 ||
 		pendingEvidence.Payload != nil || pendingEvidence.Value != nil {
 		t.Fatalf("Pending construction evidence = %#v", pendingEvidence)
 	}
@@ -730,11 +730,11 @@ func TestRecoveredLiteralHasInvalidTypeWithoutCascade(t *testing.T) {
 	}
 	body := mod.AST.Stmts[0].(*ast.FnDecl).Body
 	bad := body.Stmts[0].(*ast.LetDecl).Value
-	if _, ok := testEvidence(mod).ExprType(bad.ID()).(*typeinfo.InvalidType); !ok {
+	if _, ok := testEvidence(mod).ExprType(bad.ID()).(*types.InvalidType); !ok {
 		t.Fatal("recovered expression must record invalid type")
 	}
 	good := body.Stmts[2].(*ast.ReturnStmt).Value
-	if got := typeinfo.TypeText(testEvidence(mod).ExprType(good.ID())); got != "i32" {
+	if got := types.TypeText(testEvidence(mod).ExprType(good.ID())); got != "i32" {
 		t.Fatalf("following valid expression type = %s, want i32", got)
 	}
 }
@@ -817,12 +817,12 @@ fn Read(result: Result) -> i32 {
 	fn := module.AST.Stmts[1].(*ast.FnDecl)
 	match := fn.Body.Stmts[0].(*ast.MatchStmt)
 	evidence, found := testEvidence(module).Match(match.ID())
-	if !found || typeinfo.TypeText(evidence.EnumType) != "Result" || evidence.CaseCount != 3 || !slices.Equal(slices.Concat(evidence.ArmCases...), []thir.ArmCase{{Case: 0}, {Case: 1}, {Case: 2}}) {
+	if !found || types.TypeText(evidence.EnumType) != "Result" || evidence.CaseCount != 3 || !slices.Equal(slices.Concat(evidence.ArmCases...), []thir.ArmCase{{Case: 0}, {Case: 1}, {Case: 2}}) {
 		t.Fatalf("match evidence = %#v", evidence)
 	}
 	// Inside the Ok arm the subject is the case payload.
 	narrowed := match.Arms[0].Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.SelectorExpr).Expr
-	if got := typeinfo.TypeText(testEvidence(module).ExprType(narrowed.ID())); got != "struct{value: i32; code: i32}" {
+	if got := types.TypeText(testEvidence(module).ExprType(narrowed.ID())); got != "struct{value: i32; code: i32}" {
 		t.Fatalf("narrowed subject type = %s", got)
 	}
 }
@@ -857,11 +857,11 @@ fn Read(slot: Slot) -> i32 {
 	}
 	// The whole-case arm after `with none` selects the value that is left.
 	present := match.Arms[1].Body.Stmts[0].(*ast.ReturnStmt).Value
-	if got := typeinfo.TypeText(testEvidence(module).ExprType(present.ID())); got != "i32" {
+	if got := types.TypeText(testEvidence(module).ExprType(present.ID())); got != "i32" {
 		t.Fatalf("subject in the arm after `with none` = %s, want i32", got)
 	}
 	circle := match.Arms[2].Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.SelectorExpr).Expr
-	if got := typeinfo.TypeText(testEvidence(module).ExprType(circle.ID())); got != "struct{radius: i32}" {
+	if got := types.TypeText(testEvidence(module).ExprType(circle.ID())); got != "struct{radius: i32}" {
 		t.Fatalf("subject in `with Shape::Circle` arm = %s", got)
 	}
 }
@@ -1449,7 +1449,7 @@ func TestMutablePointerFieldDefaultsTypeToNoCopy(t *testing.T) {
 	if !ok || typ == nil {
 		t.Fatalf("missing Buffer type")
 	}
-	if got := typeinfo.OwnershipCapabilityOf(typ); got.Copy != typeinfo.CopyNever {
+	if got := types.OwnershipCapabilityOf(typ); got.Copy != types.CopyNever {
 		t.Fatalf("Buffer should default to no-copy, got %v", got.Copy)
 	}
 }
@@ -1513,7 +1513,7 @@ func TestRawPointerFieldStructSupportsExplicitCopy(t *testing.T) {
 	if !ok || typ == nil {
 		t.Fatalf("missing View type")
 	}
-	if got := typeinfo.OwnershipCapabilityOf(typ); got.Copy != typeinfo.CopyExplicit || got.NeedsDrop {
+	if got := types.OwnershipCapabilityOf(typ); got.Copy != types.CopyExplicit || got.NeedsDrop {
 		t.Fatalf("View should support explicit copy without drop, got %v", got)
 	}
 }
@@ -1610,8 +1610,8 @@ fn main() -> i32 {
 	if !ok || got == nil {
 		t.Fatalf("expected myval type")
 	}
-	if typeinfo.TypeText(got) != "i32" {
-		t.Fatalf("myval type = %q, want i32", typeinfo.TypeText(got))
+	if types.TypeText(got) != "i32" {
+		t.Fatalf("myval type = %q, want i32", types.TypeText(got))
 	}
 }
 
@@ -1639,8 +1639,8 @@ fn main() -> i32 {
 	if !ok || got == nil {
 		t.Fatalf("expected myval type")
 	}
-	if typeinfo.TypeText(got) != "bool" {
-		t.Fatalf("myval type = %q, want bool", typeinfo.TypeText(got))
+	if types.TypeText(got) != "bool" {
+		t.Fatalf("myval type = %q, want bool", types.TypeText(got))
 	}
 }
 
@@ -1792,8 +1792,8 @@ func TestArrayConstantIndexPreservesCheckedTypeAndValue(t *testing.T) {
 			index := fn.Body.Stmts[0].(*ast.ReturnStmt).Value.(*ast.IndexExpr)
 			typing := testEvidence(mod)
 			constant, found := typing.ConstantIndex(index.ID())
-			if !found || constant.Text != test.value || typeinfo.TypeText(typeinfo.Underlying(constant.Type)) != test.typ ||
-				!typeinfo.IsSameType(constant.Type, typing.ExprType(index.Index.ID())) {
+			if !found || constant.Text != test.value || types.TypeText(types.Underlying(constant.Type)) != test.typ ||
+				!types.IsSameType(constant.Type, typing.ExprType(index.Index.ID())) {
 				t.Fatalf("constant index = %#v, want checked %s %s", constant, test.typ, test.value)
 			}
 			if !test.rejected {
@@ -2092,7 +2092,7 @@ func TestIndexExprRejectsFloatPostfixBeforeConstEvaluation(t *testing.T) {
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	ret := fn.Body.Stmts[0].(*ast.ReturnStmt)
 	index := ret.Value.(*ast.IndexExpr)
-	if !typeinfo.IsInvalidOrUnknown(testEvidence(module).ExprType(index.ID())) {
+	if !types.IsInvalidOrUnknown(testEvidence(module).ExprType(index.ID())) {
 		t.Fatalf("index expression should have invalid semantic type")
 	}
 }
@@ -2143,8 +2143,8 @@ func TestArrayLiteralTypechecksExplicitLength(t *testing.T) {
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	letDecl := fn.Body.Stmts[0].(*ast.LetDecl)
 	got := testEvidence(module).ExprType(letDecl.Value.ID())
-	if typeinfo.TypeText(got) != "[3]i32" {
-		t.Fatalf("array literal type = %s, want [3]i32", typeinfo.TypeText(got))
+	if types.TypeText(got) != "[3]i32" {
+		t.Fatalf("array literal type = %s, want [3]i32", types.TypeText(got))
 	}
 }
 
@@ -2159,8 +2159,8 @@ func TestArrayLiteralTypechecksInferredLength(t *testing.T) {
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	letDecl := fn.Body.Stmts[0].(*ast.LetDecl)
 	got := testEvidence(module).ExprType(letDecl.Value.ID())
-	if typeinfo.TypeText(got) != "[3]i32" {
-		t.Fatalf("array literal type = %s, want [3]i32", typeinfo.TypeText(got))
+	if types.TypeText(got) != "[3]i32" {
+		t.Fatalf("array literal type = %s, want [3]i32", types.TypeText(got))
 	}
 }
 
@@ -2175,8 +2175,8 @@ func TestArrayLiteralTypechecksDynamicArray(t *testing.T) {
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	letDecl := fn.Body.Stmts[0].(*ast.LetDecl)
 	got := testEvidence(module).ExprType(letDecl.Value.ID())
-	if typeinfo.TypeText(got) != "[]i32" {
-		t.Fatalf("array literal type = %s, want []i32", typeinfo.TypeText(got))
+	if types.TypeText(got) != "[]i32" {
+		t.Fatalf("array literal type = %s, want []i32", types.TypeText(got))
 	}
 }
 
@@ -2201,18 +2201,18 @@ func TestDynamicArrayOwnerOperationsTypecheck(t *testing.T) {
 	}
 	for i, stmt := range fn.Body.Stmts[1:] {
 		call := stmt.(*ast.ExprStmt).Expr.(*ast.CallExpr)
-		fnType, ok := testEvidence(module).ExprType(call.Callee.ID()).(*typeinfo.FuncType)
+		fnType, ok := testEvidence(module).ExprType(call.Callee.ID()).(*types.FuncType)
 		if !ok {
 			t.Fatalf("operation %v callee type = %#v, want function", i, testEvidence(module).ExprType(call.Callee.ID()))
 		}
 		if fnType.Return != nil {
-			t.Fatalf("operation %v return = %s, want void", i, typeinfo.TypeText(fnType.Return))
+			t.Fatalf("operation %v return = %s, want void", i, types.TypeText(fnType.Return))
 		}
 		if len(fnType.Params) != len(wantParams[i]) {
 			t.Fatalf("operation %v parameter count = %v, want %v", i, len(fnType.Params), len(wantParams[i]))
 		}
 		for paramIndex, want := range wantParams[i] {
-			if got := typeinfo.TypeText(fnType.Params[paramIndex]); got != want {
+			if got := types.TypeText(fnType.Params[paramIndex]); got != want {
 				t.Fatalf("operation %v parameter %v = %s, want %s", i, paramIndex, got, want)
 			}
 		}
@@ -2325,7 +2325,7 @@ func TestAllocTypecheck(t *testing.T) {
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	letDecl := fn.Body.Stmts[1].(*ast.LetDecl)
-	if got := typeinfo.TypeText(testEvidence(module).ExprType(letDecl.Value.ID())); got != "*i32" {
+	if got := types.TypeText(testEvidence(module).ExprType(letDecl.Value.ID())); got != "*i32" {
 		t.Fatalf("alloc type = %s, want *i32", got)
 	}
 }
@@ -2377,7 +2377,7 @@ func TestArrayLiteralRejectsFloatPostfixLengthBeforeElementChecks(t *testing.T) 
 	}
 	fn := module.AST.Stmts[0].(*ast.FnDecl)
 	letDecl := fn.Body.Stmts[0].(*ast.LetDecl)
-	if !typeinfo.IsInvalidOrUnknown(testEvidence(module).ExprType(letDecl.Value.ID())) {
+	if !types.IsInvalidOrUnknown(testEvidence(module).ExprType(letDecl.Value.ID())) {
 		t.Fatalf("array literal should have invalid semantic type")
 	}
 }
@@ -3601,20 +3601,20 @@ fn valid() -> i32 {
 func TestCanAdaptFirstCallArgumentUsesCallConversionRules(t *testing.T) {
 	ctx := project.New(".", peeper.SourceExt, diagnostics.NewDiagnosticBag())
 	module := &module.Module{}
-	element, ok := typeinfo.NumericTypeFromName("i32", ctx.Target)
+	element, ok := types.NumericTypeFromName("i32", ctx.Target)
 	if !ok {
 		t.Fatal("missing i32 type")
 	}
-	owner := &typeinfo.ArrayType{Shape: typeinfo.ArrayOwner, Elem: element}
-	mutableOwner := &typeinfo.RefType{Target: owner, IsMutable: true}
+	owner := &types.ArrayType{Shape: types.ArrayOwner, Elem: element}
+	mutableOwner := &types.RefType{Target: owner, IsMutable: true}
 	if !CanAdaptFirstCallArgument(ctx, module, mutableOwner, owner) {
 		t.Fatal("owner should adapt to mutable owner reference")
 	}
-	slice := &typeinfo.ArrayType{Shape: typeinfo.ArraySlice, Elem: element}
+	slice := &types.ArrayType{Shape: types.ArraySlice, Elem: element}
 	if CanAdaptFirstCallArgument(ctx, module, mutableOwner, slice) {
 		t.Fatal("slice must not adapt to mutable owner reference")
 	}
-	if CanAdaptFirstCallArgument(ctx, module, &typeinfo.BoolType{}, element) {
+	if CanAdaptFirstCallArgument(ctx, module, &types.BoolType{}, element) {
 		t.Fatal("numeric value must not adapt to bool")
 	}
 }
@@ -3761,7 +3761,7 @@ fn Read(pair: Pair) {
 	for index, want := range []string{"i32", "str"} {
 		field := statement.Fields[index]
 		symbol := module.SymbolIndex.Symbol(field.Binding)
-		if symbol == nil || typeinfo.TypeText(symbol.Type) != want {
+		if symbol == nil || types.TypeText(symbol.Type) != want {
 			t.Fatalf("local `%s` = %#v, want type %s", field.Binding.Name, symbol, want)
 		}
 	}

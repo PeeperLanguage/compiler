@@ -1,4 +1,4 @@
-package typeinfo
+package types
 
 // ReceiverIdentity returns the nominal declaration identity whose method set
 // owns typ. Pointer/reference carriers and transparent aliases do not create

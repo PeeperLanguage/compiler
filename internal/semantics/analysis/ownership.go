@@ -12,7 +12,7 @@ import (
 	"compiler/internal/ir/thir"
 	"compiler/internal/semantics/place"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 )
 
 type site struct {
@@ -348,7 +348,7 @@ func cleanupSymbols(scope *symbols.Scope, st ownershipState) []*symbols.Symbol {
 			continue
 		}
 		typ, ok := symbols.GetSymbolType(sym)
-		if ok && typeinfo.OwnershipCapabilityOf(typ).NeedsDrop {
+		if ok && types.OwnershipCapabilityOf(typ).NeedsDrop {
 			cleanup = append(cleanup, sym)
 		}
 	}
@@ -402,7 +402,7 @@ func (a *analyzer) planDiscardedDrops(node *site) {
 		if !isDiscard || discard.Place.Root != nil {
 			continue
 		}
-		if typeinfo.OwnershipCapabilityOf(discard.Source.ExprType()).NeedsDrop {
+		if types.OwnershipCapabilityOf(discard.Source.ExprType()).NeedsDrop {
 			a.cleanup.DiscardedValue[discard.Node] = struct{}{}
 		}
 	}

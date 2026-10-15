@@ -1,4 +1,4 @@
-package typeinfo
+package types
 
 // IsOptional reports whether typ has optional representation after aliases are resolved.
 func IsOptional(typ Type) bool {

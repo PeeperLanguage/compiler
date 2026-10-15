@@ -6,7 +6,7 @@ import (
 
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir/thir"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 )
 
 func TestEnumPayloadFieldAssignment(t *testing.T) {
@@ -69,11 +69,11 @@ func TestEnumPayloadFieldAssignment(t *testing.T) {
 			fn := mod.AST.Stmts[1].(*ast.FnDecl)
 			assignment := fn.Body.Stmts[0].(*ast.IfStmt).Then.Stmts[0].(*ast.AssignStmt)
 			rhs, ok := mod.THIR.Node(assignment.Value.ID()).(thir.Expr)
-			if !ok || rhs.ExprType() == nil || typeinfo.IsInvalidOrUnknown(rhs.ExprType()) {
+			if !ok || rhs.ExprType() == nil || types.IsInvalidOrUnknown(rhs.ExprType()) {
 				t.Fatalf("RHS lacks base type: %#v", rhs)
 			}
-			if got := mod.BaseExprType(assignment.Target.ID()); !typeinfo.IsSameType(got, rhs.ExprType()) {
-				t.Fatalf("target type = %s, RHS type = %s", typeinfo.TypeText(got), typeinfo.TypeText(rhs.ExprType()))
+			if got := mod.BaseExprType(assignment.Target.ID()); !types.IsSameType(got, rhs.ExprType()) {
+				t.Fatalf("target type = %s, RHS type = %s", types.TypeText(got), types.TypeText(rhs.ExprType()))
 			}
 		})
 	}

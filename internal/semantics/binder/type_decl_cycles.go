@@ -10,7 +10,7 @@ import (
 	"compiler/internal/graph"
 	"compiler/internal/moduleid"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 )
 
 const (
@@ -194,8 +194,8 @@ func (b *binder) lookupTypeDeclNodeID(name string, parameters []ast.TypeParam) (
 	if !ok || sym == nil || sym.Kind != symbols.SymbolType {
 		return "", false
 	}
-	defined, ok := sym.Type.(*typeinfo.DefinedType)
-	return typeDeclNodeID(b.module.ID, sym.Name), ok && defined.Kind == typeinfo.DefinedKindAlias
+	defined, ok := sym.Type.(*types.DefinedType)
+	return typeDeclNodeID(b.module.ID, sym.Name), ok && defined.Kind == types.DefinedKindAlias
 }
 
 func (b *binder) lookupQualifiedTypeDeclNodeID(node *ast.ScopeResolution) (graph.NodeID, bool) {
@@ -210,8 +210,8 @@ func (b *binder) lookupQualifiedTypeDeclNodeID(node *ast.ScopeResolution) (graph
 	if !ok || resolved.Module == nil || resolved.Symbol == nil || resolved.Symbol.Kind != symbols.SymbolType {
 		return "", false
 	}
-	defined, ok := resolved.Symbol.Type.(*typeinfo.DefinedType)
-	return typeDeclNodeID(resolved.Module.ID, resolved.Symbol.Name), ok && defined.Kind == typeinfo.DefinedKindAlias
+	defined, ok := resolved.Symbol.Type.(*types.DefinedType)
+	return typeDeclNodeID(resolved.Module.ID, resolved.Symbol.Name), ok && defined.Kind == types.DefinedKindAlias
 }
 
 func typeDeclNameFromNodeID(id graph.NodeID) string {

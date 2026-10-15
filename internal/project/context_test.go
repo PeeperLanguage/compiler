@@ -10,7 +10,7 @@ import (
 	"compiler/internal/moduleid"
 	"compiler/internal/phase"
 	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/semantics/types"
 	"compiler/pkg/peeper"
 )
 
@@ -59,11 +59,11 @@ func TestContextsKeepIndependentTargetSizedPredeclaredTypes(t *testing.T) {
 			t.Fatal("missing reserve predeclared symbol")
 		}
 		symType, found := symbols.GetSymbolType(sym)
-		fn, ok := symType.(*typeinfo.FuncType)
+		fn, ok := symType.(*types.FuncType)
 		if !found || !ok || len(fn.Params) != 2 {
 			t.Fatalf("reserve type = %#v", symType)
 		}
-		_, bits, ok := typeinfo.NumericInfo(fn.Params[1])
+		_, bits, ok := types.NumericInfo(fn.Params[1])
 		if !ok || bits != tt.bits {
 			t.Fatalf("reserve usize width = %d, want %d", bits, tt.bits)
 		}
