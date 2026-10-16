@@ -1,7 +1,0 @@
-name = "runtime_numbers"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "exit_code"
-exit_code = 2

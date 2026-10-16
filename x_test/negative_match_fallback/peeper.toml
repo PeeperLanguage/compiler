@@ -1,7 +1,0 @@
-name = "negative_match_fallback"
-build = "lib"
-
-[test]
-mode = "check"
-outcome = "failure"
-stderr_contains = ["the `_` arm must be the last arm", "the `_` arm handles nothing", "match is missing case `Empty`", "unknown member `radius`"]

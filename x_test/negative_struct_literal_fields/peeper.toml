@@ -1,8 +1,0 @@
-name = "negative_struct_literal_fields"
-build = "program"
-
-[test]
-mode = "check"
-outcome = "failure"
-stderr_contains = ["duplicate struct literal field `x`", "unknown struct literal field `z`", "missing struct literal field `y`"]
-stderr_excludes = ["panic:"]

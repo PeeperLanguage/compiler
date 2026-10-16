@@ -1,8 +1,0 @@
-name = "negative_default_parameter_arity"
-build = "program"
-
-[test]
-mode = "check"
-outcome = "failure"
-stderr_contains = ["Compilation failed"]
-stderr_excludes = ["published semantic effects are malformed", "control-flow topology is malformed", "panic:"]

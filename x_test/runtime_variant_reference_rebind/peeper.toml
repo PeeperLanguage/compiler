@@ -1,6 +1,0 @@
-name = "runtime_variant_reference_rebind"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "success"

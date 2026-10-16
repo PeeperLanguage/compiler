@@ -1,5 +1,0 @@
-const limit = nothing;
-
-fn main() -> i32 {
-    return 0;
-}

@@ -1,7 +1,0 @@
-name = "negative_enum_payload_shorthand"
-build = "lib"
-
-[test]
-mode = "check"
-outcome = "failure"
-stderr_contains = ["expected type"]

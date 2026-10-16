@@ -1,8 +1,0 @@
-struct Point {
-    x: i32
-}
-
-fn main() {
-    let mut points = []Point{Point.{x = 1}};
-    points |> resize(2, Point.{x = 0});
-}

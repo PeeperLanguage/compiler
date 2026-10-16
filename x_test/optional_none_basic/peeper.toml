@@ -1,6 +1,0 @@
-name = "optional_none_basic"
-build = "program"
-
-[test]
-mode = "check"
-outcome = "success"

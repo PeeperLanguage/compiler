@@ -1,9 +1,0 @@
-struct Point {
-    x: i32,
-    y: i32
-}
-
-struct Box<T> {
-    value: T,
-    tag: i32
-}

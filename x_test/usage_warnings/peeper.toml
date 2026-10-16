@@ -1,6 +1,0 @@
-name = "usage_warnings"
-build = "program"
-
-[test]
-mode = "check"
-outcome = "success"

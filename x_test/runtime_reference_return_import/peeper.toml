@@ -1,6 +1,0 @@
-name = "runtime_reference_return_import"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "success"

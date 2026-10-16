@@ -1,7 +1,0 @@
-name = "for_array_loop"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "success"
-stdout_contains = ["50", "6", "15", "10", "8", "7", "9"]

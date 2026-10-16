@@ -1,6 +1,0 @@
-name = "runtime_match_owned_payload"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "success"

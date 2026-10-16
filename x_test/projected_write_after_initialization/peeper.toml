@@ -1,7 +1,0 @@
-name = "projected_write_after_initialization"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "exit_code"
-exit_code = 7

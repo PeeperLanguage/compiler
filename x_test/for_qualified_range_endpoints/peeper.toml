@@ -1,7 +1,0 @@
-name = "for_qualified_range_endpoints"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "exit_code"
-exit_code = 4

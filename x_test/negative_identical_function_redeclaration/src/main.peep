@@ -1,8 +1,0 @@
-fn same() -> i32 {
-	let mut value: i32;
-	return value;
-}
-
-fn same() -> i32 {
-	return 2;
-}

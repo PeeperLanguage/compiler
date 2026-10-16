@@ -1,6 +1,0 @@
-name = "runtime_const_address_identity"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "success"

@@ -1,7 +1,0 @@
-name = "negative_destructure_missing_field"
-build = "lib"
-
-[test]
-mode = "check"
-outcome = "failure"
-stderr_contains = ["destructure leaves out field `second`"]

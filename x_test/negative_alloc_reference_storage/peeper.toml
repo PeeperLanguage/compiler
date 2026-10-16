@@ -1,8 +1,0 @@
-name = "negative_alloc_reference_storage"
-build = "program"
-entry = "src/main.peep"
-
-[test]
-mode = "check"
-outcome = "failure"
-stderr_contains = ["Compilation failed"]

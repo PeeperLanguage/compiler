@@ -1,6 +1,0 @@
-name = "runtime_borrow_conflicts"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "success"

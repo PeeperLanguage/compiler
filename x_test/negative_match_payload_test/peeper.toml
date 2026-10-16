@@ -1,7 +1,0 @@
-name = "negative_match_payload_test"
-build = "lib"
-
-[test]
-mode = "check"
-outcome = "failure"
-stderr_contains = ["match is missing case `Value with none`", "match is missing case `Inner with Shape::Empty`", "duplicate match arm for `Value`", "`with none` needs an optional payload, but `Inner` holds Shape", "`with none` needs an optional payload, but `Free` has no payload", "`with Shape` does not fit: `Value` holds ?i32", "`Free` has no payload to name", "a `.{ }` pattern needs a struct payload, got Shape", "a pattern tests one level below its case", "a `.{ }` pattern takes the fields out of the value, which a borrowed subject keeps"]

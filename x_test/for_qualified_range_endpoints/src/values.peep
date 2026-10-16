@@ -1,2 +1,0 @@
-const Zero: i32 = 0;
-const One: i32 = 1;

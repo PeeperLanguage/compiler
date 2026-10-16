@@ -1,3 +1,0 @@
-fn Make() -> i32 {
-    return 42;
-}

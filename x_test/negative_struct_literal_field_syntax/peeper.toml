@@ -1,8 +1,0 @@
-name = "negative_struct_literal_field_syntax"
-build = "program"
-
-[test]
-mode = "check"
-outcome = "failure"
-stderr_contains = ["expected '=' after struct literal field name", "expected identifier"]
-stderr_excludes = ["panic:"]

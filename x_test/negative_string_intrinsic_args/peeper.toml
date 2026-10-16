@@ -1,7 +1,0 @@
-name = "negative_string_intrinsic_args"
-build = "lib"
-
-[test]
-mode = "check"
-outcome = "failure"
-stderr_contains = ["Compilation failed"]

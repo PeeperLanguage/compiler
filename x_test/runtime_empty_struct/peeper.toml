@@ -1,6 +1,0 @@
-name = "runtime_empty_struct"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "success"

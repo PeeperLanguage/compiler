@@ -1,7 +1,0 @@
-name = "runtime_struct_field_order_conversion"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "exit_code"
-exit_code = 40

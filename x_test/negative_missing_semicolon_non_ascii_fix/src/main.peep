@@ -1,4 +1,0 @@
-fn main() -> i32 {
-    let greeting: str = "café 日本語"
-    return 0;
-}

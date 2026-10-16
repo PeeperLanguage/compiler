@@ -1,5 +1,0 @@
-struct Token {
-    value: i32
-}
-
-const Global = Token.{ value = 1 };

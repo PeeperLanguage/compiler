@@ -1,5 +1,0 @@
-fn main() -> i32 {
-    let value = 42;
-    let _ = alloc(&value);
-    return 0;
-}

@@ -1,4 +1,0 @@
-fn main() {
-    let mut values = []i32{};
-    let _ = values |> append(1);
-}

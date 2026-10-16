@@ -1,3 +1,0 @@
-struct Box<T> {
-    value: T
-}

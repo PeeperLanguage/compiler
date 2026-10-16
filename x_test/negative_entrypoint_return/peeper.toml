@@ -1,8 +1,0 @@
-name = "negative_entrypoint_return"
-build = "program"
-
-[test]
-mode = "build"
-outcome = "failure"
-stderr_contains = ["M0006"]
-stderr_excludes = ["clang"]

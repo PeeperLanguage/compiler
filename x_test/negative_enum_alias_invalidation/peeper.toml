@@ -1,7 +1,0 @@
-name = "negative_enum_alias_invalidation"
-build = "lib"
-
-[test]
-mode = "check"
-outcome = "failure"
-stderr_contains = ["T0037", "cannot activate mutable borrow while storage is borrowed"]

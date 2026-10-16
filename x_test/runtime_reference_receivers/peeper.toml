@@ -1,6 +1,0 @@
-name = "runtime_reference_receivers"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "success"

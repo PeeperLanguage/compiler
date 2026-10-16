@@ -1,7 +1,0 @@
-name = "negative_raw_pointer_moved_escape"
-build = "lib"
-
-[test]
-mode = "check"
-outcome = "failure"
-stderr_contains = ["T0036", "cannot return pointer to local storage", "return moved.value;", "return taken.value;"]

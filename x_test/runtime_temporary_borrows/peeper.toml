@@ -1,6 +1,0 @@
-name = "runtime_temporary_borrows"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "success"

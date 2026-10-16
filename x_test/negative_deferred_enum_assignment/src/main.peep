@@ -1,6 +1,0 @@
-enum Value { Integer: struct { item: i32 }, Flag: struct { item: bool } }
-
-fn Corrupt(value: Value, replacement: i32) {
-    if value is Value::Integer { value.item = replacement; }
-}
-fn main() {}

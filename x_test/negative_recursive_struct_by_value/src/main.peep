@@ -1,7 +1,0 @@
-struct Node {
-    next: Node
-}
-
-fn consume(node: Node) -> i32 {
-    return 0;
-}

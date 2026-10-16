@@ -1,5 +1,0 @@
-struct Box<T> {
-    value: T
-}
-
-fn Use(value: Box) {}

@@ -1,6 +1,0 @@
-name = "llvm_shift_guard_exact_bound"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "failure"

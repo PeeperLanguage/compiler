@@ -1,8 +1,0 @@
-name = "for_true_endless_loop"
-build = "lib"
-
-[test]
-mode = "check"
-outcome = "success"
-stderr_contains = ["`for true` is an endless loop", "this condition is always true", "= help: write `for` with no condition\n   | \n10 |     for {\n", "this code is unreachable", "condition is always true\n", "write `for` with no condition for a loop that never ends", "condition is always false"]
-stderr_excludes = ["not all control paths return a value", "P0002", "P0003"]

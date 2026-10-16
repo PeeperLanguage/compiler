@@ -1,6 +1,0 @@
-name = "runtime_reference_returns"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "success"

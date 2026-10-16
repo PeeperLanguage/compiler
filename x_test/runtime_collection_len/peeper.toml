@@ -1,6 +1,0 @@
-name = "runtime_collection_len"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "success"

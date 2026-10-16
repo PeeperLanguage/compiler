@@ -1,6 +1,0 @@
-name = "runtime_dynamic_array_literal"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "success"

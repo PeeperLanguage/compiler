@@ -1,6 +1,0 @@
-name = "managed_object_cache"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "success"

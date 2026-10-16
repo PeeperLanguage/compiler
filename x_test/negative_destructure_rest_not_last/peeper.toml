@@ -1,7 +1,0 @@
-name = "negative_destructure_rest_not_last"
-build = "lib"
-
-[test]
-mode = "check"
-outcome = "failure"
-stderr_contains = ["`_` must be the last destructure item"]

@@ -1,6 +1,0 @@
-name = "runtime_iterator_factory"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "success"

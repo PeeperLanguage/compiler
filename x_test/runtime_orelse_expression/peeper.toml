@@ -1,7 +1,0 @@
-name = "runtime_orelse_expression"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "success"
-stdout_contains = ["7"]

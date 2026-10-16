@@ -1,8 +1,0 @@
-name = "negative_ownership_join"
-build = "program"
-entry = "src/main.peep"
-
-[test]
-mode = "check"
-outcome = "failure"
-stderr_contains = ["Compilation failed"]

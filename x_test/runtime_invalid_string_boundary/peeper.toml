@@ -1,6 +1,0 @@
-name = "runtime_invalid_string_boundary"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "failure"

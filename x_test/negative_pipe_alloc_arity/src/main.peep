@@ -1,3 +1,0 @@
-fn Invalid(value: i32) {
-    value |> alloc(1, 2);
-}

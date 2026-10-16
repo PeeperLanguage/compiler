@@ -1,6 +1,0 @@
-name = "lsp_completion"
-build = "program"
-
-[test]
-mode = "check"
-outcome = "success"

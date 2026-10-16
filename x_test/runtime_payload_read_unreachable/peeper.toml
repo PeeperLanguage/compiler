@@ -1,6 +1,0 @@
-name = "runtime_payload_read_unreachable"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "success"

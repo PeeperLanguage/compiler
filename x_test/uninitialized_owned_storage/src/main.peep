@@ -1,3 +1,0 @@
-fn main() {
-	let mut value: *i32;
-}

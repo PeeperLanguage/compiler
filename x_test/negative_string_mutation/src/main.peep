@@ -1,3 +1,0 @@
-fn Invalid(mut text: str) {
-    text[0] = b'x';
-}

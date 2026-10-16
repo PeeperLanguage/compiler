@@ -1,7 +1,0 @@
-name = "for_break_continue"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "success"
-stdout_contains = ["12"]

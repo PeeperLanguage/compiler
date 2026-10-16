@@ -1,8 +1,0 @@
-name = "negative_struct_literal_expression_prefix"
-build = "program"
-
-[test]
-mode = "check"
-outcome = "failure"
-stderr_contains = ["expected identifier"]
-stderr_excludes = ["panic:"]

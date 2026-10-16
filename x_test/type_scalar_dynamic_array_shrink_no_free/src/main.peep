@@ -1,8 +1,0 @@
-#[extern("free")]
-fn UnrelatedRelease(value: i32);
-
-fn Shorten(values: &mut []i32) {
-    shrink(values, 0);
-}
-
-fn main() {}

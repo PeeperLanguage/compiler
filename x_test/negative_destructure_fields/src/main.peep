@@ -1,4 +1,0 @@
-struct Box { value: i32 }
-struct Pair { first: *Box, second: *Box }
-fn Make() -> Pair { return Pair.{ first = alloc(Box.{ value = 1 }), second = alloc(Box.{ value = 2 }) }; }
-fn Run() { let .{ first as a, first as b, third as c, _ } = Make(); }

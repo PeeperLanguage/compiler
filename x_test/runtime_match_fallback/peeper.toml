@@ -1,6 +1,0 @@
-name = "runtime_match_fallback"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "success"

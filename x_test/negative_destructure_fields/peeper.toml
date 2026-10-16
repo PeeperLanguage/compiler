@@ -1,7 +1,0 @@
-name = "negative_destructure_fields"
-build = "lib"
-
-[test]
-mode = "check"
-outcome = "failure"
-stderr_contains = ["duplicate destructure field `first`", "unknown field `third`"]

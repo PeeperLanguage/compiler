@@ -1,2 +1,0 @@
-const Offset: u128 = 1u128 << 64u128;
-const Shift: u8 = 8u8;

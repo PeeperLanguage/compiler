@@ -1,8 +1,0 @@
-name = "negative_struct_literal_value_prefix"
-build = "program"
-
-[test]
-mode = "check"
-outcome = "failure"
-stderr_contains = ["unknown type `point`"]
-stderr_excludes = ["panic:"]

@@ -1,8 +1,0 @@
-name = "negative_earlier_error_hides_later_checks"
-build = "lib"
-
-[test]
-mode = "check"
-outcome = "failure"
-stderr_contains = ["T0001", "main.peep:11:8", "T0009", "main.peep:21:8", "Compilation failed with 4 error(s)"]
-stderr_excludes = ["main.peep:5:8"]

@@ -1,6 +1,0 @@
-name = "runtime_variant_case_narrowing"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "success"

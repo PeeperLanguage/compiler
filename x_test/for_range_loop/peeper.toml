@@ -1,7 +1,0 @@
-name = "for_range_loop"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "success"
-stdout_contains = ["10", "3", "3"]

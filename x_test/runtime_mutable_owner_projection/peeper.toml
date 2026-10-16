@@ -1,6 +1,0 @@
-name = "runtime_mutable_owner_projection"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "success"

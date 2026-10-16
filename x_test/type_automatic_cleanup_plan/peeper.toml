@@ -1,7 +1,0 @@
-name = "type_automatic_cleanup_plan"
-build = "program"
-entry = "src/main.peep"
-
-[test]
-mode = "check"
-outcome = "success"

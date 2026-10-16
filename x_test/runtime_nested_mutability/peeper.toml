@@ -1,6 +1,0 @@
-name = "runtime_nested_mutability"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "success"

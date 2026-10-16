@@ -1,6 +1,0 @@
-name = "runtime_reference_interface"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "success"

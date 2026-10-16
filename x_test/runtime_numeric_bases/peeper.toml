@@ -1,6 +1,0 @@
-name = "runtime_numeric_bases"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "success"

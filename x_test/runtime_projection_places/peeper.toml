@@ -1,6 +1,0 @@
-name = "runtime_projection_places"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "success"

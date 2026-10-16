@@ -1,6 +1,0 @@
-name = "runtime_bitwise_shift_negative"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "failure"

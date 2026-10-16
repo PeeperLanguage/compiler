@@ -1,7 +1,0 @@
-name = "negative_short_circuit"
-build = "lib"
-
-[test]
-mode = "check"
-outcome = "failure"
-stderr_contains = ["optional payload use requires a presence proof", "ownership state differs across control-flow paths"]

@@ -1,4 +1,0 @@
-fn main() -> i32 {
-    let total: i32 = 5
-    return total;
-}

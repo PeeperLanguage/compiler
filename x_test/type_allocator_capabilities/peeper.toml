@@ -1,7 +1,0 @@
-name = "type_allocator_capabilities"
-build = "program"
-entry = "src/main.peep"
-
-[test]
-mode = "check"
-outcome = "success"

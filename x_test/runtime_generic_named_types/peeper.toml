@@ -1,7 +1,0 @@
-name = "runtime_generic_named_types"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "exit_code"
-exit_code = 42

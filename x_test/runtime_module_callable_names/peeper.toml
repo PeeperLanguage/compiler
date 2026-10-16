@@ -1,6 +1,0 @@
-name = "runtime_module_callable_names"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "success"

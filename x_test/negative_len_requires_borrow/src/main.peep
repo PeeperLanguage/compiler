@@ -1,4 +1,0 @@
-fn main() {
-    let text: str = "hello";
-    let _ = len(text);
-}

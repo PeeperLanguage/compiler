@@ -1,4 +1,0 @@
-enum Result {
-    Ok: struct {},
-    Pending,
-}

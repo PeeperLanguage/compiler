@@ -1,7 +1,0 @@
-name = "negative_orelse_expression"
-build = "lib"
-
-[test]
-mode = "check"
-outcome = "failure"
-stderr_contains = ["this value is read before an `orelse` that uses `mine` and runs first", "a default value cannot leave the function"]

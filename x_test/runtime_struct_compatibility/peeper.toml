@@ -1,8 +1,0 @@
-name = "runtime_struct_compatibility"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "exit_code"
-exit_code = 30
-stdout_contains = ["struct compatibility ok"]

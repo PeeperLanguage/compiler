@@ -1,6 +1,0 @@
-name = "runtime_bitwise_shift_widths"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "success"

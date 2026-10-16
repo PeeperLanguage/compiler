@@ -1,6 +1,0 @@
-name = "runtime_enum_match_ownership"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "success"

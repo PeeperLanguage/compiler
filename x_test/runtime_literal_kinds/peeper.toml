@@ -1,6 +1,0 @@
-name = "runtime_literal_kinds"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "success"

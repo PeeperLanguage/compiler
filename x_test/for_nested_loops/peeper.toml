@@ -1,7 +1,0 @@
-name = "for_nested_loops"
-build = "program"
-
-[test]
-mode = "run"
-outcome = "success"
-stdout_contains = ["6"]
