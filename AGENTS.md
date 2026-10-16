@@ -303,7 +303,49 @@ Do not stop at "step done" until this audit passes for touched files.
 
 ---
 
-## 8) Agent conversation style
+## 8) Compiler goals and design method
+
+These are the project owner's requirements for the compiler. Every design and
+every change must serve them.
+
+### Goals, in order
+
+1. **Fast compiles.** State the hot-path cost of every design. Measure with a
+   benchmark before and after; do not guess. Profile before optimizing.
+2. **Clean organization.** Each package and type has one job. No "god" structs
+   that hold unrelated state (a parser holds its position and the tree it builds,
+   not memory management). Data is owned by the thing it describes.
+3. **Fewest items to maintain.** Fewest packages, types, fields and functions that
+   do the job. No duplicated facts or logic. Do not store what can be derived.
+4. **Readable code.** Descriptive, self-explaining names. Anyone can read a
+   package cold.
+
+### Design method
+
+- **The old codebase is evidence, not a template.** It was rebuilt because its
+  parts were too interconnected to fix. For every piece, ask what the compiler
+  needs, then find the best design: reason it out, look at how other compilers
+  solve it (Go, Rust, Zig, Odin, Clang, ...), and compare two or three options.
+  Bring old code back only when it is the best option, and simplify it first.
+- **Every piece passes three gates:** is it needed now (or by the agreed design)?
+  Is it the simplest form? Does something already do it?
+- **Unused today is not a reason to delete** a general, standalone helper.
+- **Design flaws are named, not patched over.** One writer per fact; values are
+  immutable once handed over; a step never writes another module's data.
+- **Prefer invariants kept by construction plus a test** over hand-written guards
+  that someone must remember to update.
+- **Decide with data:** when options are close, build small prototypes with the
+  same tests and benchmarks and show the numbers. Present options with a
+  recommendation; the owner decides.
+- **After each piece, ask whether it is fully ready** (faster, less code, less
+  work) and finish it before starting the next.
+- **Small rules:** never pass a concatenated string to a buffered writer's
+  `WriteString` (write each part); render Mermaid diagrams before handing them
+  over; never derive a fact from a naming convention.
+
+---
+
+## 9) Agent conversation style
 
 Respond terse like smart caveman. Technical substance stays. Fluff dies.
 
