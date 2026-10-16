@@ -7,7 +7,6 @@ name = "diagnostics"
 version = "0.1.0"
 dependencies = [
  "source",
- "unicode-general-category",
 ]
 
 [[package]]
@@ -26,6 +25,7 @@ dependencies = [
  "diagnostics",
  "lexer",
  "source",
+ "unicode-general-category",
 ]
 
 [[package]]

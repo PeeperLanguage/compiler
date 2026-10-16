@@ -1,15 +1,18 @@
 //! Writes diagnostics for a terminal: the header, each marked source line with
 //! the line above it, the notes, and the lines a fix changes as they read once
-//! it is applied.
+//! it is applied. In color, source lines are highlighted from the lexer's
+//! tokens.
 
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::io::{self, Write};
+use std::ops::Range;
 use std::sync::Arc;
 
+use diagnostics::{Diagnostic, Fix, Severity};
+use lexer::token::{self, Token, TokenKind};
 use source::{SourceFile, Span};
 use unicode_general_category::{GeneralCategory, get_general_category};
-
-use crate::{Diagnostic, Fix, Severity};
 
 const TAB_WIDTH: usize = 4;
 
@@ -25,6 +28,9 @@ const BOLD_RED: &str = "\x1b[1;31m";
 const BOLD_YELLOW: &str = "\x1b[1;33m";
 const BOLD_CYAN: &str = "\x1b[1;36m";
 const ORANGE: &str = "\x1b[38;5;208m";
+const PURPLE: &str = "\x1b[35m"; // keywords
+const LIGHT_GREEN: &str = "\x1b[38;5;120m"; // strings
+const LIGHT_ORANGE: &str = "\x1b[38;5;215m"; // numbers and characters
 // A dark letter on a mid-tone block of the same hue, readable on both dark
 // and light terminals.
 const FIX_ADDED: &str = "\x1b[38;5;22;48;5;114m";
@@ -43,6 +49,7 @@ pub fn print(out: &mut impl Write, diagnostics: &[Diagnostic], colored: bool) ->
         out: String::new(),
         colored,
         width: 0,
+        tokens: HashMap::new(),
     };
     let (mut errors, mut warnings) = (0, 0);
     for d in ordered {
@@ -79,6 +86,7 @@ struct Printer {
     out: String,
     colored: bool,
     width: usize, // digits of the largest line number shown
+    tokens: HashMap<*const SourceFile, Vec<Token>>, // each shown file's tokens, read once, in color only
 }
 
 /// The part of one source line a label covers, in 1-based character columns;
@@ -156,16 +164,16 @@ impl Printer {
             self.margin();
             let mut last_shown = 0;
             for line in &snippet.lines {
-                let context = context_line(snippet.file, line.number, last_shown);
-                let first_shown = line.number - usize::from(context.is_some());
+                let context = has_context_line(snippet.file, line.number, last_shown);
+                let first_shown = line.number - usize::from(context);
                 if last_shown > 0 && first_shown > last_shown + 1 {
                     let width = self.width;
                     self.paint(GREY, format_args!("{:>width$}", "..."));
                     self.out.push('\n');
                 }
-                if let Some(context) = context {
+                if context {
                     self.gutter(GREY, line.number - 1);
-                    self.cells(context, 0, None);
+                    self.source_line(snippet.file, line.number - 1);
                     self.out.push('\n');
                 }
                 self.marked_line(snippet.file, line, mark_color);
@@ -195,10 +203,10 @@ impl Printer {
         self.out.push('\n');
     }
 
-    fn marked_line(&mut self, file: &SourceFile, line: &MarkedLine, mark_color: &str) {
+    fn marked_line(&mut self, file: &Arc<SourceFile>, line: &MarkedLine, mark_color: &str) {
         let text = line_text(file, line.number);
         self.gutter(WHITE, line.number);
-        self.cells(text, 0, None);
+        self.source_line(file, line.number);
         self.out.push('\n');
         for mark in &line.marks {
             let end = if mark.end == 0 {
@@ -225,6 +233,24 @@ impl Printer {
                 self.paint(color, format_args!(" {message}"));
             }
             self.out.push('\n');
+        }
+    }
+
+    /// Writes line `number` of `file`, highlighted in color.
+    fn source_line(&mut self, file: &Arc<SourceFile>, number: usize) {
+        let line = file.line_span(number);
+        if !self.colored {
+            self.cells(file.slice(line), 0, None);
+            return;
+        }
+        let tokens = self
+            .tokens
+            .entry(Arc::as_ptr(file))
+            .or_insert_with(|| lexer::scan(file).0);
+        let pieces = highlight(file, tokens, line);
+        let mut column = 0;
+        for (range, color) in pieces {
+            column = self.cells(&file.text[range], column, color);
         }
     }
 
@@ -397,13 +423,60 @@ fn line_text(file: &SourceFile, number: usize) -> &str {
     file.slice(file.line_span(number))
 }
 
-/// The line above `number` when it is not blank and not already shown, so the
-/// marked line reads in its setting.
-fn context_line(file: &SourceFile, number: usize, last_shown: usize) -> Option<&str> {
-    if number <= 1 || number - 1 <= last_shown {
-        return None;
+/// Whether to show the line above `number`, so the marked line reads in its
+/// setting: it is not blank and not already shown.
+fn has_context_line(file: &SourceFile, number: usize, last_shown: usize) -> bool {
+    number > 1 && number - 1 > last_shown && !line_text(file, number - 1).trim().is_empty()
+}
+
+/// Splits `line` into pieces with their highlight color, from the file's
+/// `tokens`. Text between tokens that is not white space is a comment (or a
+/// character the lexer rejected, which a mark shows anyway).
+fn highlight(
+    file: &SourceFile,
+    tokens: &[Token],
+    line: Span,
+) -> Vec<(Range<usize>, Option<&'static str>)> {
+    let line = line.range();
+    let mut pieces = Vec::new();
+    let gap = |pieces: &mut Vec<_>, gap: Range<usize>| {
+        let text = &file.text[gap.clone()];
+        let comment = gap.start + (text.len() - text.trim_start().len());
+        let comment_end = comment + text.trim().len();
+        for (range, color) in [
+            (gap.start..comment, None),
+            (comment..comment_end, Some(GREY)),
+            (comment_end..gap.end, None),
+        ] {
+            if !range.is_empty() {
+                pieces.push((range, color));
+            }
+        }
+    };
+    let mut position = line.start;
+    let first = tokens.partition_point(|t| (t.span.end as usize) <= line.start);
+    for t in &tokens[first..] {
+        let span = t.span.range();
+        if span.start >= line.end || t.kind == TokenKind::Eof {
+            break;
+        }
+        let piece = span.start.max(line.start)..span.end.min(line.end);
+        gap(&mut pieces, position..piece.start);
+        position = piece.end;
+        pieces.push((piece, token_color(file, t)));
     }
-    Some(line_text(file, number - 1)).filter(|text| !text.trim().is_empty())
+    gap(&mut pieces, position..line.end);
+    pieces
+}
+
+fn token_color(file: &SourceFile, t: &Token) -> Option<&'static str> {
+    match t.kind {
+        TokenKind::String | TokenKind::CString => Some(LIGHT_GREEN),
+        TokenKind::Number | TokenKind::Char | TokenKind::ByteChar => Some(LIGHT_ORANGE),
+        TokenKind::DocComment => Some(GREY),
+        kind if token::keyword(file.slice(t.span)) == Some(kind) => Some(PURPLE),
+        _ => None,
+    }
 }
 
 fn line_number_width(d: &Diagnostic, snippets: &[Snippet]) -> usize {

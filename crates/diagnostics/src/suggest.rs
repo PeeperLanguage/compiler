@@ -1,0 +1,152 @@
+//! "Did you mean ...?": the known name closest to a misspelled one.
+
+/// The candidate closest to `query`, ignoring case, but only when the typo
+/// signal is strong enough and no other candidate is about as close. A lower
+/// priority wins a tie between equally close candidates; callers without a
+/// preference give every candidate the same priority.
+pub fn nearest_name<'a>(
+    query: &str,
+    candidates: impl IntoIterator<Item = (&'a str, i32)>,
+) -> Option<&'a str> {
+    if query.is_empty() {
+        return None;
+    }
+    let query = query.to_lowercase();
+    let mut best: Option<Match> = None;
+    let mut second: Option<Match> = None;
+    for (order, (name, priority)) in candidates.into_iter().enumerate() {
+        if name.trim().is_empty() {
+            continue;
+        }
+        let lower = name.to_lowercase();
+        let candidate = Match {
+            name,
+            distance: levenshtein(query.as_bytes(), lower.as_bytes()),
+            shared_prefix: query
+                .bytes()
+                .zip(lower.bytes())
+                .take_while(|(a, b)| a == b)
+                .count(),
+            length_difference: query.len().abs_diff(lower.len()),
+            priority,
+            order,
+        };
+        if best.as_ref().is_none_or(|b| candidate.ranks_before(b)) {
+            second = best.replace(candidate);
+        } else if second.as_ref().is_none_or(|s| candidate.ranks_before(s)) {
+            second = Some(candidate);
+        }
+    }
+    let best = best?;
+    // An exact match of a one- or two-letter query is taken even when others tie.
+    let exact_short = query.len() <= 2 && best.distance == 0;
+    let accepted = exact_short
+        || best.close_enough(query.len()) && second.is_none_or(|s| best.clearly_better_than(&s));
+    accepted.then_some(best.name)
+}
+
+struct Match<'a> {
+    name: &'a str,
+    distance: usize,
+    shared_prefix: usize,
+    length_difference: usize,
+    priority: i32,
+    order: usize,
+}
+
+impl Match<'_> {
+    fn ranks_before(&self, other: &Match) -> bool {
+        (
+            self.distance,
+            std::cmp::Reverse(self.shared_prefix),
+            self.priority,
+            self.length_difference,
+            self.order,
+        ) < (
+            other.distance,
+            std::cmp::Reverse(other.shared_prefix),
+            other.priority,
+            other.length_difference,
+            other.order,
+        )
+    }
+
+    /// Whether the edit distance is small for a query of `query_len` bytes.
+    fn close_enough(&self, query_len: usize) -> bool {
+        let longer = query_len.max(self.name.len());
+        match query_len {
+            0..=2 => self.distance == 1 && self.shared_prefix > 0,
+            3..=4 => self.distance <= 1,
+            5..=7 => self.distance <= 2 && self.distance * 5 <= longer * 2,
+            _ => self.distance <= 3 && self.distance * 3 <= longer,
+        }
+    }
+
+    fn clearly_better_than(&self, other: &Match) -> bool {
+        if self.distance + 1 < other.distance {
+            return true;
+        }
+        if self.distance == other.distance {
+            return self.shared_prefix >= other.shared_prefix + 2 || self.priority < other.priority;
+        }
+        if self.distance + 1 == other.distance {
+            return self.shared_prefix > other.shared_prefix
+                || self.priority < other.priority && self.shared_prefix >= other.shared_prefix;
+        }
+        false
+    }
+}
+
+/// The number of byte insertions, deletions and substitutions that turn `a`
+/// into `b`.
+fn levenshtein(a: &[u8], b: &[u8]) -> usize {
+    let mut previous: Vec<usize> = (0..=b.len()).collect();
+    let mut current = vec![0; b.len() + 1];
+    for (i, &x) in a.iter().enumerate() {
+        current[0] = i + 1;
+        for (j, &y) in b.iter().enumerate() {
+            let substitution = previous[j] + usize::from(x != y);
+            current[j + 1] = substitution.min(previous[j + 1] + 1).min(current[j] + 1);
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    previous[b.len()]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn nearest<'a>(query: &str, names: &[&'a str]) -> Option<&'a str> {
+        nearest_name(query, names.iter().map(|&name| (name, 0)))
+    }
+
+    #[test]
+    fn close_typos() {
+        assert_eq!(nearest("pritn", &["print"]), Some("print"));
+        assert_eq!(nearest("rint", &["print"]), Some("print")); // one edit, no shared prefix
+        assert_eq!(nearest("ength", &["length"]), Some("length"));
+        assert_eq!(nearest("Lenght", &["length"]), Some("length")); // case is ignored
+    }
+
+    #[test]
+    fn weak_or_ambiguous_matches_are_rejected() {
+        assert_eq!(nearest("foo", &["bar"]), None);
+        assert_eq!(nearest("cotn", &["cost", "count"]), None);
+        assert_eq!(nearest("", &["a"]), None);
+        assert_eq!(nearest("a", &[" "]), None);
+        assert_eq!(nearest("ab", &["ab", "AB"]), Some("ab")); // exact short match despite the tie
+    }
+
+    #[test]
+    fn priority_breaks_a_tie() {
+        assert_eq!(nearest_name("foa", [("for", 1), ("foo", 0)]), Some("foo"));
+    }
+
+    #[test]
+    fn edit_distance() {
+        assert_eq!(levenshtein(b"kitten", b"sitting"), 3);
+        assert_eq!(levenshtein(b"", b"abc"), 3);
+        assert_eq!(levenshtein(b"same", b"same"), 0);
+    }
+}

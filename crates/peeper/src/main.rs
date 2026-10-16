@@ -4,8 +4,10 @@ use std::io::{IsTerminal, Write};
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use diagnostics::{Severity, printer};
+use diagnostics::Severity;
 use source::SourceFile;
+
+mod printer;
 
 const USAGE: &str = "usage: peeper check file.peep";
 

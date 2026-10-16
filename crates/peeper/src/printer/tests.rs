@@ -1,5 +1,5 @@
 use super::*;
-use crate::Code;
+use diagnostics::Code;
 
 fn span(file: &SourceFile, text: &str) -> Span {
     let start = file.text.find(text).unwrap();
@@ -195,4 +195,31 @@ fn color() {
     print(&mut out, &[d], true).unwrap();
     let out = String::from_utf8(out).unwrap();
     assert!(out.contains("\x1b[1;33m[W0001]\x1b[0m"), "{out:?}");
+}
+
+#[test]
+fn source_lines_are_highlighted_in_color() {
+    let text = "fn main() {\n    let s = \"x\" + 1; // note\n}\n";
+    let file = Arc::new(SourceFile::new("a.peep", text));
+    let d =
+        Diagnostic::new(code("P0003", Severity::Error), "bad").label(&file, span(&file, "+"), "");
+    let mut out = Vec::new();
+    print(&mut out, &[d], true).unwrap();
+    let out = String::from_utf8(out).unwrap();
+    let line = "    \x1b[35mlet\x1b[0m s = \x1b[38;5;120m\"x\"\x1b[0m + \x1b[38;5;215m1\x1b[0m; \x1b[90m// note\x1b[0m\n";
+    assert!(out.contains(line), "{out:?}");
+    assert!(
+        out.contains("\x1b[35mfn\x1b[0m main() {\n"),
+        "context line: {out:?}"
+    );
+    assert!(
+        !render(&[
+            Diagnostic::new(code("P0003", Severity::Error), "bad").label(
+                &file,
+                span(&file, "+"),
+                ""
+            )
+        ])
+        .contains('\x1b')
+    );
 }
