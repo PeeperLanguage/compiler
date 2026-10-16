@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -101,9 +102,13 @@ func generated(n int) string {
 }
 
 func TestParseOneErrorForUnexpectedTopLevelText(t *testing.T) {
-	m, errs := Parse(source.NewFile("main.peep", "const a: i32 = 0;\nlet b = 1;\nfn f() {}"))
-	if len(errs) != 1 || errs[0].Message != "module scope expects declaration" {
-		t.Fatalf("errors = %v", errs)
+	m, errs := Parse(source.NewFile("main.peep", "let b = 1;\nx + 1; y();\nfn f() {}"))
+	var got []string
+	for _, err := range errs {
+		got = append(got, err.Message)
+	}
+	if strings.Join(got, "\n") != "top-level `let` not allowed\nmodule scope expects declaration" {
+		t.Fatalf("errors = %q", got)
 	}
 	if got := dump(m); got != "module\n  function declaration\n    declared name f\n    block {}\n" {
 		t.Fatalf("parsing did not go on at the next declaration: %s", got)
@@ -119,6 +124,9 @@ var brokenInputs = []string{
 	"fn f() { ) ; let x = ; }", "fn f() { let a = 1\nfn g() {}", "fn f() { g(a b c); h(1 2); }",
 	"fn (", "fn (a: &) f", "fn f<", "fn f<T", "fn f(a: Box<T) {}", "fn f(a: Box<Box<T>) {}", "fn f(a: [", "fn f(a: [4",
 	"fn f(a: fn(", "fn f() -> &mut", "fn f() -> i32 from (a", "fn f(a: ??) {}", "fn f(a: a::) {}", "fn f(mut mut) {}",
+	"///", "/// x", "#", "#[", "#[a(", "#[a(1, ] fn f();", "const", "const a", "const a: = ;", "struct", "struct S {",
+	"struct S { a: }", "enum E { A: }", "iface I { fn", "iface I { fn (", "type", "type A =", "type A<T", "struct S {} struct",
+	"fn f() { let a: i32; }", "fn f() {\nstruct S {}", "/// doc\n#[a] let x = 1;",
 }
 
 // TestOneErrorPerMistake checks that each mistake is reported once, and that
@@ -448,4 +456,139 @@ func grouped(t *ast.Tree, i ast.Index) string {
 		return grouped(t, n.A) + "(" + strings.Join(args, ", ") + ")"
 	}
 	return t.Text(i)
+}
+
+func TestParseDeclarations(t *testing.T) {
+	src := `/// The answer.
+/// Twice checked.
+const Answer: i32 = 42;
+const Untyped = 1;
+#[extern("rt_exit")]
+fn exit(code: i32);
+struct Pair<T> {
+    first: T,
+    second: struct { flag: bool },
+};
+enum Status { Ready, Waiting: Pair<i32>, }
+iface Summer {
+    fn (&Self) sum() -> i32,
+    fn (self: &Self) add<T>(value: T)
+}
+type Alias<T> = ?T;
+`
+	tree, errs := Parse(source.NewFile("t.peep", src))
+	if len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	want := `module
+  const declaration
+    metadata
+      doc comment /// The answer.
+/// Twice checked.
+    declared name Answer
+    type name i32
+    number literal 42
+  const declaration
+    declared name Untyped
+    number literal 1
+  function declaration
+    metadata
+      attribute
+        name reference extern
+        string literal "rt_exit"
+    declared name exit
+    parameter
+      declared name code
+      type name i32
+  struct declaration
+    declared name Pair
+    declared name T
+    struct type
+      field
+        declared name first
+        type name T
+      field
+        declared name second
+        struct type
+          field
+            declared name flag
+            type name bool
+  enum declaration
+    declared name Status
+    enum type
+      variant
+        declared name Ready
+      variant
+        declared name Waiting
+        generic type
+          type name Pair
+          type name i32
+  interface declaration
+    declared name Summer
+    interface type
+      function declaration
+        parameter
+          reference type
+            type name Self
+        declared name sum
+        type name i32
+      function declaration
+        parameter
+          declared name self
+          reference type
+            type name Self
+        declared name add
+        declared name T
+        parameter
+          declared name value
+          type name T
+  type alias declaration
+    declared name Alias
+    declared name T
+    optional type
+      type name T
+`
+	if got := dump(tree); got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// TestParsePrelude parses the real prelude, the first file of every program.
+func TestParsePrelude(t *testing.T) {
+	text, err := os.ReadFile("../../../_builtin_library/core/src/global.peep")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, errs := Parse(source.NewFile("global.peep", string(text))); len(errs) != 0 {
+		t.Fatalf("errors: %v", errs)
+	}
+}
+
+func TestDeclarationErrors(t *testing.T) {
+	for _, test := range []struct{ src, message string }{
+		{"let a = 1;", "top-level `let` not allowed"},
+		{"a + 1;", "module scope expects declaration"},
+		{"#[a, b] fn f();", "only one attribute is allowed per `#[...]` block"},
+		{"iface I { fn (&Self) f(a: i32 = 1) }", "interface method defaults are not supported"},
+		{"iface I { fn f() }", "expected `(`, found `identifier`"},
+		{"type A i32;", "expected `=`, found `identifier`"},
+		{"struct S { a i32 }", "expected `:`, found `identifier`"},
+		{"enum E { A B }", "expected `,`"},
+	} {
+		_, errs := Parse(source.NewFile("t.peep", test.src))
+		if len(errs) != 1 || errs[0].Message != test.message {
+			t.Errorf("%q: errors %v, want %q", test.src, errs, test.message)
+		}
+	}
+}
+
+// TestDocCommentAfterCode checks that a `///` on the line of earlier code is
+// not taken as the next declaration's documentation.
+func TestDocCommentAfterCode(t *testing.T) {
+	tree, _ := Parse(source.NewFile("t.peep", "const a = 1; /// about a\nconst b = 2;"))
+	for _, n := range tree.Nodes {
+		if n.Kind == ast.KindDocComment || n.Kind == ast.KindMetadata {
+			t.Fatalf("a %s was made", n.Kind)
+		}
+	}
 }

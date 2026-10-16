@@ -1,7 +1,7 @@
 // Package parser builds the syntax tree of one file (grammar so far: imports;
-// functions with receivers, type parameters, parameters, results and return
-// origins; every type form except struct, iface and enum; let, return and
-// expression statements; names, numbers, strings, calls and binary operators).
+// functions, constants, structs, enums, interfaces and type aliases with their
+// doc comments and attributes; every type form; let, return and expression
+// statements; names, numbers, strings, calls and binary operators).
 //
 // Every node is made when the parser has read up to its end, and its span ends
 // there, so node ends never decrease along the tree's node array (see ast).
@@ -41,19 +41,25 @@ type parser struct {
 	recovering bool // an error was reported and the parser is not yet in step again
 }
 
-func (p *parser) tok() token.Token {
-	for p.tokens[p.pos].Kind == token.DOC_COMMENT {
-		p.pos++
+// current returns the index of the current token: the next one that is not a
+// doc comment. Doc comments are read only where a declaration may begin (see
+// docComment); everywhere else the parser looks past them.
+func (p *parser) current() int {
+	i := p.pos
+	for p.tokens[i].Kind == token.DOC_COMMENT {
+		i++
 	}
-	return p.tokens[p.pos]
+	return i
 }
+
+func (p *parser) tok() token.Token { return p.tokens[p.current()] }
 
 func (p *parser) at(kind token.Kind) bool { return p.tok().Kind == kind }
 
 // peek returns the token after the current one.
 func (p *parser) peek() token.Token {
-	i := p.pos
-	if p.tok().Kind != token.EOF {
+	i := p.current()
+	if p.tokens[i].Kind != token.EOF {
 		i++
 	}
 	for p.tokens[i].Kind == token.DOC_COMMENT {
@@ -63,7 +69,8 @@ func (p *parser) peek() token.Token {
 }
 
 func (p *parser) next() token.Token {
-	t := p.tok()
+	p.pos = p.current()
+	t := p.tokens[p.pos]
 	if t.Kind != token.EOF {
 		p.pos++
 		p.lastEnd = t.End
@@ -129,7 +136,7 @@ func (p *parser) close(kind token.Kind, open token.Token) {
 // startsStatement reports whether kind begins a statement or declaration
 // wherever it appears, so parsing is in step again there.
 func startsStatement(kind token.Kind) bool {
-	return kind == token.LET || kind == token.RETURN || kind == token.FN || kind == token.IMPORT
+	return statements[kind] != nil || startsDeclaration(kind)
 }
 
 // sync skips to where parsing can go on after an error: past the next `;`, or

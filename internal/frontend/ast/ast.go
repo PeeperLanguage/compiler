@@ -34,9 +34,17 @@ type Kind uint8
 
 const (
 	KindNone                Kind = iota // the placeholder at index 0
-	KindModule                          // A: list of imports, B: list of functions
+	KindModule                          // A: list of imports, B: list of declarations
 	KindImportDecl                      // A: path (StringLiteral), B: alias (DeclaredName) or None
-	KindFunctionDecl                    // A: name (DeclaredName), B: Extra offset of [receiver (Parameter) or None, list of type parameters (DeclaredName), list of parameters, result type or None, list of return origins (NameReference), body (Block) or None]
+	KindFunctionDecl                    // A: name (DeclaredName), B: Extra offset of [receiver (Parameter) or None, list of type parameters (DeclaredName), list of parameters, result type or None, list of return origins (NameReference), body (Block) or None, metadata or None]; an interface method has no body and no metadata
+	KindConstDecl                       // A: name (DeclaredName), B: Extra offset of [type or None, value or None, metadata or None]
+	KindStructDecl                      // A: name (DeclaredName), B: Extra offset of [list of type parameters (DeclaredName), StructType, metadata or None]
+	KindEnumDecl                        // A: name (DeclaredName), B: Extra offset of [list of type parameters (DeclaredName), EnumType, metadata or None]
+	KindInterfaceDecl                   // A: name (DeclaredName), B: Extra offset of [list of type parameters (DeclaredName), InterfaceType, metadata or None]
+	KindTypeAliasDecl                   // A: name (DeclaredName), B: Extra offset of [list of type parameters (DeclaredName), type, metadata or None]
+	KindMetadata                        // A: DocComment or None, B: list of attributes; what comes before a declaration
+	KindDocComment                      // the `///` lines before a declaration; its text is the node's source text
+	KindAttribute                       // A: name (NameReference), B: list of arguments, as in `#[extern("name")]`
 	KindParameter                       // Op: MUT or 0, A: name (DeclaredName) or None, B: Extra offset of [type, default value or None]
 	KindDeclaredName                    // the name a declaration introduces; its text is the node's source text
 	KindTypeName                        // a type written as a name; its text is the node's source text
@@ -50,6 +58,11 @@ const (
 	KindDynamicArrayType                // A: element type, as in `[]T`
 	KindSliceType                       // A: element type, as in `[..]T`
 	KindFunctionType                    // A: list of parameters, B: Extra offset of [result type or None, list of return origins (NameReference)]
+	KindStructType                      // A: list of fields
+	KindField                           // A: name (DeclaredName), B: type
+	KindEnumType                        // A: list of variants
+	KindVariant                         // A: name (DeclaredName), B: payload type or None
+	KindInterfaceType                   // A: list of methods (FunctionDecl)
 	KindInvalidType                     // a type that could not be parsed
 	KindBlock                           // A: list of statements
 	KindLetStatement                    // A: name (DeclaredName), B: Extra offset of [type or None, value]
@@ -69,6 +82,14 @@ var kindNames = [...]string{
 	KindModule:              "module",
 	KindImportDecl:          "import declaration",
 	KindFunctionDecl:        "function declaration",
+	KindConstDecl:           "const declaration",
+	KindStructDecl:          "struct declaration",
+	KindEnumDecl:            "enum declaration",
+	KindInterfaceDecl:       "interface declaration",
+	KindTypeAliasDecl:       "type alias declaration",
+	KindMetadata:            "metadata",
+	KindDocComment:          "doc comment",
+	KindAttribute:           "attribute",
 	KindParameter:           "parameter",
 	KindDeclaredName:        "declared name",
 	KindTypeName:            "type name",
@@ -82,6 +103,11 @@ var kindNames = [...]string{
 	KindDynamicArrayType:    "dynamic array type",
 	KindSliceType:           "slice type",
 	KindFunctionType:        "function type",
+	KindStructType:          "struct type",
+	KindField:               "field",
+	KindEnumType:            "enum type",
+	KindVariant:             "variant",
+	KindInterfaceType:       "interface type",
 	KindInvalidType:         "invalid type",
 	KindBlock:               "block",
 	KindLetStatement:        "let statement",
@@ -131,13 +157,32 @@ func (t *Tree) Text(i Index) string {
 // FunctionDecl is a function declaration's children; TypeParameters,
 // Parameters and Origins are lists' Extra offsets.
 type FunctionDecl struct {
-	Name, Receiver, TypeParameters, Parameters, Result, Origins, Body Index
+	Name, Receiver, TypeParameters, Parameters, Result, Origins, Body, Metadata Index
 }
 
 func (t *Tree) FunctionDecl(i Index) FunctionDecl {
 	n := t.Nodes[i]
-	x := t.Extra[n.B : n.B+6]
-	return FunctionDecl{Name: n.A, Receiver: x[0], TypeParameters: x[1], Parameters: x[2], Result: x[3], Origins: x[4], Body: x[5]}
+	x := t.Extra[n.B : n.B+7]
+	return FunctionDecl{Name: n.A, Receiver: x[0], TypeParameters: x[1], Parameters: x[2], Result: x[3], Origins: x[4], Body: x[5], Metadata: x[6]}
+}
+
+// ConstDecl is a const declaration's children.
+type ConstDecl struct{ Name, Type, Value, Metadata Index }
+
+func (t *Tree) ConstDecl(i Index) ConstDecl {
+	n := t.Nodes[i]
+	x := t.Extra[n.B : n.B+3]
+	return ConstDecl{Name: n.A, Type: x[0], Value: x[1], Metadata: x[2]}
+}
+
+// TypeDecl is the children of a struct, enum, interface or type alias
+// declaration; TypeParameters is a list's Extra offset.
+type TypeDecl struct{ Name, TypeParameters, Type, Metadata Index }
+
+func (t *Tree) TypeDecl(i Index) TypeDecl {
+	n := t.Nodes[i]
+	x := t.Extra[n.B : n.B+3]
+	return TypeDecl{Name: n.A, TypeParameters: x[0], Type: x[1], Metadata: x[2]}
 }
 
 // Parameter is a parameter's children.
@@ -186,11 +231,12 @@ func (t *Tree) Children(i Index) iter.Seq[Index] {
 		case KindModule:
 			list(n.A)
 			list(n.B)
-		case KindImportDecl, KindBinaryExpression, KindFixedArrayType:
+		case KindImportDecl, KindBinaryExpression, KindFixedArrayType, KindField, KindVariant:
 			node(n.A)
 			node(n.B)
 		case KindFunctionDecl:
 			f := t.FunctionDecl(i)
+			node(f.Metadata)
 			node(f.Receiver)
 			node(f.Name)
 			list(f.TypeParameters)
@@ -198,6 +244,23 @@ func (t *Tree) Children(i Index) iter.Seq[Index] {
 			node(f.Result)
 			list(f.Origins)
 			node(f.Body)
+		case KindConstDecl:
+			c := t.ConstDecl(i)
+			node(c.Metadata)
+			node(c.Name)
+			node(c.Type)
+			node(c.Value)
+		case KindStructDecl, KindEnumDecl, KindInterfaceDecl, KindTypeAliasDecl:
+			d := t.TypeDecl(i)
+			node(d.Metadata)
+			node(d.Name)
+			list(d.TypeParameters)
+			node(d.Type)
+		case KindMetadata, KindAttribute:
+			node(n.A)
+			list(n.B)
+		case KindStructType, KindEnumType, KindInterfaceType:
+			list(n.A)
 		case KindParameter:
 			p := t.Parameter(i)
 			node(p.Name)

@@ -5,8 +5,8 @@ import (
 	"compiler/internal/frontend/token"
 )
 
-// block reads a block. A `fn` or `import` inside it means its `}` is missing:
-// the block ends there and the declaration is read next.
+// block reads a block. A declaration keyword inside it means its `}` is
+// missing: the block ends there and the declaration is read next.
 func (p *parser) block() ast.Index {
 	open, ok := p.expect(token.LBRACE)
 	if !ok {
@@ -16,7 +16,7 @@ func (p *parser) block() ast.Index {
 	stmts := buf[:0]
 	for {
 		kind := p.tok().Kind
-		if kind == token.RBRACE || kind == token.EOF || kind == token.FN || kind == token.IMPORT {
+		if kind == token.RBRACE || kind == token.EOF || startsDeclaration(kind) {
 			break
 		}
 		if startsStatement(kind) {
@@ -38,8 +38,8 @@ func (p *parser) block() ast.Index {
 var statements [256]func(p *parser) ast.Index
 
 func init() {
-	statements[token.LET] = (*parser).letStatement
-	statements[token.RETURN] = (*parser).returnStatement
+	statements[token.LET] = letStatement
+	statements[token.RETURN] = returnStatement
 }
 
 func (p *parser) stmt() ast.Index {
@@ -52,23 +52,16 @@ func (p *parser) stmt() ast.Index {
 	return p.add(ast.KindExpressionStatement, start, e, ast.None)
 }
 
-// letStatement reads `let name: Type = value;`; the type may be left out.
-func (p *parser) letStatement() ast.Index {
+// letStatement reads `let name: Type = value;`; the type and the value may be
+// left out.
+func letStatement(p *parser) ast.Index {
 	start := p.next().Start
-	name := p.name(ast.KindDeclaredName)
-	typ := ast.None
-	if p.at(token.COLON) {
-		p.next()
-		typ = p.typeExpr()
-	}
-	p.expect(token.ASSIGN)
-	value := p.expr(precLowest)
-	p.end()
+	name, typ, value := p.binding()
 	return p.add(ast.KindLetStatement, start, name, p.extra(typ, value))
 }
 
 // returnStatement reads `return value;`; the value may be left out.
-func (p *parser) returnStatement() ast.Index {
+func returnStatement(p *parser) ast.Index {
 	start := p.next().Start
 	value := ast.None
 	if !p.at(token.SEMICOLON) {

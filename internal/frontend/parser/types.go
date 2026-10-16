@@ -10,7 +10,8 @@ import (
 // startsType reports whether a type can begin with kind.
 func startsType(kind token.Kind) bool {
 	switch kind {
-	case token.IDENT, token.AMP, token.QUESTION, token.QQ, token.ASTERISK, token.RAWPTR, token.LBRACK, token.FN:
+	case token.IDENT, token.AMP, token.QUESTION, token.QQ, token.ASTERISK, token.RAWPTR, token.LBRACK, token.FN,
+		token.STRUCT, token.ENUM, token.IFACE:
 		return true
 	}
 	return false
@@ -43,6 +44,15 @@ func (p *parser) typeExpr() ast.Index {
 		return p.arrayType()
 	case token.FN:
 		return p.functionType()
+	case token.STRUCT:
+		p.next()
+		return p.structType(t.Start)
+	case token.ENUM:
+		p.next()
+		return p.enumType(t.Start)
+	case token.IFACE:
+		p.next()
+		return p.interfaceType(t.Start)
 	}
 	p.fail(diag.New(diag.InvalidType, "expected type, found `"+t.Kind.String()+"`").Label(p.t.File, t.Span, "expected a type here"))
 	return p.add(ast.KindInvalidType, p.lastEnd, ast.None, ast.None)
@@ -84,7 +94,7 @@ func (p *parser) typeSegment() ast.Index {
 func (p *parser) closeAngle(open token.Token) {
 	if t := p.tok(); t.Kind == token.SHR {
 		p.lastEnd = t.Start + 1
-		p.tokens[p.pos] = token.Token{Kind: token.GT, Span: source.Span{Start: t.Start + 1, End: t.End}}
+		p.tokens[p.current()] = token.Token{Kind: token.GT, Span: source.Span{Start: t.Start + 1, End: t.End}}
 		return
 	}
 	p.close(token.GT, open)
@@ -156,4 +166,68 @@ func (p *parser) functionType() ast.Index {
 	paramList := p.list(params)
 	result, origins := p.result()
 	return p.add(ast.KindFunctionType, start, paramList, p.extra(result, origins))
+}
+
+// structType reads `{ name: Type, ... }`, the fields of a struct type that
+// starts at start.
+func (p *parser) structType(start int) ast.Index {
+	return p.members(start, ast.KindStructType, isName, func() ast.Index {
+		fieldStart := p.tok().Start
+		name := p.name(ast.KindDeclaredName)
+		p.expect(token.COLON)
+		return p.add(ast.KindField, fieldStart, name, p.typeExpr())
+	})
+}
+
+// enumType reads `{ Name, Name: Payload, ... }`, the variants of an enum type
+// that starts at start.
+func (p *parser) enumType(start int) ast.Index {
+	return p.members(start, ast.KindEnumType, isName, func() ast.Index {
+		variantStart := p.tok().Start
+		name := p.name(ast.KindDeclaredName)
+		payload := ast.None
+		if p.at(token.COLON) {
+			p.next()
+			payload = p.typeExpr()
+		}
+		return p.add(ast.KindVariant, variantStart, name, payload)
+	})
+}
+
+// interfaceType reads `{ fn (receiver) name(parameters) -> Result, ... }`, the
+// methods of an interface type that starts at start: function signatures
+// without bodies. A method needs a receiver and takes no default values.
+func (p *parser) interfaceType(start int) ast.Index {
+	return p.members(start, ast.KindInterfaceType, func(kind token.Kind) bool { return kind == token.FN }, func() ast.Index {
+		methodStart := p.next().Start
+		if !p.at(token.LPAREN) {
+			p.expect(token.LPAREN)
+		}
+		f := p.signature()
+		noDefault := func(param ast.Index) {
+			if value := p.t.Parameter(param).Default; value != ast.None {
+				p.repair(diag.New(diag.InvalidDeclaration, "interface method defaults are not supported").
+					Label(p.t.File, p.t.Nodes[value].Span, ""))
+			}
+		}
+		if f.Receiver != ast.None {
+			noDefault(f.Receiver)
+		}
+		for _, param := range p.t.List(f.Parameters) {
+			noDefault(param)
+		}
+		return p.function(methodStart, f)
+	})
+}
+
+// members reads the `{ ... }` list of a struct, enum or interface type that
+// starts at start, and makes its node of kind.
+func (p *parser) members(start int, kind ast.Kind, startsMember func(token.Kind) bool, member func() ast.Index) ast.Index {
+	var buf [8]ast.Index
+	items := buf[:0]
+	if open, ok := p.expect(token.LBRACE); ok {
+		items = p.items(items, token.RBRACE, startsMember, member)
+		p.close(token.RBRACE, open)
+	}
+	return p.add(kind, start, p.list(items), ast.None)
 }

@@ -7,30 +7,131 @@ import (
 	"compiler/internal/source"
 )
 
+// declarations holds, by token kind, the reader of each declaration a keyword
+// begins; each takes the declaration's metadata node or None. It is filled in
+// init: a function's body calls back into the parser, which reads this table.
+var declarations [256]func(p *parser, metadata ast.Index) ast.Index
+
+func init() {
+	declarations[token.FN] = funcDecl
+	declarations[token.CONST] = constDecl
+	declarations[token.STRUCT] = typeDecl
+	declarations[token.ENUM] = typeDecl
+	declarations[token.IFACE] = typeDecl
+	declarations[token.TYPE] = typeDecl
+}
+
+// startsDeclaration reports whether kind begins a declaration or an import.
+func startsDeclaration(kind token.Kind) bool {
+	return declarations[kind] != nil || kind == token.IMPORT
+}
+
 func (p *parser) module() {
-	var importBuf, funcBuf [16]ast.Index
-	imports, funcs := importBuf[:0], funcBuf[:0]
-	for !p.at(token.EOF) {
-		if p.at(token.IMPORT) || p.at(token.FN) {
+	var importBuf, declBuf [16]ast.Index
+	imports, decls := importBuf[:0], declBuf[:0]
+	for {
+		metadata := p.metadata()
+		kind := p.tok().Kind
+		if startsDeclaration(kind) {
 			p.recovering = false
 		}
 		switch {
-		case p.at(token.IMPORT):
+		case kind == token.EOF:
+			p.t.Root = p.add(ast.KindModule, 0, p.list(imports), p.list(decls))
+			return
+		case kind == token.IMPORT:
 			if imp := p.importDecl(); imp != ast.None {
 				imports = append(imports, imp)
 			}
-		case p.at(token.FN):
-			funcs = append(funcs, p.funcDecl())
+		case declarations[kind] != nil:
+			decls = append(decls, declarations[kind](p, metadata))
+		case kind == token.SEMICOLON:
+			p.next()
+		case kind == token.LET:
+			// Read it to go on in step, but keep no module-level variable.
+			let := p.next()
+			p.fail(diag.New(diag.InvalidDeclaration, "top-level `let` not allowed").
+				Label(p.t.File, let.Span, "").
+				Help("use `const` for module-scope values"))
+			p.binding()
 		default:
 			// One error for the whole stretch, then go on at the next declaration.
 			p.fail(diag.New(diag.InvalidDeclaration, "module scope expects declaration").
-				Label(p.t.File, p.tok().Span, "expected a declaration here"))
-			for !p.at(token.EOF) && !p.at(token.FN) && !p.at(token.IMPORT) {
+				Label(p.t.File, p.tok().Span, "expected a declaration here").
+				Help("move this statement into a function"))
+			for !p.at(token.EOF) && !startsDeclaration(p.tok().Kind) {
 				p.next()
 			}
 		}
 	}
-	p.t.Root = p.add(ast.KindModule, 0, p.list(imports), p.list(funcs))
+}
+
+// metadata reads the doc comment and attributes in front of a declaration into
+// one node, or returns None when there are none.
+func (p *parser) metadata() ast.Index {
+	start := p.tok().Start
+	doc := p.docComment()
+	var buf [2]ast.Index
+	attrs := buf[:0]
+	for p.at(token.HASH) {
+		attrs = append(attrs, p.attribute())
+	}
+	if doc == ast.None && len(attrs) == 0 {
+		return ast.None
+	}
+	if doc != ast.None {
+		start = p.t.Nodes[doc].Span.Start
+	}
+	return p.add(ast.KindMetadata, start, doc, p.list(attrs))
+}
+
+// docComment reads the `///` lines in front of a declaration into one node, or
+// returns None. A `///` on the line of earlier code belongs to that code, not
+// to what follows.
+func (p *parser) docComment() ast.Index {
+	start := -1
+	for ; p.tokens[p.pos].Kind == token.DOC_COMMENT; p.pos++ {
+		t := p.tokens[p.pos]
+		if p.pos > 0 && p.tokens[p.pos-1].Kind != token.DOC_COMMENT &&
+			p.t.File.Line(p.tokens[p.pos-1].End) == p.t.File.Line(t.Start) {
+			start = -1
+			continue
+		}
+		if start < 0 {
+			start = t.Start
+		}
+		p.lastEnd = t.End
+	}
+	if start < 0 {
+		return ast.None
+	}
+	return p.add(ast.KindDocComment, start, ast.None, ast.None)
+}
+
+// attribute reads `#[name]` or `#[name(arguments)]`; one attribute per block.
+func (p *parser) attribute() ast.Index {
+	start := p.next().Start
+	open, ok := p.expect(token.LBRACK)
+	if !ok {
+		return p.add(ast.KindAttribute, start, p.add(ast.KindNameReference, p.lastEnd, ast.None, ast.None), ast.EmptyList)
+	}
+	name := p.name(ast.KindNameReference)
+	var buf [4]ast.Index
+	args := buf[:0]
+	if p.at(token.LPAREN) {
+		argsOpen := p.next()
+		args = p.items(args, token.RPAREN, startsExpression, func() ast.Index { return p.expr(precLowest) })
+		p.close(token.RPAREN, argsOpen)
+	}
+	if t := p.tok(); t.Kind == token.COMMA {
+		p.fail(diag.New(diag.ExpectedToken, "only one attribute is allowed per `#[...]` block").
+			Label(p.t.File, t.Span, "split attributes into separate `#[...]` blocks"))
+		for !p.at(token.RBRACK) && !p.at(token.EOF) && !startsDeclaration(p.tok().Kind) {
+			p.next()
+		}
+	}
+	p.close(token.RBRACK, open)
+	return p.add(ast.KindAttribute, start, name, p.list(args))
 }
 
 func (p *parser) importDecl() ast.Index {
@@ -60,41 +161,109 @@ func (p *parser) name(kind ast.Kind) ast.Index {
 
 // funcDecl reads `fn (receiver) name<T>(parameters) -> Result from origins`
 // followed by a body, or by `;` for a function defined elsewhere.
-func (p *parser) funcDecl() ast.Index {
+func funcDecl(p *parser, metadata ast.Index) ast.Index {
 	start := p.next().Start
-	receiver := ast.None
+	f := p.signature()
+	f.Metadata = metadata
+	switch {
+	case p.at(token.SEMICOLON):
+		p.end()
+	case p.at(token.LBRACE):
+		f.Body = p.block()
+	default:
+		p.fail(diag.New(diag.ExpectedToken, "missing function body").
+			Label(p.t.File, source.Span{Start: p.lastEnd, End: p.lastEnd}, "expected `{` or `;` here"))
+	}
+	return p.function(start, f)
+}
+
+// signature reads a function's signature after its `fn`; its body and
+// metadata are None.
+func (p *parser) signature() ast.FunctionDecl {
+	f := ast.FunctionDecl{Receiver: ast.None, Result: ast.None, Body: ast.None, Metadata: ast.None}
 	if p.at(token.LPAREN) {
 		open := p.next()
-		receiver = p.parameter()
+		f.Receiver = p.parameter()
 		p.close(token.RPAREN, open)
 	}
-	name := p.name(ast.KindDeclaredName)
-	var typeBuf [4]ast.Index
-	typeParams := typeBuf[:0]
-	if p.at(token.LT) {
-		open := p.next()
-		typeParams = p.items(typeParams, token.GT, isName, func() ast.Index { return p.name(ast.KindDeclaredName) })
-		p.closeAngle(open)
-	}
+	f.Name = p.name(ast.KindDeclaredName)
+	f.TypeParameters = p.typeParameters()
 	var buf [8]ast.Index
 	params := buf[:0]
 	if open, ok := p.expect(token.LPAREN); ok {
 		params = p.items(params, token.RPAREN, startsParameter, p.parameter)
 		p.close(token.RPAREN, open)
 	}
-	typeParamList, paramList := p.list(typeParams), p.list(params)
-	result, origins := p.result()
-	body := ast.None
-	switch {
-	case p.at(token.SEMICOLON):
-		p.end()
-	case p.at(token.LBRACE):
-		body = p.block()
-	default:
-		p.fail(diag.New(diag.ExpectedToken, "missing function body").
-			Label(p.t.File, source.Span{Start: p.lastEnd, End: p.lastEnd}, "expected `{` or `;` here"))
+	f.Parameters = p.list(params)
+	f.Result, f.Origins = p.result()
+	return f
+}
+
+// function makes the node of function f, which starts at start.
+func (p *parser) function(start int, f ast.FunctionDecl) ast.Index {
+	return p.add(ast.KindFunctionDecl, start, f.Name, p.extra(f.Receiver, f.TypeParameters, f.Parameters, f.Result, f.Origins, f.Body, f.Metadata))
+}
+
+// typeParameters reads `<T, U>` and returns its list; it may be left out.
+func (p *parser) typeParameters() ast.Index {
+	if !p.at(token.LT) {
+		return ast.EmptyList
 	}
-	return p.add(ast.KindFunctionDecl, start, name, p.extra(receiver, typeParamList, paramList, result, origins, body))
+	open := p.next()
+	var buf [4]ast.Index
+	names := p.items(buf[:0], token.GT, isName, func() ast.Index { return p.name(ast.KindDeclaredName) })
+	p.closeAngle(open)
+	return p.list(names)
+}
+
+// constDecl reads `const name: Type = value;`.
+func constDecl(p *parser, metadata ast.Index) ast.Index {
+	start := p.next().Start
+	name, typ, value := p.binding()
+	return p.add(ast.KindConstDecl, start, name, p.extra(typ, value, metadata))
+}
+
+// binding reads `name: Type = value;` after `let` or `const`; the type and the
+// value may be left out.
+func (p *parser) binding() (name, typ, value ast.Index) {
+	name, typ, value = p.name(ast.KindDeclaredName), ast.None, ast.None
+	if p.at(token.COLON) {
+		p.next()
+		typ = p.typeExpr()
+	}
+	if p.at(token.ASSIGN) {
+		p.next()
+		value = p.expr(precLowest)
+	}
+	p.end()
+	return name, typ, value
+}
+
+// typeDecl reads `struct Name<T> { fields }`, `enum Name<T> { variants }`,
+// `iface Name<T> { methods }` or `type Name<T> = Type;`. A `;` after the `}`
+// is allowed.
+func typeDecl(p *parser, metadata ast.Index) ast.Index {
+	keyword := p.next()
+	name := p.name(ast.KindDeclaredName)
+	typeParams := p.typeParameters()
+	var kind ast.Kind
+	var typ ast.Index
+	switch keyword.Kind {
+	case token.STRUCT:
+		kind, typ = ast.KindStructDecl, p.structType(p.tok().Start)
+	case token.ENUM:
+		kind, typ = ast.KindEnumDecl, p.enumType(p.tok().Start)
+	case token.IFACE:
+		kind, typ = ast.KindInterfaceDecl, p.interfaceType(p.tok().Start)
+	default:
+		p.expect(token.ASSIGN)
+		kind, typ = ast.KindTypeAliasDecl, p.typeExpr()
+		p.end()
+	}
+	if keyword.Kind != token.TYPE && p.at(token.SEMICOLON) {
+		p.next()
+	}
+	return p.add(kind, keyword.Start, name, p.extra(typeParams, typ, metadata))
 }
 
 func isName(kind token.Kind) bool { return kind == token.IDENT }
@@ -154,9 +323,9 @@ func (p *parser) result() (result, origins ast.Index) {
 	case kind == token.ARROW:
 		p.next()
 		result = p.typeExpr()
-	case kind != token.FN && startsType(kind):
-		// A type right after the parameters can only be the result; `fn` there
-		// starts the next declaration.
+	case startsType(kind) && !startsDeclaration(kind):
+		// A type right after the parameters can only be the result; `fn`,
+		// `struct`, `enum` or `iface` there starts the next declaration.
 		at := source.Span{Start: p.lastEnd, End: p.lastEnd}
 		p.repair(diag.New(diag.ExpectedToken, "expected `->` before the return type").Label(p.t.File, at, "").
 			Help("add missing `->`", diag.Fix{File: p.t.File, Span: at, NewText: " ->"}))
