@@ -180,3 +180,102 @@ needed now, is it the simplest form, does something else already do it.
    of one shared, locked bag.
 4. The prelude is an implicit ordinary import (proposed).
 5. Import cycles stay an error.
+
+## Diagnostics
+
+Status: APPROVED by the user on 2026-10-16 (all five decisions as proposed, plus
+editor quick fixes).
+
+Every step reports problems, so this must be right before more steps exist.
+
+### What a diagnostic must handle (from the old compiler's real output)
+
+- A primary place and secondary places, each with a short message, and they may
+  be in **different files** (an error in `main.peep` with "defined here" in
+  `global.peep`).
+- Notes and help lines; help may carry fixes (insert, remove or replace text),
+  shown as the fixed line. Several alternative fixes are just several help lines.
+- No place at all (a file that cannot be read, an import cycle summary).
+- Errors, warnings and style notes (`S` codes), counted in a final summary.
+
+### Design
+
+```
+Diagnostic
+  Code     Code       declared once with its ID and severity
+  Message  string
+  Labels   []Label    first is the primary place; may be empty
+  Notes    []Note
+
+Code    ID string, Severity Severity     e.g. Code{"L0002", Error}
+Label   File *source.File, Span source.Span, Message string
+Note    Help bool, Text string, Fixes []Fix
+Fix     File *source.File, Span source.Span, NewText string
+```
+
+- **Self-contained.** A label names its own file, so a diagnostic can point into
+  any module, and printing needs no lookups. The pointer is shared, not copied.
+- **Severity is declared with the code.** Each code is one declaration holding
+  its ID and its severity; a diagnostic holds the code. Renaming or renumbering
+  an ID cannot change a severity, and no diagnostic can carry a severity that
+  disagrees with its code. (Deriving severity from the ID's first letter was
+  rejected: IDs can change.)
+- **Owned and returned.** Each step returns its diagnostics with its result
+  (already true for the lexer). There is no shared bag and no lock.
+- **Deterministic order.** Before printing, diagnostics are sorted by the file
+  and position of their primary place; ones without a place come first, in the
+  order they were made. The same input always prints the same way.
+- **Printing is separate from data.** Colors and layout live only in the
+  printer. The printer never panics: a span outside its file's text is clamped
+  and still printed.
+- **Visible format unchanged.** `[CODE]: message`, `--> file:line:col`, the
+  numbered source lines with `^` under the primary place and `-` under secondary
+  ones, `= note:` / `= help:` lines with fixed lines, and the summary line. Users
+  already know it.
+- **Codes defined once.** Every code is a constant in `diag` with a one-line
+  meaning.
+- **Suggestions.** The "did you mean" helper (`NearestName`, from the old
+  `suggest.go`) comes back as part of `diag`.
+
+### Editor quick fixes
+
+The fixes are the data an editor needs for clickable quick fixes (LSP code
+actions):
+
+- each help note with fixes is one action: its text is the title, and all its
+  fixes are applied together, possibly in several files;
+- several help notes are alternatives the user picks from;
+- when a diagnostic has exactly one help note with fixes, that action is the
+  preferred one (an editor may apply it with one key or "fix all"); this is
+  derived, not stored, and alternatives are never preferred;
+- a fix's spans must lie inside its file's text and must not overlap; a broken
+  fix is dropped and reported as an internal error, never applied;
+- the LSP converts byte offsets to its UTF-16 positions with one `source.File`
+  function, added with the LSP;
+- a `peeper fix` command can later apply all preferred fixes from the command
+  line, using the same data.
+
+### Not now
+
+- Coloring code inside snippets (syntax highlighting): it would make `diag`
+  depend on the lexer, which already depends on `diag`. Can come back later as
+  a printer option.
+- HTML output: the LSP will take diagnostics as data, not text.
+- Hiding internal compiler error details: comes back with the first internal
+  error code.
+
+### Tests
+
+Golden tests for the printer: primary and secondary labels in two files, a span
+over several lines, tabs and wide characters, CRLF line ends, notes and help
+with fixes, a diagnostic with no place, a span outside the text (no panic), the
+summary, colors off.
+
+### Decisions for the user
+
+1. Labels and fixes carry their own file (proposed).
+2. Severity is declared together with each code (changed by the user from
+   "derived from the code's first letter").
+3. Keep the visible output format (proposed).
+4. Print sorted by file and position (proposed).
+5. Syntax highlighting in snippets later (proposed).

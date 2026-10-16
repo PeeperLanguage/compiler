@@ -41,3 +41,19 @@ func (f *File) Position(offset int) (line, column int) {
 	line = f.Line(offset)
 	return line, utf8.RuneCountInString(f.Text[f.lines[line-1]:offset]) + 1
 }
+
+// LineSpan returns the span of the 1-based line n without its line end, or an
+// empty span at the end of the text when the file has no such line.
+func (f *File) LineSpan(n int) Span {
+	if n < 1 || n > len(f.lines) {
+		return Span{Start: len(f.Text), End: len(f.Text)}
+	}
+	end := len(f.Text)
+	if n < len(f.lines) {
+		end = f.lines[n] - 1
+	}
+	if end > f.lines[n-1] && f.Text[end-1] == '\r' {
+		end--
+	}
+	return Span{Start: f.lines[n-1], End: end}
+}

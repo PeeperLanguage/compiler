@@ -55,3 +55,19 @@ func Unquote(s string, quote byte) (string, error) {
 	}
 	return string(out), nil
 }
+
+// Value returns the value of a string, character or byte literal token's text.
+// For a literal the lexer reported as invalid it returns its best reading, so
+// the error is reported once, by the lexer.
+func Value(text string) string {
+	prefix := 0
+	if text[0] == 'c' || text[0] == 'b' {
+		prefix = 1
+	}
+	quote := text[prefix]
+	inner := strings.TrimSuffix(text[prefix+1:], string(quote))
+	if value, err := Unquote(inner, quote); err == nil {
+		return value
+	}
+	return inner
+}

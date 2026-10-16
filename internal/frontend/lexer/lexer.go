@@ -13,9 +13,11 @@ import (
 )
 
 // Scan returns the tokens of file, ending with EOF, and the lexical errors in it.
-// A malformed literal or an illegal character is reported and produces no token.
+// An illegal character is reported and produces no token. A malformed or
+// unclosed literal is reported and still produces its token, so parsing goes on
+// without a second error.
 func Scan(file *source.File) ([]token.Token, []diag.Diagnostic) {
-	s := scanner{text: file.Text, tokens: make([]token.Token, 0, len(file.Text)/3+1)}
+	s := scanner{file: file, text: file.Text, tokens: make([]token.Token, 0, len(file.Text)/3+1)}
 	for s.pos < len(s.text) {
 		s.next()
 	}
@@ -24,6 +26,7 @@ func Scan(file *source.File) ([]token.Token, []diag.Diagnostic) {
 }
 
 type scanner struct {
+	file   *source.File
 	text   string
 	pos    int
 	tokens []token.Token
@@ -42,11 +45,12 @@ func (s *scanner) next() {
 			s.emit(token.DOC_COMMENT, start)
 		}
 	case c == '/' && s.at(1) == '*':
-		// An unclosed /* is not a comment: it reads as the operators / and *.
 		if end := strings.Index(s.text[start+2:], "*/"); end >= 0 {
 			s.pos = start + 2 + end + 2
 		} else {
-			s.operator()
+			s.pos = start + 2
+			s.fail(start, diag.UnterminatedComment, "unterminated block comment", "add `*/` to close it")
+			s.pos = len(s.text)
 		}
 	case c == '"':
 		s.quoted(0, token.STRING)
@@ -69,14 +73,8 @@ func (s *scanner) next() {
 			s.word()
 		}
 	}
-	// A quoted literal that never closes is not a literal: c"... and b'... start
-	// a name, and a lone quote is an illegal character.
 	if s.pos == start {
-		if c == 'c' || c == 'b' {
-			s.word()
-		} else {
-			s.illegal()
-		}
+		s.illegal()
 	}
 }
 
@@ -99,13 +97,8 @@ func (s *scanner) emit(kind token.Kind, start int) {
 	s.tokens = append(s.tokens, token.Token{Kind: kind, Span: source.Span{Start: start, End: s.pos}})
 }
 
-func (s *scanner) fail(start int, message, label string) {
-	s.errors = append(s.errors, diag.Diagnostic{
-		Severity: diag.Error,
-		Code:     diag.UnexpectedCharacter,
-		Message:  message,
-		Labels:   []diag.Label{{Span: source.Span{Start: start, End: s.pos}, Message: label}},
-	})
+func (s *scanner) fail(start int, code diag.Code, message, label string) {
+	s.errors = append(s.errors, *diag.New(code, message).Label(s.file, source.Span{Start: start, End: s.pos}, label))
 }
 
 // word reads a name or keyword. A name holding letters, digits or marks outside
@@ -131,7 +124,7 @@ func (s *scanner) word() {
 		s.emit(token.LookupIdent(s.text[start:s.pos]), start)
 		return
 	}
-	s.fail(start, fmt.Sprintf("name `%s` uses characters that are not allowed in names", s.text[start:s.pos]),
+	s.fail(start, diag.UnexpectedCharacter, fmt.Sprintf("name `%s` uses characters that are not allowed in names", s.text[start:s.pos]),
 		"use only `A-Z`, `a-z`, `0-9` and `_`")
 	s.emit(token.IDENT, start)
 }
@@ -186,14 +179,16 @@ func (s *scanner) digits(isDigit func(byte) bool) {
 }
 
 // quoted reads a string, character or byte literal whose quote follows prefix
-// bytes. It reads nothing when the closing quote is missing; an escape needs a
-// following character on the same line.
+// bytes. A literal may span lines; an escape needs a following character on the
+// same line. When the closing quote is missing, the literal is reported and
+// ends with its first line.
 func (s *scanner) quoted(prefix int, kind token.Kind) {
 	start := s.pos
 	quote := s.text[start+prefix]
 	end := start + prefix + 1
 	for {
 		if end >= len(s.text) {
+			s.unterminated(start, quote, kind)
 			return
 		}
 		switch s.text[end] {
@@ -203,6 +198,7 @@ func (s *scanner) quoted(prefix int, kind token.Kind) {
 			return
 		case '\\':
 			if end+1 >= len(s.text) || s.text[end+1] == '\n' {
+				s.unterminated(start, quote, kind)
 				return
 			}
 			_, width := utf8.DecodeRuneInString(s.text[end+1:])
@@ -213,27 +209,40 @@ func (s *scanner) quoted(prefix int, kind token.Kind) {
 	}
 }
 
-// literal checks a quoted literal and emits it, or reports why it is invalid.
+// literal checks a closed quoted literal, reports why it is invalid if it is,
+// and emits it.
 func (s *scanner) literal(start, innerStart, innerEnd int, kind token.Kind) {
 	value, err := Unquote(s.text[innerStart:innerEnd], s.text[innerEnd])
 	switch {
 	case err != nil:
-		s.fail(start, err.Error(), "fix this escape sequence")
+		s.fail(start, diag.UnexpectedCharacter, err.Error(), "fix this escape sequence")
 	case kind == token.CHAR && (!utf8.ValidString(value) || utf8.RuneCountInString(value) != 1):
-		s.fail(start, "character literal must contain exactly one character",
+		s.fail(start, diag.UnexpectedCharacter, "character literal must contain exactly one character",
 			"use exactly one valid UTF-8 character between single quotes")
 	case kind == token.BYTE_CHAR && len(value) != 1:
-		s.fail(start, "byte literal must contain exactly one byte", "use exactly one byte after the b'...' prefix")
-	default:
-		s.emit(kind, start)
+		s.fail(start, diag.UnexpectedCharacter, "byte literal must contain exactly one byte",
+			"use exactly one byte after the b'...' prefix")
 	}
+	s.emit(kind, start)
+}
+
+// unterminated reports a literal without its closing quote and emits it up to
+// the end of its first line.
+func (s *scanner) unterminated(start int, quote byte, kind token.Kind) {
+	s.pos = s.lineEnd()
+	if quote == '"' {
+		s.fail(start, diag.UnterminatedString, "unterminated string literal", "add a closing `\"`")
+	} else {
+		s.fail(start, diag.UnterminatedString, "unterminated character literal", "add a closing `'`")
+	}
+	s.emit(kind, start)
 }
 
 func (s *scanner) illegal() {
 	start := s.pos
 	_, width := utf8.DecodeRuneInString(s.text[start:])
 	s.pos += width
-	s.fail(start, fmt.Sprintf("illegal character %q", s.text[start:s.pos]), "remove or replace this character")
+	s.fail(start, diag.UnexpectedCharacter, fmt.Sprintf("illegal character %q", s.text[start:s.pos]), "remove or replace this character")
 }
 
 type operator struct {
