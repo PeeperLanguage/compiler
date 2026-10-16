@@ -6,9 +6,9 @@ import (
 	"strings"
 )
 
-// Unquote decodes the escape sequences in the text between the quotes of a
+// unquote decodes the escape sequences in the text between the quotes of a
 // literal. quote is the literal's quote character; only it may be escaped.
-func Unquote(s string, quote byte) (string, error) {
+func unquote(s string, quote byte) (string, error) {
 	if strings.IndexByte(s, '\\') < 0 {
 		return s, nil
 	}
@@ -66,7 +66,7 @@ func Value(text string) string {
 	}
 	quote := text[prefix]
 	inner := strings.TrimSuffix(text[prefix+1:], string(quote))
-	if value, err := Unquote(inner, quote); err == nil {
+	if value, err := unquote(inner, quote); err == nil {
 		return value
 	}
 	return inner

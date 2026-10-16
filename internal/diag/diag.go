@@ -77,4 +77,12 @@ var (
 	UnexpectedCharacter = Code{"L0001", Error}
 	UnterminatedString  = Code{"L0002", Error}
 	UnterminatedComment = Code{"L0005", Error}
+	ExpectedToken       = Code{"P0002", Error}
+	InvalidDeclaration  = Code{"P0005", Error}
+
+	ModuleNotFound         = Code{"M0001", Error}
+	CyclicImport           = Code{"M0002", Error}
+	InvalidImportPath      = Code{"M0003", Error}
+	AliasInUse             = Code{"M0005", Error}
+	RedundantPreludeImport = Code{"S0004", Info}
 )

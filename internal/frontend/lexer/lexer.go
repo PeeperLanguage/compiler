@@ -212,7 +212,7 @@ func (s *scanner) quoted(prefix int, kind token.Kind) {
 // literal checks a closed quoted literal, reports why it is invalid if it is,
 // and emits it.
 func (s *scanner) literal(start, innerStart, innerEnd int, kind token.Kind) {
-	value, err := Unquote(s.text[innerStart:innerEnd], s.text[innerEnd])
+	value, err := unquote(s.text[innerStart:innerEnd], s.text[innerEnd])
 	switch {
 	case err != nil:
 		s.fail(start, diag.UnexpectedCharacter, err.Error(), "fix this escape sequence")

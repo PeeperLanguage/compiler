@@ -75,13 +75,13 @@ func TestUnquote(t *testing.T) {
 		{`\xZZ`, '"', "", `invalid hex escape "\\xZZ"`},
 		{`\x4`, '"', "", `hex escape \x requires exactly two hexadecimal digits`},
 	} {
-		got, err := Unquote(test.text, test.quote)
+		got, err := unquote(test.text, test.quote)
 		message := ""
 		if err != nil {
 			message = err.Error()
 		}
 		if got != test.want || message != test.err {
-			t.Errorf("Unquote(%q) = %q, %q; want %q, %q", test.text, got, message, test.want, test.err)
+			t.Errorf("unquote(%q) = %q, %q; want %q, %q", test.text, got, message, test.want, test.err)
 		}
 	}
 }
