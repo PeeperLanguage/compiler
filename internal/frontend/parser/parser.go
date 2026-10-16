@@ -108,23 +108,52 @@ func (p *parser) expect(kind token.Kind) (token.Token, bool) {
 	if p.at(kind) {
 		return p.next(), true
 	}
-	t := p.tok()
-	p.fail(diag.New(diag.ExpectedToken, "expected `"+kind.String()+"`, found `"+t.Kind.String()+"`").
-		Label(p.t.File, t.Span, "expected `"+kind.String()+"` here"))
-	return t, false
+	p.fail(p.missing(kind))
+	return p.tok(), false
 }
 
-// close reads the token closing what open opened. When it is missing, the
-// error also marks open if it is on an earlier line.
+// missing describes kind missing before the current token. A missing closer
+// belongs at the end of the text read so far, and so does any token when the
+// current one is on a later line: the error points there and, when kind has
+// one fixed spelling, offers to insert it. Otherwise it points at the token
+// found. The line decides only where the error points, never how parsing
+// goes on.
+func (p *parser) missing(kind token.Kind) *diag.Diagnostic {
+	t := p.tok()
+	d := diag.New(diag.ExpectedToken, "expected `"+kind.String()+"`, found `"+t.Kind.String()+"`")
+	closer := kind == token.RPAREN || kind == token.RBRACK || kind == token.RBRACE || kind == token.GT
+	if p.lastEnd == 0 || !closer && p.t.File.Line(t.Start) == p.t.File.Line(p.lastEnd) {
+		return d.Label(p.t.File, t.Span, "expected `"+kind.String()+"` here")
+	}
+	at := source.Span{Start: p.lastEnd, End: p.lastEnd}
+	d.Label(p.t.File, at, "")
+	if text, ok := token.Spelling(kind); ok {
+		d.Help("add missing `"+text+"`", diag.Fix{File: p.t.File, Span: at, NewText: text})
+	}
+	return d
+}
+
+// close reads the token closing what open opened. When that closer comes
+// later at this depth, what stands before it cannot be in the list: that is
+// reported, and parsing skips to the closer. Otherwise the closer is missing,
+// and the error also marks open if it is on an earlier line.
 func (p *parser) close(kind token.Kind, open token.Token) {
 	if p.at(kind) {
 		p.next()
 		return
 	}
-	t := p.tok()
-	d := diag.New(diag.ExpectedToken, "expected `"+kind.String()+"`, found `"+t.Kind.String()+"`").
-		Label(p.t.File, t.Span, "expected `"+kind.String()+"` here")
-	if p.t.File.Line(open.Start) < p.t.File.Line(t.Start) {
+	if i := p.closerAhead(); p.tokens[i].Kind == kind {
+		t := p.tok()
+		p.fail(diag.New(diag.ExpectedToken, "expected `"+kind.String()+"`, found `"+t.Kind.String()+"`").
+			Label(p.t.File, t.Span, "this cannot be here"))
+		for p.current() < i {
+			p.next()
+		}
+		p.next()
+		return
+	}
+	d := p.missing(kind)
+	if p.t.File.Line(open.Start) < p.t.File.Line(d.Labels[0].Span.Start) {
 		d.Label(p.t.File, open.Span, "this `"+open.Kind.String()+"` is still open")
 	}
 	p.fail(d)

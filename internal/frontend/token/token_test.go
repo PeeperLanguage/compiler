@@ -18,3 +18,16 @@ func TestLookupIdent(t *testing.T) {
 		t.Fatal("LookupIdent must map keywords to their kind and other names to IDENT")
 	}
 }
+
+func TestSpelling(t *testing.T) {
+	for kind, want := range map[Kind]string{SEMICOLON: ";", RPAREN: ")", FATARROW: "=>", SHR: ">>", FN: "fn", ORELSE: "orelse"} {
+		if got, ok := Spelling(kind); !ok || got != want {
+			t.Errorf("Spelling(%s) = %q, %v; want %q", kind, got, ok, want)
+		}
+	}
+	for _, kind := range []Kind{IDENT, NUMBER, STRING, EOF, DOC_COMMENT} {
+		if got, ok := Spelling(kind); ok {
+			t.Errorf("Spelling(%s) = %q, want none", kind, got)
+		}
+	}
+}

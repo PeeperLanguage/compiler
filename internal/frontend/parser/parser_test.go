@@ -978,3 +978,36 @@ func TestSeparators(t *testing.T) {
 		t.Errorf("for-in range without end: %v", errs)
 	}
 }
+
+// TestMissingTokenPlace checks where a missing token is reported: at the end of
+// the text read when the next token is on a later line, with a fix that
+// inserts it there; at the token found when it is on the same line.
+func TestMissingTokenPlace(t *testing.T) {
+	src := "fn f() {\n    let a = 1\n    return a;\n}"
+	_, errs := Parse(source.NewFile("t.peep", src))
+	if len(errs) != 1 || len(errs[0].Notes) != 1 {
+		t.Fatalf("next line: errors %v", errs)
+	}
+	fix := errs[0].Notes[0].Fixes[0]
+	if got := src[:fix.Span.Start] + fix.NewText + src[fix.Span.End:]; got != "fn f() {\n    let a = 1;\n    return a;\n}" {
+		t.Errorf("next line: fix gives %q", got)
+	}
+	src = "fn f() { let a = 1 let b = 2; }"
+	_, errs = Parse(source.NewFile("t.peep", src))
+	if len(errs) != 1 || len(errs[0].Notes) != 0 || src[errs[0].Labels[0].Span.Start:errs[0].Labels[0].Span.End] != "let" {
+		t.Errorf("same line: errors %v", errs)
+	}
+	// A missing closer always belongs where the read text ends.
+	src = "fn f() { g(1 + 2; }"
+	_, errs = Parse(source.NewFile("t.peep", src))
+	if len(errs) != 1 || len(errs[0].Notes) != 1 || errs[0].Notes[0].Fixes[0].Span.Start != strings.Index(src, ";") {
+		t.Errorf("closer: errors %v", errs)
+	}
+	// A closer that comes later means what stands before it does not belong:
+	// that is reported once, and the list ends at its own closer.
+	src = "fn f() { let p = Point.{ .x = 1, y = 2 }; }\nfn g() {}"
+	tree, errs := Parse(source.NewFile("t.peep", src))
+	if len(errs) != 1 || errs[0].Message != "expected `}`, found `.`" || len(tree.List(tree.Module(tree.Root).Declarations)) != 2 {
+		t.Errorf("skip to closer: errors %v", errs)
+	}
+}

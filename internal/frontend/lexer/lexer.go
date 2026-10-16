@@ -268,72 +268,12 @@ func (s *scanner) illegal() {
 	s.fail(source.Span{Start: start, End: s.pos}, diag.UnexpectedCharacter, fmt.Sprintf("illegal character %q", s.text[start:s.pos]), "remove or replace this character")
 }
 
-type operator struct {
-	text string
-	kind token.Kind
-}
-
-// operators lists every operator and punctuation token, longest first within
-// each leading character, so the first match is the right one.
-var operators = [...]operator{
-	{"::", token.DCOLON},
-	{":", token.COLON},
-	{"==", token.EQ},
-	{"=>", token.FATARROW},
-	{"=", token.ASSIGN},
-	{"!=", token.NEQ},
-	{"!!", token.BB},
-	{"!", token.BANG},
-	{"<=", token.LE},
-	{"<<", token.SHL},
-	{"<", token.LT},
-	{">=", token.GE},
-	{">>", token.SHR},
-	{">", token.GT},
-	{"&&", token.ANDAND},
-	{"&", token.AMP},
-	{"||", token.OROR},
-	{"|>", token.PIPE_ARROW},
-	{"|", token.BAR},
-	{"??", token.QQ},
-	{"?", token.QUESTION},
-	{"->", token.ARROW},
-	{"--", token.MINUS_MINUS},
-	{"-=", token.MINUS_ASSIGN},
-	{"-", token.MINUS},
-	{"++", token.PLUS_PLUS},
-	{"+=", token.PLUS_ASSIGN},
-	{"+", token.PLUS},
-	{"*=", token.STAR_ASSIGN},
-	{"*", token.ASTERISK},
-	{"/=", token.SLASH_ASSIGN},
-	{"/", token.SLASH},
-	{"%=", token.PCT_ASSIGN},
-	{"%", token.PERCENT},
-	{"...", token.ELLIPSIS},
-	{"..=", token.DOTDOT_EQ},
-	{"..", token.DOTDOT},
-	{".", token.DOT},
-	{"@", token.AT},
-	{"^", token.CARET},
-	{"~", token.TILDE},
-	{",", token.COMMA},
-	{"#", token.HASH},
-	{";", token.SEMICOLON},
-	{"(", token.LPAREN},
-	{")", token.RPAREN},
-	{"{", token.LBRACE},
-	{"}", token.RBRACE},
-	{"[", token.LBRACK},
-	{"]", token.RBRACK},
-}
-
-// operatorsByFirst indexes operators by their first byte.
-var operatorsByFirst [utf8.RuneSelf][]operator
+// operatorsByFirst indexes token.Operators by their first byte.
+var operatorsByFirst [utf8.RuneSelf][]token.Operator
 
 func init() {
-	for _, op := range operators {
-		operatorsByFirst[op.text[0]] = append(operatorsByFirst[op.text[0]], op)
+	for _, op := range token.Operators {
+		operatorsByFirst[op.Text[0]] = append(operatorsByFirst[op.Text[0]], op)
 	}
 }
 
@@ -341,10 +281,10 @@ func init() {
 func (s *scanner) operator() {
 	rest := s.text[s.pos:]
 	for _, op := range operatorsByFirst[rest[0]] {
-		if strings.HasPrefix(rest, op.text) {
+		if strings.HasPrefix(rest, op.Text) {
 			start := s.pos
-			s.pos += len(op.text)
-			s.emit(op.kind, start)
+			s.pos += len(op.Text)
+			s.emit(op.Kind, start)
 			return
 		}
 	}

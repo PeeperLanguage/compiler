@@ -40,11 +40,11 @@ var reference = func() []struct {
 		{refNumber, token.NUMBER},
 		{`[A-Za-z_][A-Za-z0-9_]*`, token.IDENT}, // keywords are told apart below
 	}
-	for _, op := range operators {
+	for _, op := range token.Operators {
 		rules = append(rules, struct {
 			pattern string
 			kind    token.Kind
-		}{regexp.QuoteMeta(op.text), op.kind})
+		}{regexp.QuoteMeta(op.Text), op.Kind})
 	}
 	out := make([]struct {
 		re   *regexp.Regexp
