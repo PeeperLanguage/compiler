@@ -37,7 +37,7 @@ func (p *parser) module() {
 		}
 		switch {
 		case kind == token.EOF:
-			p.t.Root = p.add(ast.KindModule, 0, p.list(imports), p.list(decls))
+			p.t.Root = p.add(ast.KindModule, 0, p.t.PackModule(ast.Module{Imports: p.list(imports), Declarations: p.list(decls)}))
 			return
 		case kind == token.IMPORT:
 			if imp := p.importDecl(); imp != ast.None {
@@ -82,7 +82,7 @@ func (p *parser) metadata() ast.Index {
 	if doc != ast.None {
 		start = p.t.Nodes[doc].Span.Start
 	}
-	return p.add(ast.KindMetadata, start, doc, p.list(attrs))
+	return p.add(ast.KindMetadata, start, p.t.PackMetadata(ast.Metadata{DocComment: doc, Attributes: p.list(attrs)}))
 }
 
 // docComment reads the `///` lines in front of a declaration into one node, or
@@ -105,7 +105,7 @@ func (p *parser) docComment() ast.Index {
 	if start < 0 {
 		return ast.None
 	}
-	return p.add(ast.KindDocComment, start, ast.None, ast.None)
+	return p.leaf(ast.KindDocComment, start)
 }
 
 // attribute reads `#[name]` or `#[name(arguments)]`; one attribute per block.
@@ -113,7 +113,8 @@ func (p *parser) attribute() ast.Index {
 	start := p.next().Start
 	open, ok := p.expect(token.LBRACK)
 	if !ok {
-		return p.add(ast.KindAttribute, start, p.add(ast.KindNameReference, p.lastEnd, ast.None, ast.None), ast.EmptyList)
+		name := p.leaf(ast.KindNameReference, p.lastEnd)
+		return p.add(ast.KindAttribute, start, p.t.PackAttribute(ast.Attribute{Name: name, Arguments: ast.EmptyList}))
 	}
 	name := p.name(ast.KindNameReference)
 	var buf [4]ast.Index
@@ -131,7 +132,7 @@ func (p *parser) attribute() ast.Index {
 		}
 	}
 	p.close(token.RBRACK, open)
-	return p.add(ast.KindAttribute, start, name, p.list(args))
+	return p.add(ast.KindAttribute, start, p.t.PackAttribute(ast.Attribute{Name: name, Arguments: p.list(args)}))
 }
 
 func (p *parser) importDecl() ast.Index {
@@ -141,22 +142,22 @@ func (p *parser) importDecl() ast.Index {
 		p.sync()
 		return ast.None
 	}
-	pathNode := p.add(ast.KindStringLiteral, path.Start, ast.None, ast.None)
+	pathNode := p.leaf(ast.KindStringLiteral, path.Start)
 	alias := ast.None
 	if p.at(token.AS) {
 		p.next()
 		alias = p.name(ast.KindDeclaredName)
 	}
 	p.end()
-	return p.add(ast.KindImportDecl, start, pathNode, alias)
+	return p.add(ast.KindImportDecl, start, p.t.PackImportDecl(ast.ImportDecl{Path: pathNode, Alias: alias}))
 }
 
 // name reads a name into a node of kind; a missing one gives an empty span.
 func (p *parser) name(kind ast.Kind) ast.Index {
 	if t, ok := p.expect(token.IDENT); ok {
-		return p.add(kind, t.Start, ast.None, ast.None)
+		return p.leaf(kind, t.Start)
 	}
-	return p.add(kind, p.lastEnd, ast.None, ast.None)
+	return p.leaf(kind, p.lastEnd)
 }
 
 // funcDecl reads `fn (receiver) name<T>(parameters) -> Result from origins`
@@ -201,11 +202,11 @@ func (p *parser) signature() ast.FunctionDecl {
 
 // function makes the node of function f, which starts at start.
 func (p *parser) function(start int, f ast.FunctionDecl) ast.Index {
-	return p.add(ast.KindFunctionDecl, start, f.Name, p.extra(f.Receiver, f.TypeParameters, f.Parameters, f.Result, f.Origins, f.Body, f.Metadata))
+	return p.add(ast.KindFunctionDecl, start, p.t.PackFunctionDecl(f))
 }
 
 // typeParameters reads `<T, U>` and returns its list; it may be left out.
-func (p *parser) typeParameters() ast.Index {
+func (p *parser) typeParameters() ast.List {
 	if !p.at(token.LT) {
 		return ast.EmptyList
 	}
@@ -220,7 +221,7 @@ func (p *parser) typeParameters() ast.Index {
 func constDecl(p *parser, metadata ast.Index) ast.Index {
 	start := p.next().Start
 	name, typ, value := p.binding()
-	return p.add(ast.KindConstDecl, start, name, p.extra(typ, value, metadata))
+	return p.add(ast.KindConstDecl, start, p.t.PackConstDecl(ast.ConstDecl{Metadata: metadata, Name: name, Type: typ, Value: value}))
 }
 
 // binding reads `name: Type = value;` after `let` or `const`; the type and the
@@ -263,7 +264,7 @@ func typeDecl(p *parser, metadata ast.Index) ast.Index {
 	if keyword.Kind != token.TYPE && p.at(token.SEMICOLON) {
 		p.next()
 	}
-	return p.add(kind, keyword.Start, name, p.extra(typeParams, typ, metadata))
+	return p.add(kind, keyword.Start, p.t.PackTypeDecl(ast.TypeDecl{Metadata: metadata, Name: name, TypeParameters: typeParams, Type: typ}))
 }
 
 func isName(kind token.Kind) bool { return kind == token.IDENT }
@@ -300,7 +301,7 @@ func (p *parser) parameter() ast.Index {
 		p.next()
 		value = p.expr(precLowest)
 	}
-	i := p.add(ast.KindParameter, start, name, p.extra(typ, value))
+	i := p.add(ast.KindParameter, start, p.t.PackParameter(ast.Parameter{Name: name, Type: typ, Default: value}))
 	p.t.Nodes[i].Op = op
 	return i
 }
@@ -317,7 +318,7 @@ func (p *parser) parameterName() ast.Index {
 
 // result reads what follows a parameter list: `-> Type` and the origins of a
 // returned reference, `from name` or `from (a, b)`. Both may be left out.
-func (p *parser) result() (result, origins ast.Index) {
+func (p *parser) result() (result ast.Index, origins ast.List) {
 	result = ast.None
 	switch kind := p.tok().Kind; {
 	case kind == token.ARROW:

@@ -213,29 +213,26 @@ func (p *parser) closerAhead() token.Kind {
 	return token.EOF
 }
 
-// add appends a node spanning from start, where the token beginning it was,
-// to the end of the last token read. A node that read nothing (its start lies
-// past what was read) is an empty span at the read position.
-func (p *parser) add(kind ast.Kind, start int, a, b ast.Index) ast.Index {
+// add appends a node with slots s, spanning from start, where the token
+// beginning it was, to the end of the last token read. A node that read nothing
+// (its start lies past what was read) is an empty span at the read position.
+func (p *parser) add(kind ast.Kind, start int, s ast.Slots) ast.Index {
 	start = min(start, p.lastEnd)
-	p.t.Nodes = append(p.t.Nodes, ast.Node{Kind: kind, Span: source.Span{Start: start, End: p.lastEnd}, A: a, B: b})
+	p.t.Nodes = append(p.t.Nodes, ast.Node{Kind: kind, Span: source.Span{Start: start, End: p.lastEnd}, A: s.A, B: s.B})
 	return ast.Index(len(p.t.Nodes) - 1)
 }
 
-// extra stores values in Extra and returns their offset.
-func (p *parser) extra(values ...ast.Index) ast.Index {
-	at := ast.Index(len(p.t.Extra))
-	p.t.Extra = append(p.t.Extra, values...)
-	return at
-}
+// leaf appends a node without children.
+func (p *parser) leaf(kind ast.Kind, start int) ast.Index { return p.add(kind, start, ast.Slots{}) }
 
 // list stores items as a list in Extra and returns its offset; every empty
 // list shares offset 0.
-func (p *parser) list(items []ast.Index) ast.Index {
+func (p *parser) list(items []ast.Index) ast.List {
 	if len(items) == 0 {
 		return ast.EmptyList
 	}
-	at := p.extra(ast.Index(len(items)))
+	at := ast.List(len(p.t.Extra))
+	p.t.Extra = append(p.t.Extra, ast.Index(len(items)))
 	p.t.Extra = append(p.t.Extra, items...)
 	return at
 }

@@ -29,17 +29,17 @@ func (p *parser) typeExpr() ast.Index {
 		if p.at(token.MUT) {
 			op = p.next().Kind
 		}
-		i := p.add(ast.KindReferenceType, t.Start, p.typeExpr(), ast.None)
+		i := p.add(ast.KindReferenceType, t.Start, p.t.PackPointerType(ast.PointerType{Target: p.typeExpr()}))
 		p.t.Nodes[i].Op = op
 		return i
 	case token.QUESTION, token.QQ:
 		return p.optionalType()
 	case token.ASTERISK:
 		p.next()
-		return p.add(ast.KindOwnedPointerType, t.Start, p.typeExpr(), ast.None)
+		return p.add(ast.KindOwnedPointerType, t.Start, p.t.PackPointerType(ast.PointerType{Target: p.typeExpr()}))
 	case token.RAWPTR:
 		p.next()
-		return p.add(ast.KindRawPointerType, t.Start, ast.None, ast.None)
+		return p.leaf(ast.KindRawPointerType, t.Start)
 	case token.LBRACK:
 		return p.arrayType()
 	case token.FN:
@@ -55,7 +55,7 @@ func (p *parser) typeExpr() ast.Index {
 		return p.interfaceType(t.Start)
 	}
 	p.fail(diag.New(diag.InvalidType, "expected type, found `"+t.Kind.String()+"`").Label(p.t.File, t.Span, "expected a type here"))
-	return p.add(ast.KindInvalidType, p.lastEnd, ast.None, ast.None)
+	return p.leaf(ast.KindInvalidType, p.lastEnd)
 }
 
 // namedType reads a type name with its type arguments, if any (`Box<T>`), or a
@@ -72,7 +72,7 @@ func (p *parser) namedType() ast.Index {
 		p.next()
 		segments = append(segments, p.typeSegment())
 	}
-	return p.add(ast.KindPath, start, p.list(segments), ast.None)
+	return p.add(ast.KindPath, start, p.t.PackPath(ast.Path{Segments: p.list(segments)}))
 }
 
 func (p *parser) typeSegment() ast.Index {
@@ -85,7 +85,7 @@ func (p *parser) typeSegment() ast.Index {
 	var buf [4]ast.Index
 	args := p.items(buf[:0], token.GT, startsType, p.typeExpr)
 	p.closeAngle(open)
-	return p.add(ast.KindGenericType, start, name, p.list(args))
+	return p.add(ast.KindGenericType, start, p.t.PackGenericType(ast.GenericType{Name: name, Arguments: p.list(args)}))
 }
 
 // closeAngle reads the `>` closing type arguments. The lexer reads `>>` as one
@@ -120,7 +120,7 @@ func (p *parser) optionalType() ast.Index {
 	}
 	inner := p.typeExpr()
 	for i := len(markers) - 1; i >= 0; i-- {
-		inner = p.add(ast.KindOptionalType, markers[i], inner, ast.None)
+		inner = p.add(ast.KindOptionalType, markers[i], p.t.PackOptionalType(ast.OptionalType{Inner: inner}))
 	}
 	return inner
 }
@@ -131,21 +131,21 @@ func (p *parser) arrayType() ast.Index {
 	switch t := p.tok(); t.Kind {
 	case token.RBRACK:
 		p.next()
-		return p.add(ast.KindDynamicArrayType, open.Start, p.typeExpr(), ast.None)
+		return p.add(ast.KindDynamicArrayType, open.Start, p.t.PackElementType(ast.ElementType{Element: p.typeExpr()}))
 	case token.DOTDOT:
 		p.next()
 		p.close(token.RBRACK, open)
-		return p.add(ast.KindSliceType, open.Start, p.typeExpr(), ast.None)
+		return p.add(ast.KindSliceType, open.Start, p.t.PackElementType(ast.ElementType{Element: p.typeExpr()}))
 	case token.NUMBER:
 		p.next()
 		p.checkNumber(t)
-		length := p.add(ast.KindNumberLiteral, t.Start, ast.None, ast.None)
+		length := p.leaf(ast.KindNumberLiteral, t.Start)
 		p.close(token.RBRACK, open)
-		return p.add(ast.KindFixedArrayType, open.Start, length, p.typeExpr())
+		return p.add(ast.KindFixedArrayType, open.Start, p.t.PackFixedArrayType(ast.FixedArrayType{Length: length, Element: p.typeExpr()}))
 	default:
 		p.fail(diag.New(diag.InvalidType, "expected array length").
 			Label(p.t.File, t.Span, "use `[N]T` for fixed arrays, `[]T` for dynamic arrays, or `[..]T` for slices"))
-		return p.add(ast.KindInvalidType, open.Start, ast.None, ast.None)
+		return p.leaf(ast.KindInvalidType, open.Start)
 	}
 }
 
@@ -159,30 +159,31 @@ func (p *parser) functionType() ast.Index {
 		params = p.items(params, token.RPAREN, startsType, func() ast.Index {
 			paramStart := p.tok().Start
 			name := p.parameterName()
-			return p.add(ast.KindParameter, paramStart, name, p.extra(p.typeExpr(), ast.None))
+			return p.add(ast.KindParameter, paramStart, p.t.PackParameter(ast.Parameter{Name: name, Type: p.typeExpr(), Default: ast.None}))
 		})
 		p.close(token.RPAREN, open)
 	}
 	paramList := p.list(params)
 	result, origins := p.result()
-	return p.add(ast.KindFunctionType, start, paramList, p.extra(result, origins))
+	return p.add(ast.KindFunctionType, start, p.t.PackFunctionType(ast.FunctionType{Parameters: paramList, Result: result, Origins: origins}))
 }
 
 // structType reads `{ name: Type, ... }`, the fields of a struct type that
 // starts at start.
 func (p *parser) structType(start int) ast.Index {
-	return p.members(start, ast.KindStructType, isName, func() ast.Index {
+	fields := p.members(isName, func() ast.Index {
 		fieldStart := p.tok().Start
 		name := p.name(ast.KindDeclaredName)
 		p.expect(token.COLON)
-		return p.add(ast.KindField, fieldStart, name, p.typeExpr())
+		return p.add(ast.KindField, fieldStart, p.t.PackField(ast.Field{Name: name, Type: p.typeExpr()}))
 	})
+	return p.add(ast.KindStructType, start, p.t.PackStructType(ast.StructType{Fields: fields}))
 }
 
 // enumType reads `{ Name, Name: Payload, ... }`, the variants of an enum type
 // that starts at start.
 func (p *parser) enumType(start int) ast.Index {
-	return p.members(start, ast.KindEnumType, isName, func() ast.Index {
+	variants := p.members(isName, func() ast.Index {
 		variantStart := p.tok().Start
 		name := p.name(ast.KindDeclaredName)
 		payload := ast.None
@@ -190,15 +191,16 @@ func (p *parser) enumType(start int) ast.Index {
 			p.next()
 			payload = p.typeExpr()
 		}
-		return p.add(ast.KindVariant, variantStart, name, payload)
+		return p.add(ast.KindVariant, variantStart, p.t.PackVariant(ast.Variant{Name: name, Payload: payload}))
 	})
+	return p.add(ast.KindEnumType, start, p.t.PackEnumType(ast.EnumType{Variants: variants}))
 }
 
 // interfaceType reads `{ fn (receiver) name(parameters) -> Result, ... }`, the
 // methods of an interface type that starts at start: function signatures
 // without bodies. A method needs a receiver and takes no default values.
 func (p *parser) interfaceType(start int) ast.Index {
-	return p.members(start, ast.KindInterfaceType, func(kind token.Kind) bool { return kind == token.FN }, func() ast.Index {
+	methods := p.members(func(kind token.Kind) bool { return kind == token.FN }, func() ast.Index {
 		methodStart := p.next().Start
 		if !p.at(token.LPAREN) {
 			p.expect(token.LPAREN)
@@ -218,16 +220,17 @@ func (p *parser) interfaceType(start int) ast.Index {
 		}
 		return p.function(methodStart, f)
 	})
+	return p.add(ast.KindInterfaceType, start, p.t.PackInterfaceType(ast.InterfaceType{Methods: methods}))
 }
 
-// members reads the `{ ... }` list of a struct, enum or interface type that
-// starts at start, and makes its node of kind.
-func (p *parser) members(start int, kind ast.Kind, startsMember func(token.Kind) bool, member func() ast.Index) ast.Index {
+// members reads the `{ ... }` list of the members of a struct, enum or
+// interface type.
+func (p *parser) members(startsMember func(token.Kind) bool, member func() ast.Index) ast.List {
 	var buf [8]ast.Index
 	items := buf[:0]
 	if open, ok := p.expect(token.LBRACE); ok {
 		items = p.items(items, token.RBRACE, startsMember, member)
 		p.close(token.RBRACE, open)
 	}
-	return p.add(kind, start, p.list(items), ast.None)
+	return p.list(items)
 }

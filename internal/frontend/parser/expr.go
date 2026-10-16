@@ -107,7 +107,7 @@ func (p *parser) expr(min precedence) ast.Index {
 	if read == nil {
 		p.fail(diag.New(diag.ExpectedToken, "expected expression, found `"+t.Kind.String()+"`").
 			Label(p.t.File, t.Span, "expected an expression here"))
-		return p.add(ast.KindInvalidExpression, p.lastEnd, ast.None, ast.None)
+		return p.leaf(ast.KindInvalidExpression, p.lastEnd)
 	}
 	left := read(p)
 	for precTable[p.tok().Kind] > min {
@@ -117,17 +117,17 @@ func (p *parser) expr(min precedence) ast.Index {
 }
 
 func nameReference(p *parser) ast.Index {
-	return p.add(ast.KindNameReference, p.next().Start, ast.None, ast.None)
+	return p.leaf(ast.KindNameReference, p.next().Start)
 }
 
 func stringLiteral(p *parser) ast.Index {
-	return p.add(ast.KindStringLiteral, p.next().Start, ast.None, ast.None)
+	return p.leaf(ast.KindStringLiteral, p.next().Start)
 }
 
 func numberLiteral(p *parser) ast.Index {
 	t := p.next()
 	p.checkNumber(t)
-	return p.add(ast.KindNumberLiteral, t.Start, ast.None, ast.None)
+	return p.leaf(ast.KindNumberLiteral, t.Start)
 }
 
 // parentheses reads `( expression )`.
@@ -135,7 +135,7 @@ func parentheses(p *parser) ast.Index {
 	open := p.next()
 	inner := p.expr(precLowest)
 	p.close(token.RPAREN, open)
-	return p.add(ast.KindParentheses, open.Start, inner, ast.None)
+	return p.add(ast.KindParentheses, open.Start, p.t.PackParentheses(ast.Parentheses{Inner: inner}))
 }
 
 // binary reads a binary operator and its right side. The right side takes only
@@ -145,7 +145,7 @@ func binary(p *parser, left ast.Index) ast.Index {
 	prec := precTable[p.tok().Kind]
 	op := p.next().Kind
 	right := p.expr(prec)
-	i := p.add(ast.KindBinaryExpression, p.t.Nodes[left].Span.Start, left, right)
+	i := p.add(ast.KindBinaryExpression, p.t.Nodes[left].Span.Start, p.t.PackBinaryExpression(ast.BinaryExpression{Left: left, Right: right}))
 	p.t.Nodes[i].Op = op
 	return i
 }
@@ -156,7 +156,7 @@ func call(p *parser, left ast.Index) ast.Index {
 	var buf [8]ast.Index
 	args := p.items(buf[:0], token.RPAREN, startsExpression, func() ast.Index { return p.expr(precLowest) })
 	p.close(token.RPAREN, open)
-	return p.add(ast.KindCallExpression, p.t.Nodes[left].Span.Start, left, p.list(args))
+	return p.add(ast.KindCallExpression, p.t.Nodes[left].Span.Start, p.t.PackCallExpression(ast.CallExpression{Callee: left, Arguments: p.list(args)}))
 }
 
 // checkNumber checks the type suffix of number literal t, the part of a number

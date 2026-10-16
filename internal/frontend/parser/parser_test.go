@@ -434,9 +434,9 @@ func TestPrecedence(t *testing.T) {
 			t.Errorf("%s: %v", src, errs)
 			continue
 		}
-		block := tree.FunctionDecl(tree.List(tree.Nodes[tree.Root].B)[0]).Body
-		statement := tree.List(tree.Nodes[block].A)[0]
-		if got := grouped(tree, tree.Nodes[statement].A); got != want {
+		block := tree.FunctionDecl(tree.List(tree.Module(tree.Root).Declarations)[0]).Body
+		statement := tree.List(tree.Block(block).Statements)[0]
+		if got := grouped(tree, tree.ExpressionStatement(statement).Expression); got != want {
 			t.Errorf("%s: got %s, want %s", src, got, want)
 		}
 	}
@@ -444,16 +444,17 @@ func TestPrecedence(t *testing.T) {
 
 // grouped writes an expression with each binary operation in parentheses.
 func grouped(t *ast.Tree, i ast.Index) string {
-	n := t.Nodes[i]
-	switch n.Kind {
+	switch n := t.Nodes[i]; n.Kind {
 	case ast.KindBinaryExpression:
-		return "(" + grouped(t, n.A) + " " + n.Op.String() + " " + grouped(t, n.B) + ")"
+		b := t.BinaryExpression(i)
+		return "(" + grouped(t, b.Left) + " " + n.Op.String() + " " + grouped(t, b.Right) + ")"
 	case ast.KindCallExpression:
+		c := t.CallExpression(i)
 		var args []string
-		for _, arg := range t.List(n.B) {
+		for _, arg := range t.List(c.Arguments) {
 			args = append(args, grouped(t, arg))
 		}
-		return grouped(t, n.A) + "(" + strings.Join(args, ", ") + ")"
+		return grouped(t, c.Callee) + "(" + strings.Join(args, ", ") + ")"
 	}
 	return t.Text(i)
 }

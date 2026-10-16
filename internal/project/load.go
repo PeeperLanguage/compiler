@@ -120,7 +120,7 @@ func loadFile(p Packages, j job, withPrelude bool) *Module {
 func (m *Module) resolveImports(p Packages, standalone, withPrelude bool) {
 	t := m.Syntax
 	aliases := map[string]string{} // alias -> import path
-	for _, i := range t.List(t.Nodes[t.Root].A) {
+	for _, i := range t.List(t.Module(t.Root).Imports) {
 		imp := t.Nodes[i]
 		written := literal.Value(t.Text(imp.A))
 		fail := func(code diag.Code, message string) {

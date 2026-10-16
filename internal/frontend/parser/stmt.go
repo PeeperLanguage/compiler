@@ -10,7 +10,7 @@ import (
 func (p *parser) block() ast.Index {
 	open, ok := p.expect(token.LBRACE)
 	if !ok {
-		return p.add(ast.KindBlock, p.lastEnd, p.list(nil), ast.None)
+		return p.add(ast.KindBlock, p.lastEnd, p.t.PackBlock(ast.Block{Statements: ast.EmptyList}))
 	}
 	var buf [16]ast.Index
 	stmts := buf[:0]
@@ -28,7 +28,7 @@ func (p *parser) block() ast.Index {
 		p.recovering = false // the block's own `}`: in step again
 	}
 	p.close(token.RBRACE, open)
-	return p.add(ast.KindBlock, open.Start, p.list(stmts), ast.None)
+	return p.add(ast.KindBlock, open.Start, p.t.PackBlock(ast.Block{Statements: p.list(stmts)}))
 }
 
 // statements holds, by token kind, the reader of each statement that a keyword
@@ -49,7 +49,7 @@ func (p *parser) stmt() ast.Index {
 	start := p.tok().Start
 	e := p.expr(precLowest)
 	p.end()
-	return p.add(ast.KindExpressionStatement, start, e, ast.None)
+	return p.add(ast.KindExpressionStatement, start, p.t.PackExpressionStatement(ast.ExpressionStatement{Expression: e}))
 }
 
 // letStatement reads `let name: Type = value;`; the type and the value may be
@@ -57,7 +57,7 @@ func (p *parser) stmt() ast.Index {
 func letStatement(p *parser) ast.Index {
 	start := p.next().Start
 	name, typ, value := p.binding()
-	return p.add(ast.KindLetStatement, start, name, p.extra(typ, value))
+	return p.add(ast.KindLetStatement, start, p.t.PackLetStatement(ast.LetStatement{Name: name, Type: typ, Value: value}))
 }
 
 // returnStatement reads `return value;`; the value may be left out.
@@ -68,7 +68,7 @@ func returnStatement(p *parser) ast.Index {
 		value = p.expr(precLowest)
 	}
 	p.end()
-	return p.add(ast.KindReturnStatement, start, value, ast.None)
+	return p.add(ast.KindReturnStatement, start, p.t.PackReturnStatement(ast.ReturnStatement{Value: value}))
 }
 
 // end reads the `;` that closes a statement, which puts the parser in step
