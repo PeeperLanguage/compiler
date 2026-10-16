@@ -19,7 +19,7 @@ type File struct {
 }
 
 func NewFile(name, text string) *File {
-	lines := []int{0}
+	lines := make([]int, 1, strings.Count(text, "\n")+1)
 	for offset := 0; ; {
 		next := strings.IndexByte(text[offset:], '\n')
 		if next < 0 {
