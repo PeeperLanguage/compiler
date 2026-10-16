@@ -301,14 +301,12 @@ func (p *parser) parameter() ast.Index {
 		p.next()
 		value = p.expr(precLowest)
 	}
-	i := p.add(ast.KindParameter, start, p.t.PackParameter(ast.Parameter{Name: name, Type: typ, Default: value}))
-	p.t.Nodes[i].Op = op
-	return i
+	return p.setOp(p.add(ast.KindParameter, start, p.t.PackParameter(ast.Parameter{Name: name, Type: typ, Default: value})), op)
 }
 
 // parameterName reads the `name:` in front of a parameter's type, if it is there.
 func (p *parser) parameterName() ast.Index {
-	if !p.at(token.IDENT) || p.peek().Kind != token.COLON {
+	if !p.at(token.IDENT) || p.ahead(1).Kind != token.COLON {
 		return ast.None
 	}
 	name := p.name(ast.KindDeclaredName)

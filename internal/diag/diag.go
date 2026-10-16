@@ -79,6 +79,7 @@ var (
 	InvalidNumber       = Code{"L0003", Error}
 	UnterminatedComment = Code{"L0005", Error}
 	ExpectedToken       = Code{"P0002", Error}
+	InvalidExpression   = Code{"P0003", Error}
 	InvalidDeclaration  = Code{"P0005", Error}
 	InvalidType         = Code{"P0011", Error}
 	RedundantOptional   = Code{"S0006", Info}

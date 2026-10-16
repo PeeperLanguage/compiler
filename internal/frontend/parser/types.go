@@ -29,9 +29,7 @@ func (p *parser) typeExpr() ast.Index {
 		if p.at(token.MUT) {
 			op = p.next().Kind
 		}
-		i := p.add(ast.KindReferenceType, t.Start, p.t.PackPointerType(ast.PointerType{Target: p.typeExpr()}))
-		p.t.Nodes[i].Op = op
-		return i
+		return p.setOp(p.add(ast.KindReferenceType, t.Start, p.t.PackPointerType(ast.PointerType{Target: p.typeExpr()})), op)
 	case token.QUESTION, token.QQ:
 		return p.optionalType()
 	case token.ASTERISK:

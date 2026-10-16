@@ -172,3 +172,74 @@ type CallExpression struct {
 type Parentheses struct {
 	Inner Index `ast:"A"`
 }
+
+//ast:node KindUnaryExpression KindReferenceExpression KindRawAddressExpression KindFreeExpression KindPrintExpression
+type Operand struct {
+	Value Index `ast:"A"`
+}
+
+//ast:node KindSelectorExpression
+type SelectorExpression struct {
+	Value Index `ast:"A"`
+	Field Index `ast:"B"` // a FieldName
+}
+
+//ast:node KindIndexExpression
+type IndexExpression struct {
+	Value Index `ast:"A"`
+	Index Index `ast:"B"` // an expression or a Range
+}
+
+//ast:node KindRange
+type Range struct {
+	Start Index `ast:"A"`
+	End   Index `ast:"B"`
+}
+
+//ast:node KindStructLiteral
+type StructLiteral struct {
+	Type   Index `ast:"A"` // None in `.{ ... }`
+	Fields List  `ast:"B"` // FieldValues
+}
+
+//ast:node KindFieldValue
+type FieldValue struct {
+	Name  Index `ast:"A"` // a FieldName
+	Value Index `ast:"B"`
+}
+
+//ast:node KindVariantLiteral
+type VariantLiteral struct {
+	Case    Index `ast:"A"` // a Path
+	Payload Index `ast:"B"`
+}
+
+//ast:node KindArrayLiteral
+type ArrayLiteral struct {
+	Type   Index `ast:"A"` // a FixedArrayType, DynamicArrayType or SliceType
+	Values List  `ast:"B"`
+}
+
+//ast:node KindCastExpression
+type CastExpression struct {
+	Value Index `ast:"A"`
+	Type  Index `ast:"B"`
+}
+
+//ast:node KindIsExpression
+type IsExpression struct {
+	Value Index `ast:"A"`
+	Case  Index `ast:"B"` // a Path
+}
+
+//ast:node KindOrElseExpression
+type OrElseExpression struct {
+	Value    Index `ast:"A"`
+	Fallback Index `ast:"B"` // an expression or a Block
+}
+
+//ast:node KindPipeExpression
+type PipeExpression struct {
+	Value Index `ast:"A"`
+	Call  Index `ast:"B"` // a CallExpression
+}

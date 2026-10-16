@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"compiler/internal/frontend/ast"
+	"compiler/internal/frontend/token"
 	"compiler/internal/source"
 )
 
@@ -124,6 +125,10 @@ var brokenInputs = []string{
 	"fn f() { ) ; let x = ; }", "fn f() { let a = 1\nfn g() {}", "fn f() { g(a b c); h(1 2); }",
 	"fn (", "fn (a: &) f", "fn f<", "fn f<T", "fn f(a: Box<T) {}", "fn f(a: Box<Box<T>) {}", "fn f(a: [", "fn f(a: [4",
 	"fn f(a: fn(", "fn f() -> &mut", "fn f() -> i32 from (a", "fn f(a: ??) {}", "fn f(a: a::) {}", "fn f(mut mut) {}",
+	"fn f() { a.; }", "fn f() { a[; }", "fn f() { a[1..=]; }", "fn f() { a as ; }", "fn f() { a is b; }",
+	"fn f() { a orelse ; }", "fn f() { a |> b; }", "fn f() { a |> b.c(); }", "fn f() { .{ a = }; }", "fn f() { .{ a: 1, b: 2 }; }",
+	"fn f() { [_]i32{1, 2; }", "fn f() { [x]i32{}; }", "fn f() { A::B with ; }", "fn f() { Box<T>::; }", "fn f() { print(; }",
+	"fn f() { &mut ; }", "fn f() { a < b > c; }", "fn f() { a<b>.{}; }", "fn f() { -; }", "fn f() { a orelse { return; }; }",
 	"///", "/// x", "#", "#[", "#[a(", "#[a(1, ] fn f();", "const", "const a", "const a: = ;", "struct", "struct S {",
 	"struct S { a: }", "enum E { A: }", "iface I { fn", "iface I { fn (", "type", "type A =", "type A<T", "struct S {} struct",
 	"fn f() { let a: i32; }", "fn f() {\nstruct S {}", "/// doc\n#[a] let x = 1;",
@@ -428,6 +433,19 @@ func TestPrecedence(t *testing.T) {
 		"a * b % c / d":         "(((a * b) % c) / d)",
 		"(a + b) * f(c, d + e)": "((a + b) * f(c, (d + e)))",
 		"a != b >= c > d <= e":  "(a != (((b >= c) > d) <= e))",
+		"-a * b":                "(-a * b)",
+		"-a.b(c)[d]":            "-a.b(c)[d]",
+		"!a && b":               "(!a && b)",
+		"&mut a + b":            "(&mut a + b)",
+		"a + b as i64":          "(a + (b as i64))",
+		"a as i32 * b":          "((a as i32) * b)",
+		"a is E::B && c":        "((a is E::B) && c)",
+		"a orelse b orelse c":   "(a orelse (b orelse c))",
+		"a || b orelse c":       "((a || b) orelse c)",
+		"a |> f(b) |> g()":      "((a |> f(b)) |> g())",
+		"a |> len() as i32":     "((a |> len()) as i32)",
+		"a + b |> f()":          "((a + b) |> f())",
+		"x.y.z[0][i..j]":        "x.y.z[0][i..j]",
 	} {
 		tree, errs := Parse(source.NewFile("t.peep", "fn f() { "+src+"; }"))
 		if len(errs) != 0 {
@@ -448,6 +466,30 @@ func grouped(t *ast.Tree, i ast.Index) string {
 	case ast.KindBinaryExpression:
 		b := t.BinaryExpression(i)
 		return "(" + grouped(t, b.Left) + " " + n.Op.String() + " " + grouped(t, b.Right) + ")"
+	case ast.KindCastExpression:
+		c := t.CastExpression(i)
+		return "(" + grouped(t, c.Value) + " as " + t.Text(c.Type) + ")"
+	case ast.KindIsExpression:
+		c := t.IsExpression(i)
+		return "(" + grouped(t, c.Value) + " is " + t.Text(c.Case) + ")"
+	case ast.KindOrElseExpression:
+		o := t.OrElseExpression(i)
+		return "(" + grouped(t, o.Value) + " orelse " + grouped(t, o.Fallback) + ")"
+	case ast.KindPipeExpression:
+		o := t.PipeExpression(i)
+		return "(" + grouped(t, o.Value) + " |> " + grouped(t, o.Call) + ")"
+	case ast.KindUnaryExpression, ast.KindReferenceExpression:
+		prefix := strings.TrimSpace(t.Text(i)[:t.Nodes[t.Operand(i).Value].Span.Start-n.Span.Start])
+		if n.Op == token.MUT {
+			prefix += " "
+		}
+		return prefix + grouped(t, t.Operand(i).Value)
+	case ast.KindSelectorExpression:
+		s := t.SelectorExpression(i)
+		return grouped(t, s.Value) + "." + t.Text(s.Field)
+	case ast.KindIndexExpression:
+		x := t.IndexExpression(i)
+		return grouped(t, x.Value) + "[" + t.Text(x.Index) + "]"
 	case ast.KindCallExpression:
 		c := t.CallExpression(i)
 		var args []string
@@ -590,6 +632,142 @@ func TestDocCommentAfterCode(t *testing.T) {
 	for _, n := range tree.Nodes {
 		if n.Kind == ast.KindDocComment || n.Kind == ast.KindMetadata {
 			t.Fatalf("a %s was made", n.Kind)
+		}
+	}
+}
+
+func TestParseExpressions(t *testing.T) {
+	src := `fn f() {
+    c"c";
+    'x';
+    b'y';
+    true;
+    none;
+    Point.{ x = 1, y = -2 };
+    .{ a = &mut v, b = @raw };
+    Shape::Line with .{ end = Box<i32>::new(1) };
+    [_]u8{ 1, 2 };
+    []str{};
+    free(p);
+    println(items[1..=n]);
+}
+`
+	tree, errs := Parse(source.NewFile("t.peep", src))
+	if len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	want := `module
+  function declaration
+    declared name f
+    block
+      expression statement
+        string literal c string c"c"
+      expression statement
+        character literal 'x'
+      expression statement
+        character literal byte character b'y'
+      expression statement
+        bool literal true
+      expression statement
+        none literal none
+      expression statement
+        struct literal
+          type name Point
+          field value
+            field name x
+            number literal 1
+          field value
+            field name y
+            unary expression -
+              number literal 2
+      expression statement
+        struct literal
+          field value
+            field name a
+            reference expression mut
+              name reference v
+          field value
+            field name b
+            raw address expression
+              name reference raw
+      expression statement
+        variant literal
+          path
+            type name Shape
+            type name Line
+          struct literal
+            field value
+              field name end
+              call expression
+                path
+                  generic type
+                    type name Box
+                    type name i32
+                  type name new
+                number literal 1
+      expression statement
+        array literal
+          fixed array type
+            inferred length _
+            type name u8
+          number literal 1
+          number literal 2
+      expression statement
+        array literal
+          dynamic array type
+            type name str
+      expression statement
+        free expression
+          name reference p
+      expression statement
+        print expression println
+          index expression
+            name reference items
+            range ..=
+              number literal 1
+              name reference n
+`
+	if got := dump(tree); got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestExpressionErrors(t *testing.T) {
+	for _, test := range []struct{ src, message string }{
+		{"a[1..=];", "inclusive range requires an end bound"},
+		{"a is b;", "enum case must use a fully named path"},
+		{"a |> b;", "pipe target must be a free-function call"},
+		{"a |> b.c();", "pipe cannot call a method"},
+		{".{ a: 1, b: 2 };", "expected `=` after struct literal field name"},
+		{"[x]i32{};", "expected array length"},
+		{"a.;", "expected `identifier`, found `;`"},
+	} {
+		_, errs := Parse(source.NewFile("t.peep", "fn f() { "+test.src+" }"))
+		if len(errs) != 1 || errs[0].Message != test.message {
+			t.Errorf("%q: errors %v, want %q", test.src, errs, test.message)
+		}
+	}
+}
+
+// TestComparisonIsNotTypeArguments checks that `<` begins type arguments only
+// when `::` or `.{` follows the matching `>`.
+func TestComparisonIsNotTypeArguments(t *testing.T) {
+	for src, want := range map[string]ast.Kind{
+		"a < b && c > d;":  ast.KindBinaryExpression,
+		"Box<T>::new();":   ast.KindCallExpression,
+		"Pair<A, B>.{};":   ast.KindStructLiteral,
+		"a < b;":           ast.KindBinaryExpression,
+		"f(a < b, c > d);": ast.KindCallExpression,
+	} {
+		tree, errs := Parse(source.NewFile("t.peep", "fn f() { "+src+" }"))
+		if len(errs) != 0 {
+			t.Errorf("%s: %v", src, errs)
+			continue
+		}
+		block := tree.FunctionDecl(tree.List(tree.Module(tree.Root).Declarations)[0]).Body
+		statement := tree.List(tree.Block(block).Statements)[0]
+		if got := tree.Nodes[tree.ExpressionStatement(statement).Expression].Kind; got != want {
+			t.Errorf("%s: %s, want %s", src, got, want)
 		}
 	}
 }

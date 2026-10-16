@@ -1,7 +1,7 @@
 // Package parser builds the syntax tree of one file (grammar so far: imports;
 // functions, constants, structs, enums, interfaces and type aliases with their
 // doc comments and attributes; every type form; let, return and expression
-// statements; names, numbers, strings, calls and binary operators).
+// statements; every expression form).
 //
 // Every node is made when the parser has read up to its end, and its span ends
 // there, so node ends never decrease along the tree's node array (see ast).
@@ -56,14 +56,12 @@ func (p *parser) tok() token.Token { return p.tokens[p.current()] }
 
 func (p *parser) at(kind token.Kind) bool { return p.tok().Kind == kind }
 
-// peek returns the token after the current one.
-func (p *parser) peek() token.Token {
+// ahead returns the token n tokens after the current one, or EOF past the end.
+func (p *parser) ahead(n int) token.Token {
 	i := p.current()
-	if p.tokens[i].Kind != token.EOF {
-		i++
-	}
-	for p.tokens[i].Kind == token.DOC_COMMENT {
-		i++
+	for ; n > 0 && p.tokens[i].Kind != token.EOF; n-- {
+		for i++; p.tokens[i].Kind == token.DOC_COMMENT; i++ {
+		}
 	}
 	return p.tokens[i]
 }
@@ -224,6 +222,12 @@ func (p *parser) add(kind ast.Kind, start int, s ast.Slots) ast.Index {
 
 // leaf appends a node without children.
 func (p *parser) leaf(kind ast.Kind, start int) ast.Index { return p.add(kind, start, ast.Slots{}) }
+
+// setOp sets the Op of node i and returns i.
+func (p *parser) setOp(i ast.Index, op token.Kind) ast.Index {
+	p.t.Nodes[i].Op = op
+	return i
+}
 
 // list stores items as a list in Extra and returns its offset; every empty
 // list shares offset 0.

@@ -42,93 +42,135 @@ type Kind uint8
 //go:generate go run ./gen
 
 const (
-	KindNone                Kind = iota // the placeholder at index 0
-	KindModule                          // a file
-	KindImportDecl                      // `import "pkg:path" as alias;`
-	KindFunctionDecl                    // `fn`; also an interface method, without body and metadata
-	KindConstDecl                       // `const`
-	KindStructDecl                      // `struct Name { ... }`
-	KindEnumDecl                        // `enum Name { ... }`
-	KindInterfaceDecl                   // `iface Name { ... }`
-	KindTypeAliasDecl                   // `type Name = T;`
-	KindMetadata                        // the doc comment and attributes before a declaration
-	KindDocComment                      // the `///` lines before a declaration; its text is the node's source text
-	KindAttribute                       // `#[name(arguments)]`
-	KindParameter                       // Op: MUT or 0
-	KindDeclaredName                    // the name a declaration introduces; its text is the node's source text
-	KindTypeName                        // a type written as a name; its text is the node's source text
-	KindPath                            // `a::B<T>`
-	KindGenericType                     // `Box<T>`
-	KindReferenceType                   // `&T` or `&mut T`; Op: MUT or 0
-	KindOptionalType                    // `?T`
-	KindOwnedPointerType                // `*T`
-	KindRawPointerType                  // the type `rawptr`
-	KindFixedArrayType                  // `[4]T`
-	KindDynamicArrayType                // `[]T`
-	KindSliceType                       // `[..]T`
-	KindFunctionType                    // `fn(T) -> R from a`
-	KindStructType                      // `struct { ... }`
-	KindField                           // `name: T` in a struct
-	KindEnumType                        // `enum { ... }`
-	KindVariant                         // `Name` or `Name: T` in an enum
-	KindInterfaceType                   // `iface { ... }`
-	KindInvalidType                     // a type that could not be parsed
-	KindBlock                           // `{ ... }`
-	KindLetStatement                    // `let`
-	KindReturnStatement                 // `return`
-	KindExpressionStatement             // an expression followed by `;`
-	KindNameReference                   // a use of a declared name; its text is the node's source text
-	KindNumberLiteral                   // the number is the node's source text
-	KindStringLiteral                   // the literal is the node's source text; literal.Value decodes it
-	KindBinaryExpression                // Op: the operator
-	KindCallExpression                  // `f(arguments)`
-	KindParentheses                     // `( expression )`
-	KindInvalidExpression               // an expression that could not be parsed
+	KindNone                 Kind = iota // the placeholder at index 0
+	KindModule                           // a file
+	KindImportDecl                       // `import "pkg:path" as alias;`
+	KindFunctionDecl                     // `fn`; also an interface method, without body and metadata
+	KindConstDecl                        // `const`
+	KindStructDecl                       // `struct Name { ... }`
+	KindEnumDecl                         // `enum Name { ... }`
+	KindInterfaceDecl                    // `iface Name { ... }`
+	KindTypeAliasDecl                    // `type Name = T;`
+	KindMetadata                         // the doc comment and attributes before a declaration
+	KindDocComment                       // the `///` lines before a declaration; its text is the node's source text
+	KindAttribute                        // `#[name(arguments)]`
+	KindParameter                        // Op: MUT or 0
+	KindDeclaredName                     // the name a declaration introduces; its text is the node's source text
+	KindTypeName                         // a type written as a name; its text is the node's source text
+	KindPath                             // `a::B<T>`
+	KindGenericType                      // `Box<T>`
+	KindReferenceType                    // `&T` or `&mut T`; Op: MUT or 0
+	KindOptionalType                     // `?T`
+	KindOwnedPointerType                 // `*T`
+	KindRawPointerType                   // the type `rawptr`
+	KindFixedArrayType                   // `[4]T`
+	KindDynamicArrayType                 // `[]T`
+	KindSliceType                        // `[..]T`
+	KindFunctionType                     // `fn(T) -> R from a`
+	KindStructType                       // `struct { ... }`
+	KindField                            // `name: T` in a struct
+	KindEnumType                         // `enum { ... }`
+	KindVariant                          // `Name` or `Name: T` in an enum
+	KindInterfaceType                    // `iface { ... }`
+	KindInvalidType                      // a type that could not be parsed
+	KindBlock                            // `{ ... }`
+	KindLetStatement                     // `let`
+	KindReturnStatement                  // `return`
+	KindExpressionStatement              // an expression followed by `;`
+	KindNameReference                    // a use of a declared name; its text is the node's source text
+	KindNumberLiteral                    // the number is the node's source text
+	KindStringLiteral                    // Op: CSTRING (c"...") or 0; the literal is the node's source text, literal.Value decodes it
+	KindCharacterLiteral                 // Op: BYTE_CHAR (b'x') or 0; the literal is the node's source text, literal.Value decodes it
+	KindBoolLiteral                      // `true` or `false`, the node's source text
+	KindNoneLiteral                      // `none`
+	KindFieldName                        // a field or method name after `.`, or before `=` in a struct literal
+	KindInferredLength                   // the `_` of `[_]T{...}`
+	KindBinaryExpression                 // Op: the operator
+	KindUnaryExpression                  // Op: PLUS, MINUS, BANG or TILDE
+	KindReferenceExpression              // `&x` or `&mut x`; Op: MUT or 0
+	KindRawAddressExpression             // `@x`
+	KindFreeExpression                   // `free(x)`
+	KindPrintExpression                  // `print(x)` or `println(x)`; Op: PRINT or PRINTLN
+	KindCallExpression                   // `f(arguments)`
+	KindSelectorExpression               // `x.name`
+	KindIndexExpression                  // `x[index]`
+	KindRange                            // `a..b` or `a..=b` inside `[ ]` or after `in`; Op: DOTDOT or DOTDOT_EQ
+	KindStructLiteral                    // `Type.{ name = value }` or `.{ ... }`
+	KindFieldValue                       // `name = value` in a struct literal
+	KindVariantLiteral                   // `Enum::Variant with payload`
+	KindArrayLiteral                     // `[N]T{ values }`
+	KindCastExpression                   // `x as T`
+	KindIsExpression                     // `x is Enum::Variant`
+	KindOrElseExpression                 // `x orelse fallback`
+	KindPipeExpression                   // `x |> f(arguments)`, kept as written
+	KindParentheses                      // `( expression )`
+	KindInvalidExpression                // an expression that could not be parsed
 )
 
 var kindNames = [...]string{
-	KindNone:                "none",
-	KindModule:              "module",
-	KindImportDecl:          "import declaration",
-	KindFunctionDecl:        "function declaration",
-	KindConstDecl:           "const declaration",
-	KindStructDecl:          "struct declaration",
-	KindEnumDecl:            "enum declaration",
-	KindInterfaceDecl:       "interface declaration",
-	KindTypeAliasDecl:       "type alias declaration",
-	KindMetadata:            "metadata",
-	KindDocComment:          "doc comment",
-	KindAttribute:           "attribute",
-	KindParameter:           "parameter",
-	KindDeclaredName:        "declared name",
-	KindTypeName:            "type name",
-	KindPath:                "path",
-	KindGenericType:         "generic type",
-	KindReferenceType:       "reference type",
-	KindOptionalType:        "optional type",
-	KindOwnedPointerType:    "owned pointer type",
-	KindRawPointerType:      "raw pointer type",
-	KindFixedArrayType:      "fixed array type",
-	KindDynamicArrayType:    "dynamic array type",
-	KindSliceType:           "slice type",
-	KindFunctionType:        "function type",
-	KindStructType:          "struct type",
-	KindField:               "field",
-	KindEnumType:            "enum type",
-	KindVariant:             "variant",
-	KindInterfaceType:       "interface type",
-	KindInvalidType:         "invalid type",
-	KindBlock:               "block",
-	KindLetStatement:        "let statement",
-	KindReturnStatement:     "return statement",
-	KindExpressionStatement: "expression statement",
-	KindNameReference:       "name reference",
-	KindNumberLiteral:       "number literal",
-	KindStringLiteral:       "string literal",
-	KindBinaryExpression:    "binary expression",
-	KindCallExpression:      "call expression",
-	KindParentheses:         "parentheses",
-	KindInvalidExpression:   "invalid expression",
+	KindNone:                 "none",
+	KindModule:               "module",
+	KindImportDecl:           "import declaration",
+	KindFunctionDecl:         "function declaration",
+	KindConstDecl:            "const declaration",
+	KindStructDecl:           "struct declaration",
+	KindEnumDecl:             "enum declaration",
+	KindInterfaceDecl:        "interface declaration",
+	KindTypeAliasDecl:        "type alias declaration",
+	KindMetadata:             "metadata",
+	KindDocComment:           "doc comment",
+	KindAttribute:            "attribute",
+	KindParameter:            "parameter",
+	KindDeclaredName:         "declared name",
+	KindTypeName:             "type name",
+	KindPath:                 "path",
+	KindGenericType:          "generic type",
+	KindReferenceType:        "reference type",
+	KindOptionalType:         "optional type",
+	KindOwnedPointerType:     "owned pointer type",
+	KindRawPointerType:       "raw pointer type",
+	KindFixedArrayType:       "fixed array type",
+	KindDynamicArrayType:     "dynamic array type",
+	KindSliceType:            "slice type",
+	KindFunctionType:         "function type",
+	KindStructType:           "struct type",
+	KindField:                "field",
+	KindEnumType:             "enum type",
+	KindVariant:              "variant",
+	KindInterfaceType:        "interface type",
+	KindInvalidType:          "invalid type",
+	KindBlock:                "block",
+	KindLetStatement:         "let statement",
+	KindReturnStatement:      "return statement",
+	KindExpressionStatement:  "expression statement",
+	KindNameReference:        "name reference",
+	KindNumberLiteral:        "number literal",
+	KindStringLiteral:        "string literal",
+	KindCharacterLiteral:     "character literal",
+	KindBoolLiteral:          "bool literal",
+	KindNoneLiteral:          "none literal",
+	KindFieldName:            "field name",
+	KindInferredLength:       "inferred length",
+	KindBinaryExpression:     "binary expression",
+	KindUnaryExpression:      "unary expression",
+	KindReferenceExpression:  "reference expression",
+	KindRawAddressExpression: "raw address expression",
+	KindFreeExpression:       "free expression",
+	KindPrintExpression:      "print expression",
+	KindCallExpression:       "call expression",
+	KindSelectorExpression:   "selector expression",
+	KindIndexExpression:      "index expression",
+	KindRange:                "range",
+	KindStructLiteral:        "struct literal",
+	KindFieldValue:           "field value",
+	KindVariantLiteral:       "variant literal",
+	KindArrayLiteral:         "array literal",
+	KindCastExpression:       "cast expression",
+	KindIsExpression:         "is expression",
+	KindOrElseExpression:     "orelse expression",
+	KindPipeExpression:       "pipe expression",
+	KindParentheses:          "parentheses",
+	KindInvalidExpression:    "invalid expression",
 }
 
 func (k Kind) String() string {

@@ -313,6 +313,138 @@ func (*Tree) PackParentheses(v Parentheses) Slots {
 	return Slots{A: v.Inner, B: None}
 }
 
+// Operand returns the children of node i, a KindUnaryExpression or KindReferenceExpression or KindRawAddressExpression or KindFreeExpression or KindPrintExpression.
+func (t *Tree) Operand(i Index) Operand {
+	n := t.Nodes[i]
+	return Operand{Value: n.A}
+}
+
+// PackOperand keeps the children v in the tree and returns the slots of their node.
+func (*Tree) PackOperand(v Operand) Slots {
+	return Slots{A: v.Value, B: None}
+}
+
+// SelectorExpression returns the children of node i, a KindSelectorExpression.
+func (t *Tree) SelectorExpression(i Index) SelectorExpression {
+	n := t.Nodes[i]
+	return SelectorExpression{Value: n.A, Field: n.B}
+}
+
+// PackSelectorExpression keeps the children v in the tree and returns the slots of their node.
+func (*Tree) PackSelectorExpression(v SelectorExpression) Slots {
+	return Slots{A: v.Value, B: v.Field}
+}
+
+// IndexExpression returns the children of node i, a KindIndexExpression.
+func (t *Tree) IndexExpression(i Index) IndexExpression {
+	n := t.Nodes[i]
+	return IndexExpression{Value: n.A, Index: n.B}
+}
+
+// PackIndexExpression keeps the children v in the tree and returns the slots of their node.
+func (*Tree) PackIndexExpression(v IndexExpression) Slots {
+	return Slots{A: v.Value, B: v.Index}
+}
+
+// Range returns the children of node i, a KindRange.
+func (t *Tree) Range(i Index) Range {
+	n := t.Nodes[i]
+	return Range{Start: n.A, End: n.B}
+}
+
+// PackRange keeps the children v in the tree and returns the slots of their node.
+func (*Tree) PackRange(v Range) Slots {
+	return Slots{A: v.Start, B: v.End}
+}
+
+// StructLiteral returns the children of node i, a KindStructLiteral.
+func (t *Tree) StructLiteral(i Index) StructLiteral {
+	n := t.Nodes[i]
+	return StructLiteral{Type: n.A, Fields: List(n.B)}
+}
+
+// PackStructLiteral keeps the children v in the tree and returns the slots of their node.
+func (*Tree) PackStructLiteral(v StructLiteral) Slots {
+	return Slots{A: v.Type, B: Index(v.Fields)}
+}
+
+// FieldValue returns the children of node i, a KindFieldValue.
+func (t *Tree) FieldValue(i Index) FieldValue {
+	n := t.Nodes[i]
+	return FieldValue{Name: n.A, Value: n.B}
+}
+
+// PackFieldValue keeps the children v in the tree and returns the slots of their node.
+func (*Tree) PackFieldValue(v FieldValue) Slots {
+	return Slots{A: v.Name, B: v.Value}
+}
+
+// VariantLiteral returns the children of node i, a KindVariantLiteral.
+func (t *Tree) VariantLiteral(i Index) VariantLiteral {
+	n := t.Nodes[i]
+	return VariantLiteral{Case: n.A, Payload: n.B}
+}
+
+// PackVariantLiteral keeps the children v in the tree and returns the slots of their node.
+func (*Tree) PackVariantLiteral(v VariantLiteral) Slots {
+	return Slots{A: v.Case, B: v.Payload}
+}
+
+// ArrayLiteral returns the children of node i, a KindArrayLiteral.
+func (t *Tree) ArrayLiteral(i Index) ArrayLiteral {
+	n := t.Nodes[i]
+	return ArrayLiteral{Type: n.A, Values: List(n.B)}
+}
+
+// PackArrayLiteral keeps the children v in the tree and returns the slots of their node.
+func (*Tree) PackArrayLiteral(v ArrayLiteral) Slots {
+	return Slots{A: v.Type, B: Index(v.Values)}
+}
+
+// CastExpression returns the children of node i, a KindCastExpression.
+func (t *Tree) CastExpression(i Index) CastExpression {
+	n := t.Nodes[i]
+	return CastExpression{Value: n.A, Type: n.B}
+}
+
+// PackCastExpression keeps the children v in the tree and returns the slots of their node.
+func (*Tree) PackCastExpression(v CastExpression) Slots {
+	return Slots{A: v.Value, B: v.Type}
+}
+
+// IsExpression returns the children of node i, a KindIsExpression.
+func (t *Tree) IsExpression(i Index) IsExpression {
+	n := t.Nodes[i]
+	return IsExpression{Value: n.A, Case: n.B}
+}
+
+// PackIsExpression keeps the children v in the tree and returns the slots of their node.
+func (*Tree) PackIsExpression(v IsExpression) Slots {
+	return Slots{A: v.Value, B: v.Case}
+}
+
+// OrElseExpression returns the children of node i, a KindOrElseExpression.
+func (t *Tree) OrElseExpression(i Index) OrElseExpression {
+	n := t.Nodes[i]
+	return OrElseExpression{Value: n.A, Fallback: n.B}
+}
+
+// PackOrElseExpression keeps the children v in the tree and returns the slots of their node.
+func (*Tree) PackOrElseExpression(v OrElseExpression) Slots {
+	return Slots{A: v.Value, B: v.Fallback}
+}
+
+// PipeExpression returns the children of node i, a KindPipeExpression.
+func (t *Tree) PipeExpression(i Index) PipeExpression {
+	n := t.Nodes[i]
+	return PipeExpression{Value: n.A, Call: n.B}
+}
+
+// PackPipeExpression keeps the children v in the tree and returns the slots of their node.
+func (*Tree) PackPipeExpression(v PipeExpression) Slots {
+	return Slots{A: v.Value, B: v.Call}
+}
+
 // Children returns the children of node i in source order, the items of its
 // lists in place.
 func (t *Tree) Children(i Index) iter.Seq[Index] {
@@ -413,6 +545,41 @@ func (t *Tree) Children(i Index) iter.Seq[Index] {
 			list(List(n.B))
 		case KindParentheses:
 			node(n.A)
+		case KindUnaryExpression, KindReferenceExpression, KindRawAddressExpression, KindFreeExpression, KindPrintExpression:
+			node(n.A)
+		case KindSelectorExpression:
+			node(n.A)
+			node(n.B)
+		case KindIndexExpression:
+			node(n.A)
+			node(n.B)
+		case KindRange:
+			node(n.A)
+			node(n.B)
+		case KindStructLiteral:
+			node(n.A)
+			list(List(n.B))
+		case KindFieldValue:
+			node(n.A)
+			node(n.B)
+		case KindVariantLiteral:
+			node(n.A)
+			node(n.B)
+		case KindArrayLiteral:
+			node(n.A)
+			list(List(n.B))
+		case KindCastExpression:
+			node(n.A)
+			node(n.B)
+		case KindIsExpression:
+			node(n.A)
+			node(n.B)
+		case KindOrElseExpression:
+			node(n.A)
+			node(n.B)
+		case KindPipeExpression:
+			node(n.A)
+			node(n.B)
 		}
 	}
 }
