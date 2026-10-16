@@ -1,5 +1,5 @@
 [package]
-name = "peeper_source"
+name = "source"
 description = "Source files and spans"
 version.workspace = true
 edition.workspace = true

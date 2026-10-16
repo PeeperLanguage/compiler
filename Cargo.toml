@@ -9,9 +9,9 @@ license-file = "LICENSE"
 publish = false
 
 [workspace.dependencies]
-peeper_source = { path = "crates/peeper_source" }
-peeper_diagnostics = { path = "crates/peeper_diagnostics" }
-peeper_lexer = { path = "crates/peeper_lexer" }
+source = { path = "crates/source" }
+diagnostics = { path = "crates/diagnostics" }
+lexer = { path = "crates/lexer" }
 unicode-general-category = "1.1.0"
 
 [workspace.lints.rust]

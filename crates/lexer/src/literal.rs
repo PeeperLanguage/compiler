@@ -3,7 +3,7 @@
 
 use std::borrow::Cow;
 
-use peeper_diagnostics::quote;
+use diagnostics::quote;
 
 /// Reads the escape sequence at `s[i]`, a backslash: Ok holds the byte it
 /// stands for, and either way the second value is its length in `s`. `quote` is

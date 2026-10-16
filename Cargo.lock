@@ -3,33 +3,33 @@
 version = 4
 
 [[package]]
+name = "diagnostics"
+version = "0.1.0"
+dependencies = [
+ "source",
+ "unicode-general-category",
+]
+
+[[package]]
+name = "lexer"
+version = "0.1.0"
+dependencies = [
+ "diagnostics",
+ "source",
+ "unicode-general-category",
+]
+
+[[package]]
 name = "peeper"
 version = "0.1.0"
 dependencies = [
- "peeper_diagnostics",
- "peeper_lexer",
- "peeper_source",
+ "diagnostics",
+ "lexer",
+ "source",
 ]
 
 [[package]]
-name = "peeper_diagnostics"
-version = "0.1.0"
-dependencies = [
- "peeper_source",
- "unicode-general-category",
-]
-
-[[package]]
-name = "peeper_lexer"
-version = "0.1.0"
-dependencies = [
- "peeper_diagnostics",
- "peeper_source",
- "unicode-general-category",
-]
-
-[[package]]
-name = "peeper_source"
+name = "source"
 version = "0.1.0"
 
 [[package]]

@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use crate::literal::{escape, next_char_width};
 use crate::token::{OPERATORS, Token, TokenKind};
-use peeper_diagnostics::{self as diagnostic, Code, Diagnostic, quote};
-use peeper_source::{SourceFile, Span};
+use diagnostics::{self as diagnostic, Code, Diagnostic, quote};
+use source::{SourceFile, Span};
 use unicode_general_category::{GeneralCategory, get_general_category};
 
 pub mod literal;

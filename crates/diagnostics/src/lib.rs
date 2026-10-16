@@ -3,7 +3,9 @@
 
 use std::sync::Arc;
 
-use peeper_source::{SourceFile, Span};
+use source::{SourceFile, Span};
+
+pub mod printer;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Severity {

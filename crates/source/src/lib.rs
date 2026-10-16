@@ -58,11 +58,17 @@ impl SourceFile {
             .partition_point(|&start| start as usize <= offset)
     }
 
-    /// The 1-based line and column of `offset`; columns count characters.
+    /// The 1-based line and column of `offset`; columns count characters. Before
+    /// an offset inside a character (a lexer span may end there), each byte of
+    /// the cut character counts as one.
     pub fn position(&self, offset: usize) -> (usize, usize) {
         let line = self.line(offset);
         let start = self.lines[line - 1] as usize;
-        (line, self.text[start..offset].chars().count() + 1)
+        let columns: usize = self.text.as_bytes()[start..offset]
+            .utf8_chunks()
+            .map(|chunk| chunk.valid().chars().count() + chunk.invalid().len())
+            .sum();
+        (line, columns + 1)
     }
 
     /// The span of the 1-based line `n` without its line end, or an empty span
@@ -100,6 +106,7 @@ mod tests {
         ] {
             assert_eq!(f.position(offset), want, "offset {offset}");
         }
+        assert_eq!(f.position(5), (2, 2)); // inside "ç": its first byte counts
         assert_eq!(f.line_span(2), Span::new(4, 7)); // without "\r\n"
         assert_eq!(f.line_span(3), Span::new(9, 13));
         assert_eq!(f.line_span(4), Span::at(13));
