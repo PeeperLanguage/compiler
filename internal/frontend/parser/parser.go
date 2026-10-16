@@ -5,6 +5,11 @@
 // Every node is made when the parser has read up to its end, and its span ends
 // there, so node ends never decrease along the tree's node array (see ast).
 // A missing name or expression is an empty span at that point.
+//
+// One mistake gives one error. After an error the parser is recovering: it
+// reports nothing more until it is in step with the source again, at the next
+// `;`, the `}` closing the block, or a `let`, `return`, `fn` or `import` starting
+// a statement or declaration (see sync).
 package parser
 
 import (
@@ -22,17 +27,19 @@ import (
 func Parse(file *source.File) (*ast.Tree, []diag.Diagnostic) {
 	tokens, errs := lexer.Scan(file)
 	nodes := make([]ast.Node, 1, len(tokens)+1) // index 0: the placeholder
-	p := parser{t: &ast.Tree{File: file, Nodes: nodes}, tokens: tokens, errors: errs}
+	p := parser{t: &ast.Tree{File: file, Nodes: nodes}, tokens: tokens, errors: errs, lexErrors: len(errs)}
 	p.module()
 	return p.t, p.errors
 }
 
 type parser struct {
-	t       *ast.Tree // the tree being built
-	tokens  []token.Token
-	pos     int
-	lastEnd int // end of the last token read
-	errors  []diag.Diagnostic
+	t          *ast.Tree // the tree being built
+	tokens     []token.Token
+	pos        int
+	lastEnd    int // end of the last token read
+	errors     []diag.Diagnostic
+	lexErrors  int  // errors[:lexErrors] are the lexer's
+	recovering bool // an error was reported and the parser is not yet in step again
 }
 
 func (p *parser) tok() token.Token {
@@ -53,23 +60,139 @@ func (p *parser) next() token.Token {
 	return t
 }
 
+// fail reports a mistake the parser cannot read past, and starts recovering.
+// Nothing is reported while recovering already, or when a lexical error lies
+// between the last token read and the current one: an illegal character makes
+// no token, so the parser's error would only repeat it.
+func (p *parser) fail(d *diag.Diagnostic) {
+	if !p.recovering && !p.afterLexicalError() {
+		p.errors = append(p.errors, *d)
+	}
+	p.recovering = true
+}
+
+// repair reports a mistake the parser reads past as if the missing token were
+// there, so it stays in step and goes on reporting.
+func (p *parser) repair(d *diag.Diagnostic) {
+	if !p.recovering {
+		p.errors = append(p.errors, *d)
+	}
+}
+
+func (p *parser) afterLexicalError() bool {
+	next := p.tok().Start
+	for _, err := range p.errors[:p.lexErrors] {
+		if span := err.Labels[0].Span; p.lastEnd <= span.Start && span.End <= next {
+			return true
+		}
+	}
+	return false
+}
+
 func (p *parser) expect(kind token.Kind) (token.Token, bool) {
 	if p.at(kind) {
 		return p.next(), true
 	}
 	t := p.tok()
-	p.errors = append(p.errors, *diag.New(diag.ExpectedToken, "expected `"+kind.String()+"`, found `"+t.Kind.String()+"`").
+	p.fail(diag.New(diag.ExpectedToken, "expected `"+kind.String()+"`, found `"+t.Kind.String()+"`").
 		Label(p.t.File, t.Span, "expected `"+kind.String()+"` here"))
 	return t, false
 }
 
-// skipTo moves past the next ';' or to the next '}' or end of file.
-func (p *parser) skipTo() {
-	for !p.at(token.EOF) && !p.at(token.RBRACE) {
-		if p.next().Kind == token.SEMICOLON {
+// close reads the token closing what open opened. When it is missing, the
+// error also marks open if it is on an earlier line.
+func (p *parser) close(kind token.Kind, open token.Token) {
+	if p.at(kind) {
+		p.next()
+		return
+	}
+	t := p.tok()
+	d := diag.New(diag.ExpectedToken, "expected `"+kind.String()+"`, found `"+t.Kind.String()+"`").
+		Label(p.t.File, t.Span, "expected `"+kind.String()+"` here")
+	if p.t.File.Line(open.Start) < p.t.File.Line(t.Start) {
+		d.Label(p.t.File, open.Span, "this `"+open.Kind.String()+"` is still open")
+	}
+	p.fail(d)
+}
+
+// startsStatement reports whether kind begins a statement or declaration
+// wherever it appears, so parsing is in step again there.
+func startsStatement(kind token.Kind) bool {
+	return kind == token.LET || kind == token.RETURN || kind == token.FN || kind == token.IMPORT
+}
+
+// sync skips to where parsing can go on after an error: past the next `;`, or
+// up to a `}` closing the current block, a keyword that starts a statement, or
+// the end of file. Brackets opened on the way are skipped whole, and a stray
+// closing `)` or `]` is skipped. Passing a `;` puts the parser in step again.
+func (p *parser) sync() {
+	depth := 0
+	for !p.at(token.EOF) {
+		switch kind := p.tok().Kind; {
+		case kind == token.LPAREN || kind == token.LBRACK || kind == token.LBRACE:
+			depth++
+		case kind == token.RPAREN || kind == token.RBRACK:
+			depth = max(depth-1, 0)
+		case kind == token.RBRACE:
+			if depth == 0 {
+				return
+			}
+			depth--
+		case kind == token.SEMICOLON && depth == 0:
+			p.next()
+			p.recovering = false
+			return
+		case startsStatement(kind) && depth == 0:
 			return
 		}
+		p.next()
 	}
+}
+
+// items reads the items of a list up to close, separated by commas, appending
+// them to buf. item reads one item and startsItem tells whether a token can
+// begin one. An item that follows another without a comma is read as if the
+// comma were there, when the list's own close comes next at this depth; all
+// missing commas are reported in one error.
+func (p *parser) items(buf []ast.Index, close token.Kind, startsItem func(token.Kind) bool, item func() ast.Index) []ast.Index {
+	var missing []diag.Fix
+	for startsItem(p.tok().Kind) { // neither close nor EOF starts an item
+		buf = append(buf, item())
+		if p.at(token.COMMA) {
+			p.next()
+			continue
+		}
+		if !startsItem(p.tok().Kind) || p.closerAhead() != close {
+			break
+		}
+		missing = append(missing, diag.Fix{File: p.t.File, Span: source.Span{Start: p.lastEnd, End: p.lastEnd}, NewText: ","})
+	}
+	if len(missing) > 0 {
+		help := "add missing `,`"
+		if len(missing) > 1 {
+			help = "add the missing commas"
+		}
+		p.repair(diag.New(diag.ExpectedToken, "expected `,`").Label(p.t.File, missing[0].Span, "").Help(help, missing...))
+	}
+	return buf
+}
+
+// closerAhead returns the first closing bracket ahead at the current depth, or
+// EOF when there is none.
+func (p *parser) closerAhead() token.Kind {
+	depth := 0
+	for _, t := range p.tokens[p.pos:] {
+		switch t.Kind {
+		case token.LPAREN, token.LBRACK, token.LBRACE:
+			depth++
+		case token.RPAREN, token.RBRACK, token.RBRACE:
+			if depth == 0 {
+				return t.Kind
+			}
+			depth--
+		}
+	}
+	return token.EOF
 }
 
 // add appends a node spanning from start to the end of the last token read.
@@ -96,6 +219,9 @@ func (p *parser) module() {
 	var importBuf, funcBuf [16]ast.Index
 	imports, funcs := importBuf[:0], funcBuf[:0]
 	for !p.at(token.EOF) {
+		if p.at(token.IMPORT) || p.at(token.FN) {
+			p.recovering = false
+		}
 		switch {
 		case p.at(token.IMPORT):
 			if imp := p.importDecl(); imp != ast.None {
@@ -105,7 +231,7 @@ func (p *parser) module() {
 			funcs = append(funcs, p.funcDecl())
 		default:
 			// One error for the whole stretch, then go on at the next declaration.
-			p.errors = append(p.errors, *diag.New(diag.InvalidDeclaration, "module scope expects declaration").
+			p.fail(diag.New(diag.InvalidDeclaration, "module scope expects declaration").
 				Label(p.t.File, p.tok().Span, "expected a declaration here"))
 			for !p.at(token.EOF) && !p.at(token.FN) && !p.at(token.IMPORT) {
 				p.next()
@@ -119,7 +245,7 @@ func (p *parser) importDecl() ast.Index {
 	start := p.next().Start
 	path, ok := p.expect(token.STRING)
 	if !ok {
-		p.skipTo()
+		p.sync()
 		return ast.None
 	}
 	pathNode := p.add(ast.KindStringLiteral, path.Start, ast.None, ast.None)
@@ -128,7 +254,7 @@ func (p *parser) importDecl() ast.Index {
 		p.next()
 		alias = p.name(ast.KindDeclaredName)
 	}
-	p.expect(token.SEMICOLON)
+	p.end()
 	return p.add(ast.KindImportDecl, start, pathNode, alias)
 }
 
@@ -143,21 +269,12 @@ func (p *parser) name(kind ast.Kind) ast.Index {
 func (p *parser) funcDecl() ast.Index {
 	start := p.next().Start
 	name := p.name(ast.KindDeclaredName)
-	p.expect(token.LPAREN)
 	var buf [8]ast.Index
 	params := buf[:0]
-	for !p.at(token.RPAREN) && !p.at(token.EOF) {
-		paramStart := p.tok().Start
-		pname := p.name(ast.KindDeclaredName)
-		p.expect(token.COLON)
-		ptype := p.name(ast.KindTypeName)
-		params = append(params, p.add(ast.KindParameter, paramStart, pname, ptype))
-		if !p.at(token.COMMA) {
-			break
-		}
-		p.next()
+	if open, ok := p.expect(token.LPAREN); ok {
+		params = p.items(params, token.RPAREN, func(kind token.Kind) bool { return kind == token.IDENT }, p.parameter)
+		p.close(token.RPAREN, open)
 	}
-	p.expect(token.RPAREN)
 	result := ast.None
 	if p.at(token.ARROW) {
 		p.next()
@@ -168,15 +285,38 @@ func (p *parser) funcDecl() ast.Index {
 	return p.add(ast.KindFunctionDecl, start, name, p.extra(paramList, result, body))
 }
 
+func (p *parser) parameter() ast.Index {
+	start := p.tok().Start
+	name := p.name(ast.KindDeclaredName)
+	p.expect(token.COLON)
+	typ := p.name(ast.KindTypeName)
+	return p.add(ast.KindParameter, start, name, typ)
+}
+
+// block reads a block. A `fn` or `import` inside it means its `}` is missing:
+// the block ends there and the declaration is read next.
 func (p *parser) block() ast.Index {
-	start, _ := p.expect(token.LBRACE)
+	open, ok := p.expect(token.LBRACE)
+	if !ok {
+		return p.add(ast.KindBlock, p.lastEnd, p.list(nil), ast.None)
+	}
 	var buf [16]ast.Index
 	stmts := buf[:0]
-	for !p.at(token.RBRACE) && !p.at(token.EOF) {
+	for {
+		kind := p.tok().Kind
+		if kind == token.RBRACE || kind == token.EOF || kind == token.FN || kind == token.IMPORT {
+			break
+		}
+		if startsStatement(kind) {
+			p.recovering = false
+		}
 		stmts = append(stmts, p.stmt())
 	}
-	p.expect(token.RBRACE)
-	return p.add(ast.KindBlock, start.Start, p.list(stmts), ast.None)
+	if p.at(token.RBRACE) {
+		p.recovering = false // the block's own `}`: in step again
+	}
+	p.close(token.RBRACE, open)
+	return p.add(ast.KindBlock, open.Start, p.list(stmts), ast.None)
 }
 
 func (p *parser) stmt() ast.Index {
@@ -208,12 +348,16 @@ func (p *parser) stmt() ast.Index {
 	return p.add(ast.KindExpressionStatement, start, e, ast.None)
 }
 
-// end reads the ';' that closes a statement, skipping to the next statement
-// when it is missing.
+// end reads the `;` that closes a statement, which puts the parser in step
+// again; when it is missing, it skips to where parsing can go on.
 func (p *parser) end() {
-	if _, ok := p.expect(token.SEMICOLON); !ok {
-		p.skipTo()
+	if p.at(token.SEMICOLON) {
+		p.next()
+		p.recovering = false
+		return
 	}
+	p.expect(token.SEMICOLON)
+	p.sync()
 }
 
 func precedence(kind token.Kind) int {
@@ -245,20 +389,18 @@ func (p *parser) postfix() ast.Index {
 	start := p.tok().Start
 	e := p.primary()
 	for p.at(token.LPAREN) {
-		p.next()
+		open := p.next()
 		var buf [8]ast.Index
-		args := buf[:0]
-		for !p.at(token.RPAREN) && !p.at(token.EOF) {
-			args = append(args, p.expr(0))
-			if !p.at(token.COMMA) {
-				break
-			}
-			p.next()
-		}
-		p.expect(token.RPAREN)
+		args := p.items(buf[:0], token.RPAREN, startsExpression, func() ast.Index { return p.expr(0) })
+		p.close(token.RPAREN, open)
 		e = p.add(ast.KindCallExpression, start, e, p.list(args))
 	}
 	return e
+}
+
+// startsExpression reports whether an expression can begin with kind.
+func startsExpression(kind token.Kind) bool {
+	return kind == token.IDENT || kind == token.NUMBER || kind == token.STRING || kind == token.LPAREN
 }
 
 func (p *parser) primary() ast.Index {
@@ -275,12 +417,13 @@ func (p *parser) primary() ast.Index {
 		p.next()
 		return p.add(ast.KindStringLiteral, t.Start, ast.None, ast.None)
 	case token.LPAREN:
-		p.next()
+		open := p.next()
 		e := p.expr(0)
-		p.expect(token.RPAREN)
+		p.close(token.RPAREN, open)
 		return e
 	}
-	p.expect(token.IDENT)
+	p.fail(diag.New(diag.ExpectedToken, "expected expression, found `"+t.Kind.String()+"`").
+		Label(p.t.File, t.Span, "expected an expression here"))
 	return p.add(ast.KindInvalidExpression, p.lastEnd, ast.None, ast.None)
 }
 
@@ -297,10 +440,10 @@ func (p *parser) checkNumber(t token.Token) {
 	switch {
 	// A suffix needs a size after its letter (i32, not i), and no `_`.
 	case len(suffix) == 1 || strings.IndexByte(suffix, '_') >= 0:
-		p.errors = append(p.errors, *diag.New(diag.InvalidNumber, "invalid numeric literal suffix "+suffix).Label(p.t.File, t.Span, ""))
+		p.repair(diag.New(diag.InvalidNumber, "invalid numeric literal suffix "+suffix).Label(p.t.File, t.Span, ""))
 	// suffix[0] is the suffix letter: i or u is an integer type, f a float type.
 	case suffix != "" && suffix[0] != 'f' && isFloat:
-		p.errors = append(p.errors, *diag.New(diag.InvalidNumber, "integer suffix "+suffix+" cannot be used on a float literal").Label(p.t.File, t.Span, ""))
+		p.repair(diag.New(diag.InvalidNumber, "integer suffix "+suffix+" cannot be used on a float literal").Label(p.t.File, t.Span, ""))
 	// A decimal integer of two or more digits starting with 0, such as 007;
 	// with an f suffix (01f32) it is a float and the zero is harmless.
 	case base == 10 && !isFloat && len(digits) > 1 && digits[0] == '0' && (suffix == "" || suffix[0] != 'f'):

@@ -101,6 +101,97 @@ func TestParseOneErrorForUnexpectedTopLevelText(t *testing.T) {
 var brokenInputs = []string{
 	"", "fn", "fn f(", "fn f(a: ) {", "fn f() { let = ; }", "fn f() { return 1 + ; }",
 	"fn f() { g(1, ; }", "import ;", "import \"x\" as ;", "let x = 1;", "fn f() -> { }", "fn f() { ((1 }",
+	"fn f( {", "fn f() { a$b; }", "fn f() { g(1 2); }", "fn f(a: i32 b: i32) {}", "fn f() { fn }",
+	"fn f() { ) ; let x = ; }", "fn f() { let a = 1\nfn g() {}", "fn f() { g(a b c); h(1 2); }",
+}
+
+// TestOneErrorPerMistake checks that each mistake is reported once, and that
+// parsing goes on to report the next one.
+func TestOneErrorPerMistake(t *testing.T) {
+	for _, test := range []struct {
+		src    string
+		errors []string
+	}{
+		{"fn f( {", []string{"expected `)`, found `{`"}},
+		{"fn", []string{"expected `identifier`, found `end of file`"}},
+		{"fn f() { ((1 }", []string{"expected `)`, found `}`"}},
+		{"fn f() { g(1, ; }", []string{"expected `)`, found `;`"}},
+		{"fn f() { return 1 + ; }", []string{"expected expression, found `;`"}},
+		{"fn f() { g(1 2); }", []string{"expected `,`"}},
+		{"fn f(a: i32 b: i32) {}", []string{"expected `,`"}},
+		{"fn f() { a$b; }", []string{`illegal character "$"`}}, // the parser adds nothing
+		{"fn f() { let a = ; let b = ; }", []string{"expected expression, found `;`", "expected expression, found `;`"}},
+		{"fn f() { ) ; let x = ; }", []string{"expected expression, found `)`", "expected expression, found `;`"}},
+		{"fn f() { g(a b c); h(1 2); }", []string{"expected `,`", "expected `,`"}},
+		{"fn f() { let a = 1\nfn g() {}", []string{"expected `;`, found `function`"}},
+	} {
+		_, errs := Parse(source.NewFile("t.peep", test.src))
+		var got []string
+		for _, err := range errs {
+			got = append(got, err.Message)
+		}
+		if strings.Join(got, "\n") != strings.Join(test.errors, "\n") {
+			t.Errorf("%q:\n got: %q\nwant: %q", test.src, got, test.errors)
+		}
+	}
+}
+
+// TestMissingCommasAreRepaired checks that items without commas are read as if
+// the commas were there, with one fix per missing comma.
+func TestMissingCommasAreRepaired(t *testing.T) {
+	src := "fn f(a: i32 b: i32) { g(a b c); }"
+	tree, errs := Parse(source.NewFile("t.peep", src))
+	want := `module
+  function f
+    parameter a: i32
+    parameter b: i32
+    block
+      call
+        g
+        a
+        b
+        c
+`
+	if got := dump(tree); got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+	if len(errs) != 2 || len(errs[0].Notes[0].Fixes) != 1 || len(errs[1].Notes[0].Fixes) != 2 {
+		t.Fatalf("errors = %v", errs)
+	}
+	if fix := errs[1].Notes[0].Fixes[1]; src[:fix.Span.Start] != "fn f(a: i32 b: i32) { g(a b" {
+		t.Fatalf("second fix at %d", fix.Span.Start)
+	}
+}
+
+// TestUnclosedMarksTheOpener checks that a missing closer on a later line
+// points back at what is still open.
+func TestUnclosedMarksTheOpener(t *testing.T) {
+	_, errs := Parse(source.NewFile("t.peep", "fn f() {\n    g(1;\n}"))
+	if len(errs) != 1 || len(errs[0].Labels) != 1 {
+		t.Fatalf("same line: errors = %v", errs)
+	}
+	_, errs = Parse(source.NewFile("t.peep", "fn f() {\n    let a = 1;\n"))
+	if len(errs) != 1 || len(errs[0].Labels) != 2 || errs[0].Labels[1].Message != "this `{` is still open" {
+		t.Fatalf("later line: errors = %v", errs)
+	}
+}
+
+// FuzzParse checks that any input parses, and that the tree keeps its rules:
+// every span lies in the text and starts before it ends, and node ends never
+// decrease. Run it with: go test -fuzz=FuzzParse ./internal/frontend/parser
+func FuzzParse(f *testing.F) {
+	for _, src := range append([]string{program}, brokenInputs...) {
+		f.Add(src)
+	}
+	f.Fuzz(func(t *testing.T, src string) {
+		tree, _ := Parse(source.NewFile("fuzz.peep", src))
+		for i := 1; i < len(tree.Nodes); i++ {
+			s := tree.Nodes[i].Span
+			if s.Start < 0 || s.Start > s.End || s.End > len(src) || s.End < tree.Nodes[i-1].Span.End {
+				t.Fatalf("%q: node %d (%s) has span %d-%d after a node ending at %d", src, i, tree.Nodes[i].Kind, s.Start, s.End, tree.Nodes[i-1].Span.End)
+			}
+		}
+	})
 }
 
 // TestNodeEndsNeverDecrease checks the rule NodeAt relies on.
