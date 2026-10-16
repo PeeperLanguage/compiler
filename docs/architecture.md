@@ -53,17 +53,24 @@ inside the rules set here. If the base is wrong, every later phase inherits it.
 
 ### Identity: one string
 
-A module is one source file. Its identity is its **import path**, one string:
+A module is one source file. Its identity is its **import path**, one string of
+the form `package:path`:
 
-- `app/util`: a file of the current project (`app` is the project name from
-  `peeper.toml`, then the path under `src/` without the extension);
-- `core:global`: a file of a library (`core` is the library, then the path under
-  that library's `src/`).
+- `myapp:utils/file`: a file of this project (`myapp` is the name in its
+  `peeper.toml`; the path is under its `src/`, without the extension);
+- `core:global`: a file of a bundled library (`core`, under `libs/core/src/`);
+- later, downloaded packages the same way (`json:parse`), named in the dependency
+  file the tool writes.
+
+One file has one spelling from every importer; there are no relative paths.
+The compiler core gets a map from package names to folders and nothing else; it
+never reads `peeper.toml`. `peeper check` on a folder reads that folder's
+`peeper.toml` (folders above are not searched); `peeper check file.peep` checks
+the file on its own, with no project and no imports.
 
 This string is the module's name in the graph, in diagnostics and, later, in
 linking. The file path on disk is computed from it when the file is read, and is
-not stored as a second identity. Dependencies of the project can later add one
-more form (for example `dep/path`) without changing anything else.
+not stored as a second identity.
 
 ### Data: two types
 
@@ -101,7 +108,7 @@ worker: read file -> lex -> parse -> resolve each import string -> return Module
 1. The coordinator starts with the entry path (and the prelude path, see below)
    and sends each new path to a pool of workers (size = number of CPUs).
 2. A worker reads, lexes and parses its file, resolves every import string into
-   an `Import` (a pure function of the project config and the string), records
+   an `Import` (a pure function of the package map and the string), records
    its own diagnostics, and sends the finished `Module` back.
 3. The coordinator stores it, and sends every import path it has not seen yet.
 4. When no work is left, loading ends. No locks: the map is touched only by the
@@ -155,7 +162,8 @@ this rule (#165 came from breaking it).
 | `token`, `lexer` | tokens, lexing | old frontend, reviewed |
 | `ast`, `parser` | syntax tree, parsing | old frontend, reviewed (parser only parses) |
 | `diag` | one diagnostic value and how it is printed | rewritten small; old emitter and `suggest.go` reviewed |
-| `load` | project config, import resolution, workers, graph, cycles | new; ideas from old loader/resolver |
+| `manifest` | reading `peeper.toml` in one folder: the project name | new |
+| `project` | import resolution from a package map, workers, graph, cycles | new; ideas from old loader/resolver |
 | `cmd` | `peeper check <path>` | new |
 
 Every item brought back from the old code passes three questions first: is it
