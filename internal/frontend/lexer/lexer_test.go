@@ -100,3 +100,24 @@ func TestValue(t *testing.T) {
 		}
 	}
 }
+
+func TestEscapeErrorsPointAtTheEscape(t *testing.T) {
+	text := `"a\q b\xZZ c" 'é' '\xC3\xA9' 'ab' b'\x41'`
+	tokens, errs := Scan(source.NewFile("t.peep", text))
+	var got []string
+	for _, err := range errs {
+		span := err.Labels[0].Span
+		got = append(got, text[span.Start:span.End]+": "+err.Message)
+	}
+	want := []string{
+		`\q: unknown escape sequence "\\q"`,
+		`\xZZ: invalid hex escape "\\xZZ"`,
+		`'ab': character literal must contain exactly one character`,
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("errors\n got: %q\nwant: %q", got, want)
+	}
+	if len(tokens) != 6 { // five literals and EOF; invalid literals keep their tokens
+		t.Fatalf("%d tokens", len(tokens))
+	}
+}

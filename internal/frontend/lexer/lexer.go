@@ -10,6 +10,7 @@ import (
 	"compiler/internal/diag"
 	"compiler/internal/frontend/token"
 	"compiler/internal/source"
+	"compiler/pkg/ascii"
 )
 
 // Scan returns the tokens of file, ending with EOF, and the lexical errors in it.
@@ -49,7 +50,7 @@ func (s *scanner) next() {
 			s.pos = start + 2 + end + 2
 		} else {
 			s.pos = start + 2
-			s.fail(start, diag.UnterminatedComment, "unterminated block comment", "add `*/` to close it")
+			s.fail(source.Span{Start: start, End: s.pos}, diag.UnterminatedComment, "unterminated block comment", "add `*/` to close it")
 			s.pos = len(s.text)
 		}
 	case c == '"':
@@ -60,10 +61,10 @@ func (s *scanner) next() {
 		s.quoted(1, token.BYTE_CHAR)
 	case c == '\'':
 		s.quoted(0, token.CHAR)
-	case isDigit(c):
+	case ascii.IsDigit(c):
 		s.number()
 	case c < utf8.RuneSelf:
-		if c == '_' || isLetter(c) {
+		if c == '_' || ascii.IsLetter(c) {
 			s.word()
 		} else {
 			s.operator()
@@ -97,8 +98,8 @@ func (s *scanner) emit(kind token.Kind, start int) {
 	s.tokens = append(s.tokens, token.Token{Kind: kind, Span: source.Span{Start: start, End: s.pos}})
 }
 
-func (s *scanner) fail(start int, code diag.Code, message, label string) {
-	s.errors = append(s.errors, *diag.New(code, message).Label(s.file, source.Span{Start: start, End: s.pos}, label))
+func (s *scanner) fail(span source.Span, code diag.Code, message, label string) {
+	s.errors = append(s.errors, *diag.New(code, message).Label(s.file, span, label))
 }
 
 // word reads a name or keyword. A name holding letters, digits or marks outside
@@ -107,7 +108,7 @@ func (s *scanner) word() {
 	start, isASCII := s.pos, true
 	for s.pos < len(s.text) {
 		if c := s.text[s.pos]; c < utf8.RuneSelf {
-			if c != '_' && !isLetter(c) && !isDigit(c) {
+			if c != '_' && !ascii.IsLetter(c) && !ascii.IsDigit(c) {
 				break
 			}
 			s.pos++
@@ -124,7 +125,7 @@ func (s *scanner) word() {
 		s.emit(token.LookupIdent(s.text[start:s.pos]), start)
 		return
 	}
-	s.fail(start, diag.UnexpectedCharacter, fmt.Sprintf("name `%s` uses characters that are not allowed in names", s.text[start:s.pos]),
+	s.fail(source.Span{Start: start, End: s.pos}, diag.UnexpectedCharacter, fmt.Sprintf("name `%s` uses characters that are not allowed in names", s.text[start:s.pos]),
 		"use only `A-Z`, `a-z`, `0-9` and `_`")
 	s.emit(token.IDENT, start)
 }
@@ -135,30 +136,30 @@ func (s *scanner) word() {
 // digits.
 func (s *scanner) number() {
 	start := s.pos
-	if s.text[start] == '0' && strings.IndexByte("xXoObB", s.at(1)) >= 0 && isAlnum(s.at(2)) {
+	if s.text[start] == '0' && strings.IndexByte("xXoObB", s.at(1)) >= 0 && ascii.IsAlnum(s.at(2)) {
 		s.pos += 2
-		s.digits(isAlnum)
+		s.digits(ascii.IsAlnum[byte])
 		s.emit(token.NUMBER, start)
 		return
 	}
-	s.digits(isDigit)
-	if s.at(0) == '.' && isDigit(s.at(1)) {
+	s.digits(ascii.IsDigit[byte])
+	if s.at(0) == '.' && ascii.IsDigit(s.at(1)) {
 		s.pos++
-		s.digits(isDigit)
+		s.digits(ascii.IsDigit[byte])
 	}
 	if e := s.at(0); e == 'e' || e == 'E' {
 		sign := 0
 		if next := s.at(1); next == '+' || next == '-' {
 			sign = 1
 		}
-		if isDigit(s.at(1 + sign)) {
+		if ascii.IsDigit(s.at(1 + sign)) {
 			s.pos += 1 + sign
-			s.digits(isDigit)
+			s.digits(ascii.IsDigit[byte])
 		}
 	}
 	if suffix := s.at(0); suffix == 'i' || suffix == 'u' || suffix == 'f' {
 		s.pos++
-		for isDigit(s.at(0)) || s.at(0) == '_' {
+		for ascii.IsDigit(s.at(0)) || s.at(0) == '_' {
 			s.pos++
 		}
 	}
@@ -179,61 +180,75 @@ func (s *scanner) digits(isDigit func(byte) bool) {
 }
 
 // quoted reads a string, character or byte literal whose quote follows prefix
-// bytes. A literal may span lines; an escape needs a following character on the
-// same line. When the closing quote is missing, the literal is reported and
-// ends with its first line.
+// bytes, in one pass: it finds the closing quote, reports each bad escape at
+// the escape, and checks that a character or byte literal holds exactly one.
+// A literal may span lines; an escape needs a following character on the same
+// line. When the closing quote is missing, the literal is reported and ends
+// with its first line. The literal's token is kept even when it is invalid, so
+// parsing goes on without a second error.
 func (s *scanner) quoted(prefix int, kind token.Kind) {
 	start := s.pos
 	quote := s.text[start+prefix]
-	end := start + prefix + 1
-	for {
-		if end >= len(s.text) {
+	var value [utf8.UTFMax]byte // the first bytes of the literal's value
+	length, badEscape := 0, false
+	for i := start + prefix + 1; ; {
+		if i >= len(s.text) || s.text[i] == '\\' && (i+1 >= len(s.text) || s.text[i+1] == '\n') {
 			s.unterminated(start, quote, kind)
 			return
 		}
-		switch s.text[end] {
+		c := s.text[i]
+		switch c {
 		case quote:
-			s.pos = end + 1
-			s.literal(start, start+prefix+1, end, kind)
+			s.pos = i + 1
+			if !badEscape {
+				s.checkLength(start, kind, value[:min(length, len(value))], length)
+			}
+			s.emit(kind, start)
 			return
 		case '\\':
-			if end+1 >= len(s.text) || s.text[end+1] == '\n' {
-				s.unterminated(start, quote, kind)
-				return
+			b, width, err := escape(s.text, i, quote)
+			if err != nil {
+				s.fail(source.Span{Start: i, End: i + width}, diag.UnexpectedCharacter, err.Error(), "fix this escape sequence")
+				badEscape = true
+			} else if length < len(value) {
+				value[length] = b
 			}
-			_, width := utf8.DecodeRuneInString(s.text[end+1:])
-			end += 1 + width
+			length++
+			i += width
 		default:
-			end++
+			if length < len(value) {
+				value[length] = c
+			}
+			length++
+			i++
 		}
 	}
 }
 
-// literal checks a closed quoted literal, reports why it is invalid if it is,
-// and emits it.
-func (s *scanner) literal(start, innerStart, innerEnd int, kind token.Kind) {
-	value, err := unquote(s.text[innerStart:innerEnd], s.text[innerEnd])
+// checkLength reports a character literal whose value is not exactly one
+// valid UTF-8 character, or a byte literal whose value is not exactly one byte.
+// value holds the first bytes of the literal's value, which is length bytes long.
+func (s *scanner) checkLength(start int, kind token.Kind, value []byte, length int) {
+	span := source.Span{Start: start, End: s.pos}
 	switch {
-	case err != nil:
-		s.fail(start, diag.UnexpectedCharacter, err.Error(), "fix this escape sequence")
-	case kind == token.CHAR && (!utf8.ValidString(value) || utf8.RuneCountInString(value) != 1):
-		s.fail(start, diag.UnexpectedCharacter, "character literal must contain exactly one character",
+	case kind == token.CHAR && (length > utf8.UTFMax || !utf8.Valid(value) || utf8.RuneCount(value) != 1):
+		s.fail(span, diag.UnexpectedCharacter, "character literal must contain exactly one character",
 			"use exactly one valid UTF-8 character between single quotes")
-	case kind == token.BYTE_CHAR && len(value) != 1:
-		s.fail(start, diag.UnexpectedCharacter, "byte literal must contain exactly one byte",
+	case kind == token.BYTE_CHAR && length != 1:
+		s.fail(span, diag.UnexpectedCharacter, "byte literal must contain exactly one byte",
 			"use exactly one byte after the b'...' prefix")
 	}
-	s.emit(kind, start)
 }
 
 // unterminated reports a literal without its closing quote and emits it up to
 // the end of its first line.
 func (s *scanner) unterminated(start int, quote byte, kind token.Kind) {
 	s.pos = s.lineEnd()
+	span := source.Span{Start: start, End: s.pos}
 	if quote == '"' {
-		s.fail(start, diag.UnterminatedString, "unterminated string literal", "add a closing `\"`")
+		s.fail(span, diag.UnterminatedString, "unterminated string literal", "add a closing `\"`")
 	} else {
-		s.fail(start, diag.UnterminatedString, "unterminated character literal", "add a closing `'`")
+		s.fail(span, diag.UnterminatedString, "unterminated character literal", "add a closing `'`")
 	}
 	s.emit(kind, start)
 }
@@ -242,7 +257,7 @@ func (s *scanner) illegal() {
 	start := s.pos
 	_, width := utf8.DecodeRuneInString(s.text[start:])
 	s.pos += width
-	s.fail(start, diag.UnexpectedCharacter, fmt.Sprintf("illegal character %q", s.text[start:s.pos]), "remove or replace this character")
+	s.fail(source.Span{Start: start, End: s.pos}, diag.UnexpectedCharacter, fmt.Sprintf("illegal character %q", s.text[start:s.pos]), "remove or replace this character")
 }
 
 type operator struct {
@@ -253,23 +268,56 @@ type operator struct {
 // operators lists every operator and punctuation token, longest first within
 // each leading character, so the first match is the right one.
 var operators = [...]operator{
-	{"::", token.DCOLON}, {":", token.COLON},
-	{"==", token.EQ}, {"=>", token.FATARROW}, {"=", token.ASSIGN},
-	{"!=", token.NEQ}, {"!!", token.BB}, {"!", token.BANG},
-	{"<=", token.LE}, {"<<", token.SHL}, {"<", token.LT},
-	{">=", token.GE}, {">>", token.SHR}, {">", token.GT},
-	{"&&", token.ANDAND}, {"&", token.AMP},
-	{"||", token.OROR}, {"|>", token.PIPE_ARROW}, {"|", token.BAR},
-	{"??", token.QQ}, {"?", token.QUESTION},
-	{"->", token.ARROW}, {"--", token.MINUS_MINUS}, {"-=", token.MINUS_ASSIGN}, {"-", token.MINUS},
-	{"++", token.PLUS_PLUS}, {"+=", token.PLUS_ASSIGN}, {"+", token.PLUS},
-	{"*=", token.STAR_ASSIGN}, {"*", token.ASTERISK},
-	{"/=", token.SLASH_ASSIGN}, {"/", token.SLASH},
-	{"%=", token.PCT_ASSIGN}, {"%", token.PERCENT},
-	{"...", token.ELLIPSIS}, {"..=", token.DOTDOT_EQ}, {"..", token.DOTDOT}, {".", token.DOT},
-	{"@", token.AT}, {"^", token.CARET}, {"~", token.TILDE}, {",", token.COMMA}, {"#", token.HASH},
-	{";", token.SEMICOLON}, {"(", token.LPAREN}, {")", token.RPAREN},
-	{"{", token.LBRACE}, {"}", token.RBRACE}, {"[", token.LBRACK}, {"]", token.RBRACK},
+	{"::", token.DCOLON},
+	{":", token.COLON},
+	{"==", token.EQ},
+	{"=>", token.FATARROW},
+	{"=", token.ASSIGN},
+	{"!=", token.NEQ},
+	{"!!", token.BB},
+	{"!", token.BANG},
+	{"<=", token.LE},
+	{"<<", token.SHL},
+	{"<", token.LT},
+	{">=", token.GE},
+	{">>", token.SHR},
+	{">", token.GT},
+	{"&&", token.ANDAND},
+	{"&", token.AMP},
+	{"||", token.OROR},
+	{"|>", token.PIPE_ARROW},
+	{"|", token.BAR},
+	{"??", token.QQ},
+	{"?", token.QUESTION},
+	{"->", token.ARROW},
+	{"--", token.MINUS_MINUS},
+	{"-=", token.MINUS_ASSIGN},
+	{"-", token.MINUS},
+	{"++", token.PLUS_PLUS},
+	{"+=", token.PLUS_ASSIGN},
+	{"+", token.PLUS},
+	{"*=", token.STAR_ASSIGN},
+	{"*", token.ASTERISK},
+	{"/=", token.SLASH_ASSIGN},
+	{"/", token.SLASH},
+	{"%=", token.PCT_ASSIGN},
+	{"%", token.PERCENT},
+	{"...", token.ELLIPSIS},
+	{"..=", token.DOTDOT_EQ},
+	{"..", token.DOTDOT},
+	{".", token.DOT},
+	{"@", token.AT},
+	{"^", token.CARET},
+	{"~", token.TILDE},
+	{",", token.COMMA},
+	{"#", token.HASH},
+	{";", token.SEMICOLON},
+	{"(", token.LPAREN},
+	{")", token.RPAREN},
+	{"{", token.LBRACE},
+	{"}", token.RBRACE},
+	{"[", token.LBRACK},
+	{"]", token.RBRACK},
 }
 
 // operatorsByFirst indexes operators by their first byte.
@@ -293,9 +341,3 @@ func (s *scanner) operator() {
 		}
 	}
 }
-
-func isDigit(c byte) bool { return '0' <= c && c <= '9' }
-
-func isLetter(c byte) bool { return 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' }
-
-func isAlnum(c byte) bool { return isDigit(c) || isLetter(c) }
