@@ -120,3 +120,51 @@ impl Diagnostic {
         self
     }
 }
+
+/// Writes `bytes` between double quotes the way messages show source text: `"`
+/// and `\` escaped, common control characters as `\n`, `\t` and the like, other
+/// control characters and bytes that are not UTF-8 as `\xHH`, and everything
+/// else as written.
+pub fn quote(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut out = String::with_capacity(bytes.len() + 2);
+    out.push('"');
+    for chunk in bytes.utf8_chunks() {
+        for c in chunk.valid().chars() {
+            match c {
+                '"' => out.push_str("\\\""),
+                '\\' => out.push_str("\\\\"),
+                '\x07' => out.push_str("\\a"),
+                '\x08' => out.push_str("\\b"),
+                '\x0c' => out.push_str("\\f"),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                '\x0b' => out.push_str("\\v"),
+                c if (c as u32) < 0x80 && c.is_control() => _ = write!(out, "\\x{:02x}", c as u32),
+                c if c.is_control() => _ = write!(out, "\\u{:04x}", c as u32),
+                c => out.push(c),
+            }
+        }
+        for b in chunk.invalid() {
+            _ = write!(out, "\\x{b:02x}");
+        }
+    }
+    out.push('"');
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quote_like_the_messages() {
+        assert_eq!(quote(b"$"), r#""$""#);
+        assert_eq!(quote(b"\x0b"), r#""\v""#);
+        assert_eq!(quote(b"\\q"), r#""\\q""#);
+        assert_eq!(quote("é".as_bytes()), r#""é""#);
+        assert_eq!(quote(b"\\x\xc3"), r#""\\x\xc3""#);
+        assert_eq!(quote(b"\x01"), r#""\x01""#);
+    }
+}
