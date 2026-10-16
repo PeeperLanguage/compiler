@@ -28,19 +28,19 @@ impl Span {
 /// One source file. It records where each line starts, so a byte offset becomes
 /// a line and column only when a message needs them.
 #[derive(Debug)]
-pub struct File {
+pub struct SourceFile {
     pub name: String,
     pub text: String,
     lines: Vec<u32>, // byte offset where each line starts
 }
 
-impl File {
-    pub fn new(name: impl Into<String>, text: impl Into<String>) -> File {
+impl SourceFile {
+    pub fn new(name: impl Into<String>, text: impl Into<String>) -> SourceFile {
         let text = text.into();
         let mut lines = Vec::with_capacity(text.bytes().filter(|&b| b == b'\n').count() + 1);
         lines.push(0);
         lines.extend(text.match_indices('\n').map(|(i, _)| i as u32 + 1));
-        File {
+        SourceFile {
             name: name.into(),
             text,
             lines,
@@ -89,7 +89,7 @@ mod tests {
 
     #[test]
     fn position() {
-        let f = File::new("t.peep", "a\tb\nçd\r\nlast");
+        let f = SourceFile::new("t.peep", "a\tb\nçd\r\nlast");
         for (offset, want) in [
             (0, (1, 1)),
             (2, (1, 3)),
@@ -107,7 +107,7 @@ mod tests {
 
     #[test]
     fn empty_file() {
-        let f = File::new("t.peep", "");
+        let f = SourceFile::new("t.peep", "");
         assert_eq!(f.position(0), (1, 1));
         assert_eq!(f.line_span(1), Span::at(0));
     }

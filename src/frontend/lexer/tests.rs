@@ -3,7 +3,7 @@ use super::*;
 /// The tokens of `text` as "kind:text" (end of file left out) and the error
 /// messages.
 fn scan_text(text: &str) -> (String, Vec<String>) {
-    let file = Arc::new(File::new("test.peep", text));
+    let file = Arc::new(SourceFile::new("test.peep", text));
     let (tokens, errors) = scan(&file);
     let parts: Vec<String> = tokens[..tokens.len() - 1]
         .iter()
@@ -128,7 +128,7 @@ fn tokens_and_errors() {
 #[test]
 fn escape_errors_point_at_the_escape() {
     let text = r#""a\q b\xZZ c" 'é' '\xC3\xA9' 'ab' b'\x41'"#;
-    let file = Arc::new(File::new("t.peep", text));
+    let file = Arc::new(SourceFile::new("t.peep", text));
     let (tokens, errors) = scan(&file);
     let got: Vec<String> = errors
         .iter()
@@ -158,7 +158,7 @@ fn number_digits() {
         ("1i", ""),
         ("007", ""),
     ] {
-        let file = Arc::new(File::new("t.peep", text));
+        let file = Arc::new(SourceFile::new("t.peep", text));
         let (tokens, errors) = scan(&file);
         assert_eq!(tokens.len(), 2, "{text}: one number token");
         assert_eq!(

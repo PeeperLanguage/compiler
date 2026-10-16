@@ -6,14 +6,14 @@ use crate::diagnostic::{self, Code, Diagnostic, quote};
 use crate::frontend::literal::{escape, next_char_width};
 use crate::frontend::token::{self, OPERATORS, Token, TokenKind};
 use crate::numeric;
-use crate::source::{File, Span};
+use crate::source::{SourceFile, Span};
 use unicode_general_category::{GeneralCategory, get_general_category};
 
 /// Returns the tokens of `file`, ending with an end-of-file token, and the
 /// lexical errors in it. An illegal character is reported and produces no
 /// token. A malformed or unclosed literal is reported and still produces its
 /// token, so parsing goes on without a second error.
-pub fn scan(file: &Arc<File>) -> (Vec<Token>, Vec<Diagnostic>) {
+pub fn scan(file: &Arc<SourceFile>) -> (Vec<Token>, Vec<Diagnostic>) {
     let mut s = Scanner {
         file,
         text: file.text.as_bytes(),
@@ -29,7 +29,7 @@ pub fn scan(file: &Arc<File>) -> (Vec<Token>, Vec<Diagnostic>) {
 }
 
 struct Scanner<'a> {
-    file: &'a Arc<File>,
+    file: &'a Arc<SourceFile>,
     text: &'a [u8],
     pos: usize,
     tokens: Vec<Token>,

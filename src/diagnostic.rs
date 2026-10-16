@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use crate::source::{File, Span};
+use crate::source::{SourceFile, Span};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Severity {
@@ -59,7 +59,7 @@ pub struct Diagnostic {
 /// A span of a file marked with a short message.
 #[derive(Clone, Debug)]
 pub struct Label {
-    pub file: Arc<File>,
+    pub file: Arc<SourceFile>,
     pub span: Span,
     pub message: String,
 }
@@ -77,7 +77,7 @@ pub struct Note {
 /// removes.
 #[derive(Clone, Debug)]
 pub struct Fix {
-    pub file: Arc<File>,
+    pub file: Arc<SourceFile>,
     pub span: Span,
     pub new_text: String,
 }
@@ -93,7 +93,12 @@ impl Diagnostic {
     }
 
     /// Adds a place; the first place added is the primary one.
-    pub fn label(mut self, file: &Arc<File>, span: Span, message: impl Into<String>) -> Diagnostic {
+    pub fn label(
+        mut self,
+        file: &Arc<SourceFile>,
+        span: Span,
+        message: impl Into<String>,
+    ) -> Diagnostic {
         self.labels.push(Label {
             file: file.clone(),
             span,
