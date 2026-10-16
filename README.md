@@ -54,7 +54,8 @@ security, and maintainer setup.
 
 ## Source build requirements
 
-- Go version declared in [`go.mod`](go.mod).
+- A Rust toolchain (`cargo`, with `rustfmt` and `clippy`) for the edition in
+  [`Cargo.toml`](Cargo.toml).
 - LLVM Clang available as `clang` for native `build` and `run` commands.
 - Git for cloning the compiler and fetching packages.
 
@@ -67,8 +68,7 @@ bash scripts/build.sh
 build/bin/peeper -help
 ```
 
-`scripts/build.sh` first writes the generated code again (`go generate ./...`),
-then builds:
+`scripts/build.sh` builds:
 
 - compiler binary: `build/bin/peeper`
 - bundled libraries: `build/libs`
@@ -114,31 +114,11 @@ Run `peeper -help` for the complete command list and current aliases.
 ## Development
 
 ```bash
-go generate ./...
-go vet ./...
-go test ./...
-go test -race ./...
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
 bash scripts/build.sh
-PEEPER_BIN="$PWD/build/bin/peeper" go test -count=1 ./x_test
 ```
-
-### Generated code
-
-Some Go files are written by generators, not by hand. They are committed, and
-`go build` does not run the generators, so after changing a generator's input:
-
-1. run `go generate ./...` (or `bash scripts/build.sh`, which runs it first);
-2. commit the input and the generated file together.
-
-Never edit a file that starts with `// Code generated ... DO NOT EDIT.`; change
-its input instead. A test fails when a generated file is out of date.
-
-| Input | Generator | Generated file |
-| --- | --- | --- |
-| `internal/frontend/ast/nodes.go` (node structs) | `internal/frontend/ast/gen` | `internal/frontend/ast/nodes_gen.go` (readers, packers, `Children`) |
-
-Agents: after editing any input above, run `go generate ./...` before testing
-or committing.
 
 Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before proposing a change. Mandatory engineering requirements live in [`RULES.md`](RULES.md); Go and compiler design guidance live in [`go-style.md`](go-style.md) and [`COMPILER_GUIDELINES.md`](COMPILER_GUIDELINES.md).
 

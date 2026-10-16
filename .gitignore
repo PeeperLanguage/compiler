@@ -41,3 +41,4 @@ clean.md
 !.github/workflows/
 !.github/workflows/*.yml
 x_test/owned_pointer_carrier/main
+/target

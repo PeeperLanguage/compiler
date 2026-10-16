@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Builds the compiler from source into build/: first writes the generated code
-# again (go generate), so a build never uses stale generated files, then builds
-# build/bin/peeper and copies the bundled libraries to build/libs, where the
-# compiler looks for them (next to its bin folder).
+# Builds the compiler from source into build/: build/bin/peeper, with the
+# bundled libraries copied to build/libs, where the compiler looks for them
+# (next to its bin folder).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-go generate ./...
-go build -o build/bin/peeper ./cmd
+cargo build --release
+mkdir -p build/bin
+cp target/release/peeper build/bin/peeper
 rm -rf build/libs
 mkdir -p build/libs
 cp -R _builtin_library/. build/libs/
