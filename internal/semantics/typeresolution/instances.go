@@ -141,7 +141,11 @@ func (r *Resolver) typeInstanceUnderlying(diag *diagnostics.DiagnosticBag, decla
 	if _, ok := declaration.(*ast.InterfaceDecl); ok {
 		context.NamedInterfaceRoot = syntax
 	}
-	return r.resolve(diag, declarationModule, syntax, context, chain)
+	// An instance is not the declaring module's own source: it gets no index, so
+	// names resolve through that module's scope and nothing is read from or
+	// recorded in its index. That module recorded this declaration when it bound it.
+	underlying, _ := r.resolve(diag, declarationModule, nil, syntax, context, chain)
+	return underlying
 }
 
 // CompleteTypeInstances rebuilds cached instances in place after binder fills

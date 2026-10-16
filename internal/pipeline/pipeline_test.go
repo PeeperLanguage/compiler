@@ -2359,6 +2359,59 @@ fn main() {}`)
 	}
 }
 
+// `outer` imports `inner`, so main binds one round later, while `result` is
+// already resolving and writing its own symbol index. Building result::Alias<T>
+// from main must not touch that index; under -race this catches it (#165).
+func TestPipelineInstantiatesImportedGenericWhileItsModuleResolves(t *testing.T) {
+	ctx, entry := importedPipelineContext(t, "", map[string]string{
+		peeper.MainFileName: `import "app/result";
+import "app/outer";
+
+type LocalResult<T> = result::Alias<T>;
+
+fn Read(value: outer::Outer) -> i32 {
+    return value.inner.value;
+}
+
+fn main() -> i32 {
+    let value = LocalResult<i32>::Ok with .{ value = 42 };
+    if value is LocalResult<i32>::Ok {
+        return Read(.{ inner = .{ value = value.value } });
+    }
+    return 0;
+}`,
+		"result" + peeper.SourceExt: `enum Result<T> {
+    Ok: struct {
+        value: T
+    },
+    Pending
+}
+
+type Alias<T> = Result<T>;
+
+fn Accept(value: Result<i32>) -> i32 {
+    if value is Result<i32>::Ok {
+        return value.value;
+    }
+    return 0;
+}`,
+		"outer" + peeper.SourceExt: `import "app/inner";
+
+struct Outer {
+    inner: inner::Inner
+}`,
+		"inner" + peeper.SourceExt: `struct Inner {
+    value: i32
+}`,
+	})
+	if err := Run(ctx, entry); err != nil {
+		t.Fatalf("pipeline.Run returned error: %v", err)
+	}
+	if ctx.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics:\n%s", ctx.Diagnostics.EmitAllToString())
+	}
+}
+
 func TestPipelineResolvesImportedGenericApplication(t *testing.T) {
 	diag := runImportedRuntimeSymbolPipeline(t, `import "app/runtime";
 

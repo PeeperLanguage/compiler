@@ -43,10 +43,54 @@ type syntaxResolver struct {
 	query    *QueryResult
 	diag     *diagnostics.DiagnosticBag
 	chain    []typeInstantiationFrame
+	// index is the symbol index this resolver may read: the caller's own module's
+	// index, set only by the package's entry points. It is nil while building an
+	// instance from another module's declaration, whose goroutine may be writing
+	// that index; names then resolve through that module's scope.
+	index *symbols.Index
+	// uses collects the symbols the syntax names; nil collects nothing.
+	uses *[]typeUse
 }
 
+// typeUse is one symbol a type's syntax names. An import alias is set when the
+// name went through one.
+type typeUse struct {
+	node   ast.Node
+	symbol *symbols.Symbol
+	alias  string
+}
+
+// Resolve resolves mod's own type syntax and records what it names in mod's
+// index.
 func (r *Resolver) Resolve(diag *diagnostics.DiagnosticBag, mod *module.Module, node ast.TypeExpr, context Context) types.Type {
-	return r.resolve(diag, mod, node, context, nil)
+	typ, uses := r.resolve(diag, mod, ownIndex(mod), node, context, nil)
+	publishTypeUses(mod, uses)
+	return typ
+}
+
+// ownIndex is the index of the module whose source an entry point resolves.
+func ownIndex(mod *module.Module) *symbols.Index {
+	if mod == nil {
+		return nil
+	}
+	return mod.SymbolIndex
+}
+
+// publishTypeUses records in mod's own index the symbols its source names. Only
+// an entry point that compiles mod's source calls it: a module writes only its
+// own index, and it may be running its phases on another goroutine.
+func publishTypeUses(mod *module.Module, uses []typeUse) {
+	if mod == nil || mod.SymbolIndex == nil {
+		return
+	}
+	for _, use := range uses {
+		if use.alias != "" {
+			mod.RecordImportedUse(use.alias, use.symbol)
+		} else {
+			mod.SymbolIndex.MarkUsed(use.symbol)
+		}
+		mod.SymbolIndex.Bind(use.node, use.symbol)
+	}
 }
 
 // Query resolves syntax without publishing source evidence or creating generic
@@ -54,7 +98,7 @@ func (r *Resolver) Resolve(diag *diagnostics.DiagnosticBag, mod *module.Module, 
 // resolved to an invalid semantic type.
 func (r *Resolver) Query(mod *module.Module, node ast.TypeExpr, context Context) QueryResult {
 	result := QueryResult{Status: QueryAvailable}
-	syntax := syntaxResolver{resolver: r, module: mod, query: &result}
+	syntax := syntaxResolver{resolver: r, module: mod, index: ownIndex(mod), query: &result}
 	result.Type = types.TypeFromSyntax(node, syntax.context(context, r.compilerTarget(), nil))
 	if types.ContainsMalformed(result.Type) {
 		result.Status = QueryInvalid
@@ -70,7 +114,8 @@ func (r *Resolver) ResolveFunction(diag *diagnostics.DiagnosticBag, mod *module.
 		return nil
 	}
 	issues := make([]types.SyntaxIssue, 0, 1)
-	syntax := syntaxResolver{resolver: r, module: mod, diag: diag}
+	var uses []typeUse
+	syntax := syntaxResolver{resolver: r, module: mod, index: ownIndex(mod), diag: diag, uses: &uses}
 	compilerTarget := r.compilerTarget()
 	fnType := types.FuncTypeFromDecl(fn, syntax.context(context, compilerTarget, &issues))
 	// A function's own type parameters are not bound to types yet. Their
@@ -81,16 +126,20 @@ func (r *Resolver) ResolveFunction(diag *diagnostics.DiagnosticBag, mod *module.
 		})
 	})
 	reportSyntaxIssues(diag, mod, compilerTarget.IndexBits, issues)
+	publishTypeUses(mod, uses)
 	return fnType
 }
 
-func (r *Resolver) resolve(diag *diagnostics.DiagnosticBag, mod *module.Module, node ast.TypeExpr, context Context, chain []typeInstantiationFrame) types.Type {
-	syntax := syntaxResolver{resolver: r, module: mod, diag: diag, chain: chain}
+// resolve builds the type mod's syntax describes and returns the symbols it
+// names. It reads index when given one and writes no module state.
+func (r *Resolver) resolve(diag *diagnostics.DiagnosticBag, mod *module.Module, index *symbols.Index, node ast.TypeExpr, context Context, chain []typeInstantiationFrame) (types.Type, []typeUse) {
+	var uses []typeUse
+	syntax := syntaxResolver{resolver: r, module: mod, index: index, diag: diag, chain: chain, uses: &uses}
 	issues := make([]types.SyntaxIssue, 0, 1)
 	compilerTarget := r.compilerTarget()
 	typ := types.TypeFromSyntax(node, syntax.context(context, compilerTarget, &issues))
 	reportSyntaxIssues(diag, mod, compilerTarget.IndexBits, issues)
-	return typ
+	return typ, uses
 }
 
 func (r *Resolver) compilerTarget() target.Info {
@@ -165,9 +214,11 @@ func (r syntaxResolver) ResolveNamed(node ast.TypeExpr) (types.Type, bool) {
 	if r.module == nil || r.module.ModuleScope == nil || node == nil {
 		return nil, false
 	}
-	if r.module.SymbolIndex != nil {
-		if sym := r.module.SymbolIndex.Symbol(node); sym != nil && sym.Kind == symbols.SymbolType {
-			r.record(sym)
+	// A name a binding phase already resolved is bound in the index; default
+	// arguments cloned from another module rely on it.
+	if r.index != nil {
+		if sym := r.index.Symbol(node); sym != nil && sym.Kind == symbols.SymbolType {
+			r.record(node, sym, "")
 			return symbols.GetSymbolType(sym)
 		}
 	}
@@ -179,10 +230,7 @@ func (r syntaxResolver) ResolveNamed(node ast.TypeExpr) (types.Type, bool) {
 	if !found || sym == nil || sym.Kind != symbols.SymbolType {
 		return nil, false
 	}
-	r.record(sym)
-	if r.query == nil && r.module.SymbolIndex != nil {
-		r.module.SymbolIndex.Bind(node, sym)
-	}
+	r.record(node, sym, "")
 	return symbols.GetSymbolType(sym)
 }
 
@@ -194,11 +242,9 @@ func (r syntaxResolver) ResolveQualified(node *ast.ScopeResolution) (types.Type,
 	if !imported {
 		return nil, false
 	}
-	if r.module.SymbolIndex != nil {
-		if sym := r.module.SymbolIndex.Symbol(node); sym != nil && sym.Kind == symbols.SymbolType && sym.IsPub {
-			if r.query == nil {
-				r.module.RecordImportedUse(qualifier.Name, sym)
-			}
+	if r.index != nil {
+		if sym := r.index.Symbol(node); sym != nil && sym.Kind == symbols.SymbolType && sym.IsPub {
+			r.record(node, sym, qualifier.Name)
 			return symbols.GetSymbolType(sym)
 		}
 	}
@@ -206,12 +252,7 @@ func (r syntaxResolver) ResolveQualified(node *ast.ScopeResolution) (types.Type,
 	if !ok || resolved.Symbol == nil || resolved.Symbol.Kind != symbols.SymbolType || !resolved.Symbol.IsPub {
 		return nil, false
 	}
-	if r.query == nil {
-		r.module.RecordImportedUse(qualifier.Name, resolved.Symbol)
-		if r.module.SymbolIndex != nil {
-			r.module.SymbolIndex.Bind(node, resolved.Symbol)
-		}
-	}
+	r.record(node, resolved.Symbol, qualifier.Name)
 	return symbols.GetSymbolType(resolved.Symbol)
 }
 
@@ -240,8 +281,8 @@ func (r syntaxResolver) Instantiate(base *types.DefinedType, arguments []types.T
 	return r.resolver.instantiateType(r.diag, base, arguments, node, r.chain)
 }
 
-func (r syntaxResolver) record(sym *symbols.Symbol) {
-	if r.query == nil && r.module != nil && r.module.SymbolIndex != nil && sym != nil {
-		r.module.SymbolIndex.MarkUsed(sym)
+func (r syntaxResolver) record(node ast.Node, sym *symbols.Symbol, alias string) {
+	if r.uses != nil && sym != nil {
+		*r.uses = append(*r.uses, typeUse{node: node, symbol: sym, alias: alias})
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"compiler/internal/moduleid"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/types"
+	"compiler/internal/source"
 	"compiler/internal/target"
 )
 
@@ -245,5 +246,40 @@ func TestTypeOwnerReadsTheDeclaringModuleFromTheIdentity(t *testing.T) {
 		if got := resolver.typeOwner(test.identity); got != test.want {
 			t.Errorf("%s: owner = %p, want %p", test.name, got, test.want)
 		}
+	}
+}
+
+// Instantiating a generic resolves the declaring module's syntax, and that
+// module may be running its own phases on another goroutine. The instance must
+// be built without reading or writing the declaring module's symbol index.
+func TestInstantiationLeavesDeclaringModuleSymbolIndexAlone(t *testing.T) {
+	resolver, diag, mod, _ := genericQueryContext(t)
+	boxSymbol, _ := mod.ModuleScope.LookupLocal("Box")
+	field := &ast.NamedType{Name: "Inner"}
+	field.SetID(source.ParsedNodeID(2)) // hand-built nodes share ID 0, which the symbol index treats as one node
+	boxSymbol.ASTNode = &ast.StructDecl{Name: &ast.Ident{Name: "Box"}, Type: &ast.StructType{
+		Fields: []ast.TypeField{{Name: &ast.Ident{Name: "inner"}, Type: field}},
+	}}
+	inner := symbols.New(symbols.ProjectedSymbolID(symbols.SymbolType, "Inner"), "Inner", symbols.SymbolType, &ast.StructDecl{Name: &ast.Ident{Name: "Inner"}}, nil)
+	inner.BindType(&types.DefinedType{Name: "Inner", Identity: mod.TypeDeclarationIdentity("Inner"), Kind: types.DefinedKindStruct})
+	if err := mod.ModuleScope.Declare(inner); err != nil {
+		t.Fatalf("declare inner type: %v", err)
+	}
+
+	application := &ast.AppliedType{
+		Name:     &ast.Ident{Name: "Box"},
+		TypeArgs: []ast.TypeExpr{&ast.NamedType{Name: "i32"}},
+	}
+	application.SetID(source.ParsedNodeID(1))
+	got := resolver.Resolve(diag, mod, application, Context{})
+
+	if types.ContainsInvalid(got) || diag.HasErrors() {
+		t.Fatalf("instance is invalid (%#v): %s", got, diag.EmitAllToString())
+	}
+	if mod.SymbolIndex.IsUsed(inner) {
+		t.Error("instantiation marked a symbol of the declaring module used")
+	}
+	if mod.SymbolIndex.Symbol(field) != nil {
+		t.Error("instantiation bound declaration syntax in the declaring module's symbol index")
 	}
 }
