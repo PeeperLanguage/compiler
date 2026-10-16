@@ -127,12 +127,11 @@ func (b *binder) bindTypeDecl(decl ast.TypeDecl) *types.DefinedType {
 	if sym == nil {
 		return nil
 	}
+	// Reuse the collector's shell so self-references keep the same type identity.
+	// Its name and identity are already set; other modules may read them while
+	// this module binds, so binding only fills Underlying.
 	defined, ok := sym.Type.(*types.DefinedType)
-	if ok && defined != nil {
-		// Reuse same shell so self-references keep same type identity.
-		defined.Name = name.Name
-		defined.Identity = b.module.TypeDeclarationIdentity(name.Name)
-	} else {
+	if !ok || defined == nil {
 		defined = &types.DefinedType{
 			Name:     name.Name,
 			Identity: b.module.TypeDeclarationIdentity(name.Name),

@@ -2347,6 +2347,18 @@ fn main() -> i32 {
 	}
 }
 
+// A module may bind while the prelude is still binding. Under -race this
+// catches the prelude's binder writing a type shell the module instantiates.
+func TestPipelineResolvesPreludeGenericApplication(t *testing.T) {
+	diag := buildPipelineTestWithConfig(t, project.Config{RootDir: ".", Extension: peeper.SourceExt},
+		`struct Box<T> { value: T }`,
+		`fn Take(value: Box<i32>) {}
+fn main() {}`)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected prelude generic diagnostics:\n%s", diag.EmitAllToString())
+	}
+}
+
 func TestPipelineResolvesImportedGenericApplication(t *testing.T) {
 	diag := runImportedRuntimeSymbolPipeline(t, `import "app/runtime";
 
