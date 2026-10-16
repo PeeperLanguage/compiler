@@ -78,9 +78,11 @@ var (
 	UnterminatedString  = Code{"L0002", Error}
 	InvalidNumber       = Code{"L0003", Error}
 	UnterminatedComment = Code{"L0005", Error}
-	LeadingZero         = Code{"W0017", Warning}
 	ExpectedToken       = Code{"P0002", Error}
 	InvalidDeclaration  = Code{"P0005", Error}
+	InvalidType         = Code{"P0011", Error}
+	RedundantOptional   = Code{"S0006", Info}
+	InvalidNumberSuffix = Code{"S0007", Error}
 
 	ModuleNotFound         = Code{"M0001", Error}
 	CyclicImport           = Code{"M0002", Error}

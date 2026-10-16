@@ -13,6 +13,7 @@
 package ast
 
 import (
+	"iter"
 	"sort"
 
 	"compiler/internal/frontend/token"
@@ -25,16 +26,31 @@ type Index int32
 // None is an absent child. Nodes[0] is a placeholder, so no real node has index 0.
 const None Index = 0
 
+// EmptyList is the Extra offset every empty list shares: Extra[0] is 0, a
+// list of no items.
+const EmptyList Index = 0
+
 type Kind uint8
 
 const (
 	KindNone                Kind = iota // the placeholder at index 0
 	KindModule                          // A: list of imports, B: list of functions
 	KindImportDecl                      // A: path (StringLiteral), B: alias (DeclaredName) or None
-	KindFunctionDecl                    // A: name (DeclaredName), B: Extra offset of [list of parameters, result type or None, body (Block)]
-	KindParameter                       // A: name (DeclaredName), B: type
+	KindFunctionDecl                    // A: name (DeclaredName), B: Extra offset of [receiver (Parameter) or None, list of type parameters (DeclaredName), list of parameters, result type or None, list of return origins (NameReference), body (Block) or None]
+	KindParameter                       // Op: MUT or 0, A: name (DeclaredName) or None, B: Extra offset of [type, default value or None]
 	KindDeclaredName                    // the name a declaration introduces; its text is the node's source text
 	KindTypeName                        // a type written as a name; its text is the node's source text
+	KindPath                            // A: list of segments (TypeName or GenericType), as in `a::B<T>`
+	KindGenericType                     // A: name (TypeName), B: list of type arguments, as in `Box<T>`
+	KindReferenceType                   // Op: MUT or 0, A: target type, as in `&T` or `&mut T`
+	KindOptionalType                    // A: inner type, as in `?T`
+	KindOwnedPointerType                // A: target type, as in `*T`
+	KindRawPointerType                  // the type `rawptr`
+	KindFixedArrayType                  // A: length (NumberLiteral), B: element type, as in `[4]T`
+	KindDynamicArrayType                // A: element type, as in `[]T`
+	KindSliceType                       // A: element type, as in `[..]T`
+	KindFunctionType                    // A: list of parameters, B: Extra offset of [result type or None, list of return origins (NameReference)]
+	KindInvalidType                     // a type that could not be parsed
 	KindBlock                           // A: list of statements
 	KindLetStatement                    // A: name (DeclaredName), B: Extra offset of [type or None, value]
 	KindReturnStatement                 // A: value or None
@@ -44,6 +60,7 @@ const (
 	KindStringLiteral                   // the literal is the node's source text; literal.Value decodes it
 	KindBinaryExpression                // Op: operator, A: left, B: right
 	KindCallExpression                  // A: callee, B: list of arguments
+	KindParentheses                     // A: the expression inside `( )`
 	KindInvalidExpression               // an expression that could not be parsed
 )
 
@@ -55,6 +72,17 @@ var kindNames = [...]string{
 	KindParameter:           "parameter",
 	KindDeclaredName:        "declared name",
 	KindTypeName:            "type name",
+	KindPath:                "path",
+	KindGenericType:         "generic type",
+	KindReferenceType:       "reference type",
+	KindOptionalType:        "optional type",
+	KindOwnedPointerType:    "owned pointer type",
+	KindRawPointerType:      "raw pointer type",
+	KindFixedArrayType:      "fixed array type",
+	KindDynamicArrayType:    "dynamic array type",
+	KindSliceType:           "slice type",
+	KindFunctionType:        "function type",
+	KindInvalidType:         "invalid type",
 	KindBlock:               "block",
 	KindLetStatement:        "let statement",
 	KindReturnStatement:     "return statement",
@@ -64,6 +92,7 @@ var kindNames = [...]string{
 	KindStringLiteral:       "string literal",
 	KindBinaryExpression:    "binary expression",
 	KindCallExpression:      "call expression",
+	KindParentheses:         "parentheses",
 	KindInvalidExpression:   "invalid expression",
 }
 
@@ -86,7 +115,7 @@ type Node struct {
 type Tree struct {
 	File  *source.File
 	Nodes []Node
-	Extra []Index // lists, each its length followed by its items, and extra children
+	Extra []Index // lists, each its length followed by its items, and extra children; Extra[0] is the empty list
 	Root  Index   // the module
 }
 
@@ -99,14 +128,33 @@ func (t *Tree) Text(i Index) string {
 	return t.File.Text[s.Start:s.End]
 }
 
-// FunctionDecl is a function declaration's children; Parameters is a list's
-// Extra offset.
-type FunctionDecl struct{ Name, Parameters, Result, Body Index }
+// FunctionDecl is a function declaration's children; TypeParameters,
+// Parameters and Origins are lists' Extra offsets.
+type FunctionDecl struct {
+	Name, Receiver, TypeParameters, Parameters, Result, Origins, Body Index
+}
 
 func (t *Tree) FunctionDecl(i Index) FunctionDecl {
 	n := t.Nodes[i]
-	x := t.Extra[n.B : n.B+3]
-	return FunctionDecl{Name: n.A, Parameters: x[0], Result: x[1], Body: x[2]}
+	x := t.Extra[n.B : n.B+6]
+	return FunctionDecl{Name: n.A, Receiver: x[0], TypeParameters: x[1], Parameters: x[2], Result: x[3], Origins: x[4], Body: x[5]}
+}
+
+// Parameter is a parameter's children.
+type Parameter struct{ Name, Type, Default Index }
+
+func (t *Tree) Parameter(i Index) Parameter {
+	n := t.Nodes[i]
+	return Parameter{Name: n.A, Type: t.Extra[n.B], Default: t.Extra[n.B+1]}
+}
+
+// FunctionType is a function type's children; Parameters and Origins are
+// lists' Extra offsets.
+type FunctionType struct{ Parameters, Result, Origins Index }
+
+func (t *Tree) FunctionType(i Index) FunctionType {
+	n := t.Nodes[i]
+	return FunctionType{Parameters: n.A, Result: t.Extra[n.B], Origins: t.Extra[n.B+1]}
 }
 
 // LetStatement is a let statement's children.
@@ -115,6 +163,66 @@ type LetStatement struct{ Name, Type, Value Index }
 func (t *Tree) LetStatement(i Index) LetStatement {
 	n := t.Nodes[i]
 	return LetStatement{Name: n.A, Type: t.Extra[n.B], Value: t.Extra[n.B+1]}
+}
+
+// Children returns the children of node i in source order, the items of its
+// lists in place. It is the one place that walks every kind's slots, so a walk
+// over the tree needs no copy of the slot layout.
+func (t *Tree) Children(i Index) iter.Seq[Index] {
+	return func(yield func(Index) bool) {
+		stopped := false
+		node := func(child Index) {
+			if !stopped && child != None {
+				stopped = !yield(child)
+			}
+		}
+		list := func(at Index) {
+			for _, child := range t.List(at) {
+				node(child)
+			}
+		}
+		n := t.Nodes[i]
+		switch n.Kind {
+		case KindModule:
+			list(n.A)
+			list(n.B)
+		case KindImportDecl, KindBinaryExpression, KindFixedArrayType:
+			node(n.A)
+			node(n.B)
+		case KindFunctionDecl:
+			f := t.FunctionDecl(i)
+			node(f.Receiver)
+			node(f.Name)
+			list(f.TypeParameters)
+			list(f.Parameters)
+			node(f.Result)
+			list(f.Origins)
+			node(f.Body)
+		case KindParameter:
+			p := t.Parameter(i)
+			node(p.Name)
+			node(p.Type)
+			node(p.Default)
+		case KindLetStatement:
+			l := t.LetStatement(i)
+			node(l.Name)
+			node(l.Type)
+			node(l.Value)
+		case KindPath, KindBlock:
+			list(n.A)
+		case KindGenericType, KindCallExpression:
+			node(n.A)
+			list(n.B)
+		case KindReferenceType, KindOptionalType, KindOwnedPointerType, KindDynamicArrayType, KindSliceType,
+			KindReturnStatement, KindExpressionStatement, KindParentheses:
+			node(n.A)
+		case KindFunctionType:
+			f := t.FunctionType(i)
+			list(f.Parameters)
+			node(f.Result)
+			list(f.Origins)
+		}
+	}
 }
 
 // NodeAt returns the smallest node whose span holds offset, or None. Node ends

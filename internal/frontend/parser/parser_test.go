@@ -30,36 +30,50 @@ func TestParse(t *testing.T) {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
 	want := `module
-  import "app/util" as u
-  import "core:io"
-  function add
-    parameter a: i32
-    parameter b: i32
-    result i32
+  import declaration
+    string literal "app/util"
+    declared name u
+  import declaration
+    string literal "core:io"
+  function declaration
+    declared name add
+    parameter
+      declared name a
+      type name i32
+    parameter
+      declared name b
+      type name i32
+    type name i32
     block
-      let sum: i32
-        binary +
-          a
-          binary *
-            b
-            2
-      return
-        sum
-  function main
+      let statement
+        declared name sum
+        type name i32
+        binary expression +
+          name reference a
+          binary expression *
+            name reference b
+            number literal 2
+      return statement
+        name reference sum
+  function declaration
+    declared name main
     block
-      let x
-        binary ==
-          call
-            add
-            1
-            binary +
-              2
-              3
-          7
-      call
-        log
-        "hi"
-      return
+      let statement
+        declared name x
+        binary expression ==
+          call expression
+            name reference add
+            number literal 1
+            parentheses
+              binary expression +
+                number literal 2
+                number literal 3
+          number literal 7
+      expression statement
+        call expression
+          name reference log
+          string literal "hi"
+      return statement return;
 `
 	if got := dump(m); got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
@@ -71,7 +85,7 @@ func TestParseRecoversAfterMissingSemicolon(t *testing.T) {
 	if len(errs) != 1 || !strings.Contains(errs[0].Message, "expected `;`") {
 		t.Fatalf("errors = %v", errs)
 	}
-	if got := dump(m); !strings.Contains(got, "return\n        b\n") {
+	if got := dump(m); !strings.Contains(got, "return statement\n        name reference b\n") {
 		t.Fatalf("parsing did not continue after the error: %s", got)
 	}
 }
@@ -91,7 +105,7 @@ func TestParseOneErrorForUnexpectedTopLevelText(t *testing.T) {
 	if len(errs) != 1 || errs[0].Message != "module scope expects declaration" {
 		t.Fatalf("errors = %v", errs)
 	}
-	if got := dump(m); got != "module\n  function f\n    block\n" {
+	if got := dump(m); got != "module\n  function declaration\n    declared name f\n    block {}\n" {
 		t.Fatalf("parsing did not go on at the next declaration: %s", got)
 	}
 }
@@ -103,6 +117,8 @@ var brokenInputs = []string{
 	"fn f() { g(1, ; }", "import ;", "import \"x\" as ;", "let x = 1;", "fn f() -> { }", "fn f() { ((1 }",
 	"fn f( {", "fn f() { a$b; }", "fn f() { g(1 2); }", "fn f(a: i32 b: i32) {}", "fn f() { fn }",
 	"fn f() { ) ; let x = ; }", "fn f() { let a = 1\nfn g() {}", "fn f() { g(a b c); h(1 2); }",
+	"fn (", "fn (a: &) f", "fn f<", "fn f<T", "fn f(a: Box<T) {}", "fn f(a: Box<Box<T>) {}", "fn f(a: [", "fn f(a: [4",
+	"fn f(a: fn(", "fn f() -> &mut", "fn f() -> i32 from (a", "fn f(a: ??) {}", "fn f(a: a::) {}", "fn f(mut mut) {}",
 }
 
 // TestOneErrorPerMistake checks that each mistake is reported once, and that
@@ -142,15 +158,21 @@ func TestMissingCommasAreRepaired(t *testing.T) {
 	src := "fn f(a: i32 b: i32) { g(a b c); }"
 	tree, errs := Parse(source.NewFile("t.peep", src))
 	want := `module
-  function f
-    parameter a: i32
-    parameter b: i32
+  function declaration
+    declared name f
+    parameter
+      declared name a
+      type name i32
+    parameter
+      declared name b
+      type name i32
     block
-      call
-        g
-        a
-        b
-        c
+      expression statement
+        call expression
+          name reference g
+          name reference a
+          name reference b
+          name reference c
 `
 	if got := dump(tree); got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
@@ -246,25 +268,21 @@ func BenchmarkParse(b *testing.B) {
 }
 
 // TestNumberChecks holds the old compiler's messages for number literal
-// suffixes and leading zeros. Digits outside the base are the lexer's to report.
+// suffixes. Digits outside the base are the lexer's to report; a leading zero
+// (007) is left to a later lint pass.
 func TestNumberChecks(t *testing.T) {
-	for _, test := range []struct{ literal, message, fixed string }{
-		{"1i", "invalid numeric literal suffix i", ""},
-		{"1i_32", "invalid numeric literal suffix i_32", ""},
-		{"1i8_", "invalid numeric literal suffix i8_", ""},
-		{"1u", "invalid numeric literal suffix u", ""},
-		{"1f", "invalid numeric literal suffix f", ""},
-		{"0b1i", "invalid numeric literal suffix i", ""},
-		{"0o7u", "invalid numeric literal suffix u", ""},
-		{"2.4i32", "integer suffix i32 cannot be used on a float literal", ""},
-		{"1e3u8", "integer suffix u8 cannot be used on a float literal", ""},
-		{"007", "decimal integer literal has a leading zero", "7"},
-		{"0_1", "decimal integer literal has a leading zero", "1"},
-		{"00", "decimal integer literal has a leading zero", "0"},
-		{"0_0_7", "decimal integer literal has a leading zero", "7"},
-		{"01i32", "decimal integer literal has a leading zero", "1i32"},
-		{"0", "", ""}, {"0.5", "", ""}, {"01.5", "", ""}, {"01f32", "", ""},
-		{"1.5f32", "", ""}, {"0x1f_u8", "", ""}, {"0xffu24", "", ""}, {"1_000i64", "", ""}, {"1e3f64", "", ""},
+	for _, test := range []struct{ literal, message string }{
+		{"1i", "invalid numeric literal suffix i"},
+		{"1i_32", "invalid numeric literal suffix i_32"},
+		{"1i8_", "invalid numeric literal suffix i8_"},
+		{"1u", "invalid numeric literal suffix u"},
+		{"1f", "invalid numeric literal suffix f"},
+		{"0b1i", "invalid numeric literal suffix i"},
+		{"0o7u", "invalid numeric literal suffix u"},
+		{"2.4i32", "integer suffix i32 cannot be used on a float literal"},
+		{"1e3u8", "integer suffix u8 cannot be used on a float literal"},
+		{"0", ""}, {"0.5", ""}, {"007", ""}, {"01i32", ""}, {"01f32", ""},
+		{"1.5f32", ""}, {"0x1f_u8", ""}, {"0xffu24", ""}, {"1_000i64", ""}, {"1e3f64", ""},
 	} {
 		src := "fn f() { " + test.literal + "; }"
 		_, errs := Parse(source.NewFile("t.peep", src))
@@ -277,13 +295,157 @@ func TestNumberChecks(t *testing.T) {
 		}
 		if len(errs) != 1 || errs[0].Message != test.message || errs[0].Labels[0].Span != (source.Span{Start: start, End: start + len(test.literal)}) {
 			t.Errorf("%s: got %v, want %q on the whole literal", test.literal, errs, test.message)
+		}
+	}
+}
+
+func TestParseSignatures(t *testing.T) {
+	src := `fn (self: &mut Counter) Add<T, U>(mut delta: i32, scale: f64 = 1, &Self) -> &T from (self, delta) {}
+fn exit(code: i32);
+fn Use(callback: fn(value: &Box, i32) -> &Box from value, items: []?*T, view: [..]u8, grid: [4]rawptr) -> ?a::Box<Box<T>>;
+`
+	tree, errs := Parse(source.NewFile("t.peep", src))
+	if len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	want := `module
+  function declaration
+    parameter
+      declared name self
+      reference type mut
+        type name Counter
+    declared name Add
+    declared name T
+    declared name U
+    parameter mut
+      declared name delta
+      type name i32
+    parameter
+      declared name scale
+      type name f64
+      number literal 1
+    parameter
+      reference type
+        type name Self
+    reference type
+      type name T
+    name reference self
+    name reference delta
+    block {}
+  function declaration
+    declared name exit
+    parameter
+      declared name code
+      type name i32
+  function declaration
+    declared name Use
+    parameter
+      declared name callback
+      function type
+        parameter
+          declared name value
+          reference type
+            type name Box
+        parameter
+          type name i32
+        reference type
+          type name Box
+        name reference value
+    parameter
+      declared name items
+      dynamic array type
+        optional type
+          owned pointer type
+            type name T
+    parameter
+      declared name view
+      slice type
+        type name u8
+    parameter
+      declared name grid
+      fixed array type
+        number literal 4
+        raw pointer type rawptr
+    optional type
+      path
+        type name a
+        generic type
+          type name Box
+          generic type
+            type name Box
+            type name T
+`
+	if got := dump(tree); got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestSignatureErrors(t *testing.T) {
+	for _, test := range []struct{ src, message, fixed string }{
+		{"fn f() i32 {}", "expected `->` before the return type", "fn f() -> i32 {}"},
+		{"fn f(mut mut a: i32) {}", "`mut` is repeated", "fn f(mut a: i32) {}"},
+		{"fn f(a: ??i32) {}", "redundant optional marker", "fn f(a: ?i32) {}"},
+		{"fn f(mut i32) {}", "mutable parameter requires a named binding", ""},
+		{"fn f(a: [n]i32) {}", "expected array length", ""},
+		{"fn f(a: ) {}", "expected type, found `)`", ""},
+		{"fn f() -> i32", "missing function body", ""},
+		{"fn f<T U>() {}", "expected `>`, found `identifier`", ""},
+	} {
+		_, errs := Parse(source.NewFile("t.peep", test.src))
+		if len(errs) != 1 || errs[0].Message != test.message {
+			t.Errorf("%q: errors %v, want %q", test.src, errs, test.message)
 			continue
 		}
 		if test.fixed != "" {
 			fix := errs[0].Notes[0].Fixes[0]
-			if got := src[:fix.Span.Start] + fix.NewText + src[fix.Span.End:]; got != "fn f() { "+test.fixed+"; }" {
-				t.Errorf("%s: fix gives %q, want %q", test.literal, got, test.fixed)
+			if got := test.src[:fix.Span.Start] + fix.NewText + test.src[fix.Span.End:]; got != test.fixed {
+				t.Errorf("%q: fix gives %q, want %q", test.src, got, test.fixed)
 			}
 		}
 	}
+}
+
+// TestPrecedence checks how operators group, from loosest to tightest, and
+// that operators of one precedence group to the left.
+func TestPrecedence(t *testing.T) {
+	for src, want := range map[string]string{
+		"a || b && c":           "(a || (b && c))",
+		"a | b ^ c & d":         "(a | (b ^ (c & d)))",
+		"a & b == c":            "(a & (b == c))",
+		"a == b < c":            "(a == (b < c))",
+		"a < b << c":            "(a < (b << c))",
+		"a << b + c":            "(a << (b + c))",
+		"a + b * c":             "(a + (b * c))",
+		"a - b - c":             "((a - b) - c)",
+		"a * b % c / d":         "(((a * b) % c) / d)",
+		"(a + b) * f(c, d + e)": "((a + b) * f(c, (d + e)))",
+		"a != b >= c > d <= e":  "(a != (((b >= c) > d) <= e))",
+	} {
+		tree, errs := Parse(source.NewFile("t.peep", "fn f() { "+src+"; }"))
+		if len(errs) != 0 {
+			t.Errorf("%s: %v", src, errs)
+			continue
+		}
+		block := tree.FunctionDecl(tree.List(tree.Nodes[tree.Root].B)[0]).Body
+		statement := tree.List(tree.Nodes[block].A)[0]
+		if got := grouped(tree, tree.Nodes[statement].A); got != want {
+			t.Errorf("%s: got %s, want %s", src, got, want)
+		}
+	}
+}
+
+// grouped writes an expression with each binary operation in parentheses.
+func grouped(t *ast.Tree, i ast.Index) string {
+	n := t.Nodes[i]
+	switch n.Kind {
+	case ast.KindBinaryExpression:
+		return "(" + grouped(t, n.A) + " " + n.Op.String() + " " + grouped(t, n.B) + ")"
+	case ast.KindCallExpression:
+		var args []string
+		for _, arg := range t.List(n.B) {
+			args = append(args, grouped(t, arg))
+		}
+		return grouped(t, n.A) + "(" + strings.Join(args, ", ") + ")"
+	}
+	return t.Text(i)
 }

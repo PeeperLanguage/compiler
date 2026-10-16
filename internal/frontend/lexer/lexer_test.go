@@ -83,9 +83,9 @@ func TestEscapeErrorsPointAtTheEscape(t *testing.T) {
 }
 
 // TestNumberDigits holds the old compiler's messages for digits outside a
-// number's base. The suffix and a leading zero are the parser's to check, so
-// those literals give no lexical error. A literal keeps its single token
-// whether or not it is valid.
+// number's base. The suffix is the parser's to check and a leading zero a later
+// lint's, so those literals give no lexical error. A literal keeps its single
+// token whether or not it is valid.
 func TestNumberDigits(t *testing.T) {
 	for _, test := range []struct{ text, message string }{
 		{"0xFG", "invalid hexadecimal literal 0xFG"},

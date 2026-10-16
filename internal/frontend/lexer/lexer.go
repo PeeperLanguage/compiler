@@ -142,9 +142,9 @@ func (s *scanner) number() {
 		s.pos += 2
 		s.digits(ascii.IsAlnum[byte])
 		s.emit(token.NUMBER, start)
-		if base, digits, _ := numeric.Split(s.text[start:s.pos]); !inBase(digits, base) {
-			body := s.text[start : start+2+len(digits)]
-			s.fail(source.Span{Start: start, End: s.pos}, diag.InvalidNumber, fmt.Sprintf("invalid %s literal %s", baseNames[base], body), "")
+		if l := numeric.Split(s.text[start:s.pos]); !l.DigitsInBase() {
+			prefixed := s.text[start : start+2+len(l.Digits)] // without the suffix
+			s.fail(source.Span{Start: start, End: s.pos}, diag.InvalidNumber, fmt.Sprintf("invalid %s literal %s", baseNames[l.Base], prefixed), "")
 		}
 		return
 	}
@@ -173,32 +173,6 @@ func (s *scanner) number() {
 }
 
 var baseNames = map[int]string{16: "hexadecimal", 8: "octal", 2: "binary"}
-
-// inBase reports whether digits, ignoring `_` separators, hold at least one
-// digit and only digits of base.
-func inBase(digits string, base int) bool {
-	count := 0
-	for i := 0; i < len(digits); i++ {
-		c := digits[i]
-		if c == '_' {
-			continue
-		}
-		// A digit's value: 0-9 for '0'-'9', 10-35 for 'a'-'z' in either case
-		// (bit 0x20 makes a letter lower case). 36 is above every base, so any
-		// other byte is rejected.
-		value := 36
-		if ascii.IsDigit(c) {
-			value = int(c - '0')
-		} else if ascii.IsLetter(c) {
-			value = int(c|0x20-'a') + 10
-		}
-		if value >= base {
-			return false
-		}
-		count++
-	}
-	return count > 0
-}
 
 // digits reads one or more digits; `_` is taken only when a digit follows it.
 func (s *scanner) digits(isDigit func(byte) bool) {
