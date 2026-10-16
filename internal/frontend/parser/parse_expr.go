@@ -13,7 +13,6 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/token"
 	"compiler/internal/source"
-	"compiler/pkg/colors"
 	"compiler/pkg/numeric"
 	"fmt"
 )
@@ -726,7 +725,7 @@ func (p *Parser) parseIdent() *ast.Ident {
 			WithCode(diagnostics.ErrMissingIdentifier).
 			WithPrimaryLabel(loc, fmt.Sprintf("found %s", tok.Kind))
 		if token.IsKeyword(tok.Literal) {
-			d.WithText("help", "`"+tok.Literal+"` is a reserved keyword and cannot be used as a name", colors.GREEN)
+			d.Help("`" + tok.Literal + "` is a reserved keyword and cannot be used as a name")
 		}
 		p.diag.Add(d)
 		return nil
