@@ -1,6 +1,6 @@
 //! The tokens the lexer produces.
 
-use crate::source::Span;
+use peeper_source::Span;
 
 /// One token: its kind and where its text is. The text itself is the file's
 /// text at `span`; literal values are decoded later.

@@ -2,12 +2,15 @@
 
 use std::sync::Arc;
 
-use crate::diagnostic::{self, Code, Diagnostic, quote};
-use crate::frontend::literal::{escape, next_char_width};
-use crate::frontend::token::{self, OPERATORS, Token, TokenKind};
-use crate::numeric;
-use crate::source::{SourceFile, Span};
+use crate::literal::{escape, next_char_width};
+use crate::token::{OPERATORS, Token, TokenKind};
+use peeper_diagnostics::{self as diagnostic, Code, Diagnostic, quote};
+use peeper_source::{SourceFile, Span};
 use unicode_general_category::{GeneralCategory, get_general_category};
+
+pub mod literal;
+pub mod numeric;
+pub mod token;
 
 /// Returns the tokens of `file`, ending with an end-of-file token, and the
 /// lexical errors in it. An illegal character is reported and produces no

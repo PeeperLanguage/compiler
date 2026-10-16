@@ -6,8 +6,31 @@ version = 4
 name = "peeper"
 version = "0.1.0"
 dependencies = [
+ "peeper_diagnostics",
+ "peeper_lexer",
+ "peeper_source",
+]
+
+[[package]]
+name = "peeper_diagnostics"
+version = "0.1.0"
+dependencies = [
+ "peeper_source",
  "unicode-general-category",
 ]
+
+[[package]]
+name = "peeper_lexer"
+version = "0.1.0"
+dependencies = [
+ "peeper_diagnostics",
+ "peeper_source",
+ "unicode-general-category",
+]
+
+[[package]]
+name = "peeper_source"
+version = "0.1.0"
 
 [[package]]
 name = "unicode-general-category"

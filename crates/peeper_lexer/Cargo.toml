@@ -1,0 +1,15 @@
+[package]
+name = "peeper_lexer"
+description = "Turns Peeper source text into tokens"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+peeper_source.workspace = true
+peeper_diagnostics.workspace = true
+unicode-general-category.workspace = true
+
+[lints]
+workspace = true

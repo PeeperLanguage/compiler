@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use crate::source::{SourceFile, Span};
+use peeper_source::{SourceFile, Span};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Severity {
