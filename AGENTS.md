@@ -77,6 +77,7 @@ Use `RULES.md` for durable engineering checks. Treat representation, package, an
 - Optimize for readability and maintainability, not only correctness.
 - Keep diffs minimal and task-focused; do not mix unrelated refactors.
 - Do not bypass a verified correctness boundary merely to reduce edits.
+- When a bug comes from a design flaw (a wrong owner, boundary, or data flow, such as one module writing into another's state), say so plainly. Name the flaw, its root cause, and a design-level fix with its cost, then let the user choose. Do not keep the flawed design and hide it behind guards, flags, copies, or special cases. A local workaround is allowed only when labeled as a stopgap and paired with the design fix.
 
 ### Self-review marker
 
