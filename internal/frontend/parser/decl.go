@@ -121,7 +121,7 @@ func (p *parser) attribute() ast.Index {
 	args := buf[:0]
 	if p.at(token.LPAREN) {
 		argsOpen := p.next()
-		args = p.items(args, token.RPAREN, startsExpression, func() ast.Index { return p.expr(precLowest) })
+		args = p.items(args, token.RPAREN, false, startsExpression, func() ast.Index { return p.expr(precLowest) })
 		p.close(token.RPAREN, argsOpen)
 	}
 	if t := p.tok(); t.Kind == token.COMMA {
@@ -192,7 +192,7 @@ func (p *parser) signature() ast.FunctionDecl {
 	var buf [8]ast.Index
 	params := buf[:0]
 	if open, ok := p.expect(token.LPAREN); ok {
-		params = p.items(params, token.RPAREN, startsParameter, p.parameter)
+		params = p.items(params, token.RPAREN, false, startsParameter, p.parameter)
 		p.close(token.RPAREN, open)
 	}
 	f.Parameters = p.list(params)
@@ -212,7 +212,7 @@ func (p *parser) typeParameters() ast.List {
 	}
 	open := p.next()
 	var buf [4]ast.Index
-	names := p.items(buf[:0], token.GT, isName, func() ast.Index { return p.name(ast.KindDeclaredName) })
+	names := p.items(buf[:0], token.GT, false, isName, func() ast.Index { return p.name(ast.KindDeclaredName) })
 	p.closeAngle(open)
 	return p.list(names)
 }
@@ -337,7 +337,7 @@ func (p *parser) result() (result ast.Index, origins ast.List) {
 		reference := func() ast.Index { return p.name(ast.KindNameReference) }
 		if p.at(token.LPAREN) {
 			open := p.next()
-			names = p.items(names, token.RPAREN, isName, reference)
+			names = p.items(names, token.RPAREN, false, isName, reference)
 			p.close(token.RPAREN, open)
 		} else {
 			names = append(names, reference())

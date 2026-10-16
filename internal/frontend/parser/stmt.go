@@ -22,6 +22,10 @@ func (p *parser) block() ast.Index {
 		if kind == token.RBRACE || kind == token.EOF || startsDeclaration(kind) && statements[kind] == nil {
 			break
 		}
+		if kind == token.SEMICOLON { // an empty statement: a matter of style, left to a lint
+			p.next()
+			continue
+		}
 		if startsStatement(kind) {
 			p.recovering = false
 		}
@@ -258,7 +262,7 @@ func (p *parser) structPattern() ast.Index {
 	var buf [8]ast.Index
 	fields := buf[:0]
 	if open, ok := p.expect(token.LBRACE); ok {
-		fields = p.items(fields, token.RBRACE, isName, func() ast.Index {
+		fields = p.items(fields, token.RBRACE, false, isName, func() ast.Index {
 			if t := p.tok(); p.text(t) == "_" {
 				return p.leaf(ast.KindRestPattern, p.next().Start)
 			}

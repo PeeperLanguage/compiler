@@ -83,7 +83,6 @@ var (
 	InvalidStatement    = Code{"P0004", Error}
 	InvalidDeclaration  = Code{"P0005", Error}
 	InvalidType         = Code{"P0011", Error}
-	RedundantOptional   = Code{"S0006", Info}
 	InvalidNumberSuffix = Code{"S0007", Error}
 
 	ModuleNotFound         = Code{"M0001", Error}

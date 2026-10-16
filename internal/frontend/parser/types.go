@@ -81,7 +81,7 @@ func (p *parser) typeSegment() ast.Index {
 	}
 	open := p.next()
 	var buf [4]ast.Index
-	args := p.items(buf[:0], token.GT, startsType, p.typeExpr)
+	args := p.items(buf[:0], token.GT, false, startsType, p.typeExpr)
 	p.closeAngle(open)
 	return p.add(ast.KindGenericType, start, p.t.PackGenericType(ast.GenericType{Name: name, Arguments: p.list(args)}))
 }
@@ -98,8 +98,8 @@ func (p *parser) closeAngle(open token.Token) {
 	p.close(token.GT, open)
 }
 
-// optionalType reads `?T`. A second marker changes nothing (`??T` is `?T`), so
-// each extra one is reported as redundant and still kept in the tree.
+// optionalType reads `?T`. A second marker changes nothing (`??T` is `?T`); it
+// is kept in the tree as written and left to a lint to report.
 func (p *parser) optionalType() ast.Index {
 	var buf [2]int
 	markers := buf[:0] // where each `?` starts; `??` is one token holding two
@@ -109,12 +109,6 @@ func (p *parser) optionalType() ast.Index {
 		if t.Kind == token.QQ {
 			markers = append(markers, t.Start+1)
 		}
-	}
-	for _, at := range markers[1:] {
-		marker := source.Span{Start: at, End: at + 1}
-		p.repair(diag.New(diag.RedundantOptional, "redundant optional marker").Label(p.t.File, marker, "").
-			Help("remove redundant `?`", diag.Fix{File: p.t.File, Span: marker}).
-			Note("nested optional types are the same as a single optional type"))
 	}
 	inner := p.typeExpr()
 	for i := len(markers) - 1; i >= 0; i-- {
@@ -154,7 +148,7 @@ func (p *parser) functionType() ast.Index {
 	var buf [4]ast.Index
 	params := buf[:0]
 	if open, ok := p.expect(token.LPAREN); ok {
-		params = p.items(params, token.RPAREN, startsType, func() ast.Index {
+		params = p.items(params, token.RPAREN, false, startsType, func() ast.Index {
 			paramStart := p.tok().Start
 			name := p.parameterName()
 			return p.add(ast.KindParameter, paramStart, p.t.PackParameter(ast.Parameter{Name: name, Type: p.typeExpr(), Default: ast.None}))
@@ -227,7 +221,7 @@ func (p *parser) members(startsMember func(token.Kind) bool, member func() ast.I
 	var buf [8]ast.Index
 	items := buf[:0]
 	if open, ok := p.expect(token.LBRACE); ok {
-		items = p.items(items, token.RBRACE, startsMember, member)
+		items = p.items(items, token.RBRACE, true, startsMember, member)
 		p.close(token.RBRACE, open)
 	}
 	return p.list(items)

@@ -256,7 +256,7 @@ func binary(p *parser, left ast.Index) ast.Index {
 func call(p *parser, left ast.Index) ast.Index {
 	open := p.next()
 	var buf [8]ast.Index
-	args := p.items(buf[:0], token.RPAREN, startsExpression, func() ast.Index { return p.expr(precLowest) })
+	args := p.items(buf[:0], token.RPAREN, false, startsExpression, func() ast.Index { return p.expr(precLowest) })
 	p.close(token.RPAREN, open)
 	return p.add(ast.KindCallExpression, p.t.Nodes[left].Span.Start, p.t.PackCallExpression(ast.CallExpression{Callee: left, Arguments: p.list(args)}))
 }
@@ -315,7 +315,7 @@ func (p *parser) structLiteral(typ ast.Index, start int) ast.Index {
 	var buf [8]ast.Index
 	fields := buf[:0]
 	if open, ok := p.expect(token.LBRACE); ok {
-		fields = p.items(fields, token.RBRACE, isName, func() ast.Index {
+		fields = p.items(fields, token.RBRACE, false, isName, func() ast.Index {
 			fieldStart := p.tok().Start
 			name := p.name(ast.KindFieldName)
 			if t := p.tok(); t.Kind == token.COLON {
@@ -352,7 +352,7 @@ func arrayLiteral(p *parser) ast.Index {
 	var buf [8]ast.Index
 	values := buf[:0]
 	if open, ok := p.expect(token.LBRACE); ok {
-		values = p.items(values, token.RBRACE, startsExpression, func() ast.Index { return p.expr(precLowest) })
+		values = p.items(values, token.RBRACE, false, startsExpression, func() ast.Index { return p.expr(precLowest) })
 		p.close(token.RBRACE, open)
 	}
 	return p.add(ast.KindArrayLiteral, start, p.t.PackArrayLiteral(ast.ArrayLiteral{Type: typ, Values: p.list(values)}))
@@ -367,7 +367,8 @@ func index(p *parser, left ast.Index) ast.Index {
 }
 
 // indexOperand reads what may stand inside `[ ]` or after `in`: an expression,
-// or a range `a..b`, `a..=b`, `..b` or `a..`. Ranges appear nowhere else.
+// or a range `a..b`, `a..=b`, `..b` or `a..`. Ranges appear nowhere else, and
+// only right before the `]` may a range leave out its end.
 func (p *parser) indexOperand() ast.Index {
 	start := p.tok().Start
 	low := ast.None
@@ -378,7 +379,7 @@ func (p *parser) indexOperand() ast.Index {
 	}
 	op := p.next()
 	high := ast.None
-	if startsExpression(p.tok().Kind) {
+	if !p.at(token.RBRACK) {
 		high = p.expr(precLowest)
 	} else if op.Kind == token.DOTDOT_EQ {
 		p.repair(diag.New(diag.InvalidExpression, "inclusive range requires an end bound").

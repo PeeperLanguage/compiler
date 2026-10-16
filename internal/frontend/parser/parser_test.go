@@ -402,12 +402,11 @@ func TestSignatureErrors(t *testing.T) {
 	for _, test := range []struct{ src, message, fixed string }{
 		{"fn f() i32 {}", "expected `->` before the return type", "fn f() -> i32 {}"},
 		{"fn f(mut mut a: i32) {}", "`mut` is repeated", "fn f(mut a: i32) {}"},
-		{"fn f(a: ??i32) {}", "redundant optional marker", "fn f(a: ?i32) {}"},
 		{"fn f(mut i32) {}", "mutable parameter requires a named binding", ""},
 		{"fn f(a: [n]i32) {}", "expected array length", ""},
 		{"fn f(a: ) {}", "expected type, found `)`", ""},
 		{"fn f() -> i32", "missing function body", ""},
-		{"fn f<T U>() {}", "expected `>`, found `identifier`", ""},
+		{"fn f<T U>() {}", "expected `,`", "fn f<T, U>() {}"},
 	} {
 		_, errs := Parse(source.NewFile("t.peep", test.src))
 		if len(errs) != 1 || errs[0].Message != test.message {
@@ -931,5 +930,51 @@ func TestStatementErrors(t *testing.T) {
 				t.Errorf("%q: fix gives %q", test.src, got)
 			}
 		}
+	}
+}
+
+// TestSeparators checks what the parser accepts and repairs between items:
+// extra commas, trailing commas, empty statements and `??` are style, left to
+// a lint; a `;` for a `,` in a `{ }` list is repaired with one error per list.
+func TestSeparators(t *testing.T) {
+	for _, src := range []string{
+		"fn f(a: i32,, b: i32,) { g(1,, 2,); ;; }",
+		"struct S { a: i32, b: i32, }",
+		"enum E { A,, B, }",
+		"fn f(a: ??i32) { let p = .{ a = 1,, }; }",
+	} {
+		if _, errs := Parse(source.NewFile("t.peep", src)); len(errs) != 0 {
+			t.Errorf("%q: %v", src, errs)
+		}
+	}
+	for _, test := range []struct{ src, fixed string }{
+		{"struct S { a: i32; b: i32 }", "struct S { a: i32, b: i32 }"},
+		{"struct S { a: i32; b: i32; }", "struct S { a: i32, b: i32 }"},
+		{"fn f() { let p = .{ a = 1; b = 2 }; }", "fn f() { let p = .{ a = 1, b = 2 }; }"},
+		{"fn f() { let v = [2]i32{1; 2}; }", "fn f() { let v = [2]i32{1, 2}; }"},
+	} {
+		_, errs := Parse(source.NewFile("t.peep", test.src))
+		if len(errs) != 1 || errs[0].Message != "expected `,` between items, found `;`" {
+			t.Errorf("%q: errors %v", test.src, errs)
+			continue
+		}
+		fixed := test.src
+		fixes := errs[0].Notes[0].Fixes
+		for i := len(fixes) - 1; i >= 0; i-- {
+			fixed = fixed[:fixes[i].Span.Start] + fixes[i].NewText + fixed[fixes[i].Span.End:]
+		}
+		if fixed != test.fixed {
+			t.Errorf("%q: fixes give %q", test.src, fixed)
+		}
+	}
+	// A `;` after an unclosed literal ends the statement: the `}` is missing.
+	_, errs := Parse(source.NewFile("t.peep", "fn f() {\n    let v = [3]i32{4, 5, 6;\n    return;\n}"))
+	if len(errs) != 1 || errs[0].Message != "expected `}`, found `;`" {
+		t.Errorf("unclosed literal: %v", errs)
+	}
+	// Only before `]` may a range leave out its end.
+	_, errs = Parse(source.NewFile("t.peep", "fn f() { for i in 0.. { } }"))
+	if len(errs) != 1 || errs[0].Message != "expected expression, found `{`" {
+		t.Errorf("for-in range without end: %v", errs)
 	}
 }

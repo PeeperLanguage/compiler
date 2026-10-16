@@ -166,21 +166,42 @@ func (p *parser) sync() {
 
 // items reads the items of a list up to close, separated by commas, appending
 // them to buf. item reads one item and startsItem tells whether a token can
-// begin one. An item that follows another without a comma is read as if the
-// comma were there, when the list's own close comes next at this depth; all
-// missing commas are reported in one error.
-func (p *parser) items(buf []ast.Index, close token.Kind, startsItem func(token.Kind) bool, item func() ast.Index) []ast.Index {
-	var missing []diag.Fix
-	for startsItem(p.tok().Kind) { // neither close nor EOF starts an item
-		buf = append(buf, item())
-		if p.at(token.COMMA) {
+// begin one. Extra commas are accepted (they are a matter of style, left to a
+// lint). Two mistakes are read as if the comma were there, and each kind is
+// reported once per list:
+//   - an item that follows another without a comma, when the list's own close
+//     comes next at this depth;
+//   - a `;` between the items of a `{ }` list: always in a declaration's body
+//     (inDeclaration), and in an expression's braces when they end the
+//     expression (`;`, `,` or `)` follows the `}`).
+func (p *parser) items(buf []ast.Index, close token.Kind, inDeclaration bool, startsItem func(token.Kind) bool, item func() ast.Index) []ast.Index {
+	var missing, semicolons []diag.Fix
+	for {
+		for p.at(token.COMMA) {
 			p.next()
-			continue
 		}
-		if !startsItem(p.tok().Kind) || p.closerAhead() != close {
+		if !startsItem(p.tok().Kind) { // neither close nor EOF starts an item
 			break
 		}
-		missing = append(missing, diag.Fix{File: p.t.File, Span: source.Span{Start: p.lastEnd, End: p.lastEnd}, NewText: ","})
+		buf = append(buf, item())
+		switch t := p.tok(); {
+		case t.Kind == token.COMMA:
+			continue
+		case t.Kind == token.SEMICOLON && close == token.RBRACE && p.semicolonSeparates(inDeclaration):
+			fix := diag.Fix{File: p.t.File, Span: t.Span, NewText: ","}
+			if p.ahead(1).Kind == token.RBRACE {
+				fix.NewText = ""
+			}
+			semicolons = append(semicolons, fix)
+			p.next()
+			continue
+		case startsItem(t.Kind) && (close == token.GT || p.tokens[p.closerAhead()].Kind == close):
+			// `>` is no bracket the closer scan follows; in `<T U>` the next
+			// name can only be another item.
+			missing = append(missing, diag.Fix{File: p.t.File, Span: source.Span{Start: p.lastEnd, End: p.lastEnd}, NewText: ","})
+			continue
+		}
+		break
 	}
 	if len(missing) > 0 {
 		help := "add missing `,`"
@@ -189,25 +210,44 @@ func (p *parser) items(buf []ast.Index, close token.Kind, startsItem func(token.
 		}
 		p.repair(diag.New(diag.ExpectedToken, "expected `,`").Label(p.t.File, missing[0].Span, "").Help(help, missing...))
 	}
+	if len(semicolons) > 0 {
+		p.repair(diag.New(diag.ExpectedToken, "expected `,` between items, found `;`").
+			Label(p.t.File, semicolons[0].Span, "").Help("separate items with `,`", semicolons...))
+	}
 	return buf
 }
 
-// closerAhead returns the first closing bracket ahead at the current depth, or
-// EOF when there is none.
-func (p *parser) closerAhead() token.Kind {
+// semicolonSeparates reports whether the `;` at the current token stands for
+// a `,` in a `{ }` list (see items): the list's `}` comes next at this depth,
+// and the list is a declaration's body or `;`, `,` or `)` follows the `}`.
+func (p *parser) semicolonSeparates(inDeclaration bool) bool {
+	i := p.closerAhead()
+	if p.tokens[i].Kind != token.RBRACE {
+		return false
+	}
+	if inDeclaration {
+		return true
+	}
+	after := p.tokens[min(i+1, len(p.tokens)-1)].Kind
+	return after == token.SEMICOLON || after == token.COMMA || after == token.RPAREN
+}
+
+// closerAhead returns the index of the first closing bracket ahead at the
+// current depth, or of the EOF token when there is none.
+func (p *parser) closerAhead() int {
 	depth := 0
-	for _, t := range p.tokens[p.pos:] {
-		switch t.Kind {
+	for i := p.pos; i < len(p.tokens); i++ {
+		switch p.tokens[i].Kind {
 		case token.LPAREN, token.LBRACK, token.LBRACE:
 			depth++
 		case token.RPAREN, token.RBRACK, token.RBRACE:
 			if depth == 0 {
-				return t.Kind
+				return i
 			}
 			depth--
 		}
 	}
-	return token.EOF
+	return len(p.tokens) - 1
 }
 
 // add appends a node with slots s, spanning from start, where the token
