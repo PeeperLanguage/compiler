@@ -153,3 +153,46 @@ func BenchmarkParse(b *testing.B) {
 		Parse(file)
 	}
 }
+
+// TestNumberChecks holds the old compiler's messages for number literal
+// suffixes and leading zeros. Digits outside the base are the lexer's to report.
+func TestNumberChecks(t *testing.T) {
+	for _, test := range []struct{ literal, message, fixed string }{
+		{"1i", "invalid numeric literal suffix i", ""},
+		{"1i_32", "invalid numeric literal suffix i_32", ""},
+		{"1i8_", "invalid numeric literal suffix i8_", ""},
+		{"1u", "invalid numeric literal suffix u", ""},
+		{"1f", "invalid numeric literal suffix f", ""},
+		{"0b1i", "invalid numeric literal suffix i", ""},
+		{"0o7u", "invalid numeric literal suffix u", ""},
+		{"2.4i32", "integer suffix i32 cannot be used on a float literal", ""},
+		{"1e3u8", "integer suffix u8 cannot be used on a float literal", ""},
+		{"007", "decimal integer literal has a leading zero", "7"},
+		{"0_1", "decimal integer literal has a leading zero", "1"},
+		{"00", "decimal integer literal has a leading zero", "0"},
+		{"0_0_7", "decimal integer literal has a leading zero", "7"},
+		{"01i32", "decimal integer literal has a leading zero", "1i32"},
+		{"0", "", ""}, {"0.5", "", ""}, {"01.5", "", ""}, {"01f32", "", ""},
+		{"1.5f32", "", ""}, {"0x1f_u8", "", ""}, {"0xffu24", "", ""}, {"1_000i64", "", ""}, {"1e3f64", "", ""},
+	} {
+		src := "fn f() { " + test.literal + "; }"
+		_, errs := Parse(source.NewFile("t.peep", src))
+		start := strings.Index(src, test.literal)
+		if test.message == "" {
+			if len(errs) != 0 {
+				t.Errorf("%s: unexpected %q", test.literal, errs[0].Message)
+			}
+			continue
+		}
+		if len(errs) != 1 || errs[0].Message != test.message || errs[0].Labels[0].Span != (source.Span{Start: start, End: start + len(test.literal)}) {
+			t.Errorf("%s: got %v, want %q on the whole literal", test.literal, errs, test.message)
+			continue
+		}
+		if test.fixed != "" {
+			fix := errs[0].Notes[0].Fixes[0]
+			if got := src[:fix.Span.Start] + fix.NewText + src[fix.Span.End:]; got != "fn f() { "+test.fixed+"; }" {
+				t.Errorf("%s: fix gives %q, want %q", test.literal, got, test.fixed)
+			}
+		}
+	}
+}

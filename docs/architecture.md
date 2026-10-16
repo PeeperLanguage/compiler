@@ -160,6 +160,8 @@ this rule (#165 came from breaking it).
 | --- | --- | --- |
 | `source` | source files and byte spans; line and column on demand | rewritten (old one tracked line and column per character and allocated every location) |
 | `token`, `lexer` | tokens, lexing | old frontend, reviewed |
+| `literal` | values of string, character and byte literal tokens, shared by the lexer, the parser and later phases | split out of the lexer |
+| `pkg/numeric` | rules of number literals (base, digits, suffix; values and fits-in-type come in M4), shared by the lexer, the parser and the type checker | rewritten; old one was regex based |
 | `ast`, `parser` | syntax tree, parsing | old frontend, reviewed (parser only parses) |
 | `diag` | one diagnostic value and how it is printed | rewritten small; old emitter and `suggest.go` reviewed |
 | `manifest` | reading `peeper.toml` in one folder: the project name | new |

@@ -1,4 +1,7 @@
-package lexer
+// Package literal reads the values of string, character and byte literal
+// tokens. The lexer, the parser and later phases share these rules, so they
+// live here once.
+package literal
 
 import (
 	"errors"
@@ -8,11 +11,11 @@ import (
 	"unicode/utf8"
 )
 
-// escape reads the escape sequence at s[i], a backslash, and returns the byte
+// Escape reads the escape sequence at s[i], a backslash, and returns the byte
 // it stands for and its length in s. quote is the literal's quote character,
 // the only quote that may be escaped. Every escape stands for one byte: \n \r
 // \t \0 \\ \" \' and \xHH.
-func escape(s string, i int, quote byte) (value byte, width int, err error) {
+func Escape(s string, i int, quote byte) (value byte, width int, err error) {
 	if i+1 >= len(s) {
 		return 0, 1, errors.New("unterminated escape sequence")
 	}
@@ -64,7 +67,7 @@ func unquote(s string, quote byte) (string, error) {
 			i++
 			continue
 		}
-		value, width, err := escape(s, i, quote)
+		value, width, err := Escape(s, i, quote)
 		if err != nil {
 			return "", err
 		}

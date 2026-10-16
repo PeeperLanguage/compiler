@@ -8,11 +8,14 @@
 package parser
 
 import (
+	"strings"
+
 	"compiler/internal/diag"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/token"
 	"compiler/internal/source"
+	"compiler/pkg/numeric"
 )
 
 // Parse returns the syntax tree of file and the lexical and syntax errors in it.
@@ -266,6 +269,7 @@ func (p *parser) primary() ast.Index {
 		return p.add(ast.KindNameReference, t.Start, ast.None, ast.None)
 	case token.NUMBER:
 		p.next()
+		p.checkNumber(t)
 		return p.add(ast.KindNumberLiteral, t.Start, ast.None, ast.None)
 	case token.STRING:
 		p.next()
@@ -278,4 +282,36 @@ func (p *parser) primary() ast.Index {
 	}
 	p.expect(token.IDENT)
 	return p.add(ast.KindInvalidExpression, p.lastEnd, ast.None, ast.None)
+}
+
+// checkNumber checks the parts of number literal t that the lexer leaves to the
+// parser: its type suffix, and a leading zero on a decimal integer. Whether the
+// value fits its type is the type checker's to decide.
+func (p *parser) checkNumber(t token.Token) {
+	text := p.t.File.Text[t.Start:t.End]
+	base, digits, suffix := numeric.Split(text)
+	if suffix == "" && digits[0] != '0' {
+		return // most numbers: no suffix, no leading zero
+	}
+	isFloat := base == 10 && strings.ContainsAny(digits, ".eE")
+	switch {
+	// A suffix needs a size after its letter (i32, not i), and no `_`.
+	case len(suffix) == 1 || strings.IndexByte(suffix, '_') >= 0:
+		p.errors = append(p.errors, *diag.New(diag.InvalidNumber, "invalid numeric literal suffix "+suffix).Label(p.t.File, t.Span, ""))
+	// suffix[0] is the suffix letter: i or u is an integer type, f a float type.
+	case suffix != "" && suffix[0] != 'f' && isFloat:
+		p.errors = append(p.errors, *diag.New(diag.InvalidNumber, "integer suffix "+suffix+" cannot be used on a float literal").Label(p.t.File, t.Span, ""))
+	// A decimal integer of two or more digits starting with 0, such as 007;
+	// with an f suffix (01f32) it is a float and the zero is harmless.
+	case base == 10 && !isFloat && len(digits) > 1 && digits[0] == '0' && (suffix == "" || suffix[0] != 'f'):
+		// Remove the zeros and separators in front, keeping the last digit.
+		zeros := 0
+		for zeros < len(digits)-1 && (digits[zeros] == '0' || digits[zeros] == '_') {
+			zeros++
+		}
+		p.errors = append(p.errors, *diag.New(diag.LeadingZero, "decimal integer literal has a leading zero").
+			Label(p.t.File, t.Span, "").
+			Help("remove the leading zero", diag.Fix{File: p.t.File, Span: source.Span{Start: t.Start, End: t.Start + zeros}}).
+			Help("use the `0o` prefix for octal values"))
+	}
 }

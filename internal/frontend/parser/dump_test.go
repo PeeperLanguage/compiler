@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"compiler/internal/frontend/ast"
-	"compiler/internal/frontend/lexer"
+	"compiler/internal/frontend/literal"
 )
 
 // dump writes the tree one node per line, children indented under their parent.
@@ -73,7 +73,7 @@ func dumpNode(t *ast.Tree, b *strings.Builder, i ast.Index, depth int) {
 	case ast.KindNameReference, ast.KindNumberLiteral:
 		line(b, depth, t.Text(i))
 	case ast.KindStringLiteral:
-		line(b, depth, fmt.Sprintf("%q", lexer.Value(t.Text(i))))
+		line(b, depth, fmt.Sprintf("%q", literal.Value(t.Text(i))))
 	case ast.KindBinaryExpression:
 		line(b, depth, "binary ", n.Op.String())
 		dumpNode(t, b, n.A, depth+1)

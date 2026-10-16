@@ -76,7 +76,9 @@ func (d *Diagnostic) Help(text string, fixes ...Fix) *Diagnostic {
 var (
 	UnexpectedCharacter = Code{"L0001", Error}
 	UnterminatedString  = Code{"L0002", Error}
+	InvalidNumber       = Code{"L0003", Error}
 	UnterminatedComment = Code{"L0005", Error}
+	LeadingZero         = Code{"W0017", Warning}
 	ExpectedToken       = Code{"P0002", Error}
 	InvalidDeclaration  = Code{"P0005", Error}
 

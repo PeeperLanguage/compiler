@@ -41,7 +41,7 @@ const (
 	KindExpressionStatement             // A: expression
 	KindNameReference                   // a use of a declared name; its text is the node's source text
 	KindNumberLiteral                   // the number is the node's source text
-	KindStringLiteral                   // the literal is the node's source text; lexer.Value decodes it
+	KindStringLiteral                   // the literal is the node's source text; literal.Value decodes it
 	KindBinaryExpression                // Op: operator, A: left, B: right
 	KindCallExpression                  // A: callee, B: list of arguments
 	KindInvalidExpression               // an expression that could not be parsed

@@ -14,7 +14,7 @@ import (
 
 	"compiler/internal/diag"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/frontend/lexer"
+	"compiler/internal/frontend/literal"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/source"
 )
@@ -122,7 +122,7 @@ func (m *Module) resolveImports(p Packages, standalone, withPrelude bool) {
 	aliases := map[string]string{} // alias -> import path
 	for _, i := range t.List(t.Nodes[t.Root].A) {
 		imp := t.Nodes[i]
-		written := lexer.Value(t.Text(imp.A))
+		written := literal.Value(t.Text(imp.A))
 		fail := func(code diag.Code, message string) {
 			m.Diagnostics = append(m.Diagnostics, *diag.New(code, message).Label(m.Source, imp.Span, message))
 		}

@@ -131,4 +131,5 @@ Exit: one edited file re-checks only what its interface change affects.
 1. AST accessors (`Func`, `Let`) and `NodeAt` have no production caller until
    check (M4) and the LSP (M7) read the tree.
 2. Disk cache location and the hash function (`overall-design.md`).
-3. Struct literal ambiguity: context flag (recommended) or stop token (M2).
+3. Struct literal ambiguity: decided (M2 plan): valid code has none (`.{`);
+   a header flag serves only the missing-`.` recovery.

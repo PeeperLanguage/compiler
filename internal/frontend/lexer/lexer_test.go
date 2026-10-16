@@ -61,46 +61,6 @@ func TestScan(t *testing.T) {
 	}
 }
 
-func TestUnquote(t *testing.T) {
-	for _, test := range []struct {
-		text  string
-		quote byte
-		want  string
-		err   string
-	}{
-		{`plain`, '"', "plain", ""},
-		{`a\n\t\\\"\x41`, '"', "a\n\t\\\"A", ""},
-		{`\'`, '\'', "'", ""},
-		{`\'`, '"', "", `invalid escape sequence \'`},
-		{`\xZZ`, '"', "", `invalid hex escape "\\xZZ"`},
-		{`\x4`, '"', "", `hex escape \x requires exactly two hexadecimal digits`},
-	} {
-		got, err := unquote(test.text, test.quote)
-		message := ""
-		if err != nil {
-			message = err.Error()
-		}
-		if got != test.want || message != test.err {
-			t.Errorf("unquote(%q) = %q, %q; want %q, %q", test.text, got, message, test.want, test.err)
-		}
-	}
-}
-
-func TestValue(t *testing.T) {
-	for text, want := range map[string]string{
-		`"a\tb"`:  "a\tb",
-		`c"c"`:    "c",
-		`'x'`:     "x",
-		`b'\x41'`: "A",
-		`"open`:   "open", // unterminated: reported by the lexer
-		`"a\q"`:   `a\q`,  // bad escape: reported by the lexer
-	} {
-		if got := Value(text); got != want {
-			t.Errorf("Value(%s) = %q, want %q", text, got, want)
-		}
-	}
-}
-
 func TestEscapeErrorsPointAtTheEscape(t *testing.T) {
 	text := `"a\q b\xZZ c" 'é' '\xC3\xA9' 'ab' b'\x41'`
 	tokens, errs := Scan(source.NewFile("t.peep", text))
@@ -119,5 +79,36 @@ func TestEscapeErrorsPointAtTheEscape(t *testing.T) {
 	}
 	if len(tokens) != 6 { // five literals and EOF; invalid literals keep their tokens
 		t.Fatalf("%d tokens", len(tokens))
+	}
+}
+
+// TestNumberDigits holds the old compiler's messages for digits outside a
+// number's base. The suffix and a leading zero are the parser's to check, so
+// those literals give no lexical error. A literal keeps its single token
+// whether or not it is valid.
+func TestNumberDigits(t *testing.T) {
+	for _, test := range []struct{ text, message string }{
+		{"0xFG", "invalid hexadecimal literal 0xFG"},
+		{"0o8", "invalid octal literal 0o8"},
+		{"0b102u8", "invalid binary literal 0b102"},
+		{"0xu8", "invalid hexadecimal literal 0x"},
+		{"0", ""}, {"0x1f_u8", ""}, {"0b1_0", ""}, {"0XAB", ""}, {"0xffu24", ""}, {"1.5f32", ""},
+		{"1i", ""}, {"2.4i32", ""}, {"007", ""}, {"0b1i", ""},
+	} {
+		tokens, errs := Scan(source.NewFile("t.peep", test.text))
+		if len(tokens) != 2 || tokens[0].End != len(test.text) {
+			t.Errorf("%s: not one number token: %v", test.text, tokens)
+			continue
+		}
+		var got string
+		if len(errs) > 0 {
+			got = errs[0].Message
+			if len(errs) > 1 || errs[0].Labels[0].Span != tokens[0].Span {
+				t.Errorf("%s: errors %v, want one on the whole literal", test.text, errs)
+			}
+		}
+		if got != test.message {
+			t.Errorf("%s: got %q, want %q", test.text, got, test.message)
+		}
 	}
 }

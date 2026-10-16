@@ -8,9 +8,11 @@ import (
 	"unicode/utf8"
 
 	"compiler/internal/diag"
+	"compiler/internal/frontend/literal"
 	"compiler/internal/frontend/token"
 	"compiler/internal/source"
 	"compiler/pkg/ascii"
+	"compiler/pkg/numeric"
 )
 
 // Scan returns the tokens of file, ending with EOF, and the lexical errors in it.
@@ -131,15 +133,19 @@ func (s *scanner) word() {
 }
 
 // number reads a number literal: 0x, 0o and 0b numbers take letters and digits
-// as digits (the parser checks them); a decimal number may have a fraction, an
-// exponent and a type suffix such as i32 or f64. A single `_` may sit between
-// digits.
+// as digits (checked here against the base); a decimal number may have a
+// fraction, an exponent and a type suffix such as i32 or f64. A single `_` may
+// sit between digits. The suffix is the parser's to check.
 func (s *scanner) number() {
 	start := s.pos
 	if s.text[start] == '0' && strings.IndexByte("xXoObB", s.at(1)) >= 0 && ascii.IsAlnum(s.at(2)) {
 		s.pos += 2
 		s.digits(ascii.IsAlnum[byte])
 		s.emit(token.NUMBER, start)
+		if base, digits, _ := numeric.Split(s.text[start:s.pos]); !inBase(digits, base) {
+			body := s.text[start : start+2+len(digits)]
+			s.fail(source.Span{Start: start, End: s.pos}, diag.InvalidNumber, fmt.Sprintf("invalid %s literal %s", baseNames[base], body), "")
+		}
 		return
 	}
 	s.digits(ascii.IsDigit[byte])
@@ -164,6 +170,34 @@ func (s *scanner) number() {
 		}
 	}
 	s.emit(token.NUMBER, start)
+}
+
+var baseNames = map[int]string{16: "hexadecimal", 8: "octal", 2: "binary"}
+
+// inBase reports whether digits, ignoring `_` separators, hold at least one
+// digit and only digits of base.
+func inBase(digits string, base int) bool {
+	count := 0
+	for i := 0; i < len(digits); i++ {
+		c := digits[i]
+		if c == '_' {
+			continue
+		}
+		// A digit's value: 0-9 for '0'-'9', 10-35 for 'a'-'z' in either case
+		// (bit 0x20 makes a letter lower case). 36 is above every base, so any
+		// other byte is rejected.
+		value := 36
+		if ascii.IsDigit(c) {
+			value = int(c - '0')
+		} else if ascii.IsLetter(c) {
+			value = int(c|0x20-'a') + 10
+		}
+		if value >= base {
+			return false
+		}
+		count++
+	}
+	return count > 0
 }
 
 // digits reads one or more digits; `_` is taken only when a digit follows it.
@@ -206,7 +240,7 @@ func (s *scanner) quoted(prefix int, kind token.Kind) {
 			s.emit(kind, start)
 			return
 		case '\\':
-			b, width, err := escape(s.text, i, quote)
+			b, width, err := literal.Escape(s.text, i, quote)
 			if err != nil {
 				s.fail(source.Span{Start: i, End: i + width}, diag.UnexpectedCharacter, err.Error(), "fix this escape sequence")
 				badEscape = true
