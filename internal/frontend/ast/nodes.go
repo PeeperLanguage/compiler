@@ -243,3 +243,65 @@ type PipeExpression struct {
 	Value Index `ast:"A"`
 	Call  Index `ast:"B"` // a CallExpression
 }
+
+//ast:node KindAssignStatement
+type AssignStatement struct {
+	Target Index `ast:"A"`
+	Value  Index `ast:"B"`
+}
+
+//ast:node KindDestructureStatement
+type DestructureStatement struct {
+	Pattern Index `ast:"A"` // a StructPattern
+	Value   Index `ast:"B"`
+}
+
+//ast:node KindIfStatement
+type IfStatement struct {
+	Condition Index `ast:"A"`
+	Then      Index // a Block
+	Else      Index // a Block or an IfStatement
+}
+
+//ast:node KindLoopStatement
+type LoopStatement struct {
+	Condition Index `ast:"A"`
+	Body      Index `ast:"B"`
+}
+
+//ast:node KindForInStatement
+type ForInStatement struct {
+	Index    Index // a DeclaredName
+	Value    Index `ast:"A"` // a DeclaredName
+	Iterable Index // an expression or a Range
+	Body     Index
+}
+
+//ast:node KindMatchStatement
+type MatchStatement struct {
+	Subject Index `ast:"A"`
+	Arms    List  `ast:"B"` // MatchArms
+}
+
+//ast:node KindMatchArm
+type MatchArm struct {
+	Pattern Index `ast:"A"` // a WildcardPattern or a CasePattern
+	Body    Index `ast:"B"`
+}
+
+//ast:node KindCasePattern
+type CasePattern struct {
+	Case  Index `ast:"A"` // a Path
+	Inner Index `ast:"B"` // the pattern after `with`: a NonePattern, a DeclaredName (a binding), a StructPattern or a CasePattern
+}
+
+//ast:node KindStructPattern
+type StructPattern struct {
+	Fields List `ast:"A"` // FieldPatterns, then perhaps a RestPattern
+}
+
+//ast:node KindFieldPattern
+type FieldPattern struct {
+	Field   Index `ast:"A"` // a FieldName
+	Binding Index `ast:"B"` // the DeclaredName after `as`; None binds the field's own name
+}

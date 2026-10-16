@@ -341,7 +341,7 @@ func (p *parser) structLiteral(typ ast.Index, start int) ast.Index {
 func arrayLiteral(p *parser) ast.Index {
 	start := p.tok().Start
 	var typ ast.Index
-	if t := p.ahead(1); t.Kind == token.IDENT && p.t.File.Text[t.Start:t.End] == "_" {
+	if t := p.ahead(1); t.Kind == token.IDENT && p.text(t) == "_" {
 		open := p.next()
 		length := p.leaf(ast.KindInferredLength, p.next().Start)
 		p.close(token.RBRACK, open)

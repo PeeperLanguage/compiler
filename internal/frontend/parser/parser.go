@@ -1,7 +1,6 @@
-// Package parser builds the syntax tree of one file (grammar so far: imports;
-// functions, constants, structs, enums, interfaces and type aliases with their
-// doc comments and attributes; every type form; let, return and expression
-// statements; every expression form).
+// Package parser builds the syntax tree of one file: imports; functions,
+// constants, structs, enums, interfaces and type aliases with their doc
+// comments and attributes; and every type, statement, pattern and expression.
 //
 // Every node is made when the parser has read up to its end, and its span ends
 // there, so node ends never decrease along the tree's node array (see ast).
@@ -222,6 +221,9 @@ func (p *parser) add(kind ast.Kind, start int, s ast.Slots) ast.Index {
 
 // leaf appends a node without children.
 func (p *parser) leaf(kind ast.Kind, start int) ast.Index { return p.add(kind, start, ast.Slots{}) }
+
+// text returns the source text of token t.
+func (p *parser) text(t token.Token) string { return p.t.File.Text[t.Start:t.End] }
 
 // setOp sets the Op of node i and returns i.
 func (p *parser) setOp(i ast.Index, op token.Kind) ast.Index {

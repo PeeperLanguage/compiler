@@ -445,6 +445,120 @@ func (*Tree) PackPipeExpression(v PipeExpression) Slots {
 	return Slots{A: v.Value, B: v.Call}
 }
 
+// AssignStatement returns the children of node i, a KindAssignStatement.
+func (t *Tree) AssignStatement(i Index) AssignStatement {
+	n := t.Nodes[i]
+	return AssignStatement{Target: n.A, Value: n.B}
+}
+
+// PackAssignStatement keeps the children v in the tree and returns the slots of their node.
+func (*Tree) PackAssignStatement(v AssignStatement) Slots {
+	return Slots{A: v.Target, B: v.Value}
+}
+
+// DestructureStatement returns the children of node i, a KindDestructureStatement.
+func (t *Tree) DestructureStatement(i Index) DestructureStatement {
+	n := t.Nodes[i]
+	return DestructureStatement{Pattern: n.A, Value: n.B}
+}
+
+// PackDestructureStatement keeps the children v in the tree and returns the slots of their node.
+func (*Tree) PackDestructureStatement(v DestructureStatement) Slots {
+	return Slots{A: v.Pattern, B: v.Value}
+}
+
+// IfStatement returns the children of node i, a KindIfStatement.
+func (t *Tree) IfStatement(i Index) IfStatement {
+	n := t.Nodes[i]
+	return IfStatement{Condition: n.A, Then: t.Extra[n.B], Else: t.Extra[n.B+1]}
+}
+
+// PackIfStatement keeps the children v in the tree and returns the slots of their node.
+func (t *Tree) PackIfStatement(v IfStatement) Slots {
+	b := Index(len(t.Extra))
+	t.Extra = append(t.Extra, v.Then, v.Else)
+	return Slots{A: v.Condition, B: b}
+}
+
+// LoopStatement returns the children of node i, a KindLoopStatement.
+func (t *Tree) LoopStatement(i Index) LoopStatement {
+	n := t.Nodes[i]
+	return LoopStatement{Condition: n.A, Body: n.B}
+}
+
+// PackLoopStatement keeps the children v in the tree and returns the slots of their node.
+func (*Tree) PackLoopStatement(v LoopStatement) Slots {
+	return Slots{A: v.Condition, B: v.Body}
+}
+
+// ForInStatement returns the children of node i, a KindForInStatement.
+func (t *Tree) ForInStatement(i Index) ForInStatement {
+	n := t.Nodes[i]
+	return ForInStatement{Index: t.Extra[n.B], Value: n.A, Iterable: t.Extra[n.B+1], Body: t.Extra[n.B+2]}
+}
+
+// PackForInStatement keeps the children v in the tree and returns the slots of their node.
+func (t *Tree) PackForInStatement(v ForInStatement) Slots {
+	b := Index(len(t.Extra))
+	t.Extra = append(t.Extra, v.Index, v.Iterable, v.Body)
+	return Slots{A: v.Value, B: b}
+}
+
+// MatchStatement returns the children of node i, a KindMatchStatement.
+func (t *Tree) MatchStatement(i Index) MatchStatement {
+	n := t.Nodes[i]
+	return MatchStatement{Subject: n.A, Arms: List(n.B)}
+}
+
+// PackMatchStatement keeps the children v in the tree and returns the slots of their node.
+func (*Tree) PackMatchStatement(v MatchStatement) Slots {
+	return Slots{A: v.Subject, B: Index(v.Arms)}
+}
+
+// MatchArm returns the children of node i, a KindMatchArm.
+func (t *Tree) MatchArm(i Index) MatchArm {
+	n := t.Nodes[i]
+	return MatchArm{Pattern: n.A, Body: n.B}
+}
+
+// PackMatchArm keeps the children v in the tree and returns the slots of their node.
+func (*Tree) PackMatchArm(v MatchArm) Slots {
+	return Slots{A: v.Pattern, B: v.Body}
+}
+
+// CasePattern returns the children of node i, a KindCasePattern.
+func (t *Tree) CasePattern(i Index) CasePattern {
+	n := t.Nodes[i]
+	return CasePattern{Case: n.A, Inner: n.B}
+}
+
+// PackCasePattern keeps the children v in the tree and returns the slots of their node.
+func (*Tree) PackCasePattern(v CasePattern) Slots {
+	return Slots{A: v.Case, B: v.Inner}
+}
+
+// StructPattern returns the children of node i, a KindStructPattern.
+func (t *Tree) StructPattern(i Index) StructPattern {
+	n := t.Nodes[i]
+	return StructPattern{Fields: List(n.A)}
+}
+
+// PackStructPattern keeps the children v in the tree and returns the slots of their node.
+func (*Tree) PackStructPattern(v StructPattern) Slots {
+	return Slots{A: Index(v.Fields), B: None}
+}
+
+// FieldPattern returns the children of node i, a KindFieldPattern.
+func (t *Tree) FieldPattern(i Index) FieldPattern {
+	n := t.Nodes[i]
+	return FieldPattern{Field: n.A, Binding: n.B}
+}
+
+// PackFieldPattern keeps the children v in the tree and returns the slots of their node.
+func (*Tree) PackFieldPattern(v FieldPattern) Slots {
+	return Slots{A: v.Field, B: v.Binding}
+}
+
 // Children returns the children of node i in source order, the items of its
 // lists in place.
 func (t *Tree) Children(i Index) iter.Seq[Index] {
@@ -578,6 +692,38 @@ func (t *Tree) Children(i Index) iter.Seq[Index] {
 			node(n.A)
 			node(n.B)
 		case KindPipeExpression:
+			node(n.A)
+			node(n.B)
+		case KindAssignStatement:
+			node(n.A)
+			node(n.B)
+		case KindDestructureStatement:
+			node(n.A)
+			node(n.B)
+		case KindIfStatement:
+			node(n.A)
+			node(t.Extra[n.B])
+			node(t.Extra[n.B+1])
+		case KindLoopStatement:
+			node(n.A)
+			node(n.B)
+		case KindForInStatement:
+			node(t.Extra[n.B])
+			node(n.A)
+			node(t.Extra[n.B+1])
+			node(t.Extra[n.B+2])
+		case KindMatchStatement:
+			node(n.A)
+			list(List(n.B))
+		case KindMatchArm:
+			node(n.A)
+			node(n.B)
+		case KindCasePattern:
+			node(n.A)
+			node(n.B)
+		case KindStructPattern:
+			list(List(n.A))
+		case KindFieldPattern:
 			node(n.A)
 			node(n.B)
 		}

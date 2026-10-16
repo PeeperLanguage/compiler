@@ -74,9 +74,24 @@ const (
 	KindInterfaceType                    // `iface { ... }`
 	KindInvalidType                      // a type that could not be parsed
 	KindBlock                            // `{ ... }`
-	KindLetStatement                     // `let`
+	KindLetStatement                     // `let`; Op: MUT or 0
 	KindReturnStatement                  // `return`
 	KindExpressionStatement              // an expression followed by `;`
+	KindAssignStatement                  // `target = value;`
+	KindDestructureStatement             // `let .{ a, b as c } = value;`
+	KindIfStatement                      // `if condition { } else { }`
+	KindLoopStatement                    // `for { }` or `for condition { }`
+	KindForInStatement                   // `for value in items { }` or `for index, value in items { }`
+	KindBreakStatement                   // `break;`
+	KindContinueStatement                // `continue;`
+	KindMatchStatement                   // `match subject { arms }`
+	KindMatchArm                         // `pattern => { }`
+	KindWildcardPattern                  // `_`
+	KindNonePattern                      // `none`
+	KindCasePattern                      // `Enum::Case` or `Enum::Case with pattern`
+	KindStructPattern                    // `.{ a, b as c, _ }`
+	KindFieldPattern                     // `a` or `a as b` in a struct pattern
+	KindRestPattern                      // the `_` that ends a struct pattern
 	KindNameReference                    // a use of a declared name; its text is the node's source text
 	KindNumberLiteral                    // the number is the node's source text
 	KindStringLiteral                    // Op: CSTRING (c"...") or 0; the literal is the node's source text, literal.Value decodes it
@@ -143,6 +158,21 @@ var kindNames = [...]string{
 	KindLetStatement:         "let statement",
 	KindReturnStatement:      "return statement",
 	KindExpressionStatement:  "expression statement",
+	KindAssignStatement:      "assign statement",
+	KindDestructureStatement: "destructure statement",
+	KindIfStatement:          "if statement",
+	KindLoopStatement:        "loop statement",
+	KindForInStatement:       "for in statement",
+	KindBreakStatement:       "break statement",
+	KindContinueStatement:    "continue statement",
+	KindMatchStatement:       "match statement",
+	KindMatchArm:             "match arm",
+	KindWildcardPattern:      "wildcard pattern",
+	KindNonePattern:          "none pattern",
+	KindCasePattern:          "case pattern",
+	KindStructPattern:        "struct pattern",
+	KindFieldPattern:         "field pattern",
+	KindRestPattern:          "rest pattern",
 	KindNameReference:        "name reference",
 	KindNumberLiteral:        "number literal",
 	KindStringLiteral:        "string literal",

@@ -129,6 +129,11 @@ var brokenInputs = []string{
 	"fn f() { a orelse ; }", "fn f() { a |> b; }", "fn f() { a |> b.c(); }", "fn f() { .{ a = }; }", "fn f() { .{ a: 1, b: 2 }; }",
 	"fn f() { [_]i32{1, 2; }", "fn f() { [x]i32{}; }", "fn f() { A::B with ; }", "fn f() { Box<T>::; }", "fn f() { print(; }",
 	"fn f() { &mut ; }", "fn f() { a < b > c; }", "fn f() { a<b>.{}; }", "fn f() { -; }", "fn f() { a orelse { return; }; }",
+	"fn f() { if }", "fn f() { if a }", "fn f() { if a {} else }", "fn f() { if a = b {} }", "fn f() { for }", "fn f() { for x in }",
+	"fn f() { for i, in x {} }", "fn f() { for a.b in x {} }", "fn f() { break l; }", "fn f() { match }", "fn f() { match x { }",
+	"fn f() { match x { A::B {} } }", "fn f() { match x { A::B => {}, _ => {} } }", "fn f() { match x { let } }",
+	"fn f() { match x { A::B with => {} } }", "fn f() { let .{ a = b, _, c } = v; }", "fn f() { let .{ } }", "fn f() { a = ; }",
+	"fn f() { let mut ; }", "fn f() { const c = 1; { } }",
 	"///", "/// x", "#", "#[", "#[a(", "#[a(1, ] fn f();", "const", "const a", "const a: = ;", "struct", "struct S {",
 	"struct S { a: }", "enum E { A: }", "iface I { fn", "iface I { fn (", "type", "type A =", "type A<T", "struct S {} struct",
 	"fn f() { let a: i32; }", "fn f() {\nstruct S {}", "/// doc\n#[a] let x = 1;",
@@ -768,6 +773,163 @@ func TestComparisonIsNotTypeArguments(t *testing.T) {
 		statement := tree.List(tree.Block(block).Statements)[0]
 		if got := tree.Nodes[tree.ExpressionStatement(statement).Expression].Kind; got != want {
 			t.Errorf("%s: %s, want %s", src, got, want)
+		}
+	}
+}
+
+func TestParseStatements(t *testing.T) {
+	src := `fn f() {
+    let mut n: i32 = 0;
+    let .{ x, y as z, _ } = point;
+    const limit = 10;
+    n = n + 1;
+    if n == 1 { } else if n == 2 { } else { }
+    for { break; }
+    for n < limit { continue; }
+    for item in items { }
+    for i, item in items[1..] { }
+    match shape {
+        Shape::Dot => { }
+        Shape::Line with .{ end } => { }
+        Shape::Maybe with none => { }
+        Shape::Wrap with Inner::Leaf with value => { }
+        _ => { }
+    }
+    { }
+}
+`
+	tree, errs := Parse(source.NewFile("t.peep", src))
+	if len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	want := `module
+  function declaration
+    declared name f
+    block
+      let statement mut
+        declared name n
+        type name i32
+        number literal 0
+      destructure statement
+        struct pattern
+          field pattern
+            field name x
+          field pattern
+            field name y
+            declared name z
+          rest pattern _
+        name reference point
+      const declaration
+        declared name limit
+        number literal 10
+      assign statement
+        name reference n
+        binary expression +
+          name reference n
+          number literal 1
+      if statement
+        binary expression ==
+          name reference n
+          number literal 1
+        block { }
+        if statement
+          binary expression ==
+            name reference n
+            number literal 2
+          block { }
+          block { }
+      loop statement
+        block
+          break statement break;
+      loop statement
+        binary expression <
+          name reference n
+          name reference limit
+        block
+          continue statement continue;
+      for in statement
+        declared name item
+        name reference items
+        block { }
+      for in statement
+        declared name i
+        declared name item
+        index expression
+          name reference items
+          range ..
+            number literal 1
+        block { }
+      match statement
+        name reference shape
+        match arm
+          case pattern
+            path
+              type name Shape
+              type name Dot
+          block { }
+        match arm
+          case pattern
+            path
+              type name Shape
+              type name Line
+            struct pattern
+              field pattern
+                field name end
+          block { }
+        match arm
+          case pattern
+            path
+              type name Shape
+              type name Maybe
+            none pattern none
+          block { }
+        match arm
+          case pattern
+            path
+              type name Shape
+              type name Wrap
+            case pattern
+              path
+                type name Inner
+                type name Leaf
+              declared name value
+          block { }
+        match arm
+          wildcard pattern _
+          block { }
+      block { }
+`
+	if got := dump(tree); got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestStatementErrors(t *testing.T) {
+	for _, test := range []struct{ src, message, fixed string }{
+		{"if a = b {}", "expected `==` in condition, found `=`", "if a == b {}"},
+		{"if a", "missing if body", ""},
+		{"if a {} else", "missing else body", ""},
+		{"for x in items", "missing for body", ""},
+		{"for a.b in x {}", "invalid loop variable", ""},
+		{"break outer;", "labeled break is not supported yet", ""},
+		{"match x { A::B {} }", "expected `=>` after match case", "match x { A::B => {} }"},
+		{"match x { A::B => {}, _ => {} }", "match arms do not use commas", "match x { A::B => {} _ => {} }"},
+		{"match x { a => {} }", "enum case must use a fully named path", ""},
+		{"match x { A::B with => {} }", "expected a pattern after `with`", ""},
+		{"let .{ a = b } = v;", "a destructure field is renamed with `as`", "let .{ a as b } = v;"},
+		{"let .{ _, a } = v;", "`_` must be the last destructure item", ""},
+	} {
+		src := "fn f() { " + test.src + " }"
+		_, errs := Parse(source.NewFile("t.peep", src))
+		if len(errs) != 1 || errs[0].Message != test.message {
+			t.Errorf("%q: errors %v, want %q", test.src, errs, test.message)
+			continue
+		}
+		if test.fixed != "" {
+			fix := errs[0].Notes[0].Fixes[0]
+			if got := src[:fix.Span.Start] + fix.NewText + src[fix.Span.End:]; got != "fn f() { "+test.fixed+" }" {
+				t.Errorf("%q: fix gives %q", test.src, got)
+			}
 		}
 	}
 }
