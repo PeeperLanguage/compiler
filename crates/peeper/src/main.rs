@@ -4,10 +4,8 @@ use std::io::{IsTerminal, Write};
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use diagnostics::Severity;
+use diagnostics::{Severity, printer};
 use source::SourceFile;
-
-mod printer;
 
 const USAGE: &str = "usage: peeper check file.peep";
 
@@ -40,7 +38,9 @@ fn check(path: &str, out: &mut impl Write, colored: bool) -> u8 {
     };
     let file = Arc::new(SourceFile::new(path, text));
     let (_, errors) = lexer::scan(&file);
-    if let Err(err) = printer::print(out, &errors, colored) {
+    let scan = |file: &Arc<SourceFile>| lexer::scan(file).0;
+    let highlight: Option<printer::TokensOf> = if colored { Some(&scan) } else { None };
+    if let Err(err) = printer::print(out, &errors, highlight) {
         eprintln!("peeper: cannot write diagnostics: {err}");
         return 1;
     }

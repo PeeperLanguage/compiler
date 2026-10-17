@@ -1,0 +1,13 @@
+[package]
+name = "literal"
+description = "Escapes and values of string and character literals"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+diagnostics.workspace = true
+
+[lints]
+workspace = true

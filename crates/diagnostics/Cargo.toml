@@ -1,6 +1,6 @@
 [package]
 name = "diagnostics"
-description = "Diagnostics and name suggestions"
+description = "Diagnostics, their terminal printer and name suggestions"
 version.workspace = true
 edition.workspace = true
 license-file.workspace = true
@@ -8,6 +8,9 @@ publish.workspace = true
 
 [dependencies]
 source.workspace = true
+token.workspace = true
+colors.workspace = true
+unicode-general-category.workspace = true
 
 [lints]
 workspace = true

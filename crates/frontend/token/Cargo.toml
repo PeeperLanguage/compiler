@@ -1,6 +1,6 @@
 [package]
-name = "lexer"
-description = "Turns Peeper source text into tokens"
+name = "token"
+description = "The tokens of Peeper source"
 version.workspace = true
 edition.workspace = true
 license-file.workspace = true
@@ -8,8 +8,6 @@ publish.workspace = true
 
 [dependencies]
 source.workspace = true
-diagnostics.workspace = true
-unicode-general-category.workspace = true
 
 [lints]
 workspace = true

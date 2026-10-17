@@ -1,7 +1,6 @@
 //! Writes diagnostics for a terminal: the header, each marked source line with
 //! the line above it, the notes, and the lines a fix changes as they read once
-//! it is applied. In color, source lines are highlighted from the lexer's
-//! tokens.
+//! it is applied. In color, source lines are highlighted from their tokens.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -9,37 +8,31 @@ use std::io::{self, Write};
 use std::ops::Range;
 use std::sync::Arc;
 
-use diagnostics::{Diagnostic, Fix, Severity};
-use lexer::token::{self, Token, TokenKind};
+use colors::{
+    BLUE, BOLD_CYAN, BOLD_RED, BOLD_YELLOW, CYAN, FIX_ADDED, GREEN, GREY, LIGHT_GREEN,
+    LIGHT_ORANGE, ORANGE, PURPLE, RED, RESET, WHITE, YELLOW,
+};
 use source::{SourceFile, Span};
+use token::{Token, TokenKind};
+
+use crate::{Diagnostic, Fix, Severity};
 use unicode_general_category::{GeneralCategory, get_general_category};
 
 const TAB_WIDTH: usize = 4;
 
-const RESET: &str = "\x1b[0m";
-const RED: &str = "\x1b[31m";
-const GREEN: &str = "\x1b[32m";
-const YELLOW: &str = "\x1b[33m";
-const BLUE: &str = "\x1b[34m";
-const CYAN: &str = "\x1b[36m";
-const WHITE: &str = "\x1b[37m";
-const GREY: &str = "\x1b[90m";
-const BOLD_RED: &str = "\x1b[1;31m";
-const BOLD_YELLOW: &str = "\x1b[1;33m";
-const BOLD_CYAN: &str = "\x1b[1;36m";
-const ORANGE: &str = "\x1b[38;5;208m";
-const PURPLE: &str = "\x1b[35m"; // keywords
-const LIGHT_GREEN: &str = "\x1b[38;5;120m"; // strings
-const LIGHT_ORANGE: &str = "\x1b[38;5;215m"; // numbers and characters
-// A dark letter on a mid-tone block of the same hue, readable on both dark
-// and light terminals.
-const FIX_ADDED: &str = "\x1b[38;5;22;48;5;114m";
+/// Returns the tokens of a file, to highlight its lines.
+pub type TokensOf<'a> = &'a dyn Fn(&Arc<SourceFile>) -> Vec<Token>;
 
 /// Writes `diagnostics`, ordered by the file and position of their primary
-/// place (those without a place first), then a summary line. `colored` adds
-/// terminal colors. A span outside its file's text is clamped, so printing
-/// never fails on a bad span.
-pub fn print(out: &mut impl Write, diagnostics: &[Diagnostic], colored: bool) -> io::Result<()> {
+/// place (those without a place first), then a summary line. With `colored`,
+/// output has terminal colors and source lines are highlighted from the tokens
+/// it returns for a file (the lexer's, read once per file). A span outside its
+/// file's text is clamped, so printing never fails on a bad span.
+pub fn print(
+    out: &mut impl Write,
+    diagnostics: &[Diagnostic],
+    colored: Option<TokensOf>,
+) -> io::Result<()> {
     let mut ordered: Vec<&Diagnostic> = diagnostics.iter().collect();
     ordered.sort_by(|a, b| match (a.labels.first(), b.labels.first()) {
         (Some(a), Some(b)) => (&a.file.name, a.span.start).cmp(&(&b.file.name, b.span.start)),
@@ -82,9 +75,9 @@ pub fn print(out: &mut impl Write, diagnostics: &[Diagnostic], colored: bool) ->
     out.write_all(p.out.as_bytes())
 }
 
-struct Printer {
+struct Printer<'a> {
     out: String,
-    colored: bool,
+    colored: Option<TokensOf<'a>>,
     width: usize, // digits of the largest line number shown
     tokens: HashMap<*const SourceFile, Vec<Token>>, // each shown file's tokens, read once, in color only
 }
@@ -111,9 +104,9 @@ struct Snippet<'a> {
     lines: Vec<MarkedLine<'a>>,
 }
 
-impl Printer {
+impl Printer<'_> {
     fn paint(&mut self, color: &str, text: impl std::fmt::Display) {
-        if self.colored {
+        if self.colored.is_some() {
             _ = write!(self.out, "{color}{text}{}", RESET);
         } else {
             _ = write!(self.out, "{text}");
@@ -239,14 +232,14 @@ impl Printer {
     /// Writes line `number` of `file`, highlighted in color.
     fn source_line(&mut self, file: &Arc<SourceFile>, number: usize) {
         let line = file.line_span(number);
-        if !self.colored {
+        let Some(scan) = self.colored else {
             self.cells(file.slice(line), 0, None);
             return;
-        }
+        };
         let tokens = self
             .tokens
             .entry(Arc::as_ptr(file))
-            .or_insert_with(|| lexer::scan(file).0);
+            .or_insert_with(|| scan(file));
         let pieces = highlight(file, tokens, line);
         let mut column = 0;
         for (range, color) in pieces {
@@ -562,4 +555,280 @@ fn cell_width(c: char, column: usize) -> usize {
 }
 
 #[cfg(test)]
-mod tests;
+mod tests {
+    use super::*;
+    use crate::Code;
+    use token::Token;
+
+    fn span(file: &SourceFile, text: &str) -> Span {
+        let start = file.text.find(text).unwrap();
+        Span::new(start, start + text.len())
+    }
+
+    fn render(diagnostics: &[Diagnostic]) -> String {
+        let mut out = Vec::new();
+        print(&mut out, diagnostics, None).unwrap();
+        String::from_utf8(out).unwrap()
+    }
+
+    fn no_tokens(_: &Arc<SourceFile>) -> Vec<Token> {
+        Vec::new()
+    }
+
+    fn code(id: &'static str, severity: Severity) -> Code {
+        Code { id, severity }
+    }
+
+    #[test]
+    fn two_files() {
+        let main = Arc::new(SourceFile::new(
+            "src/main.peep",
+            "fn main() -> i32 {\n    global::exit(0);\n}\n",
+        ));
+        let global = Arc::new(SourceFile::new(
+            "lib/global.peep",
+            "#[extern(\"exit\")]\nfn exit(code: i32);\n",
+        ));
+        let d = Diagnostic::new(
+            code("M0004", Severity::Error),
+            "`exit` is not exported from `global`",
+        )
+        .label(
+            &main,
+            span(&main, "global::exit"),
+            "use of unexported symbol",
+        )
+        .label(
+            &global,
+            {
+                let s = span(&global, "exit(");
+                Span::new(s.start as usize, s.end as usize - 1)
+            },
+            "defined here",
+        )
+        .note("symbols with uppercase are exported otherwise private");
+        let want = "[M0004]: `exit` is not exported from `global`
+  --> src/main.peep:2:5
+  | 
+1 | fn main() -> i32 {
+2 |     global::exit(0);
+  |     ^^^^^^^^^^^^ use of unexported symbol
+
+  --> lib/global.peep:2:4
+  | 
+1 | #[extern(\"exit\")]
+2 | fn exit(code: i32);
+  |    ---- defined here
+  | 
+  = note: symbols with uppercase are exported otherwise private
+
+Compilation failed with 1 error(s)
+";
+        assert_eq!(render(&[d]), want);
+    }
+
+    #[test]
+    fn help_with_fix() {
+        let file = Arc::new(SourceFile::new(
+            "a.peep",
+            "struct S {\n    value: i32,\n}\n",
+        ));
+        let comma = span(&file, ",");
+        let fix = Fix {
+            file: file.clone(),
+            span: comma,
+            new_text: String::new(),
+        };
+        let d = Diagnostic::new(
+            code("S0001", Severity::Info),
+            "trailing comma is unnecessary",
+        )
+        .label(&file, comma, "")
+        .help("remove this comma", vec![fix]);
+        let want = "[S0001]: trailing comma is unnecessary
+  --> a.peep:2:15
+  | 
+1 | struct S {
+2 |     value: i32,
+  |               ^
+  | 
+  = help: remove this comma
+  | 
+2 |     value: i32
+
+";
+        assert_eq!(render(&[d]), want);
+    }
+
+    #[test]
+    fn inserted_text_is_marked() {
+        let file = Arc::new(SourceFile::new("a.peep", "let a = 1\n"));
+        let at = Span::at(9);
+        let fix = Fix {
+            file: file.clone(),
+            span: at,
+            new_text: ";".into(),
+        };
+        let d = Diagnostic::new(code("P0002", Severity::Error), "expected `;`")
+            .label(&file, at, "")
+            .help("add missing `;`", vec![fix]);
+        let mut out = Vec::new();
+        print(&mut out, &[d], Some(&no_tokens)).unwrap();
+        let out = String::from_utf8(out).unwrap();
+        assert!(
+            out.contains("let a = 1\x1b[38;5;22;48;5;114m;\x1b[0m\n"),
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn order_and_summary() {
+        let file = Arc::new(SourceFile::new("a.peep", "a\nb\n"));
+        let late = Diagnostic::new(code("W0001", Severity::Warning), "late").label(
+            &file,
+            span(&file, "b"),
+            "",
+        );
+        let early = Diagnostic::new(code("L0001", Severity::Error), "early").label(
+            &file,
+            span(&file, "a"),
+            "",
+        );
+        let nowhere = Diagnostic::new(code("M0001", Severity::Error), "no place");
+        let got = render(&[late, early, nowhere]);
+        let mut last = 0;
+        for part in [
+            "[M0001]",
+            "[L0001]",
+            "[W0001]",
+            "Compilation failed with 2 error(s) and 1 warning(s)",
+        ] {
+            let at = got
+                .find(part)
+                .unwrap_or_else(|| panic!("{part} missing in:\n{got}"));
+            assert!(at >= last, "{part} out of order in:\n{got}");
+            last = at;
+        }
+    }
+
+    #[test]
+    fn span_over_lines_tabs_and_wide_characters() {
+        let file = Arc::new(SourceFile::new("a.peep", "\tlet 名 = (\r\n  1)\r\n"));
+        let start = file.text.find('名').unwrap();
+        let end = file.text.find(')').unwrap() + 1;
+        let d = Diagnostic::new(code("P0003", Severity::Error), "bad").label(
+            &file,
+            Span::new(start, end),
+            "here",
+        );
+        let want = "[P0003]: bad
+  --> a.peep:1:6
+  | 
+1 |     let 名 = (
+  |         ^^^^^^
+2 |   1)
+  | ^^^^ here
+
+Compilation failed with 1 error(s)
+";
+        assert_eq!(render(&[d]), want);
+    }
+
+    #[test]
+    fn never_fails_on_bad_spans() {
+        let file = Arc::new(SourceFile::new("a.peep", "x\n"));
+        let fix = Fix {
+            file: file.clone(),
+            span: Span::new(1, 99),
+            new_text: "y".into(),
+        };
+        let d = Diagnostic::new(code("L0001", Severity::Error), "outside")
+            .label(&file, Span::new(40, 2), "")
+            .help("broken fix is not drawn", vec![fix]);
+        let got = render(&[d]);
+        assert!(
+            got.contains("[L0001]: outside") && got.contains("= help: broken fix is not drawn"),
+            "{got}"
+        );
+    }
+
+    #[test]
+    fn color() {
+        let file = Arc::new(SourceFile::new("a.peep", "x\n"));
+        let d = Diagnostic::new(code("W0001", Severity::Warning), "w").label(
+            &file,
+            span(&file, "x"),
+            "",
+        );
+        let mut out = Vec::new();
+        print(&mut out, &[d], Some(&no_tokens)).unwrap();
+        let out = String::from_utf8(out).unwrap();
+        assert!(out.contains("\x1b[1;33m[W0001]\x1b[0m"), "{out:?}");
+    }
+
+    #[test]
+    fn source_lines_are_highlighted_in_color() {
+        let text = "fn main() {\n    let s = \"x\" + 1; // note\n}\n";
+        let file = Arc::new(SourceFile::new("a.peep", text));
+        let d = Diagnostic::new(code("P0003", Severity::Error), "bad").label(
+            &file,
+            span(&file, "+"),
+            "",
+        );
+        // The lexer's tokens of `text`, comment left out as the lexer leaves it.
+        let tokens = |file: &Arc<SourceFile>| {
+            use token::TokenKind as K;
+            let mut at = 0;
+            let parts = [
+                ("fn", K::Fn),
+                ("main", K::Ident),
+                ("(", K::LeftParen),
+                (")", K::RightParen),
+                ("{", K::LeftBrace),
+                ("let", K::Let),
+                ("s", K::Ident),
+                ("=", K::Assign),
+                ("\"x\"", K::String),
+                ("+", K::Plus),
+                ("1", K::Number),
+                (";", K::Semicolon),
+                ("}", K::RightBrace),
+            ];
+            let mut tokens: Vec<Token> = parts
+                .iter()
+                .map(|&(part, kind)| {
+                    let start = at + file.text[at..].find(part).unwrap();
+                    at = start + part.len();
+                    Token {
+                        kind,
+                        span: Span::new(start, at),
+                    }
+                })
+                .collect();
+            tokens.push(Token {
+                kind: K::Eof,
+                span: Span::at(file.text.len()),
+            });
+            tokens
+        };
+        let mut out = Vec::new();
+        print(&mut out, &[d], Some(&tokens)).unwrap();
+        let out = String::from_utf8(out).unwrap();
+        let line = "    \x1b[35mlet\x1b[0m s = \x1b[38;5;120m\"x\"\x1b[0m + \x1b[38;5;215m1\x1b[0m; \x1b[90m// note\x1b[0m\n";
+        assert!(out.contains(line), "{out:?}");
+        assert!(
+            out.contains("\x1b[35mfn\x1b[0m main() {\n"),
+            "context line: {out:?}"
+        );
+        assert!(
+            !render(&[
+                Diagnostic::new(code("P0003", Severity::Error), "bad").label(
+                    &file,
+                    span(&file, "+"),
+                    ""
+                )
+            ])
+            .contains('\x1b')
+        );
+    }
+}

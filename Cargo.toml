@@ -1,5 +1,11 @@
 [workspace]
-members = ["crates/*"]
+members = [
+    "crates/source",
+    "crates/diagnostics",
+    "crates/frontend/*",
+    "crates/pkg/*",
+    "crates/peeper",
+]
 resolver = "3"
 
 [workspace.package]
@@ -11,7 +17,11 @@ publish = false
 [workspace.dependencies]
 source = { path = "crates/source" }
 diagnostics = { path = "crates/diagnostics" }
-lexer = { path = "crates/lexer" }
+token = { path = "crates/frontend/token" }
+literal = { path = "crates/frontend/literal" }
+lexer = { path = "crates/frontend/lexer" }
+numeric = { path = "crates/pkg/numeric" }
+colors = { path = "crates/pkg/colors" }
 unicode-general-category = "1.1.0"
 
 [workspace.lints.rust]

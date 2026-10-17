@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use source::{SourceFile, Span};
 
+pub mod printer;
 pub mod suggest;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]

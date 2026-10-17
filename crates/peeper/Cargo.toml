@@ -10,7 +10,6 @@ publish.workspace = true
 source.workspace = true
 diagnostics.workspace = true
 lexer.workspace = true
-unicode-general-category.workspace = true
 
 [lints]
 workspace = true
