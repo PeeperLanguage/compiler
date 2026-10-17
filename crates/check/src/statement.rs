@@ -124,12 +124,26 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
     }
 
     /// Declares the name written at `span` in the current block. It may
-    /// shadow a parameter or an earlier local of the same name, in this block
-    /// or an outer one, until the block ends.
+    /// shadow a name of an outer block until the block ends. A name the block
+    /// already declares is reported and keeps its first meaning; the
+    /// parameters are in the body's outermost block, as in Go.
     fn declare(&mut self, span: Span, named: Named) {
         let name = self.tree.file.slice(span);
         if name.is_empty() || name == "_" {
             return; // missing after a syntax error, or not a name
+        }
+        let block = &self.names[self.block_start..];
+        if let Some(&(_, first, _)) = block.iter().find(|(declared, ..)| *declared == name) {
+            let file = &self.tree.file;
+            self.checker.diagnostics.push(
+                Diagnostic::new(
+                    diagnostics::ALREADY_DECLARED,
+                    format!("`{name}` is already declared in this block"),
+                )
+                .label(file, span, "declared again here")
+                .label(file, first, "first declared here"),
+            );
+            return;
         }
         self.names.push((name, span, named));
     }
@@ -501,27 +515,54 @@ mod tests {
     fn names_shadow_until_their_block_ends() {
         let (bodies, reported) = bodies(
             "fn f(x: i32) {
-                let x = x + 1;
-                let y = x;
+                { let x = x + 1; let y = x; }
                 { let x = true; let z = x; }
                 let w = x;
-                const x = 2u8;
-                let v = x;
+                { const x = 2u8; let v = x; }
             }",
         );
         assert!(reported.is_empty(), "{reported:?}");
         assert_eq!(
             bodies,
-            ["    let x.1 = (x.0 Add 1:i32)
-    let y.2 = x.1
+            ["    {
+        let x.1 = (x.0 Add 1:i32)
+        let y.2 = x.1
+    }
     {
         let x.3 = true
         let z.4 = x.3
     }
-    let w.5 = x.1
-    let v.6 = 2:u8
+    let w.5 = x.0
+    {
+        let v.6 = 2:u8
+    }
 "]
         );
+    }
+
+    /// A block declares each name once; the parameters are in the body's
+    /// outermost block. The first declaration keeps the name.
+    #[test]
+    fn a_block_declares_a_name_once() {
+        let (shown, found) = bodies(
+            "fn f(a: i32, a: i64) {
+                let b = 1;
+                let b = true;
+                const C = 1;
+                let C = 2;
+                let a = 3;
+                let c: i32 = b;
+            }",
+        );
+        let again = "is already declared in this block";
+        let expected = reported(&[
+            ("T0003", &format!("`a` {again}"), "a"),
+            ("T0003", &format!("`b` {again}"), "b"),
+            ("T0003", &format!("`C` {again}"), "C"),
+            ("T0003", &format!("`a` {again}"), "a"),
+        ]);
+        assert_eq!(found, expected);
+        assert!(shown.is_empty(), "{shown:?}");
     }
 
     #[test]
@@ -575,7 +616,7 @@ mod tests {
                 let j = missing;
                 let k = utils;
                 let l = helper;
-                let m = 1; let m = 2;
+                let m = 1;
                 m = 3;
                 let w = m(1);
                 let y = utils::Nope;

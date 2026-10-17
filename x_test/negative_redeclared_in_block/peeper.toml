@@ -1,0 +1,7 @@
+name = "negative_redeclared_in_block"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["[T0003]: `total` is already declared in this block", "declared again here", "first declared here", "[T0003]: `limit` is already declared in this block", "[T0003]: `Size` is already declared in this block", "[T0003]: `inner` is already declared in this block", "[T0003]: `value` is already declared in this block", "Compilation failed with 5 error(s)"]

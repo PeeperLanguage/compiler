@@ -329,9 +329,12 @@ the owner, 2026-10-17).
 
 The checker warns (W0018) at an inner block's `let` that hides an outer `mut`
 local: the `let` was likely meant as an assignment, and the outer local is
-unchanged. Shadowing is otherwise silent
-(decided by the owner). It lives in the checker, which knows the blocks; MIR
-has no scopes.
+unchanged. Shadowing an outer block's name is otherwise silent (decided by the
+owner). A block declares each name once: a `let`, body `const` or parameter
+reusing a name of its own block is T0003, and the first keeps the name. The
+parameters are in the body's outermost block, as in Go, so a `let` there
+cannot reuse one; named results can join that block later (owner, 2026-10-18).
+These live in the checker, which knows the blocks; MIR has no scopes.
 
 `peeper -dump [thir | mir] <path>` writes the THIR and MIR of every function
 of a program without errors, or only the kind named, one file per module under

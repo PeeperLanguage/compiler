@@ -1,0 +1,32 @@
+// A block declares each name once. The parameters are in the body's
+// outermost block, so a `let` there cannot reuse a parameter's name.
+
+fn SameBlock() -> i32 {
+    let mut total = 0;
+    let total = total + 1;
+    return total;
+}
+
+fn ParameterAgain(mut limit: i32) -> i32 {
+    let limit = limit + 1;
+    return limit;
+}
+
+fn ConstantAgain() -> u8 {
+    const Size: u8 = 1;
+    let Size: u8 = 2;
+    return Size;
+}
+
+fn InnerBlockAgain(ready: bool) -> i32 {
+    if ready {
+        let inner = 1;
+        let inner = 2;
+        return inner;
+    }
+    return 0;
+}
+
+fn ParametersTwice(value: i32, value: i64) -> i32 {
+    return value;
+}
