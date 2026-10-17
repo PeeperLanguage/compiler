@@ -68,6 +68,7 @@ pub const CONSTANT_REASSIGNMENT: Code = error("T0018");
 pub const NOT_A_TYPE: Code = error("T0021");
 pub const USED_BEFORE_SET: Code = error("T0039");
 pub const NOT_SUPPORTED_YET: Code = error("T0043");
+pub const UNREACHABLE_CODE: Code = warning("W0001");
 pub const HIDDEN_MUTABLE: Code = warning("W0018");
 pub const REDUNDANT_PRELUDE_IMPORT: Code = Code {
     id: "S0004",

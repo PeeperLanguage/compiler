@@ -21,7 +21,7 @@ fn add:
 fn note:
   bb0:
     store value.0, arg0
-    return
+    fall off at `}`
 fn main:
   bb0:
-    return
+    fall off at `}`

@@ -155,12 +155,13 @@ impl<'p> Build<'p> {
         };
         let tree = &self.program.modules[definition.module as usize].syntax;
         let span = tree.blocks.span(function.body?);
-        let mir = lower::lower(&body, parameters.len(), *result, span)?;
+        let mir = lower::lower(&body, parameters.len(), span)?;
         // Only a `let` without a value can be unset or assigned twice.
         let late = |index| body.locals[Id::from_index(index)].declared_without_value;
         if (0..body.locals.len()).any(late) {
             lower::path_checks::initialization(&mir, &tree.file, &mut self.diagnostics);
         }
+        lower::path_checks::unreachable_code(&mir, &tree.file, &mut self.diagnostics);
         if let Some(error) =
             lower::path_checks::missing_return(&mir, &tree.file, &self.types, *result)
         {

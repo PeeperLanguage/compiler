@@ -33,9 +33,9 @@ fn quiet:
   bb1:
     return
   bb2:
-    return
+    fall off at `}`
   bb3:
     goto bb2
 fn main:
   bb0:
-    return
+    fall off at `}`

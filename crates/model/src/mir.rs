@@ -99,8 +99,10 @@ pub enum Terminator {
         value: Option<Operand>,
         span: Span,
     },
-    /// The end of a function with a result, at its closing brace, reached
-    /// without a `return`.
+    /// The end of the function, at its closing brace, reached without a
+    /// `return`: a function without a result returns there, and one with a
+    /// result is missing a `return` (`path_checks::missing_return`). Every
+    /// `Return` is a written `return`.
     FallOff(Span),
 }
 

@@ -1,0 +1,58 @@
+// Code that no path reaches warns once, at the start of each stretch.
+
+fn Work() {}
+
+fn AfterReturn() -> i32 {
+    return 1;
+    let unused = 2;
+    Work();
+    return unused;
+}
+
+fn AfterBothSides(ready: bool) -> i32 {
+    if ready {
+        return 1;
+    } else {
+        return 2;
+    }
+    Work();
+    return 3;
+}
+
+fn InEachSide(ready: bool) {
+    if ready {
+        return;
+        Work();
+    } else {
+        return;
+        let later = 1;
+    }
+    Work();
+}
+
+fn DeadBranch(ready: bool) {
+    return;
+    if ready {
+        Work();
+    }
+}
+
+// Silent: every line here can run, or is only skipped by a constant.
+
+fn ReturnLast() {
+    Work();
+    return;
+}
+
+fn ReturnInside(ready: bool) -> i32 {
+    if ready {
+        return 1;
+    }
+    return 2;
+}
+
+fn ConstantCondition() {
+    if false {
+        Work();
+    }
+}

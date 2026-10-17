@@ -245,8 +245,9 @@ and debuggers; the logic lives in a `lower` crate, the data in `model::mir`.
   instruction keeps the span of the expression it came from: LLVM's `!dbg`
   line, and where an error points.
 - **Terminators.** Each block ends in one: `br` (goto), `condbr` (with the span
-  of its condition), `ret`, or `fall off` at the closing `}` of a function with
-  a result (the missing-return check reports it when it is reachable; LLVM gets
+  of its condition), `ret` for a written `return`, or `fall off` at the closing
+  `}` of every function (LLVM gets `ret void` without a result; with one, the
+  missing-return check reports it when it is reachable, and LLVM gets
   `unreachable`). `&&` and `||` lower to `condbr` and a `phi` where both paths
   meet, as clang does.
 - **Single assignment by construction.** An instruction's value is written once
@@ -290,6 +291,14 @@ that may already be set is T0007 ("cannot assign twice to immutable `x`"). So
 assignments to a variable without `mut` only when its `let` has a value. Only a
 `let` without a value can be unset, so the check is skipped for a function
 that has none (decided by the owner, 2026-10-17).
+
+The unreachable-code check (W0001, `lower::path_checks::unreachable_code`)
+warns once at the first code of each stretch of blocks no path reaches, such
+as code after a `return` ("this never runs"); the blocks that stretch leads to
+are not warned about again. Reachability ignores constant values, as for the
+missing-return check, and there is no warning that a condition is always true
+or false: `if DEBUG` with a constant is how code is switched off (decided by
+the owner, 2026-10-17).
 
 The checker warns (W0018) at an inner block's `let` that hides an outer `mut`
 local: the `let` was likely meant as an assignment, and the outer local is

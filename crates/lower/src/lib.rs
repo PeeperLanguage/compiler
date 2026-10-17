@@ -15,16 +15,10 @@ use model::types::TypeId;
 use model::value::Value;
 use source::Span;
 
-/// The MIR of a function's checked body, which has `parameters` parameters,
-/// gives a `result` and is written at `span`, braces included. `None` when an
-/// error left the body incomplete: what it reported is all there is to say
-/// about it.
-pub fn lower(
-    body: &thir::Body,
-    parameters: usize,
-    result: TypeId,
-    span: Span,
-) -> Option<mir::Body> {
+/// The MIR of a function's checked body, which has `parameters` parameters
+/// and is written at `span`, braces included. `None` when an error left the
+/// body incomplete: what it reported is all there is to say about it.
+pub fn lower(body: &thir::Body, parameters: usize, span: Span) -> Option<mir::Body> {
     let mut lowering = Lowering {
         thir: body,
         mir: mir::Body {
@@ -63,13 +57,7 @@ pub fn lower(
     }
     lowering.statements(body.statements)?;
     let end = Span::new(span.end as usize - 1, span.end as usize); // the `}`
-    lowering.finish(match result {
-        TypeId::VOID => mir::Terminator::Return {
-            value: None,
-            span: end,
-        },
-        _ => mir::Terminator::FallOff(end),
-    });
+    lowering.finish(mir::Terminator::FallOff(end));
     Some(lowering.mir)
 }
 

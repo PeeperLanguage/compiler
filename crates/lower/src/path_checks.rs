@@ -11,6 +11,8 @@
 //! - `initialization` (T0039 and T0007): a variable used where some path left
 //!   it unset, and a variable without `mut` assigned where some path already
 //!   set it. This is what lets `let x: i32;` be set once later.
+//! - `unreachable_code` (W0001, a warning): code no path reaches, such as code
+//!   after a `return`.
 //!
 //! How they work: they only read the graph. A block's terminator gives the
 //! edges out of it (`Terminator::targets`); a check that needs the edges in
@@ -30,9 +32,11 @@
 //!   still has two sides, as in Go and Rust, so whether code compiles never
 //!   depends on a constant's value; a label only says which side the constant
 //!   takes.
-//! - No reports from blocks that cannot be reached, such as code after a
-//!   `return`. Warning about such code, and about conditions that are always
-//!   true or false, is planned (W0001 to W0003).
+//! - No errors from blocks that cannot be reached: `unreachable_code` warns
+//!   about them once, and the other checks skip them.
+//! - No warning that a condition is always true or false: `if DEBUG` with a
+//!   constant `DEBUG` is how code is switched on and off, and Go, Rust and Zig
+//!   do not warn there either (decided by the owner, 2026-10-17).
 //! - No building of the MIR: `lower` in lib.rs does that, and these checks run
 //!   after it, called by the scheduler (`build`).
 
@@ -65,6 +69,9 @@ pub fn missing_return(
     types: &Types,
     result: TypeId,
 ) -> Option<Diagnostic> {
+    if result == TypeId::VOID {
+        return None; // such a function returns at its closing brace
+    }
     let block_ids = || (0..body.blocks.len()).map(Id::<mir::Block>::from_index);
     let (end, end_span) = block_ids().find_map(|block| match body.blocks[block].terminator {
         mir::Terminator::FallOff(span) => Some((block, span)),
@@ -255,6 +262,61 @@ pub fn initialization(body: &mir::Body, file: &Arc<SourceFile>, diagnostics: &mu
 
 /// One bit per variable.
 type Bits = Vec<u64>;
+
+/// Warns once at the first code of each stretch that no path reaches, such as
+/// code after a `return`; what that stretch leads to is not warned about
+/// again. Code is an instruction, a `return` or a branch; a jump between
+/// blocks or the closing brace is not.
+pub fn unreachable_code(
+    body: &mir::Body,
+    file: &Arc<SourceFile>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let mut seen = reachable(body);
+    // (the first code written, its block) of each block not reached.
+    let mut starts: Vec<(Span, Id<mir::Block>)> = (0..body.blocks.len())
+        .filter(|&index| !seen[index])
+        .filter_map(|index| {
+            let block = Id::<mir::Block>::from_index(index);
+            let mir::Block {
+                instructions,
+                ref terminator,
+            } = body.blocks[block];
+            let terminator = match *terminator {
+                mir::Terminator::Return { span, .. } | mir::Terminator::Branch { span, .. } => {
+                    Some(span)
+                }
+                mir::Terminator::Goto(_) | mir::Terminator::FallOff(_) => None,
+            };
+            let spans = body.lists.items(instructions);
+            let spans = spans.map(|instruction| body.instructions.span(instruction));
+            // The earliest, and of those the widest: the whole statement.
+            let first = spans
+                .chain(terminator)
+                .min_by_key(|span| (span.start, std::cmp::Reverse(span.end)))?;
+            Some((first, block))
+        })
+        .collect();
+    starts.sort_by_key(|&(span, _)| span.start);
+    for (span, block) in starts {
+        if seen[block.index()] {
+            continue; // follows code already warned about
+        }
+        diagnostics.push(
+            Diagnostic::new(diagnostics::UNREACHABLE_CODE, "unreachable code").label(
+                file,
+                span,
+                "this never runs",
+            ),
+        );
+        let mut pending = vec![block];
+        while let Some(block) = pending.pop() {
+            if !std::mem::replace(&mut seen[block.index()], true) {
+                pending.extend(body.blocks[block].terminator.targets());
+            }
+        }
+    }
+}
 
 /// The error for `variable`, used at `span` where it is not set on every path
 /// to there; `on_some_path` when some path did set it.

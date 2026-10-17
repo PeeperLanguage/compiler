@@ -21,4 +21,4 @@ fn both:
     fall off at `}`
 fn main:
   bb0:
-    return
+    fall off at `}`
