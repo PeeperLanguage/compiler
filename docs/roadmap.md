@@ -82,6 +82,8 @@ re-parses only it.
 
 ## M4 Check
 
+> Superseded by [`ir-design.md`](ir-design.md) (proposal, 2026-10-17): check builds THIR per declaration, on demand, instead of tables per module.
+
 Goal: names, types, constants in one pass per module; results in tables.
 
 - `types` (type model), `check` (declarations then bodies, result tables, module
@@ -93,6 +95,8 @@ Goal: names, types, constants in one pass per module; results in tables.
 Exit: the old fixtures' type errors (text and position) reproduced; race-free.
 
 ## M5 MIR and flow checks
+
+> Superseded by [`ir-design.md`](ir-design.md) (proposal, 2026-10-17): MIR is lowered from THIR; flow checks are dataflow over its graph.
 
 Goal: one control-flow graph per function; all flow checks on it.
 

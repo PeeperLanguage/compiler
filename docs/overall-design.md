@@ -20,6 +20,8 @@ importers run again, even if its function bodies changed.
 
 ## 1. Pipeline
 
+> Superseded by [`ir-design.md`](ir-design.md) (proposal, 2026-10-17): check builds a THIR per body; there is a `thir` crate and no check tables over the AST.
+
 ```mermaid
 flowchart LR
     src["source files"] --> load
@@ -195,6 +197,8 @@ sequenceDiagram
 
 ## 7. Data and ownership
 
+> Superseded by [`ir-design.md`](ir-design.md) (proposal, 2026-10-17): check results live in THIR bodies and signatures in `ir`, not in tables over the AST.
+
 ```mermaid
 classDiagram
     class Module {
@@ -232,6 +236,8 @@ classDiagram
   nothing else.
 
 ## 8. Packages
+
+> Superseded by [`ir-design.md`](ir-design.md) (proposal, 2026-10-17): crates are `ir`, `thir`, `mir`, `llvm`, `build` as listed there.
 
 ```mermaid
 flowchart TD

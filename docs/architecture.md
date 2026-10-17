@@ -147,6 +147,8 @@ module's own syntax and the results of its imports) are the same values.
 
 ## Later phases (contract only)
 
+> Superseded by [`ir-design.md`](ir-design.md) (proposal, 2026-10-17): check builds THIR per declaration, scheduled on demand inside a module, not phase by phase per module.
+
 Each later phase is a function: `(this module's earlier results, imported modules'
 finished results) -> new immutable result + diagnostics`. The scheduler runs a
 module's phase once the results it needs from its imports exist. A phase never

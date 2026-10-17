@@ -1,0 +1,198 @@
+# Semantic design: check, THIR, MIR, LLVM
+
+Status: PROPOSAL. Decided by the owner (2026-10-17): the points marked
+**decided**. Open points are listed at the end.
+
+This replaces two statements in older documents: `overall-design.md` (no `thir`
+package; check writes tables over the AST) and the "Later phases" contract in
+`architecture.md` (work scheduled per module, phase by phase).
+
+## Goals
+
+1. Constant evaluation now, compile-time code (comptime) later.
+2. As few walks over each function body as possible.
+3. One owner per fact: a fact computed once, stored once, read by everyone.
+
+## What other compilers do
+
+| Compiler | Constants | Compile-time code | Walks per body |
+|---|---|---|---|
+| Go (types2) | folded while type checking, exact values | none | check, IR, SSA |
+| Odin | folded in the checker | none | check, LLVM |
+| Zig | folded by Sema while it types | Sema runs comptime code in the same walk | AST to ZIR, ZIR to AIR, AIR to code |
+| Rust | Miri interprets MIR | `const fn` runs on the callee's MIR, built on demand | HIR, typeck, THIR, MIR, LLVM |
+
+Two lessons decide the shape. Folding constants inside the type-checking walk
+costs nothing extra (Go, Odin, Zig). Running user code at compile time needs the
+called function ready to run while its caller is being checked, so work must be
+scheduled per declaration, on demand (Zig, Rust), not module by module.
+
+## Decisions
+
+- **decided** IRs: THIR (typed tree per body), MIR (control-flow graph per
+  function), LLVM IR.
+- **decided** Check builds THIR in one walk: names, types and constants
+  together. There are no side tables over the AST.
+- **decided** Simple constants are folded during that walk. Comptime, when it
+  comes, runs in a MIR interpreter (Rust style). Both use the same value
+  arithmetic in `ir`; see "Constant evaluation" for where each one stops.
+- **decided** Scheduling is per declaration, on demand.
+- **decided** LLVM IR is written as text and compiled by clang.
+- **decided** A shared `ir` crate owns the type model, definition ids, constant
+  values with their arithmetic, and operator kinds. THIR and MIR keep their own
+  node types: a tree and a graph have different shapes.
+- **decided** Order: this design first, then a thin program end to end, then one
+  feature at a time through every layer.
+
+## Pipeline and walks
+
+```
+project ──► modules (AST)            1 parse per file
+              │
+check ────────┤ per declaration:     signature: walk its header once
+              │                      body: 1 walk, AST -> THIR (+ constants)
+              ▼
+mir ──────────┤ per function:        1 walk, THIR -> MIR
+              │                      flow checks: dataflow over the graph
+              ▼                      (init, move, borrow, return) in one pass where they agree
+llvm ─────────┘ per module:          1 walk over each function's MIR -> .ll text -> clang
+```
+
+A body is walked by three single passes (build THIR, build MIR, emit LLVM) and
+by the flow checks. The flow checks are dataflow: they visit the blocks until
+nothing changes, which in reverse postorder is two or three rounds for the
+usual graph, more for deep loop nests. Constants and comptime add no walk of
+their own: constants fold during the THIR walk; a comptime call interprets MIR
+that is built once and kept.
+
+## Crates
+
+```
+peeper ─► build ─► project ─► parser ─► ast ─► arena
+            │
+            ├─► thir ─► ir, ast, arena   check: AST -> THIR and signatures; folding
+            ├─► mir ──► ir, thir, arena  THIR -> MIR; flow checks; (later) interpreter
+            └─► llvm ─► ir, mir          MIR -> LLVM text; clang
+```
+
+Only `mir` reads THIR. `llvm` and the interpreter need struct fields, enum
+variants and function types for layout and values; those are signatures, and
+signatures are `ir` data, written by check.
+
+| crate | owns |
+|---|---|
+| `ir` | `TypeId` and the type interner; `DefId`; signatures (fields, variants, parameters, results); constant values and their arithmetic; `BinaryOp`, `UnaryOp` |
+| `thir` | THIR node types; the checker that builds THIR and writes signatures |
+| `mir` | MIR node types; lowering from THIR; flow checks; later the interpreter |
+| `llvm` | LLVM text for a module; running clang and the linker |
+| `build` | the scheduler: memo tables, demand order, worker threads (the `build` of `overall-design.md`) |
+
+The typed arenas `Arena`, `Id` and `List` now in `ast` are needed by THIR and MIR
+as well. They move to one small crate (`pkg/arena`) that all three use, instead
+of being written again. The `Node` trait moves with them, generic over the
+container that holds the arenas (`trait Node { type Container; fn arena(c: &mut
+Self::Container) -> &mut Arena<Self>; }`), and so does the `nodes!` macro, which
+takes the container's name (`nodes!(Tree; Expr => exprs, ...)`). The AST tree,
+a THIR body and a MIR body each list their arenas once with it.
+
+## The `ir` crate
+
+- **Types.** `TypeId(u32)` names an interned type: integers and floats by width
+  and sign, `bool`, `char`, strings, references, pointers, optionals, arrays,
+  slices, function types, and nominal types (struct, enum, interface) by their
+  `DefId`. A nominal type's fields or variants are not in the type; they are in
+  its declaration's signature, written once by check. Equal types have equal ids,
+  so comparing types is comparing two numbers. Primitive types have fixed ids and
+  need no lookup.
+- **Signatures.** What check learns from a declaration's header: a function's
+  parameter and result types, a struct's fields, an enum's variants and payloads,
+  an interface's methods. Written once per declaration by check; read by check
+  itself, by MIR lowering, by LLVM layout and by the interpreter.
+- **Definition ids.** `DefId { module, index }`: the module's place in the
+  program's order and the declaration's index in its tree. Memo tables are
+  vectors indexed by it: no hashing on the hot path.
+- **Constants.** A constant value is an integer (wide enough for `u128` and
+  negative values), a float, `bool`, `char`, string bytes, or an aggregate (struct
+  fields, enum variant and payload, array elements). Arithmetic takes the result
+  type and reports overflow and division by zero; the same functions serve the
+  checker's folding and the future interpreter.
+- **Operators.** `BinaryOp` and `UnaryOp`, mapped once from tokens by check;
+  THIR, MIR, the interpreter and LLVM read them.
+
+## Constant evaluation
+
+One owner for the meaning of every operation: `ir`'s value functions (add,
+compare, cast, build an aggregate, read a field). Two drivers call them, each for
+what the other cannot do:
+
+- **Check folds** literals, operators, casts, struct and enum literals, field
+  reads and references to other constants, while it builds THIR. A `const`
+  declaration's value comes from this today.
+- **The interpreter** (later) runs what folding cannot: calls and control flow,
+  over MIR. Once comptime exists, a `const` whose value needs a call is handed to
+  it; everything else still folds in check.
+
+Neither driver implements an operation itself, so the two cannot disagree.
+
+## Scheduling per declaration
+
+```
+signature(d)   header of d: parameter and result types, fields, variants
+const_value(d) the value of constant d (needs signature(d), folds its THIR)
+body(d)        THIR of function d (needs the signatures it calls)
+mir(d)         MIR of function d (needs body(d)); later also comptime calls
+```
+
+- Each query's result is written once and never changed. A table per module and
+  per query, indexed by declaration, holds it.
+- A query asked for while it is running is a cycle (`const A = B; const B = A;`)
+  and is reported once, at the declaration that closes it.
+- The model is a hybrid. Across modules: the program's order, so imported
+  declarations are always ready (import cycles are already errors), and
+  independent modules run on separate threads. Inside a module: on demand, in the
+  order declarations ask for each other. This replaces the per-module phase
+  contract of `architecture.md`.
+- Every declaration is checked, used or not, so errors in unused code are still
+  reported (unlike Zig).
+- Comptime later: check asks `mir(f)` and runs it in the interpreter. The checker
+  reaches `mir` through the scheduler, never by depending on the `mir` crate.
+
+## THIR
+
+One per function body, in arenas like the AST. Every expression has a `TypeId`
+and a span; every name is resolved to a local or a `DefId`; an expression whose
+value is known at compile time is a constant node holding its value, and keeps
+its span for messages. Implicit steps the source leaves out (an implicit
+conversion, an auto reference) are explicit nodes.
+
+## MIR
+
+One graph per function: locals with their types, basic blocks of statements
+(`place = value`) ending in a terminator (goto, branch, switch, call, return).
+Flow checks are dataflow passes over the blocks that share one fixed-point
+helper. LLVM emission and the future interpreter both read MIR; nothing below MIR
+reads THIR.
+
+## Cost on the hot path
+
+- Type equality: one integer comparison. Building a type: one interner lookup,
+  none for primitives.
+- Memo tables: one vector index per query.
+- Constants: folded where they are met; no separate evaluation pass.
+- Interner shared by threads: one lock; measure before changing.
+
+## Decided after review (2026-10-17)
+
+- **decided** Untyped constants: typed at once. A literal without a suffix takes
+  the type its context expects (`i32`, `f64` by default) and is checked to fit.
+- **decided** Generics: checked per instance, remembered by (`DefId`, type
+  arguments) so each instance is checked once. Revisit if bounds enter the
+  language.
+- **decided** Interner: one lock, primitives at fixed ids with no lookup. Change
+  only if a large-project benchmark shows contention.
+
+## Open decisions
+
+1. **Disk cache.** `TypeId` is not stable between runs, so a cached module
+   interface stores types by structure. Decide with the cache (roadmap M3);
+   nothing in this design blocks it.
