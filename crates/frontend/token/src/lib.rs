@@ -77,16 +77,12 @@ pub enum TokenKind {
     Struct,
     Iface,
     Enum,
-    Union,
-    Error,
     Fn,
-    Test,
     Let,
     If,
     Else,
     Match,
     For,
-    While,
     Break,
     Continue,
     Return,
@@ -100,18 +96,10 @@ pub enum TokenKind {
     In,
     With,
     Mut,
-    Atomic,
-    Comptime,
-    Lock,
-    Defer,
-    Panic,
-    Release,
-    Catch,
     Orelse,
     None,
     True,
     False,
-    Unsafe,
 }
 
 impl TokenKind {
@@ -182,16 +170,12 @@ impl TokenKind {
             TokenKind::Struct => "struct",
             TokenKind::Iface => "iface",
             TokenKind::Enum => "enum",
-            TokenKind::Union => "union",
-            TokenKind::Error => "error",
             TokenKind::Fn => "function",
-            TokenKind::Test => "test",
             TokenKind::Let => "let",
             TokenKind::If => "if",
             TokenKind::Else => "else",
             TokenKind::Match => "match",
             TokenKind::For => "for",
-            TokenKind::While => "while",
             TokenKind::Break => "break",
             TokenKind::Continue => "continue",
             TokenKind::Return => "return",
@@ -205,18 +189,10 @@ impl TokenKind {
             TokenKind::In => "in",
             TokenKind::With => "with",
             TokenKind::Mut => "mut",
-            TokenKind::Atomic => "atomic",
-            TokenKind::Comptime => "comptime",
-            TokenKind::Lock => "lock",
-            TokenKind::Defer => "defer",
-            TokenKind::Panic => "panic",
-            TokenKind::Release => "release",
-            TokenKind::Catch => "catch",
             TokenKind::Orelse => "orelse",
             TokenKind::None => "none",
             TokenKind::True => "true",
             TokenKind::False => "false",
-            TokenKind::Unsafe => "unsafe",
         }
     }
 
@@ -280,16 +256,12 @@ impl TokenKind {
             TokenKind::Struct => "struct",
             TokenKind::Iface => "iface",
             TokenKind::Enum => "enum",
-            TokenKind::Union => "union",
-            TokenKind::Error => "error",
             TokenKind::Fn => "fn",
-            TokenKind::Test => "test",
             TokenKind::Let => "let",
             TokenKind::If => "if",
             TokenKind::Else => "else",
             TokenKind::Match => "match",
             TokenKind::For => "for",
-            TokenKind::While => "while",
             TokenKind::Break => "break",
             TokenKind::Continue => "continue",
             TokenKind::Return => "return",
@@ -303,18 +275,10 @@ impl TokenKind {
             TokenKind::In => "in",
             TokenKind::With => "with",
             TokenKind::Mut => "mut",
-            TokenKind::Atomic => "atomic",
-            TokenKind::Comptime => "comptime",
-            TokenKind::Lock => "lock",
-            TokenKind::Defer => "defer",
-            TokenKind::Panic => "panic",
-            TokenKind::Release => "release",
-            TokenKind::Catch => "catch",
             TokenKind::Orelse => "orelse",
             TokenKind::None => "none",
             TokenKind::True => "true",
             TokenKind::False => "false",
-            TokenKind::Unsafe => "unsafe",
             TokenKind::Eof
             | TokenKind::Ident
             | TokenKind::Number
@@ -338,16 +302,12 @@ pub fn keyword(ident: &str) -> Option<TokenKind> {
         "struct" => TokenKind::Struct,
         "iface" => TokenKind::Iface,
         "enum" => TokenKind::Enum,
-        "union" => TokenKind::Union,
-        "error" => TokenKind::Error,
         "fn" => TokenKind::Fn,
-        "test" => TokenKind::Test,
         "let" => TokenKind::Let,
         "if" => TokenKind::If,
         "else" => TokenKind::Else,
         "match" => TokenKind::Match,
         "for" => TokenKind::For,
-        "while" => TokenKind::While,
         "break" => TokenKind::Break,
         "continue" => TokenKind::Continue,
         "return" => TokenKind::Return,
@@ -361,18 +321,10 @@ pub fn keyword(ident: &str) -> Option<TokenKind> {
         "in" => TokenKind::In,
         "with" => TokenKind::With,
         "mut" => TokenKind::Mut,
-        "atomic" => TokenKind::Atomic,
-        "comptime" => TokenKind::Comptime,
-        "lock" => TokenKind::Lock,
-        "defer" => TokenKind::Defer,
-        "panic" => TokenKind::Panic,
-        "release" => TokenKind::Release,
-        "catch" => TokenKind::Catch,
         "orelse" => TokenKind::Orelse,
         "none" => TokenKind::None,
         "true" => TokenKind::True,
         "false" => TokenKind::False,
-        "unsafe" => TokenKind::Unsafe,
         _ => return None,
     })
 }
@@ -443,11 +395,12 @@ mod tests {
         for &(text, kind) in OPERATORS {
             assert_eq!(kind.spelling(), Some(text));
         }
-        for text in ["fn", "let", "orelse", "rawptr", "unsafe"] {
+        for text in ["fn", "let", "orelse", "rawptr", "with"] {
             let kind = keyword(text).unwrap();
             assert_eq!(kind.spelling(), Some(text));
         }
         assert_eq!(keyword("name"), None);
+        assert_eq!(keyword("while"), None, "a keyword only once the parser reads it");
         assert_eq!(TokenKind::Fn.name(), "function");
         assert_eq!(TokenKind::Ident.spelling(), None);
     }
