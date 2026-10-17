@@ -359,10 +359,13 @@ const OPERATORS_BY_FIRST: [(u8, u8); 128] = {
 };
 
 fn is_letter(c: char) -> bool {
-    use GeneralCategory::*;
     matches!(
         get_general_category(c),
-        UppercaseLetter | LowercaseLetter | TitlecaseLetter | ModifierLetter | OtherLetter
+        GeneralCategory::UppercaseLetter
+            | GeneralCategory::LowercaseLetter
+            | GeneralCategory::TitlecaseLetter
+            | GeneralCategory::ModifierLetter
+            | GeneralCategory::OtherLetter
     )
 }
 
@@ -371,10 +374,11 @@ fn is_digit(c: char) -> bool {
 }
 
 fn is_mark(c: char) -> bool {
-    use GeneralCategory::*;
     matches!(
         get_general_category(c),
-        NonspacingMark | SpacingMark | EnclosingMark
+        GeneralCategory::NonspacingMark
+            | GeneralCategory::SpacingMark
+            | GeneralCategory::EnclosingMark
     )
 }
 

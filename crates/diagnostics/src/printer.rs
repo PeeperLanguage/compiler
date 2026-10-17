@@ -788,22 +788,22 @@ Compilation failed with 1 error(s)
         );
         // The lexer's tokens of `text`, comment left out as the lexer leaves it.
         let tokens = |file: &Arc<SourceFile>| {
-            use token::TokenKind as K;
+            use token::TokenKind;
             let mut at = 0;
             let parts = [
-                ("fn", K::Fn),
-                ("main", K::Ident),
-                ("(", K::LeftParen),
-                (")", K::RightParen),
-                ("{", K::LeftBrace),
-                ("let", K::Let),
-                ("s", K::Ident),
-                ("=", K::Assign),
-                ("\"x\"", K::String),
-                ("+", K::Plus),
-                ("1", K::Number),
-                (";", K::Semicolon),
-                ("}", K::RightBrace),
+                ("fn", TokenKind::Fn),
+                ("main", TokenKind::Ident),
+                ("(", TokenKind::LeftParen),
+                (")", TokenKind::RightParen),
+                ("{", TokenKind::LeftBrace),
+                ("let", TokenKind::Let),
+                ("s", TokenKind::Ident),
+                ("=", TokenKind::Assign),
+                ("\"x\"", TokenKind::String),
+                ("+", TokenKind::Plus),
+                ("1", TokenKind::Number),
+                (";", TokenKind::Semicolon),
+                ("}", TokenKind::RightBrace),
             ];
             let mut tokens: Vec<Token> = parts
                 .iter()
@@ -817,7 +817,7 @@ Compilation failed with 1 error(s)
                 })
                 .collect();
             tokens.push(Token {
-                kind: K::Eof,
+                kind: TokenKind::Eof,
                 span: Span::at(file.text.len()),
             });
             tokens

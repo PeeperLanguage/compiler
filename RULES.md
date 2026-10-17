@@ -115,6 +115,15 @@ Prefer:
 
 Do not comment what code already states.
 
+Names must keep their meaning when read as plain text, with no editor help:
+
+- Do not shorten a name if the short form loses its meaning. A reader with
+  no LSP or highlighter must be able to tell what it is. `use TokenKind as K`
+  fails this; `TokenKind::Comma` passes. Common short names whose meaning is
+  clear from the line (`i`, `t` for the current token) are fine.
+- Write the enum's name on every variant: `Prefix::Number`, not
+  `use Prefix::*` (or `use Prefix::{...}`) and then a bare `Number`.
+
 ## 6. Change scope
 
 Keep diffs minimal and task-focused. Do not mix unrelated refactors, scatter workarounds across callers, or add special cases that hide known defect.
