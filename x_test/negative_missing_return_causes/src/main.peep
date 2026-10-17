@@ -1,0 +1,168 @@
+fn Touch(value: i32) {}
+
+// A missing return is reported only when some path reaches the end of the
+// function without returning. A branch that does not return is no error while
+// code after it does, so the valid functions below must stay silent.
+
+fn OuterReturn(a: i32) -> i32 {
+    if a > 0 {
+        Touch(a);
+    }
+    return 2;
+}
+
+fn NestedOuterReturn(a: i32, b: i32) -> i32 {
+    if a > 0 {
+        if b > 0 {
+            return 1;
+        }
+    }
+    return 3;
+}
+
+fn EveryBranchReturns(a: i32) -> i32 {
+    if a > 0 {
+        return 1;
+    } else {
+        return 2;
+    }
+}
+
+fn NoResult(a: i32) {
+    if a > 0 {
+        return;
+    }
+}
+
+// A function whose checking found an error gets no missing-return error too.
+fn AlreadyWrong(a: i32) -> i32 {
+    let b: bool = a;
+}
+
+// Nothing returns: the end of the function is the cause.
+fn OnlyStatements(a: i32) -> i32 {
+    Touch(a);
+}
+
+fn EmptyBody() -> i32 {
+}
+
+// Statements after an `if` separate it from the end, so only the end is named.
+fn TailAfterIf(a: i32) -> i32 {
+    if a > 0 {
+        return 1;
+    }
+    Touch(a);
+    Touch(a);
+}
+
+fn TailAfterBranches(a: i32) -> i32 {
+    if a > 0 {
+        Touch(1);
+    } else {
+        Touch(2);
+    }
+    Touch(3);
+}
+
+// The function ends right after the construct, so the construct is named.
+fn IfWithoutElse(a: i32) -> i32 {
+    if a > 0 {
+        return 1;
+    }
+}
+
+fn BranchEnds(a: i32) -> i32 {
+    if a > 0 {
+        return 1;
+    } else {
+        Touch(a);
+    }
+}
+
+fn ElseIfWithoutElse(a: i32) -> i32 {
+    if a > 0 {
+        return 1;
+    } else if a < 0 {
+        return 2;
+    }
+}
+
+fn NestedIf(a: i32, b: i32) -> i32 {
+    if a > 0 {
+        if b > 0 {
+            return 1;
+        }
+    } else {
+        return 2;
+    }
+}
+
+fn InnerThenFalls(a: i32, b: i32) -> i32 {
+    if a > 0 {
+        if b > 0 {
+            return 1;
+        }
+        Touch(b);
+    }
+}
+
+fn TwoIfs(a: i32, b: i32) -> i32 {
+    if a > 0 {
+        Touch(1);
+    }
+    if b > 0 {
+        Touch(2);
+    }
+}
+
+fn ManyCauses(a: i32, b: i32, c: i32, d: i32) -> i32 {
+    if a > 0 {
+        Touch(1);
+    } else if b > 0 {
+        Touch(2);
+    } else if c > 0 {
+        Touch(3);
+    } else if d > 0 {
+        Touch(4);
+    }
+}
+
+fn ConstantCondition() -> i32 {
+    if false {
+        return 1;
+    }
+}
+
+// Constant conditions count both sides, so `if true` without an `else` is
+// still missing a return; the label says which side the constant takes.
+fn ConstantTrue() -> i32 {
+    if true {
+        return 1;
+    }
+}
+
+fn ConstantTrueEmpty() -> i32 {
+    if true {
+    }
+}
+
+// An empty branch has no statement to point at, so the condition is named.
+fn EmptyThenAndNoElse(a: i32) -> i32 {
+    if a > 0 {
+    }
+}
+
+fn EmptyThenOnly(a: i32) -> i32 {
+    if a > 0 {
+    } else {
+        return 1;
+    }
+}
+
+fn EmptyElse(a: i32) -> i32 {
+    if a > 0 {
+        return 1;
+    } else {
+    }
+}

@@ -18,17 +18,16 @@ use model::types::TypeId;
 use model::types::Types;
 use model::value::Constant;
 
-/// What compiling a program gives.
-pub struct Compiled {
-    pub diagnostics: Vec<Diagnostic>,
-    pub types: Types,
-    /// The MIR of every function with a complete body, in declaration order.
-    pub functions: Vec<(DefId, mir::Body)>,
-}
-
-/// Checks every declaration of `program` and lowers each function to MIR.
-/// Integers as wide as a pointer (`isize`, `usize`) have `pointer_bits` bits.
-pub fn compile(program: &project::Program, pointer_bits: u32) -> Compiled {
+/// Checks every declaration of `program`, lowers each function to MIR and
+/// gives the diagnostics. The MIR of each function with a complete body goes
+/// to `use_mir` as soon as it is built, in declaration order, and is dropped
+/// after: nothing holds every function's MIR at once. Integers as wide as a
+/// pointer (`isize`, `usize`) have `pointer_bits` bits.
+pub fn compile(
+    program: &project::Program,
+    pointer_bits: u32,
+    mut use_mir: impl FnMut(DefId, &mir::Body, &Types),
+) -> Vec<Diagnostic> {
     let modules: Vec<&project::Module> = program
         .order
         .iter()
@@ -56,7 +55,6 @@ pub fn compile(program: &project::Program, pointer_bits: u32) -> Compiled {
         constants: table(&program.modules),
         diagnostics,
     };
-    let mut functions = Vec::new();
     for (index, module) in (0..).zip(&program.modules) {
         let tree = &module.syntax;
         for declaration in tree.lists.items(tree.declarations) {
@@ -67,7 +65,7 @@ pub fn compile(program: &project::Program, pointer_bits: u32) -> Compiled {
             match tree.decls[declaration] {
                 syntax::Decl::Function(function) => {
                     if let Some(body) = build.function(definition, &function) {
-                        functions.push((definition, body));
+                        use_mir(definition, &body, &build.types);
                     }
                 }
                 syntax::Decl::Const { .. } => {
@@ -79,11 +77,7 @@ pub fn compile(program: &project::Program, pointer_bits: u32) -> Compiled {
             }
         }
     }
-    Compiled {
-        diagnostics: build.diagnostics,
-        types: build.types,
-        functions,
-    }
+    build.diagnostics
 }
 
 /// A query's results for every declaration of `modules`, none started.
@@ -145,8 +139,9 @@ impl<'p> Build<'p> {
         result
     }
 
-    /// Checks the function `definition` and lowers its body to MIR; `None`
-    /// when it has no body or an error left its body incomplete.
+    /// Checks the function `definition`, lowers its body to MIR and runs the
+    /// path checks on it; `None` when it has no body or checking it found an
+    /// error.
     fn function(&mut self, definition: DefId, function: &syntax::Function) -> Option<mir::Body> {
         let ty = self.signature(definition);
         let body = self.with_checker(definition.module, |checker| checker.body(function, ty))?;
@@ -155,7 +150,18 @@ impl<'p> Build<'p> {
         };
         let tree = &self.program.modules[definition.module as usize].syntax;
         let span = tree.blocks.span(function.body?);
-        lower::lower(&body, parameters.len(), *result, span)
+        let mir = lower::lower(&body, parameters.len(), *result, span)?;
+        // Only a `let` without a value can be unset or assigned twice.
+        let late = |index| body.locals[Id::from_index(index)].declared_without_value;
+        if (0..body.locals.len()).any(late) {
+            lower::path_checks::initialization(&mir, &tree.file, &mut self.diagnostics);
+        }
+        if let Some(error) =
+            lower::path_checks::missing_return(&mir, &tree.file, &self.types, *result)
+        {
+            self.diagnostics.push(error); // last: it points at the closing brace
+        }
+        Some(mir)
     }
 
     /// Reports that the declaration `definition` was asked for while it was
@@ -283,7 +289,7 @@ mod tests {
     /// Checks the program of `modules` (see `program`) and gives each
     /// diagnostic as its code, message and the text of its first label.
     fn diagnostics(modules: &[(&str, &str)]) -> Vec<(&'static str, String, String)> {
-        let found = compile(&program(modules), 64).diagnostics;
+        let found = compile(&program(modules), 64, |_, _, _| {});
         found
             .iter()
             .map(|diagnostic| {

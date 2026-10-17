@@ -1,5 +1,5 @@
 fn pick(a: i32) -> i32 {
-    let mut late: i32;
+    let late: i32;
     if a > 0 {
         late = 1;
     } else if a < 0 {

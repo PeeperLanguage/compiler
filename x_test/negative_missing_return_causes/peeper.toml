@@ -1,0 +1,7 @@
+name = "negative_missing_return_causes"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["function ends without returning `i32`", "if this is false, nothing is returned", "if this is true, nothing is returned", "this path ends without returning", "2 more path(s) like these are not shown", "add a `return` at the end of the function, or make each path shown return a value", "either way, nothing is returned", "this is always false, so nothing is returned", "this is always true, so nothing is returned", "Compilation failed with 18 error(s)"]

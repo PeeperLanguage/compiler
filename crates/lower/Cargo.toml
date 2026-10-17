@@ -1,6 +1,6 @@
 [package]
 name = "lower"
-description = "Lowering: a function's THIR into MIR"
+description = "Lowering: a function's THIR into MIR, and the path checks on it"
 version.workspace = true
 edition.workspace = true
 license-file.workspace = true
@@ -8,6 +8,7 @@ publish.workspace = true
 
 [dependencies]
 arena.workspace = true
+diagnostics.workspace = true
 model.workspace = true
 source.workspace = true
 

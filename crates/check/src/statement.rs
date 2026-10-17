@@ -6,6 +6,7 @@ use std::num::NonZeroU32;
 use arena::Id;
 use arena::List;
 use diagnostics::Diagnostic;
+use diagnostics::Severity;
 use model::syntax;
 use model::thir::Block;
 use model::thir::Body;
@@ -45,9 +46,11 @@ pub(crate) struct BodyChecker<'c, 'a, Q: Queries> {
 
 impl<'a, Q: Queries> Checker<'a, Q> {
     /// The THIR of `function`'s body, given its signature `ty` (`signature`).
-    /// `None` for a function without a body, or whose signature had an error.
+    /// `None` for a function without a body, or whose signature or body had an
+    /// error: what later phases would find in it would only follow from that.
     pub fn body(&mut self, function: &syntax::Function, ty: TypeId) -> Option<Body> {
         let block = function.body?;
+        let reported = self.diagnostics.len();
         let Type::Function { parameters, result } = &self.queries.types()[ty] else {
             return None; // the signature's error was reported
         };
@@ -61,13 +64,18 @@ impl<'a, Q: Queries> Checker<'a, Q> {
                 Local {
                     ty,
                     mutable: parameter.mutable,
+                    declared_without_value: false,
                 },
                 name,
             );
             checker.declare(name, Named::Local(local));
         }
         checker.body.statements = checker.statements(tree.blocks[block].statements);
-        Some(checker.body)
+        let body = checker.body;
+        let failed = self.diagnostics[reported..]
+            .iter()
+            .any(|diagnostic| diagnostic.code.severity == Severity::Error);
+        (!failed).then_some(body)
     }
 
     /// The type and value of the module's constant `declaration`; `None` when
@@ -183,6 +191,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
                         let unknown = Local {
                             ty: TypeId::INVALID,
                             mutable: true,
+                            declared_without_value: false,
                         };
                         let local = self.body.add(unknown, name);
                         self.declare(name, Named::Local(local));
@@ -216,6 +225,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
         value: Option<Id<syntax::Expr>>,
     ) -> Stmt {
         let declared = ty.map(|ty| self.checker.resolve_type(ty));
+        let declared_without_value = value.is_none();
         let (ty, value) = match (declared, value) {
             (Some(ty), value) => (ty, value.map(|value| self.expect(value, ty))),
             (None, Some(value)) => {
@@ -238,7 +248,12 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
                 (TypeId::INVALID, None)
             }
         };
-        let local = self.body.add(Local { ty, mutable }, name);
+        let local = Local {
+            ty,
+            mutable,
+            declared_without_value,
+        };
+        let local = self.body.add(local, name);
         self.declare(name, Named::Local(local));
         Stmt::Let { local, value }
     }
@@ -316,7 +331,9 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
 
     /// The local that `target` names, reporting a target that cannot be
     /// assigned. An immutable local is reported but still given, so the value
-    /// is checked against its type.
+    /// is checked against its type. An immutable local declared without a
+    /// value may be assigned; the path checks on MIR report one that may be
+    /// assigned twice.
     fn assigned_local(&mut self, target: Id<syntax::Expr>) -> Option<Id<Local>> {
         let tree = self.tree;
         let span = tree.exprs.span(target);
@@ -358,7 +375,12 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
                 return None;
             }
         };
-        if !self.body.locals[local].mutable {
+        let Local {
+            mutable,
+            declared_without_value,
+            ..
+        } = self.body.locals[local];
+        if !mutable && !declared_without_value {
             self.checker.diagnostics.push(
                 Diagnostic::new(
                     diagnostics::INVALID_ASSIGNMENT,

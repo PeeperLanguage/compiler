@@ -1,0 +1,23 @@
+fn Twice() -> i32 {
+    let a: i32;
+    a = 1;
+    a = 2;
+    return a;
+}
+
+fn MaybeTwice(flag: bool) -> i32 {
+    let b: i32;
+    if flag {
+        b = 1;
+    }
+    b = 2;
+    return b;
+}
+
+// A `let` with a value is set where it is declared, so the checker rejects any
+// assignment to it.
+fn WithValue() -> i32 {
+    let c = 1;
+    c = 2;
+    return c;
+}

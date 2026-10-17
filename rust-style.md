@@ -93,6 +93,16 @@ checking), with a large file and the minimum of 20 interleaved runs.
 `Value`, so an operand is 8 bytes instead of 24 and an instruction shrinks with
 it. Lowering a 20k-function file got measurably faster.
 
+**Hand each result on; do not collect them all.** `build::compile` gives each
+function's MIR to a callback as soon as it is built and drops it after, the way
+Go compiles one function at a time. Keeping every function's MIR in a `Vec`
+took a 20k-function file from 60 MB to 98 MB and was slower.
+
+**Skip a pass that cannot find anything.** When a cheap fact proves a pass
+has nothing to report, do not run it: the initialization check runs only for a
+function with a `let` without a value, since nothing else can be unset. It made
+the check free for the usual function (a 20k-function file: +7% to +0%).
+
 **Do not guess capacities.** Reserving MIR arenas from THIR sizes over-allocated
 and made lowering slower; `Default` and normal growth won. Reserve only when the
 size is known, not estimated.

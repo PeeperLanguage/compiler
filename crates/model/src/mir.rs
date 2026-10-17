@@ -104,6 +104,20 @@ pub enum Terminator {
     FallOff(Span),
 }
 
+impl Terminator {
+    /// The blocks control can go to next.
+    pub fn targets(&self) -> impl Iterator<Item = Id<Block>> {
+        let targets = match *self {
+            Terminator::Goto(target) => [Some(target), None],
+            Terminator::Branch {
+                then, otherwise, ..
+            } => [Some(then), Some(otherwise)],
+            Terminator::Return { .. } | Terminator::FallOff(_) => [None, None],
+        };
+        targets.into_iter().flatten()
+    }
+}
+
 impl Body {
     /// The body as text, one block after another, for `peeper mir`. `file` is
     /// where the body is written; `function_name` names a called function. A

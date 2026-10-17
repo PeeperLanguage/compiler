@@ -57,13 +57,13 @@ check ────────┤ per declaration:     signature: walk its heade
               │                      body: 1 walk, AST -> THIR (+ constants)
               ▼
 lower ────────┤ per function:        1 walk, THIR -> MIR
-              │                      flow checks: dataflow over the graph
+              │                      path checks: dataflow over the graph
               ▼                      (init, move, borrow, return) in one pass where they agree
 llvm ─────────┘ per module:          1 walk over each function's MIR -> .ll text -> clang
 ```
 
 A body is walked by three single passes (build THIR, build MIR, emit LLVM) and
-by the flow checks. The flow checks are dataflow: they visit the blocks until
+by the path checks. The path checks are dataflow: they visit the blocks until
 nothing changes, which in reverse postorder is two or three rounds for the
 usual graph, more for deep loop nests. Constants and comptime add no walk of
 their own: constants fold during the THIR walk; a comptime call interprets MIR
@@ -75,7 +75,7 @@ that is built once and kept.
 peeper ─► build ─► project ─► parser ─► model ─► arena
             │
             ├─► check ─► model, project   AST -> THIR and signatures; folding
-            ├─► lower ─► model            THIR -> MIR; flow checks; (later) interpreter
+            ├─► lower ─► model            THIR -> MIR; path checks; (later) interpreter
             └─► llvm ──► model            MIR -> LLVM text; clang
 ```
 
@@ -87,7 +87,7 @@ enum variants, function types) are `model` data, written by check.
 |---|---|
 | `model` | data only: `syntax` (the syntax tree), `thir` (THIR nodes), `mir` (MIR graphs); `types` (`TypeId`, the type interner, the built-in types table); `value` (constant values and their arithmetic); `DefId`; `BinaryOp`, `UnaryOp`; signatures |
 | `check` | the checker: scopes, name lookup, building THIR, writing signatures |
-| `lower` | lowering from THIR; flow checks; later the interpreter |
+| `lower` | lowering from THIR; path checks; later the interpreter |
 | `llvm` | LLVM text for a module; running clang and the linker |
 | `build` | the scheduler: memo tables, demand order, worker threads (the `build` of `overall-design.md`) |
 
@@ -250,7 +250,7 @@ and debuggers; the logic lives in a `lower` crate, the data in `model::mir`.
   `unreachable`). `&&` and `||` lower to `condbr` and a `phi` where both paths
   meet, as clang does.
 - **Single assignment by construction.** An instruction's value is written once
-  and used after it, so the flow checks only follow variables.
+  and used after it, so the path checks only follow variables.
 
 ```
 fn f(a: i32) -> i32 { let b = a * 2; if b > 3 { return b; } return 0; }
@@ -267,10 +267,29 @@ bb1:  %5 = load b
 bb2:  ret const 0
 ```
 
-Flow checks are dataflow passes over the blocks that share one fixed-point
+Path checks are dataflow passes over the blocks that share one fixed-point
 helper; a function whose checking already reported an error is not
-flow-checked, since its errors would only follow from the first. LLVM emission
+path-checked, since its errors would only follow from the first. LLVM emission
 and the future interpreter both read MIR; nothing below MIR reads THIR.
+
+The missing-return check (T0017, `lower::path_checks`) reports a function whose
+`fall off` block is reachable. It walks back from that block through blocks
+with no instructions; on each path, the first branch met names its condition
+("if this is false, nothing is returned"), and the first block with
+instructions names its last one ("this path ends without returning"). When the
+end block itself has instructions, only the end is named, since one `return`
+there fixes every path. `Checker::body` gives no THIR for a body whose check
+reported an error, so such a function is neither lowered nor path-checked.
+
+The initialization check (`lower::path_checks::initialization`) is forward dataflow
+with two bits per variable at each block's start: set on every path to it
+("and" at joins) and set on some path ("or"). A `load` not set on every path is
+T0039 ("`x` is used before it is set"); a `store` to a variable without `mut`
+that may already be set is T0007 ("cannot assign twice to immutable `x`"). So
+`let x: T;` may be set once later even without `mut`: check rejects other
+assignments to a variable without `mut` only when its `let` has a value. Only a
+`let` without a value can be unset, so the check is skipped for a function
+that has none (decided by the owner, 2026-10-17).
 
 `peeper mir <path>` prints the MIR of every function of a program without
 errors (`mir::Body::text`, beside the data, like rustc's `-Zdump-mir`). MIR

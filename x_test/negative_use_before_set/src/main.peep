@@ -1,0 +1,43 @@
+fn NeverSet() -> i32 {
+    let a: i32;
+    return a;
+}
+
+fn SetOnOnePath(flag: bool) -> i32 {
+    let b: i32;
+    if flag {
+        b = 1;
+    }
+    return b;
+}
+
+// `c` is set on every path that reaches its uses, since the other path returns;
+// `d` is not.
+fn SetBeforeReturn(flag: bool) -> i32 {
+    let mut c: i32;
+    if flag {
+        c = 1;
+    } else {
+        return 0;
+    }
+    if flag {
+        return c;
+    }
+    let d: i32;
+    if flag {
+        d = 1;
+    } else {
+        Touch(c);
+    }
+    return d;
+}
+
+fn Touch(value: i32) {}
+
+// Each variable is reported once.
+fn ReportedOnce() -> i32 {
+    let e: i32;
+    Touch(e);
+    Touch(e);
+    return e;
+}

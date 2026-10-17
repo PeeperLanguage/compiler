@@ -1,0 +1,7 @@
+name = "negative_use_before_set"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["`a` is used before it is set", "`a` is not set yet here", "`b` is not set on every path to here", "declared here without a value", "set `b` on every path before this use, or give it a value where it is declared", "`d` is not set on every path to here", "Compilation failed with 4 error(s)"]

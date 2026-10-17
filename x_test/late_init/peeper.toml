@@ -1,0 +1,6 @@
+name = "late_init"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "success"

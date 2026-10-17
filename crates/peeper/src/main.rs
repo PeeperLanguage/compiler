@@ -95,28 +95,34 @@ fn run(
     // Checking a tree with syntax errors would only add reports of the holes
     // the parser left.
     if !all.iter().any(|d| d.code.severity == Severity::Error) {
-        let compiled = build::compile(&program, usize::BITS);
-        all.extend(compiled.diagnostics);
+        let tree =
+            |definition: DefId| &program.modules[&program.order[definition.module as usize]].syntax;
+        let name = |definition: DefId| {
+            let tree = tree(definition);
+            let declaration = tree.decls[Id::from_index(definition.index as usize)];
+            tree.file.slice(declaration.name()).to_string()
+        };
+        // Printed only once the whole program is known to have no errors.
+        let mut text = String::new();
+        let printing = mir.is_some();
+        all.extend(build::compile(
+            &program,
+            usize::BITS,
+            |definition, body, types| {
+                if printing {
+                    text.push_str("fn ");
+                    text.push_str(&name(definition));
+                    text.push_str(":\n");
+                    text.push_str(&body.text(types, &tree(definition).file, name));
+                }
+            },
+        ));
         if let Some(mir) = mir
             && !all.iter().any(|d| d.code.severity == Severity::Error)
+            && let Err(error) = mir.write_all(text.as_bytes())
         {
-            let tree = |definition: DefId| {
-                &program.modules[&program.order[definition.module as usize]].syntax
-            };
-            let name = |definition: DefId| {
-                let tree = tree(definition);
-                let declaration = tree.decls[Id::from_index(definition.index as usize)];
-                tree.file.slice(declaration.name()).to_string()
-            };
-            for (definition, body) in &compiled.functions {
-                let text = body.text(&compiled.types, &tree(*definition).file, name);
-                if let Err(error) = writeln!(mir, "fn {}:", name(*definition))
-                    .and_then(|()| mir.write_all(text.as_bytes()))
-                {
-                    eprintln!("peeper: cannot write MIR: {error}");
-                    return 1;
-                }
-            }
+            eprintln!("peeper: cannot write MIR: {error}");
+            return 1;
         }
     }
     let scan = |file: &std::sync::Arc<source::SourceFile>| lexer::scan(file).0;

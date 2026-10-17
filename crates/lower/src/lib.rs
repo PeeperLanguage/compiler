@@ -1,4 +1,7 @@
-//! Lowering: a function's THIR into MIR, in one walk (docs/ir-design.md).
+//! Lowering: a function's THIR into MIR, in one walk (docs/ir-design.md), and
+//! the path checks on the MIR (`path_checks`).
+
+pub mod path_checks;
 
 use std::num::NonZeroU32;
 

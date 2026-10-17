@@ -117,6 +117,7 @@ name = "lower"
 version = "0.1.0"
 dependencies = [
  "arena",
+ "diagnostics",
  "model",
  "source",
 ]

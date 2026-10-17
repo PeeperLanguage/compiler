@@ -40,6 +40,8 @@ pub struct Body {
 pub struct Local {
     pub ty: TypeId,
     pub mutable: bool,
+    /// `let x: T;`: its first assignment sets it, even without `mut`.
+    pub declared_without_value: bool,
 }
 
 #[derive(Clone, Debug)]
