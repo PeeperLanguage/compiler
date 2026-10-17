@@ -247,9 +247,11 @@ last keystroke; opening, saving and closing a file are checked at once.
 Go to definition and hover (owner's choice, 2026-10-18: the checker records
 names, not a second resolver). While checking a body, the checker appends a
 `thir::Name` for each name written in it (in `declare`, `resolve`, which
-looks every written name up, and module paths): a declaration or use of a local or
-body constant (with its declaration's span and type), a module's function,
-constant or type (its `DefId`), or an imported module. A body with an error
+looks every written name up, and module paths). Its `thir::Target` is what
+the checker resolved, not a copy: a name of the body (`Symbol`, a local or a
+body `const` by its id; the body's arenas hold its span and type, so body
+`const`s get an arena of their own, `consts`), or a module-level `Binding`
+(which lives in `model` for this). A body with an error
 keeps its THIR, marked `has_errors` (as rustc marks typeck results
 `tainted_by_errors`), so names work while a function is broken; `lower::lower`
 gives no MIR for it, and `use_function` gets its THIR alone. `build` runs the

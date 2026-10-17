@@ -7,33 +7,10 @@
 use std::collections::HashMap;
 
 use diagnostics::Diagnostic;
+use model::Binding;
 use model::DefId;
 use model::syntax;
-use model::thir::Target;
 use source::Span;
-
-/// What a module-level name stands for, by the kind of its declaration.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Binding {
-    Function(DefId),
-    Constant(DefId),
-    /// a struct, enum, interface or type alias
-    Type(DefId),
-    /// An imported module, by its place in the program's order.
-    Module(u32),
-}
-
-impl Binding {
-    /// What a name bound to it stands for, as THIR records it.
-    pub fn target(self) -> Target {
-        match self {
-            Binding::Function(definition)
-            | Binding::Constant(definition)
-            | Binding::Type(definition) => Target::Declaration(definition),
-            Binding::Module(index) => Target::Module(index),
-        }
-    }
-}
 
 pub struct ModuleScope {
     names: HashMap<Box<str>, (Binding, Span)>, // and where the name is written
@@ -115,9 +92,9 @@ mod tests {
 
     use model::DefId;
 
-    use super::Binding;
     use super::collect;
     use crate::testing::module;
+    use model::Binding;
 
     #[test]
     fn declarations_and_imports() {

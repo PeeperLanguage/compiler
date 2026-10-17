@@ -44,8 +44,10 @@ use lsp_types::TextDocumentPositionParams;
 use lsp_types::TextDocumentSyncCapability;
 use lsp_types::TextDocumentSyncKind;
 use lsp_types::Url;
+use model::Binding;
 use model::syntax;
 use model::thir;
+use model::types::TypeId;
 use model::types::Types;
 use source::SourceFile;
 use source::Span;
@@ -328,7 +330,7 @@ impl<'s> Server<'s> {
                     let body_names = body
                         .names
                         .iter()
-                        .map(|name| Name::new(&program, name, types));
+                        .map(|name| Name::new(&program, body, name, types));
                     found.entry(path).or_default().extend(body_names);
                 },
             );
@@ -425,19 +427,36 @@ enum Target {
 }
 
 impl Name {
-    /// `name` of a body of `program`, whose types are in `types`.
-    fn new(program: &project::Program, name: &thir::Name, types: &Types) -> Name {
+    /// `name` of `body`, a body of `program` whose types are in `types`.
+    fn new(
+        program: &project::Program,
+        body: &thir::Body,
+        name: &thir::Name,
+        types: &Types,
+    ) -> Name {
         let path = |module: u32| program.order[module as usize].clone();
         let target = match name.target {
-            thir::Target::InBody { declared, ty } => Target::InBody {
-                declared,
-                ty: types.text(ty),
-            },
-            thir::Target::Declaration(definition) => Target::Declaration {
+            thir::Target::Body(symbol) => {
+                let ty = match symbol {
+                    thir::Symbol::Local(local) => body.locals[local].ty,
+                    thir::Symbol::Constant(constant) => body.consts[constant]
+                        .as_ref()
+                        .map_or(TypeId::INVALID, |&(ty, _)| ty),
+                };
+                Target::InBody {
+                    declared: body.declared(symbol),
+                    ty: types.text(ty),
+                }
+            }
+            thir::Target::Global(Binding::Module(module)) => Target::Module(path(module)),
+            thir::Target::Global(
+                Binding::Function(definition)
+                | Binding::Constant(definition)
+                | Binding::Type(definition),
+            ) => Target::Declaration {
                 module: path(definition.module),
                 index: definition.index,
             },
-            thir::Target::Module(module) => Target::Module(path(module)),
         };
         Name {
             span: name.span,

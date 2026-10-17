@@ -14,6 +14,7 @@ use model::thir::ExprKind;
 use model::thir::Local;
 use model::thir::Name;
 use model::thir::Stmt;
+use model::thir::Symbol;
 use model::thir::Target;
 use model::types::Type;
 use model::types::TypeId;
@@ -22,34 +23,16 @@ use source::Span;
 
 use crate::Checker;
 use crate::Queries;
-use crate::scope::Binding;
-
-/// What a name declared in a body stands for.
-#[derive(Clone)]
-pub(crate) enum Named {
-    Local(Id<Local>),
-    /// a `const`, by its type and value; `None` when its value had an error,
-    /// so uses of it report nothing more
-    Constant(Option<Constant>),
-}
-
-/// What a name written in a body stands for.
-pub(crate) enum Resolved {
-    /// A name of the body, declared at the span.
-    Body(Span, Named),
-    /// A name of the module or the prelude.
-    Global(Binding),
-}
+use model::Binding;
 
 /// Checking one function body.
 pub(crate) struct BodyChecker<'c, 'a, Q: Queries> {
     pub(crate) checker: &'c mut Checker<'a, Q>,
     pub(crate) tree: &'a syntax::Tree,
     pub(crate) body: Body,
-    /// The names declared in the enclosing blocks so far, innermost last, with
-    /// where each is declared. Few names are in scope at once, so a search
-    /// from the end beats hashing.
-    pub(crate) names: Vec<(&'a str, Span, Named)>,
+    /// The names declared in the enclosing blocks so far, innermost last. Few
+    /// names are in scope at once, so a search from the end beats hashing.
+    pub(crate) names: Vec<(&'a str, Symbol)>,
     /// Where in `names` the current block's names start.
     block_start: usize,
     result: TypeId, // the function's result type
@@ -79,7 +62,7 @@ impl<'a, Q: Queries> Checker<'a, Q> {
                 },
                 name,
             );
-            checker.declare(name, Named::Local(local));
+            checker.declare(name, Symbol::Local(local));
         }
         checker.body.span = tree.blocks.span(block);
         checker.body.statements = checker.statements(tree.blocks[block].statements);
@@ -138,13 +121,14 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
     /// shadow a name of an outer block until the block ends. A name the block
     /// already declares is reported and keeps its first meaning; the
     /// parameters are in the body's outermost block, as in Go.
-    fn declare(&mut self, span: Span, named: Named) {
+    fn declare(&mut self, span: Span, symbol: Symbol) {
         let name = self.tree.file.slice(span);
         if name.is_empty() || name == "_" {
             return; // missing after a syntax error, or not a name
         }
         let block = &self.names[self.block_start..];
-        if let Some(&(_, first, _)) = block.iter().find(|(declared, ..)| *declared == name) {
+        if let Some(&(_, first)) = block.iter().find(|&&(declared, _)| declared == name) {
+            let first = self.body.declared(first);
             let file = &self.tree.file;
             self.checker.diagnostics.push(
                 Diagnostic::new(
@@ -156,41 +140,33 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
             );
             return;
         }
-        let target = self.target(span, &named);
+        let target = Target::Body(symbol);
         self.body.names.push(Name { span, target });
-        self.names.push((name, span, named));
-    }
-
-    /// What the body's name declared at `declared` as `named` stands for.
-    fn target(&self, declared: Span, named: &Named) -> Target {
-        let ty = match named {
-            Named::Local(local) => self.body.locals[*local].ty,
-            Named::Constant(constant) => constant.as_ref().map_or(TypeId::INVALID, |&(ty, _)| ty),
-        };
-        Target::InBody { declared, ty }
+        self.names.push((name, symbol));
     }
 
     /// What the name written at `span` stands for: a name of the current
     /// block or an outer one, else of the module or the prelude, recorded in
     /// `Body::names`. `None` after reporting that nothing declares it.
-    pub(crate) fn resolve(&mut self, span: Span) -> Option<Resolved> {
+    pub(crate) fn resolve(&mut self, span: Span) -> Option<Target> {
         let name = self.tree.file.slice(span);
         let found = self
             .names
             .iter()
             .rev()
-            .find(|&&(declared, ..)| declared == name);
-        let (resolved, target) = if let Some((_, declared, named)) = found {
-            let target = self.target(*declared, named);
-            (Resolved::Body(*declared, named.clone()), target)
-        } else if let Some(binding) = self.checker.global(name) {
-            (Resolved::Global(binding), binding.target())
-        } else {
-            self.undeclared(name, span);
-            return None;
+            .find(|&&(declared, _)| declared == name);
+        let target = match found {
+            Some(&(_, symbol)) => Target::Body(symbol),
+            None => match self.checker.global(name) {
+                Some(binding) => Target::Global(binding),
+                None => {
+                    self.undeclared(name, span);
+                    return None;
+                }
+            },
         };
         self.body.names.push(Name { span, target });
-        Some(resolved)
+        Some(target)
     }
 
     /// The THIR of `statement`; `None` for a `const`, which only declares a
@@ -211,7 +187,8 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
                 let syntax::Decl::Const { name, .. } = tree.decls[declaration] else {
                     unreachable!("a const statement holds a const declaration")
                 };
-                self.declare(name, Named::Constant(constant));
+                let constant = self.body.consts.push(constant, name);
+                self.declare(name, Symbol::Constant(constant));
                 return None;
             }
             syntax::Stmt::Return(value) => Stmt::Return(self.return_value(span, value)),
@@ -247,7 +224,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
                             declared_without_value: false,
                         };
                         let local = self.body.add(unknown, name);
-                        self.declare(name, Named::Local(local));
+                        self.declare(name, Symbol::Local(local));
                     }
                 }
                 return None;
@@ -313,7 +290,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
             .rposition(|&(declared, ..)| declared == text);
         if let Some(position) = shadowed
             && position < self.block_start
-            && let Named::Local(outer) = self.names[position].2
+            && let Symbol::Local(outer) = self.names[position].1
             && self.body.locals[outer].mutable
         {
             // Likely meant as `x = ...`: the outer local stays unchanged.
@@ -340,7 +317,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
             );
         }
         let local = self.body.add(local, name);
-        self.declare(name, Named::Local(local));
+        self.declare(name, Symbol::Local(local));
         Stmt::Let { local, value }
     }
 
@@ -429,9 +406,10 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
             return None;
         }
         let name = tree.file.slice(span);
-        let (declared, local) = match self.resolve(span)? {
-            Resolved::Body(declared, Named::Local(local)) => (declared, local),
-            Resolved::Body(declared, Named::Constant(_)) => {
+        let local = match self.resolve(span)? {
+            Target::Body(Symbol::Local(local)) => local,
+            Target::Body(Symbol::Constant(constant)) => {
+                let declared = self.body.consts.span(constant);
                 self.checker.diagnostics.push(
                     Diagnostic::new(
                         diagnostics::CONSTANT_REASSIGNMENT,
@@ -442,7 +420,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
                 );
                 return None;
             }
-            Resolved::Global(binding) => {
+            Target::Global(binding) => {
                 let (code, message) = match binding {
                     Binding::Constant(_) => (
                         diagnostics::CONSTANT_REASSIGNMENT,
@@ -469,7 +447,11 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
                     format!("cannot assign to immutable `{name}`"),
                 )
                 .label(&tree.file, span, "")
-                .label(&tree.file, declared, "declared without `mut` here"),
+                .label(
+                    &tree.file,
+                    self.body.locals.span(local),
+                    "declared without `mut` here",
+                ),
             );
         }
         Some(local)

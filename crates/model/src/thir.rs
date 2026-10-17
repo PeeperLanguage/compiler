@@ -6,11 +6,13 @@
 use std::fmt::Write;
 
 use crate::BinaryOp;
+use crate::Binding;
 use crate::DefId;
 use crate::UnaryOp;
 use crate::types::Type;
 use crate::types::TypeId;
 use crate::types::Types;
+use crate::value::Constant;
 use crate::value::Value;
 use arena::Arena;
 use arena::Id;
@@ -38,6 +40,9 @@ pub struct Body {
     pub stmts: Arena<Stmt>,
     pub blocks: Arena<Block>,
     pub locals: Arena<Local>, // with the span of each name
+    /// Each `const` of the body, by its type and value, with the span of its
+    /// name; `None` when its value had an error. Uses of it are folded.
+    pub consts: Arena<Option<Constant>>,
     pub lists: Lists,
     pub names: Vec<Name>, // in the order checked; for editors
     /// Checking it reported an error: later phases would only find what
@@ -53,14 +58,20 @@ pub struct Name {
     pub target: Target,
 }
 
+/// What a name written in a body stands for.
 #[derive(Clone, Copy, Debug)]
 pub enum Target {
-    /// A parameter, `let` or `const` of this body, declared at `declared`.
-    InBody { declared: Span, ty: TypeId },
-    /// A module's function, constant or type.
-    Declaration(DefId),
-    /// An imported module, by its place in the program's order.
-    Module(u32),
+    Body(Symbol),
+    /// A name of the module or the prelude.
+    Global(Binding),
+}
+
+/// A name declared in a body: a parameter or `let` (a local, which holds a
+/// value at run time), or a `const` (folded where it is used).
+#[derive(Clone, Copy, Debug)]
+pub enum Symbol {
+    Local(Id<Local>),
+    Constant(Id<Option<Constant>>),
 }
 
 /// A parameter or a `let` binding.
@@ -148,6 +159,7 @@ impl Default for Body {
             stmts: Arena::default(),
             blocks: Arena::default(),
             locals: Arena::default(),
+            consts: Arena::default(),
             lists: Lists::default(),
             names: Vec::new(),
             has_errors: false,
@@ -159,6 +171,14 @@ impl Body {
     /// Adds `node` with `span` to its arena.
     pub fn add<T: Node<Container = Body>>(&mut self, node: T, span: Span) -> Id<T> {
         T::arena(self).push(node, span)
+    }
+
+    /// Where the body declares `symbol`: its name.
+    pub fn declared(&self, symbol: Symbol) -> Span {
+        match symbol {
+            Symbol::Local(local) => self.locals.span(local),
+            Symbol::Constant(constant) => self.consts.span(constant),
+        }
     }
 }
 

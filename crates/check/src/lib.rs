@@ -18,8 +18,8 @@ use model::types::Types;
 use model::value::Constant;
 use source::Span;
 
-use crate::scope::Binding;
 use crate::scope::ModuleScope;
+use model::Binding;
 
 /// What checking one declaration needs from the rest of the program. The
 /// scheduler implements it: it owns the results of every declaration, so

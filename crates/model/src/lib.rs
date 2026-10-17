@@ -18,6 +18,17 @@ pub struct DefId {
     pub index: u32,
 }
 
+/// What a module-level name stands for, by the kind of its declaration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Binding {
+    Function(DefId),
+    Constant(DefId),
+    /// a struct, enum, interface or type alias
+    Type(DefId),
+    /// An imported module, by its place in the program's order.
+    Module(u32),
+}
+
 /// A binary operator, named after what it does; the comment shows its token.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BinaryOp {

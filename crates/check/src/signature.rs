@@ -10,7 +10,7 @@ use model::types::TypeId;
 use crate::Checker;
 use crate::Queries;
 use crate::builtin::unsupported_type;
-use crate::scope::Binding;
+use model::Binding;
 
 impl<Q: Queries> Checker<'_, Q> {
     /// The signature of the module's declaration `declaration`, which is not

@@ -15,6 +15,7 @@ use model::syntax;
 use model::thir::Expr;
 use model::thir::ExprKind;
 use model::thir::Name;
+use model::thir::Symbol;
 use model::thir::Target;
 use model::types::Float;
 use model::types::Type;
@@ -27,10 +28,8 @@ use token::TokenKind;
 
 use crate::Queries;
 use crate::builtin::UNSUPPORTED_FUNCTIONS;
-use crate::scope::Binding;
 use crate::statement::BodyChecker;
-use crate::statement::Named;
-use crate::statement::Resolved;
+use model::Binding;
 
 impl<Q: Queries> BodyChecker<'_, '_, Q> {
     /// `expression`, added to the body.
@@ -147,12 +146,14 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
     /// The name written at `span`, as a value.
     pub(crate) fn name(&mut self, span: Span) -> Expr {
         match self.resolve(span) {
-            Some(Resolved::Body(_, Named::Local(local))) => Expr {
+            Some(Target::Body(Symbol::Local(local))) => Expr {
                 ty: self.body.locals[local].ty,
                 kind: ExprKind::Local(local),
             },
-            Some(Resolved::Body(_, Named::Constant(constant))) => constant_expr(constant),
-            Some(Resolved::Global(binding)) => self.global_value(binding, span),
+            Some(Target::Body(Symbol::Constant(constant))) => {
+                constant_expr(self.body.consts[constant].clone())
+            }
+            Some(Target::Global(binding)) => self.global_value(binding, span),
             None => Expr::INVALID,
         }
     }
@@ -245,8 +246,8 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
         let (module_name, member_name) =
             (tree.file.slice(module_span), tree.file.slice(member_span));
         let index = match self.checker.global(module_name) {
-            Some(Binding::Module(index)) => {
-                let target = Target::Module(index);
+            Some(binding @ Binding::Module(index)) => {
+                let target = Target::Global(binding);
                 self.body.names.push(Name {
                     span: module_span,
                     target,
@@ -274,7 +275,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
                 .error(diagnostics::UNDEFINED_NAME, message, member_span);
             return None;
         };
-        let target = binding.target();
+        let target = Target::Global(binding);
         self.body.names.push(Name {
             span: member_span,
             target,
@@ -313,14 +314,18 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
         let binding = match tree.exprs[callee] {
             syntax::Expr::Name => match self.resolve(callee_span) {
                 // Their errors were reported.
-                Some(Resolved::Body(_, Named::Constant(None))) => None,
-                Some(Resolved::Body(_, Named::Local(local)))
+                Some(Target::Body(Symbol::Constant(constant)))
+                    if self.body.consts[constant].is_none() =>
+                {
+                    None
+                }
+                Some(Target::Body(Symbol::Local(local)))
                     if self.body.locals[local].ty == TypeId::INVALID =>
                 {
                     None
                 }
-                Some(Resolved::Body(..)) => Some(Err(())),
-                Some(Resolved::Global(binding)) => Some(Ok(binding)),
+                Some(Target::Body(_)) => Some(Err(())),
+                Some(Target::Global(binding)) => Some(Ok(binding)),
                 None => None,
             },
             syntax::Expr::Path(path) => self.path_binding(path).map(Ok),
