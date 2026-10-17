@@ -386,14 +386,14 @@ mod tests {
     use model::value::Value;
 
     use crate::testing::Reported;
-    use crate::testing::check;
     use crate::testing::reported;
+    use crate::testing::with_checker;
 
     /// The THIR of every function body of `text`, as text, and the
     /// diagnostics.
     fn bodies(text: &str) -> (Vec<String>, Vec<Reported>) {
         let file = text.to_string();
-        let (bodies, types, reported) = check(text, |checker| {
+        let (bodies, types, reported) = with_checker(text, |checker| {
             let tree = &checker.module.syntax;
             let declarations: Vec<_> = tree.lists.items(tree.declarations).collect();
             let mut bodies = Vec::new();
@@ -709,7 +709,7 @@ mod tests {
     /// The diagnostics of the body of `text`'s first function, as each
     /// message with its first note.
     fn notes(text: &str) -> Vec<(String, Option<String>)> {
-        let (notes, _, _) = check(text, |checker| {
+        let (notes, _, _) = with_checker(text, |checker| {
             let tree = &checker.module.syntax;
             let declaration = tree.lists.items(tree.declarations).next().unwrap();
             let syntax::Decl::Function(function) = tree.decls[declaration] else {

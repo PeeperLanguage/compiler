@@ -1,0 +1,41 @@
+fn pick:
+  bb0:
+    store a.0, arg0
+    %1 = load a.0: i32
+    %2 = GreaterThan %1, 0: bool
+    branch %2 (a > 0) bb1 bb2
+  bb1:
+    store late.1, 1
+    goto bb3
+  bb2:
+    %4 = load a.0: i32
+    %5 = LessThan %4, 0: bool
+    branch %5 (a < 0) bb4 bb5
+  bb3:
+    %7 = load late.1: i32
+    return %7
+  bb4:
+    return 2
+  bb5:
+    store late.1, 3
+    goto bb6
+  bb6:
+    goto bb3
+  bb7:
+    goto bb6
+  bb8:
+    fall off at `}`
+fn quiet:
+  bb0:
+    store flag.0, arg0
+    %1 = load flag.0: bool
+    branch %1 (flag) bb1 bb2
+  bb1:
+    return
+  bb2:
+    return
+  bb3:
+    goto bb2
+fn main:
+  bb0:
+    return

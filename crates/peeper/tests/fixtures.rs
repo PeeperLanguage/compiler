@@ -1,7 +1,8 @@
 //! Runs the Peeper fixtures in x_test: each folder with a peeper.toml is a
 //! project whose `[test]` section says what the compiler must do with it.
-//! Only `mode = "check"` runs for now; building and running programs come with
-//! code generation. The compiler is `$PEEPER` if set (the bundled
+//! `mode = "check"` checks it; `mode = "mir"` also compares the MIR printed
+//! on stdout with the folder's expected.mir, which `PEEPER_BLESS=1` rewrites.
+//! Building and running programs come with code generation. The compiler is `$PEEPER` if set (the bundled
 //! build/bin/peeper, which finds its libraries), else the one cargo built.
 
 use std::path::Path;
@@ -25,12 +26,13 @@ fn fixtures() {
         let data =
             toml::parse_file(&folder.join("peeper.toml")).expect("a fixture's peeper.toml parses");
         let text = |key: &str| data.get("test", key).and_then(toml::Value::as_str);
-        if text("mode") != Some("check") {
-            continue;
-        }
+        let mode = match text("mode") {
+            Some(mode @ ("check" | "mir")) => mode,
+            _ => continue,
+        };
         checked += 1;
         let output = Command::new(&compiler)
-            .arg("check")
+            .arg(mode)
             .arg(folder)
             .output()
             .expect("the compiler runs");
@@ -64,6 +66,17 @@ fn fixtures() {
         for wanted in wanted {
             if !stderr.contains(wanted) {
                 failures.push(format!("{name}: stderr lacks {wanted:?}\n{stderr}"));
+            }
+        }
+        if mode == "mir" {
+            let file = folder.join("expected.mir");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if std::env::var_os("PEEPER_BLESS").is_some() {
+                std::fs::write(&file, stdout.as_bytes()).expect("expected.mir is written");
+            } else if std::fs::read_to_string(&file).ok().as_deref() != Some(&stdout) {
+                failures.push(format!(
+                    "{name}: the MIR differs from expected.mir (PEEPER_BLESS=1 rewrites it)\n{stdout}"
+                ));
             }
         }
     }

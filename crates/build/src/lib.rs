@@ -11,14 +11,24 @@ use check::Queries;
 use check::scope::ModuleScope;
 use diagnostics::Diagnostic;
 use model::DefId;
+use model::mir;
 use model::syntax;
+use model::types::Type;
 use model::types::TypeId;
 use model::types::Types;
 use model::value::Constant;
 
-/// Checks every declaration of `program` and gives the diagnostics. Integers
-/// as wide as a pointer (`isize`, `usize`) have `pointer_bits` bits.
-pub fn check(program: &project::Program, pointer_bits: u32) -> Vec<Diagnostic> {
+/// What compiling a program gives.
+pub struct Compiled {
+    pub diagnostics: Vec<Diagnostic>,
+    pub types: Types,
+    /// The MIR of every function with a complete body, in declaration order.
+    pub functions: Vec<(DefId, mir::Body)>,
+}
+
+/// Checks every declaration of `program` and lowers each function to MIR.
+/// Integers as wide as a pointer (`isize`, `usize`) have `pointer_bits` bits.
+pub fn compile(program: &project::Program, pointer_bits: u32) -> Compiled {
     let modules: Vec<&project::Module> = program
         .order
         .iter()
@@ -46,6 +56,7 @@ pub fn check(program: &project::Program, pointer_bits: u32) -> Vec<Diagnostic> {
         constants: table(&program.modules),
         diagnostics,
     };
+    let mut functions = Vec::new();
     for (index, module) in (0..).zip(&program.modules) {
         let tree = &module.syntax;
         for declaration in tree.lists.items(tree.declarations) {
@@ -55,10 +66,9 @@ pub fn check(program: &project::Program, pointer_bits: u32) -> Vec<Diagnostic> {
             };
             match tree.decls[declaration] {
                 syntax::Decl::Function(function) => {
-                    let ty = build.signature(definition);
-                    // shortcut: the THIR is dropped until MIR lowering (R5e)
-                    // takes it.
-                    build.with_checker(index, |checker| checker.body(&function, ty));
+                    if let Some(body) = build.function(definition, &function) {
+                        functions.push((definition, body));
+                    }
                 }
                 syntax::Decl::Const { .. } => {
                     build.constant(definition);
@@ -69,7 +79,11 @@ pub fn check(program: &project::Program, pointer_bits: u32) -> Vec<Diagnostic> {
             }
         }
     }
-    build.diagnostics
+    Compiled {
+        diagnostics: build.diagnostics,
+        types: build.types,
+        functions,
+    }
 }
 
 /// A query's results for every declaration of `modules`, none started.
@@ -108,12 +122,12 @@ struct Build<'p> {
 }
 
 impl<'p> Build<'p> {
-    /// Runs `check` on a checker of the module at `module`; what it reports
+    /// Runs `work` on a checker of the module at `module`; what it reports
     /// joins the program's diagnostics.
     fn with_checker<T>(
         &mut self,
         module: u32,
-        check: impl FnOnce(&mut Checker<Build<'p>>) -> T,
+        work: impl FnOnce(&mut Checker<Build<'p>>) -> T,
     ) -> T {
         let program = self.program;
         let index = module as usize;
@@ -126,24 +140,29 @@ impl<'p> Build<'p> {
             queries: self,
             diagnostics: &mut diagnostics,
         };
-        let result = check(&mut checker);
+        let result = work(&mut checker);
         self.diagnostics.append(&mut diagnostics);
         result
+    }
+
+    /// Checks the function `definition` and lowers its body to MIR; `None`
+    /// when it has no body or an error left its body incomplete.
+    fn function(&mut self, definition: DefId, function: &syntax::Function) -> Option<mir::Body> {
+        let ty = self.signature(definition);
+        let body = self.with_checker(definition.module, |checker| checker.body(function, ty))?;
+        let Type::Function { parameters, result } = &self.types[ty] else {
+            return None; // the signature's error was reported
+        };
+        let tree = &self.program.modules[definition.module as usize].syntax;
+        let span = tree.blocks.span(function.body?);
+        lower::lower(&body, parameters.len(), *result, span)
     }
 
     /// Reports that the declaration `definition` was asked for while it was
     /// being checked: it depends on itself.
     fn report_cycle(&mut self, definition: DefId) {
-        let module = self.program.modules[definition.module as usize];
-        let tree = &module.syntax;
-        let name = match tree.decls[Id::from_index(definition.index as usize)] {
-            syntax::Decl::Function(function) => function.name,
-            syntax::Decl::Const { name, .. } => name,
-            syntax::Decl::Struct(declaration)
-            | syntax::Decl::Enum(declaration)
-            | syntax::Decl::Interface(declaration)
-            | syntax::Decl::Alias(declaration) => declaration.name,
-        };
+        let tree = &self.program.modules[definition.module as usize].syntax;
+        let name = tree.decls[Id::from_index(definition.index as usize)].name();
         let text = tree.file.slice(name);
         self.diagnostics.push(
             Diagnostic::new(
@@ -208,13 +227,12 @@ mod tests {
 
     use source::SourceFile;
 
-    use super::check;
+    use super::compile;
 
-    /// Checks the program of `modules`, each an import path and its text, in
-    /// the order given (each after those it imports). An import written as
-    /// `import "app:utils";` is named after its last part. Gives each
-    /// diagnostic as its code, message and the text of its first label.
-    fn diagnostics(modules: &[(&str, &str)]) -> Vec<(&'static str, String, String)> {
+    /// The program of `modules`, each an import path and its text, in the
+    /// order given (each after those it imports). An import written as
+    /// `import "app:utils";` is named after its last part.
+    fn program(modules: &[(&str, &str)]) -> project::Program {
         let mut program = project::Program {
             modules: HashMap::new(),
             order: Vec::new(),
@@ -259,7 +277,13 @@ mod tests {
             program.modules.insert(path.to_string(), module);
             program.order.push(path.to_string());
         }
-        let found = check(&program, 64);
+        program
+    }
+
+    /// Checks the program of `modules` (see `program`) and gives each
+    /// diagnostic as its code, message and the text of its first label.
+    fn diagnostics(modules: &[(&str, &str)]) -> Vec<(&'static str, String, String)> {
+        let found = compile(&program(modules), 64).diagnostics;
         found
             .iter()
             .map(|diagnostic| {

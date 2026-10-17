@@ -113,13 +113,13 @@ mod tests {
     use model::types::TypeId;
 
     use crate::testing::Reported;
-    use crate::testing::check;
     use crate::testing::reported;
+    use crate::testing::with_checker;
 
     /// The signature of every declaration of `text`, as type text, and the
     /// diagnostics.
     fn signatures(text: &str) -> (Vec<String>, Vec<Reported>) {
-        let (found, types, reported) = check(text, |checker| {
+        let (found, types, reported) = with_checker(text, |checker| {
             let tree = &checker.module.syntax;
             let declarations: Vec<_> = tree.lists.items(tree.declarations).collect();
             let found: Vec<TypeId> = declarations

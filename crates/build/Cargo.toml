@@ -12,6 +12,7 @@ arena.workspace = true
 project.workspace = true
 model.workspace = true
 check.workspace = true
+lower.workspace = true
 
 [dev-dependencies]
 source.workspace = true

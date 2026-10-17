@@ -1,0 +1,11 @@
+fn add(a: i32, b: i32) -> i32 {
+    let mut sum = a + b;
+    sum = sum * 2;
+    let wide: i64 = sum;
+    note(wide);
+    return sum;
+}
+
+fn note(value: i64) {}
+
+fn main() {}

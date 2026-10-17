@@ -1,0 +1,24 @@
+fn both:
+  bb0:
+    store a.0, arg0
+    store b.1, arg1
+    %2 = load a.0: bool
+    branch %2 (a) bb1 bb2
+  bb1:
+    %3 = load b.1: bool
+    goto bb2
+  bb2:
+    %4 = phi bb0: false, bb1: %3: bool
+    branch %4 (a && b) bb4 bb3
+  bb3:
+    %5 = load a.0: bool
+    %6 = LogicalNot %5: bool
+    goto bb4
+  bb4:
+    %7 = phi bb2: true, bb3: %6: bool
+    return %7
+  bb5:
+    fall off at `}`
+fn main:
+  bb0:
+    return

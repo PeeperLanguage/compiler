@@ -1,0 +1,5 @@
+fn both(a: bool, b: bool) -> bool {
+    return a && b || !a;
+}
+
+fn main() {}

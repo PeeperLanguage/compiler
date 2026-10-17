@@ -135,6 +135,20 @@ pub enum Decl {
     Alias(TypeDecl),
 }
 
+impl Decl {
+    /// Where the declaration's name is written.
+    pub fn name(&self) -> Span {
+        match *self {
+            Decl::Function(function) => function.name,
+            Decl::Const { name, .. } => name,
+            Decl::Struct(declaration)
+            | Decl::Enum(declaration)
+            | Decl::Interface(declaration)
+            | Decl::Alias(declaration) => declaration.name,
+        }
+    }
+}
+
 /// `fn (receiver) name<T>(parameters) -> Result from origins { body }`; also an
 /// interface method, without metadata and body.
 #[derive(Clone, Copy, Debug)]

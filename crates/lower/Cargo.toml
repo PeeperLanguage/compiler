@@ -1,0 +1,15 @@
+[package]
+name = "lower"
+description = "Lowering: a function's THIR into MIR"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+arena.workspace = true
+model.workspace = true
+source.workspace = true
+
+[lints]
+workspace = true

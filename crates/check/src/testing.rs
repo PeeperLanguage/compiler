@@ -40,12 +40,12 @@ impl Queries for Program {
 /// A diagnostic as its code, message and the text of its first label.
 pub(crate) type Reported = (&'static str, String, String);
 
-/// Runs `check` on the module `app:main` written as `text`, which imports
-/// `app:utils` as `utils`. Gives what `check` gives, the program's types and
-/// the diagnostics.
-pub(crate) fn check<T>(
+/// Runs `work` on a checker of the module `app:main` written as `text`, which
+/// imports `app:utils` as `utils`. Gives what `work` gives, the program's
+/// types and the diagnostics.
+pub(crate) fn with_checker<T>(
     text: &str,
-    check: impl FnOnce(&mut Checker<Program>) -> T,
+    work: impl FnOnce(&mut Checker<Program>) -> T,
 ) -> (T, Types, Vec<Reported>) {
     let module = |path: &str, text: &str, imports| {
         let file = Arc::new(SourceFile::new("main.peep", text));
@@ -83,7 +83,7 @@ pub(crate) fn check<T>(
         queries: &mut program,
         diagnostics: &mut diagnostics,
     };
-    let result = check(&mut checker);
+    let result = work(&mut checker);
     let reported = diagnostics
         .iter()
         .map(|diagnostic| {

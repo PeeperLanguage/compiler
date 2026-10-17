@@ -29,6 +29,7 @@ dependencies = [
  "arena",
  "check",
  "diagnostics",
+ "lower",
  "model",
  "parser",
  "project",
@@ -112,6 +113,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "lower"
+version = "0.1.0"
+dependencies = [
+ "arena",
+ "model",
+ "source",
+]
+
+[[package]]
 name = "manifest"
 version = "0.1.0"
 dependencies = [
@@ -165,10 +175,12 @@ dependencies = [
 name = "peeper"
 version = "0.1.0"
 dependencies = [
+ "arena",
  "build",
  "diagnostics",
  "lexer",
  "manifest",
+ "model",
  "project",
  "source",
  "toml",

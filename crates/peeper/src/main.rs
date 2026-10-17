@@ -4,16 +4,27 @@ use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use arena::Id;
 use diagnostics::{Severity, printer};
+use model::DefId;
 use project::Packages;
 
-const USAGE: &str = "usage: peeper check [project folder | file.peep]";
+const USAGE: &str = "usage: peeper check|mir [project folder | file.peep]\n\
+\x20 check  report the program's errors\n\
+\x20 mir    also print each function's MIR when there are none";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let path = match args.as_slice() {
-        [command] if command == "check" => ".",
-        [command, path] if command == "check" => path,
+    let (command, path) = match args.as_slice() {
+        [command] => (command.as_str(), "."),
+        [command, path] => (command.as_str(), path.as_str()),
+        _ => ("", ""),
+    };
+    let stdout = std::io::stdout();
+    let mut stdout = stdout.lock();
+    let mir: Option<&mut dyn Write> = match command {
+        "check" => None,
+        "mir" => Some(&mut stdout),
         _ => {
             eprintln!("{USAGE}");
             return ExitCode::from(2);
@@ -21,11 +32,12 @@ fn main() -> ExitCode {
     };
     let stderr = std::io::stderr();
     let colored = stderr.is_terminal();
-    let code = check(
+    let code = run(
         Path::new(path),
         &libraries_dir(),
         &mut stderr.lock(),
         colored,
+        mir,
     );
     ExitCode::from(code)
 }
@@ -33,8 +45,15 @@ fn main() -> ExitCode {
 /// Loads the program at `path`, prints its diagnostics to `out` and returns
 /// the exit code: 1 when there are errors. A folder must hold peeper.toml; its
 /// project starts at src/main.peep. A file is checked on its own, with no
-/// project and no imports.
-fn check(path: &Path, libraries: &Path, out: &mut impl Write, colored: bool) -> u8 {
+/// project and no imports. With `mir`, a program without errors has the MIR
+/// of each function written there.
+fn run(
+    path: &Path,
+    libraries: &Path,
+    out: &mut impl Write,
+    colored: bool,
+    mir: Option<&mut dyn Write>,
+) -> u8 {
     let is_dir = match std::fs::metadata(path) {
         Ok(metadata) => metadata.is_dir(),
         Err(error) => {
@@ -76,7 +95,29 @@ fn check(path: &Path, libraries: &Path, out: &mut impl Write, colored: bool) -> 
     // Checking a tree with syntax errors would only add reports of the holes
     // the parser left.
     if !all.iter().any(|d| d.code.severity == Severity::Error) {
-        all.extend(build::check(&program, usize::BITS));
+        let compiled = build::compile(&program, usize::BITS);
+        all.extend(compiled.diagnostics);
+        if let Some(mir) = mir
+            && !all.iter().any(|d| d.code.severity == Severity::Error)
+        {
+            let tree = |definition: DefId| {
+                &program.modules[&program.order[definition.module as usize]].syntax
+            };
+            let name = |definition: DefId| {
+                let tree = tree(definition);
+                let declaration = tree.decls[Id::from_index(definition.index as usize)];
+                tree.file.slice(declaration.name()).to_string()
+            };
+            for (definition, body) in &compiled.functions {
+                let text = body.text(&compiled.types, &tree(*definition).file, name);
+                if let Err(error) = writeln!(mir, "fn {}:", name(*definition))
+                    .and_then(|()| mir.write_all(text.as_bytes()))
+                {
+                    eprintln!("peeper: cannot write MIR: {error}");
+                    return 1;
+                }
+            }
+        }
     }
     let scan = |file: &std::sync::Arc<source::SourceFile>| lexer::scan(file).0;
     let highlight: Option<printer::TokensOf> = if colored { Some(&scan) } else { None };
@@ -135,7 +176,7 @@ mod tests {
 
     fn run(path: &Path, libraries: &Path) -> (u8, String) {
         let mut out = Vec::new();
-        let code = check(path, libraries, &mut out, false);
+        let code = super::run(path, libraries, &mut out, false, None);
         (code, String::from_utf8(out).unwrap())
     }
 

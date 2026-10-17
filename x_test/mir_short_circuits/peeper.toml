@@ -1,0 +1,6 @@
+name = "mir_short_circuits"
+build = "program"
+
+[test]
+mode = "mir"
+outcome = "success"

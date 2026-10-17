@@ -7,6 +7,7 @@
 use std::marker::PhantomData;
 use std::num::NonZeroU32;
 use std::ops::Index;
+use std::ops::IndexMut;
 
 use source::Span;
 
@@ -178,6 +179,12 @@ impl<T> Index<Id<T>> for Arena<T> {
 
     fn index(&self, id: Id<T>) -> &T {
         &self.nodes[id.index()]
+    }
+}
+
+impl<T> IndexMut<Id<T>> for Arena<T> {
+    fn index_mut(&mut self, id: Id<T>) -> &mut T {
+        &mut self.nodes[id.index()]
     }
 }
 

@@ -8,6 +8,7 @@ a.out
 app
 *.hir
 *.mir
+!x_test/*/expected.mir
 *.
 *.ast.json
 _gen

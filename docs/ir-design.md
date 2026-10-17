@@ -39,9 +39,9 @@ scheduled per declaration, on demand (Zig, Rust), not module by module.
 - **decided** Scheduling is per declaration, on demand.
 - **decided** LLVM IR is written as text and compiled by clang.
 - **decided** One `model` crate owns the program's data: the syntax tree, the
-  THIR (later MIR) node types, the type model, definition ids, constant values
+  THIR and MIR node types, the type model, definition ids, constant values
   with their arithmetic, and operator kinds. The crates that build them
-  (`parser`, `check`, later `mir` lowering and `llvm`) hold only logic. THIR and
+  (`parser`, `check`, `lower` and later `llvm`) hold only logic. THIR and
   MIR keep their own node types: a tree and a graph have different shapes.
   (Until 2026-10-17 this was an `ir` crate, with the tree in `ast` and THIR in
   `thir`.)
@@ -56,7 +56,7 @@ project ──► modules (AST)            1 parse per file
 check ────────┤ per declaration:     signature: walk its header once
               │                      body: 1 walk, AST -> THIR (+ constants)
               ▼
-mir ──────────┤ per function:        1 walk, THIR -> MIR
+lower ────────┤ per function:        1 walk, THIR -> MIR
               │                      flow checks: dataflow over the graph
               ▼                      (init, move, borrow, return) in one pass where they agree
 llvm ─────────┘ per module:          1 walk over each function's MIR -> .ll text -> clang
@@ -75,19 +75,19 @@ that is built once and kept.
 peeper ─► build ─► project ─► parser ─► model ─► arena
             │
             ├─► check ─► model, project   AST -> THIR and signatures; folding
-            ├─► mir ───► model            THIR -> MIR; flow checks; (later) interpreter
+            ├─► lower ─► model            THIR -> MIR; flow checks; (later) interpreter
             └─► llvm ──► model            MIR -> LLVM text; clang
 ```
 
-Every phase reads and writes its data in `model`; only `mir` reads THIR, and
+Every phase reads and writes its data in `model`; only `lower` reads THIR, and
 `llvm` and the interpreter read MIR and signatures. Signatures (struct fields,
 enum variants, function types) are `model` data, written by check.
 
 | crate | owns |
 |---|---|
-| `model` | data only: `syntax` (the syntax tree), `thir` (THIR nodes), later `mir`; `types` (`TypeId`, the type interner, the built-in types table); `value` (constant values and their arithmetic); `DefId`; `BinaryOp`, `UnaryOp`; signatures |
+| `model` | data only: `syntax` (the syntax tree), `thir` (THIR nodes), `mir` (MIR graphs); `types` (`TypeId`, the type interner, the built-in types table); `value` (constant values and their arithmetic); `DefId`; `BinaryOp`, `UnaryOp`; signatures |
 | `check` | the checker: scopes, name lookup, building THIR, writing signatures |
-| `mir` | lowering from THIR; flow checks; later the interpreter |
+| `lower` | lowering from THIR; flow checks; later the interpreter |
 | `llvm` | LLVM text for a module; running clang and the linker |
 | `build` | the scheduler: memo tables, demand order, worker threads (the `build` of `overall-design.md`) |
 
@@ -215,7 +215,7 @@ mir(d)         MIR of function d (needs body(d)); later also comptime calls
 - Every declaration is checked, used or not, so errors in unused code are still
   reported (unlike Zig).
 - Comptime later: check asks `mir(f)` and runs it in the interpreter. The checker
-  reaches `mir` through the scheduler, never by depending on the `mir` crate.
+  reaches `mir` through the scheduler, never by depending on the `lower` crate.
 
 ## THIR
 
@@ -227,11 +227,55 @@ conversion, an auto reference) are explicit nodes.
 
 ## MIR
 
-One graph per function: locals with their types, basic blocks of statements
-(`place = value`) ending in a terminator (goto, branch, switch, call, return).
+One graph per function, shaped like LLVM IR at `-O0` (what clang emits before
+optimizing), so writing LLVM text is a direct walk and every part keeps the
+source place it came from. Decided by the owner (2026-10-17): flat (shape A),
+as close to LLVM as possible, every part traceable to the source for messages
+and debuggers; the logic lives in a `lower` crate, the data in `model::mir`.
+
+- **Variables.** Each parameter and `let` is a variable slot with its type,
+  `mut`, and the span of its name: an `alloca` plus a `dbg.declare` in LLVM, so a
+  debugger finds it by name. Values reach a variable only through `store` and
+  leave it only through `load`.
+- **Instructions.** A block is a list of instructions, each one operation whose
+  id is the value it gives (`%3 = add %1, %2`): `load`, `store`, a binary or
+  unary operation, `widen`, `call`, `phi`. Operands are a constant, an argument
+  or an earlier instruction's value, never a variable. A constant operand is an
+  index into the body's constants table, so an operand stays 8 bytes. Every
+  instruction keeps the span of the expression it came from: LLVM's `!dbg`
+  line, and where an error points.
+- **Terminators.** Each block ends in one: `br` (goto), `condbr` (with the span
+  of its condition), `ret`, or `fall off` at the closing `}` of a function with
+  a result (the missing-return check reports it when it is reachable; LLVM gets
+  `unreachable`). `&&` and `||` lower to `condbr` and a `phi` where both paths
+  meet, as clang does.
+- **Single assignment by construction.** An instruction's value is written once
+  and used after it, so the flow checks only follow variables.
+
+```
+fn f(a: i32) -> i32 { let b = a * 2; if b > 3 { return b; } return 0; }
+
+bb0:  store a, %arg0          ; a: i32 at 1:6
+      %1 = load a              ; 1:31
+      %2 = mul %1, const 2     ; 1:31
+      store b, %2              ; let b at 1:27
+      %3 = load b
+      %4 = gt %3, const 3
+      condbr %4, bb1, bb2      ; condition at 1:43
+bb1:  %5 = load b
+      ret %5                   ; 1:52
+bb2:  ret const 0
+```
+
 Flow checks are dataflow passes over the blocks that share one fixed-point
-helper. LLVM emission and the future interpreter both read MIR; nothing below MIR
-reads THIR.
+helper; a function whose checking already reported an error is not
+flow-checked, since its errors would only follow from the first. LLVM emission
+and the future interpreter both read MIR; nothing below MIR reads THIR.
+
+`peeper mir <path>` prints the MIR of every function of a program without
+errors (`mir::Body::text`, beside the data, like rustc's `-Zdump-mir`). MIR
+tests are `x_test` folders with `mode = "mir"` and an `expected.mir` file, as in
+rustc's `tests/mir-opt`; `PEEPER_BLESS=1` rewrites the expected files.
 
 ## Cost on the hot path
 

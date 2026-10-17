@@ -1,8 +1,9 @@
-//! The program's data, in one place: the syntax tree, THIR, the type model,
-//! definition ids, constant values with their arithmetic, and operator kinds.
-//! Each phase keeps its own node types (`syntax`, `thir`); the crates that
-//! build them hold only logic. See docs/ir-design.md.
+//! The program's data, in one place: the syntax tree, THIR, MIR, the type
+//! model, definition ids, constant values with their arithmetic, and operator
+//! kinds. Each phase keeps its own node types (`syntax`, `thir`, `mir`); the
+//! crates that build them hold only logic. See docs/ir-design.md.
 
+pub mod mir;
 pub mod syntax;
 pub mod thir;
 pub mod types;

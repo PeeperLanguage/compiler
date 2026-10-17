@@ -1,0 +1,27 @@
+fn add:
+  bb0:
+    store a.0, arg0
+    store b.1, arg1
+    %2 = load a.0: i32
+    %3 = load b.1: i32
+    %4 = Add %2, %3: i32
+    store sum.2, %4
+    %6 = load sum.2: i32
+    %7 = Multiply %6, 2: i32
+    store sum.2, %7
+    %9 = load sum.2: i32
+    %10 = widen %9: i64
+    store wide.3, %10
+    %12 = load wide.3: i64
+    call note(%12)
+    %14 = load sum.2: i32
+    return %14
+  bb1:
+    fall off at `}`
+fn note:
+  bb0:
+    store value.0, arg0
+    return
+fn main:
+  bb0:
+    return
