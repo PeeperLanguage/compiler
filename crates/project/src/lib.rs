@@ -211,21 +211,19 @@ fn load_file(
         None => std::fs::read(&job.file).map(String::from_utf8),
     };
     let (syntax, diagnostics) = match text {
-        Ok(text) => match text {
-            Ok(text) => parser::parse(&Arc::new(SourceFile::new(name, text))),
-            Err(error) => {
-                // The text up to the bad byte is kept as is, so the error points at it.
-                let at = error.utf8_error().valid_up_to();
-                let text = String::from_utf8_lossy(error.as_bytes()).into_owned();
-                let file = Arc::new(SourceFile::new(name, text));
-                let bad = Span::new(at, at + char::REPLACEMENT_CHARACTER.len_utf8());
-                let error =
-                    Diagnostic::new(diagnostics::UNEXPECTED_CHARACTER, "file is not valid UTF-8")
-                        .label(&file, bad, "this byte is not UTF-8")
-                        .note("Peeper source files must be UTF-8 text");
-                (Tree::new(file), vec![error])
-            }
-        },
+        Ok(Ok(text)) => parser::parse(&Arc::new(SourceFile::new(name, text))),
+        Ok(Err(error)) => {
+            // The text up to the bad byte is kept as is, so the error points at it.
+            let at = error.utf8_error().valid_up_to();
+            let text = String::from_utf8_lossy(error.as_bytes()).into_owned();
+            let file = Arc::new(SourceFile::new(name, text));
+            let bad = Span::new(at, at + char::REPLACEMENT_CHARACTER.len_utf8());
+            let error =
+                Diagnostic::new(diagnostics::UNEXPECTED_CHARACTER, "file is not valid UTF-8")
+                    .label(&file, bad, "this byte is not UTF-8")
+                    .note("Peeper source files must be UTF-8 text");
+            (Tree::new(file), vec![error])
+        }
         Err(error) => {
             let message = format!("read module: {name}: {error}");
             let file = Arc::new(SourceFile::new(name, ""));

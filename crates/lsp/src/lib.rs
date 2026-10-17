@@ -60,14 +60,7 @@ fn run(connection: Connection, libraries: &Path) -> Result<(), BoxError> {
         ..ServerCapabilities::default()
     };
     connection.initialize(serde_json::to_value(capabilities)?)?;
-    let mut server = Server {
-        connection: &connection,
-        libraries,
-        open_files: HashMap::new(),
-        checked: HashMap::new(),
-        pending: HashMap::new(),
-        deadline: None,
-    };
+    let mut server = Server::new(&connection, libraries);
     loop {
         let message = match server.deadline {
             None => match connection.receiver.recv() {
@@ -113,13 +106,24 @@ struct Server<'s> {
     libraries: &'s Path,
     open_files: HashMap<PathBuf, String>, // as `project::load` takes them
     checked: HashMap<PathBuf, Checked>,   // by the entry file of each program
-    /// Programs changed and not checked yet, by entry file, each with a file
-    /// that changed; checked once `deadline` passes.
-    pending: HashMap<PathBuf, (project::Project, PathBuf)>,
+    /// Files changed and not checked yet; their programs are checked once
+    /// `deadline` passes.
+    pending: HashSet<PathBuf>,
     deadline: Option<Instant>,
 }
 
-impl Server<'_> {
+impl<'s> Server<'s> {
+    fn new(connection: &'s Connection, libraries: &'s Path) -> Server<'s> {
+        Server {
+            connection,
+            libraries,
+            open_files: HashMap::new(),
+            checked: HashMap::new(),
+            pending: HashSet::new(),
+            deadline: None,
+        }
+    }
+
     /// Keeps the open files' text current and checks the program of the file
     /// the notification is about: at once for an opened, saved or closed file
     /// (a closed file's text is the disk's again), after `DEBOUNCE` for a
@@ -163,35 +167,51 @@ impl Server<'_> {
         let Some(file) = file else {
             return Ok(());
         };
-        // A file under a folder holding peeper.toml belongs to that project's
-        // program; any other file is checked on its own.
+        if debounce {
+            self.pending.insert(file);
+            self.deadline = Some(Instant::now() + DEBOUNCE);
+            return Ok(());
+        }
+        // Other pending files of its program are still checked once more.
+        self.pending.remove(&file);
+        match self.project_of(&file) {
+            Some(project) => self.check(project, &file),
+            None => Ok(()),
+        }
+    }
+
+    /// Checks the program of each pending file, once per program.
+    fn check_pending(&mut self) -> Result<(), BoxError> {
+        self.deadline = None;
+        let mut programs = HashMap::new();
+        for file in std::mem::take(&mut self.pending) {
+            if let Some(project) = self.project_of(&file) {
+                programs
+                    .entry(project.entry.clone())
+                    .or_insert((project, file));
+            }
+        }
+        for (project, file) in programs.into_values() {
+            self.check(project, &file)?;
+        }
+        Ok(())
+    }
+
+    /// The project `file` belongs to: the one of the nearest folder above it
+    /// holding peeper.toml, or else the file alone. `None`, after logging why,
+    /// when it cannot be read.
+    fn project_of(&self, file: &Path) -> Option<project::Project> {
         let folder = file
             .ancestors()
             .skip(1)
             .find(|folder| folder.join(manifest::FILE_NAME).is_file());
-        let project = match project::find(folder.unwrap_or(&file), self.libraries) {
-            Ok(project) => project,
+        match project::find(folder.unwrap_or(file), self.libraries) {
+            Ok(project) => Some(project),
             Err(message) => {
                 eprintln!("peeper lsp: {message}"); // the editor's server log
-                return Ok(());
+                None
             }
-        };
-        if debounce {
-            self.pending.insert(project.entry.clone(), (project, file));
-            self.deadline = Some(Instant::now() + DEBOUNCE);
-            return Ok(());
         }
-        self.pending.remove(&project.entry);
-        self.check(project, &file)
-    }
-
-    /// Checks every pending program once.
-    fn check_pending(&mut self) -> Result<(), BoxError> {
-        self.deadline = None;
-        for (project, file) in std::mem::take(&mut self.pending).into_values() {
-            self.check(project, &file)?;
-        }
-        Ok(())
     }
 
     /// Checks the program of `project`, after a change to `file`, and
@@ -339,6 +359,7 @@ mod tests {
     use source::Span;
 
     use super::DEBOUNCE;
+    use super::Server;
     use super::lsp_diagnostic;
     use super::position;
     use super::run;
@@ -471,19 +492,6 @@ mod tests {
         let more = client.receiver.recv_timeout(Duration::from_millis(50));
         assert!(more.is_err(), "a second publish: {more:?}");
 
-        // A save checks at once, and the change before it is not checked again.
-        send(change(5, broken));
-        let saved = json!({ "textDocument": { "uri": uri } });
-        send(notification("textDocument/didSave", saved));
-        let start = Instant::now();
-        let on_save = published();
-        assert!(start.elapsed() < DEBOUNCE, "the save waited");
-        assert_eq!(on_save.diagnostics.len(), opened.diagnostics.len());
-        let more = client
-            .receiver
-            .recv_timeout(DEBOUNCE + Duration::from_millis(50));
-        assert!(more.is_err(), "the change was checked again: {more:?}");
-
         send(request(2, "shutdown", serde_json::Value::Null));
         assert!(matches!(
             client.receiver.recv().unwrap(),
@@ -491,5 +499,44 @@ mod tests {
         ));
         send(notification("exit", serde_json::Value::Null));
         thread.join().unwrap();
+    }
+
+    /// A change only waits; a save checks at once, before `notification`
+    /// returns, and its file is no longer pending.
+    #[test]
+    fn a_save_checks_at_once() {
+        let folder = std::env::temp_dir().join(format!("peeper-lsp-save-{}", std::process::id()));
+        _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let file = folder.join("main.peep");
+        std::fs::write(&file, "fn main() {}\n").unwrap();
+        let uri = Url::from_file_path(&file).unwrap();
+        let (connection, client) = Connection::memory();
+        let mut server = Server::new(&connection, Path::new(""));
+        let change = json!({
+            "textDocument": { "uri": uri, "version": 2 },
+            "contentChanges": [{ "text": "fn main() { a $ b; }\n" }],
+        });
+        let change = Notification::new("textDocument/didChange".to_string(), change);
+        server.notification(change).unwrap();
+        assert!(
+            client.receiver.try_recv().is_err(),
+            "a change was checked at once"
+        );
+        assert!(server.deadline.is_some());
+        let save = json!({ "textDocument": { "uri": uri } });
+        let save = Notification::new("textDocument/didSave".to_string(), save);
+        server.notification(save).unwrap();
+        let Ok(Message::Notification(published)) = client.receiver.try_recv() else {
+            panic!("the save did not publish at once");
+        };
+        let published: PublishDiagnosticsParams = serde_json::from_value(published.params).unwrap();
+        assert_eq!(
+            published.diagnostics.len(),
+            1,
+            "{:?}",
+            published.diagnostics
+        );
+        assert!(server.pending.is_empty());
     }
 }
