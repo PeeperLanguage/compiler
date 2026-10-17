@@ -109,10 +109,11 @@ size is known, not estimated.
 
 ## Printing and testing an IR
 
-**An IR prints itself, beside its data, and a command shows it.** `mir::Body::text`
-lives in `model::mir`, as `Types::text` lives in `model::types`, and `peeper mir`
-prints it. A printer only tests call has no production caller and grows inside
-a test module.
+**An IR prints itself, beside its data, and a command writes it.**
+`thir::Body::text` and `mir::Body::text` live beside their data, as
+`Types::text` lives in `model::types`, and `peeper -dump [thir | mir]` writes
+them to files under build/debug/dumps. A printer only tests call has no
+production caller and grows inside a test module; tests call the same printer.
 
 **Expected output lives in files, not in Rust strings.** A MIR test is an
 `x_test` folder with `mode = "mir"`, its source and `expected.mir`;
@@ -132,6 +133,10 @@ and Cranelift (`filetests`) work the same way.
   `build::compile` once it also lowered to MIR; the CLI's command runner is
   `run`, not `check`. In a compiler, "check" means the type checker (the
   `check` crate), so no other function is named that.
+- **`main` only wires the parts together.** The `peeper` binary keeps
+  argument parsing and the usage text in `args.rs`, loading, compiling and
+  reporting in `driver.rs`, and the dumpers in `dump.rs`; `main.rs` parses,
+  runs and returns the exit code.
 - **Data lives in `model`, logic in the crates that build it.** Name a data
   module by its path: `use model::syntax;`, then `syntax::Expr`.
 - **Never write a concatenated string into a `String` builder**

@@ -291,10 +291,14 @@ assignments to a variable without `mut` only when its `let` has a value. Only a
 `let` without a value can be unset, so the check is skipped for a function
 that has none (decided by the owner, 2026-10-17).
 
-`peeper mir <path>` prints the MIR of every function of a program without
-errors (`mir::Body::text`, beside the data, like rustc's `-Zdump-mir`). MIR
-tests are `x_test` folders with `mode = "mir"` and an `expected.mir` file, as in
-rustc's `tests/mir-opt`; `PEEPER_BLESS=1` rewrites the expected files.
+`peeper -dump [thir | mir] <path>` writes the THIR and MIR of every function
+of a program without errors, or only the kind named, one file per module under
+build/debug/dumps in the project folder or beside the file
+(`myapp:deep/x` to `myapp/deep/x.mir`), like the old `-keep-gen` and rustc's
+`-Zdump-mir`. The printers are `thir::Body::text` and `mir::Body::text`, beside
+the data; LLVM text joins as `ll` with code generation. MIR tests are `x_test`
+folders with `mode = "mir"` and an `expected.mir` file, as in rustc's
+`tests/mir-opt`; `PEEPER_BLESS=1` rewrites the expected files.
 
 ## Cost on the hot path
 

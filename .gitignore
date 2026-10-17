@@ -1,4 +1,5 @@
 /build/
+**/build/debug/
 basic
 test_void
 a.out

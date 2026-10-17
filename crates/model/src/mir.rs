@@ -119,7 +119,7 @@ impl Terminator {
 }
 
 impl Body {
-    /// The body as text, one block after another, for `peeper mir`. `file` is
+    /// The body as text, one block after another, for `peeper -dump`. `file` is
     /// where the body is written; `function_name` names a called function. A
     /// variable shows as its name and index (`sum.2`), an integer constant as
     /// its bits read unsigned.

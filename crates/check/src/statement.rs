@@ -396,16 +396,9 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
 
 #[cfg(test)]
 mod tests {
-    use arena::Id;
-    use arena::List;
+    use model::DefId;
     use model::syntax;
-    use model::thir::Body;
-    use model::thir::Expr;
-    use model::thir::ExprKind;
-    use model::thir::Stmt;
-    use model::types::Type;
-    use model::types::Types;
-    use model::value::Value;
+    use source::SourceFile;
 
     use crate::testing::Reported;
     use crate::testing::reported;
@@ -414,7 +407,6 @@ mod tests {
     /// The THIR of every function body of `text`, as text, and the
     /// diagnostics.
     fn bodies(text: &str) -> (Vec<String>, Vec<Reported>) {
-        let file = text.to_string();
         let (bodies, types, reported) = with_checker(text, |checker| {
             let tree = &checker.module.syntax;
             let declarations: Vec<_> = tree.lists.items(tree.declarations).collect();
@@ -429,115 +421,13 @@ mod tests {
             }
             bodies
         });
+        let file = SourceFile::new("main.peep", text);
+        let name = |function: DefId| format!("f{}", function.index);
         let shown = bodies
             .iter()
-            .map(|body| {
-                Shown {
-                    file: &file,
-                    types: &types,
-                    body,
-                }
-                .list(body.statements)
-            })
+            .map(|body| body.text(&types, &file, name))
             .collect();
         (shown, reported)
-    }
-
-    struct Shown<'a> {
-        file: &'a str,
-        types: &'a Types,
-        body: &'a Body,
-    }
-
-    impl Shown<'_> {
-        fn list(&self, statements: List<Stmt>) -> String {
-            let shown: Vec<String> = self
-                .body
-                .lists
-                .items(statements)
-                .map(|statement| self.statement(statement))
-                .collect();
-            shown.join("; ")
-        }
-
-        fn statement(&self, statement: Id<Stmt>) -> String {
-            let body = self.body;
-            match body.stmts[statement] {
-                Stmt::Let { local, value } => {
-                    let value =
-                        value.map_or(String::new(), |value| format!(" = {}", self.expr(value)));
-                    format!("let {}{value}", self.local(local))
-                }
-                Stmt::Assign { local, value } => {
-                    format!("{} = {}", self.local(local), self.expr(value))
-                }
-                Stmt::Expression(value) => self.expr(value),
-                Stmt::Return(None) => "return".to_string(),
-                Stmt::Return(Some(value)) => format!("return {}", self.expr(value)),
-                Stmt::If {
-                    condition,
-                    then,
-                    otherwise,
-                } => {
-                    let otherwise = otherwise.map_or(String::new(), |otherwise| {
-                        format!(" else {}", self.statement(otherwise))
-                    });
-                    let then = self.list(body.blocks[then].statements);
-                    format!("if {} {{ {then} }}{otherwise}", self.expr(condition))
-                }
-                Stmt::Block(block) => format!("{{ {} }}", self.list(body.blocks[block].statements)),
-            }
-        }
-
-        fn local(&self, local: Id<model::thir::Local>) -> String {
-            let span = self.body.locals.span(local);
-            let name = &self.file[span.start as usize..span.end as usize];
-            format!("{name}{local:?}") // `x#0`: which `x`
-        }
-
-        fn expr(&self, expr: Id<Expr>) -> String {
-            let Expr { ty, kind } = &self.body.exprs[expr];
-            let ty = self.types.text(*ty);
-            match kind {
-                ExprKind::Constant(Value::Bool(value)) => format!("{value}"),
-                ExprKind::Constant(Value::Float(bits)) => format!("{}:{ty}", f64::from_bits(*bits)),
-                ExprKind::Constant(Value::Integer(limbs)) => {
-                    let Type::Integer(integer) = self.types[self.body.exprs[expr].ty] else {
-                        unreachable!()
-                    };
-                    let value = match integer.bits {
-                        ..=128 => bigint::extend(integer.bits, integer.signed, limbs, 128),
-                        _ => limbs.clone(), // shown by its low 128 bits
-                    };
-                    let low = value.as_slice()[0] as u128 | (value.as_slice()[1] as u128) << 64;
-                    let value = if integer.signed {
-                        (low as i128).to_string()
-                    } else {
-                        low.to_string()
-                    };
-                    format!("{value}:{ty}")
-                }
-                ExprKind::Local(local) => self.local(*local),
-                ExprKind::Binary { op, left, right } => {
-                    format!("({} {op:?} {})", self.expr(*left), self.expr(*right))
-                }
-                ExprKind::Unary { op, value } => format!("({op:?} {})", self.expr(*value)),
-                ExprKind::Widen(value) => format!("widen({}):{ty}", self.expr(*value)),
-                ExprKind::Call {
-                    function,
-                    arguments,
-                } => {
-                    let arguments: Vec<String> = self
-                        .body
-                        .lists
-                        .items(*arguments)
-                        .map(|argument| self.expr(argument))
-                        .collect();
-                    format!("call{function:?}({}):{ty}", arguments.join(", "))
-                }
-                ExprKind::Invalid => "invalid".to_string(),
-            }
-        }
     }
 
     #[test]
@@ -555,13 +445,18 @@ mod tests {
         assert!(reported.is_empty(), "{reported:?}");
         assert_eq!(
             bodies,
-            [
-                "let c#2 = (a#0 Add 1:i32); b#1 = (b#1 Add widen(c#2):i64); \
-                 if (a#0 LessThan 0:i32) { return 6:i64 } \
-                 else if (LogicalNot (a#0 EqualTo 1:i32)) { b#1 = (Negate b#1) } \
-                 else { let c#3 = true }; \
-                 let d#4; return (b#1 ShiftLeft 2:u8)"
-            ]
+            ["    let c.2 = (a.0 Add 1:i32)
+    b.1 = (b.1 Add widen(c.2):i64)
+    if (a.0 LessThan 0:i32) {
+        return 6:i64
+    } else if (LogicalNot (a.0 EqualTo 1:i32)) {
+        b.1 = (Negate b.1)
+    } else {
+        let c.3 = true
+    }
+    let d.4
+    return (b.1 ShiftLeft 2:u8)
+"]
         );
     }
 
@@ -580,10 +475,15 @@ mod tests {
         assert!(reported.is_empty(), "{reported:?}");
         assert_eq!(
             bodies,
-            [
-                "let x#1 = (x#0 Add 1:i32); let y#2 = x#1; { let x#3 = true; let z#4 = x#3 }; \
-                 let w#5 = x#1; let v#6 = 2:u8"
-            ]
+            ["    let x.1 = (x.0 Add 1:i32)
+    let y.2 = x.1
+    {
+        let x.3 = true
+        let z.4 = x.3
+    }
+    let w.5 = x.1
+    let v.6 = 2:u8
+"]
         );
     }
 
@@ -607,9 +507,15 @@ mod tests {
         assert_eq!(
             bodies,
             [format!(
-                "let small#0 = -128:i8; let wrapped#1 = -128:i8; let wide#2 = 200:i16; \
-                 let precise#3 = {precise}:f32; let whole#4 = 1:f64; let big#5 = {}:u256; \
-                 let no#6 = false; let parenthesized#7 = -20:i32",
+                "    let small.0 = -128:i8
+    let wrapped.1 = -128:i8
+    let wide.2 = 200:i16
+    let precise.3 = {precise}:f32
+    let whole.4 = 1:f64
+    let big.5 = {}:u256
+    let no.6 = false
+    let parenthesized.7 = -20:i32
+",
                 1u128 << 100
             )]
         );
