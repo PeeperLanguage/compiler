@@ -1,0 +1,7 @@
+name = "negative_check_call_arity"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["T0006", "`add` takes 2 arguments, but 3 were given", "T0005", "`count` is not a function"]

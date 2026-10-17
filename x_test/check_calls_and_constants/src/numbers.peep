@@ -1,0 +1,6 @@
+const Base = 21;
+const Limit: i64 = 1000;
+
+fn Scale(value: i64, factor: u8) -> i64 {
+    return value * factor;
+}

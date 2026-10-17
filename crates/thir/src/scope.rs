@@ -10,10 +10,13 @@ use diagnostics::Diagnostic;
 use ir::DefId;
 use source::Span;
 
-/// What a module-level name stands for.
+/// What a module-level name stands for, by the kind of its declaration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Binding {
-    Declaration(DefId),
+    Function(DefId),
+    Constant(DefId),
+    /// a struct, enum, interface or type alias
+    Type(DefId),
     /// An imported module, by its place in the program's order.
     Module(u32),
 }
@@ -72,24 +75,22 @@ pub fn collect(
     }
     let tree = &module.syntax;
     for declaration in tree.lists.items(tree.declarations) {
-        let name = match tree.decls[declaration] {
-            ast::Decl::Function(function) if function.receiver.is_none() => function.name,
+        let definition = DefId {
+            module: module_index,
+            index: declaration.index() as u32,
+        };
+        let (name, binding) = match tree.decls[declaration] {
+            ast::Decl::Function(function) if function.receiver.is_none() => {
+                (function.name, Binding::Function(definition))
+            }
             ast::Decl::Function(_) => continue, // a method belongs to its receiver's type
-            ast::Decl::Const { name, .. } => name,
+            ast::Decl::Const { name, .. } => (name, Binding::Constant(definition)),
             ast::Decl::Struct(declaration)
             | ast::Decl::Enum(declaration)
             | ast::Decl::Interface(declaration)
-            | ast::Decl::Alias(declaration) => declaration.name,
+            | ast::Decl::Alias(declaration) => (declaration.name, Binding::Type(definition)),
         };
-        let index = declaration.index() as u32;
-        declare(
-            file.slice(name),
-            Binding::Declaration(DefId {
-                module: module_index,
-                index,
-            }),
-            name,
-        );
+        declare(file.slice(name), binding, name);
     }
     scope
 }
@@ -138,28 +139,28 @@ mod tests {
         assert!(diagnostics.is_empty());
         assert_eq!(
             scope.get("main"),
-            Some(Binding::Declaration(DefId {
+            Some(Binding::Function(DefId {
                 module: 2,
                 index: 0
             }))
         );
         assert_eq!(
             scope.get("later"),
-            Some(Binding::Declaration(DefId {
+            Some(Binding::Function(DefId {
                 module: 2,
                 index: 1
             }))
         );
         assert_eq!(
             scope.get("Limit"),
-            Some(Binding::Declaration(DefId {
+            Some(Binding::Constant(DefId {
                 module: 2,
                 index: 2
             }))
         );
         assert_eq!(
             scope.get("Point"),
-            Some(Binding::Declaration(DefId {
+            Some(Binding::Type(DefId {
                 module: 2,
                 index: 3
             }))
@@ -183,7 +184,7 @@ mod tests {
         let scope = collect(1, &module(text, imports), &indexes, &mut diagnostics);
         assert_eq!(
             scope.get("A"),
-            Some(Binding::Declaration(DefId {
+            Some(Binding::Constant(DefId {
                 module: 1,
                 index: 1
             }))

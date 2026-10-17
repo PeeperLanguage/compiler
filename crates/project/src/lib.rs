@@ -16,7 +16,7 @@ pub use packages::Packages;
 use packages::{path_of, resolve};
 
 /// Imported by every module except itself.
-const PRELUDE_PATH: &str = "core:global";
+pub const PRELUDE_PATH: &str = "core:global";
 
 /// One source file, read and parsed. It never changes once `load` has returned
 /// it. Its source file is `syntax.file`.

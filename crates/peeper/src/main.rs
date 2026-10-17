@@ -67,11 +67,16 @@ fn check(path: &Path, libraries: &Path, out: &mut impl Write, colored: bool) -> 
         packages.insert(manifest.name, source);
     }
     let mut program = project::load(&packages, &entry);
-    let mut all = program.diagnostics;
+    let mut all = std::mem::take(&mut program.diagnostics);
     for path in &program.order {
-        if let Some(module) = program.modules.remove(path) {
-            all.extend(module.diagnostics);
+        if let Some(module) = program.modules.get_mut(path) {
+            all.append(&mut module.diagnostics);
         }
+    }
+    // Checking a tree with syntax errors would only add reports of the holes
+    // the parser left.
+    if !all.iter().any(|d| d.code.severity == Severity::Error) {
+        all.extend(build::check(&program, usize::BITS));
     }
     let scan = |file: &std::sync::Arc<source::SourceFile>| lexer::scan(file).0;
     let highlight: Option<printer::TokensOf> = if colored { Some(&scan) } else { None };

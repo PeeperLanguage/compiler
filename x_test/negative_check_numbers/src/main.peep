@@ -1,0 +1,7 @@
+fn main() {
+    let small: u8 = 300;
+    let wide: i64 = 5;
+    let mixed = 1i32 + wide;
+    let ratio = 10 / 0;
+    let shifted = 1u8 << 8;
+}

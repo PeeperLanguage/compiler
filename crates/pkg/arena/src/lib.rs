@@ -21,6 +21,18 @@ impl<T> Id<T> {
     pub fn index(self) -> usize {
         self.raw.get() as usize - 1
     }
+
+    /// The node at position `index` of its arena: the id `index` came from.
+    pub fn from_index(index: usize) -> Id<T> {
+        let raw = u32::try_from(index + 1)
+            .ok()
+            .and_then(NonZeroU32::new)
+            .expect("an arena holds fewer than 2^32 nodes");
+        Id {
+            raw,
+            category: PhantomData,
+        }
+    }
 }
 
 // Derived impls would require T itself to be Clone, Copy and so on.
@@ -141,6 +153,15 @@ impl<T> Arena<T> {
     pub fn span(&self, id: Id<T>) -> Span {
         self.spans[id.index()]
     }
+
+    /// How many nodes it holds.
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
 }
 
 impl<T> Default for Arena<T> {
@@ -191,6 +212,8 @@ mod tests {
         let a = arena.push('a', Span::new(0, 1));
         let b = arena.push('b', Span::new(2, 3));
         assert_eq!((arena[b], arena.span(b)), ('b', Span::new(2, 3)));
+        assert_eq!(Id::<char>::from_index(b.index()), b);
+        assert_eq!(arena.len(), 2);
         let mut lists = Lists::default();
         let list: List<char> = lists.add(&[a.into(), b.into()]);
         assert_eq!(lists.items(list).collect::<Vec<_>>(), [a, b]);

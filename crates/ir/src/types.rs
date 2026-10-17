@@ -60,6 +60,8 @@ pub enum Type {
     Bool,
     Integer(Integer),
     Float(Float),
+    /// `cstr`: a pointer to a C string, as C functions take it.
+    CString,
     Function {
         parameters: Box<[TypeId]>,
         result: TypeId,
@@ -86,41 +88,45 @@ const fn integer(signed: bool, bits: u32) -> Type {
     Type::Integer(Integer { signed, bits })
 }
 
-/// The types with fixed ids, in id order; they need no lookup.
-const FIXED: &[Type] = &[
-    Type::Invalid,
-    Type::Void,
-    Type::Bool,
-    integer(true, 8),
-    integer(true, 16),
-    integer(true, 32),
-    integer(true, 64),
-    integer(true, 128),
-    integer(false, 8),
-    integer(false, 16),
-    integer(false, 32),
-    integer(false, 64),
-    integer(false, 128),
-    Type::Float(Float::F32),
-    Type::Float(Float::F64),
-];
+/// Declares the types with fixed ids: `FIXED`, the types in id order (they
+/// need no lookup); a `TypeId` constant for each, numbered in the order
+/// written; and `NAMED`, the name a program writes for each type given one.
+/// Integers are named by rule instead (`Types::builtin`).
+macro_rules! fixed_types {
+    ($($name:ident $($text:literal)? => $ty:expr,)*) => {
+        const FIXED: &[Type] = &[$($ty,)*];
 
-impl TypeId {
-    pub const INVALID: TypeId = TypeId(0);
-    pub const VOID: TypeId = TypeId(1);
-    pub const BOOL: TypeId = TypeId(2);
-    pub const I8: TypeId = TypeId(3);
-    pub const I16: TypeId = TypeId(4);
-    pub const I32: TypeId = TypeId(5);
-    pub const I64: TypeId = TypeId(6);
-    pub const I128: TypeId = TypeId(7);
-    pub const U8: TypeId = TypeId(8);
-    pub const U16: TypeId = TypeId(9);
-    pub const U32: TypeId = TypeId(10);
-    pub const U64: TypeId = TypeId(11);
-    pub const U128: TypeId = TypeId(12);
-    pub const F32: TypeId = TypeId(13);
-    pub const F64: TypeId = TypeId(14);
+        /// The position of each fixed type in `FIXED`, counted by the compiler.
+        #[allow(non_camel_case_types, clippy::upper_case_acronyms)]
+        enum Position {
+            $($name,)*
+        }
+
+        impl TypeId {
+            $(pub const $name: TypeId = TypeId(Position::$name as u32);)*
+        }
+
+        const NAMED: &[(&str, TypeId)] = &[$($(($text, TypeId::$name),)?)*];
+    };
+}
+
+fixed_types! {
+    INVALID => Type::Invalid,
+    VOID => Type::Void,
+    BOOL "bool" => Type::Bool,
+    I8 => integer(true, 8),
+    I16 => integer(true, 16),
+    I32 => integer(true, 32),
+    I64 => integer(true, 64),
+    I128 => integer(true, 128),
+    U8 => integer(false, 8),
+    U16 => integer(false, 16),
+    U32 => integer(false, 32),
+    U64 => integer(false, 64),
+    U128 => integer(false, 128),
+    F32 "f32" => Type::Float(Float::F32),
+    F64 "f64" => Type::Float(Float::F64),
+    CSTR "cstr" => Type::CString,
 }
 
 /// The types of a program. The scheduler shares it between threads behind one
@@ -155,17 +161,52 @@ impl Types {
 }
 
 impl Types {
+    /// The built-in type `name` stands for: one in `NAMED`, `isize` and `usize`
+    /// (as wide as a pointer, `pointer_bits`), or `iN` and `uN` for N from 1 to
+    /// `Integer::MAX_BITS`, written without leading zeros. A number literal's
+    /// suffix (`5u24`) is one of these names too.
+    pub fn builtin(&mut self, name: &str, pointer_bits: u32) -> Option<TypeId> {
+        if let Some(&(_, id)) = NAMED.iter().find(|(text, _)| *text == name) {
+            return Some(id);
+        }
+        let (signed, bits) = match name {
+            "isize" => (true, pointer_bits),
+            "usize" => (false, pointer_bits),
+            _ => {
+                let (signed, width) = match name.split_at_checked(1)? {
+                    ("i", width) => (true, width),
+                    ("u", width) => (false, width),
+                    _ => return None,
+                };
+                let digits = !width.is_empty() && width.bytes().all(|b| b.is_ascii_digit());
+                if !digits || width.starts_with('0') {
+                    return None; // `u`, `i8x`, `u08`
+                }
+                let bits = width
+                    .parse()
+                    .ok()
+                    .filter(|&bits| bits <= Integer::MAX_BITS)?;
+                (signed, bits)
+            }
+        };
+        Some(self.intern(integer(signed, bits)))
+    }
+
     /// The type as a program writes it: `u8`, `fn(i32) -> bool`.
     pub fn text(&self, id: TypeId) -> String {
         match &self[id] {
             Type::Invalid => "{invalid}".to_string(),
             Type::Void => "void".to_string(),
-            Type::Bool => "bool".to_string(),
+            Type::Bool | Type::Float(_) | Type::CString => {
+                let (text, _) = NAMED
+                    .iter()
+                    .find(|&&(_, named)| named == id)
+                    .expect("in `NAMED`");
+                text.to_string()
+            }
             Type::Integer(Integer { signed, bits }) => {
                 format!("{}{bits}", if *signed { 'i' } else { 'u' })
             }
-            Type::Float(Float::F32) => "f32".to_string(),
-            Type::Float(Float::F64) => "f64".to_string(),
             Type::Function { parameters, result } => {
                 let parameters: Vec<String> = parameters.iter().map(|&p| self.text(p)).collect();
                 let mut text = format!("fn({})", parameters.join(", "));
@@ -214,6 +255,7 @@ mod tests {
         assert_eq!(types[TypeId::U8], integer(false, 8));
         assert_eq!(types[TypeId::BOOL], Type::Bool);
         assert_eq!(types[TypeId::F64], Type::Float(Float::F64));
+        assert_eq!(types[TypeId::CSTR], Type::CString);
     }
 
     #[test]
@@ -259,6 +301,38 @@ mod tests {
     }
 
     #[test]
+    fn builtin_names() {
+        let mut types = Types::new();
+        let mut lookup = |name| types.builtin(name, 64);
+        assert_eq!(lookup("bool"), Some(TypeId::BOOL));
+        assert_eq!(lookup("i32"), Some(TypeId::I32));
+        assert_eq!(lookup("u128"), Some(TypeId::U128));
+        assert_eq!(
+            lookup("usize"),
+            Some(TypeId::U64),
+            "a pointer is 64 bits here"
+        );
+        assert_eq!(lookup("isize"), Some(TypeId::I64));
+        assert_eq!(lookup("f32"), Some(TypeId::F32));
+        assert_eq!(lookup("cstr"), Some(TypeId::CSTR));
+        let u24 = lookup("u24").unwrap();
+        assert_eq!(lookup("u24"), Some(u24));
+        assert!(lookup("i8388608").is_some(), "2^23 bits is the widest");
+        for name in [
+            "i0", "u08", "i8388609", "u", "i8x", "x8", "byte", "", "i-1", "u+8", "void",
+        ] {
+            assert_eq!(lookup(name), None, "{name}");
+        }
+        assert_eq!(types[u24], integer(false, 24));
+        let mut types = Types::new();
+        assert_eq!(
+            types.builtin("usize", 32),
+            Some(TypeId::U32),
+            "a pointer is 32 bits there"
+        );
+    }
+
+    #[test]
     fn type_text() {
         let mut types = Types::new();
         let u24 = types.intern(integer(false, 24));
@@ -272,6 +346,7 @@ mod tests {
         });
         assert_eq!(types.text(u24), "u24");
         assert_eq!(types.text(TypeId::F32), "f32");
+        assert_eq!(types.text(TypeId::CSTR), "cstr");
         assert_eq!(types.text(function), "fn(i32, u24) -> bool");
         assert_eq!(types.text(procedure), "fn()");
     }

@@ -8,10 +8,10 @@ use arena::List;
 use diagnostics::Diagnostic;
 use ir::types::Type;
 use ir::types::TypeId;
-use ir::value::Value;
 use source::Span;
 
 use crate::Checker;
+use crate::Constant;
 use crate::Queries;
 use crate::body::Block;
 use crate::body::Body;
@@ -19,15 +19,15 @@ use crate::body::Expr;
 use crate::body::ExprKind;
 use crate::body::Local;
 use crate::body::Stmt;
+use crate::scope::Binding;
 
 /// What a name declared in a body stands for.
 #[derive(Clone)]
 pub(crate) enum Named {
     Local(Id<Local>),
-    /// a `const`, by its type and value
-    Constant(TypeId, Value),
-    /// a `const` whose value had an error; uses of it report nothing more
-    Invalid,
+    /// a `const`, by its type and value; `None` when its value had an error,
+    /// so uses of it report nothing more
+    Constant(Option<Constant>),
 }
 
 /// Checking one function body.
@@ -51,15 +51,8 @@ impl<'a, Q: Queries> Checker<'a, Q> {
             return None; // the signature's error was reported
         };
         let (parameters, result) = (parameters.clone(), *result);
-        let module: &'a project::Module = self.module;
-        let tree = &module.syntax;
-        let mut checker = BodyChecker {
-            checker: self,
-            tree,
-            body: Body::new(),
-            names: Vec::new(),
-            result,
-        };
+        let tree = &self.module.syntax;
+        let mut checker = BodyChecker::new(self, result);
         for (parameter, &ty) in tree.lists.items(function.parameters).zip(&parameters) {
             let parameter = tree.params[parameter];
             let name = parameter.name.unwrap_or_default();
@@ -75,9 +68,28 @@ impl<'a, Q: Queries> Checker<'a, Q> {
         checker.body.statements = checker.statements(tree.blocks[block].statements);
         Some(checker.body)
     }
+
+    /// The type and value of the module's constant `declaration`; `None` when
+    /// it had an error. Its value is checked as a body's `const` is, with no
+    /// locals in scope.
+    pub fn constant(&mut self, declaration: Id<ast::Decl>) -> Option<Constant> {
+        BodyChecker::new(self, TypeId::VOID).constant_value(declaration)
+    }
 }
 
-impl<'a, Q: Queries> BodyChecker<'_, 'a, Q> {
+impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
+    /// Checking a body of a function whose result type is `result`.
+    fn new(checker: &'c mut Checker<'a, Q>, result: TypeId) -> BodyChecker<'c, 'a, Q> {
+        let tree = &checker.module.syntax;
+        BodyChecker {
+            checker,
+            tree,
+            body: Body::new(),
+            names: Vec::new(),
+            result,
+        }
+    }
+
     /// The THIR of `statements`, in the current block.
     fn statements(&mut self, statements: List<ast::Stmt>) -> List<Stmt> {
         let mut checked: Vec<NonZeroU32> = Vec::with_capacity(statements.len());
@@ -133,7 +145,11 @@ impl<'a, Q: Queries> BodyChecker<'_, 'a, Q> {
                 value,
             } => self.let_statement(mutable, name, ty, value),
             ast::Stmt::Const(declaration) => {
-                self.constant(declaration);
+                let constant = self.constant_value(declaration);
+                let ast::Decl::Const { name, .. } = tree.decls[declaration] else {
+                    unreachable!("a const statement holds a const declaration")
+                };
+                self.declare(name, Named::Constant(constant));
                 return None;
             }
             ast::Stmt::Return(value) => Stmt::Return(self.return_value(span, value)),
@@ -153,8 +169,24 @@ impl<'a, Q: Queries> BodyChecker<'_, 'a, Q> {
                     otherwise,
                 }
             }
-            ast::Stmt::Destructure { .. } => {
+            ast::Stmt::Destructure { pattern, .. } => {
                 self.checker.not_supported(span, "destructuring `let`s");
+                // Its names are still declared, so their uses report nothing
+                // more.
+                let ast::Pattern::Struct(fields) = tree.patterns[pattern] else {
+                    return None; // the parser reported it
+                };
+                for field in tree.lists.items(fields) {
+                    if let ast::Pattern::Field { field, binding } = tree.patterns[field] {
+                        let name = binding.unwrap_or(field);
+                        let unknown = Local {
+                            ty: TypeId::INVALID,
+                            mutable: true,
+                        };
+                        let local = self.body.add(unknown, name);
+                        self.declare(name, Named::Local(local));
+                    }
+                }
                 return None;
             }
             ast::Stmt::Loop { .. } | ast::Stmt::ForIn { .. } => {
@@ -187,7 +219,16 @@ impl<'a, Q: Queries> BodyChecker<'_, 'a, Q> {
             (Some(ty), value) => (ty, value.map(|value| self.expect(value, ty))),
             (None, Some(value)) => {
                 let value = self.value(value, None);
-                (self.body.exprs[value].ty, Some(value))
+                let ty = self.body.exprs[value].ty;
+                if ty != TypeId::VOID {
+                    (ty, Some(value))
+                } else {
+                    let span = self.body.exprs.span(value);
+                    let message = "this expression has no value to bind";
+                    self.checker
+                        .error(diagnostics::INVALID_OPERATION, message, span);
+                    (TypeId::INVALID, None)
+                }
             }
             (None, None) => {
                 let text = self.tree.file.slice(name);
@@ -201,14 +242,15 @@ impl<'a, Q: Queries> BodyChecker<'_, 'a, Q> {
         Stmt::Let { local, value }
     }
 
-    /// `const name: ty = value;` in a body: a name for a value known at
-    /// compile time. Without a type, the constant takes its value's type.
-    fn constant(&mut self, declaration: Id<ast::Decl>) {
+    /// `const name: ty = value;`: a name for a value known at compile time.
+    /// Without a type, the constant takes its value's type. Gives its type and
+    /// value, or `None` after an error.
+    fn constant_value(&mut self, declaration: Id<ast::Decl>) -> Option<Constant> {
         let ast::Decl::Const {
             name, ty, value, ..
         } = self.tree.decls[declaration]
         else {
-            unreachable!("a const statement holds a const declaration")
+            unreachable!("`{declaration:?}` is a const declaration")
         };
         let declared = ty.map(|ty| self.checker.resolve_type(ty));
         let Some(value) = value else {
@@ -216,25 +258,23 @@ impl<'a, Q: Queries> BodyChecker<'_, 'a, Q> {
             let message = format!("constant `{text}` needs a value");
             self.checker
                 .error(diagnostics::INVALID_OPERATION, message, name);
-            self.declare(name, Named::Invalid);
-            return;
+            return None;
         };
         let span = self.tree.exprs.span(value);
         let checked = match declared {
             Some(ty) => self.coerced(value, ty),
             None => self.expr(value, None),
         };
-        let named = match checked.kind {
-            ExprKind::Constant(value) => Named::Constant(checked.ty, value),
-            ExprKind::Invalid => Named::Invalid,
+        match checked.kind {
+            ExprKind::Constant(value) => Some((checked.ty, value)),
+            ExprKind::Invalid => None,
             _ => {
                 let message = "the value of a constant must be known at compile time";
                 self.checker
                     .error(diagnostics::INVALID_OPERATION, message, span);
-                Named::Invalid
+                None
             }
-        };
-        self.declare(name, named);
+        }
     }
 
     /// The value of `return value;`, checked against the function's result.
@@ -287,7 +327,7 @@ impl<'a, Q: Queries> BodyChecker<'_, 'a, Q> {
         let name = tree.file.slice(span);
         let (declared, local) = match self.lookup(name) {
             Some((declared, &Named::Local(local))) => (declared, local),
-            Some((declared, Named::Constant(..))) => {
+            Some((declared, Named::Constant(_))) => {
                 self.checker.diagnostics.push(
                     Diagnostic::new(
                         diagnostics::CONSTANT_REASSIGNMENT,
@@ -298,9 +338,22 @@ impl<'a, Q: Queries> BodyChecker<'_, 'a, Q> {
                 );
                 return None;
             }
-            Some((_, Named::Invalid)) => return None,
             None => {
-                self.name(span); // reports what the name is instead
+                let (code, message) = match self.checker.global(name) {
+                    Some(Binding::Constant(_)) => (
+                        diagnostics::CONSTANT_REASSIGNMENT,
+                        format!("cannot assign to constant `{name}`"),
+                    ),
+                    Some(_) => (
+                        diagnostics::INVALID_ASSIGNMENT,
+                        format!("cannot assign to `{name}`, which is not a variable"),
+                    ),
+                    None => {
+                        self.undeclared(name, span);
+                        return None;
+                    }
+                };
+                self.checker.error(code, message, span);
                 return None;
             }
         };
@@ -445,6 +498,18 @@ mod tests {
                 }
                 ExprKind::Unary { op, value } => format!("({op:?} {})", self.expr(*value)),
                 ExprKind::Widen(value) => format!("widen({}):{ty}", self.expr(*value)),
+                ExprKind::Call {
+                    function,
+                    arguments,
+                } => {
+                    let arguments: Vec<String> = self
+                        .body
+                        .lists
+                        .items(*arguments)
+                        .map(|argument| self.expr(argument))
+                        .collect();
+                    format!("call{function:?}({}):{ty}", arguments.join(", "))
+                }
                 ExprKind::Invalid => "invalid".to_string(),
             }
         }
@@ -544,6 +609,9 @@ mod tests {
                 let l = helper;
                 let m = 1; let m = 2;
                 m = 3;
+                let w = m(1);
+                let y = utils::Nope;
+                let z = nothing(missing);
                 const C = 1; C = 2;
                 const D: i32 = p;
                 let n;
@@ -554,9 +622,13 @@ mod tests {
                 let r: f64 = 0xff;
                 let t = -true;
                 { let m = true; }
+                alloc(1);
+                let .{ first, second as renamed } = 1;
+                let after = first + renamed;
                 return;
             }
-            fn helper() { return 1; }",
+            fn helper() { return 1; }
+            fn calls_back(callback: fn(i32)) { callback(1); }",
         );
         let expected = reported(&[
             ("L0003", "literal `300` does not fit `u8`", "300"),
@@ -585,10 +657,14 @@ mod tests {
             ("T0004", "`utils` is a module, not a value", "utils"),
             (
                 "T0043",
-                "uses of module-level declarations are not supported yet",
+                "functions as values are not supported yet",
                 "helper",
             ),
             ("T0007", "cannot assign to immutable `m`", "m"),
+            ("T0005", "`m` is not a function", "m"),
+            ("T0002", "unknown name `Nope` in module `utils`", "Nope"),
+            ("T0002", "unknown name `nothing`", "nothing"),
+            ("T0002", "unknown name `missing`", "missing"),
             ("T0018", "cannot assign to constant `C`", "C"),
             (
                 "T0004",
@@ -610,12 +686,19 @@ mod tests {
                 "0xff",
             ),
             ("T0004", "operator `-` cannot be applied to `bool`", "-true"),
+            ("T0043", "built-in functions are not supported yet", "alloc"),
+            (
+                "T0043",
+                "destructuring `let`s are not supported yet",
+                "let .{ first, second as renamed } = 1;",
+            ),
             ("T0016", "`return` needs a value of type `i32`", "return;"),
             (
                 "T0016",
                 "this function has no result, so `return` takes no value",
                 "1",
             ),
+            ("T0043", "function types are not supported yet", "fn(i32)"),
         ]);
         assert_eq!(found, expected);
     }

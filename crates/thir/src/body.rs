@@ -10,6 +10,7 @@ use arena::Lists;
 use arena::Node;
 use arena::nodes;
 use ir::BinaryOp;
+use ir::DefId;
 use ir::UnaryOp;
 use ir::types::TypeId;
 use ir::value::Value;
@@ -69,6 +70,11 @@ pub enum ExprKind {
     Unary {
         op: UnaryOp,
         value: Id<Expr>,
+    },
+    /// A call of a module's function; calls are never folded.
+    Call {
+        function: DefId,
+        arguments: List<Expr>,
     },
     /// The value converted to the wider type `ty` without `as`
     /// (`Type::widens_to`).

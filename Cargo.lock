@@ -32,6 +32,20 @@ name = "bigint"
 version = "0.1.0"
 
 [[package]]
+name = "build"
+version = "0.1.0"
+dependencies = [
+ "arena",
+ "ast",
+ "diagnostics",
+ "ir",
+ "parser",
+ "project",
+ "source",
+ "thir",
+]
+
+[[package]]
 name = "cc"
 version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -143,11 +157,13 @@ dependencies = [
 name = "peeper"
 version = "0.1.0"
 dependencies = [
+ "build",
  "diagnostics",
  "lexer",
  "manifest",
  "project",
  "source",
+ "toml",
 ]
 
 [[package]]

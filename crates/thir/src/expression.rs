@@ -1,7 +1,10 @@
 //! Checking expressions into THIR. Each expression gets its type, and an
 //! operation on values known at compile time is folded to its value.
 
+use std::num::NonZeroU32;
+
 use arena::Id;
+use arena::List;
 use bigint::Limbs;
 use diagnostics::Diagnostic;
 use diagnostics::Fix;
@@ -16,10 +19,11 @@ use ir::value::Value;
 use source::Span;
 use token::TokenKind;
 
+use crate::Constant;
 use crate::Queries;
 use crate::body::Expr;
 use crate::body::ExprKind;
-use crate::builtin::builtin_type;
+use crate::builtin::UNSUPPORTED_FUNCTIONS;
 use crate::scope::Binding;
 use crate::statement::BodyChecker;
 use crate::statement::Named;
@@ -106,7 +110,13 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
                 return self.binary(op, left, right, span, expected);
             }
             ast::Expr::Invalid => return Expr::INVALID, // the parser reported it
-            ast::Expr::Path(_) => "paths",
+            ast::Expr::Path(path) => {
+                return match self.path_binding(path) {
+                    Some(binding) => self.global_value(binding, tree.file.slice(span), span),
+                    None => Expr::INVALID,
+                };
+            }
+            ast::Expr::Call { callee, arguments } => return self.call(callee, arguments, span),
             ast::Expr::String { .. } => "string literals",
             ast::Expr::Char { .. } => "character literals",
             ast::Expr::None => "`none` values",
@@ -114,7 +124,6 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
             ast::Expr::RawAddress(_) => "raw addresses",
             ast::Expr::Free(_) => "`free` calls",
             ast::Expr::Print { .. } => "`print` calls",
-            ast::Expr::Call { .. } => "calls",
             ast::Expr::Selector { .. } => "field accesses",
             ast::Expr::Index { .. } => "index expressions",
             ast::Expr::Range { .. } => "ranges",
@@ -140,49 +149,230 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
                     ty: self.body.locals[*local].ty,
                     kind: ExprKind::Local(*local),
                 },
-                Named::Constant(ty, value) => Expr {
-                    ty: *ty,
-                    kind: ExprKind::Constant(value.clone()),
-                },
-                Named::Invalid => Expr::INVALID,
+                Named::Constant(constant) => constant_expr(constant.clone()),
             };
         }
-        let scope = self.checker.scope;
-        match scope.get(name) {
-            Some(Binding::Declaration(_)) => {
-                self.checker
-                    .not_supported(span, "uses of module-level declarations");
+        match self.checker.global(name) {
+            Some(binding) => self.global_value(binding, name, span),
+            None => self.undeclared(name, span),
+        }
+    }
+
+    /// The module-level declaration `binding`, written as `text` at `span`,
+    /// as a value.
+    fn global_value(&mut self, binding: Binding, text: &str, span: Span) -> Expr {
+        let (code, message) = match binding {
+            Binding::Constant(constant) => {
+                return constant_expr(self.checker.queries.constant(constant));
             }
-            Some(Binding::Module(_)) => {
-                let message = format!("`{name}` is a module, not a value");
+            Binding::Function(_) => {
+                self.checker.not_supported(span, "functions as values");
+                return Expr::INVALID;
+            }
+            Binding::Type(_) => (
+                diagnostics::INVALID_OPERATION,
+                format!("`{text}` is a type, not a value"),
+            ),
+            Binding::Module(_) => (
+                diagnostics::INVALID_OPERATION,
+                format!("`{text}` is a module, not a value"),
+            ),
+        };
+        self.checker.error(code, message, span);
+        Expr::INVALID
+    }
+
+    /// Reports `name`, written at `span`, which nothing in scope declares:
+    /// a built-in function, not supported yet, or an unknown name, with the
+    /// nearest name that is declared.
+    pub(crate) fn undeclared(&mut self, name: &str, span: Span) -> Expr {
+        if UNSUPPORTED_FUNCTIONS.contains(&name) {
+            self.checker.not_supported(span, "built-in functions");
+            return Expr::INVALID;
+        }
+        // The module's names sorted, so the suggestion does not depend on the
+        // hash order.
+        let mut module_names: Vec<&str> = self.checker.scope.names().collect();
+        module_names.sort_unstable();
+        let local_names = self.names.iter().map(|&(local, ..)| local);
+        let candidates = local_names.chain(module_names).map(|name| (name, 0));
+        let file = &self.tree.file;
+        let mut diagnostic = Diagnostic::new(
+            diagnostics::UNDEFINED_NAME,
+            format!("unknown name `{name}`"),
+        )
+        .label(file, span, "");
+        if let Some(nearest) = nearest_name(name, candidates) {
+            let fix = Fix {
+                file: file.clone(),
+                span,
+                new_text: nearest.to_string(),
+            };
+            diagnostic = diagnostic.help(format!("did you mean `{nearest}`?"), vec![fix]);
+        }
+        self.checker.diagnostics.push(diagnostic);
+        Expr::INVALID
+    }
+
+    /// What the path `module::name` written as the type expression `path`
+    /// stands for, reporting a path that names nothing or is not supported.
+    /// Another module's name is reachable only if it starts with an upper case
+    /// letter, except in the prelude.
+    fn path_binding(&mut self, path: Id<ast::Type>) -> Option<Binding> {
+        let tree = self.tree;
+        let span = tree.types.span(path);
+        let segments: Vec<Id<ast::Type>> = match tree.types[path] {
+            ast::Type::Path(segments) => tree.lists.items(segments).collect(),
+            _ => {
                 self.checker
-                    .error(diagnostics::INVALID_OPERATION, message, span);
+                    .not_supported(span, "paths with type arguments");
+                return None;
+            }
+        };
+        let [module, member] = segments[..] else {
+            self.checker
+                .not_supported(span, "paths of more than two names");
+            return None;
+        };
+        if !matches!(
+            (tree.types[module], tree.types[member]),
+            (ast::Type::Name, ast::Type::Name)
+        ) {
+            self.checker
+                .not_supported(span, "paths with type arguments");
+            return None;
+        }
+        let (module_span, member_span) = (tree.types.span(module), tree.types.span(member));
+        let (module_name, member_name) =
+            (tree.file.slice(module_span), tree.file.slice(member_span));
+        let index = match self.checker.global(module_name) {
+            Some(Binding::Module(index)) => index,
+            Some(Binding::Type(_)) => {
+                self.checker.not_supported(span, "paths into types");
+                return None;
+            }
+            Some(Binding::Function(_) | Binding::Constant(_)) => {
+                let message = format!("`{module_name}` is not a module");
+                self.checker
+                    .error(diagnostics::INVALID_OPERATION, message, module_span);
+                return None;
             }
             None => {
-                // The module's names sorted, so the suggestion does not depend
-                // on the hash order.
-                let mut module_names: Vec<&str> = scope.names().collect();
-                module_names.sort_unstable();
-                let local_names = self.names.iter().map(|&(local, ..)| local);
-                let candidates = local_names.chain(module_names).map(|name| (name, 0));
-                let file = &self.tree.file;
-                let mut diagnostic = Diagnostic::new(
-                    diagnostics::UNDEFINED_NAME,
-                    format!("unknown name `{name}`"),
-                )
-                .label(file, span, "");
-                if let Some(nearest) = nearest_name(name, candidates) {
-                    let fix = Fix {
-                        file: file.clone(),
-                        span,
-                        new_text: nearest.to_string(),
-                    };
-                    diagnostic = diagnostic.help(format!("did you mean `{nearest}`?"), vec![fix]);
-                }
-                self.checker.diagnostics.push(diagnostic);
+                self.undeclared(module_name, module_span);
+                return None;
             }
+        };
+        let Some(binding) = self.checker.scopes[index as usize].get(member_name) else {
+            let message = format!("unknown name `{member_name}` in module `{module_name}`");
+            self.checker
+                .error(diagnostics::UNDEFINED_NAME, message, member_span);
+            return None;
+        };
+        // The prelude's names are in every module's scope, private or not.
+        let exported =
+            self.checker.prelude == Some(index) || member_name.starts_with(char::is_uppercase);
+        if !exported {
+            let file = &tree.file;
+            self.checker.diagnostics.push(
+                Diagnostic::new(
+                    diagnostics::NOT_EXPORTED,
+                    format!("`{member_name}` is not exported from `{module_name}`"),
+                )
+                .label(file, member_span, "")
+                .note(
+                    "names that start with an upper case letter are exported; others are private",
+                ),
+            );
+            return None;
         }
-        Expr::INVALID
+        Some(binding)
+    }
+
+    /// `callee(arguments)`, written at `span`. Only a module's function, by
+    /// its name or its path, can be called.
+    fn call(&mut self, callee: Id<ast::Expr>, arguments: List<ast::Expr>, span: Span) -> Expr {
+        let tree = self.tree;
+        let callee_span = tree.exprs.span(callee);
+        let text = tree.file.slice(callee_span);
+        let binding = match tree.exprs[callee] {
+            ast::Expr::Name => match self.lookup(text) {
+                // Their errors were reported.
+                Some((_, Named::Constant(None))) => None,
+                Some((_, &Named::Local(local)))
+                    if self.body.locals[local].ty == TypeId::INVALID =>
+                {
+                    None
+                }
+                Some(_) => Some(Err(())),
+                None => match self.checker.global(text) {
+                    Some(binding) => Some(Ok(binding)),
+                    None => {
+                        self.undeclared(text, callee_span);
+                        None
+                    }
+                },
+            },
+            ast::Expr::Path(path) => self.path_binding(path).map(Ok),
+            ast::Expr::Selector { .. } => {
+                self.checker.not_supported(callee_span, "method calls");
+                None
+            }
+            _ => {
+                self.checker
+                    .not_supported(callee_span, "calls of computed functions");
+                None
+            }
+        };
+        let function = match binding {
+            Some(Ok(Binding::Function(function))) => Some(function),
+            Some(_) => {
+                let message = format!("`{text}` is not a function");
+                self.checker
+                    .error(diagnostics::NOT_CALLABLE, message, callee_span);
+                None
+            }
+            None => None,
+        };
+        let signature = function.map(|function| {
+            let ty = self.checker.queries.signature(function);
+            (function, self.checker.queries.types()[ty].clone())
+        });
+        let Some((function, Type::Function { parameters, result })) = signature else {
+            for argument in tree.lists.items(arguments) {
+                self.value(argument, None); // for its own errors
+            }
+            return Expr::INVALID;
+        };
+        let arity_matches = parameters.len() == arguments.len();
+        if !arity_matches {
+            let message = format!(
+                "`{text}` takes {} argument{}, but {} {} given",
+                parameters.len(),
+                if parameters.len() == 1 { "" } else { "s" },
+                arguments.len(),
+                if arguments.len() == 1 { "was" } else { "were" },
+            );
+            self.checker
+                .error(diagnostics::WRONG_ARGUMENT_COUNT, message, span);
+        }
+        let mut checked: Vec<NonZeroU32> = Vec::with_capacity(arguments.len());
+        for (index, argument) in tree.lists.items(arguments).enumerate() {
+            let argument = match parameters.get(index) {
+                Some(&parameter) => self.expect(argument, parameter),
+                None => self.value(argument, None),
+            };
+            checked.push(argument.into());
+        }
+        if !arity_matches {
+            return Expr::INVALID;
+        }
+        Expr {
+            ty: result,
+            kind: ExprKind::Call {
+                function,
+                arguments: self.body.lists.add(&checked),
+            },
+        }
     }
 
     /// The number literal at `number`, or its negation written at `negated`
@@ -200,7 +390,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
                 _ if literal.is_float() => TypeId::F64,
                 _ => TypeId::I32,
             }
-        } else if let Some(ty) = builtin_type(literal.suffix, pointer_bits, types) {
+        } else if let Some(ty) = types.builtin(literal.suffix, pointer_bits) {
             ty
         } else {
             let message = format!("unsupported numeric literal suffix `{}`", literal.suffix);
@@ -418,6 +608,17 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
         self.checker
             .error(diagnostics::INVALID_OPERATION, message, span);
         Expr::INVALID
+    }
+}
+
+/// The value of a constant (`Queries::constant`) as an expression.
+fn constant_expr(constant: Option<Constant>) -> Expr {
+    match constant {
+        Some((ty, value)) => Expr {
+            ty,
+            kind: ExprKind::Constant(value),
+        },
+        None => Expr::INVALID,
     }
 }
 

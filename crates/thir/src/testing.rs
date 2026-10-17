@@ -1,12 +1,17 @@
-//! What the checking tests share: a one-module program read from text.
+//! What the checking tests share: a one-module program read from text. Its
+//! declarations are checked one at a time; checking one that asks about
+//! another needs the scheduler, so those tests live in the `build` crate.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use ir::DefId;
+use ir::types::TypeId;
 use ir::types::Types;
 use source::SourceFile;
 
 use crate::Checker;
+use crate::Constant;
 use crate::Queries;
 use crate::scope::collect;
 
@@ -22,6 +27,14 @@ impl Queries for Program {
     fn pointer_bits(&self) -> u32 {
         64
     }
+
+    fn signature(&mut self, function: DefId) -> TypeId {
+        unreachable!("a thir test asked for the signature of {function:?}; test it in `build`")
+    }
+
+    fn constant(&mut self, constant: DefId) -> Option<Constant> {
+        unreachable!("a thir test asked for the value of {constant:?}; test it in `build`")
+    }
 }
 
 /// A diagnostic as its code, message and the text of its first label.
@@ -34,29 +47,39 @@ pub(crate) fn check<T>(
     text: &str,
     check: impl FnOnce(&mut Checker<Program>) -> T,
 ) -> (T, Types, Vec<Reported>) {
-    let file = Arc::new(SourceFile::new("main.peep", text));
-    let (syntax, parse) = parser::parse(&file);
-    assert!(parse.is_empty(), "{parse:?}");
+    let module = |path: &str, text: &str, imports| {
+        let file = Arc::new(SourceFile::new("main.peep", text));
+        let (syntax, parse) = parser::parse(&file);
+        assert!(parse.is_empty(), "{parse:?}");
+        project::Module {
+            path: path.to_string(),
+            syntax,
+            imports,
+            diagnostics: Vec::new(),
+        }
+    };
     let imports = vec![project::Import {
         path: "app:utils".to_string(),
         alias: Some("utils".to_string()),
         span: source::Span::new(0, 0),
     }];
-    let module = project::Module {
-        path: "app:main".to_string(),
-        syntax,
-        imports,
-        diagnostics: Vec::new(),
-    };
+    let utils = module("app:utils", "", Vec::new());
+    let main = module("app:main", text, imports);
+    let file = main.syntax.file.clone();
     let indexes = HashMap::from([("app:utils", 0), ("app:main", 1)]);
     let mut diagnostics = Vec::new();
-    let scope = collect(1, &module, &indexes, &mut diagnostics);
+    let scopes = [
+        collect(0, &utils, &indexes, &mut diagnostics),
+        collect(1, &main, &indexes, &mut diagnostics),
+    ];
     let mut program = Program {
         types: Types::new(),
     };
     let mut checker = Checker {
-        module: &module,
-        scope: &scope,
+        module: &main,
+        scopes: &scopes,
+        scope: &scopes[1],
+        prelude: None,
         queries: &mut program,
         diagnostics: &mut diagnostics,
     };

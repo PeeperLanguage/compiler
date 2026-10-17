@@ -1,0 +1,22 @@
+[package]
+name = "build"
+description = "The scheduler: checks every declaration of a program once, in the order they ask for each other"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+diagnostics.workspace = true
+arena.workspace = true
+ast.workspace = true
+project.workspace = true
+ir.workspace = true
+thir.workspace = true
+
+[dev-dependencies]
+source.workspace = true
+parser.workspace = true
+
+[lints]
+workspace = true

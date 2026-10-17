@@ -6,6 +6,7 @@ members = [
     "crates/pkg/*",
     "crates/ir",
     "crates/thir",
+    "crates/build",
     "crates/manifest",
     "crates/project",
     "crates/peeper",
@@ -33,6 +34,7 @@ colors = { path = "crates/pkg/colors" }
 toml = { path = "crates/pkg/toml" }
 ir = { path = "crates/ir" }
 thir = { path = "crates/thir" }
+build = { path = "crates/build" }
 manifest = { path = "crates/manifest" }
 project = { path = "crates/project" }
 unicode-general-category = "1.1.0"

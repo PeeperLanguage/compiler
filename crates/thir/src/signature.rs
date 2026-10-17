@@ -1,5 +1,6 @@
 //! Signatures: what a declaration's header says, without its body. A
-//! function's signature is its function type; a constant's is its type.
+//! function's signature is its function type. A constant has none: its type
+//! comes with its value (`Checker::constant`).
 
 use arena::Id;
 use ir::types::Type;
@@ -7,15 +8,19 @@ use ir::types::TypeId;
 
 use crate::Checker;
 use crate::Queries;
-use crate::builtin::builtin_type;
+use crate::builtin::unsupported_type;
 use crate::scope::Binding;
 
 impl<Q: Queries> Checker<'_, Q> {
-    /// The signature of the module's declaration `declaration`.
+    /// The signature of the module's declaration `declaration`, which is not
+    /// a constant.
     pub fn signature(&mut self, declaration: Id<ast::Decl>) -> TypeId {
         let tree = &self.module.syntax;
         match tree.decls[declaration] {
             ast::Decl::Function(function) => {
+                if let Some(receiver) = function.receiver {
+                    return self.not_supported(tree.params.span(receiver), "methods");
+                }
                 if let Some(parameter) = tree.lists.items(function.type_parameters).next() {
                     return self.not_supported(tree.names.span(parameter), "generic functions");
                 }
@@ -38,12 +43,7 @@ impl<Q: Queries> Checker<'_, Q> {
                     .types()
                     .intern(Type::Function { parameters, result })
             }
-            ast::Decl::Const { ty: Some(ty), .. } => self.resolve_type(ty),
-            // shortcut: the type of `const A = value;` comes from its value,
-            // which the body check (R5d4) folds; until then it is reported.
-            ast::Decl::Const { name, ty: None, .. } => {
-                self.not_supported(name, "constants without a type")
-            }
+            ast::Decl::Const { .. } => unreachable!("a constant's type comes with its value"),
             ast::Decl::Struct(declaration) => {
                 self.not_supported(declaration.name, "struct declarations")
             }
@@ -65,15 +65,20 @@ impl<Q: Queries> Checker<'_, Q> {
             ast::Type::Name => {
                 let name = tree.file.slice(span);
                 let pointer_bits = self.queries.pointer_bits();
-                if let Some(builtin) = builtin_type(name, pointer_bits, self.queries.types()) {
+                if let Some(builtin) = self.queries.types().builtin(name, pointer_bits) {
                     return builtin;
                 }
-                match self.scope.get(name) {
-                    Some(Binding::Declaration(_)) => "named types",
+                match self.global(name) {
+                    Some(Binding::Type(_)) => "named types",
+                    Some(Binding::Function(_) | Binding::Constant(_)) => {
+                        let message = format!("`{name}` is a value, not a type");
+                        return self.error(diagnostics::NOT_A_TYPE, message, span);
+                    }
                     Some(Binding::Module(_)) => {
                         let message = format!("`{name}` is a module, not a type");
                         return self.error(diagnostics::NOT_A_TYPE, message, span);
                     }
+                    None if let Some(what) = unsupported_type(name) => what,
                     None => {
                         let message = format!("unknown type `{name}`");
                         return self.error(diagnostics::UNDEFINED_NAME, message, span);
@@ -130,21 +135,20 @@ mod tests {
     #[test]
     fn functions_and_constants() {
         let (found, reported) = signatures(
-            "fn add(a: i32, b: i32) -> i32 { return a; }\nfn main() {}\nconst Big: u256 = 1;\nconst Ok: bool = true;\n",
+            "fn add(a: i32, b: i32) -> i32 { return a; }\nfn main() {}\nfn take(s: cstr) {}\n",
         );
         assert!(reported.is_empty(), "{reported:?}");
         let i32 = format!("{:?}", TypeId::I32);
         let void = format!("{:?}", TypeId::VOID);
         assert_eq!(found[0], format!("fn[{i32}, {i32}] -> {i32}"));
         assert_eq!(found[1], format!("fn[] -> {void}"));
-        assert_eq!(found[2], "Integer(Integer { signed: false, bits: 256 })");
-        assert_eq!(found[3], "Bool");
+        assert_eq!(found[2], format!("fn[{:?}] -> {void}", TypeId::CSTR));
     }
 
     #[test]
     fn errors_are_located() {
         let (found, found_reported) = signatures(
-            "fn a(x: Missing) {}\nfn b(m: utils) {}\nfn c(r: &i32) {}\nfn d<T>(x: T) {}\nfn e(x: i32 = 1) {}\nstruct P { x: i32 }\nfn f(p: P) {}\nconst N = 1;\n",
+            "fn a(x: Missing) {}\nfn b(m: utils) {}\nfn c(r: &i32) {}\nfn d<T>(x: T) {}\nfn e(x: i32 = 1) {}\nstruct P { x: i32 }\nfn f(p: P) {}\nfn g(x: a) {}\nfn (p: i32) method() {}\nfn h(s: str) {}\n",
         );
         let expected = reported(&[
             ("T0002", "unknown type `Missing`", "Missing"),
@@ -154,11 +158,9 @@ mod tests {
             ("T0043", "default parameters are not supported yet", "1"),
             ("T0043", "struct declarations are not supported yet", "P"),
             ("T0043", "named types are not supported yet", "P"),
-            (
-                "T0043",
-                "constants without a type are not supported yet",
-                "N",
-            ),
+            ("T0021", "`a` is a value, not a type", "a"),
+            ("T0043", "methods are not supported yet", "p: i32"),
+            ("T0043", "string types are not supported yet", "str"),
         ]);
         assert_eq!(found_reported, expected);
         let invalid = format!("{:?}", TypeId::INVALID);

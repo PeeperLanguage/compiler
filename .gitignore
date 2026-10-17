@@ -1,4 +1,4 @@
-build/
+/build/
 basic
 test_void
 a.out

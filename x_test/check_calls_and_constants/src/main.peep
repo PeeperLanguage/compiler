@@ -1,0 +1,21 @@
+import "check_calls_and_constants:numbers";
+
+// A constant may use one declared after it, in any module.
+const Doubled = numbers::Base * 2;
+
+fn main() -> i32 {
+    let total: i64 = numbers::Scale(Doubled, 3u8);
+    let x = total;
+    let x = x + 1;
+    if x > numbers::Limit {
+        return 1;
+    }
+    return clamp(-128, 0i8);
+}
+
+fn clamp(value: i8, low: i8) -> i32 {
+    if value < low {
+        return 0;
+    }
+    return 1;
+}

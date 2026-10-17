@@ -1,0 +1,7 @@
+name = "check_calls_and_constants"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "success"
+

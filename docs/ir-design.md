@@ -187,7 +187,8 @@ Floats (`f32`, `f64`) follow the same idea:
 
 ```
 signature(d)   header of d: parameter and result types, fields, variants
-const_value(d) the value of constant d (needs signature(d), folds its THIR)
+constant(d)    the type and value of constant d (a constant has no signature:
+               without a written type, its type is its value's)
 body(d)        THIR of function d (needs the signatures it calls)
 mir(d)         MIR of function d (needs body(d)); later also comptime calls
 ```
@@ -195,7 +196,11 @@ mir(d)         MIR of function d (needs body(d)); later also comptime calls
 - Each query's result is written once and never changed. A table per module and
   per query, indexed by declaration, holds it.
 - A query asked for while it is running is a cycle (`const A = B; const B = A;`)
-  and is reported once, at the declaration that closes it.
+  and is reported once (T0013), at the declaration asked for again; the other
+  declarations of the cycle become silently invalid.
+- The `build` crate is the scheduler. It implements `thir::Queries`; the scopes
+  of all modules are collected first and handed to each checker as plain data.
+  Programs with syntax or import errors are not checked.
 - The model is a hybrid. Across modules: the program's order, so imported
   declarations are always ready (import cycles are already errors), and
   independent modules run on separate threads. Inside a module: on demand, in the
@@ -256,6 +261,12 @@ reads THIR.
 - **decided** An operation check knows will trap (division by a constant zero,
   a constant shift count below zero or at least the width) is a compile error,
   in a body as in a `const`.
+
+- **decided** A module's name is reachable from another module (`m::Name`)
+  only when it starts with an upper case letter; otherwise M0004. Names of the
+  prelude (`core:global`) are in every module's scope without that rule.
+- **decided** `cstr` (a pointer to a C string) is a built-in type, so the
+  prelude's `write` and `read` check.
 
 ## Open decisions
 

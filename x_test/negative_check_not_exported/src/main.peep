@@ -1,0 +1,5 @@
+import "negative_check_not_exported:tools";
+
+fn main() {
+    tools::helper();
+}
