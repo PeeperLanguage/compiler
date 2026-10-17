@@ -2,8 +2,17 @@
 //! order declarations ask for each other (docs/ir-design.md). It owns the
 //! result of every query, and `check` asks for them through `check::Queries`,
 //! so a declaration is checked the first time anything needs it.
+//!
+//! A compile can reuse what the previous one found: a module whose text and
+//! imported interfaces are unchanged keeps its diagnostics, and its bodies are
+//! not checked again. Only hashes and diagnostics are kept between compiles;
+//! ids, types, THIR and MIR are rebuilt, since their numbering shifts.
 
 use std::collections::HashMap;
+use std::hash::DefaultHasher;
+use std::hash::Hash;
+use std::hash::Hasher;
+use std::sync::Arc;
 
 use arena::Id;
 use check::Checker;
@@ -18,17 +27,46 @@ use model::types::Type;
 use model::types::TypeId;
 use model::types::Types;
 use model::value::Constant;
+use source::SourceFile;
+
+/// What a compile found, kept for the next compile of the same program.
+#[derive(Default)]
+pub struct Compiled {
+    names: Vec<Diagnostic>, // from collecting each module's names; redone every compile
+    modules: Vec<Module>,   // in the program's order
+}
+
+impl Compiled {
+    /// Every diagnostic, in the order a compile from nothing reports them.
+    pub fn diagnostics(&self) -> impl Iterator<Item = &Diagnostic> {
+        let modules = self.modules.iter().flat_map(|module| &module.diagnostics);
+        self.names.iter().chain(modules)
+    }
+}
+
+/// What a compile found in one module.
+struct Module {
+    path: String,
+    file: Arc<SourceFile>,
+    interface: u64, // `Build::interface`
+    diagnostics: Vec<Diagnostic>,
+}
 
 /// Checks every declaration of `program`, lowers each function to MIR and
-/// gives the diagnostics. The THIR and MIR of each function with a complete
-/// body go to `use_function` as soon as they are built, in declaration order,
-/// and are dropped after: nothing holds every function's bodies at once.
-/// Integers as wide as a pointer (`isize`, `usize`) have `pointer_bits` bits.
+/// gives what it found. A module of `previous` (a compile of the same program
+/// with the same `pointer_bits`, or `Compiled::default()`) whose text and
+/// whose imports' interfaces are unchanged keeps its diagnostics, and its
+/// bodies are not checked again. The THIR and MIR of each checked function
+/// with a complete body go to `use_function` as soon as they are built, in
+/// declaration order, and are dropped after: nothing holds every function's
+/// bodies at once. Integers as wide as a pointer (`isize`, `usize`) have
+/// `pointer_bits` bits.
 pub fn compile(
     program: &project::Program,
     pointer_bits: u32,
+    previous: Compiled,
     mut use_function: impl FnMut(DefId, &thir::Body, &mir::Body, &Types),
-) -> Vec<Diagnostic> {
+) -> Compiled {
     let modules: Vec<&project::Module> = program
         .order
         .iter()
@@ -38,10 +76,10 @@ pub fn compile(
         .zip(&modules)
         .map(|(index, module)| (module.path.as_str(), index))
         .collect();
-    let mut diagnostics = Vec::new();
+    let mut names = Vec::new();
     let scopes: Vec<ModuleScope> = (0..)
         .zip(&modules)
-        .map(|(index, module)| check::scope::collect(index, module, &indexes, &mut diagnostics))
+        .map(|(index, module)| check::scope::collect(index, module, &indexes, &mut names))
         .collect();
     let program = Program {
         prelude: indexes.get(project::PRELUDE_PATH).copied(),
@@ -54,10 +92,36 @@ pub fn compile(
         pointer_bits,
         signatures: table(&program.modules),
         constants: table(&program.modules),
-        diagnostics,
+        diagnostics: vec![Vec::new(); program.modules.len()],
+        reused: vec![false; program.modules.len()],
     };
+    let mut previous: HashMap<String, Module> = previous
+        .modules
+        .into_iter()
+        .map(|module| (module.path.clone(), module))
+        .collect();
+    let mut interfaces = Vec::with_capacity(program.modules.len());
+    // Whether each module's interface differs from the previous compile's.
+    let mut changed: Vec<bool> = Vec::with_capacity(program.modules.len());
     for (index, module) in (0..).zip(&program.modules) {
         let tree = &module.syntax;
+        // An import comes before its importer, so it is decided already.
+        let imports_unchanged = module.imports.iter().all(|import| {
+            let place = indexes.get(import.path.as_str());
+            place.is_some_and(|&place| changed.get(place as usize) == Some(&false))
+        });
+        let cached = previous.remove(&module.path);
+        let previous_interface = cached.as_ref().map(|cached| cached.interface);
+        if let Some(cached) = cached
+            && imports_unchanged
+            && cached.file.text == tree.file.text
+        {
+            build.reused[index as usize] = true;
+            build.diagnostics[index as usize] = cached.diagnostics;
+            interfaces.push(cached.interface);
+            changed.push(false);
+            continue;
+        }
         for declaration in tree.lists.items(tree.declarations) {
             let definition = DefId {
                 module: index,
@@ -77,8 +141,44 @@ pub fn compile(
                 }
             }
         }
+        let interface = build.interface(index);
+        changed.push(previous_interface != Some(interface));
+        interfaces.push(interface);
     }
-    build.diagnostics
+    let modules = program
+        .modules
+        .iter()
+        .zip(build.diagnostics)
+        .zip(interfaces);
+    let modules = modules.map(|((module, diagnostics), interface)| Module {
+        path: module.path.clone(),
+        file: module.syntax.file.clone(),
+        interface,
+        diagnostics,
+    });
+    Compiled {
+        names,
+        modules: modules.collect(),
+    }
+}
+
+/// Feeds `ty` to `hasher` by what it is, not by its id, which differs between
+/// compiles.
+fn hash_type(types: &Types, ty: TypeId, hasher: &mut DefaultHasher) {
+    let ty = &types[ty];
+    std::mem::discriminant(ty).hash(hasher);
+    match ty {
+        Type::Integer(integer) => integer.hash(hasher),
+        Type::Float(float) => float.hash(hasher),
+        Type::Function { parameters, result } => {
+            parameters.len().hash(hasher);
+            for &parameter in parameters {
+                hash_type(types, parameter, hasher);
+            }
+            hash_type(types, *result, hasher);
+        }
+        Type::Invalid | Type::Void | Type::Bool | Type::CString => {}
+    }
 }
 
 /// A query's results for every declaration of `modules`, none started.
@@ -113,12 +213,15 @@ struct Build<'p> {
     pointer_bits: u32,
     signatures: Vec<Vec<State<TypeId>>>,
     constants: Vec<Vec<State<Option<Constant>>>>,
-    diagnostics: Vec<Diagnostic>,
+    diagnostics: Vec<Vec<Diagnostic>>, // by module
+    /// By module: whether it keeps the previous compile's diagnostics, which
+    /// asking for its declarations again would only repeat.
+    reused: Vec<bool>,
 }
 
 impl<'p> Build<'p> {
     /// Runs `work` on a checker of the module at `module`; what it reports
-    /// joins the program's diagnostics.
+    /// joins that module's diagnostics.
     fn with_checker<T>(
         &mut self,
         module: u32,
@@ -136,8 +239,37 @@ impl<'p> Build<'p> {
             diagnostics: &mut diagnostics,
         };
         let result = work(&mut checker);
-        self.diagnostics.append(&mut diagnostics);
+        if !self.reused[index] {
+            self.diagnostics[index].append(&mut diagnostics);
+        }
         result
+    }
+
+    /// A hash of what other modules see of the module at `module`, once its
+    /// declarations are checked: its imports, and each declaration's kind,
+    /// name, and type or value. Its bodies are not part of it.
+    fn interface(&self, module: u32) -> u64 {
+        let index = module as usize;
+        let module = self.program.modules[index];
+        let tree = &module.syntax;
+        let mut hasher = DefaultHasher::new();
+        for import in &module.imports {
+            import.path.hash(&mut hasher);
+            import.alias.hash(&mut hasher);
+        }
+        for declaration in tree.lists.items(tree.declarations) {
+            let decl = &tree.decls[declaration];
+            std::mem::discriminant(decl).hash(&mut hasher);
+            tree.file.slice(decl.name()).hash(&mut hasher);
+            if let State::Done(ty) = self.signatures[index][declaration.index()] {
+                hash_type(&self.types, ty, &mut hasher);
+            }
+            if let State::Done(Some((ty, value))) = &self.constants[index][declaration.index()] {
+                hash_type(&self.types, *ty, &mut hasher);
+                value.hash(&mut hasher);
+            }
+        }
+        hasher.finish()
     }
 
     /// Checks the function `definition`, lowers its body to MIR and runs the
@@ -153,19 +285,21 @@ impl<'p> Build<'p> {
         let Type::Function { parameters, result } = &self.types[ty] else {
             return None; // the signature's error was reported
         };
-        let tree = &self.program.modules[definition.module as usize].syntax;
+        let module = definition.module as usize;
+        let tree = &self.program.modules[module].syntax;
         let span = tree.blocks.span(function.body?);
         let mir = lower::lower(&body, parameters.len(), span)?;
+        let diagnostics = &mut self.diagnostics[module];
         // Only a `let` without a value can be unset or assigned twice.
         let late = |index| body.locals[Id::from_index(index)].declared_without_value;
         if (0..body.locals.len()).any(late) {
-            lower::path_checks::initialization(&mir, &tree.file, &mut self.diagnostics);
+            lower::path_checks::initialization(&mir, &tree.file, diagnostics);
         }
-        lower::path_checks::unreachable_code(&mir, &tree.file, &mut self.diagnostics);
+        lower::path_checks::unreachable_code(&mir, &tree.file, diagnostics);
         if let Some(error) =
             lower::path_checks::missing_return(&mir, &tree.file, &self.types, *result)
         {
-            self.diagnostics.push(error); // last: it points at the closing brace
+            diagnostics.push(error); // last: it points at the closing brace
         }
         Some((body, mir))
     }
@@ -173,10 +307,14 @@ impl<'p> Build<'p> {
     /// Reports that the declaration `definition` was asked for while it was
     /// being checked: it depends on itself.
     fn report_cycle(&mut self, definition: DefId) {
-        let tree = &self.program.modules[definition.module as usize].syntax;
+        let module = definition.module as usize;
+        if self.reused[module] {
+            return;
+        }
+        let tree = &self.program.modules[module].syntax;
         let name = tree.decls[Id::from_index(definition.index as usize)].name();
         let text = tree.file.slice(name);
-        self.diagnostics.push(
+        self.diagnostics[module].push(
             Diagnostic::new(
                 diagnostics::CIRCULAR_DEPENDENCY,
                 format!("`{text}` depends on itself"),
@@ -239,6 +377,7 @@ mod tests {
 
     use source::SourceFile;
 
+    use super::Compiled;
     use super::compile;
 
     /// The program of `modules`, each an import path and its text, in the
@@ -295,9 +434,9 @@ mod tests {
     /// Checks the program of `modules` (see `program`) and gives each
     /// diagnostic as its code, message and the text of its first label.
     fn diagnostics(modules: &[(&str, &str)]) -> Vec<(&'static str, String, String)> {
-        let found = compile(&program(modules), 64, |_, _, _, _| {});
+        let found = compile(&program(modules), 64, Compiled::default(), |_, _, _, _| {});
         found
-            .iter()
+            .diagnostics()
             .map(|diagnostic| {
                 let label = &diagnostic.labels[0];
                 let text = label.file.slice(label.span).to_string();
@@ -491,5 +630,131 @@ mod tests {
             ),
         ]);
         assert!(found.is_empty(), "{found:?}");
+    }
+
+    /// Compiles the program of `modules` (see `program`) after `previous`;
+    /// gives what it found and the paths of the modules whose bodies were
+    /// checked, which every module of these tests has.
+    fn recompile(modules: &[(&str, &str)], previous: Compiled) -> (Compiled, Vec<String>) {
+        let program = program(modules);
+        let mut checked: Vec<String> = Vec::new();
+        let compiled = compile(&program, 64, previous, |definition, _, _, _| {
+            let path = &program.order[definition.module as usize];
+            if !checked.contains(path) {
+                checked.push(path.clone());
+            }
+        });
+        (compiled, checked)
+    }
+
+    /// The message of each diagnostic of `compiled`, in order.
+    fn messages(compiled: &Compiled) -> Vec<String> {
+        let message = |diagnostic: &diagnostics::Diagnostic| diagnostic.message.clone();
+        compiled.diagnostics().map(message).collect()
+    }
+
+    const UTILS: (&str, &str) = (
+        "app:utils",
+        "fn Add(a: i32, b: i32) -> i32 { return a + b; }",
+    );
+    const OTHER: (&str, &str) = ("app:other", "fn Other() {}");
+    const MAIN: (&str, &str) = (
+        "app:main",
+        "import \"app:utils\";
+        fn main() { let sum = utils::Add(1, 2); }
+        fn wrong() { let flag: bool = 1; }",
+    );
+
+    #[test]
+    fn an_unchanged_program_is_not_checked_again() {
+        let (first, checked) = recompile(&[UTILS, OTHER, MAIN], Compiled::default());
+        assert_eq!(checked, ["app:utils", "app:other", "app:main"]);
+        let found = messages(&first);
+        assert_eq!(found, ["mismatched types: expected `bool`, found `i32`"]);
+        let (second, checked) = recompile(&[UTILS, OTHER, MAIN], first);
+        assert!(checked.is_empty(), "{checked:?}");
+        assert_eq!(messages(&second), found);
+    }
+
+    #[test]
+    fn a_body_edit_checks_only_its_module() {
+        let (first, _) = recompile(&[UTILS, OTHER, MAIN], Compiled::default());
+        let utils = (
+            "app:utils",
+            "fn Add(a: i32, b: i32) -> i32 { return b + a; }",
+        );
+        let (_, checked) = recompile(&[utils, OTHER, MAIN], first);
+        assert_eq!(checked, ["app:utils"]);
+    }
+
+    #[test]
+    fn a_signature_edit_checks_its_importers() {
+        let (first, _) = recompile(&[UTILS, OTHER, MAIN], Compiled::default());
+        let utils = (
+            "app:utils",
+            "fn Add(a: i64, b: i64) -> i64 { return a + b; }",
+        );
+        let (_, checked) = recompile(&[utils, OTHER, MAIN], first);
+        assert_eq!(checked, ["app:utils", "app:main"]);
+    }
+
+    #[test]
+    fn errors_come_and_go_with_edits() {
+        let (first, _) = recompile(&[UTILS, MAIN], Compiled::default());
+        let broken = (
+            "app:utils",
+            "fn Add(a: i32, b: i32) -> i32 { let c: bool = a; return a + b; }",
+        );
+        // `utils` is checked, but `Add` has an error and gives no MIR; its
+        // interface is unchanged, so `main` keeps its own error.
+        let (second, checked) = recompile(&[broken, MAIN], first);
+        assert!(checked.is_empty(), "{checked:?}");
+        let mismatch = |found: &str| format!("mismatched types: expected `bool`, found `{found}`");
+        assert_eq!(messages(&second), [mismatch("i32"), mismatch("i32")]);
+        let (third, checked) = recompile(&[UTILS, MAIN], second);
+        assert_eq!(checked, ["app:utils"]);
+        assert_eq!(messages(&third), [mismatch("i32")]);
+    }
+
+    #[test]
+    fn a_reused_module_reports_its_errors_once() {
+        let utils = (
+            "app:utils",
+            "fn Bad(x: Missing) {}
+            fn Good() {}",
+        );
+        let main = (
+            "app:main",
+            "import \"app:utils\";\nfn main() { utils::Bad(1); }\nfn clean() {}",
+        );
+        let (first, _) = recompile(&[utils, main], Compiled::default());
+        let found = messages(&first);
+        assert_eq!(found, ["unknown type `Missing`"]);
+        let edited = (
+            "app:main",
+            "import \"app:utils\";\nfn main() { utils::Bad(2); }\nfn clean() {}",
+        );
+        let (second, checked) = recompile(&[utils, edited], first);
+        assert_eq!(checked, ["app:main"]);
+        assert_eq!(messages(&second), found);
+    }
+
+    #[test]
+    fn a_prelude_edit_checks_what_it_changes() {
+        let prelude = ("core:global", "const stdout: i32 = 1;\nfn Helper() {}");
+        let main = ("app:main", "fn main() { let out = stdout; }");
+        let (first, _) = recompile(&[prelude, main], Compiled::default());
+        let body = (
+            "core:global",
+            "const stdout: i32 = 1;\nfn Helper() { let a = 1; }",
+        );
+        let (second, checked) = recompile(&[body, main], first);
+        assert_eq!(checked, ["core:global"]);
+        let value = (
+            "core:global",
+            "const stdout: i32 = 2;\nfn Helper() { let a = 1; }",
+        );
+        let (_, checked) = recompile(&[value, main], second);
+        assert_eq!(checked, ["core:global", "app:main"]);
     }
 }

@@ -217,6 +217,33 @@ mir(d)         MIR of function d (needs body(d)); later also comptime calls
 - Comptime later: check asks `mir(f)` and runs it in the interpreter. The checker
   reaches `mir` through the scheduler, never by depending on the `lower` crate.
 
+## Reuse between compiles and the language server
+
+Owner's choice (2026-10-17): reuse per module, as Go's and Zig's caches do, not
+per declaration. `build::compile` takes the previous compile's `Compiled` and
+gives a new one; the command line passes `Compiled::default()`, so a cold
+compile pays nothing extra. A module is not checked again when its text is
+unchanged and the interface of each module it imports (the prelude included)
+is unchanged: it keeps its diagnostics. A module's interface is a hash of what
+other modules see: its imports, and each declaration's kind, name, and type or
+constant value, types hashed by structure. Bodies are not part of it.
+
+Only the source, the interface hash and the diagnostics are kept between
+compiles. Ids, types, THIR and MIR are rebuilt, since their numbering shifts
+with every edit. Spans stay absolute: a module is redone whole, and its
+diagnostics only point into its own file. A diagnostic pointing into another
+module's file would break reuse of it after an edit there.
+
+Measured on a generated 20k-function program (100-function modules): a full
+check costs about 160 ms; after a body edit the next compile takes about 9 ms,
+and after a constant's value changes about 10 ms (two modules). Collecting
+every module's names again is most of what remains (about 7 ms).
+
+`peeper lsp` (crate `lsp`, the only user of `lsp-server`, `lsp-types` and
+`serde_json`) keeps the text of open files, which `project::load` reads before
+the disk, and one `Compiled` per program. A change is checked 200 ms after the
+last keystroke; opening, saving and closing a file are checked at once.
+
 ## THIR
 
 One per function body, in arenas like the AST. Every expression has a `TypeId`

@@ -31,7 +31,7 @@ use crate::types::Integer;
 use crate::types::Type;
 use crate::types::TypeId;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Value {
     Bool(bool),
     /// Read through the integer's own type: the same bits are 255 as `u8` and

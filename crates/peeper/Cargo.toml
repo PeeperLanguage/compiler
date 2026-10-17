@@ -12,9 +12,9 @@ model.workspace = true
 source.workspace = true
 diagnostics.workspace = true
 lexer.workspace = true
-manifest.workspace = true
 project.workspace = true
 build.workspace = true
+lsp.workspace = true
 
 [dev-dependencies]
 toml.workspace = true

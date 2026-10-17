@@ -1,6 +1,6 @@
 //! Reads the source files of a program in parallel, resolves their imports,
-//! and orders the modules so each comes after the modules it imports. It knows
-//! packages only as names mapped to folders; finding them is the caller's job.
+//! and orders the modules so each comes after the modules it imports. `find`
+//! gives the packages and entry file of a project folder or a single file.
 
 mod packages;
 
@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
 
 use diagnostics::Diagnostic;
+use diagnostics::Severity;
 use model::syntax::Tree;
 use source::{SourceFile, Span};
 
@@ -41,6 +42,81 @@ pub struct Program {
     pub diagnostics: Vec<Diagnostic>, // about the program as a whole: import cycles
 }
 
+impl Program {
+    /// What loading found: about the program first, then each module's in
+    /// the program's order.
+    pub fn load_diagnostics(&self) -> impl Iterator<Item = &Diagnostic> {
+        let modules = self.order.iter().map(|path| &self.modules[path]);
+        let modules = modules.flat_map(|module| &module.diagnostics);
+        self.diagnostics.iter().chain(modules)
+    }
+
+    /// Whether loading found an error. Checking such a program would only add
+    /// reports of the holes the parser left, so it is not checked.
+    pub fn load_failed(&self) -> bool {
+        self.load_diagnostics()
+            .any(|diagnostic| diagnostic.code.severity == Severity::Error)
+    }
+}
+
+/// What `load` needs to check a project folder or a single file.
+pub struct Project {
+    pub packages: Packages, // the bundled libraries, and the project's own
+    pub entry: PathBuf,     // the file the program starts at
+    pub root: PathBuf,      // the project folder, or the folder of the file
+}
+
+/// The project at `path`: a folder holding peeper.toml, whose program starts
+/// at src/main.peep, or a single file, checked on its own with no imports.
+/// `libraries` holds the bundled libraries, one folder each. The error is a
+/// full message naming the file it is about.
+pub fn find(path: &Path, libraries: &Path) -> Result<Project, String> {
+    let is_dir = std::fs::metadata(path)
+        .map_err(|error| format!("{}: {error}", path.display()))?
+        .is_dir();
+    let mut packages = bundled_libraries(libraries);
+    if !is_dir {
+        return Ok(Project {
+            packages,
+            entry: path.to_path_buf(),
+            root: path.parent().unwrap_or(Path::new("")).to_path_buf(),
+        });
+    }
+    let manifest = manifest::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    if packages.contains_key(&manifest.name) {
+        let file = manifest.root.join(manifest::FILE_NAME);
+        return Err(format!(
+            "{}: project name `{}` is taken by a bundled library",
+            file.display(),
+            manifest.name
+        ));
+    }
+    let source = manifest.root.join("src");
+    let entry = source.join("main.peep");
+    packages.insert(manifest.name, source);
+    Ok(Project {
+        packages,
+        entry,
+        root: manifest.root,
+    })
+}
+
+/// Maps each library folder in `libraries` to its src folder. No libraries
+/// folder means no bundled libraries.
+fn bundled_libraries(libraries: &Path) -> Packages {
+    let Ok(entries) = std::fs::read_dir(libraries) else {
+        return Packages::new();
+    };
+    entries
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .filter_map(|entry| {
+            let name = entry.file_name().into_string().ok()?;
+            manifest::valid_name(&name).then(|| (name, entry.path().join("src")))
+        })
+        .collect()
+}
+
 struct Job {
     path: String,
     file: PathBuf,
@@ -51,7 +127,12 @@ struct Job {
 /// and parsed by a pool of worker threads; only this thread touches the module
 /// map, and each module is touched only by its worker until it is handed over.
 /// An entry in no package's folder is checked on its own and cannot import.
-pub fn load(packages: &Packages, entry: &Path) -> Program {
+///
+/// `open_files` holds the text of files open in an editor, read instead of
+/// what is on disk. Its keys are absolute paths as `std::path::absolute` makes
+/// them, symbolic links not followed: the form of the entry and of every file
+/// a package's folder names.
+pub fn load(packages: &Packages, entry: &Path, open_files: &HashMap<PathBuf, String>) -> Program {
     let entry = std::path::absolute(entry).unwrap_or_else(|_| entry.to_path_buf());
     let with_prelude = resolve(packages, PRELUDE_PATH).is_ok_and(|(_, file)| file.is_file());
     let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
@@ -72,7 +153,8 @@ pub fn load(packages: &Packages, entry: &Path) -> Program {
                         .expect("a worker never panics holding the lock")
                         .recv();
                     let Ok(job) = job else { break }; // no more jobs
-                    _ = send_module.send(load_file(packages, job, with_prelude));
+                    let module = load_file(packages, open_files, job, with_prelude);
+                    _ = send_module.send(module);
                 }
             });
         }
@@ -113,12 +195,23 @@ pub fn load(packages: &Packages, entry: &Path) -> Program {
     }
 }
 
-/// Reads, parses and resolves the imports of one module. A file that cannot
-/// be read, or is not UTF-8, gets an empty tree and one error.
-fn load_file(packages: &Packages, job: Job, with_prelude: bool) -> Module {
+/// Reads, parses and resolves the imports of one module, taking its text from
+/// `open_files` when it is open there. A file that cannot be read, or is not
+/// UTF-8, gets an empty tree and one error.
+fn load_file(
+    packages: &Packages,
+    open_files: &HashMap<PathBuf, String>,
+    job: Job,
+    with_prelude: bool,
+) -> Module {
     let name = job.file.to_string_lossy().into_owned();
-    let (syntax, diagnostics) = match std::fs::read(&job.file) {
-        Ok(bytes) => match String::from_utf8(bytes) {
+    let text = match open_files.get(&job.file) {
+        // Copied: every worker shares the map, and a source file owns its text.
+        Some(text) => Ok(Ok(text.clone())),
+        None => std::fs::read(&job.file).map(String::from_utf8),
+    };
+    let (syntax, diagnostics) = match text {
+        Ok(text) => match text {
             Ok(text) => parser::parse(&Arc::new(SourceFile::new(name, text))),
             Err(error) => {
                 // The text up to the bad byte is kept as is, so the error points at it.
@@ -146,12 +239,18 @@ fn load_file(packages: &Packages, job: Job, with_prelude: bool) -> Module {
         imports: Vec::new(),
         diagnostics,
     };
-    module.resolve_imports(packages, job.standalone, with_prelude);
+    module.resolve_imports(packages, open_files, job.standalone, with_prelude);
     module
 }
 
 impl Module {
-    fn resolve_imports(&mut self, packages: &Packages, standalone: bool, with_prelude: bool) {
+    fn resolve_imports(
+        &mut self,
+        packages: &Packages,
+        open_files: &HashMap<PathBuf, String>,
+        standalone: bool,
+        with_prelude: bool,
+    ) {
         let file = self.syntax.file.clone();
         let mut aliases = HashMap::new(); // alias -> import path
         for import in &self.syntax.imports {
@@ -174,7 +273,7 @@ impl Module {
                     continue;
                 }
             };
-            if !imported_file.is_file() {
+            if !imported_file.is_file() && !open_files.contains_key(&imported_file) {
                 let message = format!("module not found: {}", imported_file.display());
                 self.diagnostics
                     .push(error(diagnostics::MODULE_NOT_FOUND, message));
@@ -364,7 +463,7 @@ mod tests {
                 ("libs/core/src/global.peep", "fn exit(code: i32) {}"),
             ],
         );
-        let program = load(&packages, &root.join("src/main.peep"));
+        let program = load(&packages, &root.join("src/main.peep"), &HashMap::new());
         assert_eq!(messages(&program), Vec::<String>::new());
         assert_eq!(
             program.order.join(" "),
@@ -405,7 +504,7 @@ mod tests {
                 ("src/c.peep", ""),
             ],
         );
-        let program = load(&packages, &root.join("src/main.peep"));
+        let program = load(&packages, &root.join("src/main.peep"), &HashMap::new());
         let missing = root.join("src/missing.peep");
         let want = [
             format!("myapp:main: M0001 module not found: {}", missing.display()),
@@ -432,7 +531,7 @@ mod tests {
             "line",
             &[("src/main.peep", "fn main() {}\nimport \"myapp:missing\";\n")],
         );
-        let program = load(&packages, &root.join("src/main.peep"));
+        let program = load(&packages, &root.join("src/main.peep"), &HashMap::new());
         let main = &program.modules["myapp:main"];
         assert_eq!(main.diagnostics.len(), 1, "{:?}", messages(&program));
         let label = &main.diagnostics[0].labels[0];
@@ -449,7 +548,7 @@ mod tests {
                 ("src/b.peep", r#"import "myapp:a";"#),
             ],
         );
-        let program = load(&packages, &root.join("src/main.peep"));
+        let program = load(&packages, &root.join("src/main.peep"), &HashMap::new());
         assert_eq!(
             messages(&program),
             ["program: M0002 cyclic import detected: myapp:a -> myapp:b -> myapp:a"]
@@ -470,7 +569,7 @@ mod tests {
                 ("libs/core/src/global.peep", ""),
             ],
         );
-        let program = load(&packages, &root.join("src/main.peep"));
+        let program = load(&packages, &root.join("src/main.peep"), &HashMap::new());
         assert_eq!(
             messages(&program),
             ["myapp:main: S0004 `core:global` is imported automatically"]
@@ -491,7 +590,7 @@ mod tests {
                 ("libs/core/src/global.peep", ""),
             ],
         );
-        let program = load(&packages, &root.join("tool.peep"));
+        let program = load(&packages, &root.join("tool.peep"), &HashMap::new());
         assert_eq!(
             messages(&program),
             ["tool: M0003 a single file cannot import; check its project folder instead"]
@@ -507,13 +606,13 @@ mod tests {
     fn unreadable_and_non_utf8_entries() {
         let (root, packages) = write("unreadable", &[("src/bad.peep", "fn \u{0} main")]);
         std::fs::write(root.join("src/bad.peep"), b"fn \xff main() {}").unwrap();
-        let program = load(&packages, &root.join("src/main.peep"));
+        let program = load(&packages, &root.join("src/main.peep"), &HashMap::new());
         let got = messages(&program);
         assert!(
             got.len() == 1 && got[0].starts_with("myapp:main: M0001 read module: "),
             "{got:?}"
         );
-        let program = load(&packages, &root.join("src/bad.peep"));
+        let program = load(&packages, &root.join("src/bad.peep"), &HashMap::new());
         assert_eq!(
             messages(&program),
             ["myapp:bad: L0001 file is not valid UTF-8"]
@@ -541,7 +640,7 @@ mod tests {
             .collect();
         let (root, packages) = write("many", &files);
         let entry = root.join("src/main.peep");
-        let first = load(&packages, &entry);
+        let first = load(&packages, &entry, &HashMap::new());
         assert!(messages(&first).is_empty());
         assert_eq!(first.modules.len(), 202);
         let position: HashMap<&str, usize> = first
@@ -561,11 +660,32 @@ mod tests {
         }
         for _ in 0..5 {
             assert_eq!(
-                load(&packages, &entry).order,
+                load(&packages, &entry, &HashMap::new()).order,
                 first.order,
                 "order differs between runs"
             );
         }
+    }
+
+    #[test]
+    fn open_files_win_over_disk() {
+        let (root, packages) = write(
+            "open",
+            &[
+                ("src/main.peep", "import \"myapp:a\";\nfn main() {}"),
+                ("src/a.peep", "fn A( {"),
+            ],
+        );
+        let open_files = HashMap::from([
+            (
+                root.join("src/a.peep"),
+                "import \"myapp:b\";\nfn A() {}".to_string(),
+            ),
+            (root.join("src/b.peep"), "fn B() {}".to_string()), // not on disk
+        ]);
+        let program = load(&packages, &root.join("src/main.peep"), &open_files);
+        assert_eq!(messages(&program), Vec::<String>::new());
+        assert_eq!(program.modules["myapp:b"].syntax.file.text, "fn B() {}");
     }
 
     #[test]

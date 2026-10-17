@@ -8,14 +8,19 @@ use crate::dump::Dump;
 pub const USAGE: &str = "\
 usage: peeper check [project folder | file.peep]
        peeper -dump [thir | mir] [project folder | file.peep]
+       peeper lsp
   check  report the program's errors
   -dump  also write each module's THIR and MIR, or only the one named, to
-         build/debug/dumps beside the project or file, when there are no errors";
+         build/debug/dumps beside the project or file, when there are no errors
+  lsp    serve editors as a language server over stdin and stdout";
 
 /// What the arguments ask for.
-pub struct Args {
-    pub path: PathBuf,    // the project folder or file
-    pub dumps: Vec<Dump>, // what to dump; none for `check`
+pub enum Args {
+    Check {
+        path: PathBuf,    // the project folder or file
+        dumps: Vec<Dump>, // what to dump; none for `check`
+    },
+    Lsp,
 }
 
 /// The arguments after the program's name; `None` when they make no sense.
@@ -23,6 +28,7 @@ pub fn parse(args: &[String]) -> Option<Args> {
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let kind = |mode: &str| Dump::ALL.into_iter().find(|kind| kind.extension() == mode);
     let (dumps, path): (Vec<Dump>, &str) = match args.as_slice() {
+        ["lsp"] => return Some(Args::Lsp),
         ["check"] => (Vec::new(), "."),
         ["check", path] => (Vec::new(), path),
         ["-dump"] => (Dump::ALL.to_vec(), "."),
@@ -31,7 +37,7 @@ pub fn parse(args: &[String]) -> Option<Args> {
         ["-dump", mode, path] if kind(mode).is_some() => (kind(mode).into_iter().collect(), path),
         _ => return None,
     };
-    Some(Args {
+    Some(Args::Check {
         path: PathBuf::from(path),
         dumps,
     })
@@ -39,14 +45,20 @@ pub fn parse(args: &[String]) -> Option<Args> {
 
 #[cfg(test)]
 mod tests {
+    use super::Args;
     use super::parse;
 
-    /// The path and dump extensions `args` ask for, or `None`.
+    /// The path and dump extensions `args` ask for, `("lsp", [])` for
+    /// `peeper lsp`, or `None`.
     fn parsed(args: &[&str]) -> Option<(String, Vec<&'static str>)> {
         let args: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
-        let parsed = parse(&args)?;
-        let dumps = parsed.dumps.iter().map(|dump| dump.extension()).collect();
-        Some((parsed.path.display().to_string(), dumps))
+        match parse(&args)? {
+            Args::Check { path, dumps } => {
+                let dumps = dumps.iter().map(|dump| dump.extension()).collect();
+                Some((path.display().to_string(), dumps))
+            }
+            Args::Lsp => Some(("lsp".to_string(), Vec::new())),
+        }
     }
 
     #[test]
@@ -58,11 +70,13 @@ mod tests {
         assert_eq!(parsed(&["-dump", "mir"]), some(".", &["mir"]));
         assert_eq!(parsed(&["-dump", "app"]), some("app", &["thir", "mir"]));
         assert_eq!(parsed(&["-dump", "thir", "app"]), some("app", &["thir"]));
+        assert_eq!(parsed(&["lsp"]), some("lsp", &[]));
         for wrong in [
             &[][..],
             &["build"],
             &["-dump", "ll", "app"],
             &["check", "a", "b"],
+            &["lsp", "app"],
         ] {
             assert_eq!(parsed(wrong), None, "{wrong:?}");
         }

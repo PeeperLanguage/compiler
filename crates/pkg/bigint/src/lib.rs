@@ -9,7 +9,7 @@ use std::cmp::Ordering;
 /// An integer's bits in 64-bit limbs, lowest first, zero above the width. The
 /// same bits are 255 read as unsigned 8 bits and -1 read as signed. Up to 128
 /// bits are held inline.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Limbs {
     Inline([u64; 2]),
     Heap(Box<[u64]>),

@@ -13,9 +13,9 @@ project.workspace = true
 model.workspace = true
 check.workspace = true
 lower.workspace = true
+source.workspace = true
 
 [dev-dependencies]
-source.workspace = true
 parser.workspace = true
 
 [lints]

@@ -98,6 +98,11 @@ function's MIR to a callback as soon as it is built and drops it after, the way
 Go compiles one function at a time. Keeping every function's MIR in a `Vec`
 took a 20k-function file from 60 MB to 98 MB and was slower.
 
+**Hand a cache in and get it back as a value.** `build::compile` takes the
+previous compile's `Compiled` by value and gives the new one: cached entries
+move instead of being copied, and there is no long-lived object changing in
+place. The command line passes `Compiled::default()`.
+
 **Skip a pass that cannot find anything.** When a cheap fact proves a pass
 has nothing to report, do not run it: the initialization check runs only for a
 function with a `let` without a value, since nothing else can be unset. It made

@@ -1,6 +1,7 @@
 //! What a `peeper` command does: load the program, check and compile it,
 //! print its diagnostics and write the dumps asked for.
 
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
@@ -8,7 +9,6 @@ use std::path::PathBuf;
 use diagnostics::Diagnostic;
 use diagnostics::Severity;
 use diagnostics::printer;
-use project::Packages;
 
 use crate::dump::Dump;
 use crate::dump::Dumps;
@@ -25,58 +25,27 @@ pub fn run(
     colored: bool,
     dumps: &[Dump],
 ) -> u8 {
-    let is_dir = match std::fs::metadata(path) {
-        Ok(metadata) => metadata.is_dir(),
+    let project = match project::find(path, libraries) {
+        Ok(project) => project,
         Err(error) => {
-            _ = writeln!(out, "{}: {error}", path.display());
+            _ = writeln!(out, "{error}");
             return 1;
         }
     };
-    let mut packages = bundled_libraries(libraries);
-    let mut entry = path.to_path_buf();
-    let mut root = path.parent().unwrap_or(Path::new("")).to_path_buf();
-    if is_dir {
-        let manifest = match manifest::read(path) {
-            Ok(manifest) => manifest,
-            Err(error) => {
-                _ = writeln!(out, "{}: {error}", path.display());
-                return 1;
-            }
-        };
-        if packages.contains_key(&manifest.name) {
-            let file = manifest.root.join(manifest::FILE_NAME);
-            let name = &manifest.name;
-            _ = writeln!(
-                out,
-                "{}: project name `{name}` is taken by a bundled library",
-                file.display()
-            );
-            return 1;
-        }
-        let source = manifest.root.join("src");
-        entry = source.join("main.peep");
-        packages.insert(manifest.name, source);
-        root = manifest.root;
-    }
-    let mut program = project::load(&packages, &entry);
-    let mut all = std::mem::take(&mut program.diagnostics);
-    for path in &program.order {
-        if let Some(module) = program.modules.get_mut(path) {
-            all.append(&mut module.diagnostics);
-        }
-    }
+    let program = project::load(&project.packages, &project.entry, &HashMap::new());
+    let mut all: Vec<Diagnostic> = program.load_diagnostics().cloned().collect();
     let failed = |all: &[Diagnostic]| all.iter().any(|d| d.code.severity == Severity::Error);
-    // Checking a tree with syntax errors would only add reports of the holes
-    // the parser left.
-    if !failed(&all) {
+    if !program.load_failed() {
         let mut dumped = Dumps::new(&program, dumps);
-        all.extend(build::compile(
+        let compiled = build::compile(
             &program,
             usize::BITS,
+            build::Compiled::default(),
             |definition, thir, mir, types| dumped.add(definition, thir, mir, types),
-        ));
+        );
+        all.extend(compiled.diagnostics().cloned());
         if !failed(&all)
-            && let Err(error) = dumped.write(&root.join("build/debug/dumps"), out)
+            && let Err(error) = dumped.write(&project.root.join("build/debug/dumps"), out)
         {
             _ = writeln!(out, "peeper: cannot write a dump: {error}");
             return 1;
@@ -89,22 +58,6 @@ pub fn run(
         return 1;
     }
     u8::from(failed(&all))
-}
-
-/// Maps each library folder in `libraries` to its src folder. No libraries
-/// folder means no bundled libraries.
-fn bundled_libraries(libraries: &Path) -> Packages {
-    let Ok(entries) = std::fs::read_dir(libraries) else {
-        return Packages::new();
-    };
-    entries
-        .flatten()
-        .filter(|entry| entry.path().is_dir())
-        .filter_map(|entry| {
-            let name = entry.file_name().into_string().ok()?;
-            manifest::valid_name(&name).then(|| (name, entry.path().join("src")))
-        })
-        .collect()
 }
 
 /// The libs folder of the installation peeper runs from: the executable is in

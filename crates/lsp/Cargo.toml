@@ -1,0 +1,20 @@
+[package]
+name = "lsp"
+description = "The Peeper language server: the LSP protocol over the compiler"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+source.workspace = true
+diagnostics.workspace = true
+manifest.workspace = true
+project.workspace = true
+build.workspace = true
+lsp-server.workspace = true
+lsp-types.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
