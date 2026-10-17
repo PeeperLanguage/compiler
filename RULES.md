@@ -7,6 +7,7 @@ Guidance is separated by concern:
 - [`RULES.md`](./RULES.md): code quality, validation, branch, and commit requirements.
 - [`AGENTS.md`](./AGENTS.md): agent workflow, gates, local plans, and handoff requirements.
 - [`go-style.md`](./go-style.md): Go-specific idioms and linter guidance.
+- [`rust-style.md`](./rust-style.md): Rust patterns the project has settled on.
 - [`RULEBOOK.md`](./RULEBOOK.md): optional design-review questions.
 - [`docs/architecture/`](./docs/architecture/): source-verified snapshots of current implementation.
 
