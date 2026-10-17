@@ -161,6 +161,18 @@ impl Decl {
             | Decl::Alias(declaration) => declaration.name,
         }
     }
+
+    /// The doc comment and attributes before the declaration.
+    pub fn metadata(&self) -> Metadata {
+        match *self {
+            Decl::Function(function) => function.metadata,
+            Decl::Const { metadata, .. } => metadata,
+            Decl::Struct(declaration)
+            | Decl::Enum(declaration)
+            | Decl::Interface(declaration)
+            | Decl::Alias(declaration) => declaration.metadata,
+        }
+    }
 }
 
 /// `fn (receiver) name<T>(parameters) -> Result from origins { body }`; also an

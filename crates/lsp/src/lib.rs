@@ -31,9 +31,9 @@ use lsp_types::DidSaveTextDocumentParams;
 use lsp_types::Hover;
 use lsp_types::HoverContents;
 use lsp_types::HoverProviderCapability;
-use lsp_types::LanguageString;
 use lsp_types::Location;
-use lsp_types::MarkedString;
+use lsp_types::MarkupContent;
+use lsp_types::MarkupKind;
 use lsp_types::NumberOrString;
 use lsp_types::OneOf;
 use lsp_types::Position;
@@ -216,21 +216,22 @@ impl<'s> Server<'s> {
                 return Response::new_err(id, code, format!("unknown request `{method}`"));
             }
         };
-        let answer = self.name_at(&place).and_then(|(program, module, name)| {
-            let (file, declared, hover) = match &name.target {
+        let answer = self.name_at(&place).and_then(|(program, module, target)| {
+            let (file, declared, hover) = match &target {
                 Target::InBody { declared, ty } => {
                     let file = &module.syntax.file;
-                    (file, *declared, format!("{}: {ty}", file.slice(*declared)))
+                    let text = format!("{}: {ty}", file.slice(*declared));
+                    (file, *declared, code_block(&text))
                 }
                 Target::Declaration { module, index } => {
                     let tree = &program.modules.get(module)?.syntax;
                     let declaration = Id::from_index(*index as usize);
                     let declared = tree.decls[declaration].name().span;
-                    (&tree.file, declared, header(tree, declaration))
+                    (&tree.file, declared, header(tree, declaration, module))
                 }
                 Target::Module(path) => {
                     let file = &program.modules.get(path)?.syntax.file;
-                    (file, Span::at(0), format!("module `{path}`"))
+                    (file, Span::at(0), code_block(&format!("module {path}")))
                 }
             };
             if method == "textDocument/definition" {
@@ -238,12 +239,11 @@ impl<'s> Server<'s> {
                 let range = range(file, declared);
                 return serde_json::to_value(Location { uri, range }).ok();
             }
-            let hover = LanguageString {
-                language: "peeper".to_string(),
-                value: hover,
-            };
             let hover = Hover {
-                contents: HoverContents::Scalar(MarkedString::LanguageString(hover)),
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: hover,
+                }),
                 range: None,
             };
             serde_json::to_value(hover).ok()
@@ -251,12 +251,13 @@ impl<'s> Server<'s> {
         Response::new_ok(id, answer)
     }
 
-    /// The name at `place` that the last check of a program holding its file
-    /// recorded, with that program and the file's module.
+    /// What the name at `place` stands for: a name the last check of a
+    /// program holding its file recorded in a body, else the name of one of
+    /// the module's declarations; with that program and the file's module.
     fn name_at(
         &self,
         place: &TextDocumentPositionParams,
-    ) -> Option<(&project::Program, &project::Module, &Name)> {
+    ) -> Option<(&project::Program, &project::Module, Target)> {
         let file = place.text_document.uri.to_file_path().ok()?;
         self.checked.values().find_map(|checked| {
             let program = checked.program.as_ref()?;
@@ -265,9 +266,26 @@ impl<'s> Server<'s> {
                 .values()
                 .find(|module| Path::new(&module.syntax.file.name) == file)?;
             let offset = offset(&module.syntax.file, place.position) as u32;
-            let names = checked.names.get(&module.path)?;
-            let at = |name: &&Name| name.span.start <= offset && offset <= name.span.end;
-            Some((program, module, names.iter().find(at)?))
+            let at = |span: Span| span.start <= offset && offset <= span.end;
+            let in_body = checked
+                .names
+                .get(&module.path)
+                .and_then(|names| names.iter().find(|name| at(name.span)));
+            let target = match in_body {
+                Some(name) => name.target.clone(),
+                None => {
+                    let tree = &module.syntax;
+                    let declaration = tree
+                        .lists
+                        .items(tree.declarations)
+                        .find(|&declaration| at(tree.decls[declaration].name().span))?;
+                    Target::Declaration {
+                        module: module.path.clone(),
+                        index: declaration.index() as u32,
+                    }
+                }
+            };
+            Some((program, module, target))
         })
     }
 
@@ -414,6 +432,7 @@ struct Name {
     target: Target,
 }
 
+#[derive(Clone)]
 enum Target {
     /// A parameter, `let` or `const` of the body, declared at `declared`, with
     /// its type's text.
@@ -465,17 +484,48 @@ impl Name {
     }
 }
 
-/// What hover shows for `declaration`: a function's text up to its body, or
-/// another declaration's first line.
-fn header(tree: &syntax::Tree, declaration: Id<syntax::Decl>) -> String {
+/// What hover shows for `declaration` of the module at `module`, in
+/// Markdown, as rust-analyzer does: the module's path; the attributes and a
+/// function's text up to its body, or another declaration's first line; then
+/// the doc comment as prose.
+fn header(tree: &syntax::Tree, declaration: Id<syntax::Decl>, module: &str) -> String {
     let span = tree.decls.span(declaration);
-    let text = match tree.decls[declaration] {
+    let end = match tree.decls[declaration] {
         syntax::Decl::Function(syntax::Function {
             body: Some(body), ..
-        }) => &tree.file.text[span.start as usize..tree.blocks.span(body).start as usize],
-        _ => tree.file.slice(span).lines().next().unwrap_or_default(),
+        }) => tree.blocks.span(body).start,
+        _ => tree
+            .file
+            .slice(span)
+            .find('\n')
+            .map_or(span.end, |line_end| span.start + line_end as u32),
     };
-    text.trim().to_string()
+    // The attributes are written before the declaration's span.
+    let metadata = tree.decls[declaration].metadata();
+    let start = tree
+        .lists
+        .items(metadata.attributes)
+        .next()
+        .map_or(span.start, |first| tree.attributes.span(first).start);
+    let mut hover = code_block(module);
+    hover.push_str(&code_block(
+        tree.file.text[start as usize..end as usize].trim(),
+    ));
+    if let Some(doc_comment) = metadata.doc_comment {
+        hover.push_str("\n---\n\n");
+        for line in tree.file.slice(doc_comment).lines() {
+            let line = line.trim_start();
+            let line = line.strip_prefix("///").unwrap_or(line);
+            hover.push_str(line.strip_prefix(' ').unwrap_or(line));
+            hover.push('\n');
+        }
+    }
+    hover
+}
+
+/// `text` as a Markdown block of Peeper code.
+fn code_block(text: &str) -> String {
+    format!("```peeper\n{text}\n```\n")
 }
 
 /// `diagnostic` in LSP form: the primary label gives the range, the other
@@ -808,7 +858,10 @@ mod tests {
             json!({ "line": 1, "character": 13 })
         );
         let hover = ask("textDocument/hover", 2, 16);
-        assert_eq!(hover["contents"]["value"], json!("total: i64"));
+        assert_eq!(
+            hover["contents"]["value"],
+            json!("```peeper\ntotal: i64\n```\n")
+        );
         assert_eq!(ask("textDocument/hover", 0, 0), serde_json::Value::Null);
     }
     /// Names across modules: each kind of name answers where it is declared
@@ -826,7 +879,7 @@ mod tests {
             "name = \"app\"\nbuild = \"bin\"\n",
         )
         .unwrap();
-        let utils = "fn Add(a: i32, b: i32) -> i32 { return a + b; }\nconst Limit: u8 = 200;\n";
+        let utils = "fn Add(a: i32, b: i32) -> i32 { return a + b; }\n/// The cap.\n#[deprecated]\nconst Limit: u8 = 200;\n";
         let main = "import \"app:utils\";
 fn main(count: i64) {
     let mut total = count;
@@ -877,28 +930,53 @@ fn main(count: i64) {
             let name = file.file_name().unwrap().to_str().unwrap().to_string();
             (name, found["range"]["start"]["line"].clone())
         };
-        assert_eq!(hover(&server, "count", 1), json!("count: i64"));
+        assert_eq!(
+            hover(&server, "count", 1),
+            json!("```peeper\ncount: i64\n```\n")
+        );
         assert_eq!(
             declared(&server, "count", 1),
             ("main.peep".to_string(), json!(1))
         );
-        assert_eq!(hover(&server, "total", 1), json!("total: i64"));
+        assert_eq!(
+            hover(&server, "total", 1),
+            json!("```peeper\ntotal: i64\n```\n")
+        );
         assert_eq!(
             declared(&server, "total", 1),
             ("main.peep".to_string(), json!(2))
         );
-        assert_eq!(hover(&server, "utils", 1), json!("module `app:utils`"));
+        assert_eq!(
+            hover(&server, "utils", 1),
+            json!("```peeper\nmodule app:utils\n```\n")
+        );
+        assert_eq!(
+            hover(&server, "main", 0),
+            json!("```peeper\napp:main\n```\n```peeper\nfn main(count: i64)\n```\n")
+        );
+        assert_eq!(
+            declared(&server, "main", 0),
+            ("main.peep".to_string(), json!(1))
+        );
         assert_eq!(
             hover(&server, "Add", 0),
-            json!("fn Add(a: i32, b: i32) -> i32")
+            json!("```peeper\napp:utils\n```\n```peeper\nfn Add(a: i32, b: i32) -> i32\n```\n")
         );
         assert_eq!(
             declared(&server, "Add", 0),
             ("utils.peep".to_string(), json!(0))
         );
-        assert_eq!(hover(&server, "Limit", 0), json!("const Limit: u8 = 200;"));
+        assert_eq!(
+            hover(&server, "Limit", 0),
+            json!(
+                "```peeper\napp:utils\n```\n```peeper\n#[deprecated]\nconst Limit: u8 = 200;\n```\n\n---\n\nThe cap.\n"
+            )
+        );
         // `main` has an error, and its names are still there.
-        assert_eq!(hover(&server, "total", 2), json!("total: i64"));
+        assert_eq!(
+            hover(&server, "total", 2),
+            json!("```peeper\ntotal: i64\n```\n")
+        );
 
         let moved = format!("// moved down\n{utils}");
         notify(
