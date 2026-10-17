@@ -120,6 +120,11 @@ impl Diagnostic {
         }
     }
 
+    /// Whether it is an error, which fails the compile.
+    pub fn is_error(&self) -> bool {
+        self.code.severity == Severity::Error
+    }
+
     /// Adds a place; the first place added is the primary one.
     pub fn label(
         mut self,

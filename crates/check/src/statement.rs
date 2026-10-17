@@ -6,7 +6,6 @@ use std::num::NonZeroU32;
 use arena::Id;
 use arena::List;
 use diagnostics::Diagnostic;
-use diagnostics::Severity;
 use model::syntax;
 use model::thir::Block;
 use model::thir::Body;
@@ -76,7 +75,7 @@ impl<'a, Q: Queries> Checker<'a, Q> {
         let body = checker.body;
         let failed = self.diagnostics[reported..]
             .iter()
-            .any(|diagnostic| diagnostic.code.severity == Severity::Error);
+            .any(Diagnostic::is_error);
         (!failed).then_some(body)
     }
 

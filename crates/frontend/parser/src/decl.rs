@@ -147,11 +147,13 @@ impl Parser<'_> {
         let name = self.name();
         let mut arguments = List::EMPTY;
         if self.at(TokenKind::LeftParen) {
-            let open = self.next();
-            arguments = self.items(TokenKind::RightParen, false, starts_expression, |p| {
-                p.expr(Precedence::Lowest)
-            });
-            self.close(TokenKind::RightParen, open);
+            arguments = self.delimited(
+                TokenKind::LeftParen,
+                TokenKind::RightParen,
+                false,
+                starts_expression,
+                |p| p.expr(Precedence::Lowest),
+            );
         }
         let t = self.tok();
         if t.kind == TokenKind::Comma {
@@ -346,9 +348,13 @@ impl Parser<'_> {
         if self.at(TokenKind::From) {
             self.next();
             if self.at(TokenKind::LeftParen) {
-                let open = self.next();
-                origins = self.items(TokenKind::RightParen, false, is_name, Self::name_node);
-                self.close(TokenKind::RightParen, open);
+                origins = self.delimited(
+                    TokenKind::LeftParen,
+                    TokenKind::RightParen,
+                    false,
+                    is_name,
+                    Self::name_node,
+                );
             } else {
                 let origin = self.name_node();
                 origins = self.tree.lists.add(&[origin.into()]);

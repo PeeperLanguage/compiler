@@ -315,11 +315,13 @@ fn binary(p: &mut Parser, left: Id<Expr>) -> Id<Expr> {
 
 /// Reads the arguments of a call to `callee`.
 fn call(p: &mut Parser, callee: Id<Expr>) -> Id<Expr> {
-    let open = p.next();
-    let arguments = p.items(TokenKind::RightParen, false, starts_expression, |p| {
-        p.expr(Precedence::Lowest)
-    });
-    p.close(TokenKind::RightParen, open);
+    let arguments = p.delimited(
+        TokenKind::LeftParen,
+        TokenKind::RightParen,
+        false,
+        starts_expression,
+        |p| p.expr(Precedence::Lowest),
+    );
     p.add(p.start_of(callee), Expr::Call { callee, arguments })
 }
 

@@ -7,7 +7,6 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use diagnostics::Diagnostic;
-use diagnostics::Severity;
 use diagnostics::printer;
 
 use crate::dump::Dump;
@@ -34,7 +33,7 @@ pub fn run(
     };
     let program = project::load(&project.packages, &project.entry, &HashMap::new());
     let mut all: Vec<Diagnostic> = program.load_diagnostics().cloned().collect();
-    let failed = |all: &[Diagnostic]| all.iter().any(|d| d.code.severity == Severity::Error);
+    let failed = |all: &[Diagnostic]| all.iter().any(Diagnostic::is_error);
     if !program.load_failed() {
         let mut dumped = Dumps::new(&program, dumps);
         let compiled = build::compile(

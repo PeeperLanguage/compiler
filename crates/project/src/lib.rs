@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
 
 use diagnostics::Diagnostic;
-use diagnostics::Severity;
 use model::syntax::Tree;
 use source::{SourceFile, Span};
 
@@ -54,8 +53,7 @@ impl Program {
     /// Whether loading found an error. Checking such a program would only add
     /// reports of the holes the parser left, so it is not checked.
     pub fn load_failed(&self) -> bool {
-        self.load_diagnostics()
-            .any(|diagnostic| diagnostic.code.severity == Severity::Error)
+        self.load_diagnostics().any(Diagnostic::is_error)
     }
 }
 

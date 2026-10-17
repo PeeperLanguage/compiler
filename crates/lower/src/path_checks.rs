@@ -309,12 +309,7 @@ pub fn unreachable_code(
                 "this never runs",
             ),
         );
-        let mut pending = vec![block];
-        while let Some(block) = pending.pop() {
-            if !std::mem::replace(&mut seen[block.index()], true) {
-                pending.extend(body.blocks[block].terminator.targets());
-            }
-        }
+        mark_reachable(body, block, &mut seen);
     }
 }
 
@@ -379,11 +374,17 @@ fn second_assignment(
 /// Which blocks control can reach from the entry, by index.
 fn reachable(body: &mir::Body) -> Vec<bool> {
     let mut reachable = vec![false; body.blocks.len()];
-    let mut pending = vec![Id::<mir::Block>::from_index(0)];
+    mark_reachable(body, Id::from_index(0), &mut reachable);
+    reachable
+}
+
+/// Marks in `marked` `from` and every block control can reach from it,
+/// stopping at blocks already marked.
+fn mark_reachable(body: &mir::Body, from: Id<mir::Block>, marked: &mut [bool]) {
+    let mut pending = vec![from];
     while let Some(block) = pending.pop() {
-        if !std::mem::replace(&mut reachable[block.index()], true) {
+        if !std::mem::replace(&mut marked[block.index()], true) {
             pending.extend(body.blocks[block].terminator.targets());
         }
     }
-    reachable
 }
