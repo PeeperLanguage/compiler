@@ -263,7 +263,7 @@ impl<'p> Build<'p> {
         for declaration in tree.lists.items(tree.declarations) {
             let decl = &tree.decls[declaration];
             std::mem::discriminant(decl).hash(&mut hasher);
-            tree.file.slice(decl.name()).hash(&mut hasher);
+            decl.name().text(&tree.file).hash(&mut hasher);
             if let State::Done(ty) = self.signatures[index][declaration.index()] {
                 hash_type(&self.types, ty, &mut hasher);
             }
@@ -337,13 +337,13 @@ impl<'p> Build<'p> {
         }
         let tree = &self.program.modules[module].syntax;
         let name = tree.decls[Id::from_index(definition.index as usize)].name();
-        let text = tree.file.slice(name);
+        let text = name.text(&tree.file);
         self.diagnostics[module].push(
             Diagnostic::new(
                 diagnostics::CIRCULAR_DEPENDENCY,
                 format!("`{text}` depends on itself"),
             )
-            .label(&tree.file, name, ""),
+            .label(&tree.file, name.span, ""),
         );
     }
 }

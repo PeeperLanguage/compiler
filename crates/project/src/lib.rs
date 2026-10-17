@@ -277,7 +277,7 @@ impl Module {
                 continue;
             }
             let alias = match import.alias {
-                Some(alias) => file.slice(alias).to_string(),
+                Some(alias) => alias.text(&file).to_string(),
                 None => path[path.rfind(['/', ':']).map_or(0, |i| i + 1)..].to_string(),
             };
             if let Some(previous) = aliases.get(&alias) {

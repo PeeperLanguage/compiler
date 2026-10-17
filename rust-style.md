@@ -69,6 +69,12 @@ same reason: the compiler cannot check it.
 turned back into an enum variant. When code must walk a group of variants,
 generate the list of them.
 
+**Say what a span is by its type.** A name written in the source is a
+`syntax::Ident { span }`, read with `ident.text(&file)`, not a bare `Span`
+named `name`: the type tells the reader it is an identifier and where its
+text comes from. A node whose whole text is its arena span (`Expr::Name`,
+`Type::Name`) needs no wrapper.
+
 ## Give each item only what it needs
 
 Not every item needs every property. A token kind has one `text()`: a keyword's

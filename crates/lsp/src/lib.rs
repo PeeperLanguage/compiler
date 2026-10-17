@@ -225,7 +225,7 @@ impl<'s> Server<'s> {
                 Target::Declaration { module, index } => {
                     let tree = &program.modules.get(module)?.syntax;
                     let declaration = Id::from_index(*index as usize);
-                    let declared = tree.decls[declaration].name();
+                    let declared = tree.decls[declaration].name().span;
                     (&tree.file, declared, header(tree, declaration))
                 }
                 Target::Module(path) => {

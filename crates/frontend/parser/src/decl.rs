@@ -4,7 +4,7 @@
 use arena::{Id, List};
 use diagnostics::Diagnostic;
 use model::syntax::{
-    Attribute, Decl, Expr, Function, Import, Metadata, Name, Param, Type, TypeDecl,
+    Attribute, Decl, Expr, Function, Ident, Import, Metadata, Name, Param, Type, TypeDecl,
 };
 use source::Span;
 use token::TokenKind;
@@ -135,7 +135,7 @@ impl Parser<'_> {
     fn attribute(&mut self) -> Id<Attribute> {
         let start = self.next().span.start;
         let Some(open) = self.expect(TokenKind::LeftBracket) else {
-            let name = self.here();
+            let name = Ident { span: self.here() };
             return self.add(
                 start,
                 Attribute {
@@ -230,7 +230,7 @@ impl Parser<'_> {
     /// Reads a name into a node of its own: a type parameter or an origin.
     fn name_node(&mut self) -> Id<Name> {
         let name = self.name();
-        self.tree.add(Name, name)
+        self.tree.add(Name, name.span)
     }
 
     /// Reads `<T, U>`; it may be left out.
@@ -246,7 +246,7 @@ impl Parser<'_> {
 
     /// Reads `name: Type = value;` after `let` or `const`; the type and the
     /// value may be left out.
-    pub(crate) fn binding(&mut self) -> (Span, Option<Id<Type>>, Option<Id<Expr>>) {
+    pub(crate) fn binding(&mut self) -> (Ident, Option<Id<Type>>, Option<Id<Expr>>) {
         let name = self.name();
         let ty = self.at(TokenKind::Colon).then(|| {
             self.next();
@@ -312,7 +312,7 @@ impl Parser<'_> {
     }
 
     /// Reads the `name:` in front of a parameter's type, if it is there.
-    pub(crate) fn parameter_name(&mut self) -> Option<Span> {
+    pub(crate) fn parameter_name(&mut self) -> Option<Ident> {
         if !self.at(TokenKind::Ident) || self.ahead(1).kind != TokenKind::Colon {
             return None;
         }

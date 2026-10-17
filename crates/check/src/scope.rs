@@ -81,7 +81,7 @@ pub fn collect(
             | syntax::Decl::Interface(declaration)
             | syntax::Decl::Alias(declaration) => (declaration.name, Binding::Type(definition)),
         };
-        declare(file.slice(name), binding, name);
+        declare(name.text(file), binding, name.span);
     }
     scope
 }

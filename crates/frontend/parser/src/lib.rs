@@ -30,6 +30,7 @@ use std::sync::Arc;
 
 use arena::{Id, List, Node};
 use diagnostics::{Diagnostic, Fix};
+use model::syntax::Ident;
 use model::syntax::Tree;
 use source::{SourceFile, Span};
 use token::{Token, TokenKind};
@@ -421,12 +422,13 @@ impl Parser<'_> {
         self.tokens.len() - 1
     }
 
-    /// Reads a name; a missing one gives an empty span.
-    fn name(&mut self) -> Span {
-        match self.expect(TokenKind::Ident) {
+    /// Reads a name; a missing one is empty, where it should be.
+    fn name(&mut self) -> Ident {
+        let span = match self.expect(TokenKind::Ident) {
             Some(t) => t.span,
             None => self.here(),
-        }
+        };
+        Ident { span }
     }
 
     /// Reads the `;` that closes a statement, which puts the parser in step

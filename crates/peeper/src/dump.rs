@@ -55,7 +55,7 @@ impl<'p> Dumps<'p> {
         let name = |definition: DefId| {
             let tree = tree(definition);
             let declaration = tree.decls[Id::from_index(definition.index as usize)];
-            tree.file.slice(declaration.name()).to_string()
+            declaration.name().text(&tree.file).to_string()
         };
         let file = &tree(definition).file;
         for (index, kind) in self.kinds.iter().enumerate() {

@@ -38,7 +38,7 @@ impl Parser<'_> {
                 if !matches!(self.ahead(1).kind, TokenKind::ColonColon | TokenKind::Less) =>
             {
                 let name = self.name();
-                self.tree.add(Pattern::Binding, name)
+                self.tree.add(Pattern::Binding, name.span)
             }
             TokenKind::Ident => self.case_pattern(),
             _ => {

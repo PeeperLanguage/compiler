@@ -495,7 +495,9 @@ mod tests {
                 };
                 format!("{prefix}{space}{}", grouped(t, value))
             }
-            Expr::Selector { value, field } => format!("{}.{}", grouped(t, value), text(field)),
+            Expr::Selector { value, field } => {
+                format!("{}.{}", grouped(t, value), text(field.span))
+            }
             Expr::Index { value, index } => {
                 format!("{}[{}]", grouped(t, value), text(t.exprs.span(index)))
             }

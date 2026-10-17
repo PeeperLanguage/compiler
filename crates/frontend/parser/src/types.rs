@@ -104,7 +104,7 @@ impl Parser<'_> {
         let start = self.tok().span.start;
         let name = self.name();
         if !self.at(TokenKind::Less) {
-            return self.tree.add(Type::Name, name);
+            return self.tree.add(Type::Name, name.span);
         }
         let open = self.next();
         let arguments = self.items(TokenKind::Greater, false, starts_type, |p| p.type_expr());

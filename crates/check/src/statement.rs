@@ -7,6 +7,7 @@ use arena::Id;
 use arena::List;
 use diagnostics::Diagnostic;
 use model::syntax;
+use model::syntax::Ident;
 use model::thir::Block;
 use model::thir::Body;
 use model::thir::Expr;
@@ -60,7 +61,7 @@ impl<'a, Q: Queries> Checker<'a, Q> {
                     mutable: parameter.mutable,
                     declared_without_value: false,
                 },
-                name,
+                name.span,
             );
             checker.declare(name, Symbol::Local(local));
         }
@@ -117,32 +118,35 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
             .add(Block { statements }, self.tree.blocks.span(block))
     }
 
-    /// Declares the name written at `span` in the current block. It may
+    /// Declares `name` in the current block. It may
     /// shadow a name of an outer block until the block ends. A name the block
     /// already declares is reported and keeps its first meaning; the
     /// parameters are in the body's outermost block, as in Go.
-    fn declare(&mut self, span: Span, symbol: Symbol) {
-        let name = self.tree.file.slice(span);
-        if name.is_empty() || name == "_" {
+    fn declare(&mut self, name: Ident, symbol: Symbol) {
+        let text = name.text(&self.tree.file);
+        if text.is_empty() || text == "_" {
             return; // missing after a syntax error, or not a name
         }
         let block = &self.names[self.block_start..];
-        if let Some(&(_, first)) = block.iter().find(|&&(declared, _)| declared == name) {
+        if let Some(&(_, first)) = block.iter().find(|&&(declared, _)| declared == text) {
             let first = self.body.declared(first);
             let file = &self.tree.file;
             self.checker.diagnostics.push(
                 Diagnostic::new(
                     diagnostics::ALREADY_DECLARED,
-                    format!("`{name}` is already declared in this block"),
+                    format!("`{text}` is already declared in this block"),
                 )
-                .label(file, span, "declared again here")
+                .label(file, name.span, "declared again here")
                 .label(file, first, "first declared here"),
             );
             return;
         }
         let target = Target::Body(symbol);
-        self.body.names.push(Name { span, target });
-        self.names.push((name, symbol));
+        self.body.names.push(Name {
+            span: name.span,
+            target,
+        });
+        self.names.push((text, symbol));
     }
 
     /// What the name written at `span` stands for: a name of the current
@@ -187,7 +191,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
                 let syntax::Decl::Const { name, .. } = tree.decls[declaration] else {
                     unreachable!("a const statement holds a const declaration")
                 };
-                let constant = self.body.consts.push(constant, name);
+                let constant = self.body.consts.push(constant, name.span);
                 self.declare(name, Symbol::Constant(constant));
                 return None;
             }
@@ -223,7 +227,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
                             mutable: true,
                             declared_without_value: false,
                         };
-                        let local = self.body.add(unknown, name);
+                        let local = self.body.add(unknown, name.span);
                         self.declare(name, Symbol::Local(local));
                     }
                 }
@@ -250,7 +254,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
     fn let_statement(
         &mut self,
         mutable: bool,
-        name: Span,
+        name: Ident,
         ty: Option<Id<syntax::Type>>,
         value: Option<Id<syntax::Expr>>,
     ) -> Stmt {
@@ -272,9 +276,10 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
                 }
             }
             (None, None) => {
-                let text = self.tree.file.slice(name);
+                let text = name.text(&self.tree.file);
                 let message = format!("`{text}` needs a type or a value");
-                self.checker.error(diagnostics::MISSING_TYPE, message, name);
+                self.checker
+                    .error(diagnostics::MISSING_TYPE, message, name.span);
                 (TypeId::INVALID, None)
             }
         };
@@ -283,7 +288,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
             mutable,
             declared_without_value,
         };
-        let text = self.tree.file.slice(name);
+        let text = name.text(&self.tree.file);
         let shadowed = self
             .names
             .iter()
@@ -302,7 +307,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
                 )
                 .label(
                     file,
-                    name,
+                    name.span,
                     format!("a new `{text}`, only inside this block"),
                 )
                 .label(
@@ -316,7 +321,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
                 ),
             );
         }
-        let local = self.body.add(local, name);
+        let local = self.body.add(local, name.span);
         self.declare(name, Symbol::Local(local));
         Stmt::Let { local, value }
     }
@@ -333,10 +338,10 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
         };
         let declared = ty.map(|ty| self.checker.resolve_type(ty));
         let Some(value) = value else {
-            let text = self.tree.file.slice(name);
+            let text = name.text(&self.tree.file);
             let message = format!("constant `{text}` needs a value");
             self.checker
-                .error(diagnostics::INVALID_OPERATION, message, name);
+                .error(diagnostics::INVALID_OPERATION, message, name.span);
             return None;
         };
         let span = self.tree.exprs.span(value);

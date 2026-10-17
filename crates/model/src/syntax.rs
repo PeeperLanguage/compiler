@@ -86,7 +86,7 @@ impl Tree {
 pub struct Import {
     pub span: Span,
     pub path: Span, // the string literal
-    pub alias: Option<Span>,
+    pub alias: Option<Ident>,
 }
 
 /// The doc comment and attributes before a declaration.
@@ -106,8 +106,22 @@ impl Metadata {
 /// `#[name(arguments)]`
 #[derive(Clone, Copy, Debug)]
 pub struct Attribute {
-    pub name: Span,
+    pub name: Ident,
     pub arguments: List<Expr>,
+}
+
+/// An identifier written in the source, by where it is written: its text is
+/// the source there.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Ident {
+    pub span: Span,
+}
+
+impl Ident {
+    /// The identifier as `file` writes it.
+    pub fn text(self, file: &SourceFile) -> &str {
+        file.slice(self.span)
+    }
 }
 
 /// A name in a list of names: a type parameter, or an origin after `from`. Its
@@ -121,7 +135,7 @@ pub enum Decl {
     /// `const name: Type = value;`, also as a statement
     Const {
         metadata: Metadata,
-        name: Span,
+        name: Ident,
         ty: Option<Id<Type>>,
         value: Option<Id<Expr>>,
     },
@@ -136,8 +150,8 @@ pub enum Decl {
 }
 
 impl Decl {
-    /// Where the declaration's name is written.
-    pub fn name(&self) -> Span {
+    /// The declaration's name.
+    pub fn name(&self) -> Ident {
         match *self {
             Decl::Function(function) => function.name,
             Decl::Const { name, .. } => name,
@@ -155,7 +169,7 @@ impl Decl {
 pub struct Function {
     pub metadata: Metadata,
     pub receiver: Option<Id<Param>>,
-    pub name: Span,
+    pub name: Ident,
     pub type_parameters: List<Name>,
     pub parameters: List<Param>,
     pub result: Option<Id<Type>>,
@@ -166,7 +180,7 @@ pub struct Function {
 #[derive(Clone, Copy, Debug)]
 pub struct TypeDecl {
     pub metadata: Metadata,
-    pub name: Span,
+    pub name: Ident,
     pub type_parameters: List<Name>,
     pub ty: Id<Type>,
 }
@@ -175,7 +189,7 @@ pub struct TypeDecl {
 #[derive(Clone, Copy, Debug)]
 pub struct Param {
     pub mutable: bool,
-    pub name: Option<Span>,
+    pub name: Option<Ident>,
     pub ty: Id<Type>,
     pub default: Option<Id<Expr>>,
 }
@@ -183,14 +197,14 @@ pub struct Param {
 /// `name: Type` in a struct.
 #[derive(Clone, Copy, Debug)]
 pub struct Field {
-    pub name: Span,
+    pub name: Ident,
     pub ty: Id<Type>,
 }
 
 /// `Name` or `Name: Payload` in an enum.
 #[derive(Clone, Copy, Debug)]
 pub struct Variant {
-    pub name: Span,
+    pub name: Ident,
     pub payload: Option<Id<Type>>,
 }
 
@@ -201,7 +215,7 @@ pub enum Type {
     /// `a::B<T>`; the segments are `Name`s and `Generic`s
     Path(List<Type>),
     /// `Box<T>`
-    Generic { name: Span, arguments: List<Type> },
+    Generic { name: Ident, arguments: List<Type> },
     /// `&T` or `&mut T`
     Reference { mutable: bool, target: Id<Type> },
     /// `*T`
@@ -252,7 +266,7 @@ pub enum Stmt {
     /// `let mut name: Type = value;`
     Let {
         mutable: bool,
-        name: Span,
+        name: Ident,
         ty: Option<Id<Type>>,
         value: Option<Id<Expr>>,
     },
@@ -285,8 +299,8 @@ pub enum Stmt {
     /// `for value in items { }` or `for index, value in items { }`; the iterable
     /// may be an `Expr::Range`
     ForIn {
-        index: Option<Span>,
-        value: Span,
+        index: Option<Ident>,
+        value: Ident,
         iterable: Id<Expr>,
         body: Option<Id<Block>>,
     },
@@ -323,7 +337,10 @@ pub enum Pattern {
     /// `.{ a, b as c, _ }`: `Field`s, then perhaps a `Rest`
     Struct(List<Pattern>),
     /// `a`, or `a as b`; without a binding, the field's own name is bound
-    Field { field: Span, binding: Option<Span> },
+    Field {
+        field: Ident,
+        binding: Option<Ident>,
+    },
     /// the `_` that ends a struct pattern
     Rest,
     /// a pattern that could not be parsed
@@ -372,7 +389,7 @@ pub enum Expr {
         arguments: List<Expr>,
     },
     /// `x.name`
-    Selector { value: Id<Expr>, field: Span },
+    Selector { value: Id<Expr>, field: Ident },
     /// `x[index]`; the index may be a `Range`
     Index { value: Id<Expr>, index: Id<Expr> },
     /// `a..b`, or `a..=b` when `inclusive`, inside `[ ]` or after `in`
@@ -409,6 +426,6 @@ pub enum Expr {
 /// `name = value` in a struct literal.
 #[derive(Clone, Copy, Debug)]
 pub struct FieldValue {
-    pub name: Span,
+    pub name: Ident,
     pub value: Id<Expr>,
 }

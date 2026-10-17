@@ -6,8 +6,8 @@
 use arena::{Id, List};
 use model::syntax;
 use model::syntax::{
-    Attribute, Block, Decl, Expr, Field, FieldValue, Import, Length, MatchArm, Metadata, Param,
-    Pattern, Stmt, Tree, Type, Variant,
+    Attribute, Block, Decl, Expr, Field, FieldValue, Ident, Import, Length, MatchArm, Metadata,
+    Param, Pattern, Stmt, Tree, Type, Variant,
 };
 use source::Span;
 use token::TokenKind;
@@ -50,8 +50,8 @@ struct Dumper<'t> {
     out: String,
 }
 
-fn declared(span: Span) -> Item {
-    Item::Leaf("declared name", span)
+fn declared(name: Ident) -> Item {
+    Item::Leaf("declared name", name.span)
 }
 
 fn mutable(on: bool) -> Option<TokenKind> {
@@ -142,7 +142,7 @@ impl Dumper<'_> {
             }
             Item::Attribute(id) => {
                 let a = t.attributes[id];
-                let mut children = vec![Item::Leaf("name reference", a.name)];
+                let mut children = vec![Item::Leaf("name reference", a.name.span)];
                 children.extend(t.lists.items(a.arguments).map(Item::Expr));
                 ("attribute", None, t.attributes.span(id), children)
             }
@@ -247,7 +247,7 @@ impl Dumper<'_> {
                     "field value",
                     None,
                     t.field_values.span(id),
-                    vec![Item::Leaf("field name", f.name), Item::Expr(f.value)],
+                    vec![Item::Leaf("field name", f.name.span), Item::Expr(f.value)],
                 )
             }
         };
@@ -266,7 +266,7 @@ impl Dumper<'_> {
                 t.lists.items(segments).map(Item::Type).collect(),
             ),
             Type::Generic { name, arguments } => {
-                let mut children = vec![Item::Leaf("type name", name)];
+                let mut children = vec![Item::Leaf("type name", name.span)];
                 children.extend(t.lists.items(arguments).map(Item::Type));
                 ("generic type", None, children)
             }
@@ -404,7 +404,7 @@ impl Dumper<'_> {
                 t.lists.items(fields).map(Item::Pattern).collect(),
             ),
             Pattern::Field { field, binding } => {
-                let mut children = vec![Item::Leaf("field name", field)];
+                let mut children = vec![Item::Leaf("field name", field.span)];
                 children.extend(binding.map(declared));
                 ("field pattern", children)
             }
@@ -463,7 +463,7 @@ impl Dumper<'_> {
             Expr::Selector { value, field } => (
                 "selector expression",
                 None,
-                two(value, Item::Leaf("field name", field)),
+                two(value, Item::Leaf("field name", field.span)),
             ),
             Expr::Index { value, index } => {
                 ("index expression", None, two(value, Item::Expr(index)))

@@ -46,16 +46,16 @@ impl<Q: Queries> Checker<'_, Q> {
             }
             syntax::Decl::Const { .. } => unreachable!("a constant's type comes with its value"),
             syntax::Decl::Struct(declaration) => {
-                self.not_supported(declaration.name, "struct declarations")
+                self.not_supported(declaration.name.span, "struct declarations")
             }
             syntax::Decl::Enum(declaration) => {
-                self.not_supported(declaration.name, "enum declarations")
+                self.not_supported(declaration.name.span, "enum declarations")
             }
             syntax::Decl::Interface(declaration) => {
-                self.not_supported(declaration.name, "interface declarations")
+                self.not_supported(declaration.name.span, "interface declarations")
             }
             syntax::Decl::Alias(declaration) => {
-                self.not_supported(declaration.name, "type aliases")
+                self.not_supported(declaration.name.span, "type aliases")
             }
         }
     }
