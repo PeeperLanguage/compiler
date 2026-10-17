@@ -56,16 +56,16 @@ struct Module {
 /// gives what it found. A module of `previous` (a compile of the same program
 /// with the same `pointer_bits`, or `Compiled::default()`) whose text and
 /// whose imports' interfaces are unchanged keeps its diagnostics, and its
-/// bodies are not checked again. The THIR and MIR of each checked function
-/// with a complete body go to `use_function` as soon as they are built, in
-/// declaration order, and are dropped after: nothing holds every function's
-/// bodies at once. Integers as wide as a pointer (`isize`, `usize`) have
-/// `pointer_bits` bits.
+/// bodies are not checked again. The THIR of each checked function with a
+/// body, and its MIR unless checking it found an error, go to `use_function`
+/// as soon as they are built, in declaration order, and are dropped after:
+/// nothing holds every function's bodies at once. Integers as wide as a
+/// pointer (`isize`, `usize`) have `pointer_bits` bits.
 pub fn compile(
     program: &project::Program,
     pointer_bits: u32,
     previous: Compiled,
-    mut use_function: impl FnMut(DefId, &thir::Body, &mir::Body, &Types),
+    mut use_function: impl FnMut(DefId, &thir::Body, Option<&mir::Body>, &Types),
 ) -> Compiled {
     let modules: Vec<&project::Module> = program
         .order
@@ -129,8 +129,11 @@ pub fn compile(
             };
             match tree.decls[declaration] {
                 syntax::Decl::Function(function) => {
-                    if let Some((thir, mir)) = build.function(definition, &function) {
-                        use_function(definition, &thir, &mir, &build.types);
+                    let ty = build.signature(definition);
+                    let thir = build.with_checker(index, |checker| checker.body(&function, ty));
+                    if let Some(thir) = thir {
+                        let mir = build.lower(index, ty, &thir);
+                        use_function(definition, &thir, mir.as_ref(), &build.types);
                     }
                 }
                 syntax::Decl::Const { .. } => {
@@ -272,23 +275,16 @@ impl<'p> Build<'p> {
         hasher.finish()
     }
 
-    /// Checks the function `definition`, lowers its body to MIR and runs the
-    /// path checks on it; gives its THIR and MIR, or `None` when it has no body
-    /// or checking it found an error.
-    fn function(
-        &mut self,
-        definition: DefId,
-        function: &syntax::Function,
-    ) -> Option<(thir::Body, mir::Body)> {
-        let ty = self.signature(definition);
-        let body = self.with_checker(definition.module, |checker| checker.body(function, ty))?;
+    /// Lowers `body`, the THIR of a function of `module` with the signature
+    /// `ty`, to MIR and runs the path checks on it; `None` when it cannot be
+    /// lowered (`lower::lower`).
+    fn lower(&mut self, module: u32, ty: TypeId, body: &thir::Body) -> Option<mir::Body> {
         let Type::Function { parameters, result } = &self.types[ty] else {
             return None; // the signature's error was reported
         };
-        let module = definition.module as usize;
+        let module = module as usize;
         let tree = &self.program.modules[module].syntax;
-        let span = tree.blocks.span(function.body?);
-        let mir = lower::lower(&body, parameters.len(), span)?;
+        let mir = lower::lower(body, parameters.len())?;
         let diagnostics = &mut self.diagnostics[module];
         // Only a `let` without a value can be unset or assigned twice.
         let late = |index| body.locals[Id::from_index(index)].declared_without_value;
@@ -301,7 +297,7 @@ impl<'p> Build<'p> {
         {
             diagnostics.push(error); // last: it points at the closing brace
         }
-        Some((body, mir))
+        Some(mir)
     }
 
     /// The result of one query of `definition`, kept in `table`: the result
@@ -690,10 +686,10 @@ mod tests {
             "app:utils",
             "fn Add(a: i32, b: i32) -> i32 { let c: bool = a; return a + b; }",
         );
-        // `utils` is checked, but `Add` has an error and gives no MIR; its
-        // interface is unchanged, so `main` keeps its own error.
+        // `utils` is checked and `Add` has an error; its interface is
+        // unchanged, so `main` is reused and keeps its own error.
         let (second, checked) = recompile(&[broken, OTHER, MAIN], first);
-        assert!(checked.is_empty(), "{checked:?}");
+        assert_eq!(checked, ["app:utils"]);
         let mismatch = |found: &str| format!("mismatched types: expected `bool`, found `{found}`");
         assert_eq!(messages(&second), [mismatch("i32"), mismatch("i32")]);
         let (third, checked) = recompile(&[UTILS, OTHER, MAIN], second);

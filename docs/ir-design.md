@@ -244,6 +244,28 @@ every module's names again is most of what remains (about 7 ms).
 the disk, and one `Compiled` per program. A change is checked 200 ms after the
 last keystroke; opening, saving and closing a file are checked at once.
 
+Go to definition and hover (owner's choice, 2026-10-18: the checker records
+names, not a second resolver). While checking a body, the checker appends a
+`thir::Name` for each name written in it (in `declare`, `resolve`, which
+looks every written name up, and module paths): a declaration or use of a local or
+body constant (with its declaration's span and type), a module's function,
+constant or type (its `DefId`), or an imported module. A body with an error
+keeps its THIR, marked `has_errors` (as rustc marks typeck results
+`tainted_by_errors`), so names work while a function is broken; `lower::lower`
+gives no MIR for it, and `use_function` gets its THIR alone. `build` runs the
+phases one by one: `Checker::body` gives the THIR, `Build::lower` the MIR. `build` has no second way in for editors: the language
+server reads the names through `use_function` during its normal check and
+keeps them per module, beside the program it compiled, as gopls keeps what
+`go/types` records. A module the compile reused gives no names; while its
+text is unchanged its names are kept from before, so they hold no ids of one
+compile: a local by its span and type's text, a declaration by its module's
+path and its index there, found in the current program when asked (a body edit
+elsewhere moves spans but not indexes). Definition and hover are lookups;
+hover on a declaration shows its source up to the body. A program that fails
+to load keeps its last names. Cost on the command line: one push per name;
+checkload is unchanged within the noise. Not covered yet: names in signatures
+and module-level constants.
+
 ## THIR
 
 One per function body, in arenas like the AST. Every expression has a `TypeId`

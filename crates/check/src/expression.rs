@@ -14,6 +14,8 @@ use model::UnaryOp;
 use model::syntax;
 use model::thir::Expr;
 use model::thir::ExprKind;
+use model::thir::Name;
+use model::thir::Target;
 use model::types::Float;
 use model::types::Type;
 use model::types::TypeId;
@@ -28,6 +30,7 @@ use crate::builtin::UNSUPPORTED_FUNCTIONS;
 use crate::scope::Binding;
 use crate::statement::BodyChecker;
 use crate::statement::Named;
+use crate::statement::Resolved;
 
 impl<Q: Queries> BodyChecker<'_, '_, Q> {
     /// `expression`, added to the body.
@@ -113,7 +116,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
             syntax::Expr::Invalid => return Expr::INVALID, // the parser reported it
             syntax::Expr::Path(path) => {
                 return match self.path_binding(path) {
-                    Some(binding) => self.global_value(binding, tree.file.slice(span), span),
+                    Some(binding) => self.global_value(binding, span),
                     None => Expr::INVALID,
                 };
             }
@@ -143,25 +146,20 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
 
     /// The name written at `span`, as a value.
     pub(crate) fn name(&mut self, span: Span) -> Expr {
-        let name = self.tree.file.slice(span);
-        if let Some((_, named)) = self.lookup(name) {
-            return match named {
-                Named::Local(local) => Expr {
-                    ty: self.body.locals[*local].ty,
-                    kind: ExprKind::Local(*local),
-                },
-                Named::Constant(constant) => constant_expr(constant.clone()),
-            };
-        }
-        match self.checker.global(name) {
-            Some(binding) => self.global_value(binding, name, span),
-            None => self.undeclared(name, span),
+        match self.resolve(span) {
+            Some(Resolved::Body(_, Named::Local(local))) => Expr {
+                ty: self.body.locals[local].ty,
+                kind: ExprKind::Local(local),
+            },
+            Some(Resolved::Body(_, Named::Constant(constant))) => constant_expr(constant),
+            Some(Resolved::Global(binding)) => self.global_value(binding, span),
+            None => Expr::INVALID,
         }
     }
 
-    /// The module-level declaration `binding`, written as `text` at `span`,
-    /// as a value.
-    fn global_value(&mut self, binding: Binding, text: &str, span: Span) -> Expr {
+    /// The module-level declaration `binding`, written at `span`, as a value.
+    fn global_value(&mut self, binding: Binding, span: Span) -> Expr {
+        let text = self.tree.file.slice(span);
         let (code, message) = match binding {
             Binding::Constant(constant) => {
                 return constant_expr(self.checker.queries.constant(constant));
@@ -247,7 +245,14 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
         let (module_name, member_name) =
             (tree.file.slice(module_span), tree.file.slice(member_span));
         let index = match self.checker.global(module_name) {
-            Some(Binding::Module(index)) => index,
+            Some(Binding::Module(index)) => {
+                let target = Target::Module(index);
+                self.body.names.push(Name {
+                    span: module_span,
+                    target,
+                });
+                index
+            }
             Some(Binding::Type(_)) => {
                 self.checker.not_supported(span, "paths into types");
                 return None;
@@ -269,6 +274,11 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
                 .error(diagnostics::UNDEFINED_NAME, message, member_span);
             return None;
         };
+        let target = binding.target();
+        self.body.names.push(Name {
+            span: member_span,
+            target,
+        });
         // The prelude's names are in every module's scope, private or not.
         let exported =
             self.checker.prelude == Some(index) || member_name.starts_with(char::is_uppercase);
@@ -301,22 +311,17 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
         let callee_span = tree.exprs.span(callee);
         let text = tree.file.slice(callee_span);
         let binding = match tree.exprs[callee] {
-            syntax::Expr::Name => match self.lookup(text) {
+            syntax::Expr::Name => match self.resolve(callee_span) {
                 // Their errors were reported.
-                Some((_, Named::Constant(None))) => None,
-                Some((_, &Named::Local(local)))
+                Some(Resolved::Body(_, Named::Constant(None))) => None,
+                Some(Resolved::Body(_, Named::Local(local)))
                     if self.body.locals[local].ty == TypeId::INVALID =>
                 {
                     None
                 }
-                Some(_) => Some(Err(())),
-                None => match self.checker.global(text) {
-                    Some(binding) => Some(Ok(binding)),
-                    None => {
-                        self.undeclared(text, callee_span);
-                        None
-                    }
-                },
+                Some(Resolved::Body(..)) => Some(Err(())),
+                Some(Resolved::Global(binding)) => Some(Ok(binding)),
+                None => None,
             },
             syntax::Expr::Path(path) => self.path_binding(path).map(Ok),
             syntax::Expr::Selector { .. } => {

@@ -40,7 +40,11 @@ pub fn run(
             &program,
             usize::BITS,
             build::Compiled::default(),
-            |definition, thir, mir, types| dumped.add(definition, thir, mir, types),
+            |definition, thir, mir, types| {
+                if let Some(mir) = mir {
+                    dumped.add(definition, thir, mir, types); // the others have errors
+                }
+            },
         );
         all.extend(compiled.diagnostics().cloned());
         if !failed(&all)

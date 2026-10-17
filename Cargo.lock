@@ -288,11 +288,13 @@ dependencies = [
 name = "lsp"
 version = "0.1.0"
 dependencies = [
+ "arena",
  "build",
  "diagnostics",
  "lsp-server",
  "lsp-types",
  "manifest",
+ "model",
  "project",
  "serde_json",
  "source",

@@ -8,6 +8,8 @@ publish.workspace = true
 
 [dependencies]
 source.workspace = true
+arena.workspace = true
+model.workspace = true
 diagnostics.workspace = true
 manifest.workspace = true
 project.workspace = true

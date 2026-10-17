@@ -2,7 +2,8 @@
 //! stdout). It keeps the text of the files open in the editor and checks the
 //! program a file belongs to when the file is opened, saved or closed, and
 //! once typing pauses (`DEBOUNCE`) after changes; then it publishes the
-//! diagnostics of the program's files. Only the protocol is here: `project`
+//! diagnostics of the program's files. Go to definition and hover over a name
+//! read what the last check recorded. Only the protocol is here: `project`
 //! finds and loads the program and `build` checks it.
 
 use std::collections::HashMap;
@@ -13,11 +14,13 @@ use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
 
+use arena::Id;
 use diagnostics::Severity;
 use lsp_server::Connection;
 use lsp_server::ErrorCode;
 use lsp_server::Message;
 use lsp_server::Notification;
+use lsp_server::Request;
 use lsp_server::Response;
 use lsp_types::DiagnosticRelatedInformation;
 use lsp_types::DiagnosticSeverity;
@@ -25,15 +28,25 @@ use lsp_types::DidChangeTextDocumentParams;
 use lsp_types::DidCloseTextDocumentParams;
 use lsp_types::DidOpenTextDocumentParams;
 use lsp_types::DidSaveTextDocumentParams;
+use lsp_types::Hover;
+use lsp_types::HoverContents;
+use lsp_types::HoverProviderCapability;
+use lsp_types::LanguageString;
 use lsp_types::Location;
+use lsp_types::MarkedString;
 use lsp_types::NumberOrString;
+use lsp_types::OneOf;
 use lsp_types::Position;
 use lsp_types::PublishDiagnosticsParams;
 use lsp_types::Range;
 use lsp_types::ServerCapabilities;
+use lsp_types::TextDocumentPositionParams;
 use lsp_types::TextDocumentSyncCapability;
 use lsp_types::TextDocumentSyncKind;
 use lsp_types::Url;
+use model::syntax;
+use model::thir;
+use model::types::Types;
 use source::SourceFile;
 use source::Span;
 
@@ -57,6 +70,8 @@ pub fn serve(libraries: &Path) -> Result<(), BoxError> {
 fn run(connection: Connection, libraries: &Path) -> Result<(), BoxError> {
     let capabilities = ServerCapabilities {
         text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
+        definition_provider: Some(OneOf::Left(true)),
+        hover_provider: Some(HoverProviderCapability::Simple(true)),
         ..ServerCapabilities::default()
     };
     connection.initialize(serde_json::to_value(capabilities)?)?;
@@ -84,9 +99,7 @@ fn run(connection: Connection, libraries: &Path) -> Result<(), BoxError> {
                 if connection.handle_shutdown(&request)? {
                     return Ok(());
                 }
-                let message = format!("unknown request `{}`", request.method);
-                let code = ErrorCode::MethodNotFound as i32;
-                let response = Response::new_err(request.id, code, message);
+                let response = server.request(request);
                 connection.sender.send(Message::Response(response))?;
             }
             Message::Notification(notification) => {
@@ -180,6 +193,82 @@ impl<'s> Server<'s> {
         }
     }
 
+    /// Answers go to definition with where the name at the given place is
+    /// declared, and hover with a line about it; both answer null when no
+    /// name is there. Other requests are unknown.
+    fn request(&self, request: Request) -> Response {
+        let Request { id, method, params } = request;
+        let place: TextDocumentPositionParams = match method.as_str() {
+            // Both requests' parameters hold the place, and more to ignore.
+            "textDocument/definition" | "textDocument/hover" => {
+                match serde_json::from_value(params) {
+                    Ok(place) => place,
+                    Err(error) => {
+                        let code = ErrorCode::InvalidParams as i32;
+                        return Response::new_err(id, code, error.to_string());
+                    }
+                }
+            }
+            _ => {
+                let code = ErrorCode::MethodNotFound as i32;
+                return Response::new_err(id, code, format!("unknown request `{method}`"));
+            }
+        };
+        let answer = self.name_at(&place).and_then(|(program, module, name)| {
+            let (file, declared, hover) = match &name.target {
+                Target::InBody { declared, ty } => {
+                    let file = &module.syntax.file;
+                    (file, *declared, format!("{}: {ty}", file.slice(*declared)))
+                }
+                Target::Declaration { module, index } => {
+                    let tree = &program.modules.get(module)?.syntax;
+                    let declaration = Id::from_index(*index as usize);
+                    let declared = tree.decls[declaration].name();
+                    (&tree.file, declared, header(tree, declaration))
+                }
+                Target::Module(path) => {
+                    let file = &program.modules.get(path)?.syntax.file;
+                    (file, Span::at(0), format!("module `{path}`"))
+                }
+            };
+            if method == "textDocument/definition" {
+                let uri = Url::from_file_path(&file.name).ok()?;
+                let range = range(file, declared);
+                return serde_json::to_value(Location { uri, range }).ok();
+            }
+            let hover = LanguageString {
+                language: "peeper".to_string(),
+                value: hover,
+            };
+            let hover = Hover {
+                contents: HoverContents::Scalar(MarkedString::LanguageString(hover)),
+                range: None,
+            };
+            serde_json::to_value(hover).ok()
+        });
+        Response::new_ok(id, answer)
+    }
+
+    /// The name at `place` that the last check of a program holding its file
+    /// recorded, with that program and the file's module.
+    fn name_at(
+        &self,
+        place: &TextDocumentPositionParams,
+    ) -> Option<(&project::Program, &project::Module, &Name)> {
+        let file = place.text_document.uri.to_file_path().ok()?;
+        self.checked.values().find_map(|checked| {
+            let program = checked.program.as_ref()?;
+            let module = program
+                .modules
+                .values()
+                .find(|module| Path::new(&module.syntax.file.name) == file)?;
+            let offset = offset(&module.syntax.file, place.position) as u32;
+            let names = checked.names.get(&module.path)?;
+            let at = |name: &&Name| name.span.start <= offset && offset <= name.span.end;
+            Some((program, module, names.iter().find(at)?))
+        })
+    }
+
     /// Checks the program of each pending file, once per program.
     fn check_pending(&mut self) -> Result<(), BoxError> {
         self.deadline = None;
@@ -222,11 +311,44 @@ impl<'s> Server<'s> {
         let Checked {
             mut compiled,
             published,
+            program: mut compiled_program,
+            mut names,
         } = self.checked.remove(&project.entry).unwrap_or_default();
         let mut all: Vec<&diagnostics::Diagnostic> = program.load_diagnostics().collect();
         // A program that failed to load keeps the last compile for the next.
-        if !program.load_failed() {
-            compiled = build::compile(&program, usize::BITS, compiled, |_, _, _, _| {});
+        let loaded = !program.load_failed();
+        if loaded {
+            let mut found: HashMap<&str, Vec<Name>> = HashMap::new();
+            compiled = build::compile(
+                &program,
+                usize::BITS,
+                compiled,
+                |definition, body, _, types| {
+                    let path = program.order[definition.module as usize].as_str();
+                    let body_names = body
+                        .names
+                        .iter()
+                        .map(|name| Name::new(&program, name, types));
+                    found.entry(path).or_default().extend(body_names);
+                },
+            );
+            // A module the compile reused gave no names; with its text as
+            // before, the names found before still fit it.
+            let unchanged = |path: &String| {
+                let before = compiled_program
+                    .as_ref()
+                    .and_then(|before| before.modules.get(path));
+                let now = program.modules.get(path);
+                before
+                    .zip(now)
+                    .is_some_and(|(before, now)| before.syntax.file.text == now.syntax.file.text)
+            };
+            names.retain(|path, _| !found.contains_key(path.as_str()) && unchanged(path));
+            names.extend(
+                found
+                    .into_iter()
+                    .map(|(path, found)| (path.to_string(), found)),
+            );
             all.extend(compiled.diagnostics());
         }
         let mut by_file: HashMap<PathBuf, Vec<lsp_types::Diagnostic>> = HashMap::new();
@@ -258,9 +380,14 @@ impl<'s> Server<'s> {
                 .sender
                 .send(Message::Notification(notification))?;
         }
+        if loaded {
+            compiled_program = Some(program);
+        }
         let checked = Checked {
             compiled,
             published: shown,
+            program: compiled_program,
+            names,
         };
         self.checked.insert(project.entry, checked);
         Ok(())
@@ -272,6 +399,64 @@ impl<'s> Server<'s> {
 struct Checked {
     compiled: build::Compiled,   // reused by the next compile
     published: HashSet<PathBuf>, // the files last given diagnostics
+    /// The program as last compiled, and the names written in the bodies of
+    /// each of its modules, by module path: what definition and hover read.
+    program: Option<project::Program>,
+    names: HashMap<String, Vec<Name>>,
+}
+
+/// A name written in a body and what it stands for, kept as long as its
+/// module is reused: by path and place, not by the ids of one compile.
+struct Name {
+    span: Span,
+    target: Target,
+}
+
+enum Target {
+    /// A parameter, `let` or `const` of the body, declared at `declared`, with
+    /// its type's text.
+    InBody { declared: Span, ty: String },
+    /// The declaration at `index` of the module at `module`. Its importer is
+    /// reused only while the module's declarations keep their kinds and names
+    /// (`build::compile`), so the index stays right.
+    Declaration { module: String, index: u32 },
+    /// The module at this path.
+    Module(String),
+}
+
+impl Name {
+    /// `name` of a body of `program`, whose types are in `types`.
+    fn new(program: &project::Program, name: &thir::Name, types: &Types) -> Name {
+        let path = |module: u32| program.order[module as usize].clone();
+        let target = match name.target {
+            thir::Target::InBody { declared, ty } => Target::InBody {
+                declared,
+                ty: types.text(ty),
+            },
+            thir::Target::Declaration(definition) => Target::Declaration {
+                module: path(definition.module),
+                index: definition.index,
+            },
+            thir::Target::Module(module) => Target::Module(path(module)),
+        };
+        Name {
+            span: name.span,
+            target,
+        }
+    }
+}
+
+/// What hover shows for `declaration`: a function's text up to its body, or
+/// another declaration's first line.
+fn header(tree: &syntax::Tree, declaration: Id<syntax::Decl>) -> String {
+    let span = tree.decls.span(declaration);
+    let text = match tree.decls[declaration] {
+        syntax::Decl::Function(syntax::Function {
+            body: Some(body), ..
+        }) => &tree.file.text[span.start as usize..tree.blocks.span(body).start as usize],
+        _ => tree.file.slice(span).lines().next().unwrap_or_default(),
+    };
+    text.trim().to_string()
 }
 
 /// `diagnostic` in LSP form: the primary label gives the range, the other
@@ -336,6 +521,20 @@ fn position(file: &SourceFile, offset: usize) -> Position {
     Position::new(line as u32 - 1, character as u32)
 }
 
+/// The byte offset of LSP `position` in `file`, the inverse of `position`. A
+/// column past its line's end is at the end.
+fn offset(file: &SourceFile, position: Position) -> usize {
+    let line = file.line_span(position.line as usize + 1);
+    let mut units = 0;
+    for (index, character) in file.slice(line).char_indices() {
+        if units >= position.character as usize {
+            return line.start as usize + index;
+        }
+        units += character.len_utf16();
+    }
+    line.end as usize
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -349,6 +548,7 @@ mod tests {
     use lsp_server::Notification;
     use lsp_server::Request;
     use lsp_server::RequestId;
+    use lsp_server::Response;
     use lsp_types::DiagnosticSeverity;
     use lsp_types::NumberOrString;
     use lsp_types::Position;
@@ -361,6 +561,7 @@ mod tests {
     use super::DEBOUNCE;
     use super::Server;
     use super::lsp_diagnostic;
+    use super::offset;
     use super::position;
     use super::run;
 
@@ -384,7 +585,16 @@ mod tests {
                 Position::new(line, character),
                 "offset {offset}"
             );
+            if offset != 7 {
+                let back = super::offset(&file, Position::new(line, character));
+                assert_eq!(back, offset, "back from {line}:{character}");
+            }
         }
+        assert_eq!(
+            offset(&file, Position::new(1, 99)),
+            10,
+            "past the line's end"
+        );
     }
 
     #[test]
@@ -538,5 +748,148 @@ mod tests {
             published.diagnostics
         );
         assert!(server.pending.is_empty());
+    }
+    /// Go to definition and hover over a name answer where it is declared and
+    /// its type, from the open text; elsewhere they answer null.
+    #[test]
+    fn answers_definition_and_hover() {
+        let folder = std::env::temp_dir().join(format!("peeper-lsp-name-{}", std::process::id()));
+        _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let file = folder.join("main.peep");
+        std::fs::write(&file, "fn main() {}\n").unwrap();
+        let uri = Url::from_file_path(&file).unwrap();
+        let (connection, _client) = Connection::memory();
+        let mut server = Server::new(&connection, Path::new(""));
+        let text = "fn main() {\n    let total: i64 = 1;\n    let more = total;\n}\n";
+        let document = json!({ "uri": uri, "languageId": "peeper", "version": 1, "text": text });
+        let open = Notification::new(
+            "textDocument/didOpen".to_string(),
+            json!({ "textDocument": document }),
+        );
+        server.notification(open).unwrap();
+        let ask = |method: &str, line: u32, character: u32| {
+            let place = json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": line, "character": character },
+            });
+            let request = Request::new(RequestId::from(1), method.to_string(), place);
+            let Response { result, error, .. } = server.request(request);
+            assert!(error.is_none(), "{error:?}");
+            result.unwrap()
+        };
+        let definition = ask("textDocument/definition", 2, 16);
+        assert_eq!(definition["uri"], json!(uri));
+        assert_eq!(
+            definition["range"]["start"],
+            json!({ "line": 1, "character": 8 })
+        );
+        assert_eq!(
+            definition["range"]["end"],
+            json!({ "line": 1, "character": 13 })
+        );
+        let hover = ask("textDocument/hover", 2, 16);
+        assert_eq!(hover["contents"]["value"], json!("total: i64"));
+        assert_eq!(ask("textDocument/hover", 0, 0), serde_json::Value::Null);
+    }
+    /// Names across modules: each kind of name answers where it is declared
+    /// and what it is, in a body with an error too. After an edit that moves
+    /// `Add` but leaves `utils`' declarations as they were, `main` is reused,
+    /// and its use of `Add` still finds where `Add` is now.
+    #[test]
+    fn names_across_modules() {
+        let folder =
+            std::env::temp_dir().join(format!("peeper-lsp-modules-{}", std::process::id()));
+        _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(folder.join("src")).unwrap();
+        std::fs::write(
+            folder.join("peeper.toml"),
+            "name = \"app\"\nbuild = \"bin\"\n",
+        )
+        .unwrap();
+        let utils = "fn Add(a: i32, b: i32) -> i32 { return a + b; }\nconst Limit: u8 = 200;\n";
+        let main = "import \"app:utils\";
+fn main(count: i64) {
+    let mut total = count;
+    total = 2;
+    let sum = utils::Add(1, 2);
+    let wide = utils::Limit;
+    let wrong: bool = total;
+}
+";
+        let (main_file, utils_file) = (folder.join("src/main.peep"), folder.join("src/utils.peep"));
+        std::fs::write(&main_file, main).unwrap();
+        std::fs::write(&utils_file, utils).unwrap();
+        let (connection, _client) = Connection::memory();
+        let mut server = Server::new(&connection, Path::new(""));
+        let notify = |server: &mut Server, method: &str, params: serde_json::Value| {
+            server
+                .notification(Notification::new(method.to_string(), params))
+                .unwrap();
+        };
+        let open = |file: &Path, text: &str| {
+            let uri = Url::from_file_path(file).unwrap();
+            json!({ "textDocument": { "uri": uri, "languageId": "peeper", "version": 1, "text": text } })
+        };
+        notify(&mut server, "textDocument/didOpen", open(&main_file, main));
+        // The place of the `nth` `needle` in `main`.
+        let place = |needle: &str, nth: usize| {
+            let at = main.match_indices(needle).nth(nth).unwrap().0;
+            let position = position(&SourceFile::new("main.peep", main), at);
+            json!({
+                "textDocument": { "uri": Url::from_file_path(&main_file).unwrap() },
+                "position": position,
+            })
+        };
+        let ask = |server: &Server, method: &str, needle: &str, nth: usize| {
+            let request = Request::new(RequestId::from(1), method.to_string(), place(needle, nth));
+            let Response { result, error, .. } = server.request(request);
+            assert!(error.is_none(), "{error:?}");
+            result.unwrap()
+        };
+        let hover = |server: &Server, needle: &str, nth: usize| {
+            ask(server, "textDocument/hover", needle, nth)["contents"]["value"].clone()
+        };
+        // Where the name is declared: its file's name and line.
+        let declared = |server: &Server, needle: &str, nth: usize| {
+            let found = ask(server, "textDocument/definition", needle, nth);
+            let uri: Url = serde_json::from_value(found["uri"].clone()).unwrap();
+            let file = uri.to_file_path().unwrap();
+            let name = file.file_name().unwrap().to_str().unwrap().to_string();
+            (name, found["range"]["start"]["line"].clone())
+        };
+        assert_eq!(hover(&server, "count", 1), json!("count: i64"));
+        assert_eq!(
+            declared(&server, "count", 1),
+            ("main.peep".to_string(), json!(1))
+        );
+        assert_eq!(hover(&server, "total", 1), json!("total: i64"));
+        assert_eq!(
+            declared(&server, "total", 1),
+            ("main.peep".to_string(), json!(2))
+        );
+        assert_eq!(hover(&server, "utils", 1), json!("module `app:utils`"));
+        assert_eq!(
+            hover(&server, "Add", 0),
+            json!("fn Add(a: i32, b: i32) -> i32")
+        );
+        assert_eq!(
+            declared(&server, "Add", 0),
+            ("utils.peep".to_string(), json!(0))
+        );
+        assert_eq!(hover(&server, "Limit", 0), json!("const Limit: u8 = 200;"));
+        // `main` has an error, and its names are still there.
+        assert_eq!(hover(&server, "total", 2), json!("total: i64"));
+
+        let moved = format!("// moved down\n{utils}");
+        notify(
+            &mut server,
+            "textDocument/didOpen",
+            open(&utils_file, &moved),
+        );
+        assert_eq!(
+            declared(&server, "Add", 0),
+            ("utils.peep".to_string(), json!(1))
+        );
     }
 }

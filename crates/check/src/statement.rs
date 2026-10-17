@@ -12,7 +12,9 @@ use model::thir::Body;
 use model::thir::Expr;
 use model::thir::ExprKind;
 use model::thir::Local;
+use model::thir::Name;
 use model::thir::Stmt;
+use model::thir::Target;
 use model::types::Type;
 use model::types::TypeId;
 use model::value::Constant;
@@ -31,6 +33,14 @@ pub(crate) enum Named {
     Constant(Option<Constant>),
 }
 
+/// What a name written in a body stands for.
+pub(crate) enum Resolved {
+    /// A name of the body, declared at the span.
+    Body(Span, Named),
+    /// A name of the module or the prelude.
+    Global(Binding),
+}
+
 /// Checking one function body.
 pub(crate) struct BodyChecker<'c, 'a, Q: Queries> {
     pub(crate) checker: &'c mut Checker<'a, Q>,
@@ -46,9 +56,9 @@ pub(crate) struct BodyChecker<'c, 'a, Q: Queries> {
 }
 
 impl<'a, Q: Queries> Checker<'a, Q> {
-    /// The THIR of `function`'s body, given its signature `ty` (`signature`).
-    /// `None` for a function without a body, or whose signature or body had an
-    /// error: what later phases would find in it would only follow from that.
+    /// The THIR of `function`'s body, given its signature `ty` (`signature`),
+    /// with `has_errors` set when checking it reported an error. `None` for a
+    /// function without a body, or whose signature had an error.
     pub fn body(&mut self, function: &syntax::Function, ty: TypeId) -> Option<Body> {
         let block = function.body?;
         let reported = self.diagnostics.len();
@@ -71,12 +81,13 @@ impl<'a, Q: Queries> Checker<'a, Q> {
             );
             checker.declare(name, Named::Local(local));
         }
+        checker.body.span = tree.blocks.span(block);
         checker.body.statements = checker.statements(tree.blocks[block].statements);
-        let body = checker.body;
-        let failed = self.diagnostics[reported..]
+        let mut body = checker.body;
+        body.has_errors = self.diagnostics[reported..]
             .iter()
             .any(Diagnostic::is_error);
-        (!failed).then_some(body)
+        Some(body)
     }
 
     /// The type and value of the module's constant `declaration`; `None` when
@@ -145,17 +156,41 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
             );
             return;
         }
+        let target = self.target(span, &named);
+        self.body.names.push(Name { span, target });
         self.names.push((name, span, named));
     }
 
-    /// What `name` stands for in the current block, with where it is declared.
-    pub(crate) fn lookup(&self, name: &str) -> Option<(Span, &Named)> {
+    /// What the body's name declared at `declared` as `named` stands for.
+    fn target(&self, declared: Span, named: &Named) -> Target {
+        let ty = match named {
+            Named::Local(local) => self.body.locals[*local].ty,
+            Named::Constant(constant) => constant.as_ref().map_or(TypeId::INVALID, |&(ty, _)| ty),
+        };
+        Target::InBody { declared, ty }
+    }
+
+    /// What the name written at `span` stands for: a name of the current
+    /// block or an outer one, else of the module or the prelude, recorded in
+    /// `Body::names`. `None` after reporting that nothing declares it.
+    pub(crate) fn resolve(&mut self, span: Span) -> Option<Resolved> {
+        let name = self.tree.file.slice(span);
         let found = self
             .names
             .iter()
             .rev()
             .find(|&&(declared, ..)| declared == name);
-        found.map(|(_, span, named)| (*span, named))
+        let (resolved, target) = if let Some((_, declared, named)) = found {
+            let target = self.target(*declared, named);
+            (Resolved::Body(*declared, named.clone()), target)
+        } else if let Some(binding) = self.checker.global(name) {
+            (Resolved::Global(binding), binding.target())
+        } else {
+            self.undeclared(name, span);
+            return None;
+        };
+        self.body.names.push(Name { span, target });
+        Some(resolved)
     }
 
     /// The THIR of `statement`; `None` for a `const`, which only declares a
@@ -394,9 +429,9 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
             return None;
         }
         let name = tree.file.slice(span);
-        let (declared, local) = match self.lookup(name) {
-            Some((declared, &Named::Local(local))) => (declared, local),
-            Some((declared, Named::Constant(_))) => {
+        let (declared, local) = match self.resolve(span)? {
+            Resolved::Body(declared, Named::Local(local)) => (declared, local),
+            Resolved::Body(declared, Named::Constant(_)) => {
                 self.checker.diagnostics.push(
                     Diagnostic::new(
                         diagnostics::CONSTANT_REASSIGNMENT,
@@ -407,20 +442,16 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
                 );
                 return None;
             }
-            None => {
-                let (code, message) = match self.checker.global(name) {
-                    Some(Binding::Constant(_)) => (
+            Resolved::Global(binding) => {
+                let (code, message) = match binding {
+                    Binding::Constant(_) => (
                         diagnostics::CONSTANT_REASSIGNMENT,
                         format!("cannot assign to constant `{name}`"),
                     ),
-                    Some(_) => (
+                    _ => (
                         diagnostics::INVALID_ASSIGNMENT,
                         format!("cannot assign to `{name}`, which is not a variable"),
                     ),
-                    None => {
-                        self.undeclared(name, span);
-                        return None;
-                    }
                 };
                 self.checker.error(code, message, span);
                 return None;
@@ -468,7 +499,8 @@ mod tests {
                     continue;
                 };
                 let signature = checker.signature(declaration);
-                bodies.extend(checker.body(&function, signature));
+                let body = checker.body(&function, signature);
+                bodies.extend(body.filter(|body| !body.has_errors));
             }
             bodies
         });

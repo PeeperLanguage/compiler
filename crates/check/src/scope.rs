@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use diagnostics::Diagnostic;
 use model::DefId;
 use model::syntax;
+use model::thir::Target;
 use source::Span;
 
 /// What a module-level name stands for, by the kind of its declaration.
@@ -20,6 +21,18 @@ pub enum Binding {
     Type(DefId),
     /// An imported module, by its place in the program's order.
     Module(u32),
+}
+
+impl Binding {
+    /// What a name bound to it stands for, as THIR records it.
+    pub fn target(self) -> Target {
+        match self {
+            Binding::Function(definition)
+            | Binding::Constant(definition)
+            | Binding::Type(definition) => Target::Declaration(definition),
+            Binding::Module(index) => Target::Module(index),
+        }
+    }
 }
 
 pub struct ModuleScope {

@@ -15,10 +15,14 @@ use model::types::TypeId;
 use model::value::Value;
 use source::Span;
 
-/// The MIR of a function's checked body, which has `parameters` parameters
-/// and is written at `span`, braces included. `None` when an error left the
-/// body incomplete: what it reported is all there is to say about it.
-pub fn lower(body: &thir::Body, parameters: usize, span: Span) -> Option<mir::Body> {
+/// The MIR of a function's checked body, which has `parameters` parameters.
+/// `None` when checking it reported
+/// an error (`has_errors`), or an error left it incomplete: what was reported
+/// is all there is to say about it.
+pub fn lower(body: &thir::Body, parameters: usize) -> Option<mir::Body> {
+    if body.has_errors {
+        return None;
+    }
     let mut lowering = Lowering {
         thir: body,
         mir: mir::Body {
@@ -45,7 +49,7 @@ pub fn lower(body: &thir::Body, parameters: usize, span: Span) -> Option<mir::Bo
         let variable = lowering.mir.variables.push(variable, body.locals.span(id));
         lowering.variables.push(variable);
     }
-    lowering.block = lowering.new_block(span);
+    lowering.block = lowering.new_block(body.span);
     for index in 0..parameters {
         let variable = lowering.variables[index];
         let store = mir::InstructionKind::Store {
@@ -56,7 +60,7 @@ pub fn lower(body: &thir::Body, parameters: usize, span: Span) -> Option<mir::Bo
         lowering.emit(store, TypeId::VOID, span);
     }
     lowering.statements(body.statements)?;
-    let end = Span::new(span.end as usize - 1, span.end as usize); // the `}`
+    let end = Span::new(body.span.end as usize - 1, body.span.end as usize); // the `}`
     lowering.finish(mir::Terminator::FallOff(end));
     Some(lowering.mir)
 }

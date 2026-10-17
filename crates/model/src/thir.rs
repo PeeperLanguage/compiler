@@ -32,12 +32,35 @@ nodes! {
 /// One function's checked body. The function's parameters are its first
 /// locals, in order.
 pub struct Body {
+    pub span: Span,             // the function's block, braces included
     pub statements: List<Stmt>, // the function's block
     pub exprs: Arena<Expr>,
     pub stmts: Arena<Stmt>,
     pub blocks: Arena<Block>,
     pub locals: Arena<Local>, // with the span of each name
     pub lists: Lists,
+    pub names: Vec<Name>, // in the order checked; for editors
+    /// Checking it reported an error: later phases would only find what
+    /// follows from that, so it is not lowered.
+    pub has_errors: bool,
+}
+
+/// A name written in the body, where it is declared or used, and what it
+/// stands for.
+#[derive(Clone, Copy, Debug)]
+pub struct Name {
+    pub span: Span,
+    pub target: Target,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum Target {
+    /// A parameter, `let` or `const` of this body, declared at `declared`.
+    InBody { declared: Span, ty: TypeId },
+    /// A module's function, constant or type.
+    Declaration(DefId),
+    /// An imported module, by its place in the program's order.
+    Module(u32),
 }
 
 /// A parameter or a `let` binding.
@@ -119,12 +142,15 @@ pub struct Block {
 impl Default for Body {
     fn default() -> Body {
         Body {
+            span: Span::default(),
             statements: List::EMPTY,
             exprs: Arena::default(),
             stmts: Arena::default(),
             blocks: Arena::default(),
             locals: Arena::default(),
             lists: Lists::default(),
+            names: Vec::new(),
+            has_errors: false,
         }
     }
 }
