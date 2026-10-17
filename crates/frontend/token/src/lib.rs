@@ -10,297 +10,154 @@ pub struct Token {
     pub span: Span,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[repr(u8)] // parser tables are indexed by kind
-pub enum TokenKind {
-    // Named kinds: their text varies, so `text` describes them.
-    Eof,
-    Ident,
-    Number,
-    String,
-    CString,
-    Char,
-    ByteChar,
-    DocComment,
-    // Operators and punctuation.
-    Assign,
-    Plus,
-    Minus,
-    Asterisk,
-    Slash,
-    Percent,
-    PlusAssign,
-    MinusAssign,
-    StarAssign,
-    SlashAssign,
-    PercentAssign,
-    PlusPlus,
-    MinusMinus,
-    Bang,
-    Question,
-    At,
-    Amp,
-    Caret,
-    Tilde,
-    Less,
-    Greater,
-    ShiftLeft,
-    ShiftRight,
-    EqualEqual,
-    BangEqual,
-    LessEqual,
-    GreaterEqual,
-    AndAnd,
-    OrOr,
-    Bar,
-    PipeArrow,
-    QuestionQuestion,
-    BangBang,
-    FatArrow,
-    Arrow,
-    Colon,
-    ColonColon,
-    Comma,
-    Dot,
-    DotDot,
-    DotDotEq,
-    Ellipsis,
-    Hash,
-    Semicolon,
-    LeftParen,
-    RightParen,
-    LeftBrace,
-    RightBrace,
-    LeftBracket,
-    RightBracket,
-    // Keywords.
-    Import,
-    Const,
-    Type,
-    Struct,
-    Iface,
-    Enum,
-    Fn,
-    Let,
-    If,
-    Else,
-    Match,
-    For,
-    Break,
-    Continue,
-    Return,
-    From,
-    Free,
-    Print,
-    Println,
-    Rawptr,
-    As,
-    Is,
-    In,
-    With,
-    Mut,
-    Orelse,
-    None,
-    True,
-    False,
+/// Declares every token kind once, with its text: the `TokenKind` enum,
+/// `TokenKind::text`, and the lexer's `OPERATORS` and `KEYWORDS` lists, which
+/// hold the kinds after the `#[operators]` and `#[keywords]` headers, in the
+/// order written.
+macro_rules! tokens {
+    (pub enum TokenKind {
+        $($named:ident = $named_text:literal,)*
+        #[operators]
+        $($operator:ident = $operator_text:literal,)*
+        #[keywords]
+        $($keyword:ident = $keyword_text:literal,)*
+    }) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        #[repr(u8)] // parser tables are indexed by kind
+        pub enum TokenKind {
+            $($named,)*
+            $($operator,)*
+            $($keyword,)*
+        }
+
+        impl TokenKind {
+            /// The text of this kind: a keyword's or operator's spelling, or for
+            /// a named kind the words messages use for it.
+            pub const fn text(self) -> &'static str {
+                match self {
+                    $(TokenKind::$named => $named_text,)*
+                    $(TokenKind::$operator => $operator_text,)*
+                    $(TokenKind::$keyword => $keyword_text,)*
+                }
+            }
+        }
+
+        pub const OPERATORS: &[TokenKind] = &[$(TokenKind::$operator,)*];
+        pub const KEYWORDS: &[TokenKind] = &[$(TokenKind::$keyword,)*];
+    };
 }
 
-impl TokenKind {
-    /// The text of this kind: a keyword's or operator's spelling, or for a
-    /// named kind the words messages use for it.
-    pub const fn text(self) -> &'static str {
-        match self {
-            TokenKind::Eof => "end of file",
-            TokenKind::Ident => "identifier",
-            TokenKind::Number => "number",
-            TokenKind::String => "string",
-            TokenKind::CString => "c string",
-            TokenKind::Char => "character",
-            TokenKind::ByteChar => "byte character",
-            TokenKind::DocComment => "document comment",
-            TokenKind::Assign => "=",
-            TokenKind::Plus => "+",
-            TokenKind::Minus => "-",
-            TokenKind::Asterisk => "*",
-            TokenKind::Slash => "/",
-            TokenKind::Percent => "%",
-            TokenKind::PlusAssign => "+=",
-            TokenKind::MinusAssign => "-=",
-            TokenKind::StarAssign => "*=",
-            TokenKind::SlashAssign => "/=",
-            TokenKind::PercentAssign => "%=",
-            TokenKind::PlusPlus => "++",
-            TokenKind::MinusMinus => "--",
-            TokenKind::Bang => "!",
-            TokenKind::Question => "?",
-            TokenKind::At => "@",
-            TokenKind::Amp => "&",
-            TokenKind::Caret => "^",
-            TokenKind::Tilde => "~",
-            TokenKind::Less => "<",
-            TokenKind::Greater => ">",
-            TokenKind::ShiftLeft => "<<",
-            TokenKind::ShiftRight => ">>",
-            TokenKind::EqualEqual => "==",
-            TokenKind::BangEqual => "!=",
-            TokenKind::LessEqual => "<=",
-            TokenKind::GreaterEqual => ">=",
-            TokenKind::AndAnd => "&&",
-            TokenKind::OrOr => "||",
-            TokenKind::Bar => "|",
-            TokenKind::PipeArrow => "|>",
-            TokenKind::QuestionQuestion => "??",
-            TokenKind::BangBang => "!!",
-            TokenKind::FatArrow => "=>",
-            TokenKind::Arrow => "->",
-            TokenKind::Colon => ":",
-            TokenKind::ColonColon => "::",
-            TokenKind::Comma => ",",
-            TokenKind::Dot => ".",
-            TokenKind::DotDot => "..",
-            TokenKind::DotDotEq => "..=",
-            TokenKind::Ellipsis => "...",
-            TokenKind::Hash => "#",
-            TokenKind::Semicolon => ";",
-            TokenKind::LeftParen => "(",
-            TokenKind::RightParen => ")",
-            TokenKind::LeftBrace => "{",
-            TokenKind::RightBrace => "}",
-            TokenKind::LeftBracket => "[",
-            TokenKind::RightBracket => "]",
-            TokenKind::Import => "import",
-            TokenKind::Const => "const",
-            TokenKind::Type => "type",
-            TokenKind::Struct => "struct",
-            TokenKind::Iface => "iface",
-            TokenKind::Enum => "enum",
-            TokenKind::Fn => "fn",
-            TokenKind::Let => "let",
-            TokenKind::If => "if",
-            TokenKind::Else => "else",
-            TokenKind::Match => "match",
-            TokenKind::For => "for",
-            TokenKind::Break => "break",
-            TokenKind::Continue => "continue",
-            TokenKind::Return => "return",
-            TokenKind::From => "from",
-            TokenKind::Free => "free",
-            TokenKind::Print => "print",
-            TokenKind::Println => "println",
-            TokenKind::Rawptr => "rawptr",
-            TokenKind::As => "as",
-            TokenKind::Is => "is",
-            TokenKind::In => "in",
-            TokenKind::With => "with",
-            TokenKind::Mut => "mut",
-            TokenKind::Orelse => "orelse",
-            TokenKind::None => "none",
-            TokenKind::True => "true",
-            TokenKind::False => "false",
-        }
+tokens! {
+    pub enum TokenKind {
+        
+        // Kinds whose text varies: `text` describes them.
+        Eof = "end of file",
+        Ident = "identifier",
+        Number = "number",
+        String = "string",
+        CString = "c string",
+        Char = "character",
+        ByteChar = "byte character",
+        DocComment = "document comment",
+
+        
+        // Longest text first within each leading character, so the lexer's
+        // first match is the right one.
+        #[operators]
+        ColonColon = "::",
+        Colon = ":",
+        EqualEqual = "==",
+        FatArrow = "=>",
+        Assign = "=",
+        BangEqual = "!=",
+        BangBang = "!!",
+        Bang = "!",
+        LessEqual = "<=",
+        ShiftLeft = "<<",
+        Less = "<",
+        GreaterEqual = ">=",
+        ShiftRight = ">>",
+        Greater = ">",
+        AndAnd = "&&",
+        Amp = "&",
+        OrOr = "||",
+        PipeArrow = "|>",
+        Bar = "|",
+        QuestionQuestion = "??",
+        Question = "?",
+        Arrow = "->",
+        MinusMinus = "--",
+        MinusAssign = "-=",
+        Minus = "-",
+        PlusPlus = "++",
+        PlusAssign = "+=",
+        Plus = "+",
+        StarAssign = "*=",
+        Asterisk = "*",
+        SlashAssign = "/=",
+        Slash = "/",
+        PercentAssign = "%=",
+        Percent = "%",
+        Ellipsis = "...",
+        DotDotEq = "..=",
+        DotDot = "..",
+        Dot = ".",
+        At = "@",
+        Caret = "^",
+        Tilde = "~",
+        Comma = ",",
+        Hash = "#",
+        Semicolon = ";",
+        LeftParen = "(",
+        RightParen = ")",
+        LeftBrace = "{",
+        RightBrace = "}",
+        LeftBracket = "[",
+        RightBracket = "]",
+        
+        // In the order of their text, so the lexer finds the keywords starting
+        // with each letter together.
+        #[keywords]
+        As = "as",
+        Break = "break",
+        Const = "const",
+        Continue = "continue",
+        Else = "else",
+        Enum = "enum",
+        False = "false",
+        Fn = "fn",
+        For = "for",
+        Free = "free",
+        From = "from",
+        If = "if",
+        Iface = "iface",
+        Import = "import",
+        In = "in",
+        Is = "is",
+        Let = "let",
+        Match = "match",
+        Mut = "mut",
+        None = "none",
+        Orelse = "orelse",
+        Print = "print",
+        Println = "println",
+        Rawptr = "rawptr",
+        Return = "return",
+        Struct = "struct",
+        True = "true",
+        Type = "type",
+        With = "with",
     }
 }
 
-/// Every keyword kind, in the order of its text, so the lexer finds the
-/// keywords starting with each letter together.
-pub const KEYWORDS: &[TokenKind] = &[
-    TokenKind::As,
-    TokenKind::Break,
-    TokenKind::Const,
-    TokenKind::Continue,
-    TokenKind::Else,
-    TokenKind::Enum,
-    TokenKind::False,
-    TokenKind::Fn,
-    TokenKind::For,
-    TokenKind::Free,
-    TokenKind::From,
-    TokenKind::If,
-    TokenKind::Iface,
-    TokenKind::Import,
-    TokenKind::In,
-    TokenKind::Is,
-    TokenKind::Let,
-    TokenKind::Match,
-    TokenKind::Mut,
-    TokenKind::None,
-    TokenKind::Orelse,
-    TokenKind::Print,
-    TokenKind::Println,
-    TokenKind::Rawptr,
-    TokenKind::Return,
-    TokenKind::Struct,
-    TokenKind::True,
-    TokenKind::Type,
-    TokenKind::With,
-];
-
-/// Every operator and punctuation kind, longest text first within each leading
-/// character, so the lexer's first match is the right one.
-pub const OPERATORS: &[TokenKind] = &[
-    TokenKind::ColonColon,
-    TokenKind::Colon,
-    TokenKind::EqualEqual,
-    TokenKind::FatArrow,
-    TokenKind::Assign,
-    TokenKind::BangEqual,
-    TokenKind::BangBang,
-    TokenKind::Bang,
-    TokenKind::LessEqual,
-    TokenKind::ShiftLeft,
-    TokenKind::Less,
-    TokenKind::GreaterEqual,
-    TokenKind::ShiftRight,
-    TokenKind::Greater,
-    TokenKind::AndAnd,
-    TokenKind::Amp,
-    TokenKind::OrOr,
-    TokenKind::PipeArrow,
-    TokenKind::Bar,
-    TokenKind::QuestionQuestion,
-    TokenKind::Question,
-    TokenKind::Arrow,
-    TokenKind::MinusMinus,
-    TokenKind::MinusAssign,
-    TokenKind::Minus,
-    TokenKind::PlusPlus,
-    TokenKind::PlusAssign,
-    TokenKind::Plus,
-    TokenKind::StarAssign,
-    TokenKind::Asterisk,
-    TokenKind::SlashAssign,
-    TokenKind::Slash,
-    TokenKind::PercentAssign,
-    TokenKind::Percent,
-    TokenKind::Ellipsis,
-    TokenKind::DotDotEq,
-    TokenKind::DotDot,
-    TokenKind::Dot,
-    TokenKind::At,
-    TokenKind::Caret,
-    TokenKind::Tilde,
-    TokenKind::Comma,
-    TokenKind::Hash,
-    TokenKind::Semicolon,
-    TokenKind::LeftParen,
-    TokenKind::RightParen,
-    TokenKind::LeftBrace,
-    TokenKind::RightBrace,
-    TokenKind::LeftBracket,
-    TokenKind::RightBracket,
-];
-
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::TokenKind;
 
     #[test]
-    fn keywords_and_operators_are_listed_once() {
-        let all: Vec<TokenKind> = KEYWORDS.iter().chain(OPERATORS).copied().collect();
-        for (i, kind) in all.iter().enumerate() {
-            assert!(!all[..i].contains(kind), "{kind:?} is listed twice");
-        }
+    fn text() {
         assert_eq!(TokenKind::Fn.text(), "fn");
+        assert_eq!(TokenKind::ColonColon.text(), "::");
         assert_eq!(TokenKind::Ident.text(), "identifier");
     }
 }
