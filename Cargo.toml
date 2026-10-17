@@ -20,9 +20,12 @@ diagnostics = { path = "crates/diagnostics" }
 token = { path = "crates/frontend/token" }
 literal = { path = "crates/frontend/literal" }
 lexer = { path = "crates/frontend/lexer" }
+ast = { path = "crates/frontend/ast" }
+parser = { path = "crates/frontend/parser" }
 numeric = { path = "crates/pkg/numeric" }
 colors = { path = "crates/pkg/colors" }
 unicode-general-category = "1.1.0"
+stacker = "0.1.25"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

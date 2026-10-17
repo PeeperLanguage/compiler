@@ -26,8 +26,7 @@ fn main() -> ExitCode {
 
 /// Checks the file at `path`, prints its diagnostics to `out` and returns the
 /// exit code: 1 when there are errors.
-// shortcut: one file, lexer only; project folders and parsing come with the
-// project loader and the parser.
+// shortcut: one file, no imports; project folders come with the project loader.
 fn check(path: &str, out: &mut impl Write, colored: bool) -> u8 {
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
@@ -37,7 +36,7 @@ fn check(path: &str, out: &mut impl Write, colored: bool) -> u8 {
         }
     };
     let errors = match String::from_utf8(bytes) {
-        Ok(text) => lexer::scan(&Arc::new(SourceFile::new(path, text))).1,
+        Ok(text) => parser::parse(&Arc::new(SourceFile::new(path, text))).1,
         Err(err) => {
             // The text up to the bad byte is kept as is, so the error points at it.
             let at = err.utf8_error().valid_up_to();

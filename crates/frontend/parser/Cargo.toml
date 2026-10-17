@@ -1,0 +1,19 @@
+[package]
+name = "parser"
+description = "Builds the syntax tree of one Peeper file"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+source.workspace = true
+diagnostics.workspace = true
+token.workspace = true
+lexer.workspace = true
+numeric.workspace = true
+ast.workspace = true
+stacker.workspace = true
+
+[lints]
+workspace = true
