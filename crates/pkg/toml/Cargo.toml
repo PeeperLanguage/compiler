@@ -1,0 +1,12 @@
+[package]
+name = "toml"
+description = "A reader for the small part of TOML that project files use"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

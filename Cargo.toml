@@ -4,6 +4,8 @@ members = [
     "crates/diagnostics",
     "crates/frontend/*",
     "crates/pkg/*",
+    "crates/manifest",
+    "crates/project",
     "crates/peeper",
 ]
 resolver = "3"
@@ -24,6 +26,9 @@ ast = { path = "crates/frontend/ast" }
 parser = { path = "crates/frontend/parser" }
 numeric = { path = "crates/pkg/numeric" }
 colors = { path = "crates/pkg/colors" }
+toml = { path = "crates/pkg/toml" }
+manifest = { path = "crates/manifest" }
+project = { path = "crates/project" }
 unicode-general-category = "1.1.0"
 stacker = "0.1.25"
 

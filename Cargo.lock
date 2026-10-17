@@ -81,6 +81,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "manifest"
+version = "0.1.0"
+dependencies = [
+ "toml",
+]
+
+[[package]]
 name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -118,6 +125,18 @@ version = "0.1.0"
 dependencies = [
  "diagnostics",
  "lexer",
+ "manifest",
+ "project",
+ "source",
+]
+
+[[package]]
+name = "project"
+version = "0.1.0"
+dependencies = [
+ "ast",
+ "diagnostics",
+ "literal",
  "parser",
  "source",
 ]
@@ -161,6 +180,10 @@ version = "0.1.0"
 dependencies = [
  "source",
 ]
+
+[[package]]
+name = "toml"
+version = "0.1.0"
 
 [[package]]
 name = "unicode-general-category"

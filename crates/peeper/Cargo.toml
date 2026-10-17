@@ -10,7 +10,8 @@ publish.workspace = true
 source.workspace = true
 diagnostics.workspace = true
 lexer.workspace = true
-parser.workspace = true
+manifest.workspace = true
+project.workspace = true
 
 [lints]
 workspace = true
