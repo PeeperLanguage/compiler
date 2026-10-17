@@ -215,13 +215,14 @@ impl Printer<'_> {
                 (BLUE, "-")
             };
             self.blank_gutter();
-            _ = write!(self.out, "{:padding$}", "");
+            // a column can pass the 65,535 that a format width allows
+            self.out.extend(std::iter::repeat_n(' ', padding));
             self.paint(color, underline.repeat(length));
             for (index, message) in mark.messages.iter().enumerate() {
                 if index > 0 {
                     self.out.push('\n');
                     self.blank_gutter();
-                    _ = write!(self.out, "{:1$}", "", padding + length);
+                    self.out.extend(std::iter::repeat_n(' ', padding + length));
                 }
                 self.paint(color, format_args!(" {message}"));
             }
@@ -750,6 +751,16 @@ Compilation failed with 1 error(s)
             got.contains("[L0001]: outside") && got.contains("= help: broken fix is not drawn"),
             "{got}"
         );
+    }
+
+    #[test]
+    fn marks_far_into_a_long_line() {
+        let text = format!("{}x\n", " ".repeat(70_000));
+        let file = Arc::new(SourceFile::new("a.peep", text));
+        let d = Diagnostic::new(code("L0001", Severity::Error), "far")
+            .label(&file, Span::new(70_000, 70_001), "a")
+            .label(&file, Span::new(70_000, 70_001), "b");
+        assert!(render(&[d]).contains("^ a\n"));
     }
 
     #[test]
