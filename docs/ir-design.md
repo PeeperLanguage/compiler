@@ -291,6 +291,12 @@ assignments to a variable without `mut` only when its `let` has a value. Only a
 `let` without a value can be unset, so the check is skipped for a function
 that has none (decided by the owner, 2026-10-17).
 
+The checker warns (W0018) at an inner block's `let` that hides an outer `mut`
+local: the `let` was likely meant as an assignment, and the outer local is
+unchanged. Shadowing is otherwise silent
+(decided by the owner). It lives in the checker, which knows the blocks; MIR
+has no scopes.
+
 `peeper -dump [thir | mir] <path>` writes the THIR and MIR of every function
 of a program without errors, or only the kind named, one file per module under
 build/debug/dumps in the project folder or beside the file

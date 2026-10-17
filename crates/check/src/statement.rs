@@ -41,6 +41,8 @@ pub(crate) struct BodyChecker<'c, 'a, Q: Queries> {
     /// where each is declared. Few names are in scope at once, so a search
     /// from the end beats hashing.
     pub(crate) names: Vec<(&'a str, Span, Named)>,
+    /// Where in `names` the current block's names start.
+    block_start: usize,
     result: TypeId, // the function's result type
 }
 
@@ -95,6 +97,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
             tree,
             body: Body::default(),
             names: Vec::new(),
+            block_start: 0,
             result,
         }
     }
@@ -112,9 +115,11 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
 
     /// The THIR of `block`; the names it declares end with it.
     fn block(&mut self, block: Id<syntax::Block>) -> Id<Block> {
-        let outer = self.names.len();
+        let names_before = self.names.len();
+        let enclosing_start = std::mem::replace(&mut self.block_start, names_before);
         let statements = self.statements(self.tree.blocks[block].statements);
-        self.names.truncate(outer);
+        self.names.truncate(names_before);
+        self.block_start = enclosing_start;
         self.body
             .add(Block { statements }, self.tree.blocks.span(block))
     }
@@ -253,6 +258,39 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
             mutable,
             declared_without_value,
         };
+        let text = self.tree.file.slice(name);
+        let shadowed = self
+            .names
+            .iter()
+            .rposition(|&(declared, ..)| declared == text);
+        if let Some(position) = shadowed
+            && position < self.block_start
+            && let Named::Local(outer) = self.names[position].2
+            && self.body.locals[outer].mutable
+        {
+            // Likely meant as `x = ...`: the outer local stays unchanged.
+            let file = &self.tree.file;
+            self.checker.diagnostics.push(
+                Diagnostic::new(
+                    diagnostics::HIDDEN_MUTABLE,
+                    format!("this `let` hides the outer `mut {text}`"),
+                )
+                .label(
+                    file,
+                    name,
+                    format!("a new `{text}`, only inside this block"),
+                )
+                .label(
+                    file,
+                    self.body.locals.span(outer),
+                    format!("the outer `{text}`, declared `mut` here"),
+                )
+                .help(
+                    format!("to change the outer `{text}`, write `{text} = ...` without `let`"),
+                    Vec::new(),
+                ),
+            );
+        }
         let local = self.body.add(local, name);
         self.declare(name, Named::Local(local));
         Stmt::Let { local, value }

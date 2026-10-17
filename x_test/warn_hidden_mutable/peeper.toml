@@ -1,0 +1,7 @@
+name = "warn_hidden_mutable"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "success"
+stderr_contains = ["[W0018]: this `let` hides the outer `mut total`", "a new `total`, only inside this block", "the outer `total`, declared `mut` here", "to change the outer `total`, write `total = ...` without `let`", "[W0018]: this `let` hides the outer `mut count`", "Compilation succeeded with 4 warning(s)"]
