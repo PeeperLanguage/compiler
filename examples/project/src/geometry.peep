@@ -1,0 +1,12 @@
+// Names starting with an uppercase letter are exported.
+const Side = 21;
+const Limit: i64 = 1000;
+
+fn Area(width: i64, height: u8) -> i64 {
+    return scale(width * height);
+}
+
+// Lowercase: only this module can use it.
+fn scale(value: i64) -> i64 {
+    return value;
+}

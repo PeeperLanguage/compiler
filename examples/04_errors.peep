@@ -1,0 +1,20 @@
+// Each line below has one error; check prints all of them.
+const Loop = Other + 1;
+const Other = Loop;             // constant depends on itself
+
+fn add(a: i32, b: i32) -> i32 {
+    return a + b;
+}
+
+fn main() {
+    let small: u8 = 300;        // does not fit u8
+    let wide: i64 = 5;
+    let mixed = 1i32 + wide;    // i64 does not convert to i32 implicitly
+    let ratio = 10 / 0;         // division by zero
+    let sum = add(1, 2, 3);     // wrong argument count
+    let fixed = 1;
+    fixed = 2;                  // not mutable
+    let flag: bool = 1;         // mismatched types
+    let neg: u16 = -1i8;        // i8 -> u16 is not value-safe
+    missing();                  // undeclared
+}

@@ -1,0 +1,21 @@
+// Number types, literal suffixes, safe widening and constant folding.
+const Bits: u8 = 1u8 << 7;      // 128, folded at compile time
+const Big: i128 = 1i128 << 100;
+const Odd: u24 = 0xFF_FFFF;     // any width from 1 to 2^23 bits
+const Half: f32 = 0.5f32;
+
+fn widen(small: u8, signed_small: i8, ratio: f32) -> f64 {
+    let a: i16 = small;         // u8 -> i16 keeps every value
+    let b: i16 = signed_small;  // i8 -> i16
+    let c: u16 = small;         // u8 -> u16
+    let d: f64 = ratio;         // f32 -> f64
+    let sum = a + b;            // the result has the left operand's type: i16
+    let mask = ~c & 0x0F0F;
+    return d;
+}
+
+fn main() {
+    let ok: bool = !(Bits == 0) || Big > 0;
+    let x = widen(200, -5, Half);
+    let wrapped = 127i8 + 1i8;  // folds to -128 (wraps like the hardware)
+}
