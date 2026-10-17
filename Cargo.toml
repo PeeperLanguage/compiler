@@ -4,6 +4,7 @@ members = [
     "crates/diagnostics",
     "crates/frontend/*",
     "crates/pkg/*",
+    "crates/ir",
     "crates/manifest",
     "crates/project",
     "crates/peeper",
@@ -23,11 +24,13 @@ token = { path = "crates/frontend/token" }
 literal = { path = "crates/frontend/literal" }
 lexer = { path = "crates/frontend/lexer" }
 arena = { path = "crates/pkg/arena" }
+bigint = { path = "crates/pkg/bigint" }
 ast = { path = "crates/frontend/ast" }
 parser = { path = "crates/frontend/parser" }
 numeric = { path = "crates/pkg/numeric" }
 colors = { path = "crates/pkg/colors" }
 toml = { path = "crates/pkg/toml" }
+ir = { path = "crates/ir" }
 manifest = { path = "crates/manifest" }
 project = { path = "crates/project" }
 unicode-general-category = "1.1.0"

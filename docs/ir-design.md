@@ -111,17 +111,22 @@ a THIR body and a MIR body each list their arenas once with it.
 - **Definition ids.** `DefId { module, index }`: the module's place in the
   program's order and the declaration's index in its tree. Memo tables are
   vectors indexed by it: no hashing on the hot path.
-- **Constants.** A constant value is an integer (wide enough for `u128` and
-  negative values), a float, `bool`, `char`, string bytes, or an aggregate (struct
-  fields, enum variant and payload, array elements). Arithmetic takes the result
-  type and reports overflow and division by zero; the same functions serve the
-  checker's folding and the future interpreter.
+- **Constants.** A constant value is an integer of any width (1 to 2^23 bits,
+  held as 64-bit limbs, inline up to 128 bits; the arithmetic is the
+  `pkg/bigint` crate's, which works like LLVM's APInt), a float, `bool`,
+  `char`, string bytes, or an aggregate (struct fields, enum variant and payload,
+  array elements). Integer arithmetic wraps to the type's width, as the fixtures
+  expect (`127i8 + 1i8 == -128i8`); division rounds toward zero, `MIN / -1` is
+  `MIN`; division by zero and out-of-range shifts give no value (they trap at
+  run time). The same functions serve the checker's folding and the future
+  interpreter.
 - **Operators.** `BinaryOp` and `UnaryOp`, mapped once from tokens by check;
   THIR, MIR, the interpreter and LLVM read them.
 
 ## Constant evaluation
 
-One owner for the meaning of every operation: `ir`'s value functions (add,
+One owner for the meaning of every operation: `ir`'s value functions, on top
+of `pkg/bigint` for integer arithmetic (add,
 compare, cast, build an aggregate, read a field). Two drivers call them, each for
 what the other cannot do:
 
@@ -133,6 +138,50 @@ what the other cannot do:
   it; everything else still folds in check.
 
 Neither driver implements an operation itself, so the two cannot disagree.
+
+## Integer values must match LLVM
+
+The Go compiler shipped three bugs where a folded value and the value LLVM
+computed differed (issues #154, #155, PR #158). The rules that prevent them:
+
+1. **One value, one type.** A constant's bits are read only through the type
+   check gave it. Nothing evaluates a constant again under another type (#154
+   read a checked `i64` index again as the default `i32`: 4294967296 became 0).
+2. **A constant is stored with its declared type** after its initializer's
+   conversion; a constant that cannot be emitted is an error, never a silently
+   missing symbol (#155).
+3. **Widening follows the source's signedness.** Where LLVM needs a wider
+   operand (a GEP index, a shift count), LLVM emission extends it explicitly:
+   `zext` for unsigned, `sext` for signed. LLVM sign-extends a narrow GEP index
+   by itself, which read `u1` 1 as -1 (#158).
+4. **A shift count has its own type** (`value << count`, fb88e30e). The runtime
+   guard compares the count with the width at a type wide enough to hold the
+   width; the Go guard wrote the width as a constant of the count's type, so a
+   `u2` count compared against 8 cut to 0.
+5. **Constants are written from the same bits** (`iN u0x...`), and
+   `crates/ir/tests/llvm_parity.rs` runs every operator on widths 1 to 1000 in
+   `lli` and in `ir` and requires equal bits.
+
+Floats (`f32`, `f64`) follow the same idea:
+
+6. **Each precision computes in itself.** An `f32` operation is done in `f32`,
+   never kept in `f64` between operations; `%` is `frem` (C `fmod`). The parity
+   test covers both precisions with zeros, infinities, NaN, subnormals and
+   random bits.
+7. **A float constant is its bits.** `Value::Float` holds the `f64` bits (an
+   `f32` widened exactly) and LLVM gets them as a double hex constant
+   (`float 0x3FB99999A0000000`), never as decimal text.
+8. **`==` is `fcmp oeq`, `!=` is `fcmp une`,** the others ordered (`olt` ...):
+   NaN equals nothing and differs from everything, as in Rust and the Go
+   backend.
+9. **Which NaN is not specified.** A folded NaN may have other sign or payload
+   bits than the NaN the machine makes at run time; LLVM's own folding differs
+   from its generated code the same way (73 of 7,200 cases in the parity test).
+10. **A float literal is parsed straight to its precision.** Parsing an `f32`
+    literal as `f64` and then rounding to `f32` rounds twice and can give the
+    wrong `f32` (the Go compiler did this).
+11. **Programs using float `%` link the C math library** (`-lm`): LLVM turns
+    `frem` into a call to `fmod` or `fmodf`.
 
 ## Scheduling per declaration
 

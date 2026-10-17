@@ -1,0 +1,12 @@
+[package]
+name = "bigint"
+description = "Two's-complement integers of any fixed width, in 64-bit limbs"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true
