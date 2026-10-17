@@ -123,6 +123,10 @@ Names must keep their meaning when read as plain text, with no editor help:
   clear from the line (`i`, `t` for the current token) are fine.
 - Write the enum's name on every variant: `Prefix::Number`, not
   `use Prefix::*` (or `use Prefix::{...}`) and then a bare `Number`.
+- Import one item per `use`: `use source::Span;`. Do not write
+  `use path::{a, b, c}` and then use `a`, `b`, `c` bare, and do not use `*`.
+- No `pub use` re-exports: an item is named by the module that defines it
+  (`pub mod types;` and `ir::types::TypeId`, not `ir::TypeId`).
 
 ## 6. Change scope
 
