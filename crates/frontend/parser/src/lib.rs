@@ -190,7 +190,7 @@ impl Parser<'_> {
         let t = self.tok();
         let d = Diagnostic::new(
             diagnostics::EXPECTED_TOKEN,
-            format!("expected `{}`, found `{}`", kind.name(), t.kind.name()),
+            format!("expected `{}`, found `{}`", kind.text(), t.kind.text()),
         );
         let closer = matches!(
             kind,
@@ -203,17 +203,19 @@ impl Parser<'_> {
             return d.label(
                 self.file,
                 t.span,
-                format!("expected `{}` here", kind.name()),
+                format!("expected `{}` here", kind.text()),
             );
         }
         let d = d.label(self.file, self.here(), "");
-        match kind.spelling() {
-            Some(text) => d.help(
-                format!("add missing `{text}`"),
-                vec![self.fix(self.here(), text)],
-            ),
-            None => d,
+        // only a keyword or an operator has one text to insert
+        if !token::KEYWORDS.contains(&kind) && !token::OPERATORS.contains(&kind) {
+            return d;
         }
+        let text = kind.text();
+        d.help(
+            format!("add missing `{text}`"),
+            vec![self.fix(self.here(), text)],
+        )
     }
 
     /// Reads the token closing what `open` opened. When that closer comes later
@@ -231,7 +233,7 @@ impl Parser<'_> {
             self.fail(
                 Diagnostic::new(
                     diagnostics::EXPECTED_TOKEN,
-                    format!("expected `{}`, found `{}`", kind.name(), t.kind.name()),
+                    format!("expected `{}`, found `{}`", kind.text(), t.kind.text()),
                 )
                 .label(self.file, t.span, "this cannot be here"),
             );
@@ -246,7 +248,7 @@ impl Parser<'_> {
             d = d.label(
                 self.file,
                 open.span,
-                format!("this `{}` is still open", open.kind.name()),
+                format!("this `{}` is still open", open.kind.text()),
             );
         }
         self.fail(d);
@@ -736,7 +738,7 @@ fn main() {
             ),
             (
                 "fn f() { let a = 1\nfn g() {}",
-                &["expected `;`, found `function`"],
+                &["expected `;`, found `fn`"],
             ),
         ] {
             assert_eq!(messages(text), want, "{text:?}");

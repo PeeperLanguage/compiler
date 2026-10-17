@@ -283,7 +283,7 @@ fn jump_statement(p: &mut Parser) -> Id<Stmt> {
         p.repair(
             Diagnostic::new(
                 diagnostics::INVALID_STATEMENT,
-                format!("labeled {} is not supported yet", keyword.kind.name()),
+                format!("labeled {} is not supported yet", keyword.kind.text()),
             )
             .label(
                 p.file,

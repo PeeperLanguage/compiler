@@ -71,7 +71,7 @@ impl Parser<'_> {
                     self.fail(
                         Diagnostic::new(
                             diagnostics::INVALID_TYPE,
-                            format!("expected type, found `{}`", t.kind.name()),
+                            format!("expected type, found `{}`", t.kind.text()),
                         )
                         .label(self.file, t.span, "expected a type here"),
                     );

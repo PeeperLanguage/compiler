@@ -472,7 +472,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
             TokenKind::Minus => (Some(UnaryOp::Negate), number),
             TokenKind::Bang => (Some(UnaryOp::LogicalNot), ty == Type::Bool),
             TokenKind::Tilde => (Some(UnaryOp::BitNot), matches!(ty, Type::Integer(_))),
-            _ => unreachable!("`{}` is not a unary operator", op.name()),
+            _ => unreachable!("`{}` is not a unary operator", op.text()),
         };
         if !accepted {
             return self.invalid_operand(op, checked.ty, span);
@@ -610,7 +610,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
     /// Reports `op` applied to an operand of the type `ty`, at `span`.
     fn invalid_operand(&mut self, op: TokenKind, ty: TypeId, span: Span) -> Expr {
         let ty = self.checker.queries.types().text(ty);
-        let message = format!("operator `{}` cannot be applied to `{ty}`", op.name());
+        let message = format!("operator `{}` cannot be applied to `{ty}`", op.text());
         self.checker
             .error(diagnostics::INVALID_OPERATION, message, span);
         Expr::INVALID
@@ -692,6 +692,6 @@ fn binary_op(op: TokenKind) -> BinaryOp {
         TokenKind::GreaterEqual => BinaryOp::GreaterOrEqual,
         TokenKind::AndAnd => BinaryOp::LogicalAnd,
         TokenKind::OrOr => BinaryOp::LogicalOr,
-        _ => unreachable!("`{}` is not a binary operator", op.name()),
+        _ => unreachable!("`{}` is not a binary operator", op.text()),
     }
 }

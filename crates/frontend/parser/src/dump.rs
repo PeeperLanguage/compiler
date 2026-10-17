@@ -73,7 +73,7 @@ impl Dumper<'_> {
         self.out.push_str(kind);
         if let Some(op) = op {
             self.out.push(' ');
-            self.out.push_str(op.name());
+            self.out.push_str(op.text());
         }
         if self.spans {
             self.out.push_str(&format!(" @{}-{}", span.start, span.end));

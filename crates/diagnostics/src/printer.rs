@@ -457,18 +457,18 @@ fn highlight(
         let piece = span.start.max(line.start)..span.end.min(line.end);
         gap(&mut pieces, position..piece.start);
         position = piece.end;
-        pieces.push((piece, token_color(file, t)));
+        pieces.push((piece, token_color(t)));
     }
     gap(&mut pieces, position..line.end);
     pieces
 }
 
-fn token_color(file: &SourceFile, t: &Token) -> Option<&'static str> {
+fn token_color(t: &Token) -> Option<&'static str> {
     match t.kind {
         TokenKind::String | TokenKind::CString => Some(LIGHT_GREEN),
         TokenKind::Number | TokenKind::Char | TokenKind::ByteChar => Some(LIGHT_ORANGE),
         TokenKind::DocComment => Some(GREY),
-        kind if token::keyword(file.slice(t.span)) == Some(kind) => Some(PURPLE),
+        kind if token::KEYWORDS.contains(&kind) => Some(PURPLE),
         _ => None,
     }
 }

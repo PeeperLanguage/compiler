@@ -5,7 +5,7 @@ use std::sync::Arc;
 use diagnostics::{self as diagnostic, Code, Diagnostic, quote};
 use literal::{escape, next_char_width};
 use source::{SourceFile, Span};
-use token::{OPERATORS, Token, TokenKind};
+use token::{KEYWORDS, OPERATORS, Token, TokenKind};
 use unicode_general_category::{GeneralCategory, get_general_category};
 
 /// Returns the tokens of `file`, ending with an end-of-file token, and the
@@ -127,7 +127,7 @@ impl Scanner<'_> {
         }
         let text = &self.file.text[start..self.pos];
         if ascii {
-            self.emit(token::keyword(text).unwrap_or(TokenKind::Ident), start);
+            self.emit(keyword(text).unwrap_or(TokenKind::Ident), start);
             return;
         }
         let message = format!("name `{text}` uses characters that are not allowed in names");
@@ -326,37 +326,49 @@ impl Scanner<'_> {
         let rest = &self.text[self.pos..];
         let (first, count) = OPERATORS_BY_FIRST[rest[0] as usize];
         let group = &OPERATORS[first as usize..(first + count) as usize];
-        if let Some(&(text, kind)) = group
+        if let Some(&kind) = group
             .iter()
-            .find(|(text, _)| rest.starts_with(text.as_bytes()))
+            .find(|kind| rest.starts_with(kind.text().as_bytes()))
         {
             let start = self.pos;
-            self.pos += text.len();
+            self.pos += kind.text().len();
             self.emit(kind, start);
         }
     }
 }
 
-/// For each ASCII byte, where the operators starting with it begin in
-/// OPERATORS and how many there are. OPERATORS lists each leading character's
-/// operators together, which the build checks.
-const OPERATORS_BY_FIRST: [(u8, u8); 128] = {
+/// For each ASCII byte, where the kinds of `kinds` whose text starts with it
+/// begin and how many there are. `kinds` lists each leading byte's kinds
+/// together, which the build checks.
+const fn by_first_byte(kinds: &[TokenKind]) -> [(u8, u8); 128] {
     let mut table = [(0u8, 0u8); 128];
     let mut i = 0;
-    while i < OPERATORS.len() {
-        let first = OPERATORS[i].0.as_bytes()[0] as usize;
+    while i < kinds.len() {
+        let first = kinds[i].text().as_bytes()[0] as usize;
         assert!(
             table[first].1 == 0,
-            "OPERATORS must list each leading character's operators together"
+            "each leading byte's kinds must be listed together"
         );
         let start = i;
-        while i < OPERATORS.len() && OPERATORS[i].0.as_bytes()[0] as usize == first {
+        while i < kinds.len() && kinds[i].text().as_bytes()[0] as usize == first {
             i += 1;
         }
         table[first] = (start as u8, (i - start) as u8);
     }
     table
-};
+}
+
+const OPERATORS_BY_FIRST: [(u8, u8); 128] = by_first_byte(OPERATORS);
+const KEYWORDS_BY_FIRST: [(u8, u8); 128] = by_first_byte(KEYWORDS);
+
+/// The keyword kind of the ASCII name `text`, or None for a name.
+fn keyword(text: &str) -> Option<TokenKind> {
+    let (first, count) = KEYWORDS_BY_FIRST[text.as_bytes()[0] as usize];
+    KEYWORDS[first as usize..(first + count) as usize]
+        .iter()
+        .copied()
+        .find(|kind| kind.text() == text)
+}
 
 fn is_letter(c: char) -> bool {
     matches!(
@@ -392,6 +404,16 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn keywords() {
+        for &kind in KEYWORDS {
+            assert_eq!(keyword(kind.text()), Some(kind));
+        }
+        for name in ["name", "f", "fns", "_", "while"] {
+            assert_eq!(keyword(name), None, "{name}");
+        }
+    }
+
     /// The tokens of `text` as "kind:text" (end of file left out) and the error
     /// messages.
     fn scan_text(text: &str) -> (String, Vec<String>) {
@@ -399,7 +421,7 @@ mod tests {
         let (tokens, errors) = scan(&file);
         let parts: Vec<String> = tokens[..tokens.len() - 1]
             .iter()
-            .map(|t| format!("{}:{}", t.kind.name(), file.slice(t.span)))
+            .map(|t| format!("{}:{}", t.kind.text(), file.slice(t.span)))
             .collect();
         (
             parts.join(" "),

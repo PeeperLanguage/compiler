@@ -143,7 +143,7 @@ impl Parser<'_> {
                 self.fail(
                     Diagnostic::new(
                         diagnostics::EXPECTED_TOKEN,
-                        format!("expected expression, found `{}`", t.kind.name()),
+                        format!("expected expression, found `{}`", t.kind.text()),
                     )
                     .label(self.file, t.span, "expected an expression here"),
                 );
@@ -469,7 +469,7 @@ mod tests {
         let text = |span| t.file.slice(span).to_string();
         match t.exprs[id] {
             Expr::Binary { op, left, right } => {
-                format!("({} {} {})", grouped(t, left), op.name(), grouped(t, right))
+                format!("({} {} {})", grouped(t, left), op.text(), grouped(t, right))
             }
             Expr::Cast { value, ty } => {
                 format!("({} as {})", grouped(t, value), text(t.types.span(ty)))
