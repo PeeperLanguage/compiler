@@ -7,11 +7,40 @@ use std::ops::Index;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TypeId(u32);
 
-/// An integer type: `i5` is signed with 5 bits. Widths run from 1 to 2^23.
+/// An integer type: `i5` is signed with 5 bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Integer {
     pub signed: bool,
     pub bits: u32,
+}
+
+impl Integer {
+    /// The widest integer: LLVM's limit.
+    pub const MAX_BITS: u32 = 1 << 23;
+
+    /// Whether the number `magnitude` (64-bit limbs, lowest first), negated
+    /// when `negative`, is a value of this type: `-128` fits `i8`, `128` does
+    /// not.
+    pub fn fits(self, magnitude: &[u64], negative: bool) -> bool {
+        let length = magnitude
+            .iter()
+            .rposition(|&limb| limb != 0)
+            .map_or(0, |top| {
+                top as u64 * 64 + u64::from(64 - magnitude[top].leading_zeros())
+            });
+        let bits = u64::from(self.bits);
+        match (self.signed, negative) {
+            _ if length == 0 => true, // zero, also written `-0`
+            (false, false) => length <= bits,
+            (false, true) => false,
+            (true, false) => length < bits,
+            // Down to -2^(bits-1): shorter, or exactly that power of two.
+            (true, true) => {
+                let power_of_two = magnitude.iter().map(|limb| limb.count_ones()).sum::<u32>() == 1;
+                length < bits || length == bits && power_of_two
+            }
+        }
+    }
 }
 
 /// A float type: IEEE 754 single or double precision.
@@ -127,6 +156,7 @@ impl Index<TypeId> for Types {
 mod tests {
     use super::FIXED;
     use super::Float;
+    use super::Integer;
     use super::Type;
     use super::TypeId;
     use super::Types;
@@ -143,6 +173,30 @@ mod tests {
         assert_eq!(types[TypeId::U8], integer(false, 8));
         assert_eq!(types[TypeId::BOOL], Type::Bool);
         assert_eq!(types[TypeId::F64], Type::Float(Float::F64));
+    }
+
+    #[test]
+    fn literals_that_fit() {
+        let fits = |signed, bits, magnitude: &[u64], negative| {
+            Integer { signed, bits }.fits(magnitude, negative)
+        };
+        assert!(fits(true, 8, &[127], false));
+        assert!(!fits(true, 8, &[128], false));
+        assert!(fits(true, 8, &[128], true), "-128");
+        assert!(!fits(true, 8, &[129], true));
+        assert!(fits(false, 8, &[255], false));
+        assert!(!fits(false, 8, &[256], false));
+        assert!(!fits(false, 8, &[1], true));
+        assert!(fits(false, 8, &[0], true), "-0");
+        assert!(fits(false, 1, &[1], false));
+        assert!(fits(true, 1, &[1], true), "-1 is the only negative i1");
+        assert!(!fits(true, 1, &[1], false));
+        assert!(fits(false, 64, &[u64::MAX], false));
+        assert!(!fits(false, 64, &[0, 1], false));
+        assert!(fits(true, 128, &[0, 1 << 63], true), "i128::MIN");
+        assert!(!fits(true, 128, &[1, 1 << 63], true));
+        assert!(fits(false, 256, &[u64::MAX; 4], false));
+        assert!(fits(false, 8, &[200, 0, 0], false), "high zero limbs");
     }
 
     #[test]

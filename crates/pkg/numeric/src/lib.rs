@@ -1,6 +1,8 @@
 //! The rules of number literals that the lexer, the parser and the type checker
 //! share. Each phase asks its question here and reports in its own words.
 
+use std::str::FromStr;
+
 /// A number literal's text in its parts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Literal<'a> {
@@ -79,11 +81,43 @@ impl Literal<'_> {
     pub fn integer_suffix(&self) -> bool {
         !self.suffix.is_empty() && !self.suffix.starts_with('f')
     }
+
+    /// The integer's exact value in 64-bit limbs, lowest first, as wide as it
+    /// needs. The digits must be valid in the base (`digits_in_base`).
+    pub fn integer_value(&self) -> Vec<u64> {
+        let mut limbs = vec![0u64];
+        for digit in self.digits.chars().filter_map(|c| c.to_digit(self.base)) {
+            let mut carry = u128::from(digit);
+            for limb in &mut limbs {
+                let next = u128::from(*limb) * u128::from(self.base) + carry;
+                (*limb, carry) = (next as u64, next >> 64);
+            }
+            if carry != 0 {
+                limbs.push(carry as u64);
+            }
+        }
+        limbs
+    }
+
+    /// The decimal number's value in the precision of `T` (`f32` or `f64`),
+    /// rounded once from the text; reading an `f32` through an `f64` would
+    /// round twice. `None` when the value is too large for `T`, or the number
+    /// is not decimal.
+    pub fn float_value<T: Copy + FromStr + Into<f64>>(&self) -> Option<T> {
+        if self.base != 10 {
+            return None;
+        }
+        let text: String = self.digits.chars().filter(|&c| c != '_').collect();
+        let value: T = text.parse().ok()?;
+        let finite = value.into().is_finite();
+        finite.then_some(value)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::Literal;
+    use super::split;
 
     #[test]
     fn split_parts() {
@@ -139,5 +173,48 @@ mod tests {
                 "{text}"
             );
         }
+    }
+
+    #[test]
+    fn integer_values() {
+        for (text, limbs) in [
+            ("0", vec![0]),
+            ("1_000", vec![1000]),
+            ("0b1010u8", vec![10]),
+            ("0o777", vec![511]),
+            ("007", vec![7]),
+            ("18446744073709551615", vec![u64::MAX]),
+            ("18446744073709551616", vec![0, 1]),
+            (
+                "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffu256",
+                vec![u64::MAX; 4],
+            ),
+        ] {
+            assert_eq!(split(text).integer_value(), limbs, "{text}");
+        }
+    }
+
+    #[test]
+    fn float_values() {
+        assert_eq!(split("1_000.5").float_value::<f64>(), Some(1000.5));
+        assert_eq!(split("2.5e-3f64").float_value::<f64>(), Some(2.5e-3));
+        assert_eq!(split("5").float_value::<f32>(), Some(5.0));
+        assert_eq!(
+            split("1e39").float_value::<f32>(),
+            None,
+            "too large for f32"
+        );
+        assert_eq!(split("1e39").float_value::<f64>(), Some(1e39));
+        assert_eq!(split("0x10").float_value::<f64>(), None, "not decimal");
+        // Halfway between two f32 values, and just above it: read through f64,
+        // the text rounds to the halfway f64, which then rounds to the even
+        // f32 below; read directly, it rounds up.
+        let above_halfway = "1.000000059604644775390625000001";
+        assert_eq!(split(above_halfway).float_value::<f32>(), Some(1.0000001));
+        assert_eq!(
+            above_halfway.parse::<f64>().unwrap() as f32,
+            1.0,
+            "double rounding"
+        );
     }
 }

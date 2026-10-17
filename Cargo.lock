@@ -195,6 +195,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "thir"
+version = "0.1.0"
+dependencies = [
+ "arena",
+ "ast",
+ "diagnostics",
+ "ir",
+ "parser",
+ "project",
+ "source",
+]
+
+[[package]]
 name = "token"
 version = "0.1.0"
 dependencies = [

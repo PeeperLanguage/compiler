@@ -1,0 +1,21 @@
+[package]
+name = "thir"
+description = "Semantic analysis: names, types and constants of a program, into THIR"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+source.workspace = true
+diagnostics.workspace = true
+arena.workspace = true
+ast.workspace = true
+project.workspace = true
+ir.workspace = true
+
+[dev-dependencies]
+parser.workspace = true
+
+[lints]
+workspace = true

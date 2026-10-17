@@ -45,6 +45,10 @@ pub const MODULE_NOT_FOUND: Code = error("M0001");
 pub const CYCLIC_IMPORT: Code = error("M0002");
 pub const INVALID_IMPORT_PATH: Code = error("M0003");
 pub const ALIAS_IN_USE: Code = error("M0005");
+pub const UNDEFINED_NAME: Code = error("T0002");
+pub const ALREADY_DECLARED: Code = error("T0003");
+pub const NOT_A_TYPE: Code = error("T0021");
+pub const NOT_SUPPORTED_YET: Code = error("T0043");
 pub const REDUNDANT_PRELUDE_IMPORT: Code = Code {
     id: "S0004",
     severity: Severity::Info,
