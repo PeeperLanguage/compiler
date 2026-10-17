@@ -240,6 +240,23 @@ reads THIR.
 - **decided** Interner: one lock, primitives at fixed ids with no lookup. Change
   only if a large-project benchmark shows contention.
 
+- **decided** Implicit number conversions only widen when every value of the
+  source fits the target: `u8` to `i16`, `i8` to `i16`, `u8` to `u16`, `f32` to
+  `f64`. `i8` to `u16`, narrowing, and integer-float conversions need `as` (the
+  Go compiler also allowed `i8` to `u16`, turning -1 into 65535).
+- **decided** A binary operator has its left operand's type: the right operand
+  is converted to it when that is value-safe, otherwise it is an error
+  (`1i64 + 2i32` is `i64`; `1i32 + 2i64` is an error). A shift's count keeps its
+  own type. A literal without a suffix takes the type its context expects, else
+  `i32` or `f64`; the right operand's context is the left operand's type, and
+  the left operand's is the type the whole expression is expected to have. So
+  `x + 1` and `let y: i64 = 1 + x` are `i64`, and `1 + x` with nothing expected
+  is `i32 + i64`, an error whose help suggests `1i64`. (Provisional: the left
+  literal could later take the right operand's type instead.)
+- **decided** An operation check knows will trap (division by a constant zero,
+  a constant shift count below zero or at least the width) is a compile error,
+  in a body as in a `const`.
+
 ## Open decisions
 
 1. **Disk cache.** `TypeId` is not stable between runs, so a cached module
