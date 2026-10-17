@@ -1,133 +1,17 @@
-//! The syntax tree of one file. Nodes of one category (expressions, types,
-//! statements and so on) are values of one enum, stored in that category's
-//! arena and named by a typed `Id`, so a tree takes a few allocations and an id
-//! of one category cannot stand where another is expected. Later phases keep
-//! their results in vectors indexed by id.
+//! The syntax tree of one file, in typed arenas (see the `arena` crate).
 //!
 //! A name is the span of its text, kept in the node it belongs to. A name or
 //! child that is missing after a syntax error is an empty span or an `Invalid`
 //! node.
 
-use std::marker::PhantomData;
-use std::num::NonZeroU32;
-use std::ops::Index;
 use std::sync::Arc;
 
+use arena::{Arena, Id, List, Lists, Node, nodes};
 use source::{SourceFile, Span};
 use token::TokenKind;
 
-/// A node in the arena of `T`. `Option<Id<T>>` takes no more room than an id.
-pub struct Id<T> {
-    raw: NonZeroU32, // the node's position in its arena, plus one
-    category: PhantomData<fn() -> T>,
-}
-
-impl<T> Id<T> {
-    /// The node's position in its arena.
-    pub fn index(self) -> usize {
-        self.raw.get() as usize - 1
-    }
-}
-
-// Derived impls would require T itself to be Clone, Copy and so on.
-impl<T> Clone for Id<T> {
-    fn clone(&self) -> Id<T> {
-        *self
-    }
-}
-impl<T> Copy for Id<T> {}
-impl<T> PartialEq for Id<T> {
-    fn eq(&self, other: &Id<T>) -> bool {
-        self.raw == other.raw
-    }
-}
-impl<T> Eq for Id<T> {}
-impl<T> std::fmt::Debug for Id<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "#{}", self.index())
-    }
-}
-
-/// A list of nodes of `T`: a range of the tree's list items.
-pub struct List<T> {
-    start: u32,
-    len: u32,
-    category: PhantomData<fn() -> T>,
-}
-
-impl<T> List<T> {
-    pub const EMPTY: List<T> = List {
-        start: 0,
-        len: 0,
-        category: PhantomData,
-    };
-
-    pub fn len(self) -> usize {
-        self.len as usize
-    }
-
-    pub fn is_empty(self) -> bool {
-        self.len == 0
-    }
-}
-
-impl<T> Clone for List<T> {
-    fn clone(&self) -> List<T> {
-        *self
-    }
-}
-impl<T> Copy for List<T> {}
-impl<T> std::fmt::Debug for List<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[{}; {}]", self.start, self.len)
-    }
-}
-
-/// The nodes of one category and their spans.
-pub struct Arena<T> {
-    nodes: Vec<T>,
-    spans: Vec<Span>,
-}
-
-impl<T> Arena<T> {
-    pub fn span(&self, id: Id<T>) -> Span {
-        self.spans[id.index()]
-    }
-}
-
-impl<T> Default for Arena<T> {
-    fn default() -> Arena<T> {
-        Arena {
-            nodes: Vec::new(),
-            spans: Vec::new(),
-        }
-    }
-}
-
-impl<T> Index<Id<T>> for Arena<T> {
-    type Output = T;
-
-    fn index(&self, id: Id<T>) -> &T {
-        &self.nodes[id.index()]
-    }
-}
-
-/// A node type: it knows its arena in the tree, so `Tree::add` takes any node.
-pub trait Node: Sized {
-    fn arena(tree: &mut Tree) -> &mut Arena<Self>;
-}
-
-macro_rules! nodes {
-    ($($node:ty => $arena:ident),* $(,)?) => {
-        $(impl Node for $node {
-            fn arena(tree: &mut Tree) -> &mut Arena<$node> {
-                &mut tree.$arena
-            }
-        })*
-    };
-}
-
 nodes! {
+    Tree;
     Decl => decls,
     Type => types,
     Stmt => stmts,
@@ -164,7 +48,7 @@ pub struct Tree {
     pub field_values: Arena<FieldValue>,
     pub match_arms: Arena<MatchArm>,
 
-    list_items: Vec<NonZeroU32>, // the items of every list, each list's items together
+    pub lists: Lists,
 }
 
 impl Tree {
@@ -187,55 +71,13 @@ impl Tree {
             variants: Arena::default(),
             field_values: Arena::default(),
             match_arms: Arena::default(),
-            list_items: Vec::new(),
+            lists: Lists::default(),
         }
     }
 
     /// Adds `node` with `span` to its arena.
-    pub fn add<T: Node>(&mut self, node: T, span: Span) -> Id<T> {
-        let arena = T::arena(self);
-        arena.nodes.push(node);
-        arena.spans.push(span);
-        let raw = u32::try_from(arena.nodes.len())
-            .ok()
-            .and_then(NonZeroU32::new)
-            .expect("an arena holds fewer than 2^32 nodes");
-        Id {
-            raw,
-            category: PhantomData,
-        }
-    }
-
-    /// The items of `list`.
-    pub fn list<T>(&self, list: List<T>) -> impl ExactSizeIterator<Item = Id<T>> + '_ {
-        self.list_items[list.start as usize..][..list.len()]
-            .iter()
-            .map(|&raw| Id {
-                raw,
-                category: PhantomData,
-            })
-    }
-
-    /// Stores the items as a list; `items` hold raw ids of `T` (see
-    /// `From<Id<T>> for NonZeroU32`).
-    pub fn add_list<T>(&mut self, items: &[NonZeroU32]) -> List<T> {
-        if items.is_empty() {
-            return List::EMPTY;
-        }
-        let start = self.list_items.len() as u32;
-        self.list_items.extend_from_slice(items);
-        List {
-            start,
-            len: items.len() as u32,
-            category: PhantomData,
-        }
-    }
-}
-
-/// Lets the parser keep the ids of the lists being read in one shared buffer.
-impl<T> From<Id<T>> for NonZeroU32 {
-    fn from(id: Id<T>) -> NonZeroU32 {
-        id.raw
+    pub fn add<T: Node<Container = Tree>>(&mut self, node: T, span: Span) -> Id<T> {
+        T::arena(self).push(node, span)
     }
 }
 
@@ -555,21 +397,4 @@ pub enum Expr {
 pub struct FieldValue {
     pub name: Span,
     pub value: Id<Expr>,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ids_and_lists_round_trip() {
-        let mut tree = Tree::new(Arc::new(SourceFile::new("a.peep", "a b")));
-        let a = tree.add(Expr::Name, Span::new(0, 1));
-        let b = tree.add(Expr::Name, Span::new(2, 3));
-        assert_eq!(tree.exprs.span(b), Span::new(2, 3));
-        let list: List<Expr> = tree.add_list(&[a.into(), b.into()]);
-        assert_eq!(tree.list(list).collect::<Vec<_>>(), [a, b]);
-        assert!(tree.add_list::<Expr>(&[]).is_empty());
-        assert_eq!(size_of::<Option<Id<Expr>>>(), 4);
-    }
 }

@@ -28,7 +28,8 @@ mod dump;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
-use ast::{Id, List, Node, Tree};
+use arena::{Id, List, Node};
+use ast::Tree;
 use diagnostics::{Diagnostic, Fix};
 use source::{SourceFile, Span};
 use token::{Token, TokenKind};
@@ -138,7 +139,7 @@ impl Parser<'_> {
     /// Adds `node`, spanning from `start`, where the token beginning it was, to
     /// the end of the last token read. A node that read nothing (its start lies
     /// past what was read) is an empty span at the read position.
-    fn add<T: Node>(&mut self, start: u32, node: T) -> Id<T> {
+    fn add<T: Node<Container = Tree>>(&mut self, start: u32, node: T) -> Id<T> {
         let span = Span::new(start.min(self.last_end) as usize, self.last_end as usize);
         self.tree.add(node, span)
     }
@@ -379,7 +380,7 @@ impl Parser<'_> {
 
     /// Moves the ids that `scratch` holds from `mark` on into a list.
     fn finish_list<T>(&mut self, mark: usize) -> List<T> {
-        let list = self.tree.add_list(&self.scratch[mark..]);
+        let list = self.tree.lists.add(&self.scratch[mark..]);
         self.scratch.truncate(mark);
         list
     }

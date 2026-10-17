@@ -1,6 +1,7 @@
 //! Blocks and statements.
 
-use ast::{Block, Expr, Id, List, MatchArm, Metadata, Pattern, Stmt};
+use arena::{Id, List};
+use ast::{Block, Expr, MatchArm, Metadata, Pattern, Stmt};
 use diagnostics::Diagnostic;
 use token::TokenKind;
 

@@ -1,0 +1,13 @@
+[package]
+name = "arena"
+description = "Typed arenas, ids and lists for the trees and graphs of the phases"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+source.workspace = true
+
+[lints]
+workspace = true

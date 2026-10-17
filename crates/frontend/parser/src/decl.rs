@@ -1,9 +1,8 @@
 //! The module and its declarations: imports, functions, constants and type
 //! declarations, with their doc comments and attributes.
 
-use ast::{
-    Attribute, Decl, Expr, Function, Id, Import, List, Metadata, Name, Param, Type, TypeDecl,
-};
+use arena::{Id, List};
+use ast::{Attribute, Decl, Expr, Function, Import, Metadata, Name, Param, Type, TypeDecl};
 use diagnostics::Diagnostic;
 use source::Span;
 use token::TokenKind;
@@ -350,7 +349,7 @@ impl Parser<'_> {
                 self.close(TokenKind::RightParen, open);
             } else {
                 let origin = self.name_node();
-                origins = self.tree.add_list(&[origin.into()]);
+                origins = self.tree.lists.add(&[origin.into()]);
             }
         }
         (result, origins)

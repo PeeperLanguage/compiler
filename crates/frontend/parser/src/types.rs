@@ -1,7 +1,8 @@
 //! Types: names and paths, pointers, optionals, arrays, function types, and the
 //! struct, enum and interface types of type declarations.
 
-use ast::{Decl, Field, Id, Length, Param, Type, Variant};
+use arena::Id;
+use ast::{Decl, Field, Length, Param, Type, Variant};
 use diagnostics::Diagnostic;
 use source::Span;
 use token::{Token, TokenKind};
@@ -275,7 +276,7 @@ impl Parser<'_> {
                 let parameters: Vec<_> = f
                     .receiver
                     .into_iter()
-                    .chain(p.tree.list(f.parameters))
+                    .chain(p.tree.lists.items(f.parameters))
                     .collect();
                 for parameter in parameters {
                     if let Some(value) = p.tree.params[parameter].default {

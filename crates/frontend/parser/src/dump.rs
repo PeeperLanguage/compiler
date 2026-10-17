@@ -3,8 +3,9 @@
 //! node without children. This is the Go parser's dump format, so trees can be
 //! compared with it. With `spans`, each line also shows the node's span.
 
+use arena::{Id, List};
 use ast::{
-    Attribute, Block, Decl, Expr, Field, FieldValue, Id, Import, Length, MatchArm, Metadata, Param,
+    Attribute, Block, Decl, Expr, Field, FieldValue, Import, Length, MatchArm, Metadata, Param,
     Pattern, Stmt, Tree, Type, Variant,
 };
 use source::Span;
@@ -17,7 +18,7 @@ pub(crate) fn dump(tree: &Tree, spans: bool) -> String {
         out: String::new(),
     };
     let mut children: Vec<Item> = tree.imports.iter().map(|&i| Item::Import(i)).collect();
-    children.extend(tree.list(tree.declarations).map(Item::Decl));
+    children.extend(tree.lists.items(tree.declarations).map(Item::Decl));
     d.write("module", None, tree.span, &children, 0);
     d.out
 }
@@ -93,8 +94,9 @@ impl Dumper<'_> {
 
     fn item(&mut self, item: Item, depth: usize) {
         let t = self.tree;
-        let names = |kind: &'static str, list: ast::List<ast::Name>| {
-            t.list(list)
+        let names = |kind: &'static str, list: List<ast::Name>| {
+            t.lists
+                .items(list)
                 .map(move |name| Item::Leaf(kind, t.names.span(name)))
         };
         let (kind, op, span, children): (&str, Option<TokenKind>, Span, Vec<Item>) = match item {
@@ -112,7 +114,7 @@ impl Dumper<'_> {
                 .collect(),
             ),
             Item::Metadata(m) => {
-                let attributes: Vec<_> = t.list(m.attributes).collect();
+                let attributes: Vec<_> = t.lists.items(m.attributes).collect();
                 let start = m
                     .doc_comment
                     .or(attributes.first().map(|&a| t.attributes.span(a)))
@@ -140,7 +142,7 @@ impl Dumper<'_> {
             Item::Attribute(id) => {
                 let a = t.attributes[id];
                 let mut children = vec![Item::Leaf("name reference", a.name)];
-                children.extend(t.list(a.arguments).map(Item::Expr));
+                children.extend(t.lists.items(a.arguments).map(Item::Expr));
                 ("attribute", None, t.attributes.span(id), children)
             }
             Item::Decl(id) => {
@@ -152,7 +154,7 @@ impl Dumper<'_> {
                         children.extend(f.receiver.map(Item::Param));
                         children.push(declared(f.name));
                         children.extend(names("declared name", f.type_parameters));
-                        children.extend(t.list(f.parameters).map(Item::Param));
+                        children.extend(t.lists.items(f.parameters).map(Item::Param));
                         children.extend(f.result.map(Item::Type));
                         children.extend(names("name reference", f.origins));
                         children.extend(f.body.map(Item::Block));
@@ -213,7 +215,10 @@ impl Dumper<'_> {
                 "block",
                 None,
                 t.blocks.span(id),
-                t.list(t.blocks[id].statements).map(Item::Stmt).collect(),
+                t.lists
+                    .items(t.blocks[id].statements)
+                    .map(Item::Stmt)
+                    .collect(),
             ),
             Item::Stmt(id) => match t.stmts[id] {
                 Stmt::Block(block) => return self.item(Item::Block(block), depth),
@@ -254,10 +259,14 @@ impl Dumper<'_> {
         let one = |ty: Id<Type>| vec![Item::Type(ty)];
         let (kind, op, children) = match t.types[id] {
             Type::Name => ("type name", None, vec![]),
-            Type::Path(segments) => ("path", None, t.list(segments).map(Item::Type).collect()),
+            Type::Path(segments) => (
+                "path",
+                None,
+                t.lists.items(segments).map(Item::Type).collect(),
+            ),
             Type::Generic { name, arguments } => {
                 let mut children = vec![Item::Leaf("type name", name)];
-                children.extend(t.list(arguments).map(Item::Type));
+                children.extend(t.lists.items(arguments).map(Item::Type));
                 ("generic type", None, children)
             }
             Type::Reference { mutable: m, target } => ("reference type", mutable(m), one(target)),
@@ -278,10 +287,11 @@ impl Dumper<'_> {
                 result,
                 origins,
             } => {
-                let mut children: Vec<Item> = t.list(parameters).map(Item::Param).collect();
+                let mut children: Vec<Item> = t.lists.items(parameters).map(Item::Param).collect();
                 children.extend(result.map(Item::Type));
                 children.extend(
-                    t.list(origins)
+                    t.lists
+                        .items(origins)
                         .map(|n| Item::Leaf("name reference", t.names.span(n))),
                 );
                 ("function type", None, children)
@@ -289,17 +299,17 @@ impl Dumper<'_> {
             Type::Struct(fields) => (
                 "struct type",
                 None,
-                t.list(fields).map(Item::Field).collect(),
+                t.lists.items(fields).map(Item::Field).collect(),
             ),
             Type::Enum(variants) => (
                 "enum type",
                 None,
-                t.list(variants).map(Item::Variant).collect(),
+                t.lists.items(variants).map(Item::Variant).collect(),
             ),
             Type::Interface(methods) => (
                 "interface type",
                 None,
-                t.list(methods).map(Item::Decl).collect(),
+                t.lists.items(methods).map(Item::Decl).collect(),
             ),
             Type::Invalid => ("invalid type", None, vec![]),
         };
@@ -367,7 +377,7 @@ impl Dumper<'_> {
             Stmt::Continue => ("continue statement", None, vec![]),
             Stmt::Match { subject, arms } => {
                 let mut children = vec![Item::Expr(subject)];
-                children.extend(t.list(arms).map(Item::MatchArm));
+                children.extend(t.lists.items(arms).map(Item::MatchArm));
                 ("match statement", None, children)
             }
             Stmt::Block(_) | Stmt::Const(_) => {
@@ -390,7 +400,7 @@ impl Dumper<'_> {
             Pattern::Binding => ("declared name", vec![]),
             Pattern::Struct(fields) => (
                 "struct pattern",
-                t.list(fields).map(Item::Pattern).collect(),
+                t.lists.items(fields).map(Item::Pattern).collect(),
             ),
             Pattern::Field { field, binding } => {
                 let mut children = vec![Item::Leaf("field name", field)];
@@ -446,7 +456,7 @@ impl Dumper<'_> {
             ),
             Expr::Call { callee, arguments } => {
                 let mut children = one(callee);
-                children.extend(t.list(arguments).map(Item::Expr));
+                children.extend(t.lists.items(arguments).map(Item::Expr));
                 ("call expression", None, children)
             }
             Expr::Selector { value, field } => (
@@ -472,7 +482,7 @@ impl Dumper<'_> {
             ),
             Expr::StructLiteral { ty, fields } => {
                 let mut children: Vec<Item> = ty.map(Item::Type).into_iter().collect();
-                children.extend(t.list(fields).map(Item::FieldValue));
+                children.extend(t.lists.items(fields).map(Item::FieldValue));
                 ("struct literal", None, children)
             }
             Expr::VariantLiteral { case, payload } => (
@@ -482,7 +492,7 @@ impl Dumper<'_> {
             ),
             Expr::ArrayLiteral { ty, values } => {
                 let mut children = vec![Item::Type(ty)];
-                children.extend(t.list(values).map(Item::Expr));
+                children.extend(t.lists.items(values).map(Item::Expr));
                 ("array literal", None, children)
             }
             Expr::Cast { value, ty } => ("cast expression", None, two(value, Item::Type(ty))),

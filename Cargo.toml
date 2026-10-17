@@ -22,6 +22,7 @@ diagnostics = { path = "crates/diagnostics" }
 token = { path = "crates/frontend/token" }
 literal = { path = "crates/frontend/literal" }
 lexer = { path = "crates/frontend/lexer" }
+arena = { path = "crates/pkg/arena" }
 ast = { path = "crates/frontend/ast" }
 parser = { path = "crates/frontend/parser" }
 numeric = { path = "crates/pkg/numeric" }

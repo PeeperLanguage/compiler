@@ -1,7 +1,8 @@
 //! Literals: numbers, strings, characters, `true`, `false`, `none`, and struct
 //! and array literals.
 
-use ast::{Expr, FieldValue, Id, Length, Type};
+use arena::Id;
+use ast::{Expr, FieldValue, Length, Type};
 use diagnostics::Diagnostic;
 use token::{Token, TokenKind};
 

@@ -12,9 +12,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "arena"
+version = "0.1.0"
+dependencies = [
+ "source",
+]
+
+[[package]]
 name = "ast"
 version = "0.1.0"
 dependencies = [
+ "arena",
  "source",
  "token",
 ]
@@ -110,6 +118,7 @@ dependencies = [
 name = "parser"
 version = "0.1.0"
 dependencies = [
+ "arena",
  "ast",
  "diagnostics",
  "lexer",

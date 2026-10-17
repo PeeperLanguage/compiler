@@ -5,7 +5,8 @@
 //! binds tighter than the operator before it, so precedence and associativity
 //! live in the table below and not in nested grammar rules.
 
-use ast::{Expr, Id, Type};
+use arena::Id;
+use ast::{Expr, Type};
 use diagnostics::Diagnostic;
 use token::TokenKind;
 
@@ -448,12 +449,13 @@ mod tests {
 
     /// The expression of the first statement of the first function.
     fn first_expression(tree: &Tree) -> Id<Expr> {
-        let decl = tree.list(tree.declarations).next().unwrap();
+        let decl = tree.lists.items(tree.declarations).next().unwrap();
         let Decl::Function(f) = tree.decls[decl] else {
             panic!("not a function")
         };
         let statement = tree
-            .list(tree.blocks[f.body.unwrap()].statements)
+            .lists
+            .items(tree.blocks[f.body.unwrap()].statements)
             .next()
             .unwrap();
         let Stmt::Expression(e) = tree.stmts[statement] else {
@@ -496,7 +498,7 @@ mod tests {
                 format!("{}[{}]", grouped(t, value), text(t.exprs.span(index)))
             }
             Expr::Call { callee, arguments } => {
-                let arguments: Vec<_> = t.list(arguments).map(|a| grouped(t, a)).collect();
+                let arguments: Vec<_> = t.lists.items(arguments).map(|a| grouped(t, a)).collect();
                 format!("{}({})", grouped(t, callee), arguments.join(", "))
             }
             _ => text(t.exprs.span(id)),
