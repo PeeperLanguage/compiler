@@ -12,14 +12,14 @@ use std::fmt::Write;
 use std::process::Command;
 
 use bigint::Limbs;
-use ir::BinaryOp;
-use ir::UnaryOp;
-use ir::types::Float;
-use ir::types::Integer;
-use ir::types::Type;
-use ir::value::Value;
-use ir::value::binary;
-use ir::value::unary;
+use model::BinaryOp;
+use model::UnaryOp;
+use model::types::Float;
+use model::types::Integer;
+use model::types::Type;
+use model::value::Value;
+use model::value::binary;
+use model::value::unary;
 
 const WIDTHS: &[u32] = &[
     1, 2, 3, 5, 7, 8, 9, 15, 16, 17, 24, 31, 32, 33, 63, 64, 65, 100, 127, 128, 129, 192, 200, 255,

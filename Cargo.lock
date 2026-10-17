@@ -19,15 +19,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ast"
-version = "0.1.0"
-dependencies = [
- "arena",
- "source",
- "token",
-]
-
-[[package]]
 name = "bigint"
 version = "0.1.0"
 
@@ -36,13 +27,12 @@ name = "build"
 version = "0.1.0"
 dependencies = [
  "arena",
- "ast",
+ "check",
  "diagnostics",
- "ir",
+ "model",
  "parser",
  "project",
  "source",
- "thir",
 ]
 
 [[package]]
@@ -60,6 +50,21 @@ name = "cfg-if"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
+
+[[package]]
+name = "check"
+version = "0.1.0"
+dependencies = [
+ "arena",
+ "bigint",
+ "diagnostics",
+ "model",
+ "numeric",
+ "parser",
+ "project",
+ "source",
+ "token",
+]
 
 [[package]]
 name = "colors"
@@ -80,13 +85,6 @@ name = "find-msvc-tools"
 version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
-
-[[package]]
-name = "ir"
-version = "0.1.0"
-dependencies = [
- "bigint",
-]
 
 [[package]]
 name = "lexer"
@@ -127,6 +125,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
+name = "model"
+version = "0.1.0"
+dependencies = [
+ "arena",
+ "bigint",
+ "source",
+ "token",
+]
+
+[[package]]
 name = "numeric"
 version = "0.1.0"
 
@@ -144,9 +152,9 @@ name = "parser"
 version = "0.1.0"
 dependencies = [
  "arena",
- "ast",
  "diagnostics",
  "lexer",
+ "model",
  "numeric",
  "source",
  "stacker",
@@ -170,9 +178,9 @@ dependencies = [
 name = "project"
 version = "0.1.0"
 dependencies = [
- "ast",
  "diagnostics",
  "literal",
+ "model",
  "parser",
  "source",
 ]
@@ -208,22 +216,6 @@ dependencies = [
  "libc",
  "psm",
  "windows-sys",
-]
-
-[[package]]
-name = "thir"
-version = "0.1.0"
-dependencies = [
- "arena",
- "ast",
- "bigint",
- "diagnostics",
- "ir",
- "numeric",
- "parser",
- "project",
- "source",
- "token",
 ]
 
 [[package]]

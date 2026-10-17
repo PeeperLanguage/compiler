@@ -1,8 +1,8 @@
 //! Blocks and statements.
 
 use arena::{Id, List};
-use ast::{Block, Expr, MatchArm, Metadata, Pattern, Stmt};
 use diagnostics::Diagnostic;
+use model::syntax::{Block, Expr, MatchArm, Metadata, Pattern, Stmt};
 use token::TokenKind;
 
 use crate::decl::{const_decl, starts_declaration};

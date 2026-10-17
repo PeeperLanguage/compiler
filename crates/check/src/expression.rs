@@ -9,20 +9,21 @@ use bigint::Limbs;
 use diagnostics::Diagnostic;
 use diagnostics::Fix;
 use diagnostics::suggest::nearest_name;
-use ir::BinaryOp;
-use ir::UnaryOp;
-use ir::types::Float;
-use ir::types::Type;
-use ir::types::TypeId;
-use ir::value;
-use ir::value::Value;
+use model::BinaryOp;
+use model::UnaryOp;
+use model::syntax;
+use model::thir::Expr;
+use model::thir::ExprKind;
+use model::types::Float;
+use model::types::Type;
+use model::types::TypeId;
+use model::value;
+use model::value::Constant;
+use model::value::Value;
 use source::Span;
 use token::TokenKind;
 
-use crate::Constant;
 use crate::Queries;
-use crate::body::Expr;
-use crate::body::ExprKind;
 use crate::builtin::UNSUPPORTED_FUNCTIONS;
 use crate::scope::Binding;
 use crate::statement::BodyChecker;
@@ -32,7 +33,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
     /// `expression`, added to the body.
     pub(crate) fn value(
         &mut self,
-        expression: Id<ast::Expr>,
+        expression: Id<syntax::Expr>,
         expected: Option<TypeId>,
     ) -> Id<Expr> {
         let checked = self.expr(expression, expected);
@@ -40,14 +41,14 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
     }
 
     /// `expression` as a value of the type `ty`, added to the body.
-    pub(crate) fn expect(&mut self, expression: Id<ast::Expr>, ty: TypeId) -> Id<Expr> {
+    pub(crate) fn expect(&mut self, expression: Id<syntax::Expr>, ty: TypeId) -> Id<Expr> {
         let checked = self.coerced(expression, ty);
         self.body.add(checked, self.tree.exprs.span(expression))
     }
 
     /// `expression` as a value of the type `ty`, not yet added to the body;
     /// a mismatch is reported.
-    pub(crate) fn coerced(&mut self, expression: Id<ast::Expr>, ty: TypeId) -> Expr {
+    pub(crate) fn coerced(&mut self, expression: Id<syntax::Expr>, ty: TypeId) -> Expr {
         let span = self.tree.exprs.span(expression);
         let checked = self.expr(expression, Some(ty));
         self.coerce(checked, span, ty).unwrap_or_else(|mismatch| {
@@ -91,50 +92,50 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
     /// operation leaves no nodes for its operands. `expected` is the type the
     /// context expects, which a number literal without a suffix takes; where
     /// the context requires that type, its caller coerces the result to it.
-    pub(crate) fn expr(&mut self, expression: Id<ast::Expr>, expected: Option<TypeId>) -> Expr {
+    pub(crate) fn expr(&mut self, expression: Id<syntax::Expr>, expected: Option<TypeId>) -> Expr {
         let tree = self.tree;
         let span = tree.exprs.span(expression);
         let what = match tree.exprs[expression] {
-            ast::Expr::Name => return self.name(span),
-            ast::Expr::Number => return self.number(span, None, expected),
-            ast::Expr::Bool => {
+            syntax::Expr::Name => return self.name(span),
+            syntax::Expr::Number => return self.number(span, None, expected),
+            syntax::Expr::Bool => {
                 let value = Value::Bool(tree.file.slice(span) == "true");
                 return Expr {
                     ty: TypeId::BOOL,
                     kind: ExprKind::Constant(value),
                 };
             }
-            ast::Expr::Parentheses(inner) => return self.expr(inner, expected),
-            ast::Expr::Unary { op, value } => return self.unary(op, value, span, expected),
-            ast::Expr::Binary { op, left, right } => {
+            syntax::Expr::Parentheses(inner) => return self.expr(inner, expected),
+            syntax::Expr::Unary { op, value } => return self.unary(op, value, span, expected),
+            syntax::Expr::Binary { op, left, right } => {
                 return self.binary(op, left, right, span, expected);
             }
-            ast::Expr::Invalid => return Expr::INVALID, // the parser reported it
-            ast::Expr::Path(path) => {
+            syntax::Expr::Invalid => return Expr::INVALID, // the parser reported it
+            syntax::Expr::Path(path) => {
                 return match self.path_binding(path) {
                     Some(binding) => self.global_value(binding, tree.file.slice(span), span),
                     None => Expr::INVALID,
                 };
             }
-            ast::Expr::Call { callee, arguments } => return self.call(callee, arguments, span),
-            ast::Expr::String { .. } => "string literals",
-            ast::Expr::Char { .. } => "character literals",
-            ast::Expr::None => "`none` values",
-            ast::Expr::Reference { .. } => "references",
-            ast::Expr::RawAddress(_) => "raw addresses",
-            ast::Expr::Free(_) => "`free` calls",
-            ast::Expr::Print { .. } => "`print` calls",
-            ast::Expr::Selector { .. } => "field accesses",
-            ast::Expr::Index { .. } => "index expressions",
-            ast::Expr::Range { .. } => "ranges",
-            ast::Expr::StructLiteral { .. } => "struct literals",
-            ast::Expr::VariantLiteral { .. } => "variant literals",
-            ast::Expr::ArrayLiteral { .. } => "array literals",
-            ast::Expr::Cast { .. } => "casts",
-            ast::Expr::Is { .. } => "`is` tests",
-            ast::Expr::OrElse { .. } => "`orelse` fallbacks",
-            ast::Expr::Block(_) => "block expressions",
-            ast::Expr::Pipe { .. } => "pipes",
+            syntax::Expr::Call { callee, arguments } => return self.call(callee, arguments, span),
+            syntax::Expr::String { .. } => "string literals",
+            syntax::Expr::Char { .. } => "character literals",
+            syntax::Expr::None => "`none` values",
+            syntax::Expr::Reference { .. } => "references",
+            syntax::Expr::RawAddress(_) => "raw addresses",
+            syntax::Expr::Free(_) => "`free` calls",
+            syntax::Expr::Print { .. } => "`print` calls",
+            syntax::Expr::Selector { .. } => "field accesses",
+            syntax::Expr::Index { .. } => "index expressions",
+            syntax::Expr::Range { .. } => "ranges",
+            syntax::Expr::StructLiteral { .. } => "struct literals",
+            syntax::Expr::VariantLiteral { .. } => "variant literals",
+            syntax::Expr::ArrayLiteral { .. } => "array literals",
+            syntax::Expr::Cast { .. } => "casts",
+            syntax::Expr::Is { .. } => "`is` tests",
+            syntax::Expr::OrElse { .. } => "`orelse` fallbacks",
+            syntax::Expr::Block(_) => "block expressions",
+            syntax::Expr::Pipe { .. } => "pipes",
         };
         self.checker.not_supported(span, what);
         Expr::INVALID
@@ -218,11 +219,11 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
     /// stands for, reporting a path that names nothing or is not supported.
     /// Another module's name is reachable only if it starts with an upper case
     /// letter, except in the prelude.
-    fn path_binding(&mut self, path: Id<ast::Type>) -> Option<Binding> {
+    fn path_binding(&mut self, path: Id<syntax::Type>) -> Option<Binding> {
         let tree = self.tree;
         let span = tree.types.span(path);
-        let segments: Vec<Id<ast::Type>> = match tree.types[path] {
-            ast::Type::Path(segments) => tree.lists.items(segments).collect(),
+        let segments: Vec<Id<syntax::Type>> = match tree.types[path] {
+            syntax::Type::Path(segments) => tree.lists.items(segments).collect(),
             _ => {
                 self.checker
                     .not_supported(span, "paths with type arguments");
@@ -236,7 +237,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
         };
         if !matches!(
             (tree.types[module], tree.types[member]),
-            (ast::Type::Name, ast::Type::Name)
+            (syntax::Type::Name, syntax::Type::Name)
         ) {
             self.checker
                 .not_supported(span, "paths with type arguments");
@@ -290,12 +291,17 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
 
     /// `callee(arguments)`, written at `span`. Only a module's function, by
     /// its name or its path, can be called.
-    fn call(&mut self, callee: Id<ast::Expr>, arguments: List<ast::Expr>, span: Span) -> Expr {
+    fn call(
+        &mut self,
+        callee: Id<syntax::Expr>,
+        arguments: List<syntax::Expr>,
+        span: Span,
+    ) -> Expr {
         let tree = self.tree;
         let callee_span = tree.exprs.span(callee);
         let text = tree.file.slice(callee_span);
         let binding = match tree.exprs[callee] {
-            ast::Expr::Name => match self.lookup(text) {
+            syntax::Expr::Name => match self.lookup(text) {
                 // Their errors were reported.
                 Some((_, Named::Constant(None))) => None,
                 Some((_, &Named::Local(local)))
@@ -312,8 +318,8 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
                     }
                 },
             },
-            ast::Expr::Path(path) => self.path_binding(path).map(Ok),
-            ast::Expr::Selector { .. } => {
+            syntax::Expr::Path(path) => self.path_binding(path).map(Ok),
+            syntax::Expr::Selector { .. } => {
                 self.checker.not_supported(callee_span, "method calls");
                 None
             }
@@ -441,7 +447,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
     fn unary(
         &mut self,
         op: TokenKind,
-        operand: Id<ast::Expr>,
+        operand: Id<syntax::Expr>,
         span: Span,
         expected: Option<TypeId>,
     ) -> Expr {
@@ -449,7 +455,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
         let operand_span = tree.exprs.span(operand);
         // Only a literal right after `-` is a negative literal: `-(128)`
         // negates `128`, which does not fit `i8`.
-        if op == TokenKind::Minus && matches!(tree.exprs[operand], ast::Expr::Number) {
+        if op == TokenKind::Minus && matches!(tree.exprs[operand], syntax::Expr::Number) {
             return self.number(operand_span, Some(span), expected);
         }
         let checked = match op {
@@ -496,8 +502,8 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
     fn binary(
         &mut self,
         op: TokenKind,
-        left: Id<ast::Expr>,
-        right: Id<ast::Expr>,
+        left: Id<syntax::Expr>,
+        right: Id<syntax::Expr>,
         span: Span,
         expected: Option<TypeId>,
     ) -> Expr {
@@ -659,9 +665,9 @@ fn takes_type(literal: &numeric::Literal, ty: &Type) -> bool {
 }
 
 /// The text of `expression` if it is a number literal without a suffix.
-fn unsuffixed_literal(tree: &ast::Tree, expression: Id<ast::Expr>) -> Option<&str> {
+fn unsuffixed_literal(tree: &syntax::Tree, expression: Id<syntax::Expr>) -> Option<&str> {
     let text = tree.file.slice(tree.exprs.span(expression));
-    let number = matches!(tree.exprs[expression], ast::Expr::Number);
+    let number = matches!(tree.exprs[expression], syntax::Expr::Number);
     (number && numeric::split(text).suffix.is_empty()).then_some(text)
 }
 

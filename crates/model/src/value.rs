@@ -29,6 +29,7 @@ use crate::UnaryOp;
 use crate::types::Float;
 use crate::types::Integer;
 use crate::types::Type;
+use crate::types::TypeId;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {
@@ -40,6 +41,9 @@ pub enum Value {
     /// Bits, not an `f64`, so that every value equals itself, NaN included.
     Float(u64),
 }
+
+/// A constant's type and value.
+pub type Constant = (TypeId, Value);
 
 /// Why an operation gives no value at compile time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -1,8 +1,8 @@
 //! The patterns of `match` arms and `let .{ }`.
 
 use arena::Id;
-use ast::Pattern;
 use diagnostics::Diagnostic;
+use model::syntax::Pattern;
 
 use token::TokenKind;
 

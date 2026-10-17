@@ -35,12 +35,16 @@ scheduled per declaration, on demand (Zig, Rust), not module by module.
   together. There are no side tables over the AST.
 - **decided** Simple constants are folded during that walk. Comptime, when it
   comes, runs in a MIR interpreter (Rust style). Both use the same value
-  arithmetic in `ir`; see "Constant evaluation" for where each one stops.
+  arithmetic in `model`; see "Constant evaluation" for where each one stops.
 - **decided** Scheduling is per declaration, on demand.
 - **decided** LLVM IR is written as text and compiled by clang.
-- **decided** A shared `ir` crate owns the type model, definition ids, constant
-  values with their arithmetic, and operator kinds. THIR and MIR keep their own
-  node types: a tree and a graph have different shapes.
+- **decided** One `model` crate owns the program's data: the syntax tree, the
+  THIR (later MIR) node types, the type model, definition ids, constant values
+  with their arithmetic, and operator kinds. The crates that build them
+  (`parser`, `check`, later `mir` lowering and `llvm`) hold only logic. THIR and
+  MIR keep their own node types: a tree and a graph have different shapes.
+  (Until 2026-10-17 this was an `ir` crate, with the tree in `ast` and THIR in
+  `thir`.)
 - **decided** Order: this design first, then a thin program end to end, then one
   feature at a time through every layer.
 
@@ -68,34 +72,36 @@ that is built once and kept.
 ## Crates
 
 ```
-peeper ─► build ─► project ─► parser ─► ast ─► arena
+peeper ─► build ─► project ─► parser ─► model ─► arena
             │
-            ├─► thir ─► ir, ast, arena   check: AST -> THIR and signatures; folding
-            ├─► mir ──► ir, thir, arena  THIR -> MIR; flow checks; (later) interpreter
-            └─► llvm ─► ir, mir          MIR -> LLVM text; clang
+            ├─► check ─► model, project   AST -> THIR and signatures; folding
+            ├─► mir ───► model            THIR -> MIR; flow checks; (later) interpreter
+            └─► llvm ──► model            MIR -> LLVM text; clang
 ```
 
-Only `mir` reads THIR. `llvm` and the interpreter need struct fields, enum
-variants and function types for layout and values; those are signatures, and
-signatures are `ir` data, written by check.
+Every phase reads and writes its data in `model`; only `mir` reads THIR, and
+`llvm` and the interpreter read MIR and signatures. Signatures (struct fields,
+enum variants, function types) are `model` data, written by check.
 
 | crate | owns |
 |---|---|
-| `ir` | `TypeId` and the type interner; `DefId`; signatures (fields, variants, parameters, results); constant values and their arithmetic; `BinaryOp`, `UnaryOp` |
-| `thir` | THIR node types; the checker that builds THIR and writes signatures |
-| `mir` | MIR node types; lowering from THIR; flow checks; later the interpreter |
+| `model` | data only: `syntax` (the syntax tree), `thir` (THIR nodes), later `mir`; `types` (`TypeId`, the type interner, the built-in types table); `value` (constant values and their arithmetic); `DefId`; `BinaryOp`, `UnaryOp`; signatures |
+| `check` | the checker: scopes, name lookup, building THIR, writing signatures |
+| `mir` | lowering from THIR; flow checks; later the interpreter |
 | `llvm` | LLVM text for a module; running clang and the linker |
 | `build` | the scheduler: memo tables, demand order, worker threads (the `build` of `overall-design.md`) |
 
-The typed arenas `Arena`, `Id` and `List` now in `ast` are needed by THIR and MIR
-as well. They move to one small crate (`pkg/arena`) that all three use, instead
-of being written again. The `Node` trait moves with them, generic over the
-container that holds the arenas (`trait Node { type Container; fn arena(c: &mut
-Self::Container) -> &mut Arena<Self>; }`), and so does the `nodes!` macro, which
-takes the container's name (`nodes!(Tree; Expr => exprs, ...)`). The AST tree,
-a THIR body and a MIR body each list their arenas once with it.
+A scope's `Binding` and `ModuleScope` stay in `check`: only the checker reads
+them, and their one writer (`collect`) is checker logic.
 
-## The `ir` crate
+The typed arenas `Arena`, `Id` and `List` live in one small crate (`pkg/arena`)
+used by the syntax tree, THIR and MIR. The `Node` trait is generic over the
+container that holds the arenas (`trait Node { type Container; fn arena(c: &mut
+Self::Container) -> &mut Arena<Self>; }`), and the `nodes!` macro takes the
+container's name (`nodes!(Tree; Expr => exprs, ...)`). The syntax tree, a THIR
+body and a MIR body each list their arenas once with it.
+
+## The `model` crate's semantic data
 
 - **Types.** `TypeId(u32)` names an interned type: integers and floats by width
   and sign, `bool`, `char`, strings, references, pointers, optionals, arrays,
@@ -125,7 +131,7 @@ a THIR body and a MIR body each list their arenas once with it.
 
 ## Constant evaluation
 
-One owner for the meaning of every operation: `ir`'s value functions, on top
+One owner for the meaning of every operation: `model`'s value functions, on top
 of `pkg/bigint` for integer arithmetic (add,
 compare, cast, build an aggregate, read a field). Two drivers call them, each for
 what the other cannot do:
@@ -159,8 +165,8 @@ computed differed (issues #154, #155, PR #158). The rules that prevent them:
    width; the Go guard wrote the width as a constant of the count's type, so a
    `u2` count compared against 8 cut to 0.
 5. **Constants are written from the same bits** (`iN u0x...`), and
-   `crates/ir/tests/llvm_parity.rs` runs every operator on widths 1 to 1000 in
-   `lli` and in `ir` and requires equal bits.
+   `crates/model/tests/llvm_parity.rs` runs every operator on widths 1 to 1000 in
+   `lli` and in `model` and requires equal bits.
 
 Floats (`f32`, `f64`) follow the same idea:
 
@@ -198,7 +204,7 @@ mir(d)         MIR of function d (needs body(d)); later also comptime calls
 - A query asked for while it is running is a cycle (`const A = B; const B = A;`)
   and is reported once (T0013), at the declaration asked for again; the other
   declarations of the cycle become silently invalid.
-- The `build` crate is the scheduler. It implements `thir::Queries`; the scopes
+- The `build` crate is the scheduler. It implements `check::Queries`; the scopes
   of all modules are collected first and handed to each checker as plain data.
   Programs with syntax or import errors are not checked.
 - The model is a hybrid. Across modules: the program's order, so imported

@@ -5,13 +5,13 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use ir::DefId;
-use ir::types::TypeId;
-use ir::types::Types;
+use model::DefId;
+use model::types::TypeId;
+use model::types::Types;
+use model::value::Constant;
 use source::SourceFile;
 
 use crate::Checker;
-use crate::Constant;
 use crate::Queries;
 use crate::scope::collect;
 
@@ -29,11 +29,11 @@ impl Queries for Program {
     }
 
     fn signature(&mut self, function: DefId) -> TypeId {
-        unreachable!("a thir test asked for the signature of {function:?}; test it in `build`")
+        unreachable!("a check test asked for the signature of {function:?}; test it in `build`")
     }
 
     fn constant(&mut self, constant: DefId) -> Option<Constant> {
-        unreachable!("a thir test asked for the value of {constant:?}; test it in `build`")
+        unreachable!("a check test asked for the value of {constant:?}; test it in `build`")
     }
 }
 

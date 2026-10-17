@@ -2,8 +2,8 @@
 //! and array literals.
 
 use arena::Id;
-use ast::{Expr, FieldValue, Length, Type};
 use diagnostics::Diagnostic;
+use model::syntax::{Expr, FieldValue, Length, Type};
 use token::{Token, TokenKind};
 
 use crate::expr::{Precedence, starts_expression};

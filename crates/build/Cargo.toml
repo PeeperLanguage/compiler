@@ -9,10 +9,9 @@ publish.workspace = true
 [dependencies]
 diagnostics.workspace = true
 arena.workspace = true
-ast.workspace = true
 project.workspace = true
-ir.workspace = true
-thir.workspace = true
+model.workspace = true
+check.workspace = true
 
 [dev-dependencies]
 source.workspace = true

@@ -1,6 +1,6 @@
 [package]
-name = "ast"
-description = "The syntax tree of one Peeper file"
+name = "model"
+description = "The program's data: syntax tree, THIR, types, constant values and operators"
 version.workspace = true
 edition.workspace = true
 license-file.workspace = true
@@ -8,6 +8,7 @@ publish.workspace = true
 
 [dependencies]
 arena.workspace = true
+bigint.workspace = true
 source.workspace = true
 token.workspace = true
 

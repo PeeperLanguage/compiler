@@ -8,8 +8,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
 
-use ast::Tree;
 use diagnostics::Diagnostic;
+use model::syntax::Tree;
 use source::{SourceFile, Span};
 
 pub use packages::Packages;

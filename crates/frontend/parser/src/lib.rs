@@ -29,8 +29,8 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use arena::{Id, List, Node};
-use ast::Tree;
 use diagnostics::{Diagnostic, Fix};
+use model::syntax::Tree;
 use source::{SourceFile, Span};
 use token::{Token, TokenKind};
 

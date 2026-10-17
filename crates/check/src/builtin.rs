@@ -1,5 +1,5 @@
 //! The built-ins the checker does not handle yet. The built-in types it does
-//! handle are named in `ir::types` (`Types::builtin`).
+//! handle are named in `model::types` (`Types::builtin`).
 
 /// What to call the built-in type `name` in a "not supported yet" report, if
 /// it is one the checker does not handle yet.

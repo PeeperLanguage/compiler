@@ -1,5 +1,5 @@
 [package]
-name = "thir"
+name = "check"
 description = "Semantic analysis: names, types and constants of a program, into THIR"
 version.workspace = true
 edition.workspace = true
@@ -10,9 +10,8 @@ publish.workspace = true
 source.workspace = true
 diagnostics.workspace = true
 arena.workspace = true
-ast.workspace = true
 project.workspace = true
-ir.workspace = true
+model.workspace = true
 bigint.workspace = true
 numeric.workspace = true
 token.workspace = true

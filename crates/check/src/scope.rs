@@ -7,7 +7,8 @@
 use std::collections::HashMap;
 
 use diagnostics::Diagnostic;
-use ir::DefId;
+use model::DefId;
+use model::syntax;
 use source::Span;
 
 /// What a module-level name stands for, by the kind of its declaration.
@@ -80,15 +81,15 @@ pub fn collect(
             index: declaration.index() as u32,
         };
         let (name, binding) = match tree.decls[declaration] {
-            ast::Decl::Function(function) if function.receiver.is_none() => {
+            syntax::Decl::Function(function) if function.receiver.is_none() => {
                 (function.name, Binding::Function(definition))
             }
-            ast::Decl::Function(_) => continue, // a method belongs to its receiver's type
-            ast::Decl::Const { name, .. } => (name, Binding::Constant(definition)),
-            ast::Decl::Struct(declaration)
-            | ast::Decl::Enum(declaration)
-            | ast::Decl::Interface(declaration)
-            | ast::Decl::Alias(declaration) => (declaration.name, Binding::Type(definition)),
+            syntax::Decl::Function(_) => continue, // a method belongs to its receiver's type
+            syntax::Decl::Const { name, .. } => (name, Binding::Constant(definition)),
+            syntax::Decl::Struct(declaration)
+            | syntax::Decl::Enum(declaration)
+            | syntax::Decl::Interface(declaration)
+            | syntax::Decl::Alias(declaration) => (declaration.name, Binding::Type(definition)),
         };
         declare(file.slice(name), binding, name);
     }
@@ -100,7 +101,7 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    use ir::DefId;
+    use model::DefId;
     use source::SourceFile;
 
     use super::Binding;

@@ -4,7 +4,8 @@
 //! compared with it. With `spans`, each line also shows the node's span.
 
 use arena::{Id, List};
-use ast::{
+use model::syntax;
+use model::syntax::{
     Attribute, Block, Decl, Expr, Field, FieldValue, Import, Length, MatchArm, Metadata, Param,
     Pattern, Stmt, Tree, Type, Variant,
 };
@@ -94,7 +95,7 @@ impl Dumper<'_> {
 
     fn item(&mut self, item: Item, depth: usize) {
         let t = self.tree;
-        let names = |kind: &'static str, list: List<ast::Name>| {
+        let names = |kind: &'static str, list: List<syntax::Name>| {
             t.lists
                 .items(list)
                 .map(move |name| Item::Leaf(kind, t.names.span(name)))

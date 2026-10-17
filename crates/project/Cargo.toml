@@ -10,7 +10,7 @@ publish.workspace = true
 source.workspace = true
 diagnostics.workspace = true
 literal.workspace = true
-ast.workspace = true
+model.workspace = true
 parser.workspace = true
 
 [lints]

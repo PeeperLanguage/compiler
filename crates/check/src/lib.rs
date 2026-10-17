@@ -2,7 +2,6 @@
 //! the value of each constant, built into THIR in one walk per body
 //! (docs/ir-design.md). It starts with each module's scope.
 
-pub mod body;
 pub mod builtin;
 mod expression;
 pub mod scope;
@@ -13,21 +12,18 @@ mod testing;
 
 use diagnostics::Code;
 use diagnostics::Diagnostic;
-use ir::DefId;
-use ir::types::TypeId;
-use ir::types::Types;
-use ir::value::Value;
+use model::DefId;
+use model::types::TypeId;
+use model::types::Types;
+use model::value::Constant;
 use source::Span;
 
 use crate::scope::Binding;
 use crate::scope::ModuleScope;
 
-/// A constant's type and value.
-pub type Constant = (TypeId, Value);
-
 /// What checking one declaration needs from the rest of the program. The
 /// scheduler implements it: it owns the results of every declaration, so
-/// `thir` never depends on the scheduler.
+/// `check` never depends on the scheduler.
 pub trait Queries {
     /// The program's types, shared by every declaration.
     fn types(&mut self) -> &mut Types;

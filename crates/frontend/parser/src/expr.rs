@@ -6,8 +6,8 @@
 //! live in the table below and not in nested grammar rules.
 
 use arena::Id;
-use ast::{Expr, Type};
 use diagnostics::Diagnostic;
+use model::syntax::{Expr, Type};
 use token::TokenKind;
 
 use crate::literals::{
@@ -442,7 +442,7 @@ fn pipe(p: &mut Parser, value: Id<Expr>) -> Id<Expr> {
 
 #[cfg(test)]
 mod tests {
-    use ast::{Decl, Stmt, Tree};
+    use model::syntax::{Decl, Stmt, Tree};
 
     use super::*;
     use crate::tests::{dump_of, messages, one_error, parse_text};

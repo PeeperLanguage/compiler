@@ -2,8 +2,8 @@
 //! struct, enum and interface types of type declarations.
 
 use arena::Id;
-use ast::{Decl, Field, Length, Param, Type, Variant};
 use diagnostics::Diagnostic;
+use model::syntax::{Decl, Field, Length, Param, Type, Variant};
 use source::Span;
 use token::{Token, TokenKind};
 

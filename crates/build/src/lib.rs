@@ -1,19 +1,20 @@
 //! The scheduler: checks every declaration of a program, each once, in the
 //! order declarations ask for each other (docs/ir-design.md). It owns the
-//! result of every query, and `thir` asks for them through `thir::Queries`,
+//! result of every query, and `check` asks for them through `check::Queries`,
 //! so a declaration is checked the first time anything needs it.
 
 use std::collections::HashMap;
 
 use arena::Id;
+use check::Checker;
+use check::Queries;
+use check::scope::ModuleScope;
 use diagnostics::Diagnostic;
-use ir::DefId;
-use ir::types::TypeId;
-use ir::types::Types;
-use thir::Checker;
-use thir::Constant;
-use thir::Queries;
-use thir::scope::ModuleScope;
+use model::DefId;
+use model::syntax;
+use model::types::TypeId;
+use model::types::Types;
+use model::value::Constant;
 
 /// Checks every declaration of `program` and gives the diagnostics. Integers
 /// as wide as a pointer (`isize`, `usize`) have `pointer_bits` bits.
@@ -30,7 +31,7 @@ pub fn check(program: &project::Program, pointer_bits: u32) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     let scopes: Vec<ModuleScope> = (0..)
         .zip(&modules)
-        .map(|(index, module)| thir::scope::collect(index, module, &indexes, &mut diagnostics))
+        .map(|(index, module)| check::scope::collect(index, module, &indexes, &mut diagnostics))
         .collect();
     let program = Program {
         prelude: indexes.get(project::PRELUDE_PATH).copied(),
@@ -53,13 +54,13 @@ pub fn check(program: &project::Program, pointer_bits: u32) -> Vec<Diagnostic> {
                 index: declaration.index() as u32,
             };
             match tree.decls[declaration] {
-                ast::Decl::Function(function) => {
+                syntax::Decl::Function(function) => {
                     let ty = build.signature(definition);
                     // shortcut: the THIR is dropped until MIR lowering (R5e)
                     // takes it.
                     build.with_checker(index, |checker| checker.body(&function, ty));
                 }
-                ast::Decl::Const { .. } => {
+                syntax::Decl::Const { .. } => {
                     build.constant(definition);
                 }
                 _ => {
@@ -136,12 +137,12 @@ impl<'p> Build<'p> {
         let module = self.program.modules[definition.module as usize];
         let tree = &module.syntax;
         let name = match tree.decls[Id::from_index(definition.index as usize)] {
-            ast::Decl::Function(function) => function.name,
-            ast::Decl::Const { name, .. } => name,
-            ast::Decl::Struct(declaration)
-            | ast::Decl::Enum(declaration)
-            | ast::Decl::Interface(declaration)
-            | ast::Decl::Alias(declaration) => declaration.name,
+            syntax::Decl::Function(function) => function.name,
+            syntax::Decl::Const { name, .. } => name,
+            syntax::Decl::Struct(declaration)
+            | syntax::Decl::Enum(declaration)
+            | syntax::Decl::Interface(declaration)
+            | syntax::Decl::Alias(declaration) => declaration.name,
         };
         let text = tree.file.slice(name);
         self.diagnostics.push(

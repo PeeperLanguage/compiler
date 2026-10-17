@@ -4,8 +4,8 @@ members = [
     "crates/diagnostics",
     "crates/frontend/*",
     "crates/pkg/*",
-    "crates/ir",
-    "crates/thir",
+    "crates/model",
+    "crates/check",
     "crates/build",
     "crates/manifest",
     "crates/project",
@@ -27,13 +27,12 @@ literal = { path = "crates/frontend/literal" }
 lexer = { path = "crates/frontend/lexer" }
 arena = { path = "crates/pkg/arena" }
 bigint = { path = "crates/pkg/bigint" }
-ast = { path = "crates/frontend/ast" }
 parser = { path = "crates/frontend/parser" }
 numeric = { path = "crates/pkg/numeric" }
 colors = { path = "crates/pkg/colors" }
 toml = { path = "crates/pkg/toml" }
-ir = { path = "crates/ir" }
-thir = { path = "crates/thir" }
+model = { path = "crates/model" }
+check = { path = "crates/check" }
 build = { path = "crates/build" }
 manifest = { path = "crates/manifest" }
 project = { path = "crates/project" }

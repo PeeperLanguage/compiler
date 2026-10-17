@@ -126,7 +126,7 @@ Names must keep their meaning when read as plain text, with no editor help:
 - Import one item per `use`: `use source::Span;`. Do not write
   `use path::{a, b, c}` and then use `a`, `b`, `c` bare, and do not use `*`.
 - No `pub use` re-exports: an item is named by the module that defines it
-  (`pub mod types;` and `ir::types::TypeId`, not `ir::TypeId`).
+  (`pub mod types;` and `model::types::TypeId`, not `model::TypeId`).
 
 ## 6. Change scope
 

@@ -2,8 +2,10 @@
 //! declarations, with their doc comments and attributes.
 
 use arena::{Id, List};
-use ast::{Attribute, Decl, Expr, Function, Import, Metadata, Name, Param, Type, TypeDecl};
 use diagnostics::Diagnostic;
+use model::syntax::{
+    Attribute, Decl, Expr, Function, Import, Metadata, Name, Param, Type, TypeDecl,
+};
 use source::Span;
 use token::TokenKind;
 

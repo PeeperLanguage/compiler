@@ -13,7 +13,7 @@ token.workspace = true
 lexer.workspace = true
 numeric.workspace = true
 arena.workspace = true
-ast.workspace = true
+model.workspace = true
 stacker.workspace = true
 
 [lints]

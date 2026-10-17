@@ -3,17 +3,17 @@
 //! are explicit nodes, and constant expressions are folded to their values.
 //! Its nodes live in typed arenas, as the syntax tree's do.
 
+use crate::BinaryOp;
+use crate::DefId;
+use crate::UnaryOp;
+use crate::types::TypeId;
+use crate::value::Value;
 use arena::Arena;
 use arena::Id;
 use arena::List;
 use arena::Lists;
 use arena::Node;
 use arena::nodes;
-use ir::BinaryOp;
-use ir::DefId;
-use ir::UnaryOp;
-use ir::types::TypeId;
-use ir::value::Value;
 use source::Span;
 
 nodes! {
@@ -109,8 +109,8 @@ pub struct Block {
     pub statements: List<Stmt>,
 }
 
-impl Body {
-    pub(crate) fn new() -> Body {
+impl Default for Body {
+    fn default() -> Body {
         Body {
             statements: List::EMPTY,
             exprs: Arena::default(),
@@ -120,7 +120,9 @@ impl Body {
             lists: Lists::default(),
         }
     }
+}
 
+impl Body {
     /// Adds `node` with `span` to its arena.
     pub fn add<T: Node<Container = Body>>(&mut self, node: T, span: Span) -> Id<T> {
         T::arena(self).push(node, span)
