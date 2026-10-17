@@ -15,8 +15,5 @@ check.workspace = true
 lower.workspace = true
 source.workspace = true
 
-[dev-dependencies]
-parser.workspace = true
-
 [lints]
 workspace = true

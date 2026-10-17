@@ -37,6 +37,20 @@ impl Queries for Program {
     }
 }
 
+/// The module `path`, written as `text`, with `imports`; its text must parse
+/// without errors.
+pub(crate) fn module(path: &str, text: &str, imports: Vec<project::Import>) -> project::Module {
+    let file = Arc::new(SourceFile::new("main.peep", text));
+    let (syntax, parse) = parser::parse(&file);
+    assert!(parse.is_empty(), "{parse:?}");
+    project::Module {
+        path: path.to_string(),
+        syntax,
+        imports,
+        diagnostics: Vec::new(),
+    }
+}
+
 /// A diagnostic as its code, message and the text of its first label.
 pub(crate) type Reported = (&'static str, String, String);
 
@@ -47,17 +61,6 @@ pub(crate) fn with_checker<T>(
     text: &str,
     work: impl FnOnce(&mut Checker<Program>) -> T,
 ) -> (T, Types, Vec<Reported>) {
-    let module = |path: &str, text: &str, imports| {
-        let file = Arc::new(SourceFile::new("main.peep", text));
-        let (syntax, parse) = parser::parse(&file);
-        assert!(parse.is_empty(), "{parse:?}");
-        project::Module {
-            path: path.to_string(),
-            syntax,
-            imports,
-            diagnostics: Vec::new(),
-        }
-    };
     let imports = vec![project::Import {
         path: "app:utils".to_string(),
         alias: Some("utils".to_string()),

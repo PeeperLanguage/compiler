@@ -372,62 +372,39 @@ impl Queries for Build<'_> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-    use std::sync::Arc;
-
-    use source::SourceFile;
+    use std::path::PathBuf;
 
     use super::Compiled;
     use super::compile;
 
-    /// The program of `modules`, each an import path and its text, in the
-    /// order given (each after those it imports). An import written as
-    /// `import "app:utils";` is named after its last part.
+    /// The program of `modules`, each an import path and its text, loaded as
+    /// `peeper check` loads it from `app:main`, with every file given as open
+    /// editor text so nothing is read from disk. Loading must find no error.
     fn program(modules: &[(&str, &str)]) -> project::Program {
-        let mut program = project::Program {
-            modules: HashMap::new(),
-            order: Vec::new(),
-            diagnostics: Vec::new(),
+        let folder = |package: &str| match package {
+            "core" => PathBuf::from("/peeper-build-test/libs/core/src"),
+            _ => PathBuf::from("/peeper-build-test/src"),
         };
-        for &(path, text) in modules {
-            let file = Arc::new(SourceFile::new(format!("{path}.peep"), text));
-            let (syntax, parse) = parser::parse(&file);
-            assert!(parse.is_empty(), "{parse:?}");
-            let mut imports: Vec<project::Import> = syntax
-                .imports
-                .iter()
-                .map(|import| {
-                    let written = file.slice(import.path).trim_matches('"').to_string();
-                    let alias = match import.alias {
-                        Some(alias) => file.slice(alias).to_string(),
-                        None => written.rsplit([':', '/']).next().unwrap().to_string(),
-                    };
-                    project::Import {
-                        path: written,
-                        alias: Some(alias),
-                        span: import.span,
-                    }
-                })
-                .collect();
-            let has_prelude = modules
-                .iter()
-                .any(|&(path, _)| path == project::PRELUDE_PATH);
-            if has_prelude && path != project::PRELUDE_PATH {
-                imports.push(project::Import {
-                    path: project::PRELUDE_PATH.to_string(),
-                    alias: None,
-                    span: source::Span::at(0),
-                });
-            }
-            let module = project::Module {
-                path: path.to_string(),
-                syntax,
-                imports,
-                diagnostics: Vec::new(),
-            };
-            program.modules.insert(path.to_string(), module);
-            program.order.push(path.to_string());
-        }
+        let packages = project::Packages::from([
+            ("app".to_string(), folder("app")),
+            ("core".to_string(), folder("core")),
+        ]);
+        let open_files = modules
+            .iter()
+            .map(|&(path, text)| {
+                let (package, file) = path.split_once(':').unwrap();
+                (
+                    folder(package).join(format!("{file}.peep")),
+                    text.to_string(),
+                )
+            })
+            .collect();
+        let program = project::load(&packages, &folder("app").join("main.peep"), &open_files);
+        let reported: Vec<&str> = program
+            .load_diagnostics()
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect();
+        assert!(!program.load_failed(), "{reported:?}");
         program
     }
 
@@ -661,6 +638,7 @@ mod tests {
     const MAIN: (&str, &str) = (
         "app:main",
         "import \"app:utils\";
+        import \"app:other\";
         fn main() { let sum = utils::Add(1, 2); }
         fn wrong() { let flag: bool = 1; }",
     );
@@ -668,7 +646,7 @@ mod tests {
     #[test]
     fn an_unchanged_program_is_not_checked_again() {
         let (first, checked) = recompile(&[UTILS, OTHER, MAIN], Compiled::default());
-        assert_eq!(checked, ["app:utils", "app:other", "app:main"]);
+        assert_eq!(checked, ["app:other", "app:utils", "app:main"]);
         let found = messages(&first);
         assert_eq!(found, ["mismatched types: expected `bool`, found `i32`"]);
         let (second, checked) = recompile(&[UTILS, OTHER, MAIN], first);
@@ -700,18 +678,18 @@ mod tests {
 
     #[test]
     fn errors_come_and_go_with_edits() {
-        let (first, _) = recompile(&[UTILS, MAIN], Compiled::default());
+        let (first, _) = recompile(&[UTILS, OTHER, MAIN], Compiled::default());
         let broken = (
             "app:utils",
             "fn Add(a: i32, b: i32) -> i32 { let c: bool = a; return a + b; }",
         );
         // `utils` is checked, but `Add` has an error and gives no MIR; its
         // interface is unchanged, so `main` keeps its own error.
-        let (second, checked) = recompile(&[broken, MAIN], first);
+        let (second, checked) = recompile(&[broken, OTHER, MAIN], first);
         assert!(checked.is_empty(), "{checked:?}");
         let mismatch = |found: &str| format!("mismatched types: expected `bool`, found `{found}`");
         assert_eq!(messages(&second), [mismatch("i32"), mismatch("i32")]);
-        let (third, checked) = recompile(&[UTILS, MAIN], second);
+        let (third, checked) = recompile(&[UTILS, OTHER, MAIN], second);
         assert_eq!(checked, ["app:utils"]);
         assert_eq!(messages(&third), [mismatch("i32")]);
     }

@@ -99,25 +99,12 @@ pub fn collect(
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
-    use std::sync::Arc;
 
     use model::DefId;
-    use source::SourceFile;
 
     use super::Binding;
     use super::collect;
-
-    fn module(text: &str, imports: Vec<project::Import>) -> project::Module {
-        let file = Arc::new(SourceFile::new("main.peep", text));
-        let (syntax, diagnostics) = parser::parse(&file);
-        assert!(diagnostics.is_empty(), "{diagnostics:?}");
-        project::Module {
-            path: "app:main".to_string(),
-            syntax,
-            imports,
-            diagnostics: Vec::new(),
-        }
-    }
+    use crate::testing::module;
 
     #[test]
     fn declarations_and_imports() {
@@ -136,7 +123,12 @@ mod tests {
         ];
         let indexes = HashMap::from([("app:utils", 0), ("core:global", 1), ("app:main", 2)]);
         let mut diagnostics = Vec::new();
-        let scope = collect(2, &module(text, imports), &indexes, &mut diagnostics);
+        let scope = collect(
+            2,
+            &module("app:main", text, imports),
+            &indexes,
+            &mut diagnostics,
+        );
         assert!(diagnostics.is_empty());
         assert_eq!(
             scope.get("main"),
@@ -182,7 +174,12 @@ mod tests {
         }];
         let indexes = HashMap::from([("app:utils", 0), ("app:main", 1)]);
         let mut diagnostics = Vec::new();
-        let scope = collect(1, &module(text, imports), &indexes, &mut diagnostics);
+        let scope = collect(
+            1,
+            &module("app:main", text, imports),
+            &indexes,
+            &mut diagnostics,
+        );
         assert_eq!(
             scope.get("A"),
             Some(Binding::Constant(DefId {

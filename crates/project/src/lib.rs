@@ -132,7 +132,8 @@ struct Job {
 /// a package's folder names.
 pub fn load(packages: &Packages, entry: &Path, open_files: &HashMap<PathBuf, String>) -> Program {
     let entry = std::path::absolute(entry).unwrap_or_else(|_| entry.to_path_buf());
-    let with_prelude = resolve(packages, PRELUDE_PATH).is_ok_and(|(_, file)| file.is_file());
+    let with_prelude = resolve(packages, PRELUDE_PATH)
+        .is_ok_and(|(_, file)| file.is_file() || open_files.contains_key(&file));
     let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
 
     let mut modules = HashMap::new();
