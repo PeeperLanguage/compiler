@@ -304,6 +304,34 @@ impl<'p> Build<'p> {
         Some((body, mir))
     }
 
+    /// The result of one query of `definition`, kept in `table`: the result
+    /// already found, `on_cycle` when the query is asked for while it runs (a
+    /// cycle, reported), or else what `work` finds with a checker of its
+    /// module, kept for the next ask.
+    fn query<T: Clone>(
+        &mut self,
+        definition: DefId,
+        table: fn(&mut Self) -> &mut Vec<Vec<State<T>>>,
+        on_cycle: T,
+        work: impl FnOnce(&mut Checker<Build<'p>>, Id<syntax::Decl>) -> T,
+    ) -> T {
+        let (module, index) = (definition.module as usize, definition.index as usize);
+        match &table(self)[module][index] {
+            State::Done(result) => return result.clone(),
+            State::Running => {
+                self.report_cycle(definition);
+                return on_cycle;
+            }
+            State::NotStarted => {}
+        }
+        table(self)[module][index] = State::Running;
+        let result = self.with_checker(definition.module, |checker| {
+            work(checker, Id::from_index(index))
+        });
+        table(self)[module][index] = State::Done(result.clone());
+        result
+    }
+
     /// Reports that the declaration `definition` was asked for while it was
     /// being checked: it depends on itself.
     fn report_cycle(&mut self, definition: DefId) {
@@ -334,39 +362,18 @@ impl Queries for Build<'_> {
     }
 
     fn signature(&mut self, function: DefId) -> TypeId {
-        let (module, index) = (function.module as usize, function.index as usize);
-        match self.signatures[module][index] {
-            State::Done(ty) => return ty,
-            State::Running => {
-                self.report_cycle(function);
-                return TypeId::INVALID;
-            }
-            State::NotStarted => {}
-        }
-        self.signatures[module][index] = State::Running;
-        let ty = self.with_checker(function.module, |checker| {
-            checker.signature(Id::from_index(index))
-        });
-        self.signatures[module][index] = State::Done(ty);
-        ty
+        let work = |checker: &mut Checker<_>, declaration| checker.signature(declaration);
+        self.query(
+            function,
+            |build| &mut build.signatures,
+            TypeId::INVALID,
+            work,
+        )
     }
 
     fn constant(&mut self, constant: DefId) -> Option<Constant> {
-        let (module, index) = (constant.module as usize, constant.index as usize);
-        match &self.constants[module][index] {
-            State::Done(value) => return value.clone(),
-            State::Running => {
-                self.report_cycle(constant);
-                return None;
-            }
-            State::NotStarted => {}
-        }
-        self.constants[module][index] = State::Running;
-        let value = self.with_checker(constant.module, |checker| {
-            checker.constant(Id::from_index(index))
-        });
-        self.constants[module][index] = State::Done(value.clone());
-        value
+        let work = |checker: &mut Checker<_>, declaration| checker.constant(declaration);
+        self.query(constant, |build| &mut build.constants, None, work)
     }
 }
 
