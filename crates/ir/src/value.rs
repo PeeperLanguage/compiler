@@ -108,6 +108,32 @@ pub fn unary(op: UnaryOp, operand_type: &Type, value: &Value) -> Result<Value, V
     }
 }
 
+/// `value` of the type `from` as a value of the wider type `to`
+/// (`from.widens_to(to)`): a signed integer keeps its sign.
+pub fn widen(from: &Type, to: &Type, value: &Value) -> Value {
+    match (from, to, value) {
+        (Type::Integer(from), Type::Integer(to), Value::Integer(limbs)) => {
+            Value::Integer(bigint::extend(from.bits, from.signed, limbs, to.bits))
+        }
+        // An `f32` value is already held as the `f64` it widens to.
+        (Type::Float(Float::F32), Type::Float(Float::F64), Value::Float(_)) => value.clone(),
+        _ => unreachable!("check widens only {from:?} values that widen to {to:?}"),
+    }
+}
+
+/// The count of a shift of a `shifted` value by `count`, of the type
+/// `count_type`: below the shifted type's width, or out of range.
+pub fn shift_count(
+    shifted: Integer,
+    count_type: Integer,
+    count: &Limbs,
+) -> Result<u32, ValueError> {
+    bigint::to_u64(count_type.bits, count_type.signed, count)
+        .filter(|&count| count < u64::from(shifted.bits))
+        .map(|count| count as u32)
+        .ok_or(ValueError::ShiftOutOfRange)
+}
+
 fn integer_binary(
     op: BinaryOp,
     integer: Integer,
@@ -132,9 +158,7 @@ fn integer_binary(
             bigint::remainder(bits, signed, left, right).ok_or(ValueError::DivisionByZero)?
         }
         BinaryOp::ShiftLeft | BinaryOp::ShiftRight => {
-            let count = bigint::to_u64(count_type.bits, count_type.signed, right)
-                .filter(|&count| count < u64::from(bits))
-                .ok_or(ValueError::ShiftOutOfRange)? as u32;
+            let count = shift_count(integer, count_type, right)?;
             match op {
                 BinaryOp::ShiftLeft => bigint::shift_left(bits, left, count),
                 _ => bigint::shift_right(bits, signed, left, count),
@@ -187,6 +211,7 @@ mod tests {
     use super::ValueError;
     use super::binary;
     use super::unary;
+    use super::widen;
     use crate::BinaryOp;
     use crate::UnaryOp;
     use crate::types::Float;
@@ -298,6 +323,19 @@ mod tests {
         assert_eq!(
             shift(BinaryOp::ShiftLeft, &u8, 1, &u16, 256),
             Err(ValueError::ShiftOutOfRange)
+        );
+    }
+
+    #[test]
+    fn widening_keeps_the_value() {
+        let (i8, u8, i16, i256) = (int(true, 8), int(false, 8), int(true, 16), int(true, 256));
+        assert_eq!(widen(&i8, &i16, &value(&i8, -1)), value(&i16, -1));
+        assert_eq!(widen(&u8, &i16, &value(&u8, 255)), value(&i16, 255));
+        assert_eq!(widen(&i8, &i256, &value(&i8, -128)), value(&i256, -128));
+        let (f32, f64) = (Type::Float(Float::F32), Type::Float(Float::F64));
+        assert_eq!(
+            widen(&f32, &f64, &float(&f32, 0.1)),
+            float(&f64, f64::from(0.1f32))
         );
     }
 

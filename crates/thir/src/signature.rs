@@ -2,7 +2,6 @@
 //! function's signature is its function type; a constant's is its type.
 
 use arena::Id;
-use diagnostics::Diagnostic;
 use ir::types::Type;
 use ir::types::TypeId;
 
@@ -72,24 +71,12 @@ impl<Q: Queries> Checker<'_, Q> {
                 match self.scope.get(name) {
                     Some(Binding::Declaration(_)) => "named types",
                     Some(Binding::Module(_)) => {
-                        self.diagnostics.push(
-                            Diagnostic::new(
-                                diagnostics::NOT_A_TYPE,
-                                format!("`{name}` is a module, not a type"),
-                            )
-                            .label(&tree.file, span, ""),
-                        );
-                        return TypeId::INVALID;
+                        let message = format!("`{name}` is a module, not a type");
+                        return self.error(diagnostics::NOT_A_TYPE, message, span);
                     }
                     None => {
-                        self.diagnostics.push(
-                            Diagnostic::new(
-                                diagnostics::UNDEFINED_NAME,
-                                format!("unknown type `{name}`"),
-                            )
-                            .label(&tree.file, span, ""),
-                        );
-                        return TypeId::INVALID;
+                        let message = format!("unknown type `{name}`");
+                        return self.error(diagnostics::UNDEFINED_NAME, message, span);
                     }
                 }
             }
@@ -114,86 +101,30 @@ impl<Q: Queries> Checker<'_, Q> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-    use std::sync::Arc;
-
     use ir::types::Type;
     use ir::types::TypeId;
-    use ir::types::Types;
-    use source::SourceFile;
 
-    use crate::Checker;
-    use crate::Queries;
-    use crate::scope::collect;
-
-    struct Program {
-        types: Types,
-    }
-
-    impl Queries for Program {
-        fn types(&mut self) -> &mut Types {
-            &mut self.types
-        }
-
-        fn pointer_bits(&self) -> u32 {
-            64
-        }
-    }
+    use crate::testing::Reported;
+    use crate::testing::check;
+    use crate::testing::reported;
 
     /// The signature of every declaration of `text`, as type text, and the
-    /// diagnostics as (code, message, labelled text).
-    fn signatures(text: &str) -> (Vec<String>, Vec<(&'static str, String, String)>) {
-        let file = Arc::new(SourceFile::new("main.peep", text));
-        let (syntax, parse) = parser::parse(&file);
-        assert!(parse.is_empty(), "{parse:?}");
-        let imports = vec![project::Import {
-            path: "app:utils".to_string(),
-            alias: Some("utils".to_string()),
-            span: source::Span::new(0, 0),
-        }];
-        let module = project::Module {
-            path: "app:main".to_string(),
-            syntax,
-            imports,
-            diagnostics: Vec::new(),
-        };
-        let indexes = HashMap::from([("app:utils", 0), ("app:main", 1)]);
-        let mut diagnostics = Vec::new();
-        let scope = collect(1, &module, &indexes, &mut diagnostics);
-        let mut program = Program {
-            types: Types::new(),
-        };
-        let mut checker = Checker {
-            module: &module,
-            scope: &scope,
-            queries: &mut program,
-            diagnostics: &mut diagnostics,
-        };
-        let declarations: Vec<_> = module
-            .syntax
-            .lists
-            .items(module.syntax.declarations)
-            .collect();
-        let found: Vec<TypeId> = declarations
-            .into_iter()
-            .map(|declaration| checker.signature(declaration))
-            .collect();
-        let text_of = |ty: TypeId| match &program.types[ty] {
+    /// diagnostics.
+    fn signatures(text: &str) -> (Vec<String>, Vec<Reported>) {
+        let (found, types, reported) = check(text, |checker| {
+            let tree = &checker.module.syntax;
+            let declarations: Vec<_> = tree.lists.items(tree.declarations).collect();
+            let found: Vec<TypeId> = declarations
+                .into_iter()
+                .map(|declaration| checker.signature(declaration))
+                .collect();
+            found
+        });
+        let text_of = |ty: TypeId| match &types[ty] {
             Type::Function { parameters, result } => format!("fn{parameters:?} -> {result:?}"),
             other => format!("{other:?}"),
         };
-        let found = found.into_iter().map(text_of).collect();
-        let reported = diagnostics
-            .iter()
-            .map(|d| {
-                (
-                    d.code.id,
-                    d.message.clone(),
-                    file.slice(d.labels[0].span).to_string(),
-                )
-            })
-            .collect();
-        (found, reported)
+        (found.into_iter().map(text_of).collect(), reported)
     }
 
     #[test]
@@ -212,10 +143,10 @@ mod tests {
 
     #[test]
     fn errors_are_located() {
-        let (found, reported) = signatures(
+        let (found, found_reported) = signatures(
             "fn a(x: Missing) {}\nfn b(m: utils) {}\nfn c(r: &i32) {}\nfn d<T>(x: T) {}\nfn e(x: i32 = 1) {}\nstruct P { x: i32 }\nfn f(p: P) {}\nconst N = 1;\n",
         );
-        let expected = [
+        let expected = reported(&[
             ("T0002", "unknown type `Missing`", "Missing"),
             ("T0021", "`utils` is a module, not a type", "utils"),
             ("T0043", "reference types are not supported yet", "&i32"),
@@ -228,12 +159,8 @@ mod tests {
                 "constants without a type are not supported yet",
                 "N",
             ),
-        ];
-        let expected: Vec<_> = expected
-            .iter()
-            .map(|&(code, message, text)| (code, message.to_string(), text.to_string()))
-            .collect();
-        assert_eq!(reported, expected);
+        ]);
+        assert_eq!(found_reported, expected);
         let invalid = format!("{:?}", TypeId::INVALID);
         assert_eq!(
             found[0],

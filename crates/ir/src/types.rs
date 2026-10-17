@@ -66,6 +66,22 @@ pub enum Type {
     },
 }
 
+impl Type {
+    /// Whether every value of this type is also a value of `target`, so a value
+    /// converts without `as`: to a wider integer of the same signedness, from
+    /// unsigned to a wider signed integer, and from `f32` to `f64`. A type does
+    /// not widen to itself.
+    pub fn widens_to(&self, target: &Type) -> bool {
+        match (self, target) {
+            (Type::Integer(from), Type::Integer(to)) => {
+                to.bits > from.bits && (from.signed == to.signed || to.signed)
+            }
+            (Type::Float(Float::F32), Type::Float(Float::F64)) => true,
+            _ => false,
+        }
+    }
+}
+
 const fn integer(signed: bool, bits: u32) -> Type {
     Type::Integer(Integer { signed, bits })
 }
@@ -138,6 +154,31 @@ impl Types {
     }
 }
 
+impl Types {
+    /// The type as a program writes it: `u8`, `fn(i32) -> bool`.
+    pub fn text(&self, id: TypeId) -> String {
+        match &self[id] {
+            Type::Invalid => "{invalid}".to_string(),
+            Type::Void => "void".to_string(),
+            Type::Bool => "bool".to_string(),
+            Type::Integer(Integer { signed, bits }) => {
+                format!("{}{bits}", if *signed { 'i' } else { 'u' })
+            }
+            Type::Float(Float::F32) => "f32".to_string(),
+            Type::Float(Float::F64) => "f64".to_string(),
+            Type::Function { parameters, result } => {
+                let parameters: Vec<String> = parameters.iter().map(|&p| self.text(p)).collect();
+                let mut text = format!("fn({})", parameters.join(", "));
+                if *result != TypeId::VOID {
+                    text.push_str(" -> ");
+                    text.push_str(&self.text(*result));
+                }
+                text
+            }
+        }
+    }
+}
+
 impl Default for Types {
     fn default() -> Types {
         Types::new()
@@ -197,6 +238,42 @@ mod tests {
         assert!(!fits(true, 128, &[1, 1 << 63], true));
         assert!(fits(false, 256, &[u64::MAX; 4], false));
         assert!(fits(false, 8, &[200, 0, 0], false), "high zero limbs");
+    }
+
+    #[test]
+    fn widening_keeps_every_value() {
+        let widens = |from: Type, to: Type| from.widens_to(&to);
+        assert!(widens(integer(false, 8), integer(true, 16)));
+        assert!(widens(integer(true, 8), integer(true, 16)));
+        assert!(widens(integer(false, 8), integer(false, 16)));
+        assert!(widens(Type::Float(Float::F32), Type::Float(Float::F64)));
+        assert!(
+            !widens(integer(true, 8), integer(false, 16)),
+            "-1 is no u16"
+        );
+        assert!(!widens(integer(false, 8), integer(true, 8)), "255 is no i8");
+        assert!(!widens(integer(true, 16), integer(true, 8)));
+        assert!(!widens(integer(true, 32), integer(true, 32)));
+        assert!(!widens(integer(true, 32), Type::Float(Float::F64)));
+        assert!(!widens(Type::Float(Float::F64), Type::Float(Float::F32)));
+    }
+
+    #[test]
+    fn type_text() {
+        let mut types = Types::new();
+        let u24 = types.intern(integer(false, 24));
+        let function = types.intern(Type::Function {
+            parameters: [TypeId::I32, u24].into(),
+            result: TypeId::BOOL,
+        });
+        let procedure = types.intern(Type::Function {
+            parameters: [].into(),
+            result: TypeId::VOID,
+        });
+        assert_eq!(types.text(u24), "u24");
+        assert_eq!(types.text(TypeId::F32), "f32");
+        assert_eq!(types.text(function), "fn(i32, u24) -> bool");
+        assert_eq!(types.text(procedure), "fn()");
     }
 
     #[test]

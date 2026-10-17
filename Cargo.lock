@@ -200,11 +200,14 @@ version = "0.1.0"
 dependencies = [
  "arena",
  "ast",
+ "bigint",
  "diagnostics",
  "ir",
+ "numeric",
  "parser",
  "project",
  "source",
+ "token",
 ]
 
 [[package]]

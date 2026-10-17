@@ -2,10 +2,16 @@
 //! the value of each constant, built into THIR in one walk per body
 //! (docs/ir-design.md). It starts with each module's scope.
 
+pub mod body;
 pub mod builtin;
+mod expression;
 pub mod scope;
 pub mod signature;
+mod statement;
+#[cfg(test)]
+mod testing;
 
+use diagnostics::Code;
 use diagnostics::Diagnostic;
 use ir::types::TypeId;
 use ir::types::Types;
@@ -33,17 +39,21 @@ pub struct Checker<'a, Q: Queries> {
 }
 
 impl<Q: Queries> Checker<'_, Q> {
-    /// Reports syntax the checker does not handle yet, such as `what` =
-    /// "reference types", and gives the type of an error already reported, so
-    /// nothing more is reported about it.
-    fn not_supported(&mut self, span: Span, what: &str) -> TypeId {
-        self.diagnostics.push(
-            Diagnostic::new(
-                diagnostics::NOT_SUPPORTED_YET,
-                format!("{what} are not supported yet"),
-            )
-            .label(&self.module.syntax.file, span, ""),
-        );
+    /// Reports the error `message` at `span` of the module, and gives the type
+    /// of an error already reported, so nothing more is reported about it.
+    fn error(&mut self, code: Code, message: impl Into<String>, span: Span) -> TypeId {
+        self.diagnostics.push(Diagnostic::new(code, message).label(
+            &self.module.syntax.file,
+            span,
+            "",
+        ));
         TypeId::INVALID
+    }
+
+    /// Reports syntax the checker does not handle yet, such as `what` =
+    /// "reference types".
+    fn not_supported(&mut self, span: Span, what: &str) -> TypeId {
+        let message = format!("{what} are not supported yet");
+        self.error(diagnostics::NOT_SUPPORTED_YET, message, span)
     }
 }

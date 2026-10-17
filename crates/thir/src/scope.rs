@@ -26,6 +26,11 @@ impl ModuleScope {
     pub fn get(&self, name: &str) -> Option<Binding> {
         self.names.get(name).map(|&(binding, _)| binding)
     }
+
+    /// Every name, in no order.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.names.keys().map(|name| &**name)
+    }
 }
 
 /// The scope of `module`, the module at `module_index` in the program's

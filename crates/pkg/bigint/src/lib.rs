@@ -96,6 +96,21 @@ pub fn bit_xor(bits: u32, left: &Limbs, right: &Limbs) -> Limbs {
     each_limb(bits, left, right, |a, b| a ^ b)
 }
 
+/// `value` widened from `bits` to `to_bits` bits (at least `bits`): the new
+/// top bits copy the sign when `signed`, else they are zero.
+pub fn extend(bits: u32, signed: bool, value: &Limbs, to_bits: u32) -> Limbs {
+    assert!(to_bits >= bits, "extending keeps every bit");
+    let value = used(bits, value);
+    let negative = is_negative(bits, signed, value);
+    with_result(to_bits, |out| {
+        out.fill(if negative { u64::MAX } else { 0 });
+        out[..value.len()].copy_from_slice(value);
+        if negative && !bits.is_multiple_of(64) {
+            out[value.len() - 1] |= u64::MAX << (bits % 64);
+        }
+    })
+}
+
 /// `value << count`; `count` is below `bits`.
 pub fn shift_left(bits: u32, value: &Limbs, count: u32) -> Limbs {
     assert!(count < bits, "a shift count is below the width");
@@ -404,6 +419,22 @@ mod tests {
             super::remainder(256, false, &power(200), &power(100)),
             Some(limbs(256, 0))
         );
+    }
+
+    #[test]
+    fn extending_keeps_the_value() {
+        assert_eq!(super::extend(8, true, &limbs(8, -1), 16), limbs(16, -1));
+        assert_eq!(super::extend(8, false, &limbs(8, 255), 16), limbs(16, 255));
+        assert_eq!(
+            super::extend(100, true, &limbs(100, -2), 200),
+            limbs(200, -2)
+        );
+        assert_eq!(super::extend(64, true, &limbs(64, -3), 130), limbs(130, -3));
+        assert_eq!(
+            super::extend(64, false, &limbs(64, -3), 130),
+            limbs(130, u64::MAX as i128 - 2)
+        );
+        assert_eq!(super::extend(7, true, &limbs(7, 5), 300), limbs(300, 5));
     }
 
     #[test]

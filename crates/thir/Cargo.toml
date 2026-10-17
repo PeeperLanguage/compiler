@@ -13,6 +13,9 @@ arena.workspace = true
 ast.workspace = true
 project.workspace = true
 ir.workspace = true
+bigint.workspace = true
+numeric.workspace = true
+token.workspace = true
 
 [dev-dependencies]
 parser.workspace = true
