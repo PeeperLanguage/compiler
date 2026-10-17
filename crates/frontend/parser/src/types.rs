@@ -1,28 +1,28 @@
 //! Types: names and paths, pointers, optionals, arrays, function types, and the
 //! struct, enum and interface types of type declarations.
 
-use ast::{Decl, Field, Id, Length, List, Param, Type, Variant};
+use ast::{Decl, Field, Id, Length, Param, Type, Variant};
 use diagnostics::Diagnostic;
 use source::Span;
 use token::{Token, TokenKind};
 
-use crate::{K, Parser, grow, is_name};
+use crate::{Parser, grow, is_name};
 
 /// Whether a type can begin with `kind`.
 pub(crate) fn starts_type(kind: TokenKind) -> bool {
     matches!(
         kind,
-        K::Ident
-            | K::Amp
-            | K::Question
-            | K::QuestionQuestion
-            | K::Asterisk
-            | K::Rawptr
-            | K::LeftBracket
-            | K::Fn
-            | K::Struct
-            | K::Enum
-            | K::Iface
+        TokenKind::Ident
+            | TokenKind::Amp
+            | TokenKind::Question
+            | TokenKind::QuestionQuestion
+            | TokenKind::Asterisk
+            | TokenKind::Rawptr
+            | TokenKind::LeftBracket
+            | TokenKind::Fn
+            | TokenKind::Struct
+            | TokenKind::Enum
+            | TokenKind::Iface
     )
 }
 
@@ -32,37 +32,37 @@ impl Parser<'_> {
         grow(|| {
             let t = self.tok();
             match t.kind {
-                K::Ident => self.named_type(),
-                K::Amp => {
+                TokenKind::Ident => self.named_type(),
+                TokenKind::Amp => {
                     self.next();
-                    let mutable = self.at(K::Mut);
+                    let mutable = self.at(TokenKind::Mut);
                     if mutable {
                         self.next();
                     }
                     let target = self.type_expr();
                     self.add(t.span.start, Type::Reference { mutable, target })
                 }
-                K::Question | K::QuestionQuestion => self.optional_type(),
-                K::Asterisk => {
+                TokenKind::Question | TokenKind::QuestionQuestion => self.optional_type(),
+                TokenKind::Asterisk => {
                     self.next();
                     let target = self.type_expr();
                     self.add(t.span.start, Type::OwnedPointer(target))
                 }
-                K::Rawptr => {
+                TokenKind::Rawptr => {
                     self.next();
                     self.add(t.span.start, Type::RawPointer)
                 }
-                K::LeftBracket => self.array_type(),
-                K::Fn => self.function_type(),
-                K::Struct => {
+                TokenKind::LeftBracket => self.array_type(),
+                TokenKind::Fn => self.function_type(),
+                TokenKind::Struct => {
                     self.next();
                     self.struct_type(t.span.start)
                 }
-                K::Enum => {
+                TokenKind::Enum => {
                     self.next();
                     self.enum_type(t.span.start)
                 }
-                K::Iface => {
+                TokenKind::Iface => {
                     self.next();
                     self.interface_type(t.span.start)
                 }
@@ -85,12 +85,12 @@ impl Parser<'_> {
     pub(crate) fn named_type(&mut self) -> Id<Type> {
         let start = self.tok().span.start;
         let first = self.type_segment();
-        if !self.at(K::ColonColon) {
+        if !self.at(TokenKind::ColonColon) {
             return first;
         }
         let mark = self.scratch.len();
         self.scratch.push(first.into());
-        while self.at(K::ColonColon) {
+        while self.at(TokenKind::ColonColon) {
             self.next();
             let segment = self.type_segment();
             self.scratch.push(segment.into());
@@ -102,11 +102,11 @@ impl Parser<'_> {
     fn type_segment(&mut self) -> Id<Type> {
         let start = self.tok().span.start;
         let name = self.name();
-        if !self.at(K::Less) {
+        if !self.at(TokenKind::Less) {
             return self.tree.add(Type::Name, name);
         }
         let open = self.next();
-        let arguments = self.items(K::Greater, false, starts_type, |p| p.type_expr());
+        let arguments = self.items(TokenKind::Greater, false, starts_type, |p| p.type_expr());
         self.close_angle(open);
         self.add(start, Type::Generic { name, arguments })
     }
@@ -116,26 +116,26 @@ impl Parser<'_> {
     /// the token, owned by the parser, is cut down to the second.
     pub(crate) fn close_angle(&mut self, open: Token) {
         let t = self.tok();
-        if t.kind == K::ShiftRight {
+        if t.kind == TokenKind::ShiftRight {
             self.last_end = t.span.start + 1;
             let current = self.current();
             self.tokens[current] = Token {
-                kind: K::Greater,
+                kind: TokenKind::Greater,
                 span: Span::new(t.span.start as usize + 1, t.span.end as usize),
             };
             return;
         }
-        self.close(K::Greater, open);
+        self.close(TokenKind::Greater, open);
     }
 
     /// Reads `?T`. A second marker changes nothing (`??T` is `?T`); it is kept
     /// in the tree as written and left to a lint to report.
     fn optional_type(&mut self) -> Id<Type> {
         let mut markers = Vec::new(); // where each `?` starts; `??` is one token holding two
-        while self.at(K::Question) || self.at(K::QuestionQuestion) {
+        while self.at(TokenKind::Question) || self.at(TokenKind::QuestionQuestion) {
             let t = self.next();
             markers.push(t.span.start);
-            if t.kind == K::QuestionQuestion {
+            if t.kind == TokenKind::QuestionQuestion {
                 markers.push(t.span.start + 1);
             }
         }
@@ -151,21 +151,21 @@ impl Parser<'_> {
         let open = self.next();
         let t = self.tok();
         match t.kind {
-            K::RightBracket => {
+            TokenKind::RightBracket => {
                 self.next();
                 let element = self.type_expr();
                 self.add(open.span.start, Type::DynamicArray(element))
             }
-            K::DotDot => {
+            TokenKind::DotDot => {
                 self.next();
-                self.close(K::RightBracket, open);
+                self.close(TokenKind::RightBracket, open);
                 let element = self.type_expr();
                 self.add(open.span.start, Type::Slice(element))
             }
-            K::Number => {
+            TokenKind::Number => {
                 self.next();
                 self.check_number(t);
-                self.close(K::RightBracket, open);
+                self.close(TokenKind::RightBracket, open);
                 let element = self.type_expr();
                 let length = Length::Number(t.span);
                 self.add(open.span.start, Type::FixedArray { length, element })
@@ -186,27 +186,26 @@ impl Parser<'_> {
     /// Reads `fn(name: T, U) -> R from name`; parameter names are optional.
     fn function_type(&mut self) -> Id<Type> {
         let start = self.next().span.start;
-        let parameters = match self.expect(K::LeftParen) {
-            Some(open) => {
-                let parameters = self.items(K::RightParen, false, starts_type, |p| {
-                    let start = p.tok().span.start;
-                    let name = p.parameter_name();
-                    let ty = p.type_expr();
-                    p.add(
-                        start,
-                        Param {
-                            mutable: false,
-                            name,
-                            ty,
-                            default: None,
-                        },
-                    )
-                });
-                self.close(K::RightParen, open);
-                parameters
-            }
-            None => List::EMPTY,
-        };
+        let parameters = self.delimited(
+            TokenKind::LeftParen,
+            TokenKind::RightParen,
+            false,
+            starts_type,
+            |p| {
+                let start = p.tok().span.start;
+                let name = p.parameter_name();
+                let ty = p.type_expr();
+                p.add(
+                    start,
+                    Param {
+                        mutable: false,
+                        name,
+                        ty,
+                        default: None,
+                    },
+                )
+            },
+        );
         let (result, origins) = self.result();
         self.add(
             start,
@@ -221,28 +220,40 @@ impl Parser<'_> {
     /// Reads `{ name: Type, ... }`, the fields of a struct type that starts at
     /// `start`.
     pub(crate) fn struct_type(&mut self, start: u32) -> Id<Type> {
-        let fields = self.members(is_name, |p| {
-            let start = p.tok().span.start;
-            let name = p.name();
-            p.expect(K::Colon);
-            let ty = p.type_expr();
-            p.add(start, Field { name, ty })
-        });
+        let fields = self.delimited(
+            TokenKind::LeftBrace,
+            TokenKind::RightBrace,
+            true,
+            is_name,
+            |p| {
+                let start = p.tok().span.start;
+                let name = p.name();
+                p.expect(TokenKind::Colon);
+                let ty = p.type_expr();
+                p.add(start, Field { name, ty })
+            },
+        );
         self.add(start, Type::Struct(fields))
     }
 
     /// Reads `{ Name, Name: Payload, ... }`, the variants of an enum type that
     /// starts at `start`.
     pub(crate) fn enum_type(&mut self, start: u32) -> Id<Type> {
-        let variants = self.members(is_name, |p| {
-            let start = p.tok().span.start;
-            let name = p.name();
-            let payload = p.at(K::Colon).then(|| {
-                p.next();
-                p.type_expr()
-            });
-            p.add(start, Variant { name, payload })
-        });
+        let variants = self.delimited(
+            TokenKind::LeftBrace,
+            TokenKind::RightBrace,
+            true,
+            is_name,
+            |p| {
+                let start = p.tok().span.start;
+                let name = p.name();
+                let payload = p.at(TokenKind::Colon).then(|| {
+                    p.next();
+                    p.type_expr()
+                });
+                p.add(start, Variant { name, payload })
+            },
+        );
         self.add(start, Type::Enum(variants))
     }
 
@@ -250,12 +261,15 @@ impl Parser<'_> {
     /// an interface type that starts at `start`: function signatures without
     /// bodies. A method needs a receiver and takes no default values.
     pub(crate) fn interface_type(&mut self, start: u32) -> Id<Type> {
-        let methods = self.members(
-            |kind| kind == K::Fn,
+        let methods = self.delimited(
+            TokenKind::LeftBrace,
+            TokenKind::RightBrace,
+            true,
+            |kind| kind == TokenKind::Fn,
             |p| {
                 let start = p.next().span.start;
-                if !p.at(K::LeftParen) {
-                    p.expect(K::LeftParen);
+                if !p.at(TokenKind::LeftParen) {
+                    p.expect(TokenKind::LeftParen);
                 }
                 let f = p.signature();
                 let parameters: Vec<_> = f
@@ -279,20 +293,5 @@ impl Parser<'_> {
             },
         );
         self.add(start, Type::Interface(methods))
-    }
-
-    /// Reads the `{ ... }` list of the members of a struct, enum or interface
-    /// type.
-    fn members<T>(
-        &mut self,
-        starts_member: fn(TokenKind) -> bool,
-        member: impl FnMut(&mut Self) -> Id<T>,
-    ) -> List<T> {
-        let Some(open) = self.expect(K::LeftBrace) else {
-            return List::EMPTY;
-        };
-        let items = self.items(K::RightBrace, true, starts_member, member);
-        self.close(K::RightBrace, open);
-        items
     }
 }

@@ -171,6 +171,31 @@ this rule (#165 came from breaking it).
 Every item brought back from the old code passes three questions first: is it
 needed now, is it the simplest form, does something else already do it.
 
+### Parser layout
+
+The parser uses two methods, each in its own files, so every file stays small
+and has one job:
+
+- **Pratt parsing for expressions** (`expr.rs`), driven by one table indexed
+  by token kind, as in the Go parser: `rules.nud(kind, rule)` and
+  `rules.led(kind, precedence, rule)` register each token's rule in one line.
+  Whether a token starts an expression is read from the table, never kept in
+  a second list.
+  Literal rules live in `literals.rs`, the operators and the table in
+  `expr.rs`.
+- **Recursive descent for everything else**: statements (`stmt.rs`), types
+  (`types.rs`), declarations (`decl.rs`), patterns. The keyword that begins
+  a statement or declaration picks its rule from a table too (`STATEMENTS`,
+  `DECLARATIONS`), the same way.
+- Rules in a table are plain functions taking `p: &mut Parser`; shared helpers
+  stay methods.
+- `lib.rs` holds only what all rules share: the token cursor, errors and
+  recovery, lists.
+
+One kind of syntax per file. When a file grows past about 500 lines of code
+(tests not counted), split it by kind of syntax, not by size alone. A new rule
+goes in the file of its kind; it never goes in `lib.rs`.
+
 ## How we know the base works
 
 - A project of several files with nested imports loads and parses; the module

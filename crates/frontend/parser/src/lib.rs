@@ -17,6 +17,8 @@
 
 mod decl;
 mod expr;
+mod literals;
+mod pattern;
 mod stmt;
 mod types;
 
@@ -30,8 +32,6 @@ use ast::{Id, List, Node, Tree};
 use diagnostics::{Diagnostic, Fix};
 use source::{SourceFile, Span};
 use token::{Token, TokenKind};
-
-use TokenKind as K;
 
 /// Returns the syntax tree of `file` and the lexical and syntax errors in it.
 pub fn parse(file: &Arc<SourceFile>) -> (Tree, Vec<Diagnostic>) {
@@ -76,7 +76,7 @@ impl Parser<'_> {
     /// `doc_comment`); everywhere else the parser looks past them.
     fn current(&self) -> usize {
         let mut i = self.pos;
-        while self.tokens[i].kind == K::DocComment {
+        while self.tokens[i].kind == TokenKind::DocComment {
             i += 1;
         }
         i
@@ -94,9 +94,9 @@ impl Parser<'_> {
     /// end.
     fn ahead(&self, mut n: usize) -> Token {
         let mut i = self.current();
-        while n > 0 && self.tokens[i].kind != K::Eof {
+        while n > 0 && self.tokens[i].kind != TokenKind::Eof {
             i += 1;
-            while self.tokens[i].kind == K::DocComment {
+            while self.tokens[i].kind == TokenKind::DocComment {
                 i += 1;
             }
             n -= 1;
@@ -107,7 +107,7 @@ impl Parser<'_> {
     fn next(&mut self) -> Token {
         self.pos = self.current();
         let t = self.tokens[self.pos];
-        if t.kind != K::Eof {
+        if t.kind != TokenKind::Eof {
             self.pos += 1;
             self.last_end = t.span.end;
         }
@@ -193,7 +193,10 @@ impl Parser<'_> {
         );
         let closer = matches!(
             kind,
-            K::RightParen | K::RightBracket | K::RightBrace | K::Greater
+            TokenKind::RightParen
+                | TokenKind::RightBracket
+                | TokenKind::RightBrace
+                | TokenKind::Greater
         );
         if self.last_end == 0 || !closer && self.line(t.span.start) == self.line(self.last_end) {
             return d.label(
@@ -254,17 +257,17 @@ impl Parser<'_> {
     /// closing `)` or `]` is skipped. Passing a `;` puts the parser in step again.
     fn sync(&mut self) {
         let mut depth = 0usize;
-        while !self.at(K::Eof) {
+        while !self.at(TokenKind::Eof) {
             match self.tok().kind {
-                K::LeftParen | K::LeftBracket | K::LeftBrace => depth += 1,
-                K::RightParen | K::RightBracket => depth = depth.saturating_sub(1),
-                K::RightBrace => {
+                TokenKind::LeftParen | TokenKind::LeftBracket | TokenKind::LeftBrace => depth += 1,
+                TokenKind::RightParen | TokenKind::RightBracket => depth = depth.saturating_sub(1),
+                TokenKind::RightBrace => {
                     if depth == 0 {
                         return;
                     }
                     depth -= 1;
                 }
-                K::Semicolon if depth == 0 => {
+                TokenKind::Semicolon if depth == 0 => {
                     self.next();
                     self.recovering = false;
                     return;
@@ -297,7 +300,7 @@ impl Parser<'_> {
         let mut missing = Vec::new();
         let mut semicolons = Vec::new();
         loop {
-            while self.at(K::Comma) {
+            while self.at(TokenKind::Comma) {
                 self.next();
             }
             if !starts_item(self.tok().kind) {
@@ -306,14 +309,14 @@ impl Parser<'_> {
             let id = item(self);
             self.scratch.push(id.into());
             let t = self.tok();
-            if t.kind == K::Comma {
+            if t.kind == TokenKind::Comma {
                 continue;
             }
-            if t.kind == K::Semicolon
-                && close == K::RightBrace
+            if t.kind == TokenKind::Semicolon
+                && close == TokenKind::RightBrace
                 && self.semicolon_separates(in_declaration)
             {
-                let text = if self.ahead(1).kind == K::RightBrace {
+                let text = if self.ahead(1).kind == TokenKind::RightBrace {
                     ""
                 } else {
                     ","
@@ -325,7 +328,7 @@ impl Parser<'_> {
             // `>` is no bracket the closer scan follows; in `<T U>` the next name
             // can only be another item.
             if starts_item(t.kind)
-                && (close == K::Greater || self.tokens[self.closer_ahead()].kind == close)
+                && (close == TokenKind::Greater || self.tokens[self.closer_ahead()].kind == close)
             {
                 missing.push(self.fix(self.here(), ","));
                 continue;
@@ -356,6 +359,24 @@ impl Parser<'_> {
         self.finish_list(mark)
     }
 
+    /// Reads `open`, the items of a list up to `close` (see `items`), and
+    /// `close`. A missing `open` is reported and gives an empty list.
+    fn delimited<T>(
+        &mut self,
+        open: TokenKind,
+        close: TokenKind,
+        in_declaration: bool,
+        starts_item: fn(TokenKind) -> bool,
+        item: impl FnMut(&mut Self) -> Id<T>,
+    ) -> List<T> {
+        let Some(open) = self.expect(open) else {
+            return List::EMPTY;
+        };
+        let items = self.items(close, in_declaration, starts_item, item);
+        self.close(close, open);
+        items
+    }
+
     /// Moves the ids that `scratch` holds from `mark` on into a list.
     fn finish_list<T>(&mut self, mark: usize) -> List<T> {
         let list = self.tree.add_list(&self.scratch[mark..]);
@@ -368,13 +389,13 @@ impl Parser<'_> {
     /// declaration's body or `;`, `,` or `)` follows the `}`.
     fn semicolon_separates(&self, in_declaration: bool) -> bool {
         let i = self.closer_ahead();
-        if self.tokens[i].kind != K::RightBrace {
+        if self.tokens[i].kind != TokenKind::RightBrace {
             return false;
         }
         in_declaration
             || matches!(
                 self.tokens[(i + 1).min(self.tokens.len() - 1)].kind,
-                K::Semicolon | K::Comma | K::RightParen
+                TokenKind::Semicolon | TokenKind::Comma | TokenKind::RightParen
             )
     }
 
@@ -384,8 +405,8 @@ impl Parser<'_> {
         let mut depth = 0usize;
         for (i, t) in self.tokens.iter().enumerate().skip(self.pos) {
             match t.kind {
-                K::LeftParen | K::LeftBracket | K::LeftBrace => depth += 1,
-                K::RightParen | K::RightBracket | K::RightBrace => {
+                TokenKind::LeftParen | TokenKind::LeftBracket | TokenKind::LeftBrace => depth += 1,
+                TokenKind::RightParen | TokenKind::RightBracket | TokenKind::RightBrace => {
                     if depth == 0 {
                         return i;
                     }
@@ -399,7 +420,7 @@ impl Parser<'_> {
 
     /// Reads a name; a missing one gives an empty span.
     fn name(&mut self) -> Span {
-        match self.expect(K::Ident) {
+        match self.expect(TokenKind::Ident) {
             Some(t) => t.span,
             None => self.here(),
         }
@@ -408,12 +429,12 @@ impl Parser<'_> {
     /// Reads the `;` that closes a statement, which puts the parser in step
     /// again; when it is missing, it skips to where parsing can go on.
     fn end(&mut self) {
-        if self.at(K::Semicolon) {
+        if self.at(TokenKind::Semicolon) {
             self.next();
             self.recovering = false;
             return;
         }
-        self.expect(K::Semicolon);
+        self.expect(TokenKind::Semicolon);
         self.sync();
     }
 }
@@ -425,7 +446,7 @@ fn starts_statement(kind: TokenKind) -> bool {
 }
 
 fn is_name(kind: TokenKind) -> bool {
-    kind == K::Ident
+    kind == TokenKind::Ident
 }
 
 #[cfg(test)]

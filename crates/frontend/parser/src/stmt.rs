@@ -1,28 +1,42 @@
-//! Blocks, statements and the patterns of `match` and `let .{ }`.
+//! Blocks and statements.
 
 use ast::{Block, Expr, Id, List, MatchArm, Metadata, Pattern, Stmt};
 use diagnostics::Diagnostic;
 use token::TokenKind;
 
-use crate::decl::starts_declaration;
-use crate::expr::Prec;
-use crate::{K, Parser, grow, is_name, starts_statement};
+use crate::decl::{const_decl, starts_declaration};
+use crate::expr::Precedence;
+use crate::{Parser, grow, starts_statement};
 
-/// Whether `kind` begins a statement (see `Parser::stmt`); any other token
-/// begins an expression statement.
+/// Reads the statement the current keyword begins.
+type StatementRule = fn(&mut Parser<'_>) -> Id<Stmt>;
+
+/// The reader of each statement a keyword begins, indexed by token kind; any
+/// other token begins an expression statement.
+static STATEMENTS: [Option<StatementRule>; 256] = {
+    let mut statements: [Option<StatementRule>; 256] = [None; 256];
+    statements[TokenKind::Let as usize] = Some(let_statement);
+    statements[TokenKind::Const as usize] = Some(|p| {
+        let decl = const_decl(p, Metadata::NONE);
+        let span = p.tree.decls.span(decl);
+        p.tree.add(Stmt::Const(decl), span)
+    });
+    statements[TokenKind::Return as usize] = Some(return_statement);
+    statements[TokenKind::If as usize] = Some(if_statement);
+    statements[TokenKind::For as usize] = Some(for_statement);
+    statements[TokenKind::Break as usize] = Some(jump_statement);
+    statements[TokenKind::Continue as usize] = Some(jump_statement);
+    statements[TokenKind::Match as usize] = Some(match_statement);
+    statements[TokenKind::LeftBrace as usize] = Some(|p| {
+        let block = p.block();
+        p.block_statement(block)
+    });
+    statements
+};
+
+/// Whether `kind` begins a statement other than an expression statement.
 pub(crate) fn is_statement_keyword(kind: TokenKind) -> bool {
-    matches!(
-        kind,
-        K::Let
-            | K::Const
-            | K::Return
-            | K::If
-            | K::For
-            | K::Break
-            | K::Continue
-            | K::Match
-            | K::LeftBrace
-    )
+    STATEMENTS[kind as usize].is_some()
 }
 
 impl Parser<'_> {
@@ -30,7 +44,7 @@ impl Parser<'_> {
     /// means its `}` is missing: the block ends there and the declaration is
     /// read next.
     pub(crate) fn block(&mut self) -> Id<Block> {
-        let Some(open) = self.expect(K::LeftBrace) else {
+        let Some(open) = self.expect(TokenKind::LeftBrace) else {
             return self.add(
                 self.last_end,
                 Block {
@@ -41,13 +55,13 @@ impl Parser<'_> {
         let mark = self.scratch.len();
         loop {
             let kind = self.tok().kind;
-            if kind == K::RightBrace
-                || kind == K::Eof
+            if kind == TokenKind::RightBrace
+                || kind == TokenKind::Eof
                 || starts_declaration(kind) && !is_statement_keyword(kind)
             {
                 break;
             }
-            if kind == K::Semicolon {
+            if kind == TokenKind::Semicolon {
                 // an empty statement: a matter of style, left to a lint
                 self.next();
                 continue;
@@ -59,44 +73,30 @@ impl Parser<'_> {
             self.scratch.push(statement.into());
         }
         let statements = self.finish_list(mark);
-        if self.at(K::RightBrace) {
+        if self.at(TokenKind::RightBrace) {
             self.recovering = false; // the block's own `}`: in step again
         }
-        self.close(K::RightBrace, open);
+        self.close(TokenKind::RightBrace, open);
         self.add(open.span.start, Block { statements })
     }
 
     /// Reads a statement: one a keyword begins, or an expression statement, or
     /// an assignment `target = value;`.
     fn stmt(&mut self) -> Id<Stmt> {
-        grow(|| match self.tok().kind {
-            K::Let => self.let_statement(),
-            K::Const => {
-                let decl = self.const_decl(Metadata::NONE);
-                let span = self.tree.decls.span(decl);
-                self.tree.add(Stmt::Const(decl), span)
+        grow(|| {
+            if let Some(read) = STATEMENTS[self.tok().kind as usize] {
+                return read(self);
             }
-            K::Return => self.return_statement(),
-            K::If => self.if_statement(),
-            K::For => self.for_statement(),
-            K::Break | K::Continue => self.jump_statement(),
-            K::Match => self.match_statement(),
-            K::LeftBrace => {
-                let block = self.block();
-                self.block_statement(block)
-            }
-            _ => {
-                let start = self.tok().span.start;
-                let target = self.expr(Prec::Lowest);
-                if self.at(K::Assign) {
-                    self.next();
-                    let value = self.expr(Prec::Lowest);
-                    self.end();
-                    return self.add(start, Stmt::Assign { target, value });
-                }
+            let start = self.tok().span.start;
+            let target = self.expr(Precedence::Lowest);
+            if self.at(TokenKind::Assign) {
+                self.next();
+                let value = self.expr(Precedence::Lowest);
                 self.end();
-                self.add(start, Stmt::Expression(target))
+                return self.add(start, Stmt::Assign { target, value });
             }
+            self.end();
+            self.add(start, Stmt::Expression(target))
         })
     }
 
@@ -106,87 +106,10 @@ impl Parser<'_> {
         self.tree.add(Stmt::Block(block), span)
     }
 
-    /// Reads `let mut name: Type = value;`, where `mut`, the type and the value
-    /// may be left out, or `let .{ fields } = value;`.
-    fn let_statement(&mut self) -> Id<Stmt> {
-        let start = self.next().span.start;
-        if self.at(K::Dot) {
-            let pattern = self.struct_pattern();
-            self.expect(K::Assign);
-            let value = self.expr(Prec::Lowest);
-            self.end();
-            return self.add(start, Stmt::Destructure { pattern, value });
-        }
-        let mutable = self.at(K::Mut);
-        if mutable {
-            self.next();
-        }
-        let (name, ty, value) = self.binding();
-        self.add(
-            start,
-            Stmt::Let {
-                mutable,
-                name,
-                ty,
-                value,
-            },
-        )
-    }
-
-    /// Reads `if condition { } else if ... else { }`. A `=` written for `==` in
-    /// the condition is read as `==`.
-    fn if_statement(&mut self) -> Id<Stmt> {
-        grow(|| {
-            let start = self.next().span.start;
-            let mut condition = self.expr(Prec::Lowest);
-            let t = self.tok();
-            if t.kind == K::Assign {
-                self.next();
-                let fix = self.fix(t.span, "==");
-                self.repair(
-                    Diagnostic::new(
-                        diagnostics::EXPECTED_TOKEN,
-                        "expected `==` in condition, found `=`",
-                    )
-                    .label(self.file, t.span, "")
-                    .help("compare with `==`", vec![fix]),
-                );
-                let right = self.expr(Prec::Lowest);
-                let left_start = self.tree.exprs.span(condition).start;
-                condition = self.add(
-                    left_start,
-                    Expr::Binary {
-                        op: K::EqualEqual,
-                        left: condition,
-                        right,
-                    },
-                );
-            }
-            let then = self.body("if");
-            let mut otherwise = None;
-            if self.at(K::Else) {
-                self.next();
-                otherwise = if self.at(K::If) {
-                    Some(self.if_statement())
-                } else {
-                    self.body("else").map(|block| self.block_statement(block))
-                };
-            }
-            self.add(
-                start,
-                Stmt::If {
-                    condition,
-                    then,
-                    otherwise,
-                },
-            )
-        })
-    }
-
     /// Reads the block of an if, else or for; when it is missing, it reports
     /// "missing <what> body" where the block should start.
     fn body(&mut self, what: &str) -> Option<Id<Block>> {
-        if self.at(K::LeftBrace) {
+        if self.at(TokenKind::LeftBrace) {
             return Some(self.block());
         }
         let at = self.here();
@@ -200,121 +123,17 @@ impl Parser<'_> {
         None
     }
 
-    /// Reads `for { }`, `for condition { }`, `for value in items { }` or
-    /// `for index, value in items { }`. The iterable may be a range.
-    fn for_statement(&mut self) -> Id<Stmt> {
-        let start = self.next().span.start;
-        if self.at(K::Ident) && matches!(self.ahead(1).kind, K::In | K::Comma) {
-            let mut index = None;
-            let mut value = self.name();
-            if self.at(K::Comma) {
-                self.next();
-                index = Some(value);
-                value = self.name();
-            }
-            self.expect(K::In);
-            let iterable = self.index_operand();
-            let body = self.body("for");
-            return self.add(
-                start,
-                Stmt::ForIn {
-                    index,
-                    value,
-                    iterable,
-                    body,
-                },
-            );
-        }
-        let mut condition = None;
-        if !self.at(K::LeftBrace) {
-            let value = self.expr(Prec::Lowest);
-            if self.at(K::In) {
-                let span = self.tree.exprs.span(value);
-                self.fail(
-                    Diagnostic::new(diagnostics::INVALID_EXPRESSION, "invalid loop variable")
-                        .label(self.file, span, "expected an identifier before `in`"),
-                );
-            }
-            condition = Some(value);
-        }
-        let body = self.body("for");
-        self.add(start, Stmt::Loop { condition, body })
-    }
-
-    /// Reads `break;` or `continue;`. Loop labels are not part of the language
-    /// yet; a label is reported and skipped.
-    fn jump_statement(&mut self) -> Id<Stmt> {
-        let keyword = self.next();
-        let t = self.tok();
-        if t.kind == K::Ident {
-            self.next();
-            self.repair(
-                Diagnostic::new(
-                    diagnostics::INVALID_STATEMENT,
-                    format!("labeled {} is not supported yet", keyword.kind.name()),
-                )
-                .label(
-                    self.file,
-                    t.span,
-                    "loop labels are planned for a later release",
-                ),
-            );
-        }
-        self.end();
-        let node = if keyword.kind == K::Continue {
-            Stmt::Continue
-        } else {
-            Stmt::Break
-        };
-        self.add(keyword.span.start, node)
-    }
-
-    /// Reads `match subject { arms }`. An arm is `_ => { }`, `Enum::Case => { }`
-    /// or `Enum::Case with pattern => { }`; arms are not separated by commas.
-    fn match_statement(&mut self) -> Id<Stmt> {
-        let start = self.next().span.start;
-        let subject = self.expr(Prec::Lowest);
-        let mut arms = List::EMPTY;
-        if let Some(open) = self.expect(K::LeftBrace) {
-            let mark = self.scratch.len();
-            // Every arm begins with a name (`_` or a path) and reads at least it,
-            // so the loop always moves on.
-            while self.at(K::Ident) {
-                let arm_start = self.tok().span.start;
-                let (pattern, body) = self.match_arm();
-                let arm = self.add(arm_start, MatchArm { pattern, body });
-                self.scratch.push(arm.into());
-                let t = self.tok();
-                if t.kind == K::Comma {
-                    self.next();
-                    let fix = self.fix(t.span, "");
-                    self.repair(
-                        Diagnostic::new(
-                            diagnostics::EXPECTED_TOKEN,
-                            "match arms do not use commas",
-                        )
-                        .label(self.file, t.span, "")
-                        .help("remove this comma", vec![fix]),
-                    );
-                }
-            }
-            arms = self.finish_list(mark);
-            self.close(K::RightBrace, open);
-        }
-        self.add(start, Stmt::Match { subject, arms })
-    }
-
     /// Reads one arm's pattern, its `=>` and its block. A missing `=>` before
     /// the block is read as if it were there.
     fn match_arm(&mut self) -> (Id<Pattern>, Id<Block>) {
         let t = self.tok();
-        let pattern = if t.kind == K::Ident && self.text(t) == "_" {
+        let pattern = if t.kind == TokenKind::Ident && self.text(t) == "_" {
             let start = self.next().span.start;
             self.add(start, Pattern::Wildcard)
         } else {
             self.case_pattern()
         };
-        if self.at(K::LeftBrace) {
+        if self.at(TokenKind::LeftBrace) {
             let at = self.here();
             let fix = self.fix(at, " =>");
             self.repair(
@@ -325,118 +144,200 @@ impl Parser<'_> {
                 .label(self.file, at, "")
                 .help("add missing `=>`", vec![fix]),
             );
-        } else if self.expect(K::FatArrow).is_none() {
+        } else if self.expect(TokenKind::FatArrow).is_none() {
             self.sync();
         }
         (pattern, self.block())
     }
+}
 
-    /// Reads `Enum::Case`, perhaps followed by `with` and the pattern of its
-    /// payload. The case is a full path.
-    fn case_pattern(&mut self) -> Id<Pattern> {
-        grow(|| {
-            let start = self.tok().span.start;
-            let case = self.type_expr();
-            self.require_path(case);
-            let inner = self.at(K::With).then(|| {
-                self.next();
-                self.payload_pattern()
-            });
-            self.add(start, Pattern::Case { case, inner })
-        })
+/// Reads `let mut name: Type = value;`, where `mut`, the type and the value
+/// may be left out, or `let .{ fields } = value;`.
+fn let_statement(p: &mut Parser) -> Id<Stmt> {
+    let start = p.next().span.start;
+    if p.at(TokenKind::Dot) {
+        let pattern = p.struct_pattern();
+        p.expect(TokenKind::Assign);
+        let value = p.expr(Precedence::Lowest);
+        p.end();
+        return p.add(start, Stmt::Destructure { pattern, value });
     }
+    let mutable = p.at(TokenKind::Mut);
+    if mutable {
+        p.next();
+    }
+    let (name, ty, value) = p.binding();
+    p.add(
+        start,
+        Stmt::Let {
+            mutable,
+            name,
+            ty,
+            value,
+        },
+    )
+}
 
-    /// Reads the pattern after `with`: `none`, a name to bind, `.{ fields }`, or
-    /// another case.
-    fn payload_pattern(&mut self) -> Id<Pattern> {
-        let t = self.tok();
-        match t.kind {
-            K::None => {
-                self.next();
-                self.add(t.span.start, Pattern::None)
-            }
-            K::Dot => self.struct_pattern(),
-            K::Ident if !matches!(self.ahead(1).kind, K::ColonColon | K::Less) => {
-                let name = self.name();
-                self.tree.add(Pattern::Binding, name)
-            }
-            K::Ident => self.case_pattern(),
-            _ => {
-                self.fail(
-                    Diagnostic::new(
-                        diagnostics::EXPECTED_TOKEN,
-                        "expected a pattern after `with`",
-                    )
-                    .label(self.file, t.span, "")
-                    .help(
-                        "write `none`, a name, `.{ field }`, or a case of the payload's enum",
-                        Vec::new(),
-                    ),
+/// Reads `if condition { } else if ... else { }`. A `=` written for `==` in
+/// the condition is read as `==`.
+fn if_statement(p: &mut Parser) -> Id<Stmt> {
+    grow(|| {
+        let start = p.next().span.start;
+        let mut condition = p.expr(Precedence::Lowest);
+        let t = p.tok();
+        if t.kind == TokenKind::Assign {
+            p.next();
+            let fix = p.fix(t.span, "==");
+            p.repair(
+                Diagnostic::new(
+                    diagnostics::EXPECTED_TOKEN,
+                    "expected `==` in condition, found `=`",
+                )
+                .label(p.file, t.span, "")
+                .help("compare with `==`", vec![fix]),
+            );
+            let right = p.expr(Precedence::Lowest);
+            let left_start = p.tree.exprs.span(condition).start;
+            condition = p.add(
+                left_start,
+                Expr::Binary {
+                    op: TokenKind::EqualEqual,
+                    left: condition,
+                    right,
+                },
+            );
+        }
+        let then = p.body("if");
+        let mut otherwise = None;
+        if p.at(TokenKind::Else) {
+            p.next();
+            otherwise = if p.at(TokenKind::If) {
+                Some(if_statement(p))
+            } else {
+                p.body("else").map(|block| p.block_statement(block))
+            };
+        }
+        p.add(
+            start,
+            Stmt::If {
+                condition,
+                then,
+                otherwise,
+            },
+        )
+    })
+}
+
+/// Reads `for { }`, `for condition { }`, `for value in items { }` or
+/// `for index, value in items { }`. The iterable may be a range.
+fn for_statement(p: &mut Parser) -> Id<Stmt> {
+    let start = p.next().span.start;
+    if p.at(TokenKind::Ident) && matches!(p.ahead(1).kind, TokenKind::In | TokenKind::Comma) {
+        let mut index = None;
+        let mut value = p.name();
+        if p.at(TokenKind::Comma) {
+            p.next();
+            index = Some(value);
+            value = p.name();
+        }
+        p.expect(TokenKind::In);
+        let iterable = p.index_operand();
+        let body = p.body("for");
+        return p.add(
+            start,
+            Stmt::ForIn {
+                index,
+                value,
+                iterable,
+                body,
+            },
+        );
+    }
+    let mut condition = None;
+    if !p.at(TokenKind::LeftBrace) {
+        let value = p.expr(Precedence::Lowest);
+        if p.at(TokenKind::In) {
+            let span = p.tree.exprs.span(value);
+            p.fail(
+                Diagnostic::new(diagnostics::INVALID_EXPRESSION, "invalid loop variable").label(
+                    p.file,
+                    span,
+                    "expected an identifier before `in`",
+                ),
+            );
+        }
+        condition = Some(value);
+    }
+    let body = p.body("for");
+    p.add(start, Stmt::Loop { condition, body })
+}
+
+/// Reads `break;` or `continue;`. Loop labels are not part of the language
+/// yet; a label is reported and skipped.
+fn jump_statement(p: &mut Parser) -> Id<Stmt> {
+    let keyword = p.next();
+    let t = p.tok();
+    if t.kind == TokenKind::Ident {
+        p.next();
+        p.repair(
+            Diagnostic::new(
+                diagnostics::INVALID_STATEMENT,
+                format!("labeled {} is not supported yet", keyword.kind.name()),
+            )
+            .label(
+                p.file,
+                t.span,
+                "loop labels are planned for a later release",
+            ),
+        );
+    }
+    p.end();
+    let node = if keyword.kind == TokenKind::Continue {
+        Stmt::Continue
+    } else {
+        Stmt::Break
+    };
+    p.add(keyword.span.start, node)
+}
+
+/// Reads `match subject { arms }`. An arm is `_ => { }`, `Enum::Case => { }`
+/// or `Enum::Case with pattern => { }`; arms are not separated by commas.
+fn match_statement(p: &mut Parser) -> Id<Stmt> {
+    let start = p.next().span.start;
+    let subject = p.expr(Precedence::Lowest);
+    let mut arms = List::EMPTY;
+    if let Some(open) = p.expect(TokenKind::LeftBrace) {
+        let mark = p.scratch.len();
+        // Every arm begins with a name (`_` or a path) and reads at least it,
+        // so the loop always moves on.
+        while p.at(TokenKind::Ident) {
+            let arm_start = p.tok().span.start;
+            let (pattern, body) = p.match_arm();
+            let arm = p.add(arm_start, MatchArm { pattern, body });
+            p.scratch.push(arm.into());
+            let t = p.tok();
+            if t.kind == TokenKind::Comma {
+                p.next();
+                let fix = p.fix(t.span, "");
+                p.repair(
+                    Diagnostic::new(diagnostics::EXPECTED_TOKEN, "match arms do not use commas")
+                        .label(p.file, t.span, "")
+                        .help("remove this comma", vec![fix]),
                 );
-                self.add(self.last_end, Pattern::Invalid)
             }
         }
+        arms = p.finish_list(mark);
+        p.close(TokenKind::RightBrace, open);
     }
+    p.add(start, Stmt::Match { subject, arms })
+}
 
-    /// Reads `.{ a, b as c, _ }`: fields to bind, each by its own name or by the
-    /// name after `as`, and a `_` for the fields left out, which must come last.
-    /// A `=` written for `as` is read as `as`.
-    fn struct_pattern(&mut self) -> Id<Pattern> {
-        let start = self.next().span.start; // `.`
-        let mut fields = List::EMPTY;
-        if let Some(open) = self.expect(K::LeftBrace) {
-            fields = self.items(K::RightBrace, false, is_name, |p| {
-                let field_token = p.tok();
-                if p.text(field_token) == "_" {
-                    p.next();
-                    return p.add(field_token.span.start, Pattern::Rest);
-                }
-                let field = p.name();
-                let mut binding = None;
-                let t = p.tok();
-                if t.kind == K::As || t.kind == K::Assign {
-                    p.next();
-                    if t.kind == K::Assign {
-                        let fix = p.fix(t.span, "as");
-                        let help = format!("write `{} as name`", p.text(field_token));
-                        p.repair(
-                            Diagnostic::new(
-                                diagnostics::EXPECTED_TOKEN,
-                                "a destructure field is renamed with `as`",
-                            )
-                            .label(p.file, t.span, "")
-                            .help(help, vec![fix]),
-                        );
-                    }
-                    binding = Some(p.name());
-                }
-                p.add(field_token.span.start, Pattern::Field { field, binding })
-            });
-            self.close(K::RightBrace, open);
-        }
-        let ids: Vec<_> = self.tree.list(fields).collect();
-        for &field in ids.iter().take(ids.len().saturating_sub(1)) {
-            if let Pattern::Rest = self.tree.patterns[field] {
-                let span = self.tree.patterns.span(field);
-                self.repair(
-                    Diagnostic::new(
-                        diagnostics::EXPECTED_TOKEN,
-                        "`_` must be the last destructure item",
-                    )
-                    .label(self.file, span, ""),
-                );
-            }
-        }
-        self.add(start, Pattern::Struct(fields))
-    }
-
-    /// Reads `return value;`; the value may be left out.
-    fn return_statement(&mut self) -> Id<Stmt> {
-        let start = self.next().span.start;
-        let value = (!self.at(K::Semicolon)).then(|| self.expr(Prec::Lowest));
-        self.end();
-        self.add(start, Stmt::Return(value))
-    }
+/// Reads `return value;`; the value may be left out.
+fn return_statement(p: &mut Parser) -> Id<Stmt> {
+    let start = p.next().span.start;
+    let value = (!p.at(TokenKind::Semicolon)).then(|| p.expr(Precedence::Lowest));
+    p.end();
+    p.add(start, Stmt::Return(value))
 }
 
 #[cfg(test)]
