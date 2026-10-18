@@ -5,8 +5,9 @@
 //!
 //! A compile can reuse what the previous one found: a module whose text and
 //! imported interfaces are unchanged keeps its diagnostics, and its bodies are
-//! not checked again. Only hashes and diagnostics are kept between compiles;
-//! ids, types, THIR and MIR are rebuilt, since their numbering shifts.
+//! not checked again. Only each module's source file, interface hash and
+//! diagnostics are kept between compiles; ids, types, THIR and MIR are
+//! rebuilt, since their numbering shifts.
 
 use std::collections::HashMap;
 use std::hash::DefaultHasher;

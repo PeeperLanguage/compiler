@@ -139,16 +139,10 @@ pub struct Arena<T> {
 impl<T> Arena<T> {
     /// Adds `node` with `span`.
     pub fn push(&mut self, node: T, span: Span) -> Id<T> {
+        let id = Id::from_index(self.nodes.len());
         self.nodes.push(node);
         self.spans.push(span);
-        let raw = u32::try_from(self.nodes.len())
-            .ok()
-            .and_then(NonZeroU32::new)
-            .expect("an arena holds fewer than 2^32 nodes");
-        Id {
-            raw,
-            category: PhantomData,
-        }
+        id
     }
 
     pub fn span(&self, id: Id<T>) -> Span {

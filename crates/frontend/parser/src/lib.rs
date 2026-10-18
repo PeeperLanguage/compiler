@@ -97,6 +97,21 @@ impl Parser<'_> {
         self.tok().kind == kind
     }
 
+    /// Whether the current token is `yes`; it must be `yes` or `no`, as for a
+    /// rule registered for those two kinds only.
+    fn is_either(&self, yes: TokenKind, no: TokenKind) -> bool {
+        match self.tok().kind {
+            kind if kind == yes => true,
+            kind if kind == no => false,
+            kind => unreachable!(
+                "expected `{}` or `{}`, found `{}`",
+                yes.text(),
+                no.text(),
+                kind.text()
+            ),
+        }
+    }
+
     /// The token `n` tokens after the current one, or the end of file past the
     /// end.
     fn ahead(&self, mut n: usize) -> Token {

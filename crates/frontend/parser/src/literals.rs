@@ -79,19 +79,20 @@ impl Parser<'_> {
 
 /// Reads `"text"` or `c"text"`.
 pub(crate) fn string_literal(p: &mut Parser) -> Id<Expr> {
-    let c_string = p.at(TokenKind::CString);
+    let c_string = p.is_either(TokenKind::CString, TokenKind::String);
     p.leaf(Expr::String { c_string })
 }
 
 /// Reads `'x'` or `b'x'`.
 pub(crate) fn character_literal(p: &mut Parser) -> Id<Expr> {
-    let byte = p.at(TokenKind::ByteChar);
+    let byte = p.is_either(TokenKind::ByteChar, TokenKind::Char);
     p.leaf(Expr::Char { byte })
 }
 
 /// Reads `true` or `false`.
 pub(crate) fn bool_literal(p: &mut Parser) -> Id<Expr> {
-    p.leaf(Expr::Bool)
+    let value = p.is_either(TokenKind::True, TokenKind::False);
+    p.leaf(Expr::Bool(value))
 }
 
 /// Reads `none`.

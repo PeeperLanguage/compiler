@@ -65,6 +65,13 @@ generated list (`KEYWORDS.contains(&kind)`) or an exhaustive `match` instead.
 **Never derive a fact from a naming convention** (AGENTS.md section 8). The
 same reason: the compiler cannot check it.
 
+**Keep what the parser knew, and read it by name.** A literal's node holds
+what its token said (`Expr::Bool(bool)`, `Expr::String { c_string }`), so no
+later phase reads the text again. A rule shared by two tokens reads which one
+with `p.is_either(yes, no)`, which names both and panics on any other, not
+`p.at(yes)` with the other falling into `else`: registering the rule for one
+more token then fails loudly instead of reading as the default.
+
 **Unsafe code is forbidden** (`unsafe_code = "forbid"`), so a number cannot be
 turned back into an enum variant. When code must walk a group of variants,
 generate the list of them.

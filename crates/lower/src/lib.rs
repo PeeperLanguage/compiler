@@ -16,9 +16,8 @@ use model::thir;
 use source::Span;
 
 /// The MIR of a function's checked body, which has `parameters` parameters.
-/// `None` when checking it reported
-/// an error (`has_errors`), or an error left it incomplete: what was reported
-/// is all there is to say about it.
+/// `None` when checking it reported an error (`has_errors`), or an error left
+/// it incomplete: what was reported is all there is to say about it.
 pub fn lower(body: &thir::Body, parameters: usize) -> Option<mir::Body> {
     if body.has_errors {
         return None;
@@ -32,10 +31,10 @@ pub fn lower(body: &thir::Body, parameters: usize) -> Option<mir::Body> {
             constants: Vec::new(),
             lists: Lists::default(),
         },
-        variables: Vec::with_capacity(body.locals.len()),
         block: Id::from_index(0),
         instructions: Vec::new(),
     };
+    // One variable per local, in order: local `i` is variable `i`.
     for index in 0..body.locals.len() {
         let id = Id::from_index(index);
         let local = body.locals[id];
@@ -46,12 +45,11 @@ pub fn lower(body: &thir::Body, parameters: usize) -> Option<mir::Body> {
             ty: local.ty,
             mutable: local.mutable,
         };
-        let variable = lowering.mir.variables.push(variable, body.locals.span(id));
-        lowering.variables.push(variable);
+        lowering.mir.variables.push(variable, body.locals.span(id));
     }
     lowering.block = lowering.new_block(body.span);
     for index in 0..parameters {
-        let variable = lowering.variables[index];
+        let variable = Id::from_index(index);
         let store = mir::InstructionKind::Store {
             variable,
             value: mir::Operand::Argument(index as u32),
@@ -68,9 +66,8 @@ pub fn lower(body: &thir::Body, parameters: usize) -> Option<mir::Body> {
 struct Lowering<'t> {
     thir: &'t thir::Body,
     mir: mir::Body,
-    variables: Vec<Id<mir::Variable>>, // of each THIR local, by its index
-    block: Id<mir::Block>,             // the block being filled
-    instructions: Vec<NonZeroU32>,     // that block's instructions so far
+    block: Id<mir::Block>,         // the block being filled
+    instructions: Vec<NonZeroU32>, // that block's instructions so far
 }
 
 impl Lowering<'_> {
@@ -127,7 +124,7 @@ impl Lowering<'_> {
             }
             | thir::Stmt::Assign { local, value } => {
                 let value = self.expr(value)?;
-                let variable = self.variables[local.index()];
+                let variable = Id::from_index(local.index());
                 let store = mir::InstructionKind::Store { variable, value };
                 self.emit(store, TypeId::VOID, span);
             }
@@ -186,7 +183,7 @@ impl Lowering<'_> {
                 return Some(self.constant(value.clone()));
             }
             thir::ExprKind::Local(local) => {
-                mir::InstructionKind::Load(self.variables[local.index()])
+                mir::InstructionKind::Load(Id::from_index(local.index()))
             }
             thir::ExprKind::Binary {
                 op: op @ (BinaryOp::LogicalAnd | BinaryOp::LogicalOr),

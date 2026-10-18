@@ -62,7 +62,6 @@ impl Parser<'_> {
             }
             match kind {
                 TokenKind::Eof => {
-                    self.tree.span = Span::new(0, self.last_end as usize);
                     self.tree.imports = imports;
                     self.tree.declarations = self.finish_list(mark);
                     return;

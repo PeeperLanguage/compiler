@@ -34,7 +34,8 @@ pub(crate) fn dump(tree: &Tree, spans: bool) -> String {
     };
     let mut children: Vec<Item> = tree.imports.iter().map(|&i| Item::Import(i)).collect();
     children.extend(tree.lists.items(tree.declarations).map(Item::Decl));
-    d.write("module", None, tree.span, &children, 0);
+    let file = Span::new(0, tree.file.text.len());
+    d.write("module", None, file, &children, 0);
     d.out
 }
 
@@ -445,7 +446,7 @@ impl Dumper<'_> {
                 byte.then_some(TokenKind::ByteChar),
                 vec![],
             ),
-            Expr::Bool => ("bool literal", None, vec![]),
+            Expr::Bool(_) => ("bool literal", None, vec![]),
             Expr::None => ("none literal", None, vec![]),
             Expr::Binary { op, left, right } => {
                 ("binary expression", Some(op), two(left, Item::Expr(right)))

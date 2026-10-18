@@ -129,8 +129,7 @@ fixed_types! {
     CSTR "cstr" => Type::CString,
 }
 
-/// The types of a program. The scheduler shares it between threads behind one
-/// lock (docs/ir-design.md).
+/// The types of a program, owned by the scheduler for one compile.
 pub struct Types {
     types: Vec<Type>,
     ids: HashMap<Type, TypeId>,

@@ -100,11 +100,10 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
         let what = match tree.exprs[expression] {
             ast::Expr::Name => return self.name(span),
             ast::Expr::Number => return self.number(span, None, expected),
-            ast::Expr::Bool => {
-                let value = Value::Bool(tree.file.slice(span) == "true");
+            ast::Expr::Bool(value) => {
                 return Expr {
                     ty: TypeId::BOOL,
-                    kind: ExprKind::Constant(value),
+                    kind: ExprKind::Constant(Value::Bool(value)),
                 };
             }
             ast::Expr::Parentheses(inner) => return self.expr(inner, expected),
@@ -185,10 +184,10 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
     /// Reports `name`, written at `span`, which nothing in scope declares:
     /// a built-in function, not supported yet, or an unknown name, with the
     /// nearest name that is declared.
-    pub(crate) fn undeclared(&mut self, name: &str, span: Span) -> Expr {
+    pub(crate) fn undeclared(&mut self, name: &str, span: Span) {
         if UNSUPPORTED_FUNCTIONS.contains(&name) {
             self.checker.not_supported(span, "built-in functions");
-            return Expr::INVALID;
+            return;
         }
         // The module's names sorted, so the suggestion does not depend on the
         // hash order.
@@ -211,7 +210,6 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
             diagnostic = diagnostic.help(format!("did you mean `{nearest}`?"), vec![fix]);
         }
         self.checker.diagnostics.push(diagnostic);
-        Expr::INVALID
     }
 
     /// What the path `module::name` written as the type expression `path`

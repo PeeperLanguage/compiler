@@ -36,7 +36,6 @@ nodes! {
 /// The syntax tree of one file. It never changes once the parser returns it.
 pub struct Tree {
     pub file: Arc<SourceFile>,
-    pub span: Span, // the module: from the start of the file to the last token read
     pub imports: Vec<Import>,
     pub declarations: List<Decl>,
 
@@ -61,7 +60,6 @@ impl Tree {
     pub fn new(file: Arc<SourceFile>) -> Tree {
         Tree {
             file,
-            span: Span::default(),
             imports: Vec::new(),
             declarations: List::EMPTY,
             decls: Arena::default(),
@@ -378,8 +376,8 @@ pub enum Expr {
     String { c_string: bool },
     /// `'x'`, or `b'x'` when `byte`; `literal::value` decodes the text
     Char { byte: bool },
-    /// `true` or `false`, its text
-    Bool,
+    /// `true` or `false`
+    Bool(bool),
     /// `none`
     None,
     /// `left op right`
