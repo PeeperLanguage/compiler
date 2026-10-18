@@ -3,9 +3,9 @@
 //! comes with its value (`Checker::constant`).
 
 use arena::Id;
-use model::syntax;
-use model::types::Type;
-use model::types::TypeId;
+use model::ast;
+use model::semantic_types::Type;
+use model::semantic_types::TypeId;
 
 use crate::Checker;
 use crate::Queries;
@@ -15,10 +15,10 @@ use model::Binding;
 impl<Q: Queries> Checker<'_, Q> {
     /// The signature of the module's declaration `declaration`, which is not
     /// a constant.
-    pub fn signature(&mut self, declaration: Id<syntax::Decl>) -> TypeId {
-        let tree = &self.module.syntax;
+    pub fn signature(&mut self, declaration: Id<ast::Decl>) -> TypeId {
+        let tree = &self.module.ast;
         match tree.decls[declaration] {
-            syntax::Decl::Function(function) => {
+            ast::Decl::Function(function) => {
                 if let Some(receiver) = function.receiver {
                     return self.not_supported(tree.params.span(receiver), "methods");
                 }
@@ -44,28 +44,28 @@ impl<Q: Queries> Checker<'_, Q> {
                     .types()
                     .intern(Type::Function { parameters, result })
             }
-            syntax::Decl::Const { .. } => unreachable!("a constant's type comes with its value"),
-            syntax::Decl::Struct(declaration) => {
+            ast::Decl::Const { .. } => unreachable!("a constant's type comes with its value"),
+            ast::Decl::Struct(declaration) => {
                 self.not_supported(declaration.name.span, "struct declarations")
             }
-            syntax::Decl::Enum(declaration) => {
+            ast::Decl::Enum(declaration) => {
                 self.not_supported(declaration.name.span, "enum declarations")
             }
-            syntax::Decl::Interface(declaration) => {
+            ast::Decl::Interface(declaration) => {
                 self.not_supported(declaration.name.span, "interface declarations")
             }
-            syntax::Decl::Alias(declaration) => {
+            ast::Decl::Alias(declaration) => {
                 self.not_supported(declaration.name.span, "type aliases")
             }
         }
     }
 
     /// The type a type expression of the module's tree stands for.
-    pub fn resolve_type(&mut self, ty: Id<syntax::Type>) -> TypeId {
-        let tree = &self.module.syntax;
+    pub fn resolve_type(&mut self, ty: Id<ast::Type>) -> TypeId {
+        let tree = &self.module.ast;
         let span = tree.types.span(ty);
         let what = match tree.types[ty] {
-            syntax::Type::Name => {
+            ast::Type::Name => {
                 let name = tree.file.slice(span);
                 let pointer_bits = self.queries.pointer_bits();
                 if let Some(builtin) = self.queries.types().builtin(name, pointer_bits) {
@@ -88,20 +88,20 @@ impl<Q: Queries> Checker<'_, Q> {
                     }
                 }
             }
-            syntax::Type::Invalid => return TypeId::INVALID, // the parser reported it
-            syntax::Type::Path(_) => "types of other modules",
-            syntax::Type::Generic { .. } => "generic types",
-            syntax::Type::Reference { .. } => "reference types",
-            syntax::Type::OwnedPointer(_) => "owned pointer types",
-            syntax::Type::Optional(_) => "optional types",
-            syntax::Type::RawPointer => "raw pointers",
-            syntax::Type::FixedArray { .. } => "array types",
-            syntax::Type::DynamicArray(_) => "dynamic array types",
-            syntax::Type::Slice(_) => "slice types",
-            syntax::Type::Function { .. } => "function types",
-            syntax::Type::Struct(_) => "struct types",
-            syntax::Type::Enum(_) => "enum types",
-            syntax::Type::Interface(_) => "interface types",
+            ast::Type::Invalid => return TypeId::INVALID, // the parser reported it
+            ast::Type::Path(_) => "types of other modules",
+            ast::Type::Generic { .. } => "generic types",
+            ast::Type::Reference { .. } => "reference types",
+            ast::Type::OwnedPointer(_) => "owned pointer types",
+            ast::Type::Optional(_) => "optional types",
+            ast::Type::RawPointer => "raw pointers",
+            ast::Type::FixedArray { .. } => "array types",
+            ast::Type::DynamicArray(_) => "dynamic array types",
+            ast::Type::Slice(_) => "slice types",
+            ast::Type::Function { .. } => "function types",
+            ast::Type::Struct(_) => "struct types",
+            ast::Type::Enum(_) => "enum types",
+            ast::Type::Interface(_) => "interface types",
         };
         self.not_supported(span, what)
     }
@@ -109,8 +109,8 @@ impl<Q: Queries> Checker<'_, Q> {
 
 #[cfg(test)]
 mod tests {
-    use model::types::Type;
-    use model::types::TypeId;
+    use model::semantic_types::Type;
+    use model::semantic_types::TypeId;
 
     use crate::testing::Reported;
     use crate::testing::reported;
@@ -120,7 +120,7 @@ mod tests {
     /// diagnostics.
     fn signatures(text: &str) -> (Vec<String>, Vec<Reported>) {
         let (found, types, reported) = with_checker(text, |checker| {
-            let tree = &checker.module.syntax;
+            let tree = &checker.module.ast;
             let declarations: Vec<_> = tree.lists.items(tree.declarations).collect();
             let found: Vec<TypeId> = declarations
                 .into_iter()

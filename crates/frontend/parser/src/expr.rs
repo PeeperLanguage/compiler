@@ -7,14 +7,19 @@
 
 use arena::Id;
 use diagnostics::Diagnostic;
-use model::syntax::{Expr, Type};
+use model::ast::Expr;
+use model::ast::Type;
 use token::TokenKind;
 
-use crate::literals::{
-    anonymous_struct_literal, array_literal, bool_literal, character_literal, none_literal,
-    number_literal, string_literal,
-};
-use crate::{Parser, grow};
+use crate::Parser;
+use crate::grow;
+use crate::literals::anonymous_struct_literal;
+use crate::literals::array_literal;
+use crate::literals::bool_literal;
+use crate::literals::character_literal;
+use crate::literals::none_literal;
+use crate::literals::number_literal;
+use crate::literals::string_literal;
 
 /// How tightly an operator binds, from loosest to tightest.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -444,10 +449,15 @@ fn pipe(p: &mut Parser, value: Id<Expr>) -> Id<Expr> {
 
 #[cfg(test)]
 mod tests {
-    use model::syntax::{Decl, Stmt, Tree};
+    use model::ast::Decl;
+    use model::ast::Stmt;
+    use model::ast::Tree;
 
     use super::*;
-    use crate::tests::{dump_of, messages, one_error, parse_text};
+    use crate::tests::dump_of;
+    use crate::tests::messages;
+    use crate::tests::one_error;
+    use crate::tests::parse_text;
 
     /// The expression of the first statement of the first function.
     fn first_expression(tree: &Tree) -> Id<Expr> {

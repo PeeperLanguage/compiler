@@ -2,11 +2,13 @@
 
 use arena::Id;
 use diagnostics::Diagnostic;
-use model::syntax::Pattern;
+use model::ast::Pattern;
 
 use token::TokenKind;
 
-use crate::{Parser, grow, is_name};
+use crate::Parser;
+use crate::grow;
+use crate::is_name;
 
 impl Parser<'_> {
     /// Reads `Enum::Case`, perhaps followed by `with` and the pattern of its

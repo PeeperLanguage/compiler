@@ -3,11 +3,17 @@
 
 use arena::Id;
 use diagnostics::Diagnostic;
-use model::syntax::{Expr, FieldValue, Length, Type};
-use token::{Token, TokenKind};
+use model::ast::Expr;
+use model::ast::FieldValue;
+use model::ast::Length;
+use model::ast::Type;
+use token::Token;
+use token::TokenKind;
 
-use crate::expr::{Precedence, starts_expression};
-use crate::{Parser, is_name};
+use crate::Parser;
+use crate::expr::Precedence;
+use crate::expr::starts_expression;
+use crate::is_name;
 
 impl Parser<'_> {
     /// Reads `.{ name = value, ... }` after `ty` (none when there is no type), a

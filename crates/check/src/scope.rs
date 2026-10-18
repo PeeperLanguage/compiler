@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use diagnostics::Diagnostic;
 use model::Binding;
 use model::DefId;
-use model::syntax;
+use model::ast;
 use source::Span;
 
 pub struct ModuleScope {
@@ -36,7 +36,7 @@ pub fn collect(
     module_indexes: &HashMap<&str, u32>,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> ModuleScope {
-    let file = &module.syntax.file;
+    let file = &module.ast.file;
     let mut scope = ModuleScope {
         names: HashMap::new(),
     };
@@ -64,22 +64,22 @@ pub fn collect(
             declare(alias, Binding::Module(index), import.span);
         }
     }
-    let tree = &module.syntax;
+    let tree = &module.ast;
     for declaration in tree.lists.items(tree.declarations) {
         let definition = DefId {
             module: module_index,
             index: declaration.index() as u32,
         };
         let (name, binding) = match tree.decls[declaration] {
-            syntax::Decl::Function(function) if function.receiver.is_none() => {
+            ast::Decl::Function(function) if function.receiver.is_none() => {
                 (function.name, Binding::Function(definition))
             }
-            syntax::Decl::Function(_) => continue, // a method belongs to its receiver's type
-            syntax::Decl::Const { name, .. } => (name, Binding::Constant(definition)),
-            syntax::Decl::Struct(declaration)
-            | syntax::Decl::Enum(declaration)
-            | syntax::Decl::Interface(declaration)
-            | syntax::Decl::Alias(declaration) => (declaration.name, Binding::Type(definition)),
+            ast::Decl::Function(_) => continue, // a method belongs to its receiver's type
+            ast::Decl::Const { name, .. } => (name, Binding::Constant(definition)),
+            ast::Decl::Struct(declaration)
+            | ast::Decl::Enum(declaration)
+            | ast::Decl::Interface(declaration)
+            | ast::Decl::Alias(declaration) => (declaration.name, Binding::Type(definition)),
         };
         declare(name.text(file), binding, name.span);
     }

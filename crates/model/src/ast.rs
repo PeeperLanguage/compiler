@@ -1,13 +1,19 @@
 //! The syntax tree of one file, in typed arenas (see the `arena` crate).
 //!
-//! A name is the span of its text, kept in the node it belongs to. A name or
-//! child that is missing after a syntax error is an empty span or an `Invalid`
-//! node.
+//! A name is an `Ident`, the span of its text, kept in the node it belongs to.
+//! A name or child that is missing after a syntax error is an empty span or an
+//! `Invalid` node.
 
 use std::sync::Arc;
 
-use arena::{Arena, Id, List, Lists, Node, nodes};
-use source::{SourceFile, Span};
+use arena::Arena;
+use arena::Id;
+use arena::List;
+use arena::Lists;
+use arena::Node;
+use arena::nodes;
+use source::SourceFile;
+use source::Span;
 use token::TokenKind;
 
 nodes! {

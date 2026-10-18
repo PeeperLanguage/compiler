@@ -6,8 +6,11 @@ use std::num::NonZeroU32;
 use arena::Id;
 use arena::List;
 use diagnostics::Diagnostic;
-use model::syntax;
-use model::syntax::Ident;
+use model::ast;
+use model::ast::Ident;
+use model::constant::Constant;
+use model::semantic_types::Type;
+use model::semantic_types::TypeId;
 use model::thir::Block;
 use model::thir::Body;
 use model::thir::Expr;
@@ -17,9 +20,6 @@ use model::thir::Name;
 use model::thir::Stmt;
 use model::thir::Symbol;
 use model::thir::Target;
-use model::types::Type;
-use model::types::TypeId;
-use model::value::Constant;
 use source::Span;
 
 use crate::Checker;
@@ -29,7 +29,7 @@ use model::Binding;
 /// Checking one function body.
 pub(crate) struct BodyChecker<'c, 'a, Q: Queries> {
     pub(crate) checker: &'c mut Checker<'a, Q>,
-    pub(crate) tree: &'a syntax::Tree,
+    pub(crate) tree: &'a ast::Tree,
     pub(crate) body: Body,
     /// The names declared in the enclosing blocks so far, innermost last. Few
     /// names are in scope at once, so a search from the end beats hashing.
@@ -43,14 +43,14 @@ impl<'a, Q: Queries> Checker<'a, Q> {
     /// The THIR of `function`'s body, given its signature `ty` (`signature`),
     /// with `has_errors` set when checking it reported an error. `None` for a
     /// function without a body, or whose signature had an error.
-    pub fn body(&mut self, function: &syntax::Function, ty: TypeId) -> Option<Body> {
+    pub fn body(&mut self, function: &ast::Function, ty: TypeId) -> Option<Body> {
         let block = function.body?;
         let reported = self.diagnostics.len();
         let Type::Function { parameters, result } = &self.queries.types()[ty] else {
             return None; // the signature's error was reported
         };
         let (parameters, result) = (parameters.clone(), *result);
-        let tree = &self.module.syntax;
+        let tree = &self.module.ast;
         let mut checker = BodyChecker::new(self, result);
         for (parameter, &ty) in tree.lists.items(function.parameters).zip(&parameters) {
             let parameter = tree.params[parameter];
@@ -77,7 +77,7 @@ impl<'a, Q: Queries> Checker<'a, Q> {
     /// The type and value of the module's constant `declaration`; `None` when
     /// it had an error. Its value is checked as a body's `const` is, with no
     /// locals in scope.
-    pub fn constant(&mut self, declaration: Id<syntax::Decl>) -> Option<Constant> {
+    pub fn constant(&mut self, declaration: Id<ast::Decl>) -> Option<Constant> {
         BodyChecker::new(self, TypeId::VOID).constant_value(declaration)
     }
 }
@@ -85,7 +85,7 @@ impl<'a, Q: Queries> Checker<'a, Q> {
 impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
     /// Checking a body of a function whose result type is `result`.
     fn new(checker: &'c mut Checker<'a, Q>, result: TypeId) -> BodyChecker<'c, 'a, Q> {
-        let tree = &checker.module.syntax;
+        let tree = &checker.module.ast;
         BodyChecker {
             checker,
             tree,
@@ -97,7 +97,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
     }
 
     /// The THIR of `statements`, in the current block.
-    fn statements(&mut self, statements: List<syntax::Stmt>) -> List<Stmt> {
+    fn statements(&mut self, statements: List<ast::Stmt>) -> List<Stmt> {
         let mut checked: Vec<NonZeroU32> = Vec::with_capacity(statements.len());
         for statement in self.tree.lists.items(statements) {
             if let Some(statement) = self.statement(statement) {
@@ -108,7 +108,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
     }
 
     /// The THIR of `block`; the names it declares end with it.
-    fn block(&mut self, block: Id<syntax::Block>) -> Id<Block> {
+    fn block(&mut self, block: Id<ast::Block>) -> Id<Block> {
         let names_before = self.names.len();
         let enclosing_start = std::mem::replace(&mut self.block_start, names_before);
         let statements = self.statements(self.tree.blocks[block].statements);
@@ -175,30 +175,30 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
 
     /// The THIR of `statement`; `None` for a `const`, which only declares a
     /// name, and for a statement with an error.
-    fn statement(&mut self, statement: Id<syntax::Stmt>) -> Option<Id<Stmt>> {
+    fn statement(&mut self, statement: Id<ast::Stmt>) -> Option<Id<Stmt>> {
         let tree = self.tree;
         let span = tree.stmts.span(statement);
         let checked = match tree.stmts[statement] {
-            syntax::Stmt::Block(block) => Stmt::Block(self.block(block)),
-            syntax::Stmt::Let {
+            ast::Stmt::Block(block) => Stmt::Block(self.block(block)),
+            ast::Stmt::Let {
                 mutable,
                 name,
                 ty,
                 value,
             } => self.let_statement(mutable, name, ty, value),
-            syntax::Stmt::Const(declaration) => {
+            ast::Stmt::Const(declaration) => {
                 let constant = self.constant_value(declaration);
-                let syntax::Decl::Const { name, .. } = tree.decls[declaration] else {
+                let ast::Decl::Const { name, .. } = tree.decls[declaration] else {
                     unreachable!("a const statement holds a const declaration")
                 };
                 let constant = self.body.consts.push(constant, name.span);
                 self.declare(name, Symbol::Constant(constant));
                 return None;
             }
-            syntax::Stmt::Return(value) => Stmt::Return(self.return_value(span, value)),
-            syntax::Stmt::Expression(value) => Stmt::Expression(self.value(value, None)),
-            syntax::Stmt::Assign { target, value } => self.assign(target, value)?,
-            syntax::Stmt::If {
+            ast::Stmt::Return(value) => Stmt::Return(self.return_value(span, value)),
+            ast::Stmt::Expression(value) => Stmt::Expression(self.value(value, None)),
+            ast::Stmt::Assign { target, value } => self.assign(target, value)?,
+            ast::Stmt::If {
                 condition,
                 then,
                 otherwise,
@@ -212,15 +212,15 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
                     otherwise,
                 }
             }
-            syntax::Stmt::Destructure { pattern, .. } => {
+            ast::Stmt::Destructure { pattern, .. } => {
                 self.checker.not_supported(span, "destructuring `let`s");
                 // Its names are still declared, so their uses report nothing
                 // more.
-                let syntax::Pattern::Struct(fields) = tree.patterns[pattern] else {
+                let ast::Pattern::Struct(fields) = tree.patterns[pattern] else {
                     return None; // the parser reported it
                 };
                 for field in tree.lists.items(fields) {
-                    if let syntax::Pattern::Field { field, binding } = tree.patterns[field] {
+                    if let ast::Pattern::Field { field, binding } = tree.patterns[field] {
                         let name = binding.unwrap_or(field);
                         let unknown = Local {
                             ty: TypeId::INVALID,
@@ -233,15 +233,15 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
                 }
                 return None;
             }
-            syntax::Stmt::Loop { .. } | syntax::Stmt::ForIn { .. } => {
+            ast::Stmt::Loop { .. } | ast::Stmt::ForIn { .. } => {
                 self.checker.not_supported(span, "loops");
                 return None;
             }
-            syntax::Stmt::Break | syntax::Stmt::Continue => {
+            ast::Stmt::Break | ast::Stmt::Continue => {
                 self.checker.not_supported(span, "`break` and `continue`");
                 return None;
             }
-            syntax::Stmt::Match { .. } => {
+            ast::Stmt::Match { .. } => {
                 self.checker.not_supported(span, "`match` statements");
                 return None;
             }
@@ -255,8 +255,8 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
         &mut self,
         mutable: bool,
         name: Ident,
-        ty: Option<Id<syntax::Type>>,
-        value: Option<Id<syntax::Expr>>,
+        ty: Option<Id<ast::Type>>,
+        value: Option<Id<ast::Expr>>,
     ) -> Stmt {
         let declared = ty.map(|ty| self.checker.resolve_type(ty));
         let declared_without_value = value.is_none();
@@ -329,8 +329,8 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
     /// `const name: ty = value;`: a name for a value known at compile time.
     /// Without a type, the constant takes its value's type. Gives its type and
     /// value, or `None` after an error.
-    fn constant_value(&mut self, declaration: Id<syntax::Decl>) -> Option<Constant> {
-        let syntax::Decl::Const {
+    fn constant_value(&mut self, declaration: Id<ast::Decl>) -> Option<Constant> {
+        let ast::Decl::Const {
             name, ty, value, ..
         } = self.tree.decls[declaration]
         else {
@@ -350,7 +350,10 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
             None => self.expr(value, None),
         };
         match checked.kind {
-            ExprKind::Constant(value) => Some((checked.ty, value)),
+            ExprKind::Constant(value) => Some(Constant {
+                ty: checked.ty,
+                value,
+            }),
             ExprKind::Invalid => None,
             _ => {
                 let message = "the value of a constant must be known at compile time";
@@ -362,7 +365,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
     }
 
     /// The value of `return value;`, checked against the function's result.
-    fn return_value(&mut self, span: Span, value: Option<Id<syntax::Expr>>) -> Option<Id<Expr>> {
+    fn return_value(&mut self, span: Span, value: Option<Id<ast::Expr>>) -> Option<Id<Expr>> {
         match value {
             Some(value) if self.result == TypeId::VOID => {
                 let message = "this function has no result, so `return` takes no value";
@@ -388,7 +391,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
     }
 
     /// `target = value;`, where the target is a mutable local.
-    fn assign(&mut self, target: Id<syntax::Expr>, value: Id<syntax::Expr>) -> Option<Stmt> {
+    fn assign(&mut self, target: Id<ast::Expr>, value: Id<ast::Expr>) -> Option<Stmt> {
         let Some(local) = self.assigned_local(target) else {
             self.value(value, None); // for its own errors
             return None;
@@ -402,10 +405,10 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
     /// is checked against its type. An immutable local declared without a
     /// value may be assigned; the path checks on MIR report one that may be
     /// assigned twice.
-    fn assigned_local(&mut self, target: Id<syntax::Expr>) -> Option<Id<Local>> {
+    fn assigned_local(&mut self, target: Id<ast::Expr>) -> Option<Id<Local>> {
         let tree = self.tree;
         let span = tree.exprs.span(target);
-        if !matches!(tree.exprs[target], syntax::Expr::Name) {
+        if !matches!(tree.exprs[target], ast::Expr::Name) {
             self.checker
                 .not_supported(span, "assignments to targets other than names");
             return None;
@@ -466,7 +469,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
 #[cfg(test)]
 mod tests {
     use model::DefId;
-    use model::syntax;
+    use model::ast;
     use source::SourceFile;
 
     use crate::testing::Reported;
@@ -477,12 +480,11 @@ mod tests {
     /// diagnostics.
     fn bodies(text: &str) -> (Vec<String>, Vec<Reported>) {
         let (bodies, types, reported) = with_checker(text, |checker| {
-            let tree = &checker.module.syntax;
+            let tree = &checker.module.ast;
             let declarations: Vec<_> = tree.lists.items(tree.declarations).collect();
             let mut bodies = Vec::new();
             for declaration in declarations {
-                let syntax::Decl::Function(function) = checker.module.syntax.decls[declaration]
-                else {
+                let ast::Decl::Function(function) = checker.module.ast.decls[declaration] else {
                     continue;
                 };
                 let signature = checker.signature(declaration);
@@ -735,9 +737,9 @@ mod tests {
     /// message with its first note.
     fn notes(text: &str) -> Vec<(String, Option<String>)> {
         let (notes, _, _) = with_checker(text, |checker| {
-            let tree = &checker.module.syntax;
+            let tree = &checker.module.ast;
             let declaration = tree.lists.items(tree.declarations).next().unwrap();
-            let syntax::Decl::Function(function) = tree.decls[declaration] else {
+            let ast::Decl::Function(function) = tree.decls[declaration] else {
                 unreachable!("the first declaration is a function")
             };
             let signature = checker.signature(declaration);

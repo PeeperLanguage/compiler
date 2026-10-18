@@ -2,11 +2,20 @@
 
 use std::sync::Arc;
 
-use diagnostics::{self as diagnostic, Code, Diagnostic, quote};
-use literal::{escape, next_char_width};
-use source::{SourceFile, Span};
-use token::{KEYWORDS, OPERATORS, Token, TokenKind};
-use unicode_general_category::{GeneralCategory, get_general_category};
+use diagnostics as diagnostic;
+use diagnostics::Code;
+use diagnostics::Diagnostic;
+use diagnostics::quote;
+use literal::escape;
+use literal::next_char_width;
+use source::SourceFile;
+use source::Span;
+use token::KEYWORDS;
+use token::OPERATORS;
+use token::Token;
+use token::TokenKind;
+use unicode_general_category::GeneralCategory;
+use unicode_general_category::get_general_category;
 
 /// Returns the tokens of `file`, ending with an end-of-file token, and the
 /// lexical errors in it. An illegal character is reported and produces no

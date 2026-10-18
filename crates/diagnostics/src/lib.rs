@@ -3,7 +3,8 @@
 
 use std::sync::Arc;
 
-use source::{SourceFile, Span};
+use source::SourceFile;
+use source::Span;
 
 pub mod printer;
 pub mod suggest;

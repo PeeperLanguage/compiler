@@ -28,12 +28,17 @@ mod dump;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
-use arena::{Id, List, Node};
-use diagnostics::{Diagnostic, Fix};
-use model::syntax::Ident;
-use model::syntax::Tree;
-use source::{SourceFile, Span};
-use token::{Token, TokenKind};
+use arena::Id;
+use arena::List;
+use arena::Node;
+use diagnostics::Diagnostic;
+use diagnostics::Fix;
+use model::ast::Ident;
+use model::ast::Tree;
+use source::SourceFile;
+use source::Span;
+use token::Token;
+use token::TokenKind;
 
 /// Returns the syntax tree of `file` and the lexical and syntax errors in it.
 pub fn parse(file: &Arc<SourceFile>) -> (Tree, Vec<Diagnostic>) {

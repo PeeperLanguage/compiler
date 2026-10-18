@@ -13,9 +13,9 @@ mod testing;
 use diagnostics::Code;
 use diagnostics::Diagnostic;
 use model::DefId;
-use model::types::TypeId;
-use model::types::Types;
-use model::value::Constant;
+use model::constant::Constant;
+use model::semantic_types::TypeId;
+use model::semantic_types::Types;
 use source::Span;
 
 use crate::scope::ModuleScope;
@@ -56,7 +56,7 @@ impl<Q: Queries> Checker<'_, Q> {
     /// of an error already reported, so nothing more is reported about it.
     fn error(&mut self, code: Code, message: impl Into<String>, span: Span) -> TypeId {
         self.diagnostics.push(Diagnostic::new(code, message).label(
-            &self.module.syntax.file,
+            &self.module.ast.file,
             span,
             "",
         ));

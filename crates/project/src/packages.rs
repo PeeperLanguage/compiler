@@ -2,19 +2,15 @@
 //! import paths of the files in them.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 
 const SOURCE_EXTENSION: &str = ".peep";
-
-/// Maps each package name to the folder holding its source files, for example
-/// "myapp" to <project>/src and "core" to <installation>/libs/core/src. An
-/// import "myapp:utils/file" names <project>/src/utils/file.peep.
-pub type Packages = HashMap<String, PathBuf>;
 
 /// The import path of the source file at `file`: its package and its path in
 /// that package's folder, without the extension. A file in no package's folder
 /// has only its file name for a path, and the second value is false.
-pub(crate) fn path_of(packages: &Packages, file: &Path) -> (String, bool) {
+pub(crate) fn path_of(packages: &HashMap<String, PathBuf>, file: &Path) -> (String, bool) {
     for (name, dir) in packages {
         if let Ok(relative) = file.strip_prefix(dir) {
             let parts: Vec<_> = relative
@@ -33,7 +29,10 @@ pub(crate) fn path_of(packages: &Packages, file: &Path) -> (String, bool) {
 
 /// Checks an import path as written, "package:path/in/package", and returns
 /// its canonical form and the file it names. The file is not checked to exist.
-pub(crate) fn resolve(packages: &Packages, path: &str) -> Result<(String, PathBuf), String> {
+pub(crate) fn resolve(
+    packages: &HashMap<String, PathBuf>,
+    path: &str,
+) -> Result<(String, PathBuf), String> {
     let Some((name, rest)) = path.split_once(':') else {
         return Err("import path needs a package, such as `myapp:utils/file`".to_string());
     };

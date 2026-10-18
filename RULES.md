@@ -126,8 +126,9 @@ Names must keep their meaning when read as plain text, with no editor help:
   `use Prefix::*` (or `use Prefix::{...}`) and then a bare `Number`.
 - Import one item per `use`: `use source::Span;`. Do not write
   `use path::{a, b, c}` and then use `a`, `b`, `c` bare, and do not use `*`.
+  A test module may write `use super::*;` for the module it tests.
 - No `pub use` re-exports: an item is named by the module that defines it
-  (`pub mod types;` and `model::types::TypeId`, not `model::TypeId`).
+  (`pub mod semantic_types;` and `model::semantic_types::TypeId`, not `model::TypeId`).
 
 ## 6. Change scope
 

@@ -3,11 +3,19 @@
 
 use arena::Id;
 use diagnostics::Diagnostic;
-use model::syntax::{Decl, Field, Length, Param, Type, Variant};
+use model::ast::Decl;
+use model::ast::Field;
+use model::ast::Length;
+use model::ast::Param;
+use model::ast::Type;
+use model::ast::Variant;
 use source::Span;
-use token::{Token, TokenKind};
+use token::Token;
+use token::TokenKind;
 
-use crate::{Parser, grow, is_name};
+use crate::Parser;
+use crate::grow;
+use crate::is_name;
 
 /// Whether a type can begin with `kind`.
 pub(crate) fn starts_type(kind: TokenKind) -> bool {

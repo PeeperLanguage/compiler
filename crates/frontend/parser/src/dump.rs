@@ -3,12 +3,26 @@
 //! node without children. This is the Go parser's dump format, so trees can be
 //! compared with it. With `spans`, each line also shows the node's span.
 
-use arena::{Id, List};
-use model::syntax;
-use model::syntax::{
-    Attribute, Block, Decl, Expr, Field, FieldValue, Ident, Import, Length, MatchArm, Metadata,
-    Param, Pattern, Stmt, Tree, Type, Variant,
-};
+use arena::Id;
+use arena::List;
+use model::ast;
+use model::ast::Attribute;
+use model::ast::Block;
+use model::ast::Decl;
+use model::ast::Expr;
+use model::ast::Field;
+use model::ast::FieldValue;
+use model::ast::Ident;
+use model::ast::Import;
+use model::ast::Length;
+use model::ast::MatchArm;
+use model::ast::Metadata;
+use model::ast::Param;
+use model::ast::Pattern;
+use model::ast::Stmt;
+use model::ast::Tree;
+use model::ast::Type;
+use model::ast::Variant;
 use source::Span;
 use token::TokenKind;
 
@@ -95,7 +109,7 @@ impl Dumper<'_> {
 
     fn item(&mut self, item: Item, depth: usize) {
         let t = self.tree;
-        let names = |kind: &'static str, list: List<syntax::Name>| {
+        let names = |kind: &'static str, list: List<ast::Name>| {
             t.lists
                 .items(list)
                 .map(move |name| Item::Leaf(kind, t.names.span(name)))

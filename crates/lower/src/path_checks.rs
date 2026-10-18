@@ -44,10 +44,10 @@ use std::sync::Arc;
 
 use arena::Id;
 use diagnostics::Diagnostic;
+use model::constant::Value;
 use model::mir;
-use model::types::TypeId;
-use model::types::Types;
-use model::value::Value;
+use model::semantic_types::TypeId;
+use model::semantic_types::Types;
 use source::SourceFile;
 use source::Span;
 

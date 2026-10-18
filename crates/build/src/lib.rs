@@ -20,27 +20,31 @@ use check::Queries;
 use check::scope::ModuleScope;
 use diagnostics::Diagnostic;
 use model::DefId;
+use model::ast;
+use model::constant::Constant;
 use model::mir;
-use model::syntax;
+use model::semantic_types::Type;
+use model::semantic_types::TypeId;
+use model::semantic_types::Types;
 use model::thir;
-use model::types::Type;
-use model::types::TypeId;
-use model::types::Types;
-use model::value::Constant;
 use source::SourceFile;
 
 /// What a compile found, kept for the next compile of the same program.
 #[derive(Default)]
-pub struct Compiled {
-    names: Vec<Diagnostic>, // from collecting each module's names; redone every compile
-    modules: Vec<Module>,   // in the program's order
+pub struct Results {
+    modules: Vec<Module>, // in the program's order
 }
 
-impl Compiled {
-    /// Every diagnostic, in the order a compile from nothing reports them.
+impl Results {
+    /// Every diagnostic, in the order a compile from nothing reports them:
+    /// building every module's scope comes before checking any module.
     pub fn diagnostics(&self) -> impl Iterator<Item = &Diagnostic> {
-        let modules = self.modules.iter().flat_map(|module| &module.diagnostics);
-        self.names.iter().chain(modules)
+        let scopes = self
+            .modules
+            .iter()
+            .flat_map(|module| &module.scope_diagnostics);
+        let checked = self.modules.iter().flat_map(|module| &module.diagnostics);
+        scopes.chain(checked)
     }
 }
 
@@ -48,13 +52,14 @@ impl Compiled {
 struct Module {
     path: String,
     file: Arc<SourceFile>,
-    interface: u64, // `Build::interface`
-    diagnostics: Vec<Diagnostic>,
+    interface: u64,                     // `Build::interface`
+    scope_diagnostics: Vec<Diagnostic>, // from building its scope; redone every compile
+    diagnostics: Vec<Diagnostic>,       // from checking it; kept while it is reused
 }
 
 /// Checks every declaration of `program`, lowers each function to MIR and
 /// gives what it found. A module of `previous` (a compile of the same program
-/// with the same `pointer_bits`, or `Compiled::default()`) whose text and
+/// with the same `pointer_bits`, or `Results::default()`) whose text and
 /// whose imports' interfaces are unchanged keeps its diagnostics, and its
 /// bodies are not checked again. The THIR of each checked function with a
 /// body, and its MIR unless checking it found an error, go to `use_function`
@@ -64,9 +69,9 @@ struct Module {
 pub fn compile(
     program: &project::Program,
     pointer_bits: u32,
-    previous: Compiled,
+    previous: Results,
     mut use_function: impl FnMut(DefId, &thir::Body, Option<&mir::Body>, &Types),
-) -> Compiled {
+) -> Results {
     let modules: Vec<&project::Module> = program
         .order
         .iter()
@@ -76,10 +81,13 @@ pub fn compile(
         .zip(&modules)
         .map(|(index, module)| (module.path.as_str(), index))
         .collect();
-    let mut names = Vec::new();
+    let mut scope_diagnostics = vec![Vec::new(); modules.len()];
     let scopes: Vec<ModuleScope> = (0..)
         .zip(&modules)
-        .map(|(index, module)| check::scope::collect(index, module, &indexes, &mut names))
+        .zip(&mut scope_diagnostics)
+        .map(|((index, module), diagnostics)| {
+            check::scope::collect(index, module, &indexes, diagnostics)
+        })
         .collect();
     let program = Program {
         prelude: indexes.get(project::PRELUDE_PATH).copied(),
@@ -104,7 +112,7 @@ pub fn compile(
     // Whether each module's interface differs from the previous compile's.
     let mut changed: Vec<bool> = Vec::with_capacity(program.modules.len());
     for (index, module) in (0..).zip(&program.modules) {
-        let tree = &module.syntax;
+        let tree = &module.ast;
         // An import comes before its importer, so it is decided already.
         let imports_unchanged = module.imports.iter().all(|import| {
             let place = indexes.get(import.path.as_str());
@@ -128,7 +136,7 @@ pub fn compile(
                 index: declaration.index() as u32,
             };
             match tree.decls[declaration] {
-                syntax::Decl::Function(function) => {
+                ast::Decl::Function(function) => {
                     let ty = build.signature(definition);
                     let thir = build.with_checker(index, |checker| checker.body(&function, ty));
                     if let Some(thir) = thir {
@@ -136,7 +144,7 @@ pub fn compile(
                         use_function(definition, &thir, mir.as_ref(), &build.types);
                     }
                 }
-                syntax::Decl::Const { .. } => {
+                ast::Decl::Const { .. } => {
                     build.constant(definition);
                 }
                 _ => {
@@ -151,16 +159,19 @@ pub fn compile(
     let modules = program
         .modules
         .iter()
+        .zip(scope_diagnostics)
         .zip(build.diagnostics)
         .zip(interfaces);
-    let modules = modules.map(|((module, diagnostics), interface)| Module {
-        path: module.path.clone(),
-        file: module.syntax.file.clone(),
-        interface,
-        diagnostics,
-    });
-    Compiled {
-        names,
+    let modules = modules.map(
+        |(((module, scope_diagnostics), diagnostics), interface)| Module {
+            path: module.path.clone(),
+            file: module.ast.file.clone(),
+            interface,
+            scope_diagnostics,
+            diagnostics,
+        },
+    );
+    Results {
         modules: modules.collect(),
     }
 }
@@ -186,7 +197,7 @@ fn hash_type(types: &Types, ty: TypeId, hasher: &mut DefaultHasher) {
 
 /// A query's results for every declaration of `modules`, none started.
 fn table<T: Clone>(modules: &[&project::Module]) -> Vec<Vec<State<T>>> {
-    let declarations = |module: &&project::Module| module.syntax.decls.len();
+    let declarations = |module: &&project::Module| module.ast.decls.len();
     modules
         .iter()
         .map(|module| vec![State::NotStarted; declarations(module)])
@@ -254,7 +265,7 @@ impl<'p> Build<'p> {
     fn interface(&self, module: u32) -> u64 {
         let index = module as usize;
         let module = self.program.modules[index];
-        let tree = &module.syntax;
+        let tree = &module.ast;
         let mut hasher = DefaultHasher::new();
         for import in &module.imports {
             import.path.hash(&mut hasher);
@@ -267,7 +278,9 @@ impl<'p> Build<'p> {
             if let State::Done(ty) = self.signatures[index][declaration.index()] {
                 hash_type(&self.types, ty, &mut hasher);
             }
-            if let State::Done(Some((ty, value))) = &self.constants[index][declaration.index()] {
+            if let State::Done(Some(Constant { ty, value })) =
+                &self.constants[index][declaration.index()]
+            {
                 hash_type(&self.types, *ty, &mut hasher);
                 value.hash(&mut hasher);
             }
@@ -283,7 +296,7 @@ impl<'p> Build<'p> {
             return None; // the signature's error was reported
         };
         let module = module as usize;
-        let tree = &self.program.modules[module].syntax;
+        let tree = &self.program.modules[module].ast;
         let mir = lower::lower(body, parameters.len())?;
         let diagnostics = &mut self.diagnostics[module];
         // Only a `let` without a value can be unset or assigned twice.
@@ -309,7 +322,7 @@ impl<'p> Build<'p> {
         definition: DefId,
         table: fn(&mut Self) -> &mut Vec<Vec<State<T>>>,
         on_cycle: T,
-        work: impl FnOnce(&mut Checker<Build<'p>>, Id<syntax::Decl>) -> T,
+        work: impl FnOnce(&mut Checker<Build<'p>>, Id<ast::Decl>) -> T,
     ) -> T {
         let (module, index) = (definition.module as usize, definition.index as usize);
         match &table(self)[module][index] {
@@ -335,7 +348,7 @@ impl<'p> Build<'p> {
         if self.reused[module] {
             return;
         }
-        let tree = &self.program.modules[module].syntax;
+        let tree = &self.program.modules[module].ast;
         let name = tree.decls[Id::from_index(definition.index as usize)].name();
         let text = name.text(&tree.file);
         self.diagnostics[module].push(
@@ -375,9 +388,10 @@ impl Queries for Build<'_> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::path::PathBuf;
 
-    use super::Compiled;
+    use super::Results;
     use super::compile;
 
     /// The program of `modules`, each an import path and its text, loaded as
@@ -388,7 +402,7 @@ mod tests {
             "core" => PathBuf::from("/peeper-build-test/libs/core/src"),
             _ => PathBuf::from("/peeper-build-test/src"),
         };
-        let packages = project::Packages::from([
+        let packages = HashMap::from([
             ("app".to_string(), folder("app")),
             ("core".to_string(), folder("core")),
         ]);
@@ -414,7 +428,7 @@ mod tests {
     /// Checks the program of `modules` (see `program`) and gives each
     /// diagnostic as its code, message and the text of its first label.
     fn diagnostics(modules: &[(&str, &str)]) -> Vec<(&'static str, String, String)> {
-        let found = compile(&program(modules), 64, Compiled::default(), |_, _, _, _| {});
+        let found = compile(&program(modules), 64, Results::default(), |_, _, _, _| {});
         found
             .diagnostics()
             .map(|diagnostic| {
@@ -615,22 +629,22 @@ mod tests {
     /// Compiles the program of `modules` (see `program`) after `previous`;
     /// gives what it found and the paths of the modules whose bodies were
     /// checked, which every module of these tests has.
-    fn recompile(modules: &[(&str, &str)], previous: Compiled) -> (Compiled, Vec<String>) {
+    fn recompile(modules: &[(&str, &str)], previous: Results) -> (Results, Vec<String>) {
         let program = program(modules);
         let mut checked: Vec<String> = Vec::new();
-        let compiled = compile(&program, 64, previous, |definition, _, _, _| {
+        let results = compile(&program, 64, previous, |definition, _, _, _| {
             let path = &program.order[definition.module as usize];
             if !checked.contains(path) {
                 checked.push(path.clone());
             }
         });
-        (compiled, checked)
+        (results, checked)
     }
 
-    /// The message of each diagnostic of `compiled`, in order.
-    fn messages(compiled: &Compiled) -> Vec<String> {
+    /// The message of each diagnostic of `results`, in order.
+    fn messages(results: &Results) -> Vec<String> {
         let message = |diagnostic: &diagnostics::Diagnostic| diagnostic.message.clone();
-        compiled.diagnostics().map(message).collect()
+        results.diagnostics().map(message).collect()
     }
 
     const UTILS: (&str, &str) = (
@@ -648,7 +662,7 @@ mod tests {
 
     #[test]
     fn an_unchanged_program_is_not_checked_again() {
-        let (first, checked) = recompile(&[UTILS, OTHER, MAIN], Compiled::default());
+        let (first, checked) = recompile(&[UTILS, OTHER, MAIN], Results::default());
         assert_eq!(checked, ["app:other", "app:utils", "app:main"]);
         let found = messages(&first);
         assert_eq!(found, ["mismatched types: expected `bool`, found `i32`"]);
@@ -659,7 +673,7 @@ mod tests {
 
     #[test]
     fn a_body_edit_checks_only_its_module() {
-        let (first, _) = recompile(&[UTILS, OTHER, MAIN], Compiled::default());
+        let (first, _) = recompile(&[UTILS, OTHER, MAIN], Results::default());
         let utils = (
             "app:utils",
             "fn Add(a: i32, b: i32) -> i32 { return b + a; }",
@@ -670,7 +684,7 @@ mod tests {
 
     #[test]
     fn a_signature_edit_checks_its_importers() {
-        let (first, _) = recompile(&[UTILS, OTHER, MAIN], Compiled::default());
+        let (first, _) = recompile(&[UTILS, OTHER, MAIN], Results::default());
         let utils = (
             "app:utils",
             "fn Add(a: i64, b: i64) -> i64 { return a + b; }",
@@ -681,7 +695,7 @@ mod tests {
 
     #[test]
     fn errors_come_and_go_with_edits() {
-        let (first, _) = recompile(&[UTILS, OTHER, MAIN], Compiled::default());
+        let (first, _) = recompile(&[UTILS, OTHER, MAIN], Results::default());
         let broken = (
             "app:utils",
             "fn Add(a: i32, b: i32) -> i32 { let c: bool = a; return a + b; }",
@@ -708,7 +722,7 @@ mod tests {
             "app:main",
             "import \"app:utils\";\nfn main() { utils::Bad(1); }\nfn clean() {}",
         );
-        let (first, _) = recompile(&[utils, main], Compiled::default());
+        let (first, _) = recompile(&[utils, main], Results::default());
         let found = messages(&first);
         assert_eq!(found, ["unknown type `Missing`"]);
         let edited = (
@@ -724,7 +738,7 @@ mod tests {
     fn a_prelude_edit_checks_what_it_changes() {
         let prelude = ("core:global", "const stdout: i32 = 1;\nfn Helper() {}");
         let main = ("app:main", "fn main() { let out = stdout; }");
-        let (first, _) = recompile(&[prelude, main], Compiled::default());
+        let (first, _) = recompile(&[prelude, main], Results::default());
         let body = (
             "core:global",
             "const stdout: i32 = 1;\nfn Helper() { let a = 1; }",

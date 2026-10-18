@@ -4,25 +4,30 @@
 
 mod packages;
 
-use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, mpsc};
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::path::Path;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::mpsc;
 
 use diagnostics::Diagnostic;
-use model::syntax::Tree;
-use source::{SourceFile, Span};
+use model::ast::Tree;
+use source::SourceFile;
+use source::Span;
 
-pub use packages::Packages;
-use packages::{path_of, resolve};
+use packages::path_of;
+use packages::resolve;
 
 /// Imported by every module except itself.
 pub const PRELUDE_PATH: &str = "core:global";
 
 /// One source file, read and parsed. It never changes once `load` has returned
-/// it. Its source file is `syntax.file`.
+/// it. Its source file is `ast.file`.
 pub struct Module {
     pub path: String, // import path, such as "myapp:utils/file" or "core:global"
-    pub syntax: Tree,
+    pub ast: Tree,
     pub imports: Vec<Import>, // in source order; the implicit prelude import last
     pub diagnostics: Vec<Diagnostic>,
 }
@@ -59,9 +64,13 @@ impl Program {
 
 /// What `load` needs to check a project folder or a single file.
 pub struct Project {
-    pub packages: Packages, // the bundled libraries, and the project's own
-    pub entry: PathBuf,     // the file the program starts at
-    pub root: PathBuf,      // the project folder, or the folder of the file
+    /// Each package's name mapped to the folder holding its source files: the
+    /// bundled libraries, and the project's own. For example "myapp" to
+    /// <project>/src and "core" to <installation>/libs/core/src; an import
+    /// "myapp:utils/file" names <project>/src/utils/file.peep.
+    pub packages: HashMap<String, PathBuf>,
+    pub entry: PathBuf, // the file the program starts at
+    pub root: PathBuf,  // the project folder, or the folder of the file
 }
 
 /// The project at `path`: a folder holding peeper.toml, whose program starts
@@ -101,9 +110,9 @@ pub fn find(path: &Path, libraries: &Path) -> Result<Project, String> {
 
 /// Maps each library folder in `libraries` to its src folder. No libraries
 /// folder means no bundled libraries.
-fn bundled_libraries(libraries: &Path) -> Packages {
+fn bundled_libraries(libraries: &Path) -> HashMap<String, PathBuf> {
     let Ok(entries) = std::fs::read_dir(libraries) else {
-        return Packages::new();
+        return HashMap::new();
     };
     entries
         .flatten()
@@ -130,7 +139,11 @@ struct Job {
 /// what is on disk. Its keys are absolute paths as `std::path::absolute` makes
 /// them, symbolic links not followed: the form of the entry and of every file
 /// a package's folder names.
-pub fn load(packages: &Packages, entry: &Path, open_files: &HashMap<PathBuf, String>) -> Program {
+pub fn load(
+    packages: &HashMap<String, PathBuf>,
+    entry: &Path,
+    open_files: &HashMap<PathBuf, String>,
+) -> Program {
     let entry = std::path::absolute(entry).unwrap_or_else(|_| entry.to_path_buf());
     let with_prelude = resolve(packages, PRELUDE_PATH)
         .is_ok_and(|(_, file)| file.is_file() || open_files.contains_key(&file));
@@ -198,7 +211,7 @@ pub fn load(packages: &Packages, entry: &Path, open_files: &HashMap<PathBuf, Str
 /// `open_files` when it is open there. A file that cannot be read, or is not
 /// UTF-8, gets an empty tree and one error.
 fn load_file(
-    packages: &Packages,
+    packages: &HashMap<String, PathBuf>,
     open_files: &HashMap<PathBuf, String>,
     job: Job,
     with_prelude: bool,
@@ -209,7 +222,7 @@ fn load_file(
         Some(text) => Ok(Ok(text.clone())),
         None => std::fs::read(&job.file).map(String::from_utf8),
     };
-    let (syntax, diagnostics) = match text {
+    let (ast, diagnostics) = match text {
         Ok(Ok(text)) => parser::parse(&Arc::new(SourceFile::new(name, text))),
         Ok(Err(error)) => {
             // The text up to the bad byte is kept as is, so the error points at it.
@@ -232,7 +245,7 @@ fn load_file(
     };
     let mut module = Module {
         path: job.path,
-        syntax,
+        ast,
         imports: Vec::new(),
         diagnostics,
     };
@@ -243,14 +256,14 @@ fn load_file(
 impl Module {
     fn resolve_imports(
         &mut self,
-        packages: &Packages,
+        packages: &HashMap<String, PathBuf>,
         open_files: &HashMap<PathBuf, String>,
         standalone: bool,
         with_prelude: bool,
     ) {
-        let file = self.syntax.file.clone();
+        let file = self.ast.file.clone();
         let mut aliases = HashMap::new(); // alias -> import path
-        for import in &self.syntax.imports {
+        for import in &self.ast.imports {
             let written =
                 String::from_utf8_lossy(&literal::value(file.slice(import.path))).into_owned();
             let error = |code, message: String| {
@@ -381,7 +394,7 @@ impl<'a> Sorter<'a> {
                     self.cycles.push(match import.alias {
                         None => d.note(format!("every module imports `{PRELUDE_PATH}` implicitly")),
                         Some(_) => d.label(
-                            &module.syntax.file,
+                            &module.ast.file,
                             import.span,
                             "this import closes the cycle",
                         ),
@@ -402,7 +415,7 @@ mod tests {
 
     /// Writes `files` (paths relative to a new temporary folder) and returns that
     /// folder and its packages: "myapp" in src, "core" in libs/core/src.
-    fn write(test: &str, files: &[(&str, &str)]) -> (PathBuf, Packages) {
+    fn write(test: &str, files: &[(&str, &str)]) -> (PathBuf, HashMap<String, PathBuf>) {
         let root =
             std::env::temp_dir().join(format!("peeper-project-{}-{test}", std::process::id()));
         _ = std::fs::remove_dir_all(&root);
@@ -412,7 +425,7 @@ mod tests {
             std::fs::create_dir_all(file.parent().unwrap()).unwrap();
             std::fs::write(file, text).unwrap();
         }
-        let packages = Packages::from([
+        let packages = HashMap::from([
             ("myapp".to_string(), root.join("src")),
             ("core".to_string(), root.join("libs/core/src")),
         ]);
@@ -532,7 +545,7 @@ mod tests {
         let main = &program.modules["myapp:main"];
         assert_eq!(main.diagnostics.len(), 1, "{:?}", messages(&program));
         let label = &main.diagnostics[0].labels[0];
-        assert_eq!(main.syntax.file.position(label.span.start as usize), (2, 1));
+        assert_eq!(main.ast.file.position(label.span.start as usize), (2, 1));
     }
 
     #[test]
@@ -553,7 +566,7 @@ mod tests {
         let label = &program.diagnostics[0].labels[0];
         assert!(Arc::ptr_eq(
             &label.file,
-            &program.modules["myapp:b"].syntax.file
+            &program.modules["myapp:b"].ast.file
         ));
     }
 
@@ -682,7 +695,7 @@ mod tests {
         ]);
         let program = load(&packages, &root.join("src/main.peep"), &open_files);
         assert_eq!(messages(&program), Vec::<String>::new());
-        assert_eq!(program.modules["myapp:b"].syntax.file.text, "fn B() {}");
+        assert_eq!(program.modules["myapp:b"].ast.file.text, "fn B() {}");
     }
 
     #[test]

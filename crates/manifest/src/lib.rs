@@ -1,7 +1,8 @@
 //! Reads peeper.toml, the file that makes a folder a project.
 
 use std::io::ErrorKind;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 
 pub const FILE_NAME: &str = "peeper.toml";
 

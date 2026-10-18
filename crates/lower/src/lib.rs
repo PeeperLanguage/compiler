@@ -9,10 +9,10 @@ use arena::Arena;
 use arena::Id;
 use arena::Lists;
 use model::BinaryOp;
+use model::constant::Value;
 use model::mir;
+use model::semantic_types::TypeId;
 use model::thir;
-use model::types::TypeId;
-use model::value::Value;
 use source::Span;
 
 /// The MIR of a function's checked body, which has `parameters` parameters.

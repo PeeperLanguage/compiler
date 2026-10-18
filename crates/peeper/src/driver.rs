@@ -36,17 +36,17 @@ pub fn run(
     let failed = |all: &[Diagnostic]| all.iter().any(Diagnostic::is_error);
     if !program.load_failed() {
         let mut dumped = Dumps::new(&program, dumps);
-        let compiled = build::compile(
+        let results = build::compile(
             &program,
             usize::BITS,
-            build::Compiled::default(),
+            build::Results::default(),
             |definition, thir, mir, types| {
                 if let Some(mir) = mir {
                     dumped.add(definition, thir, mir, types); // the others have errors
                 }
             },
         );
-        all.extend(compiled.diagnostics().cloned());
+        all.extend(results.diagnostics().cloned());
         if !failed(&all)
             && let Err(error) = dumped.write(&project.root.join("build/debug/dumps"), out)
         {

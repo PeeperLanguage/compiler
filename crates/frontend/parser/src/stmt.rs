@@ -1,13 +1,22 @@
 //! Blocks and statements.
 
-use arena::{Id, List};
+use arena::Id;
+use arena::List;
 use diagnostics::Diagnostic;
-use model::syntax::{Block, Expr, MatchArm, Metadata, Pattern, Stmt};
+use model::ast::Block;
+use model::ast::Expr;
+use model::ast::MatchArm;
+use model::ast::Metadata;
+use model::ast::Pattern;
+use model::ast::Stmt;
 use token::TokenKind;
 
-use crate::decl::{const_decl, starts_declaration};
+use crate::Parser;
+use crate::decl::const_decl;
+use crate::decl::starts_declaration;
 use crate::expr::Precedence;
-use crate::{Parser, grow, starts_statement};
+use crate::grow;
+use crate::starts_statement;
 
 /// Reads the statement the current keyword begins.
 type StatementRule = fn(&mut Parser<'_>) -> Id<Stmt>;
@@ -343,7 +352,9 @@ fn return_statement(p: &mut Parser) -> Id<Stmt> {
 
 #[cfg(test)]
 mod tests {
-    use crate::tests::{dump_of, messages, one_error};
+    use crate::tests::dump_of;
+    use crate::tests::messages;
+    use crate::tests::one_error;
 
     #[test]
     fn parses_statements() {

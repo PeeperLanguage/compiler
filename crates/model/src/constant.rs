@@ -26,10 +26,10 @@ use bigint::Limbs;
 
 use crate::BinaryOp;
 use crate::UnaryOp;
-use crate::types::Float;
-use crate::types::Integer;
-use crate::types::Type;
-use crate::types::TypeId;
+use crate::semantic_types::Float;
+use crate::semantic_types::Integer;
+use crate::semantic_types::Type;
+use crate::semantic_types::TypeId;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Value {
@@ -43,7 +43,11 @@ pub enum Value {
 }
 
 /// A constant's type and value.
-pub type Constant = (TypeId, Value);
+#[derive(Clone, Debug)]
+pub struct Constant {
+    pub ty: TypeId,
+    pub value: Value,
+}
 
 /// Why an operation gives no value at compile time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -218,9 +222,9 @@ mod tests {
     use super::widen;
     use crate::BinaryOp;
     use crate::UnaryOp;
-    use crate::types::Float;
-    use crate::types::Integer;
-    use crate::types::Type;
+    use crate::semantic_types::Float;
+    use crate::semantic_types::Integer;
+    use crate::semantic_types::Type;
 
     fn int(signed: bool, bits: u32) -> Type {
         Type::Integer(Integer { signed, bits })

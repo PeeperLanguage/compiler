@@ -1,17 +1,28 @@
 //! The module and its declarations: imports, functions, constants and type
 //! declarations, with their doc comments and attributes.
 
-use arena::{Id, List};
+use arena::Id;
+use arena::List;
 use diagnostics::Diagnostic;
-use model::syntax::{
-    Attribute, Decl, Expr, Function, Ident, Import, Metadata, Name, Param, Type, TypeDecl,
-};
+use model::ast::Attribute;
+use model::ast::Decl;
+use model::ast::Expr;
+use model::ast::Function;
+use model::ast::Ident;
+use model::ast::Import;
+use model::ast::Metadata;
+use model::ast::Name;
+use model::ast::Param;
+use model::ast::Type;
+use model::ast::TypeDecl;
 use source::Span;
 use token::TokenKind;
 
-use crate::expr::{Precedence, starts_expression};
+use crate::Parser;
+use crate::expr::Precedence;
+use crate::expr::starts_expression;
+use crate::is_name;
 use crate::types::starts_type;
-use crate::{Parser, is_name};
 
 /// Reads the declaration the current keyword begins, with its doc comment and
 /// attributes.
@@ -441,7 +452,9 @@ fn type_decl(p: &mut Parser, metadata: Metadata) -> Id<Decl> {
 
 #[cfg(test)]
 mod tests {
-    use crate::tests::{dump_of, messages, one_error};
+    use crate::tests::dump_of;
+    use crate::tests::messages;
+    use crate::tests::one_error;
 
     #[test]
     fn parses_signatures() {

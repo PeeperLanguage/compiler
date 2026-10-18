@@ -4,19 +4,37 @@
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
-use std::io::{self, Write};
+use std::io;
+use std::io::Write;
 use std::ops::Range;
 use std::sync::Arc;
 
-use colors::{
-    BLUE, BOLD_CYAN, BOLD_RED, BOLD_YELLOW, CYAN, FIX_ADDED, GREEN, GREY, LIGHT_GREEN,
-    LIGHT_ORANGE, ORANGE, PURPLE, RED, RESET, WHITE, YELLOW,
-};
-use source::{SourceFile, Span};
-use token::{Token, TokenKind};
+use colors::BLUE;
+use colors::BOLD_CYAN;
+use colors::BOLD_RED;
+use colors::BOLD_YELLOW;
+use colors::CYAN;
+use colors::FIX_ADDED;
+use colors::GREEN;
+use colors::GREY;
+use colors::LIGHT_GREEN;
+use colors::LIGHT_ORANGE;
+use colors::ORANGE;
+use colors::PURPLE;
+use colors::RED;
+use colors::RESET;
+use colors::WHITE;
+use colors::YELLOW;
+use source::SourceFile;
+use source::Span;
+use token::Token;
+use token::TokenKind;
 
-use crate::{Diagnostic, Fix, Severity};
-use unicode_general_category::{GeneralCategory, get_general_category};
+use crate::Diagnostic;
+use crate::Fix;
+use crate::Severity;
+use unicode_general_category::GeneralCategory;
+use unicode_general_category::get_general_category;
 
 const TAB_WIDTH: usize = 4;
 

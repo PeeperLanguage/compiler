@@ -12,7 +12,7 @@ list of items needs an enum, constants, names or lookup lists, write one
 `macro_rules!` invocation and let the macro build them all. Do not keep a hand
 list next to a `match` that must agree with it.
 
-- `model/src/types.rs` `fixed_types!`: each built-in type is one line; the
+- `model/src/semantic_types.rs` `fixed_types!`: each built-in type is one line; the
   macro builds `FIXED`, the `TypeId::*` constants and the `NAMED` name list.
 - `frontend/token/src/lib.rs` `tokens!`: each token kind is one line with its
   text; the macro builds `TokenKind`, `TokenKind::text`, `OPERATORS` and
@@ -70,7 +70,7 @@ turned back into an enum variant. When code must walk a group of variants,
 generate the list of them.
 
 **Say what a span is by its type.** A name written in the source is a
-`syntax::Ident { span }`, read with `ident.text(&file)`, not a bare `Span`
+`ast::Ident { span }`, read with `ident.text(&file)`, not a bare `Span`
 named `name`: the type tells the reader it is an identifier and where its
 text comes from. A node whose whole text is its arena span (`Expr::Name`,
 `Type::Name`) needs no wrapper.
@@ -155,6 +155,6 @@ and Cranelift (`filetests`) work the same way.
   reporting in `driver.rs`, and the dumpers in `dump.rs`; `main.rs` parses,
   runs and returns the exit code.
 - **Data lives in `model`, logic in the crates that build it.** Name a data
-  module by its path: `use model::syntax;`, then `syntax::Expr`.
+  module by its path: `use model::ast;`, then `ast::Expr`.
 - **Never write a concatenated string into a `String` builder**
   (`out.push_str(&(a + b))`); push each part, or use `write!`.

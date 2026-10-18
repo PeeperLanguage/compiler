@@ -45,10 +45,10 @@ use lsp_types::TextDocumentSyncCapability;
 use lsp_types::TextDocumentSyncKind;
 use lsp_types::Url;
 use model::Binding;
-use model::syntax;
+use model::ast;
+use model::semantic_types::TypeId;
+use model::semantic_types::Types;
 use model::thir;
-use model::types::TypeId;
-use model::types::Types;
 use source::SourceFile;
 use source::Span;
 
@@ -219,18 +219,18 @@ impl<'s> Server<'s> {
         let answer = self.name_at(&place).and_then(|(program, module, target)| {
             let (file, declared, hover) = match &target {
                 Target::InBody { declared, ty } => {
-                    let file = &module.syntax.file;
+                    let file = &module.ast.file;
                     let text = format!("{}: {ty}", file.slice(*declared));
                     (file, *declared, code_block(&text))
                 }
                 Target::Declaration { module, index } => {
-                    let tree = &program.modules.get(module)?.syntax;
+                    let tree = &program.modules.get(module)?.ast;
                     let declaration = Id::from_index(*index as usize);
                     let declared = tree.decls[declaration].name().span;
                     (&tree.file, declared, header(tree, declaration, module))
                 }
                 Target::Module(path) => {
-                    let file = &program.modules.get(path)?.syntax.file;
+                    let file = &program.modules.get(path)?.ast.file;
                     (file, Span::at(0), code_block(&format!("module {path}")))
                 }
             };
@@ -264,8 +264,8 @@ impl<'s> Server<'s> {
             let module = program
                 .modules
                 .values()
-                .find(|module| Path::new(&module.syntax.file.name) == file)?;
-            let offset = offset(&module.syntax.file, place.position) as u32;
+                .find(|module| Path::new(&module.ast.file.name) == file)?;
+            let offset = offset(&module.ast.file, place.position) as u32;
             let at = |span: Span| span.start <= offset && offset <= span.end;
             let in_body = checked
                 .names
@@ -274,7 +274,7 @@ impl<'s> Server<'s> {
             let target = match in_body {
                 Some(name) => name.target.clone(),
                 None => {
-                    let tree = &module.syntax;
+                    let tree = &module.ast;
                     let declaration = tree
                         .lists
                         .items(tree.declarations)
@@ -329,7 +329,7 @@ impl<'s> Server<'s> {
     fn check(&mut self, project: project::Project, file: &Path) -> Result<(), BoxError> {
         let program = project::load(&project.packages, &project.entry, &self.open_files);
         let Checked {
-            mut compiled,
+            mut results,
             published,
             program: mut compiled_program,
             mut names,
@@ -339,10 +339,10 @@ impl<'s> Server<'s> {
         let loaded = !program.load_failed();
         if loaded {
             let mut found: HashMap<&str, Vec<Name>> = HashMap::new();
-            compiled = build::compile(
+            results = build::compile(
                 &program,
                 usize::BITS,
-                compiled,
+                results,
                 |definition, body, _, types| {
                     let path = program.order[definition.module as usize].as_str();
                     let body_names = body
@@ -361,7 +361,7 @@ impl<'s> Server<'s> {
                 let now = program.modules.get(path);
                 before
                     .zip(now)
-                    .is_some_and(|(before, now)| before.syntax.file.text == now.syntax.file.text)
+                    .is_some_and(|(before, now)| before.ast.file.text == now.ast.file.text)
             };
             names.retain(|path, _| !found.contains_key(path.as_str()) && unchanged(path));
             names.extend(
@@ -369,7 +369,7 @@ impl<'s> Server<'s> {
                     .into_iter()
                     .map(|(path, found)| (path.to_string(), found)),
             );
-            all.extend(compiled.diagnostics());
+            all.extend(results.diagnostics());
         }
         let mut by_file: HashMap<PathBuf, Vec<lsp_types::Diagnostic>> = HashMap::new();
         for diagnostic in all {
@@ -404,7 +404,7 @@ impl<'s> Server<'s> {
             compiled_program = Some(program);
         }
         let checked = Checked {
-            compiled,
+            results,
             published: shown,
             program: compiled_program,
             names,
@@ -417,7 +417,7 @@ impl<'s> Server<'s> {
 /// What the server keeps of a program between checks.
 #[derive(Default)]
 struct Checked {
-    compiled: build::Compiled,   // reused by the next compile
+    results: build::Results,     // reused by the next compile
     published: HashSet<PathBuf>, // the files last given diagnostics
     /// The program as last compiled, and the names written in the bodies of
     /// each of its modules, by module path: what definition and hover read.
@@ -460,7 +460,7 @@ impl Name {
                     thir::Symbol::Local(local) => body.locals[local].ty,
                     thir::Symbol::Constant(constant) => body.consts[constant]
                         .as_ref()
-                        .map_or(TypeId::INVALID, |&(ty, _)| ty),
+                        .map_or(TypeId::INVALID, |constant| constant.ty),
                 };
                 Target::InBody {
                     declared: body.declared(symbol),
@@ -488,10 +488,10 @@ impl Name {
 /// Markdown, as rust-analyzer does: the module's path; the attributes and a
 /// function's text up to its body, or another declaration's first line; then
 /// the doc comment as prose.
-fn header(tree: &syntax::Tree, declaration: Id<syntax::Decl>, module: &str) -> String {
+fn header(tree: &ast::Tree, declaration: Id<ast::Decl>, module: &str) -> String {
     let span = tree.decls.span(declaration);
     let end = match tree.decls[declaration] {
-        syntax::Decl::Function(syntax::Function {
+        ast::Decl::Function(ast::Function {
             body: Some(body), ..
         }) => tree.blocks.span(body).start,
         _ => tree

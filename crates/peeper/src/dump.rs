@@ -7,8 +7,8 @@ use std::path::Path;
 use arena::Id;
 use model::DefId;
 use model::mir;
+use model::semantic_types::Types;
 use model::thir;
-use model::types::Types;
 
 /// An IR `peeper -dump` writes, one file per module.
 #[derive(Clone, Copy)]
@@ -51,7 +51,7 @@ impl<'p> Dumps<'p> {
     pub fn add(&mut self, definition: DefId, thir: &thir::Body, mir: &mir::Body, types: &Types) {
         let program = self.program;
         let tree =
-            |definition: DefId| &program.modules[&program.order[definition.module as usize]].syntax;
+            |definition: DefId| &program.modules[&program.order[definition.module as usize]].ast;
         let name = |definition: DefId| {
             let tree = tree(definition);
             let declaration = tree.decls[Id::from_index(definition.index as usize)];

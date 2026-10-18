@@ -6,9 +6,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use model::DefId;
-use model::types::TypeId;
-use model::types::Types;
-use model::value::Constant;
+use model::constant::Constant;
+use model::semantic_types::TypeId;
+use model::semantic_types::Types;
 use source::SourceFile;
 
 use crate::Checker;
@@ -41,11 +41,11 @@ impl Queries for Program {
 /// without errors.
 pub(crate) fn module(path: &str, text: &str, imports: Vec<project::Import>) -> project::Module {
     let file = Arc::new(SourceFile::new("main.peep", text));
-    let (syntax, parse) = parser::parse(&file);
+    let (ast, parse) = parser::parse(&file);
     assert!(parse.is_empty(), "{parse:?}");
     project::Module {
         path: path.to_string(),
-        syntax,
+        ast,
         imports,
         diagnostics: Vec::new(),
     }
@@ -68,7 +68,7 @@ pub(crate) fn with_checker<T>(
     }];
     let utils = module("app:utils", "", Vec::new());
     let main = module("app:main", text, imports);
-    let file = main.syntax.file.clone();
+    let file = main.ast.file.clone();
     let indexes = HashMap::from([("app:utils", 0), ("app:main", 1)]);
     let mut diagnostics = Vec::new();
     let scopes = [

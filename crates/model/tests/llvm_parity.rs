@@ -4,7 +4,7 @@
 //! fold (volatile loads), and the bits must match; a NaN matches any NaN, as
 //! LLVM does not specify which NaN an operation gives. Cases the runtime traps
 //! on (division by zero, out-of-range shifts) or guards (`MIN / -1`) are left
-//! out; the unit tests in value.rs cover them.
+//! out; the unit tests in constant.rs cover them.
 //!
 //! Needs `lli` on the path: `cargo test -p ir -- --ignored`.
 
@@ -14,12 +14,12 @@ use std::process::Command;
 use bigint::Limbs;
 use model::BinaryOp;
 use model::UnaryOp;
-use model::types::Float;
-use model::types::Integer;
-use model::types::Type;
-use model::value::Value;
-use model::value::binary;
-use model::value::unary;
+use model::constant::Value;
+use model::constant::binary;
+use model::constant::unary;
+use model::semantic_types::Float;
+use model::semantic_types::Integer;
+use model::semantic_types::Type;
 
 const WIDTHS: &[u32] = &[
     1, 2, 3, 5, 7, 8, 9, 15, 16, 17, 24, 31, 32, 33, 63, 64, 65, 100, 127, 128, 129, 192, 200, 255,
