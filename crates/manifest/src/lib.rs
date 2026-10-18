@@ -25,14 +25,18 @@ pub fn valid_name(name: &str) -> bool {
 pub fn read(dir: &Path) -> Result<Manifest, String> {
     let root = std::path::absolute(dir).map_err(|error| error.to_string())?;
     let file = root.join(FILE_NAME);
-    let data = match toml::parse_file(&file) {
-        Ok(data) => data,
+    let document = match toml::parse_file(&file) {
+        Ok(document) => document,
         Err(toml::FileError::Io(error)) if error.kind() == ErrorKind::NotFound => {
             return Err(format!("no {FILE_NAME} in this folder"));
         }
         Err(error) => return Err(format!("{}: {error}", file.display())),
     };
-    match data.get("default", "name").and_then(toml::Value::as_str) {
+    match document
+        .data()
+        .get("default", "name")
+        .and_then(toml::Value::as_str)
+    {
         Some(name) if valid_name(name) => Ok(Manifest {
             name: name.to_string(),
             root,

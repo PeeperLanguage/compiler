@@ -21,6 +21,16 @@ list next to a `match` that must agree with it.
 Why: two lists that must agree drift apart. One line per item means adding an
 item cannot be half done.
 
+**Edit the source, then read it again.** When parsed data comes from a text
+that can change, keep the text as the one source: an edit changes the text and
+parses it again into new data. Do not patch the text and the data side by side.
+Checking that the new data holds what was set catches a value written wrongly.
+
+- `pkg/toml` `Document::set`: splices only the value's bytes, reparses, and
+  fails without change when the value does not read back.
+
+Why: two copies patched by hand drift apart; a reparse cannot.
+
 **Let the compiler count.** Number generated constants with a hidden enum
 instead of hand-written numbers:
 

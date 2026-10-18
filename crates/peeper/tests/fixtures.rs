@@ -24,8 +24,9 @@ fn fixtures() {
     let mut failures = Vec::new();
     let mut checked = 0;
     for folder in &folders {
-        let data =
+        let document =
             toml::parse_file(&folder.join("peeper.toml")).expect("a fixture's peeper.toml parses");
+        let data = document.data();
         let text = |key: &str| data.get("test", key).and_then(toml::Value::as_str);
         let mode = match text("mode") {
             Some(mode @ ("check" | "mir")) => mode,

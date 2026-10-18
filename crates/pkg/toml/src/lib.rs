@@ -1,12 +1,13 @@
-//! Reads the small part of TOML that project files use, one line at a time:
-//! `[section]` headers, `key = value` pairs, and `#` comments. A value is a
-//! string in double quotes, an integer, a float, `true` or `false`, an array
-//! `[a, b]` or an inline table `{ key = value }`, all on one line; any other
-//! text is kept as a string. Keys before the first header are in the section
-//! "default".
+//! Reads and writes the small part of TOML that project files use, one line
+//! at a time: `[section]` headers, `key = value` pairs, and `#` comments. A
+//! value is a string in double quotes, an integer, a float, `true` or `false`,
+//! an array `[a, b]` or an inline table `{ key = value }`, all on one line; any
+//! other value is an error. Keys before the first header are in the
+//! section "default". A `Document` changes a file in place: setting a value
+//! rewrites only that value's text, so comments and layout stay.
 
-use std::collections::HashMap;
 use std::fmt;
+use std::ops::Range;
 use std::path::Path;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -19,7 +20,71 @@ pub enum Value {
     Table(Table),
 }
 
-pub type Table = HashMap<String, Value>;
+/// Keys and their values, in the order they were written.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Table(Vec<(String, Value)>);
+
+impl Table {
+    pub fn get(&self, key: &str) -> Option<&Value> {
+        self.0
+            .iter()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value)
+    }
+
+    /// Adds `key` after the keys already there; the caller has checked that
+    /// it is not one of them.
+    pub fn push(&mut self, key: String, value: Value) {
+        self.0.push((key, value));
+    }
+}
+
+/// The value as written in a file, which reads back as the same value.
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Value::String(text) => {
+                f.write_str("\"")?;
+                for c in text.chars() {
+                    match c {
+                        '"' => f.write_str("\\\"")?,
+                        '\\' => f.write_str("\\\\")?,
+                        '\n' => f.write_str("\\n")?,
+                        '\r' => f.write_str("\\r")?,
+                        '\t' => f.write_str("\\t")?,
+                        c if c.is_control() => write!(f, "\\u{:04x}", u32::from(c))?,
+                        c => write!(f, "{c}")?,
+                    }
+                }
+                f.write_str("\"")
+            }
+            Value::Integer(integer) => write!(f, "{integer}"),
+            Value::Float(float) => write!(f, "{float:?}"), // keeps the `.0` of 1.0
+            Value::Bool(bool) => write!(f, "{bool}"),
+            Value::Array(values) => {
+                f.write_str("[")?;
+                for (index, value) in values.iter().enumerate() {
+                    if index > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{value}")?;
+                }
+                f.write_str("]")
+            }
+            Value::Table(table) if table.0.is_empty() => f.write_str("{}"),
+            Value::Table(table) => {
+                f.write_str("{ ")?;
+                for (index, (key, value)) in table.0.iter().enumerate() {
+                    if index > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{key} = {value}")?;
+                }
+                f.write_str(" }")
+            }
+        }
+    }
+}
 
 impl Value {
     /// The text of a string value; None for any other value.
@@ -31,43 +96,50 @@ impl Value {
     }
 }
 
-/// The sections of a file, each with its keys, and the order both were
-/// written in.
+/// The sections of a file, each with its keys, in the order they were
+/// written.
 #[derive(Debug, Default)]
 pub struct Data {
-    pub sections: HashMap<String, Table>,
-    pub section_order: Vec<String>,
-    pub key_order: HashMap<String, Vec<String>>,
+    sections: Vec<(String, Table)>,
 }
 
 impl Data {
     /// Whether a section exists. Retained at maintainer request as part of the
     /// TOML API; do not remove it as dead code without asking.
     pub fn has_section(&self, name: &str) -> bool {
-        self.sections.contains_key(name)
+        self.section(name).is_some()
     }
 
     pub fn section(&self, name: &str) -> Option<&Table> {
-        self.sections.get(name)
+        let section = self.sections.iter().find(|(section, _)| section == name);
+        section.map(|(_, table)| table)
     }
 
     /// Returns a section, creating it when missing. Retained at maintainer
     /// request as part of the TOML API; do not remove it as dead code without
     /// asking.
     pub fn ensure_section(&mut self, name: &str) -> &mut Table {
-        if !self.sections.contains_key(name) {
-            self.section_order.push(name.to_string());
-        }
-        self.sections.entry(name.to_string()).or_default()
+        let index = match self
+            .sections
+            .iter()
+            .position(|(section, _)| section == name)
+        {
+            Some(index) => index,
+            None => {
+                self.sections.push((name.to_string(), Table::default()));
+                self.sections.len() - 1
+            }
+        };
+        &mut self.sections[index].1
     }
 
     pub fn get(&self, section: &str, key: &str) -> Option<&Value> {
-        self.sections.get(section)?.get(key)
+        self.section(section)?.get(key)
     }
 
     /// Adds a section the file declares; declaring one twice is an error.
     fn declare_section(&mut self, name: &str) -> Result<(), String> {
-        if self.sections.contains_key(name) {
+        if self.has_section(name) {
             return Err(format!("duplicate section {name:?}"));
         }
         self.ensure_section(name);
@@ -108,9 +180,126 @@ impl fmt::Display for FileError {
 
 impl std::error::Error for FileError {}
 
-pub fn parse_file(path: &Path) -> Result<Data, FileError> {
-    let bytes = std::fs::read(path).map_err(FileError::Io)?;
-    parse_bytes(&bytes).map_err(FileError::Parse)
+/// A file's text and what it says. The text is the one source: each change
+/// edits it and reads it again.
+#[derive(Debug)]
+pub struct Document {
+    text: String,
+    data: Data,
+}
+
+impl Document {
+    pub fn parse(text: String) -> Result<Document, ParseError> {
+        let data = parse(&text)?;
+        Ok(Document { text, data })
+    }
+
+    pub fn data(&self) -> &Data {
+        &self.data
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// Sets `key` of `section` to `value`. An existing value's text is
+    /// replaced in place, keeping the line's comment; a new key goes after
+    /// the section's last line, and a new section at the end of the file.
+    /// Fails, changing nothing, when the edited text would not read back as
+    /// `value`, as for a key holding `=`.
+    pub fn set(&mut self, section: &str, key: &str, value: &Value) -> Result<(), String> {
+        let place = self.find(section, key);
+        let mut text = self.text.clone();
+        let newline = if text.contains("\r\n") { "\r\n" } else { "\n" };
+        match (place.pair, place.end) {
+            (Some((_, old)), _) => text.replace_range(old, &value.to_string()),
+            (None, Some(end)) => {
+                let line = format!("{key} = {value}{newline}");
+                if end == 0 || text[..end].ends_with('\n') {
+                    text.insert_str(end, &line);
+                } else {
+                    text.insert_str(end, &format!("{newline}{line}")); // the last line had no break
+                }
+            }
+            (None, None) => {
+                if !text.is_empty() {
+                    if !text.ends_with('\n') {
+                        text.push_str(newline);
+                    }
+                    text.push_str(newline);
+                }
+                text.push_str(&format!("[{section}]{newline}{key} = {value}{newline}"));
+            }
+        }
+        let cannot = || format!("cannot write {key} = {value} in section {section:?}");
+        let data = parse(&text).map_err(|_| cannot())?;
+        if data.get(section, key) != Some(value) {
+            return Err(cannot());
+        }
+        self.text = text;
+        self.data = data;
+        Ok(())
+    }
+
+    /// Removes the line of `key` in `section`, comment and all; false when
+    /// there is none. The section's header stays.
+    pub fn remove(&mut self, section: &str, key: &str) -> bool {
+        let Some((line, _)) = self.find(section, key).pair else {
+            return false;
+        };
+        self.text.replace_range(line, "");
+        self.data =
+            parse(&self.text).expect("each line reads on its own, so the others stay valid");
+        true
+    }
+
+    /// Where `key` of `section` is in the text.
+    fn find(&self, section: &str, key: &str) -> Place {
+        let mut place = Place {
+            pair: None,
+            end: (section == "default").then_some(0),
+        };
+        let mut current = "default";
+        for (bytes, line) in lines(&self.text) {
+            match line {
+                Ok(Line::Header(name)) => {
+                    current = name;
+                    if name == section {
+                        place.end = Some(bytes.end);
+                    }
+                }
+                Ok(Line::Pair { key: name, value }) if current == section => {
+                    if name == key {
+                        place.pair = Some((bytes.clone(), value));
+                    }
+                    place.end = Some(bytes.end);
+                }
+                _ => {}
+            }
+        }
+        place
+    }
+
+    /// Writes the text to `path` through a file beside it, so a failed write
+    /// leaves the old file whole.
+    pub fn write_file(&self, path: &Path) -> std::io::Result<()> {
+        let temporary = path.with_added_extension("tmp");
+        std::fs::write(&temporary, &self.text)?;
+        std::fs::rename(&temporary, path)
+    }
+}
+
+/// Where a key is in a document's text.
+struct Place {
+    pair: Option<(Range<usize>, Range<usize>)>, // the key's line and its value
+    end: Option<usize>, // the end of the section's last line, where a new key goes
+}
+
+/// Reads the file at `path`, which must be UTF-8, so that writing it back
+/// changes no byte it does not set.
+pub fn parse_file(path: &Path) -> Result<Document, FileError> {
+    let text = std::fs::read_to_string(path).map_err(FileError::Io)?;
+    Document::parse(text).map_err(FileError::Parse)
 }
 
 /// Parses TOML held in memory. Bytes that are not UTF-8 read as U+FFFD.
@@ -122,58 +311,86 @@ pub fn parse_bytes(src: &[u8]) -> Result<Data, ParseError> {
 
 pub fn parse(src: &str) -> Result<Data, ParseError> {
     let mut data = Data::default();
-    let mut current_section = "default".to_string();
-    for (index, line) in src.lines().enumerate() {
-        let line_number = index + 1;
+    let mut current_section = "default";
+    for (index, (_, line)) in lines(src).enumerate() {
         let fail = |message: String| ParseError {
-            line: line_number,
+            line: index + 1,
             message,
         };
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if let Some(header) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
-            let name = header.trim();
-            if name.is_empty() {
-                return Err(fail("empty section name".to_string()));
+        match line.map_err(fail)? {
+            Line::Blank => {}
+            Line::Header(name) => {
+                data.declare_section(name).map_err(fail)?;
+                current_section = name;
             }
-            data.declare_section(name).map_err(fail)?;
-            current_section = name.to_string();
-            continue;
+            Line::Pair { key, value } => {
+                if data.get(current_section, key).is_some() {
+                    return Err(fail(format!(
+                        "duplicate key {key:?} in section {current_section:?}"
+                    )));
+                }
+                let value = parse_value(&src[value]).map_err(fail)?;
+                data.ensure_section(current_section)
+                    .push(key.to_string(), value);
+            }
         }
-        key_value(&mut data, &current_section, line).map_err(fail)?;
     }
     Ok(data)
 }
 
-fn key_value(data: &mut Data, section: &str, line: &str) -> Result<(), String> {
-    let Some((key, value_text)) = line.split_once('=') else {
-        return Err(format!("invalid key/value pair: {line}"));
+/// What one line of a file holds.
+enum Line<'a> {
+    Blank, // empty or a comment
+    Header(&'a str),
+    Pair { key: &'a str, value: Range<usize> }, // value: where its text is in the file
+}
+
+/// Each line of `src`, with where it is in `src` (its line break included)
+/// and what it holds.
+fn lines(src: &str) -> impl Iterator<Item = (Range<usize>, Result<Line<'_>, String>)> {
+    let mut start = 0;
+    src.split_inclusive('\n').map(move |text| {
+        let bytes = start..start + text.len();
+        start = bytes.end;
+        (bytes.clone(), line(src, bytes))
+    })
+}
+
+fn line(src: &str, bytes: Range<usize>) -> Result<Line<'_>, String> {
+    let text = &src[bytes.clone()];
+    let trimmed = text.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return Ok(Line::Blank);
+    }
+    if let Some(header) = trimmed.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+        let name = header.trim();
+        if name.is_empty() {
+            return Err("empty section name".to_string());
+        }
+        return Ok(Line::Header(name));
+    }
+    let Some(equals) = text.find('=') else {
+        return Err(format!("invalid key/value pair: {trimmed}"));
     };
-    let key = key.trim();
+    let key = text[..equals].trim();
     if key.is_empty() {
         return Err("empty key".to_string());
     }
-    let value_text = strip_inline_comment(value_text.trim());
-    if data.get(section, key).is_some() {
-        return Err(format!("duplicate key {key:?} in section {section:?}"));
-    }
-    let value = parse_value(&value_text)?;
-    data.ensure_section(section).insert(key.to_string(), value);
-    data.key_order
-        .entry(section.to_string())
-        .or_default()
-        .push(key.to_string());
-    Ok(())
+    let after = &text[equals + 1..];
+    let value = &after[..comment_start(after)];
+    let start = bytes.start + equals + 1 + (value.len() - value.trim_start().len());
+    Ok(Line::Pair {
+        key,
+        value: start..start + value.trim().len(),
+    })
 }
 
-/// `value_text` without a `#` comment that starts outside quotes.
-fn strip_inline_comment(value_text: &str) -> String {
-    let mut out = String::with_capacity(value_text.len());
+/// Where a `#` comment starts in `text` outside quotes; the length of `text`
+/// when there is none.
+fn comment_start(text: &str) -> usize {
     let mut in_quotes = false;
     let mut escaped = false;
-    for c in value_text.chars() {
+    for (index, c) in text.char_indices() {
         if escaped {
             escaped = false;
         } else if c == '\\' {
@@ -181,11 +398,10 @@ fn strip_inline_comment(value_text: &str) -> String {
         } else if c == '"' {
             in_quotes = !in_quotes;
         } else if c == '#' && !in_quotes {
-            break;
+            return index;
         }
-        out.push(c);
     }
-    out.trim().to_string()
+    text.len()
 }
 
 fn parse_value(text: &str) -> Result<Value, String> {
@@ -214,11 +430,13 @@ fn parse_value(text: &str) -> Result<Value, String> {
     if let Ok(float) = text.parse() {
         return Ok(Value::Float(float));
     }
-    Ok(Value::String(text.to_string()))
+    Err(format!(
+        "invalid value {text}; write text in double quotes, like \"{text}\""
+    ))
 }
 
 fn inline_table(body: &str) -> Result<Table, String> {
-    let mut table = Table::new();
+    let mut table = Table::default();
     for part in split_top_level(body.trim(), ',')? {
         let Some((key, value_text)) = part.split_once('=') else {
             return Err(format!("invalid inline table entry {part:?}"));
@@ -227,10 +445,10 @@ fn inline_table(body: &str) -> Result<Table, String> {
         if key.is_empty() {
             return Err("empty inline table key".to_string());
         }
-        if table.contains_key(key) {
+        if table.get(key).is_some() {
             return Err(format!("duplicate inline table key {key:?}"));
         }
-        table.insert(key.to_string(), parse_value(value_text)?);
+        table.push(key.to_string(), parse_value(value_text)?);
     }
     Ok(table)
 }
@@ -378,7 +596,10 @@ flags = [true, 1, "x", [2]]
         let Some(Value::Table(json)) = data.get("dependencies", "json") else {
             panic!("not a table")
         };
-        assert_eq!(json["repo"].as_str(), Some("github.com/acme/json"));
+        assert_eq!(
+            json.get("repo").and_then(Value::as_str),
+            Some("github.com/acme/json")
+        );
         let flags = vec![
             Value::Bool(true),
             Value::Integer(1),
@@ -389,8 +610,15 @@ flags = [true, 1, "x", [2]]
             data.get("dependencies", "flags"),
             Some(&Value::Array(flags))
         );
-        assert_eq!(data.section_order, ["default", "package", "dependencies"]);
-        assert_eq!(data.key_order["package"], ["name", "count", "ratio"]);
+        let sections: Vec<&str> = data
+            .sections
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect();
+        assert_eq!(sections, ["default", "package", "dependencies"]);
+        let package = data.section("package").unwrap();
+        let keys: Vec<&str> = package.0.iter().map(|(key, _)| key.as_str()).collect();
+        assert_eq!(keys, ["name", "count", "ratio"]);
         assert!(data.has_section("package") && data.section("dev").is_none());
     }
 
@@ -405,8 +633,13 @@ flags = [true, 1, "x", [2]]
             value(r##""a # not a comment""##),
             string("a # not a comment")
         );
-        assert_eq!(value("plain words"), string("plain words"));
-        for bad in [r#""\q""#, r#""\x4""#, r#""\x+1""#, r#""a"b""#] {
+        for bad in [
+            r#""\q""#,
+            r#""\x4""#,
+            r#""\x+1""#,
+            r#""a"b""#,
+            "plain words",
+        ] {
             assert!(value(bad).is_err(), "{bad}");
         }
     }
@@ -426,6 +659,10 @@ flags = [true, 1, "x", [2]]
             ("a = { b }", "line 1: invalid inline table entry \"b\""),
             ("a = [1, ]]", "line 1: unbalanced ']'"),
             ("a = [\"x]", "line 1: unterminated composite value"),
+            (
+                "v = 1.2.0",
+                "line 1: invalid value 1.2.0; write text in double quotes, like \"1.2.0\"",
+            ),
         ];
         for (src, want) in cases {
             assert_eq!(parse(src).unwrap_err().to_string(), want, "{src}");
@@ -437,9 +674,127 @@ flags = [true, 1, "x", [2]]
         let mut data = parse("[a]\nk = 1").unwrap();
         data.ensure_section("a");
         data.ensure_section("b")
-            .insert("k".to_string(), Value::Bool(true));
+            .push("k".to_string(), Value::Bool(true));
         assert_eq!(data.get("a", "k"), Some(&Value::Integer(1)));
-        assert_eq!(data.section_order, ["a", "b"]);
+        let sections: Vec<&str> = data
+            .sections
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect();
+        assert_eq!(sections, ["a", "b"]);
         assert!(parse_bytes(b"k = \"\xff\"").is_ok());
+    }
+
+    #[test]
+    fn set_rewrites_only_the_value() {
+        let text = "# app\nname = \"app\" # the name\n\n[dependencies]\njson = { repo = \"a\", version = \"v1\" } # pinned\n\n[test]\nmode = \"check\"\n";
+        let mut document = Document::parse(text.to_string()).unwrap();
+        let mut json = Table::default();
+        json.push("repo".to_string(), Value::String("a".to_string()));
+        json.push("version".to_string(), Value::String("v2".to_string()));
+        document
+            .set("dependencies", "json", &Value::Table(json.clone()))
+            .unwrap();
+        assert_eq!(
+            document.text(),
+            text.replace("version = \"v1\"", "version = \"v2\"")
+        );
+        assert_eq!(
+            document.data().get("dependencies", "json"),
+            Some(&Value::Table(json))
+        );
+    }
+
+    #[test]
+    fn set_adds_keys_and_sections() {
+        let mut document = Document::parse("[a]\nk = 1".to_string()).unwrap();
+        document.set("a", "j", &Value::Bool(true)).unwrap();
+        document
+            .set("default", "name", &Value::String("x".to_string()))
+            .unwrap();
+        document
+            .set("b", "list", &Value::Array(Vec::new()))
+            .unwrap();
+        assert_eq!(
+            document.text(),
+            "name = \"x\"\n[a]\nk = 1\nj = true\n\n[b]\nlist = []\n"
+        );
+        let mut empty = Document::parse(String::new()).unwrap();
+        empty.set("c", "k", &Value::Integer(2)).unwrap();
+        assert_eq!(empty.text(), "[c]\nk = 2\n");
+    }
+
+    #[test]
+    fn remove_drops_the_whole_line() {
+        let text = "[dependencies]\na = \"1\" # first\nb = \"2\"\n";
+        let mut document = Document::parse(text.to_string()).unwrap();
+        assert!(document.remove("dependencies", "a"));
+        assert!(!document.remove("dependencies", "a"));
+        assert!(!document.remove("default", "b"));
+        assert_eq!(document.text(), "[dependencies]\nb = \"2\"\n");
+        assert_eq!(document.data().get("dependencies", "a"), None);
+    }
+
+    #[test]
+    fn set_keeps_the_line_breaks_of_the_file() {
+        let mut document = Document::parse("[a]\r\nk = 1\r\n".to_string()).unwrap();
+        document.set("a", "j", &Value::Integer(2)).unwrap();
+        document.set("b", "k", &Value::Integer(3)).unwrap();
+        assert_eq!(
+            document.text(),
+            "[a]\r\nk = 1\r\nj = 2\r\n\r\n[b]\r\nk = 3\r\n"
+        );
+    }
+
+    #[test]
+    fn set_fails_without_change_when_it_cannot_read_back() {
+        let mut document = Document::parse("k = 1\n".to_string()).unwrap();
+        for (section, key) in [("default", "a = b"), ("default", "a\nb"), ("x\ny", "k")] {
+            assert!(
+                document.set(section, key, &Value::Integer(2)).is_err(),
+                "{key}"
+            );
+        }
+        assert!(
+            document
+                .set("default", "k", &Value::Float(f64::NAN))
+                .is_err()
+        );
+        assert_eq!(document.text(), "k = 1\n");
+    }
+
+    #[test]
+    fn values_print_as_they_read() {
+        let mut table = Table::default();
+        table.push(
+            "t".to_string(),
+            Value::String("a\"b\\c\nd\u{1}é".to_string()),
+        );
+        table.push("f".to_string(), Value::Float(1.0));
+        let values = [
+            Value::Table(table),
+            Value::Table(Table::default()),
+            Value::Array(vec![Value::Integer(-3), Value::Array(Vec::new())]),
+        ];
+        for value in values {
+            let data = parse(&format!("k = {value}")).unwrap();
+            assert_eq!(data.get("default", "k"), Some(&value), "{value}");
+        }
+    }
+
+    #[test]
+    fn write_file_replaces_the_file() {
+        let folder = std::env::temp_dir().join(format!("peeper-toml-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let path = folder.join("peeper.toml");
+        std::fs::write(&path, "k = 1 # kept\n").unwrap();
+        let mut document = parse_file(&path).unwrap();
+        document.set("default", "k", &Value::Integer(2)).unwrap();
+        document.write_file(&path).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "k = 2 # kept\n");
+        assert!(!path.with_added_extension("tmp").exists());
+        std::fs::write(&path, b"k = \"\xff\"").unwrap();
+        assert!(matches!(parse_file(&path), Err(FileError::Io(_))));
+        _ = std::fs::remove_dir_all(&folder);
     }
 }
