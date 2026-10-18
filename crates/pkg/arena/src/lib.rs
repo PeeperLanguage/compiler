@@ -149,6 +149,11 @@ impl<T> Arena<T> {
         self.spans[id.index()]
     }
 
+    /// The id of each node, in the order they were added.
+    pub fn ids(&self) -> impl ExactSizeIterator<Item = Id<T>> + use<T> {
+        (0..self.nodes.len()).map(Id::from_index)
+    }
+
     /// How many nodes it holds.
     pub fn len(&self) -> usize {
         self.nodes.len()
@@ -215,6 +220,7 @@ mod tests {
         assert_eq!((arena[b], arena.span(b)), ('b', Span::new(2, 3)));
         assert_eq!(Id::<char>::from_index(b.index()), b);
         assert_eq!(arena.len(), 2);
+        assert_eq!(arena.ids().collect::<Vec<_>>(), [a, b]);
         let mut lists = Lists::default();
         let list: List<char> = lists.add(&[a.into(), b.into()]);
         assert_eq!(lists.items(list).collect::<Vec<_>>(), [a, b]);

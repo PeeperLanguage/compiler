@@ -159,9 +159,9 @@ impl Body {
             Operand::Value(value) => format!("%{}", value.index()),
         };
         let mut out = String::new();
-        for index in 0..self.blocks.len() {
-            let block = &self.blocks[Id::from_index(index)];
-            _ = writeln!(out, "  bb{index}:");
+        for block in self.blocks.ids() {
+            _ = writeln!(out, "  bb{}:", block.index());
+            let block = &self.blocks[block];
             for instruction in self.lists.items(block.instructions) {
                 let Instruction { ty, kind } = &self.instructions[instruction];
                 out.push_str("    ");

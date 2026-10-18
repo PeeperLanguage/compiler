@@ -72,11 +72,13 @@ pub fn missing_return(
     if result == TypeId::VOID {
         return None; // such a function returns at its closing brace
     }
-    let block_ids = || (0..body.blocks.len()).map(Id::<mir::Block>::from_index);
-    let (end, end_span) = block_ids().find_map(|block| match body.blocks[block].terminator {
-        mir::Terminator::FallOff(span) => Some((block, span)),
-        _ => None,
-    })?;
+    let (end, end_span) =
+        body.blocks
+            .ids()
+            .find_map(|block| match body.blocks[block].terminator {
+                mir::Terminator::FallOff(span) => Some((block, span)),
+                _ => None,
+            })?;
     let reachable = reachable(body);
     if !reachable[end.index()] {
         return None;
@@ -85,7 +87,7 @@ pub fn missing_return(
     let mut causes = Vec::new();
     if body.blocks[end].instructions.is_empty() {
         let mut predecessors = vec![Vec::new(); body.blocks.len()];
-        for block in block_ids().filter(|block| reachable[block.index()]) {
+        for block in body.blocks.ids().filter(|block| reachable[block.index()]) {
             for target in body.blocks[block].terminator.targets() {
                 predecessors[target.index()].push(block);
             }
@@ -180,8 +182,11 @@ pub fn missing_return(
 /// loop finds the bits at each block's start; the second walks each block
 /// again from those bits and reports at each `load` and `store`.
 pub fn initialization(body: &mir::Body, file: &Arc<SourceFile>, diagnostics: &mut Vec<Diagnostic>) {
-    let initialized = |index| body.variables[Id::from_index(index)].initialized;
-    if (0..body.variables.len()).all(initialized) {
+    if body
+        .variables
+        .ids()
+        .all(|variable| body.variables[variable].initialized)
+    {
         return;
     }
     let words = body.variables.len().div_ceil(64);
@@ -277,10 +282,11 @@ pub fn unreachable_code(
 ) {
     let mut seen = reachable(body);
     // (the first code written, its block) of each block not reached.
-    let mut starts: Vec<(Span, Id<mir::Block>)> = (0..body.blocks.len())
-        .filter(|&index| !seen[index])
-        .filter_map(|index| {
-            let block = Id::<mir::Block>::from_index(index);
+    let mut starts: Vec<(Span, Id<mir::Block>)> = body
+        .blocks
+        .ids()
+        .filter(|block| !seen[block.index()])
+        .filter_map(|block| {
             let mir::Block {
                 instructions,
                 ref terminator,

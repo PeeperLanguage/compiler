@@ -35,8 +35,7 @@ pub fn lower(body: &thir::Body, parameters: usize) -> Option<mir::Body> {
         instructions: Vec::new(),
     };
     // One variable per local, in order: local `i` is variable `i`.
-    for index in 0..body.locals.len() {
-        let id = Id::from_index(index);
+    for id in body.locals.ids() {
         let local = body.locals[id];
         if local.ty == TypeId::INVALID {
             return None;
