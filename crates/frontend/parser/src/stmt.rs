@@ -15,6 +15,7 @@ use crate::Parser;
 use crate::decl::const_decl;
 use crate::decl::starts_declaration;
 use crate::expr::Precedence;
+use crate::expr::starts_expression;
 use crate::grow;
 use crate::starts_statement;
 
@@ -349,10 +350,11 @@ fn match_statement(p: &mut Parser) -> Id<Stmt> {
     p.add(start, Stmt::Match { subject, arms })
 }
 
-/// Reads `return value;`; the value may be left out.
+/// Reads `return value;`; the value may be left out, so a token that cannot
+/// begin one, such as the `}` after a `return` missing its `;`, ends it.
 fn return_statement(p: &mut Parser) -> Id<Stmt> {
     let start = p.next().span.start;
-    let value = (!p.at(TokenKind::Semicolon)).then(|| p.expr(Precedence::Lowest));
+    let value = starts_expression(p.tok().kind).then(|| p.expr(Precedence::Lowest));
     p.end();
     p.add(start, Stmt::Return(value))
 }
@@ -362,6 +364,18 @@ mod tests {
     use crate::tests::dump_of;
     use crate::tests::messages;
     use crate::tests::one_error;
+
+    /// A `return` without a value needs only its `;`: one missing at a line
+    /// end is read past with a fix, one missing inside a line is reported.
+    #[test]
+    fn lone_return() {
+        one_error(
+            "fn f() {\n    return\n}",
+            "expected `;`, found `}`",
+            Some("fn f() {\n    return;\n}"),
+        );
+        one_error("fn f() { return }", "expected `;`, found `}`", None);
+    }
 
     #[test]
     fn parses_statements() {

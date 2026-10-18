@@ -1,0 +1,7 @@
+name = "negative_lone_return_semicolon"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["expected `;`, found `}`", "= fix: add missing `;`", "unknown name `answr`", "Compilation failed with 2 error(s)"]
