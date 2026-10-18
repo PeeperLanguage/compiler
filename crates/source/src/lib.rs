@@ -29,19 +29,19 @@ impl Span {
 /// a line and column only when a message needs them.
 #[derive(Debug)]
 pub struct SourceFile {
-    pub name: String,
+    pub path: String, // where the file was read from, shown in messages
     pub text: String,
     lines: Vec<u32>, // byte offset where each line starts
 }
 
 impl SourceFile {
-    pub fn new(name: impl Into<String>, text: impl Into<String>) -> SourceFile {
+    pub fn new(path: impl Into<String>, text: impl Into<String>) -> SourceFile {
         let text = text.into();
         let mut lines = Vec::with_capacity(text.bytes().filter(|&b| b == b'\n').count() + 1);
         lines.push(0);
         lines.extend(text.match_indices('\n').map(|(i, _)| i as u32 + 1));
         SourceFile {
-            name: name.into(),
+            path: path.into(),
             text,
             lines,
         }

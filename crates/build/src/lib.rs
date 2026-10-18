@@ -102,7 +102,7 @@ pub fn compile(
     let mut previous: HashMap<String, Module> = previous
         .modules
         .into_iter()
-        .map(|cached| (cached.file.name.clone(), cached))
+        .map(|cached| (cached.file.path.clone(), cached))
         .collect();
     let mut interfaces = Vec::with_capacity(program.modules.len());
     // Whether each module's interface differs from the previous compile's.
@@ -115,7 +115,7 @@ pub fn compile(
             .imports
             .iter()
             .all(|import| changed.get(import.module.index()) == Some(&false));
-        let cached = previous.remove(&module.ast.file.name);
+        let cached = previous.remove(&module.ast.file.path);
         let previous_interface = cached.as_ref().map(|cached| cached.interface);
         if let Some(cached) = cached
             && imports_unchanged
@@ -680,7 +680,7 @@ mod tests {
         );
         let (second, checked) = recompile(&[utils, OTHER, MAIN], first);
         assert_eq!(checked, ["app:utils"]);
-        let reused: Vec<&str> = second.reused().map(|file| file.name.as_str()).collect();
+        let reused: Vec<&str> = second.reused().map(|file| file.path.as_str()).collect();
         assert_eq!(
             reused,
             [

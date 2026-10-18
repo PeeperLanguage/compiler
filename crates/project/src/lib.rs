@@ -96,7 +96,7 @@ impl Program {
     pub fn module_of(&self, file: &Path) -> Option<&Module> {
         self.modules
             .iter()
-            .find(|module| Path::new(&module.ast.file.name) == file)
+            .find(|module| Path::new(&module.ast.file.path) == file)
     }
 
     /// What loading found: about the program first, then each module's in
@@ -301,19 +301,19 @@ fn load_file(
     job: Job,
     with_prelude: bool,
 ) -> Loaded {
-    let name = job.file.to_string_lossy().into_owned();
+    let path = job.file.to_string_lossy().into_owned();
     let text = match open_files.get(&job.file) {
         // Copied: every worker shares the map, and a source file owns its text.
         Some(text) => Ok(Ok(text.clone())),
         None => std::fs::read(&job.file).map(String::from_utf8),
     };
     let (ast, diagnostics) = match text {
-        Ok(Ok(text)) => parser::parse(&Arc::new(SourceFile::new(name, text))),
+        Ok(Ok(text)) => parser::parse(&Arc::new(SourceFile::new(path, text))),
         Ok(Err(error)) => {
             // The text up to the bad byte is kept as is, so the error points at it.
             let at = error.utf8_error().valid_up_to();
             let text = String::from_utf8_lossy(error.as_bytes()).into_owned();
-            let file = Arc::new(SourceFile::new(name, text));
+            let file = Arc::new(SourceFile::new(path, text));
             let bad = Span::new(at, at + char::REPLACEMENT_CHARACTER.len_utf8());
             let error =
                 Diagnostic::new(diagnostics::UNEXPECTED_CHARACTER, "file is not valid UTF-8")
@@ -322,8 +322,8 @@ fn load_file(
             (Tree::new(file), vec![error])
         }
         Err(error) => {
-            let message = format!("read module: {name}: {error}");
-            let file = Arc::new(SourceFile::new(name, ""));
+            let message = format!("read module: {path}: {error}");
+            let file = Arc::new(SourceFile::new(path, ""));
             let error = Diagnostic::new(diagnostics::MODULE_NOT_FOUND, message);
             (Tree::new(file), vec![error])
         }

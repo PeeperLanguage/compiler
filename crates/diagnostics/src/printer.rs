@@ -53,7 +53,7 @@ pub fn print(
 ) -> io::Result<()> {
     let mut ordered: Vec<&Diagnostic> = diagnostics.iter().collect();
     ordered.sort_by(|a, b| match (a.labels.first(), b.labels.first()) {
-        (Some(a), Some(b)) => (&a.file.name, a.span.start).cmp(&(&b.file.name, b.span.start)),
+        (Some(a), Some(b)) => (&a.file.path, a.span.start).cmp(&(&b.file.path, b.span.start)),
         (a, b) => a.is_some().cmp(&b.is_some()),
     });
     let mut p = Printer {
@@ -168,7 +168,7 @@ impl Printer<'_> {
                 BLUE,
                 format_args!(
                     "{:pad$}--> {}:{}:{}",
-                    "", snippet.file.name, snippet.line, snippet.column
+                    "", snippet.file.path, snippet.line, snippet.column
                 ),
             );
             self.out.push('\n');
@@ -404,7 +404,7 @@ fn snippets(d: &Diagnostic) -> Vec<Snippet<'_>> {
         }
     }
     if snippets.len() > 1 {
-        snippets[1..].sort_by(|a, b| a.file.name.cmp(&b.file.name));
+        snippets[1..].sort_by(|a, b| a.file.path.cmp(&b.file.path));
     }
     snippets
 }

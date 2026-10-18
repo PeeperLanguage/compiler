@@ -239,7 +239,7 @@ impl<'s> Server<'s> {
                 }
             };
             if method == "textDocument/definition" {
-                let uri = Url::from_file_path(&file.name).ok()?;
+                let uri = Url::from_file_path(&file.path).ok()?;
                 let range = range(file, declared);
                 return serde_json::to_value(Location { uri, range }).ok();
             }
@@ -358,10 +358,10 @@ impl<'s> Server<'s> {
             // A module the compile reused gave no names; the names found
             // before still fit it. A module checked again gets its new names.
             let reused: HashSet<&Path> =
-                results.reused().map(|file| Path::new(&file.name)).collect();
+                results.reused().map(|file| Path::new(&file.path)).collect();
             names.retain(|file, _| reused.contains(file.as_path()));
             names.extend(found.into_iter().map(|(module, found)| {
-                let file = &program.modules[module.index()].ast.file.name;
+                let file = &program.modules[module.index()].ast.file.path;
                 (PathBuf::from(file), found)
             }));
             all.extend(results.diagnostics());
@@ -373,7 +373,7 @@ impl<'s> Server<'s> {
             let place = diagnostic
                 .labels
                 .first()
-                .map_or(file.to_path_buf(), |label| PathBuf::from(&label.file.name));
+                .map_or(file.to_path_buf(), |label| PathBuf::from(&label.file.path));
             by_file
                 .entry(place)
                 .or_default()
@@ -448,7 +448,7 @@ impl Name {
         name: &thir::Name,
         types: &Types,
     ) -> Name {
-        let file = |module: ModuleId| PathBuf::from(&program.modules[module.index()].ast.file.name);
+        let file = |module: ModuleId| PathBuf::from(&program.modules[module.index()].ast.file.path);
         let target = match name.target {
             thir::Target::Body(symbol) => {
                 let ty = match symbol {
@@ -542,7 +542,7 @@ fn lsp_diagnostic(diagnostic: &diagnostics::Diagnostic) -> lsp_types::Diagnostic
         .filter_map(|label| {
             Some(DiagnosticRelatedInformation {
                 location: Location {
-                    uri: Url::from_file_path(&label.file.name).ok()?,
+                    uri: Url::from_file_path(&label.file.path).ok()?,
                     range: range(&label.file, label.span),
                 },
                 message: label.message.clone(),
