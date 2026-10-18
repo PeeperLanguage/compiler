@@ -1,0 +1,7 @@
+name = "negative_missing_module_stops_check"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["module not found", "Compilation failed with 1 error(s)"]

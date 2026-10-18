@@ -54,6 +54,11 @@ pub struct Tree {
     pub match_arms: Arena<MatchArm>,
 
     pub lists: Lists,
+
+    /// Whether every token of the text is in the tree: false after a lexical
+    /// error, after a syntax error the parser skipped text for, and for text
+    /// that was never parsed (a file that could not be read).
+    pub complete: bool,
 }
 
 impl Tree {
@@ -76,6 +81,7 @@ impl Tree {
             field_values: Arena::default(),
             match_arms: Arena::default(),
             lists: Lists::default(),
+            complete: false,
         }
     }
 

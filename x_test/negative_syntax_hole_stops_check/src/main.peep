@@ -1,0 +1,6 @@
+// A `;` missing inside a line makes the parser skip ahead, so the tree has a
+// hole and the type checker does not run: `answr` is not reported.
+fn main() {
+    let answer = 1 let other = 2;
+    let copy = answr;
+}

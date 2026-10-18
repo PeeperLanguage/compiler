@@ -414,7 +414,7 @@ mod tests {
             .load_diagnostics()
             .map(|diagnostic| diagnostic.message.as_str())
             .collect();
-        assert!(!program.load_failed(), "{reported:?}");
+        assert!(program.checkable(), "{reported:?}");
         program
     }
 

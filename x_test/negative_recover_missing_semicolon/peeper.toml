@@ -1,0 +1,7 @@
+name = "negative_recover_missing_semicolon"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["expected `;`, found `let`", "expected `;`, found `}`", "= fix: add missing `;`", "unknown name `answr`", "= help: did you mean `answer`?", "Compilation failed with 3 error(s)"]

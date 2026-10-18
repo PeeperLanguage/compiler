@@ -1,0 +1,7 @@
+// A `;` missing at a line end leaves nothing out of the tree, so the type
+// checker still runs and reports the misspelled name too.
+fn main() {
+    let answer = 1
+    let copy = answr;
+    let other = copy
+}

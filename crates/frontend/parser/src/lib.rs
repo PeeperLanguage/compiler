@@ -53,6 +53,7 @@ pub fn parse(file: &Arc<SourceFile>) -> (Tree, Vec<Diagnostic>) {
         recovering: false,
         scratch: Vec::new(),
     };
+    p.tree.complete = p.lex_errors == 0;
     p.module();
     (p.tree, p.errors)
 }
@@ -172,6 +173,7 @@ impl Parser {
             self.errors.push(d);
         }
         self.recovering = true;
+        self.tree.complete = false; // `sync` skips what follows
     }
 
     /// Reports a mistake the parser reads past as if the missing token were
@@ -453,10 +455,24 @@ impl Parser {
     }
 
     /// Reads the `;` that closes a statement, which puts the parser in step
-    /// again; when it is missing, it skips to where parsing can go on.
+    /// again. A `;` missing at the end of a line, before what starts the next
+    /// statement or closes the block, is read as if it were there: nothing
+    /// needs skipping. Otherwise the parser skips to where parsing can go on.
     fn end(&mut self) {
         if self.at(TokenKind::Semicolon) {
             self.next();
+            self.recovering = false;
+            return;
+        }
+        let t = self.tok();
+        let next_line = self.line(t.span.start) > self.line(self.last_end);
+        let next_starts = matches!(
+            t.kind,
+            TokenKind::RightBrace | TokenKind::Eof | TokenKind::Ident
+        ) || starts_statement(t.kind);
+        if next_line && next_starts {
+            let d = self.missing(TokenKind::Semicolon);
+            self.repair(d);
             self.recovering = false;
             return;
         }
@@ -790,11 +806,27 @@ fn main() {
                 &["expected `,`", "expected `,`"],
             ),
             (
-                "fn f() { let a = 1\nfn g() {}",
-                &["expected `;`, found `fn`"],
+                "fn f() { let a = 1\nfn g() {}", // the `;` and the `}`
+                &["expected `;`, found `fn`", "expected `}`, found `fn`"],
             ),
         ] {
             assert_eq!(messages(text), want, "{text:?}");
+        }
+    }
+
+    /// A `;` missing at a line end before the next statement is read past and
+    /// leaves the tree complete; one missing inside a line makes the parser
+    /// skip, and an illegal character drops text, so neither tree is.
+    #[test]
+    fn complete_trees() {
+        for (text, complete) in [
+            ("fn f() {\n    let a = 1\n    let b = 2\n}\n", true),
+            ("fn f() { let a = 1 let b = 2; }", false),
+            ("fn f() { a $ 1; }", false),
+            ("fn f() { let a = 1; }", true),
+        ] {
+            let (tree, errors) = parse_text(text);
+            assert_eq!(tree.complete, complete, "{text:?} {errors:?}");
         }
     }
 

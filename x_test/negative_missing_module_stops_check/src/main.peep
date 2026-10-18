@@ -1,0 +1,8 @@
+// A missing module stops checking: its names would only be reported as
+// unknown at every use, and `answr` is not reported either.
+import "negative_missing_module_stops_check:gone";
+
+fn main() {
+    let answer = gone::Value;
+    let copy = answr;
+}

@@ -48,6 +48,7 @@ pub(crate) fn module(path: &str, text: &str, imports: Vec<project::Import>) -> p
         path: path.to_string(),
         ast,
         imports,
+        imports_complete: true,
         diagnostics: Vec::new(),
     }
 }

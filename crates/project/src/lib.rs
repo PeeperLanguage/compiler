@@ -34,6 +34,7 @@ pub struct Module {
     pub path: String, // import path, such as "myapp:utils/file" or "core:global"
     pub ast: Tree,
     pub imports: Vec<Import>, // in source order; the implicit prelude import last, in every module but the prelude
+    pub imports_complete: bool, // every written import names a module it brings in
     pub diagnostics: Vec<Diagnostic>,
 }
 
@@ -106,10 +107,14 @@ impl Program {
         self.diagnostics.iter().chain(modules)
     }
 
-    /// Whether loading found an error. Checking such a program would only add
-    /// reports of the holes the parser left, so it is not checked.
-    pub fn load_failed(&self) -> bool {
-        self.load_diagnostics().any(Diagnostic::is_error)
+    /// Whether the program can be checked: every module's text is all in its
+    /// tree, every import brings in its module, and no import cycle was found.
+    /// Checking with a hole in a tree or a missing import would only add
+    /// reports of it. A syntax error the parser read past, such as a missing
+    /// `;` at a line end, leaves no hole.
+    pub fn checkable(&self) -> bool {
+        let complete = |module: &Module| module.ast.complete && module.imports_complete;
+        !self.diagnostics.iter().any(Diagnostic::is_error) && self.modules.iter().all(complete)
     }
 }
 
@@ -185,6 +190,7 @@ struct Loaded {
     path: String,
     ast: Tree,
     imports: Vec<(ImportKind, String)>, // with the imported module's path
+    imports_complete: bool,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -200,6 +206,7 @@ impl Loaded {
             path: self.path,
             ast: self.ast,
             imports: imports.collect(),
+            imports_complete: self.imports_complete,
             diagnostics: self.diagnostics,
         }
     }
@@ -337,6 +344,7 @@ fn load_file(
         path: job.path,
         ast,
         imports: Vec::new(),
+        imports_complete: true,
         diagnostics,
     };
     loaded.resolve_imports(packages, open_files, job.standalone, with_prelude);
@@ -363,6 +371,7 @@ impl Loaded {
                 let message = "a single file cannot import; check its project folder instead";
                 self.diagnostics
                     .push(error(diagnostics::INVALID_IMPORT_PATH, message.to_string()));
+                self.imports_complete = false;
                 continue;
             }
             let (path, imported_file) = match resolve(packages, &written) {
@@ -370,6 +379,7 @@ impl Loaded {
                 Err(message) => {
                     self.diagnostics
                         .push(error(diagnostics::INVALID_IMPORT_PATH, message));
+                    self.imports_complete = false;
                     continue;
                 }
             };
@@ -377,6 +387,7 @@ impl Loaded {
                 let message = format!("module not found: {}", imported_file.display());
                 self.diagnostics
                     .push(error(diagnostics::MODULE_NOT_FOUND, message));
+                self.imports_complete = false;
                 continue;
             }
             let alias = match import.alias {
@@ -388,6 +399,7 @@ impl Loaded {
                     let message = "import alias already in use".to_string();
                     self.diagnostics
                         .push(error(diagnostics::ALIAS_IN_USE, message));
+                    self.imports_complete = false;
                 }
                 continue;
             }
@@ -644,6 +656,8 @@ mod tests {
             .filter(|m| m.starts_with("myapp:main: "))
             .collect();
         assert_eq!(got, want);
+        assert!(!module_named(&program, "myapp:main").imports_complete);
+        assert!(module_named(&program, "myapp:a").imports_complete);
         let b = module_named(&program, "myapp:b");
         assert_eq!(b.diagnostics[0].code, diagnostics::EXPECTED_TOKEN);
     }
