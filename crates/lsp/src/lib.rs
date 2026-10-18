@@ -219,12 +219,12 @@ impl<'s> Server<'s> {
         };
         let answer = self.name_at(&place).and_then(|(program, module, target)| {
             let (file, declared, hover) = match &target {
-                Target::InBody { declared, ty } => {
+                CachedTarget::InBody { declared, ty } => {
                     let file = &module.ast.file;
                     let text = format!("{}: {ty}", file.slice(*declared));
                     (file, *declared, code_block(&text))
                 }
-                Target::Declaration { file, index } => {
+                CachedTarget::Declaration { file, index } => {
                     let declared_in = program.module_of(file)?;
                     let tree = &declared_in.ast;
                     let declaration = Id::from_index(*index as usize);
@@ -232,7 +232,7 @@ impl<'s> Server<'s> {
                     let hover = header(tree, declaration, &declared_in.path);
                     (&tree.file, declared, hover)
                 }
-                Target::Module(file) => {
+                CachedTarget::Module(file) => {
                     let imported = program.module_of(file)?;
                     let hover = code_block(&format!("module {}", imported.path));
                     (&imported.ast.file, Span::at(0), hover)
@@ -261,7 +261,7 @@ impl<'s> Server<'s> {
     fn name_at(
         &self,
         place: &TextDocumentPositionParams,
-    ) -> Option<(&project::Program, &project::Module, Target)> {
+    ) -> Option<(&project::Program, &project::Module, CachedTarget)> {
         let file = place.text_document.uri.to_file_path().ok()?;
         self.checked.values().find_map(|checked| {
             let program = checked.program.as_ref()?;
@@ -280,7 +280,7 @@ impl<'s> Server<'s> {
                         .lists
                         .items(tree.declarations)
                         .find(|&declaration| at(tree.decls[declaration].name().span))?;
-                    Target::Declaration {
+                    CachedTarget::Declaration {
                         file: file.clone(),
                         index: declaration.index() as u32,
                     }
@@ -339,7 +339,7 @@ impl<'s> Server<'s> {
         // A program that failed to load keeps the last compile for the next.
         let loaded = !program.load_failed();
         if loaded {
-            let mut found: HashMap<ModuleId, Vec<Name>> = HashMap::new();
+            let mut found: HashMap<ModuleId, Vec<CachedName>> = HashMap::new();
             results = build::compile(
                 &program,
                 usize::BITS,
@@ -348,7 +348,7 @@ impl<'s> Server<'s> {
                     let body_names = body
                         .names
                         .iter()
-                        .map(|name| Name::new(&program, body, name, types));
+                        .map(|name| CachedName::new(&program, body, name, types));
                     found
                         .entry(definition.module)
                         .or_default()
@@ -417,18 +417,18 @@ struct Checked {
     /// The program as last compiled, and the names written in the bodies of
     /// each of its modules, by file: what definition and hover read.
     program: Option<project::Program>,
-    names: HashMap<PathBuf, Vec<Name>>,
+    names: HashMap<PathBuf, Vec<CachedName>>,
 }
 
 /// A name written in a body and what it stands for, kept as long as its
 /// module is reused: by file and place, not by the ids of one compile.
-struct Name {
+struct CachedName {
     span: Span,
-    target: Target,
+    target: CachedTarget,
 }
 
 #[derive(Clone)]
-enum Target {
+enum CachedTarget {
     /// A parameter, `let` or `const` of the body, declared at `declared`, with
     /// its type's text.
     InBody { declared: Span, ty: String },
@@ -440,14 +440,14 @@ enum Target {
     Module(PathBuf),
 }
 
-impl Name {
+impl CachedName {
     /// `name` of `body`, a body of `program` whose types are in `types`.
     fn new(
         program: &project::Program,
         body: &thir::Body,
         name: &thir::Name,
         types: &Types,
-    ) -> Name {
+    ) -> CachedName {
         let file = |module: ModuleId| PathBuf::from(&program.modules[module.index()].ast.file.path);
         let target = match name.target {
             thir::Target::Body(symbol) => {
@@ -457,22 +457,22 @@ impl Name {
                         .as_ref()
                         .map_or(TypeId::INVALID, |constant| constant.ty),
                 };
-                Target::InBody {
+                CachedTarget::InBody {
                     declared: body.declared(symbol),
                     ty: types.text(ty),
                 }
             }
-            thir::Target::Global(Binding::Module(module)) => Target::Module(file(module)),
+            thir::Target::Global(Binding::Module(module)) => CachedTarget::Module(file(module)),
             thir::Target::Global(
                 Binding::Function(definition)
                 | Binding::Constant(definition)
                 | Binding::Type(definition),
-            ) => Target::Declaration {
+            ) => CachedTarget::Declaration {
                 file: file(definition.module),
                 index: definition.index,
             },
         };
-        Name {
+        CachedName {
             span: name.span,
             target,
         }
