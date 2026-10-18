@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use diagnostics as diagnostic;
 use diagnostics::Code;
 use diagnostics::Diagnostic;
 use diagnostics::quote;
@@ -22,18 +21,18 @@ use unicode_general_category::get_general_category;
 /// token. A malformed or unclosed literal is reported and still produces its
 /// token, so parsing goes on without a second error.
 pub fn scan(file: &Arc<SourceFile>) -> (Vec<Token>, Vec<Diagnostic>) {
-    let mut s = Scanner {
+    let mut scanner = Scanner {
         file,
         text: file.text.as_bytes(),
         pos: 0,
         tokens: Vec::with_capacity(file.text.len() / 3 + 1),
-        errors: Vec::new(),
+        diagnostics: Vec::new(),
     };
-    while s.pos < s.text.len() {
-        s.next();
+    while scanner.pos < scanner.text.len() {
+        scanner.next();
     }
-    s.emit(TokenKind::Eof, s.pos);
-    (s.tokens, s.errors)
+    scanner.emit(TokenKind::Eof, scanner.pos);
+    (scanner.tokens, scanner.diagnostics)
 }
 
 struct Scanner<'a> {
@@ -41,7 +40,7 @@ struct Scanner<'a> {
     text: &'a [u8],
     pos: usize,
     tokens: Vec<Token>,
-    errors: Vec<Diagnostic>,
+    diagnostics: Vec<Diagnostic>,
 }
 
 impl Scanner<'_> {
@@ -60,7 +59,7 @@ impl Scanner<'_> {
                 None => {
                     self.fail(
                         Span::new(start, start + 2),
-                        diagnostic::UNTERMINATED_COMMENT,
+                        diagnostics::UNTERMINATED_COMMENT,
                         "unterminated block comment",
                         "add `*/` to close it",
                     );
@@ -110,7 +109,7 @@ impl Scanner<'_> {
     }
 
     fn fail(&mut self, span: Span, code: Code, message: impl Into<String>, label: &str) {
-        self.errors
+        self.diagnostics
             .push(Diagnostic::new(code, message).label(self.file, span, label));
     }
 
@@ -142,7 +141,7 @@ impl Scanner<'_> {
         let message = format!("name `{text}` uses characters that are not allowed in names");
         self.fail(
             Span::new(start, self.pos),
-            diagnostic::UNEXPECTED_CHARACTER,
+            diagnostics::UNEXPECTED_CHARACTER,
             message,
             "use only `A-Z`, `a-z`, `0-9` and `_`",
         );
@@ -173,7 +172,7 @@ impl Scanner<'_> {
                 let message = format!("invalid {base} literal {prefixed}");
                 self.fail(
                     Span::new(start, self.pos),
-                    diagnostic::INVALID_NUMBER,
+                    diagnostics::INVALID_NUMBER,
                     message,
                     "",
                 );
@@ -253,7 +252,7 @@ impl Scanner<'_> {
                     Err(message) => {
                         self.fail(
                             Span::new(i, i + width),
-                            diagnostic::UNEXPECTED_CHARACTER,
+                            diagnostics::UNEXPECTED_CHARACTER,
                             message,
                             "fix this escape sequence",
                         );
@@ -281,14 +280,14 @@ impl Scanner<'_> {
         if kind == TokenKind::Char && (length > 4 || !one_char()) {
             self.fail(
                 span,
-                diagnostic::UNEXPECTED_CHARACTER,
+                diagnostics::UNEXPECTED_CHARACTER,
                 "character literal must contain exactly one character",
                 "use exactly one valid UTF-8 character between single quotes",
             );
         } else if kind == TokenKind::ByteChar && length != 1 {
             self.fail(
                 span,
-                diagnostic::UNEXPECTED_CHARACTER,
+                diagnostics::UNEXPECTED_CHARACTER,
                 "byte literal must contain exactly one byte",
                 "use exactly one byte after the b'...' prefix",
             );
@@ -303,14 +302,14 @@ impl Scanner<'_> {
         if quote_char == b'"' {
             self.fail(
                 span,
-                diagnostic::UNTERMINATED_STRING,
+                diagnostics::UNTERMINATED_STRING,
                 "unterminated string literal",
                 "add a closing `\"`",
             );
         } else {
             self.fail(
                 span,
-                diagnostic::UNTERMINATED_STRING,
+                diagnostics::UNTERMINATED_STRING,
                 "unterminated character literal",
                 "add a closing `'`",
             );
@@ -324,7 +323,7 @@ impl Scanner<'_> {
         let message = format!("illegal character {}", quote(&self.text[start..self.pos]));
         self.fail(
             Span::new(start, self.pos),
-            diagnostic::UNEXPECTED_CHARACTER,
+            diagnostics::UNEXPECTED_CHARACTER,
             message,
             "remove or replace this character",
         );

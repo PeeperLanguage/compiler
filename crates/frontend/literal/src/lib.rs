@@ -1,16 +1,16 @@
-//! The values of string, character and byte literal tokens. The lexer, the
-//! parser and later phases share these rules.
+//! The values of string, character and byte literal tokens. The lexer, which
+//! checks them, and the loader, which reads import paths, share these rules.
 
 use std::borrow::Cow;
 
 use diagnostics::quote;
 
-/// Reads the escape sequence at `s[i]`, a backslash: Ok holds the byte it
-/// stands for, and either way the second value is its length in `s`. `quote` is
-/// the literal's quote character, the only quote that may be escaped. Every
-/// escape stands for one byte: `\n \r \t \0 \\ \" \'` and `\xHH`.
-pub fn escape(s: &[u8], i: usize, quote_char: u8) -> (Result<u8, String>, usize) {
-    let Some(&c) = s.get(i + 1) else {
+/// Reads the escape sequence at `text[i]`, a backslash: Ok holds the byte it
+/// stands for, and either way the second value is its length in `text`.
+/// `quote_char` is the literal's quote character, the only quote that may be
+/// escaped. Every escape stands for one byte: `\n \r \t \0 \\ \" \'` and `\xHH`.
+pub fn escape(text: &[u8], i: usize, quote_char: u8) -> (Result<u8, String>, usize) {
+    let Some(&c) = text.get(i + 1) else {
         return (Err("unterminated escape sequence".into()), 1);
     };
     match c {
@@ -22,7 +22,7 @@ pub fn escape(s: &[u8], i: usize, quote_char: u8) -> (Result<u8, String>, usize)
         b'"' | b'\'' if c == quote_char => (Ok(c), 2),
         b'"' | b'\'' => (Err(format!("invalid escape sequence \\{}", c as char)), 2),
         b'x' => {
-            let digits = s[i + 2..]
+            let digits = text[i + 2..]
                 .iter()
                 .take(2)
                 .take_while(|&&d| d != quote_char && d != b'\n')
@@ -33,24 +33,24 @@ pub fn escape(s: &[u8], i: usize, quote_char: u8) -> (Result<u8, String>, usize)
                     2 + digits,
                 );
             }
-            let hex = &s[i + 2..i + 4];
+            let hex = &text[i + 2..i + 4];
             match (
                 char::from(hex[0]).to_digit(16),
                 char::from(hex[1]).to_digit(16),
             ) {
                 (Some(high), Some(low)) => (Ok((high * 16 + low) as u8), 4),
                 _ => (
-                    Err(format!("invalid hex escape {}", quote(&s[i..i + 4]))),
+                    Err(format!("invalid hex escape {}", quote(&text[i..i + 4]))),
                     4,
                 ),
             }
         }
         _ => {
-            let width = next_char_width(&s[i + 1..]);
+            let width = next_char_width(&text[i + 1..]);
             (
                 Err(format!(
                     "unknown escape sequence {}",
-                    quote(&s[i..i + 1 + width])
+                    quote(&text[i..i + 1 + width])
                 )),
                 1 + width,
             )
