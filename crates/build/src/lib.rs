@@ -150,7 +150,7 @@ pub fn compile(
                     let mut names = Vec::new(); // allocates only when a name is recorded
                     let recorded = record_names.then_some(&mut names);
                     let thir =
-                        build.with_checker(id, recorded, |checker| checker.body(&function, ty));
+                        build.with_checker(id, |checker| checker.body(&function, ty, recorded));
                     if let Some(thir) = thir {
                         let mir = build.lower(id, ty, &thir);
                         use_function(definition, &thir, &names, mir.as_ref(), &build.types);
@@ -223,12 +223,11 @@ struct Build<'p> {
 }
 
 impl<'p> Build<'p> {
-    /// Runs `work` on a checker of `module`, which records names into
-    /// `names` when given; what it reports joins that module's diagnostics.
+    /// Runs `work` on a checker of `module`; what it reports joins that
+    /// module's diagnostics.
     fn with_checker<T>(
         &mut self,
         module: ModuleId,
-        names: Option<&mut Vec<thir::Name>>,
         work: impl FnOnce(&mut Checker<Build<'p>>) -> T,
     ) -> T {
         let (modules, scopes) = (self.modules, self.scopes);
@@ -240,7 +239,6 @@ impl<'p> Build<'p> {
             current_module: module,
             queries: self,
             diagnostics: &mut diagnostics,
-            names,
         };
         let result = work(&mut checker);
         let found = &mut self.results[index];
@@ -324,7 +322,7 @@ impl<'p> Build<'p> {
             State::NotStarted => {}
         }
         table(self)[module][index] = State::Running;
-        let result = self.with_checker(definition.module, None, |checker| {
+        let result = self.with_checker(definition.module, |checker| {
             work(checker, Id::from_index(index))
         });
         table(self)[module][index] = State::Done(result.clone());

@@ -32,6 +32,9 @@ pub(crate) struct BodyChecker<'c, 'a, Q: Queries> {
     pub(crate) checker: &'c mut Checker<'a, Q>,
     pub(crate) tree: &'a ast::Tree,
     pub(crate) body: Body,
+    /// The names written in the body, in the order checked, for a caller that
+    /// wants them (`Checker::body`); `None` records nothing.
+    recorded: Option<&'c mut Vec<Name>>,
     /// The names declared in the enclosing blocks so far, innermost last. Few
     /// names are in scope at once, so a search from the end beats hashing.
     pub(crate) names: Vec<(&'a str, Symbol)>,
@@ -43,8 +46,14 @@ pub(crate) struct BodyChecker<'c, 'a, Q: Queries> {
 impl<'a, Q: Queries> Checker<'a, Q> {
     /// The THIR of `function`'s body, given its signature `ty` (`signature`),
     /// with `has_errors` set when checking it reported an error. `None` for a
-    /// function without a body, or whose signature had an error.
-    pub fn body(&mut self, function: &ast::Function, ty: TypeId) -> Option<Body> {
+    /// function without a body, or whose signature had an error. The names
+    /// written in it go to `names` when given, as for an editor.
+    pub fn body(
+        &mut self,
+        function: &ast::Function,
+        ty: TypeId,
+        names: Option<&mut Vec<Name>>,
+    ) -> Option<Body> {
         let block = function.body?;
         let reported = self.diagnostics.len();
         let Type::Function { parameters, result } = &self.queries.types()[ty] else {
@@ -52,7 +61,7 @@ impl<'a, Q: Queries> Checker<'a, Q> {
         };
         let (parameters, result) = (parameters.clone(), *result);
         let tree = &self.module().ast;
-        let mut checker = BodyChecker::new(self, result);
+        let mut checker = BodyChecker::new(self, result, names);
         for (parameter, &ty) in tree
             .lists
             .items(function.signature.parameters)
@@ -83,18 +92,24 @@ impl<'a, Q: Queries> Checker<'a, Q> {
     /// it had an error. Its value is checked as a body's `const` is, with no
     /// locals in scope.
     pub fn constant(&mut self, declaration: Id<ast::Decl>) -> Option<Constant> {
-        BodyChecker::new(self, TypeId::VOID).constant_value(declaration)
+        BodyChecker::new(self, TypeId::VOID, None).constant_value(declaration)
     }
 }
 
 impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
-    /// Checking a body of a function whose result type is `result`.
-    fn new(checker: &'c mut Checker<'a, Q>, result: TypeId) -> BodyChecker<'c, 'a, Q> {
+    /// Checking a body of a function whose result type is `result`,
+    /// recording its names into `recorded` when given.
+    fn new(
+        checker: &'c mut Checker<'a, Q>,
+        result: TypeId,
+        recorded: Option<&'c mut Vec<Name>>,
+    ) -> BodyChecker<'c, 'a, Q> {
         let tree = &checker.module().ast;
         BodyChecker {
             checker,
             tree,
             body: Body::default(),
+            recorded,
             names: Vec::new(),
             block_start: 0,
             result,
@@ -144,9 +159,9 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
     }
 
     /// Records that the name written at `span` stands for `target`, when the
-    /// caller asked for names (`Checker::names`).
+    /// caller asked for names (`Checker::body`).
     pub(crate) fn record(&mut self, span: Span, target: Target) {
-        if let Some(names) = &mut self.checker.names {
+        if let Some(names) = &mut self.recorded {
             names.push(Name { span, target });
         }
     }
@@ -490,7 +505,7 @@ mod tests {
                     continue;
                 };
                 let signature = checker.signature(declaration);
-                let body = checker.body(&function, signature);
+                let body = checker.body(&function, signature, None);
                 bodies.extend(body.filter(|body| !body.has_errors));
             }
             bodies
@@ -745,7 +760,7 @@ mod tests {
                 unreachable!("the first declaration is a function")
             };
             let signature = checker.signature(declaration);
-            checker.body(&function, signature);
+            checker.body(&function, signature, None);
             let note = |diagnostic: &diagnostics::Diagnostic| {
                 let first = diagnostic.notes.first();
                 (

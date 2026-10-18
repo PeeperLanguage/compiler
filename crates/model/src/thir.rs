@@ -50,7 +50,7 @@ pub struct Body {
 }
 
 /// A name written in a body, where it is declared or used, and what it
-/// stands for. Recorded only for a caller that asks (`Checker::names`), such
+/// stands for. Recorded only for a caller that asks (`Checker::body`), such
 /// as an editor; the body itself does not keep names.
 #[derive(Clone, Copy, Debug)]
 pub struct Name {
