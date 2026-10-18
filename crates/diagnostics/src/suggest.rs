@@ -12,13 +12,29 @@ pub fn nearest_name<'a>(
         return None;
     }
     let query = query.to_lowercase();
+    // A name that differs in length by more than this can neither be taken
+    // nor stop the best one from being taken (see `close_enough` and
+    // `clearly_better_than`), so it is not measured.
+    let too_far = most_edits(query.len()) + 1;
+    let mut lower = String::new(); // one buffer for every candidate
     let mut best: Option<Match> = None;
     let mut second: Option<Match> = None;
     for (name, priority) in candidates {
+        // lower case keeps an ASCII name's length; another may change it
+        let ascii = name.is_ascii();
+        if ascii && name.len().abs_diff(query.len()) > too_far {
+            continue;
+        }
         if name.trim().is_empty() {
             continue;
         }
-        let lower = name.to_lowercase();
+        lower.clear();
+        lower.push_str(name);
+        if ascii {
+            lower.make_ascii_lowercase();
+        } else {
+            lower = lower.to_lowercase();
+        }
         let candidate = Match {
             name,
             distance: levenshtein(query.as_bytes(), lower.as_bytes()),
@@ -74,12 +90,13 @@ impl Match<'_> {
     /// Whether the edit distance is small for a query of `query_len` bytes.
     fn close_enough(&self, query_len: usize) -> bool {
         let longer = query_len.max(self.name.len());
-        match query_len {
-            0..=2 => self.distance == 1 && self.shared_prefix > 0,
-            3..=4 => self.distance <= 1,
-            5..=7 => self.distance <= 2 && self.distance * 5 <= longer * 2,
-            _ => self.distance <= 3 && self.distance * 3 <= longer,
-        }
+        self.distance <= most_edits(query_len)
+            && match query_len {
+                0..=2 => self.distance == 1 && self.shared_prefix > 0,
+                3..=4 => true,
+                5..=7 => self.distance * 5 <= longer * 2,
+                _ => self.distance * 3 <= longer,
+            }
     }
 
     fn clearly_better_than(&self, other: &Match) -> bool {
@@ -94,6 +111,16 @@ impl Match<'_> {
                 || self.priority < other.priority && self.shared_prefix >= other.shared_prefix;
         }
         false
+    }
+}
+
+/// The most edits a name may be from a query of `query_len` bytes and still
+/// be suggested.
+fn most_edits(query_len: usize) -> usize {
+    match query_len {
+        0..=4 => 1,
+        5..=7 => 2,
+        _ => 3,
     }
 }
 
@@ -148,6 +175,22 @@ mod tests {
             let mut reversed = names;
             reversed.reverse();
             assert_eq!(nearest(query, &names), nearest(query, &reversed), "{query}");
+        }
+    }
+
+    /// Names too much longer or shorter to be suggested are skipped without
+    /// changing any answer.
+    #[test]
+    fn far_lengths_do_not_change_the_answer() {
+        let far = ["x", "a_very_long_name_indeed", "lengthy_value_name"];
+        for (query, names) in [
+            ("lenght", &["length", "lent"][..]),
+            ("cotn", &["cost", "count"]),
+            ("valeu", &["value"]),
+            ("ab", &["ab", "AB"]),
+        ] {
+            let with_far: Vec<&str> = names.iter().chain(&far).copied().collect();
+            assert_eq!(nearest(query, names), nearest(query, &with_far), "{query}");
         }
     }
 
