@@ -24,6 +24,7 @@ use source::Span;
 
 use crate::Checker;
 use crate::Queries;
+use crate::scope::already_declared;
 use model::Binding;
 
 /// Checking one function body.
@@ -134,15 +135,8 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
         let block = &self.names[self.block_start..];
         if let Some(&(_, first)) = block.iter().find(|&&(declared, _)| declared == text) {
             let first = self.body.declared(first);
-            let file = &self.tree.file;
-            self.checker.diagnostics.push(
-                Diagnostic::new(
-                    diagnostics::ALREADY_DECLARED,
-                    format!("`{text}` is already declared in this block"),
-                )
-                .label(file, name.span, "declared again here")
-                .label(file, first, "first declared here"),
-            );
+            let diagnostic = already_declared(&self.tree.file, text, "block", name.span, first);
+            self.checker.diagnostics.push(diagnostic);
             return;
         }
         let target = Target::Body(symbol);

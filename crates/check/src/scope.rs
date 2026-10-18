@@ -5,13 +5,32 @@
 //! misses here goes on to the prelude module's scope.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use diagnostics::Diagnostic;
 use model::Binding;
 use model::DefId;
 use model::ModuleId;
 use model::ast;
+use source::SourceFile;
 use source::Span;
+
+/// Reports `name` declared again at `again` in the same `place` (a module or
+/// a block) of `file`, where it was first declared at `first`.
+pub(crate) fn already_declared(
+    file: &Arc<SourceFile>,
+    name: &str,
+    place: &str,
+    again: Span,
+    first: Span,
+) -> Diagnostic {
+    Diagnostic::new(
+        diagnostics::ALREADY_DECLARED,
+        format!("`{name}` is already declared in this {place}"),
+    )
+    .label(file, again, "declared again here")
+    .label(file, first, "first declared here")
+}
 
 pub struct ModuleScope {
     names: HashMap<Box<str>, (Binding, Span)>, // and where the name is written
@@ -45,14 +64,7 @@ pub fn collect(
             return; // missing after a syntax error
         }
         if let Some(&(_, first)) = scope.names.get(name) {
-            diagnostics.push(
-                Diagnostic::new(
-                    diagnostics::ALREADY_DECLARED,
-                    format!("`{name}` is already declared in this module"),
-                )
-                .label(file, span, "declared again here")
-                .label(file, first, "first declared here"),
-            );
+            diagnostics.push(already_declared(file, name, "module", span, first));
             return;
         }
         scope.names.insert(name.into(), (binding, span));
