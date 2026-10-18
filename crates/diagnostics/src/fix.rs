@@ -32,7 +32,10 @@ pub enum Certainty {
 /// when it is sure; a guess is left for the programmer. A help line is left
 /// out whole, so it is never applied in part, when one of its fixes is outside
 /// `root` (a bundled library) or overlaps a fix taken before it.
-pub fn chosen<'d>(all: &'d [Diagnostic], root: &Path) -> Vec<(&'d Fix, &'d str)> {
+pub fn chosen<'d>(
+    all: impl IntoIterator<Item = &'d Diagnostic>,
+    root: &Path,
+) -> Vec<(&'d Fix, &'d str)> {
     let overlap = |a: &Fix, b: &Fix| {
         let (a_span, b_span) = (a.span, b.span);
         a.file.path == b.file.path

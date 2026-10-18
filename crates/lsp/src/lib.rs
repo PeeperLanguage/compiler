@@ -17,6 +17,8 @@ use std::time::Instant;
 
 use arena::Id;
 use diagnostics::Severity;
+use diagnostics::fix;
+use diagnostics::fix::Fix;
 use lsp_server::Connection;
 use lsp_server::ErrorCode;
 use lsp_server::Message;
@@ -26,6 +28,7 @@ use lsp_server::RequestId;
 use lsp_server::Response;
 use lsp_types::CodeAction;
 use lsp_types::CodeActionKind;
+use lsp_types::CodeActionOptions;
 use lsp_types::CodeActionOrCommand;
 use lsp_types::CodeActionParams;
 use lsp_types::CodeActionProviderCapability;
@@ -87,7 +90,13 @@ fn run(connection: Connection, libraries: &Path) -> Result<(), BoxError> {
         text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
         definition_provider: Some(OneOf::Left(true)),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
-        code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
+        code_action_provider: Some(CodeActionProviderCapability::Options(CodeActionOptions {
+            code_action_kinds: Some(vec![
+                CodeActionKind::QUICKFIX,
+                CodeActionKind::SOURCE_FIX_ALL,
+            ]),
+            ..CodeActionOptions::default()
+        })),
         ..ServerCapabilities::default()
     };
     connection.initialize(serde_json::to_value(capabilities)?)?;
@@ -237,7 +246,7 @@ impl<'s> Server<'s> {
     fn request(&self, request: Request) -> Response {
         let Request { id, method, params } = request;
         let place: TextDocumentPositionParams = match method.as_str() {
-            "textDocument/codeAction" => return code_actions(id, params),
+            "textDocument/codeAction" => return self.code_actions(id, params),
             // Both requests' parameters hold the place, and more to ignore.
             "textDocument/definition" | "textDocument/hover" => {
                 match serde_json::from_value(params) {
@@ -357,6 +366,43 @@ impl<'s> Server<'s> {
         }
     }
 
+    /// Answers a code action request with the kinds it asks for: the quick
+    /// fixes of the diagnostics it names, which the published diagnostics
+    /// carry in their `data`, and the file's sure fixes as one `source.fixAll`
+    /// action. A fix-on-save request asks for `source.fixAll` only, so it gets
+    /// no guesses.
+    fn code_actions(&self, id: RequestId, params: serde_json::Value) -> Response {
+        let params: CodeActionParams = match serde_json::from_value(params) {
+            Ok(params) => params,
+            Err(error) => return invalid_params(id, &error),
+        };
+        let only = params.context.only.as_ref();
+        let mut actions = Vec::new();
+        let named = params.context.diagnostics.into_iter();
+        for diagnostic in named.filter(|_| asks_for(only, &CodeActionKind::QUICKFIX)) {
+            let fixes = diagnostic
+                .data
+                .clone()
+                .map(serde_json::from_value::<Vec<CodeAction>>);
+            for action in fixes.and_then(Result::ok).unwrap_or_default() {
+                actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                    diagnostics: Some(vec![diagnostic.clone()]),
+                    ..action
+                }));
+            }
+        }
+        let fix_all = file_path(&params.text_document.uri)
+            .filter(|_| asks_for(only, &CodeActionKind::SOURCE_FIX_ALL))
+            .and_then(|file| {
+                let mut checked = self.checked.values();
+                checked
+                    .find_map(|checked| checked.fix_all.get(&file))
+                    .cloned()
+            });
+        actions.extend(fix_all.map(CodeActionOrCommand::CodeAction));
+        Response::new_ok(id, actions)
+    }
+
     /// Checks the program of `project`, after a change to `file`, and
     /// publishes the diagnostics of its files, and an empty list for each file
     /// that had some last time and has none now.
@@ -367,6 +413,7 @@ impl<'s> Server<'s> {
             published,
             program: mut compiled_program,
             mut names,
+            fix_all: _, // made again below
         } = self.checked.remove(&project.entry).unwrap_or_default();
         let mut all: Vec<&diagnostics::Diagnostic> = program.load_diagnostics().collect();
         // A program that cannot be checked keeps the last compile for the next.
@@ -399,7 +446,7 @@ impl<'s> Server<'s> {
             }));
             all.extend(results.diagnostics());
         }
-        let mut by_file: HashMap<PathBuf, Vec<lsp_types::Diagnostic>> = HashMap::new();
+        let mut by_file: HashMap<PathBuf, Vec<&diagnostics::Diagnostic>> = HashMap::new();
         for diagnostic in all {
             // A diagnostic about no place in a file, such as an unreadable
             // module, is shown at the start of the file that changed.
@@ -407,19 +454,37 @@ impl<'s> Server<'s> {
                 .labels
                 .first()
                 .map_or(file.to_path_buf(), |label| PathBuf::from(&label.file.path));
-            by_file
-                .entry(place)
-                .or_default()
-                .push(lsp_diagnostic(diagnostic, &self.open_files));
+            by_file.entry(place).or_default().push(diagnostic);
         }
+        // Each file's sure fixes, chosen as `peeper fix` chooses them, as one
+        // action for a later `source.fixAll` request.
+        let fix_all = by_file
+            .iter()
+            .filter_map(|(file, in_file)| {
+                let fixes = fix::chosen(in_file.iter().copied(), &project.root);
+                let fixes = fixes.into_iter().map(|(fix, _)| fix);
+                let action = CodeAction {
+                    title: "Apply all sure fixes".to_string(),
+                    kind: Some(CodeActionKind::SOURCE_FIX_ALL),
+                    edit: Some(workspace_edit(fixes, &self.open_files)?),
+                    ..CodeAction::default()
+                };
+                Some((file.clone(), action))
+            })
+            .collect();
         let shown: HashSet<PathBuf> = by_file.keys().cloned().collect();
         for file in shown.union(&published) {
             let Ok(uri) = Url::from_file_path(file) else {
                 continue; // not an absolute path
             };
+            let in_file = by_file.remove(file).unwrap_or_default();
+            let diagnostics = in_file
+                .into_iter()
+                .map(|diagnostic| lsp_diagnostic(diagnostic, &self.open_files))
+                .collect();
             let params = PublishDiagnosticsParams {
                 uri,
-                diagnostics: by_file.remove(file).unwrap_or_default(),
+                diagnostics,
                 version: None,
             };
             let notification =
@@ -436,6 +501,7 @@ impl<'s> Server<'s> {
             published: shown,
             program: compiled_program,
             names,
+            fix_all,
         };
         self.checked.insert(project.entry, checked);
         Ok(())
@@ -451,6 +517,7 @@ struct Checked {
     /// each of its modules, by file: what definition and hover read.
     program: Option<project::Program>,
     names: HashMap<PathBuf, Vec<CachedName>>,
+    fix_all: HashMap<PathBuf, CodeAction>, // each file's sure fixes, as of the last check
 }
 
 /// A name written in a body and what it stands for, kept as long as its
@@ -561,27 +628,20 @@ fn invalid_params(id: RequestId, error: &serde_json::Error) -> Response {
     Response::new_err(id, ErrorCode::InvalidParams as i32, error.to_string())
 }
 
-/// Answers a code action request with the quick fixes of the diagnostics it
-/// names, which the published diagnostics carry in their `data`.
-fn code_actions(id: RequestId, params: serde_json::Value) -> Response {
-    let params: CodeActionParams = match serde_json::from_value(params) {
-        Ok(params) => params,
-        Err(error) => return invalid_params(id, &error),
-    };
-    let mut actions = Vec::new();
-    for diagnostic in params.context.diagnostics {
-        let fixes = diagnostic
-            .data
-            .clone()
-            .map(serde_json::from_value::<Vec<CodeAction>>);
-        for action in fixes.and_then(Result::ok).unwrap_or_default() {
-            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-                diagnostics: Some(vec![diagnostic.clone()]),
-                ..action
-            }));
-        }
-    }
-    Response::new_ok(id, actions)
+/// Whether a code action request that asks only for the kinds `only` (all
+/// kinds when `None`) asks for `kind`: a kind covers the kinds below it, as
+/// `source` covers `source.fixAll`.
+fn asks_for(only: Option<&Vec<CodeActionKind>>, kind: &CodeActionKind) -> bool {
+    let wanted = kind.as_str();
+    only.is_none_or(|only| {
+        only.iter().any(|asked| {
+            let asked = asked.as_str();
+            wanted == asked
+                || wanted
+                    .strip_prefix(asked)
+                    .is_some_and(|rest| rest.starts_with('.'))
+        })
+    })
 }
 
 /// The file `uri` names, spelled as `project::canonical_path` spells it, so
@@ -605,43 +665,53 @@ fn quick_fixes(
         .filter(|note| !note.fixes.is_empty());
     fixable
         .filter_map(|note| {
-            let mut documents: Vec<TextDocumentEdit> = Vec::new();
-            for fix in &note.fixes {
-                let uri = Url::from_file_path(&fix.file.path).ok()?;
-                let edit = OneOf::Left(TextEdit {
-                    range: range(&fix.file, fix.span),
-                    new_text: fix.new_text.clone(),
-                });
-                match documents
-                    .iter_mut()
-                    .find(|document| document.text_document.uri == uri)
-                {
-                    Some(document) => document.edits.push(edit),
-                    None => {
-                        let open = open_files.get(Path::new(&fix.file.path));
-                        let text_document = OptionalVersionedTextDocumentIdentifier {
-                            uri,
-                            version: open.map(|open| open.version), // none: not open
-                        };
-                        documents.push(TextDocumentEdit {
-                            text_document,
-                            edits: vec![edit],
-                        });
-                    }
-                }
-            }
             Some(CodeAction {
                 title: note.text.clone(),
                 kind: Some(CodeActionKind::QUICKFIX),
                 is_preferred: Some(note.sure_fix()),
-                edit: Some(WorkspaceEdit {
-                    document_changes: Some(DocumentChanges::Edits(documents)),
-                    ..WorkspaceEdit::default()
-                }),
+                edit: Some(workspace_edit(&note.fixes, open_files)?),
                 ..CodeAction::default()
             })
         })
         .collect()
+}
+
+/// `fixes` as one edit of the files they touch, each file's edits naming the
+/// version of the open text they were made for (`open_files`). `None` when a
+/// fix is in a file that has no URI, or there are no fixes.
+fn workspace_edit<'f>(
+    fixes: impl IntoIterator<Item = &'f Fix>,
+    open_files: &HashMap<PathBuf, OpenFile>,
+) -> Option<WorkspaceEdit> {
+    let mut documents: Vec<TextDocumentEdit> = Vec::new();
+    for fix in fixes {
+        let uri = Url::from_file_path(&fix.file.path).ok()?;
+        let edit = OneOf::Left(TextEdit {
+            range: range(&fix.file, fix.span),
+            new_text: fix.new_text.clone(),
+        });
+        match documents
+            .iter_mut()
+            .find(|document| document.text_document.uri == uri)
+        {
+            Some(document) => document.edits.push(edit),
+            None => {
+                let open = open_files.get(Path::new(&fix.file.path));
+                let text_document = OptionalVersionedTextDocumentIdentifier {
+                    uri,
+                    version: open.map(|open| open.version), // none: not open
+                };
+                documents.push(TextDocumentEdit {
+                    text_document,
+                    edits: vec![edit],
+                });
+            }
+        }
+    }
+    (!documents.is_empty()).then(|| WorkspaceEdit {
+        document_changes: Some(DocumentChanges::Edits(documents)),
+        ..WorkspaceEdit::default()
+    })
 }
 
 /// `diagnostic` in LSP form: the primary label gives the range, the other
@@ -757,7 +827,6 @@ mod tests {
     use super::DEBOUNCE;
     use super::OpenFile;
     use super::Server;
-    use super::code_actions;
     use super::lsp_diagnostic;
     use super::offset;
     use super::position;
@@ -852,7 +921,9 @@ mod tests {
             "range": published.range,
             "context": { "diagnostics": [published] },
         });
-        let Response { result, error, .. } = code_actions(RequestId::from(1), params);
+        let (connection, _client) = Connection::memory();
+        let server = Server::new(&connection, Path::new(""));
+        let Response { result, error, .. } = server.code_actions(RequestId::from(1), params);
         assert!(error.is_none(), "{error:?}");
         let result = result.unwrap();
         let document = &result[0]["edit"]["documentChanges"][0];
@@ -955,6 +1026,54 @@ mod tests {
         ));
         send(notification("exit", serde_json::Value::Null));
         thread.join().unwrap();
+    }
+
+    /// Asked for `source.fixAll` only, as on save, the server answers the
+    /// open file's sure fixes as one action made for its version, and no
+    /// quick fix, though the diagnostics it names carry the `count` guess.
+    #[test]
+    fn fixes_all_sure_problems() {
+        let folder =
+            std::env::temp_dir().join(format!("peeper-lsp-fix-all-{}", std::process::id()));
+        _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let file = folder.join("main.peep");
+        let text = "fn main() {\n    let count = 1\n    let a = cout\n}\n";
+        std::fs::write(&file, text).unwrap();
+        let uri = Url::from_file_path(&file).unwrap();
+        let (connection, client) = Connection::memory();
+        let mut server = Server::new(&connection, Path::new(""));
+        let document = json!({ "uri": uri, "languageId": "peeper", "version": 3, "text": text });
+        let open = json!({ "textDocument": document });
+        let open = Notification::new("textDocument/didOpen".to_string(), open);
+        server.notification(open).unwrap();
+        let Ok(Message::Notification(published)) = client.receiver.try_recv() else {
+            panic!("the open did not publish");
+        };
+        let published: PublishDiagnosticsParams = serde_json::from_value(published.params).unwrap();
+        assert_eq!(published.diagnostics.len(), 3, "two `;` and `cout`");
+        let params = json!({
+            "textDocument": { "uri": uri },
+            "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 4, "character": 0 } },
+            "context": { "diagnostics": published.diagnostics, "only": ["source.fixAll"] },
+        });
+        let ask = Request::new(
+            RequestId::from(1),
+            "textDocument/codeAction".to_string(),
+            params,
+        );
+        let result = server.request(ask).result.unwrap();
+        assert_eq!(result.as_array().map(Vec::len), Some(1), "{result}");
+        assert_eq!(result[0]["kind"], "source.fixAll");
+        let document = &result[0]["edit"]["documentChanges"][0];
+        assert_eq!(document["textDocument"]["version"], 3);
+        let inserted: Vec<&serde_json::Value> = document["edits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|edit| &edit["newText"])
+            .collect();
+        assert_eq!(inserted, [";", ";"], "the two `;`, not `count`");
     }
 
     /// A change only waits; a save checks at once, before `notification`
