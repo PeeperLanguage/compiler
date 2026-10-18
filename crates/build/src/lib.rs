@@ -411,7 +411,12 @@ mod tests {
                 )
             })
             .collect();
-        let program = project::load(&packages, &folder("app").join("main.peep"), &open_files);
+        let project = project::Project {
+            packages,
+            entry: folder("app").join("main.peep"),
+            root: PathBuf::from("/peeper-build-test"),
+        };
+        let program = project::load(&project, &open_files);
         let reported: Vec<&str> = program
             .load_diagnostics()
             .map(|diagnostic| diagnostic.message.as_str())

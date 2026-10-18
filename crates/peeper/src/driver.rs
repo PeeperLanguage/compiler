@@ -31,7 +31,7 @@ pub fn run(
             return 1;
         }
     };
-    let program = project::load(&project.packages, &project.entry, &HashMap::new());
+    let program = project::load(&project, &HashMap::new());
     let mut all: Vec<Diagnostic> = program.load_diagnostics().cloned().collect();
     let failed = |all: &[Diagnostic]| all.iter().any(Diagnostic::is_error);
     if !program.load_failed() {

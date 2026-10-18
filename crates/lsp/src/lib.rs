@@ -328,7 +328,7 @@ impl<'s> Server<'s> {
     /// publishes the diagnostics of its files, and an empty list for each file
     /// that had some last time and has none now.
     fn check(&mut self, project: project::Project, file: &Path) -> Result<(), BoxError> {
-        let program = project::load(&project.packages, &project.entry, &self.open_files);
+        let program = project::load(&project, &self.open_files);
         let Checked {
             mut results,
             published,

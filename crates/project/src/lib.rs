@@ -207,22 +207,19 @@ struct Job {
     standalone: bool, // a file in no package, checked on its own: it cannot import
 }
 
-/// Reads `entry` and every module it imports, directly or not. Files are read
-/// and parsed by a pool of worker threads; only this thread touches the module
-/// map, and each module is touched only by its worker until it is handed over.
+/// Reads `project`'s entry and every module it imports, directly or not. Files
+/// are read and parsed by a pool of worker threads; only this thread touches
+/// the module map, and each module is touched only by its worker until it is
+/// handed over.
 /// An entry in no package's folder is checked on its own and cannot import.
 ///
 /// `open_files` holds the text of files open in an editor, read instead of
 /// what is on disk. Its keys are absolute paths as `std::path::absolute` makes
 /// them, symbolic links not followed: the form of the entry and of every file
 /// a package's folder names.
-pub fn load(
-    packages: &HashMap<String, PathBuf>,
-    entry: &Path,
-    open_files: &HashMap<PathBuf, String>,
-) -> Program {
-    let entry = std::path::absolute(entry).unwrap_or_else(|_| entry.to_path_buf());
-    let with_prelude = resolve(packages, PRELUDE_PATH)
+pub fn load(project: &Project, open_files: &HashMap<PathBuf, String>) -> Program {
+    let entry = std::path::absolute(&project.entry).unwrap_or_else(|_| project.entry.clone());
+    let with_prelude = resolve(&project.packages, PRELUDE_PATH)
         .is_ok_and(|(_, file)| file.is_file() || open_files.contains_key(&file));
     let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
 
@@ -242,13 +239,13 @@ pub fn load(
                         .expect("a worker never panics holding the lock")
                         .recv();
                     let Ok(job) = job else { break }; // no more jobs
-                    let loaded = load_file(packages, open_files, job, with_prelude);
+                    let loaded = load_file(&project.packages, open_files, job, with_prelude);
                     _ = send_module.send(loaded);
                 }
             });
         }
 
-        let (path, in_package) = path_of(packages, &entry);
+        let (path, in_package) = path_of(&project.packages, &entry);
         let mut seen = HashSet::from([path.clone()]);
         _ = send_job.send(Job {
             path,
@@ -261,7 +258,8 @@ pub fn load(
             pending -= 1;
             for (_, path) in &loaded.imports {
                 if seen.insert(path.clone()) {
-                    let (_, file) = resolve(packages, path).expect("an import path is resolved");
+                    let (_, file) =
+                        resolve(&project.packages, path).expect("an import path is resolved");
                     _ = send_job.send(Job {
                         path: path.clone(),
                         file,
@@ -507,7 +505,7 @@ mod tests {
 
     /// Writes `files` (paths relative to a new temporary folder) and returns that
     /// folder and its packages: "myapp" in src, "core" in libs/core/src.
-    fn write(test: &str, files: &[(&str, &str)]) -> (PathBuf, HashMap<String, PathBuf>) {
+    fn write(test: &str, files: &[(&str, &str)]) -> Project {
         let root =
             std::env::temp_dir().join(format!("peeper-project-{}-{test}", std::process::id()));
         _ = std::fs::remove_dir_all(&root);
@@ -521,7 +519,11 @@ mod tests {
             ("myapp".to_string(), root.join("src")),
             ("core".to_string(), root.join("libs/core/src")),
         ]);
-        (root, packages)
+        Project {
+            packages,
+            entry: root.join("src/main.peep"),
+            root,
+        }
     }
 
     /// "module: CODE message" for every diagnostic, sorted.
@@ -557,7 +559,7 @@ mod tests {
 
     #[test]
     fn loads_nested_imports() {
-        let (root, packages) = write(
+        let project = write(
             "nested",
             &[
                 (
@@ -569,7 +571,7 @@ mod tests {
                 ("libs/core/src/global.peep", "fn exit(code: i32) {}"),
             ],
         );
-        let program = load(&packages, &root.join("src/main.peep"), &HashMap::new());
+        let program = load(&project, &HashMap::new());
         assert_eq!(messages(&program), Vec::<String>::new());
         assert_eq!(
             order(&program).join(" "),
@@ -601,7 +603,7 @@ mod tests {
             r#"import "myapp:b";"#,
         ]
         .join("\n");
-        let (root, packages) = write(
+        let project = write(
             "errors",
             &[
                 ("src/main.peep", &main),
@@ -610,8 +612,8 @@ mod tests {
                 ("src/c.peep", ""),
             ],
         );
-        let program = load(&packages, &root.join("src/main.peep"), &HashMap::new());
-        let missing = root.join("src/missing.peep");
+        let program = load(&project, &HashMap::new());
+        let missing = project.root.join("src/missing.peep");
         let want = [
             format!("myapp:main: M0001 module not found: {}", missing.display()),
             "myapp:main: M0003 import path needs a package, such as `myapp:utils/file`".to_string(),
@@ -633,11 +635,11 @@ mod tests {
 
     #[test]
     fn reports_imports_at_their_line() {
-        let (root, packages) = write(
+        let project = write(
             "line",
             &[("src/main.peep", "fn main() {}\nimport \"myapp:missing\";\n")],
         );
-        let program = load(&packages, &root.join("src/main.peep"), &HashMap::new());
+        let program = load(&project, &HashMap::new());
         let main = module_named(&program, "myapp:main");
         assert_eq!(main.diagnostics.len(), 1, "{:?}", messages(&program));
         let label = &main.diagnostics[0].labels[0];
@@ -646,7 +648,7 @@ mod tests {
 
     #[test]
     fn reports_a_cycle_at_the_import_closing_it() {
-        let (root, packages) = write(
+        let project = write(
             "cycle",
             &[
                 ("src/main.peep", r#"import "myapp:a";"#),
@@ -654,7 +656,7 @@ mod tests {
                 ("src/b.peep", r#"import "myapp:a";"#),
             ],
         );
-        let program = load(&packages, &root.join("src/main.peep"), &HashMap::new());
+        let program = load(&project, &HashMap::new());
         assert_eq!(
             messages(&program),
             ["program: M0002 cyclic import detected: myapp:a -> myapp:b -> myapp:a"]
@@ -670,7 +672,7 @@ mod tests {
     /// reported once, at that import.
     #[test]
     fn a_cycle_through_the_prelude_is_reported_once() {
-        let (root, packages) = write(
+        let project = write(
             "prelude_cycle",
             &[
                 ("src/main.peep", "fn main() {}"),
@@ -678,7 +680,7 @@ mod tests {
                 ("libs/core/src/x.peep", r#"import "core:global";"#),
             ],
         );
-        let program = load(&packages, &root.join("src/main.peep"), &HashMap::new());
+        let program = load(&project, &HashMap::new());
         let cycles: Vec<_> = program.diagnostics.iter().map(|d| &d.message).collect();
         assert_eq!(
             cycles,
@@ -693,14 +695,14 @@ mod tests {
 
     #[test]
     fn redundant_prelude_import() {
-        let (root, packages) = write(
+        let project = write(
             "prelude",
             &[
                 ("src/main.peep", r#"import "core:global";"#),
                 ("libs/core/src/global.peep", ""),
             ],
         );
-        let program = load(&packages, &root.join("src/main.peep"), &HashMap::new());
+        let program = load(&project, &HashMap::new());
         assert_eq!(
             messages(&program),
             ["myapp:main: S0004 `core:global` is imported automatically"]
@@ -714,14 +716,15 @@ mod tests {
 
     #[test]
     fn a_single_file_cannot_import() {
-        let (root, packages) = write(
+        let mut project = write(
             "single",
             &[
                 ("tool.peep", "import \"myapp:a\";\nfn main() {}"),
                 ("libs/core/src/global.peep", ""),
             ],
         );
-        let program = load(&packages, &root.join("tool.peep"), &HashMap::new());
+        project.entry = project.root.join("tool.peep");
+        let program = load(&project, &HashMap::new());
         assert_eq!(
             messages(&program),
             ["tool: M0003 a single file cannot import; check its project folder instead"]
@@ -735,15 +738,16 @@ mod tests {
 
     #[test]
     fn unreadable_and_non_utf8_entries() {
-        let (root, packages) = write("unreadable", &[("src/bad.peep", "fn \u{0} main")]);
-        std::fs::write(root.join("src/bad.peep"), b"fn \xff main() {}").unwrap();
-        let program = load(&packages, &root.join("src/main.peep"), &HashMap::new());
+        let mut project = write("unreadable", &[("src/bad.peep", "fn \u{0} main")]);
+        std::fs::write(project.root.join("src/bad.peep"), b"fn \xff main() {}").unwrap();
+        let program = load(&project, &HashMap::new());
         let got = messages(&program);
         assert!(
             got.len() == 1 && got[0].starts_with("myapp:main: M0001 read module: "),
             "{got:?}"
         );
-        let program = load(&packages, &root.join("src/bad.peep"), &HashMap::new());
+        project.entry = project.root.join("src/bad.peep");
+        let program = load(&project, &HashMap::new());
         assert_eq!(
             messages(&program),
             ["myapp:bad: L0001 file is not valid UTF-8"]
@@ -769,9 +773,8 @@ mod tests {
             .iter()
             .map(|(n, t)| (n.as_str(), t.as_str()))
             .collect();
-        let (root, packages) = write("many", &files);
-        let entry = root.join("src/main.peep");
-        let first = load(&packages, &entry, &HashMap::new());
+        let project = write("many", &files);
+        let first = load(&project, &HashMap::new());
         assert!(messages(&first).is_empty());
         assert_eq!(first.modules.len(), 202);
         for (index, module) in first.modules.iter().enumerate() {
@@ -786,7 +789,7 @@ mod tests {
         }
         for _ in 0..5 {
             assert_eq!(
-                order(&load(&packages, &entry, &HashMap::new())),
+                order(&load(&project, &HashMap::new())),
                 order(&first),
                 "order differs between runs"
             );
@@ -795,7 +798,7 @@ mod tests {
 
     #[test]
     fn open_files_win_over_disk() {
-        let (root, packages) = write(
+        let project = write(
             "open",
             &[
                 ("src/main.peep", "import \"myapp:a\";\nfn main() {}"),
@@ -804,30 +807,30 @@ mod tests {
         );
         let open_files = HashMap::from([
             (
-                root.join("src/a.peep"),
+                project.root.join("src/a.peep"),
                 "import \"myapp:b\";\nfn A() {}".to_string(),
             ),
-            (root.join("src/b.peep"), "fn B() {}".to_string()), // not on disk
+            (project.root.join("src/b.peep"), "fn B() {}".to_string()), // not on disk
         ]);
-        let program = load(&packages, &root.join("src/main.peep"), &open_files);
+        let program = load(&project, &open_files);
         assert_eq!(messages(&program), Vec::<String>::new());
         assert_eq!(module_named(&program, "myapp:b").ast.file.text, "fn B() {}");
     }
 
     #[test]
     fn path_of_a_file() {
-        let (root, packages) = write("path", &[]);
+        let project = write("path", &[]);
         assert_eq!(
-            path_of(&packages, &root.join("src/deep/x.peep")),
+            path_of(&project.packages, &project.root.join("src/deep/x.peep")),
             ("myapp:deep/x".to_string(), true)
         );
         assert_eq!(
-            path_of(&packages, &root.join("tool.peep")),
+            path_of(&project.packages, &project.root.join("tool.peep")),
             ("tool".to_string(), false)
         );
         assert_eq!(
-            resolve(&packages, "myapp:a.b.peep"),
-            Ok(("myapp:a.b".to_string(), root.join("src/a.b.peep")))
+            resolve(&project.packages, "myapp:a.b.peep"),
+            Ok(("myapp:a.b".to_string(), project.root.join("src/a.b.peep")))
         );
     }
 }
