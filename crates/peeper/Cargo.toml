@@ -17,7 +17,7 @@ build.workspace = true
 lsp.workspace = true
 
 [dev-dependencies]
-toml.workspace = true
+toml_edit.workspace = true
 
 [lints]
 workspace = true

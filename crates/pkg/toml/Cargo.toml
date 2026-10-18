@@ -1,6 +1,6 @@
 [package]
 name = "toml"
-description = "Reads and writes in place the small part of TOML that project files use"
+description = "Deprecated: the old reader and writer of a TOML subset; peeper uses toml_edit"
 version.workspace = true
 edition.workspace = true
 license-file.workspace = true

@@ -32,7 +32,6 @@ bigint = { path = "crates/pkg/bigint" }
 parser = { path = "crates/frontend/parser" }
 numeric = { path = "crates/pkg/numeric" }
 colors = { path = "crates/pkg/colors" }
-toml = { path = "crates/pkg/toml" }
 model = { path = "crates/model" }
 check = { path = "crates/check" }
 lower = { path = "crates/lower" }
@@ -45,6 +44,7 @@ stacker = "0.1.25"
 lsp-server = "0.7.9"
 lsp-types = "0.95.1"
 serde_json = "1.0.140"
+toml_edit = "0.25.13"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

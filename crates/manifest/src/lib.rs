@@ -22,21 +22,21 @@ pub fn valid_name(name: &str) -> bool {
 }
 
 /// Reads the project file in `dir`. Folders above `dir` are not searched.
+/// An error names the folder or file it is about.
 pub fn read(dir: &Path) -> Result<Manifest, String> {
-    let root = std::path::absolute(dir).map_err(|error| error.to_string())?;
+    let root = std::path::absolute(dir).map_err(|error| format!("{}: {error}", dir.display()))?;
     let file = root.join(FILE_NAME);
-    let document = match toml::parse_file(&file) {
-        Ok(document) => document,
-        Err(toml::FileError::Io(error)) if error.kind() == ErrorKind::NotFound => {
-            return Err(format!("no {FILE_NAME} in this folder"));
+    let text = match std::fs::read_to_string(&file) {
+        Ok(text) => text,
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            return Err(format!("{}: no {FILE_NAME} in this folder", root.display()));
         }
         Err(error) => return Err(format!("{}: {error}", file.display())),
     };
-    match document
-        .data()
-        .get("default", "name")
-        .and_then(toml::Value::as_str)
-    {
+    let document: toml_edit::DocumentMut = text
+        .parse()
+        .map_err(|error| format!("{}: {error}", file.display()))?;
+    match document.get("name").and_then(toml_edit::Item::as_str) {
         Some(name) if valid_name(name) => Ok(Manifest {
             name: name.to_string(),
             root,
@@ -71,7 +71,8 @@ mod tests {
         assert_eq!(read(&root), Ok(want));
         let sub = root.join("src");
         std::fs::create_dir(&sub).unwrap();
-        assert_eq!(read(&sub), Err(format!("no {FILE_NAME} in this folder")));
+        let want = format!("{}: no {FILE_NAME} in this folder", sub.display());
+        assert_eq!(read(&sub), Err(want));
     }
 
     #[test]

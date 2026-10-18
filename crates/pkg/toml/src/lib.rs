@@ -1,3 +1,7 @@
+//! Deprecated: peeper reads and writes TOML with `toml_edit`, which follows the
+//! whole TOML spec and keeps a file's layout when it edits. This crate is kept,
+//! unused, until the owner decides to delete it.
+//!
 //! Reads and writes the small part of TOML that project files use, one line
 //! at a time: `[section]` headers, `key = value` pairs, and `#` comments. A
 //! value is a string in double quotes, an integer, a float, `true` or `false`,
@@ -5,6 +9,8 @@
 //! later lines and hold comments there; any other value is an error. Keys before the first header are in the
 //! section "default". A `Document` changes a file in place: setting a value
 //! rewrites only that value's text, so comments and layout stay.
+
+#![allow(deprecated)] // the crate's own uses of its deprecated items
 
 use std::fmt;
 use std::ops::Range;
@@ -183,6 +189,7 @@ impl std::error::Error for FileError {}
 /// A file's text and what it says. The text is the one source: each change
 /// edits it and reads it again.
 #[derive(Debug)]
+#[deprecated(note = "use toml_edit")]
 pub struct Document {
     text: String,
     data: Data,
@@ -297,6 +304,7 @@ struct Place {
 
 /// Reads the file at `path`, which must be UTF-8, so that writing it back
 /// changes no byte it does not set.
+#[deprecated(note = "use toml_edit")]
 pub fn parse_file(path: &Path) -> Result<Document, FileError> {
     let bytes = std::fs::read(path).map_err(FileError::Io)?;
     let text = String::from_utf8(bytes).map_err(|error| {
@@ -312,10 +320,12 @@ pub fn parse_file(path: &Path) -> Result<Document, FileError> {
 /// Parses TOML held in memory. Bytes that are not UTF-8 read as U+FFFD.
 /// Retained at maintainer request as part of the TOML API; do not remove it as
 /// dead code without asking.
+#[deprecated(note = "use toml_edit")]
 pub fn parse_bytes(src: &[u8]) -> Result<Data, ParseError> {
     parse(&String::from_utf8_lossy(src))
 }
 
+#[deprecated(note = "use toml_edit")]
 pub fn parse(src: &str) -> Result<Data, ParseError> {
     let mut data = Data::default();
     let mut current_section = "default";

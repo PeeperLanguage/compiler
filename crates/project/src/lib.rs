@@ -140,7 +140,7 @@ pub fn find(path: &Path, libraries: &Path) -> Result<Project, String> {
             root: path.parent().unwrap_or(Path::new("")).to_path_buf(),
         });
     }
-    let manifest = manifest::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let manifest = manifest::read(path)?;
     if packages.contains_key(&manifest.name) {
         let file = manifest.root.join(manifest::FILE_NAME);
         return Err(format!(

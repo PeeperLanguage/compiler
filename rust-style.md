@@ -28,6 +28,7 @@ Checking that the new data holds what was set catches a value written wrongly.
 
 - `pkg/toml` `Document::set`: splices only the value's bytes, reparses, and
   fails without change when the value does not read back.
+  (That crate is deprecated; peeper now edits TOML with `toml_edit`.)
 
 Why: two copies patched by hand drift apart; a reparse cannot.
 

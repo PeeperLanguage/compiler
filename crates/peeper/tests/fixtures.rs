@@ -24,10 +24,11 @@ fn fixtures() {
     let mut failures = Vec::new();
     let mut checked = 0;
     for folder in &folders {
-        let document =
-            toml::parse_file(&folder.join("peeper.toml")).expect("a fixture's peeper.toml parses");
-        let data = document.data();
-        let text = |key: &str| data.get("test", key).and_then(toml::Value::as_str);
+        let text = std::fs::read_to_string(folder.join("peeper.toml")).expect("peeper.toml reads");
+        let document: toml_edit::DocumentMut =
+            text.parse().expect("a fixture's peeper.toml parses");
+        let test = |key: &str| document.get("test").and_then(|test| test.get(key));
+        let text = |key: &str| test(key).and_then(toml_edit::Item::as_str);
         let mode = match text("mode") {
             Some(mode @ ("check" | "mir")) => mode,
             _ => continue,
@@ -64,11 +65,9 @@ fn fixtures() {
                 text("outcome")
             ));
         }
-        let wanted = match data.get("test", "stderr_contains") {
-            Some(toml::Value::Array(values)) => {
-                values.iter().filter_map(toml::Value::as_str).collect()
-            }
-            _ => Vec::new(),
+        let wanted = match test("stderr_contains").and_then(toml_edit::Item::as_array) {
+            Some(values) => values.iter().filter_map(toml_edit::Value::as_str).collect(),
+            None => Vec::new(),
         };
         for wanted in wanted {
             if !stderr.contains(wanted) {
@@ -77,7 +76,7 @@ fn fixtures() {
         }
         if mode == "mir" {
             let file = folder.join("expected.mir");
-            let package = data.get("default", "name").and_then(toml::Value::as_str);
+            let package = document.get("name").and_then(toml_edit::Item::as_str);
             let package = package.expect("a fixture's peeper.toml has a name");
             let dumped = folder.join(format!("build/debug/dumps/{package}/main.mir"));
             let mir = std::fs::read_to_string(&dumped).unwrap_or_default();
