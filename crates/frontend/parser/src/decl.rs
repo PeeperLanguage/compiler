@@ -48,7 +48,7 @@ pub(crate) fn starts_declaration(kind: TokenKind) -> bool {
 }
 
 fn starts_parameter(kind: TokenKind) -> bool {
-    kind == TokenKind::Mut || starts_type(kind)
+    kind == TokenKind::Mut || kind == TokenKind::Underscore || starts_type(kind)
 }
 
 impl Parser {
@@ -312,14 +312,19 @@ impl Parser {
         )
     }
 
-    /// Reads the `name:` in front of a parameter's type, if it is there.
+    /// Reads the `name:` in front of a parameter's type, if it is there; `_:`
+    /// names no parameter.
     pub(crate) fn parameter_name(&mut self) -> Option<Ident> {
-        if !self.at(TokenKind::Ident) || self.ahead(1).kind != TokenKind::Colon {
+        let named = self.at(TokenKind::Ident);
+        if !named && !self.at(TokenKind::Underscore) || self.ahead(1).kind != TokenKind::Colon {
             return None;
         }
-        let name = self.name();
-        self.next();
-        Some(name)
+        let name = named.then(|| self.name());
+        if !named {
+            self.next(); // `_`
+        }
+        self.next(); // `:`
+        name
     }
 
     /// Reads `(parameters) -> Type from origins`, each parameter with

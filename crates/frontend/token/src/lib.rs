@@ -118,6 +118,7 @@ tokens! {
         // In the order of their text, so the lexer finds the keywords starting
         // with each letter together.
         #[keywords]
+        Underscore = "_",
         As = "as",
         Break = "break",
         Const = "const",

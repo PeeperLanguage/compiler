@@ -26,14 +26,18 @@ impl Parser {
         })
     }
 
-    /// Reads the pattern after `with`: `none`, a name to bind, `.{ fields }`, or
-    /// another case.
+    /// Reads the pattern after `with`: `none`, `_`, a name to bind,
+    /// `.{ fields }`, or another case.
     fn payload_pattern(&mut self) -> Id<Pattern> {
         let t = self.tok();
         match t.kind {
             TokenKind::None => {
                 self.next();
                 self.add(t.span.start, Pattern::None)
+            }
+            TokenKind::Underscore => {
+                self.next();
+                self.add(t.span.start, Pattern::Wildcard)
             }
             TokenKind::Dot => self.struct_pattern(),
             TokenKind::Ident
@@ -51,7 +55,7 @@ impl Parser {
                     )
                     .label(&self.tree.file, t.span, "")
                     .help(
-                        "write `none`, a name, `.{ field }`, or a case of the payload's enum",
+                        "write `none`, `_`, a name, `.{ field }`, or a case of the payload's enum",
                         Vec::new(),
                     ),
                 );
@@ -69,10 +73,10 @@ impl Parser {
             TokenKind::LeftBrace,
             TokenKind::RightBrace,
             false,
-            is_name,
+            |kind| is_name(kind) || kind == TokenKind::Underscore,
             |p| {
                 let field_token = p.tok();
-                if p.text(field_token) == "_" {
+                if field_token.kind == TokenKind::Underscore {
                     p.next();
                     return p.add(field_token.span.start, Pattern::Rest);
                 }

@@ -418,7 +418,7 @@ mod tests {
         for &kind in KEYWORDS {
             assert_eq!(keyword(kind.text()), Some(kind));
         }
-        for name in ["name", "f", "fns", "_", "while"] {
+        for name in ["name", "f", "fns", "_x", "while"] {
             assert_eq!(keyword(name), None, "{name}");
         }
     }

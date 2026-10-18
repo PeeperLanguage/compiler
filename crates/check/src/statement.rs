@@ -128,8 +128,8 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
     /// parameters are in the body's outermost block, as in Go.
     fn declare(&mut self, name: Ident, symbol: Symbol) {
         let text = name.text(&self.tree.file);
-        if text.is_empty() || text == "_" {
-            return; // missing after a syntax error, or not a name
+        if text.is_empty() {
+            return; // missing after a syntax error
         }
         let block = &self.names[self.block_start..];
         if let Some(&(_, first)) = block.iter().find(|&&(declared, _)| declared == text) {

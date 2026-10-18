@@ -203,7 +203,8 @@ pub struct TypeDecl {
     pub ty: Id<Type>,
 }
 
-/// `mut name: Type = default`; in a function type, only the name and type.
+/// `mut name: Type = default`; in a function type, only the name and type. A
+/// parameter written `_: Type` has no name.
 #[derive(Clone, Copy, Debug)]
 pub struct Param {
     pub mutable: bool,
@@ -310,8 +311,8 @@ pub enum Stmt {
         condition: Option<Id<Expr>>,
         body: Option<Id<Block>>,
     },
-    /// `for value in items { }` or `for index, value in items { }`; the iterable
-    /// may be an `Expr::Range`
+    /// `for value in items { }` or `for index, value in items { }`, with no
+    /// index for `for _, value in`; the iterable may be an `Expr::Range`
     ForIn {
         index: Option<Ident>,
         value: Ident,
@@ -336,12 +337,12 @@ pub struct MatchArm {
 
 #[derive(Clone, Copy, Debug)]
 pub enum Pattern {
-    /// `_`
+    /// `_`: a match arm's or a payload's pattern that binds nothing
     Wildcard,
     /// `none`
     None,
     /// `Enum::Case` or `Enum::Case with pattern`; the inner pattern is a `None`,
-    /// a `Binding`, a `Struct` or a `Case`
+    /// a `Wildcard`, a `Binding`, a `Struct` or a `Case`
     Case {
         case: Id<Type>,
         inner: Option<Id<Pattern>>,

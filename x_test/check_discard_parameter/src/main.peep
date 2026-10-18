@@ -1,0 +1,8 @@
+// A parameter written `_` is accepted and names nothing.
+fn first(value: i32, _: i32) -> i32 {
+    return value;
+}
+
+fn main() -> i32 {
+    return first(1, 2);
+}

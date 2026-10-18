@@ -1,0 +1,7 @@
+name = "negative_discard_name"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["expected `identifier`, found `_`", "expected expression, found `_`", "Compilation failed with 4 error(s)"]

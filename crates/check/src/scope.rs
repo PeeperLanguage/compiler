@@ -41,8 +41,8 @@ pub fn collect(
         names: HashMap::new(),
     };
     let mut declare = |name: &str, binding: Binding, span: Span| {
-        if name.is_empty() || name == "_" {
-            return; // missing after a syntax error, or not a name
+        if name.is_empty() {
+            return; // missing after a syntax error
         }
         if let Some(&(_, first)) = scope.names.get(name) {
             diagnostics.push(
@@ -142,7 +142,7 @@ mod tests {
 
     #[test]
     fn a_name_declared_twice_keeps_its_first_meaning() {
-        let text = "import \"app:utils\";\nfn utils() {}\nconst A: i32 = 1;\nfn A() {}\nconst _: i32 = 2;\nconst _: i32 = 3;\n";
+        let text = "import \"app:utils\";\nfn utils() {}\nconst A: i32 = 1;\nfn A() {}\n";
         let utils = ModuleId::from_index(0);
         let imports = vec![Import {
             kind: ImportKind::Declared(0),

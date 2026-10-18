@@ -120,7 +120,7 @@ pub(crate) fn anonymous_struct_literal(p: &mut Parser) -> Id<Expr> {
 pub(crate) fn array_literal(p: &mut Parser) -> Id<Expr> {
     let start = p.tok().span.start;
     let after = p.ahead(1);
-    let ty = if after.kind == TokenKind::Ident && p.text(after) == "_" {
+    let ty = if after.kind == TokenKind::Underscore {
         let open = p.next();
         let length = Length::Inferred(p.next().span);
         p.close(TokenKind::RightBracket, open);

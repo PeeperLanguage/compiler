@@ -137,7 +137,7 @@ impl Parser {
     /// the block is read as if it were there.
     fn match_arm(&mut self) -> (Id<Pattern>, Id<Block>) {
         let t = self.tok();
-        let pattern = if t.kind == TokenKind::Ident && self.text(t) == "_" {
+        let pattern = if t.kind == TokenKind::Underscore {
             let start = self.next().span.start;
             self.add(start, Pattern::Wildcard)
         } else {
@@ -242,10 +242,17 @@ fn if_statement(p: &mut Parser) -> Id<Stmt> {
 /// `for index, value in items { }`. The iterable may be a range.
 fn for_statement(p: &mut Parser) -> Id<Stmt> {
     let start = p.next().span.start;
-    if p.at(TokenKind::Ident) && matches!(p.ahead(1).kind, TokenKind::In | TokenKind::Comma) {
+    let unnamed_index = p.at(TokenKind::Underscore) && p.ahead(1).kind == TokenKind::Comma;
+    if unnamed_index
+        || p.at(TokenKind::Ident) && matches!(p.ahead(1).kind, TokenKind::In | TokenKind::Comma)
+    {
         let mut index = None;
+        if unnamed_index {
+            p.next(); // `_`
+            p.next(); // `,`
+        }
         let mut value = p.name();
-        if p.at(TokenKind::Comma) {
+        if !unnamed_index && p.at(TokenKind::Comma) {
             p.next();
             index = Some(value);
             value = p.name();
@@ -318,9 +325,9 @@ fn match_statement(p: &mut Parser) -> Id<Stmt> {
     let mut arms = List::EMPTY;
     if let Some(open) = p.expect(TokenKind::LeftBrace) {
         let mark = p.scratch.len();
-        // Every arm begins with a name (`_` or a path) and reads at least it,
-        // so the loop always moves on.
-        while p.at(TokenKind::Ident) {
+        // Every arm begins with `_` or a path and reads at least it, so the
+        // loop always moves on.
+        while p.at(TokenKind::Underscore) || p.at(TokenKind::Ident) {
             let arm_start = p.tok().span.start;
             let (pattern, body) = p.match_arm();
             let arm = p.add(arm_start, MatchArm { pattern, body });

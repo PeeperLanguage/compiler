@@ -72,6 +72,14 @@ with `p.is_either(yes, no)`, which names both and panics on any other, not
 `p.at(yes)` with the other falling into `else`: registering the rule for one
 more token then fails loudly instead of reading as the default.
 
+**A word that means "nothing" is its own token, and the tree records the
+absence.** `_` is `TokenKind::Underscore`, not an identifier with the text
+`_`: the parser turns it into `Pattern::Wildcard`, `Pattern::Rest`,
+`Length::Inferred`, or a parameter or `for` index with no name, and rejects it
+anywhere else. No later phase compares a name with `"_"` or remembers to skip
+it. Allowed today: `_ =>`, `.{ a, _ }`, `[_]T{ .. }`, `with _`, `for _, v in`,
+`fn f(_: T)`; `let _`, `const _` and `_ = x` have no use until tuples.
+
 **Unsafe code is forbidden** (`unsafe_code = "forbid"`), so a number cannot be
 turned back into an enum variant. When code must walk a group of variants,
 generate the list of them.

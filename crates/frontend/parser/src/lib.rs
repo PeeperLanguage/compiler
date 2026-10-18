@@ -592,6 +592,36 @@ fn main() {
     }
 
     #[test]
+    fn underscore_binds_nothing() {
+        let text = "fn f(_: i32) {
+    for _, v in xs {}
+    match x {
+        A::B with _ => {}
+        _ => {}
+    }
+    let a = [_]i32{1};
+    let .{ b, _ } = s;
+}";
+        assert_eq!(messages(text), Vec::<String>::new());
+        let dump = dump_of(text);
+        for node in ["wildcard pattern", "rest pattern", "inferred length"] {
+            assert!(dump.contains(node), "no {node} in\n{dump}");
+        }
+        assert!(!dump.contains("declared name _"), "{dump}");
+        for text in [
+            "fn f() { let _ = 1; }",
+            "const _: i32 = 2;",
+            "fn _() {}",
+            "fn f() { let .{ a as _ } = s; }",
+        ] {
+            one_error(text, "expected `identifier`, found `_`", None);
+        }
+        for text in ["fn f() { let x = _; }", "fn f() { _ = 1; }"] {
+            one_error(text, "expected expression, found `_`", None);
+        }
+    }
+
+    #[test]
     fn one_error_for_unexpected_top_level_text() {
         let text = "let b = 1;\nx + 1; y();\nfn f() {}";
         assert_eq!(
