@@ -178,7 +178,7 @@ impl<'s> Server<'s> {
         let (file, debounce) = match method.as_str() {
             "textDocument/didOpen" => {
                 let params: DidOpenTextDocumentParams = serde_json::from_value(params)?;
-                let file = params.text_document.uri.to_file_path().ok();
+                let file = file_path(&params.text_document.uri);
                 if let Some(file) = &file {
                     let open = OpenFile {
                         text: params.text_document.text,
@@ -190,7 +190,7 @@ impl<'s> Server<'s> {
             }
             "textDocument/didChange" => {
                 let mut params: DidChangeTextDocumentParams = serde_json::from_value(params)?;
-                let file = params.text_document.uri.to_file_path().ok();
+                let file = file_path(&params.text_document.uri);
                 // Full sync: each change holds the whole text; the last wins.
                 if let (Some(file), Some(change)) = (&file, params.content_changes.pop()) {
                     let open = OpenFile {
@@ -203,11 +203,11 @@ impl<'s> Server<'s> {
             }
             "textDocument/didSave" => {
                 let params: DidSaveTextDocumentParams = serde_json::from_value(params)?;
-                (params.text_document.uri.to_file_path().ok(), false)
+                (file_path(&params.text_document.uri), false)
             }
             "textDocument/didClose" => {
                 let params: DidCloseTextDocumentParams = serde_json::from_value(params)?;
-                let file = params.text_document.uri.to_file_path().ok();
+                let file = file_path(&params.text_document.uri);
                 if let Some(file) = &file {
                     self.open_files.remove(file);
                 }
@@ -295,7 +295,7 @@ impl<'s> Server<'s> {
         &self,
         place: &TextDocumentPositionParams,
     ) -> Option<(&project::Program, &project::Module, CachedTarget)> {
-        let file = place.text_document.uri.to_file_path().ok()?;
+        let file = file_path(&place.text_document.uri)?;
         self.checked.values().find_map(|checked| {
             let program = checked.program.as_ref()?;
             let module = program.module_of(&file)?;
@@ -582,6 +582,12 @@ fn code_actions(id: RequestId, params: serde_json::Value) -> Response {
         }
     }
     Response::new_ok(id, actions)
+}
+
+/// The file `uri` names, spelled as `project::canonical_path` spells it, so
+/// it matches the paths of the program's files.
+fn file_path(uri: &Url) -> Option<PathBuf> {
+    project::canonical_path(&uri.to_file_path().ok()?).ok()
 }
 
 /// Each help line of `diagnostic` that has fixes, as one quick fix whose

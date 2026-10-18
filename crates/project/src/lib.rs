@@ -6,8 +6,11 @@ mod packages;
 
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::ffi::OsString;
+use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
+use std::path::Prefix;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::mpsc;
@@ -129,27 +132,56 @@ pub struct Project {
     pub root: PathBuf,  // the project folder, or the folder of the file
 }
 
+/// The one spelling of `path` that files are found and compared by:
+/// absolute, without `.` and `..` parts, and on Windows with an upper case
+/// drive letter and no `\\?\` prefix. `..` is read as text, as Go's
+/// `filepath.Clean` does: symbolic links are not followed. Every path from
+/// outside goes through it: the command line's, the libraries folder's and
+/// each file an editor names.
+pub fn canonical_path(path: &Path) -> std::io::Result<PathBuf> {
+    let mut canonical = PathBuf::new();
+    for part in std::path::absolute(path)?.components() {
+        match part {
+            Component::Prefix(prefix) => canonical.push(match prefix.kind() {
+                Prefix::Disk(letter) | Prefix::VerbatimDisk(letter) => {
+                    OsString::from(format!("{}:", letter.to_ascii_uppercase() as char))
+                }
+                Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => {
+                    let mut unc = OsString::from(r"\\");
+                    unc.push(server);
+                    unc.push(r"\");
+                    unc.push(share);
+                    unc
+                }
+                _ => prefix.as_os_str().to_os_string(),
+            }),
+            Component::CurDir => {}
+            Component::ParentDir => _ = canonical.pop(), // never past the root
+            part => canonical.push(part),
+        }
+    }
+    Ok(canonical)
+}
+
 /// The project at `path`: a folder holding peeper.toml, whose program starts
 /// at src/main.peep, or a single file, checked on its own with no imports.
 /// `libraries` holds the bundled libraries, one folder each. The error is a
 /// full message naming the file it is about.
 pub fn find(path: &Path, libraries: &Path) -> Result<Project, String> {
-    let is_dir = std::fs::metadata(path)
+    let path = canonical_path(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let is_dir = std::fs::metadata(&path)
         .map_err(|error| format!("{}: {error}", path.display()))?
         .is_dir();
     let mut packages = bundled_libraries(libraries);
     if !is_dir {
-        // absolute, as a folder's root is and as `load` names every file
-        let entry =
-            std::path::absolute(path).map_err(|error| format!("{}: {error}", path.display()))?;
-        let root = entry.parent().unwrap_or(Path::new("")).to_path_buf();
+        let root = path.parent().unwrap_or(Path::new("")).to_path_buf();
         return Ok(Project {
             packages,
-            entry,
+            entry: path,
             root,
         });
     }
-    let manifest = manifest::read(path)?;
+    let manifest = manifest::read(&path)?;
     if packages.contains_key(&manifest.name) {
         let file = manifest.root.join(manifest::FILE_NAME);
         return Err(format!(
@@ -171,7 +203,10 @@ pub fn find(path: &Path, libraries: &Path) -> Result<Project, String> {
 /// Maps each library folder in `libraries` to its src folder. No libraries
 /// folder means no bundled libraries.
 fn bundled_libraries(libraries: &Path) -> HashMap<String, PathBuf> {
-    let Ok(entries) = std::fs::read_dir(libraries) else {
+    let Ok(libraries) = canonical_path(libraries) else {
+        return HashMap::new(); // an empty path names no folder
+    };
+    let Ok(entries) = std::fs::read_dir(&libraries) else {
         return HashMap::new();
     };
     entries
@@ -226,11 +261,8 @@ struct Job {
 ///
 /// `open_files` holds the text of files open in an editor (anything that
 /// reads as text, such as a `String`), read instead of what is on disk. Its
-/// keys are absolute paths as `std::path::absolute` makes them, symbolic links
-/// not followed: the form of the entry and of every file a package's folder
-/// names.
+/// keys, like `project`'s paths, are spelled as `canonical_path` spells them.
 pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + Sync>) -> Program {
-    let entry = std::path::absolute(&project.entry).unwrap_or_else(|_| project.entry.clone());
     let with_prelude = resolve(&project.packages, PRELUDE_PATH)
         .is_ok_and(|(_, file)| file.is_file() || open_files.contains_key(&file));
     let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
@@ -257,11 +289,11 @@ pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + S
             });
         }
 
-        let (path, in_package) = path_of(&project.packages, &entry);
+        let (path, in_package) = path_of(&project.packages, &project.entry);
         let mut seen = HashSet::from([path.clone()]);
         _ = send_job.send(Job {
             path,
-            file: entry,
+            file: project.entry.clone(),
             standalone: !in_package,
         });
         let mut pending = 1;
@@ -572,6 +604,38 @@ mod tests {
             .iter()
             .map(|i| format!("{}={}", alias(i), path(i)))
             .collect()
+    }
+
+    /// `..` and `.` are dropped as text, and nothing goes above the root.
+    #[test]
+    fn canonical_paths() {
+        let here = std::env::current_dir().unwrap();
+        for (path, want) in [
+            ("/a/./b/../c", PathBuf::from("/a/c")),
+            ("/a/b/../../..", PathBuf::from("/")),
+            ("x/../y", here.join("y")),
+        ] {
+            assert_eq!(canonical_path(Path::new(path)).unwrap(), want, "{path}");
+        }
+    }
+
+    /// On Windows a drive letter is upper case and a `\\?\` prefix is dropped,
+    /// as an editor and `std::fs::canonicalize` spell the same file apart.
+    #[cfg(windows)]
+    #[test]
+    fn canonical_windows_paths() {
+        for (path, want) in [
+            (r"c:\Work Dir\main.peep", r"C:\Work Dir\main.peep"),
+            (r"\\?\C:\a\b", r"C:\a\b"),
+            (r"C:/a/./b", r"C:\a\b"),
+            (r"\\?\UNC\server\share\x", r"\\server\share\x"),
+        ] {
+            assert_eq!(
+                canonical_path(Path::new(path)).unwrap(),
+                PathBuf::from(want),
+                "{path}"
+            );
+        }
     }
 
     /// A file named from the current folder gets an absolute root, the form

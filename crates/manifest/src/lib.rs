@@ -10,7 +10,7 @@ pub const FILE_NAME: &str = "peeper.toml";
 #[derive(Debug, PartialEq)]
 pub struct Manifest {
     pub name: String, // the project's package name: imports of its modules start with "name:"
-    pub root: PathBuf, // the folder holding the project file
+    pub root: PathBuf, // the folder holding the project file, as `read` was given it
 }
 
 /// Whether `name` can be a package name: a letter, then letters, digits and
@@ -24,7 +24,7 @@ pub fn valid_name(name: &str) -> bool {
 /// Reads the project file in `dir`. Folders above `dir` are not searched.
 /// An error names the folder or file it is about.
 pub fn read(dir: &Path) -> Result<Manifest, String> {
-    let root = std::path::absolute(dir).map_err(|error| format!("{}: {error}", dir.display()))?;
+    let root = dir.to_path_buf();
     let file = root.join(FILE_NAME);
     let text = match std::fs::read_to_string(&file) {
         Ok(text) => text,
