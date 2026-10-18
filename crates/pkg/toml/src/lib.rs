@@ -1,8 +1,8 @@
 //! Reads and writes the small part of TOML that project files use, one line
 //! at a time: `[section]` headers, `key = value` pairs, and `#` comments. A
 //! value is a string in double quotes, an integer, a float, `true` or `false`,
-//! an array `[a, b]` or an inline table `{ key = value }`, all on one line; any
-//! other value is an error. Keys before the first header are in the
+//! an array `[a, b]` or an inline table `{ key = value }`, which may go on over
+//! later lines and hold comments there; any other value is an error. Keys before the first header are in the
 //! section "default". A `Document` changes a file in place: setting a value
 //! rewrites only that value's text, so comments and layout stay.
 
@@ -260,7 +260,7 @@ impl Document {
             end: (section == "default").then_some(0),
         };
         let mut current = "default";
-        for (bytes, line) in lines(&self.text) {
+        for (_, bytes, line) in lines(&self.text) {
             match line {
                 Ok(Line::Header(name)) => {
                     current = name;
@@ -298,7 +298,14 @@ struct Place {
 /// Reads the file at `path`, which must be UTF-8, so that writing it back
 /// changes no byte it does not set.
 pub fn parse_file(path: &Path) -> Result<Document, FileError> {
-    let text = std::fs::read_to_string(path).map_err(FileError::Io)?;
+    let bytes = std::fs::read(path).map_err(FileError::Io)?;
+    let text = String::from_utf8(bytes).map_err(|error| {
+        let valid = &error.as_bytes()[..error.utf8_error().valid_up_to()];
+        FileError::Parse(ParseError {
+            line: valid.iter().filter(|&&byte| byte == b'\n').count() + 1,
+            message: "file is not valid UTF-8".to_string(),
+        })
+    })?;
     Document::parse(text).map_err(FileError::Parse)
 }
 
@@ -312,9 +319,9 @@ pub fn parse_bytes(src: &[u8]) -> Result<Data, ParseError> {
 pub fn parse(src: &str) -> Result<Data, ParseError> {
     let mut data = Data::default();
     let mut current_section = "default";
-    for (index, (_, line)) in lines(src).enumerate() {
+    for (number, _, line) in lines(src) {
         let fail = |message: String| ParseError {
-            line: index + 1,
+            line: number,
             message,
         };
         match line.map_err(fail)? {
@@ -329,7 +336,11 @@ pub fn parse(src: &str) -> Result<Data, ParseError> {
                         "duplicate key {key:?} in section {current_section:?}"
                     )));
                 }
-                let value = parse_value(&src[value]).map_err(fail)?;
+                let parts: Vec<&str> = src[value] // a value over several lines may hold comments
+                    .lines()
+                    .map(|part| &part[..value_part(part).0])
+                    .collect();
+                let value = parse_value(&parts.join("\n")).map_err(fail)?;
                 data.ensure_section(current_section)
                     .push(key.to_string(), value);
             }
@@ -338,58 +349,86 @@ pub fn parse(src: &str) -> Result<Data, ParseError> {
     Ok(data)
 }
 
-/// What one line of a file holds.
+/// What one item of a file holds.
 enum Line<'a> {
     Blank, // empty or a comment
     Header(&'a str),
     Pair { key: &'a str, value: Range<usize> }, // value: where its text is in the file
 }
 
-/// Each line of `src`, with where it is in `src` (its line break included)
-/// and what it holds.
-fn lines(src: &str) -> impl Iterator<Item = (Range<usize>, Result<Line<'_>, String>)> {
-    let mut start = 0;
-    src.split_inclusive('\n').map(move |text| {
-        let bytes = start..start + text.len();
-        start = bytes.end;
-        (bytes.clone(), line(src, bytes))
+/// Each item of `src`: the number of its first line, where it is in `src`
+/// (its line break included) and what it holds. An item is one line, or more
+/// when a value in brackets or braces goes on over later lines.
+fn lines(src: &str) -> impl Iterator<Item = (usize, Range<usize>, Result<Line<'_>, String>)> {
+    let (mut start, mut number) = (0, 1);
+    std::iter::from_fn(move || {
+        if start == src.len() {
+            return None;
+        }
+        let (end, line) = line(src, start);
+        let item = (number, start..end, line);
+        number += src[start..end].matches('\n').count();
+        start = end;
+        Some(item)
     })
 }
 
-fn line(src: &str, bytes: Range<usize>) -> Result<Line<'_>, String> {
-    let text = &src[bytes.clone()];
+/// The end of the line that starts at `start`, its line break included.
+fn line_end(src: &str, start: usize) -> usize {
+    src[start..]
+        .find('\n')
+        .map_or(src.len(), |index| start + index + 1)
+}
+
+/// The item that starts at `start`: where it ends and what it holds.
+fn line(src: &str, start: usize) -> (usize, Result<Line<'_>, String>) {
+    let mut end = line_end(src, start);
+    let text = &src[start..end];
     let trimmed = text.trim();
     if trimmed.is_empty() || trimmed.starts_with('#') {
-        return Ok(Line::Blank);
+        return (end, Ok(Line::Blank));
     }
     if let Some(header) = trimmed.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
         let name = header.trim();
         if name.is_empty() {
-            return Err("empty section name".to_string());
+            return (end, Err("empty section name".to_string()));
         }
-        return Ok(Line::Header(name));
+        return (end, Ok(Line::Header(name)));
     }
     let Some(equals) = text.find('=') else {
-        return Err(format!("invalid key/value pair: {trimmed}"));
+        return (end, Err(format!("invalid key/value pair: {trimmed}")));
     };
     let key = text[..equals].trim();
     if key.is_empty() {
-        return Err("empty key".to_string());
+        return (end, Err("empty key".to_string()));
     }
     let after = &text[equals + 1..];
-    let value = &after[..comment_start(after)];
-    let start = bytes.start + equals + 1 + (value.len() - value.trim_start().len());
-    Ok(Line::Pair {
-        key,
-        value: start..start + value.trim().len(),
-    })
+    let (comment, mut depth) = value_part(after);
+    let value = &after[..comment];
+    let value_start = start + equals + 1 + (value.len() - value.trim_start().len());
+    let mut value_end = value_start + value.trim().len();
+    while depth > 0 {
+        if end == src.len() {
+            return (end, Err("unterminated composite value".to_string()));
+        }
+        let next = line_end(src, end);
+        let (comment, opened) = value_part(&src[end..next]);
+        depth += opened;
+        let part = src[end..end + comment].trim_end();
+        if !part.trim_start().is_empty() {
+            value_end = end + part.len();
+        }
+        end = next;
+    }
+    let value = value_start..value_end;
+    (end, Ok(Line::Pair { key, value }))
 }
 
-/// Where a `#` comment starts in `text` outside quotes; the length of `text`
-/// when there is none.
-fn comment_start(text: &str) -> usize {
-    let mut in_quotes = false;
-    let mut escaped = false;
+/// Reads one line's part of a value: where a `#` comment starts outside
+/// quotes (the length of `text` when there is none), and how many more
+/// brackets and braces open than close before it.
+fn value_part(text: &str) -> (usize, isize) {
+    let (mut in_quotes, mut escaped, mut depth) = (false, false, 0);
     for (index, c) in text.char_indices() {
         if escaped {
             escaped = false;
@@ -397,11 +436,16 @@ fn comment_start(text: &str) -> usize {
             escaped = true;
         } else if c == '"' {
             in_quotes = !in_quotes;
-        } else if c == '#' && !in_quotes {
-            return index;
+        } else if !in_quotes {
+            match c {
+                '#' => return (index, depth),
+                '[' | '{' => depth += 1,
+                ']' | '}' => depth -= 1,
+                _ => {}
+            }
         }
     }
-    text.len()
+    (text.len(), depth)
 }
 
 fn parse_value(text: &str) -> Result<Value, String> {
@@ -503,7 +547,7 @@ fn split_top_level(text: &str, delimiter: char) -> Result<Vec<String>, String> {
     if in_quotes || brace_depth != 0 || bracket_depth != 0 {
         return Err("unterminated composite value".to_string());
     }
-    if !current.is_empty() {
+    if !current.trim().is_empty() {
         parts.push(current.trim().to_string());
     }
     Ok(parts)
@@ -725,6 +769,37 @@ flags = [true, 1, "x", [2]]
     }
 
     #[test]
+    fn values_go_on_over_lines() {
+        let text = "deps = [\n  \"a\", # first\n  \"b\",\n] # done\njson = {\n  repo = \"x\",\n  tags = [1, 2] }\nbad = 1 2\n";
+        let error = parse(text).unwrap_err();
+        assert_eq!(error.line, 8, "lines after a long value keep their numbers");
+        let mut document = Document::parse(text.replace("bad = 1 2\n", "")).unwrap();
+        let strings = |names: &[&str]| {
+            Value::Array(
+                names
+                    .iter()
+                    .map(|name| Value::String(name.to_string()))
+                    .collect(),
+            )
+        };
+        assert_eq!(
+            document.data().get("default", "deps"),
+            Some(&strings(&["a", "b"]))
+        );
+        let Some(Value::Table(json)) = document.data().get("default", "json") else {
+            panic!("not a table")
+        };
+        assert_eq!(json.get("repo"), Some(&Value::String("x".to_string())));
+        document.set("default", "deps", &strings(&["c"])).unwrap();
+        assert!(document.remove("default", "json"));
+        assert_eq!(document.text(), "deps = [\"c\"] # done\n");
+        assert_eq!(
+            parse("a = [\n1,\n").unwrap_err().to_string(),
+            "line 1: unterminated composite value"
+        );
+    }
+
+    #[test]
     fn remove_drops_the_whole_line() {
         let text = "[dependencies]\na = \"1\" # first\nb = \"2\"\n";
         let mut document = Document::parse(text.to_string()).unwrap();
@@ -793,8 +868,11 @@ flags = [true, 1, "x", [2]]
         document.write_file(&path).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "k = 2 # kept\n");
         assert!(!path.with_added_extension("tmp").exists());
-        std::fs::write(&path, b"k = \"\xff\"").unwrap();
-        assert!(matches!(parse_file(&path), Err(FileError::Io(_))));
+        std::fs::write(&path, b"k = 1\n# \xff\n").unwrap();
+        assert_eq!(
+            parse_file(&path).unwrap_err().to_string(),
+            "line 2: file is not valid UTF-8"
+        );
         _ = std::fs::remove_dir_all(&folder);
     }
 }
