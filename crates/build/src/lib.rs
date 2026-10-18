@@ -34,7 +34,7 @@ use source::SourceFile;
 /// What a compile found, kept for the next compile of the same program.
 #[derive(Default)]
 pub struct Results {
-    modules: Vec<Module>, // in the program's order
+    modules: Vec<ModuleResults>, // in the program's order
 }
 
 impl Results {
@@ -58,8 +58,8 @@ impl Results {
 }
 
 /// What a compile found in one module.
-struct Module {
-    file: Arc<SourceFile>, // its name tells the module's entry in the next compile
+struct ModuleResults {
+    file: Arc<SourceFile>, // its path tells the module's entry in the next compile
     interface: u64,        // `Build::interface`
     scope_diagnostics: Vec<Diagnostic>, // from building its scope; redone every compile
     diagnostics: Vec<Diagnostic>, // from checking it; kept while it is reused
@@ -89,25 +89,25 @@ pub fn compile(
             check::scope::collect(ModuleId::from_index(index), modules, diagnostics)
         })
         .collect();
-    let program = Program { modules, scopes };
     let mut build = Build {
-        program: &program,
+        modules,
+        scopes: &scopes,
         types: Types::new(),
         pointer_bits,
-        signatures: table(program.modules),
-        constants: table(program.modules),
-        diagnostics: vec![Vec::new(); program.modules.len()],
-        reused: vec![false; program.modules.len()],
+        signatures: table(modules),
+        constants: table(modules),
+        diagnostics: vec![Vec::new(); modules.len()],
+        reused: vec![false; modules.len()],
     };
-    let mut previous: HashMap<String, Module> = previous
+    let mut previous: HashMap<String, ModuleResults> = previous
         .modules
         .into_iter()
         .map(|cached| (cached.file.path.clone(), cached))
         .collect();
-    let mut interfaces = Vec::with_capacity(program.modules.len());
+    let mut interfaces = Vec::with_capacity(modules.len());
     // Whether each module's interface differs from the previous compile's.
-    let mut changed: Vec<bool> = Vec::with_capacity(program.modules.len());
-    for (index, module) in program.modules.iter().enumerate() {
+    let mut changed: Vec<bool> = Vec::with_capacity(modules.len());
+    for (index, module) in modules.iter().enumerate() {
         let id = ModuleId::from_index(index);
         let tree = &module.ast;
         // An import comes before its importer, so it is decided already.
@@ -153,15 +153,14 @@ pub fn compile(
         changed.push(previous_interface != Some(interface));
         interfaces.push(interface);
     }
-    let modules = program
-        .modules
+    let found = modules
         .iter()
         .zip(scope_diagnostics)
         .zip(build.diagnostics)
         .zip(interfaces)
         .zip(build.reused);
-    let modules = modules.map(
-        |((((module, scope_diagnostics), diagnostics), interface), reused)| Module {
+    let found = found.map(
+        |((((module, scope_diagnostics), diagnostics), interface), reused)| ModuleResults {
             file: module.ast.file.clone(),
             interface,
             scope_diagnostics,
@@ -170,7 +169,7 @@ pub fn compile(
         },
     );
     Results {
-        modules: modules.collect(),
+        modules: found.collect(),
     }
 }
 
@@ -201,12 +200,6 @@ fn table<T: Clone>(modules: &[project::Module]) -> Vec<Vec<State<T>>> {
         .collect()
 }
 
-/// What the scheduler reads and never changes.
-struct Program<'p> {
-    modules: &'p [project::Module], // in the program's order
-    scopes: Vec<ModuleScope>,       // of each module
-}
-
 /// Where one query of one declaration is.
 #[derive(Clone)]
 enum State<T> {
@@ -218,7 +211,8 @@ enum State<T> {
 
 /// The results of the queries, by module and declaration.
 struct Build<'p> {
-    program: &'p Program<'p>,
+    modules: &'p [project::Module], // in the program's order
+    scopes: &'p [ModuleScope],      // of each module
     types: Types,
     pointer_bits: u32,
     signatures: Vec<Vec<State<TypeId>>>,
@@ -237,12 +231,12 @@ impl<'p> Build<'p> {
         module: ModuleId,
         work: impl FnOnce(&mut Checker<Build<'p>>) -> T,
     ) -> T {
-        let program = self.program;
+        let (modules, scopes) = (self.modules, self.scopes);
         let index = module.index();
         let mut diagnostics = Vec::new();
         let mut checker = Checker {
-            modules: program.modules,
-            scopes: &program.scopes,
+            modules,
+            scopes,
             current_module: module,
             queries: self,
             diagnostics: &mut diagnostics,
@@ -259,14 +253,13 @@ impl<'p> Build<'p> {
     /// or value. Its bodies are not part of it.
     fn interface(&self, module: ModuleId) -> u64 {
         let index = module.index();
-        let module = &self.program.modules[index];
+        let module = &self.modules[index];
         let tree = &module.ast;
         let mut hasher = DefaultHasher::new();
         for import in &module.imports {
-            let modules = self.program.modules;
-            modules[import.module.index()].path.hash(&mut hasher);
+            self.modules[import.module.index()].path.hash(&mut hasher);
             import
-                .name(module, modules)
+                .name(module, self.modules)
                 .map(|(name, _)| name)
                 .hash(&mut hasher);
         }
@@ -295,7 +288,7 @@ impl<'p> Build<'p> {
             return None; // the signature's error was reported
         };
         let module = module.index();
-        let tree = &self.program.modules[module].ast;
+        let tree = &self.modules[module].ast;
         let mir = lower::lower(body, parameters.len())?;
         let diagnostics = &mut self.diagnostics[module];
         lower::path_checks::initialization(&mir, &tree.file, diagnostics);
@@ -343,7 +336,7 @@ impl<'p> Build<'p> {
         if self.reused[module] {
             return;
         }
-        let tree = &self.program.modules[module].ast;
+        let tree = &self.modules[module].ast;
         let name = tree.decls[Id::from_index(definition.index as usize)].name();
         let text = name.text(&tree.file);
         self.diagnostics[module].push(
