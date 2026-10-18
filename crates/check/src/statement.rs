@@ -139,17 +139,21 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
             self.checker.diagnostics.push(diagnostic);
             return;
         }
-        let target = Target::Body(symbol);
-        self.body.names.push(Name {
-            span: name.span,
-            target,
-        });
+        self.record(name.span, Target::Body(symbol));
         self.names.push((text, symbol));
     }
 
+    /// Records that the name written at `span` stands for `target`, when the
+    /// caller asked for names (`Checker::names`).
+    pub(crate) fn record(&mut self, span: Span, target: Target) {
+        if let Some(names) = &mut self.checker.names {
+            names.push(Name { span, target });
+        }
+    }
+
     /// What the name written at `span` stands for: a name of the current
-    /// block or an outer one, else of the module or the prelude, recorded in
-    /// `Body::names`. `None` after reporting that nothing declares it.
+    /// block or an outer one, else of the module or the prelude, recorded
+    /// (`record`). `None` after reporting that nothing declares it.
     pub(crate) fn resolve(&mut self, span: Span) -> Option<Target> {
         let name = self.tree.file.slice(span);
         let found = self
@@ -167,7 +171,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
                 }
             },
         };
-        self.body.names.push(Name { span, target });
+        self.record(span, target);
         Some(target)
     }
 

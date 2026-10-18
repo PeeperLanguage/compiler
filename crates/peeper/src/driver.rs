@@ -40,7 +40,8 @@ pub fn run(
             &program,
             usize::BITS,
             build::Results::default(),
-            |definition, thir, mir, types| {
+            false, // names are for editors
+            |definition, thir, _, mir, types| {
                 if let Some(mir) = mir {
                     dumped.add(definition, thir, mir, types); // the others have errors
                 }

@@ -344,9 +344,9 @@ impl<'s> Server<'s> {
                 &program,
                 usize::BITS,
                 results,
-                |definition, body, _, types| {
-                    let body_names = body
-                        .names
+                true,
+                |definition, body, names, _, types| {
+                    let body_names = names
                         .iter()
                         .map(|name| CachedName::new(&program, body, name, types));
                     found

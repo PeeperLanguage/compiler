@@ -71,15 +71,17 @@ struct ModuleResults {
 /// with the same `pointer_bits`, or `Results::default()`) whose text and
 /// whose imports' interfaces are unchanged keeps its diagnostics, and its
 /// bodies are not checked again. The THIR of each checked function with a
-/// body, and its MIR unless checking it found an error, go to `use_function`
-/// as soon as they are built, in declaration order, and are dropped after:
-/// nothing holds every function's bodies at once. Integers as wide as a
-/// pointer (`isize`, `usize`) have `pointer_bits` bits.
+/// body, the names written in it (only when `record_names`, as for an
+/// editor; otherwise none), and its MIR unless checking it found an error, go
+/// to `use_function` as soon as they are built, in declaration order, and are
+/// dropped after: nothing holds every function's bodies at once. Integers as
+/// wide as a pointer (`isize`, `usize`) have `pointer_bits` bits.
 pub fn compile(
     program: &project::Program,
     pointer_bits: u32,
     previous: Results,
-    mut use_function: impl FnMut(DefId, &thir::Body, Option<&mir::Body>, &Types),
+    record_names: bool,
+    mut use_function: impl FnMut(DefId, &thir::Body, &[thir::Name], Option<&mir::Body>, &Types),
 ) -> Results {
     let modules = program.modules.as_slice();
     let mut results: Vec<ModuleResults> = modules
@@ -145,10 +147,13 @@ pub fn compile(
             match tree.decls[declaration] {
                 ast::Decl::Function(function) => {
                     let ty = build.signature(definition);
-                    let thir = build.with_checker(id, |checker| checker.body(&function, ty));
+                    let mut names = Vec::new(); // allocates only when a name is recorded
+                    let recorded = record_names.then_some(&mut names);
+                    let thir =
+                        build.with_checker(id, recorded, |checker| checker.body(&function, ty));
                     if let Some(thir) = thir {
                         let mir = build.lower(id, ty, &thir);
-                        use_function(definition, &thir, mir.as_ref(), &build.types);
+                        use_function(definition, &thir, &names, mir.as_ref(), &build.types);
                     }
                 }
                 ast::Decl::Const { .. } => {
@@ -218,11 +223,12 @@ struct Build<'p> {
 }
 
 impl<'p> Build<'p> {
-    /// Runs `work` on a checker of `module`; what it reports joins that
-    /// module's diagnostics.
+    /// Runs `work` on a checker of `module`, which records names into
+    /// `names` when given; what it reports joins that module's diagnostics.
     fn with_checker<T>(
         &mut self,
         module: ModuleId,
+        names: Option<&mut Vec<thir::Name>>,
         work: impl FnOnce(&mut Checker<Build<'p>>) -> T,
     ) -> T {
         let (modules, scopes) = (self.modules, self.scopes);
@@ -234,6 +240,7 @@ impl<'p> Build<'p> {
             current_module: module,
             queries: self,
             diagnostics: &mut diagnostics,
+            names,
         };
         let result = work(&mut checker);
         let found = &mut self.results[index];
@@ -317,7 +324,7 @@ impl<'p> Build<'p> {
             State::NotStarted => {}
         }
         table(self)[module][index] = State::Running;
-        let result = self.with_checker(definition.module, |checker| {
+        let result = self.with_checker(definition.module, None, |checker| {
             work(checker, Id::from_index(index))
         });
         table(self)[module][index] = State::Done(result.clone());
@@ -416,7 +423,13 @@ mod tests {
     /// Checks the program of `modules` (see `program`) and gives each
     /// diagnostic as its code, message and the text of its first label.
     fn diagnostics(modules: &[(&str, &str)]) -> Vec<(&'static str, String, String)> {
-        let found = compile(&program(modules), 64, Results::default(), |_, _, _, _| {});
+        let found = compile(
+            &program(modules),
+            64,
+            Results::default(),
+            false,
+            |_, _, _, _, _| {},
+        );
         found
             .diagnostics()
             .map(|diagnostic| {
@@ -620,7 +633,7 @@ mod tests {
     fn recompile(modules: &[(&str, &str)], previous: Results) -> (Results, Vec<String>) {
         let program = program(modules);
         let mut checked: Vec<String> = Vec::new();
-        let results = compile(&program, 64, previous, |definition, _, _, _| {
+        let results = compile(&program, 64, previous, false, |definition, _, _, _, _| {
             let path = &program.modules[definition.module.index()].path;
             if !checked.contains(path) {
                 checked.push(path.clone());

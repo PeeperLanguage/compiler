@@ -17,6 +17,7 @@ use model::ModuleId;
 use model::constant::Constant;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
+use model::thir::Name;
 use project::ImportKind;
 use source::Span;
 
@@ -47,6 +48,9 @@ pub struct Checker<'a, Q: Queries> {
     pub current_module: ModuleId, // the module being checked
     pub queries: &'a mut Q,
     pub diagnostics: &'a mut Vec<Diagnostic>,
+    /// The names written in the body being checked, in the order checked,
+    /// for a caller that wants them; `None` records nothing.
+    pub names: Option<&'a mut Vec<Name>>,
 }
 
 impl<'a, Q: Queries> Checker<'a, Q> {

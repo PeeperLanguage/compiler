@@ -88,6 +88,7 @@ pub(crate) fn with_checker<T>(
         current_module: main_id,
         queries: &mut program,
         diagnostics: &mut diagnostics,
+        names: None,
     };
     let result = work(&mut checker);
     let reported = diagnostics

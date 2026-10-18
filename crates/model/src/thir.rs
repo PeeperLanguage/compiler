@@ -44,14 +44,14 @@ pub struct Body {
     /// name; `None` when its value had an error. Uses of it are folded.
     pub consts: Arena<Option<Constant>>,
     pub lists: Lists,
-    pub names: Vec<Name>, // in the order checked; for editors
     /// Checking it reported an error: later phases would only find what
     /// follows from that, so it is not lowered.
     pub has_errors: bool,
 }
 
-/// A name written in the body, where it is declared or used, and what it
-/// stands for.
+/// A name written in a body, where it is declared or used, and what it
+/// stands for. Recorded only for a caller that asks (`Checker::names`), such
+/// as an editor; the body itself does not keep names.
 #[derive(Clone, Copy, Debug)]
 pub struct Name {
     pub span: Span,
@@ -162,7 +162,6 @@ impl Default for Body {
             locals: Arena::default(),
             consts: Arena::default(),
             lists: Lists::default(),
-            names: Vec::new(),
             has_errors: false,
         }
     }

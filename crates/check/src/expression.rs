@@ -20,7 +20,6 @@ use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::thir::Expr;
 use model::thir::ExprKind;
-use model::thir::Name;
 use model::thir::Symbol;
 use model::thir::Target;
 use source::Span;
@@ -246,11 +245,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
             (tree.file.slice(module_span), tree.file.slice(member_span));
         let imported = match self.checker.global(module_name) {
             Some(binding @ Binding::Module(imported)) => {
-                let target = Target::Global(binding);
-                self.body.names.push(Name {
-                    span: module_span,
-                    target,
-                });
+                self.record(module_span, Target::Global(binding));
                 imported
             }
             Some(Binding::Type(_)) => {
@@ -274,11 +269,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
                 .error(diagnostics::UNDEFINED_NAME, message, member_span);
             return None;
         };
-        let target = Target::Global(binding);
-        self.body.names.push(Name {
-            span: member_span,
-            target,
-        });
+        self.record(member_span, Target::Global(binding));
         // The prelude's names are in every module's scope, private or not.
         let exported =
             self.checker.prelude() == Some(imported) || member_name.starts_with(char::is_uppercase);
