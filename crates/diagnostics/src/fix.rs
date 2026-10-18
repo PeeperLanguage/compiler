@@ -68,14 +68,14 @@ pub fn write(fixes: &[(&Fix, &str)], out: &mut impl Write) -> std::io::Result<()
     for in_file in fixes.chunk_by(|(a, _), (b, _)| a.file.path == b.file.path) {
         let file = &in_file[0].0.file;
         let mut text = file.text.clone();
-        for (fix, help) in in_file.iter().rev() {
-            let (line, column) = file.position(fix.span.start as usize);
-            writeln!(out, "fixed {}:{line}:{column}: {help}", file.path)?;
-        }
         for (fix, _) in in_file {
             text.replace_range(fix.span.range(), &fix.new_text);
         }
         std::fs::write(&file.path, text)?;
+        for (fix, help) in in_file.iter().rev() {
+            let (line, column) = file.position(fix.span.start as usize);
+            writeln!(out, "fixed {}:{line}:{column}: {help}", file.path)?;
+        }
     }
     Ok(())
 }
