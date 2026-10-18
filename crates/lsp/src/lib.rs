@@ -224,15 +224,18 @@ impl<'s> Server<'s> {
                     let text = format!("{}: {ty}", file.slice(*declared));
                     (file, *declared, code_block(&text))
                 }
-                Target::Declaration { module, index } => {
-                    let tree = &program.module(module)?.ast;
+                Target::Declaration { file, index } => {
+                    let declared_in = program.module_of(file)?;
+                    let tree = &declared_in.ast;
                     let declaration = Id::from_index(*index as usize);
                     let declared = tree.decls[declaration].name().span;
-                    (&tree.file, declared, header(tree, declaration, module))
+                    let hover = header(tree, declaration, &declared_in.path);
+                    (&tree.file, declared, hover)
                 }
-                Target::Module(path) => {
-                    let file = &program.module(path)?.ast.file;
-                    (file, Span::at(0), code_block(&format!("module {path}")))
+                Target::Module(file) => {
+                    let imported = program.module_of(file)?;
+                    let hover = code_block(&format!("module {}", imported.path));
+                    (&imported.ast.file, Span::at(0), hover)
                 }
             };
             if method == "textDocument/definition" {
@@ -262,15 +265,12 @@ impl<'s> Server<'s> {
         let file = place.text_document.uri.to_file_path().ok()?;
         self.checked.values().find_map(|checked| {
             let program = checked.program.as_ref()?;
-            let module = program
-                .modules
-                .iter()
-                .find(|module| Path::new(&module.ast.file.name) == file)?;
+            let module = program.module_of(&file)?;
             let offset = offset(&module.ast.file, place.position) as u32;
             let at = |span: Span| span.start <= offset && offset <= span.end;
             let in_body = checked
                 .names
-                .get(&module.path)
+                .get(&file)
                 .and_then(|names| names.iter().find(|name| at(name.span)));
             let target = match in_body {
                 Some(name) => name.target.clone(),
@@ -281,7 +281,7 @@ impl<'s> Server<'s> {
                         .items(tree.declarations)
                         .find(|&declaration| at(tree.decls[declaration].name().span))?;
                     Target::Declaration {
-                        module: module.path.clone(),
+                        file: file.clone(),
                         index: declaration.index() as u32,
                     }
                 }
@@ -339,37 +339,39 @@ impl<'s> Server<'s> {
         // A program that failed to load keeps the last compile for the next.
         let loaded = !program.load_failed();
         if loaded {
-            let mut found: HashMap<&str, Vec<Name>> = HashMap::new();
+            let mut found: HashMap<ModuleId, Vec<Name>> = HashMap::new();
             results = build::compile(
                 &program,
                 usize::BITS,
                 results,
                 |definition, body, _, types| {
-                    let path = program.modules[definition.module.index()].path.as_str();
                     let body_names = body
                         .names
                         .iter()
                         .map(|name| Name::new(&program, body, name, types));
-                    found.entry(path).or_default().extend(body_names);
+                    found
+                        .entry(definition.module)
+                        .or_default()
+                        .extend(body_names);
                 },
             );
             // A module the compile reused gave no names; with its text as
-            // before, the names found before still fit it.
-            let unchanged = |path: &String| {
+            // before, the names found before still fit it. A module checked
+            // again replaces its names below.
+            let unchanged = |file: &PathBuf| {
                 let before = compiled_program
                     .as_ref()
-                    .and_then(|before| before.module(path));
-                let now = program.module(path);
+                    .and_then(|before| before.module_of(file));
+                let now = program.module_of(file);
                 before
                     .zip(now)
                     .is_some_and(|(before, now)| before.ast.file.text == now.ast.file.text)
             };
-            names.retain(|path, _| !found.contains_key(path.as_str()) && unchanged(path));
-            names.extend(
-                found
-                    .into_iter()
-                    .map(|(path, found)| (path.to_string(), found)),
-            );
+            names.retain(|file, _| unchanged(file));
+            names.extend(found.into_iter().map(|(module, found)| {
+                let file = &program.modules[module.index()].ast.file.name;
+                (PathBuf::from(file), found)
+            }));
             all.extend(results.diagnostics());
         }
         let mut by_file: HashMap<PathBuf, Vec<lsp_types::Diagnostic>> = HashMap::new();
@@ -421,13 +423,13 @@ struct Checked {
     results: build::Results,     // reused by the next compile
     published: HashSet<PathBuf>, // the files last given diagnostics
     /// The program as last compiled, and the names written in the bodies of
-    /// each of its modules, by module path: what definition and hover read.
+    /// each of its modules, by file: what definition and hover read.
     program: Option<project::Program>,
-    names: HashMap<String, Vec<Name>>,
+    names: HashMap<PathBuf, Vec<Name>>,
 }
 
 /// A name written in a body and what it stands for, kept as long as its
-/// module is reused: by path and place, not by the ids of one compile.
+/// module is reused: by file and place, not by the ids of one compile.
 struct Name {
     span: Span,
     target: Target,
@@ -438,12 +440,12 @@ enum Target {
     /// A parameter, `let` or `const` of the body, declared at `declared`, with
     /// its type's text.
     InBody { declared: Span, ty: String },
-    /// The declaration at `index` of the module at `module`. Its importer is
-    /// reused only while the module's declarations keep their kinds and names
-    /// (`build::compile`), so the index stays right.
-    Declaration { module: String, index: u32 },
-    /// The module at this path.
-    Module(String),
+    /// The declaration at `index` of the module read from `file`. Its
+    /// importer is reused only while the module's declarations keep their
+    /// kinds and names (`build::compile`), so the index stays right.
+    Declaration { file: PathBuf, index: u32 },
+    /// The module read from this file.
+    Module(PathBuf),
 }
 
 impl Name {
@@ -454,7 +456,7 @@ impl Name {
         name: &thir::Name,
         types: &Types,
     ) -> Name {
-        let path = |module: ModuleId| program.modules[module.index()].path.clone();
+        let file = |module: ModuleId| PathBuf::from(&program.modules[module.index()].ast.file.name);
         let target = match name.target {
             thir::Target::Body(symbol) => {
                 let ty = match symbol {
@@ -468,13 +470,13 @@ impl Name {
                     ty: types.text(ty),
                 }
             }
-            thir::Target::Global(Binding::Module(module)) => Target::Module(path(module)),
+            thir::Target::Global(Binding::Module(module)) => Target::Module(file(module)),
             thir::Target::Global(
                 Binding::Function(definition)
                 | Binding::Constant(definition)
                 | Binding::Type(definition),
             ) => Target::Declaration {
-                module: path(definition.module),
+                file: file(definition.module),
                 index: definition.index,
             },
         };

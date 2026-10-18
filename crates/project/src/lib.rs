@@ -89,9 +89,11 @@ pub struct Program {
 }
 
 impl Program {
-    /// The module at the import path `path`.
-    pub fn module(&self, path: &str) -> Option<&Module> {
-        self.modules.iter().find(|module| module.path == path)
+    /// The module read from `file`.
+    pub fn module_of(&self, file: &Path) -> Option<&Module> {
+        self.modules
+            .iter()
+            .find(|module| Path::new(&module.ast.file.name) == file)
     }
 
     /// What loading found: about the program first, then each module's in
@@ -485,6 +487,12 @@ impl<'a> Sorter<'a> {
 mod tests {
     use super::*;
 
+    /// The module of `program` at the import path `path`.
+    fn module_named<'p>(program: &'p Program, path: &str) -> &'p Module {
+        let module = program.modules.iter().find(|module| module.path == path);
+        module.unwrap_or_else(|| panic!("no module {path}"))
+    }
+
     /// The paths of `program`'s modules, in its order.
     fn order(program: &Program) -> Vec<&str> {
         program
@@ -565,11 +573,11 @@ mod tests {
             "core:global myapp:b/c myapp:a myapp:main"
         );
         assert_eq!(
-            imports(&program, program.module("myapp:main").unwrap()),
+            imports(&program, module_named(&program, "myapp:main")),
             ["a=myapp:a", "c2=myapp:b/c", "=core:global"]
         );
         assert!(
-            program.module("core:global").unwrap().imports.is_empty(),
+            module_named(&program, "core:global").imports.is_empty(),
             "the prelude imports itself"
         );
     }
@@ -616,7 +624,7 @@ mod tests {
             .filter(|m| m.starts_with("myapp:main: "))
             .collect();
         assert_eq!(got, want);
-        let b = program.module("myapp:b").unwrap();
+        let b = module_named(&program, "myapp:b");
         assert_eq!(b.diagnostics[0].code, diagnostics::EXPECTED_TOKEN);
     }
 
@@ -627,7 +635,7 @@ mod tests {
             &[("src/main.peep", "fn main() {}\nimport \"myapp:missing\";\n")],
         );
         let program = load(&packages, &root.join("src/main.peep"), &HashMap::new());
-        let main = program.module("myapp:main").unwrap();
+        let main = module_named(&program, "myapp:main");
         assert_eq!(main.diagnostics.len(), 1, "{:?}", messages(&program));
         let label = &main.diagnostics[0].labels[0];
         assert_eq!(main.ast.file.position(label.span.start as usize), (2, 1));
@@ -651,7 +659,7 @@ mod tests {
         let label = &program.diagnostics[0].labels[0];
         assert!(Arc::ptr_eq(
             &label.file,
-            &program.module("myapp:b").unwrap().ast.file
+            &module_named(&program, "myapp:b").ast.file
         ));
     }
 
@@ -676,7 +684,7 @@ mod tests {
         let label = &program.diagnostics[0].labels[0];
         assert!(Arc::ptr_eq(
             &label.file,
-            &program.module("core:x").unwrap().ast.file
+            &module_named(&program, "core:x").ast.file
         ));
     }
 
@@ -696,7 +704,7 @@ mod tests {
         );
         // the implicit import is kept beside the written one
         assert_eq!(
-            imports(&program, program.module("myapp:main").unwrap()),
+            imports(&program, module_named(&program, "myapp:main")),
             ["global=core:global", "=core:global"]
         );
     }
@@ -716,7 +724,7 @@ mod tests {
             ["tool: M0003 a single file cannot import; check its project folder instead"]
         );
         assert_eq!(
-            imports(&program, program.module("tool").unwrap()),
+            imports(&program, module_named(&program, "tool")),
             ["=core:global"],
             "the prelude still comes in"
         );
@@ -800,10 +808,7 @@ mod tests {
         ]);
         let program = load(&packages, &root.join("src/main.peep"), &open_files);
         assert_eq!(messages(&program), Vec::<String>::new());
-        assert_eq!(
-            program.module("myapp:b").unwrap().ast.file.text,
-            "fn B() {}"
-        );
+        assert_eq!(module_named(&program, "myapp:b").ast.file.text, "fn B() {}");
     }
 
     #[test]
