@@ -23,12 +23,12 @@ use unicode_general_category::get_general_category;
 pub fn scan(file: &Arc<SourceFile>) -> (Vec<Token>, Vec<Diagnostic>) {
     let mut scanner = Scanner {
         file,
-        text: file.text.as_bytes(),
+        bytes: file.text.as_bytes(),
         pos: 0,
         tokens: Vec::with_capacity(file.text.len() / 3 + 1),
         diagnostics: Vec::new(),
     };
-    while scanner.pos < scanner.text.len() {
+    while scanner.pos < scanner.bytes.len() {
         scanner.next();
     }
     scanner.emit(TokenKind::Eof, scanner.pos);
@@ -37,7 +37,7 @@ pub fn scan(file: &Arc<SourceFile>) -> (Vec<Token>, Vec<Diagnostic>) {
 
 struct Scanner<'a> {
     file: &'a Arc<SourceFile>,
-    text: &'a [u8],
+    bytes: &'a [u8], // `file.text` as bytes for scanning; `str` slices come from `file.text`
     pos: usize,
     tokens: Vec<Token>,
     diagnostics: Vec<Diagnostic>,
@@ -46,15 +46,15 @@ struct Scanner<'a> {
 impl Scanner<'_> {
     fn next(&mut self) {
         let start = self.pos;
-        match self.text[start] {
+        match self.bytes[start] {
             b' ' | b'\t' | b'\n' | b'\r' | b'\x0c' => self.pos += 1,
             b'/' if self.at(1) == b'/' => {
                 self.pos = self.line_end();
-                if self.text[start..].starts_with(b"///") {
+                if self.bytes[start..].starts_with(b"///") {
                     self.emit(TokenKind::DocComment, start);
                 }
             }
-            b'/' if self.at(1) == b'*' => match find(&self.text[start + 2..], b"*/") {
+            b'/' if self.at(1) == b'*' => match find(&self.bytes[start + 2..], b"*/") {
                 Some(end) => self.pos = start + 2 + end + 2,
                 None => {
                     self.fail(
@@ -63,7 +63,7 @@ impl Scanner<'_> {
                         "unterminated block comment",
                         "add `*/` to close it",
                     );
-                    self.pos = self.text.len();
+                    self.pos = self.bytes.len();
                 }
             },
             b'"' => self.quoted(0, TokenKind::String),
@@ -86,7 +86,7 @@ impl Scanner<'_> {
 
     /// The byte `offset` bytes after the current one, or 0 past the end.
     fn at(&self, offset: usize) -> u8 {
-        self.text.get(self.pos + offset).copied().unwrap_or(0)
+        self.bytes.get(self.pos + offset).copied().unwrap_or(0)
     }
 
     /// The character starting at byte `at`, which starts one.
@@ -95,10 +95,10 @@ impl Scanner<'_> {
     }
 
     fn line_end(&self) -> usize {
-        self.text[self.pos..]
+        self.bytes[self.pos..]
             .iter()
             .position(|&c| c == b'\n' || c == b'\r')
-            .map_or(self.text.len(), |end| self.pos + end)
+            .map_or(self.bytes.len(), |end| self.pos + end)
     }
 
     fn emit(&mut self, kind: TokenKind, start: usize) {
@@ -118,7 +118,7 @@ impl Scanner<'_> {
     fn word(&mut self) {
         let start = self.pos;
         let mut ascii = true;
-        while let Some(&c) = self.text.get(self.pos) {
+        while let Some(&c) = self.bytes.get(self.pos) {
             if c.is_ascii() {
                 if c != b'_' && !c.is_ascii_alphanumeric() {
                     break;
@@ -154,7 +154,7 @@ impl Scanner<'_> {
     /// may sit between digits. The suffix is the parser's to check.
     fn number(&mut self) {
         let start = self.pos;
-        if self.text[start] == b'0'
+        if self.bytes[start] == b'0'
             && b"xXoObB".contains(&self.at(1))
             && self.at(2).is_ascii_alphanumeric()
         {
@@ -222,21 +222,21 @@ impl Scanner<'_> {
     /// when it is invalid, so parsing goes on without a second error.
     fn quoted(&mut self, prefix: usize, kind: TokenKind) {
         let start = self.pos;
-        let quote_char = self.text[start + prefix];
+        let quote_char = self.bytes[start + prefix];
         let mut value = [0u8; 4]; // the first bytes of the literal's value
         let (mut length, mut bad_escape) = (0, false);
         let mut i = start + prefix + 1;
         loop {
-            let unclosed = match self.text.get(i) {
+            let unclosed = match self.bytes.get(i) {
                 None => true,
-                Some(b'\\') => matches!(self.text.get(i + 1), None | Some(b'\n')),
+                Some(b'\\') => matches!(self.bytes.get(i + 1), None | Some(b'\n')),
                 Some(_) => false,
             };
             if unclosed {
                 self.unterminated(start, quote_char, kind);
                 return;
             }
-            let c = self.text[i];
+            let c = self.bytes[i];
             if c == quote_char {
                 self.pos = i + 1;
                 if !bad_escape {
@@ -246,7 +246,7 @@ impl Scanner<'_> {
                 return;
             }
             let (byte, width) = if c == b'\\' {
-                let (byte, width) = escape(self.text, i, quote_char);
+                let (byte, width) = escape(self.bytes, i, quote_char);
                 match byte {
                     Ok(byte) => (byte, width),
                     Err(message) => {
@@ -319,8 +319,8 @@ impl Scanner<'_> {
 
     fn illegal(&mut self) {
         let start = self.pos;
-        self.pos += next_char_width(&self.text[start..]);
-        let message = format!("illegal character {}", quote(&self.text[start..self.pos]));
+        self.pos += next_char_width(&self.bytes[start..]);
+        let message = format!("illegal character {}", quote(&self.bytes[start..self.pos]));
         self.fail(
             Span::new(start, self.pos),
             diagnostics::UNEXPECTED_CHARACTER,
@@ -331,7 +331,7 @@ impl Scanner<'_> {
 
     /// Reads an operator, or reads nothing when none starts here.
     fn operator(&mut self) {
-        let rest = &self.text[self.pos..];
+        let rest = &self.bytes[self.pos..];
         let (first, count) = OPERATORS_BY_FIRST[rest[0] as usize];
         let group = &OPERATORS[first as usize..(first + count) as usize];
         if let Some(&kind) = group
