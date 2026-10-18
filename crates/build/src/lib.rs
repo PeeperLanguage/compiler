@@ -21,6 +21,7 @@ use check::Queries;
 use check::scope::ModuleScope;
 use diagnostics::Diagnostic;
 use model::DefId;
+use model::ModuleId;
 use model::ast;
 use model::constant::Constant;
 use model::mir;
@@ -73,20 +74,22 @@ pub fn compile(
     mut use_function: impl FnMut(DefId, &thir::Body, Option<&mir::Body>, &Types),
 ) -> Results {
     let modules = program.modules.as_slice();
-    let indexes: HashMap<&str, u32> = (0..)
-        .zip(modules)
-        .map(|(index, module)| (module.path.as_str(), index))
+    let ids: HashMap<&str, ModuleId> = modules
+        .iter()
+        .enumerate()
+        .map(|(index, module)| (module.path.as_str(), ModuleId::from_index(index)))
         .collect();
     let mut scope_diagnostics = vec![Vec::new(); modules.len()];
-    let scopes: Vec<ModuleScope> = (0..)
-        .zip(modules)
+    let scopes: Vec<ModuleScope> = modules
+        .iter()
+        .enumerate()
         .zip(&mut scope_diagnostics)
         .map(|((index, module), diagnostics)| {
-            check::scope::collect(index, module, &indexes, diagnostics)
+            check::scope::collect(ModuleId::from_index(index), module, &ids, diagnostics)
         })
         .collect();
     let program = Program {
-        prelude: indexes.get(project::PRELUDE_PATH).copied(),
+        prelude: ids.get(project::PRELUDE_PATH).copied(),
         modules,
         scopes,
     };
@@ -107,12 +110,13 @@ pub fn compile(
     let mut interfaces = Vec::with_capacity(program.modules.len());
     // Whether each module's interface differs from the previous compile's.
     let mut changed: Vec<bool> = Vec::with_capacity(program.modules.len());
-    for (index, module) in (0..).zip(program.modules) {
+    for (index, module) in program.modules.iter().enumerate() {
+        let id = ModuleId::from_index(index);
         let tree = &module.ast;
         // An import comes before its importer, so it is decided already.
         let imports_unchanged = module.imports.iter().all(|import| {
-            let place = indexes.get(import.path.as_str());
-            place.is_some_and(|&place| changed.get(place as usize) == Some(&false))
+            let imported = ids.get(import.path.as_str());
+            imported.is_some_and(|imported| changed.get(imported.index()) == Some(&false))
         });
         let cached = previous.remove(&module.ast.file.name);
         let previous_interface = cached.as_ref().map(|cached| cached.interface);
@@ -120,23 +124,23 @@ pub fn compile(
             && imports_unchanged
             && cached.file.text == module.ast.file.text
         {
-            build.reused[index as usize] = true;
-            build.diagnostics[index as usize] = cached.diagnostics;
+            build.reused[index] = true;
+            build.diagnostics[index] = cached.diagnostics;
             interfaces.push(cached.interface);
             changed.push(false);
             continue;
         }
         for declaration in tree.lists.items(tree.declarations) {
             let definition = DefId {
-                module: index,
+                module: id,
                 index: declaration.index() as u32,
             };
             match tree.decls[declaration] {
                 ast::Decl::Function(function) => {
                     let ty = build.signature(definition);
-                    let thir = build.with_checker(index, |checker| checker.body(&function, ty));
+                    let thir = build.with_checker(id, |checker| checker.body(&function, ty));
                     if let Some(thir) = thir {
-                        let mir = build.lower(index, ty, &thir);
+                        let mir = build.lower(id, ty, &thir);
                         use_function(definition, &thir, mir.as_ref(), &build.types);
                     }
                 }
@@ -148,7 +152,7 @@ pub fn compile(
                 }
             }
         }
-        let interface = build.interface(index);
+        let interface = build.interface(id);
         changed.push(previous_interface != Some(interface));
         interfaces.push(interface);
     }
@@ -202,7 +206,7 @@ fn table<T: Clone>(modules: &[project::Module]) -> Vec<Vec<State<T>>> {
 struct Program<'p> {
     modules: &'p [project::Module], // in the program's order
     scopes: Vec<ModuleScope>,       // of each module
-    prelude: Option<u32>,           // the place of `core:global`, if loaded
+    prelude: Option<ModuleId>,      // `core:global`, if loaded
 }
 
 /// Where one query of one declaration is.
@@ -228,15 +232,15 @@ struct Build<'p> {
 }
 
 impl<'p> Build<'p> {
-    /// Runs `work` on a checker of the module at `module`; what it reports
-    /// joins that module's diagnostics.
+    /// Runs `work` on a checker of `module`; what it reports joins that
+    /// module's diagnostics.
     fn with_checker<T>(
         &mut self,
-        module: u32,
+        module: ModuleId,
         work: impl FnOnce(&mut Checker<Build<'p>>) -> T,
     ) -> T {
         let program = self.program;
-        let index = module as usize;
+        let index = module.index();
         let mut diagnostics = Vec::new();
         let mut checker = Checker {
             module: &program.modules[index],
@@ -253,11 +257,11 @@ impl<'p> Build<'p> {
         result
     }
 
-    /// A hash of what other modules see of the module at `module`, once its
-    /// declarations are checked: its imports, and each declaration's kind,
-    /// name, and type or value. Its bodies are not part of it.
-    fn interface(&self, module: u32) -> u64 {
-        let index = module as usize;
+    /// A hash of what other modules see of `module`, once its declarations
+    /// are checked: its imports, and each declaration's kind, name, and type
+    /// or value. Its bodies are not part of it.
+    fn interface(&self, module: ModuleId) -> u64 {
+        let index = module.index();
         let module = &self.program.modules[index];
         let tree = &module.ast;
         let mut hasher = DefaultHasher::new();
@@ -285,11 +289,11 @@ impl<'p> Build<'p> {
     /// Lowers `body`, the THIR of a function of `module` with the signature
     /// `ty`, to MIR and runs the path checks on it; `None` when it cannot be
     /// lowered (`lower::lower`).
-    fn lower(&mut self, module: u32, ty: TypeId, body: &thir::Body) -> Option<mir::Body> {
+    fn lower(&mut self, module: ModuleId, ty: TypeId, body: &thir::Body) -> Option<mir::Body> {
         let Type::Function { parameters, result } = &self.types[ty] else {
             return None; // the signature's error was reported
         };
-        let module = module as usize;
+        let module = module.index();
         let tree = &self.program.modules[module].ast;
         let mir = lower::lower(body, parameters.len())?;
         let diagnostics = &mut self.diagnostics[module];
@@ -318,7 +322,7 @@ impl<'p> Build<'p> {
         on_cycle: T,
         work: impl FnOnce(&mut Checker<Build<'p>>, Id<ast::Decl>) -> T,
     ) -> T {
-        let (module, index) = (definition.module as usize, definition.index as usize);
+        let (module, index) = (definition.module.index(), definition.index as usize);
         match &table(self)[module][index] {
             State::Done(result) => return result.clone(),
             State::Running => {
@@ -338,7 +342,7 @@ impl<'p> Build<'p> {
     /// Reports that the declaration `definition` was asked for while it was
     /// being checked: it depends on itself.
     fn report_cycle(&mut self, definition: DefId) {
-        let module = definition.module as usize;
+        let module = definition.module.index();
         if self.reused[module] {
             return;
         }
@@ -627,7 +631,7 @@ mod tests {
         let program = program(modules);
         let mut checked: Vec<String> = Vec::new();
         let results = compile(&program, 64, previous, |definition, _, _, _| {
-            let path = &program.modules[definition.module as usize].path;
+            let path = &program.modules[definition.module.index()].path;
             if !checked.contains(path) {
                 checked.push(path.clone());
             }

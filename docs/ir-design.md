@@ -114,9 +114,9 @@ body and a MIR body each list their arenas once with it.
   parameter and result types, a struct's fields, an enum's variants and payloads,
   an interface's methods. Written once per declaration by check; read by check
   itself, by MIR lowering, by LLVM layout and by the interpreter.
-- **Definition ids.** `DefId { module, index }`: the module's place in the
-  program's order and the declaration's index in its tree. Memo tables are
-  vectors indexed by it: no hashing on the hot path.
+- **Definition ids.** `DefId { module, index }`: the module (`ModuleId`, its
+  place in the program's order) and the declaration's index in its tree. Memo
+  tables are vectors indexed by it: no hashing on the hot path.
 - **Constants.** A constant value is an integer of any width (1 to 2^23 bits,
   held as 64-bit limbs, inline up to 128 bits; the arithmetic is the
   `pkg/bigint` crate's, which works like LLVM's APInt), a float, `bool`,

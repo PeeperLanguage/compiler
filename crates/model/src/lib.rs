@@ -9,12 +9,29 @@ pub mod mir;
 pub mod semantic_types;
 pub mod thir;
 
-/// A declaration of the program: the module's place in the program's order and
-/// the declaration's index in its syntax tree. Tables of per-declaration results
-/// are vectors indexed by it.
+/// A module of the program, by its place in the program's order. Tables of
+/// per-module results are vectors indexed by it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ModuleId(u32);
+
+impl ModuleId {
+    /// The module's place in the program's order.
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
+
+    /// The module at place `index` in the program's order.
+    pub fn from_index(index: usize) -> ModuleId {
+        ModuleId(u32::try_from(index).expect("a program has fewer than 2^32 modules"))
+    }
+}
+
+/// A declaration of the program: its module and the declaration's index in
+/// that module's syntax tree. Tables of per-declaration results are vectors
+/// indexed by it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DefId {
-    pub module: u32,
+    pub module: ModuleId,
     pub index: u32,
 }
 
@@ -25,8 +42,8 @@ pub enum Binding {
     Constant(DefId),
     /// a struct, enum, interface or type alias
     Type(DefId),
-    /// An imported module, by its place in the program's order.
-    Module(u32),
+    /// An imported module.
+    Module(ModuleId),
 }
 
 /// A binary operator, named after what it does; the comment shows its token.

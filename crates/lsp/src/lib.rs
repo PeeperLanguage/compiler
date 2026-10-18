@@ -45,6 +45,7 @@ use lsp_types::TextDocumentSyncCapability;
 use lsp_types::TextDocumentSyncKind;
 use lsp_types::Url;
 use model::Binding;
+use model::ModuleId;
 use model::ast;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
@@ -344,7 +345,7 @@ impl<'s> Server<'s> {
                 usize::BITS,
                 results,
                 |definition, body, _, types| {
-                    let path = program.modules[definition.module as usize].path.as_str();
+                    let path = program.modules[definition.module.index()].path.as_str();
                     let body_names = body
                         .names
                         .iter()
@@ -453,7 +454,7 @@ impl Name {
         name: &thir::Name,
         types: &Types,
     ) -> Name {
-        let path = |module: u32| program.modules[module as usize].path.clone();
+        let path = |module: ModuleId| program.modules[module.index()].path.clone();
         let target = match name.target {
             thir::Target::Body(symbol) => {
                 let ty = match symbol {

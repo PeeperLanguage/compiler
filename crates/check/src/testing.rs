@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use model::DefId;
+use model::ModuleId;
 use model::constant::Constant;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
@@ -69,11 +70,12 @@ pub(crate) fn with_checker<T>(
     let utils = module("app:utils", "", Vec::new());
     let main = module("app:main", text, imports);
     let file = main.ast.file.clone();
-    let indexes = HashMap::from([("app:utils", 0), ("app:main", 1)]);
+    let (utils_id, main_id) = (ModuleId::from_index(0), ModuleId::from_index(1));
+    let ids = HashMap::from([("app:utils", utils_id), ("app:main", main_id)]);
     let mut diagnostics = Vec::new();
     let scopes = [
-        collect(0, &utils, &indexes, &mut diagnostics),
-        collect(1, &main, &indexes, &mut diagnostics),
+        collect(utils_id, &utils, &ids, &mut diagnostics),
+        collect(main_id, &main, &ids, &mut diagnostics),
     ];
     let mut program = Program {
         types: Types::new(),

@@ -13,6 +13,7 @@ mod testing;
 use diagnostics::Code;
 use diagnostics::Diagnostic;
 use model::DefId;
+use model::ModuleId;
 use model::constant::Constant;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
@@ -40,13 +41,12 @@ pub trait Queries {
 /// Checking declarations of one module.
 pub struct Checker<'a, Q: Queries> {
     pub module: &'a project::Module,
-    /// The scope of every module, in the program's order (`DefId::module`).
+    /// The scope of every module, indexed by `ModuleId`.
     pub scopes: &'a [ModuleScope],
     pub scope: &'a ModuleScope, // this module's
-    /// Where a name this module does not declare is looked up next: the
-    /// place of `core:global`, unless this module is it or the program has
-    /// none.
-    pub prelude: Option<u32>,
+    /// Where a name this module does not declare is looked up next:
+    /// `core:global`, unless this module is it or the program has none.
+    pub prelude: Option<ModuleId>,
     pub queries: &'a mut Q,
     pub diagnostics: &'a mut Vec<Diagnostic>,
 }
@@ -66,7 +66,7 @@ impl<Q: Queries> Checker<'_, Q> {
     /// What `name` stands for at the top level: in this module, else in the
     /// prelude.
     fn global(&self, name: &str) -> Option<Binding> {
-        let prelude = || self.scopes[self.prelude? as usize].get(name);
+        let prelude = || self.scopes[self.prelude?.index()].get(name);
         self.scope.get(name).or_else(prelude)
     }
 

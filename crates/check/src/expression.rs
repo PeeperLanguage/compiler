@@ -243,14 +243,14 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
         let (module_span, member_span) = (tree.types.span(module), tree.types.span(member));
         let (module_name, member_name) =
             (tree.file.slice(module_span), tree.file.slice(member_span));
-        let index = match self.checker.global(module_name) {
-            Some(binding @ Binding::Module(index)) => {
+        let imported = match self.checker.global(module_name) {
+            Some(binding @ Binding::Module(imported)) => {
                 let target = Target::Global(binding);
                 self.body.names.push(Name {
                     span: module_span,
                     target,
                 });
-                index
+                imported
             }
             Some(Binding::Type(_)) => {
                 self.checker.not_supported(span, "paths into types");
@@ -267,7 +267,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
                 return None;
             }
         };
-        let Some(binding) = self.checker.scopes[index as usize].get(member_name) else {
+        let Some(binding) = self.checker.scopes[imported.index()].get(member_name) else {
             let message = format!("unknown name `{member_name}` in module `{module_name}`");
             self.checker
                 .error(diagnostics::UNDEFINED_NAME, message, member_span);
@@ -280,7 +280,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
         });
         // The prelude's names are in every module's scope, private or not.
         let exported =
-            self.checker.prelude == Some(index) || member_name.starts_with(char::is_uppercase);
+            self.checker.prelude == Some(imported) || member_name.starts_with(char::is_uppercase);
         if !exported {
             let file = &tree.file;
             self.checker.diagnostics.push(

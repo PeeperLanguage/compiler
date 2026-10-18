@@ -50,7 +50,7 @@ impl<'p> Dumps<'p> {
     /// Adds the function `definition`'s THIR and MIR to its module's dumps.
     pub fn add(&mut self, definition: DefId, thir: &thir::Body, mir: &mir::Body, types: &Types) {
         let program = self.program;
-        let tree = |definition: DefId| &program.modules[definition.module as usize].ast;
+        let tree = |definition: DefId| &program.modules[definition.module.index()].ast;
         let name = |definition: DefId| {
             let tree = tree(definition);
             let declaration = tree.decls[Id::from_index(definition.index as usize)];
@@ -58,7 +58,7 @@ impl<'p> Dumps<'p> {
         };
         let file = &tree(definition).file;
         for (index, kind) in self.kinds.iter().enumerate() {
-            let text = &mut self.texts[definition.module as usize * self.kinds.len() + index];
+            let text = &mut self.texts[definition.module.index() * self.kinds.len() + index];
             text.push_str("fn ");
             text.push_str(&name(definition));
             text.push_str(":\n");
