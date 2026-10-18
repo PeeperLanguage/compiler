@@ -25,7 +25,7 @@ pub(crate) fn starts_type(kind: TokenKind) -> bool {
     matches!(
         kind,
         TokenKind::Ident
-            | TokenKind::Amp
+            | TokenKind::Ampersand
             | TokenKind::Question
             | TokenKind::QuestionQuestion
             | TokenKind::Asterisk
@@ -45,7 +45,7 @@ impl Parser {
             let t = self.tok();
             match t.kind {
                 TokenKind::Ident => self.named_type(),
-                TokenKind::Amp => {
+                TokenKind::Ampersand => {
                     self.next();
                     let mutable = self.at(TokenKind::Mut);
                     if mutable {

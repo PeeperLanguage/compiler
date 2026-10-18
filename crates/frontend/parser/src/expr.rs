@@ -89,7 +89,7 @@ static RULES: Rules = {
     rules.nud(TokenKind::Minus, unary);
     rules.nud(TokenKind::Bang, unary);
     rules.nud(TokenKind::Tilde, unary);
-    rules.nud(TokenKind::Amp, reference);
+    rules.nud(TokenKind::Ampersand, reference);
     rules.nud(TokenKind::At, raw_address);
     rules.nud(TokenKind::Free, builtin);
     rules.nud(TokenKind::Print, builtin);
@@ -104,9 +104,9 @@ static RULES: Rules = {
     rules.led(TokenKind::AndAnd, Precedence::LogicalAnd, binary);
 
     // bitwise
-    rules.led(TokenKind::Bar, Precedence::BitOr, binary);
+    rules.led(TokenKind::Pipe, Precedence::BitOr, binary);
     rules.led(TokenKind::Caret, Precedence::BitXor, binary);
-    rules.led(TokenKind::Amp, Precedence::BitAnd, binary);
+    rules.led(TokenKind::Ampersand, Precedence::BitAnd, binary);
 
     // equality and comparison
     rules.led(TokenKind::EqualEqual, Precedence::Equality, binary);
@@ -225,7 +225,7 @@ impl Parser {
     /// only right before the `]` may a range leave out its end.
     pub(crate) fn index_operand(&mut self) -> Id<Expr> {
         let start = self.tok().span.start;
-        let is_range = |p: &Self| p.at(TokenKind::DotDot) || p.at(TokenKind::DotDotEq);
+        let is_range = |p: &Self| p.at(TokenKind::DotDot) || p.at(TokenKind::DotDotEqual);
         let mut low = None;
         if !is_range(self) {
             let value = self.expr(Precedence::Lowest);
@@ -238,7 +238,7 @@ impl Parser {
         let mut high = None;
         if !self.at(TokenKind::RightBracket) {
             high = Some(self.expr(Precedence::Lowest));
-        } else if op.kind == TokenKind::DotDotEq {
+        } else if op.kind == TokenKind::DotDotEqual {
             self.repair(
                 Diagnostic::new(
                     diagnostics::INVALID_EXPRESSION,
@@ -251,7 +251,7 @@ impl Parser {
                 ),
             );
         }
-        let inclusive = op.kind == TokenKind::DotDotEq;
+        let inclusive = op.kind == TokenKind::DotDotEqual;
         self.add(
             start,
             Expr::Range {

@@ -494,7 +494,7 @@ impl Dumper<'_> {
             } => (
                 "range",
                 Some(if inclusive {
-                    TokenKind::DotDotEq
+                    TokenKind::DotDotEqual
                 } else {
                     TokenKind::DotDot
                 }),
