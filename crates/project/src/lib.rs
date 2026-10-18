@@ -134,10 +134,14 @@ pub fn find(path: &Path, libraries: &Path) -> Result<Project, String> {
         .is_dir();
     let mut packages = bundled_libraries(libraries);
     if !is_dir {
+        // absolute, as a folder's root is and as `load` names every file
+        let entry =
+            std::path::absolute(path).map_err(|error| format!("{}: {error}", path.display()))?;
+        let root = entry.parent().unwrap_or(Path::new("")).to_path_buf();
         return Ok(Project {
             packages,
-            entry: path.to_path_buf(),
-            root: path.parent().unwrap_or(Path::new("")).to_path_buf(),
+            entry,
+            root,
         });
     }
     let manifest = manifest::read(path)?;
@@ -556,6 +560,16 @@ mod tests {
             .iter()
             .map(|i| format!("{}={}", alias(i), path(i)))
             .collect()
+    }
+
+    /// A file named from the current folder gets an absolute root, the form
+    /// `load` gives its files' paths.
+    #[test]
+    fn a_single_file_has_an_absolute_root() {
+        let project = find(Path::new("src/lib.rs"), Path::new("")).unwrap();
+        let here = std::env::current_dir().unwrap();
+        assert_eq!(project.root, here.join("src"));
+        assert_eq!(project.entry, here.join("src/lib.rs"));
     }
 
     #[test]
