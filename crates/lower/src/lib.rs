@@ -105,8 +105,9 @@ impl Lowering<'_> {
 
     /// `value` as an operand: the body's next constant.
     fn constant(&mut self, value: Value) -> mir::Operand {
+        let constant = Id::from_index(self.mir.constants.len());
         self.mir.constants.push(value);
-        mir::Operand::Constant(self.mir.constants.len() as u32 - 1)
+        mir::Operand::Constant(constant)
     }
 
     fn statements(&mut self, statements: arena::List<thir::Stmt>) -> Option<()> {

@@ -23,7 +23,7 @@ pub struct Body {
     pub blocks: Arena<Block>, // the first is the entry; with where each starts
     pub instructions: Arena<Instruction>, // with the expression each comes from
     pub variables: Arena<Variable>, // the parameters first; with each name
-    pub constants: Vec<Value>, // what `Operand::Constant` names
+    pub constants: Vec<Value>, // what `Operand::Constant` names; no spans, so not an arena
     pub lists: Lists,
 }
 
@@ -78,8 +78,8 @@ pub enum InstructionKind {
 
 #[derive(Clone, Copy, Debug)]
 pub enum Operand {
-    /// The body's constant at this position.
-    Constant(u32),
+    /// One of the body's `constants`.
+    Constant(Id<Value>),
     /// The function's parameter at this position, as passed in.
     Argument(u32),
     /// What the instruction gives.
@@ -140,7 +140,7 @@ impl Body {
             )
         };
         let operand = |operand: &Operand| match *operand {
-            Operand::Constant(index) => match &self.constants[index as usize] {
+            Operand::Constant(constant) => match &self.constants[constant.index()] {
                 Value::Bool(value) => value.to_string(),
                 Value::Integer(limbs) => match limbs.as_slice() {
                     [low, high @ ..] if high.iter().all(|&limb| limb == 0) => low.to_string(),

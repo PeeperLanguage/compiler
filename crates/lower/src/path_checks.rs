@@ -114,10 +114,12 @@ pub fn missing_return(
                     // and Rust, so whether code compiles never depends on a
                     // constant's value; the label only says which side it takes.
                     let always = match condition {
-                        mir::Operand::Constant(index) => match body.constants[index as usize] {
-                            Value::Bool(value) => Some(value),
-                            _ => None,
-                        },
+                        mir::Operand::Constant(constant) => {
+                            match body.constants[constant.index()] {
+                                Value::Bool(value) => Some(value),
+                                _ => None,
+                            }
+                        }
                         _ => None,
                     };
                     let side = then == block;
