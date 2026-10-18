@@ -17,6 +17,7 @@ use std::time::Instant;
 
 use arena::Id;
 use diagnostics::Severity;
+use diagnostics::fix::Certainty;
 use lsp_server::Connection;
 use lsp_server::ErrorCode;
 use lsp_server::Message;
@@ -627,6 +628,7 @@ fn quick_fixes(
             Some(CodeAction {
                 title: note.text.clone(),
                 kind: Some(CodeActionKind::QUICKFIX),
+                is_preferred: Some(note.certainty == Certainty::Sure),
                 edit: Some(WorkspaceEdit {
                     document_changes: Some(DocumentChanges::Edits(documents)),
                     ..WorkspaceEdit::default()
@@ -731,7 +733,7 @@ mod tests {
     use std::time::Instant;
 
     use diagnostics::Diagnostic;
-    use diagnostics::Fix;
+    use diagnostics::fix::Fix;
     use lsp_server::Connection;
     use lsp_server::Message;
     use lsp_server::Notification;
@@ -831,7 +833,7 @@ mod tests {
         };
         let diagnostic = Diagnostic::new(diagnostics::UNDEFINED_NAME, "unknown name `cout`")
             .label(&file, at, "")
-            .help("did you mean `count`?", vec![fix])
+            .guess("did you mean `count`?", vec![fix])
             .help("a help line without a fix", Vec::new());
         let open = OpenFile {
             text: file.text.to_string(),
@@ -855,6 +857,7 @@ mod tests {
         assert_eq!(result.as_array().map(Vec::len), Some(1));
         assert_eq!(result[0]["title"], "did you mean `count`?");
         assert_eq!(result[0]["kind"], "quickfix");
+        assert_eq!(result[0]["isPreferred"], false, "a guess");
         assert_eq!(result[0]["diagnostics"][0]["message"], published.message);
         assert_eq!(
             edits,

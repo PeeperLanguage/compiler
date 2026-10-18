@@ -32,7 +32,7 @@ use arena::Id;
 use arena::List;
 use arena::Node;
 use diagnostics::Diagnostic;
-use diagnostics::Fix;
+use diagnostics::fix::Fix;
 use model::ast::Ident;
 use model::ast::Tree;
 use source::SourceFile;

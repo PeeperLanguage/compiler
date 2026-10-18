@@ -1,13 +1,17 @@
 //! What a `peeper` command does: load the program, check and compile it,
-//! print its diagnostics and write the dumps asked for.
+//! apply the fixes asked for, print its diagnostics and write the dumps asked
+//! for.
 
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use diagnostics::Diagnostic;
+use diagnostics::fix;
 use diagnostics::printer;
+use source::SourceFile;
 
 use crate::dump::Dump;
 use crate::dump::Dumps;
@@ -16,13 +20,16 @@ use crate::dump::Dumps;
 /// the exit code: 1 when there are errors. A folder must hold peeper.toml; its
 /// project starts at src/main.peep. A file is checked on its own, with no
 /// project and no imports. A program without errors gets the `dumps` written
-/// to build/debug/dumps in the project folder, or beside the file.
+/// to build/debug/dumps in the project folder, or beside the file. With
+/// `apply_fixes`, the fixes the diagnostics suggest are written to the project's files
+/// and listed, and the program is checked again to report what is left.
 pub fn run(
     path: &Path,
     libraries: &Path,
     out: &mut impl Write,
     colored: bool,
     dumps: &[Dump],
+    apply_fixes: bool,
 ) -> u8 {
     let project = match project::find(path, libraries) {
         Ok(project) => project,
@@ -55,7 +62,17 @@ pub fn run(
             return 1;
         }
     }
-    let scan = |file: &std::sync::Arc<source::SourceFile>| lexer::scan(file).0;
+    if apply_fixes {
+        let fixes = fix::chosen(&all, &project.root);
+        if !fixes.is_empty() {
+            if let Err(error) = fix::write(&fixes, out) {
+                _ = writeln!(out, "peeper: cannot write a fix: {error}");
+                return 1;
+            }
+            return run(path, libraries, out, colored, dumps, false);
+        }
+    }
+    let scan = |file: &Arc<SourceFile>| lexer::scan(file).0;
     let highlight: Option<printer::TokensOf> = if colored { Some(&scan) } else { None };
     if let Err(error) = printer::print(out, &all, highlight) {
         eprintln!("peeper: cannot write diagnostics: {error}");
@@ -97,8 +114,30 @@ mod tests {
 
     fn run(path: &Path, libraries: &Path) -> (u8, String) {
         let mut out = Vec::new();
-        let code = super::run(path, libraries, &mut out, false, &[]);
+        let code = super::run(path, libraries, &mut out, false, &[], false);
         (code, String::from_utf8(out).unwrap())
+    }
+
+    /// `peeper fix` writes the suggested fixes, lists them top down, and
+    /// reports only the errors left, which have no fix.
+    #[test]
+    fn fixes_a_file() {
+        let root = temp_dir("fix");
+        let text = b"fn main() {\n    let count = 1;\n    let a = cout\n    let b = gone;\n}\n";
+        write(&root, &[("app.peep", text)]);
+        let file = root.join("app.peep");
+        let mut out = Vec::new();
+        let code = super::run(&file, Path::new(""), &mut out, false, &[], true);
+        let out = String::from_utf8(out).unwrap();
+        let fixed = std::fs::read_to_string(&file).unwrap();
+        assert_eq!(
+            fixed,
+            "fn main() {\n    let count = 1;\n    let a = cout;\n    let b = gone;\n}\n"
+        );
+        let first = format!("fixed {}:3:17: ", file.display());
+        assert!(out.starts_with(&first), "{out}");
+        assert!(out.contains("unknown name `gone`"), "{out}");
+        assert_eq!(code, 1, "`gone` has no fix");
     }
 
     #[test]

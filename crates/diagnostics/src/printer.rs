@@ -31,8 +31,9 @@ use token::Token;
 use token::TokenKind;
 
 use crate::Diagnostic;
-use crate::Fix;
 use crate::Severity;
+use crate::fix::Certainty;
+use crate::fix::Fix;
 use unicode_general_category::GeneralCategory;
 use unicode_general_category::get_general_category;
 
@@ -200,10 +201,12 @@ impl Printer<'_> {
             if after_fixed_lines {
                 self.margin();
             }
-            let (kind, color) = if note.help {
-                ("help", GREEN)
-            } else {
-                ("note", CYAN)
+            // a sure fix is what `peeper fix` applies; a guess stays a help line
+            let sure_fix = !note.fixes.is_empty() && note.certainty == Certainty::Sure;
+            let (kind, color) = match (note.help, sure_fix) {
+                (false, _) => ("note", CYAN),
+                (true, true) => ("fix", GREEN),
+                (true, false) => ("help", GREEN),
             };
             let pad = self.width + 1;
             _ = write!(self.out, "{:pad$}", "");
@@ -646,8 +649,28 @@ Compilation failed with 1 error(s)
         assert_eq!(render(&[d]), want);
     }
 
+    /// A sure fix is labeled `fix`; a guess and plain advice stay `help`.
     #[test]
-    fn help_with_fix() {
+    fn fix_and_help_labels() {
+        let file = Arc::new(SourceFile::new("a.peep", "cout\n"));
+        let at = span(&file, "cout");
+        let fix = Fix {
+            file: file.clone(),
+            span: at,
+            new_text: "count".into(),
+        };
+        let d = Diagnostic::new(code("T0002", Severity::Error), "unknown name `cout`")
+            .label(&file, at, "")
+            .guess("did you mean `count`?", vec![fix])
+            .help("declare it first", Vec::new());
+        let got = render(&[d]);
+        assert!(got.contains("= help: did you mean `count`?"), "{got}");
+        assert!(got.contains("= help: declare it first"), "{got}");
+        assert!(!got.contains("= fix:"), "{got}");
+    }
+
+    #[test]
+    fn fix_with_preview() {
         let file = Arc::new(SourceFile::new(
             "a.peep",
             "struct S {\n    value: i32,\n}\n",
@@ -671,7 +694,7 @@ Compilation failed with 1 error(s)
 2 |     value: i32,
   |               ^
   | 
-  = help: remove this comma
+  = fix: remove this comma
   | 
 2 |     value: i32
 
@@ -766,7 +789,7 @@ Compilation failed with 1 error(s)
             .help("broken fix is not drawn", vec![fix]);
         let got = render(&[d]);
         assert!(
-            got.contains("[L0001]: outside") && got.contains("= help: broken fix is not drawn"),
+            got.contains("[L0001]: outside") && got.contains("= fix: broken fix is not drawn"),
             "{got}"
         );
     }

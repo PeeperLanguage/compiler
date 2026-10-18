@@ -6,6 +6,10 @@ use std::sync::Arc;
 use source::SourceFile;
 use source::Span;
 
+use crate::fix::Certainty;
+use crate::fix::Fix;
+
+pub mod fix;
 pub mod printer;
 pub mod suggest;
 
@@ -104,15 +108,7 @@ pub struct Note {
     pub help: bool,
     pub text: String,
     pub fixes: Vec<Fix>,
-}
-
-/// Replaces a span of a file with new text: an empty span inserts, empty text
-/// removes.
-#[derive(Clone, Debug)]
-pub struct Fix {
-    pub file: Arc<SourceFile>,
-    pub span: Span,
-    pub new_text: String,
+    pub certainty: Certainty, // of the fixes
 }
 
 impl Diagnostic {
@@ -150,15 +146,29 @@ impl Diagnostic {
             help: false,
             text: text.into(),
             fixes: Vec::new(),
+            certainty: Certainty::Sure,
         });
         self
     }
 
+    /// Adds a help line whose `fixes`, if any, are sure.
     pub fn help(mut self, text: impl Into<String>, fixes: Vec<Fix>) -> Diagnostic {
         self.notes.push(Note {
             help: true,
             text: text.into(),
             fixes,
+            certainty: Certainty::Sure,
+        });
+        self
+    }
+
+    /// Adds a help line whose `fixes` are a guess.
+    pub fn guess(mut self, text: impl Into<String>, fixes: Vec<Fix>) -> Diagnostic {
+        self.notes.push(Note {
+            help: true,
+            text: text.into(),
+            fixes,
+            certainty: Certainty::Guess,
         });
         self
     }

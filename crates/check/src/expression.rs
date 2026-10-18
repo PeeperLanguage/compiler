@@ -7,7 +7,7 @@ use arena::Id;
 use arena::List;
 use bigint::Limbs;
 use diagnostics::Diagnostic;
-use diagnostics::Fix;
+use diagnostics::fix::Fix;
 use diagnostics::suggest::nearest_name;
 use model::BinaryOp;
 use model::UnaryOp;
@@ -206,7 +206,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
                 span,
                 new_text: nearest.to_string(),
             };
-            diagnostic = diagnostic.help(format!("did you mean `{nearest}`?"), vec![fix]);
+            diagnostic = diagnostic.guess(format!("did you mean `{nearest}`?"), vec![fix]);
         }
         self.checker.diagnostics.push(diagnostic);
     }

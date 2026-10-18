@@ -1,6 +1,6 @@
 [package]
 name = "diagnostics"
-description = "Diagnostics, their terminal printer and name suggestions"
+description = "Diagnostics, their terminal printer, name suggestions and applying fixes"
 version.workspace = true
 edition.workspace = true
 license-file.workspace = true

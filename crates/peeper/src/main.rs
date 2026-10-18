@@ -16,7 +16,7 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     };
     match args {
-        Args::Check { path, dumps } => {
+        Args::Check { path, dumps, fix } => {
             let stderr = std::io::stderr();
             let colored = stderr.is_terminal();
             let code = driver::run(
@@ -25,6 +25,7 @@ fn main() -> ExitCode {
                 &mut stderr.lock(),
                 colored,
                 &dumps,
+                fix,
             );
             ExitCode::from(code)
         }
