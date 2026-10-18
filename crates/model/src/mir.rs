@@ -32,6 +32,7 @@ pub struct Body {
 pub struct Variable {
     pub ty: TypeId,
     pub mutable: bool,
+    pub initialized: bool, // set where declared; false for a `let` without a value
 }
 
 #[derive(Clone, Debug)]

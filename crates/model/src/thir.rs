@@ -79,8 +79,9 @@ pub enum Symbol {
 pub struct Local {
     pub ty: TypeId,
     pub mutable: bool,
-    /// `let x: T;`: its first assignment sets it, even without `mut`.
-    pub declared_without_value: bool,
+    /// Set where declared; false for `let x: T;`, whose first assignment
+    /// sets it, even without `mut`.
+    pub initialized: bool,
 }
 
 #[derive(Clone, Debug)]

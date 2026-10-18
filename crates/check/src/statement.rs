@@ -63,7 +63,7 @@ impl<'a, Q: Queries> Checker<'a, Q> {
                 Local {
                     ty,
                     mutable: parameter.mutable,
-                    declared_without_value: false,
+                    initialized: true,
                 },
                 name.span,
             );
@@ -229,7 +229,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
                         let unknown = Local {
                             ty: TypeId::INVALID,
                             mutable: true,
-                            declared_without_value: false,
+                            initialized: true,
                         };
                         let local = self.body.add(unknown, name.span);
                         self.declare(name, Symbol::Local(local));
@@ -263,7 +263,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
         value: Option<Id<ast::Expr>>,
     ) -> Stmt {
         let declared = ty.map(|ty| self.checker.resolve_type(ty));
-        let declared_without_value = value.is_none();
+        let initialized = value.is_some();
         let (ty, value) = match (declared, value) {
             (Some(ty), value) => (ty, value.map(|value| self.expect(value, ty))),
             (None, Some(value)) => {
@@ -290,7 +290,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
         let local = Local {
             ty,
             mutable,
-            declared_without_value,
+            initialized,
         };
         let text = name.text(&self.tree.file);
         let shadowed = self
@@ -449,10 +449,10 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
         };
         let Local {
             mutable,
-            declared_without_value,
+            initialized,
             ..
         } = self.body.locals[local];
-        if !mutable && !declared_without_value {
+        if !mutable && initialized {
             self.checker.diagnostics.push(
                 Diagnostic::new(
                     diagnostics::INVALID_ASSIGNMENT,

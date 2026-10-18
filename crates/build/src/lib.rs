@@ -304,11 +304,7 @@ impl<'p> Build<'p> {
         let tree = &self.program.modules[module].ast;
         let mir = lower::lower(body, parameters.len())?;
         let diagnostics = &mut self.diagnostics[module];
-        // Only a `let` without a value can be unset or assigned twice.
-        let late = |index| body.locals[Id::from_index(index)].declared_without_value;
-        if (0..body.locals.len()).any(late) {
-            lower::path_checks::initialization(&mir, &tree.file, diagnostics);
-        }
+        lower::path_checks::initialization(&mir, &tree.file, diagnostics);
         lower::path_checks::unreachable_code(&mir, &tree.file, diagnostics);
         if let Some(error) =
             lower::path_checks::missing_return(&mir, &tree.file, &self.types, *result)

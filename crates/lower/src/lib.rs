@@ -41,11 +41,14 @@ pub fn lower(body: &thir::Body, parameters: usize) -> Option<mir::Body> {
         if local.ty == TypeId::INVALID {
             return None;
         }
-        let variable = mir::Variable {
-            ty: local.ty,
-            mutable: local.mutable,
-        };
-        lowering.mir.variables.push(variable, body.locals.span(id));
+        lowering.mir.variables.push(
+            mir::Variable {
+                ty: local.ty,
+                mutable: local.mutable,
+                initialized: local.initialized,
+            },
+            body.locals.span(id),
+        );
     }
     lowering.block = lowering.new_block(body.span);
     for index in 0..parameters {

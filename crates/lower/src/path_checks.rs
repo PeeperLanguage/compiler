@@ -172,8 +172,7 @@ pub fn missing_return(
 /// Reports each variable used where it may not be set yet, and each variable
 /// without `mut` assigned where it may already be set, once per variable. Only
 /// a `let` without a value can be unset: parameters and other `let`s are set
-/// where they are declared, so the scheduler skips this check for a function
-/// with no such `let`.
+/// where they are declared, so a function with no such `let` is not walked.
 ///
 /// Forward dataflow over the reachable blocks, with two bits per variable at
 /// each block's start: set on every path to it (joined with "and") and set on
@@ -181,6 +180,10 @@ pub fn missing_return(
 /// loop finds the bits at each block's start; the second walks each block
 /// again from those bits and reports at each `load` and `store`.
 pub fn initialization(body: &mir::Body, file: &Arc<SourceFile>, diagnostics: &mut Vec<Diagnostic>) {
+    let initialized = |index| body.variables[Id::from_index(index)].initialized;
+    if (0..body.variables.len()).all(initialized) {
+        return;
+    }
     let words = body.variables.len().div_ceil(64);
     let set = |bits: &mut Bits, variable: Id<mir::Variable>| {
         bits[variable.index() / 64] |= 1 << (variable.index() % 64);
