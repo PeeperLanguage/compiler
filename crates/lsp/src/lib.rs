@@ -2,8 +2,9 @@
 //! stdout). It keeps the text of the files open in the editor and checks the
 //! program a file belongs to when the file is opened, saved or closed, and
 //! once typing pauses (`DEBOUNCE`) after changes; then it publishes the
-//! diagnostics of the program's files. Go to definition and hover over a name
-//! read what the last check recorded. Only the protocol is here: `project`
+//! diagnostics of the program's files, each with its help lines' fixes as
+//! quick fixes. Go to definition and hover over a name read what the last
+//! check recorded. Only the protocol is here: `project`
 //! finds and loads the program and `build` checks it.
 
 use std::collections::HashMap;
@@ -21,13 +22,20 @@ use lsp_server::ErrorCode;
 use lsp_server::Message;
 use lsp_server::Notification;
 use lsp_server::Request;
+use lsp_server::RequestId;
 use lsp_server::Response;
+use lsp_types::CodeAction;
+use lsp_types::CodeActionKind;
+use lsp_types::CodeActionOrCommand;
+use lsp_types::CodeActionParams;
+use lsp_types::CodeActionProviderCapability;
 use lsp_types::DiagnosticRelatedInformation;
 use lsp_types::DiagnosticSeverity;
 use lsp_types::DidChangeTextDocumentParams;
 use lsp_types::DidCloseTextDocumentParams;
 use lsp_types::DidOpenTextDocumentParams;
 use lsp_types::DidSaveTextDocumentParams;
+use lsp_types::DocumentChanges;
 use lsp_types::Hover;
 use lsp_types::HoverContents;
 use lsp_types::HoverProviderCapability;
@@ -36,14 +44,18 @@ use lsp_types::MarkupContent;
 use lsp_types::MarkupKind;
 use lsp_types::NumberOrString;
 use lsp_types::OneOf;
+use lsp_types::OptionalVersionedTextDocumentIdentifier;
 use lsp_types::Position;
 use lsp_types::PublishDiagnosticsParams;
 use lsp_types::Range;
 use lsp_types::ServerCapabilities;
+use lsp_types::TextDocumentEdit;
 use lsp_types::TextDocumentPositionParams;
 use lsp_types::TextDocumentSyncCapability;
 use lsp_types::TextDocumentSyncKind;
+use lsp_types::TextEdit;
 use lsp_types::Url;
+use lsp_types::WorkspaceEdit;
 use model::Binding;
 use model::ModuleId;
 use model::ast;
@@ -75,6 +87,7 @@ fn run(connection: Connection, libraries: &Path) -> Result<(), BoxError> {
         text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
         definition_provider: Some(OneOf::Left(true)),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
+        code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
         ..ServerCapabilities::default()
     };
     connection.initialize(serde_json::to_value(capabilities)?)?;
@@ -116,12 +129,27 @@ fn run(connection: Connection, libraries: &Path) -> Result<(), BoxError> {
     }
 }
 
+/// A file open in the editor: its text, and the version the editor gave that
+/// text, which a quick fix names so the editor refuses it once the text moves
+/// on.
+struct OpenFile {
+    text: String,
+    version: i32,
+}
+
+/// `project::load` reads an open file's text.
+impl AsRef<str> for OpenFile {
+    fn as_ref(&self) -> &str {
+        &self.text
+    }
+}
+
 /// What the server keeps between messages.
 struct Server<'s> {
     connection: &'s Connection,
     libraries: &'s Path,
-    open_files: HashMap<PathBuf, String>, // as `project::load` takes them
-    checked: HashMap<PathBuf, Checked>,   // by the entry file of each program
+    open_files: HashMap<PathBuf, OpenFile>,
+    checked: HashMap<PathBuf, Checked>, // by the entry file of each program
     /// Files changed and not checked yet; their programs are checked once
     /// `deadline` passes.
     pending: HashSet<PathBuf>,
@@ -152,8 +180,11 @@ impl<'s> Server<'s> {
                 let params: DidOpenTextDocumentParams = serde_json::from_value(params)?;
                 let file = params.text_document.uri.to_file_path().ok();
                 if let Some(file) = &file {
-                    self.open_files
-                        .insert(file.clone(), params.text_document.text);
+                    let open = OpenFile {
+                        text: params.text_document.text,
+                        version: params.text_document.version,
+                    };
+                    self.open_files.insert(file.clone(), open);
                 }
                 (file, false)
             }
@@ -162,7 +193,11 @@ impl<'s> Server<'s> {
                 let file = params.text_document.uri.to_file_path().ok();
                 // Full sync: each change holds the whole text; the last wins.
                 if let (Some(file), Some(change)) = (&file, params.content_changes.pop()) {
-                    self.open_files.insert(file.clone(), change.text);
+                    let open = OpenFile {
+                        text: change.text,
+                        version: params.text_document.version,
+                    };
+                    self.open_files.insert(file.clone(), open);
                 }
                 (file, true)
             }
@@ -202,14 +237,12 @@ impl<'s> Server<'s> {
     fn request(&self, request: Request) -> Response {
         let Request { id, method, params } = request;
         let place: TextDocumentPositionParams = match method.as_str() {
+            "textDocument/codeAction" => return code_actions(id, params),
             // Both requests' parameters hold the place, and more to ignore.
             "textDocument/definition" | "textDocument/hover" => {
                 match serde_json::from_value(params) {
                     Ok(place) => place,
-                    Err(error) => {
-                        let code = ErrorCode::InvalidParams as i32;
-                        return Response::new_err(id, code, error.to_string());
-                    }
+                    Err(error) => return invalid_params(id, &error),
                 }
             }
             _ => {
@@ -377,7 +410,7 @@ impl<'s> Server<'s> {
             by_file
                 .entry(place)
                 .or_default()
-                .push(lsp_diagnostic(diagnostic));
+                .push(lsp_diagnostic(diagnostic, &self.open_files));
         }
         let shown: HashSet<PathBuf> = by_file.keys().cloned().collect();
         for file in shown.union(&published) {
@@ -523,9 +556,94 @@ fn code_block(text: &str) -> String {
     format!("```peeper\n{text}\n```\n")
 }
 
+/// The answer to the request `id` whose parameters are not what it takes.
+fn invalid_params(id: RequestId, error: &serde_json::Error) -> Response {
+    Response::new_err(id, ErrorCode::InvalidParams as i32, error.to_string())
+}
+
+/// Answers a code action request with the quick fixes of the diagnostics it
+/// names, which the published diagnostics carry in their `data`.
+fn code_actions(id: RequestId, params: serde_json::Value) -> Response {
+    let params: CodeActionParams = match serde_json::from_value(params) {
+        Ok(params) => params,
+        Err(error) => return invalid_params(id, &error),
+    };
+    let mut actions = Vec::new();
+    for diagnostic in params.context.diagnostics {
+        let fixes = diagnostic
+            .data
+            .clone()
+            .map(serde_json::from_value::<Vec<CodeAction>>);
+        for action in fixes.and_then(Result::ok).unwrap_or_default() {
+            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                diagnostics: Some(vec![diagnostic.clone()]),
+                ..action
+            }));
+        }
+    }
+    Response::new_ok(id, actions)
+}
+
+/// Each help line of `diagnostic` that has fixes, as one quick fix whose
+/// edits apply together. Each file's edits name the version of the open text
+/// they were made for (`open_files`), so the editor refuses them once that
+/// text has changed. A help line with a fix in a file that has no URI is left
+/// out, so a fix is never applied in part.
+fn quick_fixes(
+    diagnostic: &diagnostics::Diagnostic,
+    open_files: &HashMap<PathBuf, OpenFile>,
+) -> Vec<CodeAction> {
+    let fixable = diagnostic
+        .notes
+        .iter()
+        .filter(|note| !note.fixes.is_empty());
+    fixable
+        .filter_map(|note| {
+            let mut documents: Vec<TextDocumentEdit> = Vec::new();
+            for fix in &note.fixes {
+                let uri = Url::from_file_path(&fix.file.path).ok()?;
+                let edit = OneOf::Left(TextEdit {
+                    range: range(&fix.file, fix.span),
+                    new_text: fix.new_text.clone(),
+                });
+                match documents
+                    .iter_mut()
+                    .find(|document| document.text_document.uri == uri)
+                {
+                    Some(document) => document.edits.push(edit),
+                    None => {
+                        let open = open_files.get(Path::new(&fix.file.path));
+                        let text_document = OptionalVersionedTextDocumentIdentifier {
+                            uri,
+                            version: open.map(|open| open.version), // none: not open
+                        };
+                        documents.push(TextDocumentEdit {
+                            text_document,
+                            edits: vec![edit],
+                        });
+                    }
+                }
+            }
+            Some(CodeAction {
+                title: note.text.clone(),
+                kind: Some(CodeActionKind::QUICKFIX),
+                edit: Some(WorkspaceEdit {
+                    document_changes: Some(DocumentChanges::Edits(documents)),
+                    ..WorkspaceEdit::default()
+                }),
+                ..CodeAction::default()
+            })
+        })
+        .collect()
+}
+
 /// `diagnostic` in LSP form: the primary label gives the range, the other
-/// labels are related information, and the notes follow the message.
-fn lsp_diagnostic(diagnostic: &diagnostics::Diagnostic) -> lsp_types::Diagnostic {
+/// labels are related information, the notes follow the message, and the
+/// quick fixes go in `data` for a later code action request.
+fn lsp_diagnostic(
+    diagnostic: &diagnostics::Diagnostic,
+    open_files: &HashMap<PathBuf, OpenFile>,
+) -> lsp_types::Diagnostic {
     let mut message = diagnostic.message.clone();
     for note in &diagnostic.notes {
         message.push_str(if note.help { "\nhelp: " } else { "\nnote: " });
@@ -561,6 +679,10 @@ fn lsp_diagnostic(diagnostic: &diagnostics::Diagnostic) -> lsp_types::Diagnostic
         source: Some("peeper".to_string()),
         message,
         related_information: Some(related),
+        data: match quick_fixes(diagnostic, open_files) {
+            fixes if fixes.is_empty() => None,
+            fixes => serde_json::to_value(fixes).ok(),
+        },
         ..lsp_types::Diagnostic::default()
     }
 }
@@ -601,12 +723,15 @@ fn offset(file: &SourceFile, position: Position) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::path::Path;
+    use std::path::PathBuf;
     use std::sync::Arc;
     use std::time::Duration;
     use std::time::Instant;
 
     use diagnostics::Diagnostic;
+    use diagnostics::Fix;
     use lsp_server::Connection;
     use lsp_server::Message;
     use lsp_server::Notification;
@@ -623,7 +748,9 @@ mod tests {
     use source::Span;
 
     use super::DEBOUNCE;
+    use super::OpenFile;
     use super::Server;
+    use super::code_actions;
     use super::lsp_diagnostic;
     use super::offset;
     use super::position;
@@ -669,7 +796,7 @@ mod tests {
             .label(&file, Span::new(4, 5), "declared here")
             .note("a note")
             .help("a help line", Vec::new());
-        let converted = lsp_diagnostic(&diagnostic);
+        let converted = lsp_diagnostic(&diagnostic, &HashMap::new());
         assert_eq!(converted.range.start, Position::new(1, 0));
         assert_eq!(converted.range.end, Position::new(1, 5));
         assert_eq!(converted.severity, Some(DiagnosticSeverity::WARNING));
@@ -689,6 +816,53 @@ mod tests {
             related[0].location.uri,
             Url::from_file_path("/app/main.peep").unwrap()
         );
+    }
+
+    /// A help line's fixes are published in the diagnostic's `data` and come
+    /// back as one quick fix when the editor asks for code actions there.
+    #[test]
+    fn help_fixes_become_quick_fixes() {
+        let file = Arc::new(SourceFile::new("/app/main.peep", "let a = cout;\n"));
+        let at = Span::new(8, 12);
+        let fix = Fix {
+            file: file.clone(),
+            span: at,
+            new_text: "count".to_string(),
+        };
+        let diagnostic = Diagnostic::new(diagnostics::UNDEFINED_NAME, "unknown name `cout`")
+            .label(&file, at, "")
+            .help("did you mean `count`?", vec![fix])
+            .help("a help line without a fix", Vec::new());
+        let open = OpenFile {
+            text: file.text.to_string(),
+            version: 7,
+        };
+        let open_files = HashMap::from([(PathBuf::from("/app/main.peep"), open)]);
+        let published = lsp_diagnostic(&diagnostic, &open_files);
+        let uri = Url::from_file_path("/app/main.peep").unwrap();
+        let params = json!({
+            "textDocument": { "uri": uri },
+            "range": published.range,
+            "context": { "diagnostics": [published] },
+        });
+        let Response { result, error, .. } = code_actions(RequestId::from(1), params);
+        assert!(error.is_none(), "{error:?}");
+        let result = result.unwrap();
+        let document = &result[0]["edit"]["documentChanges"][0];
+        assert_eq!(document["textDocument"]["uri"], uri.as_str());
+        assert_eq!(document["textDocument"]["version"], 7, "made for this text");
+        let edits = &document["edits"];
+        assert_eq!(result.as_array().map(Vec::len), Some(1));
+        assert_eq!(result[0]["title"], "did you mean `count`?");
+        assert_eq!(result[0]["kind"], "quickfix");
+        assert_eq!(result[0]["diagnostics"][0]["message"], published.message);
+        assert_eq!(
+            edits,
+            &json!([{ "range": { "start": { "line": 0, "character": 8 }, "end": { "line": 0, "character": 12 } }, "newText": "count" }])
+        );
+        let plain = Diagnostic::new(diagnostics::UNDEFINED_NAME, "no help");
+        let plain = lsp_diagnostic(&plain, &open_files);
+        assert_eq!(plain.data, None, "nothing to fix, nothing in `data`");
     }
 
     /// Opening a file with an error publishes it; changing the open text to

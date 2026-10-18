@@ -213,11 +213,12 @@ struct Job {
 /// handed over.
 /// An entry in no package's folder is checked on its own and cannot import.
 ///
-/// `open_files` holds the text of files open in an editor, read instead of
-/// what is on disk. Its keys are absolute paths as `std::path::absolute` makes
-/// them, symbolic links not followed: the form of the entry and of every file
-/// a package's folder names.
-pub fn load(project: &Project, open_files: &HashMap<PathBuf, String>) -> Program {
+/// `open_files` holds the text of files open in an editor (anything that
+/// reads as text, such as a `String`), read instead of what is on disk. Its
+/// keys are absolute paths as `std::path::absolute` makes them, symbolic links
+/// not followed: the form of the entry and of every file a package's folder
+/// names.
+pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + Sync>) -> Program {
     let entry = std::path::absolute(&project.entry).unwrap_or_else(|_| project.entry.clone());
     let with_prelude = resolve(&project.packages, PRELUDE_PATH)
         .is_ok_and(|(_, file)| file.is_file() || open_files.contains_key(&file));
@@ -297,14 +298,14 @@ pub fn load(project: &Project, open_files: &HashMap<PathBuf, String>) -> Program
 /// UTF-8, gets an empty tree and one error.
 fn load_file(
     packages: &HashMap<String, PathBuf>,
-    open_files: &HashMap<PathBuf, String>,
+    open_files: &HashMap<PathBuf, impl AsRef<str>>,
     job: Job,
     with_prelude: bool,
 ) -> Loaded {
     let path = job.file.to_string_lossy().into_owned();
     let text = match open_files.get(&job.file) {
         // Copied: every worker shares the map, and a source file owns its text.
-        Some(text) => Ok(Ok(text.clone())),
+        Some(text) => Ok(Ok(text.as_ref().to_string())),
         None => std::fs::read(&job.file).map(String::from_utf8),
     };
     let (ast, diagnostics) = match text {
@@ -342,7 +343,7 @@ impl Loaded {
     fn resolve_imports(
         &mut self,
         packages: &HashMap<String, PathBuf>,
-        open_files: &HashMap<PathBuf, String>,
+        open_files: &HashMap<PathBuf, impl AsRef<str>>,
         standalone: bool,
         with_prelude: bool,
     ) {
@@ -571,7 +572,7 @@ mod tests {
                 ("libs/core/src/global.peep", "fn exit(code: i32) {}"),
             ],
         );
-        let program = load(&project, &HashMap::new());
+        let program = load(&project, &HashMap::<PathBuf, String>::new());
         assert_eq!(messages(&program), Vec::<String>::new());
         assert_eq!(
             order(&program).join(" "),
@@ -612,7 +613,7 @@ mod tests {
                 ("src/c.peep", ""),
             ],
         );
-        let program = load(&project, &HashMap::new());
+        let program = load(&project, &HashMap::<PathBuf, String>::new());
         let missing = project.root.join("src/missing.peep");
         let want = [
             format!("myapp:main: M0001 module not found: {}", missing.display()),
@@ -639,7 +640,7 @@ mod tests {
             "line",
             &[("src/main.peep", "fn main() {}\nimport \"myapp:missing\";\n")],
         );
-        let program = load(&project, &HashMap::new());
+        let program = load(&project, &HashMap::<PathBuf, String>::new());
         let main = module_named(&program, "myapp:main");
         assert_eq!(main.diagnostics.len(), 1, "{:?}", messages(&program));
         let label = &main.diagnostics[0].labels[0];
@@ -656,7 +657,7 @@ mod tests {
                 ("src/b.peep", r#"import "myapp:a";"#),
             ],
         );
-        let program = load(&project, &HashMap::new());
+        let program = load(&project, &HashMap::<PathBuf, String>::new());
         assert_eq!(
             messages(&program),
             ["program: M0002 cyclic import detected: myapp:a -> myapp:b -> myapp:a"]
@@ -680,7 +681,7 @@ mod tests {
                 ("libs/core/src/x.peep", r#"import "core:global";"#),
             ],
         );
-        let program = load(&project, &HashMap::new());
+        let program = load(&project, &HashMap::<PathBuf, String>::new());
         let cycles: Vec<_> = program.diagnostics.iter().map(|d| &d.message).collect();
         assert_eq!(
             cycles,
@@ -702,7 +703,7 @@ mod tests {
                 ("libs/core/src/global.peep", ""),
             ],
         );
-        let program = load(&project, &HashMap::new());
+        let program = load(&project, &HashMap::<PathBuf, String>::new());
         assert_eq!(
             messages(&program),
             ["myapp:main: S0004 `core:global` is imported automatically"]
@@ -724,7 +725,7 @@ mod tests {
             ],
         );
         project.entry = project.root.join("tool.peep");
-        let program = load(&project, &HashMap::new());
+        let program = load(&project, &HashMap::<PathBuf, String>::new());
         assert_eq!(
             messages(&program),
             ["tool: M0003 a single file cannot import; check its project folder instead"]
@@ -740,14 +741,14 @@ mod tests {
     fn unreadable_and_non_utf8_entries() {
         let mut project = write("unreadable", &[("src/bad.peep", "fn \u{0} main")]);
         std::fs::write(project.root.join("src/bad.peep"), b"fn \xff main() {}").unwrap();
-        let program = load(&project, &HashMap::new());
+        let program = load(&project, &HashMap::<PathBuf, String>::new());
         let got = messages(&program);
         assert!(
             got.len() == 1 && got[0].starts_with("myapp:main: M0001 read module: "),
             "{got:?}"
         );
         project.entry = project.root.join("src/bad.peep");
-        let program = load(&project, &HashMap::new());
+        let program = load(&project, &HashMap::<PathBuf, String>::new());
         assert_eq!(
             messages(&program),
             ["myapp:bad: L0001 file is not valid UTF-8"]
@@ -774,7 +775,7 @@ mod tests {
             .map(|(n, t)| (n.as_str(), t.as_str()))
             .collect();
         let project = write("many", &files);
-        let first = load(&project, &HashMap::new());
+        let first = load(&project, &HashMap::<PathBuf, String>::new());
         assert!(messages(&first).is_empty());
         assert_eq!(first.modules.len(), 202);
         for (index, module) in first.modules.iter().enumerate() {
@@ -789,7 +790,7 @@ mod tests {
         }
         for _ in 0..5 {
             assert_eq!(
-                order(&load(&project, &HashMap::new())),
+                order(&load(&project, &HashMap::<PathBuf, String>::new())),
                 order(&first),
                 "order differs between runs"
             );
