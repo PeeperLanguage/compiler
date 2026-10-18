@@ -10,7 +10,7 @@ use crate::Parser;
 use crate::grow;
 use crate::is_name;
 
-impl Parser<'_> {
+impl Parser {
     /// Reads `Enum::Case`, perhaps followed by `with` and the pattern of its
     /// payload. The case is a full path.
     pub(crate) fn case_pattern(&mut self) -> Id<Pattern> {
@@ -49,7 +49,7 @@ impl Parser<'_> {
                         diagnostics::EXPECTED_TOKEN,
                         "expected a pattern after `with`",
                     )
-                    .label(self.file, t.span, "")
+                    .label(&self.tree.file, t.span, "")
                     .help(
                         "write `none`, a name, `.{ field }`, or a case of the payload's enum",
                         Vec::new(),
@@ -89,7 +89,7 @@ impl Parser<'_> {
                                 diagnostics::EXPECTED_TOKEN,
                                 "a destructure field is renamed with `as`",
                             )
-                            .label(p.file, t.span, "")
+                            .label(&p.tree.file, t.span, "")
                             .help(help, vec![fix]),
                         );
                     }
@@ -107,7 +107,7 @@ impl Parser<'_> {
                         diagnostics::EXPECTED_TOKEN,
                         "`_` must be the last destructure item",
                     )
-                    .label(self.file, span, ""),
+                    .label(&self.tree.file, span, ""),
                 );
             }
         }

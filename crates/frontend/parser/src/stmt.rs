@@ -19,7 +19,7 @@ use crate::grow;
 use crate::starts_statement;
 
 /// Reads the statement the current keyword begins.
-type StatementRule = fn(&mut Parser<'_>) -> Id<Stmt>;
+type StatementRule = fn(&mut Parser) -> Id<Stmt>;
 
 /// The reader of each statement a keyword begins, indexed by token kind; any
 /// other token begins an expression statement.
@@ -49,7 +49,7 @@ pub(crate) fn is_statement_keyword(kind: TokenKind) -> bool {
     STATEMENTS[kind as usize].is_some()
 }
 
-impl Parser<'_> {
+impl Parser {
     /// Reads a block. A keyword that begins a declaration but not a statement
     /// means its `}` is missing: the block ends there and the declaration is
     /// read next.
@@ -125,7 +125,7 @@ impl Parser<'_> {
         let at = self.here();
         self.fail(
             Diagnostic::new(diagnostics::EXPECTED_TOKEN, format!("missing {what} body")).label(
-                self.file,
+                &self.tree.file,
                 at,
                 "expected `{` here",
             ),
@@ -151,7 +151,7 @@ impl Parser<'_> {
                     diagnostics::EXPECTED_TOKEN,
                     "expected `=>` after match case",
                 )
-                .label(self.file, at, "")
+                .label(&self.tree.file, at, "")
                 .help("add missing `=>`", vec![fix]),
             );
         } else if self.expect(TokenKind::FatArrow).is_none() {
@@ -203,7 +203,7 @@ fn if_statement(p: &mut Parser) -> Id<Stmt> {
                     diagnostics::EXPECTED_TOKEN,
                     "expected `==` in condition, found `=`",
                 )
-                .label(p.file, t.span, "")
+                .label(&p.tree.file, t.span, "")
                 .help("compare with `==`", vec![fix]),
             );
             let right = p.expr(Precedence::Lowest);
@@ -270,7 +270,7 @@ fn for_statement(p: &mut Parser) -> Id<Stmt> {
             let span = p.tree.exprs.span(value);
             p.fail(
                 Diagnostic::new(diagnostics::INVALID_EXPRESSION, "invalid loop variable").label(
-                    p.file,
+                    &p.tree.file,
                     span,
                     "expected an identifier before `in`",
                 ),
@@ -295,7 +295,7 @@ fn jump_statement(p: &mut Parser) -> Id<Stmt> {
                 format!("labeled {} is not supported yet", keyword.kind.text()),
             )
             .label(
-                p.file,
+                &p.tree.file,
                 t.span,
                 "loop labels are planned for a later release",
             ),
@@ -331,7 +331,7 @@ fn match_statement(p: &mut Parser) -> Id<Stmt> {
                 let fix = p.fix(t.span, "");
                 p.repair(
                     Diagnostic::new(diagnostics::EXPECTED_TOKEN, "match arms do not use commas")
-                        .label(p.file, t.span, "")
+                        .label(&p.tree.file, t.span, "")
                         .help("remove this comma", vec![fix]),
                 );
             }

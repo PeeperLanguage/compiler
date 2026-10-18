@@ -44,7 +44,6 @@ use token::TokenKind;
 pub fn parse(file: &Arc<SourceFile>) -> (Tree, Vec<Diagnostic>) {
     let (tokens, errors) = lexer::scan(file);
     let mut p = Parser {
-        file,
         tree: Tree::new(file.clone()),
         tokens,
         pos: 0,
@@ -65,8 +64,7 @@ fn grow<R>(rule: impl FnOnce() -> R) -> R {
     stacker::maybe_grow(RED_ZONE, SEGMENT, rule)
 }
 
-struct Parser<'a> {
-    file: &'a Arc<SourceFile>,
+struct Parser {
     tree: Tree, // the tree being built
     tokens: Vec<Token>,
     pos: usize,
@@ -77,7 +75,7 @@ struct Parser<'a> {
     scratch: Vec<NonZeroU32>, // the items of the lists being read, innermost last
 }
 
-impl Parser<'_> {
+impl Parser {
     /// The index of the current token: the next one that is not a doc comment.
     /// Doc comments are read only where a declaration may begin (see
     /// `doc_comment`); everywhere else the parser looks past them.
@@ -142,16 +140,16 @@ impl Parser<'_> {
     }
 
     fn line(&self, offset: u32) -> usize {
-        self.file.line(offset as usize)
+        self.tree.file.line(offset as usize)
     }
 
     fn text(&self, t: Token) -> &str {
-        self.file.slice(t.span)
+        self.tree.file.slice(t.span)
     }
 
     fn fix(&self, span: Span, new_text: &str) -> Fix {
         Fix {
-            file: self.file.clone(),
+            file: self.tree.file.clone(),
             span,
             new_text: new_text.to_string(),
         }
@@ -222,12 +220,12 @@ impl Parser<'_> {
         );
         if self.last_end == 0 || !closer && self.line(t.span.start) == self.line(self.last_end) {
             return d.label(
-                self.file,
+                &self.tree.file,
                 t.span,
                 format!("expected `{}` here", kind.text()),
             );
         }
-        let d = d.label(self.file, self.here(), "");
+        let d = d.label(&self.tree.file, self.here(), "");
         // only a keyword or an operator has one text to insert
         if !token::KEYWORDS.contains(&kind) && !token::OPERATORS.contains(&kind) {
             return d;
@@ -256,7 +254,7 @@ impl Parser<'_> {
                     diagnostics::EXPECTED_TOKEN,
                     format!("expected `{}`, found `{}`", kind.text(), t.kind.text()),
                 )
-                .label(self.file, t.span, "this cannot be here"),
+                .label(&self.tree.file, t.span, "this cannot be here"),
             );
             while self.current() < i {
                 self.next();
@@ -267,7 +265,7 @@ impl Parser<'_> {
         let mut d = self.missing(kind);
         if self.line(open.span.start) < self.line(d.labels[0].span.start) {
             d = d.label(
-                self.file,
+                &self.tree.file,
                 open.span,
                 format!("this `{}` is still open", open.kind.text()),
             );
@@ -366,7 +364,7 @@ impl Parser<'_> {
                 "add missing `,`"
             };
             let d = Diagnostic::new(diagnostics::EXPECTED_TOKEN, "expected `,`").label(
-                self.file,
+                &self.tree.file,
                 missing[0].span,
                 "",
             );
@@ -377,7 +375,7 @@ impl Parser<'_> {
                 diagnostics::EXPECTED_TOKEN,
                 "expected `,` between items, found `;`",
             )
-            .label(self.file, semicolons[0].span, "");
+            .label(&self.tree.file, semicolons[0].span, "");
             self.repair(d.help("separate items with `,`", semicolons));
         }
         self.finish_list(mark)

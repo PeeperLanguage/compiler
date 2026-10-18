@@ -43,10 +43,10 @@ pub(crate) enum Precedence {
 }
 
 /// Reads the expression the current token begins.
-type Nud = fn(&mut Parser<'_>) -> Id<Expr>;
+type Nud = fn(&mut Parser) -> Id<Expr>;
 
 /// Reads what the current token adds to the expression `left`.
-type Led = fn(&mut Parser<'_>, Id<Expr>) -> Id<Expr>;
+type Led = fn(&mut Parser, Id<Expr>) -> Id<Expr>;
 
 /// The rules of each token, indexed by token kind. A token without a nud
 /// cannot begin an expression; a token without a led never continues one.
@@ -139,7 +139,7 @@ pub(crate) fn starts_expression(kind: TokenKind) -> bool {
     RULES.nud[kind as usize].is_some()
 }
 
-impl Parser<'_> {
+impl Parser {
     /// Reads an expression whose operators bind tighter than `min`.
     pub(crate) fn expr(&mut self, min: Precedence) -> Id<Expr> {
         grow(|| {
@@ -150,7 +150,11 @@ impl Parser<'_> {
                         diagnostics::EXPECTED_TOKEN,
                         format!("expected expression, found `{}`", t.kind.text()),
                     )
-                    .label(self.file, t.span, "expected an expression here"),
+                    .label(
+                        &self.tree.file,
+                        t.span,
+                        "expected an expression here",
+                    ),
                 );
                 return self.add(self.last_end, Expr::Invalid);
             };
@@ -241,7 +245,7 @@ impl Parser<'_> {
                     "inclusive range requires an end bound",
                 )
                 .label(
-                    self.file,
+                    &self.tree.file,
                     op.span,
                     "add the inclusive end bound after `..=`",
                 ),
@@ -268,7 +272,7 @@ impl Parser<'_> {
                     diagnostics::INVALID_EXPRESSION,
                     "enum case must use a fully named path",
                 )
-                .label(self.file, span, "write `Enum::Variant`"),
+                .label(&self.tree.file, span, "write `Enum::Variant`"),
             );
         }
     }
@@ -429,7 +433,7 @@ fn pipe(p: &mut Parser, value: Id<Expr>) -> Id<Expr> {
                 let span = p.tree.exprs.span(callee);
                 p.repair(
                     Diagnostic::new(diagnostics::INVALID_EXPRESSION, "pipe cannot call a method")
-                        .label(p.file, span, "use `value.method(...)`"),
+                        .label(&p.tree.file, span, "use `value.method(...)`"),
                 );
             }
         }
@@ -440,7 +444,7 @@ fn pipe(p: &mut Parser, value: Id<Expr>) -> Id<Expr> {
                     diagnostics::INVALID_EXPRESSION,
                     "pipe target must be a free-function call",
                 )
-                .label(p.file, span, "write `value |> function(...)`"),
+                .label(&p.tree.file, span, "write `value |> function(...)`"),
             );
         }
     }

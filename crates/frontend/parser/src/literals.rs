@@ -15,7 +15,7 @@ use crate::expr::Precedence;
 use crate::expr::starts_expression;
 use crate::is_name;
 
-impl Parser<'_> {
+impl Parser {
     /// Reads `.{ name = value, ... }` after `ty` (none when there is no type), a
     /// literal that starts at `start`. A `name: value` field, the colon of a
     /// declaration where a field is set, is read as if it were `=`, and all such
@@ -47,7 +47,7 @@ impl Parser<'_> {
                 diagnostics::EXPECTED_TOKEN,
                 "expected `=` after struct literal field name",
             )
-            .label(self.file, colons[0].span, "");
+            .label(&self.tree.file, colons[0].span, "");
             self.repair(d.help("set a field with `=`", colons));
         }
         self.add(start, Expr::StructLiteral { ty, fields })
@@ -71,8 +71,11 @@ impl Parser<'_> {
             return;
         };
         self.repair(
-            Diagnostic::new(diagnostics::INVALID_NUMBER_SUFFIX, message)
-                .label(self.file, t.span, ""),
+            Diagnostic::new(diagnostics::INVALID_NUMBER_SUFFIX, message).label(
+                &self.tree.file,
+                t.span,
+                "",
+            ),
         );
     }
 }

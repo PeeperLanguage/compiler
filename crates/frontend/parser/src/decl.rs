@@ -27,7 +27,7 @@ use crate::types::starts_type;
 
 /// Reads the declaration the current keyword begins, with its doc comment and
 /// attributes.
-type DeclarationRule = fn(&mut Parser<'_>, Metadata) -> Id<Decl>;
+type DeclarationRule = fn(&mut Parser, Metadata) -> Id<Decl>;
 
 /// The reader of each declaration a keyword begins, indexed by token kind;
 /// each takes the declaration's doc comment and attributes.
@@ -51,7 +51,7 @@ fn starts_parameter(kind: TokenKind) -> bool {
     kind == TokenKind::Mut || starts_type(kind)
 }
 
-impl Parser<'_> {
+impl Parser {
     pub(crate) fn module(&mut self) {
         let mut imports = Vec::new();
         let mark = self.scratch.len();
@@ -83,7 +83,7 @@ impl Parser<'_> {
                             diagnostics::INVALID_DECLARATION,
                             "top-level `let` not allowed",
                         )
-                        .label(self.file, keyword.span, "")
+                        .label(&self.tree.file, keyword.span, "")
                         .help("use `const` for module-scope values", Vec::new()),
                     );
                     self.binding();
@@ -96,7 +96,7 @@ impl Parser<'_> {
                             diagnostics::INVALID_DECLARATION,
                             "module scope expects declaration",
                         )
-                        .label(self.file, t.span, "expected a declaration here")
+                        .label(&self.tree.file, t.span, "expected a declaration here")
                         .help("move this statement into a function", Vec::new()),
                     );
                     while !self.at(TokenKind::Eof) && !starts_declaration(self.tok().kind) {
@@ -174,7 +174,7 @@ impl Parser<'_> {
                     "only one attribute is allowed per `#[...]` block",
                 )
                 .label(
-                    self.file,
+                    &self.tree.file,
                     t.span,
                     "split attributes into separate `#[...]` blocks",
                 ),
@@ -274,7 +274,7 @@ impl Parser<'_> {
                 let fix = self.fix(removed, "");
                 self.repair(
                     Diagnostic::new(diagnostics::INVALID_DECLARATION, "`mut` is repeated")
-                        .label(self.file, extra.span, "")
+                        .label(&self.tree.file, extra.span, "")
                         .help("remove the extra `mut`", vec![fix]),
                 );
             }
@@ -290,7 +290,11 @@ impl Parser<'_> {
                     diagnostics::INVALID_DECLARATION,
                     "mutable parameter requires a named binding",
                 )
-                .label(self.file, span, "add a parameter name after the modifier"),
+                .label(
+                    &self.tree.file,
+                    span,
+                    "add a parameter name after the modifier",
+                ),
             );
         }
         let default = self.at(TokenKind::Assign).then(|| {
@@ -351,7 +355,7 @@ impl Parser<'_> {
                     diagnostics::EXPECTED_TOKEN,
                     "expected `->` before the return type",
                 )
-                .label(self.file, at, "")
+                .label(&self.tree.file, at, "")
                 .help("add missing `->`", vec![fix]),
             );
             result = Some(self.type_expr());
@@ -397,7 +401,7 @@ fn func_decl(p: &mut Parser, metadata: Metadata) -> Id<Decl> {
             let at = p.here();
             p.fail(
                 Diagnostic::new(diagnostics::EXPECTED_TOKEN, "missing function body").label(
-                    p.file,
+                    &p.tree.file,
                     at,
                     "expected `{` or `;` here",
                 ),

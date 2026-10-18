@@ -38,7 +38,7 @@ pub(crate) fn starts_type(kind: TokenKind) -> bool {
     )
 }
 
-impl Parser<'_> {
+impl Parser {
     /// Reads a type.
     pub(crate) fn type_expr(&mut self) -> Id<Type> {
         grow(|| {
@@ -84,7 +84,11 @@ impl Parser<'_> {
                             diagnostics::INVALID_TYPE,
                             format!("expected type, found `{}`", t.kind.text()),
                         )
-                        .label(self.file, t.span, "expected a type here"),
+                        .label(
+                            &self.tree.file,
+                            t.span,
+                            "expected a type here",
+                        ),
                     );
                     self.add(self.last_end, Type::Invalid)
                 }
@@ -185,7 +189,7 @@ impl Parser<'_> {
             _ => {
                 self.fail(
                     Diagnostic::new(diagnostics::INVALID_TYPE, "expected array length").label(
-                        self.file,
+                        &self.tree.file,
                         t.span,
                         "use `[N]T` for fixed arrays, `[]T` for dynamic arrays, or `[..]T` for slices",
                     ),
@@ -283,7 +287,7 @@ impl Parser<'_> {
                                 diagnostics::INVALID_DECLARATION,
                                 "interface method defaults are not supported",
                             )
-                            .label(p.file, span, ""),
+                            .label(&p.tree.file, span, ""),
                         );
                     }
                 }
