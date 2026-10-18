@@ -16,7 +16,7 @@ impl<Q: Queries> Checker<'_, Q> {
     /// The signature of the module's declaration `declaration`, which is not
     /// a constant.
     pub fn signature(&mut self, declaration: Id<ast::Decl>) -> TypeId {
-        let tree = &self.module.ast;
+        let tree = &self.module().ast;
         match tree.decls[declaration] {
             ast::Decl::Function(ast::Function { signature, .. }) => {
                 if let Some(receiver) = signature.receiver {
@@ -62,7 +62,7 @@ impl<Q: Queries> Checker<'_, Q> {
 
     /// The type a type expression of the module's tree stands for.
     pub fn resolve_type(&mut self, ty: Id<ast::Type>) -> TypeId {
-        let tree = &self.module.ast;
+        let tree = &self.module().ast;
         let span = tree.types.span(ty);
         let what = match tree.types[ty] {
             ast::Type::Name => {
@@ -120,7 +120,7 @@ mod tests {
     /// diagnostics.
     fn signatures(text: &str) -> (Vec<String>, Vec<Reported>) {
         let (found, types, reported) = with_checker(text, |checker| {
-            let tree = &checker.module.ast;
+            let tree = &checker.module().ast;
             let declarations: Vec<_> = tree.lists.items(tree.declarations).collect();
             let found: Vec<TypeId> = declarations
                 .into_iter()

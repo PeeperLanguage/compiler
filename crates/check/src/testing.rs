@@ -83,9 +83,9 @@ pub(crate) fn with_checker<T>(
         types: Types::new(),
     };
     let mut checker = Checker {
-        module: &modules[1],
+        modules: &modules,
         scopes: &scopes,
-        scope: &scopes[1],
+        current_module: main_id,
         prelude: None,
         queries: &mut program,
         diagnostics: &mut diagnostics,

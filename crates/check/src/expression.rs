@@ -191,7 +191,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
         }
         // The module's names sorted, so the suggestion does not depend on the
         // hash order.
-        let mut module_names: Vec<&str> = self.checker.scope.names().collect();
+        let mut module_names: Vec<&str> = self.checker.scope().names().collect();
         module_names.sort_unstable();
         let local_names = self.names.iter().map(|&(local, ..)| local);
         let candidates = local_names.chain(module_names).map(|name| (name, 0));

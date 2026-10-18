@@ -40,10 +40,10 @@ pub trait Queries {
 
 /// Checking declarations of one module.
 pub struct Checker<'a, Q: Queries> {
-    pub module: &'a project::Module,
-    /// The scope of every module, indexed by `ModuleId`.
+    /// The program's modules and the scope of each, indexed by `ModuleId`.
+    pub modules: &'a [project::Module],
     pub scopes: &'a [ModuleScope],
-    pub scope: &'a ModuleScope, // this module's
+    pub current_module: ModuleId, // the module being checked
     /// Where a name this module does not declare is looked up next:
     /// `core:global`, unless this module is it or the program has none.
     pub prelude: Option<ModuleId>,
@@ -51,12 +51,22 @@ pub struct Checker<'a, Q: Queries> {
     pub diagnostics: &'a mut Vec<Diagnostic>,
 }
 
-impl<Q: Queries> Checker<'_, Q> {
+impl<'a, Q: Queries> Checker<'a, Q> {
+    /// The module being checked.
+    pub fn module(&self) -> &'a project::Module {
+        &self.modules[self.current_module.index()]
+    }
+
+    /// The names the module being checked declares and imports.
+    pub fn scope(&self) -> &'a ModuleScope {
+        &self.scopes[self.current_module.index()]
+    }
+
     /// Reports the error `message` at `span` of the module, and gives the type
     /// of an error already reported, so nothing more is reported about it.
     fn error(&mut self, code: Code, message: impl Into<String>, span: Span) -> TypeId {
         self.diagnostics.push(Diagnostic::new(code, message).label(
-            &self.module.ast.file,
+            &self.module().ast.file,
             span,
             "",
         ));
@@ -67,7 +77,7 @@ impl<Q: Queries> Checker<'_, Q> {
     /// prelude.
     fn global(&self, name: &str) -> Option<Binding> {
         let prelude = || self.scopes[self.prelude?.index()].get(name);
-        self.scope.get(name).or_else(prelude)
+        self.scope().get(name).or_else(prelude)
     }
 
     /// Reports syntax the checker does not handle yet, such as `what` =

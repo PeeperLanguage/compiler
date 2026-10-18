@@ -50,7 +50,7 @@ impl<'a, Q: Queries> Checker<'a, Q> {
             return None; // the signature's error was reported
         };
         let (parameters, result) = (parameters.clone(), *result);
-        let tree = &self.module.ast;
+        let tree = &self.module().ast;
         let mut checker = BodyChecker::new(self, result);
         for (parameter, &ty) in tree
             .lists
@@ -89,7 +89,7 @@ impl<'a, Q: Queries> Checker<'a, Q> {
 impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
     /// Checking a body of a function whose result type is `result`.
     fn new(checker: &'c mut Checker<'a, Q>, result: TypeId) -> BodyChecker<'c, 'a, Q> {
-        let tree = &checker.module.ast;
+        let tree = &checker.module().ast;
         BodyChecker {
             checker,
             tree,
@@ -484,11 +484,11 @@ mod tests {
     /// diagnostics.
     fn bodies(text: &str) -> (Vec<String>, Vec<Reported>) {
         let (bodies, types, reported) = with_checker(text, |checker| {
-            let tree = &checker.module.ast;
+            let tree = &checker.module().ast;
             let declarations: Vec<_> = tree.lists.items(tree.declarations).collect();
             let mut bodies = Vec::new();
             for declaration in declarations {
-                let ast::Decl::Function(function) = checker.module.ast.decls[declaration] else {
+                let ast::Decl::Function(function) = checker.module().ast.decls[declaration] else {
                     continue;
                 };
                 let signature = checker.signature(declaration);
@@ -741,7 +741,7 @@ mod tests {
     /// message with its first note.
     fn notes(text: &str) -> Vec<(String, Option<String>)> {
         let (notes, _, _) = with_checker(text, |checker| {
-            let tree = &checker.module.ast;
+            let tree = &checker.module().ast;
             let declaration = tree.lists.items(tree.declarations).next().unwrap();
             let ast::Decl::Function(function) = tree.decls[declaration] else {
                 unreachable!("the first declaration is a function")

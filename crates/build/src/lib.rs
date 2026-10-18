@@ -242,9 +242,9 @@ impl<'p> Build<'p> {
         let index = module.index();
         let mut diagnostics = Vec::new();
         let mut checker = Checker {
-            module: &program.modules[index],
+            modules: program.modules,
             scopes: &program.scopes,
-            scope: &program.scopes[index],
+            current_module: module,
             prelude: program.modules[index]
                 .imports
                 .iter()
