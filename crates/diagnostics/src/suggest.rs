@@ -14,7 +14,7 @@ pub fn nearest_name<'a>(
     let query = query.to_lowercase();
     let mut best: Option<Match> = None;
     let mut second: Option<Match> = None;
-    for (order, (name, priority)) in candidates.into_iter().enumerate() {
+    for (name, priority) in candidates {
         if name.trim().is_empty() {
             continue;
         }
@@ -29,7 +29,6 @@ pub fn nearest_name<'a>(
                 .count(),
             length_difference: query.len().abs_diff(lower.len()),
             priority,
-            order,
         };
         if best.as_ref().is_none_or(|b| candidate.ranks_before(b)) {
             second = best.replace(candidate);
@@ -51,23 +50,24 @@ struct Match<'a> {
     shared_prefix: usize,
     length_difference: usize,
     priority: i32,
-    order: usize,
 }
 
 impl Match<'_> {
+    /// The last key is the name, so the answer does not depend on the order
+    /// the candidates come in.
     fn ranks_before(&self, other: &Match) -> bool {
         (
             self.distance,
             std::cmp::Reverse(self.shared_prefix),
             self.priority,
             self.length_difference,
-            self.order,
+            self.name,
         ) < (
             other.distance,
             std::cmp::Reverse(other.shared_prefix),
             other.priority,
             other.length_difference,
-            other.order,
+            other.name,
         )
     }
 
@@ -135,7 +135,20 @@ mod tests {
         assert_eq!(nearest("cotn", &["cost", "count"]), None);
         assert_eq!(nearest("", &["a"]), None);
         assert_eq!(nearest("a", &[" "]), None);
-        assert_eq!(nearest("ab", &["ab", "AB"]), Some("ab")); // exact short match despite the tie
+        assert_eq!(nearest("ab", &["ab", "AB"]), Some("AB")); // exact short match despite the tie
+    }
+
+    #[test]
+    fn the_order_of_candidates_does_not_matter() {
+        for (query, names) in [
+            ("ab", ["aB", "AB", "ab"]),
+            ("lenght", ["length", "lent", "height"]),
+            ("cotn", ["cost", "count", "coat"]),
+        ] {
+            let mut reversed = names;
+            reversed.reverse();
+            assert_eq!(nearest(query, &names), nearest(query, &reversed), "{query}");
+        }
     }
 
     #[test]

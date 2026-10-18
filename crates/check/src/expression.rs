@@ -188,13 +188,12 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
             self.checker.not_supported(span, "built-in functions");
             return;
         }
-        // The module's names sorted, so the suggestion does not depend on the
-        // hash order.
-        let mut module_names: Vec<&str> = self.checker.scope().names().collect();
-        module_names.sort_unstable();
-        // A local wins a tie with a module name: it is the nearer scope.
+        // A local wins a tie with a module name: it is the nearer scope. The
+        // module's names come in hash order, which cannot change the answer:
+        // two names that tie suggest nothing (`nearest_name`).
         let local_names = self.names.iter().map(|&(local, ..)| (local, 0));
-        let candidates = local_names.chain(module_names.into_iter().map(|name| (name, 1)));
+        let module_names = self.checker.scope().names().map(|name| (name, 1));
+        let candidates = local_names.chain(module_names);
         let file = &self.tree.file;
         let mut diagnostic = Diagnostic::new(
             diagnostics::UNDEFINED_NAME,
