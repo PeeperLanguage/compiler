@@ -50,11 +50,10 @@ impl Results {
 
 /// What a compile found in one module.
 struct Module {
-    path: String,
-    file: Arc<SourceFile>,
-    interface: u64,                     // `Build::interface`
+    file: Arc<SourceFile>, // its name tells the module's entry in the next compile
+    interface: u64,        // `Build::interface`
     scope_diagnostics: Vec<Diagnostic>, // from building its scope; redone every compile
-    diagnostics: Vec<Diagnostic>,       // from checking it; kept while it is reused
+    diagnostics: Vec<Diagnostic>, // from checking it; kept while it is reused
 }
 
 /// Checks every declaration of `program`, lowers each function to MIR and
@@ -72,18 +71,14 @@ pub fn compile(
     previous: Results,
     mut use_function: impl FnMut(DefId, &thir::Body, Option<&mir::Body>, &Types),
 ) -> Results {
-    let modules: Vec<&project::Module> = program
-        .order
-        .iter()
-        .map(|path| &program.modules[path])
-        .collect();
+    let modules = program.modules.as_slice();
     let indexes: HashMap<&str, u32> = (0..)
-        .zip(&modules)
+        .zip(modules)
         .map(|(index, module)| (module.path.as_str(), index))
         .collect();
     let mut scope_diagnostics = vec![Vec::new(); modules.len()];
     let scopes: Vec<ModuleScope> = (0..)
-        .zip(&modules)
+        .zip(modules)
         .zip(&mut scope_diagnostics)
         .map(|((index, module), diagnostics)| {
             check::scope::collect(index, module, &indexes, diagnostics)
@@ -98,31 +93,31 @@ pub fn compile(
         program: &program,
         types: Types::new(),
         pointer_bits,
-        signatures: table(&program.modules),
-        constants: table(&program.modules),
+        signatures: table(program.modules),
+        constants: table(program.modules),
         diagnostics: vec![Vec::new(); program.modules.len()],
         reused: vec![false; program.modules.len()],
     };
     let mut previous: HashMap<String, Module> = previous
         .modules
         .into_iter()
-        .map(|module| (module.path.clone(), module))
+        .map(|cached| (cached.file.name.clone(), cached))
         .collect();
     let mut interfaces = Vec::with_capacity(program.modules.len());
     // Whether each module's interface differs from the previous compile's.
     let mut changed: Vec<bool> = Vec::with_capacity(program.modules.len());
-    for (index, module) in (0..).zip(&program.modules) {
+    for (index, module) in (0..).zip(program.modules) {
         let tree = &module.ast;
         // An import comes before its importer, so it is decided already.
         let imports_unchanged = module.imports.iter().all(|import| {
             let place = indexes.get(import.path.as_str());
             place.is_some_and(|&place| changed.get(place as usize) == Some(&false))
         });
-        let cached = previous.remove(&module.path);
+        let cached = previous.remove(&module.ast.file.name);
         let previous_interface = cached.as_ref().map(|cached| cached.interface);
         if let Some(cached) = cached
             && imports_unchanged
-            && cached.file.text == tree.file.text
+            && cached.file.text == module.ast.file.text
         {
             build.reused[index as usize] = true;
             build.diagnostics[index as usize] = cached.diagnostics;
@@ -164,7 +159,6 @@ pub fn compile(
         .zip(interfaces);
     let modules = modules.map(
         |(((module, scope_diagnostics), diagnostics), interface)| Module {
-            path: module.path.clone(),
             file: module.ast.file.clone(),
             interface,
             scope_diagnostics,
@@ -196,19 +190,18 @@ fn hash_type(types: &Types, ty: TypeId, hasher: &mut DefaultHasher) {
 }
 
 /// A query's results for every declaration of `modules`, none started.
-fn table<T: Clone>(modules: &[&project::Module]) -> Vec<Vec<State<T>>> {
-    let declarations = |module: &&project::Module| module.ast.decls.len();
+fn table<T: Clone>(modules: &[project::Module]) -> Vec<Vec<State<T>>> {
     modules
         .iter()
-        .map(|module| vec![State::NotStarted; declarations(module)])
+        .map(|module| vec![State::NotStarted; module.ast.decls.len()])
         .collect()
 }
 
 /// What the scheduler reads and never changes.
 struct Program<'p> {
-    modules: Vec<&'p project::Module>, // in the program's order
-    scopes: Vec<ModuleScope>,          // of each module
-    prelude: Option<u32>,              // the place of `core:global`, if loaded
+    modules: &'p [project::Module], // in the program's order
+    scopes: Vec<ModuleScope>,       // of each module
+    prelude: Option<u32>,           // the place of `core:global`, if loaded
 }
 
 /// Where one query of one declaration is.
@@ -245,7 +238,7 @@ impl<'p> Build<'p> {
         let index = module as usize;
         let mut diagnostics = Vec::new();
         let mut checker = Checker {
-            module: program.modules[index],
+            module: &program.modules[index],
             scopes: &program.scopes,
             scope: &program.scopes[index],
             prelude: program.prelude.filter(|&prelude| prelude != module),
@@ -264,7 +257,7 @@ impl<'p> Build<'p> {
     /// name, and type or value. Its bodies are not part of it.
     fn interface(&self, module: u32) -> u64 {
         let index = module as usize;
-        let module = self.program.modules[index];
+        let module = &self.program.modules[index];
         let tree = &module.ast;
         let mut hasher = DefaultHasher::new();
         for import in &module.imports {
@@ -633,7 +626,7 @@ mod tests {
         let program = program(modules);
         let mut checked: Vec<String> = Vec::new();
         let results = compile(&program, 64, previous, |definition, _, _, _| {
-            let path = &program.order[definition.module as usize];
+            let path = &program.modules[definition.module as usize].path;
             if !checked.contains(path) {
                 checked.push(path.clone());
             }

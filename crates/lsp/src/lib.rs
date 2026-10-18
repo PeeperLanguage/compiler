@@ -224,13 +224,13 @@ impl<'s> Server<'s> {
                     (file, *declared, code_block(&text))
                 }
                 Target::Declaration { module, index } => {
-                    let tree = &program.modules.get(module)?.ast;
+                    let tree = &program.module(module)?.ast;
                     let declaration = Id::from_index(*index as usize);
                     let declared = tree.decls[declaration].name().span;
                     (&tree.file, declared, header(tree, declaration, module))
                 }
                 Target::Module(path) => {
-                    let file = &program.modules.get(path)?.ast.file;
+                    let file = &program.module(path)?.ast.file;
                     (file, Span::at(0), code_block(&format!("module {path}")))
                 }
             };
@@ -263,7 +263,7 @@ impl<'s> Server<'s> {
             let program = checked.program.as_ref()?;
             let module = program
                 .modules
-                .values()
+                .iter()
                 .find(|module| Path::new(&module.ast.file.name) == file)?;
             let offset = offset(&module.ast.file, place.position) as u32;
             let at = |span: Span| span.start <= offset && offset <= span.end;
@@ -344,7 +344,7 @@ impl<'s> Server<'s> {
                 usize::BITS,
                 results,
                 |definition, body, _, types| {
-                    let path = program.order[definition.module as usize].as_str();
+                    let path = program.modules[definition.module as usize].path.as_str();
                     let body_names = body
                         .names
                         .iter()
@@ -357,8 +357,8 @@ impl<'s> Server<'s> {
             let unchanged = |path: &String| {
                 let before = compiled_program
                     .as_ref()
-                    .and_then(|before| before.modules.get(path));
-                let now = program.modules.get(path);
+                    .and_then(|before| before.module(path));
+                let now = program.module(path);
                 before
                     .zip(now)
                     .is_some_and(|(before, now)| before.ast.file.text == now.ast.file.text)
@@ -453,7 +453,7 @@ impl Name {
         name: &thir::Name,
         types: &Types,
     ) -> Name {
-        let path = |module: u32| program.order[module as usize].clone();
+        let path = |module: u32| program.modules[module as usize].path.clone();
         let target = match name.target {
             thir::Target::Body(symbol) => {
                 let ty = match symbol {

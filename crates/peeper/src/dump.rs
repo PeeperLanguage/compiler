@@ -43,15 +43,14 @@ impl<'p> Dumps<'p> {
         Dumps {
             program,
             kinds,
-            texts: vec![String::new(); program.order.len() * kinds.len()],
+            texts: vec![String::new(); program.modules.len() * kinds.len()],
         }
     }
 
     /// Adds the function `definition`'s THIR and MIR to its module's dumps.
     pub fn add(&mut self, definition: DefId, thir: &thir::Body, mir: &mir::Body, types: &Types) {
         let program = self.program;
-        let tree =
-            |definition: DefId| &program.modules[&program.order[definition.module as usize]].ast;
+        let tree = |definition: DefId| &program.modules[definition.module as usize].ast;
         let name = |definition: DefId| {
             let tree = tree(definition);
             let declaration = tree.decls[Id::from_index(definition.index as usize)];
@@ -74,13 +73,17 @@ impl<'p> Dumps<'p> {
     /// as a folder (`myapp:deep/x` to `myapp/deep/x.mir`), and names each file
     /// written in `out`. A module with no functions gets no file.
     pub fn write(&self, folder: &Path, out: &mut impl Write) -> std::io::Result<()> {
-        for (module, path) in self.program.order.iter().enumerate() {
-            for (index, kind) in self.kinds.iter().enumerate() {
-                let text = &self.texts[module * self.kinds.len() + index];
+        for (module_index, module) in self.program.modules.iter().enumerate() {
+            for (kind_index, kind) in self.kinds.iter().enumerate() {
+                let text = &self.texts[module_index * self.kinds.len() + kind_index];
                 if text.is_empty() {
                     continue;
                 }
-                let file = folder.join(format!("{}.{}", path.replace(':', "/"), kind.extension()));
+                let file = folder.join(format!(
+                    "{}.{}",
+                    module.path.replace(':', "/"),
+                    kind.extension()
+                ));
                 std::fs::create_dir_all(file.parent().unwrap_or(folder))?;
                 std::fs::write(&file, text)?;
                 writeln!(out, "wrote {}", file.display())?;

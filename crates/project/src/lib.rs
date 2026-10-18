@@ -41,17 +41,22 @@ pub struct Import {
 
 /// Every module reachable from an entry file.
 pub struct Program {
-    pub modules: HashMap<String, Module>,
-    pub order: Vec<String>, // each module after the modules it imports; outside cycles, the same order every run
+    /// Each module after the modules it imports; outside cycles, the same
+    /// order every run.
+    pub modules: Vec<Module>,
     pub diagnostics: Vec<Diagnostic>, // about the program as a whole: import cycles
 }
 
 impl Program {
+    /// The module at the import path `path`.
+    pub fn module(&self, path: &str) -> Option<&Module> {
+        self.modules.iter().find(|module| module.path == path)
+    }
+
     /// What loading found: about the program first, then each module's in
     /// the program's order.
     pub fn load_diagnostics(&self) -> impl Iterator<Item = &Diagnostic> {
-        let modules = self.order.iter().map(|path| &self.modules[path]);
-        let modules = modules.flat_map(|module| &module.diagnostics);
+        let modules = self.modules.iter().flat_map(|module| &module.diagnostics);
         self.diagnostics.iter().chain(modules)
     }
 
@@ -200,9 +205,13 @@ pub fn load(
     });
 
     let (order, cycles) = sort_modules(&modules);
+    // The order holds every module: the sort visits each.
+    let modules = order
+        .iter()
+        .filter_map(|path| modules.remove(path))
+        .collect();
     Program {
         modules,
-        order,
         diagnostics: cycles,
     }
 }
@@ -413,6 +422,15 @@ impl<'a> Sorter<'a> {
 mod tests {
     use super::*;
 
+    /// The paths of `program`'s modules, in its order.
+    fn order(program: &Program) -> Vec<&str> {
+        program
+            .modules
+            .iter()
+            .map(|module| module.path.as_str())
+            .collect()
+    }
+
     /// Writes `files` (paths relative to a new temporary folder) and returns that
     /// folder and its packages: "myapp" in src, "core" in libs/core/src.
     fn write(test: &str, files: &[(&str, &str)]) -> (PathBuf, HashMap<String, PathBuf>) {
@@ -441,7 +459,7 @@ mod tests {
             .chain(
                 program
                     .modules
-                    .values()
+                    .iter()
                     .flat_map(|m| m.diagnostics.iter().map(|d| (m.path.as_str(), d))),
             )
             .map(|(module, d)| format!("{module}: {} {}", d.code.id, d.message))
@@ -476,15 +494,15 @@ mod tests {
         let program = load(&packages, &root.join("src/main.peep"), &HashMap::new());
         assert_eq!(messages(&program), Vec::<String>::new());
         assert_eq!(
-            program.order.join(" "),
+            order(&program).join(" "),
             "core:global myapp:b/c myapp:a myapp:main"
         );
         assert_eq!(
-            imports(&program.modules["myapp:main"]),
+            imports(program.module("myapp:main").unwrap()),
             ["a=myapp:a", "c2=myapp:b/c", "=core:global"]
         );
         assert!(
-            program.modules["core:global"].imports.is_empty(),
+            program.module("core:global").unwrap().imports.is_empty(),
             "the prelude imports itself"
         );
     }
@@ -531,7 +549,7 @@ mod tests {
             .filter(|m| m.starts_with("myapp:main: "))
             .collect();
         assert_eq!(got, want);
-        let b = &program.modules["myapp:b"];
+        let b = program.module("myapp:b").unwrap();
         assert_eq!(b.diagnostics[0].code, diagnostics::EXPECTED_TOKEN);
     }
 
@@ -542,7 +560,7 @@ mod tests {
             &[("src/main.peep", "fn main() {}\nimport \"myapp:missing\";\n")],
         );
         let program = load(&packages, &root.join("src/main.peep"), &HashMap::new());
-        let main = &program.modules["myapp:main"];
+        let main = program.module("myapp:main").unwrap();
         assert_eq!(main.diagnostics.len(), 1, "{:?}", messages(&program));
         let label = &main.diagnostics[0].labels[0];
         assert_eq!(main.ast.file.position(label.span.start as usize), (2, 1));
@@ -566,7 +584,7 @@ mod tests {
         let label = &program.diagnostics[0].labels[0];
         assert!(Arc::ptr_eq(
             &label.file,
-            &program.modules["myapp:b"].ast.file
+            &program.module("myapp:b").unwrap().ast.file
         ));
     }
 
@@ -586,7 +604,7 @@ mod tests {
         );
         // the implicit import must not repeat an explicit one
         assert_eq!(
-            imports(&program.modules["myapp:main"]),
+            imports(program.module("myapp:main").unwrap()),
             ["global=core:global"]
         );
     }
@@ -606,7 +624,7 @@ mod tests {
             ["tool: M0003 a single file cannot import; check its project folder instead"]
         );
         assert_eq!(
-            imports(&program.modules["tool"]),
+            imports(program.module("tool").unwrap()),
             ["=core:global"],
             "the prelude still comes in"
         );
@@ -653,25 +671,22 @@ mod tests {
         let first = load(&packages, &entry, &HashMap::new());
         assert!(messages(&first).is_empty());
         assert_eq!(first.modules.len(), 202);
-        let position: HashMap<&str, usize> = first
-            .order
-            .iter()
-            .enumerate()
-            .map(|(i, p)| (p.as_str(), i))
-            .collect();
-        for (path, module) in &first.modules {
+        let position: HashMap<&str, usize> =
+            (0..).zip(order(&first)).map(|(i, p)| (p, i)).collect();
+        for module in &first.modules {
             for import in &module.imports {
                 assert!(
-                    position[import.path.as_str()] < position[path.as_str()],
-                    "{path} before {}",
+                    position[import.path.as_str()] < position[module.path.as_str()],
+                    "{} before {}",
+                    module.path,
                     import.path
                 );
             }
         }
         for _ in 0..5 {
             assert_eq!(
-                load(&packages, &entry, &HashMap::new()).order,
-                first.order,
+                order(&load(&packages, &entry, &HashMap::new())),
+                order(&first),
                 "order differs between runs"
             );
         }
@@ -695,7 +710,10 @@ mod tests {
         ]);
         let program = load(&packages, &root.join("src/main.peep"), &open_files);
         assert_eq!(messages(&program), Vec::<String>::new());
-        assert_eq!(program.modules["myapp:b"].ast.file.text, "fn B() {}");
+        assert_eq!(
+            program.module("myapp:b").unwrap().ast.file.text,
+            "fn B() {}"
+        );
     }
 
     #[test]

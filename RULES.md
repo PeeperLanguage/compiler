@@ -130,6 +130,31 @@ Names must keep their meaning when read as plain text, with no editor help:
 - No `pub use` re-exports: an item is named by the module that defines it
   (`pub mod semantic_types;` and `model::semantic_types::TypeId`, not `model::TypeId`).
 
+### 5.1 Data: one fact, one place, one meaning
+
+Before adding a field, struct, alias, or file, answer:
+
+- **Derived?** If an existing field gives it or can compute it, do not store
+  it. A map keyed by `x` whose values also hold `x`, or a list of keys kept
+  next to the map, stores one fact twice.
+- **Writer?** Name the one phase that writes it. A phase does not write
+  fields of a struct another phase owns; it builds its own.
+- **Name?** The name says what the value means and which phase it belongs
+  to, not its shape: `semantic_types`, not `types`; `name: Ident`, not
+  `name: Span`; a field of diagnostics is not called `names`.
+- **Clash?** No two types used in the same file share a name
+  (`build::Module` and `project::Module`), and a variable does not change type
+  when it is bound again.
+- **Type over convention.** A meaning the reader must learn from a comment
+  ("this span is the name") belongs in the type. Keep one record per thing:
+  not several parallel lists indexed alike when the thing has a struct.
+- **Type aliases** add a name, not a type. Add one only when the name itself
+  is needed; a doc comment on the field does the same job.
+
+After changing a representation (a map to a list, a tuple to a struct, a
+rename), search for the old shape in code, docs, examples, and comments, and
+remove what is left before reporting.
+
 ## 6. Change scope
 
 Keep diffs minimal and task-focused. Do not mix unrelated refactors, scatter workarounds across callers, or add special cases that hide known defect.
@@ -231,6 +256,7 @@ Before completion, verify:
 - [ ] Every new production symbol has a current non-test production consumer; rejected experiments left no production scaffolding.
 - [ ] New helpers satisfy Section 2.
 - [ ] No duplicated semantic decision remains in touched area when one owner is clearer.
+- [ ] Every new field, type, alias, and file passes Section 5.1, and no remnant of a replaced representation is left.
 - [ ] Diagnostics, validation, mutation, caching, normalization, logging, fallback behavior, and invariants were preserved or intentionally changed.
 - [ ] Verified correctness boundaries were preserved or changed with rationale and tests.
 - [ ] Generated artifacts come from real transformations.
