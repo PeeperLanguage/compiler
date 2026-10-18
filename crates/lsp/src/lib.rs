@@ -355,19 +355,11 @@ impl<'s> Server<'s> {
                         .extend(body_names);
                 },
             );
-            // A module the compile reused gave no names; with its text as
-            // before, the names found before still fit it. A module checked
-            // again replaces its names below.
-            let unchanged = |file: &PathBuf| {
-                let before = compiled_program
-                    .as_ref()
-                    .and_then(|before| before.module_of(file));
-                let now = program.module_of(file);
-                before
-                    .zip(now)
-                    .is_some_and(|(before, now)| before.ast.file.text == now.ast.file.text)
-            };
-            names.retain(|file, _| unchanged(file));
+            // A module the compile reused gave no names; the names found
+            // before still fit it. A module checked again gets its new names.
+            let reused: HashSet<&Path> =
+                results.reused().map(|file| Path::new(&file.name)).collect();
+            names.retain(|file, _| reused.contains(file.as_path()));
             names.extend(found.into_iter().map(|(module, found)| {
                 let file = &program.modules[module.index()].ast.file.name;
                 (PathBuf::from(file), found)

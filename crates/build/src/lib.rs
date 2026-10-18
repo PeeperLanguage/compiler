@@ -49,6 +49,13 @@ impl Results {
         let checked = self.modules.iter().flat_map(|module| &module.diagnostics);
         scopes.chain(checked)
     }
+
+    /// The files of the modules this compile reused instead of checking them
+    /// again.
+    pub fn reused(&self) -> impl Iterator<Item = &SourceFile> {
+        let reused = self.modules.iter().filter(|module| module.reused);
+        reused.map(|module| &*module.file)
+    }
 }
 
 /// What a compile found in one module.
@@ -57,6 +64,7 @@ struct Module {
     interface: u64,        // `Build::interface`
     scope_diagnostics: Vec<Diagnostic>, // from building its scope; redone every compile
     diagnostics: Vec<Diagnostic>, // from checking it; kept while it is reused
+    reused: bool,          // kept from the previous compile, not checked
 }
 
 /// Checks every declaration of `program`, lowers each function to MIR and
@@ -151,13 +159,15 @@ pub fn compile(
         .iter()
         .zip(scope_diagnostics)
         .zip(build.diagnostics)
-        .zip(interfaces);
+        .zip(interfaces)
+        .zip(build.reused);
     let modules = modules.map(
-        |(((module, scope_diagnostics), diagnostics), interface)| Module {
+        |((((module, scope_diagnostics), diagnostics), interface), reused)| Module {
             file: module.ast.file.clone(),
             interface,
             scope_diagnostics,
             diagnostics,
+            reused,
         },
     );
     Results {
@@ -673,8 +683,16 @@ mod tests {
             "app:utils",
             "fn Add(a: i32, b: i32) -> i32 { return b + a; }",
         );
-        let (_, checked) = recompile(&[utils, OTHER, MAIN], first);
+        let (second, checked) = recompile(&[utils, OTHER, MAIN], first);
         assert_eq!(checked, ["app:utils"]);
+        let reused: Vec<&str> = second.reused().map(|file| file.name.as_str()).collect();
+        assert_eq!(
+            reused,
+            [
+                "/peeper-build-test/src/other.peep",
+                "/peeper-build-test/src/main.peep"
+            ]
+        );
     }
 
     #[test]
