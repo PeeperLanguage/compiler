@@ -19,6 +19,7 @@ use model::ast::MatchArm;
 use model::ast::Metadata;
 use model::ast::Param;
 use model::ast::Pattern;
+use model::ast::Signature;
 use model::ast::Stmt;
 use model::ast::Tree;
 use model::ast::Type;
@@ -167,12 +168,7 @@ impl Dumper<'_> {
                     Decl::Function(f) => {
                         let mut children: Vec<Item> =
                             self.metadata(f.metadata).into_iter().collect();
-                        children.extend(f.receiver.map(Item::Param));
-                        children.push(declared(f.name));
-                        children.extend(names("declared name", f.type_parameters));
-                        children.extend(t.lists.items(f.parameters).map(Item::Param));
-                        children.extend(f.result.map(Item::Type));
-                        children.extend(names("name reference", f.origins));
+                        children.extend(self.signature(Some(f.name), f.signature));
                         children.extend(f.body.map(Item::Block));
                         ("function declaration", None, span, children)
                     }
@@ -272,6 +268,24 @@ impl Dumper<'_> {
         self.write(kind, op, span, &children, depth);
     }
 
+    /// A signature's parts, with the function's `name`, if any, in source
+    /// order after the receiver.
+    fn signature(&self, name: Option<Ident>, signature: Signature) -> Vec<Item> {
+        let t = self.tree;
+        let names = |kind: &'static str, list: List<ast::Name>| {
+            t.lists
+                .items(list)
+                .map(move |name| Item::Leaf(kind, t.names.span(name)))
+        };
+        let mut children: Vec<Item> = signature.receiver.map(Item::Param).into_iter().collect();
+        children.extend(name.map(declared));
+        children.extend(names("declared name", signature.type_parameters));
+        children.extend(t.lists.items(signature.parameters).map(Item::Param));
+        children.extend(signature.result.map(Item::Type));
+        children.extend(names("name reference", signature.origins));
+        children
+    }
+
     fn type_node(&self, id: Id<Type>) -> (&'static str, Option<TokenKind>, Span, Vec<Item>) {
         let t = self.tree;
         let span = t.types.span(id);
@@ -301,20 +315,7 @@ impl Dumper<'_> {
             }
             Type::DynamicArray(element) => ("dynamic array type", None, one(element)),
             Type::Slice(element) => ("slice type", None, one(element)),
-            Type::Function {
-                parameters,
-                result,
-                origins,
-            } => {
-                let mut children: Vec<Item> = t.lists.items(parameters).map(Item::Param).collect();
-                children.extend(result.map(Item::Type));
-                children.extend(
-                    t.lists
-                        .items(origins)
-                        .map(|n| Item::Leaf("name reference", t.names.span(n))),
-                );
-                ("function type", None, children)
-            }
+            Type::Function(signature) => ("function type", None, self.signature(None, signature)),
             Type::Struct(fields) => (
                 "struct type",
                 None,

@@ -70,7 +70,7 @@ pub fn collect(
             index: declaration.index() as u32,
         };
         let (name, binding) = match tree.decls[declaration] {
-            ast::Decl::Function(function) if function.receiver.is_none() => {
+            ast::Decl::Function(function) if function.signature.receiver.is_none() => {
                 (function.name, Binding::Function(definition))
             }
             ast::Decl::Function(_) => continue, // a method belongs to its receiver's type

@@ -18,25 +18,25 @@ impl<Q: Queries> Checker<'_, Q> {
     pub fn signature(&mut self, declaration: Id<ast::Decl>) -> TypeId {
         let tree = &self.module.ast;
         match tree.decls[declaration] {
-            ast::Decl::Function(function) => {
-                if let Some(receiver) = function.receiver {
+            ast::Decl::Function(ast::Function { signature, .. }) => {
+                if let Some(receiver) = signature.receiver {
                     return self.not_supported(tree.params.span(receiver), "methods");
                 }
-                if let Some(parameter) = tree.lists.items(function.type_parameters).next() {
+                if let Some(parameter) = tree.lists.items(signature.type_parameters).next() {
                     return self.not_supported(tree.names.span(parameter), "generic functions");
                 }
-                if let Some(origin) = tree.lists.items(function.origins).next() {
+                if let Some(origin) = tree.lists.items(signature.origins).next() {
                     return self.not_supported(tree.names.span(origin), "`from` origins");
                 }
-                let mut parameters = Vec::with_capacity(function.parameters.len());
-                for parameter in tree.lists.items(function.parameters) {
+                let mut parameters = Vec::with_capacity(signature.parameters.len());
+                for parameter in tree.lists.items(signature.parameters) {
                     let parameter = tree.params[parameter];
                     if let Some(default) = parameter.default {
                         return self.not_supported(tree.exprs.span(default), "default parameters");
                     }
                     parameters.push(self.resolve_type(parameter.ty));
                 }
-                let result = function
+                let result = signature
                     .result
                     .map_or(TypeId::VOID, |result| self.resolve_type(result));
                 let parameters = parameters.into();
@@ -98,7 +98,7 @@ impl<Q: Queries> Checker<'_, Q> {
             ast::Type::FixedArray { .. } => "array types",
             ast::Type::DynamicArray(_) => "dynamic array types",
             ast::Type::Slice(_) => "slice types",
-            ast::Type::Function { .. } => "function types",
+            ast::Type::Function(_) => "function types",
             ast::Type::Struct(_) => "struct types",
             ast::Type::Enum(_) => "enum types",
             ast::Type::Interface(_) => "interface types",

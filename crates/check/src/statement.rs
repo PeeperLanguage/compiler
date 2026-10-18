@@ -52,7 +52,11 @@ impl<'a, Q: Queries> Checker<'a, Q> {
         let (parameters, result) = (parameters.clone(), *result);
         let tree = &self.module.ast;
         let mut checker = BodyChecker::new(self, result);
-        for (parameter, &ty) in tree.lists.items(function.parameters).zip(&parameters) {
+        for (parameter, &ty) in tree
+            .lists
+            .items(function.signature.parameters)
+            .zip(&parameters)
+        {
             let parameter = tree.params[parameter];
             let name = parameter.name.unwrap_or_default();
             let local = checker.body.add(

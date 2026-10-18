@@ -2,10 +2,13 @@
 //! struct, enum and interface types of type declarations.
 
 use arena::Id;
+use arena::List;
 use diagnostics::Diagnostic;
 use model::ast::Decl;
 use model::ast::Field;
+use model::ast::Function;
 use model::ast::Length;
+use model::ast::Metadata;
 use model::ast::Param;
 use model::ast::Type;
 use model::ast::Variant;
@@ -195,35 +198,21 @@ impl Parser<'_> {
     /// Reads `fn(name: T, U) -> R from name`; parameter names are optional.
     fn function_type(&mut self) -> Id<Type> {
         let start = self.next().span.start;
-        let parameters = self.delimited(
-            TokenKind::LeftParen,
-            TokenKind::RightParen,
-            false,
-            starts_type,
-            |p| {
-                let start = p.tok().span.start;
-                let name = p.parameter_name();
-                let ty = p.type_expr();
-                p.add(
-                    start,
-                    Param {
-                        mutable: false,
-                        name,
-                        ty,
-                        default: None,
-                    },
-                )
-            },
-        );
-        let (result, origins) = self.result();
-        self.add(
-            start,
-            Type::Function {
-                parameters,
-                result,
-                origins,
-            },
-        )
+        let signature = self.signature(None, List::EMPTY, starts_type, |p| {
+            let start = p.tok().span.start;
+            let name = p.parameter_name();
+            let ty = p.type_expr();
+            p.add(
+                start,
+                Param {
+                    mutable: false,
+                    name,
+                    ty,
+                    default: None,
+                },
+            )
+        });
+        self.add(start, Type::Function(signature))
     }
 
     /// Reads `{ name: Type, ... }`, the fields of a struct type that starts at
@@ -280,11 +269,11 @@ impl Parser<'_> {
                 if !p.at(TokenKind::LeftParen) {
                     p.expect(TokenKind::LeftParen);
                 }
-                let f = p.signature();
-                let parameters: Vec<_> = f
+                let (name, signature) = p.named_signature();
+                let parameters: Vec<_> = signature
                     .receiver
                     .into_iter()
-                    .chain(p.tree.lists.items(f.parameters))
+                    .chain(p.tree.lists.items(signature.parameters))
                     .collect();
                 for parameter in parameters {
                     if let Some(value) = p.tree.params[parameter].default {
@@ -298,7 +287,15 @@ impl Parser<'_> {
                         );
                     }
                 }
-                p.add(start, Decl::Function(f))
+                p.add(
+                    start,
+                    Decl::Function(Function {
+                        metadata: Metadata::NONE,
+                        name,
+                        signature,
+                        body: None,
+                    }),
+                )
             },
         );
         self.add(start, Type::Interface(methods))

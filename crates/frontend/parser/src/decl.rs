@@ -13,6 +13,7 @@ use model::ast::Import;
 use model::ast::Metadata;
 use model::ast::Name;
 use model::ast::Param;
+use model::ast::Signature;
 use model::ast::Type;
 use model::ast::TypeDecl;
 use source::Span;
@@ -207,8 +208,9 @@ impl Parser<'_> {
         })
     }
 
-    /// Reads a function's signature after its `fn`; it has no body or metadata.
-    pub(crate) fn signature(&mut self) -> Function {
+    /// Reads `(receiver) name<T>(parameters) -> Result from origins` after a
+    /// function's `fn`: its name and signature.
+    pub(crate) fn named_signature(&mut self) -> (Ident, Signature) {
         let receiver = self.at(TokenKind::LeftParen).then(|| {
             let open = self.next();
             let receiver = self.parameter();
@@ -217,24 +219,9 @@ impl Parser<'_> {
         });
         let name = self.name();
         let type_parameters = self.type_parameters();
-        let parameters = self.delimited(
-            TokenKind::LeftParen,
-            TokenKind::RightParen,
-            false,
-            starts_parameter,
-            |p| p.parameter(),
-        );
-        let (result, origins) = self.result();
-        Function {
-            metadata: Metadata::NONE,
-            receiver,
-            name,
-            type_parameters,
-            parameters,
-            result,
-            origins,
-            body: None,
-        }
+        let signature =
+            self.signature(receiver, type_parameters, starts_parameter, Self::parameter);
+        (name, signature)
     }
 
     /// Reads a name into a node of its own: a type parameter or an origin.
@@ -331,9 +318,24 @@ impl Parser<'_> {
         Some(name)
     }
 
-    /// Reads what follows a parameter list: `-> Type` and the origins of a
-    /// returned reference, `from name` or `from (a, b)`. Both may be left out.
-    pub(crate) fn result(&mut self) -> (Option<Id<Type>>, List<Name>) {
+    /// Reads `(parameters) -> Type from origins`, each parameter with
+    /// `parameter`, into a signature with `receiver` and `type_parameters`
+    /// read before it. The result and the origins of a returned reference,
+    /// `from name` or `from (a, b)`, may be left out.
+    pub(crate) fn signature(
+        &mut self,
+        receiver: Option<Id<Param>>,
+        type_parameters: List<Name>,
+        starts_parameter: fn(TokenKind) -> bool,
+        parameter: impl FnMut(&mut Self) -> Id<Param>,
+    ) -> Signature {
+        let parameters = self.delimited(
+            TokenKind::LeftParen,
+            TokenKind::RightParen,
+            false,
+            starts_parameter,
+            parameter,
+        );
         let kind = self.tok().kind;
         let mut result = None;
         if kind == TokenKind::Arrow {
@@ -370,7 +372,13 @@ impl Parser<'_> {
                 origins = self.tree.lists.add(&[origin.into()]);
             }
         }
-        (result, origins)
+        Signature {
+            receiver,
+            type_parameters,
+            parameters,
+            result,
+            origins,
+        }
     }
 }
 
@@ -378,11 +386,13 @@ impl Parser<'_> {
 /// by a body, or by `;` for a function defined elsewhere.
 fn func_decl(p: &mut Parser, metadata: Metadata) -> Id<Decl> {
     let start = p.next().span.start;
-    let mut function = p.signature();
-    function.metadata = metadata;
-    match p.tok().kind {
-        TokenKind::Semicolon => p.end(),
-        TokenKind::LeftBrace => function.body = Some(p.block()),
+    let (name, signature) = p.named_signature();
+    let body = match p.tok().kind {
+        TokenKind::Semicolon => {
+            p.end();
+            None
+        }
+        TokenKind::LeftBrace => Some(p.block()),
         _ => {
             let at = p.here();
             p.fail(
@@ -392,9 +402,18 @@ fn func_decl(p: &mut Parser, metadata: Metadata) -> Id<Decl> {
                     "expected `{` or `;` here",
                 ),
             );
+            None
         }
-    }
-    p.add(start, Decl::Function(function))
+    };
+    p.add(
+        start,
+        Decl::Function(Function {
+            metadata,
+            name,
+            signature,
+            body,
+        }),
+    )
 }
 
 /// Reads `const name: Type = value;`.

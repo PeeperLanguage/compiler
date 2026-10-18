@@ -171,18 +171,28 @@ impl Decl {
     }
 }
 
-/// `fn (receiver) name<T>(parameters) -> Result from origins { body }`; also an
-/// interface method, without metadata and body.
+/// `fn (receiver) name<T>(parameters) -> Result from origins { body }`, or
+/// with `;` for a body defined elsewhere; an interface method has no body.
+/// Everything but the name and body is its signature.
 #[derive(Clone, Copy, Debug)]
 pub struct Function {
     pub metadata: Metadata,
-    pub receiver: Option<Id<Param>>,
     pub name: Ident,
+    pub signature: Signature,
+    pub body: Option<Id<Block>>,
+}
+
+/// A function's type: its receiver, type parameters, parameters, result and
+/// the origins of a returned reference. A function type `fn(T) -> R from a`
+/// has no receiver or type parameters, and its parameters only a name and a
+/// type.
+#[derive(Clone, Copy, Debug)]
+pub struct Signature {
+    pub receiver: Option<Id<Param>>,
     pub type_parameters: List<Name>,
     pub parameters: List<Param>,
     pub result: Option<Id<Type>>,
     pub origins: List<Name>, // what a returned reference may point into
-    pub body: Option<Id<Block>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -239,17 +249,13 @@ pub enum Type {
     /// `[..]T`
     Slice(Id<Type>),
     /// `fn(T) -> R from a`
-    Function {
-        parameters: List<Param>,
-        result: Option<Id<Type>>,
-        origins: List<Name>,
-    },
+    Function(Signature),
     /// `struct { fields }`
     Struct(List<Field>),
     /// `enum { variants }`
     Enum(List<Variant>),
-    /// `iface { methods }`: `Decl::Function`s without bodies
-    Interface(List<Decl>),
+    /// `iface { methods }`
+    Interface(List<Decl>), // `Decl::Function`s without bodies
     /// a type that could not be parsed
     Invalid,
 }
