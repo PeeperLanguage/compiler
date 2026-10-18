@@ -60,7 +60,7 @@ impl Results {
 /// What a compile found in one module.
 struct ModuleResults {
     file: Arc<SourceFile>, // its path tells the module's entry in the next compile
-    interface: u64,        // `Build::interface`
+    interface: u64,        // `Build::interface`; set when the module is done
     scope_diagnostics: Vec<Diagnostic>, // from building its scope; redone every compile
     diagnostics: Vec<Diagnostic>, // from checking it; kept while it is reused
     reused: bool,          // kept from the previous compile, not checked
@@ -82,11 +82,22 @@ pub fn compile(
     mut use_function: impl FnMut(DefId, &thir::Body, Option<&mir::Body>, &Types),
 ) -> Results {
     let modules = program.modules.as_slice();
-    let mut scope_diagnostics = vec![Vec::new(); modules.len()];
-    let scopes: Vec<ModuleScope> = (0..modules.len())
-        .zip(&mut scope_diagnostics)
-        .map(|(index, diagnostics)| {
-            check::scope::collect(ModuleId::from_index(index), modules, diagnostics)
+    let mut results: Vec<ModuleResults> = modules
+        .iter()
+        .map(|module| ModuleResults {
+            file: module.ast.file.clone(),
+            interface: 0,
+            scope_diagnostics: Vec::new(),
+            diagnostics: Vec::new(),
+            reused: false,
+        })
+        .collect();
+    let scopes: Vec<ModuleScope> = results
+        .iter_mut()
+        .enumerate()
+        .map(|(index, found)| {
+            let id = ModuleId::from_index(index);
+            check::scope::collect(id, modules, &mut found.scope_diagnostics)
         })
         .collect();
     let mut build = Build {
@@ -96,15 +107,13 @@ pub fn compile(
         pointer_bits,
         signatures: table(modules),
         constants: table(modules),
-        diagnostics: vec![Vec::new(); modules.len()],
-        reused: vec![false; modules.len()],
+        results,
     };
     let mut previous: HashMap<String, ModuleResults> = previous
         .modules
         .into_iter()
         .map(|cached| (cached.file.path.clone(), cached))
         .collect();
-    let mut interfaces = Vec::with_capacity(modules.len());
     // Whether each module's interface differs from the previous compile's.
     let mut changed: Vec<bool> = Vec::with_capacity(modules.len());
     for (index, module) in modules.iter().enumerate() {
@@ -121,9 +130,10 @@ pub fn compile(
             && imports_unchanged
             && cached.file.text == module.ast.file.text
         {
-            build.reused[index] = true;
-            build.diagnostics[index] = cached.diagnostics;
-            interfaces.push(cached.interface);
+            let found = &mut build.results[index];
+            found.reused = true;
+            found.diagnostics = cached.diagnostics;
+            found.interface = cached.interface;
             changed.push(false);
             continue;
         }
@@ -151,25 +161,10 @@ pub fn compile(
         }
         let interface = build.interface(id);
         changed.push(previous_interface != Some(interface));
-        interfaces.push(interface);
+        build.results[index].interface = interface;
     }
-    let found = modules
-        .iter()
-        .zip(scope_diagnostics)
-        .zip(build.diagnostics)
-        .zip(interfaces)
-        .zip(build.reused);
-    let found = found.map(
-        |((((module, scope_diagnostics), diagnostics), interface), reused)| ModuleResults {
-            file: module.ast.file.clone(),
-            interface,
-            scope_diagnostics,
-            diagnostics,
-            reused,
-        },
-    );
     Results {
-        modules: found.collect(),
+        modules: build.results,
     }
 }
 
@@ -217,10 +212,9 @@ struct Build<'p> {
     pointer_bits: u32,
     signatures: Vec<Vec<State<TypeId>>>,
     constants: Vec<Vec<State<Option<Constant>>>>,
-    diagnostics: Vec<Vec<Diagnostic>>, // by module
-    /// By module: whether it keeps the previous compile's diagnostics, which
-    /// asking for its declarations again would only repeat.
-    reused: Vec<bool>,
+    /// By module. A reused module keeps the previous compile's diagnostics,
+    /// which asking for its declarations again would only repeat.
+    results: Vec<ModuleResults>,
 }
 
 impl<'p> Build<'p> {
@@ -242,8 +236,9 @@ impl<'p> Build<'p> {
             diagnostics: &mut diagnostics,
         };
         let result = work(&mut checker);
-        if !self.reused[index] {
-            self.diagnostics[index].append(&mut diagnostics);
+        let found = &mut self.results[index];
+        if !found.reused {
+            found.diagnostics.append(&mut diagnostics);
         }
         result
     }
@@ -290,7 +285,7 @@ impl<'p> Build<'p> {
         let module = module.index();
         let tree = &self.modules[module].ast;
         let mir = lower::lower(body, parameters.len())?;
-        let diagnostics = &mut self.diagnostics[module];
+        let diagnostics = &mut self.results[module].diagnostics;
         lower::path_checks::initialization(&mir, &tree.file, diagnostics);
         lower::path_checks::unreachable_code(&mir, &tree.file, diagnostics);
         if let Some(error) =
@@ -333,13 +328,13 @@ impl<'p> Build<'p> {
     /// being checked: it depends on itself.
     fn report_cycle(&mut self, definition: DefId) {
         let module = definition.module.index();
-        if self.reused[module] {
+        if self.results[module].reused {
             return;
         }
         let tree = &self.modules[module].ast;
         let name = tree.decls[Id::from_index(definition.index as usize)].name();
         let text = name.text(&tree.file);
-        self.diagnostics[module].push(
+        self.results[module].diagnostics.push(
             Diagnostic::new(
                 diagnostics::CIRCULAR_DEPENDENCY,
                 format!("`{text}` depends on itself"),
