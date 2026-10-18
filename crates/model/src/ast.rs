@@ -143,12 +143,10 @@ pub enum Decl {
         ty: Option<Id<Type>>,
         value: Option<Id<Expr>>,
     },
-    /// `struct Name<T> { fields }`; the type is a `Type::Struct`
-    Struct(TypeDecl),
-    /// `enum Name<T> { variants }`; the type is a `Type::Enum`
-    Enum(TypeDecl),
-    /// `iface Name<T> { methods }`; the type is a `Type::Interface`
-    Interface(TypeDecl),
+    /// `struct Name<T> { fields }`, `enum Name<T> { variants }` or
+    /// `iface Name<T> { methods }`; its type, a `Type::Struct`, `Type::Enum`
+    /// or `Type::Interface`, says which
+    Type(TypeDecl),
     /// `type Name<T> = Type;`
     Alias(TypeDecl),
 }
@@ -159,10 +157,7 @@ impl Decl {
         match *self {
             Decl::Function(function) => function.name,
             Decl::Const { name, .. } => name,
-            Decl::Struct(declaration)
-            | Decl::Enum(declaration)
-            | Decl::Interface(declaration)
-            | Decl::Alias(declaration) => declaration.name,
+            Decl::Type(declaration) | Decl::Alias(declaration) => declaration.name,
         }
     }
 
@@ -171,10 +166,7 @@ impl Decl {
         match *self {
             Decl::Function(function) => function.metadata,
             Decl::Const { metadata, .. } => metadata,
-            Decl::Struct(declaration)
-            | Decl::Enum(declaration)
-            | Decl::Interface(declaration)
-            | Decl::Alias(declaration) => declaration.metadata,
+            Decl::Type(declaration) | Decl::Alias(declaration) => declaration.metadata,
         }
     }
 }

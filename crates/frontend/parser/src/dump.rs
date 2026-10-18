@@ -188,12 +188,15 @@ impl Dumper<'_> {
                         children.extend(value.map(Item::Expr));
                         ("const declaration", None, span, children)
                     }
-                    Decl::Struct(d) | Decl::Enum(d) | Decl::Interface(d) | Decl::Alias(d) => {
-                        let kind = match t.decls[id] {
-                            Decl::Struct(_) => "struct declaration",
-                            Decl::Enum(_) => "enum declaration",
-                            Decl::Interface(_) => "interface declaration",
-                            _ => "type alias declaration",
+                    Decl::Type(d) | Decl::Alias(d) => {
+                        let kind = match (t.decls[id], t.types[d.ty]) {
+                            (Decl::Alias(_), _) => "type alias declaration",
+                            (_, Type::Struct(_)) => "struct declaration",
+                            (_, Type::Enum(_)) => "enum declaration",
+                            (_, Type::Interface(_)) => "interface declaration",
+                            _ => {
+                                unreachable!("the parser gives a type declaration only these types")
+                            }
                         };
                         let mut children: Vec<Item> =
                             self.metadata(d.metadata).into_iter().collect();

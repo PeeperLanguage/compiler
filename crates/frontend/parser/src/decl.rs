@@ -441,10 +441,8 @@ fn type_decl(p: &mut Parser, metadata: Metadata) -> Id<Decl> {
         ty,
     };
     let node = match keyword.kind {
-        TokenKind::Struct => Decl::Struct(decl),
-        TokenKind::Enum => Decl::Enum(decl),
-        TokenKind::Iface => Decl::Interface(decl),
-        _ => Decl::Alias(decl),
+        TokenKind::Type => Decl::Alias(decl),
+        _ => Decl::Type(decl),
     };
     p.add(keyword.span.start, node)
 }

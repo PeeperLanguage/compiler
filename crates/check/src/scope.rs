@@ -75,10 +75,9 @@ pub fn collect(
             }
             ast::Decl::Function(_) => continue, // a method belongs to its receiver's type
             ast::Decl::Const { name, .. } => (name, Binding::Constant(definition)),
-            ast::Decl::Struct(declaration)
-            | ast::Decl::Enum(declaration)
-            | ast::Decl::Interface(declaration)
-            | ast::Decl::Alias(declaration) => (declaration.name, Binding::Type(definition)),
+            ast::Decl::Type(declaration) | ast::Decl::Alias(declaration) => {
+                (declaration.name, Binding::Type(definition))
+            }
         };
         declare(name.text(file), binding, name.span);
     }

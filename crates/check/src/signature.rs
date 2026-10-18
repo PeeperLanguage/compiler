@@ -45,14 +45,14 @@ impl<Q: Queries> Checker<'_, Q> {
                     .intern(Type::Function { parameters, result })
             }
             ast::Decl::Const { .. } => unreachable!("a constant's type comes with its value"),
-            ast::Decl::Struct(declaration) => {
-                self.not_supported(declaration.name.span, "struct declarations")
-            }
-            ast::Decl::Enum(declaration) => {
-                self.not_supported(declaration.name.span, "enum declarations")
-            }
-            ast::Decl::Interface(declaration) => {
-                self.not_supported(declaration.name.span, "interface declarations")
+            ast::Decl::Type(declaration) => {
+                let what = match tree.types[declaration.ty] {
+                    ast::Type::Struct(_) => "struct declarations",
+                    ast::Type::Enum(_) => "enum declarations",
+                    ast::Type::Interface(_) => "interface declarations",
+                    _ => unreachable!("the parser gives a type declaration only these types"),
+                };
+                self.not_supported(declaration.name.span, what)
             }
             ast::Decl::Alias(declaration) => {
                 self.not_supported(declaration.name.span, "type aliases")
