@@ -29,6 +29,7 @@ use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use model::thir;
+use project::ImportKind;
 use source::SourceFile;
 
 /// What a compile found, kept for the next compile of the same program.
@@ -74,25 +75,14 @@ pub fn compile(
     mut use_function: impl FnMut(DefId, &thir::Body, Option<&mir::Body>, &Types),
 ) -> Results {
     let modules = program.modules.as_slice();
-    let ids: HashMap<&str, ModuleId> = modules
-        .iter()
-        .enumerate()
-        .map(|(index, module)| (module.path.as_str(), ModuleId::from_index(index)))
-        .collect();
     let mut scope_diagnostics = vec![Vec::new(); modules.len()];
-    let scopes: Vec<ModuleScope> = modules
-        .iter()
-        .enumerate()
+    let scopes: Vec<ModuleScope> = (0..modules.len())
         .zip(&mut scope_diagnostics)
-        .map(|((index, module), diagnostics)| {
-            check::scope::collect(ModuleId::from_index(index), module, &ids, diagnostics)
+        .map(|(index, diagnostics)| {
+            check::scope::collect(ModuleId::from_index(index), modules, diagnostics)
         })
         .collect();
-    let program = Program {
-        prelude: ids.get(project::PRELUDE_PATH).copied(),
-        modules,
-        scopes,
-    };
+    let program = Program { modules, scopes };
     let mut build = Build {
         program: &program,
         types: Types::new(),
@@ -114,10 +104,10 @@ pub fn compile(
         let id = ModuleId::from_index(index);
         let tree = &module.ast;
         // An import comes before its importer, so it is decided already.
-        let imports_unchanged = module.imports.iter().all(|import| {
-            let imported = ids.get(import.path.as_str());
-            imported.is_some_and(|imported| changed.get(imported.index()) == Some(&false))
-        });
+        let imports_unchanged = module
+            .imports
+            .iter()
+            .all(|import| changed.get(import.module.index()) == Some(&false));
         let cached = previous.remove(&module.ast.file.name);
         let previous_interface = cached.as_ref().map(|cached| cached.interface);
         if let Some(cached) = cached
@@ -206,7 +196,6 @@ fn table<T: Clone>(modules: &[project::Module]) -> Vec<Vec<State<T>>> {
 struct Program<'p> {
     modules: &'p [project::Module], // in the program's order
     scopes: Vec<ModuleScope>,       // of each module
-    prelude: Option<ModuleId>,      // `core:global`, if loaded
 }
 
 /// Where one query of one declaration is.
@@ -246,7 +235,11 @@ impl<'p> Build<'p> {
             module: &program.modules[index],
             scopes: &program.scopes,
             scope: &program.scopes[index],
-            prelude: program.prelude.filter(|&prelude| prelude != module),
+            prelude: program.modules[index]
+                .imports
+                .iter()
+                .find(|import| import.kind == ImportKind::Prelude)
+                .map(|import| import.module),
             queries: self,
             diagnostics: &mut diagnostics,
         };
@@ -266,8 +259,12 @@ impl<'p> Build<'p> {
         let tree = &module.ast;
         let mut hasher = DefaultHasher::new();
         for import in &module.imports {
-            import.path.hash(&mut hasher);
-            import.alias.hash(&mut hasher);
+            let modules = self.program.modules;
+            modules[import.module.index()].path.hash(&mut hasher);
+            import
+                .name(module, modules)
+                .map(|(name, _)| name)
+                .hash(&mut hasher);
         }
         for declaration in tree.lists.items(tree.declarations) {
             let decl = &tree.decls[declaration];

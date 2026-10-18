@@ -2,7 +2,6 @@
 //! declarations are checked one at a time; checking one that asks about
 //! another needs the scheduler, so those tests live in the `build` crate.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use model::DefId;
@@ -10,6 +9,7 @@ use model::ModuleId;
 use model::constant::Constant;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
+use project::ImportKind;
 use source::SourceFile;
 
 use crate::Checker;
@@ -56,32 +56,34 @@ pub(crate) fn module(path: &str, text: &str, imports: Vec<project::Import>) -> p
 pub(crate) type Reported = (&'static str, String, String);
 
 /// Runs `work` on a checker of the module `app:main` written as `text`, which
-/// imports `app:utils` as `utils`. Gives what `work` gives, the program's
+/// imports `app:utils` as `utils` (an import added after `text`, so the
+/// places in `text` stay as written). Gives what `work` gives, the program's
 /// types and the diagnostics.
 pub(crate) fn with_checker<T>(
     text: &str,
     work: impl FnOnce(&mut Checker<Program>) -> T,
 ) -> (T, Types, Vec<Reported>) {
-    let imports = vec![project::Import {
-        path: "app:utils".to_string(),
-        alias: Some("utils".to_string()),
-        span: source::Span::new(0, 0),
-    }];
-    let utils = module("app:utils", "", Vec::new());
-    let main = module("app:main", text, imports);
-    let file = main.ast.file.clone();
     let (utils_id, main_id) = (ModuleId::from_index(0), ModuleId::from_index(1));
-    let ids = HashMap::from([("app:utils", utils_id), ("app:main", main_id)]);
+    let imports = vec![project::Import {
+        kind: ImportKind::Declared(0),
+        module: utils_id,
+    }];
+    let text = format!("{text}\nimport \"app:utils\";\n");
+    let modules = [
+        module("app:utils", "", Vec::new()),
+        module("app:main", &text, imports),
+    ];
+    let file = modules[1].ast.file.clone();
     let mut diagnostics = Vec::new();
     let scopes = [
-        collect(utils_id, &utils, &ids, &mut diagnostics),
-        collect(main_id, &main, &ids, &mut diagnostics),
+        collect(utils_id, &modules, &mut diagnostics),
+        collect(main_id, &modules, &mut diagnostics),
     ];
     let mut program = Program {
         types: Types::new(),
     };
     let mut checker = Checker {
-        module: &main,
+        module: &modules[1],
         scopes: &scopes,
         scope: &scopes[1],
         prelude: None,

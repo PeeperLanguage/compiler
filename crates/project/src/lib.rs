@@ -13,6 +13,8 @@ use std::sync::Mutex;
 use std::sync::mpsc;
 
 use diagnostics::Diagnostic;
+use model::ModuleId;
+use model::ast;
 use model::ast::Tree;
 use source::SourceFile;
 use source::Span;
@@ -21,22 +23,61 @@ use packages::path_of;
 use packages::resolve;
 
 /// Imported by every module except itself.
-pub const PRELUDE_PATH: &str = "core:global";
+const PRELUDE_PATH: &str = "core:global";
 
 /// One source file, read and parsed. It never changes once `load` has returned
 /// it. Its source file is `ast.file`.
 pub struct Module {
     pub path: String, // import path, such as "myapp:utils/file" or "core:global"
     pub ast: Tree,
-    pub imports: Vec<Import>, // in source order; the implicit prelude import last
+    pub imports: Vec<Import>, // in source order; the implicit prelude import last, in every module but the prelude
     pub diagnostics: Vec<Diagnostic>,
 }
 
 /// One resolved import of a module.
 pub struct Import {
-    pub path: String,          // import path of the imported module
-    pub alias: Option<String>, // its name in the importing file; None for the implicit prelude import
-    pub span: Span,            // where the import is written; empty for the implicit prelude import
+    pub kind: ImportKind,
+    pub module: ModuleId, // the imported module
+}
+
+/// Where an import comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImportKind {
+    /// The importer's `ast.imports[i]`, written in its file.
+    Declared(u32),
+    /// The implicit import of `core:global`.
+    Prelude,
+}
+
+impl ImportKind {
+    /// The import as written in `importer`; `None` for the prelude's.
+    pub fn declaration(self, importer: &Tree) -> Option<&ast::Import> {
+        match self {
+            ImportKind::Declared(index) => Some(&importer.imports[index as usize]),
+            ImportKind::Prelude => None,
+        }
+    }
+}
+
+impl Import {
+    /// The name the import brings into `importer`, and where it is written:
+    /// its alias, else the last segment of the imported module's path (in
+    /// `modules`), at the import. `None` for the prelude, whose names are
+    /// looked up, not brought in.
+    pub fn name<'a>(&self, importer: &'a Module, modules: &'a [Module]) -> Option<(&'a str, Span)> {
+        let declaration = self.kind.declaration(&importer.ast)?;
+        let name = match declaration.alias {
+            Some(alias) => alias.text(&importer.ast.file),
+            None => default_alias(&modules[self.module.index()].path),
+        };
+        Some((name, declaration.span))
+    }
+}
+
+/// The name an import without `as` gets: the last segment of the imported
+/// module's path, such as "file" for "myapp:utils/file".
+fn default_alias(path: &str) -> &str {
+    &path[path.rfind(['/', ':']).map_or(0, |i| i + 1)..]
 }
 
 /// Every module reachable from an entry file.
@@ -129,6 +170,32 @@ fn bundled_libraries(libraries: &Path) -> HashMap<String, PathBuf> {
         .collect()
 }
 
+/// A module being loaded: its imports are known by path until every module
+/// has its place in the program's order.
+struct Loaded {
+    path: String,
+    ast: Tree,
+    imports: Vec<(ImportKind, String)>, // with the imported module's path
+    diagnostics: Vec<Diagnostic>,
+}
+
+impl Loaded {
+    /// The module, its imports resolved to the places in `ids`.
+    fn into_module(self, ids: &HashMap<String, ModuleId>) -> Module {
+        let imports = self.imports.iter();
+        let imports = imports.map(|(kind, path)| Import {
+            kind: *kind,
+            module: ids[path], // every imported module is loaded
+        });
+        Module {
+            path: self.path,
+            ast: self.ast,
+            imports: imports.collect(),
+            diagnostics: self.diagnostics,
+        }
+    }
+}
+
 struct Job {
     path: String,
     file: PathBuf,
@@ -170,8 +237,8 @@ pub fn load(
                         .expect("a worker never panics holding the lock")
                         .recv();
                     let Ok(job) = job else { break }; // no more jobs
-                    let module = load_file(packages, open_files, job, with_prelude);
-                    _ = send_module.send(module);
+                    let loaded = load_file(packages, open_files, job, with_prelude);
+                    _ = send_module.send(loaded);
                 }
             });
         }
@@ -185,30 +252,36 @@ pub fn load(
         });
         let mut pending = 1;
         while pending > 0 {
-            let Ok(module) = done.recv() else { break };
+            let Ok(loaded) = done.recv() else { break };
             pending -= 1;
-            for import in &module.imports {
-                if seen.insert(import.path.clone()) {
-                    let (_, file) =
-                        resolve(packages, &import.path).expect("an import path is resolved");
+            for (_, path) in &loaded.imports {
+                if seen.insert(path.clone()) {
+                    let (_, file) = resolve(packages, path).expect("an import path is resolved");
                     _ = send_job.send(Job {
-                        path: import.path.clone(),
+                        path: path.clone(),
                         file,
                         standalone: false,
                     });
                     pending += 1;
                 }
             }
-            modules.insert(module.path.clone(), module);
+            modules.insert(loaded.path.clone(), loaded);
         }
         drop(send_job); // ends the workers
     });
 
     let (order, cycles) = sort_modules(&modules);
     // The order holds every module: the sort visits each.
+    let ids: HashMap<String, ModuleId> = order
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(index, path)| (path, ModuleId::from_index(index)))
+        .collect();
     let modules = order
         .iter()
         .filter_map(|path| modules.remove(path))
+        .map(|loaded| loaded.into_module(&ids))
         .collect();
     Program {
         modules,
@@ -224,7 +297,7 @@ fn load_file(
     open_files: &HashMap<PathBuf, String>,
     job: Job,
     with_prelude: bool,
-) -> Module {
+) -> Loaded {
     let name = job.file.to_string_lossy().into_owned();
     let text = match open_files.get(&job.file) {
         // Copied: every worker shares the map, and a source file owns its text.
@@ -252,17 +325,17 @@ fn load_file(
             (Tree::new(file), vec![error])
         }
     };
-    let mut module = Module {
+    let mut loaded = Loaded {
         path: job.path,
         ast,
         imports: Vec::new(),
         diagnostics,
     };
-    module.resolve_imports(packages, open_files, job.standalone, with_prelude);
-    module
+    loaded.resolve_imports(packages, open_files, job.standalone, with_prelude);
+    loaded
 }
 
-impl Module {
+impl Loaded {
     fn resolve_imports(
         &mut self,
         packages: &HashMap<String, PathBuf>,
@@ -272,7 +345,7 @@ impl Module {
     ) {
         let file = self.ast.file.clone();
         let mut aliases = HashMap::new(); // alias -> import path
-        for import in &self.ast.imports {
+        for (index, import) in (0..).zip(&self.ast.imports) {
             let written =
                 String::from_utf8_lossy(&literal::value(file.slice(import.path))).into_owned();
             let error = |code, message: String| {
@@ -300,7 +373,7 @@ impl Module {
             }
             let alias = match import.alias {
                 Some(alias) => alias.text(&file).to_string(),
-                None => path[path.rfind(['/', ':']).map_or(0, |i| i + 1)..].to_string(),
+                None => default_alias(&path).to_string(),
             };
             if let Some(previous) = aliases.get(&alias) {
                 if *previous != path {
@@ -321,24 +394,13 @@ impl Module {
                     .note("global symbols are always in scope without an import"),
                 );
             }
-            self.imports.push(Import {
-                path,
-                alias: Some(alias),
-                span: import.span,
-            });
+            self.imports.push((ImportKind::Declared(index), path));
         }
-        if with_prelude
-            && self.path != PRELUDE_PATH
-            && !self
-                .imports
-                .iter()
-                .any(|import| import.path == PRELUDE_PATH)
-        {
-            self.imports.push(Import {
-                path: PRELUDE_PATH.to_string(),
-                alias: None,
-                span: Span::at(0),
-            });
+        // Even next to a written import of it, so every module but the
+        // prelude finds its prelude among its imports.
+        if with_prelude && self.path != PRELUDE_PATH {
+            self.imports
+                .push((ImportKind::Prelude, PRELUDE_PATH.to_string()));
         }
     }
 }
@@ -353,14 +415,14 @@ enum Visit {
 /// import cycle. It visits modules and imports in path order, so the result
 /// does not depend on how the workers were scheduled.
 struct Sorter<'a> {
-    modules: &'a HashMap<String, Module>,
+    modules: &'a HashMap<String, Loaded>,
     visits: HashMap<&'a str, Visit>,
     stack: Vec<&'a str>, // the modules being visited, outermost first
     order: Vec<String>,
     cycles: Vec<Diagnostic>,
 }
 
-fn sort_modules(modules: &HashMap<String, Module>) -> (Vec<String>, Vec<Diagnostic>) {
+fn sort_modules(modules: &HashMap<String, Loaded>) -> (Vec<String>, Vec<Diagnostic>) {
     let mut sorter = Sorter {
         modules,
         visits: HashMap::with_capacity(modules.len()),
@@ -383,28 +445,29 @@ impl<'a> Sorter<'a> {
         self.visits.insert(path, Visit::Started);
         self.stack.push(path);
         let module = &self.modules[path];
-        let mut imports: Vec<&'a Import> = module.imports.iter().collect();
-        imports.sort_by(|a, b| a.path.cmp(&b.path));
-        for import in imports {
-            match self.visits.get(import.path.as_str()) {
-                None => self.visit(&import.path),
+        let mut imports: Vec<&'a (ImportKind, String)> = module.imports.iter().collect();
+        imports.sort_by(|(_, a), (_, b)| a.cmp(b));
+        // A module imported twice (`core:global`, written and implicit) is
+        // one edge; the stable sort keeps the written import, which has a
+        // place to point at.
+        imports.dedup_by(|(_, a), (_, b)| a == b);
+        for (kind, imported) in imports {
+            match self.visits.get(imported.as_str()) {
+                None => self.visit(imported),
                 Some(Visit::Started) => {
-                    let start = self
-                        .stack
-                        .iter()
-                        .position(|&p| p == import.path)
-                        .unwrap_or(0);
+                    let start = self.stack.iter().position(|&p| p == imported).unwrap_or(0);
                     let mut cycle = self.stack[start..].to_vec();
-                    cycle.push(&import.path);
-                    let d = Diagnostic::new(
+                    cycle.push(imported);
+                    let diagnostic = Diagnostic::new(
                         diagnostics::CYCLIC_IMPORT,
                         format!("cyclic import detected: {}", cycle.join(" -> ")),
                     );
-                    self.cycles.push(match import.alias {
-                        None => d.note(format!("every module imports `{PRELUDE_PATH}` implicitly")),
-                        Some(_) => d.label(
+                    self.cycles.push(match kind.declaration(&module.ast) {
+                        None => diagnostic
+                            .note(format!("every module imports `{PRELUDE_PATH}` implicitly")),
+                        Some(declaration) => diagnostic.label(
                             &module.ast.file,
-                            import.span,
+                            declaration.span,
                             "this import closes the cycle",
                         ),
                     });
@@ -468,12 +531,16 @@ mod tests {
         out
     }
 
-    fn imports(module: &Module) -> Vec<String> {
-        let alias = |import: &Import| import.alias.clone().unwrap_or_default();
+    fn imports(program: &Program, module: &Module) -> Vec<String> {
+        let alias = |import: &Import| {
+            let name = import.name(module, &program.modules);
+            name.map_or("", |(name, _)| name)
+        };
+        let path = |import: &Import| &program.modules[import.module.index()].path;
         module
             .imports
             .iter()
-            .map(|i| format!("{}={}", alias(i), i.path))
+            .map(|i| format!("{}={}", alias(i), path(i)))
             .collect()
     }
 
@@ -498,7 +565,7 @@ mod tests {
             "core:global myapp:b/c myapp:a myapp:main"
         );
         assert_eq!(
-            imports(program.module("myapp:main").unwrap()),
+            imports(&program, program.module("myapp:main").unwrap()),
             ["a=myapp:a", "c2=myapp:b/c", "=core:global"]
         );
         assert!(
@@ -588,6 +655,31 @@ mod tests {
         ));
     }
 
+    /// A cycle through the prelude, closed by a written import of it, is
+    /// reported once, at that import.
+    #[test]
+    fn a_cycle_through_the_prelude_is_reported_once() {
+        let (root, packages) = write(
+            "prelude_cycle",
+            &[
+                ("src/main.peep", "fn main() {}"),
+                ("libs/core/src/global.peep", r#"import "core:x";"#),
+                ("libs/core/src/x.peep", r#"import "core:global";"#),
+            ],
+        );
+        let program = load(&packages, &root.join("src/main.peep"), &HashMap::new());
+        let cycles: Vec<_> = program.diagnostics.iter().map(|d| &d.message).collect();
+        assert_eq!(
+            cycles,
+            ["cyclic import detected: core:global -> core:x -> core:global"]
+        );
+        let label = &program.diagnostics[0].labels[0];
+        assert!(Arc::ptr_eq(
+            &label.file,
+            &program.module("core:x").unwrap().ast.file
+        ));
+    }
+
     #[test]
     fn redundant_prelude_import() {
         let (root, packages) = write(
@@ -602,10 +694,10 @@ mod tests {
             messages(&program),
             ["myapp:main: S0004 `core:global` is imported automatically"]
         );
-        // the implicit import must not repeat an explicit one
+        // the implicit import is kept beside the written one
         assert_eq!(
-            imports(program.module("myapp:main").unwrap()),
-            ["global=core:global"]
+            imports(&program, program.module("myapp:main").unwrap()),
+            ["global=core:global", "=core:global"]
         );
     }
 
@@ -624,7 +716,7 @@ mod tests {
             ["tool: M0003 a single file cannot import; check its project folder instead"]
         );
         assert_eq!(
-            imports(program.module("tool").unwrap()),
+            imports(&program, program.module("tool").unwrap()),
             ["=core:global"],
             "the prelude still comes in"
         );
@@ -671,15 +763,13 @@ mod tests {
         let first = load(&packages, &entry, &HashMap::new());
         assert!(messages(&first).is_empty());
         assert_eq!(first.modules.len(), 202);
-        let position: HashMap<&str, usize> =
-            (0..).zip(order(&first)).map(|(i, p)| (p, i)).collect();
-        for module in &first.modules {
+        for (index, module) in first.modules.iter().enumerate() {
             for import in &module.imports {
                 assert!(
-                    position[import.path.as_str()] < position[module.path.as_str()],
+                    import.module.index() < index,
                     "{} before {}",
                     module.path,
-                    import.path
+                    first.modules[import.module.index()].path
                 );
             }
         }

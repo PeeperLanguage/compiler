@@ -28,15 +28,14 @@ impl ModuleScope {
     }
 }
 
-/// The scope of `module`, the module `id`; `module_ids` gives every module
-/// by its import path. A name declared twice keeps its first meaning and is
-/// reported.
+/// The scope of the module `id` of `modules`. A name declared twice keeps
+/// its first meaning and is reported.
 pub fn collect(
     id: ModuleId,
-    module: &project::Module,
-    module_ids: &HashMap<&str, ModuleId>,
+    modules: &[project::Module],
     diagnostics: &mut Vec<Diagnostic>,
 ) -> ModuleScope {
+    let module = &modules[id.index()];
     let file = &module.ast.file;
     let mut scope = ModuleScope {
         names: HashMap::new(),
@@ -60,9 +59,8 @@ pub fn collect(
     };
     // The loader already reported aliases used twice and kept the first.
     for import in &module.imports {
-        if let Some(alias) = &import.alias {
-            let imported = module_ids[import.path.as_str()];
-            declare(alias, Binding::Module(imported), import.span);
+        if let Some((name, span)) = import.name(module, modules) {
+            declare(name, Binding::Module(import.module), span);
         }
     }
     let tree = &module.ast;
@@ -89,110 +87,76 @@ pub fn collect(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use model::DefId;
     use model::ModuleId;
+    use project::Import;
+    use project::ImportKind;
 
     use super::collect;
     use crate::testing::module;
     use model::Binding;
 
+    /// The declaration `index` of the module at place `module`.
+    fn definition(module: usize, index: u32) -> DefId {
+        DefId {
+            module: ModuleId::from_index(module),
+            index,
+        }
+    }
+
     #[test]
     fn declarations_and_imports() {
-        let text = "fn main() { later(); }\nfn later() {}\nconst Limit: i32 = 4;\nstruct Point { x: i32 }\nfn (p: Point) length() -> i32 { return 0; }\n";
+        let text = "import \"app:utils\";\nfn main() { later(); }\nfn later() {}\nconst Limit: i32 = 4;\nstruct Point { x: i32 }\nfn (p: Point) length() -> i32 { return 0; }\n";
+        let (utils, global) = (ModuleId::from_index(0), ModuleId::from_index(1));
         let imports = vec![
-            project::Import {
-                path: "app:utils".to_string(),
-                alias: Some("utils".to_string()),
-                span: source::Span::new(0, 0),
+            Import {
+                kind: ImportKind::Declared(0),
+                module: utils,
             },
-            project::Import {
-                path: "core:global".to_string(),
-                alias: None,
-                span: source::Span::new(0, 0),
+            Import {
+                kind: ImportKind::Prelude,
+                module: global,
             },
         ];
-        let indexes = HashMap::from([
-            ("app:utils", ModuleId::from_index(0)),
-            ("core:global", ModuleId::from_index(1)),
-            ("app:main", ModuleId::from_index(2)),
-        ]);
+        let modules = [
+            module("app:utils", "", Vec::new()),
+            module("core:global", "fn global() {}", Vec::new()),
+            module("app:main", text, imports),
+        ];
         let mut diagnostics = Vec::new();
-        let scope = collect(
-            ModuleId::from_index(2),
-            &module("app:main", text, imports),
-            &indexes,
-            &mut diagnostics,
-        );
+        let scope = collect(ModuleId::from_index(2), &modules, &mut diagnostics);
         assert!(diagnostics.is_empty());
-        assert_eq!(
-            scope.get("main"),
-            Some(Binding::Function(DefId {
-                module: ModuleId::from_index(2),
-                index: 0
-            }))
-        );
+        assert_eq!(scope.get("main"), Some(Binding::Function(definition(2, 0))));
         assert_eq!(
             scope.get("later"),
-            Some(Binding::Function(DefId {
-                module: ModuleId::from_index(2),
-                index: 1
-            }))
+            Some(Binding::Function(definition(2, 1)))
         );
         assert_eq!(
             scope.get("Limit"),
-            Some(Binding::Constant(DefId {
-                module: ModuleId::from_index(2),
-                index: 2
-            }))
+            Some(Binding::Constant(definition(2, 2)))
         );
-        assert_eq!(
-            scope.get("Point"),
-            Some(Binding::Type(DefId {
-                module: ModuleId::from_index(2),
-                index: 3
-            }))
-        );
-        assert_eq!(
-            scope.get("utils"),
-            Some(Binding::Module(ModuleId::from_index(0)))
-        );
+        assert_eq!(scope.get("Point"), Some(Binding::Type(definition(2, 3))));
+        assert_eq!(scope.get("utils"), Some(Binding::Module(utils)));
         assert_eq!(scope.get("length"), None, "a method is not a module name");
         assert_eq!(scope.get("global"), None, "the prelude is not copied in");
     }
 
     #[test]
     fn a_name_declared_twice_keeps_its_first_meaning() {
-        let text =
-            "fn utils() {}\nconst A: i32 = 1;\nfn A() {}\nconst _: i32 = 2;\nconst _: i32 = 3;\n";
-        let imports = vec![project::Import {
-            path: "app:utils".to_string(),
-            alias: Some("utils".to_string()),
-            span: source::Span::new(0, 0),
+        let text = "import \"app:utils\";\nfn utils() {}\nconst A: i32 = 1;\nfn A() {}\nconst _: i32 = 2;\nconst _: i32 = 3;\n";
+        let utils = ModuleId::from_index(0);
+        let imports = vec![Import {
+            kind: ImportKind::Declared(0),
+            module: utils,
         }];
-        let indexes = HashMap::from([
-            ("app:utils", ModuleId::from_index(0)),
-            ("app:main", ModuleId::from_index(1)),
-        ]);
+        let modules = [
+            module("app:utils", "", Vec::new()),
+            module("app:main", text, imports),
+        ];
         let mut diagnostics = Vec::new();
-        let scope = collect(
-            ModuleId::from_index(1),
-            &module("app:main", text, imports),
-            &indexes,
-            &mut diagnostics,
-        );
-        assert_eq!(
-            scope.get("A"),
-            Some(Binding::Constant(DefId {
-                module: ModuleId::from_index(1),
-                index: 1
-            }))
-        );
-        assert_eq!(
-            scope.get("utils"),
-            Some(Binding::Module(ModuleId::from_index(0)))
-        );
+        let scope = collect(ModuleId::from_index(1), &modules, &mut diagnostics);
+        assert_eq!(scope.get("A"), Some(Binding::Constant(definition(1, 1))));
+        assert_eq!(scope.get("utils"), Some(Binding::Module(utils)));
         let messages: Vec<_> = diagnostics
             .iter()
             .map(|d| (d.code.id, d.message.as_str(), d.labels.len()))
