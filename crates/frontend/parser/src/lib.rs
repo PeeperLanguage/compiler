@@ -199,6 +199,18 @@ impl Parser {
         None
     }
 
+    /// "expected `kind`, found" the current token, without a label.
+    fn expected(&self, kind: TokenKind) -> Diagnostic {
+        Diagnostic::new(
+            diagnostics::EXPECTED_TOKEN,
+            format!(
+                "expected `{}`, found `{}`",
+                kind.text(),
+                self.tok().kind.text()
+            ),
+        )
+    }
+
     /// Describes `kind` missing before the current token. A missing closer
     /// belongs at the end of the text read so far, and so does any token when
     /// the current one is on a later line: the error points there and, when
@@ -207,10 +219,7 @@ impl Parser {
     /// parsing goes on.
     fn missing(&self, kind: TokenKind) -> Diagnostic {
         let t = self.tok();
-        let d = Diagnostic::new(
-            diagnostics::EXPECTED_TOKEN,
-            format!("expected `{}`, found `{}`", kind.text(), t.kind.text()),
-        );
+        let d = self.expected(kind);
         let closer = matches!(
             kind,
             TokenKind::RightParen
@@ -248,14 +257,8 @@ impl Parser {
         }
         let i = self.closer_ahead();
         if self.tokens[i].kind == kind {
-            let t = self.tok();
-            self.fail(
-                Diagnostic::new(
-                    diagnostics::EXPECTED_TOKEN,
-                    format!("expected `{}`, found `{}`", kind.text(), t.kind.text()),
-                )
-                .label(&self.tree.file, t.span, "this cannot be here"),
-            );
+            let d = self.expected(kind);
+            self.fail(d.label(&self.tree.file, self.tok().span, "this cannot be here"));
             while self.current() < i {
                 self.next();
             }
