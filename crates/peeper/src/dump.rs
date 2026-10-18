@@ -34,7 +34,7 @@ impl Dump {
 pub struct Dumps<'p> {
     program: &'p project::Program,
     kinds: &'p [Dump],
-    texts: Vec<String>, // by module, then by kind
+    texts: Vec<Vec<String>>, // by module, then by kind
 }
 
 impl<'p> Dumps<'p> {
@@ -43,7 +43,7 @@ impl<'p> Dumps<'p> {
         Dumps {
             program,
             kinds,
-            texts: vec![String::new(); program.modules.len() * kinds.len()],
+            texts: vec![vec![String::new(); kinds.len()]; program.modules.len()],
         }
     }
 
@@ -57,8 +57,8 @@ impl<'p> Dumps<'p> {
             declaration.name().text(&tree.file).to_string()
         };
         let file = &tree(definition).file;
-        for (index, kind) in self.kinds.iter().enumerate() {
-            let text = &mut self.texts[definition.module.index() * self.kinds.len() + index];
+        let texts = &mut self.texts[definition.module.index()];
+        for (text, kind) in texts.iter_mut().zip(self.kinds) {
             text.push_str("fn ");
             text.push_str(&name(definition));
             text.push_str(":\n");
@@ -73,9 +73,8 @@ impl<'p> Dumps<'p> {
     /// as a folder (`myapp:deep/x` to `myapp/deep/x.mir`), and names each file
     /// written in `out`. A module with no functions gets no file.
     pub fn write(&self, folder: &Path, out: &mut impl Write) -> std::io::Result<()> {
-        for (module_index, module) in self.program.modules.iter().enumerate() {
-            for (kind_index, kind) in self.kinds.iter().enumerate() {
-                let text = &self.texts[module_index * self.kinds.len() + kind_index];
+        for (module, texts) in self.program.modules.iter().zip(&self.texts) {
+            for (kind, text) in self.kinds.iter().zip(texts) {
                 if text.is_empty() {
                     continue;
                 }
