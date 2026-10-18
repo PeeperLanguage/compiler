@@ -17,7 +17,6 @@ use std::time::Instant;
 
 use arena::Id;
 use diagnostics::Severity;
-use diagnostics::fix::Certainty;
 use lsp_server::Connection;
 use lsp_server::ErrorCode;
 use lsp_server::Message;
@@ -628,7 +627,7 @@ fn quick_fixes(
             Some(CodeAction {
                 title: note.text.clone(),
                 kind: Some(CodeActionKind::QUICKFIX),
-                is_preferred: Some(note.certainty == Certainty::Sure),
+                is_preferred: Some(note.sure_fix()),
                 edit: Some(WorkspaceEdit {
                     document_changes: Some(DocumentChanges::Edits(documents)),
                     ..WorkspaceEdit::default()

@@ -32,7 +32,6 @@ use token::TokenKind;
 
 use crate::Diagnostic;
 use crate::Severity;
-use crate::fix::Certainty;
 use crate::fix::Fix;
 use unicode_general_category::GeneralCategory;
 use unicode_general_category::get_general_category;
@@ -201,9 +200,7 @@ impl Printer<'_> {
             if after_fixed_lines {
                 self.margin();
             }
-            // a sure fix is what `peeper fix` applies; a guess stays a help line
-            let sure_fix = !note.fixes.is_empty() && note.certainty == Certainty::Sure;
-            let (kind, color) = match (note.help, sure_fix) {
+            let (kind, color) = match (note.help, note.sure_fix()) {
                 (false, _) => ("note", CYAN),
                 (true, true) => ("fix", GREEN),
                 (true, false) => ("help", GREEN),

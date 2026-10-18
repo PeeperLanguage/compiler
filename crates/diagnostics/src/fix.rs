@@ -44,7 +44,7 @@ pub fn chosen<'d>(all: &'d [Diagnostic], root: &Path) -> Vec<(&'d Fix, &'d str)>
         let Some(help) = diagnostic.notes.iter().find(|note| !note.fixes.is_empty()) else {
             continue;
         };
-        let fits = help.certainty == Certainty::Sure
+        let fits = help.sure_fix()
             && help.fixes.iter().all(|fix| {
                 Path::new(&fix.file.path).starts_with(root)
                     && !chosen.iter().any(|&(taken, _)| overlap(fix, taken))

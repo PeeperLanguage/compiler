@@ -111,6 +111,14 @@ pub struct Note {
     pub certainty: Certainty, // of the fixes
 }
 
+impl Note {
+    /// Whether it carries fixes that are sure: what `peeper fix` applies, an
+    /// editor prefers and the printer labels `fix`.
+    pub fn sure_fix(&self) -> bool {
+        !self.fixes.is_empty() && self.certainty == Certainty::Sure
+    }
+}
+
 impl Diagnostic {
     pub fn new(code: Code, message: impl Into<String>) -> Diagnostic {
         Diagnostic {
