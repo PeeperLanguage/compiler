@@ -193,8 +193,9 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
         // hash order.
         let mut module_names: Vec<&str> = self.checker.scope().names().collect();
         module_names.sort_unstable();
-        let local_names = self.names.iter().map(|&(local, ..)| local);
-        let candidates = local_names.chain(module_names).map(|name| (name, 0));
+        // A local wins a tie with a module name: it is the nearer scope.
+        let local_names = self.names.iter().map(|&(local, ..)| (local, 0));
+        let candidates = local_names.chain(module_names.into_iter().map(|name| (name, 1)));
         let file = &self.tree.file;
         let mut diagnostic = Diagnostic::new(
             diagnostics::UNDEFINED_NAME,

@@ -1,0 +1,7 @@
+name = "negative_suggest_nearer_name"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["unknown name `cout`", "did you mean `count`?", "unknown name `courtt`", "did you mean `court`?", "Compilation failed with 2 error(s)"]
