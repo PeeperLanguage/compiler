@@ -33,7 +33,7 @@ type DeclarationRule = fn(&mut Parser, Metadata) -> Id<Decl>;
 /// each takes the declaration's doc comment and attributes.
 static DECLARATIONS: [Option<DeclarationRule>; 256] = {
     let mut declarations: [Option<DeclarationRule>; 256] = [None; 256];
-    declarations[TokenKind::Fn as usize] = Some(func_decl);
+    declarations[TokenKind::Fn as usize] = Some(function_decl);
     declarations[TokenKind::Const as usize] = Some(const_decl);
     declarations[TokenKind::Struct as usize] = Some(type_decl);
     declarations[TokenKind::Enum as usize] = Some(type_decl);
@@ -393,7 +393,7 @@ impl Parser {
 
 /// Reads `fn (receiver) name<T>(parameters) -> Result from origins` followed
 /// by a body, or by `;` for a function defined elsewhere.
-fn func_decl(p: &mut Parser, metadata: Metadata) -> Id<Decl> {
+fn function_decl(p: &mut Parser, metadata: Metadata) -> Id<Decl> {
     let start = p.next().span.start;
     let (name, signature) = p.named_signature();
     let body = match p.tok().kind {
