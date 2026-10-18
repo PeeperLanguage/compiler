@@ -17,6 +17,7 @@ use model::ModuleId;
 use model::constant::Constant;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
+use project::ImportKind;
 use source::Span;
 
 use crate::scope::ModuleScope;
@@ -44,9 +45,6 @@ pub struct Checker<'a, Q: Queries> {
     pub modules: &'a [project::Module],
     pub scopes: &'a [ModuleScope],
     pub current_module: ModuleId, // the module being checked
-    /// Where a name this module does not declare is looked up next:
-    /// `core:global`, unless this module is it or the program has none.
-    pub prelude: Option<ModuleId>,
     pub queries: &'a mut Q,
     pub diagnostics: &'a mut Vec<Diagnostic>,
 }
@@ -55,6 +53,16 @@ impl<'a, Q: Queries> Checker<'a, Q> {
     /// The module being checked.
     pub fn module(&self) -> &'a project::Module {
         &self.modules[self.current_module.index()]
+    }
+
+    /// Where a name the module does not declare is looked up next:
+    /// `core:global`, unless the module is it or the program has none.
+    fn prelude(&self) -> Option<ModuleId> {
+        let imports = &self.module().imports;
+        let prelude = imports
+            .iter()
+            .find(|import| import.kind == ImportKind::Prelude);
+        prelude.map(|import| import.module)
     }
 
     /// The names the module being checked declares and imports.
@@ -76,7 +84,7 @@ impl<'a, Q: Queries> Checker<'a, Q> {
     /// What `name` stands for at the top level: in this module, else in the
     /// prelude.
     fn global(&self, name: &str) -> Option<Binding> {
-        let prelude = || self.scopes[self.prelude?.index()].get(name);
+        let prelude = || self.scopes[self.prelude()?.index()].get(name);
         self.scope().get(name).or_else(prelude)
     }
 

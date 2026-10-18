@@ -280,7 +280,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
         });
         // The prelude's names are in every module's scope, private or not.
         let exported =
-            self.checker.prelude == Some(imported) || member_name.starts_with(char::is_uppercase);
+            self.checker.prelude() == Some(imported) || member_name.starts_with(char::is_uppercase);
         if !exported {
             let file = &tree.file;
             self.checker.diagnostics.push(

@@ -29,7 +29,6 @@ use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use model::thir;
-use project::ImportKind;
 use source::SourceFile;
 
 /// What a compile found, kept for the next compile of the same program.
@@ -245,11 +244,6 @@ impl<'p> Build<'p> {
             modules: program.modules,
             scopes: &program.scopes,
             current_module: module,
-            prelude: program.modules[index]
-                .imports
-                .iter()
-                .find(|import| import.kind == ImportKind::Prelude)
-                .map(|import| import.module),
             queries: self,
             diagnostics: &mut diagnostics,
         };

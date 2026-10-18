@@ -86,7 +86,6 @@ pub(crate) fn with_checker<T>(
         modules: &modules,
         scopes: &scopes,
         current_module: main_id,
-        prelude: None,
         queries: &mut program,
         diagnostics: &mut diagnostics,
     };
