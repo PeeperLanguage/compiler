@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
 
-const SOURCE_EXTENSION: &str = ".peep";
+pub(crate) const SOURCE_EXTENSION: &str = ".peep";
 
 /// The import path of the source file at `file`: its package and its path in
 /// that package's folder, without the extension. A file in no package's folder

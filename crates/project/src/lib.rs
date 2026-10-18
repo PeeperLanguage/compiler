@@ -19,11 +19,14 @@ use model::ast::Tree;
 use source::SourceFile;
 use source::Span;
 
+use packages::SOURCE_EXTENSION;
 use packages::path_of;
 use packages::resolve;
 
 /// Imported by every module except itself.
 const PRELUDE_PATH: &str = "core:global";
+/// The folder of a package that holds its source files.
+const SOURCE_FOLDER: &str = "src";
 
 /// One source file, read and parsed. It never changes once `load` has returned
 /// it. Its source file is `ast.file`.
@@ -146,8 +149,8 @@ pub fn find(path: &Path, libraries: &Path) -> Result<Project, String> {
             manifest.name
         ));
     }
-    let source = manifest.root.join("src");
-    let entry = source.join("main.peep");
+    let source = manifest.root.join(SOURCE_FOLDER);
+    let entry = source.join(format!("main{SOURCE_EXTENSION}"));
     packages.insert(manifest.name, source);
     Ok(Project {
         packages,
@@ -167,7 +170,7 @@ fn bundled_libraries(libraries: &Path) -> HashMap<String, PathBuf> {
         .filter(|entry| entry.path().is_dir())
         .filter_map(|entry| {
             let name = entry.file_name().into_string().ok()?;
-            manifest::valid_name(&name).then(|| (name, entry.path().join("src")))
+            manifest::valid_name(&name).then(|| (name, entry.path().join(SOURCE_FOLDER)))
         })
         .collect()
 }
@@ -351,7 +354,7 @@ impl Loaded {
             let written =
                 String::from_utf8_lossy(&literal::value(file.slice(import.path))).into_owned();
             let error = |code, message: String| {
-                Diagnostic::new(code, message.clone()).label(&file, import.span, message)
+                Diagnostic::new(code, message).label(&file, import.span, "")
             };
             if standalone {
                 let message = "a single file cannot import; check its project folder instead";
