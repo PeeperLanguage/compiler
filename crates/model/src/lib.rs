@@ -58,6 +58,24 @@ pub enum Declared {
     Constant(Option<Constant>),
 }
 
+impl Declared {
+    /// The signature of a function declaration.
+    pub fn signature(self) -> TypeId {
+        match self {
+            Declared::Signature(ty) => ty,
+            Declared::Constant(_) => unreachable!("a constant has a value, not a signature"),
+        }
+    }
+
+    /// The value of a constant declaration; `None` when it had an error.
+    pub fn constant(self) -> Option<Constant> {
+        match self {
+            Declared::Constant(value) => value,
+            Declared::Signature(_) => unreachable!("a function has a signature, not a value"),
+        }
+    }
+}
+
 /// A binary operator, named after what it does; the comment shows its token.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BinaryOp {

@@ -146,7 +146,7 @@ pub fn compile(
             };
             match tree.decls[declaration] {
                 ast::Decl::Function(function) => {
-                    let ty = build.signature(definition);
+                    let ty = build.declaration(definition).signature();
                     let mut names = Vec::new(); // allocates only when a name is recorded
                     let recorded = record_names.then_some(&mut names);
                     let thir =
@@ -157,10 +157,10 @@ pub fn compile(
                     }
                 }
                 ast::Decl::Const { .. } => {
-                    build.constant(definition);
+                    build.declaration(definition);
                 }
                 _ => {
-                    build.signature(definition);
+                    build.declaration(definition);
                 }
             }
         }
@@ -364,23 +364,19 @@ impl Queries for Build<'_> {
         self.pointer_bits
     }
 
-    fn signature(&mut self, function: DefId) -> TypeId {
-        let work = |checker: &mut Checker<_>, declaration| {
-            Declared::Signature(checker.signature(declaration))
-        };
-        match self.query(function, Declared::Signature(TypeId::INVALID), work) {
-            Declared::Signature(ty) => ty,
-            Declared::Constant(_) => unreachable!("a function's result is its signature"),
-        }
-    }
-
-    fn constant(&mut self, constant: DefId) -> Option<Constant> {
-        let work = |checker: &mut Checker<_>, declaration| {
-            Declared::Constant(checker.constant(declaration))
-        };
-        match self.query(constant, Declared::Constant(None), work) {
-            Declared::Constant(value) => value,
-            Declared::Signature(_) => unreachable!("a constant's result is its value"),
+    fn declaration(&mut self, definition: DefId) -> Declared {
+        let tree = &self.modules[definition.module.index()].ast;
+        let declaration = Id::from_index(definition.index as usize);
+        if let ast::Decl::Const { .. } = tree.decls[declaration] {
+            let work = |checker: &mut Checker<_>, declaration| {
+                Declared::Constant(checker.constant(declaration))
+            };
+            self.query(definition, Declared::Constant(None), work)
+        } else {
+            let work = |checker: &mut Checker<_>, declaration| {
+                Declared::Signature(checker.signature(declaration))
+            };
+            self.query(definition, Declared::Signature(TypeId::INVALID), work)
         }
     }
 }

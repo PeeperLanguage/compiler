@@ -12,9 +12,9 @@ mod testing;
 
 use diagnostics::Code;
 use diagnostics::Diagnostic;
+use model::Declared;
 use model::DefId;
 use model::ModuleId;
-use model::constant::Constant;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use project::ImportKind;
@@ -32,11 +32,9 @@ pub trait Queries {
     /// How wide a pointer is on the target, in bits: the width of `isize` and
     /// `usize`.
     fn pointer_bits(&self) -> u32;
-    /// The type of the function `function` (`Checker::signature`).
-    fn signature(&mut self, function: DefId) -> TypeId;
-    /// The type and value of the constant `constant` (`Checker::constant`);
-    /// `None` when it had an error, already reported.
-    fn constant(&mut self, constant: DefId) -> Option<Constant>;
+    /// What checking the declaration `definition` found: a constant's type
+    /// and value (`Checker::constant`), else a signature (`Checker::signature`).
+    fn declaration(&mut self, definition: DefId) -> Declared;
 }
 
 /// Checking declarations of one module.

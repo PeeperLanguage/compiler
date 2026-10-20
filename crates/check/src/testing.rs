@@ -4,10 +4,9 @@
 
 use std::sync::Arc;
 
+use model::Declared;
 use model::DefId;
 use model::ModuleId;
-use model::constant::Constant;
-use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use project::ImportKind;
 use source::SourceFile;
@@ -29,12 +28,8 @@ impl Queries for Program {
         64
     }
 
-    fn signature(&mut self, function: DefId) -> TypeId {
-        unreachable!("a check test asked for the signature of {function:?}; test it in `build`")
-    }
-
-    fn constant(&mut self, constant: DefId) -> Option<Constant> {
-        unreachable!("a check test asked for the value of {constant:?}; test it in `build`")
+    fn declaration(&mut self, definition: DefId) -> Declared {
+        unreachable!("a check test asked for {definition:?}; test it in `build`")
     }
 }
 

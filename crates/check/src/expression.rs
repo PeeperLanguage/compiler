@@ -168,7 +168,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
         let text = self.tree.file.slice(span);
         let (code, message) = match binding {
             Binding::Constant(constant) => {
-                return constant_expr(self.checker.queries.constant(constant));
+                return constant_expr(self.checker.queries.declaration(constant).constant());
             }
             Binding::Function(_) => {
                 self.checker.not_supported(span, "functions as values");
@@ -341,7 +341,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
             None => None,
         };
         let signature = function.map(|function| {
-            let ty = self.checker.queries.signature(function);
+            let ty = self.checker.queries.declaration(function).signature();
             (function, self.checker.queries.types()[ty].clone())
         });
         let Some((function, Type::Function { parameters, result })) = signature else {
