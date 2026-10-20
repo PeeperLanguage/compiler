@@ -418,9 +418,9 @@ impl<'s> Server<'s> {
             mut names,
             fix_all: _, // made again below
         } = self.checked.remove(&project.entry).unwrap_or_default();
-        let mut all: Vec<&diagnostics::Diagnostic> = program.load_diagnostics().collect();
+        let mut all: Vec<&diagnostics::Diagnostic> = program.diagnostics.iter().collect();
         // A program that cannot be checked keeps the last compile for the next.
-        let loaded = program.checkable();
+        let loaded = program.checkable;
         if loaded {
             let mut found: HashMap<ModuleId, Vec<CachedName>> = HashMap::new();
             results = build::compile(

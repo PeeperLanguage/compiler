@@ -352,7 +352,7 @@ mod tests {
             (folder.join("core/global.peep"), prelude.to_string()),
         ]);
         let program = project::load(&project, &open_files);
-        assert!(program.checkable());
+        assert!(program.checkable);
         let main = program.modules.len() - 1;
         let mut module = super::Module::new(&program, ModuleId::from_index(main), 64);
         let results = build::compile(

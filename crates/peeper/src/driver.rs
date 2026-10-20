@@ -59,7 +59,7 @@ pub fn run(
         }
     };
     let program = project::load(&project, &HashMap::<PathBuf, String>::new());
-    let mut all: Vec<Diagnostic> = program.load_diagnostics().cloned().collect();
+    let mut all: Vec<Diagnostic> = program.diagnostics.clone();
     let failed = |all: &[Diagnostic]| all.iter().any(Diagnostic::is_error);
     let dumps = match goal {
         Goal::Check { dumps, .. } => dumps,
@@ -68,7 +68,7 @@ pub fn run(
     let links = !matches!(goal, Goal::Check { .. });
     let pointer_bits = usize::BITS;
     let mut ll = Vec::new();
-    if program.checkable() {
+    if program.checkable {
         let mut dumped = Dumps::new(&program, dumps);
         if links || dumped.wants_ll() {
             ll = (0..program.modules.len())

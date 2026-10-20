@@ -40,15 +40,9 @@ pub struct Results {
 }
 
 impl Results {
-    /// Every diagnostic, in the order a compile from nothing reports them:
-    /// building every module's scope comes before checking any module.
+    /// Every diagnostic, module by module in the program's order.
     pub fn diagnostics(&self) -> impl Iterator<Item = &Diagnostic> {
-        let scopes = self
-            .modules
-            .iter()
-            .flat_map(|module| &module.scope_diagnostics);
-        let checked = self.modules.iter().flat_map(|module| &module.diagnostics);
-        scopes.chain(checked)
+        self.modules.iter().flat_map(|module| &module.diagnostics)
     }
 
     /// The files of the modules this compile reused instead of checking them
@@ -63,9 +57,12 @@ impl Results {
 struct ModuleResults {
     file: Arc<SourceFile>, // its path tells the module's entry in the next compile
     interface: u64,        // a hash of what other modules see; set when the module is done
-    scope_diagnostics: Vec<Diagnostic>, // from building its scope; redone every compile
-    diagnostics: Vec<Diagnostic>, // from checking it; kept while it is reused
-    reused: bool,          // kept from the previous compile, not checked
+    /// From building its scope, then checking it. Kept per module, not for
+    /// the whole program, so the next compile can keep an unchanged module's
+    /// and check only the others. Loading's errors are one list for the
+    /// whole program (`project::Program`), since every load is done anew.
+    diagnostics: Vec<Diagnostic>,
+    reused: bool, // kept from the previous compile, not checked
 }
 
 impl ModuleResults {
@@ -74,7 +71,6 @@ impl ModuleResults {
         ModuleResults {
             file,
             interface: 0,
-            scope_diagnostics: Vec::new(),
             diagnostics: Vec::new(),
             reused: false,
         }
@@ -114,7 +110,7 @@ pub fn compile(
     };
     for (index, module) in modules.iter().enumerate() {
         let id = ModuleId::from_index(index);
-        let diagnostics = &mut compilation.results[index].scope_diagnostics;
+        let diagnostics = &mut compilation.results[index].diagnostics;
         let set = module
             .scope
             .set(check::scope::collect(id, modules, diagnostics));
@@ -143,6 +139,7 @@ pub fn compile(
         {
             let found = &mut compilation.results[index];
             found.reused = true;
+            // Its scope's errors come from the same text, so are the same.
             found.diagnostics = cached.diagnostics;
             found.interface = cached.interface;
             changed.push(false);
@@ -406,10 +403,11 @@ mod tests {
         };
         let program = project::load(&project, &open_files);
         let reported: Vec<&str> = program
-            .load_diagnostics()
+            .diagnostics
+            .iter()
             .map(|diagnostic| diagnostic.message.as_str())
             .collect();
-        assert!(program.checkable(), "{reported:?}");
+        assert!(program.checkable, "{reported:?}");
         program
     }
 

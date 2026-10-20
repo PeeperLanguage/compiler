@@ -40,8 +40,6 @@ pub struct Module {
     pub path: String, // import path, such as "myapp:utils/file" or "core:global"
     pub ast: Tree,
     pub imports: Vec<Import>, // in source order; the implicit prelude import last, in every module but the prelude
-    pub imports_complete: bool, // every written import names a module it brings in
-    pub diagnostics: Vec<Diagnostic>, // from loading it
     /// The names it declares and imports; set once, after every module is
     /// loaded, because a scope needs the modules its imports bring in.
     pub scope: OnceCell<Scope>,
@@ -146,7 +144,17 @@ pub struct Program {
     /// Each module after the modules it imports; outside cycles, the same
     /// order every run.
     pub modules: Vec<Module>,
-    pub diagnostics: Vec<Diagnostic>, // about the program as a whole: import cycles
+    /// What loading found: import cycles first, then each module's errors,
+    /// in the program's order. One list for the whole program, because every
+    /// load reads every module again; what a compile finds is kept per
+    /// module instead (`build::Results`), so an unchanged module can reuse it.
+    pub diagnostics: Vec<Diagnostic>,
+    /// Whether the program can be checked: every module's text is all in its
+    /// tree, every import brings in its module, and no import cycle was found.
+    /// Checking with a hole in a tree or a missing import would only add
+    /// reports of it. A syntax error the parser read past, such as a missing
+    /// `;` at a line end, leaves no hole.
+    pub checkable: bool,
 }
 
 impl Program {
@@ -155,23 +163,6 @@ impl Program {
         self.modules
             .iter()
             .find(|module| Path::new(&module.ast.file.path) == file)
-    }
-
-    /// What loading found: about the program first, then each module's in
-    /// the program's order.
-    pub fn load_diagnostics(&self) -> impl Iterator<Item = &Diagnostic> {
-        let modules = self.modules.iter().flat_map(|module| &module.diagnostics);
-        self.diagnostics.iter().chain(modules)
-    }
-
-    /// Whether the program can be checked: every module's text is all in its
-    /// tree, every import brings in its module, and no import cycle was found.
-    /// Checking with a hole in a tree or a missing import would only add
-    /// reports of it. A syntax error the parser read past, such as a missing
-    /// `;` at a line end, leaves no hole.
-    pub fn checkable(&self) -> bool {
-        let complete = |module: &Module| module.ast.complete && module.imports_complete;
-        !self.diagnostics.iter().any(Diagnostic::is_error) && self.modules.iter().all(complete)
     }
 }
 
@@ -287,7 +278,7 @@ struct Loaded {
     path: String,
     ast: Tree,
     imports: Vec<(ImportKind, String)>, // with the imported module's path
-    imports_complete: bool,
+    imports_complete: bool,             // every written import names a module it brings in
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -303,8 +294,6 @@ impl Loaded {
             path: self.path,
             ast: self.ast,
             imports: imports.collect(),
-            imports_complete: self.imports_complete,
-            diagnostics: self.diagnostics,
             scope: OnceCell::new(),
         }
     }
@@ -406,14 +395,21 @@ pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + S
         .enumerate()
         .map(|(index, path)| (path, ModuleId::from_index(index)))
         .collect();
+    let mut diagnostics = cycles;
+    let mut checkable = !diagnostics.iter().any(Diagnostic::is_error);
     let modules = order
         .iter()
         .filter_map(|path| modules.remove(path))
-        .map(|loaded| loaded.into_module(&ids))
+        .map(|mut loaded| {
+            checkable &= loaded.ast.complete && loaded.imports_complete;
+            diagnostics.append(&mut loaded.diagnostics);
+            loaded.into_module(&ids)
+        })
         .collect();
     Program {
         modules,
-        diagnostics: cycles,
+        diagnostics,
+        checkable,
     }
 }
 
@@ -658,18 +654,24 @@ mod tests {
     }
 
     /// "module: CODE message" for every diagnostic, sorted.
+    /// Each diagnostic as the path of the module its first label is in, its
+    /// code and its message, sorted.
     fn messages(program: &Program) -> Vec<String> {
+        let module = |d: &Diagnostic| {
+            let file = Path::new(&d.labels.first()?.file.path);
+            Some(program.module_of(file)?.path.as_str())
+        };
         let mut out: Vec<String> = program
             .diagnostics
             .iter()
-            .map(|d| ("program", d))
-            .chain(
-                program
-                    .modules
-                    .iter()
-                    .flat_map(|m| m.diagnostics.iter().map(|d| (m.path.as_str(), d))),
-            )
-            .map(|(module, d)| format!("{module}: {} {}", d.code.id, d.message))
+            .map(|d| {
+                format!(
+                    "{}: {} {}",
+                    module(d).unwrap_or("program"),
+                    d.code.id,
+                    d.message
+                )
+            })
             .collect();
         out.sort();
         out
@@ -802,10 +804,12 @@ mod tests {
             .filter(|m| m.starts_with("myapp:main: "))
             .collect();
         assert_eq!(got, want);
-        assert!(!module_named(&program, "myapp:main").imports_complete);
-        assert!(module_named(&program, "myapp:a").imports_complete);
-        let b = module_named(&program, "myapp:b");
-        assert_eq!(b.diagnostics[0].code, diagnostics::EXPECTED_TOKEN);
+        assert!(!program.checkable);
+        let b = messages(&program)
+            .into_iter()
+            .find(|m| m.starts_with("myapp:b: "));
+        let expected_token = format!("myapp:b: {} ", diagnostics::EXPECTED_TOKEN.id);
+        assert!(b.is_some_and(|b| b.starts_with(&expected_token)));
     }
 
     #[test]
@@ -816,8 +820,8 @@ mod tests {
         );
         let program = load(&project, &HashMap::<PathBuf, String>::new());
         let main = module_named(&program, "myapp:main");
-        assert_eq!(main.diagnostics.len(), 1, "{:?}", messages(&program));
-        let label = &main.diagnostics[0].labels[0];
+        assert_eq!(program.diagnostics.len(), 1, "{:?}", messages(&program));
+        let label = &program.diagnostics[0].labels[0];
         assert_eq!(main.ast.file.position(label.span.start as usize), (2, 1));
     }
 
@@ -834,7 +838,7 @@ mod tests {
         let program = load(&project, &HashMap::<PathBuf, String>::new());
         assert_eq!(
             messages(&program),
-            ["program: M0002 cyclic import detected: myapp:a -> myapp:b -> myapp:a"]
+            ["myapp:b: M0002 cyclic import detected: myapp:a -> myapp:b -> myapp:a"]
         );
         let label = &program.diagnostics[0].labels[0];
         assert!(Arc::ptr_eq(
@@ -856,12 +860,17 @@ mod tests {
             ],
         );
         let program = load(&project, &HashMap::<PathBuf, String>::new());
-        let cycles: Vec<_> = program.diagnostics.iter().map(|d| &d.message).collect();
+        let cycles: Vec<_> = program
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == diagnostics::CYCLIC_IMPORT)
+            .collect();
+        let messages: Vec<_> = cycles.iter().map(|d| &d.message).collect();
         assert_eq!(
-            cycles,
+            messages,
             ["cyclic import detected: core:global -> core:x -> core:global"]
         );
-        let label = &program.diagnostics[0].labels[0];
+        let label = &cycles[0].labels[0];
         assert!(Arc::ptr_eq(
             &label.file,
             &module_named(&program, "core:x").ast.file
@@ -918,7 +927,7 @@ mod tests {
         let program = load(&project, &HashMap::<PathBuf, String>::new());
         let got = messages(&program);
         assert!(
-            got.len() == 1 && got[0].starts_with("myapp:main: M0001 read module: "),
+            got.len() == 1 && got[0].starts_with("program: M0001 read module: "),
             "{got:?}"
         );
         project.entry = project.root.join("src/bad.peep");
