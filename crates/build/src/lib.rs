@@ -20,6 +20,7 @@ use check::Checker;
 use check::Queries;
 use check::scope::ModuleScope;
 use diagnostics::Diagnostic;
+use model::Declared;
 use model::DefId;
 use model::ModuleId;
 use model::ast;
@@ -107,8 +108,7 @@ pub fn compile(
         scopes: &scopes,
         types: Types::new(),
         pointer_bits,
-        signatures: table(modules),
-        constants: table(modules),
+        declarations: table(modules),
         results,
     };
     let mut previous: HashMap<String, ModuleResults> = previous
@@ -192,15 +192,15 @@ fn hash_type(types: &Types, ty: TypeId, hasher: &mut DefaultHasher) {
     }
 }
 
-/// A query's results for every declaration of `modules`, none started.
-fn table<T: Clone>(modules: &[project::Module]) -> Vec<Vec<State<T>>> {
+/// The query results for every declaration of `modules`, none started.
+fn table(modules: &[project::Module]) -> Vec<Vec<State<Declared>>> {
     modules
         .iter()
         .map(|module| vec![State::NotStarted; module.ast.decls.len()])
         .collect()
 }
 
-/// Where one query of one declaration is.
+/// Where the query of one declaration is.
 #[derive(Clone)]
 enum State<T> {
     NotStarted,
@@ -215,8 +215,8 @@ struct Build<'p> {
     scopes: &'p [ModuleScope],      // of each module
     types: Types,
     pointer_bits: u32,
-    signatures: Vec<Vec<State<TypeId>>>,
-    constants: Vec<Vec<State<Option<Constant>>>>,
+    /// By module, then declaration.
+    declarations: Vec<Vec<State<Declared>>>,
     /// By module. A reused module keeps the previous compile's diagnostics,
     /// which asking for its declarations again would only repeat.
     results: Vec<ModuleResults>,
@@ -267,14 +267,13 @@ impl<'p> Build<'p> {
             let decl = &tree.decls[declaration];
             std::mem::discriminant(decl).hash(&mut hasher);
             decl.name().text(&tree.file).hash(&mut hasher);
-            if let State::Done(ty) = self.signatures[index][declaration.index()] {
-                hash_type(&self.types, ty, &mut hasher);
-            }
-            if let State::Done(Some(Constant { ty, value })) =
-                &self.constants[index][declaration.index()]
-            {
-                hash_type(&self.types, *ty, &mut hasher);
-                value.hash(&mut hasher);
+            match &self.declarations[index][declaration.index()] {
+                State::Done(Declared::Signature(ty)) => hash_type(&self.types, *ty, &mut hasher),
+                State::Done(Declared::Constant(Some(Constant { ty, value }))) => {
+                    hash_type(&self.types, *ty, &mut hasher);
+                    value.hash(&mut hasher);
+                }
+                _ => {}
             }
         }
         hasher.finish()
@@ -301,19 +300,18 @@ impl<'p> Build<'p> {
         Some(mir)
     }
 
-    /// The result of one query of `definition`, kept in `table`: the result
-    /// already found, `on_cycle` when the query is asked for while it runs (a
-    /// cycle, reported), or else what `work` finds with a checker of its
-    /// module, kept for the next ask.
-    fn query<T: Clone>(
+    /// The result of the query of `definition`: the result already found,
+    /// `on_cycle` when the query is asked for while it runs (a cycle,
+    /// reported), or else what `work` finds with a checker of its module,
+    /// kept for the next ask.
+    fn query(
         &mut self,
         definition: DefId,
-        table: fn(&mut Self) -> &mut Vec<Vec<State<T>>>,
-        on_cycle: T,
-        work: impl FnOnce(&mut Checker<Build<'p>>, Id<ast::Decl>) -> T,
-    ) -> T {
+        on_cycle: Declared,
+        work: impl FnOnce(&mut Checker<Build<'p>>, Id<ast::Decl>) -> Declared,
+    ) -> Declared {
         let (module, index) = (definition.module.index(), definition.index as usize);
-        match &table(self)[module][index] {
+        match &self.declarations[module][index] {
             State::Done(result) => return result.clone(),
             State::Running => {
                 self.report_cycle(definition);
@@ -321,11 +319,11 @@ impl<'p> Build<'p> {
             }
             State::NotStarted => {}
         }
-        table(self)[module][index] = State::Running;
+        self.declarations[module][index] = State::Running;
         let result = self.with_checker(definition.module, |checker| {
             work(checker, Id::from_index(index))
         });
-        table(self)[module][index] = State::Done(result.clone());
+        self.declarations[module][index] = State::Done(result.clone());
         result
     }
 
@@ -367,18 +365,23 @@ impl Queries for Build<'_> {
     }
 
     fn signature(&mut self, function: DefId) -> TypeId {
-        let work = |checker: &mut Checker<_>, declaration| checker.signature(declaration);
-        self.query(
-            function,
-            |build| &mut build.signatures,
-            TypeId::INVALID,
-            work,
-        )
+        let work = |checker: &mut Checker<_>, declaration| {
+            Declared::Signature(checker.signature(declaration))
+        };
+        match self.query(function, Declared::Signature(TypeId::INVALID), work) {
+            Declared::Signature(ty) => ty,
+            Declared::Constant(_) => unreachable!("a function's result is its signature"),
+        }
     }
 
     fn constant(&mut self, constant: DefId) -> Option<Constant> {
-        let work = |checker: &mut Checker<_>, declaration| checker.constant(declaration);
-        self.query(constant, |build| &mut build.constants, None, work)
+        let work = |checker: &mut Checker<_>, declaration| {
+            Declared::Constant(checker.constant(declaration))
+        };
+        match self.query(constant, Declared::Constant(None), work) {
+            Declared::Constant(value) => value,
+            Declared::Signature(_) => unreachable!("a constant's result is its value"),
+        }
     }
 }
 

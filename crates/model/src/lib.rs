@@ -9,6 +9,9 @@ pub mod mir;
 pub mod semantic_types;
 pub mod thir;
 
+use constant::Constant;
+use semantic_types::TypeId;
+
 /// A module of the program, by its place in the program's order. Tables of
 /// per-module results are vectors indexed by it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -44,6 +47,15 @@ pub enum Binding {
     Type(DefId),
     /// An imported module.
     Module(ModuleId),
+}
+
+/// What the query of a declaration found, by the declaration's kind.
+#[derive(Clone, Debug)]
+pub enum Declared {
+    /// What `Checker::signature` gives: a function's type, else `INVALID`.
+    Signature(TypeId),
+    /// A constant's type and value; `None` when it had an error.
+    Constant(Option<Constant>),
 }
 
 /// A binary operator, named after what it does; the comment shows its token.
