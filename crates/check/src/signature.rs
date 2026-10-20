@@ -10,7 +10,7 @@ use model::semantic_types::TypeId;
 use crate::Checker;
 use crate::Queries;
 use crate::builtin::unsupported_type;
-use model::Binding;
+use model::Symbol;
 
 impl<Q: Queries> Checker<'_, Q> {
     /// The signature of the module's declaration `declaration`, which is not
@@ -72,12 +72,17 @@ impl<Q: Queries> Checker<'_, Q> {
                     return builtin;
                 }
                 match self.global(name) {
-                    Some(Binding::Type(_)) => "named types",
-                    Some(Binding::Function(_) | Binding::Constant(_)) => {
+                    Some(Symbol::Type(_)) => "named types",
+                    Some(
+                        Symbol::Function(_)
+                        | Symbol::Constant(_)
+                        | Symbol::Local(_)
+                        | Symbol::BodyConstant(_),
+                    ) => {
                         let message = format!("`{name}` is a value, not a type");
                         return self.error(diagnostics::NOT_A_TYPE, message, span);
                     }
-                    Some(Binding::Module(_)) => {
+                    Some(Symbol::Module(_)) => {
                         let message = format!("`{name}` is a module, not a type");
                         return self.error(diagnostics::NOT_A_TYPE, message, span);
                     }

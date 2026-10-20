@@ -29,13 +29,21 @@ pub fn lower(body: &thir::Body, parameters: usize) -> Option<mir::Body> {
             blocks: Arena::default(),
             instructions: Arena::default(),
             variables: Arena::default(),
+            scopes: Arena::default(),
             constants: Vec::new(),
             lists: Lists::default(),
         },
         block: Id::from_index(0),
         instructions: Vec::new(),
     };
-    // One variable per local, in order: local `i` is variable `i`.
+    // One scope per block and one variable per local, in order: block `i` is
+    // scope `i` and local `i` is variable `i`.
+    let scope = |block: Id<thir::Block>| Id::from_index(block.index());
+    for block in body.blocks.ids() {
+        let parent = body.blocks[block].parent.map(scope);
+        let span = body.blocks.span(block);
+        lowering.mir.scopes.push(mir::Scope { parent }, span);
+    }
     for id in body.locals.ids() {
         let local = body.locals[id];
         if local.ty == TypeId::INVALID {
@@ -46,12 +54,14 @@ pub fn lower(body: &thir::Body, parameters: usize) -> Option<mir::Body> {
                 ty: local.ty,
                 mutable: local.mutable,
                 initialized: local.initialized,
-                scope: local.scope,
+                scope: scope(local.scope),
             },
             body.locals.span(id),
         );
     }
-    lowering.block = lowering.new_block(body.span);
+    let function = Id::from_index(0); // the function's block
+    let span = body.blocks.span(function);
+    lowering.block = lowering.new_block(span);
     for index in 0..parameters {
         let variable = Id::from_index(index);
         let store = mir::InstructionKind::Store {
@@ -61,8 +71,8 @@ pub fn lower(body: &thir::Body, parameters: usize) -> Option<mir::Body> {
         let span = lowering.mir.variables.span(variable);
         lowering.emit(store, TypeId::VOID, span);
     }
-    lowering.statements(body.statements)?;
-    let end = Span::new(body.span.end as usize - 1, body.span.end as usize); // the `}`
+    lowering.statements(body.blocks[function].statements)?;
+    let end = Span::new(span.end as usize - 1, span.end as usize); // the `}`
     lowering.finish(mir::Terminator::FallOff(end));
     Some(lowering.mir)
 }

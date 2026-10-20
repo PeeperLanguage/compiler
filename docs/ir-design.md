@@ -91,8 +91,11 @@ enum variants, function types) are `model` data, written by check.
 | `llvm` | LLVM text for a module; running clang and the linker |
 | `build` | the scheduler: memo tables, demand order, worker threads (the `build` of `overall-design.md`) |
 
-A scope's `Binding` and `ModuleScope` stay in `check`: only the checker reads
-them, and their one writer (`collect`) is checker logic.
+A module's `Scope` lives in its `project::Module`, set once by `check`'s
+`collect` after every module is loaded. A scope holds declarations; a name it
+does not hold is looked up in its parent's, so a module's scope has the
+prelude's as its parent. A name stands for a `model::Symbol`: a module,
+function, constant or type of a module scope, or a body's local or `const`.
 
 The typed arenas `Arena`, `Id` and `List` live in one small crate (`pkg/arena`)
 used by the syntax tree, THIR and MIR. The `Node` trait is generic over the
@@ -199,13 +202,14 @@ body(d)        THIR of function d (needs the signatures it calls)
 mir(d)         MIR of function d (needs body(d)); later also comptime calls
 ```
 
-- Each query's result is written once and never changed. A table per module and
-  per query, indexed by declaration, holds it.
+- Each query's result is written once and never changed. Each module holds a
+  table of them, indexed by the declaration's place among its top-level
+  declarations (`DefId`), so a body edit does not move it.
 - A query asked for while it is running is a cycle (`const A = B; const B = A;`)
   and is reported once (T0013), at the declaration asked for again; the other
   declarations of the cycle become silently invalid.
 - The `build` crate is the scheduler. It implements `check::Queries`; the scopes
-  of all modules are collected first and handed to each checker as plain data.
+  of all modules are collected first, into the modules, before any is checked.
   Programs with syntax or import errors are not checked.
 - The model is a hybrid. Across modules: the program's order, so imported
   declarations are always ready (import cycles are already errors), and
@@ -247,15 +251,14 @@ last keystroke; opening, saving and closing a file are checked at once.
 Go to definition and hover (owner's choice, 2026-10-18: the checker records
 names, not a second resolver). While checking a body, the checker appends a
 `thir::Name` for each name written in it (in `declare`, `resolve`, which
-looks every written name up, and module paths). Its `thir::Target` is what
-the checker resolved, not a copy: a name of the body (`Symbol`, a local or a
-body `const` by its id; the body's arenas hold its span and type, so body
-`const`s get an arena of their own, `consts`), or a module-level `Binding`
-(which lives in `model` for this). A body with an error
+looks every written name up, and module paths). Its `Symbol` is what the
+checker resolved, not a copy: a local or body `const` by its id (the body's
+arenas hold its span and type, so body `const`s get an arena of their own,
+`consts`), else a module-level declaration or module. A body with an error
 keeps its THIR, marked `has_errors` (as rustc marks typeck results
 `tainted_by_errors`), so names work while a function is broken; `lower::lower`
 gives no MIR for it, and `use_function` gets its THIR alone. `build` runs the
-phases one by one: `Checker::body` gives the THIR, `Build::lower` the MIR. `build` has no second way in for editors: the language
+phases one by one: `Checker::body` gives the THIR, `Compilation::lower` the MIR. `build` has no second way in for editors: the language
 server reads the names through `use_function` during its normal check and
 keeps them per module, beside the program it compiled, as gopls keeps what
 `go/types` records. A module the compile reused gives no names; while its
@@ -358,7 +361,11 @@ owner). A block declares each name once: a `let`, body `const` or parameter
 reusing a name of its own block is T0003, and the first keeps the name. The
 parameters are in the body's outermost block, as in Go, so a `let` there
 cannot reuse one; named results can join that block later (owner, 2026-10-18).
-These live in the checker, which knows the blocks; MIR has no scopes.
+These live in the checker, which knows the blocks. The blocks are the body's
+scopes: THIR's `blocks` arena holds each with its parent, the function's
+first, and each local names its block. Lowering copies them into MIR's
+`scopes` by the same ids, and the LLVM backend makes a `DILexicalBlock` of
+each that declares a variable, under its nearest such ancestor.
 
 `peeper -dump [thir | mir | ll] <path>` writes the THIR, MIR and LLVM IR of every function
 of a program without errors, or only the kind named, one file per module under

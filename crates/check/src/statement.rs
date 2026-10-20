@@ -18,14 +18,12 @@ use model::thir::ExprKind;
 use model::thir::Local;
 use model::thir::Name;
 use model::thir::Stmt;
-use model::thir::Symbol;
-use model::thir::Target;
 use source::Span;
 
 use crate::Checker;
 use crate::Queries;
 use crate::scope::already_declared;
-use model::Binding;
+use model::Symbol;
 
 /// Checking one function body.
 pub(crate) struct BodyChecker<'c, 'a, Q: Queries> {
@@ -40,8 +38,8 @@ pub(crate) struct BodyChecker<'c, 'a, Q: Queries> {
     pub(crate) names: Vec<(&'a str, Symbol)>,
     /// Where in `names` the current block's names start.
     block_start: usize,
-    /// The span of the current block, for the locals it declares.
-    scope: Span,
+    /// The current block, for the locals it declares.
+    block: Id<Block>,
     result: TypeId, // the function's result type
 }
 
@@ -58,13 +56,18 @@ impl<'a, Q: Queries> Checker<'a, Q> {
     ) -> Option<Body> {
         let block = function.body?;
         let reported = self.diagnostics.len();
-        let Type::Function { parameters, result } = &self.queries.types()[ty] else {
-            return None; // the signature's error was reported
+        // A match, so the types' guard is dropped before the body is checked.
+        let (parameters, result) = match &self.queries.types()[ty] {
+            Type::Function { parameters, result } => (parameters.clone(), *result),
+            _ => return None, // the signature's error was reported
         };
-        let (parameters, result) = (parameters.clone(), *result);
         let tree = &self.module().ast;
         let mut checker = BodyChecker::new(self, result, names);
-        checker.scope = tree.blocks.span(block);
+        let outermost = Block {
+            parent: None,
+            statements: List::EMPTY,
+        };
+        let outermost = checker.body.add(outermost, tree.blocks.span(block));
         for (parameter, &ty) in tree
             .lists
             .items(function.signature.parameters)
@@ -77,14 +80,14 @@ impl<'a, Q: Queries> Checker<'a, Q> {
                     ty,
                     mutable: parameter.mutable,
                     initialized: true,
-                    scope: checker.scope,
+                    scope: outermost,
                 },
                 name.span,
             );
             checker.declare(name, Symbol::Local(local));
         }
-        checker.body.span = tree.blocks.span(block);
-        checker.body.statements = checker.statements(tree.blocks[block].statements);
+        let statements = checker.statements(tree.blocks[block].statements);
+        checker.body.blocks[outermost].statements = statements;
         let mut body = checker.body;
         // A part of the signature that failed was reported with the signature.
         body.has_errors = parameters.contains(&TypeId::INVALID)
@@ -119,7 +122,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
             recorded,
             names: Vec::new(),
             block_start: 0,
-            scope: Span::at(0),
+            block: Id::from_index(0), // the function's, added first (`Checker::body`)
             result,
         }
     }
@@ -135,17 +138,23 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
         self.body.lists.add(&checked)
     }
 
-    /// The THIR of `block`; the names it declares end with it.
+    /// The THIR of `block`; the names it declares end with it. It is added
+    /// before the blocks inside it.
     fn block(&mut self, block: Id<ast::Block>) -> Id<Block> {
+        let checked = Block {
+            parent: Some(self.block),
+            statements: List::EMPTY,
+        };
+        let checked = self.body.add(checked, self.tree.blocks.span(block));
         let names_before = self.names.len();
         let enclosing_start = std::mem::replace(&mut self.block_start, names_before);
-        let enclosing_scope = std::mem::replace(&mut self.scope, self.tree.blocks.span(block));
+        let enclosing = std::mem::replace(&mut self.block, checked);
         let statements = self.statements(self.tree.blocks[block].statements);
         self.names.truncate(names_before);
         self.block_start = enclosing_start;
-        self.scope = enclosing_scope;
-        self.body
-            .add(Block { statements }, self.tree.blocks.span(block))
+        self.block = enclosing;
+        self.body.blocks[checked].statements = statements;
+        checked
     }
 
     /// Declares `name` in the current block. It may
@@ -159,45 +168,48 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
         }
         let block = &self.names[self.block_start..];
         if let Some(&(_, first)) = block.iter().find(|&&(declared, _)| declared == text) {
-            let first = self.body.declared(first);
+            let first = self
+                .body
+                .declared(first)
+                .expect("a block holds the body's names");
             let diagnostic = already_declared(&self.tree.file, text, "block", name.span, first);
             self.checker.diagnostics.push(diagnostic);
             return;
         }
-        self.record(name.span, Target::Body(symbol));
+        self.record(name.span, symbol);
         self.names.push((text, symbol));
     }
 
-    /// Records that the name written at `span` stands for `target`, when the
+    /// Records that the name written at `span` stands for `symbol`, when the
     /// caller asked for names (`Checker::body`).
-    pub(crate) fn record(&mut self, span: Span, target: Target) {
+    pub(crate) fn record(&mut self, span: Span, symbol: Symbol) {
         if let Some(names) = &mut self.recorded {
-            names.push(Name { span, target });
+            names.push(Name { span, symbol });
         }
     }
 
     /// What the name written at `span` stands for: a name of the current
     /// block or an outer one, else of the module or the prelude, recorded
     /// (`record`). `None` after reporting that nothing declares it.
-    pub(crate) fn resolve(&mut self, span: Span) -> Option<Target> {
+    pub(crate) fn resolve(&mut self, span: Span) -> Option<Symbol> {
         let name = self.tree.file.slice(span);
         let found = self
             .names
             .iter()
             .rev()
             .find(|&&(declared, _)| declared == name);
-        let target = match found {
-            Some(&(_, symbol)) => Target::Body(symbol),
+        let symbol = match found {
+            Some(&(_, symbol)) => symbol,
             None => match self.checker.global(name) {
-                Some(binding) => Target::Global(binding),
+                Some(symbol) => symbol,
                 None => {
                     self.undeclared(name, span);
                     return None;
                 }
             },
         };
-        self.record(span, target);
-        Some(target)
+        self.record(span, symbol);
+        Some(symbol)
     }
 
     /// The THIR of `statement`; `None` for a `const`, which only declares a
@@ -219,7 +231,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
                     unreachable!("a const statement holds a const declaration")
                 };
                 let constant = self.body.consts.push(constant, name.span);
-                self.declare(name, Symbol::Constant(constant));
+                self.declare(name, Symbol::BodyConstant(constant));
                 return None;
             }
             ast::Stmt::Return(value) => Stmt::Return(self.return_value(span, value)),
@@ -253,7 +265,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
                             ty: TypeId::INVALID,
                             mutable: true,
                             initialized: true,
-                            scope: self.scope,
+                            scope: self.block,
                         };
                         let local = self.body.add(unknown, name.span);
                         self.declare(name, Symbol::Local(local));
@@ -315,7 +327,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
             ty,
             mutable,
             initialized,
-            scope: self.scope,
+            scope: self.block,
         };
         let text = name.text(&self.tree.file);
         let shadowed = self
@@ -444,8 +456,8 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
         }
         let name = tree.file.slice(span);
         let local = match self.resolve(span)? {
-            Target::Body(Symbol::Local(local)) => local,
-            Target::Body(Symbol::Constant(constant)) => {
+            Symbol::Local(local) => local,
+            Symbol::BodyConstant(constant) => {
                 let declared = self.body.consts.span(constant);
                 self.checker.diagnostics.push(
                     Diagnostic::new(
@@ -457,18 +469,16 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
                 );
                 return None;
             }
-            Target::Global(binding) => {
-                let (code, message) = match binding {
-                    Binding::Constant(_) => (
-                        diagnostics::CONSTANT_REASSIGNMENT,
-                        format!("cannot assign to constant `{name}`"),
-                    ),
-                    _ => (
-                        diagnostics::INVALID_ASSIGNMENT,
-                        format!("cannot assign to `{name}`, which is not a variable"),
-                    ),
-                };
-                self.checker.error(code, message, span);
+            Symbol::Constant(_) => {
+                let message = format!("cannot assign to constant `{name}`");
+                self.checker
+                    .error(diagnostics::CONSTANT_REASSIGNMENT, message, span);
+                return None;
+            }
+            _ => {
+                let message = format!("cannot assign to `{name}`, which is not a variable");
+                self.checker
+                    .error(diagnostics::INVALID_ASSIGNMENT, message, span);
                 return None;
             }
         };

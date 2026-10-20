@@ -119,6 +119,14 @@ impl Lists {
         }
     }
 
+    /// The item at `index` of `list`.
+    pub fn get<T>(&self, list: List<T>, index: usize) -> Id<T> {
+        Id {
+            raw: self.items[list.start as usize..][..list.len()][index],
+            category: PhantomData,
+        }
+    }
+
     /// The items of `list`.
     pub fn items<T>(&self, list: List<T>) -> impl ExactSizeIterator<Item = Id<T>> + '_ {
         self.items[list.start as usize..][..list.len()]

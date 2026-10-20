@@ -6,8 +6,8 @@
 use std::fmt::Write;
 
 use crate::BinaryOp;
-use crate::Binding;
 use crate::DefId;
+use crate::Symbol;
 use crate::UnaryOp;
 use crate::constant::Constant;
 use crate::constant::Value;
@@ -34,11 +34,13 @@ nodes! {
 
 /// One function's checked body. The function's parameters are its first
 /// locals, in order.
+#[derive(Default)]
 pub struct Body {
-    pub span: Span,             // the function's block, braces included
-    pub statements: List<Stmt>, // the function's block
     pub exprs: Arena<Expr>,
     pub stmts: Arena<Stmt>,
+    /// Each block, with its span, braces included: the scope of the names it
+    /// declares. The first is the function's, which also holds the parameters;
+    /// a block comes before the blocks inside it.
     pub blocks: Arena<Block>,
     pub locals: Arena<Local>, // with the span of each name
     /// Each `const` of the body, by its type and value, with the span of its
@@ -56,23 +58,7 @@ pub struct Body {
 #[derive(Clone, Copy, Debug)]
 pub struct Name {
     pub span: Span,
-    pub target: Target,
-}
-
-/// What a name written in a body stands for.
-#[derive(Clone, Copy, Debug)]
-pub enum Target {
-    Body(Symbol),
-    /// A name of the module or the prelude.
-    Global(Binding),
-}
-
-/// A name declared in a body: a parameter or `let` (a local, which holds a
-/// value at run time), or a `const` (folded where it is used).
-#[derive(Clone, Copy, Debug)]
-pub enum Symbol {
-    Local(Id<Local>),
-    Constant(Id<Option<Constant>>),
+    pub symbol: Symbol,
 }
 
 /// A parameter or a `let` binding.
@@ -84,8 +70,8 @@ pub struct Local {
     /// sets it, even without `mut`.
     pub initialized: bool,
     /// The block it is declared in, whose end ends its name's scope; the
-    /// whole body for a parameter.
-    pub scope: Span,
+    /// function's block for a parameter.
+    pub scope: Id<Block>,
 }
 
 #[derive(Clone, Debug)]
@@ -152,23 +138,8 @@ pub enum Stmt {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Block {
+    pub parent: Option<Id<Block>>, // the block it is in; `None` for the function's
     pub statements: List<Stmt>,
-}
-
-impl Default for Body {
-    fn default() -> Body {
-        Body {
-            span: Span::default(),
-            statements: List::EMPTY,
-            exprs: Arena::default(),
-            stmts: Arena::default(),
-            blocks: Arena::default(),
-            locals: Arena::default(),
-            consts: Arena::default(),
-            lists: Lists::default(),
-            has_errors: false,
-        }
-    }
 }
 
 impl Body {
@@ -177,11 +148,13 @@ impl Body {
         T::arena(self).push(node, span)
     }
 
-    /// Where the body declares `symbol`: its name.
-    pub fn declared(&self, symbol: Symbol) -> Span {
+    /// Where the body declares `symbol`: its name. `None` for a name the body
+    /// does not declare.
+    pub fn declared(&self, symbol: Symbol) -> Option<Span> {
         match symbol {
-            Symbol::Local(local) => self.locals.span(local),
-            Symbol::Constant(constant) => self.consts.span(constant),
+            Symbol::Local(local) => Some(self.locals.span(local)),
+            Symbol::BodyConstant(constant) => Some(self.consts.span(constant)),
+            _ => None,
         }
     }
 }
@@ -204,7 +177,7 @@ impl Body {
             function_name,
             out: String::new(),
         };
-        printer.statements(self.statements, 1);
+        printer.statements(self.blocks[Id::from_index(0)].statements, 1);
         printer.out
     }
 }

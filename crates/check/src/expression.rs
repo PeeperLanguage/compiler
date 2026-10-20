@@ -10,6 +10,7 @@ use diagnostics::Diagnostic;
 use diagnostics::fix::Fix;
 use diagnostics::suggest::nearest_name;
 use model::BinaryOp;
+use model::Symbol;
 use model::UnaryOp;
 use model::ast;
 use model::constant;
@@ -20,15 +21,12 @@ use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::thir::Expr;
 use model::thir::ExprKind;
-use model::thir::Symbol;
-use model::thir::Target;
 use source::Span;
 use token::TokenKind;
 
 use crate::Queries;
 use crate::builtin::UNSUPPORTED_FUNCTIONS;
 use crate::statement::BodyChecker;
-use model::Binding;
 
 impl<Q: Queries> BodyChecker<'_, '_, Q> {
     /// `expression`, added to the body.
@@ -97,7 +95,10 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
         let tree = self.tree;
         let span = tree.exprs.span(expression);
         let what = match tree.exprs[expression] {
-            ast::Expr::Name => return self.name(span),
+            ast::Expr::Name => {
+                let symbol = self.resolve(span);
+                return self.symbol_value(symbol, span);
+            }
             ast::Expr::Number => return self.number(span, None, expected),
             ast::Expr::Bool(value) => {
                 return Expr {
@@ -119,10 +120,8 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
             }
             ast::Expr::Invalid => return Expr::INVALID, // the parser reported it
             ast::Expr::Path(path) => {
-                return match self.path_binding(path) {
-                    Some(binding) => self.global_value(binding, span),
-                    None => Expr::INVALID,
-                };
+                let symbol = self.path_symbol(path);
+                return self.symbol_value(symbol, span);
             }
             ast::Expr::Call { callee, arguments } => return self.call(callee, arguments, span),
             ast::Expr::String { c_string: false } => "string literals",
@@ -148,42 +147,34 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
         Expr::INVALID
     }
 
-    /// The name written at `span`, as a value.
-    pub(crate) fn name(&mut self, span: Span) -> Expr {
-        match self.resolve(span) {
-            Some(Target::Body(Symbol::Local(local))) => Expr {
-                ty: self.body.locals[local].ty,
-                kind: ExprKind::Local(local),
-            },
-            Some(Target::Body(Symbol::Constant(constant))) => {
-                constant_expr(self.body.consts[constant].clone())
+    /// The name or path written at `span`, which stands for `symbol`, as a
+    /// value. `None` when finding the symbol reported an error.
+    fn symbol_value(&mut self, symbol: Option<Symbol>, span: Span) -> Expr {
+        let what = match symbol {
+            None => return Expr::INVALID, // finding it reported the error
+            Some(Symbol::Local(local)) => {
+                return Expr {
+                    ty: self.body.locals[local].ty,
+                    kind: ExprKind::Local(local),
+                };
             }
-            Some(Target::Global(binding)) => self.global_value(binding, span),
-            None => Expr::INVALID,
-        }
-    }
-
-    /// The module-level declaration `binding`, written at `span`, as a value.
-    fn global_value(&mut self, binding: Binding, span: Span) -> Expr {
-        let text = self.tree.file.slice(span);
-        let (code, message) = match binding {
-            Binding::Constant(constant) => {
+            Some(Symbol::BodyConstant(constant)) => {
+                return constant_expr(self.body.consts[constant].clone());
+            }
+            Some(Symbol::Constant(constant)) => {
                 return constant_expr(self.checker.queries.declaration(constant).constant());
             }
-            Binding::Function(_) => {
+            Some(Symbol::Function(_)) => {
                 self.checker.not_supported(span, "functions as values");
                 return Expr::INVALID;
             }
-            Binding::Type(_) => (
-                diagnostics::INVALID_OPERATION,
-                format!("`{text}` is a type, not a value"),
-            ),
-            Binding::Module(_) => (
-                diagnostics::INVALID_OPERATION,
-                format!("`{text}` is a module, not a value"),
-            ),
+            Some(Symbol::Type(_)) => "a type",
+            Some(Symbol::Module(_)) => "a module",
         };
-        self.checker.error(code, message, span);
+        let text = self.tree.file.slice(span);
+        let message = format!("`{text}` is {what}, not a value");
+        self.checker
+            .error(diagnostics::INVALID_OPERATION, message, span);
         Expr::INVALID
     }
 
@@ -222,7 +213,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
     /// stands for, reporting a path that names nothing or is not supported.
     /// Another module's name is reachable only if it starts with an upper case
     /// letter, except in the prelude.
-    fn path_binding(&mut self, path: Id<ast::Type>) -> Option<Binding> {
+    fn path_symbol(&mut self, path: Id<ast::Type>) -> Option<Symbol> {
         let tree = self.tree;
         let span = tree.types.span(path);
         let segments: Vec<Id<ast::Type>> = match tree.types[path] {
@@ -250,15 +241,15 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
         let (module_name, member_name) =
             (tree.file.slice(module_span), tree.file.slice(member_span));
         let imported = match self.checker.global(module_name) {
-            Some(binding @ Binding::Module(imported)) => {
-                self.record(module_span, Target::Global(binding));
+            Some(symbol @ Symbol::Module(imported)) => {
+                self.record(module_span, symbol);
                 imported
             }
-            Some(Binding::Type(_)) => {
+            Some(Symbol::Type(_)) => {
                 self.checker.not_supported(span, "paths into types");
                 return None;
             }
-            Some(Binding::Function(_) | Binding::Constant(_)) => {
+            Some(_) => {
                 let message = format!("`{module_name}` is not a module");
                 self.checker
                     .error(diagnostics::INVALID_OPERATION, message, module_span);
@@ -269,13 +260,16 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
                 return None;
             }
         };
-        let Some(binding) = self.checker.scopes[imported.index()].get(member_name) else {
+        let Some(symbol) = self.checker.modules[imported.index()]
+            .scope()
+            .get(member_name)
+        else {
             let message = format!("unknown name `{member_name}` in module `{module_name}`");
             self.checker
                 .error(diagnostics::UNDEFINED_NAME, message, member_span);
             return None;
         };
-        self.record(member_span, Target::Global(binding));
+        self.record(member_span, symbol);
         // The prelude's names are in every module's scope, private or not.
         let exported =
             self.checker.prelude() == Some(imported) || member_name.starts_with(char::is_uppercase);
@@ -293,7 +287,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
             );
             return None;
         }
-        Some(binding)
+        Some(symbol)
     }
 
     /// `callee(arguments)`, written at `span`. Only a module's function, by
@@ -302,24 +296,16 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
         let tree = self.tree;
         let callee_span = tree.exprs.span(callee);
         let text = tree.file.slice(callee_span);
-        let binding = match tree.exprs[callee] {
+        let symbol = match tree.exprs[callee] {
             ast::Expr::Name => match self.resolve(callee_span) {
                 // Their errors were reported.
-                Some(Target::Body(Symbol::Constant(constant)))
-                    if self.body.consts[constant].is_none() =>
-                {
+                Some(Symbol::BodyConstant(constant)) if self.body.consts[constant].is_none() => {
                     None
                 }
-                Some(Target::Body(Symbol::Local(local)))
-                    if self.body.locals[local].ty == TypeId::INVALID =>
-                {
-                    None
-                }
-                Some(Target::Body(_)) => Some(Err(())),
-                Some(Target::Global(binding)) => Some(Ok(binding)),
-                None => None,
+                Some(Symbol::Local(local)) if self.body.locals[local].ty == TypeId::INVALID => None,
+                symbol => symbol,
             },
-            ast::Expr::Path(path) => self.path_binding(path).map(Ok),
+            ast::Expr::Path(path) => self.path_symbol(path),
             ast::Expr::Selector { .. } => {
                 self.checker.not_supported(callee_span, "method calls");
                 None
@@ -330,8 +316,8 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
                 None
             }
         };
-        let function = match binding {
-            Some(Ok(Binding::Function(function))) => Some(function),
+        let function = match symbol {
+            Some(Symbol::Function(function)) => Some(function),
             Some(_) => {
                 let message = format!("`{text}` is not a function");
                 self.checker
@@ -390,7 +376,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
         let tree = self.tree;
         let literal = numeric::split(tree.file.slice(number));
         let pointer_bits = self.checker.queries.pointer_bits();
-        let types = self.checker.queries.types();
+        let mut types = self.checker.queries.types();
         let ty = if literal.suffix.is_empty() {
             match expected {
                 Some(ty) if takes_type(&literal, &types[ty]) => ty,
@@ -548,8 +534,10 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
         if left.ty == TypeId::INVALID || right.ty == TypeId::INVALID {
             return Expr::INVALID;
         }
-        let types = self.checker.queries.types();
-        let (left_type, right_type) = (types[left.ty].clone(), types[right.ty].clone());
+        let (left_type, right_type) = {
+            let types = self.checker.queries.types();
+            (types[left.ty].clone(), types[right.ty].clone())
+        };
         let accepted = match binary_op {
             BinaryOp::Add
             | BinaryOp::Subtract
@@ -574,7 +562,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
             return self.invalid_operand(op, left.ty, span);
         }
         if shift && !matches!(right_type, Type::Integer(_)) {
-            let count = types.text(right.ty);
+            let count = self.checker.queries.types().text(right.ty);
             let message = format!("a shift count must be an integer, found `{count}`");
             self.checker
                 .error(diagnostics::INVALID_OPERATION, message, right_span);

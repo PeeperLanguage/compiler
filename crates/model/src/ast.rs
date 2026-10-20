@@ -85,6 +85,12 @@ impl Tree {
         }
     }
 
+    /// The top-level declaration at `index` of `declarations`, the place a
+    /// `DefId` names.
+    pub fn declaration(&self, index: u32) -> Id<Decl> {
+        self.lists.get(self.declarations, index as usize)
+    }
+
     /// Adds `node` with `span` to its arena.
     pub fn add<T: Node<Container = Tree>>(&mut self, node: T, span: Span) -> Id<T> {
         T::arena(self).push(node, span)

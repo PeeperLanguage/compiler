@@ -9,6 +9,7 @@ pub mod mir;
 pub mod semantic_types;
 pub mod thir;
 
+use arena::Id;
 use constant::Constant;
 use semantic_types::TypeId;
 
@@ -29,24 +30,31 @@ impl ModuleId {
     }
 }
 
-/// A declaration of the program: its module and the declaration's index in
-/// that module's syntax tree. Tables of per-declaration results are vectors
-/// indexed by it.
+/// A declaration the whole program can name: its module and its place among
+/// that module's top-level declarations (`Tree::declaration`). Tables of
+/// per-declaration results are vectors indexed by it. A body edit leaves it
+/// as it was. A name declared inside a function body is not one: it is an
+/// `Id` into that body's own arena, as a `thir::Local`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DefId {
     pub module: ModuleId,
     pub index: u32,
 }
 
-/// What a module-level name stands for, by the kind of its declaration.
+/// What a name stands for, by the kind of its declaration. A module's scope
+/// holds the first four; a body adds its own locals and constants.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Binding {
+pub enum Symbol {
+    /// An imported module.
+    Module(ModuleId),
     Function(DefId),
     Constant(DefId),
     /// a struct, enum, interface or type alias
     Type(DefId),
-    /// An imported module.
-    Module(ModuleId),
+    /// A parameter or `let` of the body: it holds a value at run time.
+    Local(Id<thir::Local>),
+    /// A `const` of the body, folded where it is used.
+    BodyConstant(Id<Option<Constant>>),
 }
 
 /// What the query of a declaration found, by the declaration's kind.
@@ -56,6 +64,15 @@ pub enum Declared {
     Signature(TypeId),
     /// A constant's type and value; `None` when it had an error.
     Constant(Option<Constant>),
+}
+
+/// Where the query of one declaration is.
+#[derive(Clone, Debug)]
+pub enum State<T> {
+    NotStarted,
+    /// Asked for again while running: a cycle.
+    Running,
+    Done(T),
 }
 
 impl Declared {

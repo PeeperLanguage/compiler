@@ -5,7 +5,6 @@
 use std::io::Write;
 use std::path::Path;
 
-use arena::Id;
 use model::DefId;
 use model::mir;
 use model::semantic_types::Types;
@@ -62,7 +61,7 @@ impl<'p> Dumps<'p> {
         let tree = |definition: DefId| &program.modules[definition.module.index()].ast;
         let name = |definition: DefId| {
             let tree = tree(definition);
-            let declaration = tree.decls[Id::from_index(definition.index as usize)];
+            let declaration = tree.decls[tree.declaration(definition.index)];
             declaration.name().text(&tree.file).to_string()
         };
         let file = &tree(definition).file;

@@ -45,7 +45,7 @@ impl Module<'_> {
         };
         let program = self.program;
         let tree = &program.modules[definition.module.index()].ast;
-        let name = tree.decls[Id::from_index(definition.index as usize)].name();
+        let name = tree.decls[tree.declaration(definition.index)].name();
         let symbol = symbol(program, definition);
         let (line, _) = tree.file.position(name.span.start as usize);
         let mut signature = vec![match self.debug_type(types, *result) {
@@ -165,7 +165,8 @@ struct Function<'m, 'p, 'b> {
     file: &'b SourceFile,
     scope: usize, // the function's DISubprogram
     /// The `DILexicalBlock` of each block that declares a variable (not the
-    /// function's outermost), by its span, outer blocks first.
+    /// function's block when it has parameters, whose scope is the function),
+    /// by its span, outer blocks first.
     scopes: Vec<(Span, usize)>,
     locations: HashMap<(usize, usize, usize), usize>, // each scope, line and column's DILocation
     out: String,
@@ -179,25 +180,34 @@ impl Function<'_, '_, '_> {
     /// The `alloca` and debug declaration of each variable, the first
     /// `parameters` of them the parameters.
     fn variables(&mut self, parameters: usize) {
-        // The parameters' scope is the function itself.
-        let outermost = (parameters > 0).then(|| self.body.variables[Id::from_index(0)].scope);
-        let mut blocks: Vec<Span> = self
-            .body
-            .variables
-            .ids()
-            .map(|variable| self.body.variables[variable].scope)
-            .filter(|&scope| Some(scope) != outermost)
-            .collect();
-        blocks.sort_by_key(|block| block.start);
-        blocks.dedup();
-        for block in blocks {
+        // A block gets a lexical block only when it declares a variable; the
+        // parameters' scope is the function itself.
+        let mut declares = vec![false; self.body.scopes.len()];
+        for variable in self.body.variables.ids() {
+            declares[self.body.variables[variable].scope.index()] = true;
+        }
+        if parameters > 0 {
+            declares[0] = false;
+        }
+        // The debug scope of each block: its lexical block, else its parent's.
+        // A block comes after its parent, so the parent's is known.
+        let mut debug_scopes: Vec<usize> = Vec::with_capacity(declares.len());
+        for scope in self.body.scopes.ids() {
+            let parent = self.body.scopes[scope]
+                .parent
+                .map_or(self.scope, |parent| debug_scopes[parent.index()]);
+            if !declares[scope.index()] {
+                debug_scopes.push(parent);
+                continue;
+            }
+            let block = self.body.scopes.span(scope);
             let (line, column) = self.file.position(block.start as usize);
-            let parent = self.scope_of(block);
             let id = self.module.metadata.add(&format!(
                 "!DILexicalBlock(scope: !{parent}, file: !{}, line: {line}, column: {column})",
                 self.module.metadata.file
             ));
             self.scopes.push((block, id));
+            debug_scopes.push(id);
         }
         for variable in self.body.variables.ids() {
             let index = variable.index();
@@ -213,7 +223,7 @@ impl Function<'_, '_, '_> {
             let declared = self.module.metadata.add(&format!(
                 "!DILocalVariable(name: {}, {argument}scope: !{}, file: !{}, line: {line}, type: !{debug_type})",
                 quoted(self.file.slice(span).as_bytes()),
-                self.scope_of(self.body.variables[variable].scope),
+                debug_scopes[self.body.variables[variable].scope.index()],
                 self.module.metadata.file,
             ));
             let location = self.location(span);

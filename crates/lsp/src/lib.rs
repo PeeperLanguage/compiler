@@ -59,8 +59,8 @@ use lsp_types::TextDocumentSyncKind;
 use lsp_types::TextEdit;
 use lsp_types::Url;
 use lsp_types::WorkspaceEdit;
-use model::Binding;
 use model::ModuleId;
+use model::Symbol;
 use model::ast;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
@@ -553,36 +553,26 @@ impl CachedName {
         types: &Types,
     ) -> CachedName {
         let file = |module: ModuleId| PathBuf::from(&program.modules[module.index()].ast.file.path);
-        let target = match name.target {
-            thir::Target::Body(symbol) => {
-                let ty = match symbol {
-                    thir::Symbol::Local(local) => body.locals[local].ty,
-                    thir::Symbol::Constant(constant) => body.consts[constant]
+        let target = match name.symbol {
+            Symbol::Local(local) => CachedTarget::InBody {
+                declared: body.locals.span(local),
+                ty: types.text(body.locals[local].ty),
+            },
+            Symbol::BodyConstant(constant) => CachedTarget::InBody {
+                declared: body.consts.span(constant),
+                ty: types.text(
+                    body.consts[constant]
                         .as_ref()
                         .map_or(TypeId::INVALID, |constant| constant.ty),
-                };
-                CachedTarget::InBody {
-                    declared: body.declared(symbol),
-                    ty: types.text(ty),
-                }
-            }
-            thir::Target::Global(Binding::Module(module)) => CachedTarget::Module(file(module)),
-            thir::Target::Global(
-                Binding::Function(definition)
-                | Binding::Constant(definition)
-                | Binding::Type(definition),
-            ) => {
-                let tree = &program.modules[definition.module.index()].ast;
-                let position = tree
-                    .lists
-                    .items(tree.declarations)
-                    .position(|declaration| declaration.index() == definition.index as usize)
-                    .expect("a global's definition is a top-level declaration");
-                CachedTarget::Declaration {
-                    file: file(definition.module),
-                    position: position as u32,
-                }
-            }
+                ),
+            },
+            Symbol::Module(module) => CachedTarget::Module(file(module)),
+            Symbol::Function(definition)
+            | Symbol::Constant(definition)
+            | Symbol::Type(definition) => CachedTarget::Declaration {
+                file: file(definition.module),
+                position: definition.index,
+            },
         };
         CachedName {
             span: name.span,

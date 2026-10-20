@@ -12,7 +12,6 @@ use std::collections::HashSet;
 use std::fmt::Write;
 use std::path::Path;
 
-use arena::Id;
 use model::DefId;
 use model::ModuleId;
 use model::ast;
@@ -218,8 +217,7 @@ impl<'p> Module<'p> {
 /// The `#[extern]` name of the function `definition`, if it has one.
 fn extern_symbol(program: &project::Program, definition: DefId) -> Option<String> {
     let tree = &program.modules[definition.module.index()].ast;
-    let ast::Decl::Function(function) = &tree.decls[Id::from_index(definition.index as usize)]
-    else {
+    let ast::Decl::Function(function) = &tree.decls[tree.declaration(definition.index)] else {
         return None;
     };
     extern_name(tree, function.metadata)
@@ -230,7 +228,7 @@ fn extern_symbol(program: &project::Program, definition: DefId) -> Option<String
 fn symbol(program: &project::Program, definition: DefId) -> String {
     extern_symbol(program, definition).unwrap_or_else(|| {
         let module = &program.modules[definition.module.index()];
-        let declaration = &module.ast.decls[Id::from_index(definition.index as usize)];
+        let declaration = &module.ast.decls[module.ast.declaration(definition.index)];
         format!(
             "{}.{}",
             module.path,
@@ -426,33 +424,37 @@ mod tests {
     }
 
     /// A variable of an inner block is in that block's scope, so a debugger
-    /// shows the outer variable of the same name outside it.
+    /// shows the outer variable of the same name outside it. A block that
+    /// declares nothing gets no scope: the inner one is in the function's.
     #[test]
     fn variables_have_the_scope_of_their_block() {
-        let text = ll("fn f(p: i32) { let x = 1; { let x = 2; } }");
-        let blocks = text.matches("!DILexicalBlock(").count();
-        assert_eq!(blocks, 1, "{text}");
-        assert!(text.contains("!DILexicalBlock(scope: !"), "{text}");
-        let scopes: Vec<&str> = text
+        let text = ll("fn f(p: i32) { let x = 1; { { let x = 2; } } }");
+        let blocks: Vec<&str> = text
+            .lines()
+            .filter(|line| line.contains("!DILexicalBlock("))
+            .collect();
+        let variables: Vec<&str> = text
             .lines()
             .filter(|line| line.contains("!DILocalVariable(name: \"x\""))
             .collect();
-        assert_eq!(scopes.len(), 2, "{text}");
-        assert_ne!(
-            scopes[0]
-                .split("scope: !")
-                .nth(1)
-                .unwrap()
-                .split(',')
-                .next(),
-            scopes[1]
-                .split("scope: !")
-                .nth(1)
-                .unwrap()
-                .split(',')
-                .next(),
-            "{text}"
-        );
+        assert_eq!((blocks.len(), variables.len()), (1, 2), "{text}");
+        let block = blocks[0]
+            .split(" = ")
+            .next()
+            .unwrap()
+            .trim_start_matches('!');
+        assert_eq!(scope(variables[1]), block, "{text}");
+        assert_eq!(scope(blocks[0]), scope(variables[0]), "{text}");
+    }
+
+    /// The metadata id after `scope: !` in the metadata `line`.
+    fn scope(line: &str) -> &str {
+        line.split("scope: !")
+            .nth(1)
+            .unwrap()
+            .split(',')
+            .next()
+            .unwrap()
     }
 
     #[test]

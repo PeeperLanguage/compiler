@@ -4,6 +4,8 @@
 
 mod packages;
 
+use std::cell::OnceCell;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::ffi::OsString;
@@ -16,7 +18,10 @@ use std::sync::Mutex;
 use std::sync::mpsc;
 
 use diagnostics::Diagnostic;
+use model::Declared;
 use model::ModuleId;
+use model::State;
+use model::Symbol;
 use model::ast;
 use model::ast::Tree;
 use source::SourceFile;
@@ -31,14 +36,112 @@ const PRELUDE_PATH: &str = "core:global";
 /// The folder of a package that holds its source files.
 const SOURCE_FOLDER: &str = "src";
 
-/// One source file, read and parsed. It never changes once `load` has returned
-/// it. Its source file is `ast.file`.
+/// One source file, read and parsed, and what a compile finds in it. Its
+/// source file is `ast.file`. What `load` read never changes; a compile sets
+/// its scope once and fills its query results and diagnostics.
 pub struct Module {
     pub path: String, // import path, such as "myapp:utils/file" or "core:global"
     pub ast: Tree,
     pub imports: Vec<Import>, // in source order; the implicit prelude import last, in every module but the prelude
     pub imports_complete: bool, // every written import names a module it brings in
-    pub diagnostics: Vec<Diagnostic>,
+    pub diagnostics: Vec<Diagnostic>, // from loading it
+    /// The names it declares and imports; set once, after every module is
+    /// loaded, because a scope needs the modules its imports bring in.
+    pub scope: OnceCell<Scope>,
+    /// The query of each top-level declaration, by its place (`DefId`).
+    pub declarations: RefCell<Vec<State<Declared>>>,
+    /// What the compile found in it.
+    pub results: RefCell<ModuleResults>,
+}
+
+impl Module {
+    /// A module as `load` read it, with nothing compiled yet.
+    pub fn new(
+        path: String,
+        ast: Tree,
+        imports: Vec<Import>,
+        imports_complete: bool,
+        diagnostics: Vec<Diagnostic>,
+    ) -> Module {
+        Module {
+            declarations: RefCell::new(vec![State::NotStarted; ast.declarations.len()]),
+            results: RefCell::new(ModuleResults::new(ast.file.clone())),
+            path,
+            ast,
+            imports,
+            imports_complete,
+            diagnostics,
+            scope: OnceCell::new(),
+        }
+    }
+
+    /// The scope the compile set.
+    pub fn scope(&self) -> &Scope {
+        self.scope.get().expect("a compile sets every scope first")
+    }
+}
+
+/// What a compile found in one module, kept for the next compile.
+pub struct ModuleResults {
+    pub file: Arc<SourceFile>, // its path tells the module's entry in the next compile
+    pub interface: u64,        // a hash of what other modules see; set when the module is done
+    pub scope_diagnostics: Vec<Diagnostic>, // from building its scope; redone every compile
+    pub diagnostics: Vec<Diagnostic>, // from checking it; kept while it is reused
+    pub reused: bool,          // kept from the previous compile, not checked
+}
+
+impl ModuleResults {
+    /// Nothing found yet in the module read from `file`.
+    pub fn new(file: Arc<SourceFile>) -> ModuleResults {
+        ModuleResults {
+            file,
+            interface: 0,
+            scope_diagnostics: Vec::new(),
+            diagnostics: Vec::new(),
+            reused: false,
+        }
+    }
+}
+
+/// A place that holds declarations, and where each name is written. A module
+/// has one for its top-level declarations and imports. A name it does not
+/// hold is looked up next in its parent's.
+pub struct Scope {
+    /// The module whose scope comes next: the prelude (`core:global`), for
+    /// every module but the prelude.
+    pub parent: Option<ModuleId>,
+    names: HashMap<Box<str>, (Symbol, Span)>,
+}
+
+impl Scope {
+    pub fn new(parent: Option<ModuleId>) -> Scope {
+        Scope {
+            parent,
+            names: HashMap::new(),
+        }
+    }
+
+    /// What `name` stands for in this scope alone.
+    pub fn get(&self, name: &str) -> Option<Symbol> {
+        self.names.get(name).map(|&(symbol, _)| symbol)
+    }
+
+    /// Every name, in no order.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.names.keys().map(|name| &**name)
+    }
+
+    /// Brings `name` in as `symbol`, written at `span`. A name already in
+    /// keeps its first meaning, and gives where that was written.
+    pub fn declare(&mut self, name: &str, symbol: Symbol, span: Span) -> Result<(), Span> {
+        match self.names.get(name) {
+            Some(&(_, first)) => Err(first),
+            None => {
+                self.names.insert(name.into(), (symbol, span));
+                Ok(())
+            }
+        }
+    }
 }
 
 /// One resolved import of a module.
@@ -245,13 +348,13 @@ impl Loaded {
             kind: *kind,
             module: ids[path], // every imported module is loaded
         });
-        Module {
-            path: self.path,
-            ast: self.ast,
-            imports: imports.collect(),
-            imports_complete: self.imports_complete,
-            diagnostics: self.diagnostics,
-        }
+        Module::new(
+            self.path,
+            self.ast,
+            imports.collect(),
+            self.imports_complete,
+            self.diagnostics,
+        )
     }
 }
 

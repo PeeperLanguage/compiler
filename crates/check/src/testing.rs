@@ -2,6 +2,8 @@
 //! declarations are checked one at a time; checking one that asks about
 //! another needs the scheduler, so those tests live in the `build` crate.
 
+use std::cell::RefCell;
+use std::cell::RefMut;
 use std::sync::Arc;
 
 use model::Declared;
@@ -16,19 +18,19 @@ use crate::Queries;
 use crate::scope::collect;
 
 pub(crate) struct Program {
-    pub(crate) types: Types,
+    pub(crate) types: RefCell<Types>,
 }
 
 impl Queries for Program {
-    fn types(&mut self) -> &mut Types {
-        &mut self.types
+    fn types(&self) -> RefMut<'_, Types> {
+        self.types.borrow_mut()
     }
 
     fn pointer_bits(&self) -> u32 {
         64
     }
 
-    fn declaration(&mut self, definition: DefId) -> Declared {
+    fn declaration(&self, definition: DefId) -> Declared {
         unreachable!("a check test asked for {definition:?}; test it in `build`")
     }
 }
@@ -39,13 +41,7 @@ pub(crate) fn module(path: &str, text: &str, imports: Vec<project::Import>) -> p
     let file = Arc::new(SourceFile::new("main.peep", text));
     let (ast, parse) = parser::parse(&file);
     assert!(parse.is_empty(), "{parse:?}");
-    project::Module {
-        path: path.to_string(),
-        ast,
-        imports,
-        imports_complete: true,
-        diagnostics: Vec::new(),
-    }
+    project::Module::new(path.to_string(), ast, imports, true, Vec::new())
 }
 
 /// A diagnostic as its code, message and the text of its first label.
@@ -71,18 +67,17 @@ pub(crate) fn with_checker<T>(
     ];
     let file = modules[1].ast.file.clone();
     let mut diagnostics = Vec::new();
-    let scopes = [
-        collect(utils_id, &modules, &mut diagnostics),
-        collect(main_id, &modules, &mut diagnostics),
-    ];
-    let mut program = Program {
-        types: Types::new(),
+    for id in [utils_id, main_id] {
+        let scope = collect(id, &modules, &mut diagnostics);
+        assert!(modules[id.index()].scope.set(scope).is_ok());
+    }
+    let program = Program {
+        types: RefCell::new(Types::new()),
     };
     let mut checker = Checker {
         modules: &modules,
-        scopes: &scopes,
         current_module: main_id,
-        queries: &mut program,
+        queries: &program,
         diagnostics: &mut diagnostics,
     };
     let result = work(&mut checker);
@@ -93,7 +88,7 @@ pub(crate) fn with_checker<T>(
             (diagnostic.code.id, diagnostic.message.clone(), text)
         })
         .collect();
-    (result, program.types, reported)
+    (result, program.types.into_inner(), reported)
 }
 
 /// `expected` as `Reported`s, to compare with what was reported.

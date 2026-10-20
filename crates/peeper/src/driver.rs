@@ -8,7 +8,6 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use arena::Id;
 use diagnostics::Diagnostic;
 use diagnostics::fix;
 use diagnostics::printer;
@@ -214,9 +213,7 @@ fn is_main(program: &project::Program, definition: DefId) -> bool {
 /// Where the declaration `definition` writes its name.
 fn name_span(program: &project::Program, definition: DefId) -> Span {
     let tree = &program.modules[definition.module.index()].ast;
-    tree.decls[Id::from_index(definition.index as usize)]
-        .name()
-        .span
+    tree.decls[tree.declaration(definition.index)].name().span
 }
 
 /// Whether a `main` of type `ty` gives the program's exit code (`fn main() ->

@@ -25,6 +25,9 @@ pub struct Body {
     pub blocks: Arena<Block>, // the first is the entry; with where each starts
     pub instructions: Arena<Instruction>, // with the expression each comes from
     pub variables: Arena<Variable>, // the parameters first; with each name
+    /// The THIR body's blocks, with their spans, by the same ids: where each
+    /// variable's name can be used, for a debugger.
+    pub scopes: Arena<Scope>,
     pub constants: Vec<Constant>, // what `Operand::Constant` names; no spans, so not an arena
     pub lists: Lists,
 }
@@ -35,7 +38,13 @@ pub struct Variable {
     pub ty: TypeId,
     pub mutable: bool,
     pub initialized: bool, // set where declared; false for a `let` without a value
-    pub scope: Span,       // the block it is declared in, for a debugger
+    pub scope: Id<Scope>,  // the block it is declared in
+}
+
+/// A block of the source, as THIR's `Block` without its statements.
+#[derive(Clone, Copy, Debug)]
+pub struct Scope {
+    pub parent: Option<Id<Scope>>, // `None` for the function's block
 }
 
 #[derive(Clone, Debug)]
