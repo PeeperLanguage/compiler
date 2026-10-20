@@ -92,7 +92,12 @@ enum variants, function types) are `model` data, written by check.
 | `build` | the scheduler: memo tables, demand order, worker threads (the `build` of `overall-design.md`) |
 
 A module's `Scope` lives in its `project::Module`, set once by `check`'s
-`collect` after every module is loaded. A scope holds declarations; a name it
+`collect` after every module is loaded; after that a module never changes.
+What a compile finds (types, query results, diagnostics) is kept apart, in
+`build::Compilation`, in vectors indexed by `ModuleId`, and everything links
+by id. So `check::Queries` takes `&mut self` and nothing needs a `RefCell`:
+holding a type across a query is a compile error, not a run-time panic. A
+scope holds declarations; a name it
 does not hold is looked up in its parent's, so a module's scope has the
 prelude's as its parent. A name stands for a `model::Symbol`: a module,
 function, constant or type of a module scope, or a body's local or `const`.
@@ -202,9 +207,9 @@ body(d)        THIR of function d (needs the signatures it calls)
 mir(d)         MIR of function d (needs body(d)); later also comptime calls
 ```
 
-- Each query's result is written once and never changed. Each module holds a
-  table of them, indexed by the declaration's place among its top-level
-  declarations (`DefId`), so a body edit does not move it.
+- Each query's result is written once and never changed. The compilation holds
+  a table of them per module, indexed by the declaration's place among its
+  top-level declarations (`DefId`), so a body edit does not move it.
 - A query asked for while it is running is a cycle (`const A = B; const B = A;`)
   and is reported once (T0013), at the declaration asked for again; the other
   declarations of the cycle become silently invalid.

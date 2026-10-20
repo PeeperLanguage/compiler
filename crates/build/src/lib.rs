@@ -1,8 +1,8 @@
 //! The scheduler: checks every declaration of a program, each once, in the
 //! order declarations ask for each other (docs/ir-design.md). The result of
-//! every query is kept in its module, and `check` asks for them through
-//! `check::Queries`, so a declaration is checked the first time anything
-//! needs it.
+//! every query is kept in the `Compilation`, and `check` asks for them
+//! through `check::Queries`, so a declaration is checked the first time
+//! anything needs it.
 //!
 //! A compile can reuse what the previous one found: a module whose text and
 //! imported interfaces are unchanged keeps its diagnostics, and its bodies are
@@ -10,12 +10,11 @@
 //! diagnostics are kept between compiles; ids, types, THIR and MIR are
 //! rebuilt, since their numbering shifts.
 
-use std::cell::RefCell;
-use std::cell::RefMut;
 use std::collections::HashMap;
 use std::hash::DefaultHasher;
 use std::hash::Hash;
 use std::hash::Hasher;
+use std::sync::Arc;
 
 use arena::Id;
 use check::Checker;
@@ -32,7 +31,6 @@ use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use model::thir;
-use project::ModuleResults;
 use source::SourceFile;
 
 /// What a compile found, kept for the next compile of the same program.
@@ -61,6 +59,28 @@ impl Results {
     }
 }
 
+/// What a compile found in one module, kept for the next compile.
+struct ModuleResults {
+    file: Arc<SourceFile>, // its path tells the module's entry in the next compile
+    interface: u64,        // a hash of what other modules see; set when the module is done
+    scope_diagnostics: Vec<Diagnostic>, // from building its scope; redone every compile
+    diagnostics: Vec<Diagnostic>, // from checking it; kept while it is reused
+    reused: bool,          // kept from the previous compile, not checked
+}
+
+impl ModuleResults {
+    /// Nothing found yet in the module read from `file`.
+    fn new(file: Arc<SourceFile>) -> ModuleResults {
+        ModuleResults {
+            file,
+            interface: 0,
+            scope_diagnostics: Vec::new(),
+            diagnostics: Vec::new(),
+            reused: false,
+        }
+    }
+}
+
 /// Checks every declaration of `program`, lowers each function to MIR and
 /// gives what it found. A module of `previous` (a compile of the same program
 /// with the same `pointer_bits`, or `Results::default()`) whose text and
@@ -79,18 +99,27 @@ pub fn compile(
     mut use_function: impl FnMut(DefId, TypeId, &thir::Body, &[thir::Name], Option<&mir::Body>, &Types),
 ) -> Results {
     let modules = program.modules.as_slice();
+    let mut compilation = Compilation {
+        modules,
+        types: Types::new(),
+        pointer_bits,
+        declarations: modules
+            .iter()
+            .map(|module| vec![State::NotStarted; module.ast.declarations.len()])
+            .collect(),
+        results: modules
+            .iter()
+            .map(|module| ModuleResults::new(module.ast.file.clone()))
+            .collect(),
+    };
     for (index, module) in modules.iter().enumerate() {
         let id = ModuleId::from_index(index);
-        let mut found = module.results.borrow_mut();
-        let scope = check::scope::collect(id, modules, &mut found.scope_diagnostics);
-        let set = module.scope.set(scope);
+        let diagnostics = &mut compilation.results[index].scope_diagnostics;
+        let set = module
+            .scope
+            .set(check::scope::collect(id, modules, diagnostics));
         assert!(set.is_ok(), "a program is compiled once");
     }
-    let compilation = Compilation {
-        modules,
-        types: RefCell::new(Types::new()),
-        pointer_bits,
-    };
     let mut previous: HashMap<String, ModuleResults> = previous
         .modules
         .into_iter()
@@ -112,7 +141,7 @@ pub fn compile(
             && imports_unchanged
             && cached.file.text == module.ast.file.text
         {
-            let mut found = module.results.borrow_mut();
+            let found = &mut compilation.results[index];
             found.reused = true;
             found.diagnostics = cached.diagnostics;
             found.interface = cached.interface;
@@ -133,8 +162,8 @@ pub fn compile(
                         .with_checker(id, |checker| checker.body(&function, ty, recorded));
                     if let Some(thir) = thir {
                         let mir = compilation.lower(id, ty, &thir);
-                        let types = compilation.types.borrow();
-                        use_function(definition, ty, &thir, &names, mir.as_ref(), &types);
+                        let types = &compilation.types;
+                        use_function(definition, ty, &thir, &names, mir.as_ref(), types);
                     }
                 }
                 _ => {
@@ -144,15 +173,10 @@ pub fn compile(
         }
         let interface = compilation.interface(id);
         changed.push(previous_interface != Some(interface));
-        module.results.borrow_mut().interface = interface;
+        compilation.results[index].interface = interface;
     }
-    // Each module's results move out; a fresh, empty one takes their place.
-    let found = modules.iter().map(|module| {
-        let fresh = ModuleResults::new(module.ast.file.clone());
-        module.results.replace(fresh)
-    });
     Results {
-        modules: found.collect(),
+        modules: compilation.results,
     }
 }
 
@@ -175,12 +199,16 @@ fn hash_type(types: &Types, ty: TypeId, hasher: &mut DefaultHasher) {
     }
 }
 
-/// The program being compiled. What a compile keeps of each module is in
-/// the module: its scope, the result of each query and what it found.
+/// One compile of a program: what it finds, beside the modules it reads.
+/// Its tables are indexed by `ModuleId`. The query results die with the
+/// compile; `results` is what the next compile is given.
 struct Compilation<'p> {
     modules: &'p [project::Module], // in the program's order
-    types: RefCell<Types>,
+    types: Types,
     pointer_bits: u32,
+    /// The query of each top-level declaration, by its place (`DefId`).
+    declarations: Vec<Vec<State<Declared>>>,
+    results: Vec<ModuleResults>,
 }
 
 impl<'p> Compilation<'p> {
@@ -189,7 +217,7 @@ impl<'p> Compilation<'p> {
     /// previous compile's, which asking for its declarations again would only
     /// repeat.
     fn with_checker<T>(
-        &self,
+        &mut self,
         module: ModuleId,
         work: impl FnOnce(&mut Checker<Compilation<'p>>) -> T,
     ) -> T {
@@ -201,7 +229,7 @@ impl<'p> Compilation<'p> {
             diagnostics: &mut diagnostics,
         };
         let result = work(&mut checker);
-        let mut found = self.modules[module.index()].results.borrow_mut();
+        let found = &mut self.results[module.index()];
         if !found.reused {
             found.diagnostics.append(&mut diagnostics);
         }
@@ -212,10 +240,10 @@ impl<'p> Compilation<'p> {
     /// are checked: its imports, and each declaration's kind, name, and type
     /// or value. Its bodies are not part of it.
     fn interface(&self, module: ModuleId) -> u64 {
+        let declarations = &self.declarations[module.index()];
         let module = &self.modules[module.index()];
         let tree = &module.ast;
-        let types = self.types.borrow();
-        let declarations = module.declarations.borrow();
+        let types = &self.types;
         let mut hasher = DefaultHasher::new();
         for import in &module.imports {
             self.modules[import.module.index()].path.hash(&mut hasher);
@@ -229,9 +257,9 @@ impl<'p> Compilation<'p> {
             std::mem::discriminant(decl).hash(&mut hasher);
             decl.name().text(&tree.file).hash(&mut hasher);
             match &declarations[index] {
-                State::Done(Declared::Signature(ty)) => hash_type(&types, *ty, &mut hasher),
+                State::Done(Declared::Signature(ty)) => hash_type(types, *ty, &mut hasher),
                 State::Done(Declared::Constant(Some(Constant { ty, value }))) => {
-                    hash_type(&types, *ty, &mut hasher);
+                    hash_type(types, *ty, &mut hasher);
                     value.hash(&mut hasher);
                 }
                 _ => {}
@@ -243,19 +271,17 @@ impl<'p> Compilation<'p> {
     /// Lowers `body`, the THIR of a function of `module` with the signature
     /// `ty`, to MIR and runs the path checks on it; `None` when it cannot be
     /// lowered (`lower::lower`).
-    fn lower(&self, module: ModuleId, ty: TypeId, body: &thir::Body) -> Option<mir::Body> {
-        let types = self.types.borrow();
+    fn lower(&mut self, module: ModuleId, ty: TypeId, body: &thir::Body) -> Option<mir::Body> {
+        let types = &self.types;
         let Type::Function { parameters, result } = &types[ty] else {
             return None; // the signature's error was reported
         };
-        let module = &self.modules[module.index()];
-        let tree = &module.ast;
+        let tree = &self.modules[module.index()].ast;
         let mir = lower::lower(body, parameters.len())?;
-        let mut found = module.results.borrow_mut();
-        let diagnostics = &mut found.diagnostics;
+        let diagnostics = &mut self.results[module.index()].diagnostics;
         lower::path_checks::initialization(&mir, &tree.file, diagnostics);
         lower::path_checks::unreachable_code(&mir, &tree.file, diagnostics);
-        if let Some(error) = lower::path_checks::missing_return(&mir, &tree.file, &types, *result) {
+        if let Some(error) = lower::path_checks::missing_return(&mir, &tree.file, types, *result) {
             diagnostics.push(error); // last: it points at the closing brace
         }
         Some(mir)
@@ -266,15 +292,14 @@ impl<'p> Compilation<'p> {
     /// reported), or else what `work` finds with a checker of its module,
     /// kept for the next ask.
     fn query(
-        &self,
+        &mut self,
         definition: DefId,
         on_cycle: Declared,
         work: impl FnOnce(&mut Checker<Compilation<'p>>, Id<ast::Decl>) -> Declared,
     ) -> Declared {
-        let module = &self.modules[definition.module.index()];
-        let index = definition.index as usize;
+        let (module, index) = (definition.module.index(), definition.index as usize);
         // Cloned, so no borrow is held while the query runs and asks others.
-        let state = module.declarations.borrow()[index].clone();
+        let state = self.declarations[module][index].clone();
         match state {
             State::Done(result) => return result,
             State::Running => {
@@ -283,22 +308,21 @@ impl<'p> Compilation<'p> {
             }
             State::NotStarted => {}
         }
-        module.declarations.borrow_mut()[index] = State::Running;
-        let declaration = module.ast.declaration(definition.index);
+        self.declarations[module][index] = State::Running;
+        let declaration = self.modules[module].ast.declaration(definition.index);
         let result = self.with_checker(definition.module, |checker| work(checker, declaration));
-        module.declarations.borrow_mut()[index] = State::Done(result.clone());
+        self.declarations[module][index] = State::Done(result.clone());
         result
     }
 
     /// Reports that the declaration `definition` was asked for while it was
     /// being checked: it depends on itself.
-    fn report_cycle(&self, definition: DefId) {
-        let module = &self.modules[definition.module.index()];
-        let mut found = module.results.borrow_mut();
+    fn report_cycle(&mut self, definition: DefId) {
+        let found = &mut self.results[definition.module.index()];
         if found.reused {
             return;
         }
-        let tree = &module.ast;
+        let tree = &self.modules[definition.module.index()].ast;
         let name = tree.decls[tree.declaration(definition.index)].name();
         let text = name.text(&tree.file);
         // `A + A` asks for `A` twice while it runs; the cycle is reported once.
@@ -320,15 +344,15 @@ impl<'p> Compilation<'p> {
 }
 
 impl Queries for Compilation<'_> {
-    fn types(&self) -> RefMut<'_, Types> {
-        self.types.borrow_mut()
+    fn types(&mut self) -> &mut Types {
+        &mut self.types
     }
 
     fn pointer_bits(&self) -> u32 {
         self.pointer_bits
     }
 
-    fn declaration(&self, definition: DefId) -> Declared {
+    fn declaration(&mut self, definition: DefId) -> Declared {
         let tree = &self.modules[definition.module.index()].ast;
         if let ast::Decl::Const { .. } = tree.decls[tree.declaration(definition.index)] {
             let work = |checker: &mut Checker<_>, declaration| {

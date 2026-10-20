@@ -56,11 +56,10 @@ impl<'a, Q: Queries> Checker<'a, Q> {
     ) -> Option<Body> {
         let block = function.body?;
         let reported = self.diagnostics.len();
-        // A match, so the types' guard is dropped before the body is checked.
-        let (parameters, result) = match &self.queries.types()[ty] {
-            Type::Function { parameters, result } => (parameters.clone(), *result),
-            _ => return None, // the signature's error was reported
+        let Type::Function { parameters, result } = &self.queries.types()[ty] else {
+            return None; // the signature's error was reported
         };
+        let (parameters, result) = (parameters.clone(), *result);
         let tree = &self.module().ast;
         let mut checker = BodyChecker::new(self, result, names);
         let outermost = Block {

@@ -376,7 +376,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
         let tree = self.tree;
         let literal = numeric::split(tree.file.slice(number));
         let pointer_bits = self.checker.queries.pointer_bits();
-        let mut types = self.checker.queries.types();
+        let types = self.checker.queries.types();
         let ty = if literal.suffix.is_empty() {
             match expected {
                 Some(ty) if takes_type(&literal, &types[ty]) => ty,

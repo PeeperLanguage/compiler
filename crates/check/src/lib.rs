@@ -10,8 +10,6 @@ mod statement;
 #[cfg(test)]
 mod testing;
 
-use std::cell::RefMut;
-
 use diagnostics::Code;
 use diagnostics::Diagnostic;
 use model::Declared;
@@ -29,13 +27,13 @@ use model::Symbol;
 /// `check` never depends on the scheduler.
 pub trait Queries {
     /// The program's types, shared by every declaration.
-    fn types(&self) -> RefMut<'_, Types>;
+    fn types(&mut self) -> &mut Types;
     /// How wide a pointer is on the target, in bits: the width of `isize` and
     /// `usize`.
     fn pointer_bits(&self) -> u32;
     /// What checking the declaration `definition` found: a constant's type
     /// and value (`Checker::constant`), else a signature (`Checker::signature`).
-    fn declaration(&self, definition: DefId) -> Declared;
+    fn declaration(&mut self, definition: DefId) -> Declared;
 }
 
 /// Checking declarations of one module.
@@ -43,7 +41,7 @@ pub struct Checker<'a, Q: Queries> {
     /// The program's modules and the scope of each, indexed by `ModuleId`.
     pub modules: &'a [project::Module],
     pub current_module: ModuleId, // the module being checked
-    pub queries: &'a Q,
+    pub queries: &'a mut Q,
     pub diagnostics: &'a mut Vec<Diagnostic>,
 }
 

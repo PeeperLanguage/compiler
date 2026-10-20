@@ -5,7 +5,6 @@
 mod packages;
 
 use std::cell::OnceCell;
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::ffi::OsString;
@@ -18,9 +17,7 @@ use std::sync::Mutex;
 use std::sync::mpsc;
 
 use diagnostics::Diagnostic;
-use model::Declared;
 use model::ModuleId;
-use model::State;
 use model::Symbol;
 use model::ast;
 use model::ast::Tree;
@@ -36,9 +33,9 @@ const PRELUDE_PATH: &str = "core:global";
 /// The folder of a package that holds its source files.
 const SOURCE_FOLDER: &str = "src";
 
-/// One source file, read and parsed, and what a compile finds in it. Its
-/// source file is `ast.file`. What `load` read never changes; a compile sets
-/// its scope once and fills its query results and diagnostics.
+/// One source file, read and parsed. Its source file is `ast.file`. What
+/// `load` read never changes, and a compile sets its scope once; what a
+/// compile finds is kept by the compile (`build::Compilation`).
 pub struct Module {
     pub path: String, // import path, such as "myapp:utils/file" or "core:global"
     pub ast: Tree,
@@ -48,58 +45,12 @@ pub struct Module {
     /// The names it declares and imports; set once, after every module is
     /// loaded, because a scope needs the modules its imports bring in.
     pub scope: OnceCell<Scope>,
-    /// The query of each top-level declaration, by its place (`DefId`).
-    pub declarations: RefCell<Vec<State<Declared>>>,
-    /// What the compile found in it.
-    pub results: RefCell<ModuleResults>,
 }
 
 impl Module {
-    /// A module as `load` read it, with nothing compiled yet.
-    pub fn new(
-        path: String,
-        ast: Tree,
-        imports: Vec<Import>,
-        imports_complete: bool,
-        diagnostics: Vec<Diagnostic>,
-    ) -> Module {
-        Module {
-            declarations: RefCell::new(vec![State::NotStarted; ast.declarations.len()]),
-            results: RefCell::new(ModuleResults::new(ast.file.clone())),
-            path,
-            ast,
-            imports,
-            imports_complete,
-            diagnostics,
-            scope: OnceCell::new(),
-        }
-    }
-
     /// The scope the compile set.
     pub fn scope(&self) -> &Scope {
         self.scope.get().expect("a compile sets every scope first")
-    }
-}
-
-/// What a compile found in one module, kept for the next compile.
-pub struct ModuleResults {
-    pub file: Arc<SourceFile>, // its path tells the module's entry in the next compile
-    pub interface: u64,        // a hash of what other modules see; set when the module is done
-    pub scope_diagnostics: Vec<Diagnostic>, // from building its scope; redone every compile
-    pub diagnostics: Vec<Diagnostic>, // from checking it; kept while it is reused
-    pub reused: bool,          // kept from the previous compile, not checked
-}
-
-impl ModuleResults {
-    /// Nothing found yet in the module read from `file`.
-    pub fn new(file: Arc<SourceFile>) -> ModuleResults {
-        ModuleResults {
-            file,
-            interface: 0,
-            scope_diagnostics: Vec::new(),
-            diagnostics: Vec::new(),
-            reused: false,
-        }
     }
 }
 
@@ -348,13 +299,14 @@ impl Loaded {
             kind: *kind,
             module: ids[path], // every imported module is loaded
         });
-        Module::new(
-            self.path,
-            self.ast,
-            imports.collect(),
-            self.imports_complete,
-            self.diagnostics,
-        )
+        Module {
+            path: self.path,
+            ast: self.ast,
+            imports: imports.collect(),
+            imports_complete: self.imports_complete,
+            diagnostics: self.diagnostics,
+            scope: OnceCell::new(),
+        }
     }
 }
 
