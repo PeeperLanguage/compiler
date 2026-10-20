@@ -1,8 +1,11 @@
 //! Runs the Peeper fixtures in x_test: each folder with a peeper.toml is a
 //! project whose `[test]` section says what the compiler must do with it.
-//! `mode = "check"` checks it; `mode = "mir"` dumps its MIR (`peeper -dump
-//! mir`) and compares the main module's with the folder's expected.mir, which
-//! `PEEPER_BLESS=1` rewrites; `mode = "run"` runs it (`peeper run`) with the
+//! `mode = "check"` checks it; `mode = "mir"` or `"ll"` dumps its MIR or LLVM
+//! text (`peeper -dump mir`) and compares the main module's with the folder's
+//! expected.mir or expected.ll, which `PEEPER_BLESS=1` rewrites; the folder's
+//! path shows as `<fixture>` there, so they read the same in every checkout
+//! (an `ll` fixture must not panic: a panic message's length counts the path).
+//! `mode = "run"` runs it (`peeper run`) with the
 //! `program_args`. `outcome` is "success" (exit code 0), "failure" (1, or any
 //! other code for `run`) or, for `run`, "exit_code" with `exit_code`; the
 //! output must hold each of `stdout_contains` and `stderr_contains`. The
@@ -67,7 +70,7 @@ fn fixtures() {
         let test = |key: &str| document.get("test").and_then(|test| test.get(key));
         let text = |key: &str| test(key).and_then(toml_edit::Item::as_str);
         let mode = match text("mode") {
-            Some(mode @ ("check" | "mir" | "run")) => mode,
+            Some(mode @ ("check" | "mir" | "ll" | "run")) => mode,
             _ => continue,
         };
         checked += 1;
@@ -79,7 +82,7 @@ fn fixtures() {
         };
         let mut command = Command::new(&compiler);
         match mode {
-            "mir" => command.args(["-dump", "mir"]).arg(folder),
+            "mir" | "ll" => command.args(["-dump", mode]).arg(folder),
             "run" => command.arg("run").arg(folder).args(texts("program_args")),
             _ => command.arg("check").arg(folder),
         };
@@ -112,17 +115,20 @@ fn fixtures() {
                 }
             }
         }
-        if mode == "mir" {
-            let file = folder.join("expected.mir");
+        if mode == "mir" || mode == "ll" {
+            let file = folder.join(format!("expected.{mode}"));
             let package = document.get("name").and_then(toml_edit::Item::as_str);
             let package = package.expect("a fixture's peeper.toml has a name");
-            let dumped = folder.join(format!("build/debug/dumps/{package}/main.mir"));
-            let mir = std::fs::read_to_string(&dumped).unwrap_or_default();
+            let dumped = folder.join(format!("build/debug/dumps/{package}/main.{mode}"));
+            let folder_path = folder.canonicalize().expect("the fixture folder exists");
+            let dump = std::fs::read_to_string(&dumped)
+                .unwrap_or_default()
+                .replace(&*folder_path.to_string_lossy(), "<fixture>");
             if std::env::var_os("PEEPER_BLESS").is_some() {
-                std::fs::write(&file, &mir).expect("expected.mir is written");
-            } else if std::fs::read_to_string(&file).ok() != Some(mir.clone()) {
+                std::fs::write(&file, &dump).expect("the expected dump is written");
+            } else if std::fs::read_to_string(&file).ok() != Some(dump.clone()) {
                 failures.push(format!(
-                    "{name}: the MIR differs from expected.mir (PEEPER_BLESS=1 rewrites it)\n{mir}"
+                    "{name}: the dump differs from expected.{mode} (PEEPER_BLESS=1 rewrites it)\n{dump}"
                 ));
             }
         }

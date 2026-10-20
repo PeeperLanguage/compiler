@@ -1,0 +1,6 @@
+name = "ll_debug_scopes"
+build = "program"
+
+[test]
+mode = "ll"
+outcome = "success"

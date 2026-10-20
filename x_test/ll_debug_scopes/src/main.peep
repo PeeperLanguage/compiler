@@ -1,0 +1,30 @@
+// The LLVM text of nested blocks, a shadowed name, a block that declares
+// nothing and a call into the prelude: each block that declares a variable is
+// a debug scope, under the nearest such block. Nothing here can panic: a panic
+// message holds the file's path, whose length differs between checkouts.
+fn scale(a: i32, b: i32) -> i32 {
+    let s = a + b;
+    {
+        {
+            let s = s * 2;
+            if s > 2 {
+                let t = s / 2;
+                return t;
+            }
+        }
+        let u = 3;
+        return u + s;
+    }
+}
+
+fn main() -> i32 {
+    write(stdout, c"scaled\n", 7);
+    let x = scale(1, 2);
+    if x > 0 {
+        {
+            let y = x;
+            let z = y;
+        }
+    }
+    return 0;
+}
