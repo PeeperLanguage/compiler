@@ -20,5 +20,9 @@ lsp.workspace = true
 [dev-dependencies]
 toml_edit.workspace = true
 
+[[bench]]
+name = "compile"
+harness = false
+
 [lints]
 workspace = true
