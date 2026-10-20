@@ -40,6 +40,8 @@ pub(crate) struct BodyChecker<'c, 'a, Q: Queries> {
     pub(crate) names: Vec<(&'a str, Symbol)>,
     /// Where in `names` the current block's names start.
     block_start: usize,
+    /// The span of the current block, for the locals it declares.
+    scope: Span,
     result: TypeId, // the function's result type
 }
 
@@ -62,6 +64,7 @@ impl<'a, Q: Queries> Checker<'a, Q> {
         let (parameters, result) = (parameters.clone(), *result);
         let tree = &self.module().ast;
         let mut checker = BodyChecker::new(self, result, names);
+        checker.scope = tree.blocks.span(block);
         for (parameter, &ty) in tree
             .lists
             .items(function.signature.parameters)
@@ -74,6 +77,7 @@ impl<'a, Q: Queries> Checker<'a, Q> {
                     ty,
                     mutable: parameter.mutable,
                     initialized: true,
+                    scope: checker.scope,
                 },
                 name.span,
             );
@@ -82,9 +86,12 @@ impl<'a, Q: Queries> Checker<'a, Q> {
         checker.body.span = tree.blocks.span(block);
         checker.body.statements = checker.statements(tree.blocks[block].statements);
         let mut body = checker.body;
-        body.has_errors = self.diagnostics[reported..]
-            .iter()
-            .any(Diagnostic::is_error);
+        // A part of the signature that failed was reported with the signature.
+        body.has_errors = parameters.contains(&TypeId::INVALID)
+            || result == TypeId::INVALID
+            || self.diagnostics[reported..]
+                .iter()
+                .any(Diagnostic::is_error);
         Some(body)
     }
 
@@ -112,6 +119,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
             recorded,
             names: Vec::new(),
             block_start: 0,
+            scope: Span::at(0),
             result,
         }
     }
@@ -131,9 +139,11 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
     fn block(&mut self, block: Id<ast::Block>) -> Id<Block> {
         let names_before = self.names.len();
         let enclosing_start = std::mem::replace(&mut self.block_start, names_before);
+        let enclosing_scope = std::mem::replace(&mut self.scope, self.tree.blocks.span(block));
         let statements = self.statements(self.tree.blocks[block].statements);
         self.names.truncate(names_before);
         self.block_start = enclosing_start;
+        self.scope = enclosing_scope;
         self.body
             .add(Block { statements }, self.tree.blocks.span(block))
     }
@@ -243,6 +253,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
                             ty: TypeId::INVALID,
                             mutable: true,
                             initialized: true,
+                            scope: self.scope,
                         };
                         let local = self.body.add(unknown, name.span);
                         self.declare(name, Symbol::Local(local));
@@ -304,6 +315,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
             ty,
             mutable,
             initialized,
+            scope: self.scope,
         };
         let text = name.text(&self.tree.file);
         let shadowed = self

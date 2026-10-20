@@ -74,13 +74,32 @@ pub fn write(fixes: &[(&Fix, &str)], out: &mut impl Write) -> std::io::Result<()
         for (fix, _) in in_file {
             text.replace_range(fix.span.range(), &fix.new_text);
         }
-        std::fs::write(&file.path, text)?;
+        replace_file(Path::new(&file.path), &text)?;
         for (fix, help) in in_file.iter().rev() {
             let (line, column) = file.position(fix.span.start as usize);
             writeln!(out, "fixed {}:{line}:{column}: {help}", file.path)?;
         }
     }
     Ok(())
+}
+
+/// Replaces the text of the file `path` (the file a symlink names, not the
+/// link) with `text`, keeping its permissions. `text` is written whole to a
+/// sibling first, so a failed write leaves the original untouched.
+fn replace_file(path: &Path, text: &str) -> std::io::Result<()> {
+    let path = std::fs::canonicalize(path)?;
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".fix{}", std::process::id()));
+    let temporary = path.with_file_name(name);
+    let written = std::fs::write(&temporary, text)
+        .and_then(|()| {
+            std::fs::set_permissions(&temporary, std::fs::metadata(&path)?.permissions())
+        })
+        .and_then(|()| std::fs::rename(&temporary, &path));
+    if written.is_err() {
+        _ = std::fs::remove_file(&temporary);
+    }
+    written
 }
 
 #[cfg(test)]
@@ -120,5 +139,22 @@ mod tests {
         let chosen = super::chosen(&all, Path::new("/app"));
         let helps: Vec<&str> = chosen.iter().map(|&(_, help)| help).collect();
         assert_eq!(helps, ["first", "after"]);
+    }
+
+    /// A replaced file keeps its permissions and leaves no sibling behind; a
+    /// file that is not there is an error and gets no new file.
+    #[test]
+    fn replaces_whole_file() {
+        let folder = std::env::temp_dir().join(format!("peeper-fix-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let file = folder.join("a.peep");
+        std::fs::write(&file, "old").unwrap();
+        super::replace_file(&file, "new text").unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "new text");
+        assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 1);
+        let missing = folder.join("b.peep");
+        assert!(super::replace_file(&missing, "x").is_err());
+        assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 1);
+        std::fs::remove_dir_all(&folder).unwrap();
     }
 }

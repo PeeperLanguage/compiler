@@ -105,6 +105,13 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
                     kind: ExprKind::Constant(Value::Bool(value)),
                 };
             }
+            ast::Expr::String { c_string: true } => {
+                let bytes = literal::value(tree.file.slice(span));
+                return Expr {
+                    ty: TypeId::CSTR,
+                    kind: ExprKind::Constant(Value::Bytes(bytes.into())),
+                };
+            }
             ast::Expr::Parentheses(inner) => return self.expr(inner, expected),
             ast::Expr::Unary { op, value } => return self.unary(op, value, span, expected),
             ast::Expr::Binary { op, left, right } => {
@@ -118,7 +125,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
                 };
             }
             ast::Expr::Call { callee, arguments } => return self.call(callee, arguments, span),
-            ast::Expr::String { .. } => "string literals",
+            ast::Expr::String { c_string: false } => "string literals",
             ast::Expr::Char { .. } => "character literals",
             ast::Expr::None => "`none` values",
             ast::Expr::Reference { .. } => "references",

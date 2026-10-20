@@ -130,6 +130,7 @@ pub struct Project {
     pub packages: HashMap<String, PathBuf>,
     pub entry: PathBuf, // the file the program starts at
     pub root: PathBuf,  // the project folder, or the folder of the file
+    pub name: String,   // the project's package name, or the file's name without `.peep`
 }
 
 /// The one spelling of `path` that files are found and compared by:
@@ -175,10 +176,16 @@ pub fn find(path: &Path, libraries: &Path) -> Result<Project, String> {
     let mut packages = bundled_libraries(libraries);
     if !is_dir {
         let root = path.parent().unwrap_or(Path::new("")).to_path_buf();
+        let name = path
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
         return Ok(Project {
             packages,
             entry: path,
             root,
+            name,
         });
     }
     let manifest = manifest::read(&path)?;
@@ -192,11 +199,12 @@ pub fn find(path: &Path, libraries: &Path) -> Result<Project, String> {
     }
     let source = manifest.root.join(SOURCE_FOLDER);
     let entry = source.join(format!("main{SOURCE_EXTENSION}"));
-    packages.insert(manifest.name, source);
+    packages.insert(manifest.name.clone(), source);
     Ok(Project {
         packages,
         entry,
         root: manifest.root,
+        name: manifest.name,
     })
 }
 
@@ -262,6 +270,8 @@ struct Job {
 /// `open_files` holds the text of files open in an editor (anything that
 /// reads as text, such as a `String`), read instead of what is on disk. Its
 /// keys, like `project`'s paths, are spelled as `canonical_path` spells them.
+/// Each `.peep` file of a package in it is loaded too, imported or not, so an
+/// editor checks the file it has open.
 pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + Sync>) -> Program {
     let with_prelude = resolve(&project.packages, PRELUDE_PATH)
         .is_ok_and(|(_, file)| file.is_file() || open_files.contains_key(&file));
@@ -297,6 +307,22 @@ pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + S
             standalone: !in_package,
         });
         let mut pending = 1;
+        // A module of the project that an editor has open is checked even
+        // when no import reaches it from the entry.
+        for file in open_files
+            .keys()
+            .filter(|file| file.extension() == Some("peep".as_ref()))
+        {
+            let (path, in_package) = path_of(&project.packages, file);
+            if in_package && seen.insert(path.clone()) {
+                _ = send_job.send(Job {
+                    path,
+                    file: file.clone(),
+                    standalone: false,
+                });
+                pending += 1;
+            }
+        }
         while pending > 0 {
             let Ok(loaded) = done.recv() else { break };
             pending -= 1;
@@ -572,6 +598,7 @@ mod tests {
             packages,
             entry: root.join("src/main.peep"),
             root,
+            name: "myapp".to_string(),
         }
     }
 

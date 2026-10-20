@@ -66,6 +66,7 @@ pub const CYCLIC_IMPORT: Code = error("M0002");
 pub const INVALID_IMPORT_PATH: Code = error("M0003");
 pub const NOT_EXPORTED: Code = error("M0004");
 pub const ALIAS_IN_USE: Code = error("M0005");
+pub const INVALID_ENTRY_POINT: Code = error("M0006");
 pub const TYPE_MISMATCH: Code = error("T0001");
 pub const UNDEFINED_NAME: Code = error("T0002");
 pub const ALREADY_DECLARED: Code = error("T0003");

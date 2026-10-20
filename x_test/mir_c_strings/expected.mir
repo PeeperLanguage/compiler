@@ -1,0 +1,7 @@
+fn main:
+  bb0:
+    store text.0, c"bye\n"
+    %1 = call write(1, c"hello\tworld\n", 12): i32
+    %2 = load text.0: cstr
+    %3 = call write(2, %2, 4): i32
+    fall off at `}`

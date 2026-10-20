@@ -2,18 +2,55 @@
 //! project whose `[test]` section says what the compiler must do with it.
 //! `mode = "check"` checks it; `mode = "mir"` dumps its MIR (`peeper -dump
 //! mir`) and compares the main module's with the folder's expected.mir, which
-//! `PEEPER_BLESS=1` rewrites.
-//! Building and running programs come with code generation. The compiler is `$PEEPER` if set (the bundled
-//! build/bin/peeper, which finds its libraries), else the one cargo built.
+//! `PEEPER_BLESS=1` rewrites; `mode = "run"` runs it (`peeper run`) with the
+//! `program_args`. `outcome` is "success" (exit code 0), "failure" (1, or any
+//! other code for `run`) or, for `run`, "exit_code" with `exit_code`; the
+//! output must hold each of `stdout_contains` and `stderr_contains`. The
+//! compiler is `$PEEPER` if set (the bundled build/bin/peeper, which finds
+//! its libraries and runtime), else the one cargo built, bundled with the
+//! libraries and runtime of this checkout.
 
 use std::path::Path;
 use std::process::Command;
 
+/// Bundles the compiler cargo built as peeper expects to be installed: in
+/// <root>/bin, beside <root>/libs and <root>/runtime. Returns its path.
+fn bundle() -> String {
+    let checkout = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join("bundle");
+    _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("bin")).expect("the bundle folder is made");
+    std::fs::create_dir_all(root.join("runtime")).expect("the bundle folder is made");
+    let compiler = root.join("bin/peeper");
+    std::fs::copy(env!("CARGO_BIN_EXE_peeper"), &compiler).expect("the compiler is copied");
+    std::os::unix::fs::symlink(
+        checkout.join("_builtin_library").canonicalize().unwrap(),
+        root.join("libs"),
+    )
+    .expect("the libraries are linked");
+    let object = root.join("runtime/peeper_rt.o");
+    let compiled = Command::new("clang")
+        .args(["-std=c11", "-O2", "-c"])
+        .arg(checkout.join("runtime/peeper_rt.c"))
+        .arg("-o")
+        .arg(&object)
+        .status()
+        .expect("clang runs");
+    assert!(compiled.success(), "the runtime compiles");
+    let archived = Command::new("ar")
+        .arg("rcs")
+        .arg(root.join("runtime/libpeeper_rt_v1.a"))
+        .arg(&object)
+        .status()
+        .expect("ar runs");
+    assert!(archived.success(), "the runtime archives");
+    compiler.to_string_lossy().into_owned()
+}
+
 #[test]
 fn fixtures() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../x_test");
-    let compiler =
-        std::env::var("PEEPER").unwrap_or_else(|_| env!("CARGO_BIN_EXE_peeper").to_string());
+    let compiler = std::env::var("PEEPER").unwrap_or_else(|_| bundle());
     let mut folders: Vec<_> = std::fs::read_dir(&root)
         .expect("x_test exists")
         .flatten()
@@ -30,48 +67,49 @@ fn fixtures() {
         let test = |key: &str| document.get("test").and_then(|test| test.get(key));
         let text = |key: &str| test(key).and_then(toml_edit::Item::as_str);
         let mode = match text("mode") {
-            Some(mode @ ("check" | "mir")) => mode,
+            Some(mode @ ("check" | "mir" | "run")) => mode,
             _ => continue,
         };
         checked += 1;
-        let command = if mode == "mir" {
-            ["-dump", "mir"]
-        } else {
-            ["check", ""]
-        };
-        let output = Command::new(&compiler)
-            .args(command.iter().filter(|arg| !arg.is_empty()))
-            .arg(folder)
-            .output()
-            .expect("the compiler runs");
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let name = folder.file_name().unwrap().to_string_lossy();
-        let succeeded = match output.status.code() {
-            Some(0) => true,
-            Some(1) => false,
-            _ => {
-                failures.push(format!("{name}: the compiler crashed\n{stderr}"));
-                continue;
+        let texts = |key: &str| -> Vec<&str> {
+            match test(key).and_then(toml_edit::Item::as_array) {
+                Some(values) => values.iter().filter_map(toml_edit::Value::as_str).collect(),
+                None => Vec::new(),
             }
         };
-        let expected = match text("outcome") {
-            Some("success") => true,
-            Some("failure") => false,
-            other => panic!("{name}: outcome {other:?} is not success or failure"),
+        let mut command = Command::new(&compiler);
+        match mode {
+            "mir" => command.args(["-dump", "mir"]).arg(folder),
+            "run" => command.arg("run").arg(folder).args(texts("program_args")),
+            _ => command.arg("check").arg(folder),
         };
-        if succeeded != expected {
+        let output = command.output().expect("the compiler runs");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let name = folder.file_name().unwrap().to_string_lossy();
+        let Some(code) = output.status.code() else {
+            failures.push(format!("{name}: the compiler crashed\n{stderr}"));
+            continue;
+        };
+        let wanted_code = test("exit_code").and_then(toml_edit::Item::as_integer);
+        let as_expected = match (text("outcome"), mode) {
+            (Some("success"), _) => code == 0,
+            (Some("failure"), "run") => code != 0,
+            (Some("failure"), _) => code == 1,
+            (Some("exit_code"), "run") => Some(i64::from(code)) == wanted_code,
+            (other, _) => panic!("{name}: outcome {other:?} does not fit mode {mode}"),
+        };
+        if !as_expected {
             failures.push(format!(
-                "{name}: expected {:?}, got\n{stderr}",
+                "{name}: expected {:?} {wanted_code:?}, got exit code {code}\n{stderr}",
                 text("outcome")
             ));
         }
-        let wanted = match test("stderr_contains").and_then(toml_edit::Item::as_array) {
-            Some(values) => values.iter().filter_map(toml_edit::Value::as_str).collect(),
-            None => Vec::new(),
-        };
-        for wanted in wanted {
-            if !stderr.contains(wanted) {
-                failures.push(format!("{name}: stderr lacks {wanted:?}\n{stderr}"));
+        for (key, printed) in [("stdout_contains", &stdout), ("stderr_contains", &stderr)] {
+            for wanted in texts(key) {
+                if !printed.contains(wanted) {
+                    failures.push(format!("{name}: {key} lacks {wanted:?}\n{printed}"));
+                }
             }
         }
         if mode == "mir" {

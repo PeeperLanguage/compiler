@@ -15,26 +15,34 @@ fn main() -> ExitCode {
         eprintln!("{}", args::USAGE);
         return ExitCode::from(2);
     };
-    match args {
-        Args::Check { path, dumps, fix } => {
-            let stderr = std::io::stderr();
-            let colored = stderr.is_terminal();
-            let code = driver::run(
-                &path,
-                &driver::libraries_dir(),
-                &mut stderr.lock(),
-                colored,
-                &dumps,
-                fix,
-            );
-            ExitCode::from(code)
+    let installation = driver::installation_dir();
+    let stderr = std::io::stderr();
+    let colored = stderr.is_terminal();
+    let (path, goal) = match &args {
+        Args::Check { path, dumps, fix } => (
+            path,
+            driver::Goal::Check {
+                dumps,
+                apply_fixes: *fix,
+            },
+        ),
+        Args::Build { path, output } => (
+            path,
+            driver::Goal::Build {
+                output: output.as_deref(),
+            },
+        ),
+        Args::Run { path, arguments } => (path, driver::Goal::Run { arguments }),
+        Args::Lsp => {
+            return match lsp::serve(&installation.join("libs")) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("peeper lsp: {error}");
+                    ExitCode::FAILURE
+                }
+            };
         }
-        Args::Lsp => match lsp::serve(&driver::libraries_dir()) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(error) => {
-                eprintln!("peeper lsp: {error}");
-                ExitCode::FAILURE
-            }
-        },
-    }
+    };
+    let code = driver::run(path, &installation, &mut stderr.lock(), colored, &goal);
+    ExitCode::from(code)
 }

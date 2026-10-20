@@ -1,0 +1,21 @@
+[package]
+name = "llvm"
+description = "LLVM IR text for a module, from each function's MIR"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+arena.workspace = true
+literal.workspace = true
+model.workspace = true
+project.workspace = true
+source.workspace = true
+
+[dev-dependencies]
+bigint.workspace = true
+build.workspace = true
+
+[lints]
+workspace = true

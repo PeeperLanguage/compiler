@@ -1,0 +1,8 @@
+name = "run_write_and_exit_code"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 7
+stdout_contains = ["hello\tworld\n", "half is 5\n"]

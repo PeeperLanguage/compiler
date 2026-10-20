@@ -70,8 +70,8 @@ struct ModuleResults {
 /// gives what it found. A module of `previous` (a compile of the same program
 /// with the same `pointer_bits`, or `Results::default()`) whose text and
 /// whose imports' interfaces are unchanged keeps its diagnostics, and its
-/// bodies are not checked again. The THIR of each checked function with a
-/// body, the names written in it (only when `record_names`, as for an
+/// bodies are not checked again. The signature of each checked function with
+/// a body, its THIR, the names written in it (only when `record_names`, as for an
 /// editor; otherwise none), and its MIR unless checking it found an error, go
 /// to `use_function` as soon as they are built, in declaration order, and are
 /// dropped after: nothing holds every function's bodies at once. Integers as
@@ -81,7 +81,7 @@ pub fn compile(
     pointer_bits: u32,
     previous: Results,
     record_names: bool,
-    mut use_function: impl FnMut(DefId, &thir::Body, &[thir::Name], Option<&mir::Body>, &Types),
+    mut use_function: impl FnMut(DefId, TypeId, &thir::Body, &[thir::Name], Option<&mir::Body>, &Types),
 ) -> Results {
     let modules = program.modules.as_slice();
     let mut results: Vec<ModuleResults> = modules
@@ -153,7 +153,7 @@ pub fn compile(
                         build.with_checker(id, |checker| checker.body(&function, ty, recorded));
                     if let Some(thir) = thir {
                         let mir = build.lower(id, ty, &thir);
-                        use_function(definition, &thir, &names, mir.as_ref(), &build.types);
+                        use_function(definition, ty, &thir, &names, mir.as_ref(), &build.types);
                     }
                 }
                 ast::Decl::Const { .. } => {
@@ -339,6 +339,14 @@ impl<'p> Build<'p> {
         let tree = &self.modules[module].ast;
         let name = tree.decls[Id::from_index(definition.index as usize)].name();
         let text = name.text(&tree.file);
+        // `A + A` asks for `A` twice while it runs; the cycle is reported once.
+        let reported = |diagnostic: &Diagnostic| {
+            diagnostic.code == diagnostics::CIRCULAR_DEPENDENCY
+                && diagnostic.labels[0].span == name.span
+        };
+        if self.results[module].diagnostics.iter().any(reported) {
+            return;
+        }
         self.results[module].diagnostics.push(
             Diagnostic::new(
                 diagnostics::CIRCULAR_DEPENDENCY,
@@ -408,6 +416,7 @@ mod tests {
             packages,
             entry: folder("app").join("main.peep"),
             root: PathBuf::from("/peeper-build-test"),
+            name: "app".to_string(),
         };
         let program = project::load(&project, &open_files);
         let reported: Vec<&str> = program
@@ -426,7 +435,7 @@ mod tests {
             64,
             Results::default(),
             false,
-            |_, _, _, _, _| {},
+            |_, _, _, _, _, _| {},
         );
         found
             .diagnostics()
@@ -631,12 +640,18 @@ mod tests {
     fn recompile(modules: &[(&str, &str)], previous: Results) -> (Results, Vec<String>) {
         let program = program(modules);
         let mut checked: Vec<String> = Vec::new();
-        let results = compile(&program, 64, previous, false, |definition, _, _, _, _| {
-            let path = &program.modules[definition.module.index()].path;
-            if !checked.contains(path) {
-                checked.push(path.clone());
-            }
-        });
+        let results = compile(
+            &program,
+            64,
+            previous,
+            false,
+            |definition, _, _, _, _, _| {
+                let path = &program.modules[definition.module.index()].path;
+                if !checked.contains(path) {
+                    checked.push(path.clone());
+                }
+            },
+        );
         (results, checked)
     }
 

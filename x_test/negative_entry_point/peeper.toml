@@ -1,0 +1,7 @@
+name = "negative_entry_point"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "failure"
+stderr_contains = ["[M0006]: program entrypoint must be a local body-backed `fn main()` or `fn main() -> i32`", "src/main.peep:1:4"]

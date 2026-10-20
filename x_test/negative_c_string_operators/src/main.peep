@@ -1,0 +1,6 @@
+fn main() {
+    let same = c"a" == c"b";
+    let negated = -c"a";
+    let number: i32 = c"x";
+    let plain = "plain";
+}

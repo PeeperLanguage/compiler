@@ -64,6 +64,7 @@ dependencies = [
  "arena",
  "bigint",
  "diagnostics",
+ "literal",
  "model",
  "numeric",
  "parser",
@@ -291,6 +292,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "llvm"
+version = "0.1.0"
+dependencies = [
+ "arena",
+ "bigint",
+ "build",
+ "literal",
+ "model",
+ "project",
+ "source",
+]
+
+[[package]]
 name = "log"
 version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -406,6 +420,7 @@ dependencies = [
  "build",
  "diagnostics",
  "lexer",
+ "llvm",
  "lsp",
  "model",
  "project",

@@ -115,7 +115,7 @@ pub fn missing_return(
                     // constant's value; the label only says which side it takes.
                     let always = match condition {
                         mir::Operand::Constant(constant) => {
-                            match body.constants[constant.index()] {
+                            match body.constants[constant.index()].value {
                                 Value::Bool(value) => Some(value),
                                 _ => None,
                             }

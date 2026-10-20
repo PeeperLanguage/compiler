@@ -266,10 +266,13 @@ impl<'s> Server<'s> {
                     let text = format!("{}: {ty}", file.slice(*declared));
                     (file, *declared, code_block(&text))
                 }
-                CachedTarget::Declaration { file, index } => {
+                CachedTarget::Declaration { file, position } => {
                     let declared_in = program.module_of(file)?;
                     let tree = &declared_in.ast;
-                    let declaration = Id::from_index(*index as usize);
+                    let declaration = tree
+                        .lists
+                        .items(tree.declarations)
+                        .nth(*position as usize)?;
                     let declared = tree.decls[declaration].name().span;
                     let hover = header(tree, declaration, &declared_in.path);
                     (&tree.file, declared, hover)
@@ -318,13 +321,13 @@ impl<'s> Server<'s> {
                 Some(name) => name.target.clone(),
                 None => {
                     let tree = &module.ast;
-                    let declaration = tree
+                    let position = tree
                         .lists
                         .items(tree.declarations)
-                        .find(|&declaration| at(tree.decls[declaration].name().span))?;
+                        .position(|declaration| at(tree.decls[declaration].name().span))?;
                     CachedTarget::Declaration {
                         file: file.clone(),
-                        index: declaration.index() as u32,
+                        position: position as u32,
                     }
                 }
             };
@@ -425,7 +428,7 @@ impl<'s> Server<'s> {
                 usize::BITS,
                 results,
                 true,
-                |definition, body, names, _, types| {
+                |definition, _, body, names, _, types| {
                     let body_names = names
                         .iter()
                         .map(|name| CachedName::new(&program, body, name, types));
@@ -532,10 +535,11 @@ enum CachedTarget {
     /// A parameter, `let` or `const` of the body, declared at `declared`, with
     /// its type's text.
     InBody { declared: Span, ty: String },
-    /// The declaration at `index` of the module read from `file`. Its
-    /// importer is reused only while the module's declarations keep their
-    /// kinds and names (`build::compile`), so the index stays right.
-    Declaration { file: PathBuf, index: u32 },
+    /// The declaration at `position` among the top-level declarations of the
+    /// module read from `file`. Its importer is reused only while those keep
+    /// their kinds and names (`build::compile`), so the position stays right;
+    /// an arena index would not, as a body's `const` shifts it.
+    Declaration { file: PathBuf, position: u32 },
     /// The module read from this file.
     Module(PathBuf),
 }
@@ -567,10 +571,18 @@ impl CachedName {
                 Binding::Function(definition)
                 | Binding::Constant(definition)
                 | Binding::Type(definition),
-            ) => CachedTarget::Declaration {
-                file: file(definition.module),
-                index: definition.index,
-            },
+            ) => {
+                let tree = &program.modules[definition.module.index()].ast;
+                let position = tree
+                    .lists
+                    .items(tree.declarations)
+                    .position(|declaration| declaration.index() == definition.index as usize)
+                    .expect("a global's definition is a top-level declaration");
+                CachedTarget::Declaration {
+                    file: file(definition.module),
+                    position: position as u32,
+                }
+            }
         };
         CachedName {
             span: name.span,
@@ -1283,6 +1295,66 @@ fn main(count: i64) {
         assert_eq!(
             declared(&server, "Add", 0),
             ("utils.peep".to_string(), json!(1))
+        );
+        // A `const` in a body shifts the arena index of the declarations after
+        // it, but `main` is still reused and `Limit` is still `Limit`.
+        let with_const = utils.replace("{ return", "{ const K = 1; return");
+        notify(
+            &mut server,
+            "textDocument/didOpen",
+            open(&utils_file, &with_const),
+        );
+        assert_eq!(
+            declared(&server, "Limit", 0),
+            ("utils.peep".to_string(), json!(3))
+        );
+        assert!(
+            hover(&server, "Limit", 0)
+                .as_str()
+                .unwrap()
+                .contains("const Limit")
+        );
+    }
+
+    /// A file the project's entry does not import is checked while it is open.
+    #[test]
+    fn checks_an_open_file_nothing_imports() {
+        let folder =
+            std::env::temp_dir().join(format!("peeper-lsp-unimported-{}", std::process::id()));
+        _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(folder.join("src")).unwrap();
+        std::fs::write(
+            folder.join("peeper.toml"),
+            "name = \"app\"\nbuild = \"bin\"\n",
+        )
+        .unwrap();
+        std::fs::write(folder.join("src/main.peep"), "fn main() {}\n").unwrap();
+        let unused = folder.join("src/unused.peep");
+        let text = "fn Broken() { let x: bool = 3; }\n";
+        std::fs::write(&unused, text).unwrap();
+        let uri = Url::from_file_path(&unused).unwrap();
+        let (connection, client) = Connection::memory();
+        let mut server = Server::new(&connection, Path::new(""));
+        let document = json!({ "uri": uri, "languageId": "peeper", "version": 1, "text": text });
+        let open = Notification::new(
+            "textDocument/didOpen".to_string(),
+            json!({ "textDocument": document }),
+        );
+        server.notification(open).unwrap();
+        let Message::Notification(published) = client.receiver.recv().unwrap() else {
+            panic!("no publish");
+        };
+        let published: PublishDiagnosticsParams = serde_json::from_value(published.params).unwrap();
+        assert_eq!(published.uri, uri);
+        assert_eq!(
+            published.diagnostics.len(),
+            1,
+            "{:?}",
+            published.diagnostics
+        );
+        assert_eq!(
+            published.diagnostics[0].code,
+            Some(NumberOrString::String("T0001".to_string()))
         );
     }
 }

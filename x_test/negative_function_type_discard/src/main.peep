@@ -1,0 +1,3 @@
+fn apply(callback: fn(_: i32, x: i32)) {}
+
+fn main() {}

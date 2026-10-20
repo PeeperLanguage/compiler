@@ -202,20 +202,25 @@ impl Parser {
     /// Reads `fn(name: T, U) -> R from name`; parameter names are optional.
     fn function_type(&mut self) -> Id<Type> {
         let start = self.next().span.start;
-        let signature = self.signature(None, List::EMPTY, starts_type, |p| {
-            let start = p.tok().span.start;
-            let name = p.parameter_name();
-            let ty = p.type_expr();
-            p.add(
-                start,
-                Param {
-                    mutable: false,
-                    name,
-                    ty,
-                    default: None,
-                },
-            )
-        });
+        let signature = self.signature(
+            None,
+            List::EMPTY,
+            |kind| kind == TokenKind::Underscore || starts_type(kind),
+            |p| {
+                let start = p.tok().span.start;
+                let name = p.parameter_name();
+                let ty = p.type_expr();
+                p.add(
+                    start,
+                    Param {
+                        mutable: false,
+                        name,
+                        ty,
+                        default: None,
+                    },
+                )
+            },
+        );
         self.add(start, Type::Function(signature))
     }
 

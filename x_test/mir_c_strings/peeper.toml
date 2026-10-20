@@ -1,0 +1,6 @@
+name = "mir_c_strings"
+build = "program"
+
+[test]
+mode = "mir"
+outcome = "success"

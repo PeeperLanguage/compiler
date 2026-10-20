@@ -9,6 +9,7 @@ use arena::Arena;
 use arena::Id;
 use arena::Lists;
 use model::BinaryOp;
+use model::constant::Constant;
 use model::constant::Value;
 use model::mir;
 use model::semantic_types::TypeId;
@@ -45,6 +46,7 @@ pub fn lower(body: &thir::Body, parameters: usize) -> Option<mir::Body> {
                 ty: local.ty,
                 mutable: local.mutable,
                 initialized: local.initialized,
+                scope: local.scope,
             },
             body.locals.span(id),
         );
@@ -103,11 +105,11 @@ impl Lowering<'_> {
         mir::Operand::Value(instruction)
     }
 
-    /// `value` as an operand: the body's next constant.
-    fn constant(&mut self, value: Value) -> mir::Operand {
-        let constant = Id::from_index(self.mir.constants.len());
-        self.mir.constants.push(value);
-        mir::Operand::Constant(constant)
+    /// `constant` as an operand: the body's next constant.
+    fn constant(&mut self, constant: Constant) -> mir::Operand {
+        let id = Id::from_index(self.mir.constants.len());
+        self.mir.constants.push(constant);
+        mir::Operand::Constant(id)
     }
 
     fn statements(&mut self, statements: arena::List<thir::Stmt>) -> Option<()> {
@@ -183,7 +185,8 @@ impl Lowering<'_> {
             _ if ty == TypeId::INVALID => return None,
             thir::ExprKind::Invalid => return None,
             thir::ExprKind::Constant(ref value) => {
-                return Some(self.constant(value.clone()));
+                let value = value.clone();
+                return Some(self.constant(Constant { ty, value }));
             }
             thir::ExprKind::Local(local) => {
                 mir::InstructionKind::Load(Id::from_index(local.index()))
@@ -252,7 +255,10 @@ impl Lowering<'_> {
         self.finish(mir::Terminator::Goto(join));
         self.block = join;
         // When `left` decides, `&&` is false and `||` is true.
-        let decided = self.constant(Value::Bool(op == BinaryOp::LogicalOr));
+        let decided = self.constant(Constant {
+            ty: TypeId::BOOL,
+            value: Value::Bool(op == BinaryOp::LogicalOr),
+        });
         let phi = mir::InstructionKind::Phi([(left_end, decided), (right_end, right)].into());
         Some(self.emit(phi, TypeId::BOOL, span))
     }

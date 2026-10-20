@@ -1,0 +1,6 @@
+name = "negative_function_type_discard"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["[T0043]: function types are not supported yet"]

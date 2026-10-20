@@ -15,6 +15,7 @@ model.workspace = true
 bigint.workspace = true
 numeric.workspace = true
 token.workspace = true
+literal.workspace = true
 
 [dev-dependencies]
 parser.workspace = true

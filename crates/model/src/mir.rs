@@ -9,7 +9,9 @@ use std::fmt::Write;
 use crate::BinaryOp;
 use crate::DefId;
 use crate::UnaryOp;
+use crate::constant::Constant;
 use crate::constant::Value;
+use crate::constant::integer_text;
 use crate::semantic_types::TypeId;
 use crate::semantic_types::Types;
 use arena::Arena;
@@ -23,7 +25,7 @@ pub struct Body {
     pub blocks: Arena<Block>, // the first is the entry; with where each starts
     pub instructions: Arena<Instruction>, // with the expression each comes from
     pub variables: Arena<Variable>, // the parameters first; with each name
-    pub constants: Vec<Value>, // what `Operand::Constant` names; no spans, so not an arena
+    pub constants: Vec<Constant>, // what `Operand::Constant` names; no spans, so not an arena
     pub lists: Lists,
 }
 
@@ -33,6 +35,7 @@ pub struct Variable {
     pub ty: TypeId,
     pub mutable: bool,
     pub initialized: bool, // set where declared; false for a `let` without a value
+    pub scope: Span,       // the block it is declared in, for a debugger
 }
 
 #[derive(Clone, Debug)]
@@ -79,7 +82,7 @@ pub enum InstructionKind {
 #[derive(Clone, Copy, Debug)]
 pub enum Operand {
     /// One of the body's `constants`.
-    Constant(Id<Value>),
+    Constant(Id<Constant>),
     /// The function's parameter at this position, as passed in.
     Argument(u32),
     /// What the instruction gives.
@@ -140,20 +143,11 @@ impl Body {
             )
         };
         let operand = |operand: &Operand| match *operand {
-            Operand::Constant(constant) => match &self.constants[constant.index()] {
+            Operand::Constant(constant) => match &self.constants[constant.index()].value {
                 Value::Bool(value) => value.to_string(),
-                Value::Integer(limbs) => match limbs.as_slice() {
-                    [low, high @ ..] if high.iter().all(|&limb| limb == 0) => low.to_string(),
-                    wide => {
-                        let hex: Vec<String> = wide
-                            .iter()
-                            .rev()
-                            .map(|limb| format!("{limb:016x}"))
-                            .collect();
-                        format!("0x{}", hex.concat())
-                    }
-                },
+                Value::Integer(limbs) => integer_text(limbs),
                 Value::Float(bits) => f64::from_bits(*bits).to_string(),
+                Value::Bytes(bytes) => format!("c\"{}\"", bytes.escape_ascii()),
             },
             Operand::Argument(index) => format!("arg{index}"),
             Operand::Value(value) => format!("%{}", value.index()),

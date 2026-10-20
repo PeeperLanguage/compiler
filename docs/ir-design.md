@@ -292,7 +292,7 @@ and debuggers; the logic lives in a `lower` crate, the data in `model::mir`.
   id is the value it gives (`%3 = add %1, %2`): `load`, `store`, a binary or
   unary operation, `widen`, `call`, `phi`. Operands are a constant, an argument
   or an earlier instruction's value, never a variable. A constant operand is an
-  index into the body's constants table, so an operand stays 8 bytes. Every
+  index into the body's constants table (each with its type), so an operand stays 8 bytes. Every
   instruction keeps the span of the expression it came from: LLVM's `!dbg`
   line, and where an error points.
 - **Terminators.** Each block ends in one: `br` (goto), `condbr` (with the span
@@ -360,14 +360,49 @@ parameters are in the body's outermost block, as in Go, so a `let` there
 cannot reuse one; named results can join that block later (owner, 2026-10-18).
 These live in the checker, which knows the blocks; MIR has no scopes.
 
-`peeper -dump [thir | mir] <path>` writes the THIR and MIR of every function
+`peeper -dump [thir | mir | ll] <path>` writes the THIR, MIR and LLVM IR of every function
 of a program without errors, or only the kind named, one file per module under
 build/debug/dumps in the project folder or beside the file
 (`myapp:deep/x` to `myapp/deep/x.mir`), like the old `-keep-gen` and rustc's
 `-Zdump-mir`. The printers are `thir::Body::text` and `mir::Body::text`, beside
-the data; LLVM text joins as `ll` with code generation. MIR tests are `x_test`
+the data, and `llvm::Module::text` for `ll`. MIR tests are `x_test`
 folders with `mode = "mir"` and an `expected.mir` file, as in rustc's
 `tests/mir-opt`; `PEEPER_BLESS=1` rewrites the expected files.
+
+## LLVM
+
+`crates/llvm` writes one module's LLVM text from its functions' MIR, one walk
+per function (`peeper -dump ll` shows it):
+
+- Each variable is an `alloca` in an `entry` block, with `llvm.dbg.declare`;
+  each instruction gets a `!dbg` line from its span; each function a
+  `DISubprogram`. A debugger shows variables by name.
+- Symbols: a function's `#[extern("name")]`, else `module_path.name`, quoted.
+- Integer division, remainder and shifts by a value not known at compile time
+  check first and continue in a new block (`bb3.1`); a `phi` names the block
+  where its incoming MIR block ends. Division by zero and a shift count
+  outside 0 to width - 1 panic; signed `MIN / -1` is `MIN` and `MIN % -1` is
+  0, as check folds them.
+- A panic writes one string constant made at compile time (`panic: division
+  by zero` and `  --> file:line:column`) through the prelude's `write` to the
+  standard error and calls its `exit` with 101: no runtime function of its own.
+- Output goes through the prelude's `write` with a `cstr` (`c"..."`); there
+  is no `print` yet (owner, 2026-10-19).
+
+`peeper build [-o program] [path]` and `peeper run [path] [arguments...]`
+work as the Go compiler's did. The entry file needs `fn main()` or `fn main()
+-> i32` (M0006, checked only by these two commands); the entry module gets a C
+`main` that calls it and returns its result, or 0. `llvm::link::executable`
+writes each module's text to a temporary folder, compiles each with `clang -c`
+and links the objects with the runtime library (`<installation>/runtime/
+libpeeper_rt_v1.a`, built from `runtime/peeper_rt.c` by `scripts/build.sh`)
+and `-lm`; the program is linked beside its output and renamed into place.
+Clang is the one on the PATH until peeper ships its toolchain. `build` names
+the program after the project or file in the current folder; `run` links to a
+temporary file, runs it and exits with its code (a signal gives 128 plus its
+number). Not brought back yet: target flags (`-target-os`, `-m32`), managed
+toolchain profiles, linker response files, `-keep-gen` (`-dump ll` covers
+it), and the manifest's `build = "program"`.
 
 ## Cost on the hot path
 

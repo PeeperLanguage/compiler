@@ -1,6 +1,6 @@
 //! What a `peeper` command does: load the program, check and compile it,
-//! apply the fixes asked for, print its diagnostics and write the dumps asked
-//! for.
+//! apply the fixes asked for, print its diagnostics, write the dumps asked
+//! for, and build or run it.
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -8,30 +8,51 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use arena::Id;
 use diagnostics::Diagnostic;
 use diagnostics::fix;
 use diagnostics::printer;
+use model::DefId;
+use model::ModuleId;
+use model::semantic_types::Type;
+use model::semantic_types::TypeId;
 use source::SourceFile;
+use source::Span;
 
 use crate::dump::Dump;
 use crate::dump::Dumps;
 
-/// Loads the program at `path`, prints its diagnostics to `out` and returns
-/// the exit code: 1 when there are errors. A folder must hold peeper.toml; its
+/// What a command does with a program once it is checked.
+pub enum Goal<'a> {
+    /// Write the `dumps`; with `apply_fixes`, write the fixes the diagnostics
+    /// suggest to the project's files, list them, and check again to report
+    /// what is left.
+    Check {
+        dumps: &'a [Dump],
+        apply_fixes: bool,
+    },
+    /// Link the program into `output`: by default the program's name, in the
+    /// current folder.
+    Build { output: Option<&'a Path> },
+    /// Link it to a temporary file and run it with `arguments`.
+    Run { arguments: &'a [String] },
+}
+
+/// Loads the program at `path`, prints its diagnostics to `out` and does what
+/// `goal` asks. The result is the exit code: 1 when there are errors, else 0,
+/// or the program's own when it ran. A folder must hold peeper.toml; its
 /// project starts at src/main.peep. A file is checked on its own, with no
-/// project and no imports. A program without errors gets the `dumps` written
-/// to build/debug/dumps in the project folder, or beside the file. With
-/// `apply_fixes`, the fixes the diagnostics suggest are written to the project's files
-/// and listed, and the program is checked again to report what is left.
+/// project and no imports. Dumps go to build/debug/dumps in the project
+/// folder, or beside the file, when the program has no errors. The bundled
+/// libraries and runtime are in `installation` (`installation_dir`).
 pub fn run(
     path: &Path,
-    libraries: &Path,
+    installation: &Path,
     out: &mut impl Write,
     colored: bool,
-    dumps: &[Dump],
-    apply_fixes: bool,
+    goal: &Goal,
 ) -> u8 {
-    let project = match project::find(path, libraries) {
+    let project = match project::find(path, &installation.join("libs")) {
         Ok(project) => project,
         Err(error) => {
             _ = writeln!(out, "{error}");
@@ -41,35 +62,81 @@ pub fn run(
     let program = project::load(&project, &HashMap::<PathBuf, String>::new());
     let mut all: Vec<Diagnostic> = program.load_diagnostics().cloned().collect();
     let failed = |all: &[Diagnostic]| all.iter().any(Diagnostic::is_error);
+    let dumps = match goal {
+        Goal::Check { dumps, .. } => dumps,
+        Goal::Build { .. } | Goal::Run { .. } => &[][..],
+    };
+    let links = !matches!(goal, Goal::Check { .. });
+    let pointer_bits = usize::BITS;
+    let mut ll = Vec::new();
     if program.checkable() {
         let mut dumped = Dumps::new(&program, dumps);
+        if links || dumped.wants_ll() {
+            ll = (0..program.modules.len())
+                .map(|index| llvm::Module::new(&program, ModuleId::from_index(index), pointer_bits))
+                .collect();
+        }
+        let entry = program
+            .modules
+            .iter()
+            .position(|module| Path::new(&module.ast.file.path) == project.entry);
+        let mut main = None; // the entry module's `main`, and whether it returns an exit code
         let results = build::compile(
             &program,
-            usize::BITS,
+            pointer_bits,
             build::Results::default(),
             false, // names are for editors
-            |definition, thir, _, mir, types| {
-                if let Some(mir) = mir {
-                    dumped.add(definition, thir, mir, types); // the others have errors
+            |definition, ty, thir, _, mir, types| {
+                if links
+                    && Some(definition.module.index()) == entry
+                    && is_main(&program, definition)
+                {
+                    main = Some((definition, gives_exit_code(&types[ty])));
+                }
+                let Some(mir) = mir else {
+                    return; // it has errors
+                };
+                dumped.add(definition, thir, mir, types);
+                if let Some(module) = ll.get_mut(definition.module.index()) {
+                    module.function(definition, ty, mir, types);
                 }
             },
         );
         all.extend(results.diagnostics().cloned());
+        if links
+            && !failed(&all)
+            && let Some(entry) = entry
+        {
+            let file = &program.modules[entry].ast.file;
+            match main {
+                Some((main, Some(exit_code))) => ll[entry].entry_point(main, exit_code),
+                Some((main, None)) => all.push(no_entry_point(file, name_span(&program, main))),
+                None => all.push(no_entry_point(file, Span::at(0))),
+            }
+        }
         if !failed(&all)
-            && let Err(error) = dumped.write(&project.root.join("build/debug/dumps"), out)
+            && let Err(error) = dumped.write(&project.root.join("build/debug/dumps"), &ll, out)
         {
             _ = writeln!(out, "peeper: cannot write a dump: {error}");
             return 1;
         }
     }
-    if apply_fixes {
+    if let Goal::Check {
+        dumps,
+        apply_fixes: true,
+    } = goal
+    {
         let fixes = fix::chosen(&all, &project.root);
         if !fixes.is_empty() {
             if let Err(error) = fix::write(&fixes, out) {
                 _ = writeln!(out, "peeper: cannot write a fix: {error}");
                 return 1;
             }
-            return run(path, libraries, out, colored, dumps, false);
+            let again = Goal::Check {
+                dumps,
+                apply_fixes: false,
+            };
+            return run(path, installation, out, colored, &again);
         }
     }
     let scan = |file: &Arc<SourceFile>| lexer::scan(file).0;
@@ -78,24 +145,132 @@ pub fn run(
         eprintln!("peeper: cannot write diagnostics: {error}");
         return 1;
     }
-    u8::from(failed(&all))
+    if failed(&all) {
+        return 1;
+    }
+    link(goal, &project, &ll, installation, out)
 }
 
-/// The libs folder of the installation peeper runs from: the executable is in
-/// <root>/bin and the libraries in <root>/libs.
-pub fn libraries_dir() -> PathBuf {
+/// Links the program, whose modules' LLVM text is in `ll`, as `goal` asks,
+/// and runs it for `Goal::Run`; gives the exit code.
+fn link(
+    goal: &Goal,
+    project: &project::Project,
+    ll: &[llvm::Module],
+    installation: &Path,
+    out: &mut impl Write,
+) -> u8 {
+    let output = match goal {
+        Goal::Check { .. } => return 0,
+        Goal::Build {
+            output: Some(output),
+        } => output.to_path_buf(),
+        Goal::Build { output: None } => {
+            PathBuf::from(format!("{}{}", project.name, std::env::consts::EXE_SUFFIX))
+        }
+        Goal::Run { .. } => std::env::temp_dir().join(format!(
+            "peeper-run-{}{}",
+            std::process::id(),
+            std::env::consts::EXE_SUFFIX
+        )),
+    };
+    let texts: Vec<String> = ll
+        .iter()
+        .filter(|module| !module.is_empty())
+        .map(llvm::Module::text)
+        .collect();
+    let runtime = installation.join("runtime").join(RUNTIME_LIBRARY);
+    if let Err(error) = llvm::link::executable(&texts, &runtime, &output) {
+        _ = writeln!(out, "peeper: {error}");
+        return 1;
+    }
+    let Goal::Run { arguments } = goal else {
+        _ = writeln!(out, "Built {}", output.display());
+        return 0;
+    };
+    _ = out.flush();
+    let status = std::process::Command::new(&output)
+        .args(*arguments)
+        .status();
+    _ = std::fs::remove_file(&output);
+    match status {
+        Ok(status) => exit_code_of(status),
+        Err(error) => {
+            _ = writeln!(out, "peeper: cannot run the program: {error}");
+            1
+        }
+    }
+}
+
+/// The runtime library's file in the installation's runtime folder.
+const RUNTIME_LIBRARY: &str = "libpeeper_rt_v1.a";
+
+/// Whether the function `definition` is named `main`.
+fn is_main(program: &project::Program, definition: DefId) -> bool {
+    let tree = &program.modules[definition.module.index()].ast;
+    tree.file.slice(name_span(program, definition)) == "main"
+}
+
+/// Where the declaration `definition` writes its name.
+fn name_span(program: &project::Program, definition: DefId) -> Span {
+    let tree = &program.modules[definition.module.index()].ast;
+    tree.decls[Id::from_index(definition.index as usize)]
+        .name()
+        .span
+}
+
+/// Whether a `main` of type `ty` gives the program's exit code (`fn main() ->
+/// i32`), gives none (`fn main()`), or cannot start a program (`None`).
+fn gives_exit_code(ty: &Type) -> Option<bool> {
+    match ty {
+        Type::Function { parameters, result } if parameters.is_empty() => match *result {
+            TypeId::VOID => Some(false),
+            TypeId::I32 => Some(true),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The error that `file`, the entry module, has no `main` a program can
+/// start at; `span` is the `main` there is, or the file's start.
+fn no_entry_point(file: &Arc<SourceFile>, span: Span) -> Diagnostic {
+    Diagnostic::new(
+        diagnostics::INVALID_ENTRY_POINT,
+        "program entrypoint must be a local body-backed `fn main()` or `fn main() -> i32`",
+    )
+    .label(file, span, "")
+}
+
+/// The exit code a program ended with; one a signal stopped is 128 plus the
+/// signal's number, as shells report it.
+fn exit_code_of(status: std::process::ExitStatus) -> u8 {
+    #[cfg(unix)]
+    if let Some(signal) = std::os::unix::process::ExitStatusExt::signal(&status) {
+        return (128 + signal) as u8;
+    }
+    status.code().map_or(1, |code| code as u8)
+}
+
+/// The installation peeper runs from: the executable is in <root>/bin, the
+/// libraries in <root>/libs and the runtime in <root>/runtime.
+pub fn installation_dir() -> PathBuf {
     let Ok(exe) = std::env::current_exe() else {
         return PathBuf::new();
     };
     let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
-    let root = exe.parent().and_then(Path::parent).unwrap_or(Path::new(""));
-    root.join("libs")
+    exe.parent()
+        .and_then(Path::parent)
+        .unwrap_or(Path::new(""))
+        .to_path_buf()
 }
 
 #[cfg(test)]
 mod tests {
     use std::path::Path;
     use std::path::PathBuf;
+
+    use super::Goal;
 
     fn temp_dir(test: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!("peeper-check-{}-{test}", std::process::id()));
@@ -112,9 +287,15 @@ mod tests {
         }
     }
 
-    fn run(path: &Path, libraries: &Path) -> (u8, String) {
+    /// Checks `path` with the libraries of `installation`; gives the exit
+    /// code and what was printed.
+    fn run(path: &Path, installation: &Path) -> (u8, String) {
+        let check = Goal::Check {
+            dumps: &[],
+            apply_fixes: false,
+        };
         let mut out = Vec::new();
-        let code = super::run(path, libraries, &mut out, false, &[], false);
+        let code = super::run(path, installation, &mut out, false, &check);
         (code, String::from_utf8(out).unwrap())
     }
 
@@ -127,7 +308,11 @@ mod tests {
         write(&root, &[("app.peep", text)]);
         let file = root.join("app.peep");
         let mut out = Vec::new();
-        let code = super::run(&file, Path::new(""), &mut out, false, &[], true);
+        let fix = Goal::Check {
+            dumps: &[],
+            apply_fixes: true,
+        };
+        let code = super::run(&file, Path::new(""), &mut out, false, &fix);
         let out = String::from_utf8(out).unwrap();
         let fixed = std::fs::read_to_string(&file).unwrap();
         assert_eq!(
@@ -143,7 +328,6 @@ mod tests {
     #[test]
     fn checks_a_project() {
         let root = temp_dir("project");
-        let libs = root.join("libs");
         write(
             &root,
             &[
@@ -156,7 +340,7 @@ mod tests {
                 ("libs/core/src/global.peep", b""),
             ],
         );
-        let (code, out) = run(&root.join("app"), &libs);
+        let (code, out) = run(&root.join("app"), &root);
         let gone = root.join("app/src/gone.peep");
         let main = root.join("app/src/main.peep");
         let want = format!(
@@ -174,7 +358,7 @@ mod tests {
             &root,
             &[("app/src/main.peep", b"import \"myapp:util\";\nfn main() {}")],
         );
-        assert_eq!(run(&root.join("app"), &libs), (0, String::new()));
+        assert_eq!(run(&root.join("app"), &root), (0, String::new()));
     }
 
     #[test]
@@ -219,13 +403,51 @@ mod tests {
                 ("empty/x", b""),
             ],
         );
-        let libs = root.join("libs");
         for (folder, want) in [
             ("empty", "no peeper.toml in this folder"),
             ("core", "project name `core` is taken by a bundled library"),
         ] {
-            let (code, out) = run(&root.join(folder), &libs);
+            let (code, out) = run(&root.join(folder), &root);
             assert!(code == 1 && out.contains(want), "{folder}: {code} {out}");
+        }
+    }
+
+    /// `build` and `run` need the entry file's `fn main()` or `fn main() ->
+    /// i32`, and report it before linking; `check` does not.
+    #[test]
+    fn needs_an_entry_point() {
+        let root = temp_dir("entry");
+        write(
+            &root,
+            &[
+                ("none.peep", b"fn helper() {}\n"),
+                ("bodyless.peep", b"fn main();\n"),
+                ("takes.peep", b"fn main(x: i32) {}\n"),
+                ("wide.peep", b"fn main() -> i64 { return 0; }\n"),
+            ],
+        );
+        let build = Goal::Build { output: None };
+        for (file, at) in [
+            ("none.peep", ":1:1"),
+            ("bodyless.peep", ":1:1"),
+            ("takes.peep", ":1:4"),
+            ("wide.peep", ":1:4"),
+        ] {
+            let path = root.join(file);
+            let mut out = Vec::new();
+            let code = super::run(&path, Path::new(""), &mut out, false, &build);
+            let out = String::from_utf8(out).unwrap();
+            assert_eq!(code, 1, "{file}: {out}");
+            assert!(
+                out.starts_with("[M0006]: program entrypoint must be")
+                    && out.contains(&format!("{}{at}\n", path.display())),
+                "{file}: {out}"
+            );
+            assert_eq!(
+                run(&path, Path::new("")).0,
+                0,
+                "{file}: check needs no main"
+            );
         }
     }
 }

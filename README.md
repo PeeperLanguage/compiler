@@ -25,6 +25,54 @@ binary, with diagrams and the real entry points at each stop.
 
 [`docs/compiler-architecture.md`](docs/compiler-architecture.md) records current compiler mechanisms and their rationale. Verify mutable details against source when extending syntax, semantic types, graphs, or analyses.
 
+### How the per-function callback works
+
+The CLI and language server call [`build::compile`](crates/build/src/lib.rs)
+with a closure named `use_function`. The scheduler checks and lowers one
+function, calls that closure with borrowed results, then drops the function's
+THIR and MIR. The callback runs synchronously inside `compile`; it is not a
+separate thread or a task queued for later.
+
+```mermaid
+sequenceDiagram
+    participant Caller as CLI or LSP
+    participant Build as build::compile
+    participant Check as Checker::body
+    participant Lower as Build::lower
+    participant Callback as Caller's closure
+
+    Caller->>Build: compile(program, previous results, use_function)
+    loop Each function with THIR in a module checked this compile
+        Build->>Build: Query the function's signature
+        Build->>Check: Check body and record names when requested
+        Check-->>Build: THIR and recorded names
+        Build->>Lower: Lower THIR and run path checks
+        Lower-->>Build: Some(MIR) or None
+        Build->>Callback: use_function(id, signature, THIR, names, MIR?, types)
+        alt CLI caller
+            Callback->>Callback: Append requested dumps and LLVM text
+        else LSP caller
+            Callback->>Callback: Convert names to cached editor information
+        end
+        Callback-->>Build: Return - borrowed results no longer needed
+        Build->>Build: Drop this function's THIR, MIR and recorded names
+    end
+    Build-->>Caller: Results: diagnostics and module reuse information
+```
+
+The callback can update state captured from its caller. The
+[`CLI closure`](crates/peeper/src/driver.rs) keeps generated text; the
+[`LSP closure`](crates/lsp/src/lib.rs) keeps name locations and display text.
+Neither needs to retain every function's IR. Types remain owned by the
+scheduler for the duration of the compile; a callback must copy any information
+it needs afterward into its own storage.
+
+This is a per-function handoff, not a whole-program success notification.
+Broken bodies can still provide THIR and names for editor recovery, with no
+MIR. The CLI publishes dumps or links only after checking all diagnostics.
+Modules reused from the previous compile produce no callbacks; the LSP keeps
+their previously cached names.
+
 ## Binary installation
 
 Linux and macOS:

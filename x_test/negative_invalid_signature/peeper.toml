@@ -1,0 +1,7 @@
+name = "negative_invalid_signature"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "failure"
+stderr_contains = ["[T0002]: unknown type `Missing`"]

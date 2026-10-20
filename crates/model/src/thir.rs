@@ -11,6 +11,7 @@ use crate::DefId;
 use crate::UnaryOp;
 use crate::constant::Constant;
 use crate::constant::Value;
+use crate::constant::integer_text;
 use crate::semantic_types::Type;
 use crate::semantic_types::TypeId;
 use crate::semantic_types::Types;
@@ -82,6 +83,9 @@ pub struct Local {
     /// Set where declared; false for `let x: T;`, whose first assignment
     /// sets it, even without `mut`.
     pub initialized: bool,
+    /// The block it is declared in, whose end ends its name's scope; the
+    /// whole body for a parameter.
+    pub scope: Span,
 }
 
 #[derive(Clone, Debug)]
@@ -289,6 +293,9 @@ impl<F: Fn(DefId) -> String> Printer<'_, F> {
         let Expr { ty, ref kind } = self.body.exprs[expr];
         match *kind {
             ExprKind::Constant(Value::Bool(value)) => _ = write!(self.out, "{value}"),
+            ExprKind::Constant(Value::Bytes(ref bytes)) => {
+                _ = write!(self.out, "c\"{}\"", bytes.escape_ascii());
+            }
             ExprKind::Constant(Value::Float(bits)) => {
                 _ = write!(self.out, "{}:{}", f64::from_bits(bits), self.types.text(ty));
             }
@@ -296,13 +303,18 @@ impl<F: Fn(DefId) -> String> Printer<'_, F> {
                 let Type::Integer(integer) = self.types[ty] else {
                     unreachable!("an integer constant has an integer type")
                 };
-                // Shown by its low 128 bits, read through its type.
                 let value = match integer.bits {
                     ..=128 => bigint::extend(integer.bits, integer.signed, limbs, 128),
                     _ => limbs.clone(),
                 };
-                let low = value.as_slice()[0] as u128 | (value.as_slice()[1] as u128) << 64;
-                _ = if integer.signed {
+                let [low, high, rest @ ..] = value.as_slice() else {
+                    unreachable!("an integer constant has at least two limbs")
+                };
+                // Decimal when 128 bits hold it, else every limb in hex.
+                let low = *low as u128 | (*high as u128) << 64;
+                _ = if !rest.iter().all(|&limb| limb == 0) {
+                    write!(self.out, "{}", integer_text(&value))
+                } else if integer.signed && integer.bits <= 128 {
                     write!(self.out, "{}", low as i128)
                 } else {
                     write!(self.out, "{low}")

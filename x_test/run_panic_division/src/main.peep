@@ -1,0 +1,9 @@
+fn divide(left: i32, right: i32) -> i32 {
+    return left / right;
+}
+
+fn main() {
+    write(stdout, c"before\n", 7);
+    divide(1, 0);
+    write(stdout, c"after\n", 6);
+}

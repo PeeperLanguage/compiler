@@ -1,15 +1,15 @@
 // Mutable locals, assignment and shadowing.
-fn count(limit: i32) -> i32 {
+fn count(mut limit: i32) -> i32 {
     let mut total = 0;
     total = total + limit;
     total = total * 2;
 
-    let limit = limit + 1;      // a let may reuse a parameter's name
+    limit = limit + 1;      // a let may reuse a parameter's name
     {
-        let limit = 5;          // an inner block may hide an outer name
+        limit = 5;          // an inner block may hide an outer name
         let doubled = limit * 2;
     }
-    let total = total + limit;  // or reuse an earlier local in the same block
+    total = total + limit;  // or reuse an earlier local in the same block
     return total;
 }
 
