@@ -1,7 +1,7 @@
-//! Expressions, read by a Pratt parser. A nud reads an expression that a token
-//! begins (a name, a literal, `(`); a led reads what a token adds after an
-//! expression on its left (an operator and its right side, a call). Each led
-//! token has a precedence: it joins the expression being read only when it
+//! Expressions, read by a Pratt parser. A prefix rule reads an expression that
+//! a token begins (a name, a literal, `(`); an infix rule reads what a token
+//! adds after an expression on its left (an operator and its right side, a
+//! call). Each token with an infix rule has a precedence: it joins the expression being read only when it
 //! binds tighter than the operator before it, so precedence and associativity
 //! live in the table below and not in nested grammar rules.
 
@@ -43,100 +43,101 @@ pub(crate) enum Precedence {
 }
 
 /// Reads the expression the current token begins.
-type Nud = fn(&mut Parser) -> Id<Expr>;
+type PrefixRule = fn(&mut Parser) -> Id<Expr>;
 
 /// Reads what the current token adds to the expression `left`.
-type Led = fn(&mut Parser, Id<Expr>) -> Id<Expr>;
+type InfixRule = fn(&mut Parser, Id<Expr>) -> Id<Expr>;
 
-/// The rules of each token, indexed by token kind. A token without a nud
-/// cannot begin an expression; a token without a led never continues one.
+/// The rules of each token, indexed by token kind. A token without a prefix
+/// rule cannot begin an expression; a token without an infix rule never
+/// continues one.
 struct Rules {
-    nud: [Option<Nud>; 256],
-    led: [Option<(Precedence, Led)>; 256],
+    prefix: [Option<PrefixRule>; 256],
+    infix: [Option<(Precedence, InfixRule)>; 256],
 }
 
 impl Rules {
-    const fn nud(&mut self, kind: TokenKind, read: Nud) {
-        self.nud[kind as usize] = Some(read);
+    const fn prefix(&mut self, kind: TokenKind, read: PrefixRule) {
+        self.prefix[kind as usize] = Some(read);
     }
 
-    const fn led(&mut self, kind: TokenKind, precedence: Precedence, read: Led) {
-        self.led[kind as usize] = Some((precedence, read));
+    const fn infix(&mut self, kind: TokenKind, precedence: Precedence, read: InfixRule) {
+        self.infix[kind as usize] = Some((precedence, read));
     }
 }
 
 static RULES: Rules = {
     let mut rules = Rules {
-        nud: [None; 256],
-        led: [None; 256],
+        prefix: [None; 256],
+        infix: [None; 256],
     };
     // values
-    rules.nud(TokenKind::Ident, name_or_path);
-    rules.nud(TokenKind::Number, number_literal);
-    rules.nud(TokenKind::String, string_literal);
-    rules.nud(TokenKind::CString, string_literal);
-    rules.nud(TokenKind::Char, character_literal);
-    rules.nud(TokenKind::ByteChar, character_literal);
-    rules.nud(TokenKind::True, bool_literal);
-    rules.nud(TokenKind::False, bool_literal);
-    rules.nud(TokenKind::None, none_literal);
-    rules.nud(TokenKind::LeftParen, parentheses);
-    rules.nud(TokenKind::LeftBracket, array_literal);
-    rules.nud(TokenKind::Dot, anonymous_struct_literal);
+    rules.prefix(TokenKind::Ident, name_or_path);
+    rules.prefix(TokenKind::Number, number_literal);
+    rules.prefix(TokenKind::String, string_literal);
+    rules.prefix(TokenKind::CString, string_literal);
+    rules.prefix(TokenKind::Char, character_literal);
+    rules.prefix(TokenKind::ByteChar, character_literal);
+    rules.prefix(TokenKind::True, bool_literal);
+    rules.prefix(TokenKind::False, bool_literal);
+    rules.prefix(TokenKind::None, none_literal);
+    rules.prefix(TokenKind::LeftParen, parentheses);
+    rules.prefix(TokenKind::LeftBracket, array_literal);
+    rules.prefix(TokenKind::Dot, anonymous_struct_literal);
 
     // prefix operators and built-in calls
-    rules.nud(TokenKind::Plus, unary);
-    rules.nud(TokenKind::Minus, unary);
-    rules.nud(TokenKind::Bang, unary);
-    rules.nud(TokenKind::Tilde, unary);
-    rules.nud(TokenKind::Ampersand, reference);
-    rules.nud(TokenKind::At, raw_address);
-    rules.nud(TokenKind::Free, builtin);
-    rules.nud(TokenKind::Print, builtin);
-    rules.nud(TokenKind::Println, builtin);
+    rules.prefix(TokenKind::Plus, unary);
+    rules.prefix(TokenKind::Minus, unary);
+    rules.prefix(TokenKind::Bang, unary);
+    rules.prefix(TokenKind::Tilde, unary);
+    rules.prefix(TokenKind::Ampersand, reference);
+    rules.prefix(TokenKind::At, raw_address);
+    rules.prefix(TokenKind::Free, builtin);
+    rules.prefix(TokenKind::Print, builtin);
+    rules.prefix(TokenKind::Println, builtin);
 
     // fallback and pipe
-    rules.led(TokenKind::Orelse, Precedence::OrElse, or_else);
-    rules.led(TokenKind::PipeArrow, Precedence::Pipe, pipe);
+    rules.infix(TokenKind::Orelse, Precedence::OrElse, or_else);
+    rules.infix(TokenKind::PipeArrow, Precedence::Pipe, pipe);
 
     // logical
-    rules.led(TokenKind::OrOr, Precedence::LogicalOr, binary);
-    rules.led(TokenKind::AndAnd, Precedence::LogicalAnd, binary);
+    rules.infix(TokenKind::OrOr, Precedence::LogicalOr, binary);
+    rules.infix(TokenKind::AndAnd, Precedence::LogicalAnd, binary);
 
     // bitwise
-    rules.led(TokenKind::Pipe, Precedence::BitOr, binary);
-    rules.led(TokenKind::Caret, Precedence::BitXor, binary);
-    rules.led(TokenKind::Ampersand, Precedence::BitAnd, binary);
+    rules.infix(TokenKind::Pipe, Precedence::BitOr, binary);
+    rules.infix(TokenKind::Caret, Precedence::BitXor, binary);
+    rules.infix(TokenKind::Ampersand, Precedence::BitAnd, binary);
 
     // equality and comparison
-    rules.led(TokenKind::EqualEqual, Precedence::Equality, binary);
-    rules.led(TokenKind::BangEqual, Precedence::Equality, binary);
-    rules.led(TokenKind::Is, Precedence::Equality, is_expression);
-    rules.led(TokenKind::Less, Precedence::Compare, binary);
-    rules.led(TokenKind::LessEqual, Precedence::Compare, binary);
-    rules.led(TokenKind::Greater, Precedence::Compare, binary);
-    rules.led(TokenKind::GreaterEqual, Precedence::Compare, binary);
+    rules.infix(TokenKind::EqualEqual, Precedence::Equality, binary);
+    rules.infix(TokenKind::BangEqual, Precedence::Equality, binary);
+    rules.infix(TokenKind::Is, Precedence::Equality, is_expression);
+    rules.infix(TokenKind::Less, Precedence::Compare, binary);
+    rules.infix(TokenKind::LessEqual, Precedence::Compare, binary);
+    rules.infix(TokenKind::Greater, Precedence::Compare, binary);
+    rules.infix(TokenKind::GreaterEqual, Precedence::Compare, binary);
 
     // arithmetic
-    rules.led(TokenKind::ShiftLeft, Precedence::Shift, binary);
-    rules.led(TokenKind::ShiftRight, Precedence::Shift, binary);
-    rules.led(TokenKind::Plus, Precedence::Sum, binary);
-    rules.led(TokenKind::Minus, Precedence::Sum, binary);
-    rules.led(TokenKind::Asterisk, Precedence::Product, binary);
-    rules.led(TokenKind::Slash, Precedence::Product, binary);
-    rules.led(TokenKind::Percent, Precedence::Product, binary);
-    rules.led(TokenKind::As, Precedence::Cast, cast);
+    rules.infix(TokenKind::ShiftLeft, Precedence::Shift, binary);
+    rules.infix(TokenKind::ShiftRight, Precedence::Shift, binary);
+    rules.infix(TokenKind::Plus, Precedence::Sum, binary);
+    rules.infix(TokenKind::Minus, Precedence::Sum, binary);
+    rules.infix(TokenKind::Asterisk, Precedence::Product, binary);
+    rules.infix(TokenKind::Slash, Precedence::Product, binary);
+    rules.infix(TokenKind::Percent, Precedence::Product, binary);
+    rules.infix(TokenKind::As, Precedence::Cast, cast);
 
     // call, index and selector
-    rules.led(TokenKind::LeftParen, Precedence::Call, call);
-    rules.led(TokenKind::LeftBracket, Precedence::Call, index);
-    rules.led(TokenKind::Dot, Precedence::Call, selector);
+    rules.infix(TokenKind::LeftParen, Precedence::Call, call);
+    rules.infix(TokenKind::LeftBracket, Precedence::Call, index);
+    rules.infix(TokenKind::Dot, Precedence::Call, selector);
     rules
 };
 
 /// Whether an expression can begin with `kind`.
 pub(crate) fn starts_expression(kind: TokenKind) -> bool {
-    RULES.nud[kind as usize].is_some()
+    RULES.prefix[kind as usize].is_some()
 }
 
 impl Parser {
@@ -144,7 +145,7 @@ impl Parser {
     pub(crate) fn expr(&mut self, min: Precedence) -> Id<Expr> {
         grow(|| {
             let t = self.tok();
-            let Some(read) = RULES.nud[t.kind as usize] else {
+            let Some(read) = RULES.prefix[t.kind as usize] else {
                 self.fail(
                     Diagnostic::new(
                         diagnostics::EXPECTED_TOKEN,
@@ -159,7 +160,7 @@ impl Parser {
                 return self.add(self.last_end, Expr::Invalid);
             };
             let mut left = read(self);
-            while let Some((precedence, read)) = RULES.led[self.tok().kind as usize]
+            while let Some((precedence, read)) = RULES.infix[self.tok().kind as usize]
                 && precedence > min
             {
                 left = read(self, left);
@@ -317,7 +318,8 @@ fn parentheses(p: &mut Parser) -> Id<Expr> {
 /// left: a - b - c is (a - b) - c.
 fn binary(p: &mut Parser, left: Id<Expr>) -> Id<Expr> {
     let op = p.next().kind;
-    let (precedence, _) = RULES.led[op as usize].expect("binary is the led of its operator");
+    let (precedence, _) =
+        RULES.infix[op as usize].expect("binary is the infix rule of its operator");
     let right = p.expr(precedence);
     p.add(p.start_of(left), Expr::Binary { op, left, right })
 }

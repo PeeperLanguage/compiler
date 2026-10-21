@@ -179,8 +179,8 @@ The parser uses two methods, each in its own files, so every file stays small
 and has one job:
 
 - **Pratt parsing for expressions** (`expr.rs`), driven by one table indexed
-  by token kind, as in the Go parser: `rules.nud(kind, rule)` and
-  `rules.led(kind, precedence, rule)` register each token's rule in one line.
+  by token kind, as in the Go parser: `rules.prefix(kind, rule)` and
+  `rules.infix(kind, precedence, rule)` register each token's rule in one line.
   Whether a token starts an expression is read from the table, never kept in
   a second list.
   Literal rules live in `literals.rs`, the operators and the table in
