@@ -271,7 +271,9 @@ impl<'s> Server<'s> {
                 CachedTarget::Declaration { file, position } => {
                     let declared_in = program.module_of(file)?;
                     let tree = &declared_in.ast;
-                    let declaration = tree.lists.items(tree.top_level).nth(*position as usize)?;
+                    // In range: a module whose declarations changed changes
+                    // its interface, so its importers' names are found again.
+                    let declaration = tree.declaration(*position);
                     let declared = tree.decls[declaration].name().span;
                     let hover = header(tree, declaration, &declared_in.path);
                     (&tree.file, declared, hover)
