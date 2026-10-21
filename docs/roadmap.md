@@ -40,13 +40,14 @@ parallel, imports resolve, the graph is checked, output is the same every run.
   imports, functions, `let`, `return`, expression statements, names, numbers,
   strings, calls, binary operators.
 - `parser`: that subset.
-- `manifest`: reads `peeper.toml` in the given folder (the project name).
+- `project::manifest`: reads `peeper.toml` in the given folder (the project name).
 - `project`: package map (`package:path` imports), import resolution, coordinator
   and worker pool, implicit prelude import, cycle check, deterministic order.
-- `cmd`: `peeper check [path]`.
+- `peeper`: `peeper check [path]`.
 
 Exit: tests for nested imports, every import error at the right line, cycles with
-their path, same order every run, `go test -race` clean on a many-module project.
+their path, same order every run on a many-module project loaded in parallel
+(no data race: the workspace forbids `unsafe`).
 
 ## M2 Full grammar
 

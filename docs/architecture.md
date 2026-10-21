@@ -164,11 +164,10 @@ this rule (#165 came from breaking it).
 | `token`, `lexer` | tokens, lexing | old frontend, reviewed |
 | `literal` | values of string, character and byte literal tokens, shared by the lexer, the parser and later phases | split out of the lexer |
 | `pkg/numeric` | rules of number literals (base, digits, suffix; values and fits-in-type come in M4), shared by the lexer, the parser and the type checker | rewritten; old one was regex based |
-| `parser` (tree in `model::syntax`) | syntax tree, parsing | old frontend, reviewed (parser only parses) |
-| `diag` | one diagnostic value and how it is printed | rewritten small; old emitter and `suggest.go` reviewed |
-| `manifest` | reading `peeper.toml` in one folder: the project name | new |
-| `project` | import resolution from a package map, workers, graph, cycles | new; ideas from old loader/resolver |
-| `cmd` | `peeper check <path>` | new |
+| `parser` (tree in `model::ast`) | syntax tree, parsing | old frontend, reviewed (parser only parses) |
+| `diagnostics` | one diagnostic value and how it is printed | rewritten small; the old Go emitter and `suggest.go` reviewed |
+| `project` | import resolution from a package map, workers, graph, cycles; `project::manifest` reads `peeper.toml` in one folder (the project name) | new; ideas from old loader/resolver |
+| `peeper` | `peeper check <path>` | new |
 
 Every item brought back from the old code passes three questions first: is it
 needed now, is it the simplest form, does something else already do it.
@@ -205,7 +204,9 @@ goes in the file of its kind; it never goes in `lib.rs`.
 - Errors: import not found, path outside the project, wrong library, duplicate
   alias, import of a folder, and an import cycle (with its path) are reported at
   the right import line.
-- `go test -race` over a many-module project: no race.
+- No data race: the workspace forbids `unsafe`, so Rust's `Send` and `Sync`
+  rules keep races out at compile time; a test loads a many-module project in
+  parallel and gets the same order every time.
 - Re-loading after editing one file re-parses only that file.
 
 ## Decisions for the user
@@ -269,10 +270,10 @@ Fix     File *source.File, Span source.Span, NewText string
   numbered source lines with `^` under the primary place and `-` under secondary
   ones, `= note:` / `= help:` lines with fixed lines, and the summary line. Users
   already know it.
-- **Codes defined once.** Every code is a constant in `diag` with a one-line
+- **Codes defined once.** Every code is a constant in `diagnostics` with a one-line
   meaning.
-- **Suggestions.** The "did you mean" helper (`NearestName`, from the old
-  `suggest.go`) comes back as part of `diag`.
+- **Suggestions.** The "did you mean" helper (`nearest_name`, from the old Go
+  compiler's `suggest.go`) comes back as part of `diagnostics`.
 
 ### Editor quick fixes
 
