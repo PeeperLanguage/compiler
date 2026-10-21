@@ -214,13 +214,27 @@ impl<'p> Module<'p> {
     }
 }
 
-/// The `#[extern]` name of the function `definition`, if it has one.
+/// The name in `#[extern("name")]` on the function `definition`, if it has
+/// one.
 fn extern_symbol(program: &project::Program, definition: DefId) -> Option<String> {
     let tree = &program.modules[definition.module.index()].ast;
     let ast::Decl::Function(function) = &tree.decls[tree.declaration(definition.index)] else {
         return None;
     };
-    extern_name(tree, function.metadata)
+    tree.lists
+        .items(function.metadata.attributes)
+        .find_map(|attribute| {
+            let attribute = &tree.attributes[attribute];
+            if attribute.name.text(&tree.file) != "extern" {
+                return None;
+            }
+            let argument = tree.lists.items(attribute.arguments).next()?;
+            let ast::Expr::String { .. } = tree.exprs[argument] else {
+                return None;
+            };
+            let text = tree.file.slice(tree.exprs.span(argument));
+            Some(String::from_utf8_lossy(&literal::value(text)).into_owned())
+        })
 }
 
 /// The name the linker knows the function `definition` by: its `#[extern]`
@@ -234,22 +248,6 @@ fn symbol(program: &project::Program, definition: DefId) -> String {
             module.path,
             declaration.name().text(&module.ast.file)
         )
-    })
-}
-
-/// The name in `#[extern("name")]` among the attributes of `metadata`.
-fn extern_name(tree: &ast::Tree, metadata: ast::Metadata) -> Option<String> {
-    tree.lists.items(metadata.attributes).find_map(|attribute| {
-        let attribute = &tree.attributes[attribute];
-        if attribute.name.text(&tree.file) != "extern" {
-            return None;
-        }
-        let argument = tree.lists.items(attribute.arguments).next()?;
-        let ast::Expr::String { .. } = tree.exprs[argument] else {
-            return None;
-        };
-        let text = tree.file.slice(tree.exprs.span(argument));
-        Some(String::from_utf8_lossy(&literal::value(text)).into_owned())
     })
 }
 
