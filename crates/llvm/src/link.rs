@@ -7,12 +7,14 @@ use std::process::Command;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
-/// Compiles the LLVM text of each of `modules` and links the objects with the
-/// runtime library `runtime` into the program `output`. The files in between
+use crate::Module;
+
+/// Compiles each of `modules` that has a function and links the objects with
+/// the runtime library `runtime` into the program `output`. The files in between
 /// live in a temporary folder, removed after. The program is linked beside
 /// `output` and then renamed to it, so a failed link leaves no half-written
 /// program.
-pub fn executable(modules: &[String], runtime: &Path, output: &Path) -> Result<(), String> {
+pub fn executable(modules: &[Module], runtime: &Path, output: &Path) -> Result<(), String> {
     if !runtime.is_file() {
         return Err(format!(
             "the runtime library is missing: {}",
@@ -31,21 +33,22 @@ pub fn executable(modules: &[String], runtime: &Path, output: &Path) -> Result<(
 }
 
 fn compile_and_link(
-    modules: &[String],
+    modules: &[Module],
     runtime: &Path,
     output: &Path,
     folder: &Path,
 ) -> Result<(), String> {
     let mut objects = Vec::with_capacity(modules.len());
-    for (index, text) in modules.iter().enumerate() {
-        let module = folder.join(format!("module_{index}.ll"));
+    let functions = modules.iter().filter(|module| !module.is_empty());
+    for (index, module) in functions.enumerate() {
+        let file = folder.join(format!("module_{index}.ll"));
         let object = folder.join(format!("module_{index}.o"));
-        std::fs::write(&module, text)
-            .map_err(|error| format!("cannot write {}: {error}", module.display()))?;
+        std::fs::write(&file, module.text())
+            .map_err(|error| format!("cannot write {}: {error}", file.display()))?;
         let mut clang = Command::new("clang");
         clang
             .args(["-c", "-x", "ir"])
-            .arg(&module)
+            .arg(&file)
             .arg("-o")
             .arg(&object);
         run(clang, "compile a module")?;

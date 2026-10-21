@@ -175,11 +175,25 @@ and Cranelift (`filetests`) work the same way.
 - **Name a function by everything it does.** `build::check` became
   `build::compile` once it also lowered to MIR; the CLI's command runner is
   `run`, not `check`. In a compiler, "check" means the type checker (the
-  `check` crate), so no other function is named that.
+  `check` crate), so no other function is named that. A function that also
+  runs the program is not `link`: the driver's `link` was split by goal.
+- **One word, one meaning.** Beside `run_check` (the `check` goal), the shared
+  step is `compile`, not `check`. Say "body" for anything with statements,
+  not "function body", when the fact holds for any body.
+- **Match a mode once.** `Command::run` matches its `Goal` once and each arm
+  calls `run_check`, `run_build` or `run_program`, which read top to bottom
+  with the shared steps (`compile`, `print`, `link`). Scattered
+  `matches!(goal, ..)` through one function hide each mode's flow.
+- **No one-field struct around a value.** `thir::Const { value }` was removed:
+  `consts` holds `Option<Constant>` until a body constant has a second fact.
+- **Private is no `pub`, never a leading `_`.** In Rust `_name` means "unused
+  on purpose" and silences the dead-code warning, so a helper that lost its
+  caller would go unnoticed; clippy also flags calling one.
 - **`main` only wires the parts together.** The `peeper` binary keeps
-  argument parsing and the usage text in `args.rs`, loading, compiling and
-  reporting in `driver.rs`, and the dumpers in `dump.rs`; `main.rs` parses,
-  runs and returns the exit code.
+  argument parsing and the usage text in `args.rs`, turning them into a
+  `driver::Command` and its `Goal` in `cli.rs`, loading, compiling and
+  reporting in `driver.rs`, and the dumpers in `dump.rs`; `main.rs` gets the
+  command, runs it and returns the exit code.
 - **Data lives in `model`, logic in the crates that build it.** Name a data
   module by its path: `use model::ast;`, then `ast::Expr`.
 - **Never write a concatenated string into a `String` builder**
