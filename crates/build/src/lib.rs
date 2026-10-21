@@ -162,12 +162,14 @@ pub fn compile(
                                 let diagnostics = &mut queries.diagnostics[id.index()];
                                 lower::path_checks::initialization(mir, file, diagnostics);
                                 lower::path_checks::unreachable_code(mir, file, diagnostics);
-                                let types = &queries.types;
-                                if let Some(error) =
-                                    lower::path_checks::missing_return(mir, file, types, result)
-                                {
-                                    diagnostics.push(error); // last: it points at the closing brace
-                                }
+                                // Last: it points at the closing brace.
+                                lower::path_checks::missing_return(
+                                    mir,
+                                    file,
+                                    &queries.types,
+                                    result,
+                                    diagnostics,
+                                );
                             }),
                             _ => None,
                         };

@@ -54,8 +54,8 @@ use source::Span;
 /// The most paths one missing-return error names.
 const SHOWN_CAUSES: usize = 3;
 
-/// The error for a function, written in `file` and giving a `result`, whose
-/// end can be reached without a `return`; `None` when it cannot.
+/// Reports a function, written in `file` and giving a `result`, whose end
+/// can be reached without a `return`.
 ///
 /// Lowering ends such a function's last block with `FallOff` at its closing
 /// brace, so the question is whether that block can be reached. If it can,
@@ -68,20 +68,24 @@ pub fn missing_return(
     file: &Arc<SourceFile>,
     types: &Types,
     result: TypeId,
-) -> Option<Diagnostic> {
+    diagnostics: &mut Vec<Diagnostic>,
+) {
     if result == TypeId::VOID {
-        return None; // such a function returns at its closing brace
+        return; // such a function returns at its closing brace
     }
-    let (end, end_span) =
-        body.blocks
-            .ids()
-            .find_map(|block| match body.blocks[block].terminator {
-                mir::Terminator::FallOff(span) => Some((block, span)),
-                _ => None,
-            })?;
+    let end = body
+        .blocks
+        .ids()
+        .find_map(|block| match body.blocks[block].terminator {
+            mir::Terminator::FallOff(span) => Some((block, span)),
+            _ => None,
+        });
+    let Some((end, end_span)) = end else {
+        return;
+    };
     let reachable = reachable(body);
     if !reachable[end.index()] {
-        return None;
+        return;
     }
     // (where, label) of each path that arrives at the end.
     let mut causes = Vec::new();
@@ -170,7 +174,7 @@ pub fn missing_return(
     } else {
         "add a `return` at the end of the function, or make each path shown return a value"
     };
-    Some(error.help(help, Vec::new()))
+    diagnostics.push(error.help(help, Vec::new()));
 }
 
 /// Reports each variable used where it may not be set yet, and each variable
