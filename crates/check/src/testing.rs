@@ -5,9 +5,10 @@
 use std::cell::OnceCell;
 use std::sync::Arc;
 
-use model::Declared;
 use model::DefId;
 use model::ModuleId;
+use model::constant::Constant;
+use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use project::ImportKind;
 use source::SourceFile;
@@ -29,7 +30,11 @@ impl Queries for Program {
         64
     }
 
-    fn declaration(&mut self, definition: DefId) -> Declared {
+    fn function(&mut self, definition: DefId) -> TypeId {
+        unreachable!("a check test asked for {definition:?}; test it in `build`")
+    }
+
+    fn constant(&mut self, definition: DefId) -> Option<Constant> {
         unreachable!("a check test asked for {definition:?}; test it in `build`")
     }
 }

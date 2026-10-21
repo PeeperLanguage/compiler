@@ -53,7 +53,7 @@ scheduled per declaration, on demand (Zig, Rust), not module by module.
 ```
 project ──► modules (AST)            1 parse per file
               │
-check ────────┤ per declaration:     signature: walk its header once
+check ────────┤ per declaration:     function type: walk its header once
               │                      body: 1 walk, AST -> THIR (+ constants)
               ▼
 lower ────────┤ per function:        1 walk, THIR -> MIR
@@ -200,13 +200,17 @@ Floats (`f32`, `f64`) follow the same idea:
 ## Scheduling per declaration
 
 ```
-signature(d)   header of d: parameter and result types, fields, variants
-constant(d)    the type and value of constant d (a constant has no signature:
-               without a written type, its type is its value's)
-body(d)        THIR of function d (needs the signatures it calls)
+function(d)    the function type of function or method d
+constant(d)    the type and value of module constant d (without a written
+               type, its type is its value's)
+body(d)        THIR of function d (needs the function types it calls)
 mir(d)         MIR of function d (needs body(d)); later also comptime calls
 ```
 
+- Queries cover module-scope declarations (`DefId`), one per kind, as
+  `Symbol` names them. A body's own names (`Symbol::Local`: a variable or a
+  `const`) are checked in place with the body, never asked for. Type
+  declarations are no query until something asks for a type.
 - Each query's result is written once and never changed. The compilation holds
   a table of them per module, indexed by the declaration's place among its
   top-level declarations (`DefId`), so a body edit does not move it.

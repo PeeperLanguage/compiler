@@ -3,18 +3,18 @@
 //! (docs/ir-design.md). It starts with each module's scope.
 
 pub mod builtin;
+pub mod declaration;
 mod expression;
 pub mod scope;
-pub mod signature;
 mod statement;
 #[cfg(test)]
 mod testing;
 
 use diagnostics::Code;
 use diagnostics::Diagnostic;
-use model::Declared;
 use model::DefId;
 use model::ModuleId;
+use model::constant::Constant;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use project::Scope;
@@ -22,18 +22,24 @@ use source::Span;
 
 use model::Symbol;
 
-/// What checking one declaration needs from the rest of the program. The
-/// scheduler implements it: it owns the results of every declaration, so
-/// `check` never depends on the scheduler.
+/// What checking one declaration needs from the rest of the program: what
+/// other module-scope declarations (`DefId`) are, one method per kind, as
+/// `Symbol` names them. A body's own names (`Symbol::Local`) are checked in
+/// place with the body, never asked for. The scheduler implements it: it owns
+/// the results of every declaration, so `check` never depends on the
+/// scheduler.
 pub trait Queries {
     /// The program's types, shared by every declaration.
     fn types(&mut self) -> &mut Types;
     /// How wide a pointer is on the target, in bits: the width of `isize` and
     /// `usize`.
     fn pointer_bits(&self) -> u32;
-    /// What checking the declaration `definition` found: a constant's type
-    /// and value (`Checker::constant`), else a signature (`Checker::signature`).
-    fn declaration(&mut self, definition: DefId) -> Declared;
+    /// The function type of the function or method `definition`
+    /// (`Checker::function`).
+    fn function(&mut self, definition: DefId) -> TypeId;
+    /// The type and value of the constant `definition`; `None` when it had
+    /// an error (`Checker::constant`).
+    fn constant(&mut self, definition: DefId) -> Option<Constant>;
 }
 
 /// Checking declarations of one module.

@@ -10,6 +10,7 @@ use diagnostics::Diagnostic;
 use diagnostics::fix::Fix;
 use diagnostics::suggest::nearest_name;
 use model::BinaryOp;
+use model::Local;
 use model::Symbol;
 use model::UnaryOp;
 use model::ast;
@@ -152,17 +153,17 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
     fn symbol_value(&mut self, symbol: Option<Symbol>, span: Span) -> Expr {
         let what = match symbol {
             None => return Expr::INVALID, // finding it reported the error
-            Some(Symbol::Local(local)) => {
+            Some(Symbol::Local(Local::Variable(variable))) => {
                 return Expr {
-                    ty: self.body.locals[local].ty,
-                    kind: ExprKind::Local(local),
+                    ty: self.body.variables[variable].ty,
+                    kind: ExprKind::Variable(variable),
                 };
             }
-            Some(Symbol::BodyConstant(constant)) => {
+            Some(Symbol::Local(Local::Constant(constant))) => {
                 return constant_expr(self.body.consts[constant].clone());
             }
             Some(Symbol::Constant(constant)) => {
-                return constant_expr(self.checker.queries.declaration(constant).constant());
+                return constant_expr(self.checker.queries.constant(constant));
             }
             Some(Symbol::Function(_)) => {
                 self.checker.not_supported(span, "functions as values");
@@ -189,7 +190,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
         // A local wins a tie with a module name: it is the nearer scope. The
         // module's names come in hash order, which cannot change the answer:
         // two names that tie suggest nothing (`nearest_name`).
-        let local_names = self.names.iter().map(|&(local, ..)| (local, 0));
+        let local_names = self.names.iter().map(|&(declared, _)| (declared, 0));
         let module_names = self.checker.scope().names().map(|name| (name, 1));
         let candidates = local_names.chain(module_names);
         let file = &self.tree.file;
@@ -299,10 +300,16 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
         let symbol = match tree.exprs[callee] {
             ast::Expr::Name => match self.resolve(callee_span) {
                 // Their errors were reported.
-                Some(Symbol::BodyConstant(constant)) if self.body.consts[constant].is_none() => {
+                Some(Symbol::Local(Local::Constant(constant)))
+                    if self.body.consts[constant].is_none() =>
+                {
                     None
                 }
-                Some(Symbol::Local(local)) if self.body.locals[local].ty == TypeId::INVALID => None,
+                Some(Symbol::Local(Local::Variable(variable)))
+                    if self.body.variables[variable].ty == TypeId::INVALID =>
+                {
+                    None
+                }
                 symbol => symbol,
             },
             ast::Expr::Path(path) => self.path_symbol(path),
@@ -327,7 +334,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
             None => None,
         };
         let signature = function.map(|function| {
-            let ty = self.checker.queries.declaration(function).signature();
+            let ty = self.checker.queries.function(function);
             (function, self.checker.queries.types()[ty].clone())
         });
         let Some((function, Type::Function { parameters, result })) = signature else {

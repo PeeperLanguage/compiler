@@ -10,8 +10,6 @@ pub mod semantic_types;
 pub mod thir;
 
 use arena::Id;
-use constant::Constant;
-use semantic_types::TypeId;
 
 /// A module of the program, by its place in the program's order. Tables of
 /// per-module results are vectors indexed by it.
@@ -33,64 +31,39 @@ impl ModuleId {
 /// A declaration the whole program can name: its module and its place among
 /// that module's top-level declarations (`Tree::declaration`). Tables of
 /// per-declaration results are vectors indexed by it. A body edit leaves it
-/// as it was. A name declared inside a function body is not one: it is an
-/// `Id` into that body's own arena, as a `thir::Local`.
+/// as it was. A name declared inside a body is not one: it is a `Local`, an
+/// `Id` into that body's own arena.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DefId {
     pub module: ModuleId,
     pub index: u32,
 }
 
-/// What a name stands for, by the kind of its declaration. A module's scope
-/// holds the first four; a body adds its own locals and constants.
+/// What a name stands for: first where it is declared, then its kind. A
+/// module's scope holds all but `Local`; a body adds its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Symbol {
     /// An imported module.
     Module(ModuleId),
+    /// A function or method.
     Function(DefId),
+    /// A `const` declared at module scope. One declared in a body is
+    /// `Local::Constant`.
     Constant(DefId),
     /// a struct, enum, interface or type alias
     Type(DefId),
-    /// A parameter or `let` of the body: it holds a value at run time.
-    Local(Id<thir::Local>),
-    /// A `const` of the body, folded where it is used.
-    BodyConstant(Id<Option<Constant>>),
+    /// A name declared in a body.
+    Local(Local),
 }
 
-/// What the query of a declaration found, by the declaration's kind.
-#[derive(Clone, Debug)]
-pub enum Declared {
-    /// What `Checker::signature` gives: a function's type, else `INVALID`.
-    Signature(TypeId),
-    /// A constant's type and value; `None` when it had an error.
-    Constant(Option<Constant>),
-}
-
-/// Where the query of one declaration is.
-#[derive(Clone, Debug)]
-pub enum State<T> {
-    NotStarted,
-    /// Asked for again while running: a cycle.
-    Running,
-    Done(T),
-}
-
-impl Declared {
-    /// The signature of a function declaration.
-    pub fn signature(self) -> TypeId {
-        match self {
-            Declared::Signature(ty) => ty,
-            Declared::Constant(_) => unreachable!("a constant has a value, not a signature"),
-        }
-    }
-
-    /// The value of a constant declaration; `None` when it had an error.
-    pub fn constant(self) -> Option<Constant> {
-        match self {
-            Declared::Constant(value) => value,
-            Declared::Signature(_) => unreachable!("a function has a signature, not a value"),
-        }
-    }
+/// A name declared in a body, by its kind: checked in place with the
+/// body, never asked for as a query.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Local {
+    /// A parameter or `let`: it holds a value at run time.
+    Variable(Id<thir::Variable>),
+    /// A `const`, folded where it is used.
+    Constant(Id<Option<constant::Constant>>),
 }
 
 /// A binary operator, named after what it does; the comment shows its token.

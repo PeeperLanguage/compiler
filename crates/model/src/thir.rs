@@ -1,5 +1,5 @@
 //! THIR: a function body after checking. Every expression has its type, every
-//! name is resolved to the local or constant it means, implicit conversions
+//! name is resolved to the variable or constant it means, implicit conversions
 //! are explicit nodes, and constant expressions are folded to their values.
 //! Its nodes live in typed arenas, as the syntax tree's do.
 
@@ -7,6 +7,7 @@ use std::fmt::Write;
 
 use crate::BinaryOp;
 use crate::DefId;
+use crate::Local;
 use crate::Symbol;
 use crate::UnaryOp;
 use crate::constant::Constant;
@@ -29,11 +30,11 @@ nodes! {
     Expr => exprs,
     Stmt => stmts,
     Block => blocks,
-    Local => locals,
+    Variable => variables,
 }
 
 /// One function's checked body. The function's parameters are its first
-/// locals, in order.
+/// variables, in order.
 #[derive(Default)]
 pub struct Body {
     pub exprs: Arena<Expr>,
@@ -42,7 +43,7 @@ pub struct Body {
     /// declares. The first is the function's, which also holds the parameters;
     /// a block comes before the blocks inside it.
     pub blocks: Arena<Block>,
-    pub locals: Arena<Local>, // with the span of each name
+    pub variables: Arena<Variable>, // with the span of each name
     /// Each `const` of the body, by its type and value, with the span of its
     /// name; `None` when its value had an error. Uses of it are folded.
     pub consts: Arena<Option<Constant>>,
@@ -63,7 +64,7 @@ pub struct Name {
 
 /// A parameter or a `let` binding.
 #[derive(Clone, Copy, Debug)]
-pub struct Local {
+pub struct Variable {
     pub ty: TypeId,
     pub mutable: bool,
     /// Set where declared; false for `let x: T;`, whose first assignment
@@ -93,7 +94,7 @@ pub enum ExprKind {
     /// A value known at compile time: a literal, a constant, or an operation
     /// on them, folded.
     Constant(Value),
-    Local(Id<Local>),
+    Variable(Id<Variable>),
     Binary {
         op: BinaryOp,
         left: Id<Expr>,
@@ -116,13 +117,13 @@ pub enum ExprKind {
 
 #[derive(Clone, Copy, Debug)]
 pub enum Stmt {
-    /// `let`; without a value, the local is set later
+    /// `let`; without a value, the variable is set later
     Let {
-        local: Id<Local>,
+        variable: Id<Variable>,
         value: Option<Id<Expr>>,
     },
     Assign {
-        local: Id<Local>,
+        variable: Id<Variable>,
         value: Id<Expr>,
     },
     Expression(Id<Expr>),
@@ -148,13 +149,11 @@ impl Body {
         T::arena(self).push(node, span)
     }
 
-    /// Where the body declares `symbol`: its name. `None` for a name the body
-    /// does not declare.
-    pub fn declared(&self, symbol: Symbol) -> Option<Span> {
-        match symbol {
-            Symbol::Local(local) => Some(self.locals.span(local)),
-            Symbol::BodyConstant(constant) => Some(self.consts.span(constant)),
-            _ => None,
+    /// Where the body declares `local`: its name.
+    pub fn declared(&self, local: Local) -> Span {
+        match local {
+            Local::Variable(variable) => self.variables.span(variable),
+            Local::Constant(constant) => self.consts.span(constant),
         }
     }
 }
@@ -162,7 +161,7 @@ impl Body {
 impl Body {
     /// The body as text, one statement per line, for `peeper -dump`. `file` is
     /// where the body is written; `function_name` names a called function. A
-    /// local shows as its name and index (`x.2`), a constant other than a
+    /// variable shows as its name and index (`x.2`), a constant other than a
     /// `bool` with its type (`1:i32`), and an operation in parentheses.
     pub fn text(
         &self,
@@ -207,17 +206,17 @@ impl<F: Fn(DefId) -> String> Printer<'_, F> {
     /// `depth + 1` levels in.
     fn statement(&mut self, statement: Id<Stmt>, depth: usize) {
         match self.body.stmts[statement] {
-            Stmt::Let { local, value } => {
-                let mutable = self.body.locals[local].mutable;
+            Stmt::Let { variable, value } => {
+                let mutable = self.body.variables[variable].mutable;
                 self.out.push_str(if mutable { "let mut " } else { "let " });
-                self.local(local);
+                self.variable(variable);
                 if let Some(value) = value {
                     self.out.push_str(" = ");
                     self.expr(value);
                 }
             }
-            Stmt::Assign { local, value } => {
-                self.local(local);
+            Stmt::Assign { variable, value } => {
+                self.variable(variable);
                 self.out.push_str(" = ");
                 self.expr(value);
             }
@@ -257,9 +256,9 @@ impl<F: Fn(DefId) -> String> Printer<'_, F> {
         self.out.push('}');
     }
 
-    fn local(&mut self, local: Id<Local>) {
-        let name = self.file.slice(self.body.locals.span(local));
-        _ = write!(self.out, "{name}.{}", local.index());
+    fn variable(&mut self, variable: Id<Variable>) {
+        let name = self.file.slice(self.body.variables.span(variable));
+        _ = write!(self.out, "{name}.{}", variable.index());
     }
 
     fn expr(&mut self, expr: Id<Expr>) {
@@ -294,7 +293,7 @@ impl<F: Fn(DefId) -> String> Printer<'_, F> {
                 };
                 _ = write!(self.out, ":{}", self.types.text(ty));
             }
-            ExprKind::Local(local) => self.local(local),
+            ExprKind::Variable(variable) => self.variable(variable),
             ExprKind::Binary { op, left, right } => {
                 self.out.push('(');
                 self.expr(left);

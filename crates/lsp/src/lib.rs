@@ -59,6 +59,7 @@ use lsp_types::TextDocumentSyncKind;
 use lsp_types::TextEdit;
 use lsp_types::Url;
 use lsp_types::WorkspaceEdit;
+use model::Local;
 use model::ModuleId;
 use model::Symbol;
 use model::ast;
@@ -555,16 +556,13 @@ impl CachedName {
         let file = |module: ModuleId| PathBuf::from(&program.modules[module.index()].ast.file.path);
         let target = match name.symbol {
             Symbol::Local(local) => CachedTarget::InBody {
-                declared: body.locals.span(local),
-                ty: types.text(body.locals[local].ty),
-            },
-            Symbol::BodyConstant(constant) => CachedTarget::InBody {
-                declared: body.consts.span(constant),
-                ty: types.text(
-                    body.consts[constant]
+                declared: body.declared(local),
+                ty: types.text(match local {
+                    Local::Variable(variable) => body.variables[variable].ty,
+                    Local::Constant(constant) => body.consts[constant]
                         .as_ref()
                         .map_or(TypeId::INVALID, |constant| constant.ty),
-                ),
+                }),
             },
             Symbol::Module(module) => CachedTarget::Module(file(module)),
             Symbol::Function(definition)

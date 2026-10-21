@@ -1,6 +1,6 @@
-//! Signatures: what a declaration's header says, without its body. A
-//! function's signature is its function type. A constant has none: its type
-//! comes with its value (`Checker::constant`).
+//! Module-scope declarations, without their bodies: a function's type and a
+//! type declaration's type. A constant's type comes with its value
+//! (`Checker::constant`).
 
 use arena::Id;
 use model::ast;
@@ -13,51 +13,53 @@ use crate::builtin::unsupported_type;
 use model::Symbol;
 
 impl<Q: Queries> Checker<'_, Q> {
-    /// The signature of the module's declaration `declaration`, which is not
-    /// a constant.
-    pub fn signature(&mut self, declaration: Id<ast::Decl>) -> TypeId {
+    /// The function type of the module's function or method `declaration`.
+    pub fn function(&mut self, declaration: Id<ast::Decl>) -> TypeId {
         let tree = &self.module().ast;
-        match tree.decls[declaration] {
-            ast::Decl::Function(ast::Function { signature, .. }) => {
-                if let Some(receiver) = signature.receiver {
-                    return self.not_supported(tree.params.span(receiver), "methods");
-                }
-                if let Some(parameter) = tree.lists.items(signature.type_parameters).next() {
-                    return self.not_supported(tree.names.span(parameter), "generic functions");
-                }
-                if let Some(origin) = tree.lists.items(signature.origins).next() {
-                    return self.not_supported(tree.names.span(origin), "`from` origins");
-                }
-                let mut parameters = Vec::with_capacity(signature.parameters.len());
-                for parameter in tree.lists.items(signature.parameters) {
-                    let parameter = tree.params[parameter];
-                    if let Some(default) = parameter.default {
-                        return self.not_supported(tree.exprs.span(default), "default parameters");
-                    }
-                    parameters.push(self.resolve_type(parameter.ty));
-                }
-                let result = signature
-                    .result
-                    .map_or(TypeId::VOID, |result| self.resolve_type(result));
-                let parameters = parameters.into();
-                self.queries
-                    .types()
-                    .intern(Type::Function { parameters, result })
-            }
-            ast::Decl::Const { .. } => unreachable!("a constant's type comes with its value"),
-            ast::Decl::Type(declaration) => {
-                let what = match tree.types[declaration.ty] {
-                    ast::Type::Struct(_) => "struct declarations",
-                    ast::Type::Enum(_) => "enum declarations",
-                    ast::Type::Interface(_) => "interface declarations",
-                    _ => unreachable!("the parser gives a type declaration only these types"),
-                };
-                self.not_supported(declaration.name.span, what)
-            }
-            ast::Decl::Alias(declaration) => {
-                self.not_supported(declaration.name.span, "type aliases")
-            }
+        let ast::Decl::Function(ast::Function { signature, .. }) = tree.decls[declaration] else {
+            unreachable!("`{declaration:?}` is a function declaration")
+        };
+        if let Some(receiver) = signature.receiver {
+            return self.not_supported(tree.params.span(receiver), "methods");
         }
+        if let Some(parameter) = tree.lists.items(signature.type_parameters).next() {
+            return self.not_supported(tree.names.span(parameter), "generic functions");
+        }
+        if let Some(origin) = tree.lists.items(signature.origins).next() {
+            return self.not_supported(tree.names.span(origin), "`from` origins");
+        }
+        let mut parameters = Vec::with_capacity(signature.parameters.len());
+        for parameter in tree.lists.items(signature.parameters) {
+            let parameter = tree.params[parameter];
+            if let Some(default) = parameter.default {
+                return self.not_supported(tree.exprs.span(default), "default parameters");
+            }
+            parameters.push(self.resolve_type(parameter.ty));
+        }
+        let result = signature
+            .result
+            .map_or(TypeId::VOID, |result| self.resolve_type(result));
+        let parameters = parameters.into();
+        self.queries
+            .types()
+            .intern(Type::Function { parameters, result })
+    }
+
+    /// The type the module's type declaration or alias `declaration`
+    /// declares; none is supported yet.
+    pub fn type_declaration(&mut self, declaration: Id<ast::Decl>) -> TypeId {
+        let tree = &self.module().ast;
+        let (name, what) = match tree.decls[declaration] {
+            ast::Decl::Type(declaration) => match tree.types[declaration.ty] {
+                ast::Type::Struct(_) => (declaration.name, "struct declarations"),
+                ast::Type::Enum(_) => (declaration.name, "enum declarations"),
+                ast::Type::Interface(_) => (declaration.name, "interface declarations"),
+                _ => unreachable!("the parser gives a type declaration only these types"),
+            },
+            ast::Decl::Alias(declaration) => (declaration.name, "type aliases"),
+            _ => unreachable!("`{declaration:?}` is a type declaration"),
+        };
+        self.not_supported(name.span, what)
     }
 
     /// The type a type expression of the module's tree stands for.
@@ -73,12 +75,7 @@ impl<Q: Queries> Checker<'_, Q> {
                 }
                 match self.global(name) {
                     Some(Symbol::Type(_)) => "named types",
-                    Some(
-                        Symbol::Function(_)
-                        | Symbol::Constant(_)
-                        | Symbol::Local(_)
-                        | Symbol::BodyConstant(_),
-                    ) => {
+                    Some(Symbol::Function(_) | Symbol::Constant(_) | Symbol::Local(_)) => {
                         let message = format!("`{name}` is a value, not a type");
                         return self.error(diagnostics::NOT_A_TYPE, message, span);
                     }
@@ -114,6 +111,7 @@ impl<Q: Queries> Checker<'_, Q> {
 
 #[cfg(test)]
 mod tests {
+    use model::ast;
     use model::semantic_types::Type;
     use model::semantic_types::TypeId;
 
@@ -121,15 +119,20 @@ mod tests {
     use crate::testing::reported;
     use crate::testing::with_checker;
 
-    /// The signature of every declaration of `text`, as type text, and the
-    /// diagnostics.
-    fn signatures(text: &str) -> (Vec<String>, Vec<Reported>) {
+    /// The type of every function and type declaration of `text`, as type
+    /// text, and the diagnostics.
+    fn declared_types(text: &str) -> (Vec<String>, Vec<Reported>) {
         let (found, types, reported) = with_checker(text, |checker| {
             let tree = &checker.module().ast;
             let declarations: Vec<_> = tree.lists.items(tree.declarations).collect();
             let found: Vec<TypeId> = declarations
                 .into_iter()
-                .map(|declaration| checker.signature(declaration))
+                .map(
+                    |declaration| match checker.module().ast.decls[declaration] {
+                        ast::Decl::Function(_) => checker.function(declaration),
+                        _ => checker.type_declaration(declaration),
+                    },
+                )
                 .collect();
             found
         });
@@ -142,7 +145,7 @@ mod tests {
 
     #[test]
     fn functions_and_constants() {
-        let (found, reported) = signatures(
+        let (found, reported) = declared_types(
             "fn add(a: i32, b: i32) -> i32 { return a; }\nfn main() {}\nfn take(s: cstr) {}\n",
         );
         assert!(reported.is_empty(), "{reported:?}");
@@ -155,7 +158,7 @@ mod tests {
 
     #[test]
     fn errors_are_located() {
-        let (found, found_reported) = signatures(
+        let (found, found_reported) = declared_types(
             "fn a(x: Missing) {}\nfn b(m: utils) {}\nfn c(r: &i32) {}\nfn d<T>(x: T) {}\nfn e(x: i32 = 1) {}\nstruct P { x: i32 }\nfn f(p: P) {}\nfn g(x: a) {}\nfn (p: i32) method() {}\nfn h(s: str) {}\n",
         );
         let expected = reported(&[

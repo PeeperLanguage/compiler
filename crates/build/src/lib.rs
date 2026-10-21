@@ -20,10 +20,8 @@ use arena::Id;
 use check::Checker;
 use check::Queries;
 use diagnostics::Diagnostic;
-use model::Declared;
 use model::DefId;
 use model::ModuleId;
-use model::State;
 use model::ast;
 use model::constant::Constant;
 use model::mir;
@@ -99,7 +97,11 @@ pub fn compile(
         modules,
         types: Types::new(),
         pointer_bits,
-        declarations: modules
+        functions: modules
+            .iter()
+            .map(|module| vec![State::NotStarted; module.ast.declarations.len()])
+            .collect(),
+        constants: modules
             .iter()
             .map(|module| vec![State::NotStarted; module.ast.declarations.len()])
             .collect(),
@@ -152,7 +154,7 @@ pub fn compile(
             };
             match tree.decls[declaration] {
                 ast::Decl::Function(function) => {
-                    let ty = compilation.declaration(definition).signature();
+                    let ty = compilation.function(definition);
                     let mut names = Vec::new(); // allocates only when a name is recorded
                     let recorded = record_names.then_some(&mut names);
                     let thir = compilation
@@ -163,8 +165,13 @@ pub fn compile(
                         use_function(definition, ty, &thir, &names, mir.as_ref(), types);
                     }
                 }
-                _ => {
-                    compilation.declaration(definition);
+                ast::Decl::Const { .. } => {
+                    compilation.constant(definition);
+                }
+                // Nothing asks for a type declaration's type yet, so it is
+                // no query: it is checked here, once.
+                ast::Decl::Type(_) | ast::Decl::Alias(_) => {
+                    compilation.with_checker(id, |checker| checker.type_declaration(declaration));
                 }
             }
         }
@@ -196,6 +203,15 @@ fn hash_type(types: &Types, ty: TypeId, hasher: &mut DefaultHasher) {
     }
 }
 
+/// Where the query of one declaration is.
+#[derive(Clone, Debug)]
+enum State<T> {
+    NotStarted,
+    /// Asked for again while running: a cycle.
+    Running,
+    Done(T),
+}
+
 /// One compile of a program: what it finds, beside the modules it reads.
 /// Its tables are indexed by `ModuleId`. The query results die with the
 /// compile; `results` is what the next compile is given.
@@ -203,8 +219,13 @@ struct Compilation<'p> {
     modules: &'p [project::Module], // in the program's order
     types: Types,
     pointer_bits: u32,
-    /// The query of each top-level declaration, by its place (`DefId`).
-    declarations: Vec<Vec<State<Declared>>>,
+    /// The query of each function and method, by its place (`DefId`): its
+    /// type. Another declaration's slot stays `NotStarted`.
+    functions: Vec<Vec<State<TypeId>>>,
+    /// The query of each module constant, by its place: its type and value,
+    /// `None` when it had an error. Another declaration's slot stays
+    /// `NotStarted`.
+    constants: Vec<Vec<State<Option<Constant>>>>,
     results: Vec<ModuleResults>,
 }
 
@@ -237,7 +258,8 @@ impl<'p> Compilation<'p> {
     /// are checked: its imports, and each declaration's kind, name, and type
     /// or value. Its bodies are not part of it.
     fn interface(&self, module: ModuleId) -> u64 {
-        let declarations = &self.declarations[module.index()];
+        let functions = &self.functions[module.index()];
+        let constants = &self.constants[module.index()];
         let module = &self.modules[module.index()];
         let tree = &module.ast;
         let types = &self.types;
@@ -253,13 +275,14 @@ impl<'p> Compilation<'p> {
             let decl = &tree.decls[declaration];
             std::mem::discriminant(decl).hash(&mut hasher);
             decl.name().text(&tree.file).hash(&mut hasher);
-            match &declarations[index] {
-                State::Done(Declared::Signature(ty)) => hash_type(types, *ty, &mut hasher),
-                State::Done(Declared::Constant(Some(Constant { ty, value }))) => {
-                    hash_type(types, *ty, &mut hasher);
-                    value.hash(&mut hasher);
-                }
-                _ => {}
+            // A declaration's result is in one table; the other slot is
+            // `NotStarted`.
+            if let State::Done(ty) = functions[index] {
+                hash_type(types, ty, &mut hasher);
+            }
+            if let State::Done(Some(Constant { ty, value })) = &constants[index] {
+                hash_type(types, *ty, &mut hasher);
+                value.hash(&mut hasher);
             }
         }
         hasher.finish()
@@ -288,15 +311,16 @@ impl<'p> Compilation<'p> {
     /// `on_cycle` when the query is asked for while it runs (a cycle,
     /// reported), or else what `work` finds with a checker of its module,
     /// kept for the next ask.
-    fn query(
+    fn query<T: Clone>(
         &mut self,
         definition: DefId,
-        on_cycle: Declared,
-        work: impl FnOnce(&mut Checker<Compilation<'p>>, Id<ast::Decl>) -> Declared,
-    ) -> Declared {
+        table: fn(&mut Self) -> &mut Vec<Vec<State<T>>>,
+        on_cycle: T,
+        work: impl FnOnce(&mut Checker<Compilation<'p>>, Id<ast::Decl>) -> T,
+    ) -> T {
         let (module, index) = (definition.module.index(), definition.index as usize);
         // Cloned, so no borrow is held while the query runs and asks others.
-        let state = self.declarations[module][index].clone();
+        let state = table(self)[module][index].clone();
         match state {
             State::Done(result) => return result,
             State::Running => {
@@ -305,10 +329,10 @@ impl<'p> Compilation<'p> {
             }
             State::NotStarted => {}
         }
-        self.declarations[module][index] = State::Running;
+        table(self)[module][index] = State::Running;
         let declaration = self.modules[module].ast.declaration(definition.index);
         let result = self.with_checker(definition.module, |checker| work(checker, declaration));
-        self.declarations[module][index] = State::Done(result.clone());
+        table(self)[module][index] = State::Done(result.clone());
         result
     }
 
@@ -349,19 +373,24 @@ impl Queries for Compilation<'_> {
         self.pointer_bits
     }
 
-    fn declaration(&mut self, definition: DefId) -> Declared {
-        let tree = &self.modules[definition.module.index()].ast;
-        if let ast::Decl::Const { .. } = tree.decls[tree.declaration(definition.index)] {
-            let work = |checker: &mut Checker<_>, declaration| {
-                Declared::Constant(checker.constant(declaration))
-            };
-            self.query(definition, Declared::Constant(None), work)
-        } else {
-            let work = |checker: &mut Checker<_>, declaration| {
-                Declared::Signature(checker.signature(declaration))
-            };
-            self.query(definition, Declared::Signature(TypeId::INVALID), work)
-        }
+    fn function(&mut self, definition: DefId) -> TypeId {
+        let work = |checker: &mut Checker<_>, declaration| checker.function(declaration);
+        self.query(
+            definition,
+            |compilation| &mut compilation.functions,
+            TypeId::INVALID,
+            work,
+        )
+    }
+
+    fn constant(&mut self, definition: DefId) -> Option<Constant> {
+        let work = |checker: &mut Checker<_>, declaration| checker.constant(declaration);
+        self.query(
+            definition,
+            |compilation| &mut compilation.constants,
+            None,
+            work,
+        )
     }
 }
 

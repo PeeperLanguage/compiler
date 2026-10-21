@@ -15,14 +15,15 @@ use model::thir::Block;
 use model::thir::Body;
 use model::thir::Expr;
 use model::thir::ExprKind;
-use model::thir::Local;
 use model::thir::Name;
 use model::thir::Stmt;
+use model::thir::Variable;
 use source::Span;
 
 use crate::Checker;
 use crate::Queries;
 use crate::scope::already_declared;
+use model::Local;
 use model::Symbol;
 
 /// Checking one function body.
@@ -35,16 +36,16 @@ pub(crate) struct BodyChecker<'c, 'a, Q: Queries> {
     recorded: Option<&'c mut Vec<Name>>,
     /// The names declared in the enclosing blocks so far, innermost last. Few
     /// names are in scope at once, so a search from the end beats hashing.
-    pub(crate) names: Vec<(&'a str, Symbol)>,
+    pub(crate) names: Vec<(&'a str, Local)>,
     /// Where in `names` the current block's names start.
     block_start: usize,
-    /// The current block, for the locals it declares.
+    /// The current block, for the variables it declares.
     block: Id<Block>,
     result: TypeId, // the function's result type
 }
 
 impl<'a, Q: Queries> Checker<'a, Q> {
-    /// The THIR of `function`'s body, given its signature `ty` (`signature`),
+    /// The THIR of `function`'s body, given its type `ty` (`function`),
     /// with `has_errors` set when checking it reported an error. `None` for a
     /// function without a body, or whose signature had an error. The names
     /// written in it go to `names` when given, as for an editor.
@@ -74,8 +75,8 @@ impl<'a, Q: Queries> Checker<'a, Q> {
         {
             let parameter = tree.params[parameter];
             let name = parameter.name.unwrap_or_default();
-            let local = checker.body.add(
-                Local {
+            let variable = checker.body.add(
+                Variable {
                     ty,
                     mutable: parameter.mutable,
                     initialized: true,
@@ -83,7 +84,7 @@ impl<'a, Q: Queries> Checker<'a, Q> {
                 },
                 name.span,
             );
-            checker.declare(name, Symbol::Local(local));
+            checker.declare(name, Local::Variable(variable));
         }
         let statements = checker.statements(tree.blocks[block].statements);
         checker.body.blocks[outermost].statements = statements;
@@ -99,7 +100,7 @@ impl<'a, Q: Queries> Checker<'a, Q> {
 
     /// The type and value of the module's constant `declaration`; `None` when
     /// it had an error. Its value is checked as a body's `const` is, with no
-    /// locals in scope.
+    /// variables in scope.
     pub fn constant(&mut self, declaration: Id<ast::Decl>) -> Option<Constant> {
         BodyChecker::new(self, TypeId::VOID, None).constant_value(declaration)
     }
@@ -160,23 +161,20 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
     /// shadow a name of an outer block until the block ends. A name the block
     /// already declares is reported and keeps its first meaning; the
     /// parameters are in the body's outermost block, as in Go.
-    fn declare(&mut self, name: Ident, symbol: Symbol) {
+    fn declare(&mut self, name: Ident, local: Local) {
         let text = name.text(&self.tree.file);
         if text.is_empty() {
             return; // missing after a syntax error
         }
         let block = &self.names[self.block_start..];
         if let Some(&(_, first)) = block.iter().find(|&&(declared, _)| declared == text) {
-            let first = self
-                .body
-                .declared(first)
-                .expect("a block holds the body's names");
+            let first = self.body.declared(first);
             let diagnostic = already_declared(&self.tree.file, text, "block", name.span, first);
             self.checker.diagnostics.push(diagnostic);
             return;
         }
-        self.record(name.span, symbol);
-        self.names.push((text, symbol));
+        self.record(name.span, Symbol::Local(local));
+        self.names.push((text, local));
     }
 
     /// Records that the name written at `span` stands for `symbol`, when the
@@ -198,7 +196,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
             .rev()
             .find(|&&(declared, _)| declared == name);
         let symbol = match found {
-            Some(&(_, symbol)) => symbol,
+            Some(&(_, local)) => Symbol::Local(local),
             None => match self.checker.global(name) {
                 Some(symbol) => symbol,
                 None => {
@@ -225,12 +223,12 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
                 value,
             } => self.let_statement(mutable, name, ty, value),
             ast::Stmt::Const(declaration) => {
-                let constant = self.constant_value(declaration);
+                let value = self.constant_value(declaration);
                 let ast::Decl::Const { name, .. } = tree.decls[declaration] else {
                     unreachable!("a const statement holds a const declaration")
                 };
-                let constant = self.body.consts.push(constant, name.span);
-                self.declare(name, Symbol::BodyConstant(constant));
+                let constant = self.body.consts.push(value, name.span);
+                self.declare(name, Local::Constant(constant));
                 return None;
             }
             ast::Stmt::Return(value) => Stmt::Return(self.return_value(span, value)),
@@ -260,14 +258,14 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
                 for field in tree.lists.items(fields) {
                     if let ast::Pattern::Field { field, binding } = tree.patterns[field] {
                         let name = binding.unwrap_or(field);
-                        let unknown = Local {
+                        let unknown = Variable {
                             ty: TypeId::INVALID,
                             mutable: true,
                             initialized: true,
                             scope: self.block,
                         };
-                        let local = self.body.add(unknown, name.span);
-                        self.declare(name, Symbol::Local(local));
+                        let variable = self.body.add(unknown, name.span);
+                        self.declare(name, Local::Variable(variable));
                     }
                 }
                 return None;
@@ -288,7 +286,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
         Some(self.body.add(checked, span))
     }
 
-    /// `let mut name: ty = value;`. The local is declared after its value is
+    /// `let mut name: ty = value;`. The variable is declared after its value is
     /// checked, so the value cannot use it.
     fn let_statement(
         &mut self,
@@ -322,7 +320,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
                 (TypeId::INVALID, None)
             }
         };
-        let local = Local {
+        let variable = Variable {
             ty,
             mutable,
             initialized,
@@ -335,8 +333,8 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
             .rposition(|&(declared, ..)| declared == text);
         if let Some(position) = shadowed
             && position < self.block_start
-            && let Symbol::Local(outer) = self.names[position].1
-            && self.body.locals[outer].mutable
+            && let Local::Variable(outer) = self.names[position].1
+            && self.body.variables[outer].mutable
         {
             // Likely meant as `x = ...`: the outer local stays unchanged.
             let file = &self.tree.file;
@@ -352,7 +350,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
                 )
                 .label(
                     file,
-                    self.body.locals.span(outer),
+                    self.body.variables.span(outer),
                     format!("the outer `{text}`, declared `mut` here"),
                 )
                 .help(
@@ -361,9 +359,9 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
                 ),
             );
         }
-        let local = self.body.add(local, name.span);
-        self.declare(name, Symbol::Local(local));
-        Stmt::Let { local, value }
+        let variable = self.body.add(variable, name.span);
+        self.declare(name, Local::Variable(variable));
+        Stmt::Let { variable, value }
     }
 
     /// `const name: ty = value;`: a name for a value known at compile time.
@@ -430,22 +428,22 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
         }
     }
 
-    /// `target = value;`, where the target is a mutable local.
+    /// `target = value;`, where the target is a mutable variable.
     fn assign(&mut self, target: Id<ast::Expr>, value: Id<ast::Expr>) -> Option<Stmt> {
-        let Some(local) = self.assigned_local(target) else {
+        let Some(variable) = self.assigned_variable(target) else {
             self.value(value, None); // for its own errors
             return None;
         };
-        let value = self.expect(value, self.body.locals[local].ty);
-        Some(Stmt::Assign { local, value })
+        let value = self.expect(value, self.body.variables[variable].ty);
+        Some(Stmt::Assign { variable, value })
     }
 
-    /// The local that `target` names, reporting a target that cannot be
-    /// assigned. An immutable local is reported but still given, so the value
-    /// is checked against its type. An immutable local declared without a
-    /// value may be assigned; the path checks on MIR report one that may be
+    /// The variable that `target` names, reporting a target that cannot be
+    /// assigned. An immutable variable is reported but still given, so the
+    /// value is checked against its type. An immutable variable declared
+    /// without a value may be assigned; the path checks on MIR report one that may be
     /// assigned twice.
-    fn assigned_local(&mut self, target: Id<ast::Expr>) -> Option<Id<Local>> {
+    fn assigned_variable(&mut self, target: Id<ast::Expr>) -> Option<Id<Variable>> {
         let tree = self.tree;
         let span = tree.exprs.span(target);
         if !matches!(tree.exprs[target], ast::Expr::Name) {
@@ -454,9 +452,9 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
             return None;
         }
         let name = tree.file.slice(span);
-        let local = match self.resolve(span)? {
-            Symbol::Local(local) => local,
-            Symbol::BodyConstant(constant) => {
+        let variable = match self.resolve(span)? {
+            Symbol::Local(Local::Variable(variable)) => variable,
+            Symbol::Local(Local::Constant(constant)) => {
                 let declared = self.body.consts.span(constant);
                 self.checker.diagnostics.push(
                     Diagnostic::new(
@@ -481,11 +479,11 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
                 return None;
             }
         };
-        let Local {
+        let Variable {
             mutable,
             initialized,
             ..
-        } = self.body.locals[local];
+        } = self.body.variables[variable];
         if !mutable && initialized {
             self.checker.diagnostics.push(
                 Diagnostic::new(
@@ -495,12 +493,12 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
                 .label(&tree.file, span, "")
                 .label(
                     &tree.file,
-                    self.body.locals.span(local),
+                    self.body.variables.span(variable),
                     "declared without `mut` here",
                 ),
             );
         }
-        Some(local)
+        Some(variable)
     }
 }
 
@@ -525,7 +523,7 @@ mod tests {
                 let ast::Decl::Function(function) = checker.module().ast.decls[declaration] else {
                     continue;
                 };
-                let signature = checker.signature(declaration);
+                let signature = checker.function(declaration);
                 let body = checker.body(&function, signature, None);
                 bodies.extend(body.filter(|body| !body.has_errors));
             }
@@ -780,7 +778,7 @@ mod tests {
             let ast::Decl::Function(function) = tree.decls[declaration] else {
                 unreachable!("the first declaration is a function")
             };
-            let signature = checker.signature(declaration);
+            let signature = checker.function(declaration);
             checker.body(&function, signature, None);
             let note = |diagnostic: &diagnostics::Diagnostic| {
                 let first = diagnostic.notes.first();

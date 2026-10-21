@@ -36,27 +36,27 @@ pub fn lower(body: &thir::Body, parameters: usize) -> Option<mir::Body> {
         block: Id::from_index(0),
         instructions: Vec::new(),
     };
-    // One scope per block and one variable per local, in order: block `i` is
-    // scope `i` and local `i` is variable `i`.
+    // One scope per block and one MIR variable per THIR variable, in order:
+    // block `i` is scope `i`, and the ids of variables match.
     let scope = |block: Id<thir::Block>| Id::from_index(block.index());
     for block in body.blocks.ids() {
         let parent = body.blocks[block].parent.map(scope);
         let span = body.blocks.span(block);
         lowering.mir.scopes.push(mir::Scope { parent }, span);
     }
-    for id in body.locals.ids() {
-        let local = body.locals[id];
-        if local.ty == TypeId::INVALID {
+    for id in body.variables.ids() {
+        let variable = body.variables[id];
+        if variable.ty == TypeId::INVALID {
             return None;
         }
         lowering.mir.variables.push(
             mir::Variable {
-                ty: local.ty,
-                mutable: local.mutable,
-                initialized: local.initialized,
-                scope: scope(local.scope),
+                ty: variable.ty,
+                mutable: variable.mutable,
+                initialized: variable.initialized,
+                scope: scope(variable.scope),
             },
-            body.locals.span(id),
+            body.variables.span(id),
         );
     }
     let function = Id::from_index(0); // the function's block
@@ -134,13 +134,15 @@ impl Lowering<'_> {
         match self.thir.stmts[statement] {
             thir::Stmt::Let { value: None, .. } => {}
             thir::Stmt::Let {
-                local,
+                variable,
                 value: Some(value),
             }
-            | thir::Stmt::Assign { local, value } => {
+            | thir::Stmt::Assign { variable, value } => {
                 let value = self.expr(value)?;
-                let variable = Id::from_index(local.index());
-                let store = mir::InstructionKind::Store { variable, value };
+                let store = mir::InstructionKind::Store {
+                    variable: Id::from_index(variable.index()),
+                    value,
+                };
                 self.emit(store, TypeId::VOID, span);
             }
             thir::Stmt::Expression(value) => {
@@ -198,8 +200,8 @@ impl Lowering<'_> {
                 let value = value.clone();
                 return Some(self.constant(Constant { ty, value }));
             }
-            thir::ExprKind::Local(local) => {
-                mir::InstructionKind::Load(Id::from_index(local.index()))
+            thir::ExprKind::Variable(variable) => {
+                mir::InstructionKind::Load(Id::from_index(variable.index()))
             }
             thir::ExprKind::Binary {
                 op: op @ (BinaryOp::LogicalAnd | BinaryOp::LogicalOr),
