@@ -514,7 +514,7 @@ impl Checked {
         let previous = std::mem::take(&mut self.results);
         self.results = build::compile(
             program,
-            usize::BITS,
+            build::POINTER_BITS,
             previous,
             true,
             |&build::CheckedFunction {

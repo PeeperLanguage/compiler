@@ -198,7 +198,6 @@ fn compile<'p>(
     links: bool,
 ) -> (Vec<Diagnostic>, Vec<llvm::Module<'p>>, Dumps<'p>) {
     let mut all: Vec<Diagnostic> = program.diagnostics.clone();
-    let pointer_bits = usize::BITS;
     let mut ll = Vec::new(); // each module's LLVM text, when it is needed
     let mut dumped = Dumps::new(program, dumps);
     // A program with a parse or load error is not checked: its errors
@@ -208,7 +207,9 @@ fn compile<'p>(
     }
     if links || dumped.wants_ll() {
         ll = (0..program.modules.len())
-            .map(|index| llvm::Module::new(program, ModuleId::from_index(index), pointer_bits))
+            .map(|index| {
+                llvm::Module::new(program, ModuleId::from_index(index), build::POINTER_BITS)
+            })
             .collect();
     }
     // The module of the entry file, which must declare `main`.
@@ -221,7 +222,7 @@ fn compile<'p>(
     // LLVM text as soon as it is built.
     let results = build::compile(
         program,
-        pointer_bits,
+        build::POINTER_BITS,
         build::Results::default(),
         false, // names are for editors
         |&build::CheckedFunction {

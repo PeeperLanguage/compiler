@@ -86,6 +86,12 @@ pub struct CheckedFunction<'c> {
     pub types: &'c Types, // the program's types so far, which `signature` and the bodies name
 }
 
+/// How many bits a pointer has on the machine a program is built for: the
+/// machine the compiler runs on, the only target for now. The driver and the
+/// language server both compile with it, so an editor reports what a build
+/// would.
+pub const POINTER_BITS: u32 = usize::BITS;
+
 /// Checks every declaration of `program`, lowers each function to MIR and
 /// gives what it found. A module of `previous` (a compile of the same program
 /// with the same `pointer_bits`, or `Results::default()`) whose text and
