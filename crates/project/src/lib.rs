@@ -2,6 +2,7 @@
 //! and orders the modules so each comes after the modules it imports. `find`
 //! gives the packages and entry file of a project folder or a single file.
 
+pub mod manifest;
 mod packages;
 
 use std::collections::HashMap;
@@ -182,20 +183,20 @@ pub fn find(path: &Path, libraries: &Path) -> Result<Project, String> {
     }
     let manifest = manifest::read(&path)?;
     if packages.contains_key(&manifest.name) {
-        let file = manifest.root.join(manifest::FILE_NAME);
+        let file = path.join(manifest::FILE_NAME);
         return Err(format!(
             "{}: project name `{}` is taken by a bundled library",
             file.display(),
             manifest.name
         ));
     }
-    let source = manifest.root.join(SOURCE_FOLDER);
+    let source = path.join(SOURCE_FOLDER);
     let entry = source.join(format!("main{SOURCE_EXTENSION}"));
     packages.insert(manifest.name.clone(), source);
     Ok(Project {
         packages,
         entry,
-        root: manifest.root,
+        root: path,
         name: manifest.name,
     })
 }

@@ -9,7 +9,6 @@ members = [
     "crates/lower",
     "crates/llvm",
     "crates/build",
-    "crates/manifest",
     "crates/project",
     "crates/lsp",
     "crates/peeper",
@@ -38,7 +37,6 @@ check = { path = "crates/check" }
 lower = { path = "crates/lower" }
 llvm = { path = "crates/llvm" }
 build = { path = "crates/build" }
-manifest = { path = "crates/manifest" }
 project = { path = "crates/project" }
 lsp = { path = "crates/lsp" }
 unicode-general-category = "1.1.0"

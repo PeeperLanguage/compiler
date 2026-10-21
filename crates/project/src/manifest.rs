@@ -2,7 +2,6 @@
 
 use std::io::ErrorKind;
 use std::path::Path;
-use std::path::PathBuf;
 
 pub const FILE_NAME: &str = "peeper.toml";
 
@@ -10,7 +9,6 @@ pub const FILE_NAME: &str = "peeper.toml";
 #[derive(Debug, PartialEq)]
 pub struct Manifest {
     pub name: String, // the project's package name: imports of its modules start with "name:"
-    pub root: PathBuf, // the folder holding the project file, as `read` was given it
 }
 
 /// Whether `name` can be a package name: a letter, then letters, digits and
@@ -24,12 +22,11 @@ pub fn valid_name(name: &str) -> bool {
 /// Reads the project file in `dir`. Folders above `dir` are not searched.
 /// An error names the folder or file it is about.
 pub fn read(dir: &Path) -> Result<Manifest, String> {
-    let root = dir.to_path_buf();
-    let file = root.join(FILE_NAME);
+    let file = dir.join(FILE_NAME);
     let text = match std::fs::read_to_string(&file) {
         Ok(text) => text,
         Err(error) if error.kind() == ErrorKind::NotFound => {
-            return Err(format!("{}: no {FILE_NAME} in this folder", root.display()));
+            return Err(format!("{}: no {FILE_NAME} in this folder", dir.display()));
         }
         Err(error) => return Err(format!("{}: {error}", file.display())),
     };
@@ -39,7 +36,6 @@ pub fn read(dir: &Path) -> Result<Manifest, String> {
     match document.get("name").and_then(toml_edit::Item::as_str) {
         Some(name) if valid_name(name) => Ok(Manifest {
             name: name.to_string(),
-            root,
         }),
         _ => Err(format!(
             "{}: name must start with a letter and hold only letters, digits and `_`",
@@ -51,6 +47,7 @@ pub fn read(dir: &Path) -> Result<Manifest, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir =
@@ -66,7 +63,6 @@ mod tests {
         std::fs::write(root.join(FILE_NAME), "name = \"myapp\"").unwrap();
         let want = Manifest {
             name: "myapp".to_string(),
-            root: root.clone(),
         };
         assert_eq!(read(&root), Ok(want));
         let sub = root.join("src");

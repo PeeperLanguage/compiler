@@ -10,9 +10,9 @@ publish.workspace = true
 source.workspace = true
 diagnostics.workspace = true
 literal.workspace = true
-manifest.workspace = true
 model.workspace = true
 parser.workspace = true
+toml_edit.workspace = true
 
 [lints]
 workspace = true

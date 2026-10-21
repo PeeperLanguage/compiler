@@ -358,7 +358,7 @@ impl<'s> Server<'s> {
         let folder = file
             .ancestors()
             .skip(1)
-            .find(|folder| folder.join(manifest::FILE_NAME).is_file());
+            .find(|folder| folder.join(project::manifest::FILE_NAME).is_file());
         match project::find(folder.unwrap_or(file), self.libraries) {
             Ok(project) => Some(project),
             Err(message) => {

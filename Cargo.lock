@@ -329,7 +329,6 @@ dependencies = [
  "diagnostics",
  "lsp-server",
  "lsp-types",
- "manifest",
  "model",
  "project",
  "serde_json",
@@ -360,13 +359,6 @@ dependencies = [
  "serde_json",
  "serde_repr",
  "url",
-]
-
-[[package]]
-name = "manifest"
-version = "0.1.0"
-dependencies = [
- "toml_edit",
 ]
 
 [[package]]
@@ -458,10 +450,10 @@ version = "0.1.0"
 dependencies = [
  "diagnostics",
  "literal",
- "manifest",
  "model",
  "parser",
  "source",
+ "toml_edit",
 ]
 
 [[package]]
