@@ -144,101 +144,133 @@ impl Body {
         file: &SourceFile,
         function_name: impl Fn(DefId) -> String,
     ) -> String {
-        let variable = |variable: Id<Variable>| {
-            format!(
-                "{}.{}",
-                file.slice(self.variables.span(variable)),
-                variable.index()
-            )
+        let mut printer = Printer {
+            body: self,
+            file,
+            out: String::new(),
         };
-        let operand = |operand: &Operand| match *operand {
-            Operand::Constant(constant) => match &self.constants[constant.index()].value {
-                Value::Bool(value) => value.to_string(),
-                Value::Integer(limbs) => integer_text(limbs),
-                Value::Float(bits) => f64::from_bits(*bits).to_string(),
-                Value::Bytes(bytes) => format!("c\"{}\"", bytes.escape_ascii()),
-            },
-            Operand::Argument(index) => format!("arg{index}"),
-            Operand::Value(value) => format!("%{}", value.index()),
-        };
-        let mut out = String::new();
         for block in self.blocks.ids() {
-            _ = writeln!(out, "  bb{}:", block.index());
+            _ = writeln!(printer.out, "  bb{}:", block.index());
             let block = &self.blocks[block];
             for instruction in self.lists.items(block.instructions) {
                 let Instruction { ty, kind } = &self.instructions[instruction];
-                out.push_str("    ");
+                printer.out.push_str("    ");
                 if *ty != TypeId::VOID {
-                    _ = write!(out, "%{} = ", instruction.index());
+                    _ = write!(printer.out, "%{} = ", instruction.index());
                 }
-                _ = match kind {
-                    InstructionKind::Store {
-                        variable: stored,
-                        value,
-                    } => {
-                        write!(out, "store {}, {}", variable(*stored), operand(value))
+                match kind {
+                    InstructionKind::Store { variable, value } => {
+                        printer.out.push_str("store ");
+                        printer.variable(*variable);
+                        printer.out.push_str(", ");
+                        printer.operand(value);
                     }
-                    InstructionKind::Load(loaded) => write!(out, "load {}", variable(*loaded)),
+                    InstructionKind::Load(variable) => {
+                        printer.out.push_str("load ");
+                        printer.variable(*variable);
+                    }
                     InstructionKind::Binary { op, left, right } => {
-                        write!(out, "{op:?} {}, {}", operand(left), operand(right))
+                        _ = write!(printer.out, "{op:?} ");
+                        printer.operand(left);
+                        printer.out.push_str(", ");
+                        printer.operand(right);
                     }
                     InstructionKind::Unary { op, value } => {
-                        write!(out, "{op:?} {}", operand(value))
+                        _ = write!(printer.out, "{op:?} ");
+                        printer.operand(value);
                     }
-                    InstructionKind::Widen(value) => write!(out, "widen {}", operand(value)),
+                    InstructionKind::Widen(value) => {
+                        printer.out.push_str("widen ");
+                        printer.operand(value);
+                    }
                     InstructionKind::Call {
                         function,
                         arguments,
                     } => {
-                        let arguments: Vec<String> = arguments.iter().map(operand).collect();
-                        write!(
-                            out,
-                            "call {}({})",
-                            function_name(*function),
-                            arguments.join(", ")
-                        )
+                        _ = write!(printer.out, "call {}(", function_name(*function));
+                        for (index, argument) in arguments.iter().enumerate() {
+                            if index > 0 {
+                                printer.out.push_str(", ");
+                            }
+                            printer.operand(argument);
+                        }
+                        printer.out.push(')');
                     }
                     InstructionKind::Phi(incoming) => {
-                        let incoming: Vec<String> = incoming
-                            .iter()
-                            .map(|(block, value)| {
-                                format!("bb{}: {}", block.index(), operand(value))
-                            })
-                            .collect();
-                        write!(out, "phi {}", incoming.join(", "))
+                        printer.out.push_str("phi ");
+                        for (index, (block, value)) in incoming.iter().enumerate() {
+                            if index > 0 {
+                                printer.out.push_str(", ");
+                            }
+                            _ = write!(printer.out, "bb{}: ", block.index());
+                            printer.operand(value);
+                        }
                     }
-                };
-                if *ty != TypeId::VOID {
-                    _ = write!(out, ": {}", types.text(*ty));
                 }
-                out.push('\n');
+                if *ty != TypeId::VOID {
+                    _ = write!(printer.out, ": {}", types.text(*ty));
+                }
+                printer.out.push('\n');
             }
-            _ = match &block.terminator {
-                Terminator::Goto(target) => writeln!(out, "    goto bb{}", target.index()),
+            printer.out.push_str("    ");
+            match &block.terminator {
+                Terminator::Goto(target) => _ = write!(printer.out, "goto bb{}", target.index()),
                 Terminator::Branch {
                     condition,
                     span,
                     then,
                     otherwise,
-                } => writeln!(
-                    out,
-                    "    branch {} ({}) bb{} bb{}",
-                    operand(condition),
-                    file.slice(*span),
-                    then.index(),
-                    otherwise.index()
-                ),
-                Terminator::Return { value: None, .. } => writeln!(out, "    return"),
-                Terminator::Return {
-                    value: Some(value), ..
                 } => {
-                    writeln!(out, "    return {}", operand(value))
+                    printer.out.push_str("branch ");
+                    printer.operand(condition);
+                    _ = write!(
+                        printer.out,
+                        " ({}) bb{} bb{}",
+                        file.slice(*span),
+                        then.index(),
+                        otherwise.index()
+                    );
+                }
+                Terminator::Return { value, .. } => {
+                    printer.out.push_str("return");
+                    if let Some(value) = value {
+                        printer.out.push(' ');
+                        printer.operand(value);
+                    }
                 }
                 Terminator::FallOff(span) => {
-                    writeln!(out, "    fall off at `{}`", file.slice(*span))
+                    _ = write!(printer.out, "fall off at `{}`", file.slice(*span));
                 }
-            };
+            }
+            printer.out.push('\n');
         }
-        out
+        printer.out
+    }
+}
+
+/// What `Body::text` writes with.
+struct Printer<'b> {
+    body: &'b Body,
+    file: &'b SourceFile,
+    out: String,
+}
+
+impl Printer<'_> {
+    fn variable(&mut self, variable: Id<Variable>) {
+        let name = self.file.slice(self.body.variables.span(variable));
+        _ = write!(self.out, "{name}.{}", variable.index());
+    }
+
+    fn operand(&mut self, operand: &Operand) {
+        _ = match *operand {
+            Operand::Constant(constant) => match &self.body.constants[constant.index()].value {
+                Value::Bool(value) => write!(self.out, "{value}"),
+                Value::Integer(limbs) => write!(self.out, "{}", integer_text(limbs)),
+                Value::Float(bits) => write!(self.out, "{}", f64::from_bits(*bits)),
+                Value::Bytes(bytes) => write!(self.out, "c\"{}\"", bytes.escape_ascii()),
+            },
+            Operand::Argument(index) => write!(self.out, "arg{index}"),
+            Operand::Value(value) => write!(self.out, "%{}", value.index()),
+        };
     }
 }

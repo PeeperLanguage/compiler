@@ -157,9 +157,7 @@ impl Types {
         self.ids.insert(ty, id);
         id
     }
-}
 
-impl Types {
     /// The built-in type `name` stands for: one in `NAMED`, `isize` and `usize`
     /// (as wide as a pointer, `pointer_bits`), or `iN` and `uN` for N from 1 to
     /// `Integer::MAX_BITS`, written without leading zeros. A number literal's

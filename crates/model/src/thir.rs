@@ -157,9 +157,7 @@ impl Body {
             Local::Constant(constant) => self.consts.span(constant),
         }
     }
-}
 
-impl Body {
     /// The body as text, one statement per line, for `peeper -dump`. `file` is
     /// where the body is written; `function_name` names a called function. A
     /// variable shows as its name and index (`x.2`), a constant other than a
