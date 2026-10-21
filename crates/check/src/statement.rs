@@ -243,14 +243,14 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 return None;
             }
             ast::Stmt::Return(value) => Stmt::Return(self.return_value(span, value)),
-            ast::Stmt::Expression(value) => Stmt::Expression(self.value(value, None)),
+            ast::Stmt::Expression(value) => Stmt::Expression(self.add_expr(value)),
             ast::Stmt::Assign { target, value } => self.assign(target, value)?,
             ast::Stmt::If {
                 condition,
                 then,
                 otherwise,
             } => {
-                let condition = self.expect(condition, TypeId::BOOL);
+                let condition = self.add_expr_as(condition, TypeId::BOOL);
                 let then = self.block(then?); // missing after a syntax error
                 let otherwise = otherwise.and_then(|otherwise| self.statement(otherwise));
                 Stmt::If {
@@ -309,9 +309,9 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         let declared = ty.map(|ty| self.checker.resolve_type(ty));
         let initialized = value.is_some();
         let (ty, value) = match (declared, value) {
-            (Some(ty), value) => (ty, value.map(|value| self.expect(value, ty))),
+            (Some(ty), value) => (ty, value.map(|value| self.add_expr_as(value, ty))),
             (None, Some(value)) => {
-                let value = self.value(value, None);
+                let value = self.add_expr(value);
                 let ty = self.body.exprs[value].ty;
                 if ty != TypeId::VOID {
                     (ty, Some(value))
@@ -395,7 +395,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         };
         let span = self.checker.module().ast.exprs.span(value);
         let checked = match declared {
-            Some(ty) => self.coerced(value, ty),
+            Some(ty) => self.expr_as(value, ty),
             None => self.expr(value, None),
         };
         match checked.kind {
@@ -423,10 +423,10 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                     message,
                     self.checker.module().ast.exprs.span(value),
                 );
-                self.value(value, None); // for its own errors
+                self.add_expr(value); // for its own errors
                 None
             }
-            Some(value) => Some(self.expect(value, self.result)),
+            Some(value) => Some(self.add_expr_as(value, self.result)),
             None => {
                 if self.result != TypeId::VOID && self.result != TypeId::INVALID {
                     let result = self.checker.queries.types.text(self.result);
@@ -442,10 +442,10 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
     /// `target = value;`, where the target is a mutable variable.
     fn assign(&mut self, target: Id<ast::Expr>, value: Id<ast::Expr>) -> Option<Stmt> {
         let Some(variable) = self.assigned_variable(target) else {
-            self.value(value, None); // for its own errors
+            self.add_expr(value); // for its own errors
             return None;
         };
-        let value = self.expect(value, self.body.variables[variable].ty);
+        let value = self.add_expr_as(value, self.body.variables[variable].ty);
         Some(Stmt::Assign { variable, value })
     }
 

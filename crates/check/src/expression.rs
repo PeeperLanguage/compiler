@@ -29,27 +29,24 @@ use crate::builtin::UNSUPPORTED_FUNCTIONS;
 use crate::statement::ThirBuilder;
 
 impl ThirBuilder<'_, '_> {
-    /// `expression`, added to the body.
-    pub(crate) fn value(
-        &mut self,
-        expression: Id<ast::Expr>,
-        expected: Option<TypeId>,
-    ) -> Id<Expr> {
-        let checked = self.expr(expression, expected);
+    /// `expression` (`expr`), added to the body.
+    pub(crate) fn add_expr(&mut self, expression: Id<ast::Expr>) -> Id<Expr> {
+        let checked = self.expr(expression, None);
         self.body
             .add(checked, self.checker.module().ast.exprs.span(expression))
     }
 
-    /// `expression` as a value of the type `ty`, added to the body.
-    pub(crate) fn expect(&mut self, expression: Id<ast::Expr>, ty: TypeId) -> Id<Expr> {
-        let checked = self.coerced(expression, ty);
+    /// `expression` as a value of the type `ty` (`expr_as`), added to the
+    /// body.
+    pub(crate) fn add_expr_as(&mut self, expression: Id<ast::Expr>, ty: TypeId) -> Id<Expr> {
+        let checked = self.expr_as(expression, ty);
         self.body
             .add(checked, self.checker.module().ast.exprs.span(expression))
     }
 
     /// `expression` as a value of the type `ty`, not yet added to the body;
     /// a mismatch is reported.
-    pub(crate) fn coerced(&mut self, expression: Id<ast::Expr>, ty: TypeId) -> Expr {
+    pub(crate) fn expr_as(&mut self, expression: Id<ast::Expr>, ty: TypeId) -> Expr {
         let span = self.checker.module().ast.exprs.span(expression);
         let checked = self.expr(expression, Some(ty));
         self.coerce(checked, span, ty).unwrap_or_else(|mismatch| {
@@ -337,7 +334,7 @@ impl ThirBuilder<'_, '_> {
         });
         let Some((function, Type::Function { parameters, result })) = signature else {
             for argument in tree.lists.items(arguments) {
-                self.value(argument, None); // for its own errors
+                self.add_expr(argument); // for its own errors
             }
             return Expr::INVALID;
         };
@@ -356,8 +353,8 @@ impl ThirBuilder<'_, '_> {
         let mut checked: Vec<NonZeroU32> = Vec::with_capacity(arguments.len());
         for (index, argument) in tree.lists.items(arguments).enumerate() {
             let argument = match parameters.get(index) {
-                Some(&parameter) => self.expect(argument, parameter),
-                None => self.value(argument, None),
+                Some(&parameter) => self.add_expr_as(argument, parameter),
+                None => self.add_expr(argument),
             };
             checked.push(argument.into());
         }
