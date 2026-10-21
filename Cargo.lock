@@ -66,7 +66,6 @@ dependencies = [
  "diagnostics",
  "literal",
  "model",
- "numeric",
  "parser",
  "project",
  "source",
@@ -266,7 +265,6 @@ version = "0.1.0"
 dependencies = [
  "diagnostics",
  "literal",
- "numeric",
  "source",
  "token",
  "unicode-general-category",
@@ -377,10 +375,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "numeric"
-version = "0.1.0"
-
-[[package]]
 name = "object"
 version = "0.39.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -396,8 +390,8 @@ dependencies = [
  "arena",
  "diagnostics",
  "lexer",
+ "literal",
  "model",
- "numeric",
  "source",
  "stacker",
  "token",

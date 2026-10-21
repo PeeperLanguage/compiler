@@ -164,7 +164,7 @@ impl Scanner<'_> {
             self.pos += 2;
             self.digits(u8::is_ascii_alphanumeric);
             self.emit(TokenKind::Number, start);
-            let literal = numeric::split(&self.file.text[start..self.pos]);
+            let literal = literal::numeric::split(&self.file.text[start..self.pos]);
             if !literal.digits_in_base() {
                 let base = match literal.base {
                     16 => "hexadecimal",

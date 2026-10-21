@@ -13,7 +13,6 @@ arena.workspace = true
 project.workspace = true
 model.workspace = true
 bigint.workspace = true
-numeric.workspace = true
 token.workspace = true
 literal.workspace = true
 

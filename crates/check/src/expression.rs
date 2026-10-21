@@ -373,7 +373,7 @@ impl ThirBuilder<'_, '_> {
     /// `f64`.
     fn number(&mut self, number: Span, negated: Option<Span>, expected: Option<TypeId>) -> Expr {
         let tree = &self.checker.module().ast;
-        let literal = numeric::split(tree.file.slice(number));
+        let literal = literal::numeric::split(tree.file.slice(number));
         let pointer_bits = self.checker.queries.pointer_bits;
         let types = &mut self.checker.queries.types;
         let ty = if literal.suffix.is_empty() {
@@ -510,8 +510,9 @@ impl ThirBuilder<'_, '_> {
                 Ok(right) => right,
                 Err(mut mismatch) => {
                     let types = &mut self.checker.queries.types;
-                    let fixable = left_literal
-                        .filter(|&literal| takes_type(&numeric::split(literal), &types[found]));
+                    let fixable = left_literal.filter(|&literal| {
+                        takes_type(&literal::numeric::split(literal), &types[found])
+                    });
                     if let Some(literal) = fixable {
                         let found = types.text(found);
                         let help =
@@ -633,7 +634,7 @@ fn known_trap(op: BinaryOp, left_type: &Type, right_type: &Type, right: &Expr) -
 /// Whether a number literal without a suffix can have the type `ty`: an
 /// integer literal any number type, a decimal float literal a float type.
 /// Hexadecimal, octal and binary literals are never floats.
-fn takes_type(literal: &numeric::Literal, ty: &Type) -> bool {
+fn takes_type(literal: &literal::numeric::Literal, ty: &Type) -> bool {
     match ty {
         Type::Integer(_) => !literal.is_float(),
         Type::Float(_) => literal.base == 10,
@@ -645,5 +646,5 @@ fn takes_type(literal: &numeric::Literal, ty: &Type) -> bool {
 fn unsuffixed_literal(tree: &ast::Tree, expression: Id<ast::Expr>) -> Option<&str> {
     let text = tree.file.slice(tree.exprs.span(expression));
     let number = matches!(tree.exprs[expression], ast::Expr::Number);
-    (number && numeric::split(text).suffix.is_empty()).then_some(text)
+    (number && literal::numeric::split(text).suffix.is_empty()).then_some(text)
 }

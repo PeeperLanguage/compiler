@@ -1,5 +1,7 @@
-//! The values of string, character and byte literal tokens. The lexer, which
-//! checks them, and the loader, which reads import paths, share these rules.
+//! The rules of literal text that the phases share: the values of string,
+//! character and byte literals here, number literals in `numeric`.
+
+pub mod numeric;
 
 use std::borrow::Cow;
 

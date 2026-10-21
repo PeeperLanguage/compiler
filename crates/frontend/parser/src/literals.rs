@@ -57,7 +57,7 @@ impl Parser {
     /// lexer leaves to the parser. Whether the value fits its type is the type
     /// checker's to decide.
     pub(crate) fn check_number(&mut self, t: Token) {
-        let literal = numeric::split(self.text(t));
+        let literal = literal::numeric::split(self.text(t));
         let message = if literal.suffix.is_empty() {
             return; // most numbers
         } else if !literal.suffix_well_formed() {

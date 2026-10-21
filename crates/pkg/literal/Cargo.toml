@@ -1,6 +1,6 @@
 [package]
 name = "literal"
-description = "Escapes and values of string and character literals"
+description = "The rules of literal text shared by the phases: string and character escapes and values, and number literals"
 version.workspace = true
 edition.workspace = true
 license-file.workspace = true
