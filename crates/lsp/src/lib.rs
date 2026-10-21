@@ -426,10 +426,16 @@ impl<'s> Server<'s> {
                 usize::BITS,
                 results,
                 true,
-                |definition, _, body, names, _, types| {
+                |&build::CheckedFunction {
+                     definition,
+                     thir,
+                     names,
+                     types,
+                     ..
+                 }| {
                     let body_names = names
                         .iter()
-                        .map(|name| CachedName::new(&program, body, name, types));
+                        .map(|name| CachedName::new(&program, thir, name, types));
                     found
                         .entry(definition.module)
                         .or_default()

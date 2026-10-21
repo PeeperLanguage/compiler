@@ -198,17 +198,24 @@ impl<W: Write> Command<W> {
             pointer_bits,
             build::Results::default(),
             false, // names are for editors
-            |definition, ty, thir, _, mir, types| {
+            |&build::CheckedFunction {
+                 definition,
+                 signature,
+                 thir,
+                 mir,
+                 types,
+                 ..
+             }| {
                 if links && Some(definition.module.index()) == entry && is_main(program, definition)
                 {
-                    main = Some((definition, gives_exit_code(&types[ty])));
+                    main = Some((definition, gives_exit_code(&types[signature])));
                 }
                 let Some(mir) = mir else {
                     return; // it has errors
                 };
                 dumped.add(definition, thir, mir, types);
                 if let Some(module) = ll.get_mut(definition.module.index()) {
-                    module.function(definition, ty, mir, types);
+                    module.function(definition, signature, mir, types);
                 }
             },
         );

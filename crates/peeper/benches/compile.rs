@@ -54,10 +54,16 @@ fn main() {
             POINTER_BITS,
             build::Results::default(),
             false,
-            |definition, ty, _, _, mir, types| {
+            |&build::CheckedFunction {
+                 definition,
+                 signature,
+                 mir,
+                 types,
+                 ..
+             }| {
                 let mir = mir.expect("the program has no errors");
                 let start = Instant::now();
-                ll[definition.module.index()].function(definition, ty, mir, types);
+                ll[definition.module.index()].function(definition, signature, mir, types);
                 writing += start.elapsed();
             },
         );

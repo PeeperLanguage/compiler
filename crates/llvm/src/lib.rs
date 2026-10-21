@@ -360,9 +360,15 @@ mod tests {
             64,
             build::Results::default(),
             false,
-            |definition, ty, _, _, mir, types| {
+            |&build::CheckedFunction {
+                 definition,
+                 signature,
+                 mir,
+                 types,
+                 ..
+             }| {
                 if definition.module.index() == main {
-                    module.function(definition, ty, mir.unwrap(), types);
+                    module.function(definition, signature, mir.unwrap(), types);
                 }
             },
         );

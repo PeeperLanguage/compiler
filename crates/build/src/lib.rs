@@ -73,22 +73,34 @@ impl ModuleResults {
     }
 }
 
+/// A function with a body, as a compile hands it on: built, used once, and
+/// dropped after.
+pub struct CheckedFunction<'c> {
+    pub definition: DefId,
+    pub signature: TypeId, // its function type
+    pub thir: &'c thir::Body,
+    /// The names written in it, when the compile records names (as for an
+    /// editor); otherwise none.
+    pub names: &'c [thir::Name],
+    pub mir: Option<&'c mir::Body>, // `None` when checking it found an error
+    pub types: &'c Types, // the program's types so far, which `signature` and the bodies name
+}
+
 /// Checks every declaration of `program`, lowers each function to MIR and
 /// gives what it found. A module of `previous` (a compile of the same program
 /// with the same `pointer_bits`, or `Results::default()`) whose text and
 /// whose imports' interfaces are unchanged keeps its diagnostics, and its
-/// bodies are not checked again. The signature of each checked function with
-/// a body, its THIR, the names written in it (only when `record_names`, as for an
-/// editor; otherwise none), and its MIR unless checking it found an error, go
-/// to `use_function` as soon as they are built, in declaration order, and are
-/// dropped after: nothing holds every function's bodies at once. Integers as
+/// bodies are not checked again. Each checked function with a body goes to
+/// `use_function` as soon as it is built, in declaration order, with its
+/// names when `record_names`, and is dropped after: nothing holds every
+/// function's bodies at once. Integers as
 /// wide as a pointer (`isize`, `usize`) have `pointer_bits` bits.
 pub fn compile(
     program: &project::Program,
     pointer_bits: u32,
     previous: Results,
     record_names: bool,
-    mut use_function: impl FnMut(DefId, TypeId, &thir::Body, &[thir::Name], Option<&mir::Body>, &Types),
+    mut use_function: impl FnMut(&CheckedFunction),
 ) -> Results {
     let modules = program.modules.as_slice();
     let mut queries = Queries::new(modules, pointer_bits);
@@ -140,8 +152,14 @@ pub fn compile(
                         queries.with_checker(id, |checker| checker.body(&function, ty, recorded));
                     if let Some(thir) = thir {
                         let mir = lower(&mut queries, id, ty, &thir);
-                        let types = &queries.types;
-                        use_function(definition, ty, &thir, &names, mir.as_ref(), types);
+                        use_function(&CheckedFunction {
+                            definition,
+                            signature: ty,
+                            thir: &thir,
+                            names: &names,
+                            mir: mir.as_ref(),
+                            types: &queries.types,
+                        });
                     }
                 }
                 ast::Decl::Const { .. } => {
@@ -245,6 +263,7 @@ mod tests {
     use std::collections::HashMap;
     use std::path::PathBuf;
 
+    use super::CheckedFunction;
     use super::Results;
     use super::compile;
 
@@ -289,13 +308,7 @@ mod tests {
     /// Checks the program of `modules` (see `program`) and gives each
     /// diagnostic as its code, message and the text of its first label.
     fn diagnostics(modules: &[(&str, &str)]) -> Vec<(&'static str, String, String)> {
-        let found = compile(
-            &program(modules),
-            64,
-            Results::default(),
-            false,
-            |_, _, _, _, _, _| {},
-        );
+        let found = compile(&program(modules), 64, Results::default(), false, |_| {});
         found
             .diagnostics()
             .map(|diagnostic| {
@@ -504,7 +517,7 @@ mod tests {
             64,
             previous,
             false,
-            |definition, _, _, _, _, _| {
+            |&CheckedFunction { definition, .. }| {
                 let path = &program.modules[definition.module.index()].path;
                 if !checked.contains(path) {
                     checked.push(path.clone());
