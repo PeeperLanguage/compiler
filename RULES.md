@@ -26,7 +26,7 @@ Do not add or keep:
 - signatures that retain ignored parameters unless a real interface or public API contract requires them;
 - duplicated semantic decisions;
 - one-field wrappers without present domain distinction, invariant, ownership boundary, or public API contract;
-- helpers used once unless they clarify genuinely complex logic or protect non-obvious invariant;
+- helpers used once, unless they split a function that is both long and doing several jobs (Section 2);
 - abstraction whose only purpose is avoiding call-site updates.
 
 Possible future work is not sufficient justification.
@@ -55,7 +55,11 @@ New helper is allowed only when it:
 - centralizes domain logic that must stay consistent;
 - protects non-obvious invariant;
 - crosses real ownership, lifetime, phase, or API boundary; or
-- makes genuinely complex logic easier to read, test, or maintain.
+- splits, along one of its jobs, a function that is over about 60 lines (one
+  page, as in the "Power of 10" rules) and does several jobs.
+
+A helper with one caller is allowed only for the last reason. Length alone,
+or making a shorter function read better, is not enough.
 
 Keep one canonical implementation when independent copies could diverge, especially for type relations and formatting, symbol lookup, name mangling, receiver or parameter shaping, ABI decisions, constant evaluation, diagnostics, and reusable semantic checks.
 
