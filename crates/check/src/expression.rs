@@ -215,27 +215,24 @@ impl ThirBuilder<'_, '_> {
     fn path_symbol(&mut self, path: Id<ast::Type>) -> Option<Symbol> {
         let tree = &self.checker.module().ast;
         let span = tree.types.span(path);
+        // A `Type::Generic` alone, as `Box<T>`, is one segment.
         let segments: Vec<Id<ast::Type>> = match tree.types[path] {
             ast::Type::Path(segments) => tree.lists.items(segments).collect(),
-            _ => {
-                self.checker
-                    .not_supported(span, "paths with type arguments");
-                return None;
-            }
+            _ => vec![path],
         };
+        if !segments
+            .iter()
+            .all(|&segment| matches!(tree.types[segment], ast::Type::Name))
+        {
+            self.checker
+                .not_supported(span, "paths with type arguments");
+            return None;
+        }
         let [module, member] = segments[..] else {
             self.checker
                 .not_supported(span, "paths of more than two names");
             return None;
         };
-        if !matches!(
-            (tree.types[module], tree.types[member]),
-            (ast::Type::Name, ast::Type::Name)
-        ) {
-            self.checker
-                .not_supported(span, "paths with type arguments");
-            return None;
-        }
         let (module_span, member_span) = (tree.types.span(module), tree.types.span(member));
         let (module_name, member_name) =
             (tree.file.slice(module_span), tree.file.slice(member_span));
@@ -266,9 +263,10 @@ impl ThirBuilder<'_, '_> {
             return None;
         };
         self.record(member_span, symbol);
-        // The prelude's names are in every module's scope, private or not.
-        let exported =
-            self.checker.prelude() == Some(imported) || member_name.starts_with(char::is_uppercase);
+        // The prelude, the scope's parent, has its names in every module's
+        // scope, private or not.
+        let exported = self.checker.scope().parent == Some(imported)
+            || member_name.starts_with(char::is_uppercase);
         if !exported {
             let file = &tree.file;
             self.checker.diagnostics.push(

@@ -194,12 +194,6 @@ impl<'p> ModuleChecker<'_, 'p> {
         &self.queries.modules[self.current_module.index()]
     }
 
-    /// Where a name the module does not declare is looked up next:
-    /// `core:global`, unless the module is it or the program has none.
-    fn prelude(&self) -> Option<ModuleId> {
-        self.scope().parent
-    }
-
     /// The names the module being checked declares and imports.
     pub fn scope(&self) -> &Scope {
         &self.queries.scopes[self.current_module.index()]

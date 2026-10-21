@@ -63,12 +63,12 @@ impl ModuleChecker<'_, '_> {
         };
         let (parameters, result) = (parameters.clone(), *result);
         let tree = &self.module().ast;
-        let mut checker = ThirBuilder::new(self, result, names);
+        let mut builder = ThirBuilder::new(self, result, names);
         let outermost = Block {
             parent: None,
             statements: List::EMPTY,
         };
-        let outermost = checker.body.add(outermost, tree.blocks.span(block));
+        let outermost = builder.body.add(outermost, tree.blocks.span(block));
         for (parameter, &ty) in tree
             .lists
             .items(function.signature.parameters)
@@ -76,7 +76,7 @@ impl ModuleChecker<'_, '_> {
         {
             let parameter = tree.params[parameter];
             let name = parameter.name.unwrap_or_default();
-            let variable = checker.body.add(
+            let variable = builder.body.add(
                 Variable {
                     ty,
                     mutable: parameter.mutable,
@@ -85,11 +85,11 @@ impl ModuleChecker<'_, '_> {
                 },
                 name.span,
             );
-            checker.declare(name, Local::Variable(variable));
+            builder.declare(name, Local::Variable(variable));
         }
-        let statements = checker.statements(tree.blocks[block].statements);
-        checker.body.blocks[outermost].statements = statements;
-        let mut body = checker.body;
+        let statements = builder.statements(tree.blocks[block].statements);
+        builder.body.blocks[outermost].statements = statements;
+        let mut body = builder.body;
         // A part of the signature that failed was reported with the signature.
         body.has_errors = parameters.contains(&TypeId::INVALID)
             || result == TypeId::INVALID
