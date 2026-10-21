@@ -257,7 +257,45 @@ impl Printer<'_> {
             .tokens
             .entry(Arc::as_ptr(file))
             .or_insert_with(|| scan(file));
-        let pieces = highlight(file, tokens, line);
+        // The line in pieces with their highlight color. Text between tokens
+        // that is not white space is a comment (or a character the lexer
+        // rejected, which a mark shows anyway).
+        let line = line.range();
+        let mut pieces = Vec::new();
+        let gap = |pieces: &mut Vec<_>, gap: Range<usize>| {
+            let text = &file.text[gap.clone()];
+            let comment = gap.start + (text.len() - text.trim_start().len());
+            let comment_end = comment + text.trim().len();
+            for (range, color) in [
+                (gap.start..comment, None),
+                (comment..comment_end, Some(GREY)),
+                (comment_end..gap.end, None),
+            ] {
+                if !range.is_empty() {
+                    pieces.push((range, color));
+                }
+            }
+        };
+        let mut position = line.start;
+        let first = tokens.partition_point(|t| (t.span.end as usize) <= line.start);
+        for t in &tokens[first..] {
+            let span = t.span.range();
+            if span.start >= line.end || t.kind == TokenKind::Eof {
+                break;
+            }
+            let piece = span.start.max(line.start)..span.end.min(line.end);
+            gap(&mut pieces, position..piece.start);
+            position = piece.end;
+            let color = match t.kind {
+                TokenKind::String | TokenKind::CString => Some(LIGHT_GREEN),
+                TokenKind::Number | TokenKind::Char | TokenKind::ByteChar => Some(LIGHT_ORANGE),
+                TokenKind::DocComment => Some(GREY),
+                kind if token::KEYWORDS.contains(&kind) => Some(PURPLE),
+                _ => None,
+            };
+            pieces.push((piece, color));
+        }
+        gap(&mut pieces, position..line.end);
         let mut column = 0;
         for (range, color) in pieces {
             column = self.cells(&file.text[range], column, color);
@@ -437,56 +475,6 @@ fn line_text(file: &SourceFile, number: usize) -> &str {
 /// setting: it is not blank and not already shown.
 fn has_context_line(file: &SourceFile, number: usize, last_shown: usize) -> bool {
     number > 1 && number - 1 > last_shown && !line_text(file, number - 1).trim().is_empty()
-}
-
-/// Splits `line` into pieces with their highlight color, from the file's
-/// `tokens`. Text between tokens that is not white space is a comment (or a
-/// character the lexer rejected, which a mark shows anyway).
-fn highlight(
-    file: &SourceFile,
-    tokens: &[Token],
-    line: Span,
-) -> Vec<(Range<usize>, Option<&'static str>)> {
-    let line = line.range();
-    let mut pieces = Vec::new();
-    let gap = |pieces: &mut Vec<_>, gap: Range<usize>| {
-        let text = &file.text[gap.clone()];
-        let comment = gap.start + (text.len() - text.trim_start().len());
-        let comment_end = comment + text.trim().len();
-        for (range, color) in [
-            (gap.start..comment, None),
-            (comment..comment_end, Some(GREY)),
-            (comment_end..gap.end, None),
-        ] {
-            if !range.is_empty() {
-                pieces.push((range, color));
-            }
-        }
-    };
-    let mut position = line.start;
-    let first = tokens.partition_point(|t| (t.span.end as usize) <= line.start);
-    for t in &tokens[first..] {
-        let span = t.span.range();
-        if span.start >= line.end || t.kind == TokenKind::Eof {
-            break;
-        }
-        let piece = span.start.max(line.start)..span.end.min(line.end);
-        gap(&mut pieces, position..piece.start);
-        position = piece.end;
-        pieces.push((piece, token_color(t)));
-    }
-    gap(&mut pieces, position..line.end);
-    pieces
-}
-
-fn token_color(t: &Token) -> Option<&'static str> {
-    match t.kind {
-        TokenKind::String | TokenKind::CString => Some(LIGHT_GREEN),
-        TokenKind::Number | TokenKind::Char | TokenKind::ByteChar => Some(LIGHT_ORANGE),
-        TokenKind::DocComment => Some(GREY),
-        kind if token::KEYWORDS.contains(&kind) => Some(PURPLE),
-        _ => None,
-    }
 }
 
 fn line_number_width(d: &Diagnostic, snippets: &[Snippet]) -> usize {
