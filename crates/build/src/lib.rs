@@ -151,7 +151,26 @@ pub fn compile(
                     let thir =
                         queries.with_checker(id, |checker| checker.body(&function, ty, recorded));
                     if let Some(thir) = thir {
-                        let mir = lower(&mut queries, id, ty, &thir);
+                        // Its MIR, path-checked; none when the signature had an
+                        // error (reported) or it cannot be lowered (`lower::lower`).
+                        let mir = match queries.types[ty] {
+                            Type::Function {
+                                ref parameters,
+                                result,
+                            } => lower::lower(&thir, parameters.len()).inspect(|mir| {
+                                let file = &tree.file;
+                                let diagnostics = &mut queries.diagnostics[id.index()];
+                                lower::path_checks::initialization(mir, file, diagnostics);
+                                lower::path_checks::unreachable_code(mir, file, diagnostics);
+                                let types = &queries.types;
+                                if let Some(error) =
+                                    lower::path_checks::missing_return(mir, file, types, result)
+                                {
+                                    diagnostics.push(error); // last: it points at the closing brace
+                                }
+                            }),
+                            _ => None,
+                        };
                         use_function(&CheckedFunction {
                             definition,
                             signature: ty,
@@ -232,30 +251,6 @@ fn interface(queries: &Queries, module: ModuleId) -> u64 {
         }
     }
     hasher.finish()
-}
-
-/// Lowers `body`, the THIR of a function of `module` with the signature `ty`,
-/// to MIR and runs the path checks on it; `None` when it cannot be lowered
-/// (`lower::lower`).
-fn lower(
-    queries: &mut Queries,
-    module: ModuleId,
-    ty: TypeId,
-    body: &thir::Body,
-) -> Option<mir::Body> {
-    let types = &queries.types;
-    let Type::Function { parameters, result } = &types[ty] else {
-        return None; // the signature's error was reported
-    };
-    let tree = &queries.modules[module.index()].ast;
-    let mir = lower::lower(body, parameters.len())?;
-    let diagnostics = &mut queries.diagnostics[module.index()];
-    lower::path_checks::initialization(&mir, &tree.file, diagnostics);
-    lower::path_checks::unreachable_code(&mir, &tree.file, diagnostics);
-    if let Some(error) = lower::path_checks::missing_return(&mir, &tree.file, types, *result) {
-        diagnostics.push(error); // last: it points at the closing brace
-    }
-    Some(mir)
 }
 
 #[cfg(test)]
