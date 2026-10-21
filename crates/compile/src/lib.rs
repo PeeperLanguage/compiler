@@ -101,7 +101,7 @@ pub const POINTER_BITS: u32 = usize::BITS;
 /// names when `record_names`, and is dropped after: nothing holds every
 /// function's bodies at once. Integers as
 /// wide as a pointer (`isize`, `usize`) have `pointer_bits` bits.
-pub fn compile(
+pub fn run(
     program: &project::Program,
     pointer_bits: u32,
     previous: Results,
@@ -268,12 +268,12 @@ mod tests {
 
     use super::CheckedFunction;
     use super::Results;
-    use super::compile;
+    use super::run;
 
     /// The program of `modules`, each an import path and its text, loaded as
     /// `peeper check` loads it from `app:main`, with every file given as open
     /// editor text so nothing is read from disk. Loading must find no error.
-    fn program(modules: &[(&str, &str)]) -> project::Program {
+    fn load(modules: &[(&str, &str)]) -> project::Program {
         let folder = |package: &str| match package {
             "core" => PathBuf::from("/peeper-build-test/libs/core/src"),
             _ => PathBuf::from("/peeper-build-test/src"),
@@ -308,10 +308,10 @@ mod tests {
         program
     }
 
-    /// Checks the program of `modules` (see `program`) and gives each
+    /// Checks the program of `modules` (see `load`) and gives each
     /// diagnostic as its code, message and the text of its first label.
     fn diagnostics(modules: &[(&str, &str)]) -> Vec<(&'static str, String, String)> {
-        let found = compile(&program(modules), 64, Results::default(), false, |_| {});
+        let found = run(&load(modules), 64, Results::default(), false, |_| {});
         found
             .diagnostics()
             .map(|diagnostic| {
@@ -509,19 +509,19 @@ mod tests {
         assert!(found.is_empty(), "{found:?}");
     }
 
-    /// Compiles the program of `modules` (see `program`) after `previous`;
+    /// Compiles the program of `modules` (see `load`) after `previous`;
     /// gives what it found and the paths of the modules whose bodies were
     /// checked, which every module of these tests has.
     fn recompile(modules: &[(&str, &str)], previous: Results) -> (Results, Vec<String>) {
-        let program = program(modules);
+        let loaded = load(modules);
         let mut checked: Vec<String> = Vec::new();
-        let results = compile(
-            &program,
+        let results = run(
+            &loaded,
             64,
             previous,
             false,
             |&CheckedFunction { definition, .. }| {
-                let path = &program.modules[definition.module.index()].path;
+                let path = &loaded.modules[definition.module.index()].path;
                 if !checked.contains(path) {
                     checked.push(path.clone());
                 }

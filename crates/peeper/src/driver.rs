@@ -49,7 +49,7 @@ impl<W: Write> Command<W> {
     /// when it ran. A folder must hold peeper.toml; its project starts at
     /// src/main.peep. A file is checked on its own, with no project and no
     /// imports.
-    pub fn run(&mut self, goal: &Goal) -> u8 {
+    pub fn execute(&mut self, goal: &Goal) -> u8 {
         // Find the project: a folder's peeper.toml, or a single file.
         let project = match project::find(&self.path, &self.installation.join("libs")) {
             Ok(project) => project,
@@ -63,17 +63,17 @@ impl<W: Write> Command<W> {
         let program = project::load(&project, &HashMap::<PathBuf, String>::new());
         match goal {
             Goal::Check { dumps, apply_fixes } => {
-                self.run_check(&project, &program, dumps, *apply_fixes)
+                self.execute_check(&project, &program, dumps, *apply_fixes)
             }
-            Goal::Build { output } => self.run_build(&project, &program, output.as_deref()),
-            Goal::Run { arguments } => self.run_program(&project, &program, arguments),
+            Goal::Build { output } => self.execute_build(&project, &program, output.as_deref()),
+            Goal::Run { arguments } => self.execute_run(&project, &program, arguments),
         }
     }
 
     /// `check`: reports the program's errors and writes the `dumps`. With
     /// `apply_fixes`, it writes the suggested fixes first, then checks again
     /// to report only what is left.
-    fn run_check(
+    fn execute_check(
         &mut self,
         project: &project::Project,
         program: &project::Program,
@@ -100,7 +100,7 @@ impl<W: Write> Command<W> {
                     dumps: dumps.to_vec(),
                     apply_fixes: false,
                 };
-                return self.run(&again);
+                return self.execute(&again);
             }
         }
         u8::from(!self.print(&diagnostics))
@@ -108,7 +108,7 @@ impl<W: Write> Command<W> {
 
     /// `build`: links the program into `output`, by default the program's
     /// name in the current folder.
-    fn run_build(
+    fn execute_build(
         &mut self,
         project: &project::Project,
         program: &project::Program,
@@ -131,7 +131,7 @@ impl<W: Write> Command<W> {
 
     /// `run`: links the program to a temporary file, runs it with
     /// `arguments` and removes it; gives the program's exit code.
-    fn run_program(
+    fn execute_run(
         &mut self,
         project: &project::Project,
         program: &project::Program,
@@ -208,7 +208,7 @@ fn compile<'p>(
     if links || dumped.wants_ll() {
         ll = (0..program.modules.len())
             .map(|index| {
-                llvm::Module::new(program, ModuleId::from_index(index), build::POINTER_BITS)
+                llvm::Module::new(program, ModuleId::from_index(index), compile::POINTER_BITS)
             })
             .collect();
     }
@@ -220,12 +220,12 @@ fn compile<'p>(
     let mut main = None; // the entry module's `main`, and whether it returns an exit code
     // Check and lower each function; its MIR goes to the dumps and the
     // LLVM text as soon as it is built.
-    let results = build::compile(
+    let results = compile::run(
         program,
-        build::POINTER_BITS,
-        build::Results::default(),
+        compile::POINTER_BITS,
+        compile::Results::default(),
         false, // names are for editors
-        |&build::CheckedFunction {
+        |&compile::CheckedFunction {
              definition,
              signature,
              thir,
@@ -347,7 +347,7 @@ mod tests {
 
     /// Checks `path` with the libraries of `installation`; gives the exit
     /// code and what was printed.
-    fn run(path: &Path, installation: &Path) -> (u8, String) {
+    fn checked(path: &Path, installation: &Path) -> (u8, String) {
         let mut command = Command {
             path: path.to_path_buf(),
             installation: installation.to_path_buf(),
@@ -358,7 +358,7 @@ mod tests {
             dumps: Vec::new(),
             apply_fixes: false,
         };
-        let code = command.run(&check);
+        let code = command.execute(&check);
         (code, String::from_utf8(command.out).unwrap())
     }
 
@@ -380,7 +380,7 @@ mod tests {
             dumps: Vec::new(),
             apply_fixes: true,
         };
-        let code = command.run(&fix);
+        let code = command.execute(&fix);
         let out = String::from_utf8(command.out).unwrap();
         let fixed = std::fs::read_to_string(&file).unwrap();
         assert_eq!(
@@ -408,7 +408,7 @@ mod tests {
                 ("libs/core/src/global.peep", b""),
             ],
         );
-        let (code, out) = run(&root.join("app"), &root);
+        let (code, out) = checked(&root.join("app"), &root);
         let gone = root.join("app/src/gone.peep");
         let main = root.join("app/src/main.peep");
         let want = format!(
@@ -426,7 +426,7 @@ mod tests {
             &root,
             &[("app/src/main.peep", b"import \"myapp:util\";\nfn main() {}")],
         );
-        assert_eq!(run(&root.join("app"), &root), (0, String::new()));
+        assert_eq!(checked(&root.join("app"), &root), (0, String::new()));
     }
 
     #[test]
@@ -440,10 +440,10 @@ mod tests {
             ],
         );
         assert_eq!(
-            run(&root.join("tool.peep"), Path::new("")),
+            checked(&root.join("tool.peep"), Path::new("")),
             (0, String::new())
         );
-        let (code, out) = run(&root.join("bad.peep"), Path::new(""));
+        let (code, out) = checked(&root.join("bad.peep"), Path::new(""));
         assert_eq!(code, 1);
         assert!(
             out.starts_with("[L0001]: illegal character \"$\"\n"),
@@ -451,13 +451,13 @@ mod tests {
         );
 
         write(&root, &[("invalid.peep", b"fn f() {}\n// \xff\n")]);
-        let (code, out) = run(&root.join("invalid.peep"), Path::new(""));
+        let (code, out) = checked(&root.join("invalid.peep"), Path::new(""));
         assert_eq!(code, 1);
         assert!(
             out.starts_with("[L0001]: file is not valid UTF-8\n") && out.contains(":2:4\n"),
             "{out}"
         );
-        assert_eq!(run(&root.join("missing.peep"), Path::new("")).0, 1);
+        assert_eq!(checked(&root.join("missing.peep"), Path::new("")).0, 1);
     }
 
     #[test]
@@ -475,7 +475,7 @@ mod tests {
             ("empty", "no peeper.toml in this folder"),
             ("core", "project name `core` is taken by a bundled library"),
         ] {
-            let (code, out) = run(&root.join(folder), &root);
+            let (code, out) = checked(&root.join(folder), &root);
             assert!(code == 1 && out.contains(want), "{folder}: {code} {out}");
         }
     }
@@ -507,7 +507,7 @@ mod tests {
                 out: Vec::new(),
                 colored: false,
             };
-            let code = command.run(&Goal::Build { output: None });
+            let code = command.execute(&Goal::Build { output: None });
             let out = String::from_utf8(command.out).unwrap();
             assert_eq!(code, 1, "{file}: {out}");
             assert!(
@@ -516,7 +516,7 @@ mod tests {
                 "{file}: {out}"
             );
             assert_eq!(
-                run(&path, Path::new("")).0,
+                checked(&path, Path::new("")).0,
                 0,
                 "{file}: check needs no main"
             );

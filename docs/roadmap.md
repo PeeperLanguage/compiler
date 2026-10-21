@@ -26,7 +26,7 @@ flowchart LR
 - Design: `architecture.md` (base, diagnostics), `overall-design.md` (incremental).
 - `source` (files, byte spans), `token`, `lexer` (hand-written, 40x faster than
   the old one, same tokens and errors on every fixture), `diagnostics` (self-contained
-  diagnostics, printer, quick-fix data), `pkg/colors`.
+  diagnostics, printer, quick-fix data), `pkg/colors` (now a module of `diagnostics`).
 - AST representation chosen by prototypes (four options measured): flat node
   array, Zig style, without hand-written guards.
 
@@ -71,7 +71,7 @@ broken inputs.
 
 Goal: the run loop both `peeper` and the LSP use, with reuse.
 
-- `build`: graph walk, per-module states (waiting, ready, reused, running, done),
+- `compile` (first named `build`): graph walk, per-module states (waiting, ready, reused, running, done),
   worker pool.
 - Fingerprints: content hash, with file size and time only as a shortcut to skip
   re-reading unchanged files.
@@ -117,7 +117,7 @@ Exit: every old runtime fixture builds and runs with the expected output.
 
 ## M7 LSP
 
-Goal: editor support on the same `build` loop with a memory cache.
+Goal: editor support on the same `compile` loop with a memory cache.
 
 - Diagnostics, hover, go to definition, completion, rename, quick fixes (from
   diagnostic fixes).

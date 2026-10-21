@@ -37,8 +37,8 @@ details against the source when extending it.
 
 ### How the per-function callback works
 
-The CLI and language server call [`build::compile`](crates/build/src/lib.rs)
-with a closure named `use_function`. The scheduler checks and lowers one
+The CLI and language server call [`compile::run`](crates/compile/src/lib.rs)
+with a closure named `use_function`. It checks and lowers one
 function, calls that closure with borrowed results, then drops the function's
 THIR and MIR. The callback runs synchronously inside `compile`; it is not a
 separate thread or a task queued for later.
@@ -46,35 +46,35 @@ separate thread or a task queued for later.
 ```mermaid
 sequenceDiagram
     participant Caller as CLI or LSP
-    participant Build as build::compile
+    participant Compile as compile::run
     participant Check as Checker::body
     participant Lower as lower::lower
     participant Callback as Caller's closure
 
-    Caller->>Build: compile(program, pointer_bits, previous, record_names, use_function)
+    Caller->>Compile: run(program, pointer_bits, previous, record_names, use_function)
     loop Each function with THIR in a module checked this compile
-        Build->>Build: Query the function's signature
-        Build->>Check: Check body, recording names when record_names
-        Check-->>Build: THIR and recorded names
-        Build->>Lower: Lower THIR and run path checks
-        Lower-->>Build: Some(MIR) or None
-        Build->>Callback: use_function(&CheckedFunction)
+        Compile->>Compile: Query the function's signature
+        Compile->>Check: Check body, recording names when record_names
+        Check-->>Compile: THIR and recorded names
+        Compile->>Lower: Lower THIR and run path checks
+        Lower-->>Compile: Some(MIR) or None
+        Compile->>Callback: use_function(&CheckedFunction)
         alt CLI caller
             Callback->>Callback: Append requested dumps and LLVM text
         else LSP caller
             Callback->>Callback: Convert names to cached editor information
         end
-        Callback-->>Build: Return - borrowed results no longer needed
-        Build->>Build: Drop this function's THIR, MIR and recorded names
+        Callback-->>Compile: Return - borrowed results no longer needed
+        Compile->>Compile: Drop this function's THIR, MIR and recorded names
     end
-    Build-->>Caller: Results: diagnostics and module reuse information
+    Compile-->>Caller: Results: diagnostics and module reuse information
 ```
 
 The callback can update state captured from its caller. The
 [`CLI closure`](crates/peeper/src/driver.rs) keeps generated text; the
 [`LSP closure`](crates/lsp/src/lib.rs) keeps name locations and display text.
 Neither needs to retain every function's IR. Types remain owned by the
-scheduler for the duration of the compile; a callback must copy any information
+compile for its whole duration; a callback must copy any information
 it needs afterward into its own storage.
 
 This is a per-function handoff, not a whole-program success notification.

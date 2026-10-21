@@ -353,12 +353,12 @@ mod tests {
         assert!(program.checkable);
         let main = program.modules.len() - 1;
         let mut module = super::Module::new(&program, ModuleId::from_index(main), 64);
-        let results = build::compile(
+        let results = compile::run(
             &program,
             64,
-            build::Results::default(),
+            compile::Results::default(),
             false,
-            |&build::CheckedFunction {
+            |&compile::CheckedFunction {
                  definition,
                  signature,
                  mir,

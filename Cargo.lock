@@ -29,19 +29,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
-name = "build"
-version = "0.1.0"
-dependencies = [
- "arena",
- "check",
- "diagnostics",
- "lower",
- "model",
- "project",
- "source",
-]
-
-[[package]]
 name = "cc"
 version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -69,12 +56,20 @@ dependencies = [
  "parser",
  "project",
  "source",
- "token",
 ]
 
 [[package]]
-name = "colors"
+name = "compile"
 version = "0.1.0"
+dependencies = [
+ "arena",
+ "check",
+ "diagnostics",
+ "lower",
+ "model",
+ "project",
+ "source",
+]
 
 [[package]]
 name = "crossbeam-channel"
@@ -95,7 +90,6 @@ checksum = "a31eee39dddec8330830986fcd7625edb5a24ec90ea038215273bbc3adb08ac6"
 name = "diagnostics"
 version = "0.1.0"
 dependencies = [
- "colors",
  "source",
  "token",
  "unicode-general-category",
@@ -295,7 +289,7 @@ version = "0.1.0"
 dependencies = [
  "arena",
  "bigint",
- "build",
+ "compile",
  "literal",
  "model",
  "project",
@@ -323,7 +317,7 @@ name = "lsp"
 version = "0.1.0"
 dependencies = [
  "arena",
- "build",
+ "compile",
  "diagnostics",
  "lsp-server",
  "lsp-types",
@@ -402,7 +396,7 @@ name = "peeper"
 version = "0.1.0"
 dependencies = [
  "arena",
- "build",
+ "compile",
  "diagnostics",
  "lexer",
  "llvm",

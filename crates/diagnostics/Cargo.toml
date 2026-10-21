@@ -9,7 +9,6 @@ publish.workspace = true
 [dependencies]
 source.workspace = true
 token.workspace = true
-colors.workspace = true
 unicode-general-category.workspace = true
 
 [lints]

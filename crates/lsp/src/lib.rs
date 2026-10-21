@@ -5,7 +5,7 @@
 //! diagnostics of the program's files, each with its help lines' fixes as
 //! quick fixes. Go to definition and hover over a name read what the last
 //! check recorded. Only the protocol is here: `project`
-//! finds and loads the program and `build` checks it.
+//! finds and loads the program and `compile` checks it.
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -81,13 +81,13 @@ const DEBOUNCE: Duration = Duration::from_millis(200);
 /// `libraries` holds the bundled libraries, as for `project::find`.
 pub fn serve(libraries: &Path) -> Result<(), BoxError> {
     let (connection, io_threads) = Connection::stdio();
-    run(connection, libraries)?;
+    serve_connection(connection, libraries)?;
     io_threads.join()?;
     Ok(())
 }
 
 /// Serves `connection` until the client shuts the server down.
-fn run(connection: Connection, libraries: &Path) -> Result<(), BoxError> {
+fn serve_connection(connection: Connection, libraries: &Path) -> Result<(), BoxError> {
     let capabilities = ServerCapabilities {
         text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
         definition_provider: Some(OneOf::Left(true)),
@@ -495,7 +495,7 @@ impl<'s> Server<'s> {
 /// What the server keeps of a program between checks.
 #[derive(Default)]
 struct Checked {
-    results: build::Results,     // reused by the next compile
+    results: compile::Results,   // reused by the next compile
     published: HashSet<PathBuf>, // the files last given diagnostics
     /// The program as last compiled, and the names written in the bodies of
     /// each of its modules, by file: what definition and hover read.
@@ -512,12 +512,12 @@ impl Checked {
     fn update(&mut self, program: &project::Program) {
         let mut found: HashMap<ModuleId, Vec<CachedName>> = HashMap::new();
         let previous = std::mem::take(&mut self.results);
-        self.results = build::compile(
+        self.results = compile::run(
             program,
-            build::POINTER_BITS,
+            compile::POINTER_BITS,
             previous,
             true,
-            |&build::CheckedFunction {
+            |&compile::CheckedFunction {
                  definition,
                  thir,
                  names,
@@ -560,7 +560,7 @@ enum CachedTarget {
     InBody { declared: Span, ty: String },
     /// The declaration at `position` among the top-level declarations of the
     /// module read from `file`. Its importer is reused only while those keep
-    /// their kinds and names (`build::compile`), so the position stays right;
+    /// their kinds and names (`compile::run`), so the position stays right;
     /// an arena index would not, as a body's `const` shifts it.
     Declaration { file: PathBuf, position: u32 },
     /// The module read from this file.
@@ -855,7 +855,7 @@ mod tests {
     use super::lsp_diagnostic;
     use super::offset;
     use super::position;
-    use super::run;
+    use super::serve_connection;
 
     #[test]
     fn positions_count_utf16_units() {
@@ -982,7 +982,7 @@ mod tests {
         let uri = Url::from_file_path(&file).unwrap();
 
         let (server, client) = Connection::memory();
-        let thread = std::thread::spawn(move || run(server, Path::new("")).unwrap());
+        let thread = std::thread::spawn(move || serve_connection(server, Path::new("")).unwrap());
         let send = |message: Message| client.sender.send(message).unwrap();
         let request = |id: i32, method: &str, params: serde_json::Value| {
             Message::Request(Request::new(

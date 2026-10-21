@@ -27,7 +27,7 @@ parses it again into new data. Do not patch the text and the data side by side.
 Checking that the new data holds what was set catches a value written wrongly.
 
 - `peeper fix` writes the fixes into the files' text, then loads and checks
-  the program again (`Command::run_check`); it never patches a syntax tree.
+  the program again (`Command::execute_check`); it never patches a syntax tree.
 
 Why: two copies patched by hand drift apart; a reparse cannot.
 
@@ -124,12 +124,12 @@ checking), with a large file and the minimum of 20 interleaved runs.
 `Value`, so an operand is 8 bytes instead of 24 and an instruction shrinks with
 it. Lowering a 20k-function file got measurably faster.
 
-**Hand each result on; do not collect them all.** `build::compile` gives each
+**Hand each result on; do not collect them all.** `compile::run` gives each
 function's MIR to a callback as soon as it is built and drops it after, the way
 Go compiles one function at a time. Keeping every function's MIR in a `Vec`
 took a 20k-function file from 60 MB to 98 MB and was slower.
 
-**Hand a cache in and get it back as a value.** `build::compile` takes the
+**Hand a cache in and get it back as a value.** `compile::run` takes the
 previous compile's `Results` by value and gives new ones: cached entries
 move instead of being copied, and there is no long-lived object changing in
 place. The command line passes `Results::default()`.
@@ -171,16 +171,16 @@ and Cranelift (`filetests`) work the same way.
   parameter dead (the printer's `token_color(file, t)` after keyword coloring
   stopped reading the file), delete it and update the callers; do not keep it
   with an `_` prefix.
-- **Name a function by everything it does.** `build::check` became
-  `build::compile` once it also lowered to MIR; the CLI's command runner is
-  `run`, not `check`. In a compiler, "check" means the type checker (the
+- **Name a function by everything it does.** `check` became
+  `compile::run` once it also lowered to MIR; the CLI's command runner is
+  `execute`, not `check`. In a compiler, "check" means the type checker (the
   `check` crate), so no other function is named that. A function that also
   runs the program is not `link`: the driver's `link` was split by goal.
-- **One word, one meaning.** Beside `run_check` (the `check` goal), the shared
+- **One word, one meaning.** Beside `execute_check` (the `check` goal), the shared
   step is `compile`, not `check`. Say "body" for anything with statements,
   not "function body", when the fact holds for any body.
-- **Match a mode once.** `Command::run` matches its `Goal` once and each arm
-  calls `run_check`, `run_build` or `run_program`, which read top to bottom
+- **Match a mode once.** `Command::execute` matches its `Goal` once and each arm
+  calls `execute_check`, `execute_build` or `execute_run`, which read top to bottom
   with the shared steps (`compile`, `print`, `link`). Scattered
   `matches!(goal, ..)` through one function hide each mode's flow.
 - **No one-field struct around a value.** `thir::Const { value }` was removed:

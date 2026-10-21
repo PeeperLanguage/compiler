@@ -1,6 +1,6 @@
 [package]
 name = "llvm"
-description = "LLVM IR text for a module, from each function's MIR"
+description = "LLVM IR text for a module, from each function's MIR, and linking it into an executable with clang"
 version.workspace = true
 edition.workspace = true
 license-file.workspace = true
@@ -15,7 +15,7 @@ source.workspace = true
 
 [dev-dependencies]
 bigint.workspace = true
-build.workspace = true
+compile.workspace = true
 
 [lints]
 workspace = true

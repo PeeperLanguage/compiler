@@ -13,7 +13,7 @@ source.workspace = true
 diagnostics.workspace = true
 lexer.workspace = true
 project.workspace = true
-build.workspace = true
+compile.workspace = true
 llvm.workspace = true
 lsp.workspace = true
 

@@ -8,7 +8,7 @@ members = [
     "crates/check",
     "crates/lower",
     "crates/llvm",
-    "crates/build",
+    "crates/compile",
     "crates/project",
     "crates/lsp",
     "crates/peeper",
@@ -30,12 +30,11 @@ arena = { path = "crates/pkg/arena" }
 bigint = { path = "crates/pkg/bigint" }
 parser = { path = "crates/frontend/parser" }
 literal = { path = "crates/pkg/literal" }
-colors = { path = "crates/pkg/colors" }
 model = { path = "crates/model" }
 check = { path = "crates/check" }
 lower = { path = "crates/lower" }
 llvm = { path = "crates/llvm" }
-build = { path = "crates/build" }
+compile = { path = "crates/compile" }
 project = { path = "crates/project" }
 lsp = { path = "crates/lsp" }
 unicode-general-category = "1.1.0"

@@ -97,7 +97,7 @@ pub struct Program {
     /// What loading found: import cycles first, then each module's errors,
     /// in the program's order. One list for the whole program, because every
     /// load reads every module again; what a compile finds is kept per
-    /// module instead (`build::Results`), so an unchanged module can reuse it.
+    /// module instead (`compile::Results`), so an unchanged module can reuse it.
     pub diagnostics: Vec<Diagnostic>,
     /// Whether the program can be checked: every module's text is all in its
     /// tree, every import brings in its module, and no import cycle was found.

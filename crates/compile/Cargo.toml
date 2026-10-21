@@ -1,6 +1,6 @@
 [package]
-name = "build"
-description = "The scheduler: checks every declaration of a program once, in the order they ask for each other"
+name = "compile"
+description = "A compile of a program up to MIR: checks every declaration once, in the order they ask for each other, and lowers each function"
 version.workspace = true
 edition.workspace = true
 license-file.workspace = true

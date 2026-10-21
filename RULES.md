@@ -146,7 +146,7 @@ Before adding a field, struct, alias, or file, answer:
   to, not its shape: `semantic_types`, not `types`; `name: Ident`, not
   `name: Span`; a field of diagnostics is not called `names`.
 - **Clash?** No two types used in the same file share a name
-  (`build::Module` and `project::Module`), and a variable does not change type
+  (`llvm::Module` and `project::Module`), and a variable does not change type
   when it is bound again.
 - **Type over convention.** A meaning the reader must learn from a comment
   ("this span is the name") belongs in the type. Keep one record per thing:

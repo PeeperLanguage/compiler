@@ -12,5 +12,5 @@ fn main() -> ExitCode {
         Ok(command) => command,
         Err(code) => return code,
     };
-    ExitCode::from(command.run(&goal))
+    ExitCode::from(command.execute(&goal))
 }

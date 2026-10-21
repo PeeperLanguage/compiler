@@ -8,6 +8,7 @@ use source::Span;
 
 use crate::fix::Fix;
 
+mod colors;
 pub mod fix;
 pub mod printer;
 pub mod suggest;

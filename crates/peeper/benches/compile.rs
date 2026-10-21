@@ -37,7 +37,7 @@ fn main() {
     let lines: usize = files.values().map(|text| text.lines().count()).sum();
     println!("{MODULES} modules, {FUNCTIONS} functions each, {lines} lines; {runs} runs");
     let mut load = Vec::new();
-    let mut check = Vec::new(); // checking and lowering, as `build::compile` does them
+    let mut check = Vec::new(); // checking and lowering, as `compile::run` does them
     let mut llvm = Vec::new();
     for _ in 0..runs {
         let start = Instant::now();
@@ -49,12 +49,12 @@ fn main() {
             .collect();
         let mut writing = Duration::ZERO; // LLVM text, timed apart from the compile around it
         let start = Instant::now();
-        let results = build::compile(
+        let results = compile::run(
             &program,
             POINTER_BITS,
-            build::Results::default(),
+            compile::Results::default(),
             false,
-            |&build::CheckedFunction {
+            |&compile::CheckedFunction {
                  definition,
                  signature,
                  mir,
