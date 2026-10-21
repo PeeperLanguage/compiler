@@ -72,25 +72,22 @@ pub fn print(
             Severity::Info => {}
         }
     }
-    if errors > 0 && warnings > 0 {
-        p.paint(
-            RED,
-            format_args!("Compilation failed with {errors} error(s) and {warnings} warning(s)"),
-        );
-        p.out.push('\n');
-    } else if errors > 0 {
-        p.paint(
-            RED,
-            format_args!("Compilation failed with {errors} error(s)"),
-        );
-        p.out.push('\n');
-    } else if warnings > 0 {
-        p.paint(
+    match (errors, warnings) {
+        (0, 0) => return out.write_all(p.out.as_bytes()),
+        (0, _) => p.paint(
             ORANGE,
             format_args!("Compilation succeeded with {warnings} warning(s)"),
-        );
-        p.out.push('\n');
+        ),
+        (_, 0) => p.paint(
+            RED,
+            format_args!("Compilation failed with {errors} error(s)"),
+        ),
+        _ => p.paint(
+            RED,
+            format_args!("Compilation failed with {errors} error(s) and {warnings} warning(s)"),
+        ),
     }
+    p.out.push('\n');
     out.write_all(p.out.as_bytes())
 }
 
