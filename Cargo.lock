@@ -604,10 +604,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "toml"
-version = "0.1.0"
-
-[[package]]
 name = "toml_datetime"
 version = "1.1.1+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
