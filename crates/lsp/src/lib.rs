@@ -16,6 +16,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use arena::Id;
+use diagnostics::NoteKind;
 use diagnostics::Severity;
 use diagnostics::fix;
 use diagnostics::fix::Fix;
@@ -681,14 +682,14 @@ fn quick_fixes(
     let fixable = diagnostic
         .notes
         .iter()
-        .filter(|note| !note.fixes.is_empty());
+        .filter(|note| !note.fixes().is_empty());
     fixable
         .filter_map(|note| {
             Some(CodeAction {
                 title: note.text.clone(),
                 kind: Some(CodeActionKind::QUICKFIX),
                 is_preferred: Some(note.sure_fix()),
-                edit: Some(workspace_edit(&note.fixes, open_files)?),
+                edit: Some(workspace_edit(note.fixes(), open_files)?),
                 ..CodeAction::default()
             })
         })
@@ -742,7 +743,10 @@ fn lsp_diagnostic(
 ) -> lsp_types::Diagnostic {
     let mut message = diagnostic.message.clone();
     for note in &diagnostic.notes {
-        message.push_str(if note.help { "\nhelp: " } else { "\nnote: " });
+        message.push_str(match note.kind {
+            NoteKind::Note => "\nnote: ",
+            NoteKind::Help(_) | NoteKind::Guess(_) => "\nhelp: ",
+        });
         message.push_str(&note.text);
     }
     let primary = diagnostic

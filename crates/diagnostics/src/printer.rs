@@ -31,6 +31,7 @@ use token::Token;
 use token::TokenKind;
 
 use crate::Diagnostic;
+use crate::NoteKind;
 use crate::Severity;
 use crate::fix::Fix;
 use unicode_general_category::GeneralCategory;
@@ -200,16 +201,16 @@ impl Printer<'_> {
             if after_fixed_lines {
                 self.margin();
             }
-            let (kind, color) = match (note.help, note.sure_fix()) {
-                (false, _) => ("note", CYAN),
-                (true, true) => ("fix", GREEN),
-                (true, false) => ("help", GREEN),
+            let (kind, color) = match note.kind {
+                NoteKind::Note => ("note", CYAN),
+                _ if note.sure_fix() => ("fix", GREEN),
+                NoteKind::Help(_) | NoteKind::Guess(_) => ("help", GREEN),
             };
             let pad = self.width + 1;
             _ = write!(self.out, "{:pad$}", "");
             self.paint(color, format_args!("= {kind}: "));
             _ = writeln!(self.out, "{}", note.text);
-            after_fixed_lines = self.fixed_lines(&note.fixes);
+            after_fixed_lines = self.fixed_lines(note.fixes());
         }
         self.out.push('\n');
     }
@@ -498,7 +499,7 @@ fn line_number_width(d: &Diagnostic, snippets: &[Snippet]) -> usize {
     let fixes = d
         .notes
         .iter()
-        .flat_map(|n| &n.fixes)
+        .flat_map(|n| n.fixes())
         .map(|f| f.file.line(clamp(&f.file, f.span).start as usize));
     let largest = lines.chain(fixes).max().unwrap_or(1).max(1);
     largest.ilog10() as usize + 1

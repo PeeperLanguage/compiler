@@ -6,7 +6,6 @@ use std::sync::Arc;
 use source::SourceFile;
 use source::Span;
 
-use crate::fix::Certainty;
 use crate::fix::Fix;
 
 pub mod fix;
@@ -106,17 +105,36 @@ pub struct Label {
 /// together, and they make exactly the text the line suggests.
 #[derive(Clone, Debug)]
 pub struct Note {
-    pub help: bool,
+    pub kind: NoteKind,
     pub text: String,
-    pub fixes: Vec<Fix>,
-    pub certainty: Certainty, // of the fixes
+}
+
+/// What a note line is, and how sure a help line is that its fixes make the
+/// code mean what was intended; `peeper fix` applies only the sure ones.
+#[derive(Clone, Debug)]
+pub enum NoteKind {
+    /// A fact about the problem, with no fixes.
+    Note,
+    /// Help whose fixes, if any, are sure: the compiler already read the
+    /// code as if fixed, as after a missing `;`.
+    Help(Vec<Fix>),
+    /// Help whose fixes are one likely meaning of several, as a name that is
+    /// close to an unknown one.
+    Guess(Vec<Fix>),
 }
 
 impl Note {
+    pub fn fixes(&self) -> &[Fix] {
+        match &self.kind {
+            NoteKind::Note => &[],
+            NoteKind::Help(fixes) | NoteKind::Guess(fixes) => fixes,
+        }
+    }
+
     /// Whether it carries fixes that are sure: what `peeper fix` applies, an
     /// editor prefers and the printer labels `fix`.
     pub fn sure_fix(&self) -> bool {
-        !self.fixes.is_empty() && self.certainty == Certainty::Sure
+        matches!(&self.kind, NoteKind::Help(fixes) if !fixes.is_empty())
     }
 }
 
@@ -152,10 +170,8 @@ impl Diagnostic {
 
     pub fn note(mut self, text: impl Into<String>) -> Diagnostic {
         self.notes.push(Note {
-            help: false,
+            kind: NoteKind::Note,
             text: text.into(),
-            fixes: Vec::new(),
-            certainty: Certainty::Sure,
         });
         self
     }
@@ -163,10 +179,8 @@ impl Diagnostic {
     /// Adds a help line whose `fixes`, if any, are sure.
     pub fn help(mut self, text: impl Into<String>, fixes: Vec<Fix>) -> Diagnostic {
         self.notes.push(Note {
-            help: true,
+            kind: NoteKind::Help(fixes),
             text: text.into(),
-            fixes,
-            certainty: Certainty::Sure,
         });
         self
     }
@@ -174,10 +188,8 @@ impl Diagnostic {
     /// Adds a help line whose `fixes` are a guess.
     pub fn guess(mut self, text: impl Into<String>, fixes: Vec<Fix>) -> Diagnostic {
         self.notes.push(Note {
-            help: true,
+            kind: NoteKind::Guess(fixes),
             text: text.into(),
-            fixes,
-            certainty: Certainty::Guess,
         });
         self
     }

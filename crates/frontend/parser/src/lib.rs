@@ -512,7 +512,7 @@ mod tests {
     /// `text` with the fixes of the first help of `d` applied.
     pub(crate) fn fixed(text: &str, d: &Diagnostic) -> String {
         let mut text = text.to_string();
-        for fix in d.notes[0].fixes.iter().rev() {
+        for fix in d.notes[0].fixes().iter().rev() {
             text.replace_range(fix.span.range(), &fix.new_text);
         }
         text
@@ -855,9 +855,9 @@ fn main() {
         assert_eq!(dump_of(text), want);
         let (_, errors) = parse_text(text);
         assert_eq!(errors.len(), 2);
-        assert_eq!(errors[0].notes[0].fixes.len(), 1);
-        assert_eq!(errors[1].notes[0].fixes.len(), 2);
-        let second = errors[1].notes[0].fixes[1].span.start as usize;
+        assert_eq!(errors[0].notes[0].fixes().len(), 1);
+        assert_eq!(errors[1].notes[0].fixes().len(), 2);
+        let second = errors[1].notes[0].fixes()[1].span.start as usize;
         assert_eq!(&text[..second], "fn f(a: i32 b: i32) { g(a b");
     }
 
@@ -900,7 +900,7 @@ fn main() {
         let (_, errors) = parse_text(text);
         assert_eq!(errors.len(), 1);
         assert_eq!(
-            errors[0].notes[0].fixes[0].span.start as usize,
+            errors[0].notes[0].fixes()[0].span.start as usize,
             text.find(';').unwrap()
         );
         // A closer that comes later means what stands before it does not belong:

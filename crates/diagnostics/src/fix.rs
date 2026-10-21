@@ -19,14 +19,6 @@ pub struct Fix {
     pub new_text: String,
 }
 
-/// How sure a help line is that its fixes make the code mean what was
-/// intended; `peeper fix` applies only the sure ones.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Certainty {
-    Sure,  // the compiler already read the code as if fixed, as after a missing `;`
-    Guess, // one likely meaning of several, as a name that is close to an unknown one
-}
-
 /// The fixes to apply for `all`, with the help line each comes from: each
 /// diagnostic's first help line with fixes (the next ones are alternatives),
 /// when it is sure; a guess is left for the programmer. A help line is left
@@ -44,16 +36,20 @@ pub fn chosen<'d>(
     };
     let mut chosen: Vec<(&Fix, &str)> = Vec::new();
     for diagnostic in all {
-        let Some(help) = diagnostic.notes.iter().find(|note| !note.fixes.is_empty()) else {
+        let Some(help) = diagnostic
+            .notes
+            .iter()
+            .find(|note| !note.fixes().is_empty())
+        else {
             continue;
         };
         let fits = help.sure_fix()
-            && help.fixes.iter().all(|fix| {
+            && help.fixes().iter().all(|fix| {
                 Path::new(&fix.file.path).starts_with(root)
                     && !chosen.iter().any(|&(taken, _)| overlap(fix, taken))
             });
         if fits {
-            chosen.extend(help.fixes.iter().map(|fix| (fix, help.text.as_str())));
+            chosen.extend(help.fixes().iter().map(|fix| (fix, help.text.as_str())));
         }
     }
     chosen
