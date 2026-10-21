@@ -25,7 +25,7 @@ flowchart LR
 
 - Design: `architecture.md` (base, diagnostics), `overall-design.md` (incremental).
 - `source` (files, byte spans), `token`, `lexer` (hand-written, 40x faster than
-  the old one, same tokens and errors on every fixture), `diag` (self-contained
+  the old one, same tokens and errors on every fixture), `diagnostics` (self-contained
   diagnostics, printer, quick-fix data), `pkg/colors`.
 - AST representation chosen by prototypes (four options measured): flat node
   array, Zig style, without hand-written guards.
@@ -69,7 +69,7 @@ broken inputs.
 
 ## M3 Build and cache (incremental base)
 
-Goal: the run loop both `cmd` and the LSP use, with reuse.
+Goal: the run loop both `peeper` and the LSP use, with reuse.
 
 - `build`: graph walk, per-module states (waiting, ready, reused, running, done),
   worker pool.

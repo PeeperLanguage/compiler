@@ -16,12 +16,9 @@ When this document conflicts with verified compiler correctness or an approved
 design, do not follow it silently. Report conflict and evidence so maintainer can
 decide whether guideline or design must change.
 
-Current ownership, pointer, copy, and optional design is recorded in
-[docs/ownership-pointer-model.md](docs/ownership-pointer-model.md). Current compiler
-structure and semantic evidence boundaries are described in
-[docs/compiler-architecture.md](docs/compiler-architecture.md). Verify both against
-source. Migration history and supporting analysis live under
-[docs/compiler-framework/](docs/compiler-framework/README.md).
+Current compiler structure is described in
+[docs/architecture.md](docs/architecture.md), and checking, THIR, MIR and LLVM in
+[docs/ir-design.md](docs/ir-design.md). Verify both against source.
 
 ## 1. Priorities
 

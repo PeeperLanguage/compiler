@@ -80,7 +80,7 @@ Module   the result of loading one file; immutable once created
   Source      *source.File      file name, text, and where each line starts
   Syntax      *ast.Module       parsed source
   Imports     []Import          in source order, each already resolved
-  Diagnostics []diag.Diagnostic produced while loading this file
+  Diagnostics []diagnostics.Diagnostic produced while loading this file
 
 Import
   Path   string                 resolved import path of the target
@@ -295,9 +295,6 @@ actions):
 
 ### Not now
 
-- Coloring code inside snippets (syntax highlighting): it would make `diag`
-  depend on the lexer, which already depends on `diag`. Can come back later as
-  a printer option.
 - HTML output: the LSP will take diagnostics as data, not text.
 - Hiding internal compiler error details: comes back with the first internal
   error code.

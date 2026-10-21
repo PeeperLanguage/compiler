@@ -9,21 +9,31 @@ server, and executable source fixtures.
 
 ## Current capabilities
 
-- Static semantic analysis with explicit compiler phases.
-- Ownership, move, borrow, pointer, and reference checks.
-- Scalars, aggregates, arrays, slices, optionals, interfaces, and modules.
+The compiler is being rebuilt in Rust; this list covers what the rebuild does
+today.
+
+- Parsing with error recovery, and fixes that `peeper fix` or an editor applies.
+- Type checking of integers, floats, `bool`, C strings, functions, constants and
+  modules, with constant folding.
+- Path checks: a variable used before it is set, a missing `return`, and
+  unreachable code.
 - THIR and MIR lowering to LLVM IR and native executables through Clang.
-- Project manifests, dependency commands, source checking, and an LSP server.
+- Project manifests, `peeper init`, incremental checking, and an LSP server.
 
 See the [open roadmap](https://github.com/PeeperLanguage/compiler/issues) for
 unfinished language and runtime work.
 
 ## Learning the compiler
 
-[`Code-tour.md`](Code-tour.md) walks one `.peep` file through every phase to a native
-binary, with diagrams and the real entry points at each stop.
+The design documents record the compiler's decisions and their reasons. Verify
+details against the source when extending it.
 
-[`docs/compiler-architecture.md`](docs/compiler-architecture.md) records current compiler mechanisms and their rationale. Verify mutable details against source when extending syntax, semantic types, graphs, or analyses.
+- [`docs/architecture.md`](docs/architecture.md): loading files, parsing in
+  parallel, imports, the module graph, and diagnostics.
+- [`docs/overall-design.md`](docs/overall-design.md): incremental compiles for
+  the command line and the LSP.
+- [`docs/ir-design.md`](docs/ir-design.md): checking, THIR, MIR and LLVM.
+- [`docs/roadmap.md`](docs/roadmap.md): milestones, done and next.
 
 ### How the per-function callback works
 
@@ -38,17 +48,17 @@ sequenceDiagram
     participant Caller as CLI or LSP
     participant Build as build::compile
     participant Check as Checker::body
-    participant Lower as Build::lower
+    participant Lower as lower::lower
     participant Callback as Caller's closure
 
-    Caller->>Build: compile(program, previous results, use_function)
+    Caller->>Build: compile(program, pointer_bits, previous, record_names, use_function)
     loop Each function with THIR in a module checked this compile
         Build->>Build: Query the function's signature
-        Build->>Check: Check body and record names when requested
+        Build->>Check: Check body, recording names when record_names
         Check-->>Build: THIR and recorded names
         Build->>Lower: Lower THIR and run path checks
         Lower-->>Build: Some(MIR) or None
-        Build->>Callback: use_function(id, signature, THIR, names, MIR?, types)
+        Build->>Callback: use_function(&CheckedFunction)
         alt CLI caller
             Callback->>Callback: Append requested dumps and LLVM text
         else LSP caller
@@ -96,9 +106,6 @@ Command Line Tools and working `xcrun --sdk macosx --show-sdk-path`.
 Bootstrap scripts persist the Peeper binary directory in the user PATH
 idempotently; restart your terminal afterward, because a piped shell cannot
 modify its parent environment.
-
-See [`docs/distribution.md`](docs/distribution.md) for support policy, release
-security, and maintainer setup.
 
 ## Source build requirements
 
