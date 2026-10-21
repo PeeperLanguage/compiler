@@ -229,22 +229,6 @@ struct Loaded {
     diagnostics: Vec<Diagnostic>,
 }
 
-impl Loaded {
-    /// The module, its imports resolved to the places in `ids`.
-    fn into_module(self, ids: &HashMap<String, ModuleId>) -> Module {
-        let imports = self.imports.iter();
-        let imports = imports.map(|(kind, path)| Import {
-            kind: *kind,
-            module: ids[path], // every imported module is loaded
-        });
-        Module {
-            path: self.path,
-            ast: self.ast,
-            imports: imports.collect(),
-        }
-    }
-}
-
 struct Job {
     path: String,
     file: PathBuf,
@@ -301,7 +285,7 @@ pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + S
         // when no import reaches it from the entry.
         for file in open_files
             .keys()
-            .filter(|file| file.extension() == Some("peep".as_ref()))
+            .filter(|file| file.to_string_lossy().ends_with(SOURCE_EXTENSION))
         {
             let (path, in_package) = path_of(&project.packages, file);
             if in_package && seen.insert(path.clone()) {
@@ -407,6 +391,20 @@ fn load_file(
 }
 
 impl Loaded {
+    /// The module, its imports resolved to the places in `ids`.
+    fn into_module(self, ids: &HashMap<String, ModuleId>) -> Module {
+        let imports = self.imports.iter();
+        let imports = imports.map(|(kind, path)| Import {
+            kind: *kind,
+            module: ids[path], // every imported module is loaded
+        });
+        Module {
+            path: self.path,
+            ast: self.ast,
+            imports: imports.collect(),
+        }
+    }
+
     fn resolve_imports(
         &mut self,
         packages: &HashMap<String, PathBuf>,
