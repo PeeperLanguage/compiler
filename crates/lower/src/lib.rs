@@ -5,9 +5,7 @@ pub mod path_checks;
 
 use std::num::NonZeroU32;
 
-use arena::Arena;
 use arena::Id;
-use arena::Lists;
 use model::BinaryOp;
 use model::constant::Constant;
 use model::constant::Value;
@@ -25,14 +23,7 @@ pub fn lower(body: &thir::Body, parameters: usize) -> Option<mir::Body> {
     }
     let mut lowering = Lowering {
         thir: body,
-        mir: mir::Body {
-            blocks: Arena::default(),
-            instructions: Arena::default(),
-            variables: Arena::default(),
-            scopes: Arena::default(),
-            constants: Vec::new(),
-            lists: Lists::default(),
-        },
+        mir: mir::Body::default(),
         block: Id::from_index(0),
         instructions: Vec::new(),
     };

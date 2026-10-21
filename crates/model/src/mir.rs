@@ -21,6 +21,7 @@ use arena::Lists;
 use source::SourceFile;
 use source::Span;
 
+#[derive(Default)]
 pub struct Body {
     pub blocks: Arena<Block>, // the first is the entry; with where each starts
     pub instructions: Arena<Instruction>, // with the expression each comes from
