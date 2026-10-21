@@ -11,6 +11,7 @@ usage: peeper check [project folder | file.peep]
        peeper build [-o program] [project folder | file.peep]
        peeper run [project folder | file.peep] [arguments...]
        peeper -dump [thir | mir | ll] [project folder | file.peep]
+       peeper init [name]
        peeper lsp
   check  report the program's errors
   fix    apply the fixes the errors suggest, then report what is left
@@ -19,6 +20,8 @@ usage: peeper check [project folder | file.peep]
   run    build the program to a temporary file and run it with the arguments
   -dump  also write each module's THIR, MIR and LLVM IR, or only the one named, to
          build/debug/dumps beside the project or file, when there are no errors
+  init   make this folder a project: write peeper.toml and src/main.peep,
+         asking for the name unless given
   lsp    serve editors as a language server over stdin and stdout";
 
 /// What the arguments ask for.
@@ -36,6 +39,9 @@ pub enum Args {
         path: PathBuf,
         arguments: Vec<String>, // for the program
     },
+    Init {
+        name: Option<String>, // asked for when not given
+    },
     Lsp,
 }
 
@@ -45,6 +51,12 @@ pub fn parse(args: &[String]) -> Option<Args> {
     let kind = |mode: &str| Dump::ALL.into_iter().find(|kind| kind.extension() == mode);
     let (dumps, path, fix): (Vec<Dump>, &str, bool) = match args.as_slice() {
         ["lsp"] => return Some(Args::Lsp),
+        ["init"] => return Some(Args::Init { name: None }),
+        ["init", name] => {
+            return Some(Args::Init {
+                name: Some(name.to_string()),
+            });
+        }
         ["build", rest @ ..] => {
             let (output, path) = match rest {
                 [] => (None, "."),
@@ -91,7 +103,8 @@ mod tests {
     use super::parse;
 
     /// The path and dump extensions `args` ask for, with "fix" added for
-    /// `peeper fix`, `("lsp", [])` for `peeper lsp`, or `None`. `build` and
+    /// `peeper fix`, `("lsp", [])` for `peeper lsp`, `("init", [name])` for
+    /// `peeper init`, or `None`. `build` and
     /// `run` give "build" or "run", then -o's value or the arguments.
     fn parsed(args: &[&str]) -> Option<(String, Vec<String>)> {
         let args: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
@@ -116,6 +129,7 @@ mod tests {
                 Some((path.display().to_string(), asked))
             }
             Args::Lsp => Some(("lsp".to_string(), Vec::new())),
+            Args::Init { name } => Some(("init".to_string(), name.into_iter().collect())),
         }
     }
 
@@ -154,6 +168,8 @@ mod tests {
             some("app", &["run", "-x", "y"])
         );
         assert_eq!(parsed(&["lsp"]), some("lsp", &[]));
+        assert_eq!(parsed(&["init"]), some("init", &[]));
+        assert_eq!(parsed(&["init", "app"]), some("init", &["app"]));
         for wrong in [
             &[][..],
             &["build", "-o"],
@@ -162,6 +178,7 @@ mod tests {
             &["check", "a", "b"],
             &["fix", "a", "b"],
             &["lsp", "app"],
+            &["init", "a", "b"],
         ] {
             assert_eq!(parsed(wrong), None, "{wrong:?}");
         }

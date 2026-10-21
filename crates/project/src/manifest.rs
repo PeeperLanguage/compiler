@@ -4,6 +4,8 @@ use std::io::ErrorKind;
 use std::path::Path;
 
 pub const FILE_NAME: &str = "peeper.toml";
+/// What `valid_name` asks of a package name, for messages.
+pub const NAME_RULE: &str = "name must start with a letter and hold only letters, digits and `_`";
 
 /// What a project file says.
 #[derive(Debug, PartialEq)]
@@ -37,10 +39,7 @@ pub fn read(dir: &Path) -> Result<Manifest, String> {
         Some(name) if valid_name(name) => Ok(Manifest {
             name: name.to_string(),
         }),
-        _ => Err(format!(
-            "{}: name must start with a letter and hold only letters, digits and `_`",
-            file.display()
-        )),
+        _ => Err(format!("{}: {NAME_RULE}", file.display())),
     }
 }
 

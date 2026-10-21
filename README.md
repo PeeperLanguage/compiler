@@ -95,7 +95,7 @@ Command Line Tools and working `xcrun --sdk macosx --show-sdk-path`.
 
 Bootstrap scripts persist the Peeper binary directory in the user PATH
 idempotently; restart your terminal afterward, because a piped shell cannot
-modify its parent environment. Run `peeper doctor` after installation.
+modify its parent environment.
 
 See [`docs/distribution.md`](docs/distribution.md) for support policy, release
 security, and maintainer setup.
@@ -113,51 +113,56 @@ security, and maintainer setup.
 git clone https://github.com/PeeperLanguage/compiler.git
 cd compiler
 bash scripts/build.sh
-build/bin/peeper -help
+build/bin/peeper
 ```
 
 `scripts/build.sh` builds:
 
 - compiler binary: `build/bin/peeper`
 - bundled libraries: `build/libs`
+- runtime library: `build/runtime`
+
+Run with no arguments, `peeper` prints its usage.
 
 ## Create a project
 
-`peeper init` initializes the current directory:
+`peeper init` makes the current folder a project: a `peeper.toml` that names
+it and a `src/main.peep` that holds `main`. It asks for the name, with the
+folder's name as the default, unless one is given:
 
 ```bash
-mkdir hello-peeper
-cd hello-peeper
-/path/to/compiler/build/bin/peeper init hello-peeper
+mkdir hello_peeper
+cd hello_peeper
+/path/to/compiler/build/bin/peeper init hello_peeper
 /path/to/compiler/build/bin/peeper run
 ```
 
-Generated source starts with:
+The generated `src/main.peep`:
 
 ```peeper
 fn main() {
-    println("Hello from Peeper!");
+    write(stdout, c"Hello from Peeper!\n", 19);
 }
 ```
+
+A name is lowercased, and spaces and `-` become `_`. A name that is not a
+package name (a letter, then letters, digits and `_`), a bundled library's name
+or an existing `peeper.toml` stops it; an existing `src/main.peep` is kept.
 
 ## Commands
 
 | Command | Purpose |
 | --- | --- |
-| `peeper build [path]` | Compile a program to a native executable. |
-| `peeper run [path] [args]` | Compile and run a program on the host target. |
-| `peeper check [path ...]` | Check `.peep` files or directories without linking. |
-| `peeper init [name]` | Initialize `peeper.toml` and `src/main.peep`. |
-| `peeper get [pkg ...]` | Install manifest or named dependencies. |
-| `peeper update [pkg ...]` | Update locked dependencies. |
-| `peeper sniff [pkg ...]` | Preview available dependency updates. |
-| `peeper list` | List direct and transitive dependencies. |
-| `peeper remove <alias>` | Remove one dependency. |
-| `peeper cleanup` | Remove orphaned cached dependencies. |
-| `peeper doctor` | Validate installation, managed toolchain, and runtime. |
-| `peeper lsp` | Start the language server over standard input/output. |
+| `peeper check [path]` | Report the program's errors. |
+| `peeper fix [path]` | Apply the fixes the errors suggest, then report what is left. |
+| `peeper build [-o program] [path]` | Check the program and link it into an executable, named after the project or file unless `-o` names it. |
+| `peeper run [path] [args]` | Build the program to a temporary file and run it with the arguments. |
+| `peeper -dump [thir \| mir \| ll] [path]` | Check, then write each module's THIR, MIR and LLVM IR, or only the one named, to `build/debug/dumps`. |
+| `peeper init [name]` | Make the current folder a project: write `peeper.toml` and `src/main.peep`, asking for the name unless given. |
+| `peeper lsp` | Serve editors as a language server over standard input and output. |
 
-Run `peeper -help` for the complete command list and current aliases.
+`path` is a project folder or a single `.peep` file, and defaults to the
+current folder.
 
 ## Development
 

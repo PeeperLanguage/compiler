@@ -8,6 +8,8 @@ mod packages;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::ffi::OsString;
+use std::io::ErrorKind;
+use std::io::Write;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
@@ -191,7 +193,7 @@ pub fn find(path: &Path, libraries: &Path) -> Result<Project, String> {
         ));
     }
     let source = path.join(SOURCE_FOLDER);
-    let entry = source.join(format!("main{SOURCE_EXTENSION}"));
+    let entry = entry(&source);
     packages.insert(manifest.name.clone(), source);
     Ok(Project {
         packages,
@@ -199,6 +201,46 @@ pub fn find(path: &Path, libraries: &Path) -> Result<Project, String> {
         root: path,
         name: manifest.name,
     })
+}
+
+/// The entry file of the package whose source folder is `source`.
+fn entry(source: &Path) -> PathBuf {
+    source.join(format!("main{SOURCE_EXTENSION}"))
+}
+
+/// The entry file a new project starts with.
+const HELLO: &str = "fn main() {\n    write(stdout, c\"Hello from Peeper!\\n\", 19);\n}\n";
+
+/// Makes the folder `dir` the project `name`: writes its peeper.toml, and its
+/// src/main.peep unless that file is there already. Returns whether it wrote
+/// src/main.peep. The error is a full message naming the file it is about;
+/// an existing peeper.toml is one, and is left as it was, and so is a name
+/// that is not a package name or is taken by a library in `libraries`.
+pub fn create(dir: &Path, name: &str, libraries: &Path) -> Result<bool, String> {
+    let manifest = dir.join(manifest::FILE_NAME);
+    if !manifest::valid_name(name) {
+        return Err(format!("`{name}`: {}", manifest::NAME_RULE));
+    }
+    if bundled_libraries(libraries).contains_key(name) {
+        return Err(format!(
+            "project name `{name}` is taken by a bundled library"
+        ));
+    }
+    let write_new = |file: &Path, text: &str| {
+        std::fs::File::create_new(file).and_then(|mut file| file.write_all(text.as_bytes()))
+    };
+    write_new(&manifest, &format!("name = \"{name}\"\n")).map_err(|error| match error.kind() {
+        ErrorKind::AlreadyExists => format!("{}: already exists", manifest.display()),
+        _ => format!("{}: {error}", manifest.display()),
+    })?;
+    let source = dir.join(SOURCE_FOLDER);
+    std::fs::create_dir_all(&source).map_err(|error| format!("{}: {error}", source.display()))?;
+    let main = entry(&source);
+    match write_new(&main, HELLO) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => Ok(false),
+        Err(error) => Err(format!("{}: {error}", main.display())),
+    }
 }
 
 /// Maps each library folder in `libraries` to its src folder. No libraries
@@ -675,6 +717,38 @@ mod tests {
         let here = std::env::current_dir().unwrap();
         assert_eq!(project.root, here.join("src"));
         assert_eq!(project.entry, here.join("src/lib.rs"));
+    }
+
+    #[test]
+    fn create_makes_a_project_find_reads() {
+        let root = write("create", &[("libs/core/src/global.peep", "")]).root;
+        let create = |name| create(&root, name, &root.join("libs"));
+        assert_eq!(
+            create("my-app").map_err(|e| e.contains(manifest::NAME_RULE)),
+            Err(true)
+        );
+        let taken = "project name `core` is taken by a bundled library";
+        assert_eq!(create("core"), Err(taken.to_string()));
+        assert!(!root.join(manifest::FILE_NAME).exists());
+        assert_eq!(create("hello"), Ok(true));
+        let found = find(&root, &root.join("libs")).unwrap();
+        assert_eq!(
+            (found.name.as_str(), &found.entry),
+            ("hello", &root.join("src/main.peep"))
+        );
+        assert_eq!(std::fs::read_to_string(&found.entry).unwrap(), HELLO);
+        // A second create keeps the project as it is.
+        let error = create("other").unwrap_err();
+        assert!(error.ends_with("peeper.toml: already exists"), "{error}");
+        assert_eq!(find(&root, &root.join("libs")).unwrap().name, "hello");
+        // A main.peep already there is kept.
+        std::fs::remove_file(root.join(manifest::FILE_NAME)).unwrap();
+        std::fs::write(&found.entry, "fn main() {}").unwrap();
+        assert_eq!(create("hello"), Ok(false));
+        assert_eq!(
+            std::fs::read_to_string(&found.entry).unwrap(),
+            "fn main() {}"
+        );
     }
 
     #[test]
