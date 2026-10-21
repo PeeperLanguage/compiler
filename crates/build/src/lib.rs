@@ -1,4 +1,4 @@
-//! The scheduler: checks every declaration of a program, each once, in the
+//! A compile of a program: checks every declaration, each once, in the
 //! order declarations ask for each other (docs/ir-design.md), and lowers each
 //! function. The result of every query is kept in `check::Queries`, so a
 //! declaration is checked the first time anything needs it.

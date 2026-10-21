@@ -10,7 +10,7 @@ Deletion and direct reuse beat new layers. Clear, equivalent code beats clever b
 
 ## Pin scope
 
-- Read repo `RULES.md`, `AGENTS.md`, `go-style.md` and relevant active local plan.
+- Read repo `RULES.md`, `AGENTS.md`, `rust-style.md` and relevant active local plan.
   Consult specs/architecture for changed behavior, then verify claims against source.
   Reference existing rules instead of creating another policy or precedence hierarchy.
 - Inspect status and resolve requested baseline. For **current uncommitted changes**,

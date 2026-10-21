@@ -168,7 +168,7 @@ cargo test
 bash scripts/build.sh
 ```
 
-Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before proposing a change. Mandatory engineering requirements live in [`RULES.md`](RULES.md); Go and compiler design guidance live in [`go-style.md`](go-style.md) and [`COMPILER_GUIDELINES.md`](COMPILER_GUIDELINES.md).
+Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before proposing a change. Mandatory engineering requirements live in [`RULES.md`](RULES.md); Rust and compiler design guidance live in [`rust-style.md`](rust-style.md) and [`COMPILER_GUIDELINES.md`](COMPILER_GUIDELINES.md).
 
 Security reports belong through the private process in
 [`SECURITY.md`](SECURITY.md), not a public issue. Community participation follows

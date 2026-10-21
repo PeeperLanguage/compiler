@@ -86,16 +86,16 @@ enum variants, function types) are `model` data, written by check.
 | crate | owns |
 |---|---|
 | `model` | data only: `ast` (the syntax tree), `thir` (THIR nodes), `mir` (MIR graphs); `semantic_types` (`TypeId`, the type interner, the built-in types table); `constant` (constant values and their arithmetic); `DefId`; `BinaryOp`, `UnaryOp`; signatures |
-| `check` | the checker: scopes, name lookup, building THIR, writing signatures |
+| `check` | the checker: scopes, name lookup, building THIR, writing signatures; the query tables (`Queries`) |
 | `lower` | lowering from THIR; path checks; later the interpreter |
 | `llvm` | LLVM text for a module; running clang and the linker |
-| `build` | the scheduler: memo tables, demand order, worker threads (the `build` of `overall-design.md`) |
+| `build` | a compile: walks the modules in order, reuses unchanged ones, lowers each body (the `build` of `overall-design.md`) |
 
-A module's `Scope` lives in its `project::Module`, set once by `check`'s
-`collect` after every module is loaded; after that a module never changes.
-What a compile finds (types, query results, diagnostics) is kept apart, in
-`check::Queries`, in vectors indexed by `ModuleId`, and everything links
-by id. So its queries take `&mut self` and nothing needs a `RefCell`:
+A `project::Module` holds only what loading read and never changes. What a
+compile finds (each module's `Scope`, types, query results, diagnostics) is
+kept apart, in `check::Queries`, in vectors indexed by `ModuleId`, and
+everything links by id. `Queries::new` collects every module's scope, after
+every module is loaded. So its queries take `&mut self` and nothing needs a `RefCell`:
 holding a type across a query is a compile error, not a run-time panic. A
 scope holds declarations; a name it
 does not hold is looked up in its parent's, so a module's scope has the
@@ -218,25 +218,28 @@ mir(d)         MIR of function d (needs body(d)); later also comptime calls
   and is reported once (T0013), at the declaration asked for again; the other
   declarations of the cycle become silently invalid.
 - `check::Queries` holds the query tables and answers each query once; the
-  checker calls it directly. The `build` crate is the scheduler: it walks the
-  modules, reuses unchanged ones and lowers each body. The scopes of all
-  modules are collected first, into the modules, before any is checked.
+  checker calls it directly. The `build` crate runs a compile: it walks the
+  modules, reuses unchanged ones and lowers each body. `Queries::new`
+  collects the scopes of all modules before any is checked.
   Programs with syntax or import errors are not checked.
 - The model is a hybrid. Across modules: the program's order, so imported
   declarations are always ready (import cycles are already errors), and
-  independent modules run on separate threads. Inside a module: on demand, in the
+  independent modules can run on separate threads (not yet: `build` walks
+  them one by one). Inside a module: on demand, in the
   order declarations ask for each other. This replaces the per-module phase
   contract of `architecture.md`.
 - Every declaration is checked, used or not, so errors in unused code are still
   reported (unlike Zig).
-- Comptime later: check asks `mir(f)` and runs it in the interpreter. The checker
-  reaches `mir` through the scheduler, never by depending on the `lower` crate.
+- Comptime later: check asks `mir(f)` and runs it in the interpreter, without
+  depending on the `lower` crate. How it reaches `lower` is open, since the
+  query tables now live in `check`: a callback that `build` passes in, or
+  another owner for the tables.
 
 ## Reuse between compiles and the language server
 
 Owner's choice (2026-10-17): reuse per module, as Go's and Zig's caches do, not
-per declaration. `build::compile` takes the previous compile's `Compiled` and
-gives a new one; the command line passes `Compiled::default()`, so a cold
+per declaration. `build::compile` takes the previous compile's `Results` and
+gives new ones; the command line passes `Results::default()`, so a cold
 compile pays nothing extra. A module is not checked again when its text is
 unchanged and the interface of each module it imports (the prelude included)
 is unchanged: it keeps its diagnostics. A module's interface is a hash of what
@@ -256,7 +259,7 @@ every module's names again is most of what remains (about 7 ms).
 
 `peeper lsp` (crate `lsp`, the only user of `lsp-server`, `lsp-types` and
 `serde_json`) keeps the text of open files, which `project::load` reads before
-the disk, and one `Compiled` per program. A change is checked 200 ms after the
+the disk, and one `build::Results` per program. A change is checked 200 ms after the
 last keystroke; opening, saving and closing a file are checked at once.
 
 Go to definition and hover (owner's choice, 2026-10-18: the checker records

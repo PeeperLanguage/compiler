@@ -17,15 +17,15 @@ review.
 
 Required tools:
 
-- Go version declared in [`go.mod`](go.mod).
+- Rust, the edition and toolchain [`Cargo.toml`](Cargo.toml) declares.
 - LLVM Clang available as `clang` for native compilation and runtime fixtures.
 - Git.
 
 Build compiler and bundled library:
 
 ```bash
-go run ./scripts/bundle.go
-build/bin/peeper -version
+bash scripts/build.sh
+build/bin/peeper check x_test/<fixture>
 ```
 
 ## Project rules
@@ -33,12 +33,10 @@ build/bin/peeper -version
 Use each guidance file for its stated concern; do not copy its rules into new documents:
 
 - [`RULES.md`](RULES.md): mandatory, durable code-quality and delivery requirements.
-- [`go-style.md`](go-style.md): Go-specific style and lint guidance.
+- [`rust-style.md`](rust-style.md): Rust patterns the project has settled on.
 - [`COMPILER_GUIDELINES.md`](COMPILER_GUIDELINES.md): compiler design-review guidance.
 
-For a change that touches compiler flow or semantic model, inspect current implementation and read [`docs/compiler-architecture.md`](docs/compiler-architecture.md) as a source-verified snapshot, not permanent design authority.
-[`docs/compiler-framework/change-paths.md`](docs/compiler-framework/change-paths.md)
-is the concrete file-by-file companion for common changes.
+For a change that touches compiler flow or semantic model, inspect current implementation and read [`docs/ir-design.md`](docs/ir-design.md) and [`docs/architecture.md`](docs/architecture.md) as design notes to check against source, not permanent design authority.
 
 `AGENTS.md` contains agent workflow, not additional human-facing code policy. Conflicts among guidance, source, tests, and explicit requirements require review.
 
@@ -59,15 +57,12 @@ is the concrete file-by-file companion for common changes.
 Run focused package tests while developing. Before requesting merge, match CI:
 
 ```bash
-gofmt -w path/to/touched.go
-go vet ./...
-go test ./...
-go test -race ./...
-go run ./scripts/bundle.go
-PEEPER_BIN="$PWD/build/bin/peeper" go test -count=1 ./x_test
+cargo fmt --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+bash scripts/build.sh
+PEEPER="$PWD/build/bin/peeper" cargo test -p peeper --test fixtures
 ```
-
-Do not run `gofmt` over untouched files solely to create unrelated churn.
 
 Language features and behavior changes require Peeper source coverage under
 `x_test/`:
@@ -75,7 +70,7 @@ Language features and behavior changes require Peeper source coverage under
 - add a positive type or runtime fixture;
 - add negative fixtures for rejected semantics when applicable;
 - validate fixtures with bundled `build/bin/peeper`;
-- retain focused Go tests near affected compiler packages.
+- retain focused Rust unit tests near affected compiler crates.
 
 Backend or ABI changes need coverage for every affected target width. Semantic
 acceptance changes must prove downstream THIR, MIR, and backend lowerability.

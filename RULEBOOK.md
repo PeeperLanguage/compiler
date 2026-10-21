@@ -1,6 +1,6 @@
 # Peeper Compiler Design Review Guide
 
-This file contains optional questions for evaluating compiler designs. Mandatory engineering requirements live in [`RULES.md`](./RULES.md); agent workflow lives in [`AGENTS.md`](./AGENTS.md); current implementation maps live in [`docs/architecture/`](./docs/architecture/).
+This file contains optional questions for evaluating compiler designs. Mandatory engineering requirements live in [`RULES.md`](./RULES.md); agent workflow lives in [`AGENTS.md`](./AGENTS.md); design and architecture notes live in [`docs/`](./docs/).
 
 This guide does not define language semantics, pipeline order, package ownership, or required representations. Those choices must be checked against explicit requirements, source, tests, and engineering purpose.
 

@@ -6,10 +6,9 @@ Guidance is separated by concern:
 
 - [`RULES.md`](./RULES.md): code quality, validation, branch, and commit requirements.
 - [`AGENTS.md`](./AGENTS.md): agent workflow, gates, local plans, and handoff requirements.
-- [`go-style.md`](./go-style.md): Go-specific idioms and linter guidance.
 - [`rust-style.md`](./rust-style.md): Rust patterns the project has settled on.
 - [`RULEBOOK.md`](./RULEBOOK.md): optional design-review questions.
-- [`docs/architecture/`](./docs/architecture/): source-verified snapshots of current implementation.
+- [`docs/`](./docs/): design and architecture notes (`ir-design.md`, `architecture.md`).
 
 No document's self-declared precedence proves a technical or semantic claim correct. When guidance conflicts, inspect explicit requirements, source behavior, tests, and engineering purpose; resolve conflict rather than silently choosing one file.
 
@@ -167,23 +166,22 @@ Peeper is pre-stable and targets the current language grammar. Do not preserve d
 
 ## 7. Errors, diagnostics, and panics
 
-Preserve root-cause context and error identity. When wrapping Go error, use `%w` so callers can use `errors.Is` and `errors.As`.
+Preserve root-cause context. When wrapping an error, keep its cause in the message (`format!("{}: {error}", path.display())`) so the reader sees what failed and where.
 
 Reuse shared diagnostic codes, phrasing, and construction when failure class is same. Keep source location and relevant type/name context.
 
 Return errors for expected failures such as invalid user input, missing files, parse/type/import failures, and expected validation failures.
 
-Use `panic` only for broken internal invariants such as unreachable branches, impossible IR states, guaranteed-non-nil violations, or unhandled closed node/effect kinds. Never use panic instead of expected error propagation, and never silently ignore internal invariant violation.
+Use `panic!`, `unreachable!` or `expect` only for broken internal invariants such as unreachable branches, impossible IR states, or values that must be present. Never use panic instead of expected error propagation, and never silently ignore internal invariant violation.
 
-## 8. Go style
+## 8. Rust style
 
-Follow [`go-style.md`](./go-style.md). At minimum:
+Follow [`rust-style.md`](./rust-style.md). At minimum:
 
-- run `gofmt` on touched Go files;
+- run `cargo fmt` and keep `cargo clippy --workspace --all-targets -- -D warnings` clean;
 - keep imports clean;
-- prefer simple, idiomatic Go;
-- avoid global mutable state unless ownership and synchronization require it;
-- avoid package variables unless they represent immutable definitions or approved shared state.
+- prefer simple, idiomatic Rust;
+- avoid global mutable state (`static mut`, global cells) unless ownership and synchronization require it.
 
 ## 9. Testing and validation
 
@@ -193,7 +191,7 @@ Language behavior changes require:
 
 - positive Peeper source fixture under `x_test/`;
 - negative fixtures for rejected semantics when applicable;
-- focused Go tests for affected evidence and invariants;
+- focused Rust unit tests for affected evidence and invariants;
 - validation with bundled `build/bin/peeper`.
 
 Additional requirements:
@@ -204,13 +202,13 @@ Additional requirements:
 - reject target-sized values that cannot be represented without loss; never rely on backend truncation to make invalid source compile;
 - require every semantically accepted construct, synthesized member, and conformance to be materializable by all affected lowering and backend stages;
 - when semantic discovery changes accepted methods or conformance, validate accepted/rejected behavior through all affected lowering and backend stages, not typechecker alone;
-- run `go run ./scripts/bundle.go` when packaging or bundled libraries may be affected.
+- run `bash scripts/build.sh` when packaging or bundled libraries may be affected.
 
 Minimum validation before commit:
 
-- `gofmt` on touched Go files;
-- focused `go test` commands for touched packages;
-- `go test ./...` when change scope or repository policy requires full validation;
+- `cargo fmt` and `cargo clippy --workspace --all-targets -- -D warnings`;
+- focused `cargo test -p <crate>` for touched crates;
+- `cargo test --workspace` when change scope or repository policy requires full validation;
 - targeted source fixture or smoke validation for language/runtime changes;
 - affected backend and target validation;
 - bundle validation when packaging or built-ins change;

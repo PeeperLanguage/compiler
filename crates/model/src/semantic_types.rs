@@ -129,7 +129,7 @@ fixed_types! {
     CSTR "cstr" => Type::CString,
 }
 
-/// The types of a program, owned by the scheduler for one compile.
+/// The types of a program, for one compile (`check::Queries` holds them).
 pub struct Types {
     types: Vec<Type>,
     ids: HashMap<Type, TypeId>,

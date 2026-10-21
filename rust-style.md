@@ -26,9 +26,8 @@ that can change, keep the text as the one source: an edit changes the text and
 parses it again into new data. Do not patch the text and the data side by side.
 Checking that the new data holds what was set catches a value written wrongly.
 
-- `pkg/toml` `Document::set`: splices only the value's bytes, reparses, and
-  fails without change when the value does not read back.
-  (That crate is deprecated; peeper now edits TOML with `toml_edit`.)
+- `peeper fix` writes the fixes into the files' text, then loads and checks
+  the program again (`Command::run_check`); it never patches a syntax tree.
 
 Why: two copies patched by hand drift apart; a reparse cannot.
 
@@ -131,9 +130,9 @@ Go compiles one function at a time. Keeping every function's MIR in a `Vec`
 took a 20k-function file from 60 MB to 98 MB and was slower.
 
 **Hand a cache in and get it back as a value.** `build::compile` takes the
-previous compile's `Compiled` by value and gives the new one: cached entries
+previous compile's `Results` by value and gives new ones: cached entries
 move instead of being copied, and there is no long-lived object changing in
-place. The command line passes `Compiled::default()`.
+place. The command line passes `Results::default()`.
 
 **Pick a field with a closure when one routine serves several tables.**
 `Queries::query` runs the query state machine once for every query; each
@@ -154,7 +153,7 @@ size is known, not estimated.
 
 **An IR prints itself, beside its data, and a command writes it.**
 `thir::Body::text` and `mir::Body::text` live beside their data, as
-`Types::text` lives in `model::types`, and `peeper -dump [thir | mir]` writes
+`Types::text` lives in `model::semantic_types`, and `peeper -dump [thir | mir]` writes
 them to files under build/debug/dumps. A printer only tests call has no
 production caller and grows inside a test module; tests call the same printer.
 
