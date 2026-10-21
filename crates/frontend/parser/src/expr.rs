@@ -7,6 +7,8 @@
 
 use arena::Id;
 use diagnostics::Diagnostic;
+use model::BinaryOp;
+use model::UnaryOp;
 use model::ast::Expr;
 use model::ast::Type;
 use token::TokenKind;
@@ -86,7 +88,7 @@ static RULES: Rules = {
     rules.prefix(TokenKind::Dot, anonymous_struct_literal);
 
     // prefix operators and built-in calls
-    rules.prefix(TokenKind::Plus, unary);
+    rules.prefix(TokenKind::Plus, leading_plus);
     rules.prefix(TokenKind::Minus, unary);
     rules.prefix(TokenKind::Bang, unary);
     rules.prefix(TokenKind::Tilde, unary);
@@ -317,9 +319,29 @@ fn parentheses(p: &mut Parser) -> Id<Expr> {
 /// operators that bind tighter, so operators of one precedence group to the
 /// left: a - b - c is (a - b) - c.
 fn binary(p: &mut Parser, left: Id<Expr>) -> Id<Expr> {
-    let op = p.next().kind;
-    let (precedence, _) =
-        RULES.infix[op as usize].expect("binary is the infix rule of its operator");
+    let kind = p.next().kind;
+    let (precedence, _) = RULES.infix[kind as usize].expect("binary is an infix rule");
+    let op = match kind {
+        TokenKind::Plus => BinaryOp::Add,
+        TokenKind::Minus => BinaryOp::Subtract,
+        TokenKind::Asterisk => BinaryOp::Multiply,
+        TokenKind::Slash => BinaryOp::Divide,
+        TokenKind::Percent => BinaryOp::Remainder,
+        TokenKind::ShiftLeft => BinaryOp::ShiftLeft,
+        TokenKind::ShiftRight => BinaryOp::ShiftRight,
+        TokenKind::Ampersand => BinaryOp::BitAnd,
+        TokenKind::Pipe => BinaryOp::BitOr,
+        TokenKind::Caret => BinaryOp::BitXor,
+        TokenKind::EqualEqual => BinaryOp::EqualTo,
+        TokenKind::BangEqual => BinaryOp::NotEqualTo,
+        TokenKind::Less => BinaryOp::LessThan,
+        TokenKind::LessEqual => BinaryOp::LessOrEqual,
+        TokenKind::Greater => BinaryOp::GreaterThan,
+        TokenKind::GreaterEqual => BinaryOp::GreaterOrEqual,
+        TokenKind::AndAnd => BinaryOp::LogicalAnd,
+        TokenKind::OrOr => BinaryOp::LogicalOr,
+        _ => unreachable!("binary is the rule of operator tokens only"),
+    };
     let right = p.expr(precedence);
     p.add(p.start_of(left), Expr::Binary { op, left, right })
 }
@@ -336,11 +358,33 @@ fn call(p: &mut Parser, callee: Id<Expr>) -> Id<Expr> {
     p.add(p.start_of(callee), Expr::Call { callee, arguments })
 }
 
-/// Reads `+x`, `-x`, `!x` or `~x`.
+/// Reads `+x` as `x`, reporting the `+`: there is no unary `+`, as it would
+/// change nothing.
+fn leading_plus(p: &mut Parser) -> Id<Expr> {
+    let plus = p.next().span;
+    let fix = p.fix(plus, "");
+    p.repair(
+        Diagnostic::new(
+            diagnostics::INVALID_EXPRESSION,
+            "`+` is not a prefix operator",
+        )
+        .label(&p.tree.file, plus, "")
+        .help("remove it; `+x` is just `x`", vec![fix]),
+    );
+    p.expr(Precedence::Prefix)
+}
+
+/// Reads `-x`, `!x` or `~x`.
 fn unary(p: &mut Parser) -> Id<Expr> {
-    let op = p.next();
+    let token = p.next();
+    let op = match token.kind {
+        TokenKind::Minus => UnaryOp::Negate,
+        TokenKind::Bang => UnaryOp::LogicalNot,
+        TokenKind::Tilde => UnaryOp::BitNot,
+        _ => unreachable!("unary is the rule of operator tokens only"),
+    };
     let value = p.expr(Precedence::Prefix);
-    p.add(op.span.start, Expr::Unary { op: op.kind, value })
+    p.add(token.span.start, Expr::Unary { op, value })
 }
 
 /// Reads `&x` or `&mut x`.
@@ -465,6 +509,49 @@ mod tests {
     use crate::tests::one_error;
     use crate::tests::parse_text;
 
+    /// There is no unary `+`: a leading one is reported, and its fix removes it.
+    #[test]
+    fn leading_plus() {
+        one_error(
+            "fn f() { let a = +5; }",
+            "`+` is not a prefix operator",
+            Some("fn f() { let a = 5; }"),
+        );
+    }
+
+    /// An operator is written as the token it is read from: each binary and
+    /// unary operator comes from exactly one operator token, whose text is
+    /// the operator's symbol.
+    #[test]
+    fn operators_are_written_as_their_tokens() {
+        let (mut binary, mut unary) = (0, 0);
+        for &kind in token::OPERATORS {
+            for text in [
+                format!("fn f() {{ a {} b; }}", kind.text()),
+                format!("fn f() {{ {}a; }}", kind.text()),
+            ] {
+                let (tree, errors) = parse_text(&text);
+                if !errors.is_empty() {
+                    continue;
+                }
+                for id in tree.exprs.ids() {
+                    match tree.exprs[id] {
+                        Expr::Binary { op, .. } => {
+                            assert_eq!(op.symbol(), kind.text(), "{text}");
+                            binary += 1;
+                        }
+                        Expr::Unary { op, .. } => {
+                            assert_eq!(op.symbol(), kind.text(), "{text}");
+                            unary += 1;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        assert_eq!((binary, unary), (18, 3));
+    }
+
     /// The expression of the first statement of the first function.
     fn first_expression(tree: &Tree) -> Id<Expr> {
         let decl = tree.lists.items(tree.top_level).next().unwrap();
@@ -487,7 +574,12 @@ mod tests {
         let text = |span| t.file.slice(span).to_string();
         match t.exprs[id] {
             Expr::Binary { op, left, right } => {
-                format!("({} {} {})", grouped(t, left), op.text(), grouped(t, right))
+                format!(
+                    "({} {} {})",
+                    grouped(t, left),
+                    op.symbol(),
+                    grouped(t, right)
+                )
             }
             Expr::Cast { value, ty } => {
                 format!("({} as {})", grouped(t, value), text(t.types.span(ty)))

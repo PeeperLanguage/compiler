@@ -3,6 +3,7 @@
 use arena::Id;
 use arena::List;
 use diagnostics::Diagnostic;
+use model::BinaryOp;
 use model::ast::Block;
 use model::ast::Expr;
 use model::ast::MatchArm;
@@ -212,7 +213,7 @@ fn if_statement(p: &mut Parser) -> Id<Stmt> {
             condition = p.add(
                 left_start,
                 Expr::Binary {
-                    op: TokenKind::EqualEqual,
+                    op: BinaryOp::EqualTo,
                     left: condition,
                     right,
                 },
@@ -498,6 +499,27 @@ mod tests {
 ";
         assert!(messages(text).is_empty());
         assert_eq!(dump_of(text), want);
+    }
+
+    /// `if a = b` is read as the comparison it was meant to be.
+    #[test]
+    fn assignment_in_condition_is_read_as_equal_to() {
+        let (tree, _) = crate::tests::parse_text("fn f() { if a = b {} }");
+        let condition = tree
+            .stmts
+            .ids()
+            .find_map(|statement| match tree.stmts[statement] {
+                model::ast::Stmt::If { condition, .. } => Some(condition),
+                _ => None,
+            })
+            .expect("an if statement");
+        assert!(matches!(
+            tree.exprs[condition],
+            model::ast::Expr::Binary {
+                op: model::BinaryOp::EqualTo,
+                ..
+            }
+        ));
     }
 
     #[test]

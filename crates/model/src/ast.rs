@@ -14,7 +14,9 @@ use arena::Node;
 use arena::nodes;
 use source::SourceFile;
 use source::Span;
-use token::TokenKind;
+
+use crate::BinaryOp;
+use crate::UnaryOp;
 
 nodes! {
     Tree;
@@ -395,12 +397,12 @@ pub enum Expr {
     None,
     /// `left op right`
     Binary {
-        op: TokenKind,
+        op: BinaryOp,
         left: Id<Expr>,
         right: Id<Expr>,
     },
-    /// `+x`, `-x`, `!x` or `~x`
-    Unary { op: TokenKind, value: Id<Expr> },
+    /// `-x`, `!x` or `~x`
+    Unary { op: UnaryOp, value: Id<Expr> },
     /// `&x` or `&mut x`
     Reference { mutable: bool, value: Id<Expr> },
     /// `@x`

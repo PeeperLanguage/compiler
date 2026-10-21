@@ -1,0 +1,7 @@
+// There is no unary `+`, as it would change nothing. A leading one is
+// reported with a fix and read past, so the type checker still runs and
+// reports `nam`.
+fn main() {
+    let a: i32 = +5;
+    let b = +nam;
+}

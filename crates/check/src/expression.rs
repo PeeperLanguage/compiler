@@ -23,7 +23,6 @@ use model::semantic_types::TypeId;
 use model::thir::Expr;
 use model::thir::ExprKind;
 use source::Span;
-use token::TokenKind;
 
 use crate::builtin::UNSUPPORTED_FUNCTIONS;
 use crate::statement::ThirBuilder;
@@ -433,7 +432,7 @@ impl ThirBuilder<'_, '_> {
     /// `op operand`, written at `span`.
     fn unary(
         &mut self,
-        op: TokenKind,
+        op: UnaryOp,
         operand: Id<ast::Expr>,
         span: Span,
         expected: Option<TypeId>,
@@ -442,38 +441,32 @@ impl ThirBuilder<'_, '_> {
         let operand_span = tree.exprs.span(operand);
         // Only a literal right after `-` is a negative literal: `-(128)`
         // negates `128`, which does not fit `i8`.
-        if op == TokenKind::Minus && matches!(tree.exprs[operand], ast::Expr::Number) {
+        if op == UnaryOp::Negate && matches!(tree.exprs[operand], ast::Expr::Number) {
             return self.number(operand_span, Some(span), expected);
         }
         let checked = match op {
-            TokenKind::Bang => self.expr(operand, Some(TypeId::BOOL)),
+            UnaryOp::LogicalNot => self.expr(operand, Some(TypeId::BOOL)),
             _ => self.expr(operand, expected),
         };
         if checked.ty == TypeId::INVALID {
             return Expr::INVALID;
         }
         let ty = self.checker.queries.types[checked.ty].clone();
-        let number = matches!(ty, Type::Integer(_) | Type::Float(_));
-        let (unary_op, accepted) = match op {
-            TokenKind::Plus => (None, number),
-            TokenKind::Minus => (Some(UnaryOp::Negate), number),
-            TokenKind::Bang => (Some(UnaryOp::LogicalNot), ty == Type::Bool),
-            TokenKind::Tilde => (Some(UnaryOp::BitNot), matches!(ty, Type::Integer(_))),
-            _ => unreachable!("`{}` is not a unary operator", op.text()),
+        let accepted = match op {
+            UnaryOp::Negate => matches!(ty, Type::Integer(_) | Type::Float(_)),
+            UnaryOp::LogicalNot => ty == Type::Bool,
+            UnaryOp::BitNot => matches!(ty, Type::Integer(_)),
         };
         if !accepted {
-            return self.invalid_operand(op, checked.ty, span);
+            return self.invalid_operand(op.symbol(), checked.ty, span);
         }
-        let Some(unary_op) = unary_op else {
-            return checked; // `+x` is `x`
-        };
         let result = checked.ty;
         let kind = match checked.kind {
             ExprKind::Constant(constant) => ExprKind::Constant(
-                constant::unary(unary_op, &ty, &constant).expect("unary operators do not trap"),
+                constant::unary(op, &ty, &constant).expect("unary operators do not trap"),
             ),
             kind => ExprKind::Unary {
-                op: unary_op,
+                op,
                 value: self.body.add(Expr { ty: result, kind }, operand_span),
             },
         };
@@ -488,7 +481,7 @@ impl ThirBuilder<'_, '_> {
     /// left one's.
     fn binary(
         &mut self,
-        op: TokenKind,
+        op: BinaryOp,
         left: Id<ast::Expr>,
         right: Id<ast::Expr>,
         span: Span,
@@ -496,9 +489,8 @@ impl ThirBuilder<'_, '_> {
     ) -> Expr {
         let tree = &self.checker.module().ast;
         let (left_span, right_span) = (tree.exprs.span(left), tree.exprs.span(right));
-        let binary_op = binary_op(op);
         let comparison = matches!(
-            binary_op,
+            op,
             BinaryOp::EqualTo
                 | BinaryOp::NotEqualTo
                 | BinaryOp::LessThan
@@ -506,7 +498,7 @@ impl ThirBuilder<'_, '_> {
                 | BinaryOp::GreaterThan
                 | BinaryOp::GreaterOrEqual
         );
-        let shift = matches!(binary_op, BinaryOp::ShiftLeft | BinaryOp::ShiftRight);
+        let shift = matches!(op, BinaryOp::ShiftLeft | BinaryOp::ShiftRight);
         let left_literal = unsuffixed_literal(tree, left);
         let left = self.expr(left, if comparison { None } else { expected });
         let right = if shift {
@@ -538,7 +530,7 @@ impl ThirBuilder<'_, '_> {
             let types = &mut self.checker.queries.types;
             (types[left.ty].clone(), types[right.ty].clone())
         };
-        let accepted = match binary_op {
+        let accepted = match op {
             BinaryOp::Add
             | BinaryOp::Subtract
             | BinaryOp::Multiply
@@ -559,7 +551,7 @@ impl ThirBuilder<'_, '_> {
             BinaryOp::LogicalAnd | BinaryOp::LogicalOr => left_type == Type::Bool,
         };
         if !accepted {
-            return self.invalid_operand(op, left.ty, span);
+            return self.invalid_operand(op.symbol(), left.ty, span);
         }
         if shift && !matches!(right_type, Type::Integer(_)) {
             let count = self.checker.queries.types.text(right.ty);
@@ -568,7 +560,7 @@ impl ThirBuilder<'_, '_> {
                 .error(diagnostics::INVALID_OPERATION, message, right_span);
             return Expr::INVALID;
         }
-        if let Some(message) = known_trap(binary_op, &left_type, &right_type, &right) {
+        if let Some(message) = known_trap(op, &left_type, &right_type, &right) {
             self.checker
                 .error(diagnostics::INVALID_OPERATION, message, right_span);
             return Expr::INVALID;
@@ -577,9 +569,8 @@ impl ThirBuilder<'_, '_> {
         if let (ExprKind::Constant(left_value), ExprKind::Constant(right_value)) =
             (&left.kind, &right.kind)
         {
-            let folded =
-                constant::binary(binary_op, &left_type, left_value, &right_type, right_value)
-                    .expect("known traps were reported before folding");
+            let folded = constant::binary(op, &left_type, left_value, &right_type, right_value)
+                .expect("known traps were reported before folding");
             return Expr {
                 ty,
                 kind: ExprKind::Constant(folded),
@@ -589,18 +580,14 @@ impl ThirBuilder<'_, '_> {
         let right = self.body.add(right, right_span);
         Expr {
             ty,
-            kind: ExprKind::Binary {
-                op: binary_op,
-                left,
-                right,
-            },
+            kind: ExprKind::Binary { op, left, right },
         }
     }
 
     /// Reports `op` applied to an operand of the type `ty`, at `span`.
-    fn invalid_operand(&mut self, op: TokenKind, ty: TypeId, span: Span) -> Expr {
+    fn invalid_operand(&mut self, op: &str, ty: TypeId, span: Span) -> Expr {
         let ty = self.checker.queries.types.text(ty);
-        let message = format!("operator `{}` cannot be applied to `{ty}`", op.text());
+        let message = format!("operator `{op}` cannot be applied to `{ty}`");
         self.checker
             .error(diagnostics::INVALID_OPERATION, message, span);
         Expr::INVALID
@@ -659,29 +646,4 @@ fn unsuffixed_literal(tree: &ast::Tree, expression: Id<ast::Expr>) -> Option<&st
     let text = tree.file.slice(tree.exprs.span(expression));
     let number = matches!(tree.exprs[expression], ast::Expr::Number);
     (number && numeric::split(text).suffix.is_empty()).then_some(text)
-}
-
-/// The operator of a binary expression.
-fn binary_op(op: TokenKind) -> BinaryOp {
-    match op {
-        TokenKind::Plus => BinaryOp::Add,
-        TokenKind::Minus => BinaryOp::Subtract,
-        TokenKind::Asterisk => BinaryOp::Multiply,
-        TokenKind::Slash => BinaryOp::Divide,
-        TokenKind::Percent => BinaryOp::Remainder,
-        TokenKind::ShiftLeft => BinaryOp::ShiftLeft,
-        TokenKind::ShiftRight => BinaryOp::ShiftRight,
-        TokenKind::Ampersand => BinaryOp::BitAnd,
-        TokenKind::Pipe => BinaryOp::BitOr,
-        TokenKind::Caret => BinaryOp::BitXor,
-        TokenKind::EqualEqual => BinaryOp::EqualTo,
-        TokenKind::BangEqual => BinaryOp::NotEqualTo,
-        TokenKind::Less => BinaryOp::LessThan,
-        TokenKind::LessEqual => BinaryOp::LessOrEqual,
-        TokenKind::Greater => BinaryOp::GreaterThan,
-        TokenKind::GreaterEqual => BinaryOp::GreaterOrEqual,
-        TokenKind::AndAnd => BinaryOp::LogicalAnd,
-        TokenKind::OrOr => BinaryOp::LogicalOr,
-        _ => unreachable!("`{}` is not a binary operator", op.text()),
-    }
 }

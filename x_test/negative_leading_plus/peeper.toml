@@ -1,0 +1,7 @@
+name = "negative_leading_plus"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["`+` is not a prefix operator", "= fix: remove it; `+x` is just `x`", "unknown name `nam`", "Compilation failed with 3 error(s)"]

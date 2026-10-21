@@ -70,15 +70,15 @@ fn declared(name: Ident) -> Item {
     Item::Leaf("declared name", name.span)
 }
 
-fn mutable(on: bool) -> Option<TokenKind> {
-    on.then_some(TokenKind::Mut)
+fn mutable(on: bool) -> Option<&'static str> {
+    on.then_some(TokenKind::Mut.text())
 }
 
 impl Dumper<'_> {
     fn write(
         &mut self,
         kind: &str,
-        op: Option<TokenKind>,
+        op: Option<&'static str>,
         span: Span,
         children: &[Item],
         depth: usize,
@@ -89,7 +89,7 @@ impl Dumper<'_> {
         self.out.push_str(kind);
         if let Some(op) = op {
             self.out.push(' ');
-            self.out.push_str(op.text());
+            self.out.push_str(op);
         }
         if self.spans {
             self.out.push_str(&format!(" @{}-{}", span.start, span.end));
@@ -116,7 +116,7 @@ impl Dumper<'_> {
                 .items(list)
                 .map(move |name| Item::Leaf(kind, t.names.span(name)))
         };
-        let (kind, op, span, children): (&str, Option<TokenKind>, Span, Vec<Item>) = match item {
+        let (kind, op, span, children): (&str, Option<&'static str>, Span, Vec<Item>) = match item {
             Item::Leaf(kind, span) => (kind, None, span, vec![]),
             Item::Import(i) => (
                 "import declaration",
@@ -286,7 +286,7 @@ impl Dumper<'_> {
         children
     }
 
-    fn type_node(&self, id: Id<Type>) -> (&'static str, Option<TokenKind>, Span, Vec<Item>) {
+    fn type_node(&self, id: Id<Type>) -> (&'static str, Option<&'static str>, Span, Vec<Item>) {
         let t = self.tree;
         let span = t.types.span(id);
         let one = |ty: Id<Type>| vec![Item::Type(ty)];
@@ -336,7 +336,7 @@ impl Dumper<'_> {
         (kind, op, span, children)
     }
 
-    fn stmt(&self, id: Id<Stmt>) -> (&'static str, Option<TokenKind>, Span, Vec<Item>) {
+    fn stmt(&self, id: Id<Stmt>) -> (&'static str, Option<&'static str>, Span, Vec<Item>) {
         let t = self.tree;
         let (kind, op, children) = match t.stmts[id] {
             Stmt::Let {
@@ -407,7 +407,7 @@ impl Dumper<'_> {
         (kind, op, t.stmts.span(id), children)
     }
 
-    fn pattern(&self, id: Id<Pattern>) -> (&'static str, Option<TokenKind>, Span, Vec<Item>) {
+    fn pattern(&self, id: Id<Pattern>) -> (&'static str, Option<&'static str>, Span, Vec<Item>) {
         let t = self.tree;
         let (kind, children) = match t.patterns[id] {
             Pattern::Wildcard => ("wildcard pattern", vec![]),
@@ -433,7 +433,7 @@ impl Dumper<'_> {
         (kind, None, t.patterns.span(id), children)
     }
 
-    fn expr(&self, id: Id<Expr>) -> (&'static str, Option<TokenKind>, Span, Vec<Item>) {
+    fn expr(&self, id: Id<Expr>) -> (&'static str, Option<&'static str>, Span, Vec<Item>) {
         let t = self.tree;
         let one = |e: Id<Expr>| vec![Item::Expr(e)];
         let two = |a: Id<Expr>, b: Item| vec![Item::Expr(a), b];
@@ -442,20 +442,22 @@ impl Dumper<'_> {
             Expr::Number => ("number literal", None, vec![]),
             Expr::String { c_string } => (
                 "string literal",
-                c_string.then_some(TokenKind::CString),
+                c_string.then_some(TokenKind::CString.text()),
                 vec![],
             ),
             Expr::Char { byte } => (
                 "character literal",
-                byte.then_some(TokenKind::ByteChar),
+                byte.then_some(TokenKind::ByteChar.text()),
                 vec![],
             ),
             Expr::Bool(_) => ("bool literal", None, vec![]),
             Expr::None => ("none literal", None, vec![]),
-            Expr::Binary { op, left, right } => {
-                ("binary expression", Some(op), two(left, Item::Expr(right)))
-            }
-            Expr::Unary { op, value } => ("unary expression", Some(op), one(value)),
+            Expr::Binary { op, left, right } => (
+                "binary expression",
+                Some(op.symbol()),
+                two(left, Item::Expr(right)),
+            ),
+            Expr::Unary { op, value } => ("unary expression", Some(op.symbol()), one(value)),
             Expr::Reference { mutable: m, value } => {
                 ("reference expression", mutable(m), one(value))
             }
@@ -468,9 +470,9 @@ impl Dumper<'_> {
             Expr::Print { newline, value } => (
                 "print expression",
                 Some(if newline {
-                    TokenKind::Println
+                    TokenKind::Println.text()
                 } else {
-                    TokenKind::Print
+                    TokenKind::Print.text()
                 }),
                 value.map(Item::Expr).into_iter().collect(),
             ),
@@ -494,9 +496,9 @@ impl Dumper<'_> {
             } => (
                 "range",
                 Some(if inclusive {
-                    TokenKind::DotDotEqual
+                    TokenKind::DotDotEqual.text()
                 } else {
-                    TokenKind::DotDot
+                    TokenKind::DotDot.text()
                 }),
                 start.into_iter().chain(end).map(Item::Expr).collect(),
             ),

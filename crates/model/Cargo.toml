@@ -10,7 +10,6 @@ publish.workspace = true
 arena.workspace = true
 bigint.workspace = true
 source.workspace = true
-token.workspace = true
 
 [lints]
 workspace = true
