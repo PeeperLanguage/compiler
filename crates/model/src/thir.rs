@@ -46,7 +46,7 @@ pub struct Body {
     pub variables: Arena<Variable>, // with the span of each name
     /// Each `const` of the body, by its type and value, with the span of its
     /// name; `None` when its value had an error. Uses of it are folded.
-    pub consts: Arena<Option<Constant>>,
+    pub constants: Arena<Option<Constant>>,
     pub lists: Lists,
     /// Checking it reported an error: later phases would only find what
     /// follows from that, so it is not lowered.
@@ -154,7 +154,7 @@ impl Body {
     pub fn declared(&self, local: Local) -> Span {
         match local {
             Local::Variable(variable) => self.variables.span(variable),
-            Local::Constant(constant) => self.consts.span(constant),
+            Local::Constant(constant) => self.constants.span(constant),
         }
     }
 

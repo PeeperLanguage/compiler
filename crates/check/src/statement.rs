@@ -238,7 +238,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 let ast::Decl::Const { name, .. } = tree.decls[declaration] else {
                     unreachable!("a const statement holds a const declaration")
                 };
-                let constant = self.body.consts.push(value, name.span);
+                let constant = self.body.constants.push(value, name.span);
                 self.declare(name, Local::Constant(constant));
                 return None;
             }
@@ -466,7 +466,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         let variable = match self.resolve(span)? {
             Symbol::Local(Local::Variable(variable)) => variable,
             Symbol::Local(Local::Constant(constant)) => {
-                let declared = self.body.consts.span(constant);
+                let declared = self.body.constants.span(constant);
                 self.checker.diagnostics.push(
                     Diagnostic::new(
                         diagnostics::CONSTANT_REASSIGNMENT,

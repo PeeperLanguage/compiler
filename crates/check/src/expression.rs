@@ -158,7 +158,7 @@ impl ThirBuilder<'_, '_> {
                 };
             }
             Some(Symbol::Local(Local::Constant(constant))) => {
-                return constant_expr(self.body.consts[constant].clone());
+                return constant_expr(self.body.constants[constant].clone());
             }
             Some(Symbol::Constant(constant)) => {
                 return constant_expr(self.checker.queries.constant(constant));
@@ -296,7 +296,7 @@ impl ThirBuilder<'_, '_> {
             ast::Expr::Name => match self.resolve(callee_span) {
                 // Their errors were reported.
                 Some(Symbol::Local(Local::Constant(constant)))
-                    if self.body.consts[constant].is_none() =>
+                    if self.body.constants[constant].is_none() =>
                 {
                     None
                 }

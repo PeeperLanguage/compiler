@@ -579,7 +579,7 @@ impl CachedName {
                 declared: body.declared(local),
                 ty: types.text(match local {
                     Local::Variable(variable) => body.variables[variable].ty,
-                    Local::Constant(constant) => body.consts[constant]
+                    Local::Constant(constant) => body.constants[constant]
                         .as_ref()
                         .map_or(TypeId::INVALID, |constant| constant.ty),
                 }),

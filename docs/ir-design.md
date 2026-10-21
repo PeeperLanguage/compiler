@@ -268,7 +268,7 @@ names, not a second resolver). While checking a body, the checker appends a
 looks every written name up, and module paths). Its `Symbol` is what the
 checker resolved, not a copy: a local or body `const` by its id (the body's
 arenas hold its span and type, so body `const`s get an arena of their own,
-`consts`), else a module-level declaration or module. A body with an error
+`constants`), else a module-level declaration or module. A body with an error
 keeps its THIR, marked `has_errors` (as rustc marks typeck results
 `tainted_by_errors`), so names work while a function is broken; `lower::lower`
 gives no MIR for it, and `use_function` gets its THIR alone. `build` runs the
