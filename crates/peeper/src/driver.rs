@@ -78,9 +78,15 @@ impl<W: Write> Command<W> {
         dumps: &[Dump],
         apply_fixes: bool,
     ) -> u8 {
-        let Some((diagnostics, _)) = self.compile(project, program, dumps, false) else {
+        let (diagnostics, ll, dumped) = compile(project, program, dumps, false);
+        // Dumps are written only for a program without errors.
+        if !diagnostics.iter().any(Diagnostic::is_error)
+            && let Err(error) =
+                dumped.write(&project.root.join("build/debug/dumps"), &ll, &mut self.out)
+        {
+            _ = writeln!(self.out, "peeper: cannot write a dump: {error}");
             return 1;
-        };
+        }
         if apply_fixes {
             let fixes = fix::chosen(&diagnostics, &project.root);
             if !fixes.is_empty() {
@@ -106,9 +112,7 @@ impl<W: Write> Command<W> {
         program: &project::Program,
         output: Option<&Path>,
     ) -> u8 {
-        let Some((diagnostics, ll)) = self.compile(project, program, &[], true) else {
-            return 1;
-        };
+        let (diagnostics, ll, _) = compile(project, program, &[], true);
         if !self.print(&diagnostics) {
             return 1;
         }
@@ -131,9 +135,7 @@ impl<W: Write> Command<W> {
         program: &project::Program,
         arguments: &[String],
     ) -> u8 {
-        let Some((diagnostics, ll)) = self.compile(project, program, &[], true) else {
-            return 1;
-        };
+        let (diagnostics, ll, _) = compile(project, program, &[], true);
         if !self.print(&diagnostics) {
             return 1;
         }
@@ -155,92 +157,6 @@ impl<W: Write> Command<W> {
                 1
             }
         }
-    }
-
-    /// Checks and lowers `program`, of `project`, unless loading it found an
-    /// error, and writes the `dumps` when it has none: to build/debug/dumps in
-    /// the project folder, or beside the file. With `links`, it also gives
-    /// each module's LLVM text and needs the entry file's `main`. Gives every
-    /// diagnostic, loading's first, and the LLVM text; `None` when a dump
-    /// cannot be written, reported.
-    fn compile<'p>(
-        &mut self,
-        project: &project::Project,
-        program: &'p project::Program,
-        dumps: &[Dump],
-        links: bool,
-    ) -> Option<(Vec<Diagnostic>, Vec<llvm::Module<'p>>)> {
-        let mut all: Vec<Diagnostic> = program.diagnostics.clone();
-        let failed = |all: &[Diagnostic]| all.iter().any(Diagnostic::is_error);
-        let pointer_bits = usize::BITS;
-        let mut ll = Vec::new(); // each module's LLVM text, when it is needed
-        // A program with a parse or load error is not checked: its errors
-        // would follow from those.
-        if !program.checkable {
-            return Some((all, ll));
-        }
-        let mut dumped = Dumps::new(program, dumps);
-        if links || dumped.wants_ll() {
-            ll = (0..program.modules.len())
-                .map(|index| llvm::Module::new(program, ModuleId::from_index(index), pointer_bits))
-                .collect();
-        }
-        // The module of the entry file, which must declare `main`.
-        let entry = program
-            .modules
-            .iter()
-            .position(|module| Path::new(&module.ast.file.path) == project.entry);
-        let mut main = None; // the entry module's `main`, and whether it returns an exit code
-        // Check and lower each function; its MIR goes to the dumps and the
-        // LLVM text as soon as it is built.
-        let results = build::compile(
-            program,
-            pointer_bits,
-            build::Results::default(),
-            false, // names are for editors
-            |&build::CheckedFunction {
-                 definition,
-                 signature,
-                 thir,
-                 mir,
-                 types,
-                 ..
-             }| {
-                if links && Some(definition.module.index()) == entry && is_main(program, definition)
-                {
-                    main = Some((definition, gives_exit_code(&types[signature])));
-                }
-                let Some(mir) = mir else {
-                    return; // it has errors
-                };
-                dumped.add(definition, thir, mir, types);
-                if let Some(module) = ll.get_mut(definition.module.index()) {
-                    module.function(definition, signature, mir, types);
-                }
-            },
-        );
-        all.extend(results.diagnostics().cloned());
-        // A program that links needs a `main` that can start it.
-        if links
-            && !failed(&all)
-            && let Some(entry) = entry
-        {
-            let file = &program.modules[entry].ast.file;
-            match main {
-                Some((main, Some(exit_code))) => ll[entry].entry_point(main, exit_code),
-                Some((main, None)) => all.push(no_entry_point(file, name_span(program, main))),
-                None => all.push(no_entry_point(file, Span::at(0))),
-            }
-        }
-        // Dumps are written only for a program without errors.
-        if !failed(&all)
-            && let Err(error) =
-                dumped.write(&project.root.join("build/debug/dumps"), &ll, &mut self.out)
-        {
-            _ = writeln!(self.out, "peeper: cannot write a dump: {error}");
-            return None;
-        }
-        Some((all, ll))
     }
 
     /// Prints `diagnostics`; on a terminal, the source they show is colored
@@ -266,6 +182,80 @@ impl<W: Write> Command<W> {
         }
         true
     }
+}
+
+/// Checks and lowers `program`, of `project`, unless loading it found an
+/// error, gathering the `dumps` of its functions. With `links`, it also
+/// needs the entry file's `main`. Gives every diagnostic, loading's
+/// first; each module's LLVM text, when linking or a dump needs it; and
+/// the dumps, to write when there is no error.
+fn compile<'p>(
+    project: &project::Project,
+    program: &'p project::Program,
+    dumps: &'p [Dump],
+    links: bool,
+) -> (Vec<Diagnostic>, Vec<llvm::Module<'p>>, Dumps<'p>) {
+    let mut all: Vec<Diagnostic> = program.diagnostics.clone();
+    let pointer_bits = usize::BITS;
+    let mut ll = Vec::new(); // each module's LLVM text, when it is needed
+    let mut dumped = Dumps::new(program, dumps);
+    // A program with a parse or load error is not checked: its errors
+    // would follow from those.
+    if !program.checkable {
+        return (all, ll, dumped);
+    }
+    if links || dumped.wants_ll() {
+        ll = (0..program.modules.len())
+            .map(|index| llvm::Module::new(program, ModuleId::from_index(index), pointer_bits))
+            .collect();
+    }
+    // The module of the entry file, which must declare `main`.
+    let entry = program
+        .modules
+        .iter()
+        .position(|module| Path::new(&module.ast.file.path) == project.entry);
+    let mut main = None; // the entry module's `main`, and whether it returns an exit code
+    // Check and lower each function; its MIR goes to the dumps and the
+    // LLVM text as soon as it is built.
+    let results = build::compile(
+        program,
+        pointer_bits,
+        build::Results::default(),
+        false, // names are for editors
+        |&build::CheckedFunction {
+             definition,
+             signature,
+             thir,
+             mir,
+             types,
+             ..
+         }| {
+            if links && Some(definition.module.index()) == entry && is_main(program, definition) {
+                main = Some((definition, gives_exit_code(&types[signature])));
+            }
+            let Some(mir) = mir else {
+                return; // it has errors
+            };
+            dumped.add(definition, thir, mir, types);
+            if let Some(module) = ll.get_mut(definition.module.index()) {
+                module.function(definition, signature, mir, types);
+            }
+        },
+    );
+    all.extend(results.diagnostics().cloned());
+    // A program that links needs a `main` that can start it.
+    if links
+        && !all.iter().any(Diagnostic::is_error)
+        && let Some(entry) = entry
+    {
+        let file = &program.modules[entry].ast.file;
+        match main {
+            Some((main, Some(exit_code))) => ll[entry].entry_point(main, exit_code),
+            Some((main, None)) => all.push(no_entry_point(file, name_span(program, main))),
+            None => all.push(no_entry_point(file, Span::at(0))),
+        }
+    }
+    (all, ll, dumped)
 }
 
 /// The runtime library's file in the installation's runtime folder.
