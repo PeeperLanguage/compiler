@@ -270,10 +270,7 @@ impl<'s> Server<'s> {
                 CachedTarget::Declaration { file, position } => {
                     let declared_in = program.module_of(file)?;
                     let tree = &declared_in.ast;
-                    let declaration = tree
-                        .lists
-                        .items(tree.declarations)
-                        .nth(*position as usize)?;
+                    let declaration = tree.lists.items(tree.top_level).nth(*position as usize)?;
                     let declared = tree.decls[declaration].name().span;
                     let hover = header(tree, declaration, &declared_in.path);
                     (&tree.file, declared, hover)
@@ -324,7 +321,7 @@ impl<'s> Server<'s> {
                     let tree = &module.ast;
                     let position = tree
                         .lists
-                        .items(tree.declarations)
+                        .items(tree.top_level)
                         .position(|declaration| at(tree.decls[declaration].name().span))?;
                     CachedTarget::Declaration {
                         file: file.clone(),

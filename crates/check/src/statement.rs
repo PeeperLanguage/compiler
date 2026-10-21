@@ -528,7 +528,7 @@ mod tests {
     fn bodies(text: &str) -> (Vec<String>, Vec<Reported>) {
         let (bodies, types, reported) = with_checker(text, |checker| {
             let tree = &checker.module().ast;
-            let declarations: Vec<_> = tree.lists.items(tree.declarations).collect();
+            let declarations: Vec<_> = tree.lists.items(tree.top_level).collect();
             let mut bodies = Vec::new();
             for declaration in declarations {
                 let ast::Decl::Function(function) = checker.module().ast.decls[declaration] else {
@@ -785,7 +785,7 @@ mod tests {
     fn notes(text: &str) -> Vec<(String, Option<String>)> {
         let (notes, _, _) = with_checker(text, |checker| {
             let tree = &checker.module().ast;
-            let declaration = tree.lists.items(tree.declarations).next().unwrap();
+            let declaration = tree.lists.items(tree.top_level).next().unwrap();
             let ast::Decl::Function(function) = tree.decls[declaration] else {
                 unreachable!("the first declaration is a function")
             };

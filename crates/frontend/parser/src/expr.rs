@@ -465,7 +465,7 @@ mod tests {
 
     /// The expression of the first statement of the first function.
     fn first_expression(tree: &Tree) -> Id<Expr> {
-        let decl = tree.lists.items(tree.declarations).next().unwrap();
+        let decl = tree.lists.items(tree.top_level).next().unwrap();
         let Decl::Function(f) = tree.decls[decl] else {
             panic!("not a function")
         };

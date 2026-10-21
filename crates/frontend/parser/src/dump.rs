@@ -34,7 +34,7 @@ pub(crate) fn dump(tree: &Tree, spans: bool) -> String {
         out: String::new(),
     };
     let mut children: Vec<Item> = tree.imports.iter().map(|&i| Item::Import(i)).collect();
-    children.extend(tree.lists.items(tree.declarations).map(Item::Decl));
+    children.extend(tree.lists.items(tree.top_level).map(Item::Decl));
     let file = Span::new(0, tree.file.text.len());
     d.write("module", None, file, &children, 0);
     d.out

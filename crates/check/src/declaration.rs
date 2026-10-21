@@ -123,7 +123,7 @@ mod tests {
     fn declared_types(text: &str) -> (Vec<String>, Vec<Reported>) {
         let (found, types, reported) = with_checker(text, |checker| {
             let tree = &checker.module().ast;
-            let declarations: Vec<_> = tree.lists.items(tree.declarations).collect();
+            let declarations: Vec<_> = tree.lists.items(tree.top_level).collect();
             let found: Vec<TypeId> = declarations
                 .into_iter()
                 .map(

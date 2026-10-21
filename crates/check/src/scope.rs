@@ -103,7 +103,7 @@ pub fn collect(
         }
     }
     let tree = &module.ast;
-    for (index, declaration) in tree.lists.items(tree.declarations).enumerate() {
+    for (index, declaration) in tree.lists.items(tree.top_level).enumerate() {
         let definition = DefId {
             module: id,
             index: index as u32,

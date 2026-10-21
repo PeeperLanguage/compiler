@@ -64,7 +64,7 @@ impl Parser {
             match kind {
                 TokenKind::Eof => {
                     self.tree.imports = imports;
-                    self.tree.declarations = self.finish_list(mark);
+                    self.tree.top_level = self.finish_list(mark);
                     return;
                 }
                 TokenKind::Import => imports.extend(self.import_decl()),

@@ -908,7 +908,7 @@ fn main() {
         let (tree, errors) = parse_text("fn f() { let p = Point.{ .x = 1, y = 2 }; }\nfn g() {}");
         let got: Vec<_> = errors.iter().map(|e| e.message.as_str()).collect();
         assert_eq!(got, ["expected `}`, found `.`"]);
-        assert_eq!(tree.declarations.len(), 2);
+        assert_eq!(tree.top_level.len(), 2);
     }
 
     /// What the parser accepts and repairs between items: extra commas,
@@ -972,7 +972,7 @@ fn main() {
             format!("fn f() {{ let a = b{}", " orelse { c".repeat(n)),
         ] {
             let (tree, _) = parse_text(&text);
-            assert_eq!(tree.declarations.len(), 1);
+            assert_eq!(tree.top_level.len(), 1);
         }
     }
 }

@@ -76,11 +76,11 @@ impl<'p> Queries<'p> {
             pointer_bits,
             functions: modules
                 .iter()
-                .map(|module| vec![State::NotStarted; module.ast.declarations.len()])
+                .map(|module| vec![State::NotStarted; module.ast.top_level.len()])
                 .collect(),
             constants: modules
                 .iter()
-                .map(|module| vec![State::NotStarted; module.ast.declarations.len()])
+                .map(|module| vec![State::NotStarted; module.ast.top_level.len()])
                 .collect(),
             diagnostics,
         }

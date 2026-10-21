@@ -37,9 +37,11 @@ nodes! {
 pub struct Tree {
     pub file: Arc<SourceFile>,
     pub imports: Vec<Import>,
-    pub declarations: List<Decl>,
+    /// The module's own declarations, in source order: what a `DefId`
+    /// counts. A body's `const` is in `decls` but not here.
+    pub top_level: List<Decl>,
 
-    pub decls: Arena<Decl>,
+    pub decls: Arena<Decl>, // every declaration, top-level or in a body
     pub types: Arena<Type>,
     pub stmts: Arena<Stmt>,
     pub blocks: Arena<Block>,
@@ -66,7 +68,7 @@ impl Tree {
         Tree {
             file,
             imports: Vec::new(),
-            declarations: List::EMPTY,
+            top_level: List::EMPTY,
             decls: Arena::default(),
             types: Arena::default(),
             stmts: Arena::default(),
@@ -85,10 +87,10 @@ impl Tree {
         }
     }
 
-    /// The top-level declaration at `index` of `declarations`, the place a
+    /// The top-level declaration at `index` of `top_level`, the place a
     /// `DefId` names.
     pub fn declaration(&self, index: u32) -> Id<Decl> {
-        self.lists.get(self.declarations, index as usize)
+        self.lists.get(self.top_level, index as usize)
     }
 
     /// Adds `node` with `span` to its arena.

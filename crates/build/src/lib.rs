@@ -126,7 +126,7 @@ pub fn compile(
             changed.push(false);
             continue;
         }
-        for (index, declaration) in tree.lists.items(tree.declarations).enumerate() {
+        for (index, declaration) in tree.lists.items(tree.top_level).enumerate() {
             let definition = DefId {
                 module: id,
                 index: index as u32,
@@ -199,7 +199,7 @@ fn interface(queries: &Queries, module: ModuleId) -> u64 {
             .map(|(name, _)| name)
             .hash(&mut hasher);
     }
-    for (index, declaration) in tree.lists.items(tree.declarations).enumerate() {
+    for (index, declaration) in tree.lists.items(tree.top_level).enumerate() {
         let decl = &tree.decls[declaration];
         std::mem::discriminant(decl).hash(&mut hasher);
         decl.name().text(&tree.file).hash(&mut hasher);
