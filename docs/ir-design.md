@@ -94,8 +94,8 @@ enum variants, function types) are `model` data, written by check.
 A module's `Scope` lives in its `project::Module`, set once by `check`'s
 `collect` after every module is loaded; after that a module never changes.
 What a compile finds (types, query results, diagnostics) is kept apart, in
-`build::Compilation`, in vectors indexed by `ModuleId`, and everything links
-by id. So `check::Queries` takes `&mut self` and nothing needs a `RefCell`:
+`check::Queries`, in vectors indexed by `ModuleId`, and everything links
+by id. So its queries take `&mut self` and nothing needs a `RefCell`:
 holding a type across a query is a compile error, not a run-time panic. A
 scope holds declarations; a name it
 does not hold is looked up in its parent's, so a module's scope has the
@@ -217,8 +217,10 @@ mir(d)         MIR of function d (needs body(d)); later also comptime calls
 - A query asked for while it is running is a cycle (`const A = B; const B = A;`)
   and is reported once (T0013), at the declaration asked for again; the other
   declarations of the cycle become silently invalid.
-- The `build` crate is the scheduler. It implements `check::Queries`; the scopes
-  of all modules are collected first, into the modules, before any is checked.
+- `check::Queries` holds the query tables and answers each query once; the
+  checker calls it directly. The `build` crate is the scheduler: it walks the
+  modules, reuses unchanged ones and lowers each body. The scopes of all
+  modules are collected first, into the modules, before any is checked.
   Programs with syntax or import errors are not checked.
 - The model is a hybrid. Across modules: the program's order, so imported
   declarations are always ready (import cycles are already errors), and
@@ -267,7 +269,8 @@ arenas hold its span and type, so body `const`s get an arena of their own,
 keeps its THIR, marked `has_errors` (as rustc marks typeck results
 `tainted_by_errors`), so names work while a function is broken; `lower::lower`
 gives no MIR for it, and `use_function` gets its THIR alone. `build` runs the
-phases one by one: `Checker::body` gives the THIR, `Compilation::lower` the MIR. `build` has no second way in for editors: the language
+phases one by one: `ModuleChecker::body` gives the THIR, `build`'s `lower`
+the MIR. `build` has no second way in for editors: the language
 server reads the names through `use_function` during its normal check and
 keeps them per module, beside the program it compiled, as gopls keeps what
 `go/types` records. A module the compile reused gives no names; while its
@@ -342,7 +345,7 @@ with no instructions; on each path, the first branch met names its condition
 ("if this is false, nothing is returned"), and the first block with
 instructions names its last one ("this path ends without returning"). When the
 end block itself has instructions, only the end is named, since one `return`
-there fixes every path. `Checker::body` gives no THIR for a body whose check
+there fixes every path. `ModuleChecker::body` gives no THIR for a body whose check
 reported an error, so such a function is neither lowered nor path-checked.
 
 The initialization check (`lower::path_checks::initialization`) is forward dataflow

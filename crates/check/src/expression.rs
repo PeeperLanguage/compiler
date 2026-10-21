@@ -25,11 +25,10 @@ use model::thir::ExprKind;
 use source::Span;
 use token::TokenKind;
 
-use crate::Queries;
 use crate::builtin::UNSUPPORTED_FUNCTIONS;
-use crate::statement::BodyChecker;
+use crate::statement::ThirBuilder;
 
-impl<Q: Queries> BodyChecker<'_, '_, Q> {
+impl ThirBuilder<'_, '_> {
     /// `expression`, added to the body.
     pub(crate) fn value(
         &mut self,
@@ -37,19 +36,21 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
         expected: Option<TypeId>,
     ) -> Id<Expr> {
         let checked = self.expr(expression, expected);
-        self.body.add(checked, self.tree.exprs.span(expression))
+        self.body
+            .add(checked, self.checker.module().ast.exprs.span(expression))
     }
 
     /// `expression` as a value of the type `ty`, added to the body.
     pub(crate) fn expect(&mut self, expression: Id<ast::Expr>, ty: TypeId) -> Id<Expr> {
         let checked = self.coerced(expression, ty);
-        self.body.add(checked, self.tree.exprs.span(expression))
+        self.body
+            .add(checked, self.checker.module().ast.exprs.span(expression))
     }
 
     /// `expression` as a value of the type `ty`, not yet added to the body;
     /// a mismatch is reported.
     pub(crate) fn coerced(&mut self, expression: Id<ast::Expr>, ty: TypeId) -> Expr {
-        let span = self.tree.exprs.span(expression);
+        let span = self.checker.module().ast.exprs.span(expression);
         let checked = self.expr(expression, Some(ty));
         self.coerce(checked, span, ty).unwrap_or_else(|mismatch| {
             self.checker.diagnostics.push(mismatch);
@@ -69,7 +70,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
         if expr.ty == to {
             return Ok(expr);
         }
-        let types = self.checker.queries.types();
+        let types = &mut self.checker.queries.types;
         let (from_type, to_type) = (types[expr.ty].clone(), types[to].clone());
         if !from_type.widens_to(&to_type) {
             let (expected, found) = (types.text(to), types.text(expr.ty));
@@ -77,7 +78,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
                 diagnostics::TYPE_MISMATCH,
                 format!("mismatched types: expected `{expected}`, found `{found}`"),
             )
-            .label(&self.tree.file, span, ""));
+            .label(&self.checker.module().ast.file, span, ""));
         }
         let kind = match expr.kind {
             ExprKind::Constant(constant) => {
@@ -93,7 +94,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
     /// context expects, which a number literal without a suffix takes; where
     /// the context requires that type, its caller coerces the result to it.
     pub(crate) fn expr(&mut self, expression: Id<ast::Expr>, expected: Option<TypeId>) -> Expr {
-        let tree = self.tree;
+        let tree = &self.checker.module().ast;
         let span = tree.exprs.span(expression);
         let what = match tree.exprs[expression] {
             ast::Expr::Name => {
@@ -172,7 +173,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
             Some(Symbol::Type(_)) => "a type",
             Some(Symbol::Module(_)) => "a module",
         };
-        let text = self.tree.file.slice(span);
+        let text = self.checker.module().ast.file.slice(span);
         let message = format!("`{text}` is {what}, not a value");
         self.checker
             .error(diagnostics::INVALID_OPERATION, message, span);
@@ -193,7 +194,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
         let local_names = self.names.iter().map(|&(declared, _)| (declared, 0));
         let module_names = self.checker.scope().names().map(|name| (name, 1));
         let candidates = local_names.chain(module_names);
-        let file = &self.tree.file;
+        let file = &self.checker.module().ast.file;
         let mut diagnostic = Diagnostic::new(
             diagnostics::UNDEFINED_NAME,
             format!("unknown name `{name}`"),
@@ -215,7 +216,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
     /// Another module's name is reachable only if it starts with an upper case
     /// letter, except in the prelude.
     fn path_symbol(&mut self, path: Id<ast::Type>) -> Option<Symbol> {
-        let tree = self.tree;
+        let tree = &self.checker.module().ast;
         let span = tree.types.span(path);
         let segments: Vec<Id<ast::Type>> = match tree.types[path] {
             ast::Type::Path(segments) => tree.lists.items(segments).collect(),
@@ -261,7 +262,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
                 return None;
             }
         };
-        let Some(symbol) = self.checker.modules[imported.index()]
+        let Some(symbol) = self.checker.queries.modules[imported.index()]
             .scope()
             .get(member_name)
         else {
@@ -294,7 +295,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
     /// `callee(arguments)`, written at `span`. Only a module's function, by
     /// its name or its path, can be called.
     fn call(&mut self, callee: Id<ast::Expr>, arguments: List<ast::Expr>, span: Span) -> Expr {
-        let tree = self.tree;
+        let tree = &self.checker.module().ast;
         let callee_span = tree.exprs.span(callee);
         let text = tree.file.slice(callee_span);
         let symbol = match tree.exprs[callee] {
@@ -335,7 +336,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
         };
         let signature = function.map(|function| {
             let ty = self.checker.queries.function(function);
-            (function, self.checker.queries.types()[ty].clone())
+            (function, self.checker.queries.types[ty].clone())
         });
         let Some((function, Type::Function { parameters, result })) = signature else {
             for argument in tree.lists.items(arguments) {
@@ -380,10 +381,10 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
     /// type, else the type `expected` if it can (`takes_type`), else `i32` or
     /// `f64`.
     fn number(&mut self, number: Span, negated: Option<Span>, expected: Option<TypeId>) -> Expr {
-        let tree = self.tree;
+        let tree = &self.checker.module().ast;
         let literal = numeric::split(tree.file.slice(number));
-        let pointer_bits = self.checker.queries.pointer_bits();
-        let types = self.checker.queries.types();
+        let pointer_bits = self.checker.queries.pointer_bits;
+        let types = &mut self.checker.queries.types;
         let ty = if literal.suffix.is_empty() {
             match expected {
                 Some(ty) if takes_type(&literal, &types[ty]) => ty,
@@ -445,7 +446,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
         span: Span,
         expected: Option<TypeId>,
     ) -> Expr {
-        let tree = self.tree;
+        let tree = &self.checker.module().ast;
         let operand_span = tree.exprs.span(operand);
         // Only a literal right after `-` is a negative literal: `-(128)`
         // negates `128`, which does not fit `i8`.
@@ -459,7 +460,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
         if checked.ty == TypeId::INVALID {
             return Expr::INVALID;
         }
-        let ty = self.checker.queries.types()[checked.ty].clone();
+        let ty = self.checker.queries.types[checked.ty].clone();
         let number = matches!(ty, Type::Integer(_) | Type::Float(_));
         let (unary_op, accepted) = match op {
             TokenKind::Plus => (None, number),
@@ -501,7 +502,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
         span: Span,
         expected: Option<TypeId>,
     ) -> Expr {
-        let tree = self.tree;
+        let tree = &self.checker.module().ast;
         let (left_span, right_span) = (tree.exprs.span(left), tree.exprs.span(right));
         let binary_op = binary_op(op);
         let comparison = matches!(
@@ -524,7 +525,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
             match self.coerce(checked, right_span, left.ty) {
                 Ok(right) => right,
                 Err(mut mismatch) => {
-                    let types = self.checker.queries.types();
+                    let types = &mut self.checker.queries.types;
                     let fixable = left_literal
                         .filter(|&literal| takes_type(&numeric::split(literal), &types[found]));
                     if let Some(literal) = fixable {
@@ -542,7 +543,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
             return Expr::INVALID;
         }
         let (left_type, right_type) = {
-            let types = self.checker.queries.types();
+            let types = &mut self.checker.queries.types;
             (types[left.ty].clone(), types[right.ty].clone())
         };
         let accepted = match binary_op {
@@ -569,7 +570,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
             return self.invalid_operand(op, left.ty, span);
         }
         if shift && !matches!(right_type, Type::Integer(_)) {
-            let count = self.checker.queries.types().text(right.ty);
+            let count = self.checker.queries.types.text(right.ty);
             let message = format!("a shift count must be an integer, found `{count}`");
             self.checker
                 .error(diagnostics::INVALID_OPERATION, message, right_span);
@@ -606,7 +607,7 @@ impl<Q: Queries> BodyChecker<'_, '_, Q> {
 
     /// Reports `op` applied to an operand of the type `ty`, at `span`.
     fn invalid_operand(&mut self, op: TokenKind, ty: TypeId, span: Span) -> Expr {
-        let ty = self.checker.queries.types().text(ty);
+        let ty = self.checker.queries.types.text(ty);
         let message = format!("operator `{}` cannot be applied to `{ty}`", op.text());
         self.checker
             .error(diagnostics::INVALID_OPERATION, message, span);

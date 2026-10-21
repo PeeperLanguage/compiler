@@ -20,23 +20,24 @@ use model::thir::Stmt;
 use model::thir::Variable;
 use source::Span;
 
-use crate::Checker;
-use crate::Queries;
+use crate::ModuleChecker;
 use crate::scope::already_declared;
 use model::Local;
 use model::Symbol;
 
-/// Checking one function body.
-pub(crate) struct BodyChecker<'c, 'a, Q: Queries> {
-    pub(crate) checker: &'c mut Checker<'a, Q>,
-    pub(crate) tree: &'a ast::Tree,
+/// Building the THIR of one piece of code: a function's body, or a
+/// constant's value. It checks the code as it builds it.
+pub(crate) struct ThirBuilder<'a, 'p> {
+    /// The module's checker, borrowed for the build: its module, queries and
+    /// diagnostics.
+    pub(crate) checker: ModuleChecker<'a, 'p>,
     pub(crate) body: Body,
     /// The names written in the body, in the order checked, for a caller that
-    /// wants them (`Checker::body`); `None` records nothing.
-    recorded: Option<&'c mut Vec<Name>>,
+    /// wants them (`ModuleChecker::body`); `None` records nothing.
+    recorded: Option<&'a mut Vec<Name>>,
     /// The names declared in the enclosing blocks so far, innermost last. Few
     /// names are in scope at once, so a search from the end beats hashing.
-    pub(crate) names: Vec<(&'a str, Local)>,
+    pub(crate) names: Vec<(&'p str, Local)>,
     /// Where in `names` the current block's names start.
     block_start: usize,
     /// The current block, for the variables it declares.
@@ -44,7 +45,7 @@ pub(crate) struct BodyChecker<'c, 'a, Q: Queries> {
     result: TypeId, // the function's result type
 }
 
-impl<'a, Q: Queries> Checker<'a, Q> {
+impl ModuleChecker<'_, '_> {
     /// The THIR of `function`'s body, given its type `ty` (`function`),
     /// with `has_errors` set when checking it reported an error. `None` for a
     /// function without a body, or whose signature had an error. The names
@@ -57,12 +58,12 @@ impl<'a, Q: Queries> Checker<'a, Q> {
     ) -> Option<Body> {
         let block = function.body?;
         let reported = self.diagnostics.len();
-        let Type::Function { parameters, result } = &self.queries.types()[ty] else {
+        let Type::Function { parameters, result } = &self.queries.types[ty] else {
             return None; // the signature's error was reported
         };
         let (parameters, result) = (parameters.clone(), *result);
         let tree = &self.module().ast;
-        let mut checker = BodyChecker::new(self, result, names);
+        let mut checker = ThirBuilder::new(self, result, names);
         let outermost = Block {
             parent: None,
             statements: List::EMPTY,
@@ -102,27 +103,29 @@ impl<'a, Q: Queries> Checker<'a, Q> {
     /// it had an error. Its value is checked as a body's `const` is, with no
     /// variables in scope.
     pub fn constant(&mut self, declaration: Id<ast::Decl>) -> Option<Constant> {
-        BodyChecker::new(self, TypeId::VOID, None).constant_value(declaration)
+        ThirBuilder::new(self, TypeId::VOID, None).constant_value(declaration)
     }
 }
 
-impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
-    /// Checking a body of a function whose result type is `result`,
-    /// recording its names into `recorded` when given.
+impl<'a, 'p> ThirBuilder<'a, 'p> {
+    /// Building code whose `return` gives `result`, recording its names into
+    /// `recorded` when given.
     fn new(
-        checker: &'c mut Checker<'a, Q>,
+        checker: &'a mut ModuleChecker<'_, 'p>,
         result: TypeId,
-        recorded: Option<&'c mut Vec<Name>>,
-    ) -> BodyChecker<'c, 'a, Q> {
-        let tree = &checker.module().ast;
-        BodyChecker {
-            checker,
-            tree,
+        recorded: Option<&'a mut Vec<Name>>,
+    ) -> ThirBuilder<'a, 'p> {
+        ThirBuilder {
+            checker: ModuleChecker {
+                current_module: checker.current_module,
+                queries: checker.queries,
+                diagnostics: checker.diagnostics,
+            },
             body: Body::default(),
             recorded,
             names: Vec::new(),
             block_start: 0,
-            block: Id::from_index(0), // the function's, added first (`Checker::body`)
+            block: Id::from_index(0), // the function's, added first (`ModuleChecker::body`)
             result,
         }
     }
@@ -130,7 +133,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
     /// The THIR of `statements`, in the current block.
     fn statements(&mut self, statements: List<ast::Stmt>) -> List<Stmt> {
         let mut checked: Vec<NonZeroU32> = Vec::with_capacity(statements.len());
-        for statement in self.tree.lists.items(statements) {
+        for statement in self.checker.module().ast.lists.items(statements) {
             if let Some(statement) = self.statement(statement) {
                 checked.push(statement.into());
             }
@@ -145,11 +148,13 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
             parent: Some(self.block),
             statements: List::EMPTY,
         };
-        let checked = self.body.add(checked, self.tree.blocks.span(block));
+        let checked = self
+            .body
+            .add(checked, self.checker.module().ast.blocks.span(block));
         let names_before = self.names.len();
         let enclosing_start = std::mem::replace(&mut self.block_start, names_before);
         let enclosing = std::mem::replace(&mut self.block, checked);
-        let statements = self.statements(self.tree.blocks[block].statements);
+        let statements = self.statements(self.checker.module().ast.blocks[block].statements);
         self.names.truncate(names_before);
         self.block_start = enclosing_start;
         self.block = enclosing;
@@ -162,14 +167,20 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
     /// already declares is reported and keeps its first meaning; the
     /// parameters are in the body's outermost block, as in Go.
     fn declare(&mut self, name: Ident, local: Local) {
-        let text = name.text(&self.tree.file);
+        let text = name.text(&self.checker.module().ast.file);
         if text.is_empty() {
             return; // missing after a syntax error
         }
         let block = &self.names[self.block_start..];
         if let Some(&(_, first)) = block.iter().find(|&&(declared, _)| declared == text) {
             let first = self.body.declared(first);
-            let diagnostic = already_declared(&self.tree.file, text, "block", name.span, first);
+            let diagnostic = already_declared(
+                &self.checker.module().ast.file,
+                text,
+                "block",
+                name.span,
+                first,
+            );
             self.checker.diagnostics.push(diagnostic);
             return;
         }
@@ -178,7 +189,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
     }
 
     /// Records that the name written at `span` stands for `symbol`, when the
-    /// caller asked for names (`Checker::body`).
+    /// caller asked for names (`ModuleChecker::body`).
     pub(crate) fn record(&mut self, span: Span, symbol: Symbol) {
         if let Some(names) = &mut self.recorded {
             names.push(Name { span, symbol });
@@ -189,7 +200,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
     /// block or an outer one, else of the module or the prelude, recorded
     /// (`record`). `None` after reporting that nothing declares it.
     pub(crate) fn resolve(&mut self, span: Span) -> Option<Symbol> {
-        let name = self.tree.file.slice(span);
+        let name = self.checker.module().ast.file.slice(span);
         let found = self
             .names
             .iter()
@@ -212,7 +223,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
     /// The THIR of `statement`; `None` for a `const`, which only declares a
     /// name, and for a statement with an error.
     fn statement(&mut self, statement: Id<ast::Stmt>) -> Option<Id<Stmt>> {
-        let tree = self.tree;
+        let tree = &self.checker.module().ast;
         let span = tree.stmts.span(statement);
         let checked = match tree.stmts[statement] {
             ast::Stmt::Block(block) => Stmt::Block(self.block(block)),
@@ -313,7 +324,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
                 }
             }
             (None, None) => {
-                let text = name.text(&self.tree.file);
+                let text = name.text(&self.checker.module().ast.file);
                 let message = format!("`{text}` needs a type or a value");
                 self.checker
                     .error(diagnostics::MISSING_TYPE, message, name.span);
@@ -326,7 +337,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
             initialized,
             scope: self.block,
         };
-        let text = name.text(&self.tree.file);
+        let text = name.text(&self.checker.module().ast.file);
         let shadowed = self
             .names
             .iter()
@@ -337,7 +348,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
             && self.body.variables[outer].mutable
         {
             // Likely meant as `x = ...`: the outer local stays unchanged.
-            let file = &self.tree.file;
+            let file = &self.checker.module().ast.file;
             self.checker.diagnostics.push(
                 Diagnostic::new(
                     diagnostics::HIDDEN_MUTABLE,
@@ -370,19 +381,19 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
     fn constant_value(&mut self, declaration: Id<ast::Decl>) -> Option<Constant> {
         let ast::Decl::Const {
             name, ty, value, ..
-        } = self.tree.decls[declaration]
+        } = self.checker.module().ast.decls[declaration]
         else {
             unreachable!("`{declaration:?}` is a const declaration")
         };
         let declared = ty.map(|ty| self.checker.resolve_type(ty));
         let Some(value) = value else {
-            let text = name.text(&self.tree.file);
+            let text = name.text(&self.checker.module().ast.file);
             let message = format!("constant `{text}` needs a value");
             self.checker
                 .error(diagnostics::INVALID_OPERATION, message, name.span);
             return None;
         };
-        let span = self.tree.exprs.span(value);
+        let span = self.checker.module().ast.exprs.span(value);
         let checked = match declared {
             Some(ty) => self.coerced(value, ty),
             None => self.expr(value, None),
@@ -410,7 +421,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
                 self.checker.error(
                     diagnostics::INVALID_RETURN,
                     message,
-                    self.tree.exprs.span(value),
+                    self.checker.module().ast.exprs.span(value),
                 );
                 self.value(value, None); // for its own errors
                 None
@@ -418,7 +429,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
             Some(value) => Some(self.expect(value, self.result)),
             None => {
                 if self.result != TypeId::VOID && self.result != TypeId::INVALID {
-                    let result = self.checker.queries.types().text(self.result);
+                    let result = self.checker.queries.types.text(self.result);
                     let message = format!("`return` needs a value of type `{result}`");
                     self.checker
                         .error(diagnostics::INVALID_RETURN, message, span);
@@ -444,7 +455,7 @@ impl<'c, 'a, Q: Queries> BodyChecker<'c, 'a, Q> {
     /// without a value may be assigned; the path checks on MIR report one that may be
     /// assigned twice.
     fn assigned_variable(&mut self, target: Id<ast::Expr>) -> Option<Id<Variable>> {
-        let tree = self.tree;
+        let tree = &self.checker.module().ast;
         let span = tree.exprs.span(target);
         if !matches!(tree.exprs[target], ast::Expr::Name) {
             self.checker

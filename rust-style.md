@@ -136,8 +136,8 @@ move instead of being copied, and there is no long-lived object changing in
 place. The command line passes `Compiled::default()`.
 
 **Pick a field with a closure when one routine serves several tables.**
-`Compilation::query` runs the query state machine once for every query; each
-caller names its table as `|compilation| &mut compilation.functions`, since a
+`Queries::query` runs the query state machine once for every query; each
+caller names its table as `|queries| &mut queries.functions`, since a
 field cannot be a parameter. Write the closure in the call: stored in a
 `let`, its returned borrow does not get the right lifetime.
 

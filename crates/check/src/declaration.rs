@@ -1,18 +1,17 @@
 //! Module-scope declarations, without their bodies: a function's type and a
 //! type declaration's type. A constant's type comes with its value
-//! (`Checker::constant`).
+//! (`ModuleChecker::constant`).
 
 use arena::Id;
 use model::ast;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 
-use crate::Checker;
-use crate::Queries;
+use crate::ModuleChecker;
 use crate::builtin::unsupported_type;
 use model::Symbol;
 
-impl<Q: Queries> Checker<'_, Q> {
+impl ModuleChecker<'_, '_> {
     /// The function type of the module's function or method `declaration`.
     pub fn function(&mut self, declaration: Id<ast::Decl>) -> TypeId {
         let tree = &self.module().ast;
@@ -41,7 +40,7 @@ impl<Q: Queries> Checker<'_, Q> {
             .map_or(TypeId::VOID, |result| self.resolve_type(result));
         let parameters = parameters.into();
         self.queries
-            .types()
+            .types
             .intern(Type::Function { parameters, result })
     }
 
@@ -69,8 +68,8 @@ impl<Q: Queries> Checker<'_, Q> {
         let what = match tree.types[ty] {
             ast::Type::Name => {
                 let name = tree.file.slice(span);
-                let pointer_bits = self.queries.pointer_bits();
-                if let Some(builtin) = self.queries.types().builtin(name, pointer_bits) {
+                let pointer_bits = self.queries.pointer_bits;
+                if let Some(builtin) = self.queries.types.builtin(name, pointer_bits) {
                     return builtin;
                 }
                 match self.global(name) {

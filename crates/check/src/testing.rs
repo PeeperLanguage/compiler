@@ -1,43 +1,17 @@
-//! What the checking tests share: a one-module program read from text. Its
-//! declarations are checked one at a time; checking one that asks about
-//! another needs the scheduler, so those tests live in the `build` crate.
+//! What the checking tests share: a one-module program read from text, whose
+//! declarations are checked one at a time.
 
 use std::cell::OnceCell;
 use std::sync::Arc;
 
-use model::DefId;
 use model::ModuleId;
-use model::constant::Constant;
-use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use project::ImportKind;
 use source::SourceFile;
 
-use crate::Checker;
+use crate::ModuleChecker;
 use crate::Queries;
 use crate::scope::collect;
-
-pub(crate) struct Program {
-    pub(crate) types: Types,
-}
-
-impl Queries for Program {
-    fn types(&mut self) -> &mut Types {
-        &mut self.types
-    }
-
-    fn pointer_bits(&self) -> u32 {
-        64
-    }
-
-    fn function(&mut self, definition: DefId) -> TypeId {
-        unreachable!("a check test asked for {definition:?}; test it in `build`")
-    }
-
-    fn constant(&mut self, definition: DefId) -> Option<Constant> {
-        unreachable!("a check test asked for {definition:?}; test it in `build`")
-    }
-}
 
 /// The module `path`, written as `text`, with `imports`; its text must parse
 /// without errors.
@@ -62,7 +36,7 @@ pub(crate) type Reported = (&'static str, String, String);
 /// types and the diagnostics.
 pub(crate) fn with_checker<T>(
     text: &str,
-    work: impl FnOnce(&mut Checker<Program>) -> T,
+    work: impl FnOnce(&mut ModuleChecker) -> T,
 ) -> (T, Types, Vec<Reported>) {
     let (utils_id, main_id) = (ModuleId::from_index(0), ModuleId::from_index(1));
     let imports = vec![project::Import {
@@ -75,29 +49,22 @@ pub(crate) fn with_checker<T>(
         module("app:main", &text, imports),
     ];
     let file = modules[1].ast.file.clone();
-    let mut diagnostics = Vec::new();
+    let mut queries = Queries::new(&modules, 64);
     for id in [utils_id, main_id] {
-        let scope = collect(id, &modules, &mut diagnostics);
+        let scope = collect(id, &modules, &mut queries.diagnostics[id.index()]);
         assert!(modules[id.index()].scope.set(scope).is_ok());
     }
-    let mut program = Program {
-        types: Types::new(),
-    };
-    let mut checker = Checker {
-        modules: &modules,
-        current_module: main_id,
-        queries: &mut program,
-        diagnostics: &mut diagnostics,
-    };
-    let result = work(&mut checker);
-    let reported = diagnostics
+    let result = queries.with_checker(main_id, work);
+    let reported = queries
+        .diagnostics
         .iter()
+        .flatten()
         .map(|diagnostic| {
             let text = file.slice(diagnostic.labels[0].span).to_string();
             (diagnostic.code.id, diagnostic.message.clone(), text)
         })
         .collect();
-    (result, program.types, reported)
+    (result, queries.types, reported)
 }
 
 /// `expected` as `Reported`s, to compare with what was reported.

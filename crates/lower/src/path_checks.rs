@@ -24,9 +24,9 @@
 //! What they do not do:
 //!
 //! - No type, name or operator rules, and no constant folding: the checker did
-//!   those while building THIR. A function whose checking reported an error is
-//!   not lowered at all (`Checker::body`), so these checks never repeat or
-//!   follow from an earlier error.
+//!   those while building THIR. A function whose checking reported an error
+//!   is not lowered at all (`ModuleChecker::body`), so these checks never
+//!   repeat or follow from an earlier error.
 //! - No changes to the MIR, and no fixes: they only report.
 //! - No use of constant values to decide which paths exist. `if false { ... }`
 //!   still has two sides, as in Go and Rust, so whether code compiles never

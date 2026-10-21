@@ -1,8 +1,7 @@
 //! The scheduler: checks every declaration of a program, each once, in the
-//! order declarations ask for each other (docs/ir-design.md). The result of
-//! every query is kept in the `Compilation`, and `check` asks for them
-//! through `check::Queries`, so a declaration is checked the first time
-//! anything needs it.
+//! order declarations ask for each other (docs/ir-design.md), and lowers each
+//! function. The result of every query is kept in `check::Queries`, so a
+//! declaration is checked the first time anything needs it.
 //!
 //! A compile can reuse what the previous one found: a module whose text and
 //! imported interfaces are unchanged keeps its diagnostics, and its bodies are
@@ -16,9 +15,8 @@ use std::hash::Hash;
 use std::hash::Hasher;
 use std::sync::Arc;
 
-use arena::Id;
-use check::Checker;
 use check::Queries;
+use check::State;
 use diagnostics::Diagnostic;
 use model::DefId;
 use model::ModuleId;
@@ -93,26 +91,14 @@ pub fn compile(
     mut use_function: impl FnMut(DefId, TypeId, &thir::Body, &[thir::Name], Option<&mir::Body>, &Types),
 ) -> Results {
     let modules = program.modules.as_slice();
-    let mut compilation = Compilation {
-        modules,
-        types: Types::new(),
-        pointer_bits,
-        functions: modules
-            .iter()
-            .map(|module| vec![State::NotStarted; module.ast.declarations.len()])
-            .collect(),
-        constants: modules
-            .iter()
-            .map(|module| vec![State::NotStarted; module.ast.declarations.len()])
-            .collect(),
-        results: modules
-            .iter()
-            .map(|module| ModuleResults::new(module.ast.file.clone()))
-            .collect(),
-    };
+    let mut queries = Queries::new(modules, pointer_bits);
+    let mut results: Vec<ModuleResults> = modules
+        .iter()
+        .map(|module| ModuleResults::new(module.ast.file.clone()))
+        .collect();
     for (index, module) in modules.iter().enumerate() {
         let id = ModuleId::from_index(index);
-        let diagnostics = &mut compilation.results[index].diagnostics;
+        let diagnostics = &mut queries.diagnostics[index];
         let set = module
             .scope
             .set(check::scope::collect(id, modules, diagnostics));
@@ -139,9 +125,10 @@ pub fn compile(
             && imports_unchanged
             && cached.file.text == module.ast.file.text
         {
-            let found = &mut compilation.results[index];
+            let found = &mut results[index];
             found.reused = true;
-            // Its scope's errors come from the same text, so are the same.
+            // Its scope's errors come from the same text, so are the same;
+            // what asking for its declarations found again is dropped.
             found.diagnostics = cached.diagnostics;
             found.interface = cached.interface;
             changed.push(false);
@@ -154,34 +141,34 @@ pub fn compile(
             };
             match tree.decls[declaration] {
                 ast::Decl::Function(function) => {
-                    let ty = compilation.function(definition);
+                    let ty = queries.function(definition);
                     let mut names = Vec::new(); // allocates only when a name is recorded
                     let recorded = record_names.then_some(&mut names);
-                    let thir = compilation
-                        .with_checker(id, |checker| checker.body(&function, ty, recorded));
+                    let thir =
+                        queries.with_checker(id, |checker| checker.body(&function, ty, recorded));
                     if let Some(thir) = thir {
-                        let mir = compilation.lower(id, ty, &thir);
-                        let types = &compilation.types;
+                        let mir = lower(&mut queries, id, ty, &thir);
+                        let types = &queries.types;
                         use_function(definition, ty, &thir, &names, mir.as_ref(), types);
                     }
                 }
                 ast::Decl::Const { .. } => {
-                    compilation.constant(definition);
+                    queries.constant(definition);
                 }
                 // Nothing asks for a type declaration's type yet, so it is
                 // no query: it is checked here, once.
                 ast::Decl::Type(_) | ast::Decl::Alias(_) => {
-                    compilation.with_checker(id, |checker| checker.type_declaration(declaration));
+                    queries.with_checker(id, |checker| checker.type_declaration(declaration));
                 }
             }
         }
-        let interface = compilation.interface(id);
+        let interface = interface(&queries, id);
         changed.push(previous_interface != Some(interface));
-        compilation.results[index].interface = interface;
+        let found = &mut results[index];
+        found.interface = interface;
+        found.diagnostics = std::mem::take(&mut queries.diagnostics[index]);
     }
-    Results {
-        modules: compilation.results,
-    }
+    Results { modules: results }
 }
 
 /// Feeds `ty` to `hasher` by what it is, not by its id, which differs between
@@ -203,195 +190,62 @@ fn hash_type(types: &Types, ty: TypeId, hasher: &mut DefaultHasher) {
     }
 }
 
-/// Where the query of one declaration is.
-#[derive(Clone, Debug)]
-enum State<T> {
-    NotStarted,
-    /// Asked for again while running: a cycle.
-    Running,
-    Done(T),
+/// A hash of what other modules see of `module`, once its declarations are
+/// checked: its imports, and each declaration's kind, name, and type or
+/// value. Its bodies are not part of it.
+fn interface(queries: &Queries, module: ModuleId) -> u64 {
+    let modules = queries.modules;
+    let functions = &queries.functions[module.index()];
+    let constants = &queries.constants[module.index()];
+    let module = &modules[module.index()];
+    let tree = &module.ast;
+    let mut hasher = DefaultHasher::new();
+    for import in &module.imports {
+        modules[import.module.index()].path.hash(&mut hasher);
+        import
+            .name(module, modules)
+            .map(|(name, _)| name)
+            .hash(&mut hasher);
+    }
+    for (index, declaration) in tree.lists.items(tree.declarations).enumerate() {
+        let decl = &tree.decls[declaration];
+        std::mem::discriminant(decl).hash(&mut hasher);
+        decl.name().text(&tree.file).hash(&mut hasher);
+        // A declaration's result is in one table; the other slot is
+        // `NotStarted`.
+        if let State::Done(ty) = functions[index] {
+            hash_type(&queries.types, ty, &mut hasher);
+        }
+        if let State::Done(Some(Constant { ty, value })) = &constants[index] {
+            hash_type(&queries.types, *ty, &mut hasher);
+            value.hash(&mut hasher);
+        }
+    }
+    hasher.finish()
 }
 
-/// One compile of a program: what it finds, beside the modules it reads.
-/// Its tables are indexed by `ModuleId`. The query results die with the
-/// compile; `results` is what the next compile is given.
-struct Compilation<'p> {
-    modules: &'p [project::Module], // in the program's order
-    types: Types,
-    pointer_bits: u32,
-    /// The query of each function and method, by its place (`DefId`): its
-    /// type. Another declaration's slot stays `NotStarted`.
-    functions: Vec<Vec<State<TypeId>>>,
-    /// The query of each module constant, by its place: its type and value,
-    /// `None` when it had an error. Another declaration's slot stays
-    /// `NotStarted`.
-    constants: Vec<Vec<State<Option<Constant>>>>,
-    results: Vec<ModuleResults>,
-}
-
-impl<'p> Compilation<'p> {
-    /// Runs `work` on a checker of `module`; what it reports joins that
-    /// module's diagnostics, unless the module was reused: it keeps the
-    /// previous compile's, which asking for its declarations again would only
-    /// repeat.
-    fn with_checker<T>(
-        &mut self,
-        module: ModuleId,
-        work: impl FnOnce(&mut Checker<Compilation<'p>>) -> T,
-    ) -> T {
-        let mut diagnostics = Vec::new();
-        let mut checker = Checker {
-            modules: self.modules,
-            current_module: module,
-            queries: self,
-            diagnostics: &mut diagnostics,
-        };
-        let result = work(&mut checker);
-        let found = &mut self.results[module.index()];
-        if !found.reused {
-            found.diagnostics.append(&mut diagnostics);
-        }
-        result
+/// Lowers `body`, the THIR of a function of `module` with the signature `ty`,
+/// to MIR and runs the path checks on it; `None` when it cannot be lowered
+/// (`lower::lower`).
+fn lower(
+    queries: &mut Queries,
+    module: ModuleId,
+    ty: TypeId,
+    body: &thir::Body,
+) -> Option<mir::Body> {
+    let types = &queries.types;
+    let Type::Function { parameters, result } = &types[ty] else {
+        return None; // the signature's error was reported
+    };
+    let tree = &queries.modules[module.index()].ast;
+    let mir = lower::lower(body, parameters.len())?;
+    let diagnostics = &mut queries.diagnostics[module.index()];
+    lower::path_checks::initialization(&mir, &tree.file, diagnostics);
+    lower::path_checks::unreachable_code(&mir, &tree.file, diagnostics);
+    if let Some(error) = lower::path_checks::missing_return(&mir, &tree.file, types, *result) {
+        diagnostics.push(error); // last: it points at the closing brace
     }
-
-    /// A hash of what other modules see of `module`, once its declarations
-    /// are checked: its imports, and each declaration's kind, name, and type
-    /// or value. Its bodies are not part of it.
-    fn interface(&self, module: ModuleId) -> u64 {
-        let functions = &self.functions[module.index()];
-        let constants = &self.constants[module.index()];
-        let module = &self.modules[module.index()];
-        let tree = &module.ast;
-        let types = &self.types;
-        let mut hasher = DefaultHasher::new();
-        for import in &module.imports {
-            self.modules[import.module.index()].path.hash(&mut hasher);
-            import
-                .name(module, self.modules)
-                .map(|(name, _)| name)
-                .hash(&mut hasher);
-        }
-        for (index, declaration) in tree.lists.items(tree.declarations).enumerate() {
-            let decl = &tree.decls[declaration];
-            std::mem::discriminant(decl).hash(&mut hasher);
-            decl.name().text(&tree.file).hash(&mut hasher);
-            // A declaration's result is in one table; the other slot is
-            // `NotStarted`.
-            if let State::Done(ty) = functions[index] {
-                hash_type(types, ty, &mut hasher);
-            }
-            if let State::Done(Some(Constant { ty, value })) = &constants[index] {
-                hash_type(types, *ty, &mut hasher);
-                value.hash(&mut hasher);
-            }
-        }
-        hasher.finish()
-    }
-
-    /// Lowers `body`, the THIR of a function of `module` with the signature
-    /// `ty`, to MIR and runs the path checks on it; `None` when it cannot be
-    /// lowered (`lower::lower`).
-    fn lower(&mut self, module: ModuleId, ty: TypeId, body: &thir::Body) -> Option<mir::Body> {
-        let types = &self.types;
-        let Type::Function { parameters, result } = &types[ty] else {
-            return None; // the signature's error was reported
-        };
-        let tree = &self.modules[module.index()].ast;
-        let mir = lower::lower(body, parameters.len())?;
-        let diagnostics = &mut self.results[module.index()].diagnostics;
-        lower::path_checks::initialization(&mir, &tree.file, diagnostics);
-        lower::path_checks::unreachable_code(&mir, &tree.file, diagnostics);
-        if let Some(error) = lower::path_checks::missing_return(&mir, &tree.file, types, *result) {
-            diagnostics.push(error); // last: it points at the closing brace
-        }
-        Some(mir)
-    }
-
-    /// The result of the query of `definition`: the result already found,
-    /// `on_cycle` when the query is asked for while it runs (a cycle,
-    /// reported), or else what `work` finds with a checker of its module,
-    /// kept for the next ask.
-    fn query<T: Clone>(
-        &mut self,
-        definition: DefId,
-        table: fn(&mut Self) -> &mut Vec<Vec<State<T>>>,
-        on_cycle: T,
-        work: impl FnOnce(&mut Checker<Compilation<'p>>, Id<ast::Decl>) -> T,
-    ) -> T {
-        let (module, index) = (definition.module.index(), definition.index as usize);
-        // Cloned, so no borrow is held while the query runs and asks others.
-        let state = table(self)[module][index].clone();
-        match state {
-            State::Done(result) => return result,
-            State::Running => {
-                self.report_cycle(definition);
-                return on_cycle;
-            }
-            State::NotStarted => {}
-        }
-        table(self)[module][index] = State::Running;
-        let declaration = self.modules[module].ast.declaration(definition.index);
-        let result = self.with_checker(definition.module, |checker| work(checker, declaration));
-        table(self)[module][index] = State::Done(result.clone());
-        result
-    }
-
-    /// Reports that the declaration `definition` was asked for while it was
-    /// being checked: it depends on itself.
-    fn report_cycle(&mut self, definition: DefId) {
-        let found = &mut self.results[definition.module.index()];
-        if found.reused {
-            return;
-        }
-        let tree = &self.modules[definition.module.index()].ast;
-        let name = tree.decls[tree.declaration(definition.index)].name();
-        let text = name.text(&tree.file);
-        // `A + A` asks for `A` twice while it runs; the cycle is reported once.
-        let reported = |diagnostic: &Diagnostic| {
-            diagnostic.code == diagnostics::CIRCULAR_DEPENDENCY
-                && diagnostic.labels[0].span == name.span
-        };
-        if found.diagnostics.iter().any(reported) {
-            return;
-        }
-        found.diagnostics.push(
-            Diagnostic::new(
-                diagnostics::CIRCULAR_DEPENDENCY,
-                format!("`{text}` depends on itself"),
-            )
-            .label(&tree.file, name.span, ""),
-        );
-    }
-}
-
-impl Queries for Compilation<'_> {
-    fn types(&mut self) -> &mut Types {
-        &mut self.types
-    }
-
-    fn pointer_bits(&self) -> u32 {
-        self.pointer_bits
-    }
-
-    fn function(&mut self, definition: DefId) -> TypeId {
-        let work = |checker: &mut Checker<_>, declaration| checker.function(declaration);
-        self.query(
-            definition,
-            |compilation| &mut compilation.functions,
-            TypeId::INVALID,
-            work,
-        )
-    }
-
-    fn constant(&mut self, definition: DefId) -> Option<Constant> {
-        let work = |checker: &mut Checker<_>, declaration| checker.constant(declaration);
-        self.query(
-            definition,
-            |compilation| &mut compilation.constants,
-            None,
-            work,
-        )
-    }
+    Some(mir)
 }
 
 #[cfg(test)]
