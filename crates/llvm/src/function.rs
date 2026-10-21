@@ -45,30 +45,8 @@ impl Module<'_> {
         };
         let program = self.program;
         let tree = &program.modules[definition.module.index()].ast;
-        let name = tree.decls[tree.declaration(definition.index)].name();
         let symbol = symbol(program, definition);
-        let (line, _) = tree.file.position(name.span.start as usize);
-        let mut signature = vec![match self.debug_type(types, *result) {
-            Some(id) => format!("!{id}"),
-            None => "null".to_string(),
-        }];
-        for &parameter in parameters {
-            let id = self.debug_type(types, parameter).unwrap_or_default();
-            signature.push(format!("!{id}"));
-        }
-        let subroutine = self.metadata.add(&format!(
-            "!DISubroutineType(types: !{{{}}})",
-            signature.join(", ")
-        ));
-        let scope = self.metadata.add(&format!(
-            "distinct !DISubprogram(name: {}, linkageName: {}, scope: !{file}, file: !{file}, \
-             line: {line}, type: !{subroutine}, scopeLine: {line}, spFlags: DISPFlagDefinition, \
-             unit: !{})",
-            quoted(name.text(&tree.file).as_bytes()),
-            quoted(symbol.as_bytes()),
-            self.metadata.unit,
-            file = self.metadata.file,
-        ));
+        let scope = self.add_debug_info(definition, &symbol, parameters, *result, types);
         // Each string constant's global.
         let strings = body
             .constants
@@ -123,6 +101,43 @@ impl Module<'_> {
         self.functions.push_str(&panics);
         self.functions.push_str("}\n\n");
         self.defined.insert(symbol);
+    }
+
+    /// Adds the debug info of the function `definition`, linked as `symbol`,
+    /// that takes `parameters` and gives `result`, and gives the id of its
+    /// `DISubprogram`: the scope of everything in the function.
+    fn add_debug_info(
+        &mut self,
+        definition: DefId,
+        symbol: &str,
+        parameters: &[TypeId],
+        result: TypeId,
+        types: &Types,
+    ) -> usize {
+        let tree = &self.program.modules[definition.module.index()].ast;
+        let name = tree.decls[tree.declaration(definition.index)].name();
+        let (line, _) = tree.file.position(name.span.start as usize);
+        let mut signature = vec![match self.debug_type(types, result) {
+            Some(id) => format!("!{id}"),
+            None => "null".to_string(),
+        }];
+        for &parameter in parameters {
+            let id = self.debug_type(types, parameter).unwrap_or_default();
+            signature.push(format!("!{id}"));
+        }
+        let subroutine = self.metadata.add(&format!(
+            "!DISubroutineType(types: !{{{}}})",
+            signature.join(", ")
+        ));
+        self.metadata.add(&format!(
+            "distinct !DISubprogram(name: {}, linkageName: {}, scope: !{file}, file: !{file}, \
+             line: {line}, type: !{subroutine}, scopeLine: {line}, spFlags: DISPFlagDefinition, \
+             unit: !{})",
+            quoted(name.text(&tree.file).as_bytes()),
+            quoted(symbol.as_bytes()),
+            self.metadata.unit,
+            file = self.metadata.file,
+        ))
     }
 }
 
