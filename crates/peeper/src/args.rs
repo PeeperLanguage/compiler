@@ -73,11 +73,9 @@ pub fn parse(args: &[String]) -> Option<Args> {
         ["fix"] => (Vec::new(), ".", true),
         ["fix", path] => (Vec::new(), path, true),
         ["-dump"] => (Dump::ALL.to_vec(), ".", false),
-        ["-dump", mode] if kind(mode).is_some() => (kind(mode).into_iter().collect(), ".", false),
+        ["-dump", mode] if let Some(dump) = kind(mode) => (vec![dump], ".", false),
         ["-dump", path] => (Dump::ALL.to_vec(), path, false),
-        ["-dump", mode, path] if kind(mode).is_some() => {
-            (kind(mode).into_iter().collect(), path, false)
-        }
+        ["-dump", mode, path] if let Some(dump) = kind(mode) => (vec![dump], path, false),
         _ => return None,
     };
     Some(Args::Check {
