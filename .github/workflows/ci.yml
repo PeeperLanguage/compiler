@@ -198,7 +198,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Check repository scripts referenced by workflows
-        run: bash -n scripts/build.sh scripts/detect-changes.sh scripts/fetch-toolchain.sh scripts/install.sh scripts/plan-toolchains.sh scripts/toolchain-fingerprint.sh scripts/update-toolchain-lock.sh scripts/update-toolchain-sources.sh scripts/toolchains/common.sh scripts/toolchains/build-linux.sh scripts/toolchains/build-darwin.sh scripts/toolchains/build-windows.sh
+        run: bash -n scripts/build.sh scripts/build-runtime.sh scripts/detect-changes.sh scripts/fetch-toolchain.sh scripts/install.sh scripts/plan-toolchains.sh scripts/toolchain-fingerprint.sh scripts/update-toolchain-lock.sh scripts/update-toolchain-sources.sh scripts/toolchains/common.sh scripts/toolchains/build-linux.sh scripts/toolchains/build-darwin.sh scripts/toolchains/build-windows.sh
 
   ci-success:
     name: CI success

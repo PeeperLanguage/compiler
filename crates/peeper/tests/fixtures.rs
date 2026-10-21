@@ -23,7 +23,6 @@ fn bundle() -> String {
     let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join("bundle");
     _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("bin")).expect("the bundle folder is made");
-    std::fs::create_dir_all(root.join("runtime")).expect("the bundle folder is made");
     let compiler = root.join("bin/peeper");
     std::fs::copy(env!("CARGO_BIN_EXE_peeper"), &compiler).expect("the compiler is copied");
     std::os::unix::fs::symlink(
@@ -31,22 +30,12 @@ fn bundle() -> String {
         root.join("libs"),
     )
     .expect("the libraries are linked");
-    let object = root.join("runtime/peeper_rt.o");
-    let compiled = Command::new("clang")
-        .args(["-std=c11", "-O2", "-c"])
-        .arg(checkout.join("runtime/peeper_rt.c"))
-        .arg("-o")
-        .arg(&object)
+    let built = Command::new("bash")
+        .arg(checkout.join("scripts/build-runtime.sh"))
+        .arg(root.join("runtime"))
         .status()
-        .expect("clang runs");
-    assert!(compiled.success(), "the runtime compiles");
-    let archived = Command::new("ar")
-        .arg("rcs")
-        .arg(root.join("runtime/libpeeper_rt_v1.a"))
-        .arg(&object)
-        .status()
-        .expect("ar runs");
-    assert!(archived.success(), "the runtime archives");
+        .expect("bash runs");
+    assert!(built.success(), "the runtime builds");
     compiler.to_string_lossy().into_owned()
 }
 
