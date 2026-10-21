@@ -262,10 +262,7 @@ impl ThirBuilder<'_, '_> {
                 return None;
             }
         };
-        let Some(symbol) = self.checker.queries.modules[imported.index()]
-            .scope()
-            .get(member_name)
-        else {
+        let Some(symbol) = self.checker.queries.scopes[imported.index()].get(member_name) else {
             let message = format!("unknown name `{member_name}` in module `{module_name}`");
             self.checker
                 .error(diagnostics::UNDEFINED_NAME, message, member_span);

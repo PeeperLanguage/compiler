@@ -4,6 +4,7 @@
 //! Names of the prelude (`core:global`) are not copied in; a lookup that
 //! misses here goes on to the prelude module's scope.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use diagnostics::Diagnostic;
@@ -12,9 +13,49 @@ use model::ModuleId;
 use model::Symbol;
 use model::ast;
 use project::ImportKind;
-use project::Scope;
 use source::SourceFile;
 use source::Span;
+
+/// A place that holds declarations, and where each name is written. A module
+/// has one for its top-level declarations and imports. A name it does not
+/// hold is looked up next in its parent's.
+pub struct Scope {
+    /// The module whose scope comes next: the prelude (`core:global`), for
+    /// every module but the prelude.
+    pub parent: Option<ModuleId>,
+    names: HashMap<Box<str>, (Symbol, Span)>,
+}
+
+impl Scope {
+    pub fn new(parent: Option<ModuleId>) -> Scope {
+        Scope {
+            parent,
+            names: HashMap::new(),
+        }
+    }
+
+    /// What `name` stands for in this scope alone.
+    pub fn get(&self, name: &str) -> Option<Symbol> {
+        self.names.get(name).map(|&(symbol, _)| symbol)
+    }
+
+    /// Every name, in no order.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.names.keys().map(|name| &**name)
+    }
+
+    /// Brings `name` in as `symbol`, written at `span`. A name already in
+    /// keeps its first meaning, and gives where that was written.
+    pub fn declare(&mut self, name: &str, symbol: Symbol, span: Span) -> Result<(), Span> {
+        match self.names.get(name) {
+            Some(&(_, first)) => Err(first),
+            None => {
+                self.names.insert(name.into(), (symbol, span));
+                Ok(())
+            }
+        }
+    }
+}
 
 /// Reports `name` declared again at `again` in the same `place` (a module or
 /// a block) of `file`, where it was first declared at `first`.

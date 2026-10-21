@@ -1,7 +1,6 @@
 //! What the checking tests share: a one-module program read from text, whose
 //! declarations are checked one at a time.
 
-use std::cell::OnceCell;
 use std::sync::Arc;
 
 use model::ModuleId;
@@ -11,7 +10,6 @@ use source::SourceFile;
 
 use crate::ModuleChecker;
 use crate::Queries;
-use crate::scope::collect;
 
 /// The module `path`, written as `text`, with `imports`; its text must parse
 /// without errors.
@@ -23,7 +21,6 @@ pub(crate) fn module(path: &str, text: &str, imports: Vec<project::Import>) -> p
         path: path.to_string(),
         ast,
         imports,
-        scope: OnceCell::new(),
     }
 }
 
@@ -50,10 +47,6 @@ pub(crate) fn with_checker<T>(
     ];
     let file = modules[1].ast.file.clone();
     let mut queries = Queries::new(&modules, 64);
-    for id in [utils_id, main_id] {
-        let scope = collect(id, &modules, &mut queries.diagnostics[id.index()]);
-        assert!(modules[id.index()].scope.set(scope).is_ok());
-    }
     let result = queries.with_checker(main_id, work);
     let reported = queries
         .diagnostics

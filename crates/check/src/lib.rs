@@ -19,7 +19,7 @@ use model::ast;
 use model::constant::Constant;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
-use project::Scope;
+use scope::Scope;
 use source::Span;
 
 use model::Symbol;
@@ -29,8 +29,12 @@ use model::Symbol;
 /// `Symbol` names them. A body's own names (`Symbol::Local`) are checked in
 /// place with the body, never asked for.
 pub struct Queries<'p> {
-    pub modules: &'p [project::Module], // in the program's order, with their scopes
-    pub types: Types,                   // the program's types, shared by every declaration
+    pub modules: &'p [project::Module], // in the program's order
+    /// The names each module declares and imports, by `ModuleId`, collected
+    /// before anything is asked for: a body can use a name declared below it
+    /// or in another module.
+    scopes: Vec<Scope>,
+    pub types: Types, // the program's types, shared by every declaration
     /// How wide a pointer is on the target, in bits: the width of `isize` and
     /// `usize`.
     pub pointer_bits: u32,
@@ -55,11 +59,19 @@ pub enum State<T> {
 }
 
 impl<'p> Queries<'p> {
-    /// Nothing checked yet of `modules`, whose scopes are set. Pointers have
-    /// `pointer_bits` bits.
+    /// Nothing checked yet of `modules` but their scopes, whose errors are
+    /// each module's first diagnostics. Pointers have `pointer_bits` bits.
     pub fn new(modules: &'p [project::Module], pointer_bits: u32) -> Queries<'p> {
+        let mut diagnostics = vec![Vec::new(); modules.len()];
+        let scopes = (0..modules.len())
+            .map(|index| {
+                let id = ModuleId::from_index(index);
+                scope::collect(id, modules, &mut diagnostics[index])
+            })
+            .collect();
         Queries {
             modules,
+            scopes,
             types: Types::new(),
             pointer_bits,
             functions: modules
@@ -70,7 +82,7 @@ impl<'p> Queries<'p> {
                 .iter()
                 .map(|module| vec![State::NotStarted; module.ast.declarations.len()])
                 .collect(),
-            diagnostics: vec![Vec::new(); modules.len()],
+            diagnostics,
         }
     }
 
@@ -189,8 +201,8 @@ impl<'p> ModuleChecker<'_, 'p> {
     }
 
     /// The names the module being checked declares and imports.
-    pub fn scope(&self) -> &'p Scope {
-        self.module().scope()
+    pub fn scope(&self) -> &Scope {
+        &self.queries.scopes[self.current_module.index()]
     }
 
     /// Reports the error `message` at `span` of the module, and gives the type
@@ -212,7 +224,7 @@ impl<'p> ModuleChecker<'_, 'p> {
             if let Some(symbol) = scope.get(name) {
                 return Some(symbol);
             }
-            scope = self.queries.modules[scope.parent?.index()].scope();
+            scope = &self.queries.scopes[scope.parent?.index()];
         }
     }
 

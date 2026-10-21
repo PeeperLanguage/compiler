@@ -96,14 +96,6 @@ pub fn compile(
         .iter()
         .map(|module| ModuleResults::new(module.ast.file.clone()))
         .collect();
-    for (index, module) in modules.iter().enumerate() {
-        let id = ModuleId::from_index(index);
-        let diagnostics = &mut queries.diagnostics[index];
-        let set = module
-            .scope
-            .set(check::scope::collect(id, modules, diagnostics));
-        assert!(set.is_ok(), "a program is compiled once");
-    }
     let mut previous: HashMap<String, ModuleResults> = previous
         .modules
         .into_iter()

@@ -4,7 +4,6 @@
 
 mod packages;
 
-use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::ffi::OsString;
@@ -18,7 +17,6 @@ use std::sync::mpsc;
 
 use diagnostics::Diagnostic;
 use model::ModuleId;
-use model::Symbol;
 use model::ast;
 use model::ast::Tree;
 use source::SourceFile;
@@ -34,63 +32,12 @@ const PRELUDE_PATH: &str = "core:global";
 const SOURCE_FOLDER: &str = "src";
 
 /// One source file, read and parsed. Its source file is `ast.file`. What
-/// `load` read never changes, and a compile sets its scope once; what a
-/// compile finds is kept by the compile (`build::Compilation`).
+/// `load` read never changes; what a compile finds, its scope included, is
+/// kept by the compile (`check::Queries`).
 pub struct Module {
     pub path: String, // import path, such as "myapp:utils/file" or "core:global"
     pub ast: Tree,
     pub imports: Vec<Import>, // in source order; the implicit prelude import last, in every module but the prelude
-    /// The names it declares and imports; set once, after every module is
-    /// loaded, because a scope needs the modules its imports bring in.
-    pub scope: OnceCell<Scope>,
-}
-
-impl Module {
-    /// The scope the compile set.
-    pub fn scope(&self) -> &Scope {
-        self.scope.get().expect("a compile sets every scope first")
-    }
-}
-
-/// A place that holds declarations, and where each name is written. A module
-/// has one for its top-level declarations and imports. A name it does not
-/// hold is looked up next in its parent's.
-pub struct Scope {
-    /// The module whose scope comes next: the prelude (`core:global`), for
-    /// every module but the prelude.
-    pub parent: Option<ModuleId>,
-    names: HashMap<Box<str>, (Symbol, Span)>,
-}
-
-impl Scope {
-    pub fn new(parent: Option<ModuleId>) -> Scope {
-        Scope {
-            parent,
-            names: HashMap::new(),
-        }
-    }
-
-    /// What `name` stands for in this scope alone.
-    pub fn get(&self, name: &str) -> Option<Symbol> {
-        self.names.get(name).map(|&(symbol, _)| symbol)
-    }
-
-    /// Every name, in no order.
-    pub fn names(&self) -> impl Iterator<Item = &str> {
-        self.names.keys().map(|name| &**name)
-    }
-
-    /// Brings `name` in as `symbol`, written at `span`. A name already in
-    /// keeps its first meaning, and gives where that was written.
-    pub fn declare(&mut self, name: &str, symbol: Symbol, span: Span) -> Result<(), Span> {
-        match self.names.get(name) {
-            Some(&(_, first)) => Err(first),
-            None => {
-                self.names.insert(name.into(), (symbol, span));
-                Ok(())
-            }
-        }
-    }
 }
 
 /// One resolved import of a module.
@@ -294,7 +241,6 @@ impl Loaded {
             path: self.path,
             ast: self.ast,
             imports: imports.collect(),
-            scope: OnceCell::new(),
         }
     }
 }
