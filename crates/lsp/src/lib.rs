@@ -409,66 +409,51 @@ impl<'s> Server<'s> {
     /// that had some last time and has none now.
     fn check(&mut self, project: project::Project, file: &Path) -> Result<(), BoxError> {
         let program = project::load(&project, &self.open_files);
-        let Checked {
-            mut results,
-            published,
-            program: mut compiled_program,
-            mut names,
-            fix_all: _, // made again below
-        } = self.checked.remove(&project.entry).unwrap_or_default();
+        let mut checked = self.checked.remove(&project.entry).unwrap_or_default();
         let mut all: Vec<&diagnostics::Diagnostic> = program.diagnostics.iter().collect();
         // A program that cannot be checked keeps the last compile for the next.
-        let loaded = program.checkable;
-        if loaded {
-            let mut found: HashMap<ModuleId, Vec<CachedName>> = HashMap::new();
-            results = build::compile(
-                &program,
-                usize::BITS,
-                results,
-                true,
-                |&build::CheckedFunction {
-                     definition,
-                     thir,
-                     names,
-                     types,
-                     ..
-                 }| {
-                    let body_names = names
-                        .iter()
-                        .map(|name| CachedName::new(&program, thir, name, types));
-                    found
-                        .entry(definition.module)
-                        .or_default()
-                        .extend(body_names);
-                },
-            );
-            // A module the compile reused gave no names; the names found
-            // before still fit it. A module checked again gets its new names.
-            let reused: HashSet<&Path> =
-                results.reused().map(|file| Path::new(&file.path)).collect();
-            names.retain(|file, _| reused.contains(file.as_path()));
-            names.extend(found.into_iter().map(|(module, found)| {
-                let file = &program.modules[module.index()].ast.file.path;
-                (PathBuf::from(file), found)
-            }));
-            all.extend(results.diagnostics());
+        if program.checkable {
+            checked.update(&program);
+            all.extend(checked.results.diagnostics());
         }
+        let (published, fix_all) = self.publish(all, &checked.published, file, &project.root)?;
+        checked.published = published;
+        checked.fix_all = fix_all;
+        if program.checkable {
+            checked.program = Some(program);
+        }
+        self.checked.insert(project.entry, checked);
+        Ok(())
+    }
+
+    /// Publishes `diagnostics` by file, and an empty list for each file of
+    /// `published` (those that had some last time) that has none now. A
+    /// diagnostic about no place in a file, such as an unreadable module, is
+    /// shown at the start of `changed`, the file that changed. Gives the files
+    /// shown, and each file's sure fixes as one action for a later
+    /// `source.fixAll` request, chosen as `peeper fix` chooses them for the
+    /// project at `root`.
+    fn publish(
+        &self,
+        diagnostics: Vec<&diagnostics::Diagnostic>,
+        published: &HashSet<PathBuf>,
+        changed: &Path,
+        root: &Path,
+    ) -> Result<(HashSet<PathBuf>, HashMap<PathBuf, CodeAction>), BoxError> {
         let mut by_file: HashMap<PathBuf, Vec<&diagnostics::Diagnostic>> = HashMap::new();
-        for diagnostic in all {
-            // A diagnostic about no place in a file, such as an unreadable
-            // module, is shown at the start of the file that changed.
+        for diagnostic in diagnostics {
             let place = diagnostic
                 .labels
                 .first()
-                .map_or(file.to_path_buf(), |label| PathBuf::from(&label.file.path));
+                .map_or(changed.to_path_buf(), |label| {
+                    PathBuf::from(&label.file.path)
+                });
             by_file.entry(place).or_default().push(diagnostic);
         }
-        // Each file's sure fixes, chosen as `peeper fix` chooses them, as one
-        // action for a later `source.fixAll` request.
         let fix_all = by_file
             .iter()
             .filter_map(|(file, in_file)| {
-                let fixes = fix::chosen(in_file.iter().copied(), &project.root);
+                let fixes = fix::chosen(in_file.iter().copied(), root);
                 let fixes = fixes.into_iter().map(|(fix, _)| fix);
                 let action = CodeAction {
                     title: "Apply all sure fixes".to_string(),
@@ -480,7 +465,7 @@ impl<'s> Server<'s> {
             })
             .collect();
         let shown: HashSet<PathBuf> = by_file.keys().cloned().collect();
-        for file in shown.union(&published) {
+        for file in shown.union(published) {
             let Ok(uri) = Url::from_file_path(file) else {
                 continue; // not an absolute path
             };
@@ -500,18 +485,7 @@ impl<'s> Server<'s> {
                 .sender
                 .send(Message::Notification(notification))?;
         }
-        if loaded {
-            compiled_program = Some(program);
-        }
-        let checked = Checked {
-            results,
-            published: shown,
-            program: compiled_program,
-            names,
-            fix_all,
-        };
-        self.checked.insert(project.entry, checked);
-        Ok(())
+        Ok((shown, fix_all))
     }
 }
 
@@ -525,6 +499,48 @@ struct Checked {
     program: Option<project::Program>,
     names: HashMap<PathBuf, Vec<CachedName>>,
     fix_all: HashMap<PathBuf, CodeAction>, // each file's sure fixes, as of the last check
+}
+
+impl Checked {
+    /// Compiles `program` again, reusing what the last compile found, and
+    /// keeps the names written in the bodies of each module: a module the
+    /// compile reused gave no names, and the names found before still fit it;
+    /// a module checked again gets its new names.
+    fn update(&mut self, program: &project::Program) {
+        let mut found: HashMap<ModuleId, Vec<CachedName>> = HashMap::new();
+        let previous = std::mem::take(&mut self.results);
+        self.results = build::compile(
+            program,
+            usize::BITS,
+            previous,
+            true,
+            |&build::CheckedFunction {
+                 definition,
+                 thir,
+                 names,
+                 types,
+                 ..
+             }| {
+                let body_names = names
+                    .iter()
+                    .map(|name| CachedName::new(program, thir, name, types));
+                found
+                    .entry(definition.module)
+                    .or_default()
+                    .extend(body_names);
+            },
+        );
+        let reused: HashSet<&Path> = self
+            .results
+            .reused()
+            .map(|file| Path::new(&file.path))
+            .collect();
+        self.names.retain(|file, _| reused.contains(file.as_path()));
+        self.names.extend(found.into_iter().map(|(module, found)| {
+            let file = &program.modules[module.index()].ast.file.path;
+            (PathBuf::from(file), found)
+        }));
+    }
 }
 
 /// A name written in a body and what it stands for, kept as long as its
