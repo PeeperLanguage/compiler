@@ -22,132 +22,132 @@ use crate::dump::Dump;
 use crate::dump::Dumps;
 
 /// What a command does with a program once it is checked.
-pub enum Goal<'a> {
+pub enum Goal {
     /// Write the `dumps`; with `apply_fixes`, write the fixes the diagnostics
     /// suggest to the project's files, list them, and check again to report
     /// what is left.
-    Check {
-        dumps: &'a [Dump],
-        apply_fixes: bool,
-    },
+    Check { dumps: Vec<Dump>, apply_fixes: bool },
     /// Link the program into `output`: by default the program's name, in the
     /// current folder.
-    Build { output: Option<&'a Path> },
+    Build { output: Option<PathBuf> },
     /// Link it to a temporary file and run it with `arguments`.
-    Run { arguments: &'a [String] },
+    Run { arguments: Vec<String> },
 }
 
-/// Loads the program at `path`, prints its diagnostics to `out` and does what
-/// `goal` asks. The result is the exit code: 1 when there are errors, else 0,
-/// or the program's own when it ran. A folder must hold peeper.toml; its
-/// project starts at src/main.peep. A file is checked on its own, with no
-/// project and no imports. Dumps go to build/debug/dumps in the project
-/// folder, or beside the file, when the program has no errors. The bundled
-/// libraries and runtime are in `installation` (`installation_dir`).
-pub fn run(
-    path: &Path,
-    installation: &Path,
-    out: &mut impl Write,
-    colored: bool,
-    goal: &Goal,
-) -> u8 {
-    let project = match project::find(path, &installation.join("libs")) {
-        Ok(project) => project,
-        Err(error) => {
-            _ = writeln!(out, "{error}");
-            return 1;
-        }
-    };
-    let program = project::load(&project, &HashMap::<PathBuf, String>::new());
-    let mut all: Vec<Diagnostic> = program.diagnostics.clone();
-    let failed = |all: &[Diagnostic]| all.iter().any(Diagnostic::is_error);
-    let dumps = match goal {
-        Goal::Check { dumps, .. } => dumps,
-        Goal::Build { .. } | Goal::Run { .. } => &[][..],
-    };
-    let links = !matches!(goal, Goal::Check { .. });
-    let pointer_bits = usize::BITS;
-    let mut ll = Vec::new();
-    if program.checkable {
-        let mut dumped = Dumps::new(&program, dumps);
-        if links || dumped.wants_ll() {
-            ll = (0..program.modules.len())
-                .map(|index| llvm::Module::new(&program, ModuleId::from_index(index), pointer_bits))
-                .collect();
-        }
-        let entry = program
-            .modules
-            .iter()
-            .position(|module| Path::new(&module.ast.file.path) == project.entry);
-        let mut main = None; // the entry module's `main`, and whether it returns an exit code
-        let results = build::compile(
-            &program,
-            pointer_bits,
-            build::Results::default(),
-            false, // names are for editors
-            |definition, ty, thir, _, mir, types| {
-                if links
-                    && Some(definition.module.index()) == entry
-                    && is_main(&program, definition)
-                {
-                    main = Some((definition, gives_exit_code(&types[ty])));
-                }
-                let Some(mir) = mir else {
-                    return; // it has errors
-                };
-                dumped.add(definition, thir, mir, types);
-                if let Some(module) = ll.get_mut(definition.module.index()) {
-                    module.function(definition, ty, mir, types);
-                }
-            },
-        );
-        all.extend(results.diagnostics().cloned());
-        if links
-            && !failed(&all)
-            && let Some(entry) = entry
-        {
-            let file = &program.modules[entry].ast.file;
-            match main {
-                Some((main, Some(exit_code))) => ll[entry].entry_point(main, exit_code),
-                Some((main, None)) => all.push(no_entry_point(file, name_span(&program, main))),
-                None => all.push(no_entry_point(file, Span::at(0))),
-            }
-        }
-        if !failed(&all)
-            && let Err(error) = dumped.write(&project.root.join("build/debug/dumps"), &ll, out)
-        {
-            _ = writeln!(out, "peeper: cannot write a dump: {error}");
-            return 1;
-        }
-    }
-    if let Goal::Check {
-        dumps,
-        apply_fixes: true,
-    } = goal
-    {
-        let fixes = fix::chosen(&all, &project.root);
-        if !fixes.is_empty() {
-            if let Err(error) = fix::write(&fixes, out) {
-                _ = writeln!(out, "peeper: cannot write a fix: {error}");
+/// One `peeper` command on a program.
+pub struct Command<W: Write> {
+    pub path: PathBuf,         // the project folder or file
+    pub installation: PathBuf, // the bundled libraries and runtime (`installation_dir`)
+    pub out: W,                // where diagnostics and messages are printed
+    pub colored: bool,         // whether diagnostics are printed in color
+    pub goal: Goal,
+}
+
+impl<W: Write> Command<W> {
+    /// Loads the program at `path`, prints its diagnostics to `out` and does
+    /// what `goal` asks. The result is the exit code: 1 when there are errors,
+    /// else 0, or the program's own when it ran. A folder must hold
+    /// peeper.toml; its project starts at src/main.peep. A file is checked on
+    /// its own, with no project and no imports. Dumps go to build/debug/dumps
+    /// in the project folder, or beside the file, when the program has no
+    /// errors.
+    pub fn run(&mut self) -> u8 {
+        let project = match project::find(&self.path, &self.installation.join("libs")) {
+            Ok(project) => project,
+            Err(error) => {
+                _ = writeln!(self.out, "{error}");
                 return 1;
             }
-            let again = Goal::Check {
-                dumps,
-                apply_fixes: false,
-            };
-            return run(path, installation, out, colored, &again);
+        };
+        let program = project::load(&project, &HashMap::<PathBuf, String>::new());
+        let mut all: Vec<Diagnostic> = program.diagnostics.clone();
+        let failed = |all: &[Diagnostic]| all.iter().any(Diagnostic::is_error);
+        let dumps = match &self.goal {
+            Goal::Check { dumps, .. } => &dumps[..],
+            Goal::Build { .. } | Goal::Run { .. } => &[],
+        };
+        let links = !matches!(self.goal, Goal::Check { .. });
+        let pointer_bits = usize::BITS;
+        let mut ll = Vec::new();
+        if program.checkable {
+            let mut dumped = Dumps::new(&program, dumps);
+            if links || dumped.wants_ll() {
+                ll = (0..program.modules.len())
+                    .map(|index| {
+                        llvm::Module::new(&program, ModuleId::from_index(index), pointer_bits)
+                    })
+                    .collect();
+            }
+            let entry = program
+                .modules
+                .iter()
+                .position(|module| Path::new(&module.ast.file.path) == project.entry);
+            let mut main = None; // the entry module's `main`, and whether it returns an exit code
+            let results = build::compile(
+                &program,
+                pointer_bits,
+                build::Results::default(),
+                false, // names are for editors
+                |definition, ty, thir, _, mir, types| {
+                    if links
+                        && Some(definition.module.index()) == entry
+                        && is_main(&program, definition)
+                    {
+                        main = Some((definition, gives_exit_code(&types[ty])));
+                    }
+                    let Some(mir) = mir else {
+                        return; // it has errors
+                    };
+                    dumped.add(definition, thir, mir, types);
+                    if let Some(module) = ll.get_mut(definition.module.index()) {
+                        module.function(definition, ty, mir, types);
+                    }
+                },
+            );
+            all.extend(results.diagnostics().cloned());
+            if links
+                && !failed(&all)
+                && let Some(entry) = entry
+            {
+                let file = &program.modules[entry].ast.file;
+                match main {
+                    Some((main, Some(exit_code))) => ll[entry].entry_point(main, exit_code),
+                    Some((main, None)) => all.push(no_entry_point(file, name_span(&program, main))),
+                    None => all.push(no_entry_point(file, Span::at(0))),
+                }
+            }
+            if !failed(&all)
+                && let Err(error) =
+                    dumped.write(&project.root.join("build/debug/dumps"), &ll, &mut self.out)
+            {
+                _ = writeln!(self.out, "peeper: cannot write a dump: {error}");
+                return 1;
+            }
         }
+        if let Goal::Check { apply_fixes, .. } = &mut self.goal
+            && *apply_fixes
+        {
+            let fixes = fix::chosen(&all, &project.root);
+            if !fixes.is_empty() {
+                if let Err(error) = fix::write(&fixes, &mut self.out) {
+                    _ = writeln!(self.out, "peeper: cannot write a fix: {error}");
+                    return 1;
+                }
+                *apply_fixes = false;
+                return self.run();
+            }
+        }
+        let scan = |file: &Arc<SourceFile>| lexer::scan(file).0;
+        let highlight: Option<printer::TokensOf> = if self.colored { Some(&scan) } else { None };
+        if let Err(error) = printer::print(&mut self.out, &all, highlight) {
+            eprintln!("peeper: cannot write diagnostics: {error}");
+            return 1;
+        }
+        if failed(&all) {
+            return 1;
+        }
+        link(&self.goal, &project, &ll, &self.installation, &mut self.out)
     }
-    let scan = |file: &Arc<SourceFile>| lexer::scan(file).0;
-    let highlight: Option<printer::TokensOf> = if colored { Some(&scan) } else { None };
-    if let Err(error) = printer::print(out, &all, highlight) {
-        eprintln!("peeper: cannot write diagnostics: {error}");
-        return 1;
-    }
-    if failed(&all) {
-        return 1;
-    }
-    link(goal, &project, &ll, installation, out)
 }
 
 /// Links the program, whose modules' LLVM text is in `ll`, as `goal` asks,
@@ -163,7 +163,7 @@ fn link(
         Goal::Check { .. } => return 0,
         Goal::Build {
             output: Some(output),
-        } => output.to_path_buf(),
+        } => output.clone(),
         Goal::Build { output: None } => {
             PathBuf::from(format!("{}{}", project.name, std::env::consts::EXE_SUFFIX))
         }
@@ -188,9 +188,7 @@ fn link(
         return 0;
     };
     _ = out.flush();
-    let status = std::process::Command::new(&output)
-        .args(*arguments)
-        .status();
+    let status = std::process::Command::new(&output).args(arguments).status();
     _ = std::fs::remove_file(&output);
     match status {
         Ok(status) => exit_code_of(status),
@@ -267,6 +265,7 @@ mod tests {
     use std::path::Path;
     use std::path::PathBuf;
 
+    use super::Command;
     use super::Goal;
 
     fn temp_dir(test: &str) -> PathBuf {
@@ -287,13 +286,18 @@ mod tests {
     /// Checks `path` with the libraries of `installation`; gives the exit
     /// code and what was printed.
     fn run(path: &Path, installation: &Path) -> (u8, String) {
-        let check = Goal::Check {
-            dumps: &[],
-            apply_fixes: false,
+        let mut command = Command {
+            path: path.to_path_buf(),
+            installation: installation.to_path_buf(),
+            out: Vec::new(),
+            colored: false,
+            goal: Goal::Check {
+                dumps: Vec::new(),
+                apply_fixes: false,
+            },
         };
-        let mut out = Vec::new();
-        let code = super::run(path, installation, &mut out, false, &check);
-        (code, String::from_utf8(out).unwrap())
+        let code = command.run();
+        (code, String::from_utf8(command.out).unwrap())
     }
 
     /// `peeper fix` writes the suggested fixes, lists them top down, and
@@ -304,13 +308,18 @@ mod tests {
         let text = b"fn main() {\n    let count = 1;\n    let a = cout\n    let b = gone;\n}\n";
         write(&root, &[("app.peep", text)]);
         let file = root.join("app.peep");
-        let mut out = Vec::new();
-        let fix = Goal::Check {
-            dumps: &[],
-            apply_fixes: true,
+        let mut command = Command {
+            path: file.clone(),
+            installation: PathBuf::new(),
+            out: Vec::new(),
+            colored: false,
+            goal: Goal::Check {
+                dumps: Vec::new(),
+                apply_fixes: true,
+            },
         };
-        let code = super::run(&file, Path::new(""), &mut out, false, &fix);
-        let out = String::from_utf8(out).unwrap();
+        let code = command.run();
+        let out = String::from_utf8(command.out).unwrap();
         let fixed = std::fs::read_to_string(&file).unwrap();
         assert_eq!(
             fixed,
@@ -423,7 +432,6 @@ mod tests {
                 ("wide.peep", b"fn main() -> i64 { return 0; }\n"),
             ],
         );
-        let build = Goal::Build { output: None };
         for (file, at) in [
             ("none.peep", ":1:1"),
             ("bodyless.peep", ":1:1"),
@@ -431,9 +439,15 @@ mod tests {
             ("wide.peep", ":1:4"),
         ] {
             let path = root.join(file);
-            let mut out = Vec::new();
-            let code = super::run(&path, Path::new(""), &mut out, false, &build);
-            let out = String::from_utf8(out).unwrap();
+            let mut command = Command {
+                path: path.clone(),
+                installation: PathBuf::new(),
+                out: Vec::new(),
+                colored: false,
+                goal: Goal::Build { output: None },
+            };
+            let code = command.run();
+            let out = String::from_utf8(command.out).unwrap();
             assert_eq!(code, 1, "{file}: {out}");
             assert!(
                 out.starts_with("[M0006]: program entrypoint must be")
