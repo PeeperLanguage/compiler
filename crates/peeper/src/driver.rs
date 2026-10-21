@@ -62,7 +62,9 @@ impl<W: Write> Command<W> {
         // unsaved text here, so every file is read from disk.
         let program = project::load(&project, &HashMap::<PathBuf, String>::new());
         match goal {
-            Goal::Check { dumps, apply_fixes } => { self.run_check(&project, &program, dumps, *apply_fixes) }
+            Goal::Check { dumps, apply_fixes } => {
+                self.run_check(&project, &program, dumps, *apply_fixes)
+            }
             Goal::Build { output } => self.run_build(&project, &program, output.as_deref()),
             Goal::Run { arguments } => self.run_program(&project, &program, arguments),
         }

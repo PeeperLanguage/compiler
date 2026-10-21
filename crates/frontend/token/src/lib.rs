@@ -49,7 +49,7 @@ macro_rules! tokens {
 
 tokens! {
     pub enum TokenKind {
-        
+
         // Kinds whose text varies: `text` describes them.
         Eof = "end of file",
         Ident = "identifier",
@@ -60,7 +60,7 @@ tokens! {
         ByteChar = "byte character",
         DocComment = "document comment",
 
-        
+
         // Longest text first within each leading character, so the lexer's
         // first match is the right one.
         #[operators]
@@ -114,7 +114,7 @@ tokens! {
         RightBrace = "}",
         LeftBracket = "[",
         RightBracket = "]",
-        
+
         // In the order of their text, so the lexer finds the keywords starting
         // with each letter together.
         #[keywords]
