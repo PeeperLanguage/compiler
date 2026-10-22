@@ -59,11 +59,14 @@ impl ModuleChecker<'_, '_> {
                 _ => unreachable!("the parser gives a type declaration only these types"),
             },
             ast::Decl::Alias(declaration) if declaration.type_parameters.is_empty() => {
-                let real = self.resolve_type(declaration.ty);
-                if real == TypeId::INVALID {
-                    return real; // its error was reported
+                let target = self.resolve_type(declaration.ty);
+                if target == TypeId::INVALID {
+                    return target; // its error was reported
                 }
-                return self.queries.types.intern(Type::Alias { definition, real });
+                return self.queries.types.intern(Type::Alias {
+                    definition,
+                    real: target,
+                });
             }
             ast::Decl::Alias(declaration) => (declaration.name, "generic type aliases"),
             _ => unreachable!("`{declaration:?}` is a type declaration"),

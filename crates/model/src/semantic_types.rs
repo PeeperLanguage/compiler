@@ -69,8 +69,9 @@ pub enum Type {
         result: TypeId,
     },
     /// A type alias: the declaration that names it, and the type it names,
-    /// perhaps another alias. Indexing `Types` looks through it to the type
-    /// itself (`Types::real`); only a message names the alias.
+    /// never another alias (an alias of an alias names that alias's type).
+    /// Indexing `Types` looks through it to the type itself (`Types::real`);
+    /// only a message names the alias.
     Alias {
         definition: DefId,
         real: TypeId,
@@ -171,8 +172,12 @@ impl Types {
         }
     }
 
-    /// The id of `ty`, made the first time `ty` is seen.
-    pub fn intern(&mut self, ty: Type) -> TypeId {
+    /// The id of `ty`, made the first time `ty` is seen. An alias of an alias
+    /// is kept as an alias of that alias's type, so `real` takes one step.
+    pub fn intern(&mut self, mut ty: Type) -> TypeId {
+        if let Type::Alias { real, .. } = &mut ty {
+            *real = self.real(*real);
+        }
         if let Some(&id) = self.ids.get(&ty) {
             return id;
         }
@@ -218,13 +223,12 @@ impl Types {
         self.real(a) == self.real(b)
     }
 
-    /// The type `id` stands for: itself, or the end of the chain of aliases
-    /// it starts.
-    pub fn real(&self, mut id: TypeId) -> TypeId {
-        while let Type::Alias { real, .. } = self.types[id.0 as usize] {
-            id = real;
+    /// The type `id` stands for: itself, or the type an alias names.
+    pub fn real(&self, id: TypeId) -> TypeId {
+        match self.types[id.0 as usize] {
+            Type::Alias { real, .. } => real,
+            _ => id,
         }
-        id
     }
 
     /// The type `id` as a message names it: an alias by its name, which
