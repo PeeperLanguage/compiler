@@ -42,7 +42,8 @@ def instructions(executable, runs):
     if child == 0:  # waits until the counter is attached, so it counts from exec
         os.close(start)
         os.read(start_reading, 1)
-        os.execve(executable, [executable], {**os.environ, "PEEPER_BENCH_RUNS": str(runs)})
+        os.execve(executable, [executable],  # without clang: its processes would be counted too
+                  {**os.environ, "PEEPER_BENCH_RUNS": str(runs), "PEEPER_BENCH_CLANG": "0"})
     os.close(start_reading)
     flags = DISABLED | INHERIT | EXCLUDE_KERNEL | EXCLUDE_HV | ENABLE_ON_EXEC
     attribute = struct.pack("IIQQQQQ", HARDWARE, 128, INSTRUCTIONS, 0, 0, 0, flags).ljust(128, b"\0")

@@ -1,9 +1,10 @@
 //! Compile speed: loads, checks and lowers a large generated program and
-//! writes its LLVM text, several times in one process, and prints the
-//! fastest and the median time of each phase. Linking is left out: it is
-//! clang's time, not the compiler's. `PEEPER_BENCH_RUNS` sets how many
-//! compiles run; scripts/bench-instructions.py counts their instructions,
-//! which machine load moves far less than time.
+//! writes its LLVM text, several times in one process, then has clang turn
+//! the text into a program, and prints the fastest and the median time of
+//! each phase. `PEEPER_BENCH_RUNS` sets how many compiles run, and
+//! `PEEPER_BENCH_CLANG=0` leaves clang out; scripts/bench-instructions.py
+//! counts the instructions of the compiler alone that way, which machine load
+//! moves far less than time.
 //!
 //! cargo bench -p peeper --bench compile
 
@@ -36,9 +37,14 @@ fn main() {
     let files = files(&folder);
     let lines: usize = files.values().map(|text| text.lines().count()).sum();
     println!("{MODULES} modules, {FUNCTIONS} functions each, {lines} lines; {runs} runs");
+    // The runtime library the program links with, unless clang is left out.
+    let built = Path::new(env!("CARGO_TARGET_TMPDIR")).join("bench");
+    let runtime = (std::env::var("PEEPER_BENCH_CLANG").map_or(true, |clang| clang != "0"))
+        .then(|| llvm::runtime::build(&built).expect("the runtime builds"));
     let mut load = Vec::new();
     let mut check = Vec::new(); // checking and lowering, as `compile::run` does them
     let mut llvm = Vec::new();
+    let mut clang = Vec::new();
     for _ in 0..runs {
         let start = Instant::now();
         let program = project::load(&project, &files);
@@ -47,6 +53,7 @@ fn main() {
         let mut ll: Vec<llvm::Module> = (0..program.modules.len())
             .map(|index| llvm::Module::new(&program, ModuleId::from_index(index), POINTER_BITS))
             .collect();
+        let mut main = None;
         let mut writing = Duration::ZERO; // LLVM text, timed apart from the compile around it
         let start = Instant::now();
         let results = compile::run(
@@ -62,6 +69,11 @@ fn main() {
                  ..
              }| {
                 let mir = mir.expect("the program has no errors");
+                if Path::new(&program.modules[definition.module.index()].ast.file.path)
+                    == project.entry
+                {
+                    main = Some(definition); // the only function of main.peep
+                }
                 let start = Instant::now();
                 ll[definition.module.index()].add_function(definition, signature, mir, types);
                 writing += start.elapsed();
@@ -73,20 +85,32 @@ fn main() {
             0,
             "the program has no errors"
         );
+        let main = main.expect("main.peep declares main");
         let start = Instant::now();
+        ll[main.module.index()].add_entry_point(main, false);
         let text: usize = ll.iter().map(|module| module.text().len()).sum();
         llvm.push(writing + start.elapsed());
         std::hint::black_box(text);
+        if let Some(runtime) = &runtime {
+            let start = Instant::now();
+            llvm::link::link_executable(&ll, runtime, &built.join("program"))
+                .expect("clang builds the program");
+            clang.push(start.elapsed());
+        }
     }
     let total: Vec<Duration> = (0..runs)
         .map(|run| load[run] + check[run] + llvm[run])
         .collect();
-    for (phase, times) in [
+    let mut phases = vec![
         ("load", load),
         ("check+lower", check),
         ("llvm text", llvm),
         ("total", total),
-    ] {
+    ];
+    if runtime.is_some() {
+        phases.push(("clang", clang));
+    }
+    for (phase, times) in phases {
         let (fastest, median) = summary(times);
         println!("{phase:<12} min {fastest:>8.2?}  median {median:>8.2?}");
     }
