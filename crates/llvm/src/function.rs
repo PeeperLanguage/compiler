@@ -4,6 +4,8 @@
 //! its incoming MIR block ends.
 
 use std::collections::HashMap;
+use std::fmt;
+use std::fmt::Display;
 use std::fmt::Write;
 
 use arena::Id;
@@ -66,7 +68,6 @@ impl Module<'_> {
             file: &tree.file,
             scope_metadata: scope_metadata.unwrap_or_default(),
             locations: HashMap::new(),
-            out: String::new(),
             panics: String::new(),
             checks: body
                 .blocks
@@ -80,28 +81,27 @@ impl Module<'_> {
             block: 0,
             checked: 0,
         };
-        let arguments: Vec<String> = parameters
-            .iter()
-            .enumerate()
-            .map(|(index, &parameter)| format!("{} %arg{index}", type_text(types, parameter)))
-            .collect();
+        let mut out = String::new();
+        let arguments = parameters.iter().enumerate().map(|(index, &parameter)| {
+            fmt::from_fn(move |out| write!(out, "{} %arg{index}", type_text(types, parameter)))
+        });
         _ = write!(
-            function.out,
+            out,
             "define {} {}({})",
             type_text(types, *result),
             global(&symbol),
-            arguments.join(", ")
+            comma_separated(arguments)
         );
         if let Some(subprogram) = subprogram {
-            _ = write!(function.out, " !dbg !{subprogram}");
+            _ = write!(out, " !dbg !{subprogram}");
         }
-        function.out.push_str(" {\nentry:\n");
-        function.variables(parameters.len());
-        function.out.push_str("  br label %bb0\n");
+        out.push_str(" {\nentry:\n");
+        function.variables(&mut out, parameters.len());
+        out.push_str("  br label %bb0\n");
         for block in body.blocks.ids() {
-            function.write_block(block, *result);
+            function.write_block(&mut out, block, *result);
         }
-        let Function { out, panics, .. } = function;
+        let Function { panics, .. } = function;
         self.functions.push_str(&out);
         self.functions.push_str(&panics);
         self.functions.push_str("}\n\n");
@@ -208,12 +208,26 @@ fn value_name(id: Id<mir::Instruction>) -> impl std::fmt::Display {
     std::fmt::from_fn(move |out| write!(out, "%i{}", id.index()))
 }
 
+/// `items` with a comma between each two, written where it is printed.
+fn comma_separated<T: Display>(items: impl Iterator<Item = T> + Clone) -> impl Display {
+    fmt::from_fn(move |out| {
+        for (index, item) in items.clone().enumerate() {
+            if index > 0 {
+                out.write_str(", ")?;
+            }
+            item.fmt(out)?;
+        }
+        Ok(())
+    })
+}
+
 /// `symbol` as an LLVM global name.
 pub(crate) fn global(symbol: &str) -> String {
     format!("@{}", quoted(symbol.as_bytes()))
 }
 
-/// Writing one function's `define`.
+/// Writing one function's `define`, into the `out` its writing methods are
+/// given.
 struct Function<'m, 'p, 'b> {
     module: &'m mut Module<'p>,
     strings: Vec<Option<String>>, // by constant: the global of each string
@@ -222,27 +236,22 @@ struct Function<'m, 'p, 'b> {
     file: &'b SourceFile,
     scope_metadata: Vec<usize>, // by MIR debug scope (`Module::add_debug_info`)
     locations: HashMap<(usize, u32), usize>, // each scope and start offset's DILocation
-    out: String,
-    panics: String,     // the blocks that call the panic function, after the others
-    checks: Vec<usize>, // how many instructions of each block check first (`traps`)
-    block: usize,       // the MIR block being written
-    checked: usize,     // its checks so far
+    panics: String,             // the blocks that call the panic function, after the others
+    checks: Vec<usize>,         // how many instructions of each block check first (`traps`)
+    block: usize,               // the MIR block being written
+    checked: usize,             // its checks so far
 }
 
 impl Function<'_, '_, '_> {
     /// The `alloca` of each variable and, in a debug build, its debug
     /// declaration; the first `parameters` of them are the parameters.
-    fn variables(&mut self, parameters: usize) {
+    fn variables(&mut self, out: &mut String, parameters: usize) {
         for variable in self.body.variables.ids() {
             let index = variable.index();
             let mir::Variable {
                 ty, debug_scope, ..
             } = self.body.variables[variable];
-            _ = writeln!(
-                self.out,
-                "  %v{index} = alloca {}",
-                type_text(self.types, ty)
-            );
+            _ = writeln!(out, "  %v{index} = alloca {}", type_text(self.types, ty));
             let Some(metadata) = &mut self.module.metadata else {
                 continue;
             };
@@ -262,7 +271,7 @@ impl Function<'_, '_, '_> {
             ));
             let location = self.location(span, debug_scope);
             _ = writeln!(
-                self.out,
+                out,
                 "  call void @llvm.dbg.declare(metadata ptr %v{index}, \
                  metadata !{declared}, metadata !DIExpression()){location}",
             );
@@ -292,75 +301,95 @@ impl Function<'_, '_, '_> {
 
     /// The label of the LLVM block where the MIR block `block` ends: after
     /// its last check.
-    fn end_label(&self, block: Id<mir::Block>) -> String {
-        match self.checks[block.index()] {
-            0 => format!("bb{}", block.index()),
-            checks => format!("bb{}.{checks}", block.index()),
-        }
+    fn end_label(&self, block: Id<mir::Block>) -> impl Display {
+        let checks = self.checks[block.index()];
+        fmt::from_fn(move |out| match checks {
+            0 => write!(out, "bb{}", block.index()),
+            checks => write!(out, "bb{}.{checks}", block.index()),
+        })
     }
 
-    fn operand(&self, operand: Operand) -> String {
-        match operand {
+    fn operand(&self, operand: Operand) -> impl Display {
+        fmt::from_fn(move |out| match operand {
             Operand::Constant(constant) => match &self.strings[constant.index()] {
-                Some(global) => global.clone(),
-                None => constant_text(self.types, &self.body.constants[constant.index()]),
+                Some(global) => out.write_str(global),
+                None => constant_text(self.types, &self.body.constants[constant.index()]).fmt(out),
             },
-            Operand::Argument(index) => format!("%arg{index}"),
-            Operand::Value(instruction) => value_name(instruction).to_string(),
-        }
+            Operand::Argument(index) => write!(out, "%arg{index}"),
+            Operand::Value(instruction) => value_name(instruction).fmt(out),
+        })
     }
 
     /// `operand` with its type before it, as a call argument.
-    fn typed(&self, operand: Operand) -> String {
+    fn typed(&self, operand: Operand) -> impl Display {
         let ty = operand_type(self.body, operand);
-        format!("{} {}", type_text(self.types, ty), self.operand(operand))
+        fmt::from_fn(move |out| {
+            write!(
+                out,
+                "{} {}",
+                type_text(self.types, ty),
+                self.operand(operand)
+            )
+        })
     }
 
     /// Writes the block `block` of a function whose result type is `result`.
-    fn write_block(&mut self, block: Id<mir::Block>, result: TypeId) {
+    fn write_block(&mut self, out: &mut String, block: Id<mir::Block>, result: TypeId) {
         self.block = block.index();
         self.checked = 0;
-        _ = writeln!(self.out, "bb{}:", block.index());
+        _ = writeln!(out, "bb{}:", block.index());
         let body = self.body;
         let mir = &body.blocks[block];
         for instruction in body.lists.items(mir.instructions) {
-            self.write_instruction(instruction);
+            self.write_instruction(out, instruction);
         }
-        let (line, span) = match mir.terminator {
-            Terminator::Goto(target) => (format!("br label %bb{}", target.index()), None),
+        // The line, then the location of its span, if it has one.
+        let span = match mir.terminator {
+            Terminator::Goto(target) => {
+                _ = write!(out, "  br label %bb{}", target.index());
+                None
+            }
             Terminator::Branch {
                 condition,
                 span,
                 then,
                 otherwise,
             } => {
-                let line = format!(
-                    "br i1 {}, label %bb{}, label %bb{}",
+                _ = write!(
+                    out,
+                    "  br i1 {}, label %bb{}, label %bb{}",
                     self.operand(condition),
                     then.index(),
                     otherwise.index()
                 );
-                (line, Some(span))
+                Some(span)
             }
             Terminator::Return {
                 value: Some(value),
                 span,
-            } => (format!("ret {}", self.typed(value)), Some(span)),
+            } => {
+                _ = write!(out, "  ret {}", self.typed(value));
+                Some(span)
+            }
             // Reachable with a result only in a function with an error,
             // which is not lowered.
-            Terminator::FallOff(_) if result != TypeId::VOID => ("unreachable".to_string(), None),
+            Terminator::FallOff(_) if result != TypeId::VOID => {
+                out.push_str("  unreachable");
+                None
+            }
             Terminator::Return { value: None, span } | Terminator::FallOff(span) => {
-                ("ret void".to_string(), Some(span))
+                out.push_str("  ret void");
+                Some(span)
             }
         };
         let location = span.map_or(DebugLocation(None), |span| {
             self.location(span, mir.debug_scope)
         });
-        _ = writeln!(self.out, "  {line}{location}");
+        _ = writeln!(out, "{location}");
     }
 
     /// Writes the instruction `id`.
-    fn write_instruction(&mut self, id: Id<mir::Instruction>) {
+    fn write_instruction(&mut self, out: &mut String, id: Id<mir::Instruction>) {
         let mir::Instruction {
             ty,
             ref kind,
@@ -370,27 +399,34 @@ impl Function<'_, '_, '_> {
         let location = self.location(span, debug_scope);
         let name = value_name(id);
         let types = self.types;
-        let line = match *kind {
-            InstructionKind::Load(variable) => format!(
-                "{name} = load {}, ptr %v{}",
+        _ = match *kind {
+            InstructionKind::Load(variable) => write!(
+                out,
+                "  {name} = load {}, ptr %v{}",
                 type_text(types, ty),
                 variable.index()
             ),
-            InstructionKind::Store { variable, value } => format!(
-                "store {} {}, ptr %v{}",
+            InstructionKind::Store { variable, value } => write!(
+                out,
+                "  store {} {}, ptr %v{}",
                 type_text(types, self.body.variables[variable].ty),
                 self.operand(value),
                 variable.index()
             ),
-            InstructionKind::Binary { op, left, right } => self.write_binary(id, op, left, right),
+            InstructionKind::Binary { op, left, right } => {
+                self.write_binary(out, id, op, left, right);
+                Ok(())
+            }
             InstructionKind::Unary { op, value } => {
                 let text = type_text(types, ty);
                 let value = self.operand(value);
                 match (op, &types[ty]) {
-                    (UnaryOp::Negate, Type::Float(_)) => format!("{name} = fneg {text} {value}"),
-                    (UnaryOp::Negate, _) => format!("{name} = sub {text} 0, {value}"),
-                    (UnaryOp::LogicalNot, _) => format!("{name} = xor {text} {value}, true"),
-                    (UnaryOp::BitNot, _) => format!("{name} = xor {text} {value}, -1"),
+                    (UnaryOp::Negate, Type::Float(_)) => {
+                        write!(out, "  {name} = fneg {text} {value}")
+                    }
+                    (UnaryOp::Negate, _) => write!(out, "  {name} = sub {text} 0, {value}"),
+                    (UnaryOp::LogicalNot, _) => write!(out, "  {name} = xor {text} {value}, true"),
+                    (UnaryOp::BitNot, _) => write!(out, "  {name} = xor {text} {value}, -1"),
                 }
             }
             InstructionKind::Widen(value) => {
@@ -400,8 +436,9 @@ impl Function<'_, '_, '_> {
                     Type::Integer(_) => "zext",
                     _ => "fpext",
                 };
-                format!(
-                    "{name} = {conversion} {} to {}",
+                write!(
+                    out,
+                    "  {name} = {conversion} {} to {}",
                     self.typed(value),
                     type_text(types, ty)
                 )
@@ -409,85 +446,88 @@ impl Function<'_, '_, '_> {
             InstructionKind::Call {
                 function,
                 ref arguments,
-            } => self.write_call(id, function, arguments),
+            } => {
+                self.write_call(out, id, function, arguments);
+                Ok(())
+            }
             InstructionKind::Phi(ref incoming) => {
-                let incoming: Vec<String> = incoming
-                    .iter()
-                    .map(|&(block, value)| {
-                        format!("[ {}, %{} ]", self.operand(value), self.end_label(block))
-                    })
-                    .collect();
-                let line = format!(
-                    "{name} = phi {} {}",
-                    type_text(types, ty),
-                    incoming.join(", ")
-                );
-                _ = writeln!(self.out, "  {line}");
+                let function = &*self;
+                let incoming = incoming.iter().map(|&(block, value)| {
+                    let (value, label) = (function.operand(value), function.end_label(block));
+                    fmt::from_fn(move |out| write!(out, "[ {value}, %{label} ]"))
+                });
+                let incoming = comma_separated(incoming);
+                _ = writeln!(out, "  {name} = phi {} {incoming}", type_text(types, ty));
                 return; // no location: it runs where control arrives
             }
         };
-        _ = writeln!(self.out, "  {line}{location}");
+        _ = writeln!(out, "{location}");
     }
 
-    /// The line calling `function` with `arguments` for the instruction `id`,
-    /// after noting the declaration the module needs for it.
+    /// Writes the line calling `function` with `arguments` for the
+    /// instruction `id`, after noting the declaration the module needs for
+    /// it.
     fn write_call(
         &mut self,
+        out: &mut String,
         id: Id<mir::Instruction>,
         function: DefId,
         arguments: &[Operand],
-    ) -> String {
-        let (ty, types) = (self.body.instructions[id].ty, self.types);
+    ) {
+        let (ty, types, body) = (self.body.instructions[id].ty, self.types, self.body);
         let symbol = symbol(self.module.program, function);
         let callee = global(&symbol);
         // Only C code needs the C ABI's extension of narrow integers; it
         // follows a parameter's type and comes before a result's.
         let external = extern_symbol(self.module.program, function).is_some();
         let extension = |ty| c_extension(types, ty).filter(|_| external);
-        let result = match extension(ty) {
-            Some(extension) => format!("{extension} {}", type_text(types, ty)),
-            None => type_text(types, ty).to_string(),
-        };
-        let parameters: Vec<String> = arguments
-            .iter()
-            .map(|&argument| {
-                let ty = operand_type(self.body, argument);
-                match extension(ty) {
-                    Some(extension) => format!("{} {extension}", type_text(types, ty)),
-                    None => type_text(types, ty).to_string(),
-                }
-            })
-            .collect();
-        self.module.declare(&symbol, || {
-            format!("declare {result} {callee}({})\n\n", parameters.join(", "))
+        let result = fmt::from_fn(|out| match extension(ty) {
+            Some(extension) => write!(out, "{extension} {}", type_text(types, ty)),
+            None => type_text(types, ty).fmt(out),
         });
-        let arguments: Vec<String> = parameters
-            .iter()
-            .zip(arguments)
-            .map(|(parameter, &argument)| format!("{parameter} {}", self.operand(argument)))
-            .collect();
-        let call = format!("call {result} {callee}({})", arguments.join(", "));
-        if ty == TypeId::VOID {
-            call
-        } else {
-            format!("{} = {call}", value_name(id))
+        let parameter = |argument| {
+            let ty = operand_type(body, argument);
+            fmt::from_fn(move |out| match extension(ty) {
+                Some(extension) => write!(out, "{} {extension}", type_text(types, ty)),
+                None => type_text(types, ty).fmt(out),
+            })
+        };
+        self.module.declare(&symbol, || {
+            let parameters = comma_separated(arguments.iter().copied().map(parameter));
+            format!("declare {result} {callee}({parameters})\n\n")
+        });
+        out.push_str("  ");
+        if ty != TypeId::VOID {
+            _ = write!(out, "{} = ", value_name(id));
         }
+        let function = &*self;
+        let arguments = arguments.iter().map(|&argument| {
+            let (parameter, value) = (parameter(argument), function.operand(argument));
+            fmt::from_fn(move |out| write!(out, "{parameter} {value}"))
+        });
+        _ = write!(
+            out,
+            "call {result} {callee}({})",
+            comma_separated(arguments)
+        );
     }
 
-    /// The line computing the binary operation `id`, after writing the checks
+    /// Writes the line computing the binary operation `id`, after the checks
     /// it needs first.
     fn write_binary(
         &mut self,
+        out: &mut String,
         id: Id<mir::Instruction>,
         op: BinaryOp,
         left: Operand,
         right: Operand,
-    ) -> String {
+    ) {
         let name = value_name(id);
         let left_type = operand_type(self.body, left);
         let ty = type_text(self.types, left_type);
-        let (l, mut r) = (self.operand(left), self.operand(right));
         let checks = traps(self.body, self.types, id);
+        // The value the right operand was converted to, if it was.
+        let mut converted: Option<String> = None;
         let instruction = match self.types[left_type] {
             Type::Float(_) => match op {
                 BinaryOp::Add => "fadd",
@@ -509,32 +549,32 @@ impl Function<'_, '_, '_> {
                     BinaryOp::Divide | BinaryOp::Remainder => {
                         if checks {
                             let zero = format!("{name}.z");
-                            _ = writeln!(self.out, "  {zero} = icmp eq {ty} {r}, 0");
-                            self.check(&zero, "division by zero", id);
+                            _ = writeln!(out, "  {zero} = icmp eq {ty} {}, 0", self.operand(right));
+                            self.check(out, &zero, "division by zero", id);
                         }
+                        let (l, r) = (self.operand(left), self.operand(right));
                         if signed && (checks || self.is_minus_one(right)) {
                             // MIN / -1 is MIN and MIN % -1 is 0, as check
                             // folds them: divide by 1 instead and negate.
                             let minus_one = format!("{name}.n");
                             let divisor = format!("{name}.d");
                             _ = writeln!(
-                                self.out,
+                                out,
                                 "  {minus_one} = icmp eq {ty} {r}, -1\n  \
                                  {divisor} = select i1 {minus_one}, {ty} 1, {ty} {r}"
                             );
                             if op == BinaryOp::Divide {
                                 let quotient = format!("{name}.q");
                                 let negated = format!("{name}.m");
-                                _ = writeln!(
-                                    self.out,
+                                _ = write!(
+                                    out,
                                     "  {quotient} = sdiv {ty} {l}, {divisor}\n  \
-                                     {negated} = sub {ty} 0, {l}"
+                                     {negated} = sub {ty} 0, {l}\n  \
+                                     {name} = select i1 {minus_one}, {ty} {negated}, {ty} {quotient}"
                                 );
-                                return format!(
-                                    "{name} = select i1 {minus_one}, {ty} {negated}, {ty} {quotient}"
-                                );
+                                return;
                             }
-                            r = divisor;
+                            converted = Some(divisor);
                         }
                         match (op, signed) {
                             (BinaryOp::Divide, true) => "sdiv",
@@ -544,7 +584,7 @@ impl Function<'_, '_, '_> {
                         }
                     }
                     BinaryOp::ShiftLeft | BinaryOp::ShiftRight => {
-                        r = self.shift_count(id, right, left_type, checks);
+                        converted = self.shift_count(out, id, right, left_type, checks);
                         match (op, signed) {
                             (BinaryOp::ShiftLeft, _) => "shl",
                             (_, true) => "ashr",
@@ -570,7 +610,15 @@ impl Function<'_, '_, '_> {
                 }
             }
         };
-        format!("{name} = {instruction} {ty} {l}, {r}")
+        _ = write!(
+            out,
+            "  {name} = {instruction} {ty} {}, ",
+            self.operand(left)
+        );
+        _ = match converted {
+            Some(converted) => write!(out, "{converted}"),
+            None => write!(out, "{}", self.operand(right)),
+        };
     }
 
     /// Whether `operand` is the constant -1: every bit of its type set.
@@ -588,18 +636,20 @@ impl Function<'_, '_, '_> {
         ones == integer.bits
     }
 
-    /// The count of a shift of a `shifted` value, converted to that type.
-    /// A count not known at compile time is checked first to be from 0 to
-    /// the width less one; the check compares at 32 bits or more, where the
-    /// width fits and a negative count reads as too big (docs/ir-design.md,
-    /// rule 4).
+    /// The count of a shift of a `shifted` value, converted to that type:
+    /// the name of the converted value, or `None` when the count has that
+    /// type already. A count not known at compile time is checked first to be
+    /// from 0 to the width less one; the check compares at 32 bits or more,
+    /// where the width fits and a negative count reads as too big
+    /// (docs/ir-design.md, rule 4).
     fn shift_count(
         &mut self,
+        out: &mut String,
         id: Id<mir::Instruction>,
         count: Operand,
         shifted: TypeId,
         checks: bool,
-    ) -> String {
+    ) -> Option<String> {
         let (Type::Integer(shifted_type), Type::Integer(count_type)) = (
             &self.types[shifted],
             &self.types[operand_type(self.body, count)],
@@ -608,49 +658,48 @@ impl Function<'_, '_, '_> {
         };
         let (width, count_bits) = (shifted_type.bits, count_type.bits);
         let name = value_name(id);
-        let value = self.operand(count);
         if checks {
-            let (compared, compared_bits) = if count_bits < 32 {
-                let extended = format!("{name}.e");
+            let too_far = format!("{name}.c");
+            if count_bits < 32 {
                 let conversion = if count_type.signed { "sext" } else { "zext" };
                 _ = writeln!(
-                    self.out,
-                    "  {extended} = {conversion} i{count_bits} {value} to i32"
+                    out,
+                    "  {name}.e = {conversion} i{count_bits} {} to i32\n  \
+                     {too_far} = icmp uge i32 {name}.e, {width}",
+                    self.operand(count)
                 );
-                (extended, 32)
             } else {
-                (value.clone(), count_bits)
-            };
-            let too_far = format!("{name}.c");
-            _ = writeln!(
-                self.out,
-                "  {too_far} = icmp uge i{compared_bits} {compared}, {width}"
-            );
+                _ = writeln!(
+                    out,
+                    "  {too_far} = icmp uge i{count_bits} {}, {width}",
+                    self.operand(count)
+                );
+            }
             let message = format!("a shift count must be from 0 to {}", width - 1);
-            self.check(&too_far, &message, id);
+            self.check(out, &too_far, &message, id);
         }
         if count_bits == width {
-            return value;
+            return None;
         }
-        let converted = format!("{name}.s");
         let conversion = if count_bits < width { "zext" } else { "trunc" };
         _ = writeln!(
-            self.out,
-            "  {converted} = {conversion} i{count_bits} {value} to i{width}"
+            out,
+            "  {name}.s = {conversion} i{count_bits} {} to i{width}",
+            self.operand(count)
         );
-        converted
+        Some(format!("{name}.s"))
     }
 
     /// Goes on in the next block of the MIR block being written when
     /// `failed` is false, else panics: writes `message` and where the
     /// instruction `id` is written to the standard error and exits with `PANIC_EXIT_CODE`. The text is
     /// known at compile time, so it is one string constant.
-    fn check(&mut self, failed: &str, message: &str, id: Id<mir::Instruction>) {
+    fn check(&mut self, out: &mut String, failed: &str, message: &str, id: Id<mir::Instruction>) {
         self.checked += 1;
         let next = format!("bb{}.{}", self.block, self.checked);
         let panic = format!("{next}.panic");
         _ = writeln!(
-            self.out,
+            out,
             "  br i1 {failed}, label %{panic}, label %{next}\n{next}:"
         );
         let span = self.body.instructions.span(id);

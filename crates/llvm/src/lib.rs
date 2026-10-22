@@ -309,30 +309,30 @@ fn c_extension(types: &Types, ty: TypeId) -> Option<&'static str> {
 /// `constant` as an LLVM constant of its type, written from its bits
 /// (docs/ir-design.md, "Integer values must match LLVM"): an integer up to
 /// 64 bits in decimal, a wider one in hexadecimal, a float as its `f64` bits.
-fn constant_text(types: &Types, constant: &Constant) -> String {
-    match (&constant.value, &types[constant.ty]) {
-        (Value::Bool(value), _) => value.to_string(),
+fn constant_text(types: &Types, constant: &Constant) -> impl fmt::Display {
+    fmt::from_fn(move |out| match (&constant.value, &types[constant.ty]) {
+        (Value::Bool(value), _) => write!(out, "{value}"),
         (Value::Integer(limbs), Type::Integer(integer)) if integer.bits <= 64 => {
             let low = limbs.as_slice()[0];
             if integer.signed {
                 let unused = 64 - integer.bits;
-                (((low << unused) as i64) >> unused).to_string()
+                write!(out, "{}", ((low << unused) as i64) >> unused)
             } else {
-                low.to_string()
+                write!(out, "{low}")
             }
         }
         (Value::Integer(limbs), _) => {
-            let mut text = String::from("u0x");
+            out.write_str("u0x")?;
             for limb in limbs.as_slice().iter().rev() {
-                _ = write!(text, "{limb:016X}");
+                write!(out, "{limb:016X}")?;
             }
-            text
+            Ok(())
         }
-        (Value::Float(bits), _) => format!("0x{bits:016X}"),
+        (Value::Float(bits), _) => write!(out, "0x{bits:016X}"),
         (Value::Bytes(_), _) => {
             unreachable!("a string constant is a global (`Module::add_string`)")
         }
-    }
+    })
 }
 
 /// `bytes` in double quotes, as LLVM reads a string: a quote, a backslash
@@ -503,8 +503,9 @@ mod tests {
         let mut types = Types::new();
         let u200 = types.builtin("u200", 64).unwrap();
         let i3 = types.builtin("i3", 64).unwrap();
-        let constant =
-            |ty: TypeId, value: Value| super::constant_text(&types, &Constant { ty, value });
+        let constant = |ty: TypeId, value: Value| {
+            super::constant_text(&types, &Constant { ty, value }).to_string()
+        };
         assert_eq!(
             constant(TypeId::I8, Value::Integer(Limbs::new(8, &[0xff]))),
             "-1"
