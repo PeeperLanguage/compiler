@@ -47,7 +47,7 @@ separate thread or a task queued for later.
 sequenceDiagram
     participant Caller as CLI or LSP
     participant Compile as compile::run
-    participant Check as Checker::body
+    participant Check as ModuleChecker::check_body
     participant Lower as lower::lower
     participant Callback as Caller's closure
 

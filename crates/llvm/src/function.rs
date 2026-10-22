@@ -39,7 +39,7 @@ const PANIC_EXIT_CODE: i32 = 101;
 impl Module<'_> {
     /// Adds the function `definition` of this module, whose signature is `ty`
     /// and whose MIR is `body`.
-    pub fn function(&mut self, definition: DefId, ty: TypeId, body: &mir::Body, types: &Types) {
+    pub fn add_function(&mut self, definition: DefId, ty: TypeId, body: &mir::Body, types: &Types) {
         let Type::Function { parameters, result } = &types[ty] else {
             unreachable!("a function's signature is a function type");
         };
@@ -52,7 +52,7 @@ impl Module<'_> {
             .constants
             .iter()
             .map(|constant| match &constant.value {
-                Value::Bytes(bytes) => Some(self.string(bytes)),
+                Value::Bytes(bytes) => Some(self.add_string(bytes)),
                 _ => None,
             })
             .collect();
@@ -94,7 +94,7 @@ impl Module<'_> {
         function.variables(parameters.len());
         function.out.push_str("  br label %bb0\n");
         for block in body.blocks.ids() {
-            function.block(block, *result);
+            function.write_block(block, *result);
         }
         let Function { out, panics, .. } = function;
         self.functions.push_str(&out);
@@ -304,14 +304,14 @@ impl Function<'_, '_, '_> {
     }
 
     /// Writes the block `block` of a function whose result type is `result`.
-    fn block(&mut self, block: Id<mir::Block>, result: TypeId) {
+    fn write_block(&mut self, block: Id<mir::Block>, result: TypeId) {
         self.block = block.index();
         self.checked = 0;
         _ = writeln!(self.out, "bb{}:", block.index());
         let body = self.body;
         let mir = &body.blocks[block];
         for instruction in body.lists.items(mir.instructions) {
-            self.instruction(instruction);
+            self.write_instruction(instruction);
         }
         let line = match mir.terminator {
             Terminator::Goto(target) => format!("br label %bb{}", target.index()),
@@ -348,7 +348,7 @@ impl Function<'_, '_, '_> {
     }
 
     /// Writes the instruction `id`.
-    fn instruction(&mut self, id: Id<mir::Instruction>) {
+    fn write_instruction(&mut self, id: Id<mir::Instruction>) {
         let mir::Instruction { ty, ref kind } = self.body.instructions[id];
         let span = self.body.instructions.span(id);
         let location = self.location(span);
@@ -366,7 +366,9 @@ impl Function<'_, '_, '_> {
                 self.operand(value),
                 variable.index()
             ),
-            InstructionKind::Binary { op, left, right } => self.binary(id, op, left, right, span),
+            InstructionKind::Binary { op, left, right } => {
+                self.write_binary(id, op, left, right, span)
+            }
             InstructionKind::Unary { op, value } => {
                 let text = type_text(types, ty);
                 let value = self.operand(value);
@@ -460,7 +462,7 @@ impl Function<'_, '_, '_> {
 
     /// The line computing the binary operation `id`, after writing the checks
     /// it needs first.
-    fn binary(
+    fn write_binary(
         &mut self,
         id: Id<mir::Instruction>,
         op: BinaryOp,
@@ -644,7 +646,7 @@ impl Function<'_, '_, '_> {
             "panic: {message}\n  --> {}:{line}:{column}\n",
             self.file.path
         );
-        let string = self.module.string(text.as_bytes());
+        let string = self.module.add_string(text.as_bytes());
         self.module.declare(WRITE, || {
             format!("declare i32 {}(i32, ptr, i32)\n\n", global(WRITE))
         });

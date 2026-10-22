@@ -65,7 +65,7 @@ pub fn print(
     };
     let (mut errors, mut warnings) = (0, 0);
     for d in ordered {
-        p.diagnostic(d);
+        p.write_diagnostic(d);
         match d.code.severity {
             Severity::Error => errors += 1,
             Severity::Warning => warnings += 1,
@@ -129,22 +129,22 @@ impl Printer<'_> {
         }
     }
 
-    fn gutter(&mut self, color: &str, number: usize) {
+    fn write_gutter(&mut self, color: &str, number: usize) {
         let width = self.width;
         self.paint(color, format_args!("{number:>width$} | "));
     }
 
-    fn blank_gutter(&mut self) {
+    fn write_blank_gutter(&mut self) {
         let width = self.width;
         self.paint(GREY, format_args!("{:>width$} | ", ""));
     }
 
-    fn margin(&mut self) {
-        self.blank_gutter();
+    fn write_margin(&mut self) {
+        self.write_blank_gutter();
         self.out.push('\n');
     }
 
-    fn diagnostic(&mut self, d: &Diagnostic) {
+    fn write_diagnostic(&mut self, d: &Diagnostic) {
         let snippets = snippets(d);
         self.width = line_number_width(d, &snippets);
         let (header, mark_color) = match d.code.severity {
@@ -170,7 +170,7 @@ impl Printer<'_> {
                 ),
             );
             self.out.push('\n');
-            self.margin();
+            self.write_margin();
             let mut last_shown = 0;
             for line in &snippet.lines {
                 let context = has_context_line(snippet.file, line.number, last_shown);
@@ -181,41 +181,41 @@ impl Printer<'_> {
                     self.out.push('\n');
                 }
                 if context {
-                    self.gutter(GREY, line.number - 1);
-                    self.source_line(snippet.file, line.number - 1);
+                    self.write_gutter(GREY, line.number - 1);
+                    self.write_source_line(snippet.file, line.number - 1);
                     self.out.push('\n');
                 }
-                self.marked_line(snippet.file, line, mark_color);
+                self.write_marked_line(snippet.file, line, mark_color);
                 last_shown = line.number;
             }
         }
         if !snippets.is_empty() && !d.notes.is_empty() {
-            self.margin();
+            self.write_margin();
         }
 
         let mut after_fixed_lines = false;
         for note in &d.notes {
             if after_fixed_lines {
-                self.margin();
+                self.write_margin();
             }
             let (kind, color) = match note.kind {
                 NoteKind::Note => ("note", CYAN),
-                _ if note.sure_fix() => ("fix", GREEN),
+                _ if note.has_sure_fix() => ("fix", GREEN),
                 NoteKind::Help(_) | NoteKind::Guess(_) => ("help", GREEN),
             };
             let pad = self.width + 1;
             _ = write!(self.out, "{:pad$}", "");
             self.paint(color, format_args!("= {kind}: "));
             _ = writeln!(self.out, "{}", note.text);
-            after_fixed_lines = self.fixed_lines(note.fixes());
+            after_fixed_lines = self.write_fixed_lines(note.fixes());
         }
         self.out.push('\n');
     }
 
-    fn marked_line(&mut self, file: &Arc<SourceFile>, line: &MarkedLine, mark_color: &str) {
+    fn write_marked_line(&mut self, file: &Arc<SourceFile>, line: &MarkedLine, mark_color: &str) {
         let text = line_text(file, line.number);
-        self.gutter(WHITE, line.number);
-        self.source_line(file, line.number);
+        self.write_gutter(WHITE, line.number);
+        self.write_source_line(file, line.number);
         self.out.push('\n');
         for mark in &line.marks {
             let end = if mark.end == 0 {
@@ -230,14 +230,14 @@ impl Printer<'_> {
             } else {
                 (BLUE, "-")
             };
-            self.blank_gutter();
+            self.write_blank_gutter();
             // a column can pass the 65,535 that a format width allows
             self.out.extend(std::iter::repeat_n(' ', padding));
             self.paint(color, underline.repeat(length));
             for (index, message) in mark.messages.iter().enumerate() {
                 if index > 0 {
                     self.out.push('\n');
-                    self.blank_gutter();
+                    self.write_blank_gutter();
                     self.out.extend(std::iter::repeat_n(' ', padding + length));
                 }
                 self.paint(color, format_args!(" {message}"));
@@ -247,10 +247,10 @@ impl Printer<'_> {
     }
 
     /// Writes line `number` of `file`, highlighted in color.
-    fn source_line(&mut self, file: &Arc<SourceFile>, number: usize) {
+    fn write_source_line(&mut self, file: &Arc<SourceFile>, number: usize) {
         let line = file.line_span(number);
         let Some(scan) = self.colored else {
-            self.cells(file.slice(line), 0, None);
+            self.write_cells(file.slice(line), 0, None);
             return;
         };
         let tokens = self
@@ -262,7 +262,7 @@ impl Printer<'_> {
         // rejected, which a mark shows anyway).
         let line = line.range();
         let mut pieces = Vec::new();
-        let gap = |pieces: &mut Vec<_>, gap: Range<usize>| {
+        let push_gap = |pieces: &mut Vec<_>, gap: Range<usize>| {
             let text = &file.text[gap.clone()];
             let comment = gap.start + (text.len() - text.trim_start().len());
             let comment_end = comment + text.trim().len();
@@ -284,7 +284,7 @@ impl Printer<'_> {
                 break;
             }
             let piece = span.start.max(line.start)..span.end.min(line.end);
-            gap(&mut pieces, position..piece.start);
+            push_gap(&mut pieces, position..piece.start);
             position = piece.end;
             let color = match t.kind {
                 TokenKind::String | TokenKind::CString => Some(LIGHT_GREEN),
@@ -295,10 +295,10 @@ impl Printer<'_> {
             };
             pieces.push((piece, color));
         }
-        gap(&mut pieces, position..line.end);
+        push_gap(&mut pieces, position..line.end);
         let mut column = 0;
         for (range, color) in pieces {
-            column = self.cells(&file.text[range], column, color);
+            column = self.write_cells(&file.text[range], column, color);
         }
     }
 
@@ -306,7 +306,7 @@ impl Printer<'_> {
     /// with the added text marked. It shows nothing unless every fix is
     /// drawable: inside its file, on one line, without a line break in its text
     /// and not overlapping another. Returns whether it drew anything.
-    fn fixed_lines(&mut self, fixes: &[Fix]) -> bool {
+    fn write_fixed_lines(&mut self, fixes: &[Fix]) -> bool {
         let mut lines: Vec<(&Arc<SourceFile>, usize, Vec<&Fix>)> = Vec::new();
         for fix in fixes {
             let (start, end) = (fix.span.start as usize, fix.span.end as usize);
@@ -336,22 +336,22 @@ impl Printer<'_> {
         if lines.is_empty() {
             return false;
         }
-        self.margin();
+        self.write_margin();
         for (file, number, fixes) in lines {
-            self.gutter(GREY, number);
+            self.write_gutter(GREY, number);
             let span = file.line_span(number);
             let (mut cells, mut position) = (0, span.start as usize);
             for fix in fixes {
                 let range = fix.span.range();
-                cells = self.cells(&file.text[position..range.start], cells, None);
+                cells = self.write_cells(&file.text[position..range.start], cells, None);
                 let (kept, added, kept_after) =
                     split_change(&file.text[range.clone()], &fix.new_text);
-                cells = self.cells(kept, cells, None);
-                cells = self.cells(added, cells, Some(FIX_ADDED));
-                cells = self.cells(kept_after, cells, None);
+                cells = self.write_cells(kept, cells, None);
+                cells = self.write_cells(added, cells, Some(FIX_ADDED));
+                cells = self.write_cells(kept_after, cells, None);
                 position = range.end;
             }
-            self.cells(&file.text[position..span.end as usize], cells, None);
+            self.write_cells(&file.text[position..span.end as usize], cells, None);
             self.out.push('\n');
         }
         true
@@ -359,7 +359,7 @@ impl Printer<'_> {
 
     /// Writes `text` starting at terminal cell `column`, expanding tabs, in
     /// `color` when one is given, and returns the column after it.
-    fn cells(&mut self, text: &str, mut column: usize, color: Option<&str>) -> usize {
+    fn write_cells(&mut self, text: &str, mut column: usize, color: Option<&str>) -> usize {
         let mut expanded = String::with_capacity(text.len());
         for c in text.chars() {
             let width = cell_width(c, column);

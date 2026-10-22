@@ -8,7 +8,7 @@ mod dump;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    let (mut command, goal) = match cli::command() {
+    let (mut command, goal) = match cli::parse_command() {
         Ok(command) => command,
         Err(code) => return code,
     };

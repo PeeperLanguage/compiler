@@ -115,7 +115,7 @@ pub enum Terminator {
     },
     /// The end of the function, at its closing brace, reached without a
     /// `return`: a function without a result returns there, and one with a
-    /// result is missing a `return` (`path_checks::missing_return`). Every
+    /// result is missing a `return` (`path_checks::report_missing_return`). Every
     /// `Return` is a written `return`.
     FallOff(Span),
 }
@@ -162,27 +162,27 @@ impl Body {
                 match kind {
                     InstructionKind::Store { variable, value } => {
                         printer.out.push_str("store ");
-                        printer.variable(*variable);
+                        printer.write_variable(*variable);
                         printer.out.push_str(", ");
-                        printer.operand(value);
+                        printer.write_operand(value);
                     }
                     InstructionKind::Load(variable) => {
                         printer.out.push_str("load ");
-                        printer.variable(*variable);
+                        printer.write_variable(*variable);
                     }
                     InstructionKind::Binary { op, left, right } => {
                         _ = write!(printer.out, "{op:?} ");
-                        printer.operand(left);
+                        printer.write_operand(left);
                         printer.out.push_str(", ");
-                        printer.operand(right);
+                        printer.write_operand(right);
                     }
                     InstructionKind::Unary { op, value } => {
                         _ = write!(printer.out, "{op:?} ");
-                        printer.operand(value);
+                        printer.write_operand(value);
                     }
                     InstructionKind::Widen(value) => {
                         printer.out.push_str("widen ");
-                        printer.operand(value);
+                        printer.write_operand(value);
                     }
                     InstructionKind::Call {
                         function,
@@ -193,7 +193,7 @@ impl Body {
                             if index > 0 {
                                 printer.out.push_str(", ");
                             }
-                            printer.operand(argument);
+                            printer.write_operand(argument);
                         }
                         printer.out.push(')');
                     }
@@ -204,7 +204,7 @@ impl Body {
                                 printer.out.push_str(", ");
                             }
                             _ = write!(printer.out, "bb{}: ", block.index());
-                            printer.operand(value);
+                            printer.write_operand(value);
                         }
                     }
                 }
@@ -223,7 +223,7 @@ impl Body {
                     otherwise,
                 } => {
                     printer.out.push_str("branch ");
-                    printer.operand(condition);
+                    printer.write_operand(condition);
                     _ = write!(
                         printer.out,
                         " ({}) bb{} bb{}",
@@ -236,7 +236,7 @@ impl Body {
                     printer.out.push_str("return");
                     if let Some(value) = value {
                         printer.out.push(' ');
-                        printer.operand(value);
+                        printer.write_operand(value);
                     }
                 }
                 Terminator::FallOff(span) => {
@@ -257,12 +257,12 @@ struct Printer<'b> {
 }
 
 impl Printer<'_> {
-    fn variable(&mut self, variable: Id<Variable>) {
+    fn write_variable(&mut self, variable: Id<Variable>) {
         let name = self.file.slice(self.body.variables.span(variable));
         _ = write!(self.out, "{name}.{}", variable.index());
     }
 
-    fn operand(&mut self, operand: &Operand) {
+    fn write_operand(&mut self, operand: &Operand) {
         _ = match *operand {
             Operand::Constant(constant) => match &self.body.constants[constant.index()].value {
                 Value::Bool(value) => write!(self.out, "{value}"),

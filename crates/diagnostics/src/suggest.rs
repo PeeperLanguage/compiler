@@ -13,7 +13,7 @@ pub fn nearest_name<'a>(
     }
     let query = query.to_lowercase();
     // A name that differs in length by more than this can neither be taken
-    // nor stop the best one from being taken (see `close_enough` and
+    // nor stop the best one from being taken (see `is_close_enough` and
     // `clearly_better_than`), so it is not measured.
     let too_far = most_edits(query.len()) + 1;
     let mut lower = String::new(); // one buffer for every candidate
@@ -56,7 +56,7 @@ pub fn nearest_name<'a>(
     // An exact match of a one- or two-letter query is taken even when others tie.
     let exact_short = query.len() <= 2 && best.distance == 0;
     let accepted = exact_short
-        || best.close_enough(query.len()) && second.is_none_or(|s| best.clearly_better_than(&s));
+        || best.is_close_enough(query.len()) && second.is_none_or(|s| best.clearly_better_than(&s));
     accepted.then_some(best.name)
 }
 
@@ -88,7 +88,7 @@ impl Match<'_> {
     }
 
     /// Whether the edit distance is small for a query of `query_len` bytes.
-    fn close_enough(&self, query_len: usize) -> bool {
+    fn is_close_enough(&self, query_len: usize) -> bool {
         let longer = query_len.max(self.name.len());
         self.distance <= most_edits(query_len)
             && match query_len {

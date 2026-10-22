@@ -59,7 +59,7 @@ impl Scope {
 
 /// Reports `name` declared again at `again` in the same `place` (a module or
 /// a block) of `file`, where it was first declared at `first`.
-pub(crate) fn already_declared(
+pub(crate) fn report_redeclared(
     file: &Arc<SourceFile>,
     name: &str,
     place: &str,
@@ -93,7 +93,7 @@ pub fn collect(
             return; // missing after a syntax error
         }
         if let Err(first) = scope.declare(name, symbol, span) {
-            diagnostics.push(already_declared(file, name, "module", span, first));
+            diagnostics.push(report_redeclared(file, name, "module", span, first));
         }
     };
     // The loader already reported aliases used twice and kept the first.

@@ -272,7 +272,7 @@ arenas hold its span and type, so body `const`s get an arena of their own,
 keeps its THIR, marked `has_errors` (as rustc marks typeck results
 `tainted_by_errors`), so names work while a function is broken; `lower::lower`
 gives no MIR for it, and `use_function` gets its THIR alone. `compile` runs the
-phases one by one: `ModuleChecker::body` gives the THIR, `compile`'s `lower`
+phases one by one: `ModuleChecker::check_body` gives the THIR, `compile`'s `lower`
 the MIR. `compile` has no second way in for editors: the language
 server reads the names through `use_function` during its normal check and
 keeps them per module, beside the program it compiled, as gopls keeps what
@@ -348,10 +348,10 @@ with no instructions; on each path, the first branch met names its condition
 ("if this is false, nothing is returned"), and the first block with
 instructions names its last one ("this path ends without returning"). When the
 end block itself has instructions, only the end is named, since one `return`
-there fixes every path. `ModuleChecker::body` gives no THIR for a body whose check
+there fixes every path. `ModuleChecker::check_body` gives no THIR for a body whose check
 reported an error, so such a function is neither lowered nor path-checked.
 
-The initialization check (`lower::path_checks::initialization`) is forward dataflow
+The initialization check (`lower::path_checks::report_initialization_errors`) is forward dataflow
 with two bits per variable at each block's start: set on every path to it
 ("and" at joins) and set on some path ("or"). A `load` not set on every path is
 T0039 ("`x` is used before it is set"); a `store` to a variable without `mut`
@@ -361,7 +361,7 @@ assignments to a variable without `mut` only when its `let` has a value. Only a
 `let` without a value can be unset, so the check is skipped for a function
 that has none (decided by the owner, 2026-10-17).
 
-The unreachable-code check (W0001, `lower::path_checks::unreachable_code`)
+The unreachable-code check (W0001, `lower::path_checks::warn_unreachable_code`)
 warns once at the first code of each stretch of blocks no path reaches, such
 as code after a `return` ("this never runs"); the blocks that stretch leads to
 are not warned about again. Reachability ignores constant values, as for the
@@ -414,7 +414,7 @@ per function (`peeper -dump ll` shows it):
 `peeper build [-o program] [path]` and `peeper run [path] [arguments...]`
 work as the Go compiler's did. The entry file needs `fn main()` or `fn main()
 -> i32` (M0006, checked only by these two commands); the entry module gets a C
-`main` that calls it and returns its result, or 0. `llvm::link::executable`
+`main` that calls it and returns its result, or 0. `llvm::link::link_executable`
 writes each module's text to a temporary folder, compiles each with `clang -c`
 and links the objects with the runtime library (`<installation>/runtime/
 libpeeper_rt_v1.a`, built from `runtime/peeper_rt.c` by `scripts/build.sh`)

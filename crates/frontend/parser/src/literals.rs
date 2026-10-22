@@ -60,9 +60,9 @@ impl Parser {
         let literal = literal::numeric::split(self.text(t));
         let message = if literal.suffix.is_empty() {
             return; // most numbers
-        } else if !literal.suffix_well_formed() {
+        } else if !literal.is_suffix_well_formed() {
             format!("invalid numeric literal suffix {}", literal.suffix)
-        } else if literal.integer_suffix() && literal.is_float() {
+        } else if literal.has_integer_suffix() && literal.is_float() {
             format!(
                 "integer suffix {} cannot be used on a float literal",
                 literal.suffix

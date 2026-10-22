@@ -1,6 +1,6 @@
 //! Module-scope declarations, without their bodies: a function's type and a
 //! type declaration's type. A constant's type comes with its value
-//! (`ModuleChecker::constant`).
+//! (`ModuleChecker::check_constant`).
 
 use arena::Id;
 use model::ast;
@@ -13,7 +13,7 @@ use model::Symbol;
 
 impl ModuleChecker<'_, '_> {
     /// The function type of the module's function or method `declaration`.
-    pub fn function(&mut self, declaration: Id<ast::Decl>) -> TypeId {
+    pub fn check_signature(&mut self, declaration: Id<ast::Decl>) -> TypeId {
         let tree = &self.module().ast;
         let ast::Decl::Function(ast::Function { signature, .. }) = tree.decls[declaration] else {
             unreachable!("`{declaration:?}` is a function declaration")
@@ -46,7 +46,7 @@ impl ModuleChecker<'_, '_> {
 
     /// The type the module's type declaration or alias `declaration`
     /// declares; none is supported yet.
-    pub fn type_declaration(&mut self, declaration: Id<ast::Decl>) -> TypeId {
+    pub fn check_type_declaration(&mut self, declaration: Id<ast::Decl>) -> TypeId {
         let tree = &self.module().ast;
         let (name, what) = match tree.decls[declaration] {
             ast::Decl::Type(declaration) => match tree.types[declaration.ty] {
@@ -128,8 +128,8 @@ mod tests {
                 .into_iter()
                 .map(
                     |declaration| match checker.module().ast.decls[declaration] {
-                        ast::Decl::Function(_) => checker.function(declaration),
-                        _ => checker.type_declaration(declaration),
+                        ast::Decl::Function(_) => checker.check_signature(declaration),
+                        _ => checker.check_type_declaration(declaration),
                     },
                 )
                 .collect();

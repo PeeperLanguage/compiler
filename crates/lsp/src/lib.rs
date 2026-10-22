@@ -126,12 +126,12 @@ fn serve_connection(connection: Connection, libraries: &Path) -> Result<(), BoxE
                 if connection.handle_shutdown(&request)? {
                     return Ok(());
                 }
-                let response = server.request(request);
+                let response = server.answer_request(request);
                 connection.sender.send(Message::Response(response))?;
             }
             Message::Notification(notification) => {
                 // A bad message is the client's mistake; serving goes on.
-                if let Err(error) = server.notification(notification) {
+                if let Err(error) = server.handle_notification(notification) {
                     eprintln!("peeper lsp: {error}");
                 }
             }
@@ -184,7 +184,7 @@ impl<'s> Server<'s> {
     /// (a closed file's text is the disk's again), after `DEBOUNCE` for a
     /// changed one. Other notifications, and documents that are not local
     /// files, are ignored.
-    fn notification(&mut self, notification: Notification) -> Result<(), BoxError> {
+    fn handle_notification(&mut self, notification: Notification) -> Result<(), BoxError> {
         let Notification { method, params } = notification;
         let (file, debounce) = match method.as_str() {
             "textDocument/didOpen" => {
@@ -245,10 +245,10 @@ impl<'s> Server<'s> {
     /// Answers go to definition with where the name at the given place is
     /// declared, and hover with a line about it; both answer null when no
     /// name is there. Other requests are unknown.
-    fn request(&self, request: Request) -> Response {
+    fn answer_request(&self, request: Request) -> Response {
         let Request { id, method, params } = request;
         let place: TextDocumentPositionParams = match method.as_str() {
-            "textDocument/codeAction" => return self.code_actions(id, params),
+            "textDocument/codeAction" => return self.answer_code_actions(id, params),
             // Both requests' parameters hold the place, and more to ignore.
             "textDocument/definition" | "textDocument/hover" => {
                 match serde_json::from_value(params) {
@@ -313,19 +313,18 @@ impl<'s> Server<'s> {
             let program = checked.program.as_ref()?;
             let module = program.module_of(&file)?;
             let offset = offset(&module.ast.file, place.position) as u32;
-            let at = |span: Span| span.start <= offset && offset <= span.end;
+            let contains_offset = |span: Span| span.start <= offset && offset <= span.end;
             let in_body = checked
                 .names
                 .get(&file)
-                .and_then(|names| names.iter().find(|name| at(name.span)));
+                .and_then(|names| names.iter().find(|name| contains_offset(name.span)));
             let target = match in_body {
                 Some(name) => name.target.clone(),
                 None => {
                     let tree = &module.ast;
-                    let position = tree
-                        .lists
-                        .items(tree.top_level)
-                        .position(|declaration| at(tree.decls[declaration].name().span))?;
+                    let position = tree.lists.items(tree.top_level).position(|declaration| {
+                        contains_offset(tree.decls[declaration].name().span)
+                    })?;
                     CachedTarget::Declaration {
                         file: file.clone(),
                         position: position as u32,
@@ -375,7 +374,7 @@ impl<'s> Server<'s> {
     /// carry in their `data`, and the file's sure fixes as one `source.fixAll`
     /// action. A fix-on-save request asks for `source.fixAll` only, so it gets
     /// no guesses.
-    fn code_actions(&self, id: RequestId, params: serde_json::Value) -> Response {
+    fn answer_code_actions(&self, id: RequestId, params: serde_json::Value) -> Response {
         let params: CodeActionParams = match serde_json::from_value(params) {
             Ok(params) => params,
             Err(error) => return invalid_params(id, &error),
@@ -690,7 +689,7 @@ fn quick_fixes(
             Some(CodeAction {
                 title: note.text.clone(),
                 kind: Some(CodeActionKind::QUICKFIX),
-                is_preferred: Some(note.sure_fix()),
+                is_preferred: Some(note.has_sure_fix()),
                 edit: Some(workspace_edit(note.fixes(), open_files)?),
                 ..CodeAction::default()
             })
@@ -948,7 +947,7 @@ mod tests {
         });
         let (connection, _client) = Connection::memory();
         let server = Server::new(&connection, Path::new(""));
-        let Response { result, error, .. } = server.code_actions(RequestId::from(1), params);
+        let Response { result, error, .. } = server.answer_code_actions(RequestId::from(1), params);
         assert!(error.is_none(), "{error:?}");
         let result = result.unwrap();
         let document = &result[0]["edit"]["documentChanges"][0];
@@ -1071,7 +1070,7 @@ mod tests {
         let document = json!({ "uri": uri, "languageId": "peeper", "version": 3, "text": text });
         let open = json!({ "textDocument": document });
         let open = Notification::new("textDocument/didOpen".to_string(), open);
-        server.notification(open).unwrap();
+        server.handle_notification(open).unwrap();
         let Ok(Message::Notification(published)) = client.receiver.try_recv() else {
             panic!("the open did not publish");
         };
@@ -1087,7 +1086,7 @@ mod tests {
             "textDocument/codeAction".to_string(),
             params,
         );
-        let result = server.request(ask).result.unwrap();
+        let result = server.answer_request(ask).result.unwrap();
         assert_eq!(result.as_array().map(Vec::len), Some(1), "{result}");
         assert_eq!(result[0]["kind"], "source.fixAll");
         let document = &result[0]["edit"]["documentChanges"][0];
@@ -1118,7 +1117,7 @@ mod tests {
             "contentChanges": [{ "text": "fn main() { a $ b; }\n" }],
         });
         let change = Notification::new("textDocument/didChange".to_string(), change);
-        server.notification(change).unwrap();
+        server.handle_notification(change).unwrap();
         assert!(
             client.receiver.try_recv().is_err(),
             "a change was checked at once"
@@ -1126,7 +1125,7 @@ mod tests {
         assert!(server.deadline.is_some());
         let save = json!({ "textDocument": { "uri": uri } });
         let save = Notification::new("textDocument/didSave".to_string(), save);
-        server.notification(save).unwrap();
+        server.handle_notification(save).unwrap();
         let Ok(Message::Notification(published)) = client.receiver.try_recv() else {
             panic!("the save did not publish at once");
         };
@@ -1157,14 +1156,14 @@ mod tests {
             "textDocument/didOpen".to_string(),
             json!({ "textDocument": document }),
         );
-        server.notification(open).unwrap();
+        server.handle_notification(open).unwrap();
         let ask = |method: &str, line: u32, character: u32| {
             let place = json!({
                 "textDocument": { "uri": uri },
                 "position": { "line": line, "character": character },
             });
             let request = Request::new(RequestId::from(1), method.to_string(), place);
-            let Response { result, error, .. } = server.request(request);
+            let Response { result, error, .. } = server.answer_request(request);
             assert!(error.is_none(), "{error:?}");
             result.unwrap()
         };
@@ -1217,7 +1216,7 @@ fn main(count: i64) {
         let mut server = Server::new(&connection, Path::new(""));
         let notify = |server: &mut Server, method: &str, params: serde_json::Value| {
             server
-                .notification(Notification::new(method.to_string(), params))
+                .handle_notification(Notification::new(method.to_string(), params))
                 .unwrap();
         };
         let open = |file: &Path, text: &str| {
@@ -1236,7 +1235,7 @@ fn main(count: i64) {
         };
         let ask = |server: &Server, method: &str, needle: &str, nth: usize| {
             let request = Request::new(RequestId::from(1), method.to_string(), place(needle, nth));
-            let Response { result, error, .. } = server.request(request);
+            let Response { result, error, .. } = server.answer_request(request);
             assert!(error.is_none(), "{error:?}");
             result.unwrap()
         };
@@ -1353,7 +1352,7 @@ fn main(count: i64) {
             "textDocument/didOpen".to_string(),
             json!({ "textDocument": document }),
         );
-        server.notification(open).unwrap();
+        server.handle_notification(open).unwrap();
         let Message::Notification(published) = client.receiver.recv().unwrap() else {
             panic!("no publish");
         };

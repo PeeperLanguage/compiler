@@ -83,7 +83,7 @@ impl Scanner<'_> {
             }
         }
         if self.pos == start {
-            self.illegal();
+            self.report_illegal();
         }
     }
 
@@ -165,7 +165,7 @@ impl Scanner<'_> {
             self.digits(u8::is_ascii_alphanumeric);
             self.emit(TokenKind::Number, start);
             let literal = literal::numeric::split(&self.file.text[start..self.pos]);
-            if !literal.digits_in_base() {
+            if !literal.has_digits_in_base() {
                 let base = match literal.base {
                     16 => "hexadecimal",
                     8 => "octal",
@@ -236,7 +236,7 @@ impl Scanner<'_> {
                 Some(_) => false,
             };
             if unclosed {
-                self.unterminated(start, quote_char, kind);
+                self.report_unterminated(start, quote_char, kind);
                 return;
             }
             let c = self.bytes[i];
@@ -279,8 +279,8 @@ impl Scanner<'_> {
     /// holds the first bytes of the literal's value, which is `length` bytes long.
     fn check_length(&mut self, start: usize, kind: TokenKind, value: &[u8], length: usize) {
         let span = Span::new(start, self.pos);
-        let one_char = || std::str::from_utf8(value).is_ok_and(|v| v.chars().count() == 1);
-        if kind == TokenKind::Char && (length > 4 || !one_char()) {
+        let is_one_char = || std::str::from_utf8(value).is_ok_and(|v| v.chars().count() == 1);
+        if kind == TokenKind::Char && (length > 4 || !is_one_char()) {
             self.fail(
                 span,
                 diagnostics::UNEXPECTED_CHARACTER,
@@ -299,7 +299,7 @@ impl Scanner<'_> {
 
     /// Reports a literal without its closing quote and emits it up to the end of
     /// its first line.
-    fn unterminated(&mut self, start: usize, quote_char: u8, kind: TokenKind) {
+    fn report_unterminated(&mut self, start: usize, quote_char: u8, kind: TokenKind) {
         self.pos = self.line_end();
         let (what, label) = if quote_char == b'"' {
             ("string", "add a closing `\"`")
@@ -315,7 +315,7 @@ impl Scanner<'_> {
         self.emit(kind, start);
     }
 
-    fn illegal(&mut self) {
+    fn report_illegal(&mut self) {
         let start = self.pos;
         self.pos += next_char_width(&self.bytes[start..]);
         let message = format!("illegal character {}", quote(&self.bytes[start..self.pos]));

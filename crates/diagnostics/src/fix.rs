@@ -28,7 +28,7 @@ pub fn chosen<'d>(
     all: impl IntoIterator<Item = &'d Diagnostic>,
     root: &Path,
 ) -> Vec<(&'d Fix, &'d str)> {
-    let overlap = |a: &Fix, b: &Fix| {
+    let overlaps = |a: &Fix, b: &Fix| {
         let (a_span, b_span) = (a.span, b.span);
         a.file.path == b.file.path
             && (a_span.start == b_span.start
@@ -43,10 +43,10 @@ pub fn chosen<'d>(
         else {
             continue;
         };
-        let fits = help.sure_fix()
+        let fits = help.has_sure_fix()
             && help.fixes().iter().all(|fix| {
                 Path::new(&fix.file.path).starts_with(root)
-                    && !chosen.iter().any(|&(taken, _)| overlap(fix, taken))
+                    && !chosen.iter().any(|&(taken, _)| overlaps(fix, taken))
             });
         if fits {
             chosen.extend(help.fixes().iter().map(|fix| (fix, help.text.as_str())));

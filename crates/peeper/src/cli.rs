@@ -15,7 +15,7 @@ use crate::driver::Goal;
 /// is the exit code of a command already done: arguments that make no sense,
 /// after the usage is printed, `init`, after making the project, or `lsp`,
 /// after serving.
-pub fn command() -> Result<(Command<StderrLock<'static>>, Goal), ExitCode> {
+pub fn parse_command() -> Result<(Command<StderrLock<'static>>, Goal), ExitCode> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(args) = args::parse(&args) else {
         eprintln!("{}", args::USAGE);

@@ -154,8 +154,8 @@ pub fn run(
                     let ty = queries.function(definition);
                     let mut names = Vec::new(); // allocates only when a name is recorded
                     let recorded = record_names.then_some(&mut names);
-                    let thir =
-                        queries.with_checker(id, |checker| checker.body(&function, ty, recorded));
+                    let thir = queries
+                        .with_checker(id, |checker| checker.check_body(&function, ty, recorded));
                     if let Some(thir) = thir {
                         // Its MIR, path-checked; none when the signature had an
                         // error (reported) or it cannot be lowered (`lower::lower`).
@@ -166,10 +166,14 @@ pub fn run(
                             } => lower::lower(&thir, parameters.len()).inspect(|mir| {
                                 let file = &tree.file;
                                 let diagnostics = &mut queries.diagnostics[id.index()];
-                                lower::path_checks::initialization(mir, file, diagnostics);
-                                lower::path_checks::unreachable_code(mir, file, diagnostics);
+                                lower::path_checks::report_initialization_errors(
+                                    mir,
+                                    file,
+                                    diagnostics,
+                                );
+                                lower::path_checks::warn_unreachable_code(mir, file, diagnostics);
                                 // Last: it points at the closing brace.
-                                lower::path_checks::missing_return(
+                                lower::path_checks::report_missing_return(
                                     mir,
                                     file,
                                     &queries.types,
@@ -195,7 +199,7 @@ pub fn run(
                 // Nothing asks for a type declaration's type yet, so it is
                 // no query: it is checked here, once.
                 ast::Decl::Type(_) | ast::Decl::Alias(_) => {
-                    queries.with_checker(id, |checker| checker.type_declaration(declaration));
+                    queries.with_checker(id, |checker| checker.check_type_declaration(declaration));
                 }
             }
         }

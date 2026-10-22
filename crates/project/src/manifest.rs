@@ -4,7 +4,7 @@ use std::io::ErrorKind;
 use std::path::Path;
 
 pub const FILE_NAME: &str = "peeper.toml";
-/// What `valid_name` asks of a package name, for messages.
+/// What `is_valid_name` asks of a package name, for messages.
 pub const NAME_RULE: &str = "name must start with a letter and hold only letters, digits and `_`";
 
 /// What a project file says.
@@ -15,7 +15,7 @@ pub struct Manifest {
 
 /// Whether `name` can be a package name: a letter, then letters, digits and
 /// `_`.
-pub fn valid_name(name: &str) -> bool {
+pub fn is_valid_name(name: &str) -> bool {
     let mut chars = name.chars();
     chars.next().is_some_and(|c| c.is_ascii_alphabetic())
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
@@ -36,7 +36,7 @@ pub fn read(dir: &Path) -> Result<Manifest, String> {
         .parse()
         .map_err(|error| format!("{}: {error}", file.display()))?;
     match document.get("name").and_then(toml_edit::Item::as_str) {
-        Some(name) if valid_name(name) => Ok(Manifest {
+        Some(name) if is_valid_name(name) => Ok(Manifest {
             name: name.to_string(),
         }),
         _ => Err(format!("{}: {NAME_RULE}", file.display())),

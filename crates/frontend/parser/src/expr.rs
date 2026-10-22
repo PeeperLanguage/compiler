@@ -189,7 +189,7 @@ impl Parser {
         match self.ahead(1).kind {
             TokenKind::ColonColon => true,
             TokenKind::Dot => self.ahead(2).kind == TokenKind::LeftBrace,
-            TokenKind::Less => self.type_arguments_ahead(),
+            TokenKind::Less => self.opens_type_arguments(),
             _ => false,
         }
     }
@@ -198,7 +198,7 @@ impl Parser {
     /// matching `>` comes before the statement ends, and `::` or `.{` follows
     /// it. Only those two decide, so in `if a < b && c > d {` the `<` stays a
     /// comparison.
-    fn type_arguments_ahead(&self) -> bool {
+    fn opens_type_arguments(&self) -> bool {
         let mut depth = 0i32;
         for i in self.current() + 1..self.tokens.len() {
             match self.tokens[i].kind {

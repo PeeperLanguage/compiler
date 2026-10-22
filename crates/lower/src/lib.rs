@@ -62,7 +62,7 @@ pub fn lower(body: &thir::Body, parameters: usize) -> Option<mir::Body> {
         let span = lowering.mir.variables.span(variable);
         lowering.emit(store, TypeId::VOID, span);
     }
-    lowering.statements(body.blocks[function].statements)?;
+    lowering.lower_statements(body.blocks[function].statements)?;
     let end = Span::new(span.end as usize - 1, span.end as usize); // the `}`
     lowering.finish(mir::Terminator::FallOff(end));
     Some(lowering.mir)
@@ -107,20 +107,20 @@ impl Lowering<'_> {
     }
 
     /// `constant` as an operand: the body's next constant.
-    fn constant(&mut self, constant: Constant) -> mir::Operand {
+    fn add_constant(&mut self, constant: Constant) -> mir::Operand {
         let id = Id::from_index(self.mir.constants.len());
         self.mir.constants.push(constant);
         mir::Operand::Constant(id)
     }
 
-    fn statements(&mut self, statements: arena::List<thir::Stmt>) -> Option<()> {
+    fn lower_statements(&mut self, statements: arena::List<thir::Stmt>) -> Option<()> {
         for statement in self.thir.lists.items(statements) {
-            self.statement(statement)?;
+            self.lower_statement(statement)?;
         }
         Some(())
     }
 
-    fn statement(&mut self, statement: Id<thir::Stmt>) -> Option<()> {
+    fn lower_statement(&mut self, statement: Id<thir::Stmt>) -> Option<()> {
         let span = self.thir.stmts.span(statement);
         match self.thir.stmts[statement] {
             thir::Stmt::Let { value: None, .. } => {}
@@ -129,7 +129,7 @@ impl Lowering<'_> {
                 value: Some(value),
             }
             | thir::Stmt::Assign { variable, value } => {
-                let value = self.expr(value)?;
+                let value = self.lower_expr(value)?;
                 let store = mir::InstructionKind::Store {
                     variable: Id::from_index(variable.index()),
                     value,
@@ -137,11 +137,11 @@ impl Lowering<'_> {
                 self.emit(store, TypeId::VOID, span);
             }
             thir::Stmt::Expression(value) => {
-                self.expr(value)?;
+                self.lower_expr(value)?;
             }
             thir::Stmt::Return(value) => {
                 let value = match value {
-                    Some(value) => Some(self.expr(value)?),
+                    Some(value) => Some(self.lower_expr(value)?),
                     None => None,
                 };
                 self.finish(mir::Terminator::Return { value, span });
@@ -154,7 +154,7 @@ impl Lowering<'_> {
                 otherwise,
             } => {
                 let condition_span = self.thir.exprs.span(condition);
-                let condition = self.expr(condition)?;
+                let condition = self.lower_expr(condition)?;
                 let then_block = self.new_block(self.thir.blocks.span(then));
                 let else_block =
                     otherwise.map(|otherwise| self.new_block(self.thir.stmts.span(otherwise)));
@@ -166,22 +166,24 @@ impl Lowering<'_> {
                     otherwise: else_block.unwrap_or(join),
                 });
                 self.block = then_block;
-                self.statements(self.thir.blocks[then].statements)?;
+                self.lower_statements(self.thir.blocks[then].statements)?;
                 self.finish(mir::Terminator::Goto(join));
                 if let (Some(else_block), Some(otherwise)) = (else_block, otherwise) {
                     self.block = else_block;
-                    self.statement(otherwise)?;
+                    self.lower_statement(otherwise)?;
                     self.finish(mir::Terminator::Goto(join));
                 }
                 self.block = join;
             }
-            thir::Stmt::Block(block) => self.statements(self.thir.blocks[block].statements)?,
+            thir::Stmt::Block(block) => {
+                self.lower_statements(self.thir.blocks[block].statements)?
+            }
         }
         Some(())
     }
 
     /// The value of `expression`, computed in the block being filled.
-    fn expr(&mut self, expression: Id<thir::Expr>) -> Option<mir::Operand> {
+    fn lower_expr(&mut self, expression: Id<thir::Expr>) -> Option<mir::Operand> {
         let span = self.thir.exprs.span(expression);
         let thir::Expr { ty, ref kind } = self.thir.exprs[expression];
         let kind = match *kind {
@@ -189,7 +191,7 @@ impl Lowering<'_> {
             thir::ExprKind::Invalid => return None,
             thir::ExprKind::Constant(ref value) => {
                 let value = value.clone();
-                return Some(self.constant(Constant { ty, value }));
+                return Some(self.add_constant(Constant { ty, value }));
             }
             thir::ExprKind::Variable(variable) => {
                 mir::InstructionKind::Load(Id::from_index(variable.index()))
@@ -198,17 +200,17 @@ impl Lowering<'_> {
                 op: op @ (BinaryOp::LogicalAnd | BinaryOp::LogicalOr),
                 left,
                 right,
-            } => return self.short_circuit(op, left, right, span),
+            } => return self.lower_short_circuit(op, left, right, span),
             thir::ExprKind::Binary { op, left, right } => {
-                let left = self.expr(left)?;
-                let right = self.expr(right)?;
+                let left = self.lower_expr(left)?;
+                let right = self.lower_expr(right)?;
                 mir::InstructionKind::Binary { op, left, right }
             }
             thir::ExprKind::Unary { op, value } => mir::InstructionKind::Unary {
                 op,
-                value: self.expr(value)?,
+                value: self.lower_expr(value)?,
             },
-            thir::ExprKind::Widen(value) => mir::InstructionKind::Widen(self.expr(value)?),
+            thir::ExprKind::Widen(value) => mir::InstructionKind::Widen(self.lower_expr(value)?),
             thir::ExprKind::Call {
                 function,
                 arguments,
@@ -217,7 +219,7 @@ impl Lowering<'_> {
                     .thir
                     .lists
                     .items(arguments)
-                    .map(|argument| self.expr(argument))
+                    .map(|argument| self.lower_expr(argument))
                     .collect::<Option<_>>()?;
                 mir::InstructionKind::Call {
                     function,
@@ -230,7 +232,7 @@ impl Lowering<'_> {
 
     /// `left && right` or `left || right`: `right` runs only when `left` does
     /// not decide the result, and a `phi` picks the result where both meet.
-    fn short_circuit(
+    fn lower_short_circuit(
         &mut self,
         op: BinaryOp,
         left: Id<thir::Expr>,
@@ -238,7 +240,7 @@ impl Lowering<'_> {
         span: Span,
     ) -> Option<mir::Operand> {
         let left_span = self.thir.exprs.span(left);
-        let left = self.expr(left)?;
+        let left = self.lower_expr(left)?;
         let left_end = self.block;
         let right_block = self.new_block(self.thir.exprs.span(right));
         let join = self.new_block(span);
@@ -253,12 +255,12 @@ impl Lowering<'_> {
             otherwise,
         });
         self.block = right_block;
-        let right = self.expr(right)?;
+        let right = self.lower_expr(right)?;
         let right_end = self.block;
         self.finish(mir::Terminator::Goto(join));
         self.block = join;
         // When `left` decides, `&&` is false and `||` is true.
-        let decided = self.constant(Constant {
+        let decided = self.add_constant(Constant {
             ty: TypeId::BOOL,
             value: Value::Bool(op == BinaryOp::LogicalOr),
         });

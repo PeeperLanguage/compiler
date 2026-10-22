@@ -50,7 +50,7 @@ impl Literal<'_> {
     /// Whether the digits hold at least one digit and only digits of the base,
     /// besides `_` separators and, in a decimal number, the marks of a fraction
     /// and an exponent (`. e E + -`).
-    pub fn digits_in_base(&self) -> bool {
+    pub fn has_digits_in_base(&self) -> bool {
         let mut count = 0;
         for c in self.digits.bytes() {
             if c == b'_' || self.base == 10 && b".eE+-".contains(&c) {
@@ -72,18 +72,18 @@ impl Literal<'_> {
 
     /// Whether the suffix, if there is one, is its letter followed by a size
     /// (i32, not i) and holds no `_`.
-    pub fn suffix_well_formed(&self) -> bool {
+    pub fn is_suffix_well_formed(&self) -> bool {
         self.suffix.is_empty() || self.suffix.len() > 1 && !self.suffix.contains('_')
     }
 
     /// Whether the suffix names an integer type: its letter is `i` (signed) or
     /// `u` (unsigned); `f` names a float type.
-    pub fn integer_suffix(&self) -> bool {
+    pub fn has_integer_suffix(&self) -> bool {
         !self.suffix.is_empty() && !self.suffix.starts_with('f')
     }
 
     /// The integer's exact value in 64-bit limbs, lowest first, as wide as it
-    /// needs. The digits must be valid in the base (`digits_in_base`).
+    /// needs. The digits must be valid in the base (`has_digits_in_base`).
     pub fn integer_value(&self) -> Vec<u64> {
         let mut limbs = vec![0u64];
         for digit in self.digits.chars().filter_map(|c| c.to_digit(self.base)) {
@@ -164,10 +164,10 @@ mod tests {
             let l = split(text);
             assert_eq!(
                 (
-                    l.digits_in_base(),
+                    l.has_digits_in_base(),
                     l.is_float(),
-                    l.suffix_well_formed(),
-                    l.integer_suffix()
+                    l.is_suffix_well_formed(),
+                    l.has_integer_suffix()
                 ),
                 (in_base, float, well_formed, integer),
                 "{text}"

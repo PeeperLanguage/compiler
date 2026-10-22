@@ -63,7 +63,7 @@ fn main() {
              }| {
                 let mir = mir.expect("the program has no errors");
                 let start = Instant::now();
-                ll[definition.module.index()].function(definition, signature, mir, types);
+                ll[definition.module.index()].add_function(definition, signature, mir, types);
                 writing += start.elapsed();
             },
         );

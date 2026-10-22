@@ -87,24 +87,24 @@ impl<'p> Queries<'p> {
     }
 
     /// The function type of the function or method `definition`
-    /// (`ModuleChecker::function`).
+    /// (`ModuleChecker::check_signature`).
     pub fn function(&mut self, definition: DefId) -> TypeId {
         self.query(
             definition,
             |queries| &mut queries.functions,
             TypeId::INVALID,
-            |checker, declaration| checker.function(declaration),
+            |checker, declaration| checker.check_signature(declaration),
         )
     }
 
     /// The type and value of the constant `definition`; `None` when it had
-    /// an error (`ModuleChecker::constant`).
+    /// an error (`ModuleChecker::check_constant`).
     pub fn constant(&mut self, definition: DefId) -> Option<Constant> {
         self.query(
             definition,
             |queries| &mut queries.constants,
             None,
-            |checker, declaration| checker.constant(declaration),
+            |checker, declaration| checker.check_constant(declaration),
         )
     }
 

@@ -30,7 +30,7 @@ use crate::statement::ThirBuilder;
 impl ThirBuilder<'_, '_> {
     /// `expression` (`expr`), added to the body.
     pub(crate) fn add_expr(&mut self, expression: Id<ast::Expr>) -> Id<Expr> {
-        let checked = self.expr(expression, None);
+        let checked = self.check_expr(expression, None);
         self.body
             .add(checked, self.checker.module().ast.exprs.span(expression))
     }
@@ -38,16 +38,16 @@ impl ThirBuilder<'_, '_> {
     /// `expression` as a value of the type `ty` (`expr_as`), added to the
     /// body.
     pub(crate) fn add_expr_as(&mut self, expression: Id<ast::Expr>, ty: TypeId) -> Id<Expr> {
-        let checked = self.expr_as(expression, ty);
+        let checked = self.check_expr_as(expression, ty);
         self.body
             .add(checked, self.checker.module().ast.exprs.span(expression))
     }
 
     /// `expression` as a value of the type `ty`, not yet added to the body;
     /// a mismatch is reported.
-    pub(crate) fn expr_as(&mut self, expression: Id<ast::Expr>, ty: TypeId) -> Expr {
+    pub(crate) fn check_expr_as(&mut self, expression: Id<ast::Expr>, ty: TypeId) -> Expr {
         let span = self.checker.module().ast.exprs.span(expression);
-        let checked = self.expr(expression, Some(ty));
+        let checked = self.check_expr(expression, Some(ty));
         self.coerce(checked, span, ty).unwrap_or_else(|mismatch| {
             self.checker.diagnostics.push(mismatch);
             Expr::INVALID
@@ -89,15 +89,19 @@ impl ThirBuilder<'_, '_> {
     /// operation leaves no nodes for its operands. `expected` is the type the
     /// context expects, which a number literal without a suffix takes; where
     /// the context requires that type, its caller coerces the result to it.
-    pub(crate) fn expr(&mut self, expression: Id<ast::Expr>, expected: Option<TypeId>) -> Expr {
+    pub(crate) fn check_expr(
+        &mut self,
+        expression: Id<ast::Expr>,
+        expected: Option<TypeId>,
+    ) -> Expr {
         let tree = &self.checker.module().ast;
         let span = tree.exprs.span(expression);
         let what = match tree.exprs[expression] {
             ast::Expr::Name => {
                 let symbol = self.resolve(span);
-                return self.symbol_value(symbol, span);
+                return self.check_symbol_value(symbol, span);
             }
-            ast::Expr::Number => return self.number(span, None, expected),
+            ast::Expr::Number => return self.check_number(span, None, expected),
             ast::Expr::Bool(value) => {
                 return Expr {
                     ty: TypeId::BOOL,
@@ -111,17 +115,19 @@ impl ThirBuilder<'_, '_> {
                     kind: ExprKind::Constant(Value::Bytes(bytes.into())),
                 };
             }
-            ast::Expr::Parentheses(inner) => return self.expr(inner, expected),
-            ast::Expr::Unary { op, value } => return self.unary(op, value, span, expected),
+            ast::Expr::Parentheses(inner) => return self.check_expr(inner, expected),
+            ast::Expr::Unary { op, value } => return self.check_unary(op, value, span, expected),
             ast::Expr::Binary { op, left, right } => {
-                return self.binary(op, left, right, span, expected);
+                return self.check_binary(op, left, right, span, expected);
             }
             ast::Expr::Invalid => return Expr::INVALID, // the parser reported it
             ast::Expr::Path(path) => {
-                let symbol = self.path_symbol(path);
-                return self.symbol_value(symbol, span);
+                let symbol = self.resolve_path(path);
+                return self.check_symbol_value(symbol, span);
             }
-            ast::Expr::Call { callee, arguments } => return self.call(callee, arguments, span),
+            ast::Expr::Call { callee, arguments } => {
+                return self.check_call(callee, arguments, span);
+            }
             ast::Expr::String { c_string: false } => "string literals",
             ast::Expr::Char { .. } => "character literals",
             ast::Expr::None => "`none` values",
@@ -147,7 +153,7 @@ impl ThirBuilder<'_, '_> {
 
     /// The name or path written at `span`, which stands for `symbol`, as a
     /// value. `None` when finding the symbol reported an error.
-    fn symbol_value(&mut self, symbol: Option<Symbol>, span: Span) -> Expr {
+    fn check_symbol_value(&mut self, symbol: Option<Symbol>, span: Span) -> Expr {
         let what = match symbol {
             None => return Expr::INVALID, // finding it reported the error
             Some(Symbol::Local(Local::Variable(variable))) => {
@@ -179,7 +185,7 @@ impl ThirBuilder<'_, '_> {
     /// Reports `name`, written at `span`, which nothing in scope declares:
     /// a built-in function, not supported yet, or an unknown name, with the
     /// nearest name that is declared.
-    pub(crate) fn undeclared(&mut self, name: &str, span: Span) {
+    pub(crate) fn report_undeclared(&mut self, name: &str, span: Span) {
         if UNSUPPORTED_FUNCTIONS.contains(&name) {
             self.checker.not_supported(span, "built-in functions");
             return;
@@ -211,7 +217,7 @@ impl ThirBuilder<'_, '_> {
     /// stands for, reporting a path that names nothing or is not supported.
     /// Another module's name is reachable only if it starts with an upper case
     /// letter, except in the prelude.
-    fn path_symbol(&mut self, path: Id<ast::Type>) -> Option<Symbol> {
+    fn resolve_path(&mut self, path: Id<ast::Type>) -> Option<Symbol> {
         let tree = &self.checker.module().ast;
         let span = tree.types.span(path);
         // A `Type::Generic` alone, as `Box<T>`, is one segment.
@@ -251,7 +257,7 @@ impl ThirBuilder<'_, '_> {
                 return None;
             }
             None => {
-                self.undeclared(module_name, module_span);
+                self.report_undeclared(module_name, module_span);
                 return None;
             }
         };
@@ -285,7 +291,12 @@ impl ThirBuilder<'_, '_> {
 
     /// `callee(arguments)`, written at `span`. Only a module's function, by
     /// its name or its path, can be called.
-    fn call(&mut self, callee: Id<ast::Expr>, arguments: List<ast::Expr>, span: Span) -> Expr {
+    fn check_call(
+        &mut self,
+        callee: Id<ast::Expr>,
+        arguments: List<ast::Expr>,
+        span: Span,
+    ) -> Expr {
         let tree = &self.checker.module().ast;
         let callee_span = tree.exprs.span(callee);
         let text = tree.file.slice(callee_span);
@@ -304,7 +315,7 @@ impl ThirBuilder<'_, '_> {
                 }
                 symbol => symbol,
             },
-            ast::Expr::Path(path) => self.path_symbol(path),
+            ast::Expr::Path(path) => self.resolve_path(path),
             ast::Expr::Selector { .. } => {
                 self.checker.not_supported(callee_span, "method calls");
                 None
@@ -371,7 +382,12 @@ impl ThirBuilder<'_, '_> {
     /// (`-128`, which fits `i8` where `128` does not). It takes its suffix's
     /// type, else the type `expected` if it can (`takes_type`), else `i32` or
     /// `f64`.
-    fn number(&mut self, number: Span, negated: Option<Span>, expected: Option<TypeId>) -> Expr {
+    fn check_number(
+        &mut self,
+        number: Span,
+        negated: Option<Span>,
+        expected: Option<TypeId>,
+    ) -> Expr {
         let tree = &self.checker.module().ast;
         let literal = literal::numeric::split(tree.file.slice(number));
         let pointer_bits = self.checker.queries.pointer_bits;
@@ -430,7 +446,7 @@ impl ThirBuilder<'_, '_> {
     }
 
     /// `op operand`, written at `span`.
-    fn unary(
+    fn check_unary(
         &mut self,
         op: UnaryOp,
         operand: Id<ast::Expr>,
@@ -442,11 +458,11 @@ impl ThirBuilder<'_, '_> {
         // Only a literal right after `-` is a negative literal: `-(128)`
         // negates `128`, which does not fit `i8`.
         if op == UnaryOp::Negate && matches!(tree.exprs[operand], ast::Expr::Number) {
-            return self.number(operand_span, Some(span), expected);
+            return self.check_number(operand_span, Some(span), expected);
         }
         let checked = match op {
-            UnaryOp::LogicalNot => self.expr(operand, Some(TypeId::BOOL)),
-            _ => self.expr(operand, expected),
+            UnaryOp::LogicalNot => self.check_expr(operand, Some(TypeId::BOOL)),
+            _ => self.check_expr(operand, expected),
         };
         if checked.ty == TypeId::INVALID {
             return Expr::INVALID;
@@ -458,7 +474,7 @@ impl ThirBuilder<'_, '_> {
             UnaryOp::BitNot => matches!(ty, Type::Integer(_)),
         };
         if !accepted {
-            return self.invalid_operand(op.symbol(), checked.ty, span);
+            return self.report_invalid_operand(op.symbol(), checked.ty, span);
         }
         let result = checked.ty;
         let kind = match checked.kind {
@@ -479,7 +495,7 @@ impl ThirBuilder<'_, '_> {
     /// the whole expression is expected to have, unless the operator gives a
     /// `bool` from other types (`==`, `<`), and the right operand takes the
     /// left one's.
-    fn binary(
+    fn check_binary(
         &mut self,
         op: BinaryOp,
         left: Id<ast::Expr>,
@@ -500,11 +516,11 @@ impl ThirBuilder<'_, '_> {
         );
         let shift = matches!(op, BinaryOp::ShiftLeft | BinaryOp::ShiftRight);
         let left_literal = unsuffixed_literal(tree, left);
-        let left = self.expr(left, if comparison { None } else { expected });
+        let left = self.check_expr(left, if comparison { None } else { expected });
         let right = if shift {
-            self.expr(right, None)
+            self.check_expr(right, None)
         } else {
-            let checked = self.expr(right, Some(left.ty));
+            let checked = self.check_expr(right, Some(left.ty));
             let found = checked.ty;
             match self.coerce(checked, right_span, left.ty) {
                 Ok(right) => right,
@@ -552,7 +568,7 @@ impl ThirBuilder<'_, '_> {
             BinaryOp::LogicalAnd | BinaryOp::LogicalOr => left_type == Type::Bool,
         };
         if !accepted {
-            return self.invalid_operand(op.symbol(), left.ty, span);
+            return self.report_invalid_operand(op.symbol(), left.ty, span);
         }
         if shift && !matches!(right_type, Type::Integer(_)) {
             let count = self.checker.queries.types.text(right.ty);
@@ -586,7 +602,7 @@ impl ThirBuilder<'_, '_> {
     }
 
     /// Reports `op` applied to an operand of the type `ty`, at `span`.
-    fn invalid_operand(&mut self, op: &str, ty: TypeId, span: Span) -> Expr {
+    fn report_invalid_operand(&mut self, op: &str, ty: TypeId, span: Span) -> Expr {
         let ty = self.checker.queries.types.text(ty);
         let message = format!("operator `{op}` cannot be applied to `{ty}`");
         self.checker

@@ -218,7 +218,7 @@ const HELLO: &str = "fn main() {\n    write(stdout, c\"Hello from Peeper!\\n\", 
 /// that is not a package name or is taken by a library in `libraries`.
 pub fn create(dir: &Path, name: &str, libraries: &Path) -> Result<bool, String> {
     let manifest = dir.join(manifest::FILE_NAME);
-    if !manifest::valid_name(name) {
+    if !manifest::is_valid_name(name) {
         return Err(format!("`{name}`: {}", manifest::NAME_RULE));
     }
     if bundled_libraries(libraries).contains_key(name) {
@@ -257,7 +257,7 @@ fn bundled_libraries(libraries: &Path) -> HashMap<String, PathBuf> {
         .filter(|entry| entry.path().is_dir())
         .filter_map(|entry| {
             let name = entry.file_name().into_string().ok()?;
-            manifest::valid_name(&name).then(|| (name, entry.path().join(SOURCE_FOLDER)))
+            manifest::is_valid_name(&name).then(|| (name, entry.path().join(SOURCE_FOLDER)))
         })
         .collect()
 }

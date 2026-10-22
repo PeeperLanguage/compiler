@@ -55,7 +55,7 @@ pub struct Body {
 
 /// A name written in a body, where it is declared or used, and what it
 /// stands for. Recorded only for a caller that asks
-/// (`ModuleChecker::body`), such as an editor; the body itself does not keep
+/// (`ModuleChecker::check_body`), such as an editor; the body itself does not keep
 /// names.
 #[derive(Clone, Copy, Debug)]
 pub struct Name {
@@ -175,7 +175,7 @@ impl Body {
             function_name,
             out: String::new(),
         };
-        printer.statements(self.blocks[Id::from_index(0)].statements, 1);
+        printer.write_statements(self.blocks[Id::from_index(0)].statements, 1);
         printer.out
     }
 }
@@ -191,40 +191,40 @@ struct Printer<'b, F> {
 
 impl<F: Fn(DefId) -> String> Printer<'_, F> {
     /// Each of `statements` on its own line, `depth` levels in.
-    fn statements(&mut self, statements: List<Stmt>, depth: usize) {
+    fn write_statements(&mut self, statements: List<Stmt>, depth: usize) {
         for statement in self.body.lists.items(statements) {
             for _ in 0..depth {
                 self.out.push_str("    ");
             }
-            self.statement(statement, depth);
+            self.write_statement(statement, depth);
             self.out.push('\n');
         }
     }
 
     /// `statement` without its indent and line end; a block's lines are
     /// `depth + 1` levels in.
-    fn statement(&mut self, statement: Id<Stmt>, depth: usize) {
+    fn write_statement(&mut self, statement: Id<Stmt>, depth: usize) {
         match self.body.stmts[statement] {
             Stmt::Let { variable, value } => {
                 let mutable = self.body.variables[variable].mutable;
                 self.out.push_str(if mutable { "let mut " } else { "let " });
-                self.variable(variable);
+                self.write_variable(variable);
                 if let Some(value) = value {
                     self.out.push_str(" = ");
-                    self.expr(value);
+                    self.write_expr(value);
                 }
             }
             Stmt::Assign { variable, value } => {
-                self.variable(variable);
+                self.write_variable(variable);
                 self.out.push_str(" = ");
-                self.expr(value);
+                self.write_expr(value);
             }
-            Stmt::Expression(value) => self.expr(value),
+            Stmt::Expression(value) => self.write_expr(value),
             Stmt::Return(value) => {
                 self.out.push_str("return");
                 if let Some(value) = value {
                     self.out.push(' ');
-                    self.expr(value);
+                    self.write_expr(value);
                 }
             }
             Stmt::If {
@@ -233,34 +233,34 @@ impl<F: Fn(DefId) -> String> Printer<'_, F> {
                 otherwise,
             } => {
                 self.out.push_str("if ");
-                self.expr(condition);
+                self.write_expr(condition);
                 self.out.push(' ');
-                self.block(self.body.blocks[then].statements, depth);
+                self.write_block(self.body.blocks[then].statements, depth);
                 if let Some(otherwise) = otherwise {
                     self.out.push_str(" else ");
-                    self.statement(otherwise, depth);
+                    self.write_statement(otherwise, depth);
                 }
             }
-            Stmt::Block(block) => self.block(self.body.blocks[block].statements, depth),
+            Stmt::Block(block) => self.write_block(self.body.blocks[block].statements, depth),
         }
     }
 
     /// `{`, the statements one level in, and `}` at `depth`.
-    fn block(&mut self, statements: List<Stmt>, depth: usize) {
+    fn write_block(&mut self, statements: List<Stmt>, depth: usize) {
         self.out.push_str("{\n");
-        self.statements(statements, depth + 1);
+        self.write_statements(statements, depth + 1);
         for _ in 0..depth {
             self.out.push_str("    ");
         }
         self.out.push('}');
     }
 
-    fn variable(&mut self, variable: Id<Variable>) {
+    fn write_variable(&mut self, variable: Id<Variable>) {
         let name = self.file.slice(self.body.variables.span(variable));
         _ = write!(self.out, "{name}.{}", variable.index());
     }
 
-    fn expr(&mut self, expr: Id<Expr>) {
+    fn write_expr(&mut self, expr: Id<Expr>) {
         let Expr { ty, ref kind } = self.body.exprs[expr];
         match *kind {
             ExprKind::Constant(Value::Bool(value)) => _ = write!(self.out, "{value}"),
@@ -292,22 +292,22 @@ impl<F: Fn(DefId) -> String> Printer<'_, F> {
                 };
                 _ = write!(self.out, ":{}", self.types.text(ty));
             }
-            ExprKind::Variable(variable) => self.variable(variable),
+            ExprKind::Variable(variable) => self.write_variable(variable),
             ExprKind::Binary { op, left, right } => {
                 self.out.push('(');
-                self.expr(left);
+                self.write_expr(left);
                 _ = write!(self.out, " {op:?} ");
-                self.expr(right);
+                self.write_expr(right);
                 self.out.push(')');
             }
             ExprKind::Unary { op, value } => {
                 _ = write!(self.out, "({op:?} ");
-                self.expr(value);
+                self.write_expr(value);
                 self.out.push(')');
             }
             ExprKind::Widen(value) => {
                 self.out.push_str("widen(");
-                self.expr(value);
+                self.write_expr(value);
                 _ = write!(self.out, "):{}", self.types.text(ty));
             }
             ExprKind::Call {
@@ -319,7 +319,7 @@ impl<F: Fn(DefId) -> String> Printer<'_, F> {
                     if index > 0 {
                         self.out.push_str(", ");
                     }
-                    self.expr(argument);
+                    self.write_expr(argument);
                 }
                 _ = write!(self.out, "):{}", self.types.text(ty));
             }

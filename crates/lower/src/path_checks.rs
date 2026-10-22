@@ -5,13 +5,13 @@
 //!
 //! What they check, each over one function's MIR:
 //!
-//! - `missing_return` (T0017): a function with a result whose closing `}` can
+//! - `report_missing_return` (T0017): a function with a result whose closing `}` can
 //!   be reached, and so ends without returning a value. The error names how
 //!   each path gets there: a branch side, or a nested block that ends.
 //! - `initialization` (T0039 and T0007): a variable used where some path left
 //!   it unset, and a variable without `mut` assigned where some path already
 //!   set it. This is what lets `let x: i32;` be set once later.
-//! - `unreachable_code` (W0001, a warning): code no path reaches, such as code
+//! - `warn_unreachable_code` (W0001, a warning): code no path reaches, such as code
 //!   after a `return`.
 //!
 //! How they work: they only read the graph. A block's terminator gives the
@@ -25,14 +25,14 @@
 //!
 //! - No type, name or operator rules, and no constant folding: the checker did
 //!   those while building THIR. A function whose checking reported an error
-//!   is not lowered at all (`ModuleChecker::body`), so these checks never
+//!   is not lowered at all (`ModuleChecker::check_body`), so these checks never
 //!   repeat or follow from an earlier error.
 //! - No changes to the MIR, and no fixes: they only report.
 //! - No use of constant values to decide which paths exist. `if false { ... }`
 //!   still has two sides, as in Go and Rust, so whether code compiles never
 //!   depends on a constant's value; a label only says which side the constant
 //!   takes.
-//! - No errors from blocks that cannot be reached: `unreachable_code` warns
+//! - No errors from blocks that cannot be reached: `warn_unreachable_code` warns
 //!   about them once, and the other checks skip them.
 //! - No warning that a condition is always true or false: `if DEBUG` with a
 //!   constant `DEBUG` is how code is switched on and off, and Go, Rust and Zig
@@ -63,7 +63,7 @@ const SHOWN_CAUSES: usize = 3;
 /// nested block, at most `SHOWN_CAUSES` of them. When the last block itself
 /// runs statements of the function body, only the end is named, since one
 /// `return` there fixes every path.
-pub fn missing_return(
+pub fn report_missing_return(
     body: &mir::Body,
     file: &Arc<SourceFile>,
     types: &Types,
@@ -187,7 +187,11 @@ pub fn missing_return(
 /// some path to it (joined with "or"). A `store` sets both bits. The first
 /// loop finds the bits at each block's start; the second walks each block
 /// again from those bits and reports at each `load` and `store`.
-pub fn initialization(body: &mir::Body, file: &Arc<SourceFile>, diagnostics: &mut Vec<Diagnostic>) {
+pub fn report_initialization_errors(
+    body: &mir::Body,
+    file: &Arc<SourceFile>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
     if body
         .variables
         .ids()
@@ -281,7 +285,7 @@ type Bits = Vec<u64>;
 /// code after a `return`; what that stretch leads to is not warned about
 /// again. Code is an instruction, a `return` or a branch; a jump between
 /// blocks or the closing brace is not.
-pub fn unreachable_code(
+pub fn warn_unreachable_code(
     body: &mir::Body,
     file: &Arc<SourceFile>,
     diagnostics: &mut Vec<Diagnostic>,

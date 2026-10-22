@@ -134,7 +134,7 @@ impl Note {
 
     /// Whether it carries fixes that are sure: what `peeper fix` applies, an
     /// editor prefers and the printer labels `fix`.
-    pub fn sure_fix(&self) -> bool {
+    pub fn has_sure_fix(&self) -> bool {
         matches!(&self.kind, NoteKind::Help(fixes) if !fixes.is_empty())
     }
 }

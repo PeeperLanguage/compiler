@@ -14,7 +14,7 @@ use crate::Module;
 /// live in a temporary folder, removed after. The program is linked beside
 /// `output` and then renamed to it, so a failed link leaves no half-written
 /// program.
-pub fn executable(modules: &[Module], runtime: &Path, output: &Path) -> Result<(), String> {
+pub fn link_executable(modules: &[Module], runtime: &Path, output: &Path) -> Result<(), String> {
     if !runtime.is_file() {
         return Err(format!(
             "the runtime library is missing: {}",

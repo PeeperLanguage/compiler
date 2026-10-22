@@ -178,7 +178,7 @@ impl<W: Write> Command<W> {
     /// `output`; gives whether it did, a failure reported.
     fn link(&mut self, ll: &[llvm::Module], output: &Path) -> bool {
         let runtime = self.installation.join("runtime").join(RUNTIME_LIBRARY);
-        if let Err(error) = llvm::link::executable(ll, &runtime, output) {
+        if let Err(error) = llvm::link::link_executable(ll, &runtime, output) {
             _ = writeln!(self.out, "peeper: {error}");
             return false;
         }
@@ -241,7 +241,7 @@ fn compile<'p>(
             };
             dumped.add(definition, thir, mir, types);
             if let Some(module) = ll.get_mut(definition.module.index()) {
-                module.function(definition, signature, mir, types);
+                module.add_function(definition, signature, mir, types);
             }
         },
     );
@@ -253,7 +253,7 @@ fn compile<'p>(
     {
         let file = &program.modules[entry].ast.file;
         match main {
-            Some((main, Some(exit_code))) => ll[entry].entry_point(main, exit_code),
+            Some((main, Some(exit_code))) => ll[entry].add_entry_point(main, exit_code),
             Some((main, None)) => all.push(no_entry_point(file, name_span(program, main))),
             None => all.push(no_entry_point(file, Span::at(0))),
         }

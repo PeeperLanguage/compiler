@@ -95,7 +95,7 @@ impl<'p> Module<'p> {
 
     /// Adds the C `main` that starts the program at the function `main`:
     /// it gives `main`'s result as the exit code when `exit_code`, else 0.
-    pub fn entry_point(&mut self, main: DefId, exit_code: bool) {
+    pub fn add_entry_point(&mut self, main: DefId, exit_code: bool) {
         let main = function::global(&symbol(self.program, main));
         let call = if exit_code {
             format!("  %code = call i32 {main}()\n  ret i32 %code")
@@ -148,7 +148,7 @@ impl<'p> Module<'p> {
 
     /// A pointer to the string constant `bytes`, ended by a zero byte; each
     /// string gets one global.
-    fn string(&mut self, bytes: &[u8]) -> String {
+    fn add_string(&mut self, bytes: &[u8]) -> String {
         let count = self.string_ids.len();
         let id = *self.string_ids.entry(bytes.to_vec()).or_insert_with(|| {
             let mut text = bytes.to_vec();
@@ -299,7 +299,9 @@ fn constant_text(types: &Types, constant: &Constant) -> String {
             text
         }
         (Value::Float(bits), _) => format!("0x{bits:016X}"),
-        (Value::Bytes(_), _) => unreachable!("a string constant is a global (`Module::string`)"),
+        (Value::Bytes(_), _) => {
+            unreachable!("a string constant is a global (`Module::add_string`)")
+        }
     }
 }
 
@@ -366,7 +368,7 @@ mod tests {
                  ..
              }| {
                 if definition.module.index() == main {
-                    module.function(definition, signature, mir.unwrap(), types);
+                    module.add_function(definition, signature, mir.unwrap(), types);
                 }
             },
         );

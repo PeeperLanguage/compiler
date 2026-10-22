@@ -21,7 +21,7 @@ use model::thir::Variable;
 use source::Span;
 
 use crate::ModuleChecker;
-use crate::scope::already_declared;
+use crate::scope::report_redeclared;
 use model::Local;
 use model::Symbol;
 
@@ -33,7 +33,7 @@ pub(crate) struct ThirBuilder<'a, 'p> {
     pub(crate) checker: ModuleChecker<'a, 'p>,
     pub(crate) body: Body,
     /// The names written in the body, in the order checked, for a caller that
-    /// wants them (`ModuleChecker::body`); `None` records nothing.
+    /// wants them (`ModuleChecker::check_body`); `None` records nothing.
     recorded: Option<&'a mut Vec<Name>>,
     /// The names declared in the enclosing blocks so far, innermost last. Few
     /// names are in scope at once, so a search from the end beats hashing.
@@ -50,7 +50,7 @@ impl ModuleChecker<'_, '_> {
     /// with `has_errors` set when checking it reported an error. `None` for a
     /// function without a body, or whose signature had an error. The names
     /// written in it go to `names` when given, as for an editor.
-    pub fn body(
+    pub fn check_body(
         &mut self,
         function: &ast::Function,
         ty: TypeId,
@@ -87,7 +87,7 @@ impl ModuleChecker<'_, '_> {
             );
             builder.declare(name, Local::Variable(variable));
         }
-        let statements = builder.statements(tree.blocks[block].statements);
+        let statements = builder.check_statements(tree.blocks[block].statements);
         builder.body.blocks[outermost].statements = statements;
         let mut body = builder.body;
         // A part of the signature that failed was reported with the signature.
@@ -102,8 +102,8 @@ impl ModuleChecker<'_, '_> {
     /// The type and value of the module's constant `declaration`; `None` when
     /// it had an error. Its value is checked as a body's `const` is, with no
     /// variables in scope.
-    pub fn constant(&mut self, declaration: Id<ast::Decl>) -> Option<Constant> {
-        ThirBuilder::new(self, TypeId::VOID, None).constant_value(declaration)
+    pub fn check_constant(&mut self, declaration: Id<ast::Decl>) -> Option<Constant> {
+        ThirBuilder::new(self, TypeId::VOID, None).check_const_statement(declaration)
     }
 }
 
@@ -125,16 +125,16 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             recorded,
             names: Vec::new(),
             block_start: 0,
-            block: Id::from_index(0), // the function's, added first (`ModuleChecker::body`)
+            block: Id::from_index(0), // the function's, added first (`ModuleChecker::check_body`)
             result,
         }
     }
 
     /// The THIR of `statements`, in the current block.
-    fn statements(&mut self, statements: List<ast::Stmt>) -> List<Stmt> {
+    fn check_statements(&mut self, statements: List<ast::Stmt>) -> List<Stmt> {
         let mut checked: Vec<NonZeroU32> = Vec::with_capacity(statements.len());
         for statement in self.checker.module().ast.lists.items(statements) {
-            if let Some(statement) = self.statement(statement) {
+            if let Some(statement) = self.check_statement(statement) {
                 checked.push(statement.into());
             }
         }
@@ -143,7 +143,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
 
     /// The THIR of `block`; the names it declares end with it. It is added
     /// before the blocks inside it.
-    fn block(&mut self, block: Id<ast::Block>) -> Id<Block> {
+    fn check_block(&mut self, block: Id<ast::Block>) -> Id<Block> {
         let checked = Block {
             parent: Some(self.block),
             statements: List::EMPTY,
@@ -154,7 +154,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         let names_before = self.names.len();
         let enclosing_start = std::mem::replace(&mut self.block_start, names_before);
         let enclosing = std::mem::replace(&mut self.block, checked);
-        let statements = self.statements(self.checker.module().ast.blocks[block].statements);
+        let statements = self.check_statements(self.checker.module().ast.blocks[block].statements);
         self.names.truncate(names_before);
         self.block_start = enclosing_start;
         self.block = enclosing;
@@ -174,7 +174,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         let block = &self.names[self.block_start..];
         if let Some(&(_, first)) = block.iter().find(|&&(declared, _)| declared == text) {
             let first = self.body.declared(first);
-            let diagnostic = already_declared(
+            let diagnostic = report_redeclared(
                 &self.checker.module().ast.file,
                 text,
                 "block",
@@ -189,7 +189,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
     }
 
     /// Records that the name written at `span` stands for `symbol`, when the
-    /// caller asked for names (`ModuleChecker::body`).
+    /// caller asked for names (`ModuleChecker::check_body`).
     pub(crate) fn record(&mut self, span: Span, symbol: Symbol) {
         if let Some(names) = &mut self.recorded {
             names.push(Name { span, symbol });
@@ -211,7 +211,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             None => match self.checker.global(name) {
                 Some(symbol) => symbol,
                 None => {
-                    self.undeclared(name, span);
+                    self.report_undeclared(name, span);
                     return None;
                 }
             },
@@ -222,19 +222,19 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
 
     /// The THIR of `statement`; `None` for a `const`, which only declares a
     /// name, and for a statement with an error.
-    fn statement(&mut self, statement: Id<ast::Stmt>) -> Option<Id<Stmt>> {
+    fn check_statement(&mut self, statement: Id<ast::Stmt>) -> Option<Id<Stmt>> {
         let tree = &self.checker.module().ast;
         let span = tree.stmts.span(statement);
         let checked = match tree.stmts[statement] {
-            ast::Stmt::Block(block) => Stmt::Block(self.block(block)),
+            ast::Stmt::Block(block) => Stmt::Block(self.check_block(block)),
             ast::Stmt::Let {
                 mutable,
                 name,
                 ty,
                 value,
-            } => self.let_statement(mutable, name, ty, value),
+            } => self.check_let_statement(mutable, name, ty, value),
             ast::Stmt::Const(declaration) => {
-                let value = self.constant_value(declaration);
+                let value = self.check_const_statement(declaration);
                 let ast::Decl::Const { name, .. } = tree.decls[declaration] else {
                     unreachable!("a const statement holds a const declaration")
                 };
@@ -242,7 +242,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 self.declare(name, Local::Constant(constant));
                 return None;
             }
-            ast::Stmt::Return(value) => Stmt::Return(self.return_value(span, value)),
+            ast::Stmt::Return(value) => Stmt::Return(self.check_return_value(span, value)),
             ast::Stmt::Expression(value) => Stmt::Expression(self.add_expr(value)),
             ast::Stmt::Assign { target, value } => self.assign(target, value)?,
             ast::Stmt::If {
@@ -251,8 +251,8 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 otherwise,
             } => {
                 let condition = self.add_expr_as(condition, TypeId::BOOL);
-                let then = self.block(then?); // missing after a syntax error
-                let otherwise = otherwise.and_then(|otherwise| self.statement(otherwise));
+                let then = self.check_block(then?); // missing after a syntax error
+                let otherwise = otherwise.and_then(|otherwise| self.check_statement(otherwise));
                 Stmt::If {
                     condition,
                     then,
@@ -299,7 +299,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
 
     /// `let mut name: ty = value;`. The variable is declared after its value is
     /// checked, so the value cannot use it.
-    fn let_statement(
+    fn check_let_statement(
         &mut self,
         mutable: bool,
         name: Ident,
@@ -378,7 +378,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
     /// `const name: ty = value;`: a name for a value known at compile time.
     /// Without a type, the constant takes its value's type. Gives its type and
     /// value, or `None` after an error.
-    fn constant_value(&mut self, declaration: Id<ast::Decl>) -> Option<Constant> {
+    fn check_const_statement(&mut self, declaration: Id<ast::Decl>) -> Option<Constant> {
         let ast::Decl::Const {
             name, ty, value, ..
         } = self.checker.module().ast.decls[declaration]
@@ -395,8 +395,8 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         };
         let span = self.checker.module().ast.exprs.span(value);
         let checked = match declared {
-            Some(ty) => self.expr_as(value, ty),
-            None => self.expr(value, None),
+            Some(ty) => self.check_expr_as(value, ty),
+            None => self.check_expr(value, None),
         };
         match checked.kind {
             ExprKind::Constant(value) => Some(Constant {
@@ -414,7 +414,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
     }
 
     /// The value of `return value;`, checked against the function's result.
-    fn return_value(&mut self, span: Span, value: Option<Id<ast::Expr>>) -> Option<Id<Expr>> {
+    fn check_return_value(&mut self, span: Span, value: Option<Id<ast::Expr>>) -> Option<Id<Expr>> {
         match value {
             Some(value) if self.result == TypeId::VOID => {
                 let message = "this function has no result, so `return` takes no value";
@@ -534,8 +534,8 @@ mod tests {
                 let ast::Decl::Function(function) = checker.module().ast.decls[declaration] else {
                     continue;
                 };
-                let signature = checker.function(declaration);
-                let body = checker.body(&function, signature, None);
+                let signature = checker.check_signature(declaration);
+                let body = checker.check_body(&function, signature, None);
                 bodies.extend(body.filter(|body| !body.has_errors));
             }
             bodies
@@ -789,8 +789,8 @@ mod tests {
             let ast::Decl::Function(function) = tree.decls[declaration] else {
                 unreachable!("the first declaration is a function")
             };
-            let signature = checker.function(declaration);
-            checker.body(&function, signature, None);
+            let signature = checker.check_signature(declaration);
+            checker.check_body(&function, signature, None);
             let note = |diagnostic: &diagnostics::Diagnostic| {
                 let first = diagnostic.notes.first();
                 (
