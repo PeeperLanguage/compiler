@@ -12,7 +12,7 @@ usage: peeper check [project folder | file.peep]
        peeper fix [project folder | file.peep]
        peeper build [-release] [-o program] [project folder | file.peep]
        peeper run [-release] [project folder | file.peep] [arguments...]
-       peeper -dump [-release] [thir | mir | ll] [project folder | file.peep]
+       peeper [check | fix] -dump [thir | mir | ll] [-release] [project folder | file.peep]
        peeper init [name]
        peeper lsp
   check  report the program's errors
@@ -26,7 +26,8 @@ usage: peeper check [project folder | file.peep]
          the LLVM IR of a debug build unless -release
   init   make this folder a project: write peeper.toml and src/main.peep,
          asking for the name unless given
-  lsp    serve editors as a language server over stdin and stdout";
+  lsp    serve editors as a language server over stdin and stdout
+Flags may come in any order, each with its value right after it.";
 
 /// What the arguments ask for.
 pub enum Args {
@@ -52,81 +53,122 @@ pub enum Args {
     Lsp,
 }
 
-/// The arguments after the program's name; `None` when they make no sense.
-pub fn parse(args: &[String]) -> Option<Args> {
-    let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    let kind = |name: &str| Dump::ALL.into_iter().find(|kind| kind.extension() == name);
-    let (path, fix) = match args.as_slice() {
-        ["lsp"] => return Some(Args::Lsp),
-        ["init"] => return Some(Args::Init { name: None }),
-        ["init", name] => {
-            return Some(Args::Init {
-                name: Some(name.to_string()),
-            });
+/// The arguments after the program's name, or what is wrong with them.
+/// Flags come anywhere, each with its value right after it: `-o` must have
+/// one, `-dump` takes the next word when it names a dump. The words left,
+/// in order, are the command and its value; `run` gives the words after its
+/// path to the program. With no command, `-dump` means `check`.
+pub fn parse(args: &[String]) -> Result<Args, String> {
+    let kind = |name: &str| Dump::ALL.iter().position(|kind| kind.extension() == name);
+    let mut output = None;
+    let mut release = false;
+    let mut dumps: Option<[bool; Dump::ALL.len()]> = None; // which were asked for, by -dump
+    let mut words = Vec::new();
+    let mut args = args.iter().map(String::as_str).peekable();
+    while let Some(arg) = args.next() {
+        match arg {
+            "-o" if output.is_some() => return Err("-o is given twice".to_string()),
+            "-o" => match args.next_if(|value| !value.starts_with('-')) {
+                Some(value) => output = Some(PathBuf::from(value)),
+                None => return Err("-o needs the program's path after it".to_string()),
+            },
+            "-release" if release => return Err("-release is given twice".to_string()),
+            "-release" => release = true,
+            "-dump" => {
+                let asked = dumps.get_or_insert([false; Dump::ALL.len()]);
+                match args.peek().and_then(|name| kind(name)) {
+                    Some(index) => {
+                        asked[index] = true;
+                        args.next();
+                    }
+                    None => *asked = [true; Dump::ALL.len()],
+                }
+            }
+            flag if flag.starts_with('-') => return Err(format!("unknown flag {flag}")),
+            word => words.push(word),
         }
-        ["build", rest @ ..] => {
-            let (mode, rest) = build_mode(rest);
-            let (output, path) = match rest {
-                [] => (None, "."),
-                [path] if *path != "-o" => (None, *path),
-                ["-o", output] => (Some(*output), "."),
-                ["-o", output, path] => (Some(*output), *path),
-                _ => return None,
-            };
-            return Some(Args::Build {
-                path: PathBuf::from(path),
-                output: output.map(PathBuf::from),
-                mode,
-            });
+    }
+    let mode = if release {
+        BuildMode::Release
+    } else {
+        BuildMode::Debug
+    };
+    let given = [
+        ("-o", output.is_some()),
+        ("-release", release),
+        ("-dump", dumps.is_some()),
+    ];
+    let path = |value: Option<&str>| PathBuf::from(value.unwrap_or("."));
+    let check = |values: &[&str], fix: bool| -> Result<Args, String> {
+        let dumps = Dump::ALL
+            .into_iter()
+            .zip(dumps.unwrap_or_default())
+            .filter_map(|(dump, asked)| asked.then_some(dump))
+            .collect();
+        let path = path(value(values)?);
+        Ok(Args::Check {
+            path,
+            dumps,
+            fix,
+            mode,
+        })
+    };
+    // `-release` picks the build an LLVM IR dump is of.
+    let check_takes = if dumps.is_some() {
+        ["-dump", "-release"].as_slice()
+    } else {
+        &["-dump"]
+    };
+    // The command, its arguments and the flags it takes.
+    let (command, args, takes) = match words.split_first() {
+        Some((&command @ ("check" | "fix"), values)) => {
+            (command, check(values, command == "fix")?, check_takes)
         }
-        ["run", rest @ ..] => {
-            let (mode, rest) = build_mode(rest);
-            let (path, arguments) = rest.split_first().unwrap_or((&".", &[]));
-            return Some(Args::Run {
+        Some((&command @ "build", values)) => {
+            let path = path(value(values)?);
+            let args = Args::Build { path, output, mode };
+            (command, args, ["-o", "-release"].as_slice())
+        }
+        Some((&command @ "run", values)) => {
+            let (path, arguments) = values.split_first().unwrap_or((&".", &[]));
+            let args = Args::Run {
                 path: PathBuf::from(path),
                 arguments: arguments
                     .iter()
                     .map(|argument| argument.to_string())
                     .collect(),
                 mode,
-            });
-        }
-        ["-dump", rest @ ..] => {
-            let (mode, rest) = build_mode(rest);
-            let (dumps, path) = match rest {
-                [] => (Dump::ALL.to_vec(), "."),
-                [name] if let Some(dump) = kind(name) => (vec![dump], "."),
-                [path] => (Dump::ALL.to_vec(), *path),
-                [name, path] if let Some(dump) = kind(name) => (vec![dump], *path),
-                _ => return None,
             };
-            return Some(Args::Check {
-                path: PathBuf::from(path),
-                dumps,
-                fix: false,
-                mode,
-            });
+            (command, args, ["-release"].as_slice())
         }
-        ["check"] => (".", false),
-        ["check", path] => (*path, false),
-        ["fix"] => (".", true),
-        ["fix", path] => (*path, true),
-        _ => return None,
+        Some((&command @ "init", values)) => {
+            let name = value(values)?.map(str::to_string);
+            (command, Args::Init { name }, [].as_slice())
+        }
+        Some((&command @ "lsp", values)) => match values.first() {
+            Some(extra) => return Err(format!("unexpected `{extra}`")),
+            None => (command, Args::Lsp, [].as_slice()),
+        },
+        // `-dump` alone means `check`: every word is its own.
+        _ if dumps.is_some() => ("check", check(&words, false)?, check_takes),
+        Some((word, _)) => return Err(format!("unknown command `{word}`")),
+        None => return Err("no command given".to_string()),
     };
-    Some(Args::Check {
-        path: PathBuf::from(path),
-        dumps: Vec::new(),
-        fix,
-        mode: BuildMode::Debug,
-    })
+    for (flag, given) in given {
+        if given && !takes.contains(&flag) {
+            return Err(format!("`{command}` does not take {flag}"));
+        }
+    }
+    Ok(args)
 }
 
-/// The build mode `rest`, the arguments of `build`, `run` or `-dump`, asks
-/// for with a leading `-release`, and the arguments after it.
-fn build_mode<'a>(rest: &'a [&'a str]) -> (BuildMode, &'a [&'a str]) {
-    match rest {
-        ["-release", rest @ ..] => (BuildMode::Release, rest),
-        _ => (BuildMode::Debug, rest),
+/// A command's value, given in `values`: one word at most, a path or
+/// `init`'s name.
+fn value<'a>(values: &[&'a str]) -> Result<Option<&'a str>, String> {
+    match *values {
+        [] => Ok(None),
+        [value] => Ok(Some(value)),
+        [_, extra, ..] => Err(format!("unexpected `{extra}`")),
     }
 }
 
@@ -144,7 +186,7 @@ mod tests {
     /// or the arguments.
     fn parsed(args: &[&str]) -> Option<(String, Vec<String>)> {
         let args: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
-        match parse(&args)? {
+        match parse(&args).ok()? {
             Args::Check {
                 path,
                 dumps,
@@ -205,10 +247,6 @@ mod tests {
         );
         assert_eq!(parsed(&["-dump", "thir", "app"]), some("app", &["thir"]));
         assert_eq!(
-            parsed(&["-dump", "-release", "ll", "app"]),
-            some("app", &["ll", "release"])
-        );
-        assert_eq!(
             parsed(&["-dump", "-release"]),
             some(".", &["thir", "mir", "ll", "release"])
         );
@@ -229,12 +267,8 @@ mod tests {
         assert_eq!(parsed(&["run"]), some(".", &["run"]));
         assert_eq!(parsed(&["run", "-release"]), some(".", &["run", "release"]));
         assert_eq!(
-            parsed(&["run", "-release", "app", "-release"]),
-            some("app", &["run", "release", "-release"])
-        );
-        assert_eq!(
-            parsed(&["run", "app", "-x", "y"]),
-            some("app", &["run", "-x", "y"])
+            parsed(&["run", "app", "x", "y"]),
+            some("app", &["run", "x", "y"])
         );
         assert_eq!(parsed(&["lsp"]), some("lsp", &[]));
         assert_eq!(parsed(&["init"]), some("init", &[]));
@@ -244,13 +278,91 @@ mod tests {
             &["build", "-o"],
             &["build", "a", "b"],
             &["-dump", "asm", "app"],
-            &["-dump", "ll", "-release", "app"],
             &["check", "a", "b"],
             &["fix", "a", "b"],
             &["lsp", "app"],
             &["init", "a", "b"],
         ] {
             assert_eq!(parsed(wrong), None, "{wrong:?}");
+        }
+    }
+
+    /// Flags come anywhere; the words left are the command and its value.
+    #[test]
+    fn flags_in_any_order() {
+        let some = |path: &str, asked: &[&str]| {
+            Some((
+                path.to_string(),
+                asked.iter().map(|a| a.to_string()).collect(),
+            ))
+        };
+        let release_build = some("app", &["build", "release", "out"]);
+        assert_eq!(
+            parsed(&["build", "-o", "out", "app", "-release"]),
+            release_build
+        );
+        assert_eq!(
+            parsed(&["-release", "build", "app", "-o", "out"]),
+            release_build
+        );
+        assert_eq!(
+            parsed(&["build", "app", "-release", "-o", "out"]),
+            release_build
+        );
+        assert_eq!(parsed(&["run", "-release"]), some(".", &["run", "release"]));
+        assert_eq!(
+            parsed(&["run", "app", "-release", "a", "b"]),
+            some("app", &["run", "release", "a", "b"])
+        );
+        assert_eq!(
+            parsed(&["-dump", "ll", "-release", "app"]),
+            some("app", &["ll", "release"])
+        );
+        assert_eq!(
+            parsed(&["check", "app", "-dump", "mir"]),
+            some("app", &["mir"])
+        );
+        assert_eq!(
+            parsed(&["-dump", "ll", "-dump", "thir"]),
+            some(".", &["thir", "ll"])
+        );
+        assert_eq!(
+            parsed(&["fix", "-dump", "mir", "app"]),
+            some("app", &["mir", "fix"])
+        );
+    }
+
+    /// Each mistake is named.
+    #[test]
+    fn errors() {
+        let error = |args: &[&str]| {
+            let args: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
+            parse(&args).err()
+        };
+        for (args, wanted) in [
+            (&[][..], "no command given"),
+            (&["app"], "unknown command `app`"),
+            (&["build", "-x"], "unknown flag -x"),
+            (&["run", "app", "-x"], "unknown flag -x"),
+            (
+                &["build", "app", "-o"],
+                "-o needs the program's path after it",
+            ),
+            (
+                &["build", "-o", "-release"],
+                "-o needs the program's path after it",
+            ),
+            (&["build", "-o", "a", "-o", "b"], "-o is given twice"),
+            (&["run", "-release", "-release"], "-release is given twice"),
+            (&["check", "-o", "out"], "`check` does not take -o"),
+            (&["check", "-release"], "`check` does not take -release"),
+            (&["run", "-dump"], "`run` does not take -dump"),
+            (&["build", "a", "b"], "unexpected `b`"),
+            // `ll` does not follow `-dump`, so it is the path.
+            (&["-dump", "-release", "ll", "app"], "unexpected `app`"),
+            (&["lsp", "app"], "unexpected `app`"),
+        ] {
+            assert_eq!(error(args).as_deref(), Some(wanted), "{args:?}");
         }
     }
 }

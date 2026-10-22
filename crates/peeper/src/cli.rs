@@ -13,13 +13,16 @@ use crate::driver::Goal;
 
 /// The command the arguments name, printing to stderr, and its goal. `Err`
 /// is the exit code of a command already done: arguments that make no sense,
-/// after the usage is printed, `init`, after making the project, or `lsp`,
+/// after what is wrong and the usage are printed, `init`, after making the project, or `lsp`,
 /// after serving.
 pub fn parse_command() -> Result<(Command<StderrLock<'static>>, Goal), ExitCode> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let Some(args) = args::parse(&args) else {
-        eprintln!("{}", args::USAGE);
-        return Err(ExitCode::from(2));
+    let args = match args::parse(&args) {
+        Ok(args) => args,
+        Err(error) => {
+            eprintln!("peeper: {error}\n\n{}", args::USAGE);
+            return Err(ExitCode::from(2));
+        }
     };
     let installation = driver::installation_dir();
     let stderr = std::io::stderr();

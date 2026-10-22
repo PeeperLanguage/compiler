@@ -77,7 +77,7 @@ fn fixtures() {
         for &release in builds {
             let mut command = Command::new(&compiler);
             match mode {
-                "mir" | "ll" => command.arg("-dump").args(release).arg(mode).arg(folder),
+                "mir" | "ll" => command.args(["-dump", mode]).args(release).arg(folder),
                 "run" => command
                     .arg("run")
                     .args(release)
