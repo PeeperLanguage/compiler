@@ -221,7 +221,7 @@ struct Function<'m, 'p, 'b> {
     types: &'b Types,
     file: &'b SourceFile,
     scope_metadata: Vec<usize>, // by MIR debug scope (`Module::add_debug_info`)
-    locations: HashMap<(usize, usize, usize), usize>, // each scope, line and column's DILocation
+    locations: HashMap<(usize, u32), usize>, // each scope and start offset's DILocation
     out: String,
     panics: String,     // the blocks that call the panic function, after the others
     checks: Vec<usize>, // how many instructions of each block check first (`traps`)
@@ -275,12 +275,14 @@ impl Function<'_, '_, '_> {
         let Some(metadata) = &mut self.module.metadata else {
             return DebugLocation(None);
         };
-        let (line, column) = self.file.position(span.start as usize);
         let scope = self.scope_metadata[debug_scope.index()];
+        // An offset has one line and column, so it is the key: they are
+        // found only for a new node.
         let id = *self
             .locations
-            .entry((scope, line, column))
+            .entry((scope, span.start))
             .or_insert_with(|| {
+                let (line, column) = self.file.position(span.start as usize);
                 metadata.add(format_args!(
                     "!DILocation(line: {line}, column: {column}, scope: !{scope})"
                 ))
