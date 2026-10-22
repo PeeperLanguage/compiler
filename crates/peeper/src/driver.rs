@@ -260,7 +260,7 @@ fn compile<'p>(
                 };
                 dumped.add(definition, thir, &mir, types);
                 if let Some(queue) = queue.as_deref_mut() {
-                    queue.add(definition, signature, mir, types);
+                    queue.add(definition, mir, types);
                 }
             },
         )

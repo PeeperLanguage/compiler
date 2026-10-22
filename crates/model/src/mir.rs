@@ -21,11 +21,12 @@ use arena::Lists;
 use source::SourceFile;
 use source::Span;
 
-#[derive(Default)]
 pub struct Body {
     pub blocks: Arena<Block>, // the first is the entry; with where each starts
     pub instructions: Arena<Instruction>, // with the expression each comes from
     pub variables: Arena<Variable>, // the parameters first; with each name
+    pub parameters: usize,    // how many of the variables are parameters
+    pub result: TypeId,       // the type the function gives
     /// The THIR body's blocks, with their spans, by the same ids: where each
     /// variable's name can be used and each instruction is written. Only debug
     /// info reads them.

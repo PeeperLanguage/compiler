@@ -5,7 +5,9 @@ pub mod path_checks;
 
 use std::num::NonZeroU32;
 
+use arena::Arena;
 use arena::Id;
+use arena::Lists;
 use model::BinaryOp;
 use model::constant::Constant;
 use model::constant::Value;
@@ -15,19 +17,34 @@ use model::semantic_types::Types;
 use model::thir;
 use source::Span;
 
-/// The MIR of a function's checked body, which has `parameters` parameters.
+/// The MIR of a function's checked body, which has `parameters` parameters
+/// and gives `result`.
 /// `None` when checking it reported an error (`has_errors`), or an error left
 /// it incomplete: what was reported is all there is to say about it. Its
 /// types, from `types`, are each the type itself: THIR's aliases are looked
 /// through (`Types::real`).
-pub fn lower(body: &thir::Body, parameters: usize, types: &Types) -> Option<mir::Body> {
+pub fn lower(
+    body: &thir::Body,
+    parameters: usize,
+    result: TypeId,
+    types: &Types,
+) -> Option<mir::Body> {
     if body.has_errors {
         return None;
     }
     let mut lowering = Lowering {
         thir: body,
         types,
-        mir: mir::Body::default(),
+        mir: mir::Body {
+            blocks: Arena::default(),
+            instructions: Arena::default(),
+            variables: Arena::default(),
+            parameters,
+            result: types.real(result),
+            debug_scopes: Arena::default(),
+            constants: Vec::new(),
+            lists: Lists::default(),
+        },
         block: Id::from_index(0),
         instructions: Vec::new(),
         debug_scope: Id::from_index(0),

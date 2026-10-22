@@ -204,8 +204,8 @@ impl Metadata {
 
     /// The debug type of `ty`; `None` for `void`.
     fn debug_type(&mut self, types: &Types, ty: TypeId) -> Option<usize> {
-        // A signature may name an alias; its debug type is its type's.
-        let ty = types.real(ty);
+        // An alias here would get a second debug type for its type.
+        debug_assert_eq!(types.real(ty), ty, "MIR holds no aliases");
         if ty == TypeId::VOID {
             return None;
         }
@@ -396,11 +396,10 @@ mod tests {
                     false,
                     |compile::CheckedFunction {
                          definition,
-                         signature,
                          mir,
                          types,
                          ..
-                     }| queue.add(definition, signature, mir.unwrap(), types),
+                     }| queue.add(definition, mir.unwrap(), types),
                 )
             });
         assert_eq!(results.diagnostics().count(), 0);

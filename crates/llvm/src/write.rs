@@ -10,17 +10,15 @@ use std::sync::mpsc;
 use model::DefId;
 use model::ModuleId;
 use model::mir;
-use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 
 use crate::BuildMode;
 use crate::Module;
 
-/// One module's functions, each with its signature and MIR, and the types
-/// they name.
+/// One module's functions, each with its MIR, and the types they name.
 struct Batch {
     module: ModuleId,
-    functions: Vec<(DefId, TypeId, mir::Body)>,
+    functions: Vec<(DefId, mir::Body)>,
     types: Types,
 }
 
@@ -33,11 +31,10 @@ pub struct FunctionQueue {
 }
 
 impl FunctionQueue {
-    /// Adds the function `definition`, whose signature is `signature` and
-    /// whose MIR is `body`; `types` is the program's types so far. A
+    /// Adds the function `definition`, whose MIR is `body`; `types` is the program's types so far. A
     /// program's functions come module by module, so a function of another
     /// module sends the one before to a worker.
-    pub fn add(&mut self, definition: DefId, signature: TypeId, body: mir::Body, types: &Types) {
+    pub fn add(&mut self, definition: DefId, body: mir::Body, types: &Types) {
         if definition.module != self.batch.module {
             self.send();
             assert!(
@@ -47,7 +44,7 @@ impl FunctionQueue {
             self.batch.module = definition.module;
         }
         self.batch.types.extend_from(types);
-        self.batch.functions.push((definition, signature, body));
+        self.batch.functions.push((definition, body));
     }
 
     /// Sends the functions kept so far, with a copy of their types, to a
@@ -92,8 +89,8 @@ pub fn write_modules<'p, T>(
                             return written; // the channel is closed and empty
                         };
                         let mut module = Module::new(program, batch.module, pointer_bits, mode);
-                        for (definition, signature, body) in &batch.functions {
-                            module.add_function(*definition, *signature, body, &batch.types);
+                        for (definition, body) in &batch.functions {
+                            module.add_function(*definition, body, &batch.types);
                         }
                         written.push(module);
                     }

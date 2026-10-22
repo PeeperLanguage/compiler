@@ -167,8 +167,8 @@ pub fn run(
                             Type::Function {
                                 ref parameters,
                                 result,
-                            } => lower::lower(&thir, parameters.len(), &queries.types).inspect(
-                                |mir| {
+                            } => lower::lower(&thir, parameters.len(), result, &queries.types)
+                                .inspect(|mir| {
                                     let file = &tree.file;
                                     let diagnostics = &mut queries.diagnostics[id.index()];
                                     lower::path_checks::report_initialization_errors(
@@ -194,8 +194,7 @@ pub fn run(
                                         },
                                         diagnostics,
                                     );
-                                },
-                            ),
+                                }),
                             _ => None,
                         };
                         use_function(CheckedFunction {

@@ -39,23 +39,13 @@ const EXIT: &str = "peeper_rt_v1_exit";
 const PANIC_EXIT_CODE: i32 = 101;
 
 impl Module<'_> {
-    /// Adds the function `definition` of this module, whose signature is `ty`
-    /// and whose MIR is `body`.
-    pub(crate) fn add_function(
-        &mut self,
-        definition: DefId,
-        ty: TypeId,
-        body: &mir::Body,
-        types: &Types,
-    ) {
-        let Type::Function { parameters, result } = &types[ty] else {
-            unreachable!("a function's signature is a function type");
-        };
+    /// Adds the function `definition` of this module, whose MIR is `body`.
+    pub(crate) fn add_function(&mut self, definition: DefId, body: &mir::Body, types: &Types) {
         let program = self.program;
         let tree = &program.modules[definition.module.index()].ast;
         let symbol = symbol(program, definition);
         let (subprogram, scope_metadata) = self
-            .add_debug_info(definition, &symbol, parameters, *result, body, types)
+            .add_debug_info(definition, &symbol, body, types)
             .unzip();
         // Each string constant's global.
         let strings = body
@@ -90,13 +80,14 @@ impl Module<'_> {
         // Written straight onto the module's functions, taken out while
         // `function` borrows the module.
         let mut out = std::mem::take(&mut function.module.functions);
-        let arguments = parameters.iter().enumerate().map(|(index, &parameter)| {
-            fmt::from_fn(move |out| write!(out, "{} %arg{index}", type_text(types, parameter)))
+        let arguments = (0..body.parameters).map(|index| {
+            let ty = body.variables[Id::from_index(index)].ty;
+            fmt::from_fn(move |out| write!(out, "{} %arg{index}", type_text(types, ty)))
         });
         _ = write!(
             out,
             "define {} {}({})",
-            type_text(types, *result),
+            type_text(types, body.result),
             global(&symbol),
             comma_separated(arguments)
         );
@@ -104,10 +95,10 @@ impl Module<'_> {
             _ = write!(out, " !dbg !{subprogram}");
         }
         out.push_str(" {\nentry:\n");
-        function.variables(&mut out, parameters.len());
+        function.variables(&mut out);
         out.push_str("  br label %bb0\n");
         for block in body.blocks.ids() {
-            function.write_block(&mut out, block, *result);
+            function.write_block(&mut out, block);
         }
         let Function { panics, .. } = function;
         out.push_str(&panics);
@@ -117,9 +108,8 @@ impl Module<'_> {
     }
 
     /// Adds the debug info of the function `definition`, linked as `symbol`,
-    /// that takes `parameters`, gives `result` and has the MIR `body`: its
-    /// `DISubprogram`, the scope of everything in it, and a `DILexicalBlock`
-    /// for each block that declares a variable. Gives the subprogram and the
+    /// that has the MIR `body`: its `DISubprogram`, the scope of everything
+    /// in it, and a `DILexicalBlock` for each block that declares a variable. Gives the subprogram and the
     /// metadata of each MIR debug scope: its lexical block, else its parent's;
     /// `None` in a release build, which has no debug info.
     /// The function's block takes the subprogram when there are parameters,
@@ -128,8 +118,6 @@ impl Module<'_> {
         &mut self,
         definition: DefId,
         symbol: &str,
-        parameters: &[TypeId],
-        result: TypeId,
         body: &mir::Body,
         types: &Types,
     ) -> Option<(usize, Vec<usize>)> {
@@ -137,12 +125,13 @@ impl Module<'_> {
         let tree = &self.program.modules[definition.module.index()].ast;
         let name = tree.decls[tree.declaration(definition.index)].name();
         let (line, _) = tree.file.position(name.span.start as usize);
-        let mut signature = vec![match metadata.debug_type(types, result) {
+        let mut signature = vec![match metadata.debug_type(types, body.result) {
             Some(id) => format!("!{id}"),
             None => "null".to_string(),
         }];
-        for &parameter in parameters {
-            let id = metadata.debug_type(types, parameter).unwrap_or_default();
+        for parameter in body.variables.ids().take(body.parameters) {
+            let ty = body.variables[parameter].ty;
+            let id = metadata.debug_type(types, ty).unwrap_or_default();
             signature.push(format!("!{id}"));
         }
         let subroutine = metadata.add(format_args!(
@@ -161,7 +150,7 @@ impl Module<'_> {
         for variable in body.variables.ids() {
             declares[body.variables[variable].debug_scope.index()] = true;
         }
-        if !parameters.is_empty() {
+        if body.parameters > 0 {
             declares[0] = false;
         }
         // A block comes after its parent, so the parent's debug scope is known.
@@ -252,8 +241,8 @@ struct Function<'m, 'p, 'b> {
 
 impl Function<'_, '_, '_> {
     /// The `alloca` of each variable and, in a debug build, its debug
-    /// declaration; the first `parameters` of them are the parameters.
-    fn variables(&mut self, out: &mut String, parameters: usize) {
+    /// declaration.
+    fn variables(&mut self, out: &mut String) {
         for variable in self.body.variables.ids() {
             let index = variable.index();
             let mir::Variable {
@@ -266,7 +255,7 @@ impl Function<'_, '_, '_> {
             let span = self.body.variables.span(variable);
             let debug_type = metadata.debug_type(self.types, ty).unwrap_or_default();
             let (line, _) = self.file.position(span.start as usize);
-            let argument = if index < parameters {
+            let argument = if index < self.body.parameters {
                 format!("arg: {}, ", index + 1)
             } else {
                 String::new()
@@ -341,8 +330,8 @@ impl Function<'_, '_, '_> {
         })
     }
 
-    /// Writes the block `block` of a function whose result type is `result`.
-    fn write_block(&mut self, out: &mut String, block: Id<mir::Block>, result: TypeId) {
+    /// Writes the block `block`.
+    fn write_block(&mut self, out: &mut String, block: Id<mir::Block>) {
         self.block = block.index();
         self.checked = 0;
         _ = writeln!(out, "bb{}:", block.index());
@@ -381,7 +370,7 @@ impl Function<'_, '_, '_> {
             }
             // Reachable with a result only in a function with an error,
             // which is not lowered.
-            Terminator::FallOff(_) if result != TypeId::VOID => {
+            Terminator::FallOff(_) if self.body.result != TypeId::VOID => {
                 out.push_str("  unreachable");
                 None
             }

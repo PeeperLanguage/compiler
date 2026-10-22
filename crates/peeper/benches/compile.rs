@@ -64,7 +64,6 @@ fn main() {
                 false,
                 |compile::CheckedFunction {
                      definition,
-                     signature,
                      mir,
                      types,
                      ..
@@ -75,7 +74,7 @@ fn main() {
                     {
                         main = Some(definition); // the only function of main.peep
                     }
-                    queue.add(definition, signature, mir, types);
+                    queue.add(definition, mir, types);
                 },
             )
         });
