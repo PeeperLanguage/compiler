@@ -15,8 +15,6 @@ use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
 
-use model::ModuleId;
-
 const MODULES: usize = 10;
 const FUNCTIONS: usize = 2000; // in each module
 const POINTER_BITS: u32 = 64;
@@ -47,57 +45,49 @@ fn main() {
     let runtime = (std::env::var("PEEPER_BENCH_CLANG").map_or(true, |clang| clang != "0"))
         .then(|| llvm::runtime::build(&built).expect("the runtime builds"));
     let mut load = Vec::new();
-    let mut check = Vec::new(); // checking and lowering, as `compile::run` does them
-    let mut llvm = Vec::new();
+    // Checking, lowering and LLVM text, which overlap: modules are written on
+    // other threads while the next one is checked.
+    let mut compile = Vec::new();
     let mut clang = Vec::new();
     for _ in 0..runs {
         let start = Instant::now();
         let program = project::load(&project, &files);
         load.push(start.elapsed());
         assert!(program.checkable, "{:?}", program.diagnostics);
-        let mut ll: Vec<llvm::Module> = (0..program.modules.len())
-            .map(|index| {
-                let module = ModuleId::from_index(index);
-                llvm::Module::new(&program, module, POINTER_BITS, mode)
-            })
-            .collect();
         let mut main = None;
-        let mut writing = Duration::ZERO; // LLVM text, timed apart from the compile around it
         let start = Instant::now();
-        let results = compile::run(
-            &program,
-            POINTER_BITS,
-            compile::Results::default(),
-            false,
-            |&compile::CheckedFunction {
-                 definition,
-                 signature,
-                 mir,
-                 types,
-                 ..
-             }| {
-                let mir = mir.expect("the program has no errors");
-                if Path::new(&program.modules[definition.module.index()].ast.file.path)
-                    == project.entry
-                {
-                    main = Some(definition); // the only function of main.peep
-                }
-                let start = Instant::now();
-                ll[definition.module.index()].add_function(definition, signature, mir, types);
-                writing += start.elapsed();
-            },
-        );
-        check.push(start.elapsed() - writing);
+        let (mut ll, results) = llvm::write::write_modules(&program, POINTER_BITS, mode, |queue| {
+            compile::run(
+                &program,
+                POINTER_BITS,
+                compile::Results::default(),
+                false,
+                |compile::CheckedFunction {
+                     definition,
+                     signature,
+                     mir,
+                     types,
+                     ..
+                 }| {
+                    let mir = mir.expect("the program has no errors");
+                    if Path::new(&program.modules[definition.module.index()].ast.file.path)
+                        == project.entry
+                    {
+                        main = Some(definition); // the only function of main.peep
+                    }
+                    queue.add(definition, signature, mir, types);
+                },
+            )
+        });
         assert_eq!(
             results.diagnostics().count(),
             0,
             "the program has no errors"
         );
         let main = main.expect("main.peep declares main");
-        let start = Instant::now();
         ll[main.module.index()].add_entry_point(main, false);
         let text: usize = ll.iter().map(|module| module.text().len()).sum();
-        llvm.push(writing + start.elapsed());
+        compile.push(start.elapsed());
         std::hint::black_box(text);
         if let Some(runtime) = &runtime {
             let start = Instant::now();
@@ -106,13 +96,10 @@ fn main() {
             clang.push(start.elapsed());
         }
     }
-    let total: Vec<Duration> = (0..runs)
-        .map(|run| load[run] + check[run] + llvm[run])
-        .collect();
+    let total: Vec<Duration> = (0..runs).map(|run| load[run] + compile[run]).collect();
     let mut phases = vec![
         ("load", load),
-        ("check+lower", check),
-        ("llvm text", llvm),
+        ("check+lower+llvm text", compile),
         ("total", total),
     ];
     if runtime.is_some() {
@@ -120,7 +107,7 @@ fn main() {
     }
     for (phase, times) in phases {
         let (fastest, median) = summary(times);
-        println!("{phase:<12} min {fastest:>8.2?}  median {median:>8.2?}");
+        println!("{phase:<22} min {fastest:>8.2?}  median {median:>8.2?}");
     }
 }
 

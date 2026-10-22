@@ -516,7 +516,7 @@ impl Checked {
             compile::POINTER_BITS,
             previous,
             true,
-            |&compile::CheckedFunction {
+            |compile::CheckedFunction {
                  definition,
                  thir,
                  names,

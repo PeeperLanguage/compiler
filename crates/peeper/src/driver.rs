@@ -13,7 +13,6 @@ use diagnostics::fix;
 use diagnostics::printer;
 use llvm::BuildMode;
 use model::DefId;
-use model::ModuleId;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use source::SourceFile;
@@ -222,54 +221,56 @@ fn compile<'p>(
     links: bool,
 ) -> (Vec<Diagnostic>, Vec<llvm::Module<'p>>, Dumps<'p>) {
     let mut all: Vec<Diagnostic> = program.diagnostics.clone();
-    let mut ll = Vec::new(); // each module's LLVM text, when it is needed
     let mut dumped = Dumps::new(program, dumps);
     // A program with a parse or load error is not checked: its errors
     // would follow from those.
     if !program.checkable {
-        return (all, ll, dumped);
+        return (all, Vec::new(), dumped);
     }
-    if links || dumped.wants_ll() {
-        ll = (0..program.modules.len())
-            .map(|index| {
-                let module = ModuleId::from_index(index);
-                llvm::Module::new(program, module, compile::POINTER_BITS, mode)
-            })
-            .collect();
-    }
+    let writes_ll = links || dumped.wants_ll();
     // The module of the entry file, which must declare `main`.
     let entry = program
         .modules
         .iter()
         .position(|module| Path::new(&module.ast.file.path) == project.entry);
     let mut main = None; // the entry module's `main`, and whether it returns an exit code
-    // Check and lower each function; its MIR goes to the dumps and the
-    // LLVM text as soon as it is built.
-    let results = compile::run(
-        program,
-        compile::POINTER_BITS,
-        compile::Results::default(),
-        false, // names are for editors
-        |&compile::CheckedFunction {
-             definition,
-             signature,
-             thir,
-             mir,
-             types,
-             ..
-         }| {
-            if links && Some(definition.module.index()) == entry && is_main(program, definition) {
-                main = Some((definition, gives_exit_code(&types[signature])));
-            }
-            let Some(mir) = mir else {
-                return; // it has errors
-            };
-            dumped.add(definition, thir, mir, types);
-            if let Some(module) = ll.get_mut(definition.module.index()) {
-                module.add_function(definition, signature, mir, types);
-            }
-        },
-    );
+    // Check and lower each function; its MIR goes to the dumps and, when
+    // LLVM text is written, to the `queue` as soon as it is built.
+    let mut check_and_lower = |mut queue: Option<&mut llvm::write::FunctionQueue>| {
+        compile::run(
+            program,
+            compile::POINTER_BITS,
+            compile::Results::default(),
+            false, // names are for editors
+            |compile::CheckedFunction {
+                 definition,
+                 signature,
+                 thir,
+                 mir,
+                 types,
+                 ..
+             }| {
+                if links && Some(definition.module.index()) == entry && is_main(program, definition)
+                {
+                    main = Some((definition, gives_exit_code(&types[signature])));
+                }
+                let Some(mir) = mir else {
+                    return; // it has errors
+                };
+                dumped.add(definition, thir, &mir, types);
+                if let Some(queue) = queue.as_deref_mut() {
+                    queue.add(definition, signature, mir, types);
+                }
+            },
+        )
+    };
+    let (mut ll, results) = if writes_ll {
+        llvm::write::write_modules(program, compile::POINTER_BITS, mode, |queue| {
+            check_and_lower(Some(queue))
+        })
+    } else {
+        (Vec::new(), check_and_lower(None))
+    };
     all.extend(results.diagnostics().cloned());
     // A program that links needs a `main` that can start it.
     if links

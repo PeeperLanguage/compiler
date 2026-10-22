@@ -6,6 +6,7 @@
 mod function;
 pub mod link;
 pub mod runtime;
+pub mod write;
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -59,7 +60,7 @@ struct Metadata {
 impl<'p> Module<'p> {
     /// The module `module` of `program`, with no functions yet, built in
     /// `mode`. Pointers have `pointer_bits` bits.
-    pub fn new(
+    fn new(
         program: &'p project::Program,
         module: ModuleId,
         pointer_bits: u32,
@@ -357,7 +358,6 @@ mod tests {
     use std::path::PathBuf;
 
     use bigint::Limbs;
-    use model::ModuleId;
     use model::constant::Constant;
     use model::constant::Value;
     use model::semantic_types::TypeId;
@@ -383,32 +383,24 @@ mod tests {
         ]);
         let program = project::load(&project, &open_files);
         assert!(program.checkable);
-        let main = program.modules.len() - 1;
-        let mut module = super::Module::new(
-            &program,
-            ModuleId::from_index(main),
-            64,
-            super::BuildMode::Debug,
-        );
-        let results = compile::run(
-            &program,
-            64,
-            compile::Results::default(),
-            false,
-            |&compile::CheckedFunction {
-                 definition,
-                 signature,
-                 mir,
-                 types,
-                 ..
-             }| {
-                if definition.module.index() == main {
-                    module.add_function(definition, signature, mir.unwrap(), types);
-                }
-            },
-        );
+        let (modules, results) =
+            super::write::write_modules(&program, 64, super::BuildMode::Debug, |queue| {
+                compile::run(
+                    &program,
+                    64,
+                    compile::Results::default(),
+                    false,
+                    |compile::CheckedFunction {
+                         definition,
+                         signature,
+                         mir,
+                         types,
+                         ..
+                     }| queue.add(definition, signature, mir.unwrap(), types),
+                )
+            });
         assert_eq!(results.diagnostics().count(), 0);
-        module.text()
+        modules.last().unwrap().text()
     }
 
     /// A division not known at compile time checks first and continues in

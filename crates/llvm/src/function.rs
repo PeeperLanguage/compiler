@@ -41,7 +41,13 @@ const PANIC_EXIT_CODE: i32 = 101;
 impl Module<'_> {
     /// Adds the function `definition` of this module, whose signature is `ty`
     /// and whose MIR is `body`.
-    pub fn add_function(&mut self, definition: DefId, ty: TypeId, body: &mir::Body, types: &Types) {
+    pub(crate) fn add_function(
+        &mut self,
+        definition: DefId,
+        ty: TypeId,
+        body: &mir::Body,
+        types: &Types,
+    ) {
         let Type::Function { parameters, result } = &types[ty] else {
             unreachable!("a function's signature is a function type");
         };

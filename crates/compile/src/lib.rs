@@ -74,7 +74,7 @@ impl ModuleResults {
 }
 
 /// A function with a body, as a compile hands it on: built, used once, and
-/// dropped after.
+/// dropped after, except its MIR, which is handed over.
 pub struct CheckedFunction<'c> {
     pub definition: DefId,
     pub signature: TypeId, // its function type
@@ -82,8 +82,8 @@ pub struct CheckedFunction<'c> {
     /// The names written in it, when the compile records names (as for an
     /// editor); otherwise none.
     pub names: &'c [thir::Name],
-    pub mir: Option<&'c mir::Body>, // `None` when checking it found an error
-    pub types: &'c Types, // the program's types so far, which `signature` and the bodies name
+    pub mir: Option<mir::Body>, // `None` when checking it found an error
+    pub types: &'c Types,       // the program's types so far, which `signature` and the bodies name
 }
 
 /// How many bits a pointer has on the machine a program is built for: the
@@ -97,16 +97,17 @@ pub const POINTER_BITS: u32 = usize::BITS;
 /// with the same `pointer_bits`, or `Results::default()`) whose text and
 /// whose imports' interfaces are unchanged keeps its diagnostics, and its
 /// bodies are not checked again. Each checked function with a body goes to
-/// `use_function` as soon as it is built, in declaration order, with its
-/// names when `record_names`, and is dropped after: nothing holds every
-/// function's bodies at once. Integers as
+/// `use_function` as soon as it is built, in declaration order, module by
+/// module, with its names when `record_names`; its THIR is dropped after and
+/// its MIR is `use_function`'s: nothing here holds every function's bodies at
+/// once. Integers as
 /// wide as a pointer (`isize`, `usize`) have `pointer_bits` bits.
 pub fn run(
     program: &project::Program,
     pointer_bits: u32,
     previous: Results,
     record_names: bool,
-    mut use_function: impl FnMut(&CheckedFunction),
+    mut use_function: impl FnMut(CheckedFunction),
 ) -> Results {
     let modules = program.modules.as_slice();
     let mut queries = Queries::new(modules, pointer_bits);
@@ -183,12 +184,12 @@ pub fn run(
                             }),
                             _ => None,
                         };
-                        use_function(&CheckedFunction {
+                        use_function(CheckedFunction {
                             definition,
                             signature: ty,
                             thir: &thir,
                             names: &names,
-                            mir: mir.as_ref(),
+                            mir,
                             types: &queries.types,
                         });
                     }
@@ -524,7 +525,7 @@ mod tests {
             64,
             previous,
             false,
-            |&CheckedFunction { definition, .. }| {
+            |CheckedFunction { definition, .. }| {
                 let path = &loaded.modules[definition.module.index()].path;
                 if !checked.contains(path) {
                     checked.push(path.clone());

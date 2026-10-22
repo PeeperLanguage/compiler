@@ -130,6 +130,7 @@ fixed_types! {
 }
 
 /// The types of a program, for one compile (`check::Queries` holds them).
+#[derive(Clone)]
 pub struct Types {
     types: Vec<Type>,
     ids: HashMap<Type, TypeId>,
@@ -145,6 +146,18 @@ impl Types {
             types.intern(ty.clone());
         }
         types
+    }
+
+    /// Adds the types `other` has after these: keeps a copy of a table that
+    /// only grows, as `other` is when this was made from it, up to date.
+    ///
+    /// TEMPORARY, to be deleted: only `llvm::write` uses it, to give its
+    /// workers a copy of the types. Delete it, and the copy, when each
+    /// module's MIR lists the types it uses (self-contained MIR).
+    pub fn extend_from(&mut self, other: &Types) {
+        for ty in &other.types[self.types.len()..] {
+            self.intern(ty.clone());
+        }
     }
 
     /// The id of `ty`, made the first time `ty` is seen.
