@@ -137,18 +137,17 @@ impl Module<'_> {
             let id = metadata.debug_type(types, parameter).unwrap_or_default();
             signature.push(format!("!{id}"));
         }
-        let subroutine = metadata.add(&format!(
+        let subroutine = metadata.add(format_args!(
             "!DISubroutineType(types: !{{{}}})",
             signature.join(", ")
         ));
-        let subprogram = metadata.add(&format!(
+        let (file, unit) = (metadata.file, metadata.unit);
+        let subprogram = metadata.add(format_args!(
             "distinct !DISubprogram(name: {}, linkageName: {}, scope: !{file}, file: !{file}, \
              line: {line}, type: !{subroutine}, scopeLine: {line}, spFlags: DISPFlagDefinition, \
-             unit: !{})",
+             unit: !{unit})",
             quoted(name.text(&tree.file).as_bytes()),
             quoted(symbol.as_bytes()),
-            metadata.unit,
-            file = metadata.file,
         ));
         let mut declares = vec![false; body.debug_scopes.len()];
         for variable in body.variables.ids() {
@@ -170,9 +169,8 @@ impl Module<'_> {
             let (line, column) = tree
                 .file
                 .position(body.debug_scopes.span(scope).start as usize);
-            scope_metadata.push(metadata.add(&format!(
-                "!DILexicalBlock(scope: !{parent}, file: !{}, line: {line}, column: {column})",
-                metadata.file
+            scope_metadata.push(metadata.add(format_args!(
+                "!DILexicalBlock(scope: !{parent}, file: !{file}, line: {line}, column: {column})"
             )));
         }
         Some((subprogram, scope_metadata))
@@ -206,8 +204,8 @@ fn operand_type(body: &mir::Body, operand: Operand) -> TypeId {
 
 /// The LLVM name of the value the instruction `id` gives, which the checks
 /// it writes first extend (`%i3.z`).
-fn value_name(id: Id<mir::Instruction>) -> String {
-    format!("%i{}", id.index())
+fn value_name(id: Id<mir::Instruction>) -> impl std::fmt::Display {
+    std::fmt::from_fn(move |out| write!(out, "%i{}", id.index()))
 }
 
 /// `symbol` as an LLVM global name.
@@ -256,11 +254,11 @@ impl Function<'_, '_, '_> {
             } else {
                 String::new()
             };
-            let declared = metadata.add(&format!(
-                "!DILocalVariable(name: {}, {argument}scope: !{}, file: !{}, line: {line}, type: !{debug_type})",
+            let file = metadata.file;
+            let declared = metadata.add(format_args!(
+                "!DILocalVariable(name: {}, {argument}scope: !{}, file: !{file}, line: {line}, type: !{debug_type})",
                 quoted(self.file.slice(span).as_bytes()),
                 self.scope_metadata[debug_scope.index()],
-                metadata.file,
             ));
             let location = self.location(span, debug_scope);
             _ = writeln!(
@@ -283,7 +281,7 @@ impl Function<'_, '_, '_> {
             .locations
             .entry((scope, line, column))
             .or_insert_with(|| {
-                metadata.add(&format!(
+                metadata.add(format_args!(
                     "!DILocation(line: {line}, column: {column}, scope: !{scope})"
                 ))
             });
@@ -306,7 +304,7 @@ impl Function<'_, '_, '_> {
                 None => constant_text(self.types, &self.body.constants[constant.index()]),
             },
             Operand::Argument(index) => format!("%arg{index}"),
-            Operand::Value(instruction) => value_name(instruction),
+            Operand::Value(instruction) => value_name(instruction).to_string(),
         }
     }
 
@@ -446,7 +444,7 @@ impl Function<'_, '_, '_> {
         let extension = |ty| c_extension(types, ty).filter(|_| external);
         let result = match extension(ty) {
             Some(extension) => format!("{extension} {}", type_text(types, ty)),
-            None => type_text(types, ty),
+            None => type_text(types, ty).to_string(),
         };
         let parameters: Vec<String> = arguments
             .iter()
@@ -454,7 +452,7 @@ impl Function<'_, '_, '_> {
                 let ty = operand_type(self.body, argument);
                 match extension(ty) {
                     Some(extension) => format!("{} {extension}", type_text(types, ty)),
-                    None => type_text(types, ty),
+                    None => type_text(types, ty).to_string(),
                 }
             })
             .collect();

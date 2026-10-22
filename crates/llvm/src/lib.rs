@@ -10,6 +10,7 @@ pub mod runtime;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::fmt;
 use std::fmt::Write;
 use std::path::Path;
 
@@ -179,24 +180,24 @@ impl Metadata {
             types: HashMap::new(),
             pointer_bits,
         };
-        metadata.file = metadata.add(&format!(
+        metadata.file = metadata.add(format_args!(
             "!DIFile(filename: {}, directory: {})",
             quoted(name.as_bytes()),
             quoted(folder.as_bytes())
         ));
-        metadata.unit = metadata.add(&format!(
-            "distinct !DICompileUnit(language: DW_LANG_C, file: !{}, producer: \"peeper\", \
-             isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)",
-            metadata.file
+        let file = metadata.file;
+        metadata.unit = metadata.add(format_args!(
+            "distinct !DICompileUnit(language: DW_LANG_C, file: !{file}, producer: \"peeper\", \
+             isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)"
         ));
         metadata
     }
 
-    /// Adds the node `text` and gives its number.
-    fn add(&mut self, text: &str) -> usize {
+    /// Adds the node `node` and gives its number.
+    fn add(&mut self, node: impl fmt::Display) -> usize {
         let id = self.count;
         self.count += 1;
-        _ = writeln!(self.text, "!{id} = {text}");
+        _ = writeln!(self.text, "!{id} = {node}");
         id
     }
 
@@ -227,7 +228,7 @@ impl Metadata {
             Type::Float(Float::F32) => basic("f32", 32, "DW_ATE_float"),
             Type::Float(Float::F64) => basic("f64", 64, "DW_ATE_float"),
             Type::CString => {
-                let char = self.add(&basic("char", 8, "DW_ATE_signed_char"));
+                let char = self.add(basic("char", 8, "DW_ATE_signed_char"));
                 format!(
                     "!DIDerivedType(tag: DW_TAG_pointer_type, name: \"cstr\", baseType: !{char}, size: {})",
                     self.pointer_bits
@@ -237,7 +238,7 @@ impl Metadata {
                 unreachable!("MIR holds no value of this type")
             }
         };
-        let id = self.add(&text);
+        let id = self.add(text);
         self.types.insert(ty, id);
         Some(id)
     }
@@ -280,17 +281,17 @@ fn symbol(program: &project::Program, definition: DefId) -> String {
     })
 }
 
-/// The LLVM type of a value of type `ty`.
-fn type_text(types: &Types, ty: TypeId) -> String {
-    match types[ty] {
-        Type::Void => "void".to_string(),
-        Type::Bool => "i1".to_string(),
-        Type::Integer(integer) => format!("i{}", integer.bits),
-        Type::Float(Float::F32) => "float".to_string(),
-        Type::Float(Float::F64) => "double".to_string(),
-        Type::CString => "ptr".to_string(),
+/// The LLVM type of a value of type `ty`, written where it is printed.
+fn type_text(types: &Types, ty: TypeId) -> impl fmt::Display {
+    fmt::from_fn(move |out| match types[ty] {
+        Type::Void => out.write_str("void"),
+        Type::Bool => out.write_str("i1"),
+        Type::Integer(integer) => write!(out, "i{}", integer.bits),
+        Type::Float(Float::F32) => out.write_str("float"),
+        Type::Float(Float::F64) => out.write_str("double"),
+        Type::CString => out.write_str("ptr"),
         Type::Invalid | Type::Function { .. } => unreachable!("MIR holds no value of this type"),
-    }
+    })
 }
 
 /// The attribute that extends a value of type `ty` to C's `int` when it
