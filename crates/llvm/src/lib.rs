@@ -5,6 +5,7 @@
 
 mod function;
 pub mod link;
+pub mod runtime;
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;

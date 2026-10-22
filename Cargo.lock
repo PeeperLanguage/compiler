@@ -294,6 +294,7 @@ dependencies = [
  "model",
  "project",
  "source",
+ "toml_edit",
 ]
 
 [[package]]

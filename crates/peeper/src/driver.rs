@@ -177,7 +177,10 @@ impl<W: Write> Command<W> {
     /// Links the modules' LLVM text `ll` with the runtime into the program
     /// `output`; gives whether it did, a failure reported.
     fn link(&mut self, ll: &[llvm::Module], output: &Path) -> bool {
-        let runtime = self.installation.join("runtime").join(RUNTIME_LIBRARY);
+        let runtime = self
+            .installation
+            .join("runtime")
+            .join(llvm::runtime::LIBRARY);
         if let Err(error) = llvm::link::link_executable(ll, &runtime, output) {
             _ = writeln!(self.out, "peeper: {error}");
             return false;
@@ -260,9 +263,6 @@ fn compile<'p>(
     }
     (all, ll, dumped)
 }
-
-/// The runtime library's file in the installation's runtime folder.
-const RUNTIME_LIBRARY: &str = "libpeeper_rt_v1.a";
 
 /// Whether the function `definition` is named `main`.
 fn is_main(program: &project::Program, definition: DefId) -> bool {

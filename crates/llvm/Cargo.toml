@@ -13,6 +13,9 @@ model.workspace = true
 project.workspace = true
 source.workspace = true
 
+[build-dependencies]
+toml_edit.workspace = true
+
 [dev-dependencies]
 bigint.workspace = true
 compile.workspace = true

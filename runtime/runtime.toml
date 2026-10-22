@@ -1,0 +1,13 @@
+# How the runtime library that every program links with is built. Only the
+# compiler's own build reads this file (crates/llvm/build.rs): its values are
+# fixed into the compiler, which builds the library with them and finds it by
+# `library` in <installation>/runtime. Changing it means rebuilding peeper.
+
+# The archive's file name.
+library = "libpeeper_rt_v1.a"
+
+# The C files in this folder that make up the library.
+sources = ["peeper_rt.c"]
+
+# Clang's flags for each source.
+flags = ["-std=c11", "-O2"]

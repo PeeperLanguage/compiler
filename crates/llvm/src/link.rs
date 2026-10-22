@@ -51,7 +51,7 @@ fn compile_and_link(
             .arg(&file)
             .arg("-o")
             .arg(&object);
-        call_clang(clang, "compile a module")?;
+        call_tool(clang, "compile a module")?;
         objects.push(object);
     }
     let name = output.file_name().unwrap_or_default().to_string_lossy();
@@ -62,7 +62,7 @@ fn compile_and_link(
         clang.arg("-lm"); // LLVM turns a float `%` into a call of `fmod`
     }
     clang.arg("-o").arg(&staged);
-    let linked = call_clang(clang, "link the program").and_then(|()| {
+    let linked = call_tool(clang, "link the program").and_then(|()| {
         std::fs::rename(&staged, output)
             .map_err(|error| format!("cannot write {}: {error}", output.display()))
     });
@@ -70,8 +70,9 @@ fn compile_and_link(
     linked
 }
 
-/// Runs `command`, a clang call; what it printed is shown only when it fails.
-fn call_clang(mut command: Command, action: &str) -> Result<(), String> {
+/// Runs `command`, a clang or archiver call; what it printed is shown only
+/// when it fails.
+pub(crate) fn call_tool(mut command: Command, action: &str) -> Result<(), String> {
     let program = command.get_program().to_string_lossy().into_owned();
     let output = command
         .output()

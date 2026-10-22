@@ -13,6 +13,6 @@ mkdir -p build/libs
 cp -R _builtin_library/. build/libs/
 
 rm -rf build/runtime
-bash scripts/build-runtime.sh build/runtime
+cargo run --release --quiet -p llvm --bin build-runtime -- build/runtime
 
 echo "built build/bin/peeper with libraries in build/libs and the runtime in build/runtime"

@@ -30,12 +30,7 @@ fn bundle() -> String {
         root.join("libs"),
     )
     .expect("the libraries are linked");
-    let built = Command::new("bash")
-        .arg(checkout.join("scripts/build-runtime.sh"))
-        .arg(root.join("runtime"))
-        .status()
-        .expect("bash runs");
-    assert!(built.success(), "the runtime builds");
+    llvm::runtime::build(&root.join("runtime")).expect("the runtime builds");
     compiler.to_string_lossy().into_owned()
 }
 

@@ -417,7 +417,8 @@ work as the Go compiler's did. The entry file needs `fn main()` or `fn main()
 `main` that calls it and returns its result, or 0. `llvm::link::link_executable`
 writes each module's text to a temporary folder, compiles each with `clang -c`
 and links the objects with the runtime library (`<installation>/runtime/
-libpeeper_rt_v1.a`, built from `runtime/peeper_rt.c` by `scripts/build.sh`)
+libpeeper_rt_v1.a`, built as `runtime/runtime.toml` says (read by `llvm`'s build.rs) by `llvm::runtime`,
+which `scripts/build.sh` runs)
 and `-lm`; the program is linked beside its output and renamed into place.
 Clang is the one on the PATH until peeper ships its toolchain. `build` names
 the program after the project or file in the current folder; `run` links to a
