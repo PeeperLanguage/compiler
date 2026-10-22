@@ -1,0 +1,13 @@
+name = "negative_check_type_alias_mismatch"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "mismatched types: expected `Flag (aka bool)`, found `i32`",
+    "mismatched types: expected `Meters (aka i64)`, found `bool`",
+    "`return` needs a value of type `Meters (aka i64)`",
+    "mismatched types: expected `bool`, found `i32`",
+    "mismatched types: expected `Flag (aka bool)`, found `i64`",
+]

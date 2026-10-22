@@ -38,9 +38,10 @@ pub struct Queries<'p> {
     /// How wide a pointer is on the target, in bits: the width of `isize` and
     /// `usize`.
     pub pointer_bits: u32,
-    /// The query of each function and method, by its place (`DefId`): its
-    /// type. Another declaration's slot stays `NotStarted`.
-    pub functions: Vec<Vec<State<TypeId>>>,
+    /// The query of each function, method and type declaration, by its place
+    /// (`DefId`): a function's type, or the type a type declaration names.
+    /// Another declaration's slot stays `NotStarted`.
+    pub declared_types: Vec<Vec<State<TypeId>>>,
     /// The query of each module constant, by its place: its type and value,
     /// `None` when it had an error. Another declaration's slot stays
     /// `NotStarted`.
@@ -74,7 +75,7 @@ impl<'p> Queries<'p> {
             scopes,
             types: Types::new(),
             pointer_bits,
-            functions: modules
+            declared_types: modules
                 .iter()
                 .map(|module| vec![State::NotStarted; module.ast.top_level.len()])
                 .collect(),
@@ -91,9 +92,20 @@ impl<'p> Queries<'p> {
     pub fn function(&mut self, definition: DefId) -> TypeId {
         self.query(
             definition,
-            |queries| &mut queries.functions,
+            |queries| &mut queries.declared_types,
             TypeId::INVALID,
             |checker, declaration| checker.check_signature(declaration),
+        )
+    }
+
+    /// The type the type declaration or alias `definition` names
+    /// (`ModuleChecker::check_type_declaration`).
+    pub fn named_type(&mut self, definition: DefId) -> TypeId {
+        self.query(
+            definition,
+            |queries| &mut queries.declared_types,
+            TypeId::INVALID,
+            |checker, _| checker.check_type_declaration(definition),
         )
     }
 
@@ -155,12 +167,20 @@ impl<'p> Queries<'p> {
         result
     }
 
+    /// The type `ty` as a message names it: an alias by its name, with the
+    /// type itself (`Types::text_named`).
+    pub fn type_text(&self, ty: TypeId) -> String {
+        self.types.text_named(ty, |definition| {
+            let (name, file) = project::declared_name(self.modules, definition);
+            name.text(file)
+        })
+    }
+
     /// Reports that the declaration `definition` was asked for while it was
     /// being checked: it depends on itself.
     fn report_cycle(&mut self, definition: DefId) {
-        let tree = &self.modules[definition.module.index()].ast;
-        let name = tree.decls[tree.declaration(definition.index)].name();
-        let text = name.text(&tree.file);
+        let (name, file) = project::declared_name(self.modules, definition);
+        let text = name.text(file);
         let found = &mut self.diagnostics[definition.module.index()];
         // `A + A` asks for `A` twice while it runs; the cycle is reported once.
         let reported = |diagnostic: &Diagnostic| {
@@ -175,7 +195,7 @@ impl<'p> Queries<'p> {
                 diagnostics::CIRCULAR_DEPENDENCY,
                 format!("`{text}` depends on itself"),
             )
-            .label(&tree.file, name.span, ""),
+            .label(file, name.span, ""),
         );
     }
 }

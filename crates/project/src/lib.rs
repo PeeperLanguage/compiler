@@ -19,8 +19,10 @@ use std::sync::Mutex;
 use std::sync::mpsc;
 
 use diagnostics::Diagnostic;
+use model::DefId;
 use model::ModuleId;
 use model::ast;
+use model::ast::Ident;
 use model::ast::Tree;
 use source::SourceFile;
 use source::Span;
@@ -41,6 +43,16 @@ pub struct Module {
     pub path: String, // import path, such as "myapp:utils/file" or "core:global"
     pub ast: Tree,
     pub imports: Vec<Import>, // in source order; the implicit prelude import last, in every module but the prelude
+}
+
+/// The name the declaration `definition` of `modules` declares, and the file
+/// it is in.
+pub fn declared_name(modules: &[Module], definition: DefId) -> (Ident, &Arc<SourceFile>) {
+    let tree = &modules[definition.module.index()].ast;
+    (
+        tree.decls[tree.declaration(definition.index)].name(),
+        &tree.file,
+    )
 }
 
 /// One resolved import of a module.

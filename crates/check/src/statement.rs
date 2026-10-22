@@ -436,7 +436,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             Some(value) => Some(self.add_expr_as(value, self.result)),
             None => {
                 if self.result != TypeId::VOID && self.result != TypeId::INVALID {
-                    let result = self.checker.queries.types.text(self.result);
+                    let result = self.checker.queries.type_text(self.result);
                     let message = format!("`return` needs a value of type `{result}`");
                     self.checker
                         .error(diagnostics::INVALID_RETURN, message, span);

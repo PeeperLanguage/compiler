@@ -3,6 +3,7 @@
 //! (`ModuleChecker::check_constant`).
 
 use arena::Id;
+use model::DefId;
 use model::ast;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
@@ -44,10 +45,12 @@ impl ModuleChecker<'_, '_> {
             .intern(Type::Function { parameters, result })
     }
 
-    /// The type the module's type declaration or alias `declaration`
-    /// declares; none is supported yet.
-    pub fn check_type_declaration(&mut self, declaration: Id<ast::Decl>) -> TypeId {
+    /// The type the module's type declaration or alias `definition` names:
+    /// for an alias, an alias of its target's type (`Type::Alias`). Only
+    /// aliases without type parameters are supported yet.
+    pub fn check_type_declaration(&mut self, definition: DefId) -> TypeId {
         let tree = &self.module().ast;
+        let declaration = tree.declaration(definition.index);
         let (name, what) = match tree.decls[declaration] {
             ast::Decl::Type(declaration) => match tree.types[declaration.ty] {
                 ast::Type::Struct(_) => (declaration.name, "struct declarations"),
@@ -55,7 +58,14 @@ impl ModuleChecker<'_, '_> {
                 ast::Type::Interface(_) => (declaration.name, "interface declarations"),
                 _ => unreachable!("the parser gives a type declaration only these types"),
             },
-            ast::Decl::Alias(declaration) => (declaration.name, "type aliases"),
+            ast::Decl::Alias(declaration) if declaration.type_parameters.is_empty() => {
+                let real = self.resolve_type(declaration.ty);
+                if real == TypeId::INVALID {
+                    return real; // its error was reported
+                }
+                return self.queries.types.intern(Type::Alias { definition, real });
+            }
+            ast::Decl::Alias(declaration) => (declaration.name, "generic type aliases"),
             _ => unreachable!("`{declaration:?}` is a type declaration"),
         };
         self.not_supported(name.span, what)
@@ -73,7 +83,7 @@ impl ModuleChecker<'_, '_> {
                     return builtin;
                 }
                 match self.global(name) {
-                    Some(Symbol::Type(_)) => "named types",
+                    Some(Symbol::Type(definition)) => return self.queries.named_type(definition),
                     Some(Symbol::Function(_) | Symbol::Constant(_) | Symbol::Local(_)) => {
                         let message = format!("`{name}` is a value, not a type");
                         return self.error(diagnostics::NOT_A_TYPE, message, span);
@@ -110,6 +120,7 @@ impl ModuleChecker<'_, '_> {
 
 #[cfg(test)]
 mod tests {
+    use model::DefId;
     use model::ast;
     use model::semantic_types::Type;
     use model::semantic_types::TypeId;
@@ -126,10 +137,15 @@ mod tests {
             let declarations: Vec<_> = tree.lists.items(tree.top_level).collect();
             let found: Vec<TypeId> = declarations
                 .into_iter()
+                .enumerate()
                 .map(
-                    |declaration| match checker.module().ast.decls[declaration] {
+                    |(index, declaration)| match checker.module().ast.decls[declaration] {
                         ast::Decl::Function(_) => checker.check_signature(declaration),
-                        _ => checker.check_type_declaration(declaration),
+                        // As a compile asks, so a use does not report it again.
+                        _ => checker.queries.named_type(DefId {
+                            module: checker.current_module,
+                            index: index as u32,
+                        }),
                     },
                 )
                 .collect();
@@ -160,14 +176,15 @@ mod tests {
         let (found, found_reported) = declared_types(
             "fn a(x: Missing) {}\nfn b(m: utils) {}\nfn c(r: &i32) {}\nfn d<T>(x: T) {}\nfn e(x: i32 = 1) {}\nstruct P { x: i32 }\nfn f(p: P) {}\nfn g(x: a) {}\nfn (p: i32) method() {}\nfn h(s: str) {}\n",
         );
+        // `f` asks for `P` while its signature is checked, so `P`'s error
+        // joins the module's first.
         let expected = reported(&[
+            ("T0043", "struct declarations are not supported yet", "P"),
             ("T0002", "unknown type `Missing`", "Missing"),
             ("T0021", "`utils` is a module, not a type", "utils"),
             ("T0043", "reference types are not supported yet", "&i32"),
             ("T0043", "generic functions are not supported yet", "T"),
             ("T0043", "default parameters are not supported yet", "1"),
-            ("T0043", "struct declarations are not supported yet", "P"),
-            ("T0043", "named types are not supported yet", "P"),
             ("T0021", "`a` is a value, not a type", "a"),
             ("T0043", "methods are not supported yet", "p: i32"),
             ("T0043", "string types are not supported yet", "str"),

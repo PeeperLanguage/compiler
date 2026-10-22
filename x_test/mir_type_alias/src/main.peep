@@ -1,0 +1,9 @@
+// MIR holds each type itself: the aliases below appear only as `i64`/`bool`.
+type Meters = i64;
+type Flag = bool;
+
+fn main() {
+    let length: Meters = 3;
+    let longer: Meters = length + 1;
+    let ready: Flag = longer > length;
+}

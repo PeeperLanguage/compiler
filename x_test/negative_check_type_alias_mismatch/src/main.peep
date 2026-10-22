@@ -1,0 +1,14 @@
+type Meters = i64;
+type Flag = bool;
+
+fn measure(mut length: Meters) -> Meters {
+    length = true;
+    return;
+}
+
+fn main() {
+    let mut ready: Flag = 1;
+    let plain: bool = 2;
+    measure(true);
+    ready = 5i64;
+}

@@ -63,13 +63,14 @@ impl ThirBuilder<'_, '_> {
         if expr.ty == TypeId::INVALID || to == TypeId::INVALID {
             return Ok(Expr::INVALID);
         }
-        if expr.ty == to {
+        let queries = &mut self.checker.queries;
+        // An alias is its type under another name.
+        if queries.types.same(expr.ty, to) {
             return Ok(expr);
         }
-        let types = &mut self.checker.queries.types;
-        let (from_type, to_type) = (types[expr.ty].clone(), types[to].clone());
+        let (from_type, to_type) = (queries.types[expr.ty].clone(), queries.types[to].clone());
         if !from_type.widens_to(&to_type) {
-            let (expected, found) = (types.text(to), types.text(expr.ty));
+            let (expected, found) = (queries.type_text(to), queries.type_text(expr.ty));
             return Err(Diagnostic::new(
                 diagnostics::TYPE_MISMATCH,
                 format!("mismatched types: expected `{expected}`, found `{found}`"),
@@ -433,7 +434,7 @@ impl ThirBuilder<'_, '_> {
             let message = format!(
                 "literal `{}` does not fit `{}`",
                 tree.file.slice(written),
-                types.text(ty)
+                self.checker.queries.type_text(ty)
             );
             self.checker
                 .error(diagnostics::INVALID_NUMBER, message, written);
@@ -571,7 +572,7 @@ impl ThirBuilder<'_, '_> {
             return self.report_invalid_operand(op.symbol(), left.ty, span);
         }
         if shift && !matches!(right_type, Type::Integer(_)) {
-            let count = self.checker.queries.types.text(right.ty);
+            let count = self.checker.queries.type_text(right.ty);
             let message = format!("a shift count must be an integer, found `{count}`");
             self.checker
                 .error(diagnostics::INVALID_OPERATION, message, right_span);
@@ -603,7 +604,7 @@ impl ThirBuilder<'_, '_> {
 
     /// Reports `op` applied to an operand of the type `ty`, at `span`.
     fn report_invalid_operand(&mut self, op: &str, ty: TypeId, span: Span) -> Expr {
-        let ty = self.checker.queries.types.text(ty);
+        let ty = self.checker.queries.type_text(ty);
         let message = format!("operator `{op}` cannot be applied to `{ty}`");
         self.checker
             .error(diagnostics::INVALID_OPERATION, message, span);

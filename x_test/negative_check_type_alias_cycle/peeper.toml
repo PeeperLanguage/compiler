@@ -1,0 +1,7 @@
+name = "negative_check_type_alias_cycle"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["T0013", "`First` depends on itself", "`Itself` depends on itself"]

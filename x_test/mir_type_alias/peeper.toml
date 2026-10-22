@@ -1,0 +1,6 @@
+name = "mir_type_alias"
+build = "program"
+
+[test]
+mode = "mir"
+outcome = "success"

@@ -1,0 +1,31 @@
+// An alias names its target's type: `Meters` is `i32`, and `Distance`,
+// declared before what it names, is `i32` too. Values of an alias and of its
+// type mix freely: in operators, conditions, calls, widening and results.
+type Distance = Meters;
+type Meters = i32;
+type Wide = i64;
+type Flag = bool;
+type Code = i32;
+
+const Limit: Meters = 40;
+
+fn double(length: Meters) -> Distance {
+    return length * 2;
+}
+
+fn widen(value: Wide) -> Wide {
+    return value + 1;
+}
+
+fn main() -> Code {
+    let half: Meters = 21;
+    let whole: i32 = double(half);
+    let far: Distance = whole - half + half;
+    let mut ready: Flag = far > Limit;
+    ready = ready && whole == far;
+    let wide = widen(half);
+    if ready && wide == 22 {
+        return far;
+    }
+    return 1;
+}

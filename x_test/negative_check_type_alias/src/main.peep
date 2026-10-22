@@ -1,0 +1,7 @@
+const Limit = 3;
+
+type Bound = Limit;
+type Same<T> = T;
+type Lost = Missing;
+
+fn main() {}

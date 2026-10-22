@@ -1,0 +1,5 @@
+type First = Second;
+type Second = First;
+type Itself = Itself;
+
+fn main() {}

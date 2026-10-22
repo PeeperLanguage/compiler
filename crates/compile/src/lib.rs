@@ -167,24 +167,35 @@ pub fn run(
                             Type::Function {
                                 ref parameters,
                                 result,
-                            } => lower::lower(&thir, parameters.len()).inspect(|mir| {
-                                let file = &tree.file;
-                                let diagnostics = &mut queries.diagnostics[id.index()];
-                                lower::path_checks::report_initialization_errors(
-                                    mir,
-                                    file,
-                                    diagnostics,
-                                );
-                                lower::path_checks::warn_unreachable_code(mir, file, diagnostics);
-                                // Last: it points at the closing brace.
-                                lower::path_checks::report_missing_return(
-                                    mir,
-                                    file,
-                                    &queries.types,
-                                    result,
-                                    diagnostics,
-                                );
-                            }),
+                            } => lower::lower(&thir, parameters.len(), &queries.types).inspect(
+                                |mir| {
+                                    let file = &tree.file;
+                                    let diagnostics = &mut queries.diagnostics[id.index()];
+                                    lower::path_checks::report_initialization_errors(
+                                        mir,
+                                        file,
+                                        diagnostics,
+                                    );
+                                    lower::path_checks::warn_unreachable_code(
+                                        mir,
+                                        file,
+                                        diagnostics,
+                                    );
+                                    // Last: it points at the closing brace.
+                                    lower::path_checks::report_missing_return(
+                                        mir,
+                                        file,
+                                        &queries.types,
+                                        result,
+                                        |definition| {
+                                            let (name, file) =
+                                                project::declared_name(modules, definition);
+                                            name.text(file)
+                                        },
+                                        diagnostics,
+                                    );
+                                },
+                            ),
                             _ => None,
                         };
                         use_function(CheckedFunction {
@@ -200,10 +211,8 @@ pub fn run(
                 ast::Decl::Const { .. } => {
                     queries.constant(definition);
                 }
-                // Nothing asks for a type declaration's type yet, so it is
-                // no query: it is checked here, once.
                 ast::Decl::Type(_) | ast::Decl::Alias(_) => {
-                    queries.with_checker(id, |checker| checker.check_type_declaration(declaration));
+                    queries.named_type(definition);
                 }
             }
         }
@@ -232,6 +241,7 @@ fn hash_type(types: &Types, ty: TypeId, hasher: &mut DefaultHasher) {
             hash_type(types, *result, hasher);
         }
         Type::Invalid | Type::Void | Type::Bool | Type::CString => {}
+        Type::Alias { .. } => unreachable!("indexing looks through aliases"),
     }
 }
 
@@ -240,7 +250,7 @@ fn hash_type(types: &Types, ty: TypeId, hasher: &mut DefaultHasher) {
 /// value. Its bodies are not part of it.
 fn interface(queries: &Queries, module: ModuleId) -> u64 {
     let modules = queries.modules;
-    let functions = &queries.functions[module.index()];
+    let declared_types = &queries.declared_types[module.index()];
     let constants = &queries.constants[module.index()];
     let module = &modules[module.index()];
     let tree = &module.ast;
@@ -258,7 +268,7 @@ fn interface(queries: &Queries, module: ModuleId) -> u64 {
         decl.name().text(&tree.file).hash(&mut hasher);
         // A declaration's result is in one table; the other slot is
         // `NotStarted`.
-        if let State::Done(ty) = functions[index] {
+        if let State::Done(ty) = declared_types[index] {
             hash_type(&queries.types, ty, &mut hasher);
         }
         if let State::Done(Some(Constant { ty, value })) = &constants[index] {

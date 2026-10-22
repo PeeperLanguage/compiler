@@ -1,0 +1,11 @@
+name = "negative_check_type_alias"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "`Limit` is a value, not a type",
+    "generic type aliases are not supported yet",
+    "unknown type `Missing`",
+]

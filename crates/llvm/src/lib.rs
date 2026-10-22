@@ -204,6 +204,8 @@ impl Metadata {
 
     /// The debug type of `ty`; `None` for `void`.
     fn debug_type(&mut self, types: &Types, ty: TypeId) -> Option<usize> {
+        // A signature may name an alias; its debug type is its type's.
+        let ty = types.real(ty);
         if ty == TypeId::VOID {
             return None;
         }
@@ -238,6 +240,7 @@ impl Metadata {
             Type::Invalid | Type::Void | Type::Function { .. } => {
                 unreachable!("MIR holds no value of this type")
             }
+            Type::Alias { .. } => unreachable!("indexing looks through aliases"),
         };
         let id = self.add(text);
         self.types.insert(ty, id);
@@ -292,6 +295,7 @@ fn type_text(types: &Types, ty: TypeId) -> impl fmt::Display {
         Type::Float(Float::F64) => out.write_str("double"),
         Type::CString => out.write_str("ptr"),
         Type::Invalid | Type::Function { .. } => unreachable!("MIR holds no value of this type"),
+        Type::Alias { .. } => unreachable!("indexing looks through aliases"),
     })
 }
 

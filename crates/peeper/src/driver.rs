@@ -15,6 +15,7 @@ use llvm::BuildMode;
 use model::DefId;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
+use model::semantic_types::Types;
 use source::SourceFile;
 use source::Span;
 
@@ -252,7 +253,7 @@ fn compile<'p>(
              }| {
                 if links && Some(definition.module.index()) == entry && is_main(program, definition)
                 {
-                    main = Some((definition, gives_exit_code(&types[signature])));
+                    main = Some((definition, gives_exit_code(types, signature)));
                 }
                 let Some(mir) = mir else {
                     return; // it has errors
@@ -280,7 +281,10 @@ fn compile<'p>(
         let file = &program.modules[entry].ast.file;
         match main {
             Some((main, Some(exit_code))) => ll[entry].add_entry_point(main, exit_code),
-            Some((main, None)) => all.push(no_entry_point(file, name_span(program, main))),
+            Some((main, None)) => {
+                let (name, _) = project::declared_name(&program.modules, main);
+                all.push(no_entry_point(file, name.span));
+            }
             None => all.push(no_entry_point(file, Span::at(0))),
         }
     }
@@ -289,21 +293,16 @@ fn compile<'p>(
 
 /// Whether the function `definition` is named `main`.
 fn is_main(program: &project::Program, definition: DefId) -> bool {
-    let tree = &program.modules[definition.module.index()].ast;
-    tree.file.slice(name_span(program, definition)) == "main"
-}
-
-/// Where the declaration `definition` writes its name.
-fn name_span(program: &project::Program, definition: DefId) -> Span {
-    let tree = &program.modules[definition.module.index()].ast;
-    tree.decls[tree.declaration(definition.index)].name().span
+    let (name, file) = project::declared_name(&program.modules, definition);
+    name.text(file) == "main"
 }
 
 /// Whether a `main` of type `ty` gives the program's exit code (`fn main() ->
 /// i32`), gives none (`fn main()`), or cannot start a program (`None`).
-fn gives_exit_code(ty: &Type) -> Option<bool> {
-    match ty {
-        Type::Function { parameters, result } if parameters.is_empty() => match *result {
+fn gives_exit_code(types: &Types, ty: TypeId) -> Option<bool> {
+    match &types[ty] {
+        Type::Function { parameters, result } if parameters.is_empty() => match types.real(*result)
+        {
             TypeId::VOID => Some(false),
             TypeId::I32 => Some(true),
             _ => None,

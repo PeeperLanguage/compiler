@@ -11,18 +11,22 @@ use model::constant::Constant;
 use model::constant::Value;
 use model::mir;
 use model::semantic_types::TypeId;
+use model::semantic_types::Types;
 use model::thir;
 use source::Span;
 
 /// The MIR of a function's checked body, which has `parameters` parameters.
 /// `None` when checking it reported an error (`has_errors`), or an error left
-/// it incomplete: what was reported is all there is to say about it.
-pub fn lower(body: &thir::Body, parameters: usize) -> Option<mir::Body> {
+/// it incomplete: what was reported is all there is to say about it. Its
+/// types, from `types`, are each the type itself: THIR's aliases are looked
+/// through (`Types::real`).
+pub fn lower(body: &thir::Body, parameters: usize, types: &Types) -> Option<mir::Body> {
     if body.has_errors {
         return None;
     }
     let mut lowering = Lowering {
         thir: body,
+        types,
         mir: mir::Body::default(),
         block: Id::from_index(0),
         instructions: Vec::new(),
@@ -47,7 +51,7 @@ pub fn lower(body: &thir::Body, parameters: usize) -> Option<mir::Body> {
         }
         lowering.mir.variables.push(
             mir::Variable {
-                ty: variable.ty,
+                ty: types.real(variable.ty),
                 mutable: variable.mutable,
                 initialized: variable.initialized,
                 debug_scope: Id::from_index(variable.scope.index()),
@@ -75,6 +79,7 @@ pub fn lower(body: &thir::Body, parameters: usize) -> Option<mir::Body> {
 
 struct Lowering<'t> {
     thir: &'t thir::Body,
+    types: &'t Types, // to look through aliases
     mir: mir::Body,
     block: Id<mir::Block>,            // the block being filled
     instructions: Vec<NonZeroU32>,    // that block's instructions so far
@@ -108,7 +113,7 @@ impl Lowering<'_> {
     fn emit(&mut self, kind: mir::InstructionKind, ty: TypeId, span: Span) -> mir::Operand {
         let instruction = self.mir.instructions.push(
             mir::Instruction {
-                ty,
+                ty: self.types.real(ty),
                 kind,
                 debug_scope: self.debug_scope,
             },
@@ -121,7 +126,8 @@ impl Lowering<'_> {
     /// `constant` as an operand: the body's next constant.
     fn add_constant(&mut self, constant: Constant) -> mir::Operand {
         let id = Id::from_index(self.mir.constants.len());
-        self.mir.constants.push(constant);
+        let ty = self.types.real(constant.ty);
+        self.mir.constants.push(Constant { ty, ..constant });
         mir::Operand::Constant(id)
     }
 

@@ -44,6 +44,7 @@ use std::sync::Arc;
 
 use arena::Id;
 use diagnostics::Diagnostic;
+use model::DefId;
 use model::constant::Value;
 use model::mir;
 use model::semantic_types::TypeId;
@@ -63,11 +64,12 @@ const SHOWN_CAUSES: usize = 3;
 /// nested block, at most `SHOWN_CAUSES` of them. When the last block itself
 /// runs statements of the function body, only the end is named, since one
 /// `return` there fixes every path.
-pub fn report_missing_return(
+pub fn report_missing_return<'n>(
     body: &mir::Body,
     file: &Arc<SourceFile>,
     types: &Types,
     result: TypeId,
+    name_of: impl FnOnce(DefId) -> &'n str,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     if result == TypeId::VOID {
@@ -156,7 +158,10 @@ pub fn report_missing_return(
     }
     causes.sort_by_key(|&(span, _): &(Span, &str)| span.start);
     let hidden = causes.len().saturating_sub(SHOWN_CAUSES);
-    let end_label = format!("function ends without returning `{}`", types.text(result));
+    let end_label = format!(
+        "function ends without returning `{}`",
+        types.text_named(result, name_of)
+    );
     let mut error = Diagnostic::new(
         diagnostics::MISSING_RETURN,
         "not all control paths return a value",

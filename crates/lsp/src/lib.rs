@@ -578,12 +578,18 @@ impl CachedName {
         let target = match name.symbol {
             Symbol::Local(local) => CachedTarget::InBody {
                 declared: body.declared(local),
-                ty: types.text(match local {
-                    Local::Variable(variable) => body.variables[variable].ty,
-                    Local::Constant(constant) => body.constants[constant]
-                        .as_ref()
-                        .map_or(TypeId::INVALID, |constant| constant.ty),
-                }),
+                ty: types.text_named(
+                    match local {
+                        Local::Variable(variable) => body.variables[variable].ty,
+                        Local::Constant(constant) => body.constants[constant]
+                            .as_ref()
+                            .map_or(TypeId::INVALID, |constant| constant.ty),
+                    },
+                    |definition| {
+                        let (name, source) = project::declared_name(&program.modules, definition);
+                        name.text(source)
+                    },
+                ),
             },
             Symbol::Module(module) => CachedTarget::Module(file(module)),
             Symbol::Function(definition)
@@ -1150,7 +1156,7 @@ mod tests {
         let uri = Url::from_file_path(&file).unwrap();
         let (connection, _client) = Connection::memory();
         let mut server = Server::new(&connection, Path::new(""));
-        let text = "fn main() {\n    let total: i64 = 1;\n    let more = total;\n}\n";
+        let text = "type Meters = i64;\nfn main() {\n    let total: Meters = 1;\n    let more = total;\n}\n";
         let document = json!({ "uri": uri, "languageId": "peeper", "version": 1, "text": text });
         let open = Notification::new(
             "textDocument/didOpen".to_string(),
@@ -1167,20 +1173,20 @@ mod tests {
             assert!(error.is_none(), "{error:?}");
             result.unwrap()
         };
-        let definition = ask("textDocument/definition", 2, 16);
+        let definition = ask("textDocument/definition", 3, 16);
         assert_eq!(definition["uri"], json!(uri));
         assert_eq!(
             definition["range"]["start"],
-            json!({ "line": 1, "character": 8 })
+            json!({ "line": 2, "character": 8 })
         );
         assert_eq!(
             definition["range"]["end"],
-            json!({ "line": 1, "character": 13 })
+            json!({ "line": 2, "character": 13 })
         );
-        let hover = ask("textDocument/hover", 2, 16);
+        let hover = ask("textDocument/hover", 3, 16);
         assert_eq!(
             hover["contents"]["value"],
-            json!("```peeper\ntotal: i64\n```\n")
+            json!("```peeper\ntotal: Meters (aka i64)\n```\n")
         );
         assert_eq!(ask("textDocument/hover", 0, 0), serde_json::Value::Null);
     }

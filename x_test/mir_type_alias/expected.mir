@@ -1,0 +1,11 @@
+fn main:
+  bb0:
+    store length.0, 3
+    %1 = load length.0: i64
+    %2 = Add %1, 1: i64
+    store longer.1, %2
+    %4 = load longer.1: i64
+    %5 = load length.0: i64
+    %6 = GreaterThan %4, %5: bool
+    store ready.2, %6
+    fall off at `}`

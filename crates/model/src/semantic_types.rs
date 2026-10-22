@@ -4,6 +4,8 @@
 use std::collections::HashMap;
 use std::ops::Index;
 
+use crate::DefId;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TypeId(u32);
 
@@ -65,6 +67,13 @@ pub enum Type {
     Function {
         parameters: Box<[TypeId]>,
         result: TypeId,
+    },
+    /// A type alias: the declaration that names it, and the type it names,
+    /// perhaps another alias. Indexing `Types` looks through it to the type
+    /// itself (`Types::real`); only a message names the alias.
+    Alias {
+        definition: DefId,
+        real: TypeId,
     },
 }
 
@@ -204,8 +213,36 @@ impl Types {
         Some(self.intern(integer(signed, bits)))
     }
 
-    /// The type as a program writes it: `u8`, `fn(i32) -> bool`.
+    /// Whether `a` and `b` are one type, aliases looked through.
+    pub fn same(&self, a: TypeId, b: TypeId) -> bool {
+        self.real(a) == self.real(b)
+    }
+
+    /// The type `id` stands for: itself, or the end of the chain of aliases
+    /// it starts.
+    pub fn real(&self, mut id: TypeId) -> TypeId {
+        while let Type::Alias { real, .. } = self.types[id.0 as usize] {
+            id = real;
+        }
+        id
+    }
+
+    /// The type `id` as a message names it: an alias by its name, which
+    /// `name_of` gives for its declaration, followed by the type itself
+    /// (`Meters (aka i64)`); another type as `text` writes it.
+    pub fn text_named<'n>(&self, id: TypeId, name_of: impl FnOnce(DefId) -> &'n str) -> String {
+        match self.types[id.0 as usize] {
+            Type::Alias { definition, .. } => {
+                format!("{} (aka {})", name_of(definition), self.text(id))
+            }
+            _ => self.text(id),
+        }
+    }
+
+    /// The type itself as a program writes it, aliases looked through: `u8`,
+    /// `fn(i32) -> bool`.
     pub fn text(&self, id: TypeId) -> String {
+        let id = self.real(id);
         match &self[id] {
             Type::Invalid => "{invalid}".to_string(),
             Type::Void => "void".to_string(),
@@ -228,6 +265,7 @@ impl Types {
                 }
                 text
             }
+            Type::Alias { .. } => unreachable!("`real` looks through aliases"),
         }
     }
 }
@@ -241,8 +279,9 @@ impl Default for Types {
 impl Index<TypeId> for Types {
     type Output = Type;
 
+    /// The type itself, aliases looked through (`Types::real`).
     fn index(&self, id: TypeId) -> &Type {
-        &self.types[id.0 as usize]
+        &self.types[self.real(id).0 as usize]
     }
 }
 
