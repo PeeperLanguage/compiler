@@ -87,7 +87,9 @@ impl Module<'_> {
             block: 0,
             checked: 0,
         };
-        let mut out = String::new();
+        // Written straight onto the module's functions, taken out while
+        // `function` borrows the module.
+        let mut out = std::mem::take(&mut function.module.functions);
         let arguments = parameters.iter().enumerate().map(|(index, &parameter)| {
             fmt::from_fn(move |out| write!(out, "{} %arg{index}", type_text(types, parameter)))
         });
@@ -108,9 +110,9 @@ impl Module<'_> {
             function.write_block(&mut out, block, *result);
         }
         let Function { panics, .. } = function;
-        self.functions.push_str(&out);
-        self.functions.push_str(&panics);
-        self.functions.push_str("}\n\n");
+        out.push_str(&panics);
+        out.push_str("}\n\n");
+        self.functions = out;
         self.defined.insert(symbol);
     }
 

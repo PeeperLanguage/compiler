@@ -64,10 +64,16 @@ impl SourceFile {
     pub fn position(&self, offset: usize) -> (usize, usize) {
         let line = self.line(offset);
         let start = self.lines[line - 1] as usize;
-        let columns: usize = self.text.as_bytes()[start..offset]
-            .utf8_chunks()
-            .map(|chunk| chunk.valid().chars().count() + chunk.invalid().len())
-            .sum();
+        let before = &self.text.as_bytes()[start..offset];
+        // Most lines are ASCII, one byte per character.
+        let columns: usize = if before.is_ascii() {
+            before.len()
+        } else {
+            before
+                .utf8_chunks()
+                .map(|chunk| chunk.valid().chars().count() + chunk.invalid().len())
+                .sum()
+        };
         (line, columns + 1)
     }
 
