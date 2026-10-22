@@ -130,6 +130,8 @@ fixed_types! {
 }
 
 /// The types of a program, for one compile (`check::Queries` holds them).
+// TEMPORARY, to be deleted: `Clone` is only for `llvm::write`, whose workers
+// each get a copy of the types; delete it with `extend_from`.
 #[derive(Clone)]
 pub struct Types {
     types: Vec<Type>,
