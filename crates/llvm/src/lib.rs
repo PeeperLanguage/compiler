@@ -1,6 +1,6 @@
 //! LLVM IR text for a module (docs/ir-design.md): one walk over each
 //! function's MIR, shaped like clang's output at `-O0`, with debug info from
-//! the spans MIR keeps. Run-time traps panic through the prelude's `write`
+//! the spans MIR keeps in a debug build. Run-time traps panic through the prelude's `write`
 //! and `exit`.
 
 mod function;
@@ -23,11 +23,18 @@ use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 
+/// What a program is built for: debugging, with debug info, or release,
+/// without it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BuildMode {
+    Debug,
+    Release,
+}
+
 /// The LLVM text of one module, built a function at a time.
 pub struct Module<'p> {
     program: &'p project::Program,
     module: ModuleId,
-    pointer_bits: u32,
     functions: String, // each `define`
     strings: String,   // each string constant's global
     string_ids: HashMap<Vec<u8>, usize>,
@@ -35,56 +42,38 @@ pub struct Module<'p> {
     /// is the same every run. Those the module defines are left out.
     declarations: BTreeMap<String, String>,
     defined: HashSet<String>,
-    metadata: Metadata,
+    metadata: Option<Metadata>, // the debug info, in a debug build
 }
 
 /// The module's debug info: numbered metadata nodes.
 struct Metadata {
-    text: String,
-    count: usize,
-    file: usize,
-    unit: usize,
+    text: String,                  // each node's line, `!N = ...`, in order
+    count: usize,                  // the nodes so far; the next one's number
+    file: usize,                   // the DIFile of the module's source file
+    unit: usize,                   // the DICompileUnit, the scope of every function
     types: HashMap<TypeId, usize>, // each type's debug type
-}
-
-impl Metadata {
-    /// Adds the node `text` and gives its number.
-    fn add(&mut self, text: &str) -> usize {
-        let id = self.count;
-        self.count += 1;
-        _ = writeln!(self.text, "!{id} = {text}");
-        id
-    }
+    pointer_bits: u32,
 }
 
 impl<'p> Module<'p> {
-    /// The module `module` of `program`, with no functions yet. Pointers have
-    /// `pointer_bits` bits.
-    pub fn new(program: &'p project::Program, module: ModuleId, pointer_bits: u32) -> Module<'p> {
-        let path = Path::new(&program.modules[module.index()].ast.file.path);
-        let name = path.file_name().unwrap_or_default().to_string_lossy();
-        let folder = path.parent().unwrap_or(Path::new("")).to_string_lossy();
-        let mut metadata = Metadata {
-            text: String::new(),
-            count: 0,
-            file: 0,
-            unit: 0,
-            types: HashMap::new(),
+    /// The module `module` of `program`, with no functions yet, built in
+    /// `mode`. Pointers have `pointer_bits` bits.
+    pub fn new(
+        program: &'p project::Program,
+        module: ModuleId,
+        pointer_bits: u32,
+        mode: BuildMode,
+    ) -> Module<'p> {
+        let metadata = match mode {
+            BuildMode::Debug => {
+                let path = Path::new(&program.modules[module.index()].ast.file.path);
+                Some(Metadata::new(path, pointer_bits))
+            }
+            BuildMode::Release => None,
         };
-        metadata.file = metadata.add(&format!(
-            "!DIFile(filename: {}, directory: {})",
-            quoted(name.as_bytes()),
-            quoted(folder.as_bytes())
-        ));
-        metadata.unit = metadata.add(&format!(
-            "distinct !DICompileUnit(language: DW_LANG_C, file: !{}, producer: \"peeper\", \
-             isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)",
-            metadata.file
-        ));
         Module {
             program,
             module,
-            pointer_bits,
             functions: String::new(),
             strings: String::new(),
             string_ids: HashMap::new(),
@@ -129,15 +118,18 @@ impl<'p> Module<'p> {
                 out.push_str(declaration);
             }
         }
+        let Some(metadata) = &self.metadata else {
+            return out;
+        };
         out.push_str("declare void @llvm.dbg.declare(metadata, metadata, metadata)\n\n");
-        let version = self.metadata.count;
-        _ = writeln!(out, "!llvm.dbg.cu = !{{!{}}}", self.metadata.unit);
+        let version = metadata.count;
+        _ = writeln!(out, "!llvm.dbg.cu = !{{!{}}}", metadata.unit);
         _ = writeln!(
             out,
             "!llvm.module.flags = !{{!{version}, !{}}}",
             version + 1
         );
-        out.push_str(&self.metadata.text);
+        out.push_str(&metadata.text);
         _ = writeln!(out, "!{version} = !{{i32 7, !\"Dwarf Version\", i32 4}}");
         _ = writeln!(
             out,
@@ -171,13 +163,49 @@ impl<'p> Module<'p> {
             self.declarations.insert(symbol.to_string(), declaration());
         }
     }
+}
+
+impl Metadata {
+    /// The debug info of a module in the file `path`, with no function yet.
+    /// Pointers have `pointer_bits` bits.
+    fn new(path: &Path, pointer_bits: u32) -> Metadata {
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        let folder = path.parent().unwrap_or(Path::new("")).to_string_lossy();
+        let mut metadata = Metadata {
+            text: String::new(),
+            count: 0,
+            file: 0,
+            unit: 0,
+            types: HashMap::new(),
+            pointer_bits,
+        };
+        metadata.file = metadata.add(&format!(
+            "!DIFile(filename: {}, directory: {})",
+            quoted(name.as_bytes()),
+            quoted(folder.as_bytes())
+        ));
+        metadata.unit = metadata.add(&format!(
+            "distinct !DICompileUnit(language: DW_LANG_C, file: !{}, producer: \"peeper\", \
+             isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)",
+            metadata.file
+        ));
+        metadata
+    }
+
+    /// Adds the node `text` and gives its number.
+    fn add(&mut self, text: &str) -> usize {
+        let id = self.count;
+        self.count += 1;
+        _ = writeln!(self.text, "!{id} = {text}");
+        id
+    }
 
     /// The debug type of `ty`; `None` for `void`.
     fn debug_type(&mut self, types: &Types, ty: TypeId) -> Option<usize> {
         if ty == TypeId::VOID {
             return None;
         }
-        if let Some(&id) = self.metadata.types.get(&ty) {
+        if let Some(&id) = self.types.get(&ty) {
             return Some(id);
         }
         let basic = |name: &str, bits: u32, encoding: &str| {
@@ -199,7 +227,7 @@ impl<'p> Module<'p> {
             Type::Float(Float::F32) => basic("f32", 32, "DW_ATE_float"),
             Type::Float(Float::F64) => basic("f64", 64, "DW_ATE_float"),
             Type::CString => {
-                let char = self.metadata.add(&basic("char", 8, "DW_ATE_signed_char"));
+                let char = self.add(&basic("char", 8, "DW_ATE_signed_char"));
                 format!(
                     "!DIDerivedType(tag: DW_TAG_pointer_type, name: \"cstr\", baseType: !{char}, size: {})",
                     self.pointer_bits
@@ -209,8 +237,8 @@ impl<'p> Module<'p> {
                 unreachable!("MIR holds no value of this type")
             }
         };
-        let id = self.metadata.add(&text);
-        self.metadata.types.insert(ty, id);
+        let id = self.add(&text);
+        self.types.insert(ty, id);
         Some(id)
     }
 }
@@ -355,7 +383,12 @@ mod tests {
         let program = project::load(&project, &open_files);
         assert!(program.checkable);
         let main = program.modules.len() - 1;
-        let mut module = super::Module::new(&program, ModuleId::from_index(main), 64);
+        let mut module = super::Module::new(
+            &program,
+            ModuleId::from_index(main),
+            64,
+            super::BuildMode::Debug,
+        );
         let results = compile::run(
             &program,
             64,

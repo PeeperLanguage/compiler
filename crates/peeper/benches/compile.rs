@@ -2,7 +2,8 @@
 //! writes its LLVM text, several times in one process, then has clang turn
 //! the text into a program, and prints the fastest and the median time of
 //! each phase. `PEEPER_BENCH_RUNS` sets how many compiles run, and
-//! `PEEPER_BENCH_CLANG=0` leaves clang out; scripts/bench-instructions.py
+//! `PEEPER_BENCH_CLANG=0` leaves clang out; `PEEPER_BENCH_RELEASE=1` builds
+//! in release mode, without debug info and with clang optimizing; scripts/bench-instructions.py
 //! counts the instructions of the compiler alone that way, which machine load
 //! moves far less than time.
 //!
@@ -34,9 +35,13 @@ fn main() {
     let runs: usize = std::env::var("PEEPER_BENCH_RUNS").map_or(10, |runs| {
         runs.parse().expect("PEEPER_BENCH_RUNS is a number")
     });
+    let mode = match std::env::var("PEEPER_BENCH_RELEASE").as_deref() {
+        Ok("1") => llvm::BuildMode::Release,
+        _ => llvm::BuildMode::Debug,
+    };
     let files = files(&folder);
     let lines: usize = files.values().map(|text| text.lines().count()).sum();
-    println!("{MODULES} modules, {FUNCTIONS} functions each, {lines} lines; {runs} runs");
+    println!("{MODULES} modules, {FUNCTIONS} functions each, {lines} lines; {runs} runs, {mode:?}");
     // The runtime library the program links with, unless clang is left out.
     let built = Path::new(env!("CARGO_TARGET_TMPDIR")).join("bench");
     let runtime = (std::env::var("PEEPER_BENCH_CLANG").map_or(true, |clang| clang != "0"))
@@ -51,7 +56,10 @@ fn main() {
         load.push(start.elapsed());
         assert!(program.checkable, "{:?}", program.diagnostics);
         let mut ll: Vec<llvm::Module> = (0..program.modules.len())
-            .map(|index| llvm::Module::new(&program, ModuleId::from_index(index), POINTER_BITS))
+            .map(|index| {
+                let module = ModuleId::from_index(index);
+                llvm::Module::new(&program, module, POINTER_BITS, mode)
+            })
             .collect();
         let mut main = None;
         let mut writing = Duration::ZERO; // LLVM text, timed apart from the compile around it
@@ -93,7 +101,7 @@ fn main() {
         std::hint::black_box(text);
         if let Some(runtime) = &runtime {
             let start = Instant::now();
-            llvm::link::link_executable(&ll, runtime, &built.join("program"))
+            llvm::link::link_executable(&ll, mode, runtime, &built.join("program"))
                 .expect("clang builds the program");
             clang.push(start.elapsed());
         }

@@ -25,15 +25,25 @@ pub fn parse_command() -> Result<(Command<StderrLock<'static>>, Goal), ExitCode>
     let stderr = std::io::stderr();
     let colored = stderr.is_terminal();
     let (path, goal) = match args {
-        Args::Check { path, dumps, fix } => (
+        Args::Check {
+            path,
+            dumps,
+            fix,
+            mode,
+        } => (
             path,
             Goal::Check {
                 dumps,
                 apply_fixes: fix,
+                mode,
             },
         ),
-        Args::Build { path, output } => (path, Goal::Build { output }),
-        Args::Run { path, arguments } => (path, Goal::Run { arguments }),
+        Args::Build { path, output, mode } => (path, Goal::Build { output, mode }),
+        Args::Run {
+            path,
+            arguments,
+            mode,
+        } => (path, Goal::Run { arguments, mode }),
         Args::Init { name } => {
             let folder = std::env::current_dir().unwrap_or_default();
             let name = name.unwrap_or_else(|| {

@@ -1,0 +1,17 @@
+// The LLVM text of a release build: the same code as a debug build, with no
+// debug info (no metadata, `!dbg` or `llvm.dbg.declare`). Nothing here can
+// panic: a panic message holds the file's path, whose length differs between
+// checkouts.
+fn twice(a: i32) -> i32 {
+    let b = a * 2;
+    return b;
+}
+
+fn main() -> i32 {
+    write(stdout, c"twice\n", 6);
+    let x = twice(2);
+    if x > 3 {
+        return 0;
+    }
+    return 1;
+}

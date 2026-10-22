@@ -1,0 +1,7 @@
+name = "ll_release"
+build = "program"
+
+[test]
+mode = "ll"
+outcome = "success"
+release = true

@@ -12,12 +12,19 @@ use std::sync::atomic::Ordering;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
+use crate::BuildMode;
 use crate::Module;
 
-/// Compiles each of `modules` that has a function, several at once, and links
-/// the objects with the runtime library `runtime` into the program `output`.
-/// The files in between live in a temporary folder, removed after.
-pub fn link_executable(modules: &[Module], runtime: &Path, output: &Path) -> Result<(), String> {
+/// Compiles each of `modules` that has a function, several at once, optimized
+/// in a release `mode`, and links the objects with the runtime library
+/// `runtime` into the program `output`. The files in between live in a
+/// temporary folder, removed after.
+pub fn link_executable(
+    modules: &[Module],
+    mode: BuildMode,
+    runtime: &Path,
+    output: &Path,
+) -> Result<(), String> {
     if !runtime.is_file() {
         return Err(format!(
             "the runtime library is missing: {}",
@@ -31,7 +38,7 @@ pub fn link_executable(modules: &[Module], runtime: &Path, output: &Path) -> Res
     std::fs::create_dir_all(&folder)
         .map_err(|error| format!("cannot make {}: {error}", folder.display()))?;
     let linked =
-        compile_modules(modules, &folder).and_then(|objects| link(&objects, runtime, output));
+        compile_modules(modules, mode, &folder).and_then(|objects| link(&objects, runtime, output));
     _ = std::fs::remove_dir_all(&folder);
     linked
 }
@@ -57,10 +64,19 @@ fn link(objects: &[PathBuf], runtime: &Path, output: &Path) -> Result<(), String
 }
 
 /// Compiles each of `modules` that has a function into an object file in
-/// `folder`, several at once, and gives the objects in module order. Up to one
+/// `folder`, several at once, optimized in a release `mode`, and gives the
+/// objects in module order. Up to one
 /// clang runs per core; each worker takes the next module no one has taken. When
 /// modules fail, the first one's error is given, whichever finished first.
-fn compile_modules(modules: &[Module], folder: &Path) -> Result<Vec<PathBuf>, String> {
+fn compile_modules(
+    modules: &[Module],
+    mode: BuildMode,
+    folder: &Path,
+) -> Result<Vec<PathBuf>, String> {
+    let optimization = match mode {
+        BuildMode::Debug => "-O0",
+        BuildMode::Release => "-O2",
+    };
     let modules: Vec<&Module> = modules.iter().filter(|module| !module.is_empty()).collect();
     let objects: Vec<PathBuf> = (0..modules.len())
         .map(|index| folder.join(format!("module_{index}.o")))
@@ -83,7 +99,7 @@ fn compile_modules(modules: &[Module], folder: &Path) -> Result<Vec<PathBuf>, St
                             .and_then(|()| {
                                 let mut clang = Command::new("clang");
                                 clang
-                                    .args(["-c", "-x", "ir"])
+                                    .args(["-c", optimization, "-x", "ir"])
                                     .arg(&file)
                                     .arg("-o")
                                     .arg(&objects[index]);

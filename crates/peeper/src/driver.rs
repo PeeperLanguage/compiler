@@ -11,6 +11,7 @@ use std::sync::Arc;
 use diagnostics::Diagnostic;
 use diagnostics::fix;
 use diagnostics::printer;
+use llvm::BuildMode;
 use model::DefId;
 use model::ModuleId;
 use model::semantic_types::Type;
@@ -23,15 +24,26 @@ use crate::dump::Dumps;
 
 /// What a command does with the program it loads.
 pub enum Goal {
-    /// Write the `dumps`; with `apply_fixes`, write the fixes the diagnostics
-    /// suggest to the project's files, list them, and check again to report
-    /// what is left.
-    Check { dumps: Vec<Dump>, apply_fixes: bool },
-    /// Link the program into `output`: by default the program's name, in the
-    /// current folder.
-    Build { output: Option<PathBuf> },
-    /// Link it to a temporary file and run it with `arguments`.
-    Run { arguments: Vec<String> },
+    /// Write the `dumps`, the LLVM IR one of a build in `mode`; with
+    /// `apply_fixes`, write the fixes the diagnostics suggest to the
+    /// project's files, list them, and check again to report what is left.
+    Check {
+        dumps: Vec<Dump>,
+        apply_fixes: bool,
+        mode: BuildMode,
+    },
+    /// Link the program, built in `mode`, into `output`: by default the
+    /// program's name, in the current folder.
+    Build {
+        output: Option<PathBuf>,
+        mode: BuildMode,
+    },
+    /// Link it, built in `mode`, to a temporary file and run it with
+    /// `arguments`.
+    Run {
+        arguments: Vec<String>,
+        mode: BuildMode,
+    },
 }
 
 /// Where a `peeper` command runs: the program it is given, the installation
@@ -62,25 +74,30 @@ impl<W: Write> Command<W> {
         // unsaved text here, so every file is read from disk.
         let program = project::load(&project, &HashMap::<PathBuf, String>::new());
         match goal {
-            Goal::Check { dumps, apply_fixes } => {
-                self.execute_check(&project, &program, dumps, *apply_fixes)
+            Goal::Check {
+                dumps,
+                apply_fixes,
+                mode,
+            } => self.execute_check(&project, &program, dumps, *apply_fixes, *mode),
+            Goal::Build { output, mode } => {
+                self.execute_build(&project, &program, output.as_deref(), *mode)
             }
-            Goal::Build { output } => self.execute_build(&project, &program, output.as_deref()),
-            Goal::Run { arguments } => self.execute_run(&project, &program, arguments),
+            Goal::Run { arguments, mode } => self.execute_run(&project, &program, arguments, *mode),
         }
     }
 
-    /// `check`: reports the program's errors and writes the `dumps`. With
-    /// `apply_fixes`, it writes the suggested fixes first, then checks again
-    /// to report only what is left.
+    /// `check`: reports the program's errors and writes the `dumps`, the
+    /// LLVM IR one of a build in `mode`. With `apply_fixes`, it writes the
+    /// suggested fixes first, then checks again to report only what is left.
     fn execute_check(
         &mut self,
         project: &project::Project,
         program: &project::Program,
         dumps: &[Dump],
         apply_fixes: bool,
+        mode: BuildMode,
     ) -> u8 {
-        let (diagnostics, ll, dumped) = compile(project, program, dumps, false);
+        let (diagnostics, ll, dumped) = compile(project, program, dumps, mode, false);
         // Dumps are written only for a program without errors.
         if !diagnostics.iter().any(Diagnostic::is_error)
             && let Err(error) =
@@ -99,6 +116,7 @@ impl<W: Write> Command<W> {
                 let again = Goal::Check {
                     dumps: dumps.to_vec(),
                     apply_fixes: false,
+                    mode,
                 };
                 return self.execute(&again);
             }
@@ -106,15 +124,16 @@ impl<W: Write> Command<W> {
         u8::from(!self.print(&diagnostics))
     }
 
-    /// `build`: links the program into `output`, by default the program's
-    /// name in the current folder.
+    /// `build`: links the program, built in `mode`, into `output`, by default
+    /// the program's name in the current folder.
     fn execute_build(
         &mut self,
         project: &project::Project,
         program: &project::Program,
         output: Option<&Path>,
+        mode: BuildMode,
     ) -> u8 {
-        let (diagnostics, ll, _) = compile(project, program, &[], true);
+        let (diagnostics, ll, _) = compile(project, program, &[], mode, true);
         if !self.print(&diagnostics) {
             return 1;
         }
@@ -122,22 +141,23 @@ impl<W: Write> Command<W> {
             || PathBuf::from(format!("{}{}", project.name, std::env::consts::EXE_SUFFIX)),
             Path::to_path_buf,
         );
-        if !self.link(&ll, &output) {
+        if !self.link(&ll, mode, &output) {
             return 1;
         }
         _ = writeln!(self.out, "Built {}", output.display());
         0
     }
 
-    /// `run`: links the program to a temporary file, runs it with
-    /// `arguments` and removes it; gives the program's exit code.
+    /// `run`: links the program, built in `mode`, to a temporary file, runs
+    /// it with `arguments` and removes it; gives the program's exit code.
     fn execute_run(
         &mut self,
         project: &project::Project,
         program: &project::Program,
         arguments: &[String],
+        mode: BuildMode,
     ) -> u8 {
-        let (diagnostics, ll, _) = compile(project, program, &[], true);
+        let (diagnostics, ll, _) = compile(project, program, &[], mode, true);
         if !self.print(&diagnostics) {
             return 1;
         }
@@ -146,7 +166,7 @@ impl<W: Write> Command<W> {
             std::process::id(),
             std::env::consts::EXE_SUFFIX
         ));
-        if !self.link(&ll, &output) {
+        if !self.link(&ll, mode, &output) {
             return 1;
         }
         _ = self.out.flush();
@@ -174,14 +194,14 @@ impl<W: Write> Command<W> {
         !diagnostics.iter().any(Diagnostic::is_error)
     }
 
-    /// Links the modules' LLVM text `ll` with the runtime into the program
-    /// `output`; gives whether it did, a failure reported.
-    fn link(&mut self, ll: &[llvm::Module], output: &Path) -> bool {
+    /// Links the modules' LLVM text `ll`, built in `mode`, with the runtime
+    /// into the program `output`; gives whether it did, a failure reported.
+    fn link(&mut self, ll: &[llvm::Module], mode: BuildMode, output: &Path) -> bool {
         let runtime = self
             .installation
             .join("runtime")
             .join(llvm::runtime::LIBRARY);
-        if let Err(error) = llvm::link::link_executable(ll, &runtime, output) {
+        if let Err(error) = llvm::link::link_executable(ll, mode, &runtime, output) {
             _ = writeln!(self.out, "peeper: {error}");
             return false;
         }
@@ -191,13 +211,14 @@ impl<W: Write> Command<W> {
 
 /// Checks and lowers `program`, of `project`, unless loading it found an
 /// error, gathering the `dumps` of its functions. With `links`, it also
-/// needs the entry file's `main`. Gives every diagnostic, loading's
-/// first; each module's LLVM text, when linking or a dump needs it; and
-/// the dumps, to write when there is no error.
+/// needs the entry file's `main`. Gives every diagnostic, loading's first;
+/// each module's LLVM text for a build in `mode`, when linking or a dump
+/// needs it; and the dumps, to write when there is no error.
 fn compile<'p>(
     project: &project::Project,
     program: &'p project::Program,
     dumps: &'p [Dump],
+    mode: BuildMode,
     links: bool,
 ) -> (Vec<Diagnostic>, Vec<llvm::Module<'p>>, Dumps<'p>) {
     let mut all: Vec<Diagnostic> = program.diagnostics.clone();
@@ -211,7 +232,8 @@ fn compile<'p>(
     if links || dumped.wants_ll() {
         ll = (0..program.modules.len())
             .map(|index| {
-                llvm::Module::new(program, ModuleId::from_index(index), compile::POINTER_BITS)
+                let module = ModuleId::from_index(index);
+                llvm::Module::new(program, module, compile::POINTER_BITS, mode)
             })
             .collect();
     }
@@ -327,6 +349,8 @@ mod tests {
     use std::path::Path;
     use std::path::PathBuf;
 
+    use llvm::BuildMode;
+
     use super::Command;
     use super::Goal;
 
@@ -357,6 +381,7 @@ mod tests {
         let check = Goal::Check {
             dumps: Vec::new(),
             apply_fixes: false,
+            mode: BuildMode::Debug,
         };
         let code = command.execute(&check);
         (code, String::from_utf8(command.out).unwrap())
@@ -379,6 +404,7 @@ mod tests {
         let fix = Goal::Check {
             dumps: Vec::new(),
             apply_fixes: true,
+            mode: BuildMode::Debug,
         };
         let code = command.execute(&fix);
         let out = String::from_utf8(command.out).unwrap();
@@ -507,7 +533,10 @@ mod tests {
                 out: Vec::new(),
                 colored: false,
             };
-            let code = command.execute(&Goal::Build { output: None });
+            let code = command.execute(&Goal::Build {
+                output: None,
+                mode: BuildMode::Debug,
+            });
             let out = String::from_utf8(command.out).unwrap();
             assert_eq!(code, 1, "{file}: {out}");
             assert!(

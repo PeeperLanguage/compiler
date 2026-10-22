@@ -46,8 +46,9 @@ impl Module<'_> {
         let program = self.program;
         let tree = &program.modules[definition.module.index()].ast;
         let symbol = symbol(program, definition);
-        let (subprogram, scope_metadata) =
-            self.add_debug_info(definition, &symbol, parameters, *result, body, types);
+        let (subprogram, scope_metadata) = self
+            .add_debug_info(definition, &symbol, parameters, *result, body, types)
+            .unzip();
         // Each string constant's global.
         let strings = body
             .constants
@@ -63,7 +64,7 @@ impl Module<'_> {
             body,
             types,
             file: &tree.file,
-            scope_metadata,
+            scope_metadata: scope_metadata.unwrap_or_default(),
             locations: HashMap::new(),
             out: String::new(),
             panics: String::new(),
@@ -84,13 +85,17 @@ impl Module<'_> {
             .enumerate()
             .map(|(index, &parameter)| format!("{} %arg{index}", type_text(types, parameter)))
             .collect();
-        _ = writeln!(
+        _ = write!(
             function.out,
-            "define {} {}({}) !dbg !{subprogram} {{\nentry:",
+            "define {} {}({})",
             type_text(types, *result),
             global(&symbol),
             arguments.join(", ")
         );
+        if let Some(subprogram) = subprogram {
+            _ = write!(function.out, " !dbg !{subprogram}");
+        }
+        function.out.push_str(" {\nentry:\n");
         function.variables(parameters.len());
         function.out.push_str("  br label %bb0\n");
         for block in body.blocks.ids() {
@@ -107,7 +112,8 @@ impl Module<'_> {
     /// that takes `parameters`, gives `result` and has the MIR `body`: its
     /// `DISubprogram`, the scope of everything in it, and a `DILexicalBlock`
     /// for each block that declares a variable. Gives the subprogram and the
-    /// metadata of each MIR debug scope: its lexical block, else its parent's.
+    /// metadata of each MIR debug scope: its lexical block, else its parent's;
+    /// `None` in a release build, which has no debug info.
     /// The function's block takes the subprogram when there are parameters,
     /// whose scope is the function.
     fn add_debug_info(
@@ -118,30 +124,31 @@ impl Module<'_> {
         result: TypeId,
         body: &mir::Body,
         types: &Types,
-    ) -> (usize, Vec<usize>) {
+    ) -> Option<(usize, Vec<usize>)> {
+        let metadata = self.metadata.as_mut()?;
         let tree = &self.program.modules[definition.module.index()].ast;
         let name = tree.decls[tree.declaration(definition.index)].name();
         let (line, _) = tree.file.position(name.span.start as usize);
-        let mut signature = vec![match self.debug_type(types, result) {
+        let mut signature = vec![match metadata.debug_type(types, result) {
             Some(id) => format!("!{id}"),
             None => "null".to_string(),
         }];
         for &parameter in parameters {
-            let id = self.debug_type(types, parameter).unwrap_or_default();
+            let id = metadata.debug_type(types, parameter).unwrap_or_default();
             signature.push(format!("!{id}"));
         }
-        let subroutine = self.metadata.add(&format!(
+        let subroutine = metadata.add(&format!(
             "!DISubroutineType(types: !{{{}}})",
             signature.join(", ")
         ));
-        let subprogram = self.metadata.add(&format!(
+        let subprogram = metadata.add(&format!(
             "distinct !DISubprogram(name: {}, linkageName: {}, scope: !{file}, file: !{file}, \
              line: {line}, type: !{subroutine}, scopeLine: {line}, spFlags: DISPFlagDefinition, \
              unit: !{})",
             quoted(name.text(&tree.file).as_bytes()),
             quoted(symbol.as_bytes()),
-            self.metadata.unit,
-            file = self.metadata.file,
+            metadata.unit,
+            file = metadata.file,
         ));
         let mut declares = vec![false; body.debug_scopes.len()];
         for variable in body.variables.ids() {
@@ -163,12 +170,12 @@ impl Module<'_> {
             let (line, column) = tree
                 .file
                 .position(body.debug_scopes.span(scope).start as usize);
-            scope_metadata.push(self.metadata.add(&format!(
+            scope_metadata.push(metadata.add(&format!(
                 "!DILexicalBlock(scope: !{parent}, file: !{}, line: {line}, column: {column})",
-                self.metadata.file
+                metadata.file
             )));
         }
-        (subprogram, scope_metadata)
+        Some((subprogram, scope_metadata))
     }
 }
 
@@ -225,51 +232,62 @@ struct Function<'m, 'p, 'b> {
 }
 
 impl Function<'_, '_, '_> {
-    /// The `alloca` and debug declaration of each variable, the first
-    /// `parameters` of them the parameters.
+    /// The `alloca` of each variable and, in a debug build, its debug
+    /// declaration; the first `parameters` of them are the parameters.
     fn variables(&mut self, parameters: usize) {
         for variable in self.body.variables.ids() {
             let index = variable.index();
             let mir::Variable {
                 ty, debug_scope, ..
             } = self.body.variables[variable];
+            _ = writeln!(
+                self.out,
+                "  %v{index} = alloca {}",
+                type_text(self.types, ty)
+            );
+            let Some(metadata) = &mut self.module.metadata else {
+                continue;
+            };
             let span = self.body.variables.span(variable);
-            let debug_type = self.module.debug_type(self.types, ty).unwrap_or_default();
+            let debug_type = metadata.debug_type(self.types, ty).unwrap_or_default();
             let (line, _) = self.file.position(span.start as usize);
             let argument = if index < parameters {
                 format!("arg: {}, ", index + 1)
             } else {
                 String::new()
             };
-            let declared = self.module.metadata.add(&format!(
+            let declared = metadata.add(&format!(
                 "!DILocalVariable(name: {}, {argument}scope: !{}, file: !{}, line: {line}, type: !{debug_type})",
                 quoted(self.file.slice(span).as_bytes()),
                 self.scope_metadata[debug_scope.index()],
-                self.module.metadata.file,
+                metadata.file,
             ));
             let location = self.location(span, debug_scope);
             _ = writeln!(
                 self.out,
-                "  %v{index} = alloca {}\n  call void @llvm.dbg.declare(metadata ptr %v{index}, \
-                 metadata !{declared}, metadata !DIExpression()), !dbg !{location}",
-                type_text(self.types, ty)
+                "  call void @llvm.dbg.declare(metadata ptr %v{index}, \
+                 metadata !{declared}, metadata !DIExpression()){location}",
             );
         }
     }
 
     /// The DILocation of where `span` starts, in the MIR debug scope
-    /// `debug_scope`.
-    fn location(&mut self, span: Span, debug_scope: Id<mir::DebugScope>) -> usize {
+    /// `debug_scope`, as the end of a line; nothing in a release build.
+    fn location(&mut self, span: Span, debug_scope: Id<mir::DebugScope>) -> DebugLocation {
+        let Some(metadata) = &mut self.module.metadata else {
+            return DebugLocation(None);
+        };
         let (line, column) = self.file.position(span.start as usize);
         let scope = self.scope_metadata[debug_scope.index()];
-        if let Some(&id) = self.locations.get(&(scope, line, column)) {
-            return id;
-        }
-        let id = self.module.metadata.add(&format!(
-            "!DILocation(line: {line}, column: {column}, scope: !{scope})"
-        ));
-        self.locations.insert((scope, line, column), id);
-        id
+        let id = *self
+            .locations
+            .entry((scope, line, column))
+            .or_insert_with(|| {
+                metadata.add(&format!(
+                    "!DILocation(line: {line}, column: {column}, scope: !{scope})"
+                ))
+            });
+        DebugLocation(Some(id))
     }
 
     /// The label of the LLVM block where the MIR block `block` ends: after
@@ -335,13 +353,10 @@ impl Function<'_, '_, '_> {
                 ("ret void".to_string(), Some(span))
             }
         };
-        match span {
-            Some(span) => {
-                let location = self.location(span, mir.debug_scope);
-                _ = writeln!(self.out, "  {line}, !dbg !{location}");
-            }
-            None => _ = writeln!(self.out, "  {line}"),
-        }
+        let location = span.map_or(DebugLocation(None), |span| {
+            self.location(span, mir.debug_scope)
+        });
+        _ = writeln!(self.out, "  {line}{location}");
     }
 
     /// Writes the instruction `id`.
@@ -411,7 +426,7 @@ impl Function<'_, '_, '_> {
                 return; // no location: it runs where control arrives
             }
         };
-        _ = writeln!(self.out, "  {line}, !dbg !{location}");
+        _ = writeln!(self.out, "  {line}{location}");
     }
 
     /// The line calling `function` with `arguments` for the instruction `id`,
@@ -653,11 +668,24 @@ impl Function<'_, '_, '_> {
             .declare(EXIT, || format!("declare void {}(i32)\n\n", global(EXIT)));
         _ = writeln!(
             self.panics,
-            "{panic}:\n  call i32 {}(i32 2, ptr {string}, i32 {}), !dbg !{location}\n  \
-             call void {}(i32 {PANIC_EXIT_CODE}), !dbg !{location}\n  unreachable",
+            "{panic}:\n  call i32 {}(i32 2, ptr {string}, i32 {}){location}\n  \
+             call void {}(i32 {PANIC_EXIT_CODE}){location}\n  unreachable",
             global(WRITE),
             text.len(),
             global(EXIT),
         );
+    }
+}
+
+/// The `, !dbg !N` that ends a line with its DILocation `N`; nothing without
+/// one.
+struct DebugLocation(Option<usize>);
+
+impl std::fmt::Display for DebugLocation {
+    fn fmt(&self, out: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self.0 {
+            Some(id) => write!(out, ", !dbg !{id}"),
+            None => Ok(()),
+        }
     }
 }
