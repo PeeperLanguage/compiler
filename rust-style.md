@@ -195,5 +195,13 @@ and Cranelift (`filetests`) work the same way.
   command, runs it and returns the exit code.
 - **Data lives in `model`, logic in the crates that build it.** Name a data
   module by its path: `use model::ast;`, then `ast::Expr`.
+- **No function around a one-line id conversion.** Lowering gives MIR the
+  same ids as THIR (block `i` is debug scope `i`); it writes
+  `Id::from_index(block.index())` where it needs one, as it does for
+  variables, and states the rule once in a comment. A `scope(block)` helper
+  added a name to learn for nothing (owner, 2026-10-22).
+- **An optional part is an `Option`, not an empty string to trim.**
+  `c_extension` gives `Option<&str>` and the caller matches it, instead of
+  `format!("{ty} {extension}").trim_end()` hiding a missing part.
 - **Never write a concatenated string into a `String` builder**
   (`out.push_str(&(a + b))`); push each part, or use `write!`.

@@ -27,8 +27,9 @@ pub struct Body {
     pub instructions: Arena<Instruction>, // with the expression each comes from
     pub variables: Arena<Variable>, // the parameters first; with each name
     /// The THIR body's blocks, with their spans, by the same ids: where each
-    /// variable's name can be used, for a debugger.
-    pub scopes: Arena<Scope>,
+    /// variable's name can be used and each instruction is written. Only debug
+    /// info reads them.
+    pub debug_scopes: Arena<DebugScope>,
     pub constants: Vec<Constant>, // what `Operand::Constant` names; no spans, so not an arena
     pub lists: Lists,
 }
@@ -39,19 +40,21 @@ pub struct Variable {
     pub ty: TypeId,
     pub mutable: bool,
     pub initialized: bool, // set where declared; false for a `let` without a value
-    pub scope: Id<Scope>,  // the block it is declared in
+    pub debug_scope: Id<DebugScope>, // the block it is declared in
 }
 
-/// A block of the source, as THIR's `Block` without its statements.
+/// A block of the source, as THIR's `Block` without its statements, for a
+/// debugger.
 #[derive(Clone, Copy, Debug)]
-pub struct Scope {
-    pub parent: Option<Id<Scope>>, // `None` for the function's block
+pub struct DebugScope {
+    pub parent: Option<Id<DebugScope>>, // `None` for the function's block
 }
 
 #[derive(Clone, Debug)]
 pub struct Block {
     pub instructions: List<Instruction>,
     pub terminator: Terminator,
+    pub debug_scope: Id<DebugScope>, // where the terminator is written
 }
 
 /// One operation; its id is the value it gives, of type `ty` (`void` when it
@@ -60,6 +63,7 @@ pub struct Block {
 pub struct Instruction {
     pub ty: TypeId,
     pub kind: InstructionKind,
+    pub debug_scope: Id<DebugScope>, // the block of the source it is written in
 }
 
 #[derive(Clone, Debug)]
@@ -154,7 +158,7 @@ impl Body {
             _ = writeln!(printer.out, "  bb{}:", block.index());
             let block = &self.blocks[block];
             for instruction in self.lists.items(block.instructions) {
-                let Instruction { ty, kind } = &self.instructions[instruction];
+                let Instruction { ty, kind, .. } = &self.instructions[instruction];
                 printer.out.push_str("    ");
                 if *ty != TypeId::VOID {
                     _ = write!(printer.out, "%{} = ", instruction.index());

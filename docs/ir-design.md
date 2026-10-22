@@ -379,8 +379,10 @@ cannot reuse one; named results can join that block later (owner, 2026-10-18).
 These live in the checker, which knows the blocks. The blocks are the body's
 scopes: THIR's `blocks` arena holds each with its parent, the function's
 first, and each local names its block. Lowering copies them into MIR's
-`scopes` by the same ids, and the LLVM backend makes a `DILexicalBlock` of
-each that declares a variable, under its nearest such ancestor.
+`debug_scopes` by the same ids, and stamps each instruction, terminator and
+variable with its debug scope; only debug info reads them. The LLVM backend
+makes a `DILexicalBlock` of each that declares a variable, under its nearest
+such ancestor.
 
 `peeper -dump [thir | mir | ll] <path>` writes the THIR, MIR and LLVM IR of every function
 of a program without errors, or only the kind named, one file per module under

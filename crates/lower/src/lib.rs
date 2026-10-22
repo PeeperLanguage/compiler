@@ -26,14 +26,19 @@ pub fn lower(body: &thir::Body, parameters: usize) -> Option<mir::Body> {
         mir: mir::Body::default(),
         block: Id::from_index(0),
         instructions: Vec::new(),
+        debug_scope: Id::from_index(0),
     };
-    // One scope per block and one MIR variable per THIR variable, in order:
-    // block `i` is scope `i`, and the ids of variables match.
-    let scope = |block: Id<thir::Block>| Id::from_index(block.index());
+    // One debug scope per block and one MIR variable per THIR variable, in
+    // order: block `i` is debug scope `i`, and the ids of variables match.
     for block in body.blocks.ids() {
-        let parent = body.blocks[block].parent.map(scope);
+        let parent = body.blocks[block]
+            .parent
+            .map(|parent| Id::from_index(parent.index()));
         let span = body.blocks.span(block);
-        lowering.mir.scopes.push(mir::Scope { parent }, span);
+        lowering
+            .mir
+            .debug_scopes
+            .push(mir::DebugScope { parent }, span);
     }
     for id in body.variables.ids() {
         let variable = body.variables[id];
@@ -45,7 +50,7 @@ pub fn lower(body: &thir::Body, parameters: usize) -> Option<mir::Body> {
                 ty: variable.ty,
                 mutable: variable.mutable,
                 initialized: variable.initialized,
-                scope: scope(variable.scope),
+                debug_scope: Id::from_index(variable.scope.index()),
             },
             body.variables.span(id),
         );
@@ -62,7 +67,7 @@ pub fn lower(body: &thir::Body, parameters: usize) -> Option<mir::Body> {
         let span = lowering.mir.variables.span(variable);
         lowering.emit(store, TypeId::VOID, span);
     }
-    lowering.lower_statements(body.blocks[function].statements)?;
+    lowering.lower_block(function)?;
     let end = Span::new(span.end as usize - 1, span.end as usize); // the `}`
     lowering.finish(mir::Terminator::FallOff(end));
     Some(lowering.mir)
@@ -71,8 +76,9 @@ pub fn lower(body: &thir::Body, parameters: usize) -> Option<mir::Body> {
 struct Lowering<'t> {
     thir: &'t thir::Body,
     mir: mir::Body,
-    block: Id<mir::Block>,         // the block being filled
-    instructions: Vec<NonZeroU32>, // that block's instructions so far
+    block: Id<mir::Block>,            // the block being filled
+    instructions: Vec<NonZeroU32>,    // that block's instructions so far
+    debug_scope: Id<mir::DebugScope>, // the one new instructions are written in
 }
 
 impl Lowering<'_> {
@@ -82,6 +88,7 @@ impl Lowering<'_> {
         let block = mir::Block {
             instructions: arena::List::EMPTY,
             terminator: mir::Terminator::FallOff(span), // replaced by `finish`
+            debug_scope: self.debug_scope,
         };
         self.mir.blocks.push(block, span)
     }
@@ -93,15 +100,20 @@ impl Lowering<'_> {
         self.mir.blocks[self.block] = mir::Block {
             instructions,
             terminator,
+            debug_scope: self.debug_scope,
         };
     }
 
     /// Adds an instruction to the block being filled and gives its value.
     fn emit(&mut self, kind: mir::InstructionKind, ty: TypeId, span: Span) -> mir::Operand {
-        let instruction = self
-            .mir
-            .instructions
-            .push(mir::Instruction { ty, kind }, span);
+        let instruction = self.mir.instructions.push(
+            mir::Instruction {
+                ty,
+                kind,
+                debug_scope: self.debug_scope,
+            },
+            span,
+        );
         self.instructions.push(instruction.into());
         mir::Operand::Value(instruction)
     }
@@ -113,10 +125,14 @@ impl Lowering<'_> {
         mir::Operand::Constant(id)
     }
 
-    fn lower_statements(&mut self, statements: arena::List<thir::Stmt>) -> Option<()> {
-        for statement in self.thir.lists.items(statements) {
+    /// Lowers the statements of the source block `block`, whose MIR debug
+    /// scope has the same id.
+    fn lower_block(&mut self, block: Id<thir::Block>) -> Option<()> {
+        let outer = std::mem::replace(&mut self.debug_scope, Id::from_index(block.index()));
+        for statement in self.thir.lists.items(self.thir.blocks[block].statements) {
             self.lower_statement(statement)?;
         }
+        self.debug_scope = outer;
         Some(())
     }
 
@@ -166,7 +182,7 @@ impl Lowering<'_> {
                     otherwise: else_block.unwrap_or(join),
                 });
                 self.block = then_block;
-                self.lower_statements(self.thir.blocks[then].statements)?;
+                self.lower_block(then)?;
                 self.finish(mir::Terminator::Goto(join));
                 if let (Some(else_block), Some(otherwise)) = (else_block, otherwise) {
                     self.block = else_block;
@@ -175,9 +191,7 @@ impl Lowering<'_> {
                 }
                 self.block = join;
             }
-            thir::Stmt::Block(block) => {
-                self.lower_statements(self.thir.blocks[block].statements)?
-            }
+            thir::Stmt::Block(block) => self.lower_block(block)?,
         }
         Some(())
     }

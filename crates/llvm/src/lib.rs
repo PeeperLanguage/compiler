@@ -266,14 +266,14 @@ fn type_text(types: &Types, ty: TypeId) -> String {
 }
 
 /// The attribute that extends a value of type `ty` to C's `int` when it
-/// passes to or from C code, as the C ABI requires of a narrower type; empty
+/// passes to or from C code, as the C ABI requires of a narrower type; `None`
 /// for any other type.
-fn c_extension(types: &Types, ty: TypeId) -> &'static str {
+fn c_extension(types: &Types, ty: TypeId) -> Option<&'static str> {
     match types[ty] {
-        Type::Bool => "zeroext",
-        Type::Integer(integer) if integer.bits < 32 && integer.signed => "signext",
-        Type::Integer(integer) if integer.bits < 32 => "zeroext",
-        _ => "",
+        Type::Bool => Some("zeroext"),
+        Type::Integer(integer) if integer.bits < 32 && integer.signed => Some("signext"),
+        Type::Integer(integer) if integer.bits < 32 => Some("zeroext"),
+        _ => None,
     }
 }
 

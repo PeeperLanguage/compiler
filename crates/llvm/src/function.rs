@@ -46,7 +46,8 @@ impl Module<'_> {
         let program = self.program;
         let tree = &program.modules[definition.module.index()].ast;
         let symbol = symbol(program, definition);
-        let scope = self.add_debug_info(definition, &symbol, parameters, *result, types);
+        let (subprogram, scope_metadata) =
+            self.add_debug_info(definition, &symbol, parameters, *result, body, types);
         // Each string constant's global.
         let strings = body
             .constants
@@ -62,8 +63,7 @@ impl Module<'_> {
             body,
             types,
             file: &tree.file,
-            scope,
-            scopes: Vec::new(),
+            scope_metadata,
             locations: HashMap::new(),
             out: String::new(),
             panics: String::new(),
@@ -86,7 +86,7 @@ impl Module<'_> {
             .collect();
         _ = writeln!(
             function.out,
-            "define {} {}({}) !dbg !{scope} {{\nentry:",
+            "define {} {}({}) !dbg !{subprogram} {{\nentry:",
             type_text(types, *result),
             global(&symbol),
             arguments.join(", ")
@@ -104,16 +104,21 @@ impl Module<'_> {
     }
 
     /// Adds the debug info of the function `definition`, linked as `symbol`,
-    /// that takes `parameters` and gives `result`, and gives the id of its
-    /// `DISubprogram`: the scope of everything in the function.
+    /// that takes `parameters`, gives `result` and has the MIR `body`: its
+    /// `DISubprogram`, the scope of everything in it, and a `DILexicalBlock`
+    /// for each block that declares a variable. Gives the subprogram and the
+    /// metadata of each MIR debug scope: its lexical block, else its parent's.
+    /// The function's block takes the subprogram when there are parameters,
+    /// whose scope is the function.
     fn add_debug_info(
         &mut self,
         definition: DefId,
         symbol: &str,
         parameters: &[TypeId],
         result: TypeId,
+        body: &mir::Body,
         types: &Types,
-    ) -> usize {
+    ) -> (usize, Vec<usize>) {
         let tree = &self.program.modules[definition.module.index()].ast;
         let name = tree.decls[tree.declaration(definition.index)].name();
         let (line, _) = tree.file.position(name.span.start as usize);
@@ -129,7 +134,7 @@ impl Module<'_> {
             "!DISubroutineType(types: !{{{}}})",
             signature.join(", ")
         ));
-        self.metadata.add(&format!(
+        let subprogram = self.metadata.add(&format!(
             "distinct !DISubprogram(name: {}, linkageName: {}, scope: !{file}, file: !{file}, \
              line: {line}, type: !{subroutine}, scopeLine: {line}, spFlags: DISPFlagDefinition, \
              unit: !{})",
@@ -137,7 +142,33 @@ impl Module<'_> {
             quoted(symbol.as_bytes()),
             self.metadata.unit,
             file = self.metadata.file,
-        ))
+        ));
+        let mut declares = vec![false; body.debug_scopes.len()];
+        for variable in body.variables.ids() {
+            declares[body.variables[variable].debug_scope.index()] = true;
+        }
+        if !parameters.is_empty() {
+            declares[0] = false;
+        }
+        // A block comes after its parent, so the parent's debug scope is known.
+        let mut scope_metadata: Vec<usize> = Vec::with_capacity(declares.len());
+        for scope in body.debug_scopes.ids() {
+            let parent = body.debug_scopes[scope]
+                .parent
+                .map_or(subprogram, |parent| scope_metadata[parent.index()]);
+            if !declares[scope.index()] {
+                scope_metadata.push(parent);
+                continue;
+            }
+            let (line, column) = tree
+                .file
+                .position(body.debug_scopes.span(scope).start as usize);
+            scope_metadata.push(self.metadata.add(&format!(
+                "!DILexicalBlock(scope: !{parent}, file: !{}, line: {line}, column: {column})",
+                self.metadata.file
+            )));
+        }
+        (subprogram, scope_metadata)
     }
 }
 
@@ -166,6 +197,12 @@ fn operand_type(body: &mir::Body, operand: Operand) -> TypeId {
     }
 }
 
+/// The LLVM name of the value the instruction `id` gives, which the checks
+/// it writes first extend (`%i3.z`).
+fn value_name(id: Id<mir::Instruction>) -> String {
+    format!("%i{}", id.index())
+}
+
 /// `symbol` as an LLVM global name.
 pub(crate) fn global(symbol: &str) -> String {
     format!("@{}", quoted(symbol.as_bytes()))
@@ -178,11 +215,7 @@ struct Function<'m, 'p, 'b> {
     body: &'b mir::Body,
     types: &'b Types,
     file: &'b SourceFile,
-    scope: usize, // the function's DISubprogram
-    /// The `DILexicalBlock` of each block that declares a variable (not the
-    /// function's block when it has parameters, whose scope is the function),
-    /// by its span, outer blocks first.
-    scopes: Vec<(Span, usize)>,
+    scope_metadata: Vec<usize>, // by MIR debug scope (`Module::add_debug_info`)
     locations: HashMap<(usize, usize, usize), usize>, // each scope, line and column's DILocation
     out: String,
     panics: String,     // the blocks that call the panic function, after the others
@@ -195,38 +228,11 @@ impl Function<'_, '_, '_> {
     /// The `alloca` and debug declaration of each variable, the first
     /// `parameters` of them the parameters.
     fn variables(&mut self, parameters: usize) {
-        // A block gets a lexical block only when it declares a variable; the
-        // parameters' scope is the function itself.
-        let mut declares = vec![false; self.body.scopes.len()];
-        for variable in self.body.variables.ids() {
-            declares[self.body.variables[variable].scope.index()] = true;
-        }
-        if parameters > 0 {
-            declares[0] = false;
-        }
-        // The debug scope of each block: its lexical block, else its parent's.
-        // A block comes after its parent, so the parent's is known.
-        let mut debug_scopes: Vec<usize> = Vec::with_capacity(declares.len());
-        for scope in self.body.scopes.ids() {
-            let parent = self.body.scopes[scope]
-                .parent
-                .map_or(self.scope, |parent| debug_scopes[parent.index()]);
-            if !declares[scope.index()] {
-                debug_scopes.push(parent);
-                continue;
-            }
-            let block = self.body.scopes.span(scope);
-            let (line, column) = self.file.position(block.start as usize);
-            let id = self.module.metadata.add(&format!(
-                "!DILexicalBlock(scope: !{parent}, file: !{}, line: {line}, column: {column})",
-                self.module.metadata.file
-            ));
-            self.scopes.push((block, id));
-            debug_scopes.push(id);
-        }
         for variable in self.body.variables.ids() {
             let index = variable.index();
-            let ty = self.body.variables[variable].ty;
+            let mir::Variable {
+                ty, debug_scope, ..
+            } = self.body.variables[variable];
             let span = self.body.variables.span(variable);
             let debug_type = self.module.debug_type(self.types, ty).unwrap_or_default();
             let (line, _) = self.file.position(span.start as usize);
@@ -238,10 +244,10 @@ impl Function<'_, '_, '_> {
             let declared = self.module.metadata.add(&format!(
                 "!DILocalVariable(name: {}, {argument}scope: !{}, file: !{}, line: {line}, type: !{debug_type})",
                 quoted(self.file.slice(span).as_bytes()),
-                debug_scopes[self.body.variables[variable].scope.index()],
+                self.scope_metadata[debug_scope.index()],
                 self.module.metadata.file,
             ));
-            let location = self.location(span);
+            let location = self.location(span, debug_scope);
             _ = writeln!(
                 self.out,
                 "  %v{index} = alloca {}\n  call void @llvm.dbg.declare(metadata ptr %v{index}, \
@@ -251,22 +257,11 @@ impl Function<'_, '_, '_> {
         }
     }
 
-    /// The innermost scope holding where `span` starts: a block that declares
-    /// a variable, else the function.
-    fn scope_of(&self, span: Span) -> usize {
-        let inside =
-            |&&(block, _): &&(Span, usize)| block.start <= span.start && span.start < block.end;
-        self.scopes
-            .iter()
-            .rev()
-            .find(inside)
-            .map_or(self.scope, |&(_, id)| id)
-    }
-
-    /// The DILocation of where `span` starts.
-    fn location(&mut self, span: Span) -> usize {
+    /// The DILocation of where `span` starts, in the MIR debug scope
+    /// `debug_scope`.
+    fn location(&mut self, span: Span, debug_scope: Id<mir::DebugScope>) -> usize {
         let (line, column) = self.file.position(span.start as usize);
-        let scope = self.scope_of(span);
+        let scope = self.scope_metadata[debug_scope.index()];
         if let Some(&id) = self.locations.get(&(scope, line, column)) {
             return id;
         }
@@ -293,7 +288,7 @@ impl Function<'_, '_, '_> {
                 None => constant_text(self.types, &self.body.constants[constant.index()]),
             },
             Operand::Argument(index) => format!("%arg{index}"),
-            Operand::Value(instruction) => format!("%i{}", instruction.index()),
+            Operand::Value(instruction) => value_name(instruction),
         }
     }
 
@@ -313,46 +308,52 @@ impl Function<'_, '_, '_> {
         for instruction in body.lists.items(mir.instructions) {
             self.write_instruction(instruction);
         }
-        let line = match mir.terminator {
-            Terminator::Goto(target) => format!("br label %bb{}", target.index()),
+        let (line, span) = match mir.terminator {
+            Terminator::Goto(target) => (format!("br label %bb{}", target.index()), None),
             Terminator::Branch {
                 condition,
                 span,
                 then,
                 otherwise,
             } => {
-                let location = self.location(span);
-                format!(
-                    "br i1 {}, label %bb{}, label %bb{}, !dbg !{location}",
+                let line = format!(
+                    "br i1 {}, label %bb{}, label %bb{}",
                     self.operand(condition),
                     then.index(),
                     otherwise.index()
-                )
+                );
+                (line, Some(span))
             }
-            Terminator::Return { value, span } => {
-                let location = self.location(span);
-                match value {
-                    Some(value) => format!("ret {}, !dbg !{location}", self.typed(value)),
-                    None => format!("ret void, !dbg !{location}"),
-                }
-            }
+            Terminator::Return {
+                value: Some(value),
+                span,
+            } => (format!("ret {}", self.typed(value)), Some(span)),
             // Reachable with a result only in a function with an error,
             // which is not lowered.
-            Terminator::FallOff(_) if result != TypeId::VOID => "unreachable".to_string(),
-            Terminator::FallOff(span) => {
-                let location = self.location(span);
-                format!("ret void, !dbg !{location}")
+            Terminator::FallOff(_) if result != TypeId::VOID => ("unreachable".to_string(), None),
+            Terminator::Return { value: None, span } | Terminator::FallOff(span) => {
+                ("ret void".to_string(), Some(span))
             }
         };
-        _ = writeln!(self.out, "  {line}");
+        match span {
+            Some(span) => {
+                let location = self.location(span, mir.debug_scope);
+                _ = writeln!(self.out, "  {line}, !dbg !{location}");
+            }
+            None => _ = writeln!(self.out, "  {line}"),
+        }
     }
 
     /// Writes the instruction `id`.
     fn write_instruction(&mut self, id: Id<mir::Instruction>) {
-        let mir::Instruction { ty, ref kind } = self.body.instructions[id];
+        let mir::Instruction {
+            ty,
+            ref kind,
+            debug_scope,
+        } = self.body.instructions[id];
         let span = self.body.instructions.span(id);
-        let location = self.location(span);
-        let name = format!("%i{}", id.index());
+        let location = self.location(span, debug_scope);
+        let name = value_name(id);
         let types = self.types;
         let line = match *kind {
             InstructionKind::Load(variable) => format!(
@@ -366,9 +367,7 @@ impl Function<'_, '_, '_> {
                 self.operand(value),
                 variable.index()
             ),
-            InstructionKind::Binary { op, left, right } => {
-                self.write_binary(id, op, left, right, span)
-            }
+            InstructionKind::Binary { op, left, right } => self.write_binary(id, op, left, right),
             InstructionKind::Unary { op, value } => {
                 let text = type_text(types, ty);
                 let value = self.operand(value);
@@ -395,52 +394,7 @@ impl Function<'_, '_, '_> {
             InstructionKind::Call {
                 function,
                 ref arguments,
-            } => {
-                let callee = symbol(self.module.program, function);
-                // Only C code needs the C ABI's extension of narrow integers;
-                // it follows a parameter's type and comes before a result's.
-                let external = extern_symbol(self.module.program, function).is_some();
-                let extension = |ty| {
-                    if external { c_extension(types, ty) } else { "" }
-                };
-                let parameter = |ty| {
-                    format!("{} {}", type_text(types, ty), extension(ty))
-                        .trim_end()
-                        .to_string()
-                };
-                let result = format!("{} {}", extension(ty), type_text(types, ty))
-                    .trim_start()
-                    .to_string();
-                let body = self.body;
-                self.module.declare(&callee, || {
-                    let parameters: Vec<String> = arguments
-                        .iter()
-                        .map(|&argument| parameter(operand_type(body, argument)))
-                        .collect();
-                    format!(
-                        "declare {result} {}({})\n\n",
-                        global(&callee),
-                        parameters.join(", ")
-                    )
-                });
-                let arguments: Vec<String> = arguments
-                    .iter()
-                    .map(|&argument| {
-                        let ty = operand_type(body, argument);
-                        format!("{} {}", parameter(ty), self.operand(argument))
-                    })
-                    .collect();
-                let call = format!(
-                    "call {result} {}({})",
-                    global(&callee),
-                    arguments.join(", ")
-                );
-                if ty == TypeId::VOID {
-                    call
-                } else {
-                    format!("{name} = {call}")
-                }
-            }
+            } => self.write_call(id, function, arguments),
             InstructionKind::Phi(ref incoming) => {
                 let incoming: Vec<String> = incoming
                     .iter()
@@ -460,6 +414,51 @@ impl Function<'_, '_, '_> {
         _ = writeln!(self.out, "  {line}, !dbg !{location}");
     }
 
+    /// The line calling `function` with `arguments` for the instruction `id`,
+    /// after noting the declaration the module needs for it.
+    fn write_call(
+        &mut self,
+        id: Id<mir::Instruction>,
+        function: DefId,
+        arguments: &[Operand],
+    ) -> String {
+        let (ty, types) = (self.body.instructions[id].ty, self.types);
+        let symbol = symbol(self.module.program, function);
+        let callee = global(&symbol);
+        // Only C code needs the C ABI's extension of narrow integers; it
+        // follows a parameter's type and comes before a result's.
+        let external = extern_symbol(self.module.program, function).is_some();
+        let extension = |ty| c_extension(types, ty).filter(|_| external);
+        let result = match extension(ty) {
+            Some(extension) => format!("{extension} {}", type_text(types, ty)),
+            None => type_text(types, ty),
+        };
+        let parameters: Vec<String> = arguments
+            .iter()
+            .map(|&argument| {
+                let ty = operand_type(self.body, argument);
+                match extension(ty) {
+                    Some(extension) => format!("{} {extension}", type_text(types, ty)),
+                    None => type_text(types, ty),
+                }
+            })
+            .collect();
+        self.module.declare(&symbol, || {
+            format!("declare {result} {callee}({})\n\n", parameters.join(", "))
+        });
+        let arguments: Vec<String> = parameters
+            .iter()
+            .zip(arguments)
+            .map(|(parameter, &argument)| format!("{parameter} {}", self.operand(argument)))
+            .collect();
+        let call = format!("call {result} {callee}({})", arguments.join(", "));
+        if ty == TypeId::VOID {
+            call
+        } else {
+            format!("{} = {call}", value_name(id))
+        }
+    }
+
     /// The line computing the binary operation `id`, after writing the checks
     /// it needs first.
     fn write_binary(
@@ -468,9 +467,8 @@ impl Function<'_, '_, '_> {
         op: BinaryOp,
         left: Operand,
         right: Operand,
-        span: Span,
     ) -> String {
-        let name = format!("%i{}", id.index());
+        let name = value_name(id);
         let left_type = operand_type(self.body, left);
         let ty = type_text(self.types, left_type);
         let (l, mut r) = (self.operand(left), self.operand(right));
@@ -497,7 +495,7 @@ impl Function<'_, '_, '_> {
                         if checks {
                             let zero = format!("{name}.z");
                             _ = writeln!(self.out, "  {zero} = icmp eq {ty} {r}, 0");
-                            self.check(&zero, "division by zero", span);
+                            self.check(&zero, "division by zero", id);
                         }
                         if signed && (checks || self.is_minus_one(right)) {
                             // MIN / -1 is MIN and MIN % -1 is 0, as check
@@ -531,7 +529,7 @@ impl Function<'_, '_, '_> {
                         }
                     }
                     BinaryOp::ShiftLeft | BinaryOp::ShiftRight => {
-                        r = self.shift_count(id, right, left_type, span, checks);
+                        r = self.shift_count(id, right, left_type, checks);
                         match (op, signed) {
                             (BinaryOp::ShiftLeft, _) => "shl",
                             (_, true) => "ashr",
@@ -585,7 +583,6 @@ impl Function<'_, '_, '_> {
         id: Id<mir::Instruction>,
         count: Operand,
         shifted: TypeId,
-        span: Span,
         checks: bool,
     ) -> String {
         let (Type::Integer(shifted_type), Type::Integer(count_type)) = (
@@ -595,10 +592,11 @@ impl Function<'_, '_, '_> {
             unreachable!("check accepts shifts of integers by integers only");
         };
         let (width, count_bits) = (shifted_type.bits, count_type.bits);
+        let name = value_name(id);
         let value = self.operand(count);
         if checks {
             let (compared, compared_bits) = if count_bits < 32 {
-                let extended = format!("%i{}.e", id.index());
+                let extended = format!("{name}.e");
                 let conversion = if count_type.signed { "sext" } else { "zext" };
                 _ = writeln!(
                     self.out,
@@ -608,18 +606,18 @@ impl Function<'_, '_, '_> {
             } else {
                 (value.clone(), count_bits)
             };
-            let too_far = format!("%i{}.c", id.index());
+            let too_far = format!("{name}.c");
             _ = writeln!(
                 self.out,
                 "  {too_far} = icmp uge i{compared_bits} {compared}, {width}"
             );
             let message = format!("a shift count must be from 0 to {}", width - 1);
-            self.check(&too_far, &message, span);
+            self.check(&too_far, &message, id);
         }
         if count_bits == width {
             return value;
         }
-        let converted = format!("%i{}.s", id.index());
+        let converted = format!("{name}.s");
         let conversion = if count_bits < width { "zext" } else { "trunc" };
         _ = writeln!(
             self.out,
@@ -629,10 +627,10 @@ impl Function<'_, '_, '_> {
     }
 
     /// Goes on in the next block of the MIR block being written when
-    /// `failed` is false, else panics: writes `message` and where `span` is
-    /// to the standard error and exits with `PANIC_EXIT_CODE`. The text is
+    /// `failed` is false, else panics: writes `message` and where the
+    /// instruction `id` is written to the standard error and exits with `PANIC_EXIT_CODE`. The text is
     /// known at compile time, so it is one string constant.
-    fn check(&mut self, failed: &str, message: &str, span: Span) {
+    fn check(&mut self, failed: &str, message: &str, id: Id<mir::Instruction>) {
         self.checked += 1;
         let next = format!("bb{}.{}", self.block, self.checked);
         let panic = format!("{next}.panic");
@@ -640,7 +638,8 @@ impl Function<'_, '_, '_> {
             self.out,
             "  br i1 {failed}, label %{panic}, label %{next}\n{next}:"
         );
-        let location = self.location(span);
+        let span = self.body.instructions.span(id);
+        let location = self.location(span, self.body.instructions[id].debug_scope);
         let (line, column) = self.file.position(span.start as usize);
         let text = format!(
             "panic: {message}\n  --> {}:{line}:{column}\n",

@@ -15,10 +15,8 @@ use std::time::UNIX_EPOCH;
 use crate::Module;
 
 /// Compiles each of `modules` that has a function, several at once, and links
-/// the objects with the runtime library `runtime` into the program `output`. The files in between
-/// live in a temporary folder, removed after. The program is linked beside
-/// `output` and then renamed to it, so a failed link leaves no half-written
-/// program.
+/// the objects with the runtime library `runtime` into the program `output`.
+/// The files in between live in a temporary folder, removed after.
 pub fn link_executable(modules: &[Module], runtime: &Path, output: &Path) -> Result<(), String> {
     if !runtime.is_file() {
         return Err(format!(
@@ -32,22 +30,20 @@ pub fn link_executable(modules: &[Module], runtime: &Path, output: &Path) -> Res
     let folder = std::env::temp_dir().join(format!("peeper-link-{}-{nanos}", std::process::id()));
     std::fs::create_dir_all(&folder)
         .map_err(|error| format!("cannot make {}: {error}", folder.display()))?;
-    let linked = compile_and_link(modules, runtime, output, &folder);
+    let linked =
+        compile_modules(modules, &folder).and_then(|objects| link(&objects, runtime, output));
     _ = std::fs::remove_dir_all(&folder);
     linked
 }
 
-fn compile_and_link(
-    modules: &[Module],
-    runtime: &Path,
-    output: &Path,
-    folder: &Path,
-) -> Result<(), String> {
-    let objects = compile_modules(modules, folder)?;
+/// Links `objects` with the runtime library `runtime` into the program
+/// `output`. The program is linked beside `output` and then renamed to it, so
+/// a failed link leaves no half-written program.
+fn link(objects: &[PathBuf], runtime: &Path, output: &Path) -> Result<(), String> {
     let name = output.file_name().unwrap_or_default().to_string_lossy();
     let staged = output.with_file_name(format!(".{name}-link-{}", std::process::id()));
     let mut clang = Command::new("clang");
-    clang.args(&objects).arg(runtime);
+    clang.args(objects).arg(runtime);
     if !cfg!(windows) {
         clang.arg("-lm"); // LLVM turns a float `%` into a call of `fmod`
     }

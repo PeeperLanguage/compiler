@@ -106,6 +106,7 @@ pub fn report_missing_return(
                 let mir::Block {
                     instructions,
                     ref terminator,
+                    ..
                 } = body.blocks[predecessor];
                 if let mir::Terminator::Branch {
                     condition,
@@ -300,6 +301,7 @@ pub fn warn_unreachable_code(
             let mir::Block {
                 instructions,
                 ref terminator,
+                ..
             } = body.blocks[block];
             let terminator = match *terminator {
                 mir::Terminator::Return { span, .. } | mir::Terminator::Branch { span, .. } => {
