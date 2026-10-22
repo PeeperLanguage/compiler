@@ -31,7 +31,7 @@ pub(crate) struct ThirBuilder<'a, 'p> {
     /// The module's checker, borrowed for the build: its module, queries and
     /// diagnostics.
     pub(crate) checker: ModuleChecker<'a, 'p>,
-    pub(crate) body: Body,
+    pub(crate) body: &'a mut Body,
     /// The names written in the body, in the order checked, for a caller that
     /// wants them (`ModuleChecker::check_body`); `None` records nothing.
     recorded: Option<&'a mut Vec<Name>>,
@@ -46,24 +46,30 @@ pub(crate) struct ThirBuilder<'a, 'p> {
 }
 
 impl ModuleChecker<'_, '_> {
-    /// The THIR of `function`'s body, given its type `ty` (`function`),
-    /// with `has_errors` set when checking it reported an error. `None` for a
-    /// function without a body, or whose signature had an error. The names
-    /// written in it go to `names` when given, as for an editor.
+    /// Puts in `body` the THIR of `function`'s body, given its type `ty`
+    /// (`function`), with `has_errors` set when checking it reported an
+    /// error; what `body` held is dropped, its memory kept. False, with
+    /// `body` untouched, for a function without a body or whose signature had
+    /// an error. The names written in it go to `names` when given, as for an
+    /// editor.
     pub fn check_body(
         &mut self,
         function: &ast::Function,
         ty: TypeId,
+        body: &mut Body,
         names: Option<&mut Vec<Name>>,
-    ) -> Option<Body> {
-        let block = function.body?;
+    ) -> bool {
+        let Some(block) = function.body else {
+            return false;
+        };
         let reported = self.diagnostics.len();
         let Type::Function { parameters, result } = &self.queries.types[ty] else {
-            return None; // the signature's error was reported
+            return false; // the signature's error was reported
         };
         let (parameters, result) = (parameters.clone(), *result);
         let tree = &self.module().ast;
-        let mut builder = ThirBuilder::new(self, result, names);
+        body.clear();
+        let mut builder = ThirBuilder::new(self, body, result, names);
         let outermost = Block {
             parent: None,
             statements: List::EMPTY,
@@ -89,29 +95,30 @@ impl ModuleChecker<'_, '_> {
         }
         let statements = builder.check_statements(tree.blocks[block].statements);
         builder.body.blocks[outermost].statements = statements;
-        let mut body = builder.body;
         // A part of the signature that failed was reported with the signature.
         body.has_errors = parameters.contains(&TypeId::INVALID)
             || result == TypeId::INVALID
             || self.diagnostics[reported..]
                 .iter()
                 .any(Diagnostic::is_error);
-        Some(body)
+        true
     }
 
     /// The type and value of the module's constant `declaration`; `None` when
     /// it had an error. Its value is checked as a body's `const` is, with no
     /// variables in scope.
     pub fn check_constant(&mut self, declaration: Id<ast::Decl>) -> Option<Constant> {
-        ThirBuilder::new(self, TypeId::VOID, None).check_const_statement(declaration)
+        let mut body = Body::default();
+        ThirBuilder::new(self, &mut body, TypeId::VOID, None).check_const_statement(declaration)
     }
 }
 
 impl<'a, 'p> ThirBuilder<'a, 'p> {
-    /// Building code whose `return` gives `result`, recording its names into
-    /// `recorded` when given.
+    /// Building code into `body` whose `return` gives `result`, recording
+    /// its names into `recorded` when given.
     fn new(
         checker: &'a mut ModuleChecker<'_, 'p>,
+        body: &'a mut Body,
         result: TypeId,
         recorded: Option<&'a mut Vec<Name>>,
     ) -> ThirBuilder<'a, 'p> {
@@ -121,7 +128,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 queries: checker.queries,
                 diagnostics: checker.diagnostics,
             },
-            body: Body::default(),
+            body,
             recorded,
             names: Vec::new(),
             block_start: 0,
@@ -517,6 +524,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
 mod tests {
     use model::DefId;
     use model::ast;
+    use model::thir::Body;
     use source::SourceFile;
 
     use crate::testing::Reported;
@@ -535,8 +543,10 @@ mod tests {
                     continue;
                 };
                 let signature = checker.check_signature(declaration);
-                let body = checker.check_body(&function, signature, None);
-                bodies.extend(body.filter(|body| !body.has_errors));
+                let mut body = Body::default();
+                if checker.check_body(&function, signature, &mut body, None) && !body.has_errors {
+                    bodies.push(body);
+                }
             }
             bodies
         });
@@ -790,7 +800,7 @@ mod tests {
                 unreachable!("the first declaration is a function")
             };
             let signature = checker.check_signature(declaration);
-            checker.check_body(&function, signature, None);
+            checker.check_body(&function, signature, &mut Body::default(), None);
             let note = |diagnostic: &diagnostics::Diagnostic| {
                 let first = diagnostic.notes.first();
                 (

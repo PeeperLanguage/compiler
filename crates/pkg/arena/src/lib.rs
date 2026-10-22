@@ -104,6 +104,11 @@ pub struct Lists {
 }
 
 impl Lists {
+    /// Removes every list, keeping the memory for the next ones.
+    pub fn clear(&mut self) {
+        self.items.clear();
+    }
+
     /// Stores the items as a list; `items` hold raw ids of `T` (see
     /// `From<Id<T>> for NonZeroU32`).
     pub fn add<T>(&mut self, items: &[NonZeroU32]) -> List<T> {
@@ -145,6 +150,12 @@ pub struct Arena<T> {
 }
 
 impl<T> Arena<T> {
+    /// Removes every node, keeping the memory for the next ones.
+    pub fn clear(&mut self) {
+        self.nodes.clear();
+        self.spans.clear();
+    }
+
     /// Adds `node` with `span`.
     pub fn push(&mut self, node: T, span: Span) -> Id<T> {
         let id = Id::from_index(self.nodes.len());

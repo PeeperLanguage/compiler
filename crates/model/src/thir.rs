@@ -145,6 +145,27 @@ pub struct Block {
 }
 
 impl Body {
+    /// Empties it for another function's body, keeping the memory.
+    pub fn clear(&mut self) {
+        // Named in full, so a new field cannot be missed.
+        let Body {
+            exprs,
+            stmts,
+            blocks,
+            variables,
+            constants,
+            lists,
+            has_errors,
+        } = self;
+        exprs.clear();
+        stmts.clear();
+        blocks.clear();
+        variables.clear();
+        constants.clear();
+        lists.clear();
+        *has_errors = false;
+    }
+
     /// Adds `node` with `span` to its arena.
     pub fn add<T: Node<Container = Body>>(&mut self, node: T, span: Span) -> Id<T> {
         T::arena(self).push(node, span)

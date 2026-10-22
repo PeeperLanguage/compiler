@@ -122,6 +122,8 @@ pub fn run(
         .collect();
     // Whether each module's interface differs from the previous compile's.
     let mut changed: Vec<bool> = Vec::with_capacity(modules.len());
+    // One THIR body for every function, so its memory is reused.
+    let mut thir = thir::Body::default();
     for (index, module) in modules.iter().enumerate() {
         let id = ModuleId::from_index(index);
         let tree = &module.ast;
@@ -155,9 +157,10 @@ pub fn run(
                     let ty = queries.function(definition);
                     let mut names = Vec::new(); // allocates only when a name is recorded
                     let recorded = record_names.then_some(&mut names);
-                    let thir = queries
-                        .with_checker(id, |checker| checker.check_body(&function, ty, recorded));
-                    if let Some(thir) = thir {
+                    let checked = queries.with_checker(id, |checker| {
+                        checker.check_body(&function, ty, &mut thir, recorded)
+                    });
+                    if checked {
                         // Its MIR, path-checked; none when the signature had an
                         // error (reported) or it cannot be lowered (`lower::lower`).
                         let mir = match queries.types[ty] {
