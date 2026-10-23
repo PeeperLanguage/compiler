@@ -1,0 +1,19 @@
+// A literal is one aggregate of its field values, computed in the order
+// written; a field of a variable is one load of its path, and a field of a
+// value not in a variable is read from it.
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+struct Segment {
+    start: Point,
+    end: Point,
+}
+
+fn main() {
+    let p = Point.{ y = 2, x = 1 };
+    let s = Segment.{ start = p, end = .{ x = 3, y = 4 } };
+    let x = s.end.x;
+    let y = Point.{ x = 5, y = 6 }.y;
+}

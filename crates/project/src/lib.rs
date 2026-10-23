@@ -55,6 +55,20 @@ pub fn declared_name(modules: &[Module], definition: DefId) -> (Ident, &Arc<Sour
     )
 }
 
+/// The names of the fields of the struct declaration `definition` of
+/// `modules`, in order.
+pub fn field_names(modules: &[Module], definition: DefId) -> impl Iterator<Item = &str> {
+    let tree = &modules[definition.module.index()].ast;
+    let ast::Decl::Type(written) = tree.decls[tree.declaration(definition.index)] else {
+        unreachable!("`{definition:?}` is a type declaration")
+    };
+    let ast::Type::Struct(fields) = tree.types[written.ty] else {
+        unreachable!("`{definition:?}` declares a struct")
+    };
+    let names = tree.lists.items(fields);
+    names.map(move |field| tree.fields[field].name.text(&tree.file))
+}
+
 /// One resolved import of a module.
 pub struct Import {
     pub kind: ImportKind,

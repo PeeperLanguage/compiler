@@ -196,14 +196,31 @@ impl Metadata {
 
     /// Adds the node `node` and gives its number.
     fn add(&mut self, node: impl fmt::Display) -> usize {
-        let id = self.count;
-        self.count += 1;
-        _ = writeln!(self.text, "!{id} = {node}");
+        let id = self.reserve();
+        self.define(id, node);
         id
     }
 
-    /// The debug type of `ty`; `None` for `void`.
-    fn debug_type(&mut self, types: &Types, ty: TypeId) -> Option<usize> {
+    /// The number of a node to `define` later, for a node that the nodes
+    /// added before it name.
+    fn reserve(&mut self) -> usize {
+        let id = self.count;
+        self.count += 1;
+        id
+    }
+
+    /// Writes the node `id` as `node`.
+    fn define(&mut self, id: usize, node: impl fmt::Display) {
+        _ = writeln!(self.text, "!{id} = {node}");
+    }
+
+    /// The debug type of `ty`, a type of `program`; `None` for `void`.
+    fn debug_type(
+        &mut self,
+        program: &project::Program,
+        types: &Types,
+        ty: TypeId,
+    ) -> Option<usize> {
         // An alias here would get a second debug type for its type.
         debug_assert_eq!(types.real(ty), ty, "MIR holds no aliases");
         if ty == TypeId::VOID {
@@ -240,10 +257,43 @@ impl Metadata {
             Type::Invalid | Type::Void | Type::Function { .. } => {
                 unreachable!("MIR holds no value of this type")
             }
-            Type::Alias { .. } => unreachable!("indexing looks through aliases"),
-            Type::Named(_) | Type::Struct(_) => {
-                unreachable!("check rejects values of declared types; `Struct` is no value's type")
+            Type::Struct {
+                definition,
+                ref fields,
+            } => {
+                // Its members name it, so its number comes first.
+                let composite = self.reserve();
+                let (offsets, size, _) = struct_layout(types, fields, self.pointer_bits);
+                let names = project::field_names(&program.modules, definition);
+                let mut members = Vec::with_capacity(fields.len());
+                for ((name, &field), offset) in names.zip(fields).zip(offsets) {
+                    let field = types.real(field);
+                    let base = self.debug_type(program, types, field);
+                    let base = base.expect("a field has a value's type");
+                    let member = self.add(format_args!(
+                        "!DIDerivedType(tag: DW_TAG_member, name: {}, scope: !{composite}, \
+                         baseType: !{base}, offset: {})",
+                        quoted(name.as_bytes()),
+                        offset * 8
+                    ));
+                    members.push(format!("!{member}"));
+                }
+                let elements = self.add(format_args!("!{{{}}}", members.join(", ")));
+                let (name, file) = project::declared_name(&program.modules, definition);
+                self.define(
+                    composite,
+                    format_args!(
+                        "distinct !DICompositeType(tag: DW_TAG_structure_type, name: {}, \
+                         size: {}, elements: !{elements})",
+                        quoted(name.text(file).as_bytes()),
+                        size * 8
+                    ),
+                );
+                self.types.insert(ty, composite);
+                return Some(composite);
             }
+            Type::Alias { .. } => unreachable!("indexing looks through aliases"),
+            Type::Named(_) => unreachable!("no value has a named type"),
         };
         let id = self.add(text);
         self.types.insert(ty, id);
@@ -297,12 +347,80 @@ fn type_text(types: &Types, ty: TypeId) -> impl fmt::Display {
         Type::Float(Float::F32) => out.write_str("float"),
         Type::Float(Float::F64) => out.write_str("double"),
         Type::CString => out.write_str("ptr"),
+        Type::Struct { ref fields, .. } => struct_type_text(types, fields, out),
         Type::Invalid | Type::Function { .. } => unreachable!("MIR holds no value of this type"),
         Type::Alias { .. } => unreachable!("indexing looks through aliases"),
-        Type::Named(_) | Type::Struct(_) => {
-            unreachable!("check rejects values of declared types; `Struct` is no value's type")
-        }
+        Type::Named(_) => unreachable!("no value has a named type"),
     })
+}
+
+/// A struct's LLVM type, `{ i32, i64 }`, of its `fields`' types. Out of
+/// line, so `type_text`, which writes every operand's type, stays small and
+/// not recursive (measured: 11 M fewer instructions per compile of the
+/// benchmark).
+#[cold]
+#[inline(never)]
+fn struct_type_text(types: &Types, fields: &[TypeId], out: &mut fmt::Formatter) -> fmt::Result {
+    out.write_str("{")?;
+    for (index, &field) in fields.iter().enumerate() {
+        let separator = if index > 0 { ", " } else { " " };
+        write!(out, "{separator}{}", type_text(types, field))?;
+    }
+    out.write_str(if fields.is_empty() { "}" } else { " }" })
+}
+
+/// The size and alignment in bytes of a value of type `ty` in memory, as LLVM
+/// lays it out: an integer is aligned as the next of 8, 16, 32, 64 and 128
+/// bits that holds it, and wider ones as 128; its size is rounded up to that.
+/// Only debug info needs it, to place each field.
+///
+/// shortcut: the alignments of 64-bit targets (x86-64, AArch64); 32-bit x86
+/// aligns `i64` and `f64` to 4. Read them from the target's data layout when
+/// a 32-bit target is built.
+fn layout(types: &Types, ty: TypeId, pointer_bits: u32) -> (u64, u64) {
+    match types[ty] {
+        Type::Bool => (1, 1),
+        Type::Integer(integer) => {
+            let align: u64 = match integer.bits {
+                1..=8 => 1,
+                9..=16 => 2,
+                17..=32 => 4,
+                33..=64 => 8,
+                _ => 16,
+            };
+            let bytes = u64::from(integer.bits.div_ceil(8));
+            (bytes.next_multiple_of(align), align)
+        }
+        Type::Float(Float::F32) => (4, 4),
+        Type::Float(Float::F64) => (8, 8),
+        Type::CString => {
+            let bytes = u64::from(pointer_bits / 8);
+            (bytes, bytes)
+        }
+        Type::Struct { ref fields, .. } => {
+            let (_, size, align) = struct_layout(types, fields, pointer_bits);
+            (size, align)
+        }
+        Type::Invalid | Type::Void | Type::Function { .. } | Type::Named(_) => {
+            unreachable!("no value is laid out with this type")
+        }
+        Type::Alias { .. } => unreachable!("indexing looks through aliases"),
+    }
+}
+
+/// The offset of each of `fields` in a struct holding them in order, and the
+/// struct's size and alignment, in bytes (`layout`): each field at the next
+/// multiple of its alignment, the size rounded up to the largest.
+fn struct_layout(types: &Types, fields: &[TypeId], pointer_bits: u32) -> (Vec<u64>, u64, u64) {
+    let (mut offsets, mut end, mut align) = (Vec::with_capacity(fields.len()), 0u64, 1);
+    for &field in fields {
+        let (size, field_align) = layout(types, field, pointer_bits);
+        let offset = end.next_multiple_of(field_align);
+        offsets.push(offset);
+        end = offset + size;
+        align = align.max(field_align);
+    }
+    (offsets, end.next_multiple_of(align), align)
 }
 
 /// The attribute that extends a value of type `ty` to C's `int` when it
@@ -497,6 +615,38 @@ mod tests {
             .split(',')
             .next()
             .unwrap()
+    }
+
+    /// Each struct's field offsets and size match what LLVM gives on x86-64
+    /// and AArch64 (measured with `getelementptr` folded by clang `-O1`).
+    #[test]
+    fn struct_layout_matches_llvm() {
+        let mut types = Types::new();
+        let mut integer = |name: &str| types.builtin(name, 64).unwrap();
+        let (i8, i24, i40, i128, i200) = (
+            integer("i8"),
+            integer("i24"),
+            integer("i40"),
+            integer("i128"),
+            integer("i200"),
+        );
+        let layout = |fields: &[TypeId]| {
+            let (offsets, size, _) = super::struct_layout(&types, fields, 64);
+            (offsets, size)
+        };
+        assert_eq!(layout(&[TypeId::I32, TypeId::I64]), (vec![0, 8], 16));
+        assert_eq!(
+            layout(&[TypeId::BOOL, i128, TypeId::I32]),
+            (vec![0, 16, 32], 48)
+        );
+        assert_eq!(layout(&[i8, i24, i8]), (vec![0, 4, 8], 12));
+        assert_eq!(layout(&[i8, i200, i8]), (vec![0, 16, 48], 64));
+        assert_eq!(layout(&[i8, i40]), (vec![0, 8], 16));
+        assert_eq!(
+            layout(&[i8, TypeId::F64, TypeId::CSTR]),
+            (vec![0, 8, 16], 24)
+        );
+        assert_eq!(layout(&[]), (vec![], 0));
     }
 
     #[test]

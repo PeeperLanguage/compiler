@@ -10,7 +10,6 @@ mod statement;
 #[cfg(test)]
 mod testing;
 
-use arena::Id;
 use diagnostics::Code;
 use diagnostics::Diagnostic;
 use model::DefId;
@@ -39,7 +38,7 @@ pub struct Checker<'p> {
     /// How wide a pointer is on the target, in bits: the width of `isize` and
     /// `usize`.
     pub pointer_bits: u32,
-    /// Each type declaration, by its place: the type written after its name
+    /// Each type declaration and alias, by its place: the type it declares
     /// (`check_type_declaration`). Another declaration's slot stays
     /// `NotStarted`, as in each table.
     pub declared_types: Vec<Vec<State<TypeId>>>,
@@ -93,8 +92,8 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// The type written after the name of the type declaration or alias
-    /// `definition` (`check_type_declaration`).
+    /// The type the type declaration or alias `definition` declares
+    /// (`check_type_declaration`).
     pub fn declared_type(&mut self, definition: DefId) -> TypeId {
         self.check_once(
             definition,
@@ -161,7 +160,7 @@ impl<'p> Checker<'p> {
         definition: DefId,
         table: fn(&mut Self) -> &mut Vec<Vec<State<T>>>,
         on_cycle: T,
-        check: fn(&mut Self, Id<ast::Decl>) -> T,
+        check: fn(&mut Self, DefId) -> T,
     ) -> T {
         let (module, index) = (definition.module.index(), definition.index as usize);
         // Cloned, so no borrow is held while the check runs and asks others.
@@ -175,8 +174,7 @@ impl<'p> Checker<'p> {
             State::NotStarted => {}
         }
         table(self)[module][index] = State::Running;
-        let declaration = self.modules[module].ast.declaration(definition.index);
-        let result = self.in_module(definition.module, |checker| check(checker, declaration));
+        let result = self.in_module(definition.module, |checker| check(checker, definition));
         table(self)[module][index] = State::Done(result.clone());
         result
     }

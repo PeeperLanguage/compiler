@@ -70,6 +70,13 @@ pub struct Instruction {
 #[derive(Clone, Debug)]
 pub enum InstructionKind {
     Load(Id<Variable>),
+    /// The field of a struct variable that its `fields` path leads to: field
+    /// indices in declaration order, outermost first (`s.start.x` is one
+    /// load).
+    LoadField {
+        variable: Id<Variable>,
+        fields: Box<[u32]>,
+    },
     Store {
         variable: Id<Variable>,
         value: Operand,
@@ -88,6 +95,14 @@ pub enum InstructionKind {
     Call {
         function: DefId,
         arguments: Box<[Operand]>,
+    },
+    /// A struct value from its fields' values, in declaration order.
+    Aggregate(Box<[Operand]>),
+    /// The field its `fields` path leads to in a struct value that is not
+    /// in a variable, as `LoadField`'s path.
+    Field {
+        value: Operand,
+        fields: Box<[u32]>,
     },
     /// The value from whichever listed block control came from; first in its
     /// block. `&&` and `||` give their result this way.
@@ -143,7 +158,7 @@ impl Body {
     /// The body as text, one block after another, for `peeper -dump`. `file` is
     /// where the body is written; `name_of` gives a declaration's name. A
     /// variable shows as its name and index (`sum.2`), an integer constant as
-    /// its bits read unsigned.
+    /// its bits read unsigned, and a field path in brackets (`load p.0[1, 0]`).
     pub fn text<'n>(
         &self,
         types: &Types,
@@ -175,6 +190,11 @@ impl Body {
                         printer.out.push_str("load ");
                         printer.write_variable(*variable);
                     }
+                    InstructionKind::LoadField { variable, fields } => {
+                        printer.out.push_str("load ");
+                        printer.write_variable(*variable);
+                        printer.write_fields(fields);
+                    }
                     InstructionKind::Binary { op, left, right } => {
                         _ = write!(printer.out, "{op:?} ");
                         printer.write_operand(left);
@@ -201,6 +221,21 @@ impl Body {
                             printer.write_operand(argument);
                         }
                         printer.out.push(')');
+                    }
+                    InstructionKind::Aggregate(fields) => {
+                        printer.out.push_str("aggregate(");
+                        for (index, field) in fields.iter().enumerate() {
+                            if index > 0 {
+                                printer.out.push_str(", ");
+                            }
+                            printer.write_operand(field);
+                        }
+                        printer.out.push(')');
+                    }
+                    InstructionKind::Field { value, fields } => {
+                        printer.out.push_str("field ");
+                        printer.write_operand(value);
+                        printer.write_fields(fields);
                     }
                     InstructionKind::Phi(incoming) => {
                         printer.out.push_str("phi ");
@@ -265,6 +300,15 @@ impl Printer<'_> {
     fn write_variable(&mut self, variable: Id<Variable>) {
         let name = self.file.slice(self.body.variables.span(variable));
         _ = write!(self.out, "{name}.{}", variable.index());
+    }
+
+    /// A field path, `[1, 0]`; nothing for an empty one.
+    fn write_fields(&mut self, fields: &[u32]) {
+        if fields.is_empty() {
+            return;
+        }
+        let path: Vec<String> = fields.iter().map(u32::to_string).collect();
+        _ = write!(self.out, "[{}]", path.join(", "));
     }
 
     fn write_operand(&mut self, operand: &Operand) {

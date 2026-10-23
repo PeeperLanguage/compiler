@@ -1,0 +1,17 @@
+// Each field of a struct literal is set once, by a name the struct declares,
+// and the literal has a struct type, written or from where it is used.
+struct Point {
+    x: i32,
+    y: i32,
+    z: i32,
+}
+
+fn main() {
+    let unknown = Point.{ x = 1, y = 2, z = 3, w = 4 };
+    let misspelled = Point.{ x = 1, y = 2, zz = 3 };
+    let twice = Point.{ x = 1, y = 2, z = 3, x = 4 };
+    let missing = Point.{ x = 1 };
+    let not_struct = i32.{ x = 1 };
+    let untyped = .{ x = 1 };
+    let wrong_value = Point.{ x = true, y = 2, z = 3 };
+}

@@ -1,0 +1,13 @@
+name = "negative_check_struct_field"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "`Point` has no field `w`",
+    "`Point` has no field `xx`",
+    "did you mean `x`?",
+    "`i32` has no fields",
+    "operator `==` cannot be applied to `Point`",
+]

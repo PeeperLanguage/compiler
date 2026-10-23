@@ -1,0 +1,15 @@
+// A field is read from a struct value by a name its struct declares; structs
+// have no operators.
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn main() {
+    let p = Point.{ x = 1, y = 2 };
+    let a = p.w;
+    let b = p.xx;
+    let number = 3;
+    let c = number.x;
+    let same = p == p;
+}

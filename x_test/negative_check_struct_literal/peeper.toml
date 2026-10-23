@@ -1,0 +1,17 @@
+name = "negative_check_struct_literal"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "`Point` has no field `w`",
+    "`Point` has no field `zz`",
+    "did you mean `z`?",
+    "field `x` is set twice",
+    "first set here",
+    "missing fields `y`, `z` in `Point`",
+    "expected a struct type, found `i32`",
+    "this struct literal needs its type: write it before `.{`",
+    "mismatched types: expected `i32`, found `bool`",
+]

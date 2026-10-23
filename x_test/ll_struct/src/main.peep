@@ -1,0 +1,19 @@
+// LLVM writes a struct as a literal type, a literal as `insertvalue`s, a
+// field of a variable as a `getelementptr` and a load, and debug info as a
+// `DICompositeType` with each member at its offset.
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+struct Segment {
+    start: Point,
+    end: Point,
+}
+
+fn main() {
+    let p = Point.{ y = 2, x = 1 };
+    let s = Segment.{ start = p, end = .{ x = 3, y = 4 } };
+    let x = s.end.x;
+    let y = Point.{ x = 5, y = 6 }.y;
+}

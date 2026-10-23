@@ -1,4 +1,4 @@
-// Declaring a struct is supported; values of one come with struct literals.
+// Struct values pass between functions in a later step.
 struct Point {
     x: i32,
 }
@@ -22,6 +22,4 @@ fn take(point: Point) {}
 
 fn give() -> Place {}
 
-fn main() {
-    let point: Point;
-}
+fn main() {}

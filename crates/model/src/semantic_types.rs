@@ -83,14 +83,18 @@ pub enum Type {
         definition: DefId,
         real: TypeId,
     },
-    /// The type a type declaration makes, such as a struct: the declaration
-    /// is its identity, so two structs with the same fields differ. What it
-    /// holds belongs to the declaration (`check::Checker::declared_type`),
-    /// not to the type.
+    /// The name of a type declaration, such as a struct, before what it
+    /// declares is checked: naming a type checks nothing. No value has it: a
+    /// value's type is the declaration's own (`Type::Struct`).
     Named(DefId),
-    /// What a struct declaration writes after its name: its fields' types, in
-    /// order. The field names stay in the declaration.
-    Struct(Box<[TypeId]>),
+    /// The type a struct declaration makes, with its fields' types in order.
+    /// The declaration is its identity, so two structs with the same fields
+    /// differ; the field names stay in the declaration. A field held by value
+    /// has its own struct's type, so the type is complete.
+    Struct {
+        definition: DefId,
+        fields: Box<[TypeId]>,
+    },
 }
 
 impl Type {
@@ -289,13 +293,8 @@ impl Types {
                 }
                 text
             }
-            Type::Named(definition) => name_of(*definition).to_string(),
-            Type::Struct(fields) => {
-                let fields: Vec<String> = fields
-                    .iter()
-                    .map(|&field| self.real_text(field, name_of))
-                    .collect();
-                format!("struct {{ {} }}", fields.join(", "))
+            Type::Named(definition) | Type::Struct { definition, .. } => {
+                name_of(*definition).to_string()
             }
             Type::Alias { .. } => unreachable!("`real` looks through aliases"),
         }
@@ -438,7 +437,10 @@ mod tests {
             definition: declaration(1),
             real: point,
         });
-        let fields = types.intern(Type::Struct([TypeId::I32, place].into()));
+        let complete = types.intern(Type::Struct {
+            definition: declaration(0),
+            fields: [TypeId::I32, TypeId::I32].into(),
+        });
         let text = |ty| {
             types.text(ty, |definition| {
                 ["Point", "Place"][definition.index as usize]
@@ -451,7 +453,7 @@ mod tests {
         assert_eq!(text(procedure), "fn()");
         assert_eq!(text(point), "Point");
         assert_eq!(text(place), "Place (aka Point)");
-        assert_eq!(text(fields), "struct { i32, Point }");
+        assert_eq!(text(complete), "Point");
     }
 
     #[test]

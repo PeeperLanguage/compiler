@@ -212,8 +212,11 @@ mir(d)            MIR of function d (needs body(d)); later also comptime calls
 - Module-scope declarations (`DefId`) are checked on demand, one table per
   language category: declared types, function types, constants. A body's own
   names (`Symbol::Local`: a variable or a `const`) are checked in place with
-  the body, never asked for. Naming a type declaration checks nothing; a struct
-  that holds another by value asks for its fields.
+  the body, never asked for. Naming a type declaration checks nothing
+  (`Type::Named`); a value's type is complete: a struct value has its
+  declaration's type, `Type::Struct { definition, fields }`, and a struct
+  that holds another by value asks for that one's type, so a struct that
+  holds itself is a cycle. Lowering and LLVM read all of it from `Types`.
 - Each declaration's result is written once and never changed. The checker holds
   a table of them per module, indexed by the declaration's place among its
   top-level declarations (`DefId`), so a body edit does not move it.
@@ -311,7 +314,10 @@ and debuggers; the logic lives in a `lower` crate, the data in `model::mir`.
   leave it only through `load`.
 - **Instructions.** A block is a list of instructions, each one operation whose
   id is the value it gives (`%3 = add %1, %2`): `load`, `store`, a binary or
-  unary operation, `widen`, `call`, `phi`. Operands are a constant, an argument
+  unary operation, `widen`, `call`, `phi`, and for structs `load` of a
+  field path (`load s.1[1, 0]`: one `getelementptr` and load, as clang),
+  `aggregate` (a struct value from its fields, LLVM's `insertvalue`) and
+  `field` of a struct value not in a variable (`extractvalue`). Operands are a constant, an argument
   or an earlier instruction's value, never a variable. A constant operand is an
   index into the body's constants table (each with its type), so an operand stays 8 bytes. Every
   instruction keeps the span of the expression it came from: LLVM's `!dbg`

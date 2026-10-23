@@ -1,0 +1,43 @@
+// Struct values in local variables: literals with fields in any order, a
+// literal taking its type from the variable, copies, nested fields, and
+// field values computed in the order written.
+struct Point {
+    x: i32,
+    y: i64,
+}
+
+struct Segment {
+    start: Point,
+    end: Place,
+    wide: i128,
+    flag: bool,
+}
+
+type Place = Point;
+
+struct Empty {}
+
+fn first() -> i32 {
+    write(stdout, c"first\n", 6);
+    return 1;
+}
+
+fn second() -> i64 {
+    write(stdout, c"second\n", 7);
+    return 2;
+}
+
+fn main() -> i32 {
+    let p = Point.{ y = second(), x = first() };
+    let q = p;
+    let end: Place = .{ x = 10, y = 20 };
+    let segment = Segment.{ start = q, end = end, wide = 5, flag = true };
+    let nothing = Empty.{};
+    let copied = segment;
+    let y = copied.end.y + copied.start.y;
+    let picked = Point.{ x = 4, y = 0 }.x;
+    if copied.flag && copied.wide == 5 && y == 22 {
+        return copied.start.x + copied.end.x + picked + 27;
+    }
+    return 0;
+}

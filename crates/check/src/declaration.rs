@@ -3,6 +3,7 @@
 //! value.
 
 use arena::Id;
+use model::DefId;
 use model::ast;
 use model::constant::Constant;
 use model::semantic_types::Type;
@@ -16,22 +17,21 @@ use crate::statement::ThirBuilder;
 use model::Symbol;
 
 impl Checker<'_> {
-    /// The type written after the name of the module's type declaration or
-    /// alias `declaration`: a struct's fields (`Type::Struct`), or the type an
-    /// alias names. Enums, interfaces and type parameters are not supported
-    /// yet.
-    pub(crate) fn check_type_declaration(&mut self, declaration: Id<ast::Decl>) -> TypeId {
+    /// The type the module's type declaration or alias `definition` declares:
+    /// a struct's type (`Type::Struct`), or the type an alias names. Enums,
+    /// interfaces and type parameters are not supported yet.
+    pub(crate) fn check_type_declaration(&mut self, definition: DefId) -> TypeId {
         let tree = &self.module().ast;
-        let (written, is_alias) = match tree.decls[declaration] {
+        let (written, is_alias) = match tree.decls[tree.declaration(definition.index)] {
             ast::Decl::Type(written) => (written, false),
             ast::Decl::Alias(written) => (written, true),
-            _ => unreachable!("`{declaration:?}` is a type declaration"),
+            _ => unreachable!("`{definition:?}` is a type declaration"),
         };
         if !written.type_parameters.is_empty() {
             return self.not_supported(written.name.span, "generic types");
         }
         if is_alias {
-            return self.resolve_type(written.ty);
+            return self.resolve_value_type(written.ty);
         }
         let what = match tree.types[written.ty] {
             ast::Type::Struct(fields) => {
@@ -47,15 +47,12 @@ impl Checker<'_> {
                             report_redeclared(&tree.file, text, "struct", name.span, first.span);
                         self.report(diagnostic);
                     }
-                    let ty = self.resolve_type(ty);
-                    // A type held by value holds what it holds: one that holds
+                    // A struct held by value is checked here: one that holds
                     // itself, however deep, is a cycle.
-                    if let Type::Named(held) = self.types[ty] {
-                        self.declared_type(held);
-                    }
-                    field_types.push(ty);
+                    field_types.push(self.resolve_value_type(ty));
                 }
-                return self.types.intern(Type::Struct(field_types.into()));
+                let fields = field_types.into();
+                return self.types.intern(Type::Struct { definition, fields });
             }
             ast::Type::Enum(_) => "enum declarations",
             ast::Type::Interface(_) => "interface declarations",
@@ -64,11 +61,12 @@ impl Checker<'_> {
         self.not_supported(written.name.span, what)
     }
 
-    /// The type of the module's function or method `declaration`.
-    pub(crate) fn check_function(&mut self, declaration: Id<ast::Decl>) -> TypeId {
+    /// The type of the module's function or method `definition`.
+    pub(crate) fn check_function(&mut self, definition: DefId) -> TypeId {
         let tree = &self.module().ast;
+        let declaration = tree.declaration(definition.index);
         let ast::Decl::Function(ast::Function { signature, .. }) = tree.decls[declaration] else {
-            unreachable!("`{declaration:?}` is a function declaration")
+            unreachable!("`{definition:?}` is a function declaration")
         };
         if let Some(receiver) = signature.receiver {
             return self.not_supported(tree.params.span(receiver), "methods");
@@ -85,31 +83,44 @@ impl Checker<'_> {
             if let Some(default) = parameter.default {
                 return self.not_supported(tree.exprs.span(default), "default parameters");
             }
-            parameters.push(self.resolve_value_type(parameter.ty));
+            parameters.push(self.resolve_signature_type(parameter.ty));
         }
         let result = signature
             .result
-            .map_or(TypeId::VOID, |result| self.resolve_value_type(result));
+            .map_or(TypeId::VOID, |result| self.resolve_signature_type(result));
         let parameters = parameters.into();
         self.types.intern(Type::Function { parameters, result })
     }
 
-    /// The type and value of the module's constant `declaration`; `None` when
+    /// The type and value of the module's constant `definition`; `None` when
     /// it had an error. Its value is checked as a body's `const` is, with no
     /// variables in scope.
-    pub(crate) fn check_constant(&mut self, declaration: Id<ast::Decl>) -> Option<Constant> {
+    pub(crate) fn check_constant(&mut self, definition: DefId) -> Option<Constant> {
+        let declaration = self.module().ast.declaration(definition.index);
         let mut body = Body::default();
         ThirBuilder::new(self, &mut body, TypeId::VOID, None).check_const_statement(declaration)
     }
 
-    /// The type of a value whose type is written `ty`. Values of a type
-    /// declaration's type are not supported until MIR and LLVM have them.
+    /// The type of a value whose type is written `ty`: a named type is the
+    /// type its declaration declares, so a value's type is complete (an
+    /// alias names a complete type already).
     pub(crate) fn resolve_value_type(&mut self, ty: Id<ast::Type>) -> TypeId {
         let resolved = self.resolve_type(ty);
-        if let Type::Named(_) = self.types[resolved] {
+        match self.types[resolved] {
+            Type::Named(definition) => self.declared_type(definition),
+            _ => resolved,
+        }
+    }
+
+    /// The type of a parameter or result written `ty`.
+    ///
+    /// TEMPORARY, to be deleted with struct parameters and results (step 4c
+    /// of the type plan): struct values do not pass between functions yet.
+    fn resolve_signature_type(&mut self, ty: Id<ast::Type>) -> TypeId {
+        let resolved = self.resolve_value_type(ty);
+        if let Type::Struct { .. } = self.types[resolved] {
             let span = self.module().ast.types.span(ty);
-            let what = format!("values of `{}`", self.type_text(resolved));
-            return self.not_supported(span, &what);
+            return self.not_supported(span, "struct parameters and results");
         }
         resolved
     }
@@ -181,16 +192,17 @@ mod tests {
             let found: Vec<TypeId> = declarations
                 .into_iter()
                 .enumerate()
-                .map(
-                    |(index, declaration)| match checker.module().ast.decls[declaration] {
-                        ast::Decl::Function(_) => checker.check_function(declaration),
-                        // As a compile asks, so a use does not report it again.
-                        _ => checker.declared_type(DefId {
-                            module: checker.current_module,
-                            index: index as u32,
-                        }),
-                    },
-                )
+                .map(|(index, declaration)| {
+                    let definition = DefId {
+                        module: checker.current_module,
+                        index: index as u32,
+                    };
+                    // As a compile asks, so a use does not report it again.
+                    match checker.module().ast.decls[declaration] {
+                        ast::Decl::Function(_) => checker.function_type(definition),
+                        _ => checker.declared_type(definition),
+                    }
+                })
                 .collect();
             found
         });
@@ -225,7 +237,11 @@ mod tests {
             ("T0043", "reference types are not supported yet", "&i32"),
             ("T0043", "generic functions are not supported yet", "T"),
             ("T0043", "default parameters are not supported yet", "1"),
-            ("T0043", "values of `P` are not supported yet", "P"),
+            (
+                "T0043",
+                "struct parameters and results are not supported yet",
+                "P",
+            ),
             ("T0021", "`a` is a value, not a type", "a"),
             ("T0043", "methods are not supported yet", "p: i32"),
             ("T0043", "string types are not supported yet", "str"),

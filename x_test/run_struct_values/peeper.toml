@@ -1,0 +1,8 @@
+name = "run_struct_values"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 42
+stdout_contains = ["second\nfirst\n"]

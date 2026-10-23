@@ -1,0 +1,6 @@
+name = "mir_struct_fields"
+build = "program"
+
+[test]
+mode = "mir"
+outcome = "success"

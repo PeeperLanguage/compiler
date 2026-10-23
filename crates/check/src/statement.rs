@@ -528,11 +528,13 @@ mod tests {
             let declarations: Vec<_> = tree.lists.items(tree.top_level).collect();
             let declared = declarations.len();
             let mut bodies = Vec::new();
-            for declaration in declarations {
+            for (index, declaration) in declarations.into_iter().enumerate() {
                 let ast::Decl::Function(function) = checker.module().ast.decls[declaration] else {
                     continue;
                 };
-                let signature = checker.check_function(declaration);
+                let module = checker.current_module;
+                let index = index as u32;
+                let signature = checker.function_type(DefId { module, index });
                 let mut body = Body::default();
                 if checker.check_body(&function, signature, &mut body, None) && !body.has_errors {
                     bodies.push(body);
@@ -791,7 +793,8 @@ mod tests {
             let ast::Decl::Function(function) = tree.decls[declaration] else {
                 unreachable!("the first declaration is a function")
             };
-            let signature = checker.check_function(declaration);
+            let module = checker.current_module;
+            let signature = checker.function_type(DefId { module, index: 0 });
             checker.check_body(&function, signature, &mut Body::default(), None);
             let note = |diagnostic: &diagnostics::Diagnostic| {
                 let first = diagnostic.notes.first();

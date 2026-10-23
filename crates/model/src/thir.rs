@@ -31,6 +31,7 @@ nodes! {
     Stmt => stmts,
     Block => blocks,
     Variable => variables,
+    FieldValue => field_values,
 }
 
 /// One function's checked body. The function's parameters are its first
@@ -43,7 +44,8 @@ pub struct Body {
     /// declares. The first is the function's, which also holds the parameters;
     /// a block comes before the blocks inside it.
     pub blocks: Arena<Block>,
-    pub variables: Arena<Variable>, // with the span of each name
+    pub variables: Arena<Variable>,      // with the span of each name
+    pub field_values: Arena<FieldValue>, // with the span of each field's name
     /// Each `const` of the body, by its type and value, with the span of its
     /// name; `None` when its value had an error. Uses of it are folded.
     pub constants: Arena<Option<Constant>>,
@@ -113,7 +115,23 @@ pub enum ExprKind {
     /// The value converted to the wider type `ty` without `as`
     /// (`Type::widens_to`).
     Widen(Id<Expr>),
+    /// A value of the struct type `ty`, each field set once, in the order
+    /// written, which is the order the values are computed in.
+    StructLiteral(List<FieldValue>),
+    /// The field at `index`, in declaration order, of a struct value.
+    Field {
+        value: Id<Expr>,
+        index: u32,
+    },
     Invalid,
+}
+
+/// `name = value` in a struct literal: the field by its index in declaration
+/// order.
+#[derive(Clone, Copy, Debug)]
+pub struct FieldValue {
+    pub index: u32,
+    pub value: Id<Expr>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -153,6 +171,7 @@ impl Body {
             stmts,
             blocks,
             variables,
+            field_values,
             constants,
             lists,
             has_errors,
@@ -161,6 +180,7 @@ impl Body {
         stmts.clear();
         blocks.clear();
         variables.clear();
+        field_values.clear();
         constants.clear();
         lists.clear();
         *has_errors = false;
@@ -182,7 +202,8 @@ impl Body {
     /// The body as text, one statement per line, for `peeper -dump`. `file` is
     /// where the body is written; `name_of` gives a declaration's name. A
     /// variable shows as its name and index (`x.2`), a constant other than a
-    /// `bool` with its type (`1:i32`), and an operation in parentheses.
+    /// `bool` with its type (`1:i32`), an operation in parentheses, and a
+    /// field by its index (`p.0[1]`, `Point.{ [1] = 2:i32 }`).
     pub fn text<'n>(
         &self,
         types: &Types,
@@ -348,6 +369,20 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
                     self.write_expr(argument);
                 }
                 _ = write!(self.out, "):{}", self.types.text(ty, self.name_of));
+            }
+            ExprKind::StructLiteral(fields) => {
+                _ = write!(self.out, "{}.{{", self.types.text(ty, self.name_of));
+                for (position, field) in self.body.lists.items(fields).enumerate() {
+                    let FieldValue { index, value } = self.body.field_values[field];
+                    let separator = if position > 0 { ", " } else { " " };
+                    _ = write!(self.out, "{separator}[{index}] = ");
+                    self.write_expr(value);
+                }
+                self.out.push_str(" }");
+            }
+            ExprKind::Field { value, index } => {
+                self.write_expr(value);
+                _ = write!(self.out, "[{index}]");
             }
             ExprKind::Invalid => self.out.push_str("invalid"),
         }

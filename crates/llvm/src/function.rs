@@ -125,13 +125,14 @@ impl Module<'_> {
         let tree = &self.program.modules[definition.module.index()].ast;
         let name = tree.decls[tree.declaration(definition.index)].name();
         let (line, _) = tree.file.position(name.span.start as usize);
-        let mut signature = vec![match metadata.debug_type(types, body.result) {
+        let program = self.program;
+        let mut signature = vec![match metadata.debug_type(program, types, body.result) {
             Some(id) => format!("!{id}"),
             None => "null".to_string(),
         }];
         for parameter in body.variables.ids().take(body.parameters) {
             let ty = body.variables[parameter].ty;
-            let id = metadata.debug_type(types, ty).unwrap_or_default();
+            let id = metadata.debug_type(program, types, ty).unwrap_or_default();
             signature.push(format!("!{id}"));
         }
         let subroutine = metadata.add(format_args!(
@@ -253,7 +254,10 @@ impl Function<'_, '_, '_> {
                 continue;
             };
             let span = self.body.variables.span(variable);
-            let debug_type = metadata.debug_type(self.types, ty).unwrap_or_default();
+            let program = self.module.program;
+            let debug_type = metadata
+                .debug_type(program, self.types, ty)
+                .unwrap_or_default();
             let (line, _) = self.file.position(span.start as usize);
             let argument = if index < self.body.parameters {
                 format!("arg: {}, ", index + 1)
@@ -403,6 +407,27 @@ impl Function<'_, '_, '_> {
                 type_text(types, ty),
                 variable.index()
             ),
+            InstructionKind::LoadField {
+                variable,
+                ref fields,
+            } => {
+                let variable_type = self.body.variables[variable].ty;
+                let indices = fields
+                    .iter()
+                    .map(|&field| fmt::from_fn(move |out| write!(out, "i32 {field}")));
+                _ = writeln!(
+                    out,
+                    "  {name}.f = getelementptr inbounds {}, ptr %v{}, i32 0, {}{location}",
+                    type_text(types, variable_type),
+                    variable.index(),
+                    comma_separated(indices)
+                );
+                write!(
+                    out,
+                    "  {name} = load {}, ptr {name}.f",
+                    type_text(types, ty)
+                )
+            }
             InstructionKind::Store { variable, value } => write!(
                 out,
                 "  store {} {}, ptr %v{}",
@@ -447,6 +472,39 @@ impl Function<'_, '_, '_> {
                 self.write_call(out, id, function, arguments);
                 Ok(())
             }
+            // An empty struct has no field to insert, so it is frozen from
+            // `poison` to one value.
+            InstructionKind::Aggregate(ref fields) if fields.is_empty() => {
+                write!(out, "  {name} = freeze {} poison", type_text(types, ty))
+            }
+            InstructionKind::Aggregate(ref fields) => {
+                let text = type_text(types, ty);
+                let mut previous = "poison".to_string();
+                for (index, &field) in fields.iter().enumerate() {
+                    if index > 0 {
+                        _ = writeln!(out, "{location}");
+                    }
+                    // The last insert gives the value its own name.
+                    let target = if index + 1 == fields.len() {
+                        name.to_string()
+                    } else {
+                        format!("{name}.{index}")
+                    };
+                    _ = write!(
+                        out,
+                        "  {target} = insertvalue {text} {previous}, {}, {index}",
+                        self.typed(field)
+                    );
+                    previous = target;
+                }
+                Ok(())
+            }
+            InstructionKind::Field { value, ref fields } => write!(
+                out,
+                "  {name} = extractvalue {}, {}",
+                self.typed(value),
+                comma_separated(fields.iter())
+            ),
             InstructionKind::Phi(ref incoming) => {
                 let function = &*self;
                 let incoming = incoming.iter().map(|&(block, value)| {

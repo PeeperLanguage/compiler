@@ -257,10 +257,15 @@ pub fn report_initialization_errors(
         for instruction in instructions(index) {
             let span = body.instructions.span(instruction);
             let (variable, error) = match body.instructions[instruction].kind {
-                mir::InstructionKind::Load(variable) if !has(&always, variable) => (
-                    variable,
-                    unset_use(body, file, variable, span, has(&maybe, variable)),
-                ),
+                mir::InstructionKind::Load(variable)
+                | mir::InstructionKind::LoadField { variable, .. }
+                    if !has(&always, variable) =>
+                {
+                    (
+                        variable,
+                        unset_use(body, file, variable, span, has(&maybe, variable)),
+                    )
+                }
                 mir::InstructionKind::Store { variable, .. } => {
                     let twice = has(&maybe, variable) && !body.variables[variable].mutable;
                     let error = twice.then(|| {

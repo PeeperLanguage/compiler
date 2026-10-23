@@ -2,6 +2,7 @@
 //! operation on values known at compile time is folded to its value.
 
 use std::num::NonZeroU32;
+use std::sync::Arc;
 
 use arena::Id;
 use arena::List;
@@ -14,6 +15,7 @@ use model::Local;
 use model::Symbol;
 use model::UnaryOp;
 use model::ast;
+use model::ast::Ident;
 use model::constant;
 use model::constant::Constant;
 use model::constant::Value;
@@ -22,6 +24,8 @@ use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::thir::Expr;
 use model::thir::ExprKind;
+use model::thir::FieldValue;
+use source::SourceFile;
 use source::Span;
 
 use crate::builtin::UNSUPPORTED_FUNCTIONS;
@@ -129,6 +133,10 @@ impl ThirBuilder<'_, '_> {
             ast::Expr::Call { callee, arguments } => {
                 return self.check_call(callee, arguments, span);
             }
+            ast::Expr::StructLiteral { ty, fields } => {
+                return self.check_struct_literal(ty, fields, span, expected);
+            }
+            ast::Expr::Selector { value, field } => return self.check_field(value, field),
             ast::Expr::String { c_string: false } => "string literals",
             ast::Expr::Char { .. } => "character literals",
             ast::Expr::None => "`none` values",
@@ -136,10 +144,8 @@ impl ThirBuilder<'_, '_> {
             ast::Expr::RawAddress(_) => "raw addresses",
             ast::Expr::Free(_) => "`free` calls",
             ast::Expr::Print { .. } => "`print` calls",
-            ast::Expr::Selector { .. } => "field accesses",
             ast::Expr::Index { .. } => "index expressions",
             ast::Expr::Range { .. } => "ranges",
-            ast::Expr::StructLiteral { .. } => "struct literals",
             ast::Expr::VariantLiteral { .. } => "variant literals",
             ast::Expr::ArrayLiteral { .. } => "array literals",
             ast::Expr::Cast { .. } => "casts",
@@ -198,20 +204,157 @@ impl ThirBuilder<'_, '_> {
         let module_names = self.checker.scope().names().map(|name| (name, 1));
         let candidates = local_names.chain(module_names);
         let file = &self.checker.module().ast.file;
-        let mut diagnostic = Diagnostic::new(
+        let diagnostic = Diagnostic::new(
             diagnostics::UNDEFINED_NAME,
             format!("unknown name `{name}`"),
         )
         .label(file, span, "");
-        if let Some(nearest) = nearest_name(name, candidates) {
-            let fix = Fix {
-                file: file.clone(),
-                span,
-                new_text: nearest.to_string(),
+        self.checker
+            .report(guess_nearest(diagnostic, file, span, name, candidates));
+    }
+
+    /// `Type.{ name = value, ... }`, written at `span`, or `.{ ... }` taking
+    /// the struct type `expected`: a struct value with each field set once.
+    /// A field that is unknown, set twice or missing is reported.
+    fn check_struct_literal(
+        &mut self,
+        written: Option<Id<ast::Type>>,
+        fields: List<ast::FieldValue>,
+        span: Span,
+        expected: Option<TypeId>,
+    ) -> Expr {
+        let tree = &self.checker.module().ast;
+        let ty = match (written, expected) {
+            (Some(written), _) => self.checker.resolve_value_type(written),
+            (None, Some(expected))
+                if matches!(self.checker.types[expected], Type::Struct { .. }) =>
+            {
+                expected
+            }
+            (None, _) => {
+                let message = "this struct literal needs its type: write it before `.{`";
+                self.checker.error(diagnostics::MISSING_TYPE, message, span)
+            }
+        };
+        let Type::Struct {
+            definition,
+            fields: ref field_types,
+        } = self.checker.types[ty]
+        else {
+            if ty != TypeId::INVALID {
+                let message = format!(
+                    "expected a struct type, found `{}`",
+                    self.checker.type_text(ty)
+                );
+                let span = written.map_or(span, |written| tree.types.span(written));
+                self.checker
+                    .error(diagnostics::TYPE_MISMATCH, message, span);
+            }
+            for field in tree.lists.items(fields) {
+                self.add_expr(tree.field_values[field].value); // for its own errors
+            }
+            return Expr::INVALID;
+        };
+        let field_types = field_types.clone();
+        // Where each field is set, by its index.
+        let mut set: Vec<Option<Span>> = vec![None; field_types.len()];
+        let mut checked: Vec<NonZeroU32> = Vec::with_capacity(fields.len());
+        for field in tree.lists.items(fields) {
+            let ast::FieldValue { name, value } = tree.field_values[field];
+            let Some(index) = self.field_index(ty, name) else {
+                self.add_expr(value); // for its own errors
+                continue;
             };
-            diagnostic = diagnostic.guess(format!("did you mean `{nearest}`?"), vec![fix]);
+            if let Some(first) = set[index] {
+                let text = name.text(&tree.file);
+                self.checker.report(
+                    Diagnostic::new(
+                        diagnostics::DUPLICATE_FIELD,
+                        format!("field `{text}` is set twice"),
+                    )
+                    .label(&tree.file, name.span, "")
+                    .label(&tree.file, first, "first set here"),
+                );
+                self.add_expr(value);
+                continue;
+            }
+            set[index] = Some(name.span);
+            let value = self.add_expr_as(value, field_types[index]);
+            let index = index as u32;
+            checked.push(self.body.add(FieldValue { index, value }, name.span).into());
         }
-        self.checker.report(diagnostic);
+        let missing: Vec<String> = project::field_names(self.checker.modules, definition)
+            .zip(&set)
+            .filter(|(_, set)| set.is_none())
+            .map(|(name, _)| format!("`{name}`"))
+            .collect();
+        if !missing.is_empty() {
+            let fields = if missing.len() == 1 {
+                "field"
+            } else {
+                "fields"
+            };
+            let message = format!(
+                "missing {fields} {} in `{}`",
+                missing.join(", "),
+                self.checker.type_text(ty)
+            );
+            self.checker
+                .error(diagnostics::MISSING_FIELD, message, span);
+        }
+        Expr {
+            ty,
+            kind: ExprKind::StructLiteral(self.body.lists.add(&checked)),
+        }
+    }
+
+    /// `value.field`: the field of a struct value.
+    fn check_field(&mut self, value: Id<ast::Expr>, field: Ident) -> Expr {
+        let value = self.add_expr(value);
+        let ty = self.body.exprs[value].ty;
+        let Type::Struct { ref fields, .. } = self.checker.types[ty] else {
+            if ty != TypeId::INVALID {
+                let message = format!("`{}` has no fields", self.checker.type_text(ty));
+                self.checker
+                    .error(diagnostics::INVALID_OPERATION, message, field.span);
+            }
+            return Expr::INVALID;
+        };
+        let fields = fields.clone();
+        let Some(index) = self.field_index(ty, field) else {
+            return Expr::INVALID;
+        };
+        Expr {
+            ty: fields[index],
+            kind: ExprKind::Field {
+                value,
+                index: index as u32,
+            },
+        }
+    }
+
+    /// The index of the field `name` of the struct type `ty`, in declaration
+    /// order; `None` after reporting that the struct has no such field, with
+    /// its nearest field name.
+    fn field_index(&mut self, ty: TypeId, name: Ident) -> Option<usize> {
+        let Type::Struct { definition, .. } = self.checker.types[ty] else {
+            unreachable!("only a struct type has fields")
+        };
+        let file = &self.checker.module().ast.file;
+        let text = name.text(file);
+        let modules = self.checker.modules;
+        let found = project::field_names(modules, definition).position(|field| field == text);
+        if found.is_none() {
+            let diagnostic = Diagnostic::new(
+                diagnostics::UNKNOWN_FIELD,
+                format!("`{}` has no field `{text}`", self.checker.type_text(ty)),
+            )
+            .label(file, name.span, "");
+            let candidates = project::field_names(modules, definition).map(|field| (field, 0));
+            self.checker
+                .report(guess_nearest(diagnostic, file, name.span, text, candidates));
+        }
+        found
     }
 
     /// What the path `module::name` written as the type expression `path`
@@ -665,4 +808,24 @@ fn unsuffixed_literal(tree: &ast::Tree, expression: Id<ast::Expr>) -> Option<&st
     let text = tree.file.slice(tree.exprs.span(expression));
     let number = matches!(tree.exprs[expression], ast::Expr::Number);
     (number && literal::numeric::split(text).suffix.is_empty()).then_some(text)
+}
+
+/// `diagnostic` with a guess that `name`, written at `span` of `file`, means
+/// the nearest of `candidates` (`nearest_name`), when one is near enough.
+fn guess_nearest<'c>(
+    diagnostic: Diagnostic,
+    file: &Arc<SourceFile>,
+    span: Span,
+    name: &str,
+    candidates: impl IntoIterator<Item = (&'c str, i32)>,
+) -> Diagnostic {
+    let Some(nearest) = nearest_name(name, candidates) else {
+        return diagnostic;
+    };
+    let fix = Fix {
+        file: file.clone(),
+        span,
+        new_text: nearest.to_string(),
+    };
+    diagnostic.guess(format!("did you mean `{nearest}`?"), vec![fix])
 }

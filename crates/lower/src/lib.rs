@@ -263,6 +263,39 @@ impl Lowering<'_> {
                     arguments,
                 }
             }
+            thir::ExprKind::StructLiteral(fields) => {
+                // Computed in the order written, given in declaration order.
+                let mut values = vec![None; fields.len()];
+                for field in self.thir.lists.items(fields) {
+                    let thir::FieldValue { index, value } = self.thir.field_values[field];
+                    values[index as usize] = Some(self.lower_expr(value)?);
+                }
+                let values = values
+                    .into_iter()
+                    .map(|value| value.expect("check sets each field"));
+                mir::InstructionKind::Aggregate(values.collect())
+            }
+            thir::ExprKind::Field { .. } => {
+                // A field of a field is one path: `s.start.x` is one load.
+                let mut fields = Vec::new();
+                let mut outer = expression;
+                while let thir::ExprKind::Field { value, index } = self.thir.exprs[outer].kind {
+                    fields.push(index);
+                    outer = value;
+                }
+                fields.reverse();
+                let fields = fields.into();
+                match self.thir.exprs[outer].kind {
+                    thir::ExprKind::Variable(variable) => mir::InstructionKind::LoadField {
+                        variable: Id::from_index(variable.index()),
+                        fields,
+                    },
+                    _ => mir::InstructionKind::Field {
+                        value: self.lower_expr(outer)?,
+                        fields,
+                    },
+                }
+            }
         };
         Some(self.emit(kind, ty, span))
     }

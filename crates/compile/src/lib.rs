@@ -250,7 +250,8 @@ fn compile_function(
 }
 
 /// Feeds `ty` to `hasher` by what it is, not by its id, which differs between
-/// compiles: a named type by its module's path and its name.
+/// compiles: a named type by its module's path and its name, a struct also
+/// by its fields' types.
 fn hash_type(checker: &Checker, ty: TypeId, hasher: &mut DefaultHasher) {
     let ty = &checker.types[ty];
     std::mem::discriminant(ty).hash(hasher);
@@ -264,16 +265,16 @@ fn hash_type(checker: &Checker, ty: TypeId, hasher: &mut DefaultHasher) {
             }
             hash_type(checker, *result, hasher);
         }
-        Type::Struct(fields) => {
-            fields.len().hash(hasher);
-            for &field in fields {
-                hash_type(checker, field, hasher);
-            }
-        }
-        Type::Named(definition) => {
+        Type::Named(definition) | Type::Struct { definition, .. } => {
             checker.modules[definition.module.index()].path.hash(hasher);
             let (name, file) = project::declared_name(checker.modules, *definition);
             name.text(file).hash(hasher);
+            if let Type::Struct { fields, .. } = ty {
+                fields.len().hash(hasher);
+                for &field in fields {
+                    hash_type(checker, field, hasher);
+                }
+            }
         }
         Type::Invalid | Type::Void | Type::Bool | Type::CString => {}
         Type::Alias { .. } => unreachable!("indexing looks through aliases"),
@@ -567,6 +568,30 @@ mod tests {
             ),
         ]);
         assert!(found.is_empty(), "{found:?}");
+    }
+
+    /// A struct declared in another module, here the prelude, has the field
+    /// names of its own module's tree.
+    #[test]
+    fn a_prelude_struct_has_its_own_fields() {
+        let found = diagnostics(&[
+            (
+                "core:global",
+                "const stdout: i32 = 1;\nstruct Pair { first: i32, second: i64 }",
+            ),
+            (
+                "app:main",
+                "fn main() {
+                    let pair = Pair.{ second = 2, first = 1 };
+                    let second: i64 = pair.second;
+                    let wrong = pair.secnd;
+                }",
+            ),
+        ]);
+        assert_eq!(
+            found,
+            expected(&[("T0010", "`Pair` has no field `secnd`", "secnd")])
+        );
     }
 
     /// Compiles the program of `modules` (see `load`) after `previous`;

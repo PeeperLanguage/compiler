@@ -8,5 +8,5 @@ stderr_contains = [
     "T0013",
     "`Node` depends on itself",
     "`Left` depends on itself",
-    "`Chain` depends on itself",
+    "`Link` depends on itself",
 ]

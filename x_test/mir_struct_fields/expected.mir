@@ -1,0 +1,14 @@
+fn main:
+  bb0:
+    %0 = aggregate(1, 2): Point
+    store p.0, %0
+    %2 = load p.0: Point
+    %3 = aggregate(3, 4): Point
+    %4 = aggregate(%2, %3): Segment
+    store s.1, %4
+    %6 = load s.1[1, 0]: i32
+    store x.2, %6
+    %8 = aggregate(5, 6): Point
+    %9 = field %8[1]: i32
+    store y.3, %9
+    fall off at `}`
