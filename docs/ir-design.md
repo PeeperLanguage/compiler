@@ -399,6 +399,26 @@ variable whose type moves can be moved, so the check is skipped for a function
 where every variable starts set and copies (decided by the owner, 2026-10-17;
 extended to moves 2026-10-23).
 
+The loan check (T0037, `flow::loans::report_loan_errors`) rejects an access that a
+reference still in use forbids. A loan is one `borrow`; it lasts until the
+last use of a reference holding it (owner, 2026-10-23), found by liveness of
+the variables and values of reference type. A `borrow` through a reference
+(`&mut r.*`, the call reborrow) also holds `r`'s loans, so what `r` refers to
+stays borrowed while the new reference is in use. A shared loan forbids
+changing, moving, ending and `&mut` borrowing its place; a `&mut` loan
+forbids every access; places overlap when one's steps start with the
+other's, so other fields stay free. Lowering writes a `scope end` at a
+block's `}` for each variable of that block borrowed not through a
+reference; it writes no code (`InstructionKind::runs`) and is how a
+reference that outlives its variable is caught. Changing a variable, or its
+scope ending, does not touch a loan reached through the reference stored
+in it: `r = &mut b` while `s = &mut r.*` is in use is valid (owner,
+2026-10-24). The message names the variable: "`x` is changed while a
+`&mut` reference to it is still in use" (events: read, changed, moved,
+borrowed, borrowed as `&mut`, gone), with "reference made here" and
+"reference used later here" (owner, 2026-10-24). A function with no
+`borrow` is not walked.
+
 The unreachable-code check (W0001, `flow::warn_unreachable_code`)
 warns once at the first code of each stretch of blocks no path reaches, such
 as code after a `return` ("this never runs"); the blocks that stretch leads to

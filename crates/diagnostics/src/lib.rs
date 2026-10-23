@@ -83,6 +83,7 @@ pub const NOT_A_TYPE: Code = error("T0021");
 pub const MISSING_FIELD: Code = error("T0029");
 pub const USED_AFTER_MOVE: Code = error("T0034");
 pub const PARTIAL_MOVE: Code = error("T0035");
+pub const BORROW_CONFLICT: Code = error("T0037");
 pub const USED_BEFORE_SET: Code = error("T0039");
 pub const DUPLICATE_FIELD: Code = error("T0040");
 pub const NOT_SUPPORTED_YET: Code = error("T0043");

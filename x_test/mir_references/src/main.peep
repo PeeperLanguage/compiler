@@ -1,6 +1,7 @@
 // A borrow is the address of a place, and a load or store through a
 // reference goes through the variable holding it (`.*` in the dump). A
-// `&mut` in a variable passed to a call is borrowed again, not moved.
+// `&mut` in a variable passed to a call is borrowed again, not moved. A
+// borrowed variable gets a `scope end` at its block's `}` for the loan check.
 struct Point { x: i32, y: i32 }
 
 fn shift(point: &mut Point) {

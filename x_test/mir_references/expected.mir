@@ -30,4 +30,6 @@ fn main:
     %15 = Add %13, %14: i32
     return %15
   bb1:
+    scope end p.0
+    scope end n.2
     fall off at `}`

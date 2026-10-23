@@ -11,15 +11,17 @@
 //! - `initialization` (T0039 and T0007): a variable used where some path left
 //!   it unset, and a variable without `mut` assigned where some path already
 //!   set it. This is what lets `let x: i32;` be set once later.
+//! - `loans::report_loan_errors` (T0037): a place used in a way that a
+//!   reference still in use forbids, or a variable whose scope ends while a
+//!   reference to it is still in use.
 //! - `warn_unreachable_code` (W0001, a warning): code no path reaches, such as code
 //!   after a `return`.
 //!
 //! How they work: they only read the graph. A block's terminator gives the
-//! edges out of it (`Terminator::targets`); a check that needs the edges in
-//! builds the predecessor lists itself. Whether a block can be reached is
-//! found from the entry. `initialization` is dataflow: it carries bits per
-//! variable along the edges until nothing changes, which also works once
-//! loops add edges back.
+//! edges out of it (`Terminator::targets`), and `predecessors` the edges in.
+//! Whether a block can be reached is found from the entry. The variable state
+//! and loan checks are dataflow (`dataflow`): they carry bits along the edges
+//! until nothing changes, which also works once loops add edges back.
 //!
 //! What they do not do:
 //!
@@ -40,6 +42,7 @@
 //! - No building of the MIR: the `lower` crate does that, and these checks run
 //!   after it, called by `compile`.
 
+use std::marker::PhantomData;
 use std::sync::Arc;
 
 use arena::Id;
@@ -51,6 +54,8 @@ use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use source::SourceFile;
 use source::Span;
+
+pub mod loans;
 
 /// The most paths one missing-return error names.
 const SHOWN_CAUSES: usize = 3;
@@ -92,12 +97,7 @@ pub fn report_missing_return<'n>(
     // (where, label) of each path that arrives at the end.
     let mut causes = Vec::new();
     if body.blocks[end].instructions.is_empty() {
-        let mut predecessors = vec![Vec::new(); body.blocks.len()];
-        for block in body.blocks.ids().filter(|block| reachable[block.index()]) {
-            for target in body.blocks[block].terminator.targets() {
-                predecessors[target.index()].push(block);
-            }
-        }
+        let predecessors = predecessors(body);
         // Back from the end through blocks that do nothing: the first thing
         // met on each path is how that path gets there. A branch is met once
         // through each side that leads here.
@@ -105,6 +105,9 @@ pub fn report_missing_return<'n>(
         let mut pending = vec![end];
         while let Some(block) = pending.pop() {
             for &predecessor in &predecessors[block.index()] {
+                if !reachable[predecessor.index()] {
+                    continue;
+                }
                 let mir::Block {
                     instructions,
                     ref terminator,
@@ -145,7 +148,8 @@ pub fn report_missing_return<'n>(
                         Some(_) => {}
                     }
                 } else if !std::mem::replace(&mut visited[predecessor.index()], true) {
-                    match body.lists.items(instructions).last() {
+                    let code = body.lists.items(instructions);
+                    match code.filter(|&id| body.instructions[id].kind.runs()).last() {
                         Some(last) => causes.push((
                             body.instructions.span(last),
                             "this path ends without returning",
@@ -189,9 +193,9 @@ pub fn report_missing_return<'n>(
 /// unset at first, and only a variable whose type moves can be moved, so a
 /// function with neither is not walked.
 ///
-/// Forward dataflow over the reachable blocks (`Facts` at each block's
-/// start). The first loop finds the facts at each block's start; the second
-/// walks each block again from them and reports at each use and `store`.
+/// Forward dataflow over the reachable blocks: `dataflow` finds the `Facts`
+/// at each block's start; the loop walks each block again from them and
+/// reports at each use and `store`.
 pub fn report_variable_state_errors(
     body: &mir::Body,
     types: &Types,
@@ -210,29 +214,17 @@ pub fn report_variable_state_errors(
         let block = &body.blocks[Id::<mir::Block>::from_index(index)];
         body.lists.items(block.instructions)
     };
-    // `None` for a block not reached.
-    let mut starts: Vec<Option<Facts>> = vec![None; body.blocks.len()];
-    starts[0] = Some(Facts::new(body.variables.len()));
-    let mut pending = vec![0];
-    while let Some(index) = pending.pop() {
-        let Some(mut facts) = starts[index].clone() else {
-            unreachable!("only reached blocks are pending")
-        };
-        for instruction in instructions(index) {
-            facts.step(&body.instructions[instruction].kind);
-        }
-        let block = &body.blocks[Id::<mir::Block>::from_index(index)];
-        for target in block.terminator.targets() {
-            let joined = match &starts[target.index()] {
-                None => facts.clone(),
-                Some(start) => start.join(&facts),
-            };
-            if starts[target.index()].as_ref() != Some(&joined) {
-                starts[target.index()] = Some(joined);
-                pending.push(target.index());
+    let starts = dataflow(
+        body.blocks.len(),
+        [(Id::from_index(0), Facts::new(body.variables.len()))],
+        |block| body.blocks[block].terminator.targets(),
+        |block, facts| {
+            for instruction in instructions(block.index()) {
+                facts.step(&body.instructions[instruction].kind);
             }
-        }
-    }
+        },
+        Facts::join,
+    );
     let mut reported = vec![false; body.variables.len()];
     let mut errors = Vec::new();
     for (index, start) in starts.into_iter().enumerate() {
@@ -251,9 +243,9 @@ pub fn report_variable_state_errors(
                 mir::InstructionKind::Store { ref place, .. }
                     if let Some(variable) = place.whole_variable() =>
                 {
-                    let assigned = has(&facts.maybe, variable) && !body.variables[variable].mutable;
+                    let assigned = facts.maybe.has(variable) && !body.variables[variable].mutable;
                     assigned.then(|| {
-                        let on_every_path = has(&facts.always, variable);
+                        let on_every_path = facts.always.has(variable);
                         let error = second_assignment(body, file, variable, span, on_every_path);
                         (variable, error)
                     })
@@ -262,18 +254,18 @@ pub fn report_variable_state_errors(
                 | mir::InstructionKind::Move(ref place)
                 | mir::InstructionKind::Store { ref place, .. }
                 | mir::InstructionKind::Borrow { ref place, .. }
-                    if !has(&facts.always, place.variable) =>
+                    if !facts.always.has(place.variable) =>
                 {
                     let variable = place.variable;
                     // Writing through a reference only reads the variable.
                     let writes_field = matches!(kind, mir::InstructionKind::Store { .. })
                         && !place.is_behind_reference();
-                    let error = if has(&facts.moved, variable) {
+                    let error = if facts.moved.has(variable) {
                         let block = Id::from_index(index);
                         let moves = move_sites(body, variable, block, position);
                         moved_use(body, file, variable, span, &moves, writes_field)
                     } else {
-                        let on_some_path = has(&facts.maybe, variable);
+                        let on_some_path = facts.maybe.has(variable);
                         unset_use(body, file, variable, span, on_some_path, writes_field)
                     };
                     Some((variable, error))
@@ -292,19 +284,70 @@ pub fn report_variable_state_errors(
     diagnostics.extend(errors.into_iter().map(|(_, error)| error));
 }
 
+/// Facts carried along a function's edges until nothing changes, which also
+/// works once loops add edges back: forward from the entry, or backward from
+/// the blocks that leave the function. Gives the facts where each block is
+/// entered in that direction (its start forward, its end backward), `None`
+/// for a block never entered. `seeds` are the first blocks with their facts;
+/// `edges` gives the blocks entered after one; `run` turns the facts where a
+/// block is entered into those where it is left; `join` gives the facts
+/// where paths meet.
+fn dataflow<F: Clone + PartialEq, E: IntoIterator<Item = Id<mir::Block>>>(
+    blocks: usize,
+    seeds: impl IntoIterator<Item = (Id<mir::Block>, F)>,
+    edges: impl Fn(Id<mir::Block>) -> E,
+    run: impl Fn(Id<mir::Block>, &mut F),
+    join: impl Fn(&F, &F) -> F,
+) -> Vec<Option<F>> {
+    let mut entered = vec![None; blocks];
+    let mut pending = Vec::new();
+    for (block, facts) in seeds {
+        entered[block.index()] = Some(facts);
+        pending.push(block);
+    }
+    while let Some(block) = pending.pop() {
+        let Some(mut facts) = entered[block.index()].clone() else {
+            unreachable!("only entered blocks are pending")
+        };
+        run(block, &mut facts);
+        for next in edges(block) {
+            let joined = match &entered[next.index()] {
+                None => facts.clone(),
+                Some(facts_there) => join(facts_there, &facts),
+            };
+            if entered[next.index()].as_ref() != Some(&joined) {
+                entered[next.index()] = Some(joined);
+                pending.push(next);
+            }
+        }
+    }
+    entered
+}
+
+/// The blocks that go straight to each block, by index.
+fn predecessors(body: &mir::Body) -> Vec<Vec<Id<mir::Block>>> {
+    let mut predecessors = vec![Vec::new(); body.blocks.len()];
+    for from in body.blocks.ids() {
+        for target in body.blocks[from].terminator.targets() {
+            predecessors[target.index()].push(from);
+        }
+    }
+    predecessors
+}
+
 /// What is known about each variable at one point of a function, one bit per
 /// variable in each set.
 #[derive(Clone, PartialEq)]
 struct Facts {
-    always: Bits, // set on every path to here (joined with "and")
-    maybe: Bits,  // set on some path to here, even if moved since ("or")
-    moved: Bits,  // moved on some path to here and not set since ("or")
+    always: Bits<mir::Variable>, // set on every path to here (joined with "and")
+    maybe: Bits<mir::Variable>,  // set on some path to here, even if moved since ("or")
+    moved: Bits<mir::Variable>,  // moved on some path to here and not set since ("or")
 }
 
 impl Facts {
     /// Nothing set or moved, for `variables` variables.
     fn new(variables: usize) -> Facts {
-        let none = vec![0; variables.div_ceil(64)];
+        let none = Bits::new(variables);
         Facts {
             always: none.clone(),
             maybe: none.clone(),
@@ -319,15 +362,15 @@ impl Facts {
             mir::InstructionKind::Store { ref place, .. }
                 if let Some(variable) = place.whole_variable() =>
             {
-                set(&mut self.always, variable);
-                set(&mut self.maybe, variable);
-                clear(&mut self.moved, variable);
+                self.always.set(variable);
+                self.maybe.set(variable);
+                self.moved.clear(variable);
             }
             mir::InstructionKind::Move(ref place)
                 if let Some(variable) = place.whole_variable() =>
             {
-                clear(&mut self.always, variable);
-                set(&mut self.moved, variable);
+                self.always.clear(variable);
+                self.moved.set(variable);
             }
             _ => {}
         }
@@ -335,33 +378,66 @@ impl Facts {
 
     /// The facts where paths with `self` and `other` meet.
     fn join(&self, other: &Facts) -> Facts {
-        let with = |a: &Bits, b: &Bits, op: fn(u64, u64) -> u64| {
-            a.iter().zip(b).map(|(&a, &b)| op(a, b)).collect()
-        };
         Facts {
-            always: with(&self.always, &other.always, |a, b| a & b),
-            maybe: with(&self.maybe, &other.maybe, |a, b| a | b),
-            moved: with(&self.moved, &other.moved, |a, b| a | b),
+            always: self.always.combine(&other.always, |a, b| a & b),
+            maybe: self.maybe.combine(&other.maybe, |a, b| a | b),
+            moved: self.moved.combine(&other.moved, |a, b| a | b),
         }
     }
 }
 
-/// One bit per variable.
-type Bits = Vec<u64>;
-
-/// Turns `variable`'s bit on in `bits`.
-fn set(bits: &mut Bits, variable: Id<mir::Variable>) {
-    bits[variable.index() / 64] |= 1 << (variable.index() % 64);
+/// A set of ids of `T`, one bit per id: only an `Id<T>` goes in, so ids of
+/// different things, such as variables and loans, cannot be mixed up.
+struct Bits<T> {
+    words: Vec<u64>,
+    kind: PhantomData<fn() -> T>,
 }
 
-/// Turns `variable`'s bit off in `bits`.
-fn clear(bits: &mut Bits, variable: Id<mir::Variable>) {
-    bits[variable.index() / 64] &= !(1 << (variable.index() % 64));
+// Derived impls would require T itself to be Clone and PartialEq.
+impl<T> Clone for Bits<T> {
+    fn clone(&self) -> Bits<T> {
+        Bits {
+            words: self.words.clone(),
+            kind: PhantomData,
+        }
+    }
+}
+impl<T> PartialEq for Bits<T> {
+    fn eq(&self, other: &Bits<T>) -> bool {
+        self.words == other.words
+    }
 }
 
-/// Whether `variable`'s bit is on in `bits`.
-fn has(bits: &Bits, variable: Id<mir::Variable>) -> bool {
-    bits[variable.index() / 64] >> (variable.index() % 64) & 1 != 0
+impl<T> Bits<T> {
+    /// No id in it, for ids below `count`.
+    fn new(count: usize) -> Bits<T> {
+        Bits {
+            words: vec![0; count.div_ceil(64)],
+            kind: PhantomData,
+        }
+    }
+
+    fn set(&mut self, id: Id<T>) {
+        self.words[id.index() / 64] |= 1 << (id.index() % 64);
+    }
+
+    fn clear(&mut self, id: Id<T>) {
+        self.words[id.index() / 64] &= !(1 << (id.index() % 64));
+    }
+
+    fn has(&self, id: Id<T>) -> bool {
+        self.words[id.index() / 64] >> (id.index() % 64) & 1 != 0
+    }
+
+    /// The set whose words are `op` of the two sets' words: `|` for the
+    /// union, `&` for the ids in both.
+    fn combine(&self, other: &Bits<T>, op: fn(u64, u64) -> u64) -> Bits<T> {
+        let words = self.words.iter().zip(&other.words);
+        Bits {
+            words: words.map(|(&a, &b)| op(a, b)).collect(),
+            kind: PhantomData,
+        }
+    }
 }
 
 /// Where `variable` was moved on the paths to the instruction at `position`
@@ -372,12 +448,7 @@ fn move_sites(
     block: Id<mir::Block>,
     position: usize,
 ) -> Vec<Span> {
-    let mut predecessors = vec![Vec::new(); body.blocks.len()];
-    for from in body.blocks.ids() {
-        for target in body.blocks[from].terminator.targets() {
-            predecessors[target.index()].push(from);
-        }
-    }
+    let predecessors = predecessors(body);
     let mut seen = vec![false; body.blocks.len()];
     let mut sites = Vec::new();
     let mut pending = vec![(block, Some(position))];
@@ -445,7 +516,9 @@ pub fn warn_unreachable_code(
                 mir::Terminator::Goto(_) | mir::Terminator::FallOff(_) => None,
             };
             let spans = body.lists.items(instructions);
-            let spans = spans.map(|instruction| body.instructions.span(instruction));
+            let spans = spans
+                .filter(|&instruction| body.instructions[instruction].kind.runs())
+                .map(|instruction| body.instructions.span(instruction));
             // The earliest, and of those the widest: the whole statement.
             let first = spans
                 .chain(terminator)

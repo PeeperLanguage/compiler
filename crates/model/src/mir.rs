@@ -152,6 +152,10 @@ pub enum InstructionKind {
     /// The value from whichever listed block control came from; first in its
     /// block. `&&` and `||` give their result this way.
     Phi(Box<[(Id<Block>, Operand)]>),
+    /// The variable's block ends here, so its storage is gone: written only
+    /// for a variable borrowed in the function, which no reference may
+    /// still use (`flow::loans::report_loan_errors`). Writes no code.
+    ScopeEnd(Id<Variable>),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -183,6 +187,14 @@ pub enum Terminator {
     /// result is missing a `return` (`flow::report_missing_return`). Every
     /// `Return` is a written `return`.
     FallOff(Span),
+}
+
+impl InstructionKind {
+    /// Whether it is code that runs: all but a `ScopeEnd`, which only marks
+    /// a point for the checks.
+    pub fn runs(&self) -> bool {
+        !matches!(self, InstructionKind::ScopeEnd(_))
+    }
 }
 
 impl Terminator {
@@ -286,6 +298,10 @@ impl Body {
                         printer.out.push_str("field ");
                         printer.write_operand(value);
                         printer.write_fields(fields);
+                    }
+                    InstructionKind::ScopeEnd(variable) => {
+                        printer.out.push_str("scope end ");
+                        printer.write_place(&Place::whole(*variable));
                     }
                     InstructionKind::Phi(incoming) => {
                         printer.out.push_str("phi ");

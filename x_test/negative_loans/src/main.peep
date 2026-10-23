@@ -1,0 +1,97 @@
+// Each access a reference still in use forbids: one error per function.
+struct Pair { left: i32, right: i32 }
+
+fn read(n: &i32) -> i32 {
+    return n.*;
+}
+
+fn both(a: &mut i32, b: &i32) {}
+
+fn WriteUnderShared() -> i32 {
+    let mut x = 1;
+    let r = &x;
+    x = 2;
+    return read(r);
+}
+
+fn MoveUnderShared() -> i32 {
+    let p = Pair.{ left = 1, right = 2 };
+    let r = &p;
+    let moved = p;
+    return r.left;
+}
+
+fn MutableUnderShared() -> i32 {
+    let mut x = 1;
+    let r = &x;
+    let m = &mut x;
+    return read(r);
+}
+
+fn ReadUnderMutable() -> i32 {
+    let mut x = 1;
+    let m = &mut x;
+    let copy = x;
+    m.* = 2;
+    return copy;
+}
+
+fn WriteUnderMutable() {
+    let mut x = 1;
+    let m = &mut x;
+    x = 2;
+    m.* = 3;
+}
+
+fn SharedUnderMutable() -> i32 {
+    let mut x = 1;
+    let m = &mut x;
+    let r = &x;
+    m.* = 2;
+    return read(r);
+}
+
+// The same field, and the whole struct, overlap the borrowed field.
+fn SameField() {
+    let mut pair = Pair.{ left = 1, right = 2 };
+    let left = &mut pair.left;
+    pair.left = 3;
+    left.* = 4;
+}
+
+// A borrow made on one side of an `if` is still in use after it.
+fn BorrowInBranch(flag: bool) -> i32 {
+    let a = 1;
+    let mut x = 2;
+    let mut r = &a;
+    if flag {
+        r = &x;
+    }
+    x = 3;
+    return read(r);
+}
+
+// A reference made through `r` keeps `x` borrowed while it is in use.
+fn ReborrowKeepsBorrow() {
+    let mut x = 1;
+    let r = &mut x;
+    let s = &mut r.*;
+    x = 2;
+    s.* = 3;
+}
+
+// `x` ends with its block while `r` still refers to it.
+fn OutlivesScope() -> i32 {
+    let r: &i32;
+    {
+        let x = 1;
+        r = &x;
+    }
+    return read(r);
+}
+
+// The `&mut` argument is in use until the call, so `&x` conflicts.
+fn SameCall() {
+    let mut x = 1;
+    both(&mut x, &x);
+}

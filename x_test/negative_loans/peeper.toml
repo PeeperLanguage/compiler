@@ -1,0 +1,21 @@
+name = "negative_loans"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "T0037",
+    "`x` is changed while a reference to it is still in use",
+    "`p` is moved while a reference to it is still in use",
+    "`x` is borrowed as `&mut` while a reference to it is still in use",
+    "`x` is read while a `&mut` reference to it is still in use",
+    "`x` is changed while a `&mut` reference to it is still in use",
+    "`x` is borrowed while a `&mut` reference to it is still in use",
+    "`pair` is changed while a `&mut` reference to it is still in use",
+    "`x` is gone while a reference to it is still in use",
+    "reference made here",
+    "reference used later here",
+    "gone here",
+    "Compilation failed with 11 error(s)",
+]

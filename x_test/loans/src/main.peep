@@ -1,0 +1,82 @@
+// What a reference allows while it is in use, and that a borrow ends at the
+// reference's last use, not at the end of its block.
+struct Pair { left: i32, right: i32 }
+
+fn read(n: &i32) -> i32 {
+    return n.*;
+}
+
+fn bump(n: &mut i32) {
+    n.* = n.* + 1;
+}
+
+// A shared reference allows reading and more shared references.
+fn SharedAllowsReads() -> i32 {
+    let x = 1;
+    let r = &x;
+    let copy = x;
+    let other = &x;
+    return read(r) + read(other) + copy;
+}
+
+// Fields are borrowed apart from each other.
+fn OtherField() -> i32 {
+    let mut pair = Pair.{ left = 1, right = 2 };
+    let left = &mut pair.left;
+    pair.right = 7;
+    left.* = 3;
+    return pair.left + pair.right;
+}
+
+// After its last use, the reference no longer holds `x`.
+fn EndsAtLastUse() -> i32 {
+    let mut x = 1;
+    let r = &mut x;
+    r.* = 2;
+    x = 3;
+    return x;
+}
+
+// A reference made through `r` ends with its own last use, and `r` is
+// usable again after it.
+fn ReborrowEnds() -> i32 {
+    let mut x = 1;
+    let r = &mut x;
+    let s = &mut r.*;
+    s.* = 2;
+    r.* = 3;
+    bump(r);
+    bump(r);
+    return x;
+}
+
+// Pointing `r` somewhere else leaves what `s` refers to alone.
+fn Repoint() -> i32 {
+    let mut a = 1;
+    let mut b = 2;
+    let mut r = &mut a;
+    let s = &mut r.*;
+    r = &mut b;
+    s.* = 3;
+    r.* = 4;
+    return a + b;
+}
+
+// A borrow on one side of an `if` ends with its last use on that side.
+fn OneBranch(flag: bool) -> i32 {
+    let mut x = 1;
+    if flag {
+        let r = &mut x;
+        r.* = 2;
+    }
+    x = x + 1;
+    return x;
+}
+
+// A reference in an outer block may refer to a variable of the same block.
+fn LateReference() -> i32 {
+    let x = 5;
+    let r: &i32;
+    r = &x;
+    return read(r);
+}

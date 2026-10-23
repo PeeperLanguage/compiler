@@ -46,6 +46,7 @@ pub fn lower(
         block: Id::from_index(0),
         instructions: Vec::new(),
         debug_scope: Id::from_index(0),
+        borrowed: Vec::new(),
     };
     // One debug scope per block and one MIR variable per THIR variable, in
     // order: block `i` is debug scope `i`, and the ids of variables match.
@@ -98,6 +99,9 @@ struct Lowering<'t> {
     block: Id<mir::Block>,            // the block being filled
     instructions: Vec<NonZeroU32>,    // that block's instructions so far
     debug_scope: Id<mir::DebugScope>, // the one new instructions are written in
+    /// The variables borrowed so far, not through a reference: each gets a
+    /// `ScopeEnd` where its block ends.
+    borrowed: Vec<Id<mir::Variable>>,
 }
 
 impl Lowering<'_> {
@@ -155,6 +159,16 @@ impl Lowering<'_> {
         let outer = std::mem::replace(&mut self.debug_scope, Id::from_index(block.index()));
         for statement in self.thir.lists.items(self.thir.blocks[block].statements) {
             self.lower_statement(statement)?;
+        }
+        // A variable is borrowed only inside its block, so its borrows are
+        // all lowered by now.
+        for index in 0..self.borrowed.len() {
+            let variable = self.borrowed[index];
+            if self.mir.variables[variable].debug_scope == self.debug_scope {
+                let end = self.thir.blocks.span(block).end as usize;
+                let end = Span::new(end - 1, end); // the `}`
+                self.emit(mir::InstructionKind::ScopeEnd(variable), TypeId::VOID, end);
+            }
         }
         self.debug_scope = outer;
         Some(())
@@ -302,6 +316,9 @@ impl Lowering<'_> {
                 let Ok(place) = self.place(place) else {
                     unreachable!("the checker borrows only a place in a variable")
                 };
+                if !place.is_behind_reference() && !self.borrowed.contains(&place.variable) {
+                    self.borrowed.push(place.variable);
+                }
                 mir::InstructionKind::Borrow { place, mutable }
             }
         };

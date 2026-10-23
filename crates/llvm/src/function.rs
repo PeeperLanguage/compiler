@@ -399,6 +399,9 @@ impl Function<'_, '_, '_> {
             ref kind,
             debug_scope,
         } = self.body.instructions[id];
+        if !kind.runs() {
+            return; // no code, so no location either
+        }
         let span = self.body.instructions.span(id);
         let location = self.location(span, debug_scope);
         let name = value_name(id);
@@ -525,6 +528,7 @@ impl Function<'_, '_, '_> {
                 _ = writeln!(out, "  {name} = phi {} {incoming}", type_text(types, ty));
                 return; // no location: it runs where control arrives
             }
+            InstructionKind::ScopeEnd(_) => unreachable!("returned above"),
         };
         _ = writeln!(out, "{location}");
     }
