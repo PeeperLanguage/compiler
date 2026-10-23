@@ -171,7 +171,7 @@ impl ThirBuilder<'_, '_> {
                 return constant_expr(self.body.constants[constant].clone());
             }
             Some(Symbol::Constant(constant)) => {
-                return constant_expr(self.checker.constant(constant));
+                return constant_expr(self.checker.constant(constant, span));
             }
             Some(Symbol::Function(_)) => {
                 self.checker.not_supported(span, "functions as values");
@@ -471,7 +471,7 @@ impl ThirBuilder<'_, '_> {
             None => None,
         };
         let signature = function.map(|function| {
-            let ty = self.checker.function_type(function);
+            let ty = self.checker.function_type(function, callee_span);
             (function, self.checker.types[ty].clone())
         });
         let Some((function, Type::Function { parameters, result })) = signature else {

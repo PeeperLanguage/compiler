@@ -109,7 +109,10 @@ impl Checker<'_> {
     pub(crate) fn resolve_value_type(&mut self, ty: Id<ast::Type>) -> TypeId {
         let resolved = self.resolve_type(ty);
         match self.types[resolved] {
-            Type::Named(definition) => self.declared_type(definition),
+            Type::Named(definition) => {
+                let span = self.module().ast.types.span(ty);
+                self.declared_type(definition, span)
+            }
             _ => resolved,
         }
     }
@@ -139,7 +142,7 @@ impl Checker<'_> {
                     return builtin;
                 }
                 match self.global(name) {
-                    Some(Symbol::Type(definition)) => return self.named_type(definition),
+                    Some(Symbol::Type(definition)) => return self.named_type(definition, span),
                     Some(Symbol::Function(_) | Symbol::Constant(_) | Symbol::Local(_)) => {
                         let message = format!("`{name}` is a value, not a type");
                         return self.error(diagnostics::NOT_A_TYPE, message, span);
@@ -207,9 +210,11 @@ mod tests {
                         index: index as u32,
                     };
                     // As a compile asks, so a use does not report it again.
-                    match checker.module().ast.decls[declaration] {
-                        ast::Decl::Function(_) => checker.function_type(definition),
-                        _ => checker.declared_type(definition),
+                    let written = checker.module().ast.decls[declaration];
+                    let name_span = written.name().span;
+                    match written {
+                        ast::Decl::Function(_) => checker.function_type(definition, name_span),
+                        _ => checker.declared_type(definition, name_span),
                     }
                 })
                 .collect();

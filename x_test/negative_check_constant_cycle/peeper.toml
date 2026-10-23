@@ -4,4 +4,11 @@ build = "program"
 [test]
 mode = "check"
 outcome = "failure"
-stderr_contains = ["T0013", "`First` depends on itself"]
+stderr_contains = [
+    "T0013",
+    "`First` depends on itself",
+    "`First` is defined here",
+    "`First` uses `Second`",
+    "`Second` uses `First`, closing the cycle",
+    "Compilation failed with 1 error(s)",
+]

@@ -580,6 +580,8 @@ struct Sorter<'a> {
     modules: &'a HashMap<String, Loaded>,
     visits: HashMap<&'a str, Visit>,
     stack: Vec<&'a str>, // the modules being visited, outermost first
+    /// The import each module on `stack` but the last takes to the next.
+    taken: Vec<ImportKind>,
     order: Vec<String>,
     cycles: Vec<Diagnostic>,
 }
@@ -622,6 +624,7 @@ fn sort_modules(modules: &HashMap<String, Loaded>) -> (Vec<String>, Vec<Diagnost
         modules,
         visits: HashMap::with_capacity(modules.len()),
         stack: Vec::new(),
+        taken: Vec::new(),
         order: Vec::with_capacity(modules.len()),
         cycles: Vec::new(),
     };
@@ -646,26 +649,16 @@ impl<'a> Sorter<'a> {
         // one edge; the stable sort keeps the written import, which has a
         // place to point at.
         imports.dedup_by(|(_, a), (_, b)| a == b);
-        for (kind, imported) in imports {
+        for &(kind, ref imported) in imports {
             match self.visits.get(imported.as_str()) {
-                None => self.visit(imported),
+                None => {
+                    self.taken.push(kind);
+                    self.visit(imported);
+                    self.taken.pop();
+                }
                 Some(Visit::Started) => {
                     let start = self.stack.iter().position(|&p| p == imported).unwrap_or(0);
-                    let mut cycle = self.stack[start..].to_vec();
-                    cycle.push(imported);
-                    let diagnostic = Diagnostic::new(
-                        diagnostics::CYCLIC_IMPORT,
-                        format!("cyclic import detected: {}", cycle.join(" -> ")),
-                    );
-                    self.cycles.push(match kind.declaration(&module.ast) {
-                        None => diagnostic
-                            .note(format!("every module imports `{PRELUDE_PATH}` implicitly")),
-                        Some(declaration) => diagnostic.label(
-                            &module.ast.file,
-                            declaration.span,
-                            "this import closes the cycle",
-                        ),
-                    });
+                    self.report_cycle(start, kind);
                 }
                 Some(Visit::Finished) => {}
             }
@@ -673,6 +666,40 @@ impl<'a> Sorter<'a> {
         self.stack.pop();
         self.visits.insert(path, Visit::Finished);
         self.order.push(path.to_string());
+    }
+
+    /// Reports the cycle that the module visited last closes with its import
+    /// `closing` of `stack[start]`: one place for each written import of the
+    /// cycle, and a note for the prelude's implicit one.
+    fn report_cycle(&mut self, start: usize, closing: ImportKind) {
+        let mut diagnostic = Diagnostic::new(
+            diagnostics::CYCLIC_IMPORT,
+            "modules import each other in a cycle",
+        );
+        let importers = &self.stack[start..];
+        let kinds = self.taken[start..].iter().copied().chain([closing]);
+        let imported = importers[1..].iter().chain([&importers[0]]);
+        for (step, ((&importer, kind), imported)) in
+            importers.iter().zip(kinds).zip(imported).enumerate()
+        {
+            let closes = if step + 1 == importers.len() {
+                ", closing the cycle"
+            } else {
+                ""
+            };
+            let tree = &self.modules[importer].ast;
+            diagnostic = match kind.declaration(tree) {
+                Some(declaration) => diagnostic.label(
+                    &tree.file,
+                    declaration.span,
+                    format!("`{importer}` imports `{imported}`{closes}"),
+                ),
+                None => diagnostic.note(format!(
+                    "`{importer}` imports `{imported}` implicitly, as every module does{closes}"
+                )),
+            };
+        }
+        self.cycles.push(diagnostic);
     }
 }
 
@@ -938,8 +965,29 @@ mod tests {
         assert_eq!(main.ast.file.position(label.span.start as usize), (2, 1));
     }
 
+    /// Each place of the import cycles `program` found, as the importer's
+    /// path and the place's message, then each note.
+    fn cycle_steps(program: &Program) -> Vec<String> {
+        let cycles = program.diagnostics.iter();
+        let cycles = cycles.filter(|d| d.code == diagnostics::CYCLIC_IMPORT);
+        let steps = |d: &Diagnostic| {
+            let importer = |label: &diagnostics::Label| {
+                let file = Path::new(&label.file.path);
+                let path = &program.module_of(file).unwrap().path;
+                format!("{path}: {}", label.message)
+            };
+            let notes = d.notes.iter().map(|note| note.text.clone());
+            d.labels
+                .iter()
+                .map(importer)
+                .chain(notes)
+                .collect::<Vec<_>>()
+        };
+        cycles.flat_map(steps).collect()
+    }
+
     #[test]
-    fn reports_a_cycle_at_the_import_closing_it() {
+    fn reports_a_cycle_with_each_import() {
         let project = write(
             "cycle",
             &[
@@ -951,13 +999,15 @@ mod tests {
         let program = load(&project, &HashMap::<PathBuf, String>::new());
         assert_eq!(
             messages(&program),
-            ["myapp:b: M0002 cyclic import detected: myapp:a -> myapp:b -> myapp:a"]
+            ["myapp:a: M0002 modules import each other in a cycle"]
         );
-        let label = &program.diagnostics[0].labels[0];
-        assert!(Arc::ptr_eq(
-            &label.file,
-            &module_named(&program, "myapp:b").ast.file
-        ));
+        assert_eq!(
+            cycle_steps(&program),
+            [
+                "myapp:a: `myapp:a` imports `myapp:b`",
+                "myapp:b: `myapp:b` imports `myapp:a`, closing the cycle",
+            ]
+        );
     }
 
     /// A cycle through the prelude, closed by a written import of it, is
@@ -973,21 +1023,34 @@ mod tests {
             ],
         );
         let program = load(&project, &HashMap::<PathBuf, String>::new());
-        let cycles: Vec<_> = program
-            .diagnostics
-            .iter()
-            .filter(|d| d.code == diagnostics::CYCLIC_IMPORT)
-            .collect();
-        let messages: Vec<_> = cycles.iter().map(|d| &d.message).collect();
         assert_eq!(
-            messages,
-            ["cyclic import detected: core:global -> core:x -> core:global"]
+            cycle_steps(&program),
+            [
+                "core:global: `core:global` imports `core:x`",
+                "core:x: `core:x` imports `core:global`, closing the cycle",
+            ]
         );
-        let label = &cycles[0].labels[0];
-        assert!(Arc::ptr_eq(
-            &label.file,
-            &module_named(&program, "core:x").ast.file
-        ));
+    }
+
+    /// The prelude's implicit import has no place; its step is a note.
+    #[test]
+    fn a_cycle_through_the_implicit_prelude_import_notes_it() {
+        let project = write(
+            "implicit_cycle",
+            &[
+                ("src/main.peep", "fn main() {}"),
+                ("libs/core/src/global.peep", r#"import "core:x";"#),
+                ("libs/core/src/x.peep", "fn F() {}"),
+            ],
+        );
+        let program = load(&project, &HashMap::<PathBuf, String>::new());
+        assert_eq!(
+            cycle_steps(&program),
+            [
+                "core:global: `core:global` imports `core:x`",
+                "`core:x` imports `core:global` implicitly, as every module does, closing the cycle",
+            ]
+        );
     }
 
     #[test]

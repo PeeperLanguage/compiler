@@ -180,11 +180,11 @@ fn compile_module(
                 record_names,
                 use_function,
             ),
-            ast::Decl::Const { .. } => {
-                checker.constant(definition);
+            ast::Decl::Const { name, .. } => {
+                checker.constant(definition, name.span);
             }
-            ast::Decl::Type(_) | ast::Decl::Alias(_) => {
-                checker.declared_type(definition);
+            ast::Decl::Type(written) | ast::Decl::Alias(written) => {
+                checker.declared_type(definition, written.name.span);
             }
         }
     }
@@ -204,7 +204,7 @@ fn compile_function(
 ) {
     let modules = checker.modules;
     let module = definition.module.index();
-    let ty = checker.function_type(definition);
+    let ty = checker.function_type(definition, function.name.span);
     let mut names = Vec::new(); // allocates only when a name is recorded
     let recorded = record_names.then_some(&mut names);
     let checked = checker.in_module(definition.module, |checker| {
@@ -509,21 +509,65 @@ mod tests {
         );
     }
 
+    /// A cycle gets one error with a place for each step, however often it
+    /// is closed (`A + A` closes it twice); a figure 8 is two cycles.
     #[test]
-    fn a_cycle_is_reported_once() {
-        let found = diagnostics(&[(
+    fn a_cycle_is_reported_once_with_its_path() {
+        let program = load(&[(
             "app:main",
-            "const A = A + 1;
-            const B = C;
+            "const A = A + A;
+            const B = C + D;
             const C = B;
+            const D = B;
             fn main() { let x = A + B; }",
         )]);
+        let found = run(&program, 64, Results::default(), false, |_| {});
+        let errors: Vec<(String, Vec<(String, String)>)> = found
+            .diagnostics()
+            .map(|diagnostic| {
+                let labels = diagnostic.labels.iter();
+                let label = |label: &diagnostics::Label| {
+                    (
+                        label.file.slice(label.span).to_string(),
+                        label.message.clone(),
+                    )
+                };
+                (diagnostic.message.clone(), labels.map(label).collect())
+            })
+            .collect();
+        let error = |message: &str, labels: &[(&str, &str)]| {
+            let labels = labels
+                .iter()
+                .map(|&(text, label)| (text.to_string(), label.to_string()));
+            (message.to_string(), labels.collect::<Vec<_>>())
+        };
         assert_eq!(
-            found,
-            expected(&[
-                ("T0013", "`A` depends on itself", "A"),
-                ("T0013", "`B` depends on itself", "B"),
-            ])
+            errors,
+            [
+                error(
+                    "`A` depends on itself",
+                    &[
+                        ("A", "`A` is defined here"),
+                        ("A", "`A` uses `A`, closing the cycle"),
+                    ]
+                ),
+                error(
+                    "`B` depends on itself",
+                    &[
+                        ("B", "`B` is defined here"),
+                        ("C", "`B` uses `C`"),
+                        ("B", "`C` uses `B`, closing the cycle"),
+                    ]
+                ),
+                error(
+                    "`B` depends on itself",
+                    &[
+                        ("B", "`B` is defined here"),
+                        ("D", "`B` uses `D`"),
+                        ("B", "`D` uses `B`, closing the cycle"),
+                    ]
+                ),
+            ]
         );
     }
 

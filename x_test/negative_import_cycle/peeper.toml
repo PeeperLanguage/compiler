@@ -1,0 +1,14 @@
+name = "negative_import_cycle"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "M0002",
+    "modules import each other in a cycle",
+    "`negative_import_cycle:geo` imports `negative_import_cycle:shapes`",
+    "`negative_import_cycle:shapes` imports `negative_import_cycle:main`",
+    "`negative_import_cycle:main` imports `negative_import_cycle:geo`, closing the cycle",
+    "Compilation failed with 1 error(s)",
+]

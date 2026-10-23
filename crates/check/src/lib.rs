@@ -10,6 +10,8 @@ mod statement;
 #[cfg(test)]
 mod testing;
 
+use std::sync::Arc;
+
 use diagnostics::Code;
 use diagnostics::Diagnostic;
 use diagnostics::fix::Fix;
@@ -51,14 +53,16 @@ pub struct Checker<'p> {
     /// What checking each module reported, by `ModuleId`, in order.
     pub diagnostics: Vec<Vec<Diagnostic>>,
     pub(crate) current_module: ModuleId, // the module being checked
+    /// The declarations being checked, outermost first, each with the span
+    /// where its asker wrote its name (its own name, when checked for its own
+    /// sake). One asked for again while it is here depends on itself.
+    checking: Vec<(DefId, Span)>,
 }
 
 /// Where the check of one declaration is.
 #[derive(Clone, Debug)]
 pub enum State<T> {
-    NotStarted,
-    /// Being checked: asked for again now, it depends on itself.
-    Running,
+    NotStarted, // or being checked: then it is in `Checker::checking`
     Done(T),
 }
 
@@ -90,14 +94,16 @@ impl<'p> Checker<'p> {
             constants: table(modules),
             diagnostics,
             current_module: ModuleId::from_index(0),
+            checking: Vec::new(),
         }
     }
 
     /// The type the type declaration or alias `definition` declares
-    /// (`check_type_declaration`).
-    pub fn declared_type(&mut self, definition: DefId) -> TypeId {
+    /// (`check_type_declaration`), named at `used_at`.
+    pub fn declared_type(&mut self, definition: DefId, used_at: Span) -> TypeId {
         self.check_once(
             definition,
+            used_at,
             |checker| &mut checker.declared_types,
             TypeId::INVALID,
             Checker::check_type_declaration,
@@ -105,14 +111,15 @@ impl<'p> Checker<'p> {
     }
 
     /// The type the name of the type declaration or alias `definition` stands
-    /// for. A type declaration makes its type (`Type::Named`), so naming it
-    /// checks nothing; an alias names its declared type (`Type::Alias`).
-    pub fn named_type(&mut self, definition: DefId) -> TypeId {
+    /// for, named at `used_at`. A type declaration makes its type
+    /// (`Type::Named`), so naming it checks nothing; an alias names its
+    /// declared type (`Type::Alias`).
+    pub fn named_type(&mut self, definition: DefId, used_at: Span) -> TypeId {
         let tree = &self.modules[definition.module.index()].ast;
         if let ast::Decl::Type(_) = tree.decls[tree.declaration(definition.index)] {
             return self.types.intern(Type::Named(definition));
         }
-        let target = self.declared_type(definition);
+        let target = self.declared_type(definition, used_at);
         if target == TypeId::INVALID {
             return target; // its error was reported
         }
@@ -122,21 +129,24 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// The type of the function or method `definition` (`check_function`).
-    pub fn function_type(&mut self, definition: DefId) -> TypeId {
+    /// The type of the function or method `definition` (`check_function`),
+    /// named at `used_at`.
+    pub fn function_type(&mut self, definition: DefId, used_at: Span) -> TypeId {
         self.check_once(
             definition,
+            used_at,
             |checker| &mut checker.function_types,
             TypeId::INVALID,
             Checker::check_function,
         )
     }
 
-    /// The type and value of the constant `definition`; `None` when it had
-    /// an error (`check_constant`).
-    pub fn constant(&mut self, definition: DefId) -> Option<Constant> {
+    /// The type and value of the constant `definition`, named at `used_at`;
+    /// `None` when it had an error (`check_constant`).
+    pub fn constant(&mut self, definition: DefId, used_at: Span) -> Option<Constant> {
         self.check_once(
             definition,
+            used_at,
             |checker| &mut checker.constants,
             None,
             Checker::check_constant,
@@ -152,30 +162,30 @@ impl<'p> Checker<'p> {
         result
     }
 
-    /// The result of `definition` in `table`: the one already found,
-    /// `on_cycle` when it is asked for while its check runs (a cycle,
-    /// reported), or else what `check` finds in its module, kept for the next
-    /// ask.
+    /// The result of `definition`, named at `used_at`, in `table`: the one
+    /// already found, `on_cycle` when it is asked for while its check runs
+    /// (a cycle, reported), or else what `check` finds in its module, kept
+    /// for the next ask.
     fn check_once<T: Clone>(
         &mut self,
         definition: DefId,
+        used_at: Span,
         table: fn(&mut Self) -> &mut Vec<Vec<State<T>>>,
         on_cycle: T,
         check: fn(&mut Self, DefId) -> T,
     ) -> T {
         let (module, index) = (definition.module.index(), definition.index as usize);
-        // Cloned, so no borrow is held while the check runs and asks others.
-        let state = table(self)[module][index].clone();
-        match state {
-            State::Done(result) => return result,
-            State::Running => {
-                self.report_cycle(definition);
-                return on_cycle;
-            }
-            State::NotStarted => {}
+        if let State::Done(result) = &table(self)[module][index] {
+            return result.clone();
         }
-        table(self)[module][index] = State::Running;
+        let mut checking = self.checking.iter();
+        if let Some(start) = checking.position(|&(running, _)| running == definition) {
+            self.report_cycle(start, used_at);
+            return on_cycle;
+        }
+        self.checking.push((definition, used_at));
         let result = self.in_module(definition.module, |checker| check(checker, definition));
+        self.checking.pop();
         table(self)[module][index] = State::Done(result.clone());
         result
     }
@@ -188,27 +198,69 @@ impl<'p> Checker<'p> {
         })
     }
 
-    /// Reports that the declaration `definition` was asked for while it was
-    /// being checked: it depends on itself.
-    fn report_cycle(&mut self, definition: DefId) {
-        let (name, file) = project::declared_name(self.modules, definition);
-        let text = name.text(file);
-        let found = &mut self.diagnostics[definition.module.index()];
-        // `A + A` asks for `A` twice while it runs; the cycle is reported once.
-        let reported = |diagnostic: &Diagnostic| {
-            diagnostic.code == diagnostics::CIRCULAR_DEPENDENCY
-                && diagnostic.labels[0].span == name.span
+    /// Reports the cycle that the declaration checked last closes by asking,
+    /// at `closing`, for `checking[start]`: one place for each step, where a
+    /// declaration names the next.
+    fn report_cycle(&mut self, start: usize, closing: Span) {
+        let modules = self.modules;
+        let declaration = |definition: DefId| {
+            let tree = &modules[definition.module.index()].ast;
+            &tree.decls[tree.declaration(definition.index)]
         };
-        if found.iter().any(reported) {
-            return;
-        }
-        found.push(
-            Diagnostic::new(
-                diagnostics::CIRCULAR_DEPENDENCY,
-                format!("`{text}` depends on itself"),
-            )
-            .label(file, name.span, ""),
+        let cycle = &self.checking[start..];
+        let (first, _) = cycle[0];
+        let (first_name, first_file) = project::declared_name(modules, first);
+        let only_aliases = cycle
+            .iter()
+            .all(|&(asker, _)| matches!(declaration(asker), ast::Decl::Alias(_)));
+        let what = match declaration(first) {
+            ast::Decl::Alias(_) if only_aliases => "is an alias of itself",
+            ast::Decl::Type(_) | ast::Decl::Alias(_) => "holds itself",
+            ast::Decl::Const { .. } | ast::Decl::Function(_) => "depends on itself",
+        };
+        let first_text = first_name.text(first_file);
+        let mut diagnostic = Diagnostic::new(
+            diagnostics::CIRCULAR_DEPENDENCY,
+            format!("`{first_text}` {what}"),
+        )
+        .label(
+            first_file,
+            first_name.span,
+            format!("`{first_text}` is defined here"),
         );
+        // Each declaration of the cycle asks for the next, the last for the
+        // first again.
+        let asked = cycle[1..].iter().copied().chain([(first, closing)]);
+        for (step, (&(asker, _), (asked, span))) in cycle.iter().zip(asked).enumerate() {
+            let verb = match declaration(asker) {
+                ast::Decl::Type(_) => "holds",
+                ast::Decl::Alias(_) => "is an alias of",
+                ast::Decl::Const { .. } | ast::Decl::Function(_) => "uses",
+            };
+            let (asker_name, file) = project::declared_name(modules, asker);
+            let (asked_name, asked_file) = project::declared_name(modules, asked);
+            let asker_text = asker_name.text(file);
+            let asked_text = asked_name.text(asked_file);
+            let closes = if step + 1 == cycle.len() {
+                ", closing the cycle"
+            } else {
+                ""
+            };
+            let message = format!("`{asker_text}` {verb} `{asked_text}`{closes}");
+            diagnostic = diagnostic.label(file, span, message);
+        }
+        // `A + A` closes the same cycle twice: only the closing place differs.
+        let labels = &diagnostic.labels;
+        let same_path = |earlier: &Diagnostic| {
+            earlier.code == diagnostics::CIRCULAR_DEPENDENCY
+                && earlier.labels.len() == labels.len()
+                && (earlier.labels.iter().zip(labels).rev().skip(1))
+                    .all(|(a, b)| a.span == b.span && Arc::ptr_eq(&a.file, &b.file))
+        };
+        let found = &mut self.diagnostics[first.module.index()];
+        if !found.iter().any(same_path) {
+            found.push(diagnostic);
+        }
     }
 
     /// The module being checked.

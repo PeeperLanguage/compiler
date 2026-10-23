@@ -6,7 +6,13 @@ mode = "check"
 outcome = "failure"
 stderr_contains = [
     "T0013",
-    "`Node` depends on itself",
-    "`Left` depends on itself",
-    "`Link` depends on itself",
+    "`Node` holds itself",
+    "`Node` holds `Node`, closing the cycle",
+    "`Left` holds itself",
+    "`Left` holds `Right`",
+    "`Right` holds `Left`, closing the cycle",
+    "`Link` holds itself",
+    "`Link` is an alias of `Chain`",
+    "`Chain` holds `Link`, closing the cycle",
+    "Compilation failed with 3 error(s)",
 ]

@@ -1,0 +1,5 @@
+// Three modules that import each other in a ring: one error, with a place at
+// each import of the ring.
+import "negative_import_cycle:geo";
+
+fn main() {}

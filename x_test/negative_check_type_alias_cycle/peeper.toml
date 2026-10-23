@@ -4,4 +4,11 @@ build = "program"
 [test]
 mode = "check"
 outcome = "failure"
-stderr_contains = ["T0013", "`First` depends on itself", "`Itself` depends on itself"]
+stderr_contains = [
+    "T0013",
+    "`First` is an alias of itself",
+    "`First` is an alias of `Second`",
+    "`Second` is an alias of `First`, closing the cycle",
+    "`Itself` is an alias of itself",
+    "Compilation failed with 2 error(s)",
+]

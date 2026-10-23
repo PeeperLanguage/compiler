@@ -534,7 +534,7 @@ mod tests {
                 };
                 let module = checker.current_module;
                 let index = index as u32;
-                let signature = checker.function_type(DefId { module, index });
+                let signature = checker.function_type(DefId { module, index }, function.name.span);
                 let mut body = Body::default();
                 if checker.check_body(&function, signature, &mut body, None) && !body.has_errors {
                     bodies.push(body);
@@ -794,7 +794,7 @@ mod tests {
                 unreachable!("the first declaration is a function")
             };
             let module = checker.current_module;
-            let signature = checker.function_type(DefId { module, index: 0 });
+            let signature = checker.function_type(DefId { module, index: 0 }, function.name.span);
             checker.check_body(&function, signature, &mut Body::default(), None);
             let note = |diagnostic: &diagnostics::Diagnostic| {
                 let first = diagnostic.notes.first();

@@ -221,8 +221,10 @@ mir(d)            MIR of function d (needs body(d)); later also comptime calls
   a table of them per module, indexed by the declaration's place among its
   top-level declarations (`DefId`), so a body edit does not move it.
 - A declaration asked for while its check is running is a cycle (`const A = B; const B = A;`)
-  and is reported once (T0013), at the declaration asked for again; the other
-  declarations of the cycle become silently invalid.
+  and is reported once (T0013), at the declaration asked for again, with a place
+  at each use on the path (the checker keeps a stack of the declarations being
+  checked and where each was named); the other declarations of the cycle become
+  silently invalid.
 - `check::Checker` holds the tables and checks each declaration once
   (`check_once`). The `compile` crate runs a compile: it walks the
   modules, reuses unchanged ones and lowers each body. `Checker::new`
