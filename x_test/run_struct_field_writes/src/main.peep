@@ -9,5 +9,5 @@ fn main() -> i32 {
     let mut line = Line.{ start = p, end = Point.{ x = 0, y = 0 } };
     line.start.y = 4;
     line.end = Point.{ x = 5, y = 6 };
-    return p.x + line.start.y + line.end.x; // 30 + 4 + 5
+    return line.start.x + line.start.y + line.end.x; // 30 + 4 + 5, `p` moved in
 }

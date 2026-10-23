@@ -250,7 +250,12 @@ impl Lowering<'_> {
                 return Some(self.add_constant(Constant { ty, value }));
             }
             thir::ExprKind::Variable(variable) => {
-                mir::InstructionKind::Load(Id::from_index(variable.index()))
+                let variable = Id::from_index(variable.index());
+                if self.types[ty].is_copy() {
+                    mir::InstructionKind::Load(variable)
+                } else {
+                    mir::InstructionKind::Move(variable)
+                }
             }
             thir::ExprKind::Binary {
                 op: op @ (BinaryOp::LogicalAnd | BinaryOp::LogicalOr),
@@ -297,10 +302,14 @@ impl Lowering<'_> {
             thir::ExprKind::Field { .. } => {
                 let (outer, fields) = self.field_path(expression);
                 match self.thir.exprs[outer].kind {
-                    thir::ExprKind::Variable(variable) => mir::InstructionKind::LoadField {
-                        variable: Id::from_index(variable.index()),
-                        fields,
-                    },
+                    thir::ExprKind::Variable(variable) => {
+                        let variable = Id::from_index(variable.index());
+                        if self.types[ty].is_copy() {
+                            mir::InstructionKind::LoadField { variable, fields }
+                        } else {
+                            mir::InstructionKind::MoveField { variable, fields }
+                        }
+                    }
                     _ => mir::InstructionKind::Field {
                         value: self.lower_expr(outer)?,
                         fields,

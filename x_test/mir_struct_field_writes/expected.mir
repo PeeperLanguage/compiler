@@ -5,6 +5,8 @@ fn main:
     %2 = aggregate(%0, %1): Line
     store line.0, %2
     store line.0[0, 1], 5
-    %5 = load line.0[0]: Point
-    store line.0[1], %5
+    %5 = aggregate(6, 7): Point
+    store other.1, %5
+    %7 = move other.1: Point
+    store line.0[1], %7
     fall off at `}`

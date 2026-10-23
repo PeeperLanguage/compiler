@@ -404,13 +404,17 @@ impl Function<'_, '_, '_> {
         let name = value_name(id);
         let types = self.types;
         _ = match *kind {
-            InstructionKind::Load(variable) => write!(
+            InstructionKind::Load(variable) | InstructionKind::Move(variable) => write!(
                 out,
                 "  {name} = load {}, ptr %v{}",
                 type_text(types, ty),
                 variable.index()
             ),
             InstructionKind::LoadField {
+                variable,
+                ref fields,
+            }
+            | InstructionKind::MoveField {
                 variable,
                 ref fields,
             } => {

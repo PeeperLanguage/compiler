@@ -1,0 +1,7 @@
+name = "run_struct_moves"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 13

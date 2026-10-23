@@ -1,0 +1,19 @@
+// A moved `mut` variable is usable again once set again, also on only the
+// path that moved it; numbers copy, so reading them never moves anything.
+struct Point { x: i32, y: i32 }
+
+fn sum(p: Point) -> i32 {
+    return p.x + p.y;
+}
+
+fn main() -> i32 {
+    let mut p = Point.{ x = 1, y = 2 };
+    let first = sum(p);
+    p = Point.{ x = 3, y = 4 };
+    let x = p.x;
+    if x > 0 {
+        let moved = p;
+        p = Point.{ x = moved.y, y = x };
+    }
+    return first + sum(p) + x;
+}

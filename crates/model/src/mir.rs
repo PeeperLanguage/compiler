@@ -69,11 +69,20 @@ pub struct Instruction {
 
 #[derive(Clone, Debug)]
 pub enum InstructionKind {
+    /// The value of a variable whose type copies (`Type::is_copy`).
     Load(Id<Variable>),
+    /// The value of a variable whose type moves: the variable is unset after.
+    Move(Id<Variable>),
     /// The field of a struct variable that its `fields` path leads to: field
     /// indices in declaration order, outermost first (`s.start.x` is one
     /// load).
     LoadField {
+        variable: Id<Variable>,
+        fields: Box<[u32]>,
+    },
+    /// A field whose type moves, by `LoadField`'s path: always an error, as a
+    /// field cannot be moved out of its struct.
+    MoveField {
         variable: Id<Variable>,
         fields: Box<[u32]>,
     },
@@ -208,8 +217,17 @@ impl Body {
                         printer.out.push_str("load ");
                         printer.write_variable(*variable);
                     }
+                    InstructionKind::Move(variable) => {
+                        printer.out.push_str("move ");
+                        printer.write_variable(*variable);
+                    }
                     InstructionKind::LoadField { variable, fields } => {
                         printer.out.push_str("load ");
+                        printer.write_variable(*variable);
+                        printer.write_fields(fields);
+                    }
+                    InstructionKind::MoveField { variable, fields } => {
+                        printer.out.push_str("move ");
                         printer.write_variable(*variable);
                         printer.write_fields(fields);
                     }

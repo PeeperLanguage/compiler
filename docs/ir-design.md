@@ -362,15 +362,28 @@ end block itself has instructions, only the end is named, since one `return`
 there fixes every path. `Checker::check_body` gives no THIR for a body whose check
 reported an error, so such a function is neither lowered nor path-checked.
 
-The initialization check (`flow::report_initialization_errors`) is forward dataflow
-with two bits per variable at each block's start: set on every path to it
-("and" at joins) and set on some path ("or"). A `load` not set on every path is
-T0039 ("`x` is used before it is set"); a `store` to a variable without `mut`
-that may already be set is T0007 ("cannot assign twice to immutable `x`"). So
-`let x: T;` may be set once later even without `mut`: check rejects other
-assignments to a variable without `mut` only when its `let` has a value. Only a
-`let` without a value can be unset, so the check is skipped for a function
-that has none (decided by the owner, 2026-10-17).
+The variable state check (`flow::report_variable_state_errors`) is forward
+dataflow with three bits per variable at each block's start: set on every path
+to it ("and" at joins), set on some path ("or"), and moved on some path and not
+set since ("or"). A `store` sets the first two and clears the third; a `move`
+clears the first and sets the third.
+
+Lowering decides what copies (`Type::is_copy`: numbers, `bool`, `cstr`): a
+whole variable whose type copies is a `load`, else a `move`; a field whose type
+copies is a `load` with a field path, else a `move` with one. So the check
+never looks at types to tell a copy from a move.
+
+A use (`load`, `move`, or a field read or write) not set on every path is T0034
+("`x` is used after it was moved", with each place it was moved) when the
+moved bit is on, else T0039 ("`x` is used before it is set"). A `move` of a
+field is always T0035 ("cannot move a field out of its struct"). A `store` to
+a variable without `mut` that may already be set is T0007 ("cannot assign
+twice to immutable `x`"). So `let x: T;` may be set once later even without
+`mut`: check rejects other assignments to a variable without `mut` only when
+its `let` has a value. Only a `let` without a value starts unset and only a
+variable whose type moves can be moved, so the check is skipped for a function
+where every variable starts set and copies (decided by the owner, 2026-10-17;
+extended to moves 2026-10-23).
 
 The unreachable-code check (W0001, `flow::warn_unreachable_code`)
 warns once at the first code of each stretch of blocks no path reaches, such

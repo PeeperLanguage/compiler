@@ -98,6 +98,21 @@ pub enum Type {
 }
 
 impl Type {
+    /// Whether a value of this type copies when used by value: numbers,
+    /// `bool` and `cstr`. Any other value moves, and the variable it moved
+    /// from is unusable until set again.
+    pub fn is_copy(&self) -> bool {
+        match self {
+            Type::Bool | Type::Integer(_) | Type::Float(_) | Type::CString => true,
+            Type::Struct { .. } => false,
+            // No value of these is moved: an error, nothing, or not yet a value.
+            Type::Invalid | Type::Void | Type::Function { .. } => true,
+            Type::Alias { .. } | Type::Named(_) => {
+                unreachable!("indexing `Types` looks through aliases; no value is named")
+            }
+        }
+    }
+
     /// Whether every value of this type is also a value of `target`, so a value
     /// converts without `as`: to a wider integer of the same signedness, from
     /// unsigned to a wider signed integer, and from `f32` to `f64`. A type does

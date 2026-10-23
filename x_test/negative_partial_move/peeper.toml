@@ -1,0 +1,12 @@
+name = "negative_partial_move"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "T0035",
+    "cannot move a field out of its struct",
+    "move the whole struct, or read only fields that copy",
+    "Compilation failed with 2 error(s)",
+]

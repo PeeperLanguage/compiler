@@ -183,64 +183,49 @@ pub fn report_missing_return<'n>(
     diagnostics.push(error.help(help, Vec::new()));
 }
 
-/// Reports each variable used where it may not be set yet, and each variable
-/// without `mut` assigned where it may already be set, once per variable. Only
-/// a `let` without a value can be unset: parameters and other `let`s are set
-/// where they are declared, so a function with no such `let` is not walked.
+/// Reports each variable used where it may not be set yet or was moved, and
+/// each variable without `mut` assigned where it may already be set, once per
+/// variable; and each move out of a field. Only a `let` without a value is
+/// unset at first, and only a variable whose type moves can be moved, so a
+/// function with neither is not walked.
 ///
-/// Forward dataflow over the reachable blocks, with two bits per variable at
-/// each block's start: set on every path to it (joined with "and") and set on
-/// some path to it (joined with "or"). A `store` sets both bits. The first
-/// loop finds the bits at each block's start; the second walks each block
-/// again from those bits and reports at each `load` and `store`.
-pub fn report_initialization_errors(
+/// Forward dataflow over the reachable blocks (`Facts` at each block's
+/// start). The first loop finds the facts at each block's start; the second
+/// walks each block again from them and reports at each use and `store`.
+pub fn report_variable_state_errors(
     body: &mir::Body,
+    types: &Types,
     file: &Arc<SourceFile>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    if body
-        .variables
-        .ids()
-        .all(|variable| body.variables[variable].initialized)
-    {
+    if body.variables.ids().all(|variable| {
+        let mir::Variable {
+            ty, initialized, ..
+        } = body.variables[variable];
+        initialized && types[ty].is_copy()
+    }) {
         return;
     }
-    let words = body.variables.len().div_ceil(64);
-    let set = |bits: &mut Bits, variable: Id<mir::Variable>| {
-        bits[variable.index() / 64] |= 1 << (variable.index() % 64);
-    };
-    let has = |bits: &Bits, variable: Id<mir::Variable>| {
-        bits[variable.index() / 64] >> (variable.index() % 64) & 1 != 0
-    };
     let instructions = |index: usize| {
         let block = &body.blocks[Id::<mir::Block>::from_index(index)];
         body.lists.items(block.instructions)
     };
-    // At each block's start: (set on every path, set on some path); `None`
-    // for a block not reached.
-    let mut starts: Vec<Option<(Bits, Bits)>> = vec![None; body.blocks.len()];
-    starts[0] = Some((vec![0; words], vec![0; words]));
+    // `None` for a block not reached.
+    let mut starts: Vec<Option<Facts>> = vec![None; body.blocks.len()];
+    starts[0] = Some(Facts::new(body.variables.len()));
     let mut pending = vec![0];
     while let Some(index) = pending.pop() {
-        let Some((mut always, mut maybe)) = starts[index].clone() else {
+        let Some(mut facts) = starts[index].clone() else {
             unreachable!("only reached blocks are pending")
         };
         for instruction in instructions(index) {
-            if let mir::InstructionKind::Store { variable, .. } =
-                body.instructions[instruction].kind
-            {
-                set(&mut always, variable);
-                set(&mut maybe, variable);
-            }
+            facts.step(&body.instructions[instruction].kind);
         }
         let block = &body.blocks[Id::<mir::Block>::from_index(index)];
         for target in block.terminator.targets() {
             let joined = match &starts[target.index()] {
-                None => (always.clone(), maybe.clone()),
-                Some((every, some)) => (
-                    every.iter().zip(&always).map(|(a, b)| a & b).collect(),
-                    some.iter().zip(&maybe).map(|(a, b)| a | b).collect(),
-                ),
+                None => facts.clone(),
+                Some(start) => start.join(&facts),
             };
             if starts[target.index()].as_ref() != Some(&joined) {
                 starts[target.index()] = Some(joined);
@@ -251,37 +236,47 @@ pub fn report_initialization_errors(
     let mut reported = vec![false; body.variables.len()];
     let mut errors = Vec::new();
     for (index, start) in starts.into_iter().enumerate() {
-        let Some((mut always, mut maybe)) = start else {
+        let Some(mut facts) = start else {
             continue;
         };
-        for instruction in instructions(index) {
+        for (position, instruction) in instructions(index).enumerate() {
             let span = body.instructions.span(instruction);
-            let (variable, error) = match body.instructions[instruction].kind {
-                ref kind @ (mir::InstructionKind::Load(variable)
+            let kind = &body.instructions[instruction].kind;
+            let error = match *kind {
+                mir::InstructionKind::MoveField { .. } => {
+                    errors.push((span.start, partial_move(file, span)));
+                    None
+                }
+                mir::InstructionKind::Load(variable)
+                | mir::InstructionKind::Move(variable)
                 | mir::InstructionKind::LoadField { variable, .. }
-                | mir::InstructionKind::StoreField { variable, .. })
-                    if !has(&always, variable) =>
+                | mir::InstructionKind::StoreField { variable, .. }
+                    if !has(&facts.always, variable) =>
                 {
                     let writes_field = matches!(kind, mir::InstructionKind::StoreField { .. });
-                    let on_some_path = has(&maybe, variable);
-                    let error = unset_use(body, file, variable, span, on_some_path, writes_field);
-                    (variable, error)
-                }
-                mir::InstructionKind::Store { variable, .. } => {
-                    let twice = has(&maybe, variable) && !body.variables[variable].mutable;
-                    let error = twice.then(|| {
-                        second_assignment(body, file, variable, span, has(&always, variable))
-                    });
-                    set(&mut always, variable);
-                    set(&mut maybe, variable);
-                    let Some(error) = error else {
-                        continue;
+                    let error = if has(&facts.moved, variable) {
+                        let block = Id::from_index(index);
+                        let moves = move_sites(body, variable, block, position);
+                        moved_use(body, file, variable, span, &moves, writes_field)
+                    } else {
+                        let on_some_path = has(&facts.maybe, variable);
+                        unset_use(body, file, variable, span, on_some_path, writes_field)
                     };
-                    (variable, error)
+                    Some((variable, error))
                 }
-                _ => continue,
+                mir::InstructionKind::Store { variable, .. }
+                    if has(&facts.maybe, variable) && !body.variables[variable].mutable =>
+                {
+                    let on_every_path = has(&facts.always, variable);
+                    let error = second_assignment(body, file, variable, span, on_every_path);
+                    Some((variable, error))
+                }
+                _ => None,
             };
-            if !std::mem::replace(&mut reported[variable.index()], true) {
+            facts.step(kind);
+            if let Some((variable, error)) = error
+                && !std::mem::replace(&mut reported[variable.index()], true)
+            {
                 errors.push((span.start, error));
             }
         }
@@ -290,8 +285,122 @@ pub fn report_initialization_errors(
     diagnostics.extend(errors.into_iter().map(|(_, error)| error));
 }
 
+/// What is known about each variable at one point of a function, one bit per
+/// variable in each set.
+#[derive(Clone, PartialEq)]
+struct Facts {
+    always: Bits, // set on every path to here (joined with "and")
+    maybe: Bits,  // set on some path to here, even if moved since ("or")
+    moved: Bits,  // moved on some path to here and not set since ("or")
+}
+
+impl Facts {
+    /// Nothing set or moved, for `variables` variables.
+    fn new(variables: usize) -> Facts {
+        let none = vec![0; variables.div_ceil(64)];
+        Facts {
+            always: none.clone(),
+            maybe: none.clone(),
+            moved: none,
+        }
+    }
+
+    /// The facts after `kind` runs: a `store` sets its variable, a `move`
+    /// unsets it.
+    fn step(&mut self, kind: &mir::InstructionKind) {
+        match *kind {
+            mir::InstructionKind::Store { variable, .. } => {
+                set(&mut self.always, variable);
+                set(&mut self.maybe, variable);
+                clear(&mut self.moved, variable);
+            }
+            mir::InstructionKind::Move(variable) => {
+                clear(&mut self.always, variable);
+                set(&mut self.moved, variable);
+            }
+            _ => {}
+        }
+    }
+
+    /// The facts where paths with `self` and `other` meet.
+    fn join(&self, other: &Facts) -> Facts {
+        let with = |a: &Bits, b: &Bits, op: fn(u64, u64) -> u64| {
+            a.iter().zip(b).map(|(&a, &b)| op(a, b)).collect()
+        };
+        Facts {
+            always: with(&self.always, &other.always, |a, b| a & b),
+            maybe: with(&self.maybe, &other.maybe, |a, b| a | b),
+            moved: with(&self.moved, &other.moved, |a, b| a | b),
+        }
+    }
+}
+
 /// One bit per variable.
 type Bits = Vec<u64>;
+
+/// Turns `variable`'s bit on in `bits`.
+fn set(bits: &mut Bits, variable: Id<mir::Variable>) {
+    bits[variable.index() / 64] |= 1 << (variable.index() % 64);
+}
+
+/// Turns `variable`'s bit off in `bits`.
+fn clear(bits: &mut Bits, variable: Id<mir::Variable>) {
+    bits[variable.index() / 64] &= !(1 << (variable.index() % 64));
+}
+
+/// Whether `variable`'s bit is on in `bits`.
+fn has(bits: &Bits, variable: Id<mir::Variable>) -> bool {
+    bits[variable.index() / 64] >> (variable.index() % 64) & 1 != 0
+}
+
+/// Where `variable` was moved on the paths to the instruction at `position`
+/// of `block` that do not set it again: searched back only for an error.
+fn move_sites(
+    body: &mir::Body,
+    variable: Id<mir::Variable>,
+    block: Id<mir::Block>,
+    position: usize,
+) -> Vec<Span> {
+    let mut predecessors = vec![Vec::new(); body.blocks.len()];
+    for from in body.blocks.ids() {
+        for target in body.blocks[from].terminator.targets() {
+            predecessors[target.index()].push(from);
+        }
+    }
+    let mut seen = vec![false; body.blocks.len()];
+    let mut sites = Vec::new();
+    let mut pending = vec![(block, Some(position))];
+    while let Some((block, end)) = pending.pop() {
+        let instructions: Vec<_> = body.lists.items(body.blocks[block].instructions).collect();
+        let before = &instructions[..end.unwrap_or(instructions.len())];
+        // The last move or store of `variable` before `end`: the move is a site;
+        // a store ends the path.
+        let last = before.iter().rev().find_map(|&instruction| {
+            match body.instructions[instruction].kind {
+                mir::InstructionKind::Move(moved) if moved == variable => {
+                    Some(Some(body.instructions.span(instruction)))
+                }
+                mir::InstructionKind::Store {
+                    variable: stored, ..
+                } if stored == variable => Some(None),
+                _ => None,
+            }
+        });
+        match last {
+            Some(site) => sites.extend(site),
+            None => {
+                for &from in &predecessors[block.index()] {
+                    if !std::mem::replace(&mut seen[from.index()], true) {
+                        pending.push((from, None));
+                    }
+                }
+            }
+        }
+    }
+    sites.sort_by_key(|span| span.start);
+    sites.dedup();
+    sites
+}
 
 /// Warns once at the first code of each stretch that no path reaches, such as
 /// code after a `return`; what that stretch leads to is not warned about
@@ -375,6 +484,50 @@ fn unset_use(
         format!(
             "set `{name}` on every path before this use, or give it a value where it is declared"
         ),
+        Vec::new(),
+    )
+}
+
+/// The error for `variable`, used at `span` where some path moved it at one
+/// of `moves`; a use that `writes_field` sets one of its fields.
+fn moved_use(
+    body: &mir::Body,
+    file: &Arc<SourceFile>,
+    variable: Id<mir::Variable>,
+    span: Span,
+    moves: &[Span],
+    writes_field: bool,
+) -> Diagnostic {
+    let name = file.slice(body.variables.span(variable));
+    let message = if writes_field {
+        format!("cannot set a field of `{name}` after `{name}` was moved")
+    } else {
+        format!("`{name}` is used after it was moved")
+    };
+    let mut error = Diagnostic::new(diagnostics::USED_AFTER_MOVE, message).label(
+        file,
+        span,
+        format!("`{name}` is used here"),
+    );
+    for &moved in moves {
+        error = error.label(file, moved, format!("`{name}` is moved here"));
+    }
+    error.note("a struct moves when used by value").help(
+        format!("set `{name}` again before this use, or stop moving it"),
+        Vec::new(),
+    )
+}
+
+/// The error for a field whose type moves, read by value at `span`: a field
+/// cannot be moved out of its struct.
+fn partial_move(file: &Arc<SourceFile>, span: Span) -> Diagnostic {
+    Diagnostic::new(
+        diagnostics::PARTIAL_MOVE,
+        "cannot move a field out of its struct",
+    )
+    .label(file, span, "this field's type moves")
+    .help(
+        "move the whole struct, or read only fields that copy",
         Vec::new(),
     )
 }

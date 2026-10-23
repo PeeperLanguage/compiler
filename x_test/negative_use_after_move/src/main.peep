@@ -1,0 +1,26 @@
+// A struct moves when used by value: by `let`, into a call, into a struct
+// literal, on one path or all. The variable is unusable until set again.
+struct Point { x: i32, y: i32 }
+struct Line { start: Point, end: Point }
+
+fn take(p: Point) {}
+
+fn main() {
+    let p = Point.{ x = 1, y = 2 };
+    let q = p;
+    let n = p.x;
+
+    let a = Point.{ x = 1, y = 2 };
+    if n > 0 {
+        take(a);
+    }
+    take(a);
+
+    let mut b = Point.{ x = 1, y = 2 };
+    let line = Line.{ start = b, end = q };
+    b.x = 3;
+
+    let c = Point.{ x = 1, y = 2 };
+    take(c);
+    let m = c.y;
+}

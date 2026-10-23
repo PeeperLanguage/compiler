@@ -222,7 +222,7 @@ fn compile_function(
         } => lower::lower(thir, parameters.len(), result, &checker.types).inspect(|mir| {
             let file = &modules[module].ast.file;
             let diagnostics = &mut checker.diagnostics[module];
-            flow::report_initialization_errors(mir, file, diagnostics);
+            flow::report_variable_state_errors(mir, &checker.types, file, diagnostics);
             flow::warn_unreachable_code(mir, file, diagnostics);
             // Last: it points at the closing brace.
             flow::report_missing_return(

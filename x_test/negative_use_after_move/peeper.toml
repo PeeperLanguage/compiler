@@ -1,0 +1,16 @@
+name = "negative_use_after_move"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "T0034",
+    "`p` is used after it was moved",
+    "`p` is moved here",
+    "`a` is used after it was moved",
+    "cannot set a field of `b` after `b` was moved",
+    "`c` is used after it was moved",
+    "a struct moves when used by value",
+    "Compilation failed with 4 error(s)",
+]

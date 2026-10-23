@@ -2,7 +2,7 @@ fn main:
   bb0:
     %0 = aggregate(1, 2): Point
     store p.0, %0
-    %2 = load p.0: Point
+    %2 = move p.0: Point
     %3 = aggregate(3, 4): Point
     %4 = aggregate(%2, %3): Segment
     store s.1, %4
