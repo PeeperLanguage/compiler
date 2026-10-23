@@ -107,6 +107,16 @@ struct Mark<'a> {
     messages: Vec<&'a str>,
 }
 
+/// A run of one character on a row of marks, at terminal cell `cell`, and
+/// the message written after it, if any.
+struct Stroke<'a> {
+    cell: usize,
+    glyph: &'static str,
+    length: usize,
+    primary: bool,
+    message: Option<&'a str>,
+}
+
 struct MarkedLine<'a> {
     number: usize,
     marks: Vec<Mark<'a>>,
@@ -212,38 +222,80 @@ impl Printer<'_> {
         self.out.push('\n');
     }
 
+    /// Writes the line with its marks: a mark inside a longer one goes above
+    /// the line and the rest below, so every mark shows in full
+    /// (`mark_rows`).
     fn write_marked_line(&mut self, file: &Arc<SourceFile>, line: &MarkedLine, mark_color: &str) {
         let text = line_text(file, line.number);
+        let cells: Vec<Range<usize>> = line
+            .marks
+            .iter()
+            .map(|mark| {
+                let end = if mark.end == 0 {
+                    text.chars().count() + 1
+                } else {
+                    mark.end
+                };
+                let start = cell_of(text, mark.start);
+                start..cell_of(text, end).max(start + 1)
+            })
+            .collect();
+        // Above: holds no other mark but lies on a longer one (on an equal
+        // one written before it, for marks that cross).
+        let above: Vec<bool> = cells
+            .iter()
+            .enumerate()
+            .map(|(index, mark)| {
+                let others = || {
+                    cells
+                        .iter()
+                        .enumerate()
+                        .filter(move |&(other, _)| other != index)
+                };
+                let holds =
+                    others().any(|(_, other)| mark.start <= other.start && other.end <= mark.end);
+                let lies_on = others().any(|(other_index, other)| {
+                    mark.start < other.end
+                        && other.start < mark.end
+                        && (other.len(), index) > (mark.len(), other_index)
+                });
+                !holds && lies_on
+            })
+            .collect();
+        let mut rows = mark_rows(text, &line.marks, &cells, |index| above[index]);
+        rows.reverse();
+        for row in &rows {
+            self.write_strokes(row, mark_color);
+        }
         self.write_gutter(WHITE, line.number);
         self.write_source_line(file, line.number);
         self.out.push('\n');
-        for mark in &line.marks {
-            let end = if mark.end == 0 {
-                text.chars().count() + 1
-            } else {
-                mark.end
-            };
-            let padding = cell_of(text, mark.start);
-            let length = cell_of(text, end).saturating_sub(padding).max(1);
-            let (color, underline) = if mark.primary {
-                (mark_color, "^")
-            } else {
-                (BLUE, "-")
-            };
-            self.write_blank_gutter();
+        for row in &mark_rows(text, &line.marks, &cells, |index| !above[index]) {
+            self.write_strokes(row, mark_color);
+        }
+    }
+
+    /// Writes one row of marks, `|`s and messages, left to right.
+    fn write_strokes(&mut self, row: &[Stroke], mark_color: &str) {
+        self.write_blank_gutter();
+        let mut cell = 0;
+        for stroke in row {
+            if stroke.cell < cell {
+                continue; // a `|` under a mark that starts at the same cell
+            }
             // a column can pass the 65,535 that a format width allows
-            self.out.extend(std::iter::repeat_n(' ', padding));
-            self.paint(color, underline.repeat(length));
-            for (index, message) in mark.messages.iter().enumerate() {
-                if index > 0 {
-                    self.out.push('\n');
-                    self.write_blank_gutter();
-                    self.out.extend(std::iter::repeat_n(' ', padding + length));
-                }
+            self.out
+                .extend(std::iter::repeat_n(' ', stroke.cell - cell));
+            let color = if stroke.primary { mark_color } else { BLUE };
+            if stroke.length > 0 {
+                self.paint(color, stroke.glyph.repeat(stroke.length));
+            }
+            if let Some(message) = stroke.message {
                 self.paint(color, format_args!(" {message}"));
             }
-            self.out.push('\n');
+            cell = stroke.cell + stroke.length;
         }
+        self.out.push('\n');
     }
 
     /// Writes line `number` of `file`, highlighted in color.
@@ -443,6 +495,130 @@ fn snippets(d: &Diagnostic) -> Vec<Snippet<'_>> {
         snippets[1..].sort_by(|a, b| a.file.path.cmp(&b.file.path));
     }
     snippets
+}
+
+/// The rows that draw the marks `chosen` picks, the row next to the source
+/// line first. That row has every mark: in full, or only the word it starts
+/// with where it covers a shorter mark. The mark nothing follows on that row
+/// keeps its message there; every other mark with a message, and every mark
+/// not drawn in full, drops: a `|` under its start, then the mark in full
+/// with its message on a row of its own. The rightmost drops first, so no `|`
+/// crosses a message.
+fn mark_rows<'a>(
+    text: &str,
+    marks: &'a [Mark],
+    cells: &[Range<usize>],
+    chosen: impl Fn(usize) -> bool,
+) -> Vec<Vec<Stroke<'a>>> {
+    let mut shortest_first: Vec<usize> = (0..marks.len()).filter(|&index| chosen(index)).collect();
+    shortest_first.sort_by_key(|&index| cells[index].len());
+    let mut drawn: Vec<(usize, Range<usize>)> = Vec::new();
+    let mut in_full = vec![false; marks.len()];
+    for &index in &shortest_first {
+        let free = |range: &Range<usize>| {
+            drawn
+                .iter()
+                .all(|(_, taken)| range.end <= taken.start || taken.end <= range.start)
+        };
+        if free(&cells[index]) {
+            in_full[index] = true;
+            drawn.push((index, cells[index].clone()));
+            continue;
+        }
+        let start = marks[index].start;
+        let word = text
+            .chars()
+            .skip(start - 1)
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .count()
+            .max(1);
+        let cell = cells[index].start;
+        let head = cell..cell_of(text, start + word).clamp(cell + 1, cells[index].end);
+        if free(&head) {
+            drawn.push((index, head));
+        }
+    }
+    let stays = drawn
+        .iter()
+        .find(|(index, range)| {
+            in_full[*index]
+                && !marks[*index].messages.is_empty()
+                && drawn.iter().all(|(_, other)| other.start < range.end)
+        })
+        .map(|&(index, _)| index);
+    let mut dropping: Vec<usize> = shortest_first
+        .iter()
+        .copied()
+        .filter(|&index| {
+            Some(index) != stays && (!in_full[index] || !marks[index].messages.is_empty())
+        })
+        .collect();
+    let glyph = |index: usize| if marks[index].primary { "^" } else { "-" };
+    dropping.sort_by_key(|&index| std::cmp::Reverse((cells[index].start, cells[index].end)));
+    // The `|`s of the marks from `dropping[from]` on, left to right.
+    let pipes = |from: usize| -> Vec<Stroke<'a>> {
+        dropping[from..]
+            .iter()
+            .rev()
+            .map(|&index| Stroke {
+                cell: cells[index].start,
+                glyph: "|",
+                length: 1,
+                primary: marks[index].primary,
+                message: None,
+            })
+            .collect()
+    };
+    // A mark in full with its first message, then a row for each other one.
+    let full =
+        |rows: &mut Vec<Vec<Stroke<'a>>>, mut row: Vec<Stroke<'a>>, index: usize, from: usize| {
+            let mark = &marks[index];
+            let range = &cells[index];
+            row.push(Stroke {
+                cell: range.start,
+                glyph: glyph(index),
+                length: range.len(),
+                primary: mark.primary,
+                message: mark.messages.first().copied(),
+            });
+            rows.push(row);
+            for &message in mark.messages.iter().skip(1) {
+                let mut row = pipes(from);
+                row.push(Stroke {
+                    cell: range.end,
+                    glyph: "",
+                    length: 0,
+                    primary: mark.primary,
+                    message: Some(message),
+                });
+                rows.push(row);
+            }
+        };
+    let mut rows = Vec::new();
+    let mut first: Vec<Stroke<'a>> = drawn
+        .iter()
+        .filter(|(index, _)| Some(*index) != stays)
+        .map(|(index, range)| Stroke {
+            cell: range.start,
+            glyph: glyph(*index),
+            length: range.len(),
+            primary: marks[*index].primary,
+            message: None,
+        })
+        .collect();
+    first.sort_by_key(|stroke| stroke.cell);
+    match stays {
+        Some(index) => full(&mut rows, first, index, 0),
+        None if !first.is_empty() => rows.push(first),
+        None => {}
+    }
+    if !dropping.is_empty() {
+        rows.push(pipes(0));
+    }
+    for (position, &index) in dropping.iter().enumerate() {
+        full(&mut rows, pipes(position + 1), index, position + 1);
+    }
+    rows
 }
 
 fn merge_same_span(marks: Vec<Mark>) -> Vec<Mark> {
@@ -753,6 +929,69 @@ Compilation failed with 1 error(s)
   |         ^^^^^^
 2 |   1)
   | ^^^^ here
+
+Compilation failed with 1 error(s)
+";
+        assert_eq!(render(&[d]), want);
+    }
+
+    /// A message that would run into the next mark drops below it, the
+    /// rightmost first, so no `|` crosses a message.
+    #[test]
+    fn marks_side_by_side() {
+        let file = Arc::new(SourceFile::new(
+            "a.peep",
+            "let n = add(width, height) + scale(depth);\n",
+        ));
+        let d = Diagnostic::new(code("T0001", Severity::Error), "mismatched types")
+            .label(&file, span(&file, "depth"), "expected `i32`, found `bool`")
+            .label(&file, span(&file, "width"), "`width` is `i32`")
+            .label(&file, span(&file, "height"), "`height` is `i64`");
+        let want = "[T0001]: mismatched types
+  --> a.peep:1:36
+  |\x20
+1 | let n = add(width, height) + scale(depth);
+  |             -----  ------          ^^^^^ expected `i32`, found `bool`
+  |             |      |
+  |             |      ------ `height` is `i64`
+  |             ----- `width` is `i32`
+
+Compilation failed with 1 error(s)
+";
+        assert_eq!(render(&[d]), want);
+    }
+
+    /// A mark inside a longer one goes above the line; the longer one shows
+    /// the word it starts with, then drops to show in full.
+    #[test]
+    fn marks_inside_marks() {
+        let file = Arc::new(SourceFile::new(
+            "a.peep",
+            "return wrap(P.{ x = f(1), y = g(2) });\n",
+        ));
+        let d = Diagnostic::new(code("T0001", Severity::Error), "mismatched types")
+            .label(
+                &file,
+                span(&file, "wrap(P.{ x = f(1), y = g(2) })"),
+                "`wrap` takes `Q`",
+            )
+            .label(
+                &file,
+                span(&file, "P.{ x = f(1), y = g(2) }"),
+                "`P` literal",
+            )
+            .label(&file, span(&file, "f(1)"), "`f` returns `bool`")
+            .label(&file, span(&file, "g(2)"), "`g` returns `u8`");
+        let want = "[T0001]: mismatched types
+  --> a.peep:1:8
+  |\x20
+  |                     ---- `f` returns `bool`
+  |                     |
+  |                     ----      ---- `g` returns `u8`
+1 | return wrap(P.{ x = f(1), y = g(2) });
+  |        ^^^^ ------------------------ `P` literal
+  |        |
+  |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `wrap` takes `Q`
 
 Compilation failed with 1 error(s)
 ";
