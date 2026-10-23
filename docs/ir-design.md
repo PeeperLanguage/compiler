@@ -417,7 +417,13 @@ in it: `r = &mut b` while `s = &mut r.*` is in use is valid (owner,
 `&mut` reference to it is still in use" (events: read, changed, moved,
 borrowed, borrowed as `&mut`, gone), with "reference made here" and
 "reference used later here" (owner, 2026-10-24). A function with no
-`borrow` is not walked.
+`borrow` is not walked. A `&mut` borrow whose only use is a call argument is
+reserved until that call (two-phase, as the spec on main asks): until then
+it acts as a shared loan, so `update(&mut x, read(&x))` and
+`take(&mut x, x > 0)` are valid; when the call starts it is checked as a
+`&mut` borrow against every reference still in use there, the call's other
+arguments included, so `both(&mut x, &x)` is an error, with the note "a
+`&mut` argument takes hold when the call starts".
 
 The unreachable-code check (W0001, `flow::warn_unreachable_code`)
 warns once at the first code of each stretch of blocks no path reaches, such

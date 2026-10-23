@@ -17,5 +17,8 @@ stderr_contains = [
     "reference made here",
     "reference used later here",
     "gone here",
-    "Compilation failed with 11 error(s)",
+    "`x` is borrowed as `&mut` while a `&mut` reference to it is still in use",
+    "`p` is moved while a `&mut` reference to it is still in use",
+    "a `&mut` argument takes hold when the call starts",
+    "Compilation failed with 15 error(s)",
 ]

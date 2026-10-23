@@ -7,6 +7,16 @@ fn read(n: &i32) -> i32 {
 
 fn both(a: &mut i32, b: &i32) {}
 
+fn twice(a: &mut i32, b: &mut i32) {}
+
+fn take(n: &mut i32, flag: bool) {}
+
+fn bump(n: &mut i32) -> i32 {
+    return 1;
+}
+
+fn consume(a: &mut Pair, b: Pair) {}
+
 fn WriteUnderShared() -> i32 {
     let mut x = 1;
     let r = &x;
@@ -90,8 +100,33 @@ fn OutlivesScope() -> i32 {
     return read(r);
 }
 
-// The `&mut` argument is in use until the call, so `&x` conflicts.
+// When the call starts, `&x`, passed to the same call, is still in use.
 fn SameCall() {
     let mut x = 1;
     both(&mut x, &x);
+}
+
+fn SameCallTwice() {
+    let mut x = 1;
+    twice(&mut x, &mut x);
+}
+
+// The `&mut x` for `bump` takes hold while the one for `take` is reserved.
+fn NestedMutable() {
+    let mut x = 1;
+    take(&mut x, bump(&mut x) > 0);
+}
+
+// `r` is still in use after the call, so `&mut x` cannot take hold.
+fn SharedBeforeCall() -> i32 {
+    let mut x = 1;
+    let r = &x;
+    take(&mut x, true);
+    return read(r);
+}
+
+// Moving `p` while its `&mut` argument is reserved.
+fn MovedArgument() {
+    let mut p = Pair.{ left = 1, right = 2 };
+    consume(&mut p, p);
 }

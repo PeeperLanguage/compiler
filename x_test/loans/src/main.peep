@@ -10,6 +10,12 @@ fn bump(n: &mut i32) {
     n.* = n.* + 1;
 }
 
+fn update(n: &mut i32, value: i32) {
+    n.* = value;
+}
+
+fn take(n: &mut i32, flag: bool) {}
+
 // A shared reference allows reading and more shared references.
 fn SharedAllowsReads() -> i32 {
     let x = 1;
@@ -79,4 +85,17 @@ fn LateReference() -> i32 {
     let r: &i32;
     r = &x;
     return read(r);
+}
+
+// A `&mut` argument takes hold only when the call starts, so the other
+// arguments may still read the place.
+fn ArgumentsRead(flag: bool) -> i32 {
+    let mut x = 1;
+    update(&mut x, read(&x));
+    take(&mut x, x > 0);
+    take(&mut x, flag && x > 0);
+    let r = &mut x;
+    update(r, read(&r.*));
+    update(r, 2);
+    return x;
 }

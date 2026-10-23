@@ -22,6 +22,12 @@
 //! steps start with the other's (`p` and `p.x`, not `p.x` and `p.y`).
 //! Changing a variable or ending its scope only touches its own storage, so
 //! a loan reached through the reference stored there is not affected.
+//!
+//! A `&mut` borrow used only as a call argument is reserved until the call
+//! (two-phase): until then it acts as a shared loan, so the other arguments
+//! may read the place (`update(&mut x, read(&x))`). When the call starts it
+//! takes hold, and a reference to the place still in use then, the call's
+//! other arguments included, is an error (`both(&mut x, &x)`).
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -80,12 +86,14 @@ pub fn report_loan_errors(
             _ => holders.push(None),
         }
     }
-    let loans = Loans {
+    let mut loans = Loans {
         body,
+        reserved: Bits::new(0), // found below: it needs `Loans::uses`
         borrows,
         holders,
         holder_count,
     };
+    loans.reserved = loans.reserved_loans();
     loans.report(file, diagnostics);
 }
 
@@ -97,6 +105,18 @@ struct Loans<'b> {
     /// `None` for one that is not a reference.
     holders: Vec<Option<Id<Holder>>>,
     holder_count: usize,
+    /// The `&mut` loans reserved until their call (two-phase).
+    reserved: Bits<Loan>,
+}
+
+/// What an instruction does to a place, as the loan rules see it.
+struct Access<'p> {
+    variable: Id<mir::Variable>,
+    projections: &'p [mir::Projection],
+    event: &'static str, // for the message: "changed", "read", ...
+    reads: bool,         // only reads it, which a shared loan allows
+    replaces: bool,      // replaces or ends the place's own storage
+    span: Span,
 }
 
 impl Loans<'_> {
@@ -177,6 +197,47 @@ impl Loans<'_> {
         [self.value_holder(id), stored]
     }
 
+    /// The loan the `Borrow` instruction `borrow` makes.
+    fn loan(&self, borrow: Id<mir::Instruction>) -> Id<Loan> {
+        let loan = self
+            .borrows
+            .partition_point(|other| other.index() < borrow.index());
+        Id::from_index(loan)
+    }
+
+    /// The `&mut` loans whose reference is used once, as a call argument.
+    fn reserved_loans(&self) -> Bits<Loan> {
+        let mut use_counts = vec![0_u32; self.holder_count];
+        let mut call_arguments = Bits::new(self.holder_count);
+        for id in self.body.instructions.ids() {
+            let call = matches!(
+                self.body.instructions[id].kind,
+                mir::InstructionKind::Call { .. }
+            );
+            self.uses(id, |holder| {
+                use_counts[holder.index()] += 1;
+                if call {
+                    call_arguments.set(holder);
+                }
+            });
+        }
+        let mut reserved = Bits::new(self.borrows.len());
+        for &borrow in &self.borrows {
+            let mutable = matches!(
+                self.body.instructions[borrow].kind,
+                mir::InstructionKind::Borrow { mutable: true, .. }
+            );
+            if let Some(holder) = self.value_holder(borrow)
+                && mutable
+                && use_counts[holder.index()] == 1
+                && call_arguments.has(holder)
+            {
+                reserved.set(self.loan(borrow));
+            }
+        }
+        reserved
+    }
+
     /// `held`, the loans of each holder, after the instruction `id`.
     fn step_held(&self, held: &mut [Bits<Loan>], id: Id<mir::Instruction>) {
         // The holder given new loans, the holder whose loans it takes, and
@@ -200,16 +261,12 @@ impl Loans<'_> {
             ),
             mir::InstructionKind::Borrow { ref place, .. } => {
                 let through = place.is_behind_reference();
-                let loan = self
-                    .borrows
-                    .partition_point(|borrow| borrow.index() < id.index());
-                let loan = Id::<Loan>::from_index(loan);
                 (
                     self.value_holder(id),
                     through
                         .then(|| self.variable_holder(place.variable))
                         .flatten(),
-                    Some(loan),
+                    Some(self.loan(id)),
                 )
             }
             _ => (self.value_holder(id), None, None),
@@ -284,7 +341,15 @@ impl Loans<'_> {
                 self.step_live(&mut live, id);
             }
             for (position, &id) in ids.iter().enumerate() {
-                let error = self.conflict(id, &held, &live_after[position], &mut reported, file);
+                let live = &live_after[position];
+                let access = self.access(id);
+                let skip = self.defines(id);
+                let error = access.and_then(|access| {
+                    self.broken_loan(&access, &held, live, skip, &mut reported, file)
+                });
+                let error =
+                    error.or_else(|| self.activation_error(id, &held, live, &mut reported, file));
+                // A reference used only by the call has no later use to show.
                 if let Some((holder, error)) = error {
                     let later = self.next_use(holder, block, position);
                     let error = match later {
@@ -300,20 +365,10 @@ impl Loans<'_> {
         diagnostics.extend(errors.into_iter().map(|(_, error)| error));
     }
 
-    /// The first loan not yet `reported` that the access `id` breaks, held
-    /// in `held` by a holder `live` after it other than one it sets: that
-    /// holder, and the error without where the holder is used later.
-    fn conflict(
-        &self,
-        id: Id<mir::Instruction>,
-        held: &[Bits<Loan>],
-        live: &Bits<Holder>,
-        reported: &mut Bits<Loan>,
-        file: &Arc<SourceFile>,
-    ) -> Option<(Id<Holder>, Diagnostic)> {
-        let ended;
-        // The place, what happens to it, whether that only reads it, and
-        // whether it replaces or ends the place's own storage.
+    /// What the instruction `id` does to a place, if anything. A reserved
+    /// `&mut` borrow only reserves its place, so it is checked as a shared
+    /// borrow.
+    fn access(&self, id: Id<mir::Instruction>) -> Option<Access<'_>> {
         let (place, event, reads, replaces) = match self.body.instructions[id].kind {
             mir::InstructionKind::Load(ref place) => (place, "read", true, false),
             mir::InstructionKind::Move(ref place) => (place, "moved", false, false),
@@ -325,17 +380,46 @@ impl Loans<'_> {
             mir::InstructionKind::Borrow {
                 ref place,
                 mutable: true,
-            } => (place, "borrowed as `&mut`", false, false),
+            } => {
+                let reserves = self.reserved.has(self.loan(id));
+                (place, "borrowed as `&mut`", reserves, false)
+            }
             mir::InstructionKind::ScopeEnd(variable) => {
-                ended = mir::Place::whole(variable);
-                (&ended, "gone", false, true)
+                return Some(Access {
+                    variable,
+                    projections: &[],
+                    event: "gone",
+                    reads: false,
+                    replaces: true,
+                    span: self.body.instructions.span(id),
+                });
             }
             _ => return None,
         };
-        let defined = self.defines(id);
+        Some(Access {
+            variable: place.variable,
+            projections: &place.projections,
+            event,
+            reads,
+            replaces,
+            span: self.body.instructions.span(id),
+        })
+    }
+
+    /// The first loan not yet `reported` that `access` breaks, held in
+    /// `held` by a holder `live` after it other than those in `skip`: that
+    /// holder, and the error without where the holder is used later.
+    fn broken_loan(
+        &self,
+        access: &Access,
+        held: &[Bits<Loan>],
+        live: &Bits<Holder>,
+        skip: [Option<Id<Holder>>; 2],
+        reported: &mut Bits<Loan>,
+        file: &Arc<SourceFile>,
+    ) -> Option<(Id<Holder>, Diagnostic)> {
         let holders = (0..self.holder_count).map(Id::from_index);
-        let holders =
-            holders.filter(|&holder| live.has(holder) && !defined.contains(&Some(holder)));
+        let holders = holders.filter(|&holder| live.has(holder) && !skip.contains(&Some(holder)));
         for holder in holders {
             let loans = (0..self.borrows.len()).map(Id::from_index);
             let held = &held[holder.index()];
@@ -348,35 +432,82 @@ impl Loans<'_> {
                 else {
                     unreachable!("each loan is a `Borrow`")
                 };
-                let common = place.projections.len().min(loaned.projections.len());
-                let overlaps = place.variable == loaned.variable
-                    && place.projections[..common] == loaned.projections[..common];
-                let past_storage = replaces
+                let common = access.projections.len().min(loaned.projections.len());
+                let overlaps = access.variable == loaned.variable
+                    && access.projections[..common] == loaned.projections[..common];
+                let past_storage = access.replaces
                     && loaned.projections[common..].contains(&mir::Projection::Dereference);
-                if !overlaps || past_storage || (reads && !mutable) {
+                // A reserved loan acts as a shared one until its call.
+                let exclusive = mutable && !self.reserved.has(loan);
+                if !overlaps || past_storage || (access.reads && !exclusive) {
                     continue;
                 }
                 reported.set(loan);
-                let name = file.slice(self.body.variables.span(place.variable));
+                let name = file.slice(self.body.variables.span(access.variable));
                 let reference = if mutable {
                     "a `&mut` reference"
                 } else {
                     "a reference"
                 };
+                let event = access.event;
                 let message =
                     format!("`{name}` is {event} while {reference} to it is still in use");
                 let error = Diagnostic::new(diagnostics::BORROW_CONFLICT, message)
-                    .label(
-                        file,
-                        self.body.instructions.span(id),
-                        format!("{event} here"),
-                    )
+                    .label(file, access.span, format!("{event} here"))
                     .label(
                         file,
                         self.body.instructions.span(borrow),
                         "reference made here",
                     );
                 return Some((holder, error));
+            }
+        }
+        None
+    }
+
+    /// At a call, the first loan broken when a reserved `&mut` argument takes
+    /// hold: a `&mut` borrow of its place, checked against every holder in
+    /// use just before the call (`live` after it, or an argument of it)
+    /// other than the argument itself.
+    fn activation_error(
+        &self,
+        id: Id<mir::Instruction>,
+        held: &[Bits<Loan>],
+        live: &Bits<Holder>,
+        reported: &mut Bits<Loan>,
+        file: &Arc<SourceFile>,
+    ) -> Option<(Id<Holder>, Diagnostic)> {
+        let mir::InstructionKind::Call { ref arguments, .. } = self.body.instructions[id].kind
+        else {
+            return None;
+        };
+        let mut live_before = None; // found only for a call with a reserved argument
+        for &argument in arguments {
+            let mir::Operand::Value(borrow) = argument else {
+                continue;
+            };
+            if !matches!(
+                self.body.instructions[borrow].kind,
+                mir::InstructionKind::Borrow { .. }
+            ) || !self.reserved.has(self.loan(borrow))
+            {
+                continue;
+            }
+            let Some(mut access) = self.access(borrow) else {
+                unreachable!("a borrow accesses its place")
+            };
+            access.reads = false; // it takes hold now
+            let skip = [self.value_holder(borrow), None];
+            let live_before = live_before.get_or_insert_with(|| {
+                let mut live_before = live.clone();
+                self.step_live(&mut live_before, id);
+                live_before
+            });
+            if let Some((holder, error)) =
+                self.broken_loan(&access, held, live_before, skip, reported, file)
+            {
+                let note = "a `&mut` argument takes hold when the call starts";
+                return Some((holder, error.note(note)));
             }
         }
         None
