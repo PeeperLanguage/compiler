@@ -153,6 +153,15 @@ MIR instruction), and a compile cost 10 M more instructions. `#[inline]` did
 not help; `#[inline(always)]` did. Find such a helper with `perf record -e instructions:u`
 on two builds and diff the functions; do not add it on a guess.
 
+**Give the common case of a general walk its own entry, once measured.**
+A plain variable is a place with no steps, but sending every variable read
+through `Lowering::place` (a loop, a `Vec`, a `Result`) cost a compile about
+10 M instructions; inlining it did not help. Lowering builds a variable's
+`Place::whole` directly and shares the rest (the one copy-or-move choice).
+Likewise the LLVM writer loads and stores a whole variable at `%vN` directly:
+passing the address as a nested `Display` cost 40 M. A nested `write!` in a
+hot `Display` costs more than the line it writes.
+
 **Do not guess capacities.** Reserving MIR arenas from THIR sizes over-allocated
 and made lowering slower; `Default` and normal growth won. Reserve only when the
 size is known, not estimated.

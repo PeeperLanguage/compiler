@@ -5,7 +5,7 @@ build = "program"
 mode = "check"
 outcome = "failure"
 stderr_contains = [
-    "cannot assign to `p.x`: `p` is immutable",
+    "cannot assign to `p.x` of immutable `p`",
     "declared without `mut` here",
     "write `let mut p`",
     "`Point` has no field `z`",

@@ -138,7 +138,8 @@ impl ThirBuilder<'_, '_> {
             ast::Expr::Selector { value, field } => return self.check_field(value, field),
             ast::Expr::Dereference(value) => return self.check_dereference(value, span),
             ast::Expr::Reference { mutable, value } => {
-                return self.check_borrow(mutable, value, span);
+                let place = self.add_expr(value);
+                return self.check_borrow(mutable, place, span);
             }
             ast::Expr::String { c_string: false } => "string literals",
             ast::Expr::Char { .. } => "character literals",
@@ -368,10 +369,9 @@ impl ThirBuilder<'_, '_> {
         }
     }
 
-    /// `&place` or `&mut place`, written at `span`: a reference to a place in
-    /// a variable. `&mut` needs a place that can be written.
-    fn check_borrow(&mut self, mutable: bool, place: Id<ast::Expr>, span: Span) -> Expr {
-        let place = self.add_expr(place);
+    /// A `&place` or `&mut place` reference to the checked place `place`, in a
+    /// variable, reported at `span`. `&mut` needs a place that can be written.
+    fn check_borrow(&mut self, mutable: bool, place: Id<Expr>, span: Span) -> Expr {
         let target = self.body.exprs[place].ty;
         if target == TypeId::INVALID {
             return Expr::INVALID;
@@ -438,7 +438,8 @@ impl ThirBuilder<'_, '_> {
     ) {
         let file = &self.checker.module().ast.file;
         let place_span = self.body.exprs.span(place);
-        let (reason, holder, declared, label, help) = match reference {
+        let place_text = file.slice(place_span);
+        let (written, declared, label, help) = match reference {
             Some(reference) => {
                 let ty = self.body.exprs[reference].ty;
                 if let Type::Reference { mutable: true, .. } = self.checker.types[ty] {
@@ -449,25 +450,28 @@ impl ThirBuilder<'_, '_> {
                     ExprKind::Variable(variable) => self.body.variables.span(variable),
                     _ => span,
                 };
-                let help = format!("make `{}` a `&mut` reference", file.slice(span));
+                let holder = file.slice(span);
+                let written = format!("`{place_text}` through shared reference `{holder}`");
+                let help = format!("make `{holder}` a `&mut` reference");
                 let label = "declared as a shared reference here";
-                ("a shared reference", span, declared, label, help)
+                (written, declared, label, help)
             }
             None => {
                 if self.body.variables[variable].mutable {
                     return;
                 }
                 let declared = self.body.variables.span(variable);
-                let help = format!("write `let mut {}`", file.slice(declared));
+                let holder = file.slice(declared);
+                let written = match self.body.exprs[place].kind {
+                    ExprKind::Variable(_) => format!("immutable `{holder}`"),
+                    _ => format!("`{place_text}` of immutable `{holder}`"),
+                };
+                let help = format!("write `let mut {holder}`");
                 let label = "declared without `mut` here";
-                ("immutable", declared, declared, label, help)
+                (written, declared, label, help)
             }
         };
-        let message = format!(
-            "cannot {action} `{}`: `{}` is {reason}",
-            file.slice(place_span),
-            file.slice(holder)
-        );
+        let message = format!("cannot {action} {written}");
         self.checker.report(
             Diagnostic::new(diagnostics::INVALID_ASSIGNMENT, message)
                 .label(file, place_span, "")
@@ -664,16 +668,9 @@ impl ThirBuilder<'_, '_> {
             {
                 let span = self.body.exprs.span(argument);
                 let reference = self.body.add(self.body.exprs[argument].clone(), span);
-                let referred = Expr {
-                    ty: target,
-                    kind: ExprKind::Dereference(reference),
-                };
+                let referred = self.dereference(reference, target);
                 let place = self.body.add(referred, span);
-                let kind = ExprKind::Borrow {
-                    place,
-                    mutable: true,
-                };
-                self.body.exprs[argument] = Expr { ty, kind };
+                self.body.exprs[argument] = self.check_borrow(true, place, span);
             }
             checked.push(argument.into());
         }

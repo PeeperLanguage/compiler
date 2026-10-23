@@ -86,6 +86,19 @@ pub enum Projection {
 }
 
 impl Place {
+    /// All of `variable`: no steps.
+    pub fn whole(variable: Id<Variable>) -> Place {
+        Place {
+            variable,
+            projections: Box::default(),
+        }
+    }
+
+    /// The variable, when the place is all of it: no steps.
+    pub fn whole_variable(&self) -> Option<Id<Variable>> {
+        self.projections.is_empty().then_some(self.variable)
+    }
+
     /// Whether the place goes through a reference, so it is not in its
     /// variable's own storage.
     pub fn is_behind_reference(&self) -> bool {
@@ -95,23 +108,15 @@ impl Place {
 
 #[derive(Clone, Debug)]
 pub enum InstructionKind {
-    /// The value of a variable whose type copies (`Type::is_copy`).
-    Load(Id<Variable>),
-    /// The value of a variable whose type moves: the variable is unset after.
-    Move(Id<Variable>),
-    /// The value at a place other than a whole variable, whose type copies.
-    LoadPlace(Place),
-    /// A value whose type moves at a place other than a whole variable:
-    /// always an error, as a value cannot be moved out of its struct or out
-    /// of a reference.
-    MovePlace(Place),
+    /// The value at the place, whose type copies (`Type::is_copy`).
+    Load(Place),
+    /// The value at the place, whose type moves: a whole variable is unset
+    /// after; moving out of a struct's field or out of a reference is an
+    /// error.
+    Move(Place),
+    /// Sets the value at the place: a whole variable is set by it; a field,
+    /// or a value behind a reference, needs its variable already set.
     Store {
-        variable: Id<Variable>,
-        value: Operand,
-    },
-    /// Sets the value at a place other than a whole variable; the variable
-    /// must already be set.
-    StorePlace {
         place: Place,
         value: Operand,
     },
@@ -220,13 +225,7 @@ impl Body {
                     _ = write!(printer.out, "%{} = ", instruction.index());
                 }
                 match kind {
-                    InstructionKind::Store { variable, value } => {
-                        printer.out.push_str("store ");
-                        printer.write_variable(*variable);
-                        printer.out.push_str(", ");
-                        printer.write_operand(value);
-                    }
-                    InstructionKind::StorePlace { place, value } => {
+                    InstructionKind::Store { place, value } => {
                         printer.out.push_str("store ");
                         printer.write_place(place);
                         printer.out.push_str(", ");
@@ -238,19 +237,11 @@ impl Body {
                             .push_str(if *mutable { "borrow mut " } else { "borrow " });
                         printer.write_place(place);
                     }
-                    InstructionKind::Load(variable) => {
-                        printer.out.push_str("load ");
-                        printer.write_variable(*variable);
-                    }
-                    InstructionKind::Move(variable) => {
-                        printer.out.push_str("move ");
-                        printer.write_variable(*variable);
-                    }
-                    InstructionKind::LoadPlace(place) => {
+                    InstructionKind::Load(place) => {
                         printer.out.push_str("load ");
                         printer.write_place(place);
                     }
-                    InstructionKind::MovePlace(place) => {
+                    InstructionKind::Move(place) => {
                         printer.out.push_str("move ");
                         printer.write_place(place);
                     }
@@ -356,15 +347,11 @@ struct Printer<'b> {
 }
 
 impl Printer<'_> {
-    fn write_variable(&mut self, variable: Id<Variable>) {
-        let name = self.file.slice(self.body.variables.span(variable));
-        _ = write!(self.out, "{name}.{}", variable.index());
-    }
-
     /// A place: its variable, then each step, `.*` for a dereference and a
     /// field path for fields next to each other (`line.2[1, 0]`, `r.3.*[0]`).
     fn write_place(&mut self, place: &Place) {
-        self.write_variable(place.variable);
+        let name = self.file.slice(self.body.variables.span(place.variable));
+        _ = write!(self.out, "{name}.{}", place.variable.index());
         let steps = place
             .projections
             .split(|&step| step == Projection::Dereference);

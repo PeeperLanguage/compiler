@@ -404,13 +404,19 @@ impl Function<'_, '_, '_> {
         let name = value_name(id);
         let types = self.types;
         _ = match *kind {
-            InstructionKind::Load(variable) | InstructionKind::Move(variable) => write!(
-                out,
-                "  {name} = load {}, ptr %v{}",
-                type_text(types, ty),
-                variable.index()
-            ),
-            InstructionKind::LoadPlace(ref place) | InstructionKind::MovePlace(ref place) => {
+            // A whole variable's address is its own; another place's is
+            // computed first.
+            InstructionKind::Load(ref place) | InstructionKind::Move(ref place)
+                if let Some(variable) = place.whole_variable() =>
+            {
+                write!(
+                    out,
+                    "  {name} = load {}, ptr %v{}",
+                    type_text(types, ty),
+                    variable.index()
+                )
+            }
+            InstructionKind::Load(ref place) | InstructionKind::Move(ref place) => {
                 let address = fmt::from_fn(|out| write!(out, "{name}.f"));
                 self.write_place_address(out, &address, place, &location);
                 write!(
@@ -419,14 +425,18 @@ impl Function<'_, '_, '_> {
                     type_text(types, ty)
                 )
             }
-            InstructionKind::Store { variable, value } => write!(
-                out,
-                "  store {} {}, ptr %v{}",
-                type_text(types, self.body.variables[variable].ty),
-                self.operand(value),
-                variable.index()
-            ),
-            InstructionKind::StorePlace { ref place, value } => {
+            InstructionKind::Store { ref place, value }
+                if let Some(variable) = place.whole_variable() =>
+            {
+                write!(
+                    out,
+                    "  store {} {}, ptr %v{}",
+                    type_text(types, self.body.variables[variable].ty),
+                    self.operand(value),
+                    variable.index()
+                )
+            }
+            InstructionKind::Store { ref place, value } => {
                 let address = fmt::from_fn(|out| write!(out, "{name}.f"));
                 self.write_place_address(out, &address, place, &location);
                 write!(out, "  store {}, ptr {address}", self.typed(value))

@@ -22,4 +22,7 @@ fn main() {
     let q = &mut p;
     let n = 5;
     let not_a_reference = n.*;
+    let later: i32;
+    later = 1;
+    let set_later = &mut later;
 }

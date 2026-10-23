@@ -438,16 +438,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
     /// `target = value;`, where the target is a mutable variable, a field of
     /// one, or what a `&mut` reference refers to.
     fn assign(&mut self, target: Id<ast::Expr>, value: Id<ast::Expr>) -> Option<Stmt> {
-        let tree = &self.checker.module().ast;
-        let place = match tree.exprs[target] {
-            ast::Expr::Selector { .. } | ast::Expr::Dereference(_) => self.assigned_place(target),
-            _ => self.assigned_variable(target).map(|variable| {
-                let ty = self.body.variables[variable].ty;
-                let kind = ExprKind::Variable(variable);
-                self.body.add(Expr { ty, kind }, tree.exprs.span(target))
-            }),
-        };
-        let Some(target) = place else {
+        let Some(target) = self.assigned_place(target) else {
             self.add_expr(value); // for its own errors
             return None;
         };
@@ -455,12 +446,28 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         Some(Stmt::Assign { target, value })
     }
 
-    /// The field or referred value that `target` names, reporting one that
-    /// cannot be set (`report_unwritable`), even of a variable declared
-    /// without a value and set once later. One that cannot be set is still
-    /// given, so the value is checked against its type.
+    /// The variable, field or referred value that `target` names, reporting
+    /// one that cannot be set (`report_unwritable`). One that cannot be set is
+    /// still given, so the value is checked against its type.
     fn assigned_place(&mut self, target: Id<ast::Expr>) -> Option<Id<Expr>> {
-        let place = self.add_expr(target);
+        let tree = &self.checker.module().ast;
+        let place = match tree.exprs[target] {
+            ast::Expr::Selector { .. } | ast::Expr::Dereference(_) => self.add_expr(target),
+            _ => {
+                let variable = self.assigned_variable(target)?;
+                let Variable {
+                    ty, initialized, ..
+                } = self.body.variables[variable];
+                let kind = ExprKind::Variable(variable);
+                let place = self.body.add(Expr { ty, kind }, tree.exprs.span(target));
+                // Declared without a value, it is set once later; the checks
+                // on MIR report one set twice.
+                if !initialized {
+                    return Some(place);
+                }
+                place
+            }
+        };
         if let ExprKind::Invalid = self.body.exprs[place].kind {
             return None; // its error was reported
         }
@@ -475,11 +482,8 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         Some(place)
     }
 
-    /// The variable that `target` names, reporting a target that cannot be
-    /// assigned. An immutable variable is reported but still given, so the
-    /// value is checked against its type. An immutable variable declared
-    /// without a value may be assigned; the path checks on MIR report one that may be
-    /// assigned twice.
+    /// The variable that `target` names, reporting a target that is not a
+    /// variable.
     fn assigned_variable(&mut self, target: Id<ast::Expr>) -> Option<Id<Variable>> {
         let tree = &self.checker.module().ast;
         let span = tree.exprs.span(target);
@@ -489,8 +493,8 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             return None;
         }
         let name = tree.file.slice(span);
-        let variable = match self.resolve(span)? {
-            Symbol::Local(Local::Variable(variable)) => variable,
+        match self.resolve(span)? {
+            Symbol::Local(Local::Variable(variable)) => Some(variable),
             Symbol::Local(Local::Constant(constant)) => {
                 let declared = self.body.constants.span(constant);
                 self.checker.report(
@@ -501,41 +505,21 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                     .label(&tree.file, span, "")
                     .label(&tree.file, declared, "declared as a constant here"),
                 );
-                return None;
+                None
             }
             Symbol::Constant(_) => {
                 let message = format!("cannot assign to constant `{name}`");
                 self.checker
                     .error(diagnostics::CONSTANT_REASSIGNMENT, message, span);
-                return None;
+                None
             }
             _ => {
                 let message = format!("cannot assign to `{name}`, which is not a variable");
                 self.checker
                     .error(diagnostics::INVALID_ASSIGNMENT, message, span);
-                return None;
+                None
             }
-        };
-        let Variable {
-            mutable,
-            initialized,
-            ..
-        } = self.body.variables[variable];
-        if !mutable && initialized {
-            self.checker.report(
-                Diagnostic::new(
-                    diagnostics::INVALID_ASSIGNMENT,
-                    format!("cannot assign to immutable `{name}`"),
-                )
-                .label(&tree.file, span, "")
-                .label(
-                    &tree.file,
-                    self.body.variables.span(variable),
-                    "declared without `mut` here",
-                ),
-            );
         }
-        Some(variable)
     }
 }
 

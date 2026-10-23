@@ -365,8 +365,8 @@ reported an error, so such a function is neither lowered nor path-checked.
 The variable state check (`flow::report_variable_state_errors`) is forward
 dataflow with three bits per variable at each block's start: set on every path
 to it ("and" at joins), set on some path ("or"), and moved on some path and not
-set since ("or"). A `store` sets the first two and clears the third; a `move`
-clears the first and sets the third.
+set since ("or"). A `store` to a whole variable sets the first two and clears
+the third; a `move` of one clears the first and sets the third.
 
 Lowering decides what copies (`Type::is_copy`: numbers, `bool`, `cstr`,
 `&T`): a whole variable whose type copies is a `load`, else a `move`; any
@@ -388,8 +388,8 @@ of what it refers to, so the variable stays usable; a `let` moves it.
 A use (`load`, `move`, `borrow`, or a read or write of a place) not set on
 every path is T0034 ("`x` is used after it was moved", with each place it was
 moved) when the moved bit is on, else T0039 ("`x` is used before it is set").
-A write through a reference only reads its variable. A `move` of a place is
-always T0035 ("cannot move a field out of its struct", or "cannot move out of
+A write through a reference only reads its variable. A `move` of a field, or
+through a reference, is always T0035 ("cannot move a field out of its struct", or "cannot move out of
 a reference"). A `store` to
 a variable without `mut` that may already be set is T0007 ("cannot assign
 twice to immutable `x`"). So `let x: T;` may be set once later even without

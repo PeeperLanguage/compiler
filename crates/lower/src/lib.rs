@@ -79,10 +79,9 @@ pub fn lower(
     lowering.block = lowering.new_block(span);
     for index in 0..parameters {
         let variable = Id::from_index(index);
-        let store = mir::InstructionKind::Store {
-            variable,
-            value: mir::Operand::Argument(index as u32),
-        };
+        let place = mir::Place::whole(variable);
+        let value = mir::Operand::Argument(index as u32);
+        let store = mir::InstructionKind::Store { place, value };
         let span = lowering.mir.variables.span(variable);
         lowering.emit(store, TypeId::VOID, span);
     }
@@ -170,10 +169,8 @@ impl Lowering<'_> {
                 value: Some(value),
             } => {
                 let value = self.lower_expr(value)?;
-                let store = mir::InstructionKind::Store {
-                    variable: Id::from_index(variable.index()),
-                    value,
-                };
+                let place = mir::Place::whole(Id::from_index(variable.index()));
+                let store = mir::InstructionKind::Store { place, value };
                 self.emit(store, TypeId::VOID, span);
             }
             thir::Stmt::Assign { target, value } => {
@@ -181,12 +178,7 @@ impl Lowering<'_> {
                 let Ok(place) = self.place(target) else {
                     unreachable!("the checker assigns only a place in a variable")
                 };
-                let store = if place.projections.is_empty() {
-                    let variable = place.variable;
-                    mir::InstructionKind::Store { variable, value }
-                } else {
-                    mir::InstructionKind::StorePlace { place, value }
-                };
+                let store = mir::InstructionKind::Store { place, value };
                 self.emit(store, TypeId::VOID, span);
             }
             thir::Stmt::Expression(value) => {
@@ -244,14 +236,6 @@ impl Lowering<'_> {
                 let value = value.clone();
                 return Some(self.add_constant(Constant { ty, value }));
             }
-            thir::ExprKind::Variable(variable) => {
-                let variable = Id::from_index(variable.index());
-                if self.types[ty].is_copy() {
-                    mir::InstructionKind::Load(variable)
-                } else {
-                    mir::InstructionKind::Move(variable)
-                }
-            }
             thir::ExprKind::Binary {
                 op: op @ (BinaryOp::LogicalAnd | BinaryOp::LogicalOr),
                 left,
@@ -294,10 +278,20 @@ impl Lowering<'_> {
                     .map(|value| value.expect("check sets each field"));
                 mir::InstructionKind::Aggregate(values.collect())
             }
-            thir::ExprKind::Field { .. } | thir::ExprKind::Dereference(_) => {
-                match self.place(expression) {
-                    Ok(place) if self.types[ty].is_copy() => mir::InstructionKind::LoadPlace(place),
-                    Ok(place) => mir::InstructionKind::MovePlace(place),
+            thir::ExprKind::Variable(_)
+            | thir::ExprKind::Field { .. }
+            | thir::ExprKind::Dereference(_) => {
+                // A variable, the most read place, skips the walk, which
+                // cost a compile 10 M instructions (rust-style.md).
+                let place = match *kind {
+                    thir::ExprKind::Variable(variable) => {
+                        Ok(mir::Place::whole(Id::from_index(variable.index())))
+                    }
+                    _ => self.place(expression),
+                };
+                match place {
+                    Ok(place) if self.types[ty].is_copy() => mir::InstructionKind::Load(place),
+                    Ok(place) => mir::InstructionKind::Move(place),
                     Err((value, fields)) => mir::InstructionKind::Field {
                         value: self.lower_expr(value)?,
                         fields,

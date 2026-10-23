@@ -243,28 +243,31 @@ pub fn report_variable_state_errors(
             let span = body.instructions.span(instruction);
             let kind = &body.instructions[instruction].kind;
             let error = match *kind {
-                mir::InstructionKind::MovePlace(ref place) => {
+                mir::InstructionKind::Move(ref place) if place.whole_variable().is_none() => {
                     let error = partial_move(file, span, place.is_behind_reference());
                     errors.push((span.start, error));
                     None
                 }
-                mir::InstructionKind::Load(variable)
-                | mir::InstructionKind::Move(variable)
-                | mir::InstructionKind::LoadPlace(mir::Place { variable, .. })
-                | mir::InstructionKind::StorePlace {
-                    place: mir::Place { variable, .. },
-                    ..
+                mir::InstructionKind::Store { ref place, .. }
+                    if let Some(variable) = place.whole_variable() =>
+                {
+                    let assigned = has(&facts.maybe, variable) && !body.variables[variable].mutable;
+                    assigned.then(|| {
+                        let on_every_path = has(&facts.always, variable);
+                        let error = second_assignment(body, file, variable, span, on_every_path);
+                        (variable, error)
+                    })
                 }
-                | mir::InstructionKind::Borrow {
-                    place: mir::Place { variable, .. },
-                    ..
-                } if !has(&facts.always, variable) => {
+                mir::InstructionKind::Load(ref place)
+                | mir::InstructionKind::Move(ref place)
+                | mir::InstructionKind::Store { ref place, .. }
+                | mir::InstructionKind::Borrow { ref place, .. }
+                    if !has(&facts.always, place.variable) =>
+                {
+                    let variable = place.variable;
                     // Writing through a reference only reads the variable.
-                    let writes_field = matches!(
-                        kind,
-                        mir::InstructionKind::StorePlace { place, .. }
-                            if !place.is_behind_reference()
-                    );
+                    let writes_field = matches!(kind, mir::InstructionKind::Store { .. })
+                        && !place.is_behind_reference();
                     let error = if has(&facts.moved, variable) {
                         let block = Id::from_index(index);
                         let moves = move_sites(body, variable, block, position);
@@ -273,13 +276,6 @@ pub fn report_variable_state_errors(
                         let on_some_path = has(&facts.maybe, variable);
                         unset_use(body, file, variable, span, on_some_path, writes_field)
                     };
-                    Some((variable, error))
-                }
-                mir::InstructionKind::Store { variable, .. }
-                    if has(&facts.maybe, variable) && !body.variables[variable].mutable =>
-                {
-                    let on_every_path = has(&facts.always, variable);
-                    let error = second_assignment(body, file, variable, span, on_every_path);
                     Some((variable, error))
                 }
                 _ => None,
@@ -316,16 +312,20 @@ impl Facts {
         }
     }
 
-    /// The facts after `kind` runs: a `store` sets its variable, a `move`
-    /// unsets it.
+    /// The facts after `kind` runs: a `store` to a whole variable sets it, a
+    /// `move` of one unsets it.
     fn step(&mut self, kind: &mir::InstructionKind) {
         match *kind {
-            mir::InstructionKind::Store { variable, .. } => {
+            mir::InstructionKind::Store { ref place, .. }
+                if let Some(variable) = place.whole_variable() =>
+            {
                 set(&mut self.always, variable);
                 set(&mut self.maybe, variable);
                 clear(&mut self.moved, variable);
             }
-            mir::InstructionKind::Move(variable) => {
+            mir::InstructionKind::Move(ref place)
+                if let Some(variable) = place.whole_variable() =>
+            {
                 clear(&mut self.always, variable);
                 set(&mut self.moved, variable);
             }
@@ -388,12 +388,16 @@ fn move_sites(
         // a store ends the path.
         let last = before.iter().rev().find_map(|&instruction| {
             match body.instructions[instruction].kind {
-                mir::InstructionKind::Move(moved) if moved == variable => {
+                mir::InstructionKind::Move(ref moved)
+                    if moved.whole_variable() == Some(variable) =>
+                {
                     Some(Some(body.instructions.span(instruction)))
                 }
-                mir::InstructionKind::Store {
-                    variable: stored, ..
-                } if stored == variable => Some(None),
+                mir::InstructionKind::Store { ref place, .. }
+                    if place.whole_variable() == Some(variable) =>
+                {
+                    Some(None)
+                }
                 _ => None,
             }
         });
