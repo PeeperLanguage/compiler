@@ -435,14 +435,65 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         }
     }
 
-    /// `target = value;`, where the target is a mutable variable.
+    /// `target = value;`, where the target is a mutable variable or a field
+    /// of one.
     fn assign(&mut self, target: Id<ast::Expr>, value: Id<ast::Expr>) -> Option<Stmt> {
-        let Some(variable) = self.assigned_variable(target) else {
+        let tree = &self.checker.module().ast;
+        let place = match tree.exprs[target] {
+            ast::Expr::Selector { .. } => self.assigned_field(target),
+            _ => self.assigned_variable(target).map(|variable| {
+                let ty = self.body.variables[variable].ty;
+                let kind = ExprKind::Variable(variable);
+                self.body.add(Expr { ty, kind }, tree.exprs.span(target))
+            }),
+        };
+        let Some(target) = place else {
             self.add_expr(value); // for its own errors
             return None;
         };
-        let value = self.add_expr_as(value, self.body.variables[variable].ty);
-        Some(Stmt::Assign { variable, value })
+        let value = self.add_expr_as(value, self.body.exprs[target].ty);
+        Some(Stmt::Assign { target, value })
+    }
+
+    /// The field that `target` names, reporting one that cannot be set: only
+    /// a field of a `mut` variable can, even of one declared without a value
+    /// and set once later. A field of an immutable variable is reported but
+    /// still given, so the value is checked against its type.
+    fn assigned_field(&mut self, target: Id<ast::Expr>) -> Option<Id<Expr>> {
+        let place = self.add_expr(target);
+        let mut root = place;
+        while let ExprKind::Field { value, .. } = self.body.exprs[root].kind {
+            root = value;
+        }
+        let file = &self.checker.module().ast.file;
+        let root_span = self.body.exprs.span(root);
+        match self.body.exprs[root].kind {
+            ExprKind::Variable(variable) if !self.body.variables[variable].mutable => {
+                let name = file.slice(root_span);
+                self.checker.report(
+                    Diagnostic::new(
+                        diagnostics::INVALID_ASSIGNMENT,
+                        format!("cannot assign to a field of immutable `{name}`"),
+                    )
+                    .label(file, self.body.exprs.span(place), "")
+                    .label(
+                        file,
+                        self.body.variables.span(variable),
+                        "declared without `mut` here",
+                    )
+                    .help(format!("write `let mut {name}`"), Vec::new()),
+                );
+            }
+            ExprKind::Variable(_) => {}
+            ExprKind::Invalid => return None, // its error was reported
+            _ => {
+                let message = "only a variable's fields can be set";
+                self.checker
+                    .error(diagnostics::INVALID_ASSIGNMENT, message, root_span);
+                return None;
+            }
+        }
+        Some(place)
     }
 
     /// The variable that `target` names, reporting a target that cannot be

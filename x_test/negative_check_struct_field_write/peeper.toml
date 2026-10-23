@@ -1,0 +1,15 @@
+name = "negative_check_struct_field_write"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "cannot assign to a field of immutable `p`",
+    "declared without `mut` here",
+    "write `let mut p`",
+    "`Point` has no field `z`",
+    "mismatched types: expected `i32`, found `bool`",
+    "only a variable's fields can be set",
+    "Compilation failed with 4 error(s)",
+]

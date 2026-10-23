@@ -141,8 +141,10 @@ pub enum Stmt {
         variable: Id<Variable>,
         value: Option<Id<Expr>>,
     },
+    /// `target = value`; the target is a place: a `Variable`, or a `Field`
+    /// of a place.
     Assign {
-        variable: Id<Variable>,
+        target: Id<Expr>,
         value: Id<Expr>,
     },
     Expression(Id<Expr>),
@@ -256,8 +258,8 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
                     self.write_expr(value);
                 }
             }
-            Stmt::Assign { variable, value } => {
-                self.write_variable(variable);
+            Stmt::Assign { target, value } => {
+                self.write_expr(target);
                 self.out.push_str(" = ");
                 self.write_expr(value);
             }

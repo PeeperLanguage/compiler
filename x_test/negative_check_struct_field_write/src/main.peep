@@ -1,0 +1,12 @@
+// Only a field of a `mut` variable can be set, by a name its struct declares,
+// to a value of the field's type.
+struct Point { x: i32, y: i32 }
+
+fn main() {
+    let p = Point.{ x = 1, y = 2 };
+    p.x = 3;
+    let mut q = Point.{ x = 1, y = 2 };
+    q.z = 1;
+    q.x = true;
+    Point.{ x = 1, y = 2 }.x = 5;
+}

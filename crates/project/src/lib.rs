@@ -57,6 +57,29 @@ pub fn declared_name(modules: &[Module], definition: DefId) -> (Ident, &Arc<Sour
     )
 }
 
+/// The name in `#[extern("name")]` on the function `definition` of
+/// `modules`, if it has one: it is a C function, linked by that name.
+pub fn extern_symbol(modules: &[Module], definition: DefId) -> Option<String> {
+    let tree = &modules[definition.module.index()].ast;
+    let ast::Decl::Function(function) = &tree.decls[tree.declaration(definition.index)] else {
+        return None;
+    };
+    tree.lists
+        .items(function.metadata.attributes)
+        .find_map(|attribute| {
+            let attribute = &tree.attributes[attribute];
+            if attribute.name.text(&tree.file) != "extern" {
+                return None;
+            }
+            let argument = tree.lists.items(attribute.arguments).next()?;
+            let ast::Expr::String { .. } = tree.exprs[argument] else {
+                return None;
+            };
+            let text = tree.file.slice(tree.exprs.span(argument));
+            Some(String::from_utf8_lossy(&literal::value(text)).into_owned())
+        })
+}
+
 /// The names of the fields of the struct declaration `definition` of
 /// `modules`, in order.
 pub fn field_names(modules: &[Module], definition: DefId) -> impl Iterator<Item = &str> {

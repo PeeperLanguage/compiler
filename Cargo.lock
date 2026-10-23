@@ -290,7 +290,6 @@ dependencies = [
  "arena",
  "bigint",
  "compile",
- "literal",
  "model",
  "project",
  "source",

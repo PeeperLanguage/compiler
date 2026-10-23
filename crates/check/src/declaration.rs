@@ -79,17 +79,18 @@ impl Checker<'_> {
         if let Some(origin) = tree.lists.items(signature.origins).next() {
             return self.not_supported(tree.names.span(origin), "`from` origins");
         }
+        let external = project::extern_symbol(self.modules, definition).is_some();
         let mut parameters = Vec::with_capacity(signature.parameters.len());
         for parameter in tree.lists.items(signature.parameters) {
             let parameter = tree.params[parameter];
             if let Some(default) = parameter.default {
                 return self.not_supported(tree.exprs.span(default), "default parameters");
             }
-            parameters.push(self.resolve_signature_type(parameter.ty));
+            parameters.push(self.resolve_signature_type(parameter.ty, external));
         }
-        let result = signature
-            .result
-            .map_or(TypeId::VOID, |result| self.resolve_signature_type(result));
+        let result = signature.result.map_or(TypeId::VOID, |result| {
+            self.resolve_signature_type(result, external)
+        });
         let parameters = parameters.into();
         self.types.intern(Type::Function { parameters, result })
     }
@@ -117,15 +118,15 @@ impl Checker<'_> {
         }
     }
 
-    /// The type of a parameter or result written `ty`.
-    ///
-    /// TEMPORARY, to be deleted with struct parameters and results (step 4c
-    /// of the type plan): struct values do not pass between functions yet.
-    fn resolve_signature_type(&mut self, ty: Id<ast::Type>) -> TypeId {
+    /// The type of a parameter or result written `ty`, of a C function when
+    /// `external`.
+    fn resolve_signature_type(&mut self, ty: Id<ast::Type>, external: bool) -> TypeId {
         let resolved = self.resolve_value_type(ty);
-        if let Type::Struct { .. } = self.types[resolved] {
+        if external && let Type::Struct { .. } = self.types[resolved] {
+            // shortcut: structs pass as LLVM values, which the C ABI does not
+            // match; allow them when the C ABI's struct rules are written.
             let span = self.module().ast.types.span(ty);
-            return self.not_supported(span, "struct parameters and results");
+            return self.not_supported(span, "struct parameters and results of `extern` functions");
         }
         resolved
     }
@@ -243,7 +244,7 @@ mod tests {
     #[test]
     fn errors_are_located() {
         let (found, found_reported) = declared_types(
-            "fn a(x: Missing) {}\nfn b(m: utils) {}\nfn c(r: &i32) {}\nfn d<T>(x: T) {}\nfn e(x: i32 = 1) {}\nstruct P { x: i32 }\nfn f(p: P) {}\nfn g(x: a) {}\nfn (p: i32) method() {}\nfn h(s: str) {}\n",
+            "fn a(x: Missing) {}\nfn b(m: utils) {}\nfn c(r: &i32) {}\nfn d<T>(x: T) {}\nfn e(x: i32 = 1) {}\nstruct P { x: i32 }\n#[extern(\"f\")]\nfn f(p: P);\nfn ok(p: P) -> P { return p; }\nfn g(x: a) {}\nfn (p: i32) method() {}\nfn h(s: str) {}\n",
         );
         let expected = reported(&[
             ("T0002", "unknown type `Missing`", "Missing"),
@@ -253,7 +254,7 @@ mod tests {
             ("T0043", "default parameters are not supported yet", "1"),
             (
                 "T0043",
-                "struct parameters and results are not supported yet",
+                "struct parameters and results of `extern` functions are not supported yet",
                 "P",
             ),
             ("T0021", "`a` is a value, not a type", "a"),

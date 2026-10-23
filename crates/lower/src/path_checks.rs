@@ -257,14 +257,15 @@ pub fn report_initialization_errors(
         for instruction in instructions(index) {
             let span = body.instructions.span(instruction);
             let (variable, error) = match body.instructions[instruction].kind {
-                mir::InstructionKind::Load(variable)
+                ref kind @ (mir::InstructionKind::Load(variable)
                 | mir::InstructionKind::LoadField { variable, .. }
+                | mir::InstructionKind::StoreField { variable, .. })
                     if !has(&always, variable) =>
                 {
-                    (
-                        variable,
-                        unset_use(body, file, variable, span, has(&maybe, variable)),
-                    )
+                    let writes_field = matches!(kind, mir::InstructionKind::StoreField { .. });
+                    let on_some_path = has(&maybe, variable);
+                    let error = unset_use(body, file, variable, span, on_some_path, writes_field);
+                    (variable, error)
                 }
                 mir::InstructionKind::Store { variable, .. } => {
                     let twice = has(&maybe, variable) && !body.variables[variable].mutable;
@@ -345,13 +346,15 @@ pub fn warn_unreachable_code(
 }
 
 /// The error for `variable`, used at `span` where it is not set on every path
-/// to there; `on_some_path` when some path did set it.
+/// to there; `on_some_path` when some path did set it. A use that
+/// `writes_field` sets one of its fields, which needs the whole struct set.
 fn unset_use(
     body: &mir::Body,
     file: &Arc<SourceFile>,
     variable: Id<mir::Variable>,
     span: Span,
     on_some_path: bool,
+    writes_field: bool,
 ) -> Diagnostic {
     let declared = body.variables.span(variable);
     let name = file.slice(declared);
@@ -360,11 +363,13 @@ fn unset_use(
     } else {
         format!("`{name}` is not set yet here")
     };
-    Diagnostic::new(
-        diagnostics::USED_BEFORE_SET,
-        format!("`{name}` is used before it is set"),
-    )
-    .label(file, span, here)
+    let message = if writes_field {
+        format!("cannot set a field of `{name}` before `{name}` is set")
+    } else {
+        format!("`{name}` is used before it is set")
+    };
+    Diagnostic::new(diagnostics::USED_BEFORE_SET, message)
+        .label(file, span, here)
     .label(file, declared, "declared here without a value")
     .help(
         format!(

@@ -1,0 +1,13 @@
+// Fields of `mut` struct variables are written one at a time, also a field of
+// a field, and read back; a whole field takes a struct value.
+struct Point { x: i32, y: i32 }
+struct Line { start: Point, end: Point }
+
+fn main() -> i32 {
+    let mut p = Point.{ x = 1, y = 2 };
+    p.x = 30;
+    let mut line = Line.{ start = p, end = Point.{ x = 0, y = 0 } };
+    line.start.y = 4;
+    line.end = Point.{ x = 5, y = 6 };
+    return p.x + line.start.y + line.end.x; // 30 + 4 + 5
+}

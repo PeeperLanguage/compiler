@@ -1,0 +1,10 @@
+fn main:
+  bb0:
+    %0 = aggregate(1, 2): Point
+    %1 = aggregate(3, 4): Point
+    %2 = aggregate(%0, %1): Line
+    store line.0, %2
+    store line.0[0, 1], 5
+    %5 = load line.0[0]: Point
+    store line.0[1], %5
+    fall off at `}`

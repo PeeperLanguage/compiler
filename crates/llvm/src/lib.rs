@@ -17,7 +17,6 @@ use std::path::Path;
 
 use model::DefId;
 use model::ModuleId;
-use model::ast;
 use model::constant::Constant;
 use model::constant::Value;
 use model::semantic_types::Float;
@@ -301,33 +300,10 @@ impl Metadata {
     }
 }
 
-/// The name in `#[extern("name")]` on the function `definition`, if it has
-/// one.
-fn extern_symbol(program: &project::Program, definition: DefId) -> Option<String> {
-    let tree = &program.modules[definition.module.index()].ast;
-    let ast::Decl::Function(function) = &tree.decls[tree.declaration(definition.index)] else {
-        return None;
-    };
-    tree.lists
-        .items(function.metadata.attributes)
-        .find_map(|attribute| {
-            let attribute = &tree.attributes[attribute];
-            if attribute.name.text(&tree.file) != "extern" {
-                return None;
-            }
-            let argument = tree.lists.items(attribute.arguments).next()?;
-            let ast::Expr::String { .. } = tree.exprs[argument] else {
-                return None;
-            };
-            let text = tree.file.slice(tree.exprs.span(argument));
-            Some(String::from_utf8_lossy(&literal::value(text)).into_owned())
-        })
-}
-
 /// The name the linker knows the function `definition` by: its `#[extern]`
 /// name, else its module's path and its name (`myapp:util.Parse`).
 fn symbol(program: &project::Program, definition: DefId) -> String {
-    extern_symbol(program, definition).unwrap_or_else(|| {
+    project::extern_symbol(&program.modules, definition).unwrap_or_else(|| {
         let module = &program.modules[definition.module.index()];
         let declaration = &module.ast.decls[module.ast.declaration(definition.index)];
         format!(

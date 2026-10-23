@@ -1,4 +1,5 @@
-// Struct values pass between functions in a later step.
+// C functions do not take or give structs until the C ABI's struct rules are
+// written; generic structs and enums come later.
 struct Point {
     x: i32,
 }
@@ -18,8 +19,10 @@ struct Drawing {
     shape: Shape,
 }
 
-fn take(point: Point) {}
+#[extern("take")]
+fn take(point: Point);
 
-fn give() -> Place {}
+#[extern("give")]
+fn give() -> Place;
 
 fn main() {}

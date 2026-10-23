@@ -8,7 +8,6 @@ publish.workspace = true
 
 [dependencies]
 arena.workspace = true
-literal.workspace = true
 model.workspace = true
 project.workspace = true
 source.workspace = true

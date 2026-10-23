@@ -1,0 +1,13 @@
+name = "negative_struct_field_write_before_set"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "cannot set a field of `q` before `q` is set",
+    "`q` is not set yet here",
+    "cannot set a field of `s` before `s` is set",
+    "`s` is not set on every path to here",
+    "Compilation failed with 2 error(s)",
+]

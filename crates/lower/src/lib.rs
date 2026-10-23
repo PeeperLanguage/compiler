@@ -166,12 +166,29 @@ impl Lowering<'_> {
             thir::Stmt::Let {
                 variable,
                 value: Some(value),
-            }
-            | thir::Stmt::Assign { variable, value } => {
+            } => {
                 let value = self.lower_expr(value)?;
                 let store = mir::InstructionKind::Store {
                     variable: Id::from_index(variable.index()),
                     value,
+                };
+                self.emit(store, TypeId::VOID, span);
+            }
+            thir::Stmt::Assign { target, value } => {
+                let value = self.lower_expr(value)?;
+                let (place, fields) = self.field_path(target);
+                let thir::ExprKind::Variable(variable) = self.thir.exprs[place].kind else {
+                    unreachable!("the checker gives a variable or a field of one")
+                };
+                let variable = Id::from_index(variable.index());
+                let store = if fields.is_empty() {
+                    mir::InstructionKind::Store { variable, value }
+                } else {
+                    mir::InstructionKind::StoreField {
+                        variable,
+                        fields,
+                        value,
+                    }
                 };
                 self.emit(store, TypeId::VOID, span);
             }
@@ -276,15 +293,7 @@ impl Lowering<'_> {
                 mir::InstructionKind::Aggregate(values.collect())
             }
             thir::ExprKind::Field { .. } => {
-                // A field of a field is one path: `s.start.x` is one load.
-                let mut fields = Vec::new();
-                let mut outer = expression;
-                while let thir::ExprKind::Field { value, index } = self.thir.exprs[outer].kind {
-                    fields.push(index);
-                    outer = value;
-                }
-                fields.reverse();
-                let fields = fields.into();
+                let (outer, fields) = self.field_path(expression);
                 match self.thir.exprs[outer].kind {
                     thir::ExprKind::Variable(variable) => mir::InstructionKind::LoadField {
                         variable: Id::from_index(variable.index()),
@@ -298,6 +307,21 @@ impl Lowering<'_> {
             }
         };
         Some(self.emit(kind, ty, span))
+    }
+
+    /// The value that the fields of `expression` are taken from, and the
+    /// path of field indices from it, outermost first: `s.start.x` is `s`
+    /// and one path, so it is one load or store. An expression that is not
+    /// a field has an empty path.
+    fn field_path(&self, expression: Id<thir::Expr>) -> (Id<thir::Expr>, Box<[u32]>) {
+        let mut fields = Vec::new();
+        let mut outer = expression;
+        while let thir::ExprKind::Field { value, index } = self.thir.exprs[outer].kind {
+            fields.push(index);
+            outer = value;
+        }
+        fields.reverse();
+        (outer, fields.into())
     }
 
     /// `left && right` or `left || right`: `right` runs only when `left` does

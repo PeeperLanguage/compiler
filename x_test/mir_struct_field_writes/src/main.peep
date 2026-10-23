@@ -1,0 +1,10 @@
+// A field write is one store along the field path from the variable; a
+// whole assignment stores the whole value.
+struct Point { x: i32, y: i32 }
+struct Line { start: Point, end: Point }
+
+fn main() {
+    let mut line = Line.{ start = Point.{ x = 1, y = 2 }, end = Point.{ x = 3, y = 4 } };
+    line.start.y = 5;
+    line.end = line.start;
+}

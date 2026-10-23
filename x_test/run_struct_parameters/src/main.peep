@@ -1,0 +1,28 @@
+// Structs pass to functions and come back by value, small ones and big ones
+// alike; a call's result is a struct value whose fields can be read.
+struct Point { x: i32, y: i32 }
+
+struct Big {
+    a: i64, b: i64, c: i64, d: i64, e: i64, f: i64,
+    g: i64, h: i64, i: i64, j: i64, k: i64, l: i64,
+}
+
+fn swap(p: Point) -> Point {
+    return Point.{ x = p.y, y = p.x };
+}
+
+fn bump(big: Big) -> Big {
+    let mut copy = big;
+    copy.l = copy.l + 1;
+    return copy;
+}
+
+fn main() -> i32 {
+    let p = Point.{ x = 1, y = 20 };
+    let back = swap(swap(p));
+    let big = bump(Big.{ a = 0, b = 0, c = 0, d = 0, e = 0, f = 0, g = 0, h = 0, i = 0, j = 0, k = 0, l = 44 });
+    if big.l == 45 && big.a == 0 {
+        return swap(p).x + back.x + 45; // 20 + 1 + 45
+    }
+    return 1;
+}

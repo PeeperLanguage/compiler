@@ -1,0 +1,6 @@
+name = "ll_struct_parameters"
+build = "program"
+
+[test]
+mode = "ll"
+outcome = "success"

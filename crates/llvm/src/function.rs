@@ -26,7 +26,6 @@ use source::Span;
 use crate::Module;
 use crate::c_extension;
 use crate::constant_text;
-use crate::extern_symbol;
 use crate::quoted;
 use crate::symbol;
 use crate::type_text;
@@ -80,6 +79,10 @@ impl Module<'_> {
         // Written straight onto the module's functions, taken out while
         // `function` borrows the module.
         let mut out = std::mem::take(&mut function.module.functions);
+        // shortcut: a struct parameter or result is an LLVM value, which a
+        // big struct copies field by field; pass structs over 16 bytes by
+        // pointer (results through `sret`) when big ones show up in real code
+        // or benchmarks.
         let arguments = (0..body.parameters).map(|index| {
             let ty = body.variables[Id::from_index(index)].ty;
             fmt::from_fn(move |out| write!(out, "{} %arg{index}", type_text(types, ty)))
@@ -411,17 +414,7 @@ impl Function<'_, '_, '_> {
                 variable,
                 ref fields,
             } => {
-                let variable_type = self.body.variables[variable].ty;
-                let indices = fields
-                    .iter()
-                    .map(|&field| fmt::from_fn(move |out| write!(out, "i32 {field}")));
-                _ = writeln!(
-                    out,
-                    "  {name}.f = getelementptr inbounds {}, ptr %v{}, i32 0, {}{location}",
-                    type_text(types, variable_type),
-                    variable.index(),
-                    comma_separated(indices)
-                );
+                self.write_field_address(out, id, variable, fields, &location);
                 write!(
                     out,
                     "  {name} = load {}, ptr {name}.f",
@@ -435,6 +428,14 @@ impl Function<'_, '_, '_> {
                 self.operand(value),
                 variable.index()
             ),
+            InstructionKind::StoreField {
+                variable,
+                ref fields,
+                value,
+            } => {
+                self.write_field_address(out, id, variable, fields, &location);
+                write!(out, "  store {}, ptr {name}.f", self.typed(value))
+            }
             InstructionKind::Binary { op, left, right } => {
                 self.write_binary(out, id, op, left, right);
                 Ok(())
@@ -519,6 +520,29 @@ impl Function<'_, '_, '_> {
         _ = writeln!(out, "{location}");
     }
 
+    /// Writes the line computing `%i<id>.f`, the address of the field that
+    /// `fields` leads to in `variable`, for the instruction `id`.
+    fn write_field_address(
+        &self,
+        out: &mut String,
+        id: Id<mir::Instruction>,
+        variable: Id<mir::Variable>,
+        fields: &[u32],
+        location: &DebugLocation,
+    ) {
+        let indices = fields
+            .iter()
+            .map(|&field| fmt::from_fn(move |out| write!(out, "i32 {field}")));
+        _ = writeln!(
+            out,
+            "  {}.f = getelementptr inbounds {}, ptr %v{}, i32 0, {}{location}",
+            value_name(id),
+            type_text(self.types, self.body.variables[variable].ty),
+            variable.index(),
+            comma_separated(indices)
+        );
+    }
+
     /// Writes the line calling `function` with `arguments` for the
     /// instruction `id`, after noting the declaration the module needs for
     /// it.
@@ -534,7 +558,7 @@ impl Function<'_, '_, '_> {
         let callee = global(&symbol);
         // Only C code needs the C ABI's extension of narrow integers; it
         // follows a parameter's type and comes before a result's.
-        let external = extern_symbol(self.module.program, function).is_some();
+        let external = project::extern_symbol(&self.module.program.modules, function).is_some();
         let extension = |ty| c_extension(types, ty).filter(|_| external);
         let result = fmt::from_fn(|out| match extension(ty) {
             Some(extension) => write!(out, "{extension} {}", type_text(types, ty)),

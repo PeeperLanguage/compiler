@@ -1,0 +1,11 @@
+// A struct parameter and result are LLVM struct values; the debug info of a
+// struct parameter is its struct type.
+struct Point { x: i32, y: i32 }
+
+fn swap(p: Point) -> Point {
+    return Point.{ x = p.y, y = p.x };
+}
+
+fn main() {
+    let p = swap(Point.{ x = 1, y = 2 });
+}

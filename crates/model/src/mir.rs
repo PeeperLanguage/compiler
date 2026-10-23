@@ -81,6 +81,13 @@ pub enum InstructionKind {
         variable: Id<Variable>,
         value: Operand,
     },
+    /// Sets the field of a struct variable that its `fields` path leads to,
+    /// as `LoadField`'s path; the variable must already be set.
+    StoreField {
+        variable: Id<Variable>,
+        fields: Box<[u32]>,
+        value: Operand,
+    },
     Binary {
         op: BinaryOp,
         left: Operand,
@@ -183,6 +190,17 @@ impl Body {
                     InstructionKind::Store { variable, value } => {
                         printer.out.push_str("store ");
                         printer.write_variable(*variable);
+                        printer.out.push_str(", ");
+                        printer.write_operand(value);
+                    }
+                    InstructionKind::StoreField {
+                        variable,
+                        fields,
+                        value,
+                    } => {
+                        printer.out.push_str("store ");
+                        printer.write_variable(*variable);
+                        printer.write_fields(fields);
                         printer.out.push_str(", ");
                         printer.write_operand(value);
                     }

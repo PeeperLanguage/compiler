@@ -1,0 +1,13 @@
+// A field is set only in a struct that is already set on every path: the
+// fields of a struct are not set one by one.
+struct Point { x: i32, y: i32 }
+
+fn main() {
+    let mut q: Point;
+    q.y = 1;
+    let mut s: Point;
+    if true {
+        s = Point.{ x = 1, y = 2 };
+    }
+    s.x = 2;
+}
