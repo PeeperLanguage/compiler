@@ -255,11 +255,11 @@ impl Loans<'_> {
             },
         );
         let predecessors = predecessors(body);
-        let exits = body.blocks.ids();
-        let exits = exits.filter(|&block| body.blocks[block].terminator.targets().next().is_none());
+        // From every block, not only those that leave the function: a block
+        // of an endless `for {}` reaches no exit.
         let ends = dataflow(
             body.blocks.len(),
-            exits.map(|block| (block, no_holders.clone())),
+            body.blocks.ids().map(|block| (block, no_holders.clone())),
             |block| predecessors[block.index()].iter().copied(),
             |block, live| {
                 let ids: Vec<_> = instructions(block).collect();
