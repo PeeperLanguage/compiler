@@ -141,14 +141,14 @@ impl Terminator {
 
 impl Body {
     /// The body as text, one block after another, for `peeper -dump`. `file` is
-    /// where the body is written; `function_name` names a called function. A
+    /// where the body is written; `name_of` gives a declaration's name. A
     /// variable shows as its name and index (`sum.2`), an integer constant as
     /// its bits read unsigned.
-    pub fn text(
+    pub fn text<'n>(
         &self,
         types: &Types,
         file: &SourceFile,
-        function_name: impl Fn(DefId) -> String,
+        name_of: impl Fn(DefId) -> &'n str + Copy,
     ) -> String {
         let mut printer = Printer {
             body: self,
@@ -193,7 +193,7 @@ impl Body {
                         function,
                         arguments,
                     } => {
-                        _ = write!(printer.out, "call {}(", function_name(*function));
+                        _ = write!(printer.out, "call {}(", name_of(*function));
                         for (index, argument) in arguments.iter().enumerate() {
                             if index > 0 {
                                 printer.out.push_str(", ");
@@ -214,7 +214,7 @@ impl Body {
                     }
                 }
                 if *ty != TypeId::VOID {
-                    _ = write!(printer.out, ": {}", types.text(*ty));
+                    _ = write!(printer.out, ": {}", types.text(*ty, name_of));
                 }
                 printer.out.push('\n');
             }

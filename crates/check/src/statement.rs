@@ -20,7 +20,7 @@ use model::thir::Stmt;
 use model::thir::Variable;
 use source::Span;
 
-use crate::ModuleChecker;
+use crate::Checker;
 use crate::scope::report_redeclared;
 use model::Local;
 use model::Symbol;
@@ -28,12 +28,12 @@ use model::Symbol;
 /// Building the THIR of one piece of code: a function's body, or a
 /// constant's value. It checks the code as it builds it.
 pub(crate) struct ThirBuilder<'a, 'p> {
-    /// The module's checker, borrowed for the build: its module, queries and
+    /// The checker, borrowed for the build: its module, tables and
     /// diagnostics.
-    pub(crate) checker: ModuleChecker<'a, 'p>,
+    pub(crate) checker: &'a mut Checker<'p>,
     pub(crate) body: &'a mut Body,
     /// The names written in the body, in the order checked, for a caller that
-    /// wants them (`ModuleChecker::check_body`); `None` records nothing.
+    /// wants them (`Checker::check_body`); `None` records nothing.
     recorded: Option<&'a mut Vec<Name>>,
     /// The names declared in the enclosing blocks so far, innermost last. Few
     /// names are in scope at once, so a search from the end beats hashing.
@@ -45,9 +45,9 @@ pub(crate) struct ThirBuilder<'a, 'p> {
     result: TypeId, // the function's result type
 }
 
-impl ModuleChecker<'_, '_> {
+impl Checker<'_> {
     /// Puts in `body` the THIR of `function`'s body, given its type `ty`
-    /// (`function`), with `has_errors` set when checking it reported an
+    /// (`function_type`), with `has_errors` set when checking it reported an
     /// error; what `body` held is dropped, its memory kept. False, with
     /// `body` untouched, for a function without a body or whose signature had
     /// an error. The names written in it go to `names` when given, as for an
@@ -62,8 +62,9 @@ impl ModuleChecker<'_, '_> {
         let Some(block) = function.body else {
             return false;
         };
-        let reported = self.diagnostics.len();
-        let Type::Function { parameters, result } = &self.queries.types[ty] else {
+        let module = self.current_module.index();
+        let reported = self.diagnostics[module].len();
+        let Type::Function { parameters, result } = &self.types[ty] else {
             return false; // the signature's error was reported
         };
         let (parameters, result) = (parameters.clone(), *result);
@@ -98,41 +99,29 @@ impl ModuleChecker<'_, '_> {
         // A part of the signature that failed was reported with the signature.
         body.has_errors = parameters.contains(&TypeId::INVALID)
             || result == TypeId::INVALID
-            || self.diagnostics[reported..]
+            || self.diagnostics[module][reported..]
                 .iter()
                 .any(Diagnostic::is_error);
         true
-    }
-
-    /// The type and value of the module's constant `declaration`; `None` when
-    /// it had an error. Its value is checked as a body's `const` is, with no
-    /// variables in scope.
-    pub fn check_constant(&mut self, declaration: Id<ast::Decl>) -> Option<Constant> {
-        let mut body = Body::default();
-        ThirBuilder::new(self, &mut body, TypeId::VOID, None).check_const_statement(declaration)
     }
 }
 
 impl<'a, 'p> ThirBuilder<'a, 'p> {
     /// Building code into `body` whose `return` gives `result`, recording
     /// its names into `recorded` when given.
-    fn new(
-        checker: &'a mut ModuleChecker<'_, 'p>,
+    pub(crate) fn new(
+        checker: &'a mut Checker<'p>,
         body: &'a mut Body,
         result: TypeId,
         recorded: Option<&'a mut Vec<Name>>,
     ) -> ThirBuilder<'a, 'p> {
         ThirBuilder {
-            checker: ModuleChecker {
-                current_module: checker.current_module,
-                queries: checker.queries,
-                diagnostics: checker.diagnostics,
-            },
+            checker,
             body,
             recorded,
             names: Vec::new(),
             block_start: 0,
-            block: Id::from_index(0), // the function's, added first (`ModuleChecker::check_body`)
+            block: Id::from_index(0), // the function's, added first (`Checker::check_body`)
             result,
         }
     }
@@ -188,7 +177,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 name.span,
                 first,
             );
-            self.checker.diagnostics.push(diagnostic);
+            self.checker.report(diagnostic);
             return;
         }
         self.record(name.span, Symbol::Local(local));
@@ -196,7 +185,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
     }
 
     /// Records that the name written at `span` stands for `symbol`, when the
-    /// caller asked for names (`ModuleChecker::check_body`).
+    /// caller asked for names (`Checker::check_body`).
     pub(crate) fn record(&mut self, span: Span, symbol: Symbol) {
         if let Some(names) = &mut self.recorded {
             names.push(Name { span, symbol });
@@ -313,7 +302,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         ty: Option<Id<ast::Type>>,
         value: Option<Id<ast::Expr>>,
     ) -> Stmt {
-        let declared = ty.map(|ty| self.checker.resolve_type(ty));
+        let declared = ty.map(|ty| self.checker.resolve_value_type(ty));
         let initialized = value.is_some();
         let (ty, value) = match (declared, value) {
             (Some(ty), value) => (ty, value.map(|value| self.add_expr_as(value, ty))),
@@ -356,7 +345,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         {
             // Likely meant as `x = ...`: the outer local stays unchanged.
             let file = &self.checker.module().ast.file;
-            self.checker.diagnostics.push(
+            self.checker.report(
                 Diagnostic::new(
                     diagnostics::HIDDEN_MUTABLE,
                     format!("this `let` hides the outer `mut {text}`"),
@@ -385,7 +374,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
     /// `const name: ty = value;`: a name for a value known at compile time.
     /// Without a type, the constant takes its value's type. Gives its type and
     /// value, or `None` after an error.
-    fn check_const_statement(&mut self, declaration: Id<ast::Decl>) -> Option<Constant> {
+    pub(crate) fn check_const_statement(&mut self, declaration: Id<ast::Decl>) -> Option<Constant> {
         let ast::Decl::Const {
             name, ty, value, ..
         } = self.checker.module().ast.decls[declaration]
@@ -436,7 +425,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             Some(value) => Some(self.add_expr_as(value, self.result)),
             None => {
                 if self.result != TypeId::VOID && self.result != TypeId::INVALID {
-                    let result = self.checker.queries.type_text(self.result);
+                    let result = self.checker.type_text(self.result);
                     let message = format!("`return` needs a value of type `{result}`");
                     self.checker
                         .error(diagnostics::INVALID_RETURN, message, span);
@@ -474,7 +463,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             Symbol::Local(Local::Variable(variable)) => variable,
             Symbol::Local(Local::Constant(constant)) => {
                 let declared = self.body.constants.span(constant);
-                self.checker.diagnostics.push(
+                self.checker.report(
                     Diagnostic::new(
                         diagnostics::CONSTANT_REASSIGNMENT,
                         format!("cannot assign to constant `{name}`"),
@@ -503,7 +492,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             ..
         } = self.body.variables[variable];
         if !mutable && initialized {
-            self.checker.diagnostics.push(
+            self.checker.report(
                 Diagnostic::new(
                     diagnostics::INVALID_ASSIGNMENT,
                     format!("cannot assign to immutable `{name}`"),
@@ -534,24 +523,27 @@ mod tests {
     /// The THIR of every function body of `text`, as text, and the
     /// diagnostics.
     fn bodies(text: &str) -> (Vec<String>, Vec<Reported>) {
-        let (bodies, types, reported) = with_checker(text, |checker| {
+        let ((bodies, declared), types, reported) = with_checker(text, |checker| {
             let tree = &checker.module().ast;
             let declarations: Vec<_> = tree.lists.items(tree.top_level).collect();
+            let declared = declarations.len();
             let mut bodies = Vec::new();
             for declaration in declarations {
                 let ast::Decl::Function(function) = checker.module().ast.decls[declaration] else {
                     continue;
                 };
-                let signature = checker.check_signature(declaration);
+                let signature = checker.check_function(declaration);
                 let mut body = Body::default();
                 if checker.check_body(&function, signature, &mut body, None) && !body.has_errors {
                     bodies.push(body);
                 }
             }
-            bodies
+            (bodies, declared)
         });
         let file = SourceFile::new("main.peep", text);
-        let name = |function: DefId| format!("f{}", function.index);
+        // A called function's name, by its place among the declarations.
+        let names: Vec<String> = (0..declared).map(|index| format!("f{index}")).collect();
+        let name = |function: DefId| names[function.index as usize].as_str();
         let shown = bodies
             .iter()
             .map(|body| body.text(&types, &file, name))
@@ -799,7 +791,7 @@ mod tests {
             let ast::Decl::Function(function) = tree.decls[declaration] else {
                 unreachable!("the first declaration is a function")
             };
-            let signature = checker.check_signature(declaration);
+            let signature = checker.check_function(declaration);
             checker.check_body(&function, signature, &mut Body::default(), None);
             let note = |diagnostic: &diagnostics::Diagnostic| {
                 let first = diagnostic.notes.first();
@@ -808,7 +800,8 @@ mod tests {
                     first.map(|note| note.text.clone()),
                 )
             };
-            checker.diagnostics.iter().map(note).collect()
+            let module = checker.current_module.index();
+            checker.diagnostics[module].iter().map(note).collect()
         });
         notes
     }

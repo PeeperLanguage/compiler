@@ -38,7 +38,7 @@ const SOURCE_FOLDER: &str = "src";
 
 /// One source file, read and parsed. Its source file is `ast.file`. What
 /// `load` read never changes; what a compile finds, its scope included, is
-/// kept by the compile (`check::Queries`).
+/// kept by the compile (`check::Checker`).
 pub struct Module {
     pub path: String, // import path, such as "myapp:utils/file" or "core:global"
     pub ast: Tree,

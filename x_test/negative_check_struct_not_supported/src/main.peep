@@ -1,0 +1,27 @@
+// Declaring a struct is supported; values of one come with struct literals.
+struct Point {
+    x: i32,
+}
+
+type Place = Point;
+
+struct Pair<T> {
+    first: T,
+}
+
+enum Shape {
+    Circle,
+}
+
+// A field may hold an enum: its declaration is what is not supported.
+struct Drawing {
+    shape: Shape,
+}
+
+fn take(point: Point) {}
+
+fn give() -> Place {}
+
+fn main() {
+    let point: Point;
+}

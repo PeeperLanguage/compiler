@@ -1,0 +1,25 @@
+// A struct declares a type: its fields may be built-in types, aliases, and
+// other structs held by value, declared above or below it.
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+struct Segment {
+    start: Point,
+    end: Place,
+    length: Meters,
+}
+
+type Place = Point;
+type Meters = i64;
+
+struct Route {
+    first: Segment,
+    second: Segment,
+    open: bool,
+}
+
+struct Empty {}
+
+fn main() {}

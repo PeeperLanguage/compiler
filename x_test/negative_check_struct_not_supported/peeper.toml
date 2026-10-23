@@ -1,0 +1,12 @@
+name = "negative_check_struct_not_supported"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "values of `Point` are not supported yet",
+    "values of `Place (aka Point)` are not supported yet",
+    "generic types are not supported yet",
+    "enum declarations are not supported yet",
+]

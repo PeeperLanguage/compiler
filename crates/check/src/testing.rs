@@ -8,8 +8,7 @@ use model::semantic_types::Types;
 use project::ImportKind;
 use source::SourceFile;
 
-use crate::ModuleChecker;
-use crate::Queries;
+use crate::Checker;
 
 /// The module `path`, written as `text`, with `imports`; its text must parse
 /// without errors.
@@ -33,7 +32,7 @@ pub(crate) type Reported = (&'static str, String, String);
 /// types and the diagnostics.
 pub(crate) fn with_checker<T>(
     text: &str,
-    work: impl FnOnce(&mut ModuleChecker) -> T,
+    work: impl FnOnce(&mut Checker) -> T,
 ) -> (T, Types, Vec<Reported>) {
     let (utils_id, main_id) = (ModuleId::from_index(0), ModuleId::from_index(1));
     let imports = vec![project::Import {
@@ -46,9 +45,9 @@ pub(crate) fn with_checker<T>(
         module("app:main", &text, imports),
     ];
     let file = modules[1].ast.file.clone();
-    let mut queries = Queries::new(&modules, 64);
-    let result = queries.with_checker(main_id, work);
-    let reported = queries
+    let mut checker = Checker::new(&modules, 64);
+    let result = checker.in_module(main_id, work);
+    let reported = checker
         .diagnostics
         .iter()
         .flatten()
@@ -57,7 +56,7 @@ pub(crate) fn with_checker<T>(
             (diagnostic.code.id, diagnostic.message.clone(), text)
         })
         .collect();
-    (result, queries.types, reported)
+    (result, checker.types, reported)
 }
 
 /// `expected` as `Reported`s, to compare with what was reported.

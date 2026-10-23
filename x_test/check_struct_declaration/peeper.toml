@@ -1,0 +1,6 @@
+name = "check_struct_declaration"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "success"

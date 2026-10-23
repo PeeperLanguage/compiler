@@ -25,7 +25,7 @@
 //!
 //! - No type, name or operator rules, and no constant folding: the checker did
 //!   those while building THIR. A function whose checking reported an error
-//!   is not lowered at all (`ModuleChecker::check_body`), so these checks never
+//!   is not lowered at all (`Checker::check_body`), so these checks never
 //!   repeat or follow from an earlier error.
 //! - No changes to the MIR, and no fixes: they only report.
 //! - No use of constant values to decide which paths exist. `if false { ... }`
@@ -69,7 +69,7 @@ pub fn report_missing_return<'n>(
     file: &Arc<SourceFile>,
     types: &Types,
     result: TypeId,
-    name_of: impl FnOnce(DefId) -> &'n str,
+    name_of: impl Fn(DefId) -> &'n str + Copy,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     if result == TypeId::VOID {
@@ -160,7 +160,7 @@ pub fn report_missing_return<'n>(
     let hidden = causes.len().saturating_sub(SHOWN_CAUSES);
     let end_label = format!(
         "function ends without returning `{}`",
-        types.text_named(result, name_of)
+        types.text(result, name_of)
     );
     let mut error = Diagnostic::new(
         diagnostics::MISSING_RETURN,

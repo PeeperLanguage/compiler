@@ -578,7 +578,7 @@ impl CachedName {
         let target = match name.symbol {
             Symbol::Local(local) => CachedTarget::InBody {
                 declared: body.declared(local),
-                ty: types.text_named(
+                ty: types.text(
                     match local {
                         Local::Variable(variable) => body.variables[variable].ty,
                         Local::Constant(constant) => body.constants[constant]

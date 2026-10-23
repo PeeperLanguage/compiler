@@ -49,7 +49,7 @@ impl ThirBuilder<'_, '_> {
         let span = self.checker.module().ast.exprs.span(expression);
         let checked = self.check_expr(expression, Some(ty));
         self.coerce(checked, span, ty).unwrap_or_else(|mismatch| {
-            self.checker.diagnostics.push(mismatch);
+            self.checker.report(mismatch);
             Expr::INVALID
         })
     }
@@ -63,14 +63,14 @@ impl ThirBuilder<'_, '_> {
         if expr.ty == TypeId::INVALID || to == TypeId::INVALID {
             return Ok(Expr::INVALID);
         }
-        let queries = &mut self.checker.queries;
+        let checker = &self.checker;
         // An alias is its type under another name.
-        if queries.types.same(expr.ty, to) {
+        if checker.types.same(expr.ty, to) {
             return Ok(expr);
         }
-        let (from_type, to_type) = (queries.types[expr.ty].clone(), queries.types[to].clone());
+        let (from_type, to_type) = (checker.types[expr.ty].clone(), checker.types[to].clone());
         if !from_type.widens_to(&to_type) {
-            let (expected, found) = (queries.type_text(to), queries.type_text(expr.ty));
+            let (expected, found) = (checker.type_text(to), checker.type_text(expr.ty));
             return Err(Diagnostic::new(
                 diagnostics::TYPE_MISMATCH,
                 format!("mismatched types: expected `{expected}`, found `{found}`"),
@@ -167,7 +167,7 @@ impl ThirBuilder<'_, '_> {
                 return constant_expr(self.body.constants[constant].clone());
             }
             Some(Symbol::Constant(constant)) => {
-                return constant_expr(self.checker.queries.constant(constant));
+                return constant_expr(self.checker.constant(constant));
             }
             Some(Symbol::Function(_)) => {
                 self.checker.not_supported(span, "functions as values");
@@ -211,7 +211,7 @@ impl ThirBuilder<'_, '_> {
             };
             diagnostic = diagnostic.guess(format!("did you mean `{nearest}`?"), vec![fix]);
         }
-        self.checker.diagnostics.push(diagnostic);
+        self.checker.report(diagnostic);
     }
 
     /// What the path `module::name` written as the type expression `path`
@@ -262,7 +262,7 @@ impl ThirBuilder<'_, '_> {
                 return None;
             }
         };
-        let Some(symbol) = self.checker.queries.scopes[imported.index()].get(member_name) else {
+        let Some(symbol) = self.checker.scopes[imported.index()].get(member_name) else {
             let message = format!("unknown name `{member_name}` in module `{module_name}`");
             self.checker
                 .error(diagnostics::UNDEFINED_NAME, message, member_span);
@@ -275,7 +275,7 @@ impl ThirBuilder<'_, '_> {
             || member_name.starts_with(char::is_uppercase);
         if !exported {
             let file = &tree.file;
-            self.checker.diagnostics.push(
+            self.checker.report(
                 Diagnostic::new(
                     diagnostics::NOT_EXPORTED,
                     format!("`{member_name}` is not exported from `{module_name}`"),
@@ -338,8 +338,8 @@ impl ThirBuilder<'_, '_> {
             None => None,
         };
         let signature = function.map(|function| {
-            let ty = self.checker.queries.function(function);
-            (function, self.checker.queries.types[ty].clone())
+            let ty = self.checker.function_type(function);
+            (function, self.checker.types[ty].clone())
         });
         let Some((function, Type::Function { parameters, result })) = signature else {
             for argument in tree.lists.items(arguments) {
@@ -391,8 +391,8 @@ impl ThirBuilder<'_, '_> {
     ) -> Expr {
         let tree = &self.checker.module().ast;
         let literal = literal::numeric::split(tree.file.slice(number));
-        let pointer_bits = self.checker.queries.pointer_bits;
-        let types = &mut self.checker.queries.types;
+        let pointer_bits = self.checker.pointer_bits;
+        let types = &mut self.checker.types;
         let ty = if literal.suffix.is_empty() {
             match expected {
                 Some(ty) if takes_type(&literal, &types[ty]) => ty,
@@ -434,7 +434,7 @@ impl ThirBuilder<'_, '_> {
             let message = format!(
                 "literal `{}` does not fit `{}`",
                 tree.file.slice(written),
-                self.checker.queries.type_text(ty)
+                self.checker.type_text(ty)
             );
             self.checker
                 .error(diagnostics::INVALID_NUMBER, message, written);
@@ -468,7 +468,7 @@ impl ThirBuilder<'_, '_> {
         if checked.ty == TypeId::INVALID {
             return Expr::INVALID;
         }
-        let ty = self.checker.queries.types[checked.ty].clone();
+        let ty = self.checker.types[checked.ty].clone();
         let accepted = match op {
             UnaryOp::Negate => matches!(ty, Type::Integer(_) | Type::Float(_)),
             UnaryOp::LogicalNot => ty == Type::Bool,
@@ -526,17 +526,18 @@ impl ThirBuilder<'_, '_> {
             match self.coerce(checked, right_span, left.ty) {
                 Ok(right) => right,
                 Err(mut mismatch) => {
-                    let types = &mut self.checker.queries.types;
+                    let checker = &self.checker;
                     let fixable = left_literal.filter(|&literal| {
-                        takes_type(&literal::numeric::split(literal), &types[found])
+                        takes_type(&literal::numeric::split(literal), &checker.types[found])
                     });
                     if let Some(literal) = fixable {
-                        let found = types.text(found);
+                        // The suffix names the type itself, not an alias.
+                        let found = checker.type_text(checker.types.real(found));
                         let help =
                             format!("write `{literal}{found}` to give the left literal that type");
                         mismatch = mismatch.help(help, Vec::new());
                     }
-                    self.checker.diagnostics.push(mismatch);
+                    self.checker.report(mismatch);
                     Expr::INVALID
                 }
             }
@@ -545,7 +546,7 @@ impl ThirBuilder<'_, '_> {
             return Expr::INVALID;
         }
         let (left_type, right_type) = {
-            let types = &mut self.checker.queries.types;
+            let types = &mut self.checker.types;
             (types[left.ty].clone(), types[right.ty].clone())
         };
         let accepted = match op {
@@ -572,7 +573,7 @@ impl ThirBuilder<'_, '_> {
             return self.report_invalid_operand(op.symbol(), left.ty, span);
         }
         if shift && !matches!(right_type, Type::Integer(_)) {
-            let count = self.checker.queries.type_text(right.ty);
+            let count = self.checker.type_text(right.ty);
             let message = format!("a shift count must be an integer, found `{count}`");
             self.checker
                 .error(diagnostics::INVALID_OPERATION, message, right_span);
@@ -604,7 +605,7 @@ impl ThirBuilder<'_, '_> {
 
     /// Reports `op` applied to an operand of the type `ty`, at `span`.
     fn report_invalid_operand(&mut self, op: &str, ty: TypeId, span: Span) -> Expr {
-        let ty = self.checker.queries.type_text(ty);
+        let ty = self.checker.type_text(ty);
         let message = format!("operator `{op}` cannot be applied to `{ty}`");
         self.checker
             .error(diagnostics::INVALID_OPERATION, message, span);
@@ -612,7 +613,7 @@ impl ThirBuilder<'_, '_> {
     }
 }
 
-/// The value of a constant (`Queries::constant`) as an expression.
+/// The value of a constant (`Checker::constant`) as an expression.
 fn constant_expr(constant: Option<Constant>) -> Expr {
     match constant {
         Some(Constant { ty, value }) => Expr {

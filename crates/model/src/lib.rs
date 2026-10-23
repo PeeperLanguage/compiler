@@ -57,7 +57,7 @@ pub enum Symbol {
 }
 
 /// A name declared in a body, by its kind: checked in place with the
-/// body, never asked for as a query.
+/// body, never asked for on its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Local {
     /// A parameter or `let`: it holds a value at run time.

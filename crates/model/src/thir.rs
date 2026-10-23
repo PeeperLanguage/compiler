@@ -55,7 +55,7 @@ pub struct Body {
 
 /// A name written in a body, where it is declared or used, and what it
 /// stands for. Recorded only for a caller that asks
-/// (`ModuleChecker::check_body`), such as an editor; the body itself does not keep
+/// (`Checker::check_body`), such as an editor; the body itself does not keep
 /// names.
 #[derive(Clone, Copy, Debug)]
 pub struct Name {
@@ -180,20 +180,20 @@ impl Body {
     }
 
     /// The body as text, one statement per line, for `peeper -dump`. `file` is
-    /// where the body is written; `function_name` names a called function. A
+    /// where the body is written; `name_of` gives a declaration's name. A
     /// variable shows as its name and index (`x.2`), a constant other than a
     /// `bool` with its type (`1:i32`), and an operation in parentheses.
-    pub fn text(
+    pub fn text<'n>(
         &self,
         types: &Types,
         file: &SourceFile,
-        function_name: impl Fn(DefId) -> String,
+        name_of: impl Fn(DefId) -> &'n str + Copy,
     ) -> String {
         let mut printer = Printer {
             body: self,
             types,
             file,
-            function_name,
+            name_of,
             out: String::new(),
         };
         printer.write_statements(self.blocks[Id::from_index(0)].statements, 1);
@@ -206,11 +206,11 @@ struct Printer<'b, F> {
     body: &'b Body,
     types: &'b Types,
     file: &'b SourceFile,
-    function_name: F,
+    name_of: F,
     out: String,
 }
 
-impl<F: Fn(DefId) -> String> Printer<'_, F> {
+impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
     /// Each of `statements` on its own line, `depth` levels in.
     fn write_statements(&mut self, statements: List<Stmt>, depth: usize) {
         for statement in self.body.lists.items(statements) {
@@ -289,7 +289,12 @@ impl<F: Fn(DefId) -> String> Printer<'_, F> {
                 _ = write!(self.out, "c\"{}\"", bytes.escape_ascii());
             }
             ExprKind::Constant(Value::Float(bits)) => {
-                _ = write!(self.out, "{}:{}", f64::from_bits(bits), self.types.text(ty));
+                _ = write!(
+                    self.out,
+                    "{}:{}",
+                    f64::from_bits(bits),
+                    self.types.text(ty, self.name_of)
+                );
             }
             ExprKind::Constant(Value::Integer(ref limbs)) => {
                 let Type::Integer(integer) = self.types[ty] else {
@@ -311,7 +316,7 @@ impl<F: Fn(DefId) -> String> Printer<'_, F> {
                 } else {
                     write!(self.out, "{low}")
                 };
-                _ = write!(self.out, ":{}", self.types.text(ty));
+                _ = write!(self.out, ":{}", self.types.text(ty, self.name_of));
             }
             ExprKind::Variable(variable) => self.write_variable(variable),
             ExprKind::Binary { op, left, right } => {
@@ -329,20 +334,20 @@ impl<F: Fn(DefId) -> String> Printer<'_, F> {
             ExprKind::Widen(value) => {
                 self.out.push_str("widen(");
                 self.write_expr(value);
-                _ = write!(self.out, "):{}", self.types.text(ty));
+                _ = write!(self.out, "):{}", self.types.text(ty, self.name_of));
             }
             ExprKind::Call {
                 function,
                 arguments,
             } => {
-                _ = write!(self.out, "call {}(", (self.function_name)(function));
+                _ = write!(self.out, "call {}(", (self.name_of)(function));
                 for (index, argument) in self.body.lists.items(arguments).enumerate() {
                     if index > 0 {
                         self.out.push_str(", ");
                     }
                     self.write_expr(argument);
                 }
-                _ = write!(self.out, "):{}", self.types.text(ty));
+                _ = write!(self.out, "):{}", self.types.text(ty, self.name_of));
             }
             ExprKind::Invalid => self.out.push_str("invalid"),
         }

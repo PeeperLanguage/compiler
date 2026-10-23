@@ -226,7 +226,7 @@ impl Metadata {
                 } else {
                     "DW_ATE_unsigned"
                 };
-                basic(&types.text(ty), integer.bits, encoding)
+                basic(&integer.to_string(), integer.bits, encoding)
             }
             Type::Float(Float::F32) => basic("f32", 32, "DW_ATE_float"),
             Type::Float(Float::F64) => basic("f64", 64, "DW_ATE_float"),
@@ -241,6 +241,9 @@ impl Metadata {
                 unreachable!("MIR holds no value of this type")
             }
             Type::Alias { .. } => unreachable!("indexing looks through aliases"),
+            Type::Named(_) | Type::Struct(_) => {
+                unreachable!("check rejects values of declared types; `Struct` is no value's type")
+            }
         };
         let id = self.add(text);
         self.types.insert(ty, id);
@@ -296,6 +299,9 @@ fn type_text(types: &Types, ty: TypeId) -> impl fmt::Display {
         Type::CString => out.write_str("ptr"),
         Type::Invalid | Type::Function { .. } => unreachable!("MIR holds no value of this type"),
         Type::Alias { .. } => unreachable!("indexing looks through aliases"),
+        Type::Named(_) | Type::Struct(_) => {
+            unreachable!("check rejects values of declared types; `Struct` is no value's type")
+        }
     })
 }
 

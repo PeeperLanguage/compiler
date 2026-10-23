@@ -1,0 +1,7 @@
+name = "negative_check_struct_duplicate_field"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["T0003", "`x` is already declared in this struct", "first declared here"]

@@ -47,13 +47,13 @@ separate thread or a task queued for later.
 sequenceDiagram
     participant Caller as CLI or LSP
     participant Compile as compile::run
-    participant Check as ModuleChecker::check_body
+    participant Check as Checker::check_body
     participant Lower as lower::lower
     participant Callback as Caller's closure
 
     Caller->>Compile: run(program, pointer_bits, previous, record_names, use_function)
     loop Each function with THIR in a module checked this compile
-        Compile->>Compile: Query the function's signature
+        Compile->>Compile: Check the function's signature
         Compile->>Check: Check body, recording names when record_names
         Check-->>Compile: THIR and recorded names
         Compile->>Lower: Lower THIR and run path checks

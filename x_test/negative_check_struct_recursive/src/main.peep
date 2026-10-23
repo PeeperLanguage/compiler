@@ -1,0 +1,22 @@
+// A struct that holds itself by value, directly, through another struct or
+// through an alias, would have no finite size.
+struct Node {
+    value: i32,
+    next: Node,
+}
+
+struct Left {
+    right: Right,
+}
+
+struct Right {
+    left: Left,
+}
+
+type Link = Chain;
+
+struct Chain {
+    next: Link,
+}
+
+fn main() {}

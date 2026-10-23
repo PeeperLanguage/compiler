@@ -17,6 +17,7 @@ use model::DefId;
 use model::ModuleId;
 use model::ast;
 use model::constant::Constant;
+use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use scope::Scope;
@@ -24,45 +25,47 @@ use source::Span;
 
 use model::Symbol;
 
-/// What checking a program's module-scope declarations (`DefId`) found, each
-/// checked once, the first time anything asks: one method per kind, as
-/// `Symbol` names them. A body's own names (`Symbol::Local`) are checked in
-/// place with the body, never asked for.
-pub struct Queries<'p> {
+/// Checks a program's declarations. Each module-scope declaration (`DefId`)
+/// is checked once, the first time anything asks for it, and its result is
+/// kept in the table of its category: types, functions or constants. A body's
+/// own names (`Symbol::Local`) are checked in place with the body.
+pub struct Checker<'p> {
     pub modules: &'p [project::Module], // in the program's order
     /// The names each module declares and imports, by `ModuleId`, collected
     /// before anything is asked for: a body can use a name declared below it
     /// or in another module.
     scopes: Vec<Scope>,
-    pub types: Types, // the program's types, shared by every declaration
+    pub types: Types, // the program's types, built-in and declared
     /// How wide a pointer is on the target, in bits: the width of `isize` and
     /// `usize`.
     pub pointer_bits: u32,
-    /// The query of each function, method and type declaration, by its place
-    /// (`DefId`): a function's type, or the type a type declaration names.
-    /// Another declaration's slot stays `NotStarted`.
+    /// Each type declaration, by its place: the type written after its name
+    /// (`check_type_declaration`). Another declaration's slot stays
+    /// `NotStarted`, as in each table.
     pub declared_types: Vec<Vec<State<TypeId>>>,
-    /// The query of each module constant, by its place: its type and value,
-    /// `None` when it had an error. Another declaration's slot stays
-    /// `NotStarted`.
+    /// Each function, by its place: its type (`check_function`).
+    pub function_types: Vec<Vec<State<TypeId>>>,
+    /// Each module constant, by its place: its type and value, `None` when it
+    /// had an error (`check_constant`).
     pub constants: Vec<Vec<State<Option<Constant>>>>,
     /// What checking each module reported, by `ModuleId`, in order.
     pub diagnostics: Vec<Vec<Diagnostic>>,
+    pub(crate) current_module: ModuleId, // the module being checked
 }
 
-/// Where the query of one declaration is.
+/// Where the check of one declaration is.
 #[derive(Clone, Debug)]
 pub enum State<T> {
     NotStarted,
-    /// Asked for again while running: a cycle.
+    /// Being checked: asked for again now, it depends on itself.
     Running,
     Done(T),
 }
 
-impl<'p> Queries<'p> {
+impl<'p> Checker<'p> {
     /// Nothing checked yet of `modules` but their scopes, whose errors are
     /// each module's first diagnostics. Pointers have `pointer_bits` bits.
-    pub fn new(modules: &'p [project::Module], pointer_bits: u32) -> Queries<'p> {
+    pub fn new(modules: &'p [project::Module], pointer_bits: u32) -> Checker<'p> {
         let mut diagnostics = vec![Vec::new(); modules.len()];
         let scopes = (0..modules.len())
             .map(|index| {
@@ -70,87 +73,98 @@ impl<'p> Queries<'p> {
                 scope::collect(id, modules, &mut diagnostics[index])
             })
             .collect();
-        Queries {
+        // A slot for each declaration of each module, in a table of any kind.
+        fn table<T: Clone>(modules: &[project::Module]) -> Vec<Vec<State<T>>> {
+            modules
+                .iter()
+                .map(|module| vec![State::NotStarted; module.ast.top_level.len()])
+                .collect()
+        }
+        Checker {
             modules,
             scopes,
             types: Types::new(),
             pointer_bits,
-            declared_types: modules
-                .iter()
-                .map(|module| vec![State::NotStarted; module.ast.top_level.len()])
-                .collect(),
-            constants: modules
-                .iter()
-                .map(|module| vec![State::NotStarted; module.ast.top_level.len()])
-                .collect(),
+            declared_types: table(modules),
+            function_types: table(modules),
+            constants: table(modules),
             diagnostics,
+            current_module: ModuleId::from_index(0),
         }
     }
 
-    /// The function type of the function or method `definition`
-    /// (`ModuleChecker::check_signature`).
-    pub fn function(&mut self, definition: DefId) -> TypeId {
-        self.query(
+    /// The type written after the name of the type declaration or alias
+    /// `definition` (`check_type_declaration`).
+    pub fn declared_type(&mut self, definition: DefId) -> TypeId {
+        self.check_once(
             definition,
-            |queries| &mut queries.declared_types,
+            |checker| &mut checker.declared_types,
             TypeId::INVALID,
-            |checker, declaration| checker.check_signature(declaration),
+            Checker::check_type_declaration,
         )
     }
 
-    /// The type the type declaration or alias `definition` names
-    /// (`ModuleChecker::check_type_declaration`).
+    /// The type the name of the type declaration or alias `definition` stands
+    /// for. A type declaration makes its type (`Type::Named`), so naming it
+    /// checks nothing; an alias names its declared type (`Type::Alias`).
     pub fn named_type(&mut self, definition: DefId) -> TypeId {
-        self.query(
+        let tree = &self.modules[definition.module.index()].ast;
+        if let ast::Decl::Type(_) = tree.decls[tree.declaration(definition.index)] {
+            return self.types.intern(Type::Named(definition));
+        }
+        let target = self.declared_type(definition);
+        if target == TypeId::INVALID {
+            return target; // its error was reported
+        }
+        self.types.intern(Type::Alias {
             definition,
-            |queries| &mut queries.declared_types,
+            real: target,
+        })
+    }
+
+    /// The type of the function or method `definition` (`check_function`).
+    pub fn function_type(&mut self, definition: DefId) -> TypeId {
+        self.check_once(
+            definition,
+            |checker| &mut checker.function_types,
             TypeId::INVALID,
-            |checker, _| checker.check_type_declaration(definition),
+            Checker::check_function,
         )
     }
 
     /// The type and value of the constant `definition`; `None` when it had
-    /// an error (`ModuleChecker::check_constant`).
+    /// an error (`check_constant`).
     pub fn constant(&mut self, definition: DefId) -> Option<Constant> {
-        self.query(
+        self.check_once(
             definition,
-            |queries| &mut queries.constants,
+            |checker| &mut checker.constants,
             None,
-            |checker, declaration| checker.check_constant(declaration),
+            Checker::check_constant,
         )
     }
 
-    /// Runs `work` on a checker of `module`; what it reports joins that
-    /// module's diagnostics.
-    pub fn with_checker<T>(
-        &mut self,
-        module: ModuleId,
-        work: impl FnOnce(&mut ModuleChecker<'_, 'p>) -> T,
-    ) -> T {
-        let mut diagnostics = Vec::new();
-        let mut checker = ModuleChecker {
-            current_module: module,
-            queries: self,
-            diagnostics: &mut diagnostics,
-        };
-        let result = work(&mut checker);
-        self.diagnostics[module.index()].append(&mut diagnostics);
+    /// Runs `work` with `module` as the module being checked, then goes back
+    /// to the one before.
+    pub fn in_module<T>(&mut self, module: ModuleId, work: impl FnOnce(&mut Self) -> T) -> T {
+        let outer = std::mem::replace(&mut self.current_module, module);
+        let result = work(self);
+        self.current_module = outer;
         result
     }
 
-    /// The result of the query of `definition`: the result already found,
-    /// `on_cycle` when the query is asked for while it runs (a cycle,
-    /// reported), or else what `work` finds with a checker of its module,
-    /// kept for the next ask.
-    fn query<T: Clone>(
+    /// The result of `definition` in `table`: the one already found,
+    /// `on_cycle` when it is asked for while its check runs (a cycle,
+    /// reported), or else what `check` finds in its module, kept for the next
+    /// ask.
+    fn check_once<T: Clone>(
         &mut self,
         definition: DefId,
         table: fn(&mut Self) -> &mut Vec<Vec<State<T>>>,
         on_cycle: T,
-        work: impl FnOnce(&mut ModuleChecker<'_, 'p>, Id<ast::Decl>) -> T,
+        check: fn(&mut Self, Id<ast::Decl>) -> T,
     ) -> T {
         let (module, index) = (definition.module.index(), definition.index as usize);
-        // Cloned, so no borrow is held while the query runs and asks others.
+        // Cloned, so no borrow is held while the check runs and asks others.
         let state = table(self)[module][index].clone();
         match state {
             State::Done(result) => return result,
@@ -162,15 +176,14 @@ impl<'p> Queries<'p> {
         }
         table(self)[module][index] = State::Running;
         let declaration = self.modules[module].ast.declaration(definition.index);
-        let result = self.with_checker(definition.module, |checker| work(checker, declaration));
+        let result = self.in_module(definition.module, |checker| check(checker, declaration));
         table(self)[module][index] = State::Done(result.clone());
         result
     }
 
-    /// The type `ty` as a message names it: an alias by its name, with the
-    /// type itself (`Types::text_named`).
-    pub fn type_text(&self, ty: TypeId) -> String {
-        self.types.text_named(ty, |definition| {
+    /// The type `ty` as a message names it (`Types::text`).
+    pub(crate) fn type_text(&self, ty: TypeId) -> String {
+        self.types.text(ty, |definition| {
             let (name, file) = project::declared_name(self.modules, definition);
             name.text(file)
         })
@@ -198,35 +211,27 @@ impl<'p> Queries<'p> {
             .label(file, name.span, ""),
         );
     }
-}
 
-/// Checking the declarations of one module: their headers and the names
-/// they use. Code inside them is built by a `ThirBuilder`.
-pub struct ModuleChecker<'a, 'p> {
-    pub current_module: ModuleId, // the module being checked
-    pub queries: &'a mut Queries<'p>,
-    pub diagnostics: &'a mut Vec<Diagnostic>,
-}
-
-impl<'p> ModuleChecker<'_, 'p> {
     /// The module being checked.
-    pub fn module(&self) -> &'p project::Module {
-        &self.queries.modules[self.current_module.index()]
+    pub(crate) fn module(&self) -> &'p project::Module {
+        &self.modules[self.current_module.index()]
     }
 
     /// The names the module being checked declares and imports.
-    pub fn scope(&self) -> &Scope {
-        &self.queries.scopes[self.current_module.index()]
+    pub(crate) fn scope(&self) -> &Scope {
+        &self.scopes[self.current_module.index()]
+    }
+
+    /// Adds `diagnostic` to what the module being checked reported.
+    fn report(&mut self, diagnostic: Diagnostic) {
+        self.diagnostics[self.current_module.index()].push(diagnostic);
     }
 
     /// Reports the error `message` at `span` of the module, and gives the type
     /// of an error already reported, so nothing more is reported about it.
     fn error(&mut self, code: Code, message: impl Into<String>, span: Span) -> TypeId {
-        self.diagnostics.push(Diagnostic::new(code, message).label(
-            &self.module().ast.file,
-            span,
-            "",
-        ));
+        let diagnostic = Diagnostic::new(code, message).label(&self.module().ast.file, span, "");
+        self.report(diagnostic);
         TypeId::INVALID
     }
 
@@ -238,7 +243,7 @@ impl<'p> ModuleChecker<'_, 'p> {
             if let Some(symbol) = scope.get(name) {
                 return Some(symbol);
             }
-            scope = &self.queries.scopes[scope.parent?.index()];
+            scope = &self.scopes[scope.parent?.index()];
         }
     }
 

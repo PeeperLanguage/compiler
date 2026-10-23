@@ -1,0 +1,8 @@
+const Limit: i32 = 3;
+
+struct Holder {
+    first: Missing,
+    second: Limit,
+}
+
+fn main() {}

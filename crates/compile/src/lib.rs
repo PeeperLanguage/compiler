@@ -1,7 +1,7 @@
 //! A compile of a program: checks every declaration, each once, in the
 //! order declarations ask for each other (docs/ir-design.md), and lowers each
-//! function. The result of every query is kept in `check::Queries`, so a
-//! declaration is checked the first time anything needs it.
+//! function. What each declaration's check finds is kept in `check::Checker`,
+//! so a declaration is checked the first time anything needs it.
 //!
 //! A compile can reuse what the previous one found: a module whose text and
 //! imported interfaces are unchanged keeps its diagnostics, and its bodies are
@@ -15,7 +15,7 @@ use std::hash::Hash;
 use std::hash::Hasher;
 use std::sync::Arc;
 
-use check::Queries;
+use check::Checker;
 use check::State;
 use diagnostics::Diagnostic;
 use model::DefId;
@@ -110,7 +110,7 @@ pub fn run(
     mut use_function: impl FnMut(CheckedFunction),
 ) -> Results {
     let modules = program.modules.as_slice();
-    let mut queries = Queries::new(modules, pointer_bits);
+    let mut checker = Checker::new(modules, pointer_bits);
     let mut results: Vec<ModuleResults> = modules
         .iter()
         .map(|module| ModuleResults::new(module.ast.file.clone()))
@@ -126,7 +126,6 @@ pub fn run(
     let mut thir = thir::Body::default();
     for (index, module) in modules.iter().enumerate() {
         let id = ModuleId::from_index(index);
-        let tree = &module.ast;
         // An import comes before its importer, so it is decided already.
         let imports_unchanged = module
             .imports
@@ -147,87 +146,113 @@ pub fn run(
             changed.push(false);
             continue;
         }
-        for (index, declaration) in tree.lists.items(tree.top_level).enumerate() {
-            let definition = DefId {
-                module: id,
-                index: index as u32,
-            };
-            match tree.decls[declaration] {
-                ast::Decl::Function(function) => {
-                    let ty = queries.function(definition);
-                    let mut names = Vec::new(); // allocates only when a name is recorded
-                    let recorded = record_names.then_some(&mut names);
-                    let checked = queries.with_checker(id, |checker| {
-                        checker.check_body(&function, ty, &mut thir, recorded)
-                    });
-                    if checked {
-                        // Its MIR, path-checked; none when the signature had an
-                        // error (reported) or it cannot be lowered (`lower::lower`).
-                        let mir = match queries.types[ty] {
-                            Type::Function {
-                                ref parameters,
-                                result,
-                            } => lower::lower(&thir, parameters.len(), result, &queries.types)
-                                .inspect(|mir| {
-                                    let file = &tree.file;
-                                    let diagnostics = &mut queries.diagnostics[id.index()];
-                                    lower::path_checks::report_initialization_errors(
-                                        mir,
-                                        file,
-                                        diagnostics,
-                                    );
-                                    lower::path_checks::warn_unreachable_code(
-                                        mir,
-                                        file,
-                                        diagnostics,
-                                    );
-                                    // Last: it points at the closing brace.
-                                    lower::path_checks::report_missing_return(
-                                        mir,
-                                        file,
-                                        &queries.types,
-                                        result,
-                                        |definition| {
-                                            let (name, file) =
-                                                project::declared_name(modules, definition);
-                                            name.text(file)
-                                        },
-                                        diagnostics,
-                                    );
-                                }),
-                            _ => None,
-                        };
-                        use_function(CheckedFunction {
-                            definition,
-                            signature: ty,
-                            thir: &thir,
-                            names: &names,
-                            mir,
-                            types: &queries.types,
-                        });
-                    }
-                }
-                ast::Decl::Const { .. } => {
-                    queries.constant(definition);
-                }
-                ast::Decl::Type(_) | ast::Decl::Alias(_) => {
-                    queries.named_type(definition);
-                }
-            }
-        }
-        let interface = interface(&queries, id);
+        compile_module(&mut checker, id, &mut thir, record_names, &mut use_function);
+        let interface = interface(&checker, id);
         changed.push(previous_interface != Some(interface));
         let found = &mut results[index];
         found.interface = interface;
-        found.diagnostics = std::mem::take(&mut queries.diagnostics[index]);
+        found.diagnostics = std::mem::take(&mut checker.diagnostics[index]);
     }
     Results { modules: results }
 }
 
+/// Checks every declaration of `module`, each where it is declared, used or
+/// not, and compiles each function (`compile_function`).
+fn compile_module(
+    checker: &mut Checker,
+    module: ModuleId,
+    thir: &mut thir::Body,
+    record_names: bool,
+    use_function: &mut impl FnMut(CheckedFunction),
+) {
+    let tree = &checker.modules[module.index()].ast;
+    for (index, declaration) in tree.lists.items(tree.top_level).enumerate() {
+        let definition = DefId {
+            module,
+            index: index as u32,
+        };
+        match tree.decls[declaration] {
+            ast::Decl::Function(function) => compile_function(
+                checker,
+                definition,
+                &function,
+                thir,
+                record_names,
+                use_function,
+            ),
+            ast::Decl::Const { .. } => {
+                checker.constant(definition);
+            }
+            ast::Decl::Type(_) | ast::Decl::Alias(_) => {
+                checker.declared_type(definition);
+            }
+        }
+    }
+}
+
+/// Checks the function `definition`, written `function`, into `thir`, and
+/// gives it to `use_function` with its MIR, path-checked, and with its names
+/// when `record_names`. A function without a body, or whose signature had an
+/// error, is not given.
+fn compile_function(
+    checker: &mut Checker,
+    definition: DefId,
+    function: &ast::Function,
+    thir: &mut thir::Body,
+    record_names: bool,
+    use_function: &mut impl FnMut(CheckedFunction),
+) {
+    let modules = checker.modules;
+    let module = definition.module.index();
+    let ty = checker.function_type(definition);
+    let mut names = Vec::new(); // allocates only when a name is recorded
+    let recorded = record_names.then_some(&mut names);
+    let checked = checker.in_module(definition.module, |checker| {
+        checker.check_body(function, ty, thir, recorded)
+    });
+    if !checked {
+        return;
+    }
+    // Its MIR, path-checked; none when the signature had an error
+    // (reported) or it cannot be lowered (`lower::lower`).
+    let mir = match checker.types[ty] {
+        Type::Function {
+            ref parameters,
+            result,
+        } => lower::lower(thir, parameters.len(), result, &checker.types).inspect(|mir| {
+            let file = &modules[module].ast.file;
+            let diagnostics = &mut checker.diagnostics[module];
+            lower::path_checks::report_initialization_errors(mir, file, diagnostics);
+            lower::path_checks::warn_unreachable_code(mir, file, diagnostics);
+            // Last: it points at the closing brace.
+            lower::path_checks::report_missing_return(
+                mir,
+                file,
+                &checker.types,
+                result,
+                |definition| {
+                    let (name, file) = project::declared_name(modules, definition);
+                    name.text(file)
+                },
+                diagnostics,
+            );
+        }),
+        _ => None,
+    };
+    use_function(CheckedFunction {
+        definition,
+        signature: ty,
+        thir,
+        names: &names,
+        mir,
+        types: &checker.types,
+    });
+}
+
 /// Feeds `ty` to `hasher` by what it is, not by its id, which differs between
-/// compiles.
-fn hash_type(types: &Types, ty: TypeId, hasher: &mut DefaultHasher) {
-    let ty = &types[ty];
+/// compiles: a named type by its module's path and its name.
+fn hash_type(checker: &Checker, ty: TypeId, hasher: &mut DefaultHasher) {
+    let ty = &checker.types[ty];
     std::mem::discriminant(ty).hash(hasher);
     match ty {
         Type::Integer(integer) => integer.hash(hasher),
@@ -235,9 +260,20 @@ fn hash_type(types: &Types, ty: TypeId, hasher: &mut DefaultHasher) {
         Type::Function { parameters, result } => {
             parameters.len().hash(hasher);
             for &parameter in parameters {
-                hash_type(types, parameter, hasher);
+                hash_type(checker, parameter, hasher);
             }
-            hash_type(types, *result, hasher);
+            hash_type(checker, *result, hasher);
+        }
+        Type::Struct(fields) => {
+            fields.len().hash(hasher);
+            for &field in fields {
+                hash_type(checker, field, hasher);
+            }
+        }
+        Type::Named(definition) => {
+            checker.modules[definition.module.index()].path.hash(hasher);
+            let (name, file) = project::declared_name(checker.modules, *definition);
+            name.text(file).hash(hasher);
         }
         Type::Invalid | Type::Void | Type::Bool | Type::CString => {}
         Type::Alias { .. } => unreachable!("indexing looks through aliases"),
@@ -245,12 +281,13 @@ fn hash_type(types: &Types, ty: TypeId, hasher: &mut DefaultHasher) {
 }
 
 /// A hash of what other modules see of `module`, once its declarations are
-/// checked: its imports, and each declaration's kind, name, and type or
-/// value. Its bodies are not part of it.
-fn interface(queries: &Queries, module: ModuleId) -> u64 {
-    let modules = queries.modules;
-    let declared_types = &queries.declared_types[module.index()];
-    let constants = &queries.constants[module.index()];
+/// checked: its imports, and each declaration's kind, name, and type, value
+/// or struct fields. Its bodies are not part of it.
+fn interface(checker: &Checker, module: ModuleId) -> u64 {
+    let modules = checker.modules;
+    let declared_types = &checker.declared_types[module.index()];
+    let function_types = &checker.function_types[module.index()];
+    let constants = &checker.constants[module.index()];
     let module = &modules[module.index()];
     let tree = &module.ast;
     let mut hasher = DefaultHasher::new();
@@ -265,13 +302,24 @@ fn interface(queries: &Queries, module: ModuleId) -> u64 {
         let decl = &tree.decls[declaration];
         std::mem::discriminant(decl).hash(&mut hasher);
         decl.name().text(&tree.file).hash(&mut hasher);
-        // A declaration's result is in one table; the other slot is
+        // A declaration's result is in one table; the other slots are
         // `NotStarted`.
         if let State::Done(ty) = declared_types[index] {
-            hash_type(&queries.types, ty, &mut hasher);
+            hash_type(checker, ty, &mut hasher);
+        }
+        if let State::Done(ty) = function_types[index] {
+            hash_type(checker, ty, &mut hasher);
+        }
+        // `Type::Struct` holds only the fields' types; their names are in the tree.
+        if let ast::Decl::Type(declaration) = decl
+            && let ast::Type::Struct(fields) = tree.types[declaration.ty]
+        {
+            for field in tree.lists.items(fields) {
+                tree.fields[field].name.text(&tree.file).hash(&mut hasher);
+            }
         }
         if let State::Done(Some(Constant { ty, value })) = &constants[index] {
-            hash_type(&queries.types, *ty, &mut hasher);
+            hash_type(checker, *ty, &mut hasher);
             value.hash(&mut hasher);
         }
     }
@@ -386,11 +434,6 @@ mod tests {
                 ("T0005", "`local` is not a function", "local"),
                 ("T0005", "`Point` is not a function", "Point"),
                 ("T0002", "unknown name `missing`", "missing"),
-                (
-                    "T0043",
-                    "struct declarations are not supported yet",
-                    "Point"
-                ),
             ])
         );
     }
@@ -605,6 +648,22 @@ mod tests {
         );
         let (_, checked) = recompile(&[utils, OTHER, MAIN], first);
         assert_eq!(checked, ["app:utils", "app:main"]);
+    }
+
+    #[test]
+    fn a_struct_field_edit_checks_its_importers() {
+        let utils =
+            |point: &str| format!("fn Add(a: i32, b: i32) -> i32 {{ return a + b; }}\n{point}");
+        let (start, retyped, renamed) = (
+            utils("struct Point { x: i32 }"),
+            utils("struct Point { x: i64 }"),
+            utils("struct Point { y: i64 }"),
+        );
+        let (first, _) = recompile(&[("app:utils", &start), OTHER, MAIN], Results::default());
+        let (second, checked) = recompile(&[("app:utils", &retyped), OTHER, MAIN], first);
+        assert_eq!(checked, ["app:utils", "app:main"], "a field's type");
+        let (_, checked) = recompile(&[("app:utils", &renamed), OTHER, MAIN], second);
+        assert_eq!(checked, ["app:utils", "app:main"], "a field's name");
     }
 
     #[test]

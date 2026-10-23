@@ -2,6 +2,7 @@
 //! two numbers.
 
 use std::collections::HashMap;
+use std::fmt;
 use std::ops::Index;
 
 use crate::DefId;
@@ -14,6 +15,12 @@ pub struct TypeId(u32);
 pub struct Integer {
     pub signed: bool,
     pub bits: u32,
+}
+
+impl fmt::Display for Integer {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(out, "{}{}", if self.signed { 'i' } else { 'u' }, self.bits)
+    }
 }
 
 impl Integer {
@@ -76,6 +83,14 @@ pub enum Type {
         definition: DefId,
         real: TypeId,
     },
+    /// The type a type declaration makes, such as a struct: the declaration
+    /// is its identity, so two structs with the same fields differ. What it
+    /// holds belongs to the declaration (`check::Checker::declared_type`),
+    /// not to the type.
+    Named(DefId),
+    /// What a struct declaration writes after its name: its fields' types, in
+    /// order. The field names stay in the declaration.
+    Struct(Box<[TypeId]>),
 }
 
 impl Type {
@@ -139,7 +154,7 @@ fixed_types! {
     CSTR "cstr" => Type::CString,
 }
 
-/// The types of a program, for one compile (`check::Queries` holds them).
+/// The types of a program, for one compile (`check::Checker` holds them).
 // TEMPORARY, to be deleted: `Clone` is only for `llvm::write`, whose workers
 // each get a copy of the types; delete it with `extend_from`.
 #[derive(Clone)]
@@ -231,21 +246,25 @@ impl Types {
         }
     }
 
-    /// The type `id` as a message names it: an alias by its name, which
-    /// `name_of` gives for its declaration, followed by the type itself
-    /// (`Meters (aka i64)`); another type as `text` writes it.
-    pub fn text_named<'n>(&self, id: TypeId, name_of: impl FnOnce(DefId) -> &'n str) -> String {
+    /// The type `id` as a program writes it, a declared type or an alias by its name,
+    /// which `name_of` gives for its declaration: an alias is followed by the
+    /// type itself (`Meters (aka i64)`).
+    pub fn text<'n>(&self, id: TypeId, name_of: impl Fn(DefId) -> &'n str + Copy) -> String {
         match self.types[id.0 as usize] {
-            Type::Alias { definition, .. } => {
-                format!("{} (aka {})", name_of(definition), self.text(id))
+            Type::Alias { definition, real } => {
+                format!(
+                    "{} (aka {})",
+                    name_of(definition),
+                    self.real_text(real, name_of)
+                )
             }
-            _ => self.text(id),
+            _ => self.real_text(id, name_of),
         }
     }
 
-    /// The type itself as a program writes it, aliases looked through: `u8`,
-    /// `fn(i32) -> bool`.
-    pub fn text(&self, id: TypeId) -> String {
+    /// The type `id` itself, aliases looked through: `u8`, `fn(i32) -> bool`,
+    /// a named type by its name.
+    fn real_text<'n>(&self, id: TypeId, name_of: impl Fn(DefId) -> &'n str + Copy) -> String {
         let id = self.real(id);
         match &self[id] {
             Type::Invalid => "{invalid}".to_string(),
@@ -257,17 +276,26 @@ impl Types {
                     .expect("in `NAMED`");
                 text.to_string()
             }
-            Type::Integer(Integer { signed, bits }) => {
-                format!("{}{bits}", if *signed { 'i' } else { 'u' })
-            }
+            Type::Integer(integer) => integer.to_string(),
             Type::Function { parameters, result } => {
-                let parameters: Vec<String> = parameters.iter().map(|&p| self.text(p)).collect();
+                let parameters: Vec<String> = parameters
+                    .iter()
+                    .map(|&parameter| self.real_text(parameter, name_of))
+                    .collect();
                 let mut text = format!("fn({})", parameters.join(", "));
                 if *result != TypeId::VOID {
                     text.push_str(" -> ");
-                    text.push_str(&self.text(*result));
+                    text.push_str(&self.real_text(*result, name_of));
                 }
                 text
+            }
+            Type::Named(definition) => name_of(*definition).to_string(),
+            Type::Struct(fields) => {
+                let fields: Vec<String> = fields
+                    .iter()
+                    .map(|&field| self.real_text(field, name_of))
+                    .collect();
+                format!("struct {{ {} }}", fields.join(", "))
             }
             Type::Alias { .. } => unreachable!("`real` looks through aliases"),
         }
@@ -298,6 +326,8 @@ mod tests {
     use super::TypeId;
     use super::Types;
     use super::integer;
+    use crate::DefId;
+    use crate::ModuleId;
 
     #[test]
     fn fixed_ids_are_the_interned_ids() {
@@ -399,11 +429,29 @@ mod tests {
             parameters: [].into(),
             result: TypeId::VOID,
         });
-        assert_eq!(types.text(u24), "u24");
-        assert_eq!(types.text(TypeId::F32), "f32");
-        assert_eq!(types.text(TypeId::CSTR), "cstr");
-        assert_eq!(types.text(function), "fn(i32, u24) -> bool");
-        assert_eq!(types.text(procedure), "fn()");
+        let declaration = |index| DefId {
+            module: ModuleId::from_index(0),
+            index,
+        };
+        let point = types.intern(Type::Named(declaration(0)));
+        let place = types.intern(Type::Alias {
+            definition: declaration(1),
+            real: point,
+        });
+        let fields = types.intern(Type::Struct([TypeId::I32, place].into()));
+        let text = |ty| {
+            types.text(ty, |definition| {
+                ["Point", "Place"][definition.index as usize]
+            })
+        };
+        assert_eq!(text(u24), "u24");
+        assert_eq!(text(TypeId::F32), "f32");
+        assert_eq!(text(TypeId::CSTR), "cstr");
+        assert_eq!(text(function), "fn(i32, u24) -> bool");
+        assert_eq!(text(procedure), "fn()");
+        assert_eq!(text(point), "Point");
+        assert_eq!(text(place), "Place (aka Point)");
+        assert_eq!(text(fields), "struct { i32, Point }");
     }
 
     #[test]

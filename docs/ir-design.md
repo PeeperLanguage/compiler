@@ -86,17 +86,17 @@ enum variants, function types) are `model` data, written by check.
 | crate | owns |
 |---|---|
 | `model` | data only: `ast` (the syntax tree), `thir` (THIR nodes), `mir` (MIR graphs); `semantic_types` (`TypeId`, the type interner, the built-in types table); `constant` (constant values and their arithmetic); `DefId`; `BinaryOp`, `UnaryOp`; signatures |
-| `check` | the checker: scopes, name lookup, building THIR, writing signatures; the query tables (`Queries`) |
+| `check` | the checker: scopes, name lookup, building THIR, writing signatures; the declaration tables (`Checker`) |
 | `lower` | lowering from THIR; path checks; later the interpreter |
 | `llvm` | LLVM text for a module; running clang and the linker |
 | `compile` | a compile: walks the modules in order, reuses unchanged ones, lowers each body (the `build` of `overall-design.md`, renamed) |
 
 A `project::Module` holds only what loading read and never changes. What a
-compile finds (each module's `Scope`, types, query results, diagnostics) is
-kept apart, in `check::Queries`, in vectors indexed by `ModuleId`, and
-everything links by id. `Queries::new` collects every module's scope, after
-every module is loaded. So its queries take `&mut self` and nothing needs a `RefCell`:
-holding a type across a query is a compile error, not a run-time panic. A
+compile finds (each module's `Scope`, types, declaration results, diagnostics)
+is kept apart, in `check::Checker`, in vectors indexed by `ModuleId`, and
+everything links by id. `Checker::new` collects every module's scope, after
+every module is loaded. So its checks take `&mut self` and nothing needs a `RefCell`:
+holding a type across a check is a compile error, not a run-time panic. A
 scope holds declarations; a name it
 does not hold is looked up in its parent's, so a module's scope has the
 prelude's as its parent. A name stands for a `model::Symbol`: a module,
@@ -200,26 +200,29 @@ Floats (`f32`, `f64`) follow the same idea:
 ## Scheduling per declaration
 
 ```
-function(d)    the function type of function or method d
-constant(d)    the type and value of module constant d (without a written
-               type, its type is its value's)
-body(d)        THIR of function d (needs the function types it calls)
-mir(d)         MIR of function d (needs body(d)); later also comptime calls
+declared_type(d)  the type written after the name of type declaration or
+                  alias d
+function_type(d)  the function type of function or method d
+constant(d)       the type and value of module constant d (without a written
+                  type, its type is its value's)
+body(d)           THIR of function d (needs the function types it calls)
+mir(d)            MIR of function d (needs body(d)); later also comptime calls
 ```
 
-- Queries cover module-scope declarations (`DefId`), one per kind, as
-  `Symbol` names them. A body's own names (`Symbol::Local`: a variable or a
-  `const`) are checked in place with the body, never asked for. Type
-  declarations are no query until something asks for a type.
-- Each query's result is written once and never changed. The compilation holds
+- Module-scope declarations (`DefId`) are checked on demand, one table per
+  language category: declared types, function types, constants. A body's own
+  names (`Symbol::Local`: a variable or a `const`) are checked in place with
+  the body, never asked for. Naming a type declaration checks nothing; a struct
+  that holds another by value asks for its fields.
+- Each declaration's result is written once and never changed. The checker holds
   a table of them per module, indexed by the declaration's place among its
   top-level declarations (`DefId`), so a body edit does not move it.
-- A query asked for while it is running is a cycle (`const A = B; const B = A;`)
+- A declaration asked for while its check is running is a cycle (`const A = B; const B = A;`)
   and is reported once (T0013), at the declaration asked for again; the other
   declarations of the cycle become silently invalid.
-- `check::Queries` holds the query tables and answers each query once; the
-  checker calls it directly. The `compile` crate runs a compile: it walks the
-  modules, reuses unchanged ones and lowers each body. `Queries::new`
+- `check::Checker` holds the tables and checks each declaration once
+  (`check_once`). The `compile` crate runs a compile: it walks the
+  modules, reuses unchanged ones and lowers each body. `Checker::new`
   collects the scopes of all modules before any is checked.
   Programs with syntax or import errors are not checked.
 - The model is a hybrid. Across modules: the program's order, so imported
@@ -232,7 +235,7 @@ mir(d)         MIR of function d (needs body(d)); later also comptime calls
   reported (unlike Zig).
 - Comptime later: check asks `mir(f)` and runs it in the interpreter, without
   depending on the `lower` crate. How it reaches `lower` is open, since the
-  query tables now live in `check`: a callback that `compile` passes in, or
+  declaration tables now live in `check`: a callback that `compile` passes in, or
   another owner for the tables.
 
 ## Reuse between compiles and the language server
@@ -272,7 +275,7 @@ arenas hold its span and type, so body `const`s get an arena of their own,
 keeps its THIR, marked `has_errors` (as rustc marks typeck results
 `tainted_by_errors`), so names work while a function is broken; `lower::lower`
 gives no MIR for it, and `use_function` gets its THIR alone. `compile` runs the
-phases one by one: `ModuleChecker::check_body` gives the THIR, `compile`'s `lower`
+phases one by one: `Checker::check_body` gives the THIR, `compile`'s `lower`
 the MIR. `compile` has no second way in for editors: the language
 server reads the names through `use_function` during its normal check and
 keeps them per module, beside the program it compiled, as gopls keeps what
@@ -348,7 +351,7 @@ with no instructions; on each path, the first branch met names its condition
 ("if this is false, nothing is returned"), and the first block with
 instructions names its last one ("this path ends without returning"). When the
 end block itself has instructions, only the end is named, since one `return`
-there fixes every path. `ModuleChecker::check_body` gives no THIR for a body whose check
+there fixes every path. `Checker::check_body` gives no THIR for a body whose check
 reported an error, so such a function is neither lowered nor path-checked.
 
 The initialization check (`lower::path_checks::report_initialization_errors`) is forward dataflow
@@ -433,7 +436,7 @@ it), and the manifest's `build = "program"`.
 
 - Type equality: one integer comparison. Building a type: one interner lookup,
   none for primitives.
-- Memo tables: one vector index per query.
+- Declaration tables: one vector index per ask.
 - Constants: folded where they are met; no separate evaluation pass.
 - Interner shared by threads: one lock; measure before changing.
 
