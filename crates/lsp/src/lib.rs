@@ -60,13 +60,13 @@ use lsp_types::TextDocumentSyncKind;
 use lsp_types::TextEdit;
 use lsp_types::Url;
 use lsp_types::WorkspaceEdit;
-use model::Local;
 use model::ModuleId;
-use model::Symbol;
 use model::ast;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use model::thir;
+use model::thir::Local;
+use model::thir::Symbol;
 use source::SourceFile;
 use source::Span;
 

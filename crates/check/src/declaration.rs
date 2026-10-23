@@ -16,7 +16,7 @@ use crate::builtin::unsupported_type;
 use crate::scope;
 use crate::scope::report_redeclared;
 use crate::statement::ThirBuilder;
-use model::Symbol;
+use model::thir::Symbol;
 
 impl Checker<'_> {
     /// The type the module's type declaration or alias `definition` declares:

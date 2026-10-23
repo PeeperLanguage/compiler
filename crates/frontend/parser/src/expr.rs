@@ -7,10 +7,10 @@
 
 use arena::Id;
 use diagnostics::Diagnostic;
-use model::BinaryOp;
-use model::UnaryOp;
 use model::ast::Expr;
 use model::ast::Type;
+use model::operators::BinaryOp;
+use model::operators::UnaryOp;
 use token::TokenKind;
 
 use crate::Parser;

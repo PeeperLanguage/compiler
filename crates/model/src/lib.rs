@@ -1,15 +1,15 @@
 //! The program's data, in one place: the syntax tree, THIR, MIR, the type
-//! model, definition ids, constant values with their arithmetic, and operator
-//! kinds. Each phase keeps its own node types (`ast`, `thir`, `mir`); the
-//! crates that build them hold only logic. See docs/ir-design.md.
+//! model, constant values with their arithmetic, operator kinds, and the ids
+//! every phase shares (`ModuleId`, `DefId`). Each phase keeps its own node
+//! types (`ast`, `thir`, `mir`); the crates that build them hold only logic.
+//! See docs/ir-design.md.
 
 pub mod ast;
 pub mod constant;
 pub mod mir;
+pub mod operators;
 pub mod semantic_types;
 pub mod thir;
-
-use arena::Id;
 
 /// A module of the program, by its place in the program's order. Tables of
 /// per-module results are vectors indexed by it.
@@ -37,100 +37,4 @@ impl ModuleId {
 pub struct DefId {
     pub module: ModuleId,
     pub index: u32,
-}
-
-/// What a name stands for: first where it is declared, then its kind. A
-/// module's scope holds all but `Local`; a body adds its own.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Symbol {
-    /// An imported module.
-    Module(ModuleId),
-    /// A function or method.
-    Function(DefId),
-    /// A `const` declared at module scope. One declared in a body is
-    /// `Local::Constant`.
-    Constant(DefId),
-    /// a struct, enum, interface or type alias
-    Type(DefId),
-    /// A name declared in a body.
-    Local(Local),
-}
-
-/// A name declared in a body, by its kind: checked in place with the
-/// body, never asked for on its own.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Local {
-    /// A parameter or `let`: it holds a value at run time.
-    Variable(Id<thir::Variable>),
-    /// A `const`, folded where it is used.
-    Constant(Id<Option<constant::Constant>>),
-}
-
-/// A binary operator, named after what it does.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BinaryOp {
-    Add,
-    Subtract,
-    Multiply,
-    Divide,
-    Remainder,
-    ShiftLeft,
-    ShiftRight,
-    BitAnd,
-    BitOr,
-    BitXor,
-    EqualTo,
-    NotEqualTo,
-    LessThan,
-    LessOrEqual,
-    GreaterThan,
-    GreaterOrEqual,
-    LogicalAnd,
-    LogicalOr,
-}
-
-impl BinaryOp {
-    /// How the operator is written, for messages and dumps.
-    pub const fn symbol(self) -> &'static str {
-        match self {
-            BinaryOp::Add => "+",
-            BinaryOp::Subtract => "-",
-            BinaryOp::Multiply => "*",
-            BinaryOp::Divide => "/",
-            BinaryOp::Remainder => "%",
-            BinaryOp::ShiftLeft => "<<",
-            BinaryOp::ShiftRight => ">>",
-            BinaryOp::BitAnd => "&",
-            BinaryOp::BitOr => "|",
-            BinaryOp::BitXor => "^",
-            BinaryOp::EqualTo => "==",
-            BinaryOp::NotEqualTo => "!=",
-            BinaryOp::LessThan => "<",
-            BinaryOp::LessOrEqual => "<=",
-            BinaryOp::GreaterThan => ">",
-            BinaryOp::GreaterOrEqual => ">=",
-            BinaryOp::LogicalAnd => "&&",
-            BinaryOp::LogicalOr => "||",
-        }
-    }
-}
-
-/// A unary operator. There is no `+x`: it would change nothing, so the
-/// parser reports it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum UnaryOp {
-    Negate,
-    LogicalNot,
-    BitNot,
-}
-
-impl UnaryOp {
-    /// How the operator is written, for messages and dumps.
-    pub const fn symbol(self) -> &'static str {
-        match self {
-            UnaryOp::Negate => "-",
-            UnaryOp::LogicalNot => "!",
-            UnaryOp::BitNot => "~",
-        }
-    }
 }

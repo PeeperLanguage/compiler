@@ -5,14 +5,13 @@
 
 use std::fmt::Write;
 
-use crate::BinaryOp;
 use crate::DefId;
-use crate::Local;
-use crate::Symbol;
-use crate::UnaryOp;
+use crate::ModuleId;
 use crate::constant::Constant;
 use crate::constant::Value;
 use crate::constant::integer_text;
+use crate::operators::BinaryOp;
+use crate::operators::UnaryOp;
 use crate::semantic_types::Type;
 use crate::semantic_types::TypeId;
 use crate::semantic_types::Types;
@@ -53,6 +52,33 @@ pub struct Body {
     /// Checking it reported an error: later phases would only find what
     /// follows from that, so it is not lowered.
     pub has_errors: bool,
+}
+
+/// What a name stands for: first where it is declared, then its kind. A
+/// module's scope holds all but `Local`; a body adds its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Symbol {
+    /// An imported module.
+    Module(ModuleId),
+    /// A function or method.
+    Function(DefId),
+    /// A `const` declared at module scope. One declared in a body is
+    /// `Local::Constant`.
+    Constant(DefId),
+    /// a struct, enum, interface or type alias
+    Type(DefId),
+    /// A name declared in a body.
+    Local(Local),
+}
+
+/// A name declared in a body, by its kind: checked in place with the
+/// body, never asked for on its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Local {
+    /// A parameter or `let`: it holds a value at run time.
+    Variable(Id<Variable>),
+    /// A `const`, folded where it is used.
+    Constant(Id<Option<Constant>>),
 }
 
 /// A name written in a body, where it is declared or used, and what it

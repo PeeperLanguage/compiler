@@ -6,12 +6,12 @@
 
 use std::fmt::Write;
 
-use crate::BinaryOp;
 use crate::DefId;
-use crate::UnaryOp;
 use crate::constant::Constant;
 use crate::constant::Value;
 use crate::constant::integer_text;
+use crate::operators::BinaryOp;
+use crate::operators::UnaryOp;
 use crate::semantic_types::TypeId;
 use crate::semantic_types::Types;
 use arena::Arena;

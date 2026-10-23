@@ -11,8 +11,8 @@ use diagnostics::Diagnostic;
 use diagnostics::suggest::nearest_name;
 use model::DefId;
 use model::ModuleId;
-use model::Symbol;
 use model::ast;
+use model::thir::Symbol;
 use project::ImportKind;
 use source::SourceFile;
 use source::Span;
@@ -156,7 +156,7 @@ mod tests {
 
     use super::collect;
     use crate::testing::module;
-    use model::Symbol;
+    use model::thir::Symbol;
 
     /// The declaration `index` of the module at place `module`.
     fn definition(module: usize, index: u32) -> DefId {

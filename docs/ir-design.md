@@ -85,7 +85,7 @@ enum variants, function types) are `model` data, written by check.
 
 | crate | owns |
 |---|---|
-| `model` | data only: `ast` (the syntax tree), `thir` (THIR nodes), `mir` (MIR graphs); `semantic_types` (`TypeId`, the type interner, the built-in types table); `constant` (constant values and their arithmetic); `DefId`; `BinaryOp`, `UnaryOp`; signatures |
+| `model` | data only: `ast` (the syntax tree), `thir` (THIR nodes), `mir` (MIR graphs); `semantic_types` (`TypeId`, the type interner, the built-in types table); `constant` (constant values and their arithmetic); `ModuleId`, `DefId`; `operators` (`BinaryOp`, `UnaryOp`); signatures |
 | `check` | the checker: scopes, name lookup, building THIR, writing signatures; the declaration tables (`Checker`) |
 | `lower` | lowering from THIR; path checks; later the interpreter |
 | `llvm` | LLVM text for a module; running clang and the linker |

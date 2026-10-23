@@ -25,7 +25,7 @@ use model::semantic_types::Types;
 use scope::Scope;
 use source::Span;
 
-use model::Symbol;
+use model::thir::Symbol;
 
 /// Checks a program's declarations. Each module-scope declaration (`DefId`)
 /// is checked once, the first time anything asks for it, and its result is

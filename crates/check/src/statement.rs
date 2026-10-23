@@ -22,8 +22,8 @@ use source::Span;
 
 use crate::Checker;
 use crate::scope::report_redeclared;
-use model::Local;
-use model::Symbol;
+use model::thir::Local;
+use model::thir::Symbol;
 
 /// Building the THIR of one piece of code: a function's body, or a
 /// constant's value. It checks the code as it builds it.

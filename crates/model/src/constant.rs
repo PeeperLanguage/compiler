@@ -24,8 +24,8 @@ use std::ops::Sub;
 
 use bigint::Limbs;
 
-use crate::BinaryOp;
-use crate::UnaryOp;
+use crate::operators::BinaryOp;
+use crate::operators::UnaryOp;
 use crate::semantic_types::Float;
 use crate::semantic_types::Integer;
 use crate::semantic_types::Type;
@@ -239,8 +239,8 @@ mod tests {
     use super::binary;
     use super::unary;
     use super::widen;
-    use crate::BinaryOp;
-    use crate::UnaryOp;
+    use crate::operators::BinaryOp;
+    use crate::operators::UnaryOp;
     use crate::semantic_types::Float;
     use crate::semantic_types::Integer;
     use crate::semantic_types::Type;

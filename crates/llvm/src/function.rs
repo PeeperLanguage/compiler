@@ -9,14 +9,14 @@ use std::fmt::Display;
 use std::fmt::Write;
 
 use arena::Id;
-use model::BinaryOp;
 use model::DefId;
-use model::UnaryOp;
 use model::constant::Value;
 use model::mir;
 use model::mir::InstructionKind;
 use model::mir::Operand;
 use model::mir::Terminator;
+use model::operators::BinaryOp;
+use model::operators::UnaryOp;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;

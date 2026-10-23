@@ -3,13 +3,13 @@
 use arena::Id;
 use arena::List;
 use diagnostics::Diagnostic;
-use model::BinaryOp;
 use model::ast::Block;
 use model::ast::Expr;
 use model::ast::MatchArm;
 use model::ast::Metadata;
 use model::ast::Pattern;
 use model::ast::Stmt;
+use model::operators::BinaryOp;
 use token::TokenKind;
 
 use crate::Parser;
@@ -516,7 +516,7 @@ mod tests {
         assert!(matches!(
             tree.exprs[condition],
             model::ast::Expr::Binary {
-                op: model::BinaryOp::EqualTo,
+                op: model::operators::BinaryOp::EqualTo,
                 ..
             }
         ));

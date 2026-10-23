@@ -12,11 +12,11 @@ use std::fmt::Write;
 use std::process::Command;
 
 use bigint::Limbs;
-use model::BinaryOp;
-use model::UnaryOp;
 use model::constant::Value;
 use model::constant::binary;
 use model::constant::unary;
+use model::operators::BinaryOp;
+use model::operators::UnaryOp;
 use model::semantic_types::Float;
 use model::semantic_types::Integer;
 use model::semantic_types::Type;

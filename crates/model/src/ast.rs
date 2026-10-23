@@ -15,8 +15,8 @@ use arena::nodes;
 use source::SourceFile;
 use source::Span;
 
-use crate::BinaryOp;
-use crate::UnaryOp;
+use crate::operators::BinaryOp;
+use crate::operators::UnaryOp;
 
 nodes! {
     Tree;
