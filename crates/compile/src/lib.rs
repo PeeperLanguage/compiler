@@ -222,10 +222,10 @@ fn compile_function(
         } => lower::lower(thir, parameters.len(), result, &checker.types).inspect(|mir| {
             let file = &modules[module].ast.file;
             let diagnostics = &mut checker.diagnostics[module];
-            lower::path_checks::report_initialization_errors(mir, file, diagnostics);
-            lower::path_checks::warn_unreachable_code(mir, file, diagnostics);
+            flow::report_initialization_errors(mir, file, diagnostics);
+            flow::warn_unreachable_code(mir, file, diagnostics);
             // Last: it points at the closing brace.
-            lower::path_checks::report_missing_return(
+            flow::report_missing_return(
                 mir,
                 file,
                 &checker.types,

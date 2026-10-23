@@ -1,7 +1,5 @@
-//! Lowering: a function's THIR into MIR, in one walk (docs/ir-design.md), and
-//! the path checks on the MIR (`path_checks`).
-
-pub mod path_checks;
+//! Lowering: a function's THIR into MIR, in one walk (docs/ir-design.md).
+//! The checks on the MIR are in the `flow` crate.
 
 use std::num::NonZeroU32;
 
@@ -127,6 +125,10 @@ impl Lowering<'_> {
     }
 
     /// Adds an instruction to the block being filled and gives its value.
+    // Called for every instruction. The inliner dropped it when unrelated code
+    // left this crate, costing a compile 10 M instructions; `#[inline]` did not
+    // bring it back.
+    #[inline(always)]
     fn emit(&mut self, kind: mir::InstructionKind, ty: TypeId, span: Span) -> mir::Operand {
         let instruction = self.mir.instructions.push(
             mir::Instruction {

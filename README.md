@@ -49,6 +49,7 @@ sequenceDiagram
     participant Compile as compile::run
     participant Check as Checker::check_body
     participant Lower as lower::lower
+    participant Flow as flow
     participant Callback as Caller's closure
 
     Caller->>Compile: run(program, pointer_bits, previous, record_names, use_function)
@@ -56,8 +57,10 @@ sequenceDiagram
         Compile->>Compile: Check the function's signature
         Compile->>Check: Check body, recording names when record_names
         Check-->>Compile: THIR and recorded names
-        Compile->>Lower: Lower THIR and run path checks
+        Compile->>Lower: Lower THIR
         Lower-->>Compile: Some(MIR) or None
+        Compile->>Flow: Check the paths through the MIR
+        Flow-->>Compile: Diagnostics
         Compile->>Callback: use_function(&CheckedFunction)
         alt CLI caller
             Callback->>Callback: Append requested dumps and LLVM text

@@ -13,6 +13,7 @@ project.workspace = true
 model.workspace = true
 check.workspace = true
 lower.workspace = true
+flow.workspace = true
 source.workspace = true
 
 [lints]

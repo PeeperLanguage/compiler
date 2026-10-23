@@ -1,0 +1,16 @@
+[package]
+name = "flow"
+description = "Checks on a function's MIR that depend on the paths execution can take"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+arena.workspace = true
+diagnostics.workspace = true
+model.workspace = true
+source.workspace = true
+
+[lints]
+workspace = true

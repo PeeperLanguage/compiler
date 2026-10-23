@@ -7,6 +7,7 @@ members = [
     "crates/model",
     "crates/check",
     "crates/lower",
+    "crates/flow",
     "crates/llvm",
     "crates/compile",
     "crates/project",
@@ -33,6 +34,7 @@ literal = { path = "crates/pkg/literal" }
 model = { path = "crates/model" }
 check = { path = "crates/check" }
 lower = { path = "crates/lower" }
+flow = { path = "crates/flow" }
 llvm = { path = "crates/llvm" }
 compile = { path = "crates/compile" }
 project = { path = "crates/project" }

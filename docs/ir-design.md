@@ -353,7 +353,7 @@ helper; a function whose checking already reported an error is not
 path-checked, since its errors would only follow from the first. LLVM emission
 and the future interpreter both read MIR; nothing below MIR reads THIR.
 
-The missing-return check (T0017, `lower::path_checks`) reports a function whose
+The missing-return check (T0017, `flow`) reports a function whose
 `fall off` block is reachable. It walks back from that block through blocks
 with no instructions; on each path, the first branch met names its condition
 ("if this is false, nothing is returned"), and the first block with
@@ -362,7 +362,7 @@ end block itself has instructions, only the end is named, since one `return`
 there fixes every path. `Checker::check_body` gives no THIR for a body whose check
 reported an error, so such a function is neither lowered nor path-checked.
 
-The initialization check (`lower::path_checks::report_initialization_errors`) is forward dataflow
+The initialization check (`flow::report_initialization_errors`) is forward dataflow
 with two bits per variable at each block's start: set on every path to it
 ("and" at joins) and set on some path ("or"). A `load` not set on every path is
 T0039 ("`x` is used before it is set"); a `store` to a variable without `mut`
@@ -372,7 +372,7 @@ assignments to a variable without `mut` only when its `let` has a value. Only a
 `let` without a value can be unset, so the check is skipped for a function
 that has none (decided by the owner, 2026-10-17).
 
-The unreachable-code check (W0001, `lower::path_checks::warn_unreachable_code`)
+The unreachable-code check (W0001, `flow::warn_unreachable_code`)
 warns once at the first code of each stretch of blocks no path reaches, such
 as code after a `return` ("this never runs"); the blocks that stretch leads to
 are not warned about again. Reachability ignores constant values, as for the

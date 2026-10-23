@@ -145,6 +145,13 @@ has nothing to report, do not run it: the initialization check runs only for a
 function with a `let` without a value, since nothing else can be unset. It made
 the check free for the usual function (a 20k-function file: +7% to +0%).
 
+**Force inlining of a tiny helper every hot walk calls, once measured.**
+The inliner's choices can change when unrelated code moves: taking the path
+checks out of `lower` made it stop inlining `Lowering::emit` (called for each
+MIR instruction), and a compile cost 10 M more instructions. `#[inline]` did
+not help; `#[inline(always)]` did. Find such a helper with `perf record -e instructions:u`
+on two builds and diff the functions; do not add it on a guess.
+
 **Do not guess capacities.** Reserving MIR arenas from THIR sizes over-allocated
 and made lowering slower; `Default` and normal growth won. Reserve only when the
 size is known, not estimated.

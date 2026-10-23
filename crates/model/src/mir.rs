@@ -142,7 +142,7 @@ pub enum Terminator {
     },
     /// The end of the function, at its closing brace, reached without a
     /// `return`: a function without a result returns there, and one with a
-    /// result is missing a `return` (`path_checks::report_missing_return`). Every
+    /// result is missing a `return` (`flow::report_missing_return`). Every
     /// `Return` is a written `return`.
     FallOff(Span),
 }
