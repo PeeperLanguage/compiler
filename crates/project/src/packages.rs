@@ -5,6 +5,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
 
+use diagnostics::suggest::nearest_name;
+
 pub(crate) const SOURCE_EXTENSION: &str = ".peep";
 
 /// The import path of the source file at `file`: its package and its path in
@@ -29,27 +31,35 @@ pub(crate) fn path_of(packages: &HashMap<String, PathBuf>, file: &Path) -> (Stri
 
 /// Checks an import path as written, "package:path/in/package", and returns
 /// its canonical form and the file it names. The file is not checked to exist.
+/// An error is the message and, for a misspelled package, the path it may
+/// have meant.
 pub(crate) fn resolve(
     packages: &HashMap<String, PathBuf>,
     path: &str,
-) -> Result<(String, PathBuf), String> {
+) -> Result<(String, PathBuf), (String, Option<String>)> {
     let Some((name, rest)) = path.split_once(':') else {
-        return Err("import path needs a package, such as `myapp:utils/file`".to_string());
+        let message = "import path needs a package, such as `myapp:utils/file`";
+        return Err((message.to_string(), None));
     };
     let Some(dir) = packages.get(name) else {
-        return Err(format!("unknown package `{name}`"));
+        let known = packages.keys().map(|known| (known.as_str(), 0));
+        let meant = nearest_name(name, known).map(|known| format!("{known}:{rest}"));
+        return Err((format!("unknown package `{name}`"), meant));
     };
     let last = rest.rsplit('/').next().unwrap_or(rest);
     let rest = match last.rfind('.').map(|dot| &last[dot..]) {
         Some(SOURCE_EXTENSION) => &rest[..rest.len() - SOURCE_EXTENSION.len()],
-        Some(extension) => return Err(format!("invalid import extension {extension:?}")),
+        Some(extension) => {
+            return Err((format!("invalid import extension {extension:?}"), None));
+        }
         None => rest,
     };
     if rest
         .split('/')
         .any(|part| part.is_empty() || part == "." || part == "..")
     {
-        return Err("import path parts cannot be empty, `.` or `..`".to_string());
+        let message = "import path parts cannot be empty, `.` or `..`";
+        return Err((message.to_string(), None));
     }
     let file = dir.join(format!("{rest}{SOURCE_EXTENSION}"));
     Ok((format!("{name}:{rest}"), file))

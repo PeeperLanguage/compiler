@@ -1,0 +1,17 @@
+name = "negative_suggest_type_and_member"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "unknown type `Pont`",
+    "did you mean `Point`?",
+    "unknown type `boool`",
+    "did you mean `bool`?",
+    "unknown name `Perimter` in module `shapes`",
+    "did you mean `Perimeter`?",
+    "unknown name `exitt`",
+    "did you mean `exit`?",
+    "Compilation failed with 4 error(s)",
+]

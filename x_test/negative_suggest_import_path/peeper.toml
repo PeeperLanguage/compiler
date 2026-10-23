@@ -1,0 +1,13 @@
+name = "negative_suggest_import_path"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "unknown package `negative_sugest_import_path`",
+    "did you mean \"negative_suggest_import_path:shapes\"?",
+    "module not found",
+    "did you mean \"negative_suggest_import_path:shapes\"?",
+    "Compilation failed with 2 error(s)",
+]

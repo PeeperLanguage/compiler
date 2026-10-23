@@ -2,13 +2,11 @@
 //! operation on values known at compile time is folded to its value.
 
 use std::num::NonZeroU32;
-use std::sync::Arc;
 
 use arena::Id;
 use arena::List;
 use bigint::Limbs;
 use diagnostics::Diagnostic;
-use diagnostics::fix::Fix;
 use diagnostics::suggest::nearest_name;
 use model::BinaryOp;
 use model::Local;
@@ -25,10 +23,10 @@ use model::semantic_types::TypeId;
 use model::thir::Expr;
 use model::thir::ExprKind;
 use model::thir::FieldValue;
-use source::SourceFile;
 use source::Span;
 
 use crate::builtin::UNSUPPORTED_FUNCTIONS;
+use crate::scope;
 use crate::statement::ThirBuilder;
 
 impl ThirBuilder<'_, '_> {
@@ -197,20 +195,11 @@ impl ThirBuilder<'_, '_> {
             self.checker.not_supported(span, "built-in functions");
             return;
         }
-        // A local wins a tie with a module name: it is the nearer scope. The
-        // module's names come in hash order, which cannot change the answer:
-        // two names that tie suggest nothing (`nearest_name`).
-        let local_names = self.names.iter().map(|&(declared, _)| (declared, 0));
-        let module_names = self.checker.scope().names().map(|name| (name, 1));
-        let candidates = local_names.chain(module_names);
-        let file = &self.checker.module().ast.file;
-        let diagnostic = Diagnostic::new(
-            diagnostics::UNDEFINED_NAME,
-            format!("unknown name `{name}`"),
-        )
-        .label(file, span, "");
+        let locals = self.names.iter().map(|&(declared, _)| declared);
+        let meant = scope::nearest(name, locals, self.checker.scope_chain(), |_, _| true);
+        let message = format!("unknown name `{name}`");
         self.checker
-            .report(guess_nearest(diagnostic, file, span, name, candidates));
+            .report_unknown(diagnostics::UNDEFINED_NAME, span, message, meant);
     }
 
     /// `Type.{ name = value, ... }`, written at `span`, or `.{ ... }` taking
@@ -345,14 +334,11 @@ impl ThirBuilder<'_, '_> {
         let modules = self.checker.modules;
         let found = project::field_names(modules, definition).position(|field| field == text);
         if found.is_none() {
-            let diagnostic = Diagnostic::new(
-                diagnostics::UNKNOWN_FIELD,
-                format!("`{}` has no field `{text}`", self.checker.type_text(ty)),
-            )
-            .label(file, name.span, "");
-            let candidates = project::field_names(modules, definition).map(|field| (field, 0));
+            let message = format!("`{}` has no field `{text}`", self.checker.type_text(ty));
+            let fields = project::field_names(modules, definition).map(|field| (field, 0));
+            let meant = nearest_name(text, fields).map(str::to_string);
             self.checker
-                .report(guess_nearest(diagnostic, file, name.span, text, candidates));
+                .report_unknown(diagnostics::UNKNOWN_FIELD, name.span, message, meant);
         }
         found
     }
@@ -405,18 +391,22 @@ impl ThirBuilder<'_, '_> {
                 return None;
             }
         };
-        let Some(symbol) = self.checker.scopes[imported.index()].get(member_name) else {
+        let members = &self.checker.scopes[imported.index()];
+        let Some(symbol) = members.get(member_name) else {
+            let exported = |declared: &str, _| self.checker.exports(imported, declared);
+            let meant = scope::nearest(
+                member_name,
+                std::iter::empty(),
+                std::iter::once(members),
+                exported,
+            );
             let message = format!("unknown name `{member_name}` in module `{module_name}`");
             self.checker
-                .error(diagnostics::UNDEFINED_NAME, message, member_span);
+                .report_unknown(diagnostics::UNDEFINED_NAME, member_span, message, meant);
             return None;
         };
         self.record(member_span, symbol);
-        // The prelude, the scope's parent, has its names in every module's
-        // scope, private or not.
-        let exported = self.checker.scope().parent == Some(imported)
-            || member_name.starts_with(char::is_uppercase);
-        if !exported {
+        if !self.checker.exports(imported, member_name) {
             let file = &tree.file;
             self.checker.report(
                 Diagnostic::new(
@@ -808,24 +798,4 @@ fn unsuffixed_literal(tree: &ast::Tree, expression: Id<ast::Expr>) -> Option<&st
     let text = tree.file.slice(tree.exprs.span(expression));
     let number = matches!(tree.exprs[expression], ast::Expr::Number);
     (number && literal::numeric::split(text).suffix.is_empty()).then_some(text)
-}
-
-/// `diagnostic` with a guess that `name`, written at `span` of `file`, means
-/// the nearest of `candidates` (`nearest_name`), when one is near enough.
-fn guess_nearest<'c>(
-    diagnostic: Diagnostic,
-    file: &Arc<SourceFile>,
-    span: Span,
-    name: &str,
-    candidates: impl IntoIterator<Item = (&'c str, i32)>,
-) -> Diagnostic {
-    let Some(nearest) = nearest_name(name, candidates) else {
-        return diagnostic;
-    };
-    let fix = Fix {
-        file: file.clone(),
-        span,
-        new_text: nearest.to_string(),
-    };
-    diagnostic.guess(format!("did you mean `{nearest}`?"), vec![fix])
 }

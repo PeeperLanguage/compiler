@@ -12,6 +12,7 @@ mod testing;
 
 use diagnostics::Code;
 use diagnostics::Diagnostic;
+use diagnostics::fix::Fix;
 use model::DefId;
 use model::ModuleId;
 use model::ast;
@@ -236,13 +237,44 @@ impl<'p> Checker<'p> {
     /// What `name` stands for at the top level: in the module's scope, else
     /// in its parent's, and so on out.
     fn global(&self, name: &str) -> Option<Symbol> {
-        let mut scope = self.scope();
-        loop {
-            if let Some(symbol) = scope.get(name) {
-                return Some(symbol);
-            }
-            scope = &self.scopes[scope.parent?.index()];
+        self.scope_chain().find_map(|scope| scope.get(name))
+    }
+
+    /// The module's scope, then its parent's, and so on out.
+    pub(crate) fn scope_chain(&self) -> impl Iterator<Item = &Scope> {
+        std::iter::successors(Some(self.scope()), |scope| {
+            Some(&self.scopes[scope.parent?.index()])
+        })
+    }
+
+    /// Whether this module can use `name` of `module`: a name that starts
+    /// with an upper case letter is exported; the prelude, the scope's
+    /// parent, gives every name, private or not.
+    pub(crate) fn exports(&self, module: ModuleId, name: &str) -> bool {
+        self.scope().parent == Some(module) || name.starts_with(char::is_uppercase)
+    }
+
+    /// Reports the error `message` about the name at `span`, which names
+    /// nothing, with a guess that it meant `meant`.
+    pub(crate) fn report_unknown(
+        &mut self,
+        code: Code,
+        span: Span,
+        message: String,
+        meant: Option<String>,
+    ) {
+        let file = &self.module().ast.file;
+        let mut diagnostic = Diagnostic::new(code, message).label(file, span, "");
+        if let Some(meant) = meant {
+            let text = format!("did you mean `{meant}`?");
+            let fix = Fix {
+                file: file.clone(),
+                span,
+                new_text: meant,
+            };
+            diagnostic = diagnostic.guess(text, vec![fix]);
         }
+        self.report(diagnostic);
     }
 
     /// Reports syntax the checker does not handle yet, such as `what` =

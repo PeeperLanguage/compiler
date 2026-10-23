@@ -6,12 +6,14 @@ use arena::Id;
 use model::DefId;
 use model::ast;
 use model::constant::Constant;
+use model::semantic_types;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::thir::Body;
 
 use crate::Checker;
 use crate::builtin::unsupported_type;
+use crate::scope;
 use crate::scope::report_redeclared;
 use crate::statement::ThirBuilder;
 use model::Symbol;
@@ -148,8 +150,12 @@ impl Checker<'_> {
                     }
                     None if let Some(what) = unsupported_type(name) => what,
                     None => {
+                        let is_type = |_: &str, symbol| matches!(symbol, Symbol::Type(_));
+                        let builtin = semantic_types::builtin_names();
+                        let meant = scope::nearest(name, builtin, self.scope_chain(), is_type);
                         let message = format!("unknown type `{name}`");
-                        return self.error(diagnostics::UNDEFINED_NAME, message, span);
+                        self.report_unknown(diagnostics::UNDEFINED_NAME, span, message, meant);
+                        return TypeId::INVALID;
                     }
                 }
             }

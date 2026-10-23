@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use diagnostics::Diagnostic;
+use diagnostics::suggest::nearest_name;
 use model::DefId;
 use model::ModuleId;
 use model::Symbol;
@@ -39,9 +40,11 @@ impl Scope {
         self.names.get(name).map(|&(symbol, _)| symbol)
     }
 
-    /// Every name, in no order.
-    pub fn names(&self) -> impl Iterator<Item = &str> {
-        self.names.keys().map(|name| &**name)
+    /// Every name with what it stands for, in no order.
+    pub fn symbols(&self) -> impl Iterator<Item = (&str, Symbol)> {
+        self.names
+            .iter()
+            .map(|(name, &(symbol, _))| (&**name, symbol))
     }
 
     /// Brings `name` in as `symbol`, written at `span`. A name already in
@@ -55,6 +58,24 @@ impl Scope {
             }
         }
     }
+}
+
+/// The name nearest to `name` (`nearest_name`): one of `first`, else one in
+/// `scopes` that `keep` accepts. A name of `first` wins a tie, as a nearer
+/// scope's does. Scope names come in hash order, which cannot change the
+/// answer: two names that tie suggest nothing.
+pub(crate) fn nearest<'s, 'f: 's>(
+    name: &str,
+    first: impl Iterator<Item = &'f str>,
+    scopes: impl Iterator<Item = &'s Scope>,
+    keep: impl Fn(&str, Symbol) -> bool,
+) -> Option<String> {
+    let in_scopes = scopes.flat_map(|scope| scope.symbols());
+    let kept = in_scopes.filter(|&(declared, symbol)| keep(declared, symbol));
+    let candidates = first
+        .map(|declared| -> (&'s str, i32) { (declared, 0) })
+        .chain(kept.map(|(declared, _)| (declared, 1)));
+    nearest_name(name, candidates).map(str::to_string)
 }
 
 /// Reports `name` declared again at `again` in the same `place` (a module or

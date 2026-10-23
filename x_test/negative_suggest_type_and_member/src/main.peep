@@ -1,0 +1,15 @@
+// An unknown type gets a guess among built-in and declared types; an
+// unknown name in a module, among the names that module exports; an unknown
+// name, among the names in scope, the prelude's included.
+import "negative_suggest_type_and_member:shapes";
+
+struct Point {
+    x: i32,
+}
+
+fn main() {
+    let point: Pont;
+    let flag: boool = true;
+    shapes::Perimter();
+    exitt(0);
+}

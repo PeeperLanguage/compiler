@@ -19,6 +19,8 @@ use std::sync::Mutex;
 use std::sync::mpsc;
 
 use diagnostics::Diagnostic;
+use diagnostics::fix::Fix;
+use diagnostics::suggest::nearest_name;
 use model::DefId;
 use model::ModuleId;
 use model::ast;
@@ -489,6 +491,23 @@ impl Loaded {
             let error = |code, message: String| {
                 Diagnostic::new(code, message).label(&file, import.span, "")
             };
+            // A guess that the import meant the path `meant`, if any.
+            let guess = |diagnostic: Diagnostic, meant: Option<String>| match meant {
+                // Written back as a literal only when it needs no escape.
+                Some(meant)
+                    if !meant.contains(['"', '\\']) && !meant.contains(char::is_control) =>
+                {
+                    let literal = format!("\"{meant}\"");
+                    let message = format!("did you mean {literal}?");
+                    let fix = Fix {
+                        file: file.clone(),
+                        span: import.path,
+                        new_text: literal,
+                    };
+                    diagnostic.guess(message, vec![fix])
+                }
+                _ => diagnostic,
+            };
             if standalone {
                 let message = "a single file cannot import; check its project folder instead";
                 self.diagnostics
@@ -498,17 +517,42 @@ impl Loaded {
             }
             let (path, imported_file) = match resolve(packages, &written) {
                 Ok(resolved) => resolved,
-                Err(message) => {
-                    self.diagnostics
-                        .push(error(diagnostics::INVALID_IMPORT_PATH, message));
+                Err((message, meant)) => {
+                    let diagnostic = error(diagnostics::INVALID_IMPORT_PATH, message);
+                    self.diagnostics.push(guess(diagnostic, meant));
                     self.imports_complete = false;
                     continue;
                 }
             };
             if !imported_file.is_file() && !open_files.contains_key(&imported_file) {
                 let message = format!("module not found: {}", imported_file.display());
-                self.diagnostics
-                    .push(error(diagnostics::MODULE_NOT_FOUND, message));
+                // The nearest module in the same folder, on disk or open.
+                let meant = || {
+                    let folder = imported_file.parent()?;
+                    let written_name = imported_file.file_stem()?.to_str()?;
+                    let folder_path = &path[..path.rfind(['/', ':'])? + 1];
+                    let on_disk = std::fs::read_dir(folder).into_iter().flatten().flatten();
+                    let open = open_files
+                        .keys()
+                        .filter(|open| open.parent() == Some(folder));
+                    let mut names: Vec<String> = on_disk
+                        .map(|entry| entry.file_name())
+                        .chain(open.filter_map(|open| open.file_name()).map(OsString::from))
+                        .filter_map(|name| {
+                            let name = name.into_string().ok()?;
+                            Some(name.strip_suffix(SOURCE_EXTENSION)?.to_string())
+                        })
+                        // Not the importing module: importing itself is a cycle.
+                        .filter(|name| format!("{folder_path}{name}") != self.path)
+                        .collect();
+                    names.sort();
+                    names.dedup(); // an open file is on disk too
+                    let candidates = names.iter().map(|name| (name.as_str(), 0));
+                    let nearest = nearest_name(written_name, candidates)?;
+                    Some(format!("{folder_path}{nearest}"))
+                };
+                let diagnostic = error(diagnostics::MODULE_NOT_FOUND, message);
+                self.diagnostics.push(guess(diagnostic, meant()));
                 self.imports_complete = false;
                 continue;
             }
@@ -855,6 +899,21 @@ mod tests {
             .find(|m| m.starts_with("myapp:b: "));
         let expected_token = format!("myapp:b: {} ", diagnostics::EXPECTED_TOKEN.id);
         assert!(b.is_some_and(|b| b.starts_with(&expected_token)));
+    }
+
+    /// A missing module's guess is a module next to it, never the module
+    /// that imports it, which would import itself.
+    #[test]
+    fn guesses_a_missing_module_but_not_itself() {
+        let main = "import \"myapp:shapez\";\nimport \"myapp:mainn\";\nfn main() {}";
+        let project = write("guess", &[("src/main.peep", main), ("src/shapes.peep", "")]);
+        let program = load(&project, &HashMap::<PathBuf, String>::new());
+        let guesses: Vec<&str> = program
+            .diagnostics
+            .iter()
+            .flat_map(|d| d.notes.iter().map(|note| note.text.as_str()))
+            .collect();
+        assert_eq!(guesses, ["did you mean \"myapp:shapes\"?"]);
     }
 
     #[test]

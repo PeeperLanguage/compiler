@@ -1,0 +1,5 @@
+// A misspelled package or module gets a guess at the path it meant.
+import "negative_sugest_import_path:shapes";
+import "negative_suggest_import_path:shapez" as other;
+
+fn main() {}

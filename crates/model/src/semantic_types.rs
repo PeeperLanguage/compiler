@@ -120,7 +120,7 @@ const fn integer(signed: bool, bits: u32) -> Type {
 /// Declares the types with fixed ids: `FIXED`, the types in id order (they
 /// need no lookup); a `TypeId` constant for each, numbered in the order
 /// written; and `NAMED`, the name a program writes for each type given one.
-/// Integers are named by rule instead (`Types::builtin`).
+/// Other integers are named by rule (`Types::builtin`).
 macro_rules! fixed_types {
     ($($name:ident $($text:literal)? => $ty:expr,)*) => {
         const FIXED: &[Type] = &[$($ty,)*];
@@ -143,19 +143,29 @@ fixed_types! {
     INVALID => Type::Invalid,
     VOID => Type::Void,
     BOOL "bool" => Type::Bool,
-    I8 => integer(true, 8),
-    I16 => integer(true, 16),
-    I32 => integer(true, 32),
-    I64 => integer(true, 64),
-    I128 => integer(true, 128),
-    U8 => integer(false, 8),
-    U16 => integer(false, 16),
-    U32 => integer(false, 32),
-    U64 => integer(false, 64),
-    U128 => integer(false, 128),
+    I8 "i8" => integer(true, 8),
+    I16 "i16" => integer(true, 16),
+    I32 "i32" => integer(true, 32),
+    I64 "i64" => integer(true, 64),
+    I128 "i128" => integer(true, 128),
+    U8 "u8" => integer(false, 8),
+    U16 "u16" => integer(false, 16),
+    U32 "u32" => integer(false, 32),
+    U64 "u64" => integer(false, 64),
+    U128 "u128" => integer(false, 128),
     F32 "f32" => Type::Float(Float::F32),
     F64 "f64" => Type::Float(Float::F64),
     CSTR "cstr" => Type::CString,
+}
+
+/// The integer types as wide as a pointer, and whether each is signed.
+const POINTER_SIZED: [(&str, bool); 2] = [("isize", true), ("usize", false)];
+
+/// The built-in type names a program writes most, for "did you mean"
+/// guesses: each in `NAMED`, `isize` and `usize`.
+pub fn builtin_names() -> impl Iterator<Item = &'static str> {
+    let named = NAMED.iter().map(|&(text, _)| text);
+    named.chain(POINTER_SIZED.iter().map(|&(text, _)| text))
 }
 
 /// The types of a program, for one compile (`check::Checker` holds them).
@@ -214,10 +224,10 @@ impl Types {
         if let Some(&(_, id)) = NAMED.iter().find(|(text, _)| *text == name) {
             return Some(id);
         }
-        let (signed, bits) = match name {
-            "isize" => (true, pointer_bits),
-            "usize" => (false, pointer_bits),
-            _ => {
+        let pointer_sized = POINTER_SIZED.iter().find(|(text, _)| *text == name);
+        let (signed, bits) = match pointer_sized {
+            Some(&(_, signed)) => (signed, pointer_bits),
+            None => {
                 let (signed, width) = match name.split_at_checked(1)? {
                     ("i", width) => (true, width),
                     ("u", width) => (false, width),
