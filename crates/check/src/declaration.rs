@@ -50,8 +50,18 @@ impl Checker<'_> {
                         self.report(diagnostic);
                     }
                     // A struct held by value is checked here: one that holds
-                    // itself, however deep, is a cycle.
-                    field_types.push(self.resolve_value_type(ty));
+                    // itself, however deep, is a cycle. A reference is
+                    // rejected before its type is, which may be this struct.
+                    let reference = matches!(tree.types[ty], ast::Type::Reference { .. });
+                    let mut field_type = TypeId::INVALID;
+                    if !reference {
+                        field_type = self.resolve_value_type(ty);
+                    }
+                    if reference || matches!(self.types[field_type], Type::Reference { .. }) {
+                        let span = tree.types.span(ty);
+                        field_type = self.not_supported(span, "references in struct fields");
+                    }
+                    field_types.push(field_type);
                 }
                 let fields = field_types.into();
                 return self.types.intern(Type::Struct { definition, fields });
@@ -89,7 +99,14 @@ impl Checker<'_> {
             parameters.push(self.resolve_signature_type(parameter.ty, external));
         }
         let result = signature.result.map_or(TypeId::VOID, |result| {
-            self.resolve_signature_type(result, external)
+            let ty = self.resolve_signature_type(result, external);
+            if let Type::Reference { .. } = self.types[ty] {
+                // shortcut: a returned reference needs a `from` origin to be
+                // checked; allow it with `from`.
+                let span = tree.types.span(result);
+                return self.not_supported(span, "reference results");
+            }
+            ty
         });
         let parameters = parameters.into();
         self.types.intern(Type::Function { parameters, result })
@@ -169,7 +186,14 @@ impl Checker<'_> {
             ast::Type::Invalid => return TypeId::INVALID, // the parser reported it
             ast::Type::Path(_) => "types of other modules",
             ast::Type::Generic { .. } => "generic types",
-            ast::Type::Reference { .. } => "reference types",
+            ast::Type::Reference { mutable, target } => {
+                let target = self.resolve_value_type(target);
+                return match self.types[target] {
+                    Type::Invalid => TypeId::INVALID,
+                    Type::Reference { .. } => self.not_supported(span, "references to references"),
+                    _ => self.types.intern(Type::Reference { mutable, target }),
+                };
+            }
             ast::Type::OwnedPointer(_) => "owned pointer types",
             ast::Type::Optional(_) => "optional types",
             ast::Type::RawPointer => "raw pointers",
@@ -244,12 +268,12 @@ mod tests {
     #[test]
     fn errors_are_located() {
         let (found, found_reported) = declared_types(
-            "fn a(x: Missing) {}\nfn b(m: utils) {}\nfn c(r: &i32) {}\nfn d<T>(x: T) {}\nfn e(x: i32 = 1) {}\nstruct P { x: i32 }\n#[extern(\"f\")]\nfn f(p: P);\nfn ok(p: P) -> P { return p; }\nfn g(x: a) {}\nfn (p: i32) method() {}\nfn h(s: str) {}\n",
+            "fn a(x: Missing) {}\nfn b(m: utils) {}\nfn c(r: &i32) -> &i32 {}\nfn d<T>(x: T) {}\nfn e(x: i32 = 1) {}\nstruct P { x: i32 }\n#[extern(\"f\")]\nfn f(p: P);\nfn ok(p: P) -> P { return p; }\nfn g(x: a) {}\nfn (p: i32) method() {}\nfn h(s: str) {}\n",
         );
         let expected = reported(&[
             ("T0002", "unknown type `Missing`", "Missing"),
             ("T0021", "`utils` is a module, not a type", "utils"),
-            ("T0043", "reference types are not supported yet", "&i32"),
+            ("T0043", "reference results are not supported yet", "&i32"),
             ("T0043", "generic functions are not supported yet", "T"),
             ("T0043", "default parameters are not supported yet", "1"),
             (

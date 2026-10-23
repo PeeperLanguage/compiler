@@ -67,35 +67,59 @@ pub struct Instruction {
     pub debug_scope: Id<DebugScope>, // the block of the source it is written in
 }
 
+/// Storage that a value is read from, written to or borrowed: a variable,
+/// then each step from it in order (`s.start.x` is one place, two fields;
+/// `r.*.x` goes through the reference in `r`, then to a field).
+#[derive(Clone, Debug)]
+pub struct Place {
+    pub variable: Id<Variable>,
+    pub projections: Box<[Projection]>,
+}
+
+/// One step of a `Place`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Projection {
+    /// The field at this index, in declaration order, of the struct here.
+    Field(u32),
+    /// What the reference here refers to.
+    Dereference,
+}
+
+impl Place {
+    /// Whether the place goes through a reference, so it is not in its
+    /// variable's own storage.
+    pub fn is_behind_reference(&self) -> bool {
+        self.projections.contains(&Projection::Dereference)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum InstructionKind {
     /// The value of a variable whose type copies (`Type::is_copy`).
     Load(Id<Variable>),
     /// The value of a variable whose type moves: the variable is unset after.
     Move(Id<Variable>),
-    /// The field of a struct variable that its `fields` path leads to: field
-    /// indices in declaration order, outermost first (`s.start.x` is one
-    /// load).
-    LoadField {
-        variable: Id<Variable>,
-        fields: Box<[u32]>,
-    },
-    /// A field whose type moves, by `LoadField`'s path: always an error, as a
-    /// field cannot be moved out of its struct.
-    MoveField {
-        variable: Id<Variable>,
-        fields: Box<[u32]>,
-    },
+    /// The value at a place other than a whole variable, whose type copies.
+    LoadPlace(Place),
+    /// A value whose type moves at a place other than a whole variable:
+    /// always an error, as a value cannot be moved out of its struct or out
+    /// of a reference.
+    MovePlace(Place),
     Store {
         variable: Id<Variable>,
         value: Operand,
     },
-    /// Sets the field of a struct variable that its `fields` path leads to,
-    /// as `LoadField`'s path; the variable must already be set.
-    StoreField {
-        variable: Id<Variable>,
-        fields: Box<[u32]>,
+    /// Sets the value at a place other than a whole variable; the variable
+    /// must already be set.
+    StorePlace {
+        place: Place,
         value: Operand,
+    },
+    /// A reference to the place, `&mut` when `mutable`; the variable must
+    /// already be set.
+    Borrow {
+        place: Place,
+        mutable: bool,
     },
     Binary {
         op: BinaryOp,
@@ -115,7 +139,7 @@ pub enum InstructionKind {
     /// A struct value from its fields' values, in declaration order.
     Aggregate(Box<[Operand]>),
     /// The field its `fields` path leads to in a struct value that is not
-    /// in a variable, as `LoadField`'s path.
+    /// in a variable, as a `Place`'s path.
     Field {
         value: Operand,
         fields: Box<[u32]>,
@@ -202,16 +226,17 @@ impl Body {
                         printer.out.push_str(", ");
                         printer.write_operand(value);
                     }
-                    InstructionKind::StoreField {
-                        variable,
-                        fields,
-                        value,
-                    } => {
+                    InstructionKind::StorePlace { place, value } => {
                         printer.out.push_str("store ");
-                        printer.write_variable(*variable);
-                        printer.write_fields(fields);
+                        printer.write_place(place);
                         printer.out.push_str(", ");
                         printer.write_operand(value);
+                    }
+                    InstructionKind::Borrow { place, mutable } => {
+                        printer
+                            .out
+                            .push_str(if *mutable { "borrow mut " } else { "borrow " });
+                        printer.write_place(place);
                     }
                     InstructionKind::Load(variable) => {
                         printer.out.push_str("load ");
@@ -221,15 +246,13 @@ impl Body {
                         printer.out.push_str("move ");
                         printer.write_variable(*variable);
                     }
-                    InstructionKind::LoadField { variable, fields } => {
+                    InstructionKind::LoadPlace(place) => {
                         printer.out.push_str("load ");
-                        printer.write_variable(*variable);
-                        printer.write_fields(fields);
+                        printer.write_place(place);
                     }
-                    InstructionKind::MoveField { variable, fields } => {
+                    InstructionKind::MovePlace(place) => {
                         printer.out.push_str("move ");
-                        printer.write_variable(*variable);
-                        printer.write_fields(fields);
+                        printer.write_place(place);
                     }
                     InstructionKind::Binary { op, left, right } => {
                         _ = write!(printer.out, "{op:?} ");
@@ -336,6 +359,28 @@ impl Printer<'_> {
     fn write_variable(&mut self, variable: Id<Variable>) {
         let name = self.file.slice(self.body.variables.span(variable));
         _ = write!(self.out, "{name}.{}", variable.index());
+    }
+
+    /// A place: its variable, then each step, `.*` for a dereference and a
+    /// field path for fields next to each other (`line.2[1, 0]`, `r.3.*[0]`).
+    fn write_place(&mut self, place: &Place) {
+        self.write_variable(place.variable);
+        let steps = place
+            .projections
+            .split(|&step| step == Projection::Dereference);
+        for (index, fields) in steps.enumerate() {
+            if index > 0 {
+                self.out.push_str(".*");
+            }
+            let fields: Vec<u32> = fields
+                .iter()
+                .map(|&step| match step {
+                    Projection::Field(index) => index,
+                    Projection::Dereference => unreachable!("split at each dereference"),
+                })
+                .collect();
+            self.write_fields(&fields);
+        }
     }
 
     /// A field path, `[1, 0]`; nothing for an empty one.

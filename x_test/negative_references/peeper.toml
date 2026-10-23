@@ -1,0 +1,18 @@
+name = "negative_references"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "references in struct fields are not supported yet",
+    "reference results are not supported yet",
+    "references to references are not supported yet",
+    "borrows of values that are not in a variable are not supported yet",
+    "cannot assign to `r.x`: `r` is a shared reference",
+    "cannot mutably borrow `r.y`: `r` is a shared reference",
+    "make `r` a `&mut` reference",
+    "cannot mutably borrow `p`: `p` is immutable",
+    "`.*` needs a reference, found `i32`",
+    "Compilation failed with 8 error(s)",
+]

@@ -1,0 +1,15 @@
+name = "negative_reference_moves"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "T0035",
+    "cannot move out of a reference",
+    "borrow it instead, or read only fields that copy",
+    "`first` is used after it was moved",
+    "`first` is moved here",
+    "`unset` is used before it is set",
+    "Compilation failed with 3 error(s)",
+]

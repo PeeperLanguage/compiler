@@ -95,15 +95,22 @@ pub enum Type {
         definition: DefId,
         fields: Box<[TypeId]>,
     },
+    /// `&T`, or `&mut T` when `mutable`: a view of a `target` value held
+    /// elsewhere, never itself a reference.
+    Reference {
+        mutable: bool,
+        target: TypeId,
+    },
 }
 
 impl Type {
     /// Whether a value of this type copies when used by value: numbers,
-    /// `bool` and `cstr`. Any other value moves, and the variable it moved
-    /// from is unusable until set again.
+    /// `bool`, `cstr` and shared references. Any other value moves, and the
+    /// variable it moved from is unusable until set again.
     pub fn is_copy(&self) -> bool {
         match self {
             Type::Bool | Type::Integer(_) | Type::Float(_) | Type::CString => true,
+            Type::Reference { mutable, .. } => !mutable,
             Type::Struct { .. } => false,
             // No value of these is moved: an error, nothing, or not yet a value.
             Type::Invalid | Type::Void | Type::Function { .. } => true,
@@ -320,6 +327,14 @@ impl Types {
             }
             Type::Named(definition) | Type::Struct { definition, .. } => {
                 name_of(*definition).to_string()
+            }
+            Type::Reference { mutable, target } => {
+                let target = self.real_text(*target, name_of);
+                if *mutable {
+                    format!("&mut {target}")
+                } else {
+                    format!("&{target}")
+                }
             }
             Type::Alias { .. } => unreachable!("`real` looks through aliases"),
         }

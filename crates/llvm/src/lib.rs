@@ -253,6 +253,14 @@ impl Metadata {
                     self.pointer_bits
                 )
             }
+            Type::Reference { target, .. } => {
+                let target = self.debug_type(program, types, types.real(target));
+                let target = target.expect("a reference refers to a value's type");
+                format!(
+                    "!DIDerivedType(tag: DW_TAG_pointer_type, baseType: !{target}, size: {})",
+                    self.pointer_bits
+                )
+            }
             Type::Invalid | Type::Void | Type::Function { .. } => {
                 unreachable!("MIR holds no value of this type")
             }
@@ -322,7 +330,7 @@ fn type_text(types: &Types, ty: TypeId) -> impl fmt::Display {
         Type::Integer(integer) => write!(out, "i{}", integer.bits),
         Type::Float(Float::F32) => out.write_str("float"),
         Type::Float(Float::F64) => out.write_str("double"),
-        Type::CString => out.write_str("ptr"),
+        Type::CString | Type::Reference { .. } => out.write_str("ptr"),
         Type::Struct { ref fields, .. } => struct_type_text(types, fields, out),
         Type::Invalid | Type::Function { .. } => unreachable!("MIR holds no value of this type"),
         Type::Alias { .. } => unreachable!("indexing looks through aliases"),
@@ -369,7 +377,7 @@ fn layout(types: &Types, ty: TypeId, pointer_bits: u32) -> (u64, u64) {
         }
         Type::Float(Float::F32) => (4, 4),
         Type::Float(Float::F64) => (8, 8),
-        Type::CString => {
+        Type::CString | Type::Reference { .. } => {
             let bytes = u64::from(pointer_bits / 8);
             (bytes, bytes)
         }

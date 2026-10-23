@@ -243,17 +243,28 @@ pub fn report_variable_state_errors(
             let span = body.instructions.span(instruction);
             let kind = &body.instructions[instruction].kind;
             let error = match *kind {
-                mir::InstructionKind::MoveField { .. } => {
-                    errors.push((span.start, partial_move(file, span)));
+                mir::InstructionKind::MovePlace(ref place) => {
+                    let error = partial_move(file, span, place.is_behind_reference());
+                    errors.push((span.start, error));
                     None
                 }
                 mir::InstructionKind::Load(variable)
                 | mir::InstructionKind::Move(variable)
-                | mir::InstructionKind::LoadField { variable, .. }
-                | mir::InstructionKind::StoreField { variable, .. }
-                    if !has(&facts.always, variable) =>
-                {
-                    let writes_field = matches!(kind, mir::InstructionKind::StoreField { .. });
+                | mir::InstructionKind::LoadPlace(mir::Place { variable, .. })
+                | mir::InstructionKind::StorePlace {
+                    place: mir::Place { variable, .. },
+                    ..
+                }
+                | mir::InstructionKind::Borrow {
+                    place: mir::Place { variable, .. },
+                    ..
+                } if !has(&facts.always, variable) => {
+                    // Writing through a reference only reads the variable.
+                    let writes_field = matches!(
+                        kind,
+                        mir::InstructionKind::StorePlace { place, .. }
+                            if !place.is_behind_reference()
+                    );
                     let error = if has(&facts.moved, variable) {
                         let block = Id::from_index(index);
                         let moves = move_sites(body, variable, block, position);
@@ -512,24 +523,32 @@ fn moved_use(
     for &moved in moves {
         error = error.label(file, moved, format!("`{name}` is moved here"));
     }
-    error.note("a struct moves when used by value").help(
-        format!("set `{name}` again before this use, or stop moving it"),
-        Vec::new(),
-    )
+    error
+        .note("a value moves when used by value, unless its type copies")
+        .help(
+            format!("set `{name}` again before this use, or stop moving it"),
+            Vec::new(),
+        )
 }
 
-/// The error for a field whose type moves, read by value at `span`: a field
-/// cannot be moved out of its struct.
-fn partial_move(file: &Arc<SourceFile>, span: Span) -> Diagnostic {
-    Diagnostic::new(
-        diagnostics::PARTIAL_MOVE,
-        "cannot move a field out of its struct",
-    )
-    .label(file, span, "this field's type moves")
-    .help(
-        "move the whole struct, or read only fields that copy",
-        Vec::new(),
-    )
+/// The error for a value whose type moves, read by value at `span` from a
+/// field, or from `behind_reference`: a value cannot be moved out of its
+/// struct, nor out of what a reference refers to.
+fn partial_move(file: &Arc<SourceFile>, span: Span, behind_reference: bool) -> Diagnostic {
+    let (message, help) = if behind_reference {
+        (
+            "cannot move out of a reference",
+            "borrow it instead, or read only fields that copy",
+        )
+    } else {
+        (
+            "cannot move a field out of its struct",
+            "move the whole struct, or read only fields that copy",
+        )
+    };
+    Diagnostic::new(diagnostics::PARTIAL_MOVE, message)
+        .label(file, span, "this value's type moves")
+        .help(help, Vec::new())
 }
 
 /// The error for `variable`, without `mut`, assigned at `span` where some path

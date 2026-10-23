@@ -486,6 +486,7 @@ impl Dumper<'_> {
                 None,
                 two(value, Item::Leaf("field name", field.span)),
             ),
+            Expr::Dereference(value) => ("dereference expression", None, one(value)),
             Expr::Index { value, index } => {
                 ("index expression", None, two(value, Item::Expr(index)))
             }

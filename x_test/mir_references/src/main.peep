@@ -1,0 +1,23 @@
+// A borrow is the address of a place, and a load or store through a
+// reference goes through the variable holding it (`.*` in the dump). A
+// `&mut` in a variable passed to a call is borrowed again, not moved.
+struct Point { x: i32, y: i32 }
+
+fn shift(point: &mut Point) {
+    point.x = point.y + 1;
+}
+
+fn set(n: &mut i32) {
+    n.* = 3;
+}
+
+fn main() -> i32 {
+    let mut p = Point.{ x = 1, y = 2 };
+    let r = &mut p;
+    shift(r);
+    shift(r);
+    let mut n = 0;
+    set(&mut n);
+    let shared = &p.y;
+    return shared.* + n;
+}

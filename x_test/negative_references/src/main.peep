@@ -1,0 +1,25 @@
+// What references cannot do yet, or ever: be held in a struct, be returned
+// without `from`, refer to a reference, borrow a value not in a variable,
+// write or lend `&mut` through `&`, or lend `&mut` of an immutable variable.
+struct Holder { point: &Point }
+struct Point { x: i32, y: i32 }
+
+fn first(point: &Point) -> &i32 {
+    return &point.x;
+}
+
+fn make() -> Point {
+    return Point.{ x = 1, y = 2 };
+}
+
+fn main() {
+    let p = Point.{ x = 1, y = 2 };
+    let r = &p;
+    let rr = &r;
+    let t = &make();
+    r.x = 3;
+    let m = &mut r.y;
+    let q = &mut p;
+    let n = 5;
+    let not_a_reference = n.*;
+}

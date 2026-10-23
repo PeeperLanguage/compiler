@@ -11,6 +11,6 @@ stderr_contains = [
     "`a` is used after it was moved",
     "cannot set a field of `b` after `b` was moved",
     "`c` is used after it was moved",
-    "a struct moves when used by value",
+    "a value moves when used by value, unless its type copies",
     "Compilation failed with 4 error(s)",
 ]

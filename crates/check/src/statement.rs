@@ -435,12 +435,12 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         }
     }
 
-    /// `target = value;`, where the target is a mutable variable or a field
-    /// of one.
+    /// `target = value;`, where the target is a mutable variable, a field of
+    /// one, or what a `&mut` reference refers to.
     fn assign(&mut self, target: Id<ast::Expr>, value: Id<ast::Expr>) -> Option<Stmt> {
         let tree = &self.checker.module().ast;
         let place = match tree.exprs[target] {
-            ast::Expr::Selector { .. } => self.assigned_field(target),
+            ast::Expr::Selector { .. } | ast::Expr::Dereference(_) => self.assigned_place(target),
             _ => self.assigned_variable(target).map(|variable| {
                 let ty = self.body.variables[variable].ty;
                 let kind = ExprKind::Variable(variable);
@@ -455,44 +455,23 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         Some(Stmt::Assign { target, value })
     }
 
-    /// The field that `target` names, reporting one that cannot be set: only
-    /// a field of a `mut` variable can, even of one declared without a value
-    /// and set once later. A field of an immutable variable is reported but
-    /// still given, so the value is checked against its type.
-    fn assigned_field(&mut self, target: Id<ast::Expr>) -> Option<Id<Expr>> {
+    /// The field or referred value that `target` names, reporting one that
+    /// cannot be set (`report_unwritable`), even of a variable declared
+    /// without a value and set once later. One that cannot be set is still
+    /// given, so the value is checked against its type.
+    fn assigned_place(&mut self, target: Id<ast::Expr>) -> Option<Id<Expr>> {
         let place = self.add_expr(target);
-        let mut root = place;
-        while let ExprKind::Field { value, .. } = self.body.exprs[root].kind {
-            root = value;
+        if let ExprKind::Invalid = self.body.exprs[place].kind {
+            return None; // its error was reported
         }
-        let file = &self.checker.module().ast.file;
-        let root_span = self.body.exprs.span(root);
-        match self.body.exprs[root].kind {
-            ExprKind::Variable(variable) if !self.body.variables[variable].mutable => {
-                let name = file.slice(root_span);
-                self.checker.report(
-                    Diagnostic::new(
-                        diagnostics::INVALID_ASSIGNMENT,
-                        format!("cannot assign to a field of immutable `{name}`"),
-                    )
-                    .label(file, self.body.exprs.span(place), "")
-                    .label(
-                        file,
-                        self.body.variables.span(variable),
-                        "declared without `mut` here",
-                    )
-                    .help(format!("write `let mut {name}`"), Vec::new()),
-                );
-            }
-            ExprKind::Variable(_) => {}
-            ExprKind::Invalid => return None, // its error was reported
-            _ => {
-                let message = "only a variable's fields can be set";
-                self.checker
-                    .error(diagnostics::INVALID_ASSIGNMENT, message, root_span);
-                return None;
-            }
-        }
+        let Some((variable, reference)) = self.place_root(place) else {
+            let message = "only a variable's fields can be set";
+            let span = self.body.exprs.span(place);
+            self.checker
+                .error(diagnostics::INVALID_ASSIGNMENT, message, span);
+            return None;
+        };
+        self.report_unwritable(place, variable, reference, "assign to");
         Some(place)
     }
 

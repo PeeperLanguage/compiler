@@ -410,18 +410,12 @@ impl Function<'_, '_, '_> {
                 type_text(types, ty),
                 variable.index()
             ),
-            InstructionKind::LoadField {
-                variable,
-                ref fields,
-            }
-            | InstructionKind::MoveField {
-                variable,
-                ref fields,
-            } => {
-                self.write_field_address(out, id, variable, fields, &location);
+            InstructionKind::LoadPlace(ref place) | InstructionKind::MovePlace(ref place) => {
+                let address = fmt::from_fn(|out| write!(out, "{name}.f"));
+                self.write_place_address(out, &address, place, &location);
                 write!(
                     out,
-                    "  {name} = load {}, ptr {name}.f",
+                    "  {name} = load {}, ptr {address}",
                     type_text(types, ty)
                 )
             }
@@ -432,13 +426,14 @@ impl Function<'_, '_, '_> {
                 self.operand(value),
                 variable.index()
             ),
-            InstructionKind::StoreField {
-                variable,
-                ref fields,
-                value,
-            } => {
-                self.write_field_address(out, id, variable, fields, &location);
-                write!(out, "  store {}, ptr {name}.f", self.typed(value))
+            InstructionKind::StorePlace { ref place, value } => {
+                let address = fmt::from_fn(|out| write!(out, "{name}.f"));
+                self.write_place_address(out, &address, place, &location);
+                write!(out, "  store {}, ptr {address}", self.typed(value))
+            }
+            InstructionKind::Borrow { ref place, .. } => {
+                self.write_place_address(out, &name, place, &location);
+                return; // the address is the value
             }
             InstructionKind::Binary { op, left, right } => {
                 self.write_binary(out, id, op, left, right);
@@ -524,27 +519,65 @@ impl Function<'_, '_, '_> {
         _ = writeln!(out, "{location}");
     }
 
-    /// Writes the line computing `%i<id>.f`, the address of the field that
-    /// `fields` leads to in `variable`, for the instruction `id`.
-    fn write_field_address(
+    /// Writes the lines computing `address`, the address of `place`: one
+    /// `getelementptr` for each run of fields, and before each dereference
+    /// a load of the pointer there, `<address>.<n>` for the `n`th.
+    fn write_place_address(
         &self,
         out: &mut String,
-        id: Id<mir::Instruction>,
-        variable: Id<mir::Variable>,
-        fields: &[u32],
+        address: &dyn Display,
+        place: &mir::Place,
         location: &DebugLocation,
     ) {
-        let indices = fields
-            .iter()
-            .map(|&field| fmt::from_fn(move |out| write!(out, "i32 {field}")));
-        _ = writeln!(
-            out,
-            "  {}.f = getelementptr inbounds {}, ptr %v{}, i32 0, {}{location}",
-            value_name(id),
-            type_text(self.types, self.body.variables[variable].ty),
-            variable.index(),
-            comma_separated(indices)
-        );
+        let variable = place.variable.index();
+        let mut ty = self.body.variables[place.variable].ty;
+        let mut runs = place
+            .projections
+            .split(|&step| step == mir::Projection::Dereference)
+            .enumerate()
+            .peekable();
+        while let Some((run, fields)) = runs.next() {
+            // The address so far: the variable's, or the pointer loaded last.
+            let base = fmt::from_fn(|out| match run {
+                0 => write!(out, "%v{variable}"),
+                _ => write!(out, "{address}.{}", run - 1),
+            });
+            let last = runs.peek().is_none();
+            let run_address = fmt::from_fn(|out| match last {
+                true => write!(out, "{address}"),
+                false => write!(out, "{address}.{run}.f"),
+            });
+            _ = write!(
+                out,
+                "  {run_address} = getelementptr inbounds {}, ptr {base}, i32 0",
+                type_text(self.types, ty)
+            );
+            let indices = fields.iter().map(|&step| match step {
+                mir::Projection::Field(index) => index,
+                mir::Projection::Dereference => unreachable!("split at each dereference"),
+            });
+            for index in indices.clone() {
+                _ = write!(out, ", i32 {index}");
+            }
+            _ = writeln!(out, "{location}");
+            if !last {
+                // The type the pointer is loaded from, only needed here.
+                for index in indices {
+                    let Type::Struct { ref fields, .. } = self.types[ty] else {
+                        unreachable!("a field step is taken in a struct")
+                    };
+                    ty = fields[index as usize];
+                }
+                let Type::Reference { target, .. } = self.types[ty] else {
+                    unreachable!("a dereference is taken of a reference")
+                };
+                _ = writeln!(
+                    out,
+                    "  {address}.{run} = load ptr, ptr {run_address}{location}"
+                );
+                ty = target;
+            }
+        }
     }
 
     /// Writes the line calling `function` with `arguments` for the

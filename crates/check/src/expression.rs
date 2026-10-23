@@ -23,6 +23,7 @@ use model::semantic_types::TypeId;
 use model::thir::Expr;
 use model::thir::ExprKind;
 use model::thir::FieldValue;
+use model::thir::Variable;
 use source::Span;
 
 use crate::builtin::UNSUPPORTED_FUNCTIONS;
@@ -135,10 +136,13 @@ impl ThirBuilder<'_, '_> {
                 return self.check_struct_literal(ty, fields, span, expected);
             }
             ast::Expr::Selector { value, field } => return self.check_field(value, field),
+            ast::Expr::Dereference(value) => return self.check_dereference(value, span),
+            ast::Expr::Reference { mutable, value } => {
+                return self.check_borrow(mutable, value, span);
+            }
             ast::Expr::String { c_string: false } => "string literals",
             ast::Expr::Char { .. } => "character literals",
             ast::Expr::None => "`none` values",
-            ast::Expr::Reference { .. } => "references",
             ast::Expr::RawAddress(_) => "raw addresses",
             ast::Expr::Free(_) => "`free` calls",
             ast::Expr::Print { .. } => "`print` calls",
@@ -298,10 +302,16 @@ impl ThirBuilder<'_, '_> {
         }
     }
 
-    /// `value.field`: the field of a struct value.
+    /// `value.field`: the field of a struct value, or of the struct a
+    /// reference refers to.
     fn check_field(&mut self, value: Id<ast::Expr>, field: Ident) -> Expr {
-        let value = self.add_expr(value);
-        let ty = self.body.exprs[value].ty;
+        let mut value = self.add_expr(value);
+        let mut ty = self.body.exprs[value].ty;
+        if let Type::Reference { target, .. } = self.checker.types[ty] {
+            let referred = self.dereference(value, target);
+            ty = referred.ty;
+            value = self.body.add(referred, self.body.exprs.span(value));
+        }
         let Type::Struct { ref fields, .. } = self.checker.types[ty] else {
             if ty != TypeId::INVALID {
                 let message = format!("`{}` has no fields", self.checker.type_text(ty));
@@ -321,6 +331,149 @@ impl ThirBuilder<'_, '_> {
                 index: index as u32,
             },
         }
+    }
+
+    /// `reference.*`, written at `span`: the value a reference refers to.
+    fn check_dereference(&mut self, reference: Id<ast::Expr>, span: Span) -> Expr {
+        let reference = self.add_expr(reference);
+        let ty = self.body.exprs[reference].ty;
+        match self.checker.types[ty] {
+            Type::Reference { target, .. } => self.dereference(reference, target),
+            Type::Invalid => Expr::INVALID,
+            _ => {
+                let message = format!(
+                    "`.*` needs a reference, found `{}`",
+                    self.checker.type_text(ty)
+                );
+                self.checker
+                    .error(diagnostics::INVALID_OPERATION, message, span);
+                Expr::INVALID
+            }
+        }
+    }
+
+    /// What `reference`, whose type refers to `target`, refers to: a place.
+    fn dereference(&mut self, reference: Id<Expr>, target: TypeId) -> Expr {
+        if self.place_root(reference).is_none() {
+            // shortcut: lowering takes a place only from a variable; a call's
+            // returned reference needs one when references are returned.
+            let span = self.body.exprs.span(reference);
+            self.checker
+                .not_supported(span, "references that are not in a variable");
+            return Expr::INVALID;
+        }
+        Expr {
+            ty: target,
+            kind: ExprKind::Dereference(reference),
+        }
+    }
+
+    /// `&place` or `&mut place`, written at `span`: a reference to a place in
+    /// a variable. `&mut` needs a place that can be written.
+    fn check_borrow(&mut self, mutable: bool, place: Id<ast::Expr>, span: Span) -> Expr {
+        let place = self.add_expr(place);
+        let target = self.body.exprs[place].ty;
+        if target == TypeId::INVALID {
+            return Expr::INVALID;
+        }
+        if let Type::Reference { .. } = self.checker.types[target] {
+            self.checker.not_supported(span, "references to references");
+            return Expr::INVALID;
+        }
+        let Some((variable, reference)) = self.place_root(place) else {
+            self.checker
+                .not_supported(span, "borrows of values that are not in a variable");
+            return Expr::INVALID;
+        };
+        if mutable {
+            self.report_unwritable(place, variable, reference, "mutably borrow");
+        }
+        Expr {
+            ty: self
+                .checker
+                .types
+                .intern(Type::Reference { mutable, target }),
+            kind: ExprKind::Borrow { place, mutable },
+        }
+    }
+
+    /// The variable that the place `place` starts from, and the reference
+    /// on its path that decides whether it can be written: a shared one if
+    /// any, else the nearest. `None` for a value not in a variable.
+    pub(crate) fn place_root(&self, place: Id<Expr>) -> Option<(Id<Variable>, Option<Id<Expr>>)> {
+        let shared = |reference: Id<Expr>| {
+            let ty = self.body.exprs[reference].ty;
+            matches!(
+                self.checker.types[ty],
+                Type::Reference { mutable: false, .. }
+            )
+        };
+        let mut root = place;
+        let mut deciding = None;
+        loop {
+            match self.body.exprs[root].kind {
+                ExprKind::Field { value, .. } => root = value,
+                ExprKind::Dereference(reference) => {
+                    if deciding.is_none_or(|kept| !shared(kept) && shared(reference)) {
+                        deciding = Some(reference);
+                    }
+                    root = reference;
+                }
+                ExprKind::Variable(variable) => return Some((variable, deciding)),
+                _ => return None,
+            }
+        }
+    }
+
+    /// Reports `action` (`"assign to"`, `"mutably borrow"`) on the place
+    /// `place`, which starts from `variable`, where it cannot write the
+    /// place: through `reference` only when that is a `&mut`, else in the
+    /// variable's own storage only when it is `mut`.
+    pub(crate) fn report_unwritable(
+        &mut self,
+        place: Id<Expr>,
+        variable: Id<Variable>,
+        reference: Option<Id<Expr>>,
+        action: &str,
+    ) {
+        let file = &self.checker.module().ast.file;
+        let place_span = self.body.exprs.span(place);
+        let (reason, holder, declared, label, help) = match reference {
+            Some(reference) => {
+                let ty = self.body.exprs[reference].ty;
+                if let Type::Reference { mutable: true, .. } = self.checker.types[ty] {
+                    return;
+                }
+                let span = self.body.exprs.span(reference);
+                let declared = match self.body.exprs[reference].kind {
+                    ExprKind::Variable(variable) => self.body.variables.span(variable),
+                    _ => span,
+                };
+                let help = format!("make `{}` a `&mut` reference", file.slice(span));
+                let label = "declared as a shared reference here";
+                ("a shared reference", span, declared, label, help)
+            }
+            None => {
+                if self.body.variables[variable].mutable {
+                    return;
+                }
+                let declared = self.body.variables.span(variable);
+                let help = format!("write `let mut {}`", file.slice(declared));
+                let label = "declared without `mut` here";
+                ("immutable", declared, declared, label, help)
+            }
+        };
+        let message = format!(
+            "cannot {action} `{}`: `{}` is {reason}",
+            file.slice(place_span),
+            file.slice(holder)
+        );
+        self.checker.report(
+            Diagnostic::new(diagnostics::INVALID_ASSIGNMENT, message)
+                .label(file, place_span, "")
+                .label(file, declared, label)
+                .help(help, Vec::new()),
+        );
     }
 
     /// The index of the field `name` of the struct type `ty`, in declaration
@@ -498,6 +651,30 @@ impl ThirBuilder<'_, '_> {
                 Some(&parameter) => self.add_expr_as(argument, parameter),
                 None => self.add_expr(argument),
             };
+            // A `&mut` in a variable is lent again, not moved: the variable
+            // stays usable after the call.
+            if let Expr {
+                ty,
+                kind: ExprKind::Variable(_),
+            } = self.body.exprs[argument]
+                && let Type::Reference {
+                    mutable: true,
+                    target,
+                } = self.checker.types[ty]
+            {
+                let span = self.body.exprs.span(argument);
+                let reference = self.body.add(self.body.exprs[argument].clone(), span);
+                let referred = Expr {
+                    ty: target,
+                    kind: ExprKind::Dereference(reference),
+                };
+                let place = self.body.add(referred, span);
+                let kind = ExprKind::Borrow {
+                    place,
+                    mutable: true,
+                };
+                self.body.exprs[argument] = Expr { ty, kind };
+            }
             checked.push(argument.into());
         }
         if !arity_matches {

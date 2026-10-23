@@ -431,9 +431,13 @@ fn index(p: &mut Parser, value: Id<Expr>) -> Id<Expr> {
     p.add(p.start_of(value), Expr::Index { value, index })
 }
 
-/// Reads `.name` after `value`.
+/// Reads `.name` or `.*` after `value`.
 fn selector(p: &mut Parser, value: Id<Expr>) -> Id<Expr> {
     p.next();
+    if p.at(TokenKind::Asterisk) {
+        p.next();
+        return p.add(p.start_of(value), Expr::Dereference(value));
+    }
     let field = p.name();
     p.add(p.start_of(value), Expr::Selector { value, field })
 }
@@ -606,6 +610,7 @@ mod tests {
             Expr::Selector { value, field } => {
                 format!("{}.{}", grouped(t, value), text(field.span))
             }
+            Expr::Dereference(value) => format!("{}.*", grouped(t, value)),
             Expr::Index { value, index } => {
                 format!("{}[{}]", grouped(t, value), text(t.exprs.span(index)))
             }
@@ -646,6 +651,8 @@ mod tests {
             ("a |> len() as i32", "((a |> len()) as i32)"),
             ("a + b |> f()", "((a + b) |> f())"),
             ("x.y.z[0][i..j]", "x.y.z[0][i..j]"),
+            ("-r.* * r.x.*", "(-r.* * r.x.*)"),
+            ("&mut r.*.x", "&mut r.*.x"),
         ] {
             let (tree, errors) = parse_text(&format!("fn f() {{ {text}; }}"));
             assert!(errors.is_empty(), "{text}: {errors:?}");

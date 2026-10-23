@@ -99,7 +99,7 @@ every module is loaded. So its checks take `&mut self` and nothing needs a `RefC
 holding a type across a check is a compile error, not a run-time panic. A
 scope holds declarations; a name it
 does not hold is looked up in its parent's, so a module's scope has the
-prelude's as its parent. A name stands for a `model::Symbol`: a module,
+prelude's as its parent. A name stands for a `model::thir::Symbol`: a module,
 function, constant or type of a module scope, or a body's local or `const`.
 
 The typed arenas `Arena`, `Id` and `List` live in one small crate (`pkg/arena`)
@@ -368,15 +368,29 @@ to it ("and" at joins), set on some path ("or"), and moved on some path and not
 set since ("or"). A `store` sets the first two and clears the third; a `move`
 clears the first and sets the third.
 
-Lowering decides what copies (`Type::is_copy`: numbers, `bool`, `cstr`): a
-whole variable whose type copies is a `load`, else a `move`; a field whose type
-copies is a `load` with a field path, else a `move` with one. So the check
-never looks at types to tell a copy from a move.
+Lowering decides what copies (`Type::is_copy`: numbers, `bool`, `cstr`,
+`&T`): a whole variable whose type copies is a `load`, else a `move`; any
+other place whose type copies is a `load` of the place, else a `move` of it.
+So the check never looks at types to tell a copy from a move.
 
-A use (`load`, `move`, or a field read or write) not set on every path is T0034
-("`x` is used after it was moved", with each place it was moved) when the
-moved bit is on, else T0039 ("`x` is used before it is set"). A `move` of a
-field is always T0035 ("cannot move a field out of its struct"). A `store` to
+A place (`mir::Place`) is a variable and the steps from it, each a field or a
+dereference (`mir::Projection`), as in Rust's MIR: `r.*.x` goes through the
+reference in `r`, then to a field. The checker makes the implicit step of
+`r.x` an explicit `Dereference` in THIR, and lowering turns each into a step,
+so neither the check nor the LLVM writer works it out from types. For now a
+reference is only in a variable (never in a field, never returned), so a
+dereference is only the first step; the shape already allows one anywhere,
+which returned references and `*T` fields need. `&place` and `&mut place` are
+a `borrow` of the place, its address. The checker also makes the spec's
+reborrow explicit: a `&mut` in a variable passed to a call becomes a `Borrow`
+of what it refers to, so the variable stays usable; a `let` moves it.
+
+A use (`load`, `move`, `borrow`, or a read or write of a place) not set on
+every path is T0034 ("`x` is used after it was moved", with each place it was
+moved) when the moved bit is on, else T0039 ("`x` is used before it is set").
+A write through a reference only reads its variable. A `move` of a place is
+always T0035 ("cannot move a field out of its struct", or "cannot move out of
+a reference"). A `store` to
 a variable without `mut` that may already be set is T0007 ("cannot assign
 twice to immutable `x`"). So `let x: T;` may be set once later even without
 `mut`: check rejects other assignments to a variable without `mut` only when

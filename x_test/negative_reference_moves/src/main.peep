@@ -1,0 +1,19 @@
+// A `&mut` moves when a `let` takes it, so the first variable is unusable; a
+// struct cannot be moved out of what a reference refers to; and a variable
+// must be set before it is borrowed.
+struct Point { x: i32, y: i32 }
+
+fn touch(point: &mut Point) {}
+
+fn take(point: &Point) {
+    let moved = point.*;
+}
+
+fn main() {
+    let mut p = Point.{ x = 1, y = 2 };
+    let first = &mut p;
+    let second = first;
+    touch(first);
+    let unset: Point;
+    let r = &unset;
+}

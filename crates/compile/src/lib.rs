@@ -276,6 +276,10 @@ fn hash_type(checker: &Checker, ty: TypeId, hasher: &mut DefaultHasher) {
                 }
             }
         }
+        Type::Reference { mutable, target } => {
+            mutable.hash(hasher);
+            hash_type(checker, *target, hasher);
+        }
         Type::Invalid | Type::Void | Type::Bool | Type::CString => {}
         Type::Alias { .. } => unreachable!("indexing looks through aliases"),
     }

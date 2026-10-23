@@ -421,6 +421,8 @@ pub enum Expr {
     },
     /// `x.name`
     Selector { value: Id<Expr>, field: Ident },
+    /// `x.*`: the value a reference refers to
+    Dereference(Id<Expr>),
     /// `x[index]`; the index may be a `Range`
     Index { value: Id<Expr>, index: Id<Expr> },
     /// `a..b`, or `a..=b` when `inclusive`, inside `[ ]` or after `in`

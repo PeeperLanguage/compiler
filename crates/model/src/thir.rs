@@ -123,6 +123,16 @@ pub enum ExprKind {
         value: Id<Expr>,
         index: u32,
     },
+    /// What the reference, a place, refers to: `r.*`, and the implicit step
+    /// of `r.x`.
+    Dereference(Id<Expr>),
+    /// `&place` or `&mut place`, and a `&mut` variable passed to a call (lent
+    /// again, not moved); the place is a `Variable`, a `Dereference` or a
+    /// `Field` of a place.
+    Borrow {
+        place: Id<Expr>,
+        mutable: bool,
+    },
     Invalid,
 }
 
@@ -141,8 +151,8 @@ pub enum Stmt {
         variable: Id<Variable>,
         value: Option<Id<Expr>>,
     },
-    /// `target = value`; the target is a place: a `Variable`, or a `Field`
-    /// of a place.
+    /// `target = value`; the target is a place: a `Variable`, a
+    /// `Dereference`, or a `Field` of a place.
     Assign {
         target: Id<Expr>,
         value: Id<Expr>,
@@ -385,6 +395,14 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
             ExprKind::Field { value, index } => {
                 self.write_expr(value);
                 _ = write!(self.out, "[{index}]");
+            }
+            ExprKind::Dereference(reference) => {
+                self.write_expr(reference);
+                self.out.push_str(".*");
+            }
+            ExprKind::Borrow { place, mutable } => {
+                self.out.push_str(if mutable { "&mut " } else { "&" });
+                self.write_expr(place);
             }
             ExprKind::Invalid => self.out.push_str("invalid"),
         }
