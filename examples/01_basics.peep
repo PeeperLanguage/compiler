@@ -20,7 +20,7 @@ fn main() {
     let n: i64 = square(Limit);
     let answer = Message;
     if n > 50 && sign(answer) == 1 {
-        exit(1);
+        Exit(1);
     }
-    exit(0);
+    Exit(0);
 }

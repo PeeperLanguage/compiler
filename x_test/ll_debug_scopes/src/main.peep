@@ -18,7 +18,7 @@ fn scale(a: i32, b: i32) -> i32 {
 }
 
 fn main() -> i32 {
-    write(stdout, c"scaled\n", 7);
+    Write(Stdout, c"scaled\n", 7);
     let x = scale(1, 2);
     if x > 0 {
         {

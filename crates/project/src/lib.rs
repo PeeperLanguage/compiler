@@ -237,7 +237,7 @@ fn entry(source: &Path) -> PathBuf {
 }
 
 /// The entry file a new project starts with.
-const HELLO: &str = "fn main() {\n    write(stdout, c\"Hello from Peeper!\\n\", 19);\n}\n";
+const HELLO: &str = "fn main() {\n    Write(Stdout, c\"Hello from Peeper!\\n\", 19);\n}\n";
 
 /// Makes the folder `dir` the project `name`: writes its peeper.toml, and its
 /// src/main.peep unless that file is there already. Returns whether it wrote
@@ -526,33 +526,9 @@ impl Loaded {
             };
             if !imported_file.is_file() && !open_files.contains_key(&imported_file) {
                 let message = format!("module not found: {}", imported_file.display());
-                // The nearest module in the same folder, on disk or open.
-                let meant = || {
-                    let folder = imported_file.parent()?;
-                    let written_name = imported_file.file_stem()?.to_str()?;
-                    let folder_path = &path[..path.rfind(['/', ':'])? + 1];
-                    let on_disk = std::fs::read_dir(folder).into_iter().flatten().flatten();
-                    let open = open_files
-                        .keys()
-                        .filter(|open| open.parent() == Some(folder));
-                    let mut names: Vec<String> = on_disk
-                        .map(|entry| entry.file_name())
-                        .chain(open.filter_map(|open| open.file_name()).map(OsString::from))
-                        .filter_map(|name| {
-                            let name = name.into_string().ok()?;
-                            Some(name.strip_suffix(SOURCE_EXTENSION)?.to_string())
-                        })
-                        // Not the importing module: importing itself is a cycle.
-                        .filter(|name| format!("{folder_path}{name}") != self.path)
-                        .collect();
-                    names.sort();
-                    names.dedup(); // an open file is on disk too
-                    let candidates = names.iter().map(|name| (name.as_str(), 0));
-                    let nearest = nearest_name(written_name, candidates)?;
-                    Some(format!("{folder_path}{nearest}"))
-                };
                 let diagnostic = error(diagnostics::MODULE_NOT_FOUND, message);
-                self.diagnostics.push(guess(diagnostic, meant()));
+                let meant = nearest_module(&imported_file, &path, &self.path, open_files);
+                self.diagnostics.push(guess(diagnostic, meant));
                 self.imports_complete = false;
                 continue;
             }
@@ -606,6 +582,39 @@ struct Sorter<'a> {
     stack: Vec<&'a str>, // the modules being visited, outermost first
     order: Vec<String>,
     cycles: Vec<Diagnostic>,
+}
+
+/// The import path of the module nearest to the missing `imported_file`,
+/// imported as `path` from the module `importer`: a module in the same
+/// folder, on disk or open in an editor, other than `importer`, which would
+/// import itself.
+fn nearest_module(
+    imported_file: &Path,
+    path: &str,
+    importer: &str,
+    open_files: &HashMap<PathBuf, impl AsRef<str>>,
+) -> Option<String> {
+    let folder = imported_file.parent()?;
+    let written_name = imported_file.file_stem()?.to_str()?;
+    let folder_path = &path[..path.rfind(['/', ':'])? + 1];
+    let on_disk = std::fs::read_dir(folder).into_iter().flatten().flatten();
+    let open = open_files
+        .keys()
+        .filter(|open| open.parent() == Some(folder));
+    let mut names: Vec<String> = on_disk
+        .map(|entry| entry.file_name())
+        .chain(open.filter_map(|open| open.file_name()).map(OsString::from))
+        .filter_map(|name| {
+            let name = name.into_string().ok()?;
+            Some(name.strip_suffix(SOURCE_EXTENSION)?.to_string())
+        })
+        .filter(|name| format!("{folder_path}{name}") != importer)
+        .collect();
+    names.sort();
+    names.dedup(); // an open file is on disk too
+    let candidates = names.iter().map(|name| (name.as_str(), 0));
+    let nearest = nearest_name(written_name, candidates)?;
+    Some(format!("{folder_path}{nearest}"))
 }
 
 fn sort_modules(modules: &HashMap<String, Loaded>) -> (Vec<String>, Vec<Diagnostic>) {
@@ -832,7 +841,7 @@ mod tests {
                 ),
                 ("src/a.peep", "import \"myapp:b/c\";\nfn A() {}"),
                 ("src/b/c.peep", "fn C() {}"),
-                ("libs/core/src/global.peep", "fn exit(code: i32) {}"),
+                ("libs/core/src/global.peep", "fn Exit(code: i32) {}"),
             ],
         );
         let program = load(&project, &HashMap::<PathBuf, String>::new());

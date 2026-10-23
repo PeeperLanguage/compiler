@@ -28,7 +28,8 @@ pub(crate) type Reported = (&'static str, String, String);
 
 /// Runs `work` on a checker of the module `app:main` written as `text`, which
 /// imports `app:utils` as `utils` (an import added after `text`, so the
-/// places in `text` stay as written). Gives what `work` gives, the program's
+/// places in `text` stay as written), which declares `Shown` and the private
+/// `hidden`. Gives what `work` gives, the program's
 /// types and the diagnostics.
 pub(crate) fn with_checker<T>(
     text: &str,
@@ -41,7 +42,7 @@ pub(crate) fn with_checker<T>(
     }];
     let text = format!("{text}\nimport \"app:utils\";\n");
     let modules = [
-        module("app:utils", "", Vec::new()),
+        module("app:utils", "fn Shown() {}\nfn hidden() {}", Vec::new()),
         module("app:main", &text, imports),
     ];
     let file = modules[1].ast.file.clone();

@@ -11,7 +11,7 @@ stderr_contains = [
     "did you mean `bool`?",
     "unknown name `Perimter` in module `shapes`",
     "did you mean `Perimeter`?",
-    "unknown name `exitt`",
-    "did you mean `exit`?",
+    "unknown name `exit`",
+    "did you mean `Exit`?",
     "Compilation failed with 4 error(s)",
 ]

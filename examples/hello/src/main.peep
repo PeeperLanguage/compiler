@@ -5,7 +5,7 @@ import "hello:math";
 const Greeting: cstr = c"hello from peeper\n";
 
 fn say(text: cstr, length: i32) {
-    write(stdout, text, length);
+    Write(Stdout, text, length);
 }
 
 // Both messages are 9 bytes long.
@@ -14,7 +14,7 @@ fn check(ok: bool, pass: cstr, fail: cstr) -> i32 {
         say(pass, 9);
         return 0;
     }
-    write(stderr, fail, 9);
+    Write(Stderr, fail, 9);
     return 1;
 }
 

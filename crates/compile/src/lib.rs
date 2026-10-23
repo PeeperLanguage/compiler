@@ -530,17 +530,17 @@ mod tests {
     #[test]
     fn module_constants_cannot_be_assigned() {
         let found = diagnostics(&[
-            ("core:global", "const stdout: i32 = 1;"),
+            ("core:global", "const Stdout: i32 = 1;"),
             (
                 "app:main",
-                "const Limit: i32 = 1;\nfn main() { Limit = 2; stdout = 3; main = 4; }",
+                "const Limit: i32 = 1;\nfn main() { Limit = 2; Stdout = 3; main = 4; }",
             ),
         ]);
         assert_eq!(
             found,
             expected(&[
                 ("T0018", "cannot assign to constant `Limit`", "Limit"),
-                ("T0018", "cannot assign to constant `stdout`", "stdout"),
+                ("T0018", "cannot assign to constant `Stdout`", "Stdout"),
                 (
                     "T0007",
                     "cannot assign to `main`, which is not a variable",
@@ -550,24 +550,31 @@ mod tests {
         );
     }
 
+    /// The prelude's exported names are in every module's scope; its private
+    /// names are not, unqualified or through an import.
     #[test]
-    fn the_prelude_is_in_scope() {
+    fn the_prelude_exports_only_upper_case_names() {
         let found = diagnostics(&[
             (
                 "core:global",
-                "const stdout: i32 = 1;
-                #[extern(\"peeper_rt_v1_write\")]
-                fn write(fd: i32, buf: cstr, n: i32) -> i32;
+                "const Stdout: i32 = 1;
+                const hidden: i32 = 2;
                 #[extern(\"peeper_rt_v1_exit\")]
-                fn exit(code: i32);",
+                fn Exit(code: i32);",
             ),
             (
                 "app:main",
                 "import \"core:global\";
-                fn main() { exit(stdout); global::exit(global::stdout); let exit = 2; }",
+                fn main() { Exit(Stdout); global::Exit(global::Stdout); let Exit = hidden; global::hidden; }",
             ),
         ]);
-        assert!(found.is_empty(), "{found:?}");
+        assert_eq!(
+            found,
+            expected(&[
+                ("T0002", "unknown name `hidden`", "hidden"),
+                ("M0004", "`hidden` is not exported from `global`", "hidden"),
+            ])
+        );
     }
 
     /// A struct declared in another module, here the prelude, has the field
@@ -577,7 +584,7 @@ mod tests {
         let found = diagnostics(&[
             (
                 "core:global",
-                "const stdout: i32 = 1;\nstruct Pair { first: i32, second: i64 }",
+                "const Stdout: i32 = 1;\nstruct Pair { first: i32, second: i64 }",
             ),
             (
                 "app:main",

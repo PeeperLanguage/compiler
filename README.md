@@ -148,7 +148,7 @@ The generated `src/main.peep`:
 
 ```peeper
 fn main() {
-    write(stdout, c"Hello from Peeper!\n", 19);
+    Write(Stdout, c"Hello from Peeper!\n", 19);
 }
 ```
 

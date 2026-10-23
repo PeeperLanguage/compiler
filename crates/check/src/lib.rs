@@ -235,23 +235,27 @@ impl<'p> Checker<'p> {
     }
 
     /// What `name` stands for at the top level: in the module's scope, else
-    /// in its parent's, and so on out.
+    /// an exported name of the prelude.
     fn global(&self, name: &str) -> Option<Symbol> {
-        self.scope_chain().find_map(|scope| scope.get(name))
+        let in_prelude = || {
+            self.prelude()?
+                .get(name)
+                .filter(|_| scope::is_exported(name))
+        };
+        self.scope().get(name).or_else(in_prelude)
     }
 
-    /// The module's scope, then its parent's, and so on out.
-    pub(crate) fn scope_chain(&self) -> impl Iterator<Item = &Scope> {
-        std::iter::successors(Some(self.scope()), |scope| {
-            Some(&self.scopes[scope.parent?.index()])
-        })
+    /// The names the module uses unqualified, with what each stands for: its
+    /// scope's, then the prelude's exported ones.
+    pub(crate) fn visible_symbols(&self) -> impl Iterator<Item = (&str, Symbol)> {
+        let prelude = self.prelude().into_iter().flat_map(Scope::symbols);
+        let exported = prelude.filter(|&(name, _)| scope::is_exported(name));
+        self.scope().symbols().chain(exported)
     }
 
-    /// Whether this module can use `name` of `module`: a name that starts
-    /// with an upper case letter is exported; the prelude, the scope's
-    /// parent, gives every name, private or not.
-    pub(crate) fn exports(&self, module: ModuleId, name: &str) -> bool {
-        self.scope().parent == Some(module) || name.starts_with(char::is_uppercase)
+    /// The prelude's scope; `None` while checking the prelude itself.
+    fn prelude(&self) -> Option<&Scope> {
+        Some(&self.scopes[self.scope().parent?.index()])
     }
 
     /// Reports the error `message` about the name at `span`, which names

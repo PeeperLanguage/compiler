@@ -2,6 +2,6 @@ const Greeting = c"hello\tworld\n";
 
 fn main() {
     let text: cstr = c"bye\n";
-    write(stdout, Greeting, 12);
-    write(stderr, text, 4);
+    Write(Stdout, Greeting, 12);
+    Write(Stderr, text, 4);
 }

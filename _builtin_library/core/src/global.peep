@@ -1,12 +1,12 @@
-const stdin:  i32 = 0;
-const stdout: i32 = 1;
-const stderr: i32 = 2;
+const Stdin:  i32 = 0;
+const Stdout: i32 = 1;
+const Stderr: i32 = 2;
 
 #[extern("peeper_rt_v1_write")]
-fn write(fd: i32, buf: cstr, n: i32) -> i32;
+fn Write(fd: i32, buf: cstr, n: i32) -> i32;
 
 #[extern("peeper_rt_v1_read")]
-fn read(fd: i32,  buf: cstr, n: i32) -> i32;
+fn Read(fd: i32,  buf: cstr, n: i32) -> i32;
 
 #[extern("peeper_rt_v1_exit")]
-fn exit(code: i32);
+fn Exit(code: i32);

@@ -130,7 +130,7 @@ fn files(folder: &Path) -> HashMap<PathBuf, String> {
         ),
         (
             folder.join("core/global.peep"),
-            "fn exit(code: i32) {}\n".to_string(),
+            "fn Exit(code: i32) {}\n".to_string(),
         ),
     ]);
     for module in 0..MODULES {

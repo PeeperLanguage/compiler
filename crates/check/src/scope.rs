@@ -2,7 +2,7 @@
 //! in. It is collected from the declarations alone, before any body is
 //! checked, so a body can use a name declared below it or in another module.
 //! Names of the prelude (`core:global`) are not copied in; a lookup that
-//! misses here goes on to the prelude module's scope.
+//! misses here goes on to the prelude's exported names.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -19,7 +19,7 @@ use source::Span;
 
 /// A place that holds declarations, and where each name is written. A module
 /// has one for its top-level declarations and imports. A name it does not
-/// hold is looked up next in its parent's.
+/// hold is looked up next among its parent's exported names.
 pub struct Scope {
     /// The module whose scope comes next: the prelude (`core:global`), for
     /// every module but the prelude.
@@ -60,21 +60,24 @@ impl Scope {
     }
 }
 
-/// The name nearest to `name` (`nearest_name`): one of `first`, else one in
-/// `scopes` that `keep` accepts. A name of `first` wins a tie, as a nearer
-/// scope's does. Scope names come in hash order, which cannot change the
-/// answer: two names that tie suggest nothing.
-pub(crate) fn nearest<'s, 'f: 's>(
+/// Whether other modules can use `name`: it starts with an upper case letter.
+pub(crate) fn is_exported(name: &str) -> bool {
+    name.starts_with(char::is_uppercase)
+}
+
+/// The name nearest to `name` (`nearest_name`): one of `first`, else one of
+/// `declared`. A name of `first` wins a tie. Declared names come in hash
+/// order, which cannot change the answer: two names that tie suggest nothing.
+pub(crate) fn nearest<'d, 'f: 'd>(
     name: &str,
     first: impl Iterator<Item = &'f str>,
-    scopes: impl Iterator<Item = &'s Scope>,
-    keep: impl Fn(&str, Symbol) -> bool,
+    declared: impl Iterator<Item = &'d str>,
 ) -> Option<String> {
-    let in_scopes = scopes.flat_map(|scope| scope.symbols());
-    let kept = in_scopes.filter(|&(declared, symbol)| keep(declared, symbol));
+    // `first` may live longer than `declared` (built-in names are
+    // `'static`); each is shortened to `declared`'s lifetime so both chain.
     let candidates = first
-        .map(|declared| -> (&'s str, i32) { (declared, 0) })
-        .chain(kept.map(|(declared, _)| (declared, 1)));
+        .map(|first| -> (&'d str, i32) { (first, 0) })
+        .chain(declared.map(|declared| (declared, 1)));
     nearest_name(name, candidates).map(str::to_string)
 }
 

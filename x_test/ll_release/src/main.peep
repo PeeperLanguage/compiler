@@ -8,7 +8,7 @@ fn twice(a: i32) -> i32 {
 }
 
 fn main() -> i32 {
-    write(stdout, c"twice\n", 6);
+    Write(Stdout, c"twice\n", 6);
     let x = twice(2);
     if x > 3 {
         return 0;

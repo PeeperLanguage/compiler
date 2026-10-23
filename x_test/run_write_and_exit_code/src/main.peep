@@ -3,9 +3,9 @@ import "run_write_and_exit_code:util";
 const Greeting = c"hello\tworld\n";
 
 fn main() -> i32 {
-    write(stdout, Greeting, 12);
+    Write(Stdout, Greeting, 12);
     if util::Half(10) == 5 {
-        write(stdout, c"half is 5\n", 10);
+        Write(Stdout, c"half is 5\n", 10);
     }
     return 7;
 }

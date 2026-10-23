@@ -196,7 +196,8 @@ impl ThirBuilder<'_, '_> {
             return;
         }
         let locals = self.names.iter().map(|&(declared, _)| declared);
-        let meant = scope::nearest(name, locals, self.checker.scope_chain(), |_, _| true);
+        let globals = self.checker.visible_symbols().map(|(declared, _)| declared);
+        let meant = scope::nearest(name, locals, globals);
         let message = format!("unknown name `{name}`");
         self.checker
             .report_unknown(diagnostics::UNDEFINED_NAME, span, message, meant);
@@ -393,12 +394,11 @@ impl ThirBuilder<'_, '_> {
         };
         let members = &self.checker.scopes[imported.index()];
         let Some(symbol) = members.get(member_name) else {
-            let exported = |declared: &str, _| self.checker.exports(imported, declared);
+            let exported = members.symbols().map(|(declared, _)| declared);
             let meant = scope::nearest(
                 member_name,
                 std::iter::empty(),
-                std::iter::once(members),
-                exported,
+                exported.filter(|declared| scope::is_exported(declared)),
             );
             let message = format!("unknown name `{member_name}` in module `{module_name}`");
             self.checker
@@ -406,7 +406,7 @@ impl ThirBuilder<'_, '_> {
             return None;
         };
         self.record(member_span, symbol);
-        if !self.checker.exports(imported, member_name) {
+        if !scope::is_exported(member_name) {
             let file = &tree.file;
             self.checker.report(
                 Diagnostic::new(

@@ -3,7 +3,7 @@ fn divide(left: i32, right: i32) -> i32 {
 }
 
 fn main() {
-    write(stdout, c"before\n", 7);
+    Write(Stdout, c"before\n", 7);
     divide(1, 0);
-    write(stdout, c"after\n", 6);
+    Write(Stdout, c"after\n", 6);
 }

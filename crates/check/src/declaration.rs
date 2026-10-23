@@ -150,9 +150,12 @@ impl Checker<'_> {
                     }
                     None if let Some(what) = unsupported_type(name) => what,
                     None => {
-                        let is_type = |_: &str, symbol| matches!(symbol, Symbol::Type(_));
+                        let symbols = self.visible_symbols();
+                        let types =
+                            symbols.filter(|&(_, symbol)| matches!(symbol, Symbol::Type(_)));
                         let builtin = semantic_types::builtin_names();
-                        let meant = scope::nearest(name, builtin, self.scope_chain(), is_type);
+                        let meant =
+                            scope::nearest(name, builtin, types.map(|(declared, _)| declared));
                         let message = format!("unknown type `{name}`");
                         self.report_unknown(diagnostics::UNDEFINED_NAME, span, message, meant);
                         return TypeId::INVALID;

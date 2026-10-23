@@ -1,7 +1,7 @@
 //! LLVM IR text for a module (docs/ir-design.md): one walk over each
 //! function's MIR, shaped like clang's output at `-O0`, with debug info from
-//! the spans MIR keeps in a debug build. Run-time traps panic through the prelude's `write`
-//! and `exit`.
+//! the spans MIR keeps in a debug build. Run-time traps panic through the prelude's `Write`
+//! and `Exit`.
 
 mod function;
 pub mod link;
@@ -492,10 +492,10 @@ mod tests {
     use model::semantic_types::Types;
 
     /// The LLVM text of the module `app:main` holding `text`, with a prelude
-    /// declaring the runtime's `exit`.
+    /// declaring the runtime's `Exit`.
     fn ll(text: &str) -> String {
         let folder = PathBuf::from("/peeper-llvm-test");
-        let prelude = "#[extern(\"peeper_rt_v1_exit\")]\nfn exit(code: i32);\n";
+        let prelude = "#[extern(\"peeper_rt_v1_exit\")]\nfn Exit(code: i32);\n";
         let project = project::Project {
             packages: HashMap::from([
                 ("app".to_string(), folder.join("src")),
@@ -553,7 +553,7 @@ mod tests {
     /// its `#[extern]` name.
     #[test]
     fn strings_and_extern_calls() {
-        let text = ll("fn f(a: u8, b: f32) { let s = c\"hi\\n\"; exit(3); }");
+        let text = ll("fn f(a: u8, b: f32) { let s = c\"hi\\n\"; Exit(3); }");
         for line in [
             "@.str.0 = private unnamed_addr constant [4 x i8] c\"hi\\0A\\00\"",
             "store ptr @.str.0, ptr %v2",

@@ -839,6 +839,21 @@ mod tests {
         );
     }
 
+    /// A name of another module is guessed only among those it exports.
+    #[test]
+    fn unknown_members_get_exported_suggestions() {
+        assert_eq!(
+            notes("fn f() { utils::Shwn(); utils::hiddn(); }"),
+            [
+                (
+                    "unknown name `Shwn` in module `utils`".to_string(),
+                    Some("did you mean `Shown`?".to_string())
+                ),
+                ("unknown name `hiddn` in module `utils`".to_string(), None),
+            ]
+        );
+    }
+
     #[test]
     fn unknown_names_get_suggestions() {
         assert_eq!(

@@ -18,12 +18,12 @@ type Place = Point;
 struct Empty {}
 
 fn first() -> i32 {
-    write(stdout, c"first\n", 6);
+    Write(Stdout, c"first\n", 6);
     return 1;
 }
 
 fn second() -> i64 {
-    write(stdout, c"second\n", 7);
+    Write(Stdout, c"second\n", 7);
     return 2;
 }
 
