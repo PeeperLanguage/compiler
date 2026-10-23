@@ -1,0 +1,10 @@
+name = "negative_struct_constant"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "the value of a constant must be known at compile time",
+    "Compilation failed with 2 error(s)",
+]

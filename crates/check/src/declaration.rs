@@ -10,13 +10,14 @@ use model::semantic_types;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::thir::Body;
+use model::thir::Symbol;
+use source::Span;
 
 use crate::Checker;
 use crate::builtin::unsupported_type;
 use crate::scope;
 use crate::scope::report_redeclared;
 use crate::statement::ThirBuilder;
-use model::thir::Symbol;
 
 impl Checker<'_> {
     /// The type the module's type declaration or alias `definition` declares:
@@ -148,8 +149,20 @@ impl Checker<'_> {
         resolved
     }
 
-    /// The type a type expression of the module's tree stands for.
-    pub(crate) fn resolve_type(&mut self, ty: Id<ast::Type>) -> TypeId {
+    /// `&target`, or `&mut target` when `mutable`, written or borrowed at
+    /// `span`: invalid when `target` is, reported when it is a reference.
+    pub(crate) fn reference_type(&mut self, mutable: bool, target: TypeId, span: Span) -> TypeId {
+        match self.types[target] {
+            Type::Invalid => TypeId::INVALID,
+            Type::Reference { .. } => self.not_supported(span, "references to references"),
+            _ => self.types.intern(Type::Reference { mutable, target }),
+        }
+    }
+
+    /// The type a type expression of the module's tree stands for. A named
+    /// type stays a name (`Type::Named`); a value's type is
+    /// `resolve_value_type`.
+    fn resolve_type(&mut self, ty: Id<ast::Type>) -> TypeId {
         let tree = &self.module().ast;
         let span = tree.types.span(ty);
         let what = match tree.types[ty] {
@@ -188,11 +201,7 @@ impl Checker<'_> {
             ast::Type::Generic { .. } => "generic types",
             ast::Type::Reference { mutable, target } => {
                 let target = self.resolve_value_type(target);
-                return match self.types[target] {
-                    Type::Invalid => TypeId::INVALID,
-                    Type::Reference { .. } => self.not_supported(span, "references to references"),
-                    _ => self.types.intern(Type::Reference { mutable, target }),
-                };
+                return self.reference_type(mutable, target, span);
             }
             ast::Type::OwnedPointer(_) => "owned pointer types",
             ast::Type::Optional(_) => "optional types",

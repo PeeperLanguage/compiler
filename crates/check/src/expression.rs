@@ -373,11 +373,8 @@ impl ThirBuilder<'_, '_> {
     /// variable, reported at `span`. `&mut` needs a place that can be written.
     fn check_borrow(&mut self, mutable: bool, place: Id<Expr>, span: Span) -> Expr {
         let target = self.body.exprs[place].ty;
-        if target == TypeId::INVALID {
-            return Expr::INVALID;
-        }
-        if let Type::Reference { .. } = self.checker.types[target] {
-            self.checker.not_supported(span, "references to references");
+        let ty = self.checker.reference_type(mutable, target, span);
+        if ty == TypeId::INVALID {
             return Expr::INVALID;
         }
         let Some((variable, reference)) = self.place_root(place) else {
@@ -389,10 +386,7 @@ impl ThirBuilder<'_, '_> {
             self.report_unwritable(place, variable, reference, "mutably borrow");
         }
         Expr {
-            ty: self
-                .checker
-                .types
-                .intern(Type::Reference { mutable, target }),
+            ty,
             kind: ExprKind::Borrow { place, mutable },
         }
     }
@@ -777,7 +771,7 @@ impl ThirBuilder<'_, '_> {
         }
         let ty = self.checker.types[checked.ty].clone();
         let accepted = match op {
-            UnaryOp::Negate => matches!(ty, Type::Integer(_) | Type::Float(_)),
+            UnaryOp::Negate => ty.is_number(),
             UnaryOp::LogicalNot => ty == Type::Bool,
             UnaryOp::BitNot => matches!(ty, Type::Integer(_)),
         };
@@ -865,14 +859,14 @@ impl ThirBuilder<'_, '_> {
             | BinaryOp::LessThan
             | BinaryOp::LessOrEqual
             | BinaryOp::GreaterThan
-            | BinaryOp::GreaterOrEqual => matches!(left_type, Type::Integer(_) | Type::Float(_)),
+            | BinaryOp::GreaterOrEqual => left_type.is_number(),
             BinaryOp::ShiftLeft
             | BinaryOp::ShiftRight
             | BinaryOp::BitAnd
             | BinaryOp::BitOr
             | BinaryOp::BitXor => matches!(left_type, Type::Integer(_)),
             BinaryOp::EqualTo | BinaryOp::NotEqualTo => {
-                matches!(left_type, Type::Integer(_) | Type::Float(_) | Type::Bool)
+                left_type.is_number() || left_type == Type::Bool
             }
             BinaryOp::LogicalAnd | BinaryOp::LogicalOr => left_type == Type::Bool,
         };

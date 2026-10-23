@@ -22,10 +22,9 @@ use model::constant::Constant;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
+use model::thir::Symbol;
 use scope::Scope;
 use source::Span;
-
-use model::thir::Symbol;
 
 /// Checks a program's declarations. Each module-scope declaration (`DefId`)
 /// is checked once, the first time anything asks for it, and its result is

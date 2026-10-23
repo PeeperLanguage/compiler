@@ -15,15 +15,15 @@ use model::thir::Block;
 use model::thir::Body;
 use model::thir::Expr;
 use model::thir::ExprKind;
+use model::thir::Local;
 use model::thir::Name;
 use model::thir::Stmt;
+use model::thir::Symbol;
 use model::thir::Variable;
 use source::Span;
 
 use crate::Checker;
 use crate::scope::report_redeclared;
-use model::thir::Local;
-use model::thir::Symbol;
 
 /// Building the THIR of one piece of code: a function's body, or a
 /// constant's value. It checks the code as it builds it.
@@ -381,7 +381,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         else {
             unreachable!("`{declaration:?}` is a const declaration")
         };
-        let declared = ty.map(|ty| self.checker.resolve_type(ty));
+        let declared = ty.map(|ty| self.checker.resolve_value_type(ty));
         let Some(value) = value else {
             let text = name.text(&self.checker.module().ast.file);
             let message = format!("constant `{text}` needs a value");

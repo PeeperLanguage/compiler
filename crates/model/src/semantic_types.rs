@@ -120,6 +120,11 @@ impl Type {
         }
     }
 
+    /// Whether the type is a number: an integer or a float.
+    pub fn is_number(&self) -> bool {
+        matches!(self, Type::Integer(_) | Type::Float(_))
+    }
+
     /// Whether every value of this type is also a value of `target`, so a value
     /// converts without `as`: to a wider integer of the same signedness, from
     /// unsigned to a wider signed integer, and from `f32` to `f64`. A type does

@@ -1,0 +1,10 @@
+struct Point { x: i32, y: i32 }
+
+// A struct value is not folded, so a constant cannot hold one yet; the
+// declared type must still be the struct's, so no type mismatch is reported.
+const Origin: Point = Point.{ x = 0, y = 0 };
+
+fn main() -> i32 {
+    const corner: Point = Point.{ x = 1, y = 1 };
+    return 0;
+}
