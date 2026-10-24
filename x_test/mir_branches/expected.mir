@@ -12,9 +12,13 @@ fn pick:
     %5 = LessThan %4, 0: bool
     branch %5 (a < 0) bb4 bb5
   bb3:
-    %7 = load late.1: i32
-    return %7
+    %9 = load late.1: i32
+    scope end a.0
+    scope end late.1
+    return %9
   bb4:
+    scope end a.0
+    scope end late.1
     return 2
   bb5:
     store late.1, 3
@@ -24,6 +28,8 @@ fn pick:
   bb7:
     goto bb6
   bb8:
+    scope end a.0
+    scope end late.1
     fall off at `}`
 fn quiet:
   bb0:
@@ -31,8 +37,10 @@ fn quiet:
     %1 = load flag.0: bool
     branch %1 (flag) bb1 bb2
   bb1:
+    scope end flag.0
     return
   bb2:
+    scope end flag.0
     fall off at `}`
   bb3:
     goto bb2

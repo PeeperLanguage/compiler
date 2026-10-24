@@ -38,10 +38,10 @@ bb1:
   ret i32 %i14, !dbg !29
 bb2:
   store i32 3, ptr %v5, !dbg !30
-  %i16 = load i32, ptr %v5, !dbg !31
-  %i17 = load i32, ptr %v2, !dbg !32
-  %i18 = add i32 %i16, %i17, !dbg !31
-  ret i32 %i18, !dbg !33
+  %i24 = load i32, ptr %v5, !dbg !31
+  %i25 = load i32, ptr %v2, !dbg !32
+  %i26 = add i32 %i24, %i25, !dbg !31
+  ret i32 %i26, !dbg !33
 bb3:
   br label %bb2
 bb4:

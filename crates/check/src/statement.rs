@@ -24,6 +24,7 @@ use source::Span;
 
 use crate::Checker;
 use crate::expression::TypeExpectation;
+use crate::expression::unsuffixed_literal;
 use crate::scope::report_redeclared;
 
 /// Building the THIR of one piece of code: a function's body, or a
@@ -44,6 +45,7 @@ pub(crate) struct ThirBuilder<'a, 'p> {
     /// The current block, for the variables it declares.
     block: Id<Block>,
     result: TypeId, // the function's result type
+    loops: u32,     // how many loops the code being checked is in
 }
 
 impl Checker<'_> {
@@ -124,6 +126,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             block_start: 0,
             block: Id::from_index(0), // the function's, added first (`Checker::check_body`)
             result,
+            loops: 0,
         }
     }
 
@@ -141,22 +144,34 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
     /// The THIR of `block`; the names it declares end with it. It is added
     /// before the blocks inside it.
     fn check_block(&mut self, block: Id<ast::Block>) -> Id<Block> {
-        let checked = Block {
+        let enclosing = self.open_block(block);
+        self.close_block(block, enclosing)
+    }
+
+    /// Makes `block` the current block, for names declared before its
+    /// statements; gives the enclosing block and where its names start, for
+    /// `close_block`.
+    fn open_block(&mut self, block: Id<ast::Block>) -> (Id<Block>, usize) {
+        let opened = Block {
             parent: Some(self.block),
             statements: List::EMPTY,
         };
-        let checked = self
+        let opened = self
             .body
-            .add(checked, self.checker.module().ast.blocks.span(block));
-        let names_before = self.names.len();
-        let enclosing_start = std::mem::replace(&mut self.block_start, names_before);
-        let enclosing = std::mem::replace(&mut self.block, checked);
+            .add(opened, self.checker.module().ast.blocks.span(block));
+        let start = std::mem::replace(&mut self.block_start, self.names.len());
+        (std::mem::replace(&mut self.block, opened), start)
+    }
+
+    /// Checks the statements of `block`, opened by `open_block`, and makes
+    /// `enclosing` the current block again.
+    fn close_block(&mut self, block: Id<ast::Block>, enclosing: (Id<Block>, usize)) -> Id<Block> {
         let statements = self.check_statements(self.checker.module().ast.blocks[block].statements);
-        self.names.truncate(names_before);
-        self.block_start = enclosing_start;
-        self.block = enclosing;
-        self.body.blocks[checked].statements = statements;
-        checked
+        let closed = self.block;
+        self.names.truncate(self.block_start);
+        (self.block, self.block_start) = enclosing;
+        self.body.blocks[closed].statements = statements;
+        closed
     }
 
     /// Declares `name` in the current block. It may
@@ -280,14 +295,36 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 }
                 return None;
             }
-            ast::Stmt::Loop { .. } | ast::Stmt::ForIn { .. } => {
-                self.checker.not_supported(span, "loops");
+            ast::Stmt::Loop { condition, body } => {
+                let condition = condition.map(|condition| {
+                    self.add_expr(condition, TypeExpectation::Required(TypeId::BOOL))
+                });
+                self.loops += 1;
+                let body = body.map(|body| self.check_block(body));
+                self.loops -= 1;
+                Stmt::Loop {
+                    condition,
+                    body: body?, // missing after a syntax error
+                }
+            }
+            ast::Stmt::ForIn {
+                index,
+                value,
+                iterable,
+                body,
+            } => self.check_for_in(index, value, iterable, body?)?,
+            ast::Stmt::Break | ast::Stmt::Continue if self.loops == 0 => {
+                let jump = match tree.stmts[statement] {
+                    ast::Stmt::Break => "break",
+                    _ => "continue",
+                };
+                let message = format!("`{jump}` outside a loop");
+                self.checker
+                    .error(diagnostics::INVALID_STATEMENT, message, span);
                 return None;
             }
-            ast::Stmt::Break | ast::Stmt::Continue => {
-                self.checker.not_supported(span, "`break` and `continue`");
-                return None;
-            }
+            ast::Stmt::Break => Stmt::Break,
+            ast::Stmt::Continue => Stmt::Continue,
             ast::Stmt::Match { .. } => {
                 self.checker.not_supported(span, "`match` statements");
                 return None;
@@ -375,6 +412,76 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         let variable = self.body.add(variable, name.span);
         self.declare(name, Local::Variable(variable));
         Stmt::Let { variable, value }
+    }
+
+    /// `for value in start..end { body }`. A literal endpoint without a
+    /// suffix takes the other endpoint's type, which must be an integer.
+    /// Over other values, with `..=` or with an index, it is reported as not
+    /// supported yet.
+    fn check_for_in(
+        &mut self,
+        index: Option<Ident>,
+        value: Ident,
+        iterable: Id<ast::Expr>,
+        body: Id<ast::Block>,
+    ) -> Option<Stmt> {
+        let tree = &self.checker.module().ast;
+        let ast::Expr::Range {
+            inclusive: false,
+            start: Some(start),
+            end: Some(end),
+        } = tree.exprs[iterable]
+        else {
+            let what = match tree.exprs[iterable] {
+                ast::Expr::Range {
+                    inclusive: true, ..
+                } => "`for` over `..=` ranges",
+                ast::Expr::Range { .. } => "`for` over ranges without both ends",
+                _ => "`for` over values other than ranges",
+            };
+            self.checker.not_supported(tree.exprs.span(iterable), what);
+            return None;
+        };
+        if let Some(index) = index {
+            self.checker
+                .not_supported(index.span, "indexes in a range `for`");
+            return None;
+        }
+        let (start, end) = if unsuffixed_literal(tree, start).is_some() {
+            let end = self.add_expr(end, TypeExpectation::Hint(None));
+            let ty = self.body.exprs[end].ty;
+            (self.add_expr(start, TypeExpectation::Required(ty)), end)
+        } else {
+            let start = self.add_expr(start, TypeExpectation::Hint(None));
+            let ty = self.body.exprs[start].ty;
+            (start, self.add_expr(end, TypeExpectation::Required(ty)))
+        };
+        let ty = self.body.exprs[start].ty;
+        if ty != TypeId::INVALID && !matches!(self.checker.types[ty], Type::Integer(_)) {
+            let found = self.checker.type_text(ty);
+            let message = format!("a `for` range must be of integers, found `{found}`");
+            let span = self.checker.module().ast.exprs.span(iterable);
+            self.checker
+                .error(diagnostics::INVALID_OPERATION, message, span);
+        }
+        let enclosing = self.open_block(body);
+        let variable = Variable {
+            ty,
+            mutable: false,
+            initialized: true,
+            scope: self.block,
+        };
+        let variable = self.body.add(variable, value.span);
+        self.declare(value, Local::Variable(variable));
+        self.loops += 1;
+        let body = self.close_block(body, enclosing);
+        self.loops -= 1;
+        Some(Stmt::ForRange {
+            value: variable,
+            start,
+            end,
+            body,
+        })
     }
 
     /// `const name: ty = value;`: a name for a value known at compile time.
@@ -605,6 +712,33 @@ mod tests {
         );
     }
 
+    /// A range's literal start takes the end's type; its variable is
+    /// declared in the body.
+    #[test]
+    fn loops() {
+        let (bodies, reported) = bodies(
+            "fn f(n: i64) {
+                for { break; }
+                for n > 0 { continue; }
+                for i in 0..n { let j = i; }
+            }",
+        );
+        assert!(reported.is_empty(), "{reported:?}");
+        assert_eq!(
+            bodies,
+            ["    for {
+        break
+    }
+    for (n.0 GreaterThan 0:i64) {
+        continue
+    }
+    for i.1 in 0:i64..n.0 {
+        let j.2 = i.1
+    }
+"]
+        );
+    }
+
     #[test]
     fn names_shadow_until_their_block_ends() {
         let (bodies, reported) = bodies(
@@ -720,7 +854,7 @@ mod tests {
                 let n;
                 if 1 {}
                 let s = \"a\";
-                for {}
+                break;
                 let q = 5f16;
                 let r: f64 = 0xff;
                 let t = -true;
@@ -781,7 +915,7 @@ mod tests {
                 "1",
             ),
             ("T0043", "string literals are not supported yet", "\"a\""),
-            ("T0043", "loops are not supported yet", "for {}"),
+            ("P0004", "`break` outside a loop", "break;"),
             ("S0007", "unsupported numeric literal suffix `f16`", "5f16"),
             (
                 "T0001",

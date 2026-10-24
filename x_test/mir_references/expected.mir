@@ -4,11 +4,13 @@ fn shift:
     %1 = load point.0.*[1]: i32
     %2 = Add %1, 1: i32
     store point.0.*[0], %2
+    scope end point.0
     fall off at `}`
 fn set:
   bb0:
     store n.0, arg0
     store n.0.*, 3
+    scope end n.0
     fall off at `}`
 fn main:
   bb0:
@@ -28,8 +30,14 @@ fn main:
     %13 = load shared.3.*: i32
     %14 = load n.2: i32
     %15 = Add %13, %14: i32
+    scope end p.0
+    scope end r.1
+    scope end n.2
+    scope end shared.3
     return %15
   bb1:
     scope end p.0
+    scope end r.1
     scope end n.2
+    scope end shared.3
     fall off at `}`

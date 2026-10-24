@@ -152,9 +152,10 @@ pub enum InstructionKind {
     /// The value from whichever listed block control came from; first in its
     /// block. `&&` and `||` give their result this way.
     Phi(Box<[(Id<Block>, Operand)]>),
-    /// The variable's block ends here, so its storage is gone: written only
-    /// for a variable borrowed in the function, which no reference may
-    /// still use (`flow::loans::report_loan_errors`). Writes no code.
+    /// The variable's block ends here, or a `break`, `continue` or `return`
+    /// leaves it, so its storage is gone: no reference may still use it
+    /// (`flow::loans::report_loan_errors`), and a loop's next pass may set
+    /// it again (`flow::report_variable_state_errors`). Writes no code.
     ScopeEnd(Id<Variable>),
 }
 

@@ -318,6 +318,7 @@ name = "lower"
 version = "0.1.0"
 dependencies = [
  "arena",
+ "bigint",
  "model",
  "source",
 ]

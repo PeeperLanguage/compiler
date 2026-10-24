@@ -1183,7 +1183,7 @@ fn takes_type(literal: &literal::numeric::Literal, ty: &Type) -> bool {
 }
 
 /// The text of `expression` if it is a number literal without a suffix.
-fn unsuffixed_literal(tree: &ast::Tree, expression: Id<ast::Expr>) -> Option<&str> {
+pub(crate) fn unsuffixed_literal(tree: &ast::Tree, expression: Id<ast::Expr>) -> Option<&str> {
     let text = tree.file.slice(tree.exprs.span(expression));
     let number = matches!(tree.exprs[expression], ast::Expr::Number);
     (number && literal::numeric::split(text).suffix.is_empty()).then_some(text)

@@ -1,0 +1,18 @@
+name = "negative_loops"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "`break` outside a loop",
+    "`continue` outside a loop",
+    "a `for` range must be of integers, found `f64`",
+    "`for` over `..=` ranges are not supported yet",
+    "cannot assign twice to immutable `x`",
+    "`p` is used after it was moved",
+    "`v` is gone while a reference to it is still in use",
+    "not all control paths return a value",
+    "W0001",
+    "Compilation failed with 9 error(s) and 1 warning(s)",
+]

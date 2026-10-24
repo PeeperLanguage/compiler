@@ -192,6 +192,25 @@ pub enum Stmt {
         otherwise: Option<Id<Stmt>>,
     },
     Block(Id<Block>),
+    /// `for { }`, or `for condition { }`, which ends when the condition is
+    /// false before a pass.
+    Loop {
+        condition: Option<Id<Expr>>,
+        body: Id<Block>,
+    },
+    /// `for value in start..end { }`: `value`, declared in `body`, is each
+    /// integer from `start` up to `end`, without `end`. Both are computed
+    /// once, before the first pass.
+    ForRange {
+        value: Id<Variable>,
+        start: Id<Expr>,
+        end: Id<Expr>,
+        body: Id<Block>,
+    },
+    /// Leaves the innermost loop.
+    Break,
+    /// Starts the innermost loop's next pass.
+    Continue,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -322,6 +341,31 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
                 }
             }
             Stmt::Block(block) => self.write_block(self.body.blocks[block].statements, depth),
+            Stmt::Loop { condition, body } => {
+                self.out.push_str("for ");
+                if let Some(condition) = condition {
+                    self.write_expr(condition);
+                    self.out.push(' ');
+                }
+                self.write_block(self.body.blocks[body].statements, depth);
+            }
+            Stmt::ForRange {
+                value,
+                start,
+                end,
+                body,
+            } => {
+                self.out.push_str("for ");
+                self.write_variable(value);
+                self.out.push_str(" in ");
+                self.write_expr(start);
+                self.out.push_str("..");
+                self.write_expr(end);
+                self.out.push(' ');
+                self.write_block(self.body.blocks[body].statements, depth);
+            }
+            Stmt::Break => self.out.push_str("break"),
+            Stmt::Continue => self.out.push_str("continue"),
         }
     }
 

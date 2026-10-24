@@ -96,7 +96,8 @@ pub fn report_missing_return<'n>(
     }
     // (where, label) of each path that arrives at the end.
     let mut causes = Vec::new();
-    if body.blocks[end].instructions.is_empty() {
+    let mut end_code = body.lists.items(body.blocks[end].instructions);
+    if !end_code.any(|id| body.instructions[id].kind.runs()) {
         let predecessors = predecessors(body);
         // Back from the end through blocks that do nothing: the first thing
         // met on each path is how that path gets there. A branch is met once
@@ -356,7 +357,8 @@ impl Facts {
     }
 
     /// The facts after `kind` runs: a `store` to a whole variable sets it, a
-    /// `move` of one unsets it.
+    /// `move` of one unsets it, and the end of its scope forgets it, so a
+    /// loop's next pass declares it anew.
     fn step(&mut self, kind: &mir::InstructionKind) {
         match *kind {
             mir::InstructionKind::Store { ref place, .. }
@@ -371,6 +373,11 @@ impl Facts {
             {
                 self.always.clear(variable);
                 self.moved.set(variable);
+            }
+            mir::InstructionKind::ScopeEnd(variable) => {
+                self.always.clear(variable);
+                self.maybe.clear(variable);
+                self.moved.clear(variable);
             }
             _ => {}
         }

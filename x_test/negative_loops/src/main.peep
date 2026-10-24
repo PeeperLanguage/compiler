@@ -1,0 +1,56 @@
+// Loop errors: a jump outside a loop, ranges the checker rejects, and the
+// path checks across passes: one error per function.
+struct Point { x: i32, y: i32 }
+
+fn take(p: Point) {}
+
+fn read(n: &i32) -> i32 { return n.*; }
+
+fn BreakOutside() { break; }
+
+fn ContinueOutside() { continue; }
+
+fn FloatRange() { for f in 0.5..2.0 {} }
+
+fn InclusiveRange() { for i in 0..=3 {} }
+
+fn SetTwice() {
+    let x: i32;
+    for { x = 1; }
+}
+
+fn MovedInEarlierPass(count: i32) {
+    let p = Point.{ x = 1, y = 2 };
+    for count > 0 { take(p); }
+}
+
+fn ReferenceOutlivesPass() -> i32 {
+    let outer = 0;
+    let mut r = &outer;
+    for i in 0..3 {
+        let total = read(r);
+        let v = i;
+        r = &v;
+    }
+    return 0;
+}
+
+fn ReferenceOutlivesBreak() -> i32 {
+    let outer = 0;
+    let mut r = &outer;
+    for {
+        let v = 1;
+        r = &v;
+        break;
+    }
+    return read(r);
+}
+
+fn MissingReturn(n: i32) -> i32 {
+    for n > 0 { return 1; }
+}
+
+fn main() {
+    for {}
+    let after = 1;
+}

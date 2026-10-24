@@ -408,9 +408,10 @@ stays borrowed while the new reference is in use. A shared loan forbids
 changing, moving, ending and `&mut` borrowing its place; a `&mut` loan
 forbids every access; places overlap when one's steps start with the
 other's, so other fields stay free. Lowering writes a `scope end` at a
-block's `}` for each variable of that block borrowed not through a
-reference; it writes no code (`InstructionKind::runs`) and is how a
-reference that outlives its variable is caught. Changing a variable, or its
+block's `}`, and at a `break`, `continue` or `return` that leaves the block,
+for each variable of that block; it writes no code (`InstructionKind::runs`) and is how a reference
+that outlives its variable is caught. The variable state check forgets a
+variable at its `scope end`, so a loop's next pass may set it again. Changing a variable, or its
 scope ending, does not touch a loan reached through the reference stored
 in it: `r = &mut b` while `s = &mut r.*` is in use is valid (owner,
 2026-10-24). The message names the variable: "`x` is changed while a

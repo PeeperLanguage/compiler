@@ -1,0 +1,81 @@
+// Each loop form, with `break` and `continue`. The comments give each
+// count; they add up to 42.
+struct Point { x: i32, y: i32 }
+
+fn take(p: Point) -> i32 { return p.x + p.y; }
+
+fn bump(calls: &mut i32) -> i32 {
+    calls.* = calls.* + 1;
+    return 3;
+}
+
+// A `for {}` without `break` never ends, so no `return` follows it.
+fn third() -> i32 {
+    let mut x = 0;
+    for {
+        x = x + 1;
+        if x == 3 { return x; }
+    }
+}
+
+fn first_even(limit: i32) -> i32 {
+    for v in 1..limit {
+        if v % 2 == 0 { return v; }
+    }
+    return -1;
+}
+
+fn main() -> i32 {
+    // Pairs `j < i` with `j` not 1, for `i` below 4: 4.
+    let mut pairs = 0;
+    for i in 0..10 {
+        if i == 4 { break; }
+        for j in 0..i {
+            if j == 1 { continue; }
+            pairs = pairs + 1;
+        }
+    }
+    for e in 5..2 { pairs = 100; } // runs no pass
+
+    // A variable declared without a value is set once in each pass: 20.
+    let mut n = 0;
+    let mut steps = 0;
+    for n < 5 {
+        let doubled: i32;
+        doubled = n * 2;
+        steps = steps + doubled;
+        n = n + 1;
+    }
+
+    // A struct made and moved in each pass: 3.
+    let mut total = 0;
+    for {
+        let p = Point.{ x = total, y = 1 };
+        total = take(p);
+        if total == 3 { break; }
+    }
+
+    // The literal start takes the end's type: 3.
+    let limit: i64 = 3;
+    let mut wide: i64 = 0;
+    for k in 0..limit { wide = wide + k; }
+
+    // The end is computed once: 1 call, 3 passes.
+    let mut calls = 0;
+    let mut passes = 0;
+    for m in 0..bump(&mut calls) { passes = passes + 1; }
+
+    // An end that checks for division by zero first: 3 passes, adding 0.
+    let divisor = calls;
+    for d in 0..passes / divisor { passes = passes + 0; }
+
+    // A reference to the counter, made in each pass: 3.
+    let mut sum = 0;
+    for q in 0..3 {
+        let r = &q;
+        sum = sum + r.*;
+    }
+
+    // 4 + 20 + 3 + 3 + 1 + 3 + 3 + 2 + 3
+    return pairs + steps + total + wide as i32 + calls + passes + sum + first_even(10) + third();
+}

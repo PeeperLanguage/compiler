@@ -15,12 +15,21 @@ fn add:
     %12 = load wide.3: i64
     call note(%12)
     %14 = load sum.2: i32
+    scope end a.0
+    scope end b.1
+    scope end sum.2
+    scope end wide.3
     return %14
   bb1:
+    scope end a.0
+    scope end b.1
+    scope end sum.2
+    scope end wide.3
     fall off at `}`
 fn note:
   bb0:
     store value.0, arg0
+    scope end value.0
     fall off at `}`
 fn main:
   bb0:
