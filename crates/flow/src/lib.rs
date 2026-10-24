@@ -607,6 +607,11 @@ fn moved_use(
     for &moved in moves {
         error = error.label(file, moved, format!("`{name}` is moved here"));
     }
+    // Code runs in the order written except where a loop goes back, so a
+    // move written at or after the use reaches it from an earlier pass.
+    if moves.iter().any(|moved| moved.start >= span.start) {
+        error = error.note("it was moved in an earlier pass of the loop");
+    }
     error
         .note("a value moves when used by value, unless its type copies")
         .help(

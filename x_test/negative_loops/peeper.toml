@@ -14,6 +14,7 @@ stderr_contains = [
     "`a` is gone while a reference to it is still in use",
     "`b` is gone while a reference to it is still in use",
     "not all control paths return a value",
+    "it was moved in an earlier pass of the loop",
     "W0001",
     "Compilation failed with 11 error(s) and 1 warning(s)",
 ]
