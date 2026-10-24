@@ -8,6 +8,22 @@ fn first(point: &Point) -> &i32 {
     return &point.x;
 }
 
+fn plus(count: &i32) -> i32 {
+    let negated = -count;
+    return count + 1;
+}
+
+fn take(value: i32) -> i32 {
+    return value;
+}
+
+fn reads(count: &i32) -> i32 {
+    let wide: i64 = count;
+    let sum = 1 + count;
+    let called = take(count);
+    return count;
+}
+
 fn make() -> Point {
     return Point.{ x = 1, y = 2 };
 }
@@ -25,4 +41,6 @@ fn main() {
     let later: i32;
     later = 1;
     let set_later = &mut later;
+    let sum = &n + 1;
+    let shifted = &p + 1;
 }

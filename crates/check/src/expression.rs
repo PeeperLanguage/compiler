@@ -7,6 +7,7 @@ use arena::Id;
 use arena::List;
 use bigint::Limbs;
 use diagnostics::Diagnostic;
+use diagnostics::fix::Fix;
 use diagnostics::suggest::nearest_name;
 use model::ast;
 use model::ast::Ident;
@@ -49,24 +50,30 @@ impl ThirBuilder<'_, '_> {
     /// `expression` as a value of the type `ty`, not yet added to the body;
     /// a mismatch is reported.
     pub(crate) fn check_expr_as(&mut self, expression: Id<ast::Expr>, ty: TypeId) -> Expr {
-        let span = self.checker.module().ast.exprs.span(expression);
         let checked = self.check_expr(expression, Some(ty));
-        self.coerce(checked, span, ty).unwrap_or_else(|mismatch| {
-            self.checker.report(mismatch);
-            Expr::INVALID
-        })
+        self.coerce(checked, expression, ty)
+            .unwrap_or_else(|mismatch| {
+                self.checker.report(mismatch);
+                Expr::INVALID
+            })
     }
 
-    /// `expr`, written at `span`, as a value of the type `to`: unchanged when
-    /// it has that type, widened when its type widens to it
-    /// (`Type::widens_to`), else the mismatch to report. An error already
-    /// reported on either side gives an invalid expression and nothing to
-    /// report.
-    fn coerce(&mut self, expr: Expr, span: Span, to: TypeId) -> Result<Expr, Diagnostic> {
+    /// `expr`, checked from `expression`, as a value of the type `to`:
+    /// unchanged when it has that type, widened when its type widens to it
+    /// (`Type::widens_to`), else the mismatch to report, with help to read
+    /// a reference to such a value. An error already reported on either side
+    /// gives an invalid expression and nothing to report.
+    fn coerce(
+        &mut self,
+        expr: Expr,
+        expression: Id<ast::Expr>,
+        to: TypeId,
+    ) -> Result<Expr, Diagnostic> {
         if expr.ty == TypeId::INVALID || to == TypeId::INVALID {
             return Ok(Expr::INVALID);
         }
         let checker = &self.checker;
+        let span = checker.module().ast.exprs.span(expression);
         // An alias is its type under another name.
         if checker.types.same(expr.ty, to) {
             return Ok(expr);
@@ -74,11 +81,20 @@ impl ThirBuilder<'_, '_> {
         let (from_type, to_type) = (checker.types[expr.ty].clone(), checker.types[to].clone());
         if !from_type.widens_to(&to_type) {
             let (expected, found) = (checker.type_text(to), checker.type_text(expr.ty));
-            return Err(Diagnostic::new(
+            let mismatch = Diagnostic::new(
                 diagnostics::TYPE_MISMATCH,
                 format!("mismatched types: expected `{expected}`, found `{found}`"),
             )
-            .label(&self.checker.module().ast.file, span, ""));
+            .label(&checker.module().ast.file, span, "");
+            return Err(match from_type {
+                Type::Reference { target, .. }
+                    if checker.types.same(target, to)
+                        || checker.types[target].widens_to(&to_type) =>
+                {
+                    self.help_read_value(mismatch, expression)
+                }
+                _ => mismatch,
+            });
         }
         let kind = match expr.kind {
             ExprKind::Constant(constant) => {
@@ -770,13 +786,13 @@ impl ThirBuilder<'_, '_> {
             return Expr::INVALID;
         }
         let ty = self.checker.types[checked.ty].clone();
-        let accepted = match op {
+        let fits = |ty: &Type| match op {
             UnaryOp::Negate => ty.is_number(),
-            UnaryOp::LogicalNot => ty == Type::Bool,
+            UnaryOp::LogicalNot => *ty == Type::Bool,
             UnaryOp::BitNot => matches!(ty, Type::Integer(_)),
         };
-        if !accepted {
-            return self.report_invalid_operand(op.symbol(), checked.ty, span);
+        if !fits(&ty) {
+            return self.report_invalid_operand(op.symbol(), checked.ty, operand, span, fits);
         }
         let result = checked.ty;
         let kind = match checked.kind {
@@ -800,13 +816,16 @@ impl ThirBuilder<'_, '_> {
     fn check_binary(
         &mut self,
         op: BinaryOp,
-        left: Id<ast::Expr>,
-        right: Id<ast::Expr>,
+        left_operand: Id<ast::Expr>,
+        right_operand: Id<ast::Expr>,
         span: Span,
         expected: Option<TypeId>,
     ) -> Expr {
         let tree = &self.checker.module().ast;
-        let (left_span, right_span) = (tree.exprs.span(left), tree.exprs.span(right));
+        let (left_span, right_span) = (
+            tree.exprs.span(left_operand),
+            tree.exprs.span(right_operand),
+        );
         let comparison = matches!(
             op,
             BinaryOp::EqualTo
@@ -817,14 +836,36 @@ impl ThirBuilder<'_, '_> {
                 | BinaryOp::GreaterOrEqual
         );
         let shift = matches!(op, BinaryOp::ShiftLeft | BinaryOp::ShiftRight);
-        let left_literal = unsuffixed_literal(tree, left);
-        let left = self.check_expr(left, if comparison { None } else { expected });
-        let right = if shift {
-            self.check_expr(right, None)
+        let left_literal = unsuffixed_literal(tree, left_operand);
+        let left = self.check_expr(left_operand, if comparison { None } else { expected });
+        let left_type = self.checker.types[left.ty].clone();
+        let fits = |ty: &Type| match op {
+            BinaryOp::Add
+            | BinaryOp::Subtract
+            | BinaryOp::Multiply
+            | BinaryOp::Divide
+            | BinaryOp::Remainder
+            | BinaryOp::LessThan
+            | BinaryOp::LessOrEqual
+            | BinaryOp::GreaterThan
+            | BinaryOp::GreaterOrEqual => ty.is_number(),
+            BinaryOp::ShiftLeft
+            | BinaryOp::ShiftRight
+            | BinaryOp::BitAnd
+            | BinaryOp::BitOr
+            | BinaryOp::BitXor => matches!(ty, Type::Integer(_)),
+            BinaryOp::EqualTo | BinaryOp::NotEqualTo => ty.is_number() || *ty == Type::Bool,
+            BinaryOp::LogicalAnd | BinaryOp::LogicalOr => *ty == Type::Bool,
+        };
+        let left_fits = fits(&left_type);
+        // Matching the right operand to a left one the operator rejects would
+        // blame the right one.
+        let right = if shift || !left_fits {
+            self.check_expr(right_operand, None)
         } else {
-            let checked = self.check_expr(right, Some(left.ty));
+            let checked = self.check_expr(right_operand, Some(left.ty));
             let found = checked.ty;
-            match self.coerce(checked, right_span, left.ty) {
+            match self.coerce(checked, right_operand, left.ty) {
                 Ok(right) => right,
                 Err(mut mismatch) => {
                     let checker = &self.checker;
@@ -846,33 +887,10 @@ impl ThirBuilder<'_, '_> {
         if left.ty == TypeId::INVALID || right.ty == TypeId::INVALID {
             return Expr::INVALID;
         }
-        let (left_type, right_type) = {
-            let types = &mut self.checker.types;
-            (types[left.ty].clone(), types[right.ty].clone())
-        };
-        let accepted = match op {
-            BinaryOp::Add
-            | BinaryOp::Subtract
-            | BinaryOp::Multiply
-            | BinaryOp::Divide
-            | BinaryOp::Remainder
-            | BinaryOp::LessThan
-            | BinaryOp::LessOrEqual
-            | BinaryOp::GreaterThan
-            | BinaryOp::GreaterOrEqual => left_type.is_number(),
-            BinaryOp::ShiftLeft
-            | BinaryOp::ShiftRight
-            | BinaryOp::BitAnd
-            | BinaryOp::BitOr
-            | BinaryOp::BitXor => matches!(left_type, Type::Integer(_)),
-            BinaryOp::EqualTo | BinaryOp::NotEqualTo => {
-                left_type.is_number() || left_type == Type::Bool
-            }
-            BinaryOp::LogicalAnd | BinaryOp::LogicalOr => left_type == Type::Bool,
-        };
-        if !accepted {
-            return self.report_invalid_operand(op.symbol(), left.ty, span);
+        if !left_fits {
+            return self.report_invalid_operand(op.symbol(), left.ty, left_operand, span, fits);
         }
+        let right_type = self.checker.types[right.ty].clone();
         if shift && !matches!(right_type, Type::Integer(_)) {
             let count = self.checker.type_text(right.ty);
             let message = format!("a shift count must be an integer, found `{count}`");
@@ -904,13 +922,64 @@ impl ThirBuilder<'_, '_> {
         }
     }
 
-    /// Reports `op` applied to an operand of the type `ty`, at `span`.
-    fn report_invalid_operand(&mut self, op: &str, ty: TypeId, span: Span) -> Expr {
-        let ty = self.checker.type_text(ty);
-        let message = format!("operator `{op}` cannot be applied to `{ty}`");
-        self.checker
-            .error(diagnostics::INVALID_OPERATION, message, span);
+    /// Reports `op` in the expression at `span` applied to `operand` of the
+    /// type `ty`, which `fits` rejects. When `ty` is a reference to a value
+    /// `fits` accepts, it helps to read that value.
+    fn report_invalid_operand(
+        &mut self,
+        op: &str,
+        ty: TypeId,
+        operand: Id<ast::Expr>,
+        span: Span,
+        fits: impl Fn(&Type) -> bool,
+    ) -> Expr {
+        let checker = &self.checker;
+        let file = &checker.module().ast.file;
+        let message = format!(
+            "operator `{op}` cannot be applied to `{}`",
+            checker.type_text(ty)
+        );
+        let mut diagnostic =
+            Diagnostic::new(diagnostics::INVALID_OPERATION, message).label(file, span, "");
+        if let Type::Reference { target, .. } = checker.types[ty]
+            && fits(&checker.types[target])
+        {
+            diagnostic = self.help_read_value(diagnostic, operand);
+        }
+        self.checker.report(diagnostic);
         Expr::INVALID
+    }
+
+    /// `diagnostic` with help to read the value that the reference
+    /// `operand` points to.
+    fn help_read_value(&self, diagnostic: Diagnostic, operand: Id<ast::Expr>) -> Diagnostic {
+        let tree = &self.checker.module().ast;
+        let operand_span = tree.exprs.span(operand);
+        let insert = |at: u32, new_text: &str| Fix {
+            file: tree.file.clone(),
+            span: Span { start: at, end: at },
+            new_text: new_text.to_string(),
+        };
+        // `.*` binds tighter than a prefix or infix operator: `&n.*` reads `n`.
+        let postfix = matches!(
+            tree.exprs[operand],
+            ast::Expr::Name
+                | ast::Expr::Path(_)
+                | ast::Expr::Call { .. }
+                | ast::Expr::Selector { .. }
+                | ast::Expr::Dereference(_)
+                | ast::Expr::Index { .. }
+                | ast::Expr::Parentheses(_)
+        );
+        let fixes = if postfix {
+            vec![insert(operand_span.end, ".*")]
+        } else {
+            vec![
+                insert(operand_span.start, "("),
+                insert(operand_span.end, ").*"),
+            ]
+        };
+        diagnostic.help("add `.*` to use the value it points to", fixes)
     }
 }
 
