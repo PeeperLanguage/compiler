@@ -46,6 +46,21 @@ fn ReferenceOutlivesBreak() -> i32 {
     return read(r);
 }
 
+// Both variables of the block are gone at its `}`: two errors.
+fn TwoReferencesOutlivePass() -> i32 {
+    let outer = 0;
+    let mut r = &outer;
+    let mut s = &outer;
+    for i in 0..2 {
+        let total = read(r) + read(s);
+        let a = 1;
+        let b = 2;
+        r = &a;
+        s = &b;
+    }
+    return 0;
+}
+
 fn MissingReturn(n: i32) -> i32 {
     for n > 0 { return 1; }
 }
