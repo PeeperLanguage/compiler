@@ -18,7 +18,8 @@ review.
 Required tools:
 
 - Rust, the edition and toolchain [`Cargo.toml`](Cargo.toml) declares.
-- LLVM Clang available as `clang` for native compilation and runtime fixtures.
+- LLVM Clang 23 or newer available as `clang` (with `lli` for the ignored
+  LLVM parity test) for native compilation and runtime fixtures.
 - Git.
 
 Build compiler and bundled library:

@@ -444,15 +444,13 @@ fn write_conversions(
                 (Type::Float(Float::F32), Type::Float(_)) => "fpext".to_string(),
                 (Type::Float(_), Type::Float(_)) => "fptrunc".to_string(),
                 (Type::Float(float), Type::Integer(to)) => {
-                    // LLVM's own saturating conversion where it can lower it,
-                    // and the expansion `llvm::function` writes: both.
                     let sign = if to.signed { 's' } else { 'u' };
                     let suffix = match float {
                         Float::F32 => "f32",
                         Float::F64 => "f64",
                     };
                     let intrinsic = format!("llvm.fpto{sign}i.sat.i{}.{suffix}", to.bits);
-                    if to.bits <= 128 && declared.insert(intrinsic.clone()) {
+                    if declared.insert(intrinsic.clone()) {
                         writeln!(
                             declarations,
                             "declare i{} @{intrinsic}({from_llvm})",
@@ -464,11 +462,7 @@ fn write_conversions(
                 }
                 _ => unreachable!(),
             };
-            let variants: &[bool] = match (instruction.starts_with("saturate"), to) {
-                (true, Type::Integer(to)) if to.bits <= 128 => &[true, false],
-                _ => &[false],
-            };
-            for &intrinsic in variants.iter().cycle().take(3 * variants.len()) {
+            for _ in 0..3 {
                 let value = match from {
                     Type::Bool => Value::Bool(random.next() % 2 == 1),
                     Type::Integer(integer) => integer_value(*integer, &random.value(*integer)),
@@ -501,25 +495,8 @@ fn write_conversions(
                 writeln!(module, "@l{k} = global {from_llvm} {source}").unwrap();
                 writeln!(body, "  %l{k} = load volatile {from_llvm}, ptr @l{k}").unwrap();
                 let to_llvm = llvm_type(to);
-                let float_overflow = match to {
-                    Type::Float(Float::F32) => 128,
-                    Type::Float(_) => 1024,
-                    _ => u32::MAX,
-                };
-                if let Type::Integer(source) = from
-                    && source.bits > float_overflow
-                {
-                    write_wide_to_float(body, k, *source, float_overflow, &from_llvm, &to_llvm);
-                } else if let Some(name) = instruction.strip_prefix("saturate ") {
-                    let Type::Integer(to) = to else {
-                        unreachable!()
-                    };
-                    if intrinsic {
-                        writeln!(body, "  %v{k} = call {to_llvm} @{name}({from_llvm} %l{k})")
-                            .unwrap();
-                    } else {
-                        write_saturation(body, k, *to, from, &from_llvm, &to_llvm);
-                    }
+                if let Some(name) = instruction.strip_prefix("saturate ") {
+                    writeln!(body, "  %v{k} = call {to_llvm} @{name}({from_llvm} %l{k})").unwrap();
                 } else {
                     writeln!(
                         body,
@@ -557,82 +534,4 @@ fn write_conversions(
         }
         writeln!(body, "  ret void\n}}\n").unwrap();
     }
-}
-
-/// The float `%l{k}` of the type `from` as the integer `%v{k}` of the type
-/// `to`, saturated, as `llvm::function` writes it.
-fn write_saturation(
-    body: &mut String,
-    k: usize,
-    to: Integer,
-    from: &Type,
-    from_llvm: &str,
-    to_llvm: &str,
-) {
-    let (low, high) = model::constant::float_range(to);
-    let bound = |bound: f64| match from {
-        Type::Float(Float::F32) => f64::from(bound as f32).to_bits(),
-        _ => bound.to_bits(),
-    };
-    let (low, high) = (bound(low), bound(high));
-    let (cut, lowest) = if to.signed {
-        writeln!(body, "  %min{k} = shl {to_llvm} 1, {}", to.bits - 1).unwrap();
-        ("fptosi", format!("%min{k}"))
-    } else {
-        ("fptoui", "0".to_string())
-    };
-    writeln!(
-        body,
-        "  %max{k} = xor {to_llvm} {lowest}, -1
-  %low{k} = fcmp ole {from_llvm} %l{k}, 0x{low:016X}
-  %high{k} = fcmp oge {from_llvm} %l{k}, 0x{high:016X}
-  %nan{k} = fcmp uno {from_llvm} %l{k}, 0.0
-  %cut{k} = {cut} {from_llvm} %l{k} to {to_llvm}
-  %a{k} = select i1 %low{k}, {to_llvm} {lowest}, {to_llvm} %cut{k}
-  %b{k} = select i1 %high{k}, {to_llvm} %max{k}, {to_llvm} %a{k}
-  %v{k} = select i1 %nan{k}, {to_llvm} 0, {to_llvm} %b{k}"
-    )
-    .unwrap();
-}
-
-/// The integer `%l{k}` of the type `source`, wider than `float_overflow`
-/// bits, as the float `%v{k}`, as `llvm::function` writes it around LLVM 22's
-/// wrong result from 2^`float_overflow` up.
-fn write_wide_to_float(
-    body: &mut String,
-    k: usize,
-    source: Integer,
-    float_overflow: u32,
-    from_llvm: &str,
-    to_llvm: &str,
-) {
-    let (conversion, above) = if source.signed {
-        ("sitofp", "sgt")
-    } else {
-        ("uitofp", "ugt")
-    };
-    writeln!(
-        body,
-        "  %big{k} = shl {from_llvm} 1, {float_overflow}
-  %top{k} = sub {from_llvm} %big{k}, 1
-  %above{k} = icmp {above} {from_llvm} %l{k}, %top{k}
-  %cut{k} = {conversion} {from_llvm} %l{k} to {to_llvm}"
-    )
-    .unwrap();
-    let mut result = format!("%cut{k}");
-    if source.signed {
-        writeln!(
-            body,
-            "  %small{k} = sub {from_llvm} 0, %big{k}
-  %below{k} = icmp sle {from_llvm} %l{k}, %small{k}
-  %low{k} = select i1 %below{k}, {to_llvm} 0xFFF0000000000000, {to_llvm} %cut{k}"
-        )
-        .unwrap();
-        result = format!("%low{k}");
-    }
-    writeln!(
-        body,
-        "  %v{k} = select i1 %above{k}, {to_llvm} 0x7FF0000000000000, {to_llvm} {result}"
-    )
-    .unwrap();
 }

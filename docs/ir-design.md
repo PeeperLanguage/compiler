@@ -530,11 +530,11 @@ it), and the manifest's `build = "program"`.
   even; a float becomes an integer cut toward zero, saturated at the ends
   of its range, NaN as 0 (Rust's rule, as LLVM's plain `fptosi` gives
   poison there). Folding and LLVM agree for every width
-  (`crates/model/tests/llvm_parity.rs`). Two LLVM 22 limits are worked
-  around in `llvm`: `llvm.fptosi.sat` cannot be lowered above 128 bits, so
-  the saturation is written out; an integer above 128 bits of magnitude
-  2^128 (`f32`) or 2^1024 (`f64`) converts to a wrong finite float, so that
-  range is mapped to infinity first. (Owner, 2026-10-24.)
+  (`crates/model/tests/llvm_parity.rs`): `llvm` writes LLVM's own
+  `sitofp`/`uitofp` and `llvm.fpto{s,u}i.sat`, which need LLVM 23 or newer
+  above 128 bits (LLVM 22 crashes on the one and gives a wrong finite float
+  for the other, llvm/llvm-project#189054), so the bundled toolchain is LLVM
+  23 or newer, whatever clang the system has. (Owner, 2026-10-24.)
 - **decided** A number literal takes the type cast to when it can, as it
   takes any expected type, so `300 as u8` is an error, not 44. (Owner,
   2026-10-24.)

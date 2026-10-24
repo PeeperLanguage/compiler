@@ -179,7 +179,7 @@ pub fn convert(from: &Type, to: &Type, value: &Value) -> Value {
 /// zero lie strictly between these two: one at or below the first becomes
 /// the type's lowest value, one at or above the second its highest. Each is
 /// a power of two (or 0), infinite when too large for an `f64`.
-pub fn float_range(integer: Integer) -> (f64, f64) {
+fn float_range(integer: Integer) -> (f64, f64) {
     let Integer { signed, bits } = integer;
     if signed {
         (-power_of_two(bits - 1), power_of_two(bits - 1))
