@@ -30,14 +30,14 @@ fn main:
     %13 = load shared.3.*: i32
     %14 = load n.2: i32
     %15 = Add %13, %14: i32
-    scope end p.0
-    scope end r.1
-    scope end n.2
     scope end shared.3
+    scope end n.2
+    scope end r.1
+    scope end p.0
     return %15
   bb1:
-    scope end p.0
-    scope end r.1
-    scope end n.2
     scope end shared.3
+    scope end n.2
+    scope end r.1
+    scope end p.0
     fall off at `}`

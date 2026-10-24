@@ -13,12 +13,12 @@ fn pick:
     branch %5 (a < 0) bb4 bb5
   bb3:
     %9 = load late.1: i32
-    scope end a.0
     scope end late.1
+    scope end a.0
     return %9
   bb4:
-    scope end a.0
     scope end late.1
+    scope end a.0
     return 2
   bb5:
     store late.1, 3
@@ -28,8 +28,8 @@ fn pick:
   bb7:
     goto bb6
   bb8:
-    scope end a.0
     scope end late.1
+    scope end a.0
     fall off at `}`
 fn quiet:
   bb0:

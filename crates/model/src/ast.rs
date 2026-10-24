@@ -323,7 +323,8 @@ pub enum Stmt {
         then: Option<Id<Block>>,
         otherwise: Option<Id<Stmt>>,
     },
-    /// `for { }` or `for condition { }`
+    /// `for { }`, `for condition { }`, or `for start..end { }`, whose
+    /// condition is a `Range`
     Loop {
         condition: Option<Id<Expr>>,
         body: Option<Id<Block>>,

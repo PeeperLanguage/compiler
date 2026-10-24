@@ -295,6 +295,12 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 }
                 return None;
             }
+            ast::Stmt::Loop {
+                condition: Some(range),
+                body,
+            } if matches!(tree.exprs[range], ast::Expr::Range { .. }) => {
+                self.check_for_in(None, None, range, body?)?
+            }
             ast::Stmt::Loop { condition, body } => {
                 let condition = condition.map(|condition| {
                     self.add_expr(condition, TypeExpectation::Required(TypeId::BOOL))
@@ -312,7 +318,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 value,
                 iterable,
                 body,
-            } => self.check_for_in(index, value, iterable, body?)?,
+            } => self.check_for_in(index, Some(value), iterable, body?)?,
             ast::Stmt::Break | ast::Stmt::Continue if self.loops == 0 => {
                 let jump = match tree.stmts[statement] {
                     ast::Stmt::Break => "break",
@@ -414,28 +420,25 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         Stmt::Let { variable, value }
     }
 
-    /// `for value in start..end { body }`. A literal endpoint without a
-    /// suffix takes the other endpoint's type, which must be an integer.
-    /// Over other values, with `..=` or with an index, it is reported as not
-    /// supported yet.
+    /// `for value in start..end { body }` or `..=`, or `for start..end
+    /// { body }` without a `value`. A literal endpoint without a suffix takes
+    /// the other endpoint's type, which must be an integer. Over other
+    /// values, or with an index, it is reported as not supported yet.
     fn check_for_in(
         &mut self,
         index: Option<Ident>,
-        value: Ident,
+        value: Option<Ident>,
         iterable: Id<ast::Expr>,
         body: Id<ast::Block>,
     ) -> Option<Stmt> {
         let tree = &self.checker.module().ast;
         let ast::Expr::Range {
-            inclusive: false,
+            inclusive,
             start: Some(start),
             end: Some(end),
         } = tree.exprs[iterable]
         else {
             let what = match tree.exprs[iterable] {
-                ast::Expr::Range {
-                    inclusive: true, ..
-                } => "`for` over `..=` ranges",
                 ast::Expr::Range { .. } => "`for` over ranges without both ends",
                 _ => "`for` over values other than ranges",
             };
@@ -465,14 +468,17 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 .error(diagnostics::INVALID_OPERATION, message, span);
         }
         let enclosing = self.open_block(body);
-        let variable = Variable {
-            ty,
-            mutable: false,
-            initialized: true,
-            scope: self.block,
-        };
-        let variable = self.body.add(variable, value.span);
-        self.declare(value, Local::Variable(variable));
+        let variable = value.map(|value| {
+            let variable = Variable {
+                ty,
+                mutable: false,
+                initialized: true,
+                scope: self.block,
+            };
+            let variable = self.body.add(variable, value.span);
+            self.declare(value, Local::Variable(variable));
+            variable
+        });
         self.loops += 1;
         let body = self.close_block(body, enclosing);
         self.loops -= 1;
@@ -480,6 +486,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             value: variable,
             start,
             end,
+            inclusive,
             body,
         })
     }
@@ -721,6 +728,8 @@ mod tests {
                 for { break; }
                 for n > 0 { continue; }
                 for i in 0..n { let j = i; }
+                for 0..3 { }
+                for k in 1..=n { }
             }",
         );
         assert!(reported.is_empty(), "{reported:?}");
@@ -734,6 +743,10 @@ mod tests {
     }
     for i.1 in 0:i64..n.0 {
         let j.2 = i.1
+    }
+    for 0:i32..3:i32 {
+    }
+    for k.3 in 1:i64..=n.0 {
     }
 "]
         );

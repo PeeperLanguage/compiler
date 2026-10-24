@@ -199,12 +199,14 @@ pub enum Stmt {
         body: Id<Block>,
     },
     /// `for value in start..end { }`: `value`, declared in `body`, is each
-    /// integer from `start` up to `end`, without `end`. Both are computed
-    /// once, before the first pass.
+    /// integer from `start` up to `end`, with `end` when `inclusive`
+    /// (`..=`). Both are computed once, before the first pass.
+    /// `for start..end { }` has no `value`.
     ForRange {
-        value: Id<Variable>,
+        value: Option<Id<Variable>>,
         start: Id<Expr>,
         end: Id<Expr>,
+        inclusive: bool,
         body: Id<Block>,
     },
     /// Leaves the innermost loop.
@@ -353,13 +355,16 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
                 value,
                 start,
                 end,
+                inclusive,
                 body,
             } => {
                 self.out.push_str("for ");
-                self.write_variable(value);
-                self.out.push_str(" in ");
+                if let Some(value) = value {
+                    self.write_variable(value);
+                    self.out.push_str(" in ");
+                }
                 self.write_expr(start);
-                self.out.push_str("..");
+                self.out.push_str(if inclusive { "..=" } else { ".." });
                 self.write_expr(end);
                 self.out.push(' ');
                 self.write_block(self.body.blocks[body].statements, depth);

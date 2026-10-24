@@ -240,8 +240,9 @@ fn if_statement(p: &mut Parser) -> Id<Stmt> {
     })
 }
 
-/// Reads `for { }`, `for condition { }`, `for value in items { }` or
-/// `for index, value in items { }`. The iterable may be a range.
+/// Reads `for { }`, `for condition { }`, `for start..end { }`, `for value
+/// in items { }` or `for index, value in items { }`. The iterable may be a
+/// range.
 fn for_statement(p: &mut Parser) -> Id<Stmt> {
     let start = p.next().span.start;
     let unnamed_index = p.at(TokenKind::Underscore) && p.ahead(1).kind == TokenKind::Comma;
@@ -274,7 +275,7 @@ fn for_statement(p: &mut Parser) -> Id<Stmt> {
     }
     let mut condition = None;
     if !p.at(TokenKind::LeftBrace) {
-        let value = p.expr(Precedence::Lowest);
+        let value = p.index_operand(); // a condition, or a range: `for 0..n { }`
         if p.at(TokenKind::In) {
             let span = p.tree.exprs.span(value);
             p.fail(

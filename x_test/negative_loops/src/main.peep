@@ -12,7 +12,7 @@ fn ContinueOutside() { continue; }
 
 fn FloatRange() { for f in 0.5..2.0 {} }
 
-fn InclusiveRange() { for i in 0..=3 {} }
+fn FloatRangeWithoutName() { for 1.5..3.0 {} }
 
 fn SetTwice() {
     let x: i32;

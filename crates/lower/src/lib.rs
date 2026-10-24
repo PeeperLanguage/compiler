@@ -49,6 +49,7 @@ pub fn lower(
         instructions: Vec::new(),
         debug_scope: Id::from_index(0),
         loops: Vec::new(),
+        declared: Vec::new(),
     };
     // One debug scope per block and one MIR variable per THIR variable, in
     // order: block `i` is debug scope `i`, and the ids of variables match.
@@ -87,6 +88,7 @@ pub fn lower(
         let store = mir::InstructionKind::Store { place, value };
         let span = lowering.mir.variables.span(variable);
         lowering.emit(store, TypeId::VOID, span);
+        lowering.declared.push(variable);
     }
     lowering.lower_block(function)?;
     let end = Span::new(span.end as usize - 1, span.end as usize); // the `}`
@@ -102,6 +104,10 @@ struct Lowering<'t> {
     instructions: Vec<NonZeroU32>,    // that block's instructions so far
     debug_scope: Id<mir::DebugScope>, // the one new instructions are written in
     loops: Vec<Loop>,                 // the loops being lowered, innermost last
+    /// The variables of the enclosing blocks declared so far, in order. A
+    /// block comes before the blocks inside it, so those of the blocks a
+    /// scope end leaves are at the end.
+    declared: Vec<Id<mir::Variable>>,
 }
 
 /// Where a loop's `continue` and `break` go, and the block they leave.
@@ -152,6 +158,18 @@ impl Lowering<'_> {
         mir::Operand::Value(instruction)
     }
 
+    /// Adds `left op right`, of type `ty`, to the block being filled.
+    fn binary(
+        &mut self,
+        op: BinaryOp,
+        left: mir::Operand,
+        right: mir::Operand,
+        ty: TypeId,
+        span: Span,
+    ) -> mir::Operand {
+        self.emit(mir::InstructionKind::Binary { op, left, right }, ty, span)
+    }
+
     /// `constant` as an operand: the body's next constant.
     fn add_constant(&mut self, constant: Constant) -> mir::Operand {
         let id = Id::from_index(self.mir.constants.len());
@@ -170,28 +188,24 @@ impl Lowering<'_> {
         // A variable is borrowed only inside its block, so its borrows are
         // all lowered by now.
         let end = self.thir.blocks.span(block).end as usize;
-        self.end_scopes(block, Span::new(end - 1, end)); // at the `}`
+        let ended = self.end_scopes(block, Span::new(end - 1, end)); // at the `}`
+        self.declared.truncate(ended);
         self.debug_scope = outer;
         Some(())
     }
 
-    /// Writes the `ScopeEnd`s of the variables of each block from
-    /// the current one out to `outermost`, at `span`.
-    fn end_scopes(&mut self, outermost: Id<thir::Block>, span: Span) {
-        let mut block = Id::<thir::Block>::from_index(self.debug_scope.index());
-        loop {
-            for variable in self.mir.variables.ids() {
-                if self.mir.variables[variable].debug_scope.index() == block.index() {
-                    self.emit(mir::InstructionKind::ScopeEnd(variable), TypeId::VOID, span);
-                }
-            }
-            if block == outermost {
-                break;
-            }
-            block = self.thir.blocks[block]
-                .parent
-                .expect("`outermost` holds the current block");
+    /// Writes the `ScopeEnd`s of the variables declared so far in each block
+    /// from the current one out to `outermost`, newest first, at `span`.
+    /// Gives where those variables start in `declared`.
+    fn end_scopes(&mut self, outermost: Id<thir::Block>, span: Span) -> usize {
+        let mut ended = self.declared.len();
+        while let Some(&variable) = self.declared[..ended].last()
+            && self.mir.variables[variable].debug_scope.index() >= outermost.index()
+        {
+            self.emit(mir::InstructionKind::ScopeEnd(variable), TypeId::VOID, span);
+            ended -= 1;
         }
+        ended
     }
 
     /// Lowers the statements of `body`, one pass of the loop `targets`,
@@ -208,15 +222,15 @@ impl Lowering<'_> {
     fn lower_statement(&mut self, statement: Id<thir::Stmt>) -> Option<()> {
         let span = self.thir.stmts.span(statement);
         match self.thir.stmts[statement] {
-            thir::Stmt::Let { value: None, .. } => {}
-            thir::Stmt::Let {
-                variable,
-                value: Some(value),
-            } => {
-                let value = self.lower_expr(value)?;
-                let place = mir::Place::whole(Id::from_index(variable.index()));
-                let store = mir::InstructionKind::Store { place, value };
-                self.emit(store, TypeId::VOID, span);
+            thir::Stmt::Let { variable, value } => {
+                let variable = Id::from_index(variable.index());
+                if let Some(value) = value {
+                    let value = self.lower_expr(value)?;
+                    let place = mir::Place::whole(variable);
+                    let store = mir::InstructionKind::Store { place, value };
+                    self.emit(store, TypeId::VOID, span);
+                }
+                self.declared.push(variable);
             }
             thir::Stmt::Assign { target, value } => {
                 let value = self.lower_expr(value)?;
@@ -298,61 +312,78 @@ impl Lowering<'_> {
                 value,
                 start,
                 end,
+                inclusive,
                 body,
             } => {
-                // The counter is a `phi`: `start` on entry, one more after
-                // each pass. It is below `end` in the body, so adding one
-                // cannot overflow.
+                // The counter and whether a pass runs are `phi`s: on entry,
+                // `start` and whether the range holds a value; after a pass,
+                // the next value and whether it is in the range. The next
+                // value is found in the pass, while the counter is in the
+                // range, so it cannot overflow: `a..b` adds one to a counter
+                // below `b`, and `a..=b` adds one only below `b`.
                 let range_span = Span::new(
                     self.thir.exprs.span(start).start as usize,
                     self.thir.exprs.span(end).end as usize,
                 );
+                let ty = self.thir.exprs[start].ty;
                 let start = self.lower_expr(start)?;
                 let end = self.lower_expr(end)?;
+                let op = if inclusive {
+                    BinaryOp::LessOrEqual
+                } else {
+                    BinaryOp::LessThan
+                };
+                let first = self.binary(op, start, end, TypeId::BOOL, range_span);
                 let entry = self.block;
                 let test = self.new_block(span);
                 self.finish(mir::Terminator::Goto(test));
                 self.block = test;
-                let ty = self.thir.variables[value].ty;
                 let counter = self.emit(mir::InstructionKind::Phi(Box::new([])), ty, range_span);
-                let op = BinaryOp::LessThan;
-                let more = mir::InstructionKind::Binary {
-                    op,
-                    left: counter,
-                    right: end,
-                };
-                let more = self.emit(more, TypeId::BOOL, range_span);
+                let going = self.emit(
+                    mir::InstructionKind::Phi(Box::new([])),
+                    TypeId::BOOL,
+                    range_span,
+                );
                 let pass = self.new_block(self.thir.blocks.span(body));
                 let exit = self.new_block(span);
                 self.finish(mir::Terminator::Branch {
-                    condition: more,
+                    condition: going,
                     span: range_span,
                     then: pass,
                     otherwise: exit,
                 });
                 self.block = pass;
-                let value = Id::from_index(value.index());
-                let place = mir::Place::whole(value);
-                let store = mir::InstructionKind::Store {
-                    place,
-                    value: counter,
+                if let Some(value) = value {
+                    let value = Id::from_index(value.index());
+                    let place = mir::Place::whole(value);
+                    let store = mir::InstructionKind::Store {
+                        place,
+                        value: counter,
+                    };
+                    self.emit(store, TypeId::VOID, self.mir.variables.span(value));
+                    self.declared.push(value);
+                }
+                let (next, more) = if inclusive {
+                    let more =
+                        self.binary(BinaryOp::LessThan, counter, end, TypeId::BOOL, range_span);
+                    let step = self.emit(mir::InstructionKind::Convert(more), ty, range_span);
+                    let next = self.binary(BinaryOp::Add, counter, step, ty, range_span);
+                    (next, more)
+                } else {
+                    let Type::Integer(integer) = self.types[ty] else {
+                        unreachable!("the checker allows only an integer range")
+                    };
+                    let one = self.add_constant(Constant {
+                        ty,
+                        value: Value::Integer(Limbs::new(integer.bits, &[1])),
+                    });
+                    let next = self.binary(BinaryOp::Add, counter, one, ty, range_span);
+                    (
+                        next,
+                        self.binary(BinaryOp::LessThan, next, end, TypeId::BOOL, range_span),
+                    )
                 };
-                self.emit(store, TypeId::VOID, self.mir.variables.span(value));
-                let Type::Integer(integer) = self.types[ty] else {
-                    unreachable!("the checker allows only an integer range")
-                };
-                let one = self.add_constant(Constant {
-                    ty,
-                    value: Value::Integer(Limbs::new(integer.bits, &[1])),
-                });
-                let op = BinaryOp::Add;
-                let next = mir::InstructionKind::Binary {
-                    op,
-                    left: counter,
-                    right: one,
-                };
-                let next = self.emit(next, ty, range_span);
-                // Every pass ends here, so the `phi` has one entry for them.
+                // Every pass ends here, so each `phi` has one entry for them.
                 let step = self.new_block(span);
                 let targets = Loop {
                     next: step,
@@ -362,11 +393,15 @@ impl Lowering<'_> {
                 self.lower_loop_body(body, targets)?;
                 self.block = step;
                 self.finish(mir::Terminator::Goto(test));
-                let mir::Operand::Value(counter) = counter else {
-                    unreachable!("`emit` gives an instruction's value")
-                };
-                let incoming = [(entry, start), (step, next)];
-                self.mir.instructions[counter].kind = mir::InstructionKind::Phi(incoming.into());
+                for (phi, incoming) in [
+                    (counter, [(entry, start), (step, next)]),
+                    (going, [(entry, first), (step, more)]),
+                ] {
+                    let mir::Operand::Value(phi) = phi else {
+                        unreachable!("`emit` gives an instruction's value")
+                    };
+                    self.mir.instructions[phi].kind = mir::InstructionKind::Phi(incoming.into());
+                }
                 self.block = exit;
             }
             thir::Stmt::Break | thir::Stmt::Continue => {

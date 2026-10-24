@@ -8,7 +8,7 @@ fn main:
     %5 = load length.0: i64
     %6 = GreaterThan %4, %5: bool
     store ready.2, %6
-    scope end length.0
-    scope end longer.1
     scope end ready.2
+    scope end longer.1
+    scope end length.0
     fall off at `}`
