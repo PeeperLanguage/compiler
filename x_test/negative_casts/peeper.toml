@@ -1,0 +1,20 @@
+name = "negative_casts"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "[T0014]: `Point` cannot be converted to `i32`",
+    "`&i32` cannot be converted to `&mut i32`",
+    "`i32` cannot be converted to `bool`",
+    "`bool` cannot be converted to `f64`",
+    "literal `300` does not fit `u8`",
+    "`&i32` cannot be converted to `i64`",
+    "let f = count.* as i64;",
+    "mismatched types: expected `u8`, found `i32`",
+    "add `as u8` to convert, which can change the value",
+    "let small: u8 = big as u8;",
+    "let single: f32 = (wide + 1.0) as f32;",
+    "Compilation failed with 8 error(s)",
+]

@@ -192,6 +192,39 @@ pub fn to_u64(bits: u32, signed: bool, value: &Limbs) -> Option<u64> {
     fits.then_some(value[0])
 }
 
+/// The value, read as signed when `signed`: whether it is negative, and
+/// its magnitude cut to its highest 64 bits, as those bits and how many
+/// bits lie below them. The lowest of the 64 is set when any bit below is,
+/// so rounding the 64 bits to a float rounds the whole magnitude as one
+/// rounding would.
+pub fn leading_bits(bits: u32, signed: bool, value: &Limbs) -> (bool, u64, u32) {
+    let negative = is_negative(bits, signed, used(bits, value));
+    let negated;
+    let magnitude = if negative {
+        negated = negate(bits, value);
+        used(bits, &negated)
+    } else {
+        used(bits, value)
+    };
+    let length = magnitude
+        .iter()
+        .rposition(|&limb| limb != 0)
+        .map_or(0, |top| {
+            top * 64 + 64 - magnitude[top].leading_zeros() as usize
+        });
+    let Some(below) = length.checked_sub(64).filter(|&below| below > 0) else {
+        return (negative, magnitude[0], 0);
+    };
+    let (limb, offset) = (below / 64, below % 64);
+    let mut top = magnitude[limb] >> offset;
+    if offset > 0 {
+        top |= magnitude[limb + 1] << (64 - offset);
+    }
+    let dropped = magnitude[..limb].iter().any(|&limb| limb != 0)
+        || magnitude[limb] & ((1 << offset) - 1) != 0;
+    (negative, top | u64::from(dropped), below as u32)
+}
+
 fn limb_count(bits: u32) -> usize {
     bits.div_ceil(64) as usize
 }
@@ -445,5 +478,23 @@ mod tests {
         assert_eq!(wide[3], 0xff, "bits above the width are zero");
         assert_eq!(limbs(128, -1).as_slice(), [u64::MAX, u64::MAX]);
         assert_eq!(limbs(64, -1).as_slice(), [u64::MAX, 0]);
+    }
+
+    #[test]
+    fn leading_bits() {
+        let leading = |bits, signed, value| super::leading_bits(bits, signed, &limbs(bits, value));
+        assert_eq!(leading(8, true, -128), (true, 128, 0));
+        assert_eq!(
+            leading(8, false, -128),
+            (false, 128, 0),
+            "the same bits read unsigned"
+        );
+        assert_eq!(leading(64, false, -1), (false, u64::MAX, 0));
+        assert_eq!(leading(128, false, 1 << 64), (false, 1 << 63, 1));
+        // A dropped bit below the 64 sets the lowest kept one.
+        assert_eq!(leading(128, false, (1 << 64) | 1), (false, 1 << 63 | 1, 1));
+        assert_eq!(leading(128, false, 3 << 70), (false, 3 << 62, 8));
+        assert_eq!(leading(128, true, i128::MIN), (true, 1 << 63, 64));
+        assert_eq!(leading(200, true, 0), (false, 0, 0));
     }
 }

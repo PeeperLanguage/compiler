@@ -76,6 +76,7 @@ pub const WRONG_ARGUMENT_COUNT: Code = error("T0006");
 pub const INVALID_ASSIGNMENT: Code = error("T0007");
 pub const UNKNOWN_FIELD: Code = error("T0010");
 pub const CIRCULAR_DEPENDENCY: Code = error("T0013");
+pub const INVALID_CAST: Code = error("T0014");
 pub const INVALID_RETURN: Code = error("T0016");
 pub const MISSING_RETURN: Code = error("T0017");
 pub const CONSTANT_REASSIGNMENT: Code = error("T0018");

@@ -138,9 +138,9 @@ pub enum ExprKind {
         function: DefId,
         arguments: List<Expr>,
     },
-    /// The value converted to the wider type `ty` without `as`
-    /// (`Type::widens_to`).
-    Widen(Id<Expr>),
+    /// The number or `bool` converted to the type `ty`, without `as` or with
+    /// it (`Types::conversion`).
+    Convert(Id<Expr>),
     /// A value of the struct type `ty`, each field set once, in the order
     /// written, which is the order the values are computed in.
     StructLiteral(List<FieldValue>),
@@ -390,8 +390,8 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
                 self.write_expr(value);
                 self.out.push(')');
             }
-            ExprKind::Widen(value) => {
-                self.out.push_str("widen(");
+            ExprKind::Convert(value) => {
+                self.out.push_str("convert(");
                 self.write_expr(value);
                 _ = write!(self.out, "):{}", self.types.text(ty, self.name_of));
             }

@@ -10,6 +10,7 @@ use diagnostics::Diagnostic;
 use model::ast::Expr;
 use model::ast::Type;
 use model::operators::BinaryOp;
+use model::operators::Precedence;
 use model::operators::UnaryOp;
 use token::TokenKind;
 
@@ -22,27 +23,6 @@ use crate::literals::character_literal;
 use crate::literals::none_literal;
 use crate::literals::number_literal;
 use crate::literals::string_literal;
-
-/// How tightly an operator binds, from loosest to tightest.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum Precedence {
-    Lowest,
-    OrElse,
-    Pipe,
-    LogicalOr,
-    LogicalAnd,
-    BitOr,
-    BitXor,
-    BitAnd,
-    Equality,
-    Compare,
-    Shift,
-    Sum,
-    Product,
-    Cast,
-    Prefix,
-    Call,
-}
 
 /// Reads the expression the current token begins.
 type PrefixRule = fn(&mut Parser) -> Id<Expr>;
@@ -103,31 +83,59 @@ static RULES: Rules = {
     rules.infix(TokenKind::PipeArrow, Precedence::Pipe, pipe);
 
     // logical
-    rules.infix(TokenKind::OrOr, Precedence::LogicalOr, binary);
-    rules.infix(TokenKind::AndAnd, Precedence::LogicalAnd, binary);
+    rules.infix(TokenKind::OrOr, BinaryOp::LogicalOr.precedence(), binary);
+    rules.infix(TokenKind::AndAnd, BinaryOp::LogicalAnd.precedence(), binary);
 
     // bitwise
-    rules.infix(TokenKind::Pipe, Precedence::BitOr, binary);
-    rules.infix(TokenKind::Caret, Precedence::BitXor, binary);
-    rules.infix(TokenKind::Ampersand, Precedence::BitAnd, binary);
+    rules.infix(TokenKind::Pipe, BinaryOp::BitOr.precedence(), binary);
+    rules.infix(TokenKind::Caret, BinaryOp::BitXor.precedence(), binary);
+    rules.infix(TokenKind::Ampersand, BinaryOp::BitAnd.precedence(), binary);
 
     // equality and comparison
-    rules.infix(TokenKind::EqualEqual, Precedence::Equality, binary);
-    rules.infix(TokenKind::BangEqual, Precedence::Equality, binary);
+    rules.infix(
+        TokenKind::EqualEqual,
+        BinaryOp::EqualTo.precedence(),
+        binary,
+    );
+    rules.infix(
+        TokenKind::BangEqual,
+        BinaryOp::NotEqualTo.precedence(),
+        binary,
+    );
     rules.infix(TokenKind::Is, Precedence::Equality, is_expression);
-    rules.infix(TokenKind::Less, Precedence::Compare, binary);
-    rules.infix(TokenKind::LessEqual, Precedence::Compare, binary);
-    rules.infix(TokenKind::Greater, Precedence::Compare, binary);
-    rules.infix(TokenKind::GreaterEqual, Precedence::Compare, binary);
+    rules.infix(TokenKind::Less, BinaryOp::LessThan.precedence(), binary);
+    rules.infix(
+        TokenKind::LessEqual,
+        BinaryOp::LessOrEqual.precedence(),
+        binary,
+    );
+    rules.infix(
+        TokenKind::Greater,
+        BinaryOp::GreaterThan.precedence(),
+        binary,
+    );
+    rules.infix(
+        TokenKind::GreaterEqual,
+        BinaryOp::GreaterOrEqual.precedence(),
+        binary,
+    );
 
     // arithmetic
-    rules.infix(TokenKind::ShiftLeft, Precedence::Shift, binary);
-    rules.infix(TokenKind::ShiftRight, Precedence::Shift, binary);
-    rules.infix(TokenKind::Plus, Precedence::Sum, binary);
-    rules.infix(TokenKind::Minus, Precedence::Sum, binary);
-    rules.infix(TokenKind::Asterisk, Precedence::Product, binary);
-    rules.infix(TokenKind::Slash, Precedence::Product, binary);
-    rules.infix(TokenKind::Percent, Precedence::Product, binary);
+    rules.infix(
+        TokenKind::ShiftLeft,
+        BinaryOp::ShiftLeft.precedence(),
+        binary,
+    );
+    rules.infix(
+        TokenKind::ShiftRight,
+        BinaryOp::ShiftRight.precedence(),
+        binary,
+    );
+    rules.infix(TokenKind::Plus, BinaryOp::Add.precedence(), binary);
+    rules.infix(TokenKind::Minus, BinaryOp::Subtract.precedence(), binary);
+    rules.infix(TokenKind::Asterisk, BinaryOp::Multiply.precedence(), binary);
+    rules.infix(TokenKind::Slash, BinaryOp::Divide.precedence(), binary);
+    rules.infix(TokenKind::Percent, BinaryOp::Remainder.precedence(), binary);
     rules.infix(TokenKind::As, Precedence::Cast, cast);
 
     // call, index and selector

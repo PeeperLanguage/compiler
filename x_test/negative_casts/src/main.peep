@@ -1,0 +1,16 @@
+// Casts `as` rejects, and conversions that need `as`.
+struct Point { x: i32, y: i32 }
+
+fn convert(big: i32, wide: f64, flag: bool, count: &i32) {
+    let p = Point.{ x = 1, y = 2 };
+    let a = p as i32;
+    let b = count as &mut i32;
+    let c = big as bool;
+    let d = flag as f64;
+    let e = 300 as u8;
+    let f = count as i64;
+    let small: u8 = big;
+    let single: f32 = wide + 1.0;
+}
+
+fn main() {}

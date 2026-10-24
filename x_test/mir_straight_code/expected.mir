@@ -10,7 +10,7 @@ fn add:
     %7 = Multiply %6, 2: i32
     store sum.2, %7
     %9 = load sum.2: i32
-    %10 = widen %9: i64
+    %10 = convert %9: i64
     store wide.3, %10
     %12 = load wide.3: i64
     call note(%12)

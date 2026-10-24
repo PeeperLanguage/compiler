@@ -130,3 +130,13 @@ fn MovedArgument() {
     let mut p = Pair.{ left = 1, right = 2 };
     consume(&mut p, p);
 }
+
+// A `&mut` used as a `&` holds `m` like a `&`: no change through `m` while
+// `r` is in use.
+fn ChangedThroughMutable() -> i32 {
+    let mut x = 1;
+    let m = &mut x;
+    let r: &i32 = m;
+    m.* = 2;
+    return read(r);
+}

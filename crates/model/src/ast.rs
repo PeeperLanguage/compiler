@@ -16,6 +16,7 @@ use source::SourceFile;
 use source::Span;
 
 use crate::operators::BinaryOp;
+use crate::operators::Precedence;
 use crate::operators::UnaryOp;
 
 nodes! {
@@ -454,6 +455,46 @@ pub enum Expr {
     Parentheses(Id<Expr>),
     /// an expression that could not be parsed
     Invalid,
+}
+
+impl Expr {
+    /// The precedence the expression's last part was read at: an operator
+    /// written after it that binds tighter joins that part, not the whole
+    /// (`-a.*` reads `a`, `a + b as T` casts `b`).
+    pub fn precedence(&self) -> Precedence {
+        match self {
+            Expr::Binary { op, .. } => op.precedence(),
+            // A pipe reads its call at prefix precedence.
+            Expr::Unary { .. }
+            | Expr::Reference { .. }
+            | Expr::RawAddress(_)
+            | Expr::Pipe { .. } => Precedence::Prefix,
+            Expr::Cast { .. } => Precedence::Cast,
+            Expr::Is { .. } => Precedence::Equality,
+            // These end in an expression read at the lowest precedence.
+            Expr::OrElse { .. } | Expr::VariantLiteral { .. } | Expr::Range { .. } => {
+                Precedence::Lowest
+            }
+            Expr::Name
+            | Expr::Path(_)
+            | Expr::Number
+            | Expr::String { .. }
+            | Expr::Char { .. }
+            | Expr::Bool(_)
+            | Expr::None
+            | Expr::Free(_)
+            | Expr::Print { .. }
+            | Expr::Call { .. }
+            | Expr::Selector { .. }
+            | Expr::Dereference(_)
+            | Expr::Index { .. }
+            | Expr::StructLiteral { .. }
+            | Expr::ArrayLiteral { .. }
+            | Expr::Block(_)
+            | Expr::Parentheses(_)
+            | Expr::Invalid => Precedence::Call,
+        }
+    }
 }
 
 /// `name = value` in a struct literal.

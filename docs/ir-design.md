@@ -316,7 +316,7 @@ and debuggers; the logic lives in a `lower` crate, the data in `model::mir`.
   leave it only through `load`.
 - **Instructions.** A block is a list of instructions, each one operation whose
   id is the value it gives (`%3 = add %1, %2`): `load`, `store`, a binary or
-  unary operation, `widen`, `call`, `phi`, and for structs `load` of a
+  unary operation, `convert`, `call`, `phi`, and for structs `load` of a
   field path (`load s.1[1, 0]`: one `getelementptr` and load, as clang),
   `aggregate` (a struct value from its fields, LLVM's `insertvalue`) and
   `field` of a struct value not in a variable (`extractvalue`). Operands are a constant, an argument
@@ -515,6 +515,32 @@ it), and the manifest's `build = "program"`.
   source fits the target: `u8` to `i16`, `i8` to `i16`, `u8` to `u16`, `f32` to
   `f64`. `i8` to `u16`, narrowing, and integer-float conversions need `as` (the
   Go compiler also allowed `i8` to `u16`, turning -1 into 65535).
+- **decided** One rule, `Types::conversion(from, to)` in `model`, says how a
+  value of one type becomes another: the same type, an implicit conversion,
+  a reborrow, only with `as`, or never. Every place that needs a value of a
+  type asks it; check builds the result (a `Convert` node, folded for a
+  constant) and makes every error on a value's type in one function, which
+  adds the `.*` help when the value is a reference to an accepted type.
+  (Owner, 2026-10-24; the Go compiler's `CheckCompatibility` was the idea,
+  without its per-site messages or its side table of conversions.)
+- **decided** `x as T` converts what converts without `as`, and between any
+  two number types and from `bool` to an integer (`true` is 1); nothing else
+  (no struct, no `&T` to `&mut T`, no integer to `bool`: write `x != 0`). A
+  narrower integer keeps the low bits; a float rounds to nearest, ties to
+  even; a float becomes an integer cut toward zero, saturated at the ends
+  of its range, NaN as 0 (Rust's rule, as LLVM's plain `fptosi` gives
+  poison there). Folding and LLVM agree for every width
+  (`crates/model/tests/llvm_parity.rs`). Two LLVM 22 limits are worked
+  around in `llvm`: `llvm.fptosi.sat` cannot be lowered above 128 bits, so
+  the saturation is written out; an integer above 128 bits of magnitude
+  2^128 (`f32`) or 2^1024 (`f64`) converts to a wrong finite float, so that
+  range is mapped to infinity first. (Owner, 2026-10-24.)
+- **decided** A number literal takes the type cast to when it can, as it
+  takes any expected type, so `300 as u8` is an error, not 44. (Owner,
+  2026-10-24.)
+- **decided** A `&mut T` is taken where a `&T` is expected by lending it
+  again as a `&` (`&m.*`), never by moving it: the `&mut` stays usable after
+  the shared reference's last use, and is not written through before it.
 - **decided** A binary operator has its left operand's type: the right operand
   is converted to it when that is value-safe, otherwise it is an error
   (`1i64 + 2i32` is `i64`; `1i32 + 2i64` is an error). A shift's count keeps its

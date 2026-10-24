@@ -47,6 +47,46 @@ impl BinaryOp {
             BinaryOp::LogicalOr => "||",
         }
     }
+
+    /// How tightly the operator binds.
+    pub const fn precedence(self) -> Precedence {
+        match self {
+            BinaryOp::Add | BinaryOp::Subtract => Precedence::Sum,
+            BinaryOp::Multiply | BinaryOp::Divide | BinaryOp::Remainder => Precedence::Product,
+            BinaryOp::ShiftLeft | BinaryOp::ShiftRight => Precedence::Shift,
+            BinaryOp::BitAnd => Precedence::BitAnd,
+            BinaryOp::BitOr => Precedence::BitOr,
+            BinaryOp::BitXor => Precedence::BitXor,
+            BinaryOp::EqualTo | BinaryOp::NotEqualTo => Precedence::Equality,
+            BinaryOp::LessThan
+            | BinaryOp::LessOrEqual
+            | BinaryOp::GreaterThan
+            | BinaryOp::GreaterOrEqual => Precedence::Compare,
+            BinaryOp::LogicalAnd => Precedence::LogicalAnd,
+            BinaryOp::LogicalOr => Precedence::LogicalOr,
+        }
+    }
+}
+
+/// How tightly an operator binds, from loosest to tightest.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Precedence {
+    Lowest,
+    OrElse,
+    Pipe,
+    LogicalOr,
+    LogicalAnd,
+    BitOr,
+    BitXor,
+    BitAnd,
+    Equality,
+    Compare,
+    Shift,
+    Sum,
+    Product,
+    Cast,
+    Prefix,
+    Call,
 }
 
 /// A unary operator. There is no `+x`: it would change nothing, so the

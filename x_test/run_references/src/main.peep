@@ -1,7 +1,7 @@
 // A function reads a struct through `&` and writes it through `&mut`, so the
 // caller keeps it; `.*` reads and writes the whole value a reference refers
 // to. A `&mut` passed to a call is lent again, so it can be passed twice; a
-// `&` copies.
+// `&` copies. A `&mut` used as a `&` is lent again as a `&`.
 struct Point { x: i32, y: i32 }
 struct Line { start: Point, end: Point }
 
@@ -14,6 +14,10 @@ fn shift(point: &mut Point, by: i32) {
     point.y = point.y + by;
 }
 
+fn sum(point: &Point) -> i32 {
+    return point.x + point.y;
+}
+
 fn double(n: &mut i32) {
     n.* = n.* * 2;
 }
@@ -24,6 +28,10 @@ fn main() -> i32 {
     let end = &mut line.end;
     shift(end, 3);
     shift(end, 1);
+    let summed = sum(end);
+    shift(end, 0); // `end` was lent, not moved
+    let viewed: &Point = end;
+    let both = summed + sum(viewed) + sum(&mut line.start); // 18 + 18 + 3
     let shared = &line;
     let copy = shared;
     let after = length(copy);
@@ -32,5 +40,5 @@ fn main() -> i32 {
     double(&mut n);
     let whole = &line.start;
     let start = whole.*.x;
-    return before + after + again + n + start - 6; // 7 + 15 + 15 + 10 + 1 - 6
+    return before + after + again + n + start + both - 45; // 7 + 15 + 15 + 10 + 1 + 39 - 45
 }

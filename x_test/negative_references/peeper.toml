@@ -27,5 +27,7 @@ stderr_contains = [
     "let sum = 1 + count.*;",
     "let called = take(count.*);",
     "return count.*;",
-    "Compilation failed with 17 error(s)",
+    "a shift count must be an integer, found `&i32`",
+    "let shifted = 1 << count.*;",
+    "Compilation failed with 18 error(s)",
 ]

@@ -264,7 +264,9 @@ impl Lowering<'_> {
                 op,
                 value: self.lower_expr(value)?,
             },
-            thir::ExprKind::Widen(value) => mir::InstructionKind::Widen(self.lower_expr(value)?),
+            thir::ExprKind::Convert(value) => {
+                mir::InstructionKind::Convert(self.lower_expr(value)?)
+            }
             thir::ExprKind::Call {
                 function,
                 arguments,

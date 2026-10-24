@@ -124,20 +124,26 @@ impl Type {
     pub fn is_number(&self) -> bool {
         matches!(self, Type::Integer(_) | Type::Float(_))
     }
+}
 
-    /// Whether every value of this type is also a value of `target`, so a value
-    /// converts without `as`: to a wider integer of the same signedness, from
-    /// unsigned to a wider signed integer, and from `f32` to `f64`. A type does
-    /// not widen to itself.
-    pub fn widens_to(&self, target: &Type) -> bool {
-        match (self, target) {
-            (Type::Integer(from), Type::Integer(to)) => {
-                to.bits > from.bits && (from.signed == to.signed || to.signed)
-            }
-            (Type::Float(Float::F32), Type::Float(Float::F64)) => true,
-            _ => false,
-        }
-    }
+/// How a value of one type becomes a value of another (`Types::conversion`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Conversion {
+    /// One type, perhaps under an alias: nothing to do.
+    Same,
+    /// Every value of the one type is a value of the other, so it converts
+    /// without `as`: to a wider integer of the same signedness, from unsigned
+    /// to a wider signed integer, and from `f32` to `f64`.
+    Implicit,
+    /// A `&mut T` used as a `&T`: lent again as a shared reference, so the
+    /// `&mut` itself is not moved.
+    Reborrow,
+    /// Converts only when written with `as`: between integers that lose
+    /// values, between floats and integers, from `f64` to `f32`, and from
+    /// `bool` to an integer.
+    NeedsCast,
+    /// No conversion.
+    Never,
 }
 
 const fn integer(signed: bool, bits: u32) -> Type {
@@ -279,6 +285,36 @@ impl Types {
         self.real(a) == self.real(b)
     }
 
+    /// How a value of the type `from` becomes a value of the type `to`.
+    pub fn conversion(&self, from: TypeId, to: TypeId) -> Conversion {
+        if self.same(from, to) {
+            return Conversion::Same;
+        }
+        match (&self[from], &self[to]) {
+            (Type::Integer(from), Type::Integer(to)) => {
+                if to.bits > from.bits && (from.signed == to.signed || to.signed) {
+                    Conversion::Implicit
+                } else {
+                    Conversion::NeedsCast
+                }
+            }
+            (Type::Float(Float::F32), Type::Float(Float::F64)) => Conversion::Implicit,
+            (Type::Float(_) | Type::Integer(_), Type::Float(_) | Type::Integer(_))
+            | (Type::Bool, Type::Integer(_)) => Conversion::NeedsCast,
+            (
+                &Type::Reference {
+                    mutable: true,
+                    target: from,
+                },
+                &Type::Reference {
+                    mutable: false,
+                    target: to,
+                },
+            ) if self.same(from, to) => Conversion::Reborrow,
+            _ => Conversion::Never,
+        }
+    }
+
     /// The type `id` stands for: itself, or the type an alias names.
     pub fn real(&self, id: TypeId) -> TypeId {
         match self.types[id.0 as usize] {
@@ -363,6 +399,7 @@ impl Index<TypeId> for Types {
 
 #[cfg(test)]
 mod tests {
+    use super::Conversion;
     use super::FIXED;
     use super::Float;
     use super::Integer;
@@ -412,21 +449,44 @@ mod tests {
     }
 
     #[test]
-    fn widening_keeps_every_value() {
-        let widens = |from: Type, to: Type| from.widens_to(&to);
-        assert!(widens(integer(false, 8), integer(true, 16)));
-        assert!(widens(integer(true, 8), integer(true, 16)));
-        assert!(widens(integer(false, 8), integer(false, 16)));
-        assert!(widens(Type::Float(Float::F32), Type::Float(Float::F64)));
-        assert!(
-            !widens(integer(true, 8), integer(false, 16)),
-            "-1 is no u16"
-        );
-        assert!(!widens(integer(false, 8), integer(true, 8)), "255 is no i8");
-        assert!(!widens(integer(true, 16), integer(true, 8)));
-        assert!(!widens(integer(true, 32), integer(true, 32)));
-        assert!(!widens(integer(true, 32), Type::Float(Float::F64)));
-        assert!(!widens(Type::Float(Float::F64), Type::Float(Float::F32)));
+    fn conversions() {
+        let mut types = Types::new();
+        let shared = types.intern(Type::Reference {
+            mutable: false,
+            target: TypeId::I32,
+        });
+        let mutable = types.intern(Type::Reference {
+            mutable: true,
+            target: TypeId::I32,
+        });
+        let other = types.intern(Type::Reference {
+            mutable: false,
+            target: TypeId::I64,
+        });
+        let cases = [
+            (TypeId::U8, TypeId::I16, Conversion::Implicit),
+            (TypeId::I8, TypeId::I16, Conversion::Implicit),
+            (TypeId::U8, TypeId::U16, Conversion::Implicit),
+            (TypeId::F32, TypeId::F64, Conversion::Implicit),
+            (TypeId::I32, TypeId::I32, Conversion::Same),
+            (TypeId::I8, TypeId::U16, Conversion::NeedsCast), // -1 is no u16
+            (TypeId::U8, TypeId::I8, Conversion::NeedsCast),  // 255 is no i8
+            (TypeId::I16, TypeId::I8, Conversion::NeedsCast),
+            (TypeId::I32, TypeId::F64, Conversion::NeedsCast),
+            (TypeId::F64, TypeId::I32, Conversion::NeedsCast),
+            (TypeId::F64, TypeId::F32, Conversion::NeedsCast),
+            (TypeId::BOOL, TypeId::U8, Conversion::NeedsCast),
+            (TypeId::I32, TypeId::BOOL, Conversion::Never),
+            (TypeId::BOOL, TypeId::F64, Conversion::Never),
+            (mutable, shared, Conversion::Reborrow),
+            (shared, mutable, Conversion::Never),
+            (mutable, other, Conversion::Never),
+            (shared, TypeId::I32, Conversion::Never),
+            (TypeId::CSTR, TypeId::I64, Conversion::Never),
+        ];
+        for (from, to, conversion) in cases {
+            assert_eq!(types.conversion(from, to), conversion, "{from:?} to {to:?}");
+        }
     }
 
     #[test]

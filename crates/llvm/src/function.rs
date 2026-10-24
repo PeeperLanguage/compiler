@@ -10,6 +10,7 @@ use std::fmt::Write;
 
 use arena::Id;
 use model::DefId;
+use model::constant;
 use model::constant::Value;
 use model::mir;
 use model::mir::InstructionKind;
@@ -17,6 +18,8 @@ use model::mir::Operand;
 use model::mir::Terminator;
 use model::operators::BinaryOp;
 use model::operators::UnaryOp;
+use model::semantic_types::Float;
+use model::semantic_types::Integer;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
@@ -464,19 +467,122 @@ impl Function<'_, '_, '_> {
                     (UnaryOp::BitNot, _) => write!(out, "  {name} = xor {text} {value}, -1"),
                 }
             }
-            InstructionKind::Widen(value) => {
+            InstructionKind::Convert(value) => {
                 let from = operand_type(self.body, value);
-                let conversion = match types[from] {
-                    Type::Integer(integer) if integer.signed => "sext",
-                    Type::Integer(_) => "zext",
-                    _ => "fpext",
+                // `bool` is LLVM's `i1`: a 1-bit unsigned integer.
+                let integer = |ty: TypeId| match types[ty] {
+                    Type::Integer(integer) => Some(integer),
+                    Type::Bool => Some(Integer {
+                        signed: false,
+                        bits: 1,
+                    }),
+                    _ => None,
                 };
-                write!(
-                    out,
-                    "  {name} = {conversion} {} to {}",
-                    self.typed(value),
-                    type_text(types, ty)
-                )
+                let to_text = type_text(types, ty);
+                // 2^this is the first power of two too large for the float
+                // type converted to.
+                let float_overflow = match types[ty] {
+                    Type::Float(Float::F32) => 128,
+                    Type::Float(Float::F64) => 1024,
+                    _ => u32::MAX,
+                };
+                match (integer(from), integer(ty), &types[from]) {
+                    (Some(source), None, _) if source.bits > float_overflow => {
+                        // shortcut: LLVM 22 converts an integer wider than 128
+                        // bits of magnitude 2^`float_overflow` or more to a
+                        // wrong finite float, so that magnitude is mapped to
+                        // infinity here; drop this branch once LLVM converts
+                        // it right. Compared as above 2^`float_overflow` - 1,
+                        // which wraps to the maximum for a signed type with
+                        // no larger value.
+                        let from_text = type_text(types, from);
+                        let value = self.operand(value);
+                        let (conversion, above) = match source.signed {
+                            true => ("sitofp", "sgt"),
+                            false => ("uitofp", "ugt"),
+                        };
+                        _ = writeln!(
+                            out,
+                            "  {name}.big = shl {from_text} 1, {float_overflow}\n  \
+                             {name}.top = sub {from_text} {name}.big, 1\n  \
+                             {name}.above = icmp {above} {from_text} {value}, {name}.top\n  \
+                             {name}.cut = {conversion} {from_text} {value} to {to_text}"
+                        );
+                        let mut result = format!("{name}.cut");
+                        if source.signed {
+                            _ = writeln!(
+                                out,
+                                "  {name}.small = sub {from_text} 0, {name}.big\n  \
+                                 {name}.below = icmp sle {from_text} {value}, {name}.small\n  \
+                                 {name}.low = select i1 {name}.below, {to_text} 0xFFF0000000000000, {to_text} {name}.cut"
+                            );
+                            result = format!("{name}.low");
+                        }
+                        write!(
+                            out,
+                            "  {name} = select i1 {name}.above, {to_text} 0x7FF0000000000000, {to_text} {result}"
+                        )
+                    }
+                    (None, Some(to), &Type::Float(float)) => {
+                        // Cut toward zero, the nearest end of the integer's
+                        // range outside it, and 0 for NaN, as check folds it.
+                        // shortcut: written out because LLVM 22 cannot lower
+                        // `llvm.fpto{s,u}i.sat` above 128 bits; use the
+                        // intrinsic once LLVM lowers it at every width.
+                        let from_text = type_text(types, from);
+                        let (low, high) = constant::float_range(to);
+                        let bound = |bound: f64| match float {
+                            Float::F32 => f64::from(bound as f32).to_bits(),
+                            Float::F64 => bound.to_bits(),
+                        };
+                        let (low, high) = (bound(low), bound(high));
+                        let (cut, lowest) = match to.signed {
+                            true => ("fptosi", format!("{name}.min")),
+                            false => ("fptoui", "0".to_string()),
+                        };
+                        let value = self.operand(value);
+                        if to.signed {
+                            _ = writeln!(out, "  {lowest} = shl {to_text} 1, {}", to.bits - 1);
+                        }
+                        _ = writeln!(
+                            out,
+                            "  {name}.max = xor {to_text} {lowest}, -1\n  \
+                             {name}.low = fcmp ole {from_text} {value}, 0x{low:016X}\n  \
+                             {name}.high = fcmp oge {from_text} {value}, 0x{high:016X}\n  \
+                             {name}.nan = fcmp uno {from_text} {value}, 0.0\n  \
+                             {name}.cut = {cut} {from_text} {value} to {to_text}\n  \
+                             {name}.a = select i1 {name}.low, {to_text} {lowest}, {to_text} {name}.cut\n  \
+                             {name}.b = select i1 {name}.high, {to_text} {name}.max, {to_text} {name}.a"
+                        );
+                        write!(
+                            out,
+                            "  {name} = select i1 {name}.nan, {to_text} 0, {to_text} {name}.b"
+                        )
+                    }
+                    pair => {
+                        let conversion = match pair {
+                            (Some(from), Some(to), _) if to.bits > from.bits && from.signed => {
+                                "sext"
+                            }
+                            (Some(from), Some(to), _) if to.bits > from.bits => "zext",
+                            (Some(from), Some(to), _) if to.bits < from.bits => "trunc",
+                            // The same bits, read with the other sign.
+                            (Some(_), Some(_), _) => "bitcast",
+                            (Some(from), None, _) if from.signed => "sitofp",
+                            (Some(_), None, _) => "uitofp",
+                            (None, None, Type::Float(Float::F32)) => "fpext",
+                            (None, None, _) => "fptrunc",
+                            (None, Some(_), _) => {
+                                unreachable!("check converts only numbers and `bool`")
+                            }
+                        };
+                        write!(
+                            out,
+                            "  {name} = {conversion} {} to {to_text}",
+                            self.typed(value)
+                        )
+                    }
+                }
             }
             InstructionKind::Call {
                 function,

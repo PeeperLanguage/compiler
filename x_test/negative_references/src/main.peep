@@ -21,6 +21,7 @@ fn reads(count: &i32) -> i32 {
     let wide: i64 = count;
     let sum = 1 + count;
     let called = take(count);
+    let shifted = 1 << count;
     return count;
 }
 

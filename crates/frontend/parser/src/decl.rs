@@ -16,11 +16,11 @@ use model::ast::Param;
 use model::ast::Signature;
 use model::ast::Type;
 use model::ast::TypeDecl;
+use model::operators::Precedence;
 use source::Span;
 use token::TokenKind;
 
 use crate::Parser;
-use crate::expr::Precedence;
 use crate::expr::starts_expression;
 use crate::is_name;
 use crate::types::starts_type;

@@ -10,12 +10,12 @@ use model::ast::Metadata;
 use model::ast::Pattern;
 use model::ast::Stmt;
 use model::operators::BinaryOp;
+use model::operators::Precedence;
 use token::TokenKind;
 
 use crate::Parser;
 use crate::decl::const_decl;
 use crate::decl::starts_declaration;
-use crate::expr::Precedence;
 use crate::expr::starts_expression;
 use crate::grow;
 use crate::starts_statement;

@@ -135,8 +135,8 @@ pub enum InstructionKind {
         op: UnaryOp,
         value: Operand,
     },
-    /// The value converted to the wider type `ty` (`Type::widens_to`).
-    Widen(Operand),
+    /// The number or `bool` converted to the type `ty` (`Types::conversion`).
+    Convert(Operand),
     Call {
         function: DefId,
         arguments: Box<[Operand]>,
@@ -267,8 +267,8 @@ impl Body {
                         _ = write!(printer.out, "{op:?} ");
                         printer.write_operand(value);
                     }
-                    InstructionKind::Widen(value) => {
-                        printer.out.push_str("widen ");
+                    InstructionKind::Convert(value) => {
+                        printer.out.push_str("convert ");
                         printer.write_operand(value);
                     }
                     InstructionKind::Call {

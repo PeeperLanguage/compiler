@@ -164,7 +164,7 @@ impl Loans<'_> {
                 (None, &[])
             }
             mir::InstructionKind::Unary { ref value, .. }
-            | mir::InstructionKind::Widen(ref value)
+            | mir::InstructionKind::Convert(ref value)
             | mir::InstructionKind::Field { ref value, .. } => (None, std::slice::from_ref(value)),
             mir::InstructionKind::Call { ref arguments, .. }
             | mir::InstructionKind::Aggregate(ref arguments) => (None, arguments),

@@ -87,6 +87,17 @@ fn LateReference() -> i32 {
     return read(r);
 }
 
+// A `&mut` used as a `&` is lent again as a `&`: reading through `m` is
+// fine while `r` is in use, and `m` can change after `r`'s last use.
+fn MutableAsShared() -> i32 {
+    let mut x = 1;
+    let m = &mut x;
+    let r: &i32 = m;
+    let copy = m.* + read(r);
+    m.* = copy;
+    return read(m);
+}
+
 // A `&mut` argument takes hold only when the call starts, so the other
 // arguments may still read the place.
 fn ArgumentsRead(flag: bool) -> i32 {

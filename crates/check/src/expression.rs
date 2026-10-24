@@ -6,6 +6,7 @@ use std::num::NonZeroU32;
 use arena::Id;
 use arena::List;
 use bigint::Limbs;
+use diagnostics::Code;
 use diagnostics::Diagnostic;
 use diagnostics::fix::Fix;
 use diagnostics::suggest::nearest_name;
@@ -15,7 +16,9 @@ use model::constant;
 use model::constant::Constant;
 use model::constant::Value;
 use model::operators::BinaryOp;
+use model::operators::Precedence;
 use model::operators::UnaryOp;
+use model::semantic_types::Conversion;
 use model::semantic_types::Float;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
@@ -31,38 +34,32 @@ use crate::builtin::UNSUPPORTED_FUNCTIONS;
 use crate::scope;
 use crate::statement::ThirBuilder;
 
+/// What the context of an expression needs of its type.
+pub(crate) enum TypeExpectation {
+    /// The type a number literal without a suffix takes, if any; the value
+    /// may have another type.
+    Hint(Option<TypeId>),
+    /// The value must be of this type, or convert to it without `as`
+    /// (`coerce`); a mismatch is reported.
+    Required(TypeId),
+}
+
 impl ThirBuilder<'_, '_> {
-    /// `expression` (`expr`), added to the body.
-    pub(crate) fn add_expr(&mut self, expression: Id<ast::Expr>) -> Id<Expr> {
-        let checked = self.check_expr(expression, None);
+    /// `expression` (`check_expr`), added to the body.
+    pub(crate) fn add_expr(
+        &mut self,
+        expression: Id<ast::Expr>,
+        expectation: TypeExpectation,
+    ) -> Id<Expr> {
+        let checked = self.check_expr(expression, expectation);
         self.body
             .add(checked, self.checker.module().ast.exprs.span(expression))
     }
 
-    /// `expression` as a value of the type `ty` (`expr_as`), added to the
-    /// body.
-    pub(crate) fn add_expr_as(&mut self, expression: Id<ast::Expr>, ty: TypeId) -> Id<Expr> {
-        let checked = self.check_expr_as(expression, ty);
-        self.body
-            .add(checked, self.checker.module().ast.exprs.span(expression))
-    }
-
-    /// `expression` as a value of the type `ty`, not yet added to the body;
-    /// a mismatch is reported.
-    pub(crate) fn check_expr_as(&mut self, expression: Id<ast::Expr>, ty: TypeId) -> Expr {
-        let checked = self.check_expr(expression, Some(ty));
-        self.coerce(checked, expression, ty)
-            .unwrap_or_else(|mismatch| {
-                self.checker.report(mismatch);
-                Expr::INVALID
-            })
-    }
-
-    /// `expr`, checked from `expression`, as a value of the type `to`:
-    /// unchanged when it has that type, widened when its type widens to it
-    /// (`Type::widens_to`), else the mismatch to report, with help to read
-    /// a reference to such a value. An error already reported on either side
-    /// gives an invalid expression and nothing to report.
+    /// `expr`, checked from `expression`, as a value of the type `to`, which
+    /// its type converts to without `as` (`Types::conversion`), else the
+    /// mismatch to report. An error already reported on either side gives an
+    /// invalid expression and nothing to report.
     fn coerce(
         &mut self,
         expr: Expr,
@@ -72,109 +69,214 @@ impl ThirBuilder<'_, '_> {
         if expr.ty == TypeId::INVALID || to == TypeId::INVALID {
             return Ok(Expr::INVALID);
         }
+        if expr.ty == to {
+            return Ok(expr); // most values already have the type: skip the lookup
+        }
+        let span = self.checker.module().ast.exprs.span(expression);
+        let found = expr.ty;
+        let conversion = self.checker.types.conversion(found, to);
+        if conversion != Conversion::NeedsCast
+            && let Some(converted) = self.convert(expr, span, to, conversion)
+        {
+            return Ok(converted);
+        }
         let checker = &self.checker;
-        let span = checker.module().ast.exprs.span(expression);
-        // An alias is its type under another name.
-        if checker.types.same(expr.ty, to) {
-            return Ok(expr);
-        }
-        let (from_type, to_type) = (checker.types[expr.ty].clone(), checker.types[to].clone());
-        if !from_type.widens_to(&to_type) {
-            let (expected, found) = (checker.type_text(to), checker.type_text(expr.ty));
-            let mismatch = Diagnostic::new(
-                diagnostics::TYPE_MISMATCH,
-                format!("mismatched types: expected `{expected}`, found `{found}`"),
-            )
-            .label(&checker.module().ast.file, span, "");
-            return Err(match from_type {
-                Type::Reference { target, .. }
-                    if checker.types.same(target, to)
-                        || checker.types[target].widens_to(&to_type) =>
-                {
-                    self.help_read_value(mismatch, expression)
-                }
-                _ => mismatch,
-            });
-        }
-        let kind = match expr.kind {
-            ExprKind::Constant(constant) => {
-                ExprKind::Constant(constant::widen(&from_type, &to_type, &constant))
-            }
-            _ => ExprKind::Widen(self.body.add(expr, span)),
-        };
-        Ok(Expr { ty: to, kind })
+        let message = format!(
+            "mismatched types: expected `{}`, found `{}`",
+            checker.type_text(to),
+            checker.type_text(found)
+        );
+        let types = &checker.types;
+        Err(self.type_error(
+            diagnostics::TYPE_MISMATCH,
+            message,
+            span,
+            expression,
+            found,
+            |ty| {
+                matches!(
+                    types.conversion(ty, to),
+                    Conversion::Same | Conversion::Implicit
+                )
+            },
+        ))
     }
 
-    /// The THIR of `expression`, not yet added to the body, so that a folded
-    /// operation leaves no nodes for its operands. `expected` is the type the
-    /// context expects, which a number literal without a suffix takes; where
-    /// the context requires that type, its caller coerces the result to it.
+    /// `mismatch`, made by `coerce` for `expression` of the type `found`,
+    /// with a guess that converts it with `as` when only `as` converts it to
+    /// `to`. Its callers add it, not `coerce`: a mismatched left literal has
+    /// a better fix, which keeps the value (`1i64 + x`).
+    fn help_cast(
+        &self,
+        mismatch: Diagnostic,
+        expression: Id<ast::Expr>,
+        found: TypeId,
+        to: TypeId,
+    ) -> Diagnostic {
+        let types = &self.checker.types;
+        if types.conversion(found, to) != Conversion::NeedsCast {
+            return mismatch;
+        }
+        // The type itself, as an alias's text is not a type to write.
+        let target = self.checker.type_text(types.real(to));
+        let suffix = format!(" as {target}");
+        let fixes = self.append_fixes(expression, &suffix, Precedence::Cast);
+        let help = format!("add `as {target}` to convert, which can change the value");
+        mismatch.guess(help, fixes)
+    }
+
+    /// `expr`, written at `span`, as a value of the type `to` by
+    /// `conversion` (`Types::conversion`): given the type, converted (folded
+    /// when it is a constant) or lent again as a `&`. `None` when it never
+    /// converts.
+    fn convert(
+        &mut self,
+        expr: Expr,
+        span: Span,
+        to: TypeId,
+        conversion: Conversion,
+    ) -> Option<Expr> {
+        let kind = match conversion {
+            Conversion::Same => expr.kind,
+            Conversion::Implicit | Conversion::NeedsCast => match expr.kind {
+                ExprKind::Constant(constant) => {
+                    let types = &self.checker.types;
+                    ExprKind::Constant(constant::convert(&types[expr.ty], &types[to], &constant))
+                }
+                _ => ExprKind::Convert(self.body.add(expr, span)),
+            },
+            Conversion::Reborrow => return Some(self.reborrow(expr, span, false)),
+            Conversion::Never => return None,
+        };
+        Some(Expr { ty: to, kind })
+    }
+
+    /// `value as ty`: `value` as a value of the type `ty`, which its type
+    /// converts to with `as` or without it (`Types::conversion`). A number
+    /// literal takes the type `ty` if it can, so `300 as u8` is an error.
+    fn check_cast(&mut self, value: Id<ast::Expr>, ty: Id<ast::Type>, span: Span) -> Expr {
+        let to = self.checker.resolve_value_type(ty);
+        let checked = self.check_expr(value, TypeExpectation::Hint(Some(to)));
+        if checked.ty == TypeId::INVALID || to == TypeId::INVALID {
+            return Expr::INVALID;
+        }
+        let value_span = self.checker.module().ast.exprs.span(value);
+        let found = checked.ty;
+        let conversion = self.checker.types.conversion(found, to);
+        if let Some(converted) = self.convert(checked, value_span, to, conversion) {
+            return converted;
+        }
+        let checker = &self.checker;
+        let message = format!(
+            "`{}` cannot be converted to `{}`",
+            checker.type_text(found),
+            checker.type_text(to)
+        );
+        let types = &checker.types;
+        let diagnostic = self.type_error(
+            diagnostics::INVALID_CAST,
+            message,
+            span,
+            value,
+            found,
+            |ty| types.conversion(ty, to) != Conversion::Never,
+        );
+        self.checker.report(diagnostic);
+        Expr::INVALID
+    }
+
+    /// The THIR of `expression`, as `expectation` needs it, not yet added to
+    /// the body, so that a folded operation leaves no nodes for its operands.
     pub(crate) fn check_expr(
         &mut self,
         expression: Id<ast::Expr>,
-        expected: Option<TypeId>,
+        expectation: TypeExpectation,
     ) -> Expr {
+        let expected = match expectation {
+            TypeExpectation::Hint(hint) => hint,
+            TypeExpectation::Required(ty) => Some(ty),
+        };
         let tree = &self.checker.module().ast;
         let span = tree.exprs.span(expression);
-        let what = match tree.exprs[expression] {
-            ast::Expr::Name => {
-                let symbol = self.resolve(span);
-                return self.check_symbol_value(symbol, span);
-            }
-            ast::Expr::Number => return self.check_number(span, None, expected),
-            ast::Expr::Bool(value) => {
-                return Expr {
-                    ty: TypeId::BOOL,
-                    kind: ExprKind::Constant(Value::Bool(value)),
-                };
-            }
-            ast::Expr::String { c_string: true } => {
-                let bytes = literal::value(tree.file.slice(span));
-                return Expr {
-                    ty: TypeId::CSTR,
-                    kind: ExprKind::Constant(Value::Bytes(bytes.into())),
-                };
-            }
-            ast::Expr::Parentheses(inner) => return self.check_expr(inner, expected),
-            ast::Expr::Unary { op, value } => return self.check_unary(op, value, span, expected),
-            ast::Expr::Binary { op, left, right } => {
-                return self.check_binary(op, left, right, span, expected);
-            }
-            ast::Expr::Invalid => return Expr::INVALID, // the parser reported it
-            ast::Expr::Path(path) => {
-                let symbol = self.resolve_path(path);
-                return self.check_symbol_value(symbol, span);
-            }
-            ast::Expr::Call { callee, arguments } => {
-                return self.check_call(callee, arguments, span);
-            }
-            ast::Expr::StructLiteral { ty, fields } => {
-                return self.check_struct_literal(ty, fields, span, expected);
-            }
-            ast::Expr::Selector { value, field } => return self.check_field(value, field),
-            ast::Expr::Dereference(value) => return self.check_dereference(value, span),
-            ast::Expr::Reference { mutable, value } => {
-                let place = self.add_expr(value);
-                return self.check_borrow(mutable, place, span);
-            }
-            ast::Expr::String { c_string: false } => "string literals",
-            ast::Expr::Char { .. } => "character literals",
-            ast::Expr::None => "`none` values",
-            ast::Expr::RawAddress(_) => "raw addresses",
-            ast::Expr::Free(_) => "`free` calls",
-            ast::Expr::Print { .. } => "`print` calls",
-            ast::Expr::Index { .. } => "index expressions",
-            ast::Expr::Range { .. } => "ranges",
-            ast::Expr::VariantLiteral { .. } => "variant literals",
-            ast::Expr::ArrayLiteral { .. } => "array literals",
-            ast::Expr::Cast { .. } => "casts",
-            ast::Expr::Is { .. } => "`is` tests",
-            ast::Expr::OrElse { .. } => "`orelse` fallbacks",
-            ast::Expr::Block(_) => "block expressions",
-            ast::Expr::Pipe { .. } => "pipes",
+        let checked = 'checked: {
+            let what = match tree.exprs[expression] {
+                ast::Expr::Name => {
+                    let symbol = self.resolve(span);
+                    break 'checked self.check_symbol_value(symbol, span);
+                }
+                ast::Expr::Number => break 'checked self.check_number(span, None, expected),
+                ast::Expr::Bool(value) => {
+                    break 'checked Expr {
+                        ty: TypeId::BOOL,
+                        kind: ExprKind::Constant(Value::Bool(value)),
+                    };
+                }
+                ast::Expr::String { c_string: true } => {
+                    let bytes = literal::value(tree.file.slice(span));
+                    break 'checked Expr {
+                        ty: TypeId::CSTR,
+                        kind: ExprKind::Constant(Value::Bytes(bytes.into())),
+                    };
+                }
+                ast::Expr::Parentheses(inner) => {
+                    break 'checked self.check_expr(inner, TypeExpectation::Hint(expected));
+                }
+                ast::Expr::Unary { op, value } => {
+                    break 'checked self.check_unary(op, value, span, expected);
+                }
+                ast::Expr::Binary { op, left, right } => {
+                    break 'checked self.check_binary(op, left, right, span, expected);
+                }
+                ast::Expr::Invalid => break 'checked Expr::INVALID, // the parser reported it
+                ast::Expr::Path(path) => {
+                    let symbol = self.resolve_path(path);
+                    break 'checked self.check_symbol_value(symbol, span);
+                }
+                ast::Expr::Call { callee, arguments } => {
+                    break 'checked self.check_call(callee, arguments, span);
+                }
+                ast::Expr::StructLiteral { ty, fields } => {
+                    break 'checked self.check_struct_literal(ty, fields, span, expected);
+                }
+                ast::Expr::Selector { value, field } => {
+                    break 'checked self.check_field(value, field);
+                }
+                ast::Expr::Dereference(value) => {
+                    break 'checked self.check_dereference(value, span);
+                }
+                ast::Expr::Reference { mutable, value } => {
+                    let place = self.add_expr(value, TypeExpectation::Hint(None));
+                    break 'checked self.check_borrow(mutable, place, span);
+                }
+                ast::Expr::Cast { value, ty } => break 'checked self.check_cast(value, ty, span),
+                ast::Expr::String { c_string: false } => "string literals",
+                ast::Expr::Char { .. } => "character literals",
+                ast::Expr::None => "`none` values",
+                ast::Expr::RawAddress(_) => "raw addresses",
+                ast::Expr::Free(_) => "`free` calls",
+                ast::Expr::Print { .. } => "`print` calls",
+                ast::Expr::Index { .. } => "index expressions",
+                ast::Expr::Range { .. } => "ranges",
+                ast::Expr::VariantLiteral { .. } => "variant literals",
+                ast::Expr::ArrayLiteral { .. } => "array literals",
+                ast::Expr::Is { .. } => "`is` tests",
+                ast::Expr::OrElse { .. } => "`orelse` fallbacks",
+                ast::Expr::Block(_) => "block expressions",
+                ast::Expr::Pipe { .. } => "pipes",
+            };
+            self.checker.not_supported(span, what);
+            Expr::INVALID
         };
-        self.checker.not_supported(span, what);
-        Expr::INVALID
+        let TypeExpectation::Required(ty) = expectation else {
+            return checked;
+        };
+        let found = checked.ty;
+        self.coerce(checked, expression, ty)
+            .unwrap_or_else(|mismatch| {
+                let mismatch = self.help_cast(mismatch, expression, found, ty);
+                self.checker.report(mismatch);
+                Expr::INVALID
+            })
     }
 
     /// The name or path written at `span`, which stands for `symbol`, as a
@@ -262,7 +364,7 @@ impl ThirBuilder<'_, '_> {
                     .error(diagnostics::TYPE_MISMATCH, message, span);
             }
             for field in tree.lists.items(fields) {
-                self.add_expr(tree.field_values[field].value); // for its own errors
+                self.add_expr(tree.field_values[field].value, TypeExpectation::Hint(None)); // for its own errors
             }
             return Expr::INVALID;
         };
@@ -273,7 +375,7 @@ impl ThirBuilder<'_, '_> {
         for field in tree.lists.items(fields) {
             let ast::FieldValue { name, value } = tree.field_values[field];
             let Some(index) = self.field_index(ty, name) else {
-                self.add_expr(value); // for its own errors
+                self.add_expr(value, TypeExpectation::Hint(None)); // for its own errors
                 continue;
             };
             if let Some(first) = set[index] {
@@ -286,11 +388,11 @@ impl ThirBuilder<'_, '_> {
                     .label(&tree.file, name.span, "")
                     .label(&tree.file, first, "first set here"),
                 );
-                self.add_expr(value);
+                self.add_expr(value, TypeExpectation::Hint(None));
                 continue;
             }
             set[index] = Some(name.span);
-            let value = self.add_expr_as(value, field_types[index]);
+            let value = self.add_expr(value, TypeExpectation::Required(field_types[index]));
             let index = index as u32;
             checked.push(self.body.add(FieldValue { index, value }, name.span).into());
         }
@@ -322,7 +424,7 @@ impl ThirBuilder<'_, '_> {
     /// `value.field`: the field of a struct value, or of the struct a
     /// reference refers to.
     fn check_field(&mut self, value: Id<ast::Expr>, field: Ident) -> Expr {
-        let mut value = self.add_expr(value);
+        let mut value = self.add_expr(value, TypeExpectation::Hint(None));
         let mut ty = self.body.exprs[value].ty;
         if let Type::Reference { target, .. } = self.checker.types[ty] {
             let referred = self.dereference(value, target);
@@ -352,7 +454,7 @@ impl ThirBuilder<'_, '_> {
 
     /// `reference.*`, written at `span`: the value a reference refers to.
     fn check_dereference(&mut self, reference: Id<ast::Expr>, span: Span) -> Expr {
-        let reference = self.add_expr(reference);
+        let reference = self.add_expr(reference, TypeExpectation::Hint(None));
         let ty = self.body.exprs[reference].ty;
         match self.checker.types[ty] {
             Type::Reference { target, .. } => self.dereference(reference, target),
@@ -643,7 +745,7 @@ impl ThirBuilder<'_, '_> {
         });
         let Some((function, Type::Function { parameters, result })) = signature else {
             for argument in tree.lists.items(arguments) {
-                self.add_expr(argument); // for its own errors
+                self.add_expr(argument, TypeExpectation::Hint(None)); // for its own errors
             }
             return Expr::INVALID;
         };
@@ -662,8 +764,8 @@ impl ThirBuilder<'_, '_> {
         let mut checked: Vec<NonZeroU32> = Vec::with_capacity(arguments.len());
         for (index, argument) in tree.lists.items(arguments).enumerate() {
             let argument = match parameters.get(index) {
-                Some(&parameter) => self.add_expr_as(argument, parameter),
-                None => self.add_expr(argument),
+                Some(&parameter) => self.add_expr(argument, TypeExpectation::Required(parameter)),
+                None => self.add_expr(argument, TypeExpectation::Hint(None)),
             };
             // A `&mut` in a variable is lent again, not moved: the variable
             // stays usable after the call.
@@ -671,16 +773,11 @@ impl ThirBuilder<'_, '_> {
                 ty,
                 kind: ExprKind::Variable(_),
             } = self.body.exprs[argument]
-                && let Type::Reference {
-                    mutable: true,
-                    target,
-                } = self.checker.types[ty]
+                && let Type::Reference { mutable: true, .. } = self.checker.types[ty]
             {
                 let span = self.body.exprs.span(argument);
-                let reference = self.body.add(self.body.exprs[argument].clone(), span);
-                let referred = self.dereference(reference, target);
-                let place = self.body.add(referred, span);
-                self.body.exprs[argument] = self.check_borrow(true, place, span);
+                let reference = self.body.exprs[argument].clone();
+                self.body.exprs[argument] = self.reborrow(reference, span, true);
             }
             checked.push(argument.into());
         }
@@ -779,8 +876,10 @@ impl ThirBuilder<'_, '_> {
             return self.check_number(operand_span, Some(span), expected);
         }
         let checked = match op {
-            UnaryOp::LogicalNot => self.check_expr(operand, Some(TypeId::BOOL)),
-            _ => self.check_expr(operand, expected),
+            UnaryOp::LogicalNot => {
+                self.check_expr(operand, TypeExpectation::Hint(Some(TypeId::BOOL)))
+            }
+            _ => self.check_expr(operand, TypeExpectation::Hint(expected)),
         };
         if checked.ty == TypeId::INVALID {
             return Expr::INVALID;
@@ -837,7 +936,10 @@ impl ThirBuilder<'_, '_> {
         );
         let shift = matches!(op, BinaryOp::ShiftLeft | BinaryOp::ShiftRight);
         let left_literal = unsuffixed_literal(tree, left_operand);
-        let left = self.check_expr(left_operand, if comparison { None } else { expected });
+        let left = self.check_expr(
+            left_operand,
+            TypeExpectation::Hint(if comparison { None } else { expected }),
+        );
         let left_type = self.checker.types[left.ty].clone();
         let fits = |ty: &Type| match op {
             BinaryOp::Add
@@ -861,9 +963,9 @@ impl ThirBuilder<'_, '_> {
         // Matching the right operand to a left one the operator rejects would
         // blame the right one.
         let right = if shift || !left_fits {
-            self.check_expr(right_operand, None)
+            self.check_expr(right_operand, TypeExpectation::Hint(None))
         } else {
-            let checked = self.check_expr(right_operand, Some(left.ty));
+            let checked = self.check_expr(right_operand, TypeExpectation::Hint(Some(left.ty)));
             let found = checked.ty;
             match self.coerce(checked, right_operand, left.ty) {
                 Ok(right) => right,
@@ -878,6 +980,8 @@ impl ThirBuilder<'_, '_> {
                         let help =
                             format!("write `{literal}{found}` to give the left literal that type");
                         mismatch = mismatch.help(help, Vec::new());
+                    } else {
+                        mismatch = self.help_cast(mismatch, right_operand, found, left.ty);
                     }
                     self.checker.report(mismatch);
                     Expr::INVALID
@@ -894,8 +998,16 @@ impl ThirBuilder<'_, '_> {
         if shift && !matches!(right_type, Type::Integer(_)) {
             let count = self.checker.type_text(right.ty);
             let message = format!("a shift count must be an integer, found `{count}`");
-            self.checker
-                .error(diagnostics::INVALID_OPERATION, message, right_span);
+            let types = &self.checker.types;
+            let diagnostic = self.type_error(
+                diagnostics::INVALID_OPERATION,
+                message,
+                right_span,
+                right_operand,
+                right.ty,
+                |ty| matches!(types[ty], Type::Integer(_)),
+            );
+            self.checker.report(diagnostic);
             return Expr::INVALID;
         }
         if let Some(message) = known_trap(op, &left_type, &right_type, &right) {
@@ -923,8 +1035,7 @@ impl ThirBuilder<'_, '_> {
     }
 
     /// Reports `op` in the expression at `span` applied to `operand` of the
-    /// type `ty`, which `fits` rejects. When `ty` is a reference to a value
-    /// `fits` accepts, it helps to read that value.
+    /// type `ty`, which `fits` rejects.
     fn report_invalid_operand(
         &mut self,
         op: &str,
@@ -933,53 +1044,94 @@ impl ThirBuilder<'_, '_> {
         span: Span,
         fits: impl Fn(&Type) -> bool,
     ) -> Expr {
-        let checker = &self.checker;
-        let file = &checker.module().ast.file;
         let message = format!(
             "operator `{op}` cannot be applied to `{}`",
-            checker.type_text(ty)
+            self.checker.type_text(ty)
         );
-        let mut diagnostic =
-            Diagnostic::new(diagnostics::INVALID_OPERATION, message).label(file, span, "");
-        if let Type::Reference { target, .. } = checker.types[ty]
-            && fits(&checker.types[target])
-        {
-            diagnostic = self.help_read_value(diagnostic, operand);
-        }
+        let types = &self.checker.types;
+        let diagnostic = self.type_error(
+            diagnostics::INVALID_OPERATION,
+            message,
+            span,
+            operand,
+            ty,
+            |ty| fits(&types[ty]),
+        );
         self.checker.report(diagnostic);
         Expr::INVALID
     }
 
-    /// `diagnostic` with help to read the value that the reference
-    /// `operand` points to.
-    fn help_read_value(&self, diagnostic: Diagnostic, operand: Id<ast::Expr>) -> Diagnostic {
+    /// The error `message` with `code` at `span`, for `operand` of the type
+    /// `found`, which is not what is needed there. When `found` is a
+    /// reference to a value of a type `accepts` takes, it helps to read that
+    /// value with `.*`. An error that a value's type is not one its place
+    /// takes is made here, so each such error gets the same help.
+    fn type_error(
+        &self,
+        code: Code,
+        message: String,
+        span: Span,
+        operand: Id<ast::Expr>,
+        found: TypeId,
+        accepts: impl Fn(TypeId) -> bool,
+    ) -> Diagnostic {
         let tree = &self.checker.module().ast;
-        let operand_span = tree.exprs.span(operand);
-        let insert = |at: u32, new_text: &str| Fix {
+        let diagnostic = Diagnostic::new(code, message).label(&tree.file, span, "");
+        let Type::Reference { target, .. } = self.checker.types[found] else {
+            return diagnostic;
+        };
+        if !accepts(target) {
+            return diagnostic;
+        }
+        let fixes = self.append_fixes(operand, ".*", Precedence::Call);
+        diagnostic.help("add `.*` to use the value it points to", fixes)
+    }
+
+    /// The fixes that write `suffix`, an operator of the precedence
+    /// `precedence`, after `operand`, in parentheses when it would join only
+    /// the operand's last part: `&n.*` reads `n`, so `&n` needs `(&n).*`.
+    fn append_fixes(
+        &self,
+        operand: Id<ast::Expr>,
+        suffix: &str,
+        precedence: Precedence,
+    ) -> Vec<Fix> {
+        let tree = &self.checker.module().ast;
+        let span = tree.exprs.span(operand);
+        let insert = |at: u32, new_text: String| Fix {
             file: tree.file.clone(),
             span: Span { start: at, end: at },
-            new_text: new_text.to_string(),
+            new_text,
         };
-        // `.*` binds tighter than a prefix or infix operator: `&n.*` reads `n`.
-        let postfix = matches!(
-            tree.exprs[operand],
-            ast::Expr::Name
-                | ast::Expr::Path(_)
-                | ast::Expr::Call { .. }
-                | ast::Expr::Selector { .. }
-                | ast::Expr::Dereference(_)
-                | ast::Expr::Index { .. }
-                | ast::Expr::Parentheses(_)
-        );
-        let fixes = if postfix {
-            vec![insert(operand_span.end, ".*")]
+        if tree.exprs[operand].precedence() >= precedence {
+            vec![insert(span.end, suffix.to_string())]
         } else {
             vec![
-                insert(operand_span.start, "("),
-                insert(operand_span.end, ").*"),
+                insert(span.start, "(".to_string()),
+                insert(span.end, format!("){suffix}")),
             ]
+        }
+    }
+
+    /// `reference`, a `&mut` checked at `span`, lent again as a `&mut` when
+    /// `mutable`, else as a `&`, to what it refers to, so the `&mut` itself
+    /// is not moved. A written `&mut place` borrows `place` itself.
+    fn reborrow(&mut self, reference: Expr, span: Span, mutable: bool) -> Expr {
+        let place = match reference.kind {
+            ExprKind::Borrow { place, .. } => place,
+            _ => {
+                let Type::Reference { target, .. } = self.checker.types[reference.ty] else {
+                    unreachable!("only a reference is lent again")
+                };
+                let reference = self.body.add(reference, span);
+                let referred = self.dereference(reference, target);
+                if referred.ty == TypeId::INVALID {
+                    return Expr::INVALID;
+                }
+                self.body.add(referred, span)
+            }
         };
-        diagnostic.help("add `.*` to use the value it points to", fixes)
+        self.check_borrow(mutable, place, span)
     }
 }
 

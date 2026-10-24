@@ -7,11 +7,11 @@ use model::ast::Expr;
 use model::ast::FieldValue;
 use model::ast::Length;
 use model::ast::Type;
+use model::operators::Precedence;
 use token::Token;
 use token::TokenKind;
 
 use crate::Parser;
-use crate::expr::Precedence;
 use crate::expr::starts_expression;
 use crate::is_name;
 

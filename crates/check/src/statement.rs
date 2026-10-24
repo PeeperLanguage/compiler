@@ -23,6 +23,7 @@ use model::thir::Variable;
 use source::Span;
 
 use crate::Checker;
+use crate::expression::TypeExpectation;
 use crate::scope::report_redeclared;
 
 /// Building the THIR of one piece of code: a function's body, or a
@@ -239,14 +240,16 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 return None;
             }
             ast::Stmt::Return(value) => Stmt::Return(self.check_return_value(span, value)),
-            ast::Stmt::Expression(value) => Stmt::Expression(self.add_expr(value)),
+            ast::Stmt::Expression(value) => {
+                Stmt::Expression(self.add_expr(value, TypeExpectation::Hint(None)))
+            }
             ast::Stmt::Assign { target, value } => self.assign(target, value)?,
             ast::Stmt::If {
                 condition,
                 then,
                 otherwise,
             } => {
-                let condition = self.add_expr_as(condition, TypeId::BOOL);
+                let condition = self.add_expr(condition, TypeExpectation::Required(TypeId::BOOL));
                 let then = self.check_block(then?); // missing after a syntax error
                 let otherwise = otherwise.and_then(|otherwise| self.check_statement(otherwise));
                 Stmt::If {
@@ -305,9 +308,12 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         let declared = ty.map(|ty| self.checker.resolve_value_type(ty));
         let initialized = value.is_some();
         let (ty, value) = match (declared, value) {
-            (Some(ty), value) => (ty, value.map(|value| self.add_expr_as(value, ty))),
+            (Some(ty), value) => (
+                ty,
+                value.map(|value| self.add_expr(value, TypeExpectation::Required(ty))),
+            ),
             (None, Some(value)) => {
-                let value = self.add_expr(value);
+                let value = self.add_expr(value, TypeExpectation::Hint(None));
                 let ty = self.body.exprs[value].ty;
                 if ty != TypeId::VOID {
                     (ty, Some(value))
@@ -391,8 +397,8 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         };
         let span = self.checker.module().ast.exprs.span(value);
         let checked = match declared {
-            Some(ty) => self.check_expr_as(value, ty),
-            None => self.check_expr(value, None),
+            Some(ty) => self.check_expr(value, TypeExpectation::Required(ty)),
+            None => self.check_expr(value, TypeExpectation::Hint(None)),
         };
         match checked.kind {
             ExprKind::Constant(value) => Some(Constant {
@@ -419,10 +425,10 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                     message,
                     self.checker.module().ast.exprs.span(value),
                 );
-                self.add_expr(value); // for its own errors
+                self.add_expr(value, TypeExpectation::Hint(None)); // for its own errors
                 None
             }
-            Some(value) => Some(self.add_expr_as(value, self.result)),
+            Some(value) => Some(self.add_expr(value, TypeExpectation::Required(self.result))),
             None => {
                 if self.result != TypeId::VOID && self.result != TypeId::INVALID {
                     let result = self.checker.type_text(self.result);
@@ -439,10 +445,10 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
     /// one, or what a `&mut` reference refers to.
     fn assign(&mut self, target: Id<ast::Expr>, value: Id<ast::Expr>) -> Option<Stmt> {
         let Some(target) = self.assigned_place(target) else {
-            self.add_expr(value); // for its own errors
+            self.add_expr(value, TypeExpectation::Hint(None)); // for its own errors
             return None;
         };
-        let value = self.add_expr_as(value, self.body.exprs[target].ty);
+        let value = self.add_expr(value, TypeExpectation::Required(self.body.exprs[target].ty));
         Some(Stmt::Assign { target, value })
     }
 
@@ -452,7 +458,9 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
     fn assigned_place(&mut self, target: Id<ast::Expr>) -> Option<Id<Expr>> {
         let tree = &self.checker.module().ast;
         let place = match tree.exprs[target] {
-            ast::Expr::Selector { .. } | ast::Expr::Dereference(_) => self.add_expr(target),
+            ast::Expr::Selector { .. } | ast::Expr::Dereference(_) => {
+                self.add_expr(target, TypeExpectation::Hint(None))
+            }
             _ => {
                 let variable = self.assigned_variable(target)?;
                 let Variable {
@@ -583,7 +591,7 @@ mod tests {
         assert_eq!(
             bodies,
             ["    let c.2 = (a.0 Add 1:i32)
-    b.1 = (b.1 Add widen(c.2):i64)
+    b.1 = (b.1 Add convert(c.2):i64)
     if (a.0 LessThan 0:i32) {
         return 6:i64
     } else if (LogicalNot (a.0 EqualTo 1:i32)) {
@@ -831,6 +839,12 @@ mod tests {
                 "write `{literal}` to give the left literal that type"
             ))
         };
+        // Without a literal to fix, the right operand is converted with `as`.
+        let cast = |ty: &str| {
+            Some(format!(
+                "add `as {ty}` to convert, which can change the value"
+            ))
+        };
         assert_eq!(
             notes(
                 "fn f(x: i64, y: f64) { let a = 1 + x; let b = x + 1; let c = 1 + y; let d = 0xff + y; }"
@@ -838,16 +852,16 @@ mod tests {
             [
                 (mismatch("i64"), help("1i64")),
                 (mismatch("f64"), help("1f64")),
-                (mismatch("f64"), None),
+                (mismatch("f64"), cast("i32")),
             ]
         );
         assert_eq!(
             notes("fn f(x: i64) { let a = 1 + true; let b = 1.5 + x; }"),
             [
-                (mismatch("bool"), None),
+                (mismatch("bool"), cast("i32")),
                 (
                     "mismatched types: expected `f64`, found `i64`".to_string(),
-                    None
+                    cast("f64")
                 ),
             ]
         );
