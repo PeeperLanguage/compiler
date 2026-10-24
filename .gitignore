@@ -29,6 +29,7 @@ graphify-out
 *_REVIEW.md
 *.patch
 clean.md
+test_local
 .*/
 !.agents/
 .agents/*
