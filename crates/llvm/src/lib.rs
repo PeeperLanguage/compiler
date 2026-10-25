@@ -253,11 +253,16 @@ impl Metadata {
                     self.pointer_bits
                 )
             }
-            Type::Reference { target, .. } => {
-                let target = self.debug_type(program, types, types.real(target));
-                let target = target.expect("a reference refers to a value's type");
+            Type::Reference { .. } | Type::RawPointer { .. } => {
+                let base = match types[ty].pointee() {
+                    Some(target) => {
+                        let target = self.debug_type(program, types, types.real(target));
+                        format!("!{}", target.expect("a pointer points to a value's type"))
+                    }
+                    None => "null".to_string(), // `rawptr`
+                };
                 format!(
-                    "!DIDerivedType(tag: DW_TAG_pointer_type, baseType: !{target}, size: {})",
+                    "!DIDerivedType(tag: DW_TAG_pointer_type, baseType: {base}, size: {})",
                     self.pointer_bits
                 )
             }
@@ -330,7 +335,7 @@ fn type_text(types: &Types, ty: TypeId) -> impl fmt::Display {
         Type::Integer(integer) => write!(out, "i{}", integer.bits),
         Type::Float(Float::F32) => out.write_str("float"),
         Type::Float(Float::F64) => out.write_str("double"),
-        Type::CString | Type::Reference { .. } => out.write_str("ptr"),
+        Type::CString | Type::Reference { .. } | Type::RawPointer { .. } => out.write_str("ptr"),
         Type::Struct { ref fields, .. } => struct_type_text(types, fields, out),
         Type::Invalid | Type::Function { .. } => unreachable!("MIR holds no value of this type"),
         Type::Alias { .. } => unreachable!("indexing looks through aliases"),
@@ -377,7 +382,7 @@ fn layout(types: &Types, ty: TypeId, pointer_bits: u32) -> (u64, u64) {
         }
         Type::Float(Float::F32) => (4, 4),
         Type::Float(Float::F64) => (8, 8),
-        Type::CString | Type::Reference { .. } => {
+        Type::CString | Type::Reference { .. } | Type::RawPointer { .. } => {
             let bytes = u64::from(pointer_bits / 8);
             (bytes, bytes)
         }
@@ -442,6 +447,7 @@ fn constant_text(types: &Types, constant: &Constant) -> impl fmt::Display {
             Ok(())
         }
         (Value::Float(bits), _) => write!(out, "0x{bits:016X}"),
+        (Value::Null, _) => out.write_str("null"),
         (Value::Bytes(_), _) => {
             unreachable!("a string constant is a global (`Module::add_string`)")
         }

@@ -1,0 +1,22 @@
+name = "negative_raw_pointers"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "`.*` needs a reference or a typed raw pointer, found `rawptr`",
+    "operator `<` cannot be applied to `*i32`",
+    "addresses of values that are not in a variable are not supported yet",
+    "cannot take the address of immutable `x`",
+    "cannot take the address of `r.*` through shared reference `r`",
+    "mismatched types: expected `*i32`, found `rawptr`",
+    "mismatched types: expected `*i64`, found `*i32`",
+    "mismatched types: expected `i32`, found `none`",
+    "`none` needs its type from where it is used",
+    "raw pointers to references are not supported yet",
+    "cannot return pointer to local storage",
+    "`local` is gone once the function returns",
+    "`kept` is gone once the function returns",
+    "Compilation failed with 12 error(s)",
+]

@@ -1,0 +1,105 @@
+// Raw pointers: from C's `malloc`, and `@x` of a variable. The comments give
+// each count; they add up to 59.
+struct Point { x: i32, y: i32 }
+
+struct Holder { memory: rawptr, value: *i32 }
+
+// C's `malloc`, declared once for each type it gives memory for.
+#[extern("malloc")]
+fn allocate_i32(size: usize) -> *i32;
+
+#[extern("malloc")]
+fn allocate_point(size: usize) -> *Point;
+
+// A typed pointer passes as a `rawptr`.
+#[extern("free")]
+fn release(memory: rawptr);
+
+// What a raw pointer points to can be written, even from a `let`.
+fn set(p: *i32, value: i32) { p.* = value; }
+
+fn set_through(holder: &*i32, value: i32) { holder.*.* = value; }
+
+fn set_field(holder: &Holder, value: i32) { holder.value.* = value; }
+
+fn read_twice(pp: **i32) -> i32 { return pp.*.*; }
+
+fn keep(slot: *rawptr, p: rawptr) { slot.* = p; }
+
+// 6
+fn heap() -> i32 {
+    let p = allocate_i32(4);
+    if p == none { return 0; }
+    p.* = 5;
+    set(p, p.* + 1);
+    let value = p.*;
+    release(p);
+    return value;
+}
+
+// 7: `.` looks through a typed raw pointer.
+fn fields() -> i32 {
+    let point = allocate_point(8);
+    point.x = 3;
+    point.y = 4;
+    let total = point.x + point.y;
+    release(point);
+    return total;
+}
+
+// 32: writes through `@x` are writes to `x`.
+fn addresses() -> i32 {
+    let mut x = 10;
+    let p = @x;
+    p.* = p.* + 1;
+    let mut q = @x;
+    let qq = @q;
+    qq.*.* = x + 1;
+    set_through(&p, x);
+    let holder = Holder.{ memory = p, value = p };
+    set_field(&holder, x);
+    let mut s = Point.{ x = 1, y = 2 };
+    let y = @s.y;
+    y.* = 20;
+    if holder.memory != holder.value { return 0; }
+    return x + s.y;
+}
+
+// 3
+fn nulls() -> i32 {
+    const NOTHING: rawptr = none;
+    let p: *i32 = none;
+    let mut x = 0;
+    let q = @x;
+    let untyped: rawptr = q;
+    let mut count = 0;
+    if p == none { count = count + 1; }
+    if NOTHING != q && untyped == q { count = count + 1; }
+    if NOTHING == none { count = count + 1; }
+    return count;
+}
+
+// 8: through two levels, and an untyped pointer kept through a `*rawptr`.
+fn nested() -> i32 {
+    let mut n = 8;
+    let mut p = @n;
+    let mut slot: rawptr = none;
+    keep(@slot, p);
+    if slot != p { return 0; }
+    return read_twice(@p);
+}
+
+// 9: `as` reads a `rawptr` as a `*i32` again; `none` may be on the left.
+fn casts() -> i32 {
+    const NOTHING: rawptr = none;
+    let typed = NOTHING as *i32;
+    let mut x = 9;
+    let untyped: rawptr = @x;
+    let back = untyped as *i32;
+    if none == typed && none != back { return back.*; }
+    return 0;
+}
+
+fn main() -> i32 {
+    return heap() + fields() + addresses() - nulls() + nested() + casts();
+}

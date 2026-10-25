@@ -159,6 +159,9 @@ pub enum ExprKind {
         place: Id<Expr>,
         mutable: bool,
     },
+    /// `@place`: the place's address as a raw pointer, which no loan
+    /// follows; the place is as a `Borrow`'s.
+    Address(Id<Expr>),
     Invalid,
 }
 
@@ -393,6 +396,9 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
         let Expr { ty, ref kind } = self.body.exprs[expr];
         match *kind {
             ExprKind::Constant(Value::Bool(value)) => _ = write!(self.out, "{value}"),
+            ExprKind::Constant(Value::Null) => {
+                _ = write!(self.out, "none:{}", self.types.text(ty, self.name_of));
+            }
             ExprKind::Constant(Value::Bytes(ref bytes)) => {
                 _ = write!(self.out, "c\"{}\"", bytes.escape_ascii());
             }
@@ -477,6 +483,10 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
             }
             ExprKind::Borrow { place, mutable } => {
                 self.out.push_str(if mutable { "&mut " } else { "&" });
+                self.write_expr(place);
+            }
+            ExprKind::Address(place) => {
+                self.out.push('@');
                 self.write_expr(place);
             }
             ExprKind::Invalid => self.out.push_str("invalid"),

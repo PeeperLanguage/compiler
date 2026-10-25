@@ -502,6 +502,12 @@ impl Lowering<'_> {
                 };
                 mir::InstructionKind::Borrow { place, mutable }
             }
+            thir::ExprKind::Address(place) => {
+                let Ok(place) = self.place(place) else {
+                    unreachable!("the checker takes only the address of a place in a variable")
+                };
+                mir::InstructionKind::Address(place)
+            }
         };
         Some(self.emit(kind, ty, span))
     }

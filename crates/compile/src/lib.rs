@@ -281,6 +281,12 @@ fn hash_type(checker: &Checker, ty: TypeId, hasher: &mut DefaultHasher) {
             mutable.hash(hasher);
             hash_type(checker, *target, hasher);
         }
+        Type::RawPointer { target } => {
+            target.is_some().hash(hasher);
+            if let Some(target) = target {
+                hash_type(checker, *target, hasher);
+            }
+        }
         Type::Invalid | Type::Void | Type::Bool | Type::CString => {}
         Type::Alias { .. } => unreachable!("indexing looks through aliases"),
     }

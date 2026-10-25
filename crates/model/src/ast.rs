@@ -254,8 +254,8 @@ pub enum Type {
     Generic { name: Ident, arguments: List<Type> },
     /// `&T` or `&mut T`
     Reference { mutable: bool, target: Id<Type> },
-    /// `*T`
-    OwnedPointer(Id<Type>),
+    /// `*T`, a raw pointer to a `T`
+    Pointer(Id<Type>),
     /// `?T`
     Optional(Id<Type>),
     /// `rawptr`

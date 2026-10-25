@@ -101,15 +101,24 @@ pub enum Type {
         mutable: bool,
         target: TypeId,
     },
+    /// `*T`, or `rawptr` without a `target`: an address that nothing
+    /// checks, `none` when null; what it points to can always be written.
+    RawPointer {
+        target: Option<TypeId>,
+    },
 }
 
 impl Type {
     /// Whether a value of this type copies when used by value: numbers,
-    /// `bool`, `cstr` and shared references. Any other value moves, and the
+    /// `bool`, `cstr`, shared references and raw pointers. Any other value moves, and the
     /// variable it moved from is unusable until set again.
     pub fn is_copy(&self) -> bool {
         match self {
-            Type::Bool | Type::Integer(_) | Type::Float(_) | Type::CString => true,
+            Type::Bool
+            | Type::Integer(_)
+            | Type::Float(_)
+            | Type::CString
+            | Type::RawPointer { .. } => true,
             Type::Reference { mutable, .. } => !mutable,
             Type::Struct { .. } => false,
             // No value of these is moved: an error, nothing, or not yet a value.
@@ -117,6 +126,16 @@ impl Type {
             Type::Alias { .. } | Type::Named(_) => {
                 unreachable!("indexing `Types` looks through aliases; no value is named")
             }
+        }
+    }
+
+    /// The type a `.*` of this type reads: a reference's target, or a typed
+    /// raw pointer's.
+    pub fn pointee(&self) -> Option<TypeId> {
+        match *self {
+            Type::Reference { target, .. } => Some(target),
+            Type::RawPointer { target } => target,
+            _ => None,
         }
     }
 
@@ -129,7 +148,8 @@ impl Type {
 /// How a value of one type becomes a value of another (`Types::conversion`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Conversion {
-    /// One type, perhaps under an alias: nothing to do.
+    /// Nothing to do: one type, perhaps under an alias, or a `*T` used
+    /// as a `rawptr`, the same address.
     Same,
     /// Every value of the one type is a value of the other, so it converts
     /// without `as`: to a wider integer of the same signedness, from unsigned
@@ -139,8 +159,9 @@ pub enum Conversion {
     /// `&mut` itself is not moved.
     Reborrow,
     /// Converts only when written with `as`: between integers that lose
-    /// values, between floats and integers, from `f64` to `f32`, and from
-    /// `bool` to an integer.
+    /// values, between floats and integers, from `f64` to `f32`, from
+    /// `bool` to an integer, and between raw pointers of other types (the
+    /// same address).
     NeedsCast,
     /// No conversion.
     Never,
@@ -189,6 +210,8 @@ fixed_types! {
     F32 "f32" => Type::Float(Float::F32),
     F64 "f64" => Type::Float(Float::F64),
     CSTR "cstr" => Type::CString,
+    // No name: `rawptr` is a keyword, not a type name.
+    RAWPTR => Type::RawPointer { target: None },
 }
 
 /// The integer types as wide as a pointer, and whether each is signed.
@@ -311,6 +334,10 @@ impl Types {
                     target: to,
                 },
             ) if self.same(from, to) => Conversion::Reborrow,
+            (Type::RawPointer { target: Some(_) }, Type::RawPointer { target: None }) => {
+                Conversion::Same
+            }
+            (Type::RawPointer { .. }, Type::RawPointer { .. }) => Conversion::NeedsCast,
             _ => Conversion::Never,
         }
     }
@@ -377,6 +404,10 @@ impl Types {
                     format!("&{target}")
                 }
             }
+            Type::RawPointer { target: None } => "rawptr".to_string(),
+            Type::RawPointer {
+                target: Some(target),
+            } => format!("*{}", self.real_text(*target, name_of)),
             Type::Alias { .. } => unreachable!("`real` looks through aliases"),
         }
     }
@@ -422,6 +453,12 @@ mod tests {
         assert_eq!(types[TypeId::BOOL], Type::Bool);
         assert_eq!(types[TypeId::F64], Type::Float(Float::F64));
         assert_eq!(types[TypeId::CSTR], Type::CString);
+        assert_eq!(types[TypeId::RAWPTR], Type::RawPointer { target: None });
+        assert_eq!(
+            types.builtin("rawptr", 64),
+            None,
+            "a keyword, not a type name"
+        );
     }
 
     #[test]
@@ -463,6 +500,13 @@ mod tests {
             mutable: false,
             target: TypeId::I64,
         });
+        let untyped = TypeId::RAWPTR;
+        let to_i32 = types.intern(Type::RawPointer {
+            target: Some(TypeId::I32),
+        });
+        let to_i64 = types.intern(Type::RawPointer {
+            target: Some(TypeId::I64),
+        });
         let cases = [
             (TypeId::U8, TypeId::I16, Conversion::Implicit),
             (TypeId::I8, TypeId::I16, Conversion::Implicit),
@@ -483,6 +527,10 @@ mod tests {
             (mutable, other, Conversion::Never),
             (shared, TypeId::I32, Conversion::Never),
             (TypeId::CSTR, TypeId::I64, Conversion::Never),
+            (to_i32, untyped, Conversion::Same),
+            (untyped, to_i32, Conversion::NeedsCast),
+            (to_i32, to_i64, Conversion::NeedsCast),
+            (untyped, TypeId::U64, Conversion::Never),
         ];
         for (from, to, conversion) in cases {
             assert_eq!(types.conversion(from, to), conversion, "{from:?} to {to:?}");
@@ -546,6 +594,8 @@ mod tests {
             definition: declaration(0),
             fields: [TypeId::I32, TypeId::I32].into(),
         });
+        let raw = TypeId::RAWPTR;
+        let typed = types.intern(Type::RawPointer { target: Some(raw) });
         let text = |ty| {
             types.text(ty, |definition| {
                 ["Point", "Place"][definition.index as usize]
@@ -559,6 +609,8 @@ mod tests {
         assert_eq!(text(point), "Point");
         assert_eq!(text(place), "Place (aka Point)");
         assert_eq!(text(complete), "Point");
+        assert_eq!(text(raw), "rawptr");
+        assert_eq!(text(typed), "*rawptr");
     }
 
     #[test]

@@ -6,10 +6,11 @@ mode = "check"
 outcome = "failure"
 stderr_contains = [
     "T0035",
-    "cannot move out of a reference",
+    "cannot move out of a reference or pointer",
+    "let moved = point.*;",
     "borrow it instead, or read only fields that copy",
     "`first` is used after it was moved",
     "`first` is moved here",
     "`unset` is used before it is set",
-    "Compilation failed with 3 error(s)",
+    "Compilation failed with 4 error(s)",
 ]

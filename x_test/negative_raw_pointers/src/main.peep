@@ -1,0 +1,39 @@
+// What raw pointers do not allow.
+
+// `rawptr` does not say what it points to.
+fn untyped_read(p: rawptr) -> i32 { return p.*; }
+
+// Addresses compare only for equality.
+fn ordering(a: *i32, b: *i32) -> bool { return a < b; }
+
+fn literal_address() { let p = @5; }
+
+// `@x` can write `x`, so `x` must be `mut`; and a shared reference's.
+fn immutable() { let x = 1; let p = @x; }
+
+fn shared(r: &i32) { let p = @r.*; }
+
+// Without `as`, only a typed pointer converts, and only to `rawptr`.
+fn typed_from_untyped(p: rawptr) { let q: *i32 = p; }
+
+fn other_type(p: *i32) { let q: *i64 = p; }
+
+// `none` is a pointer, and takes its type from where it is used.
+fn none_number() { let x: i32 = none; }
+
+fn untyped_none() { let p = none; }
+
+// No loan follows a reference behind a raw pointer.
+fn reference_target(r: &i32) { let mut s = r; let p = @s; }
+
+fn escape() -> *i32 {
+    let mut local = 1;
+    return @local;
+}
+
+fn untyped_escape() -> rawptr {
+    let mut kept = 1;
+    return @kept;
+}
+
+fn main() {}

@@ -384,13 +384,17 @@ which returned references and `*T` fields need. `&place` and `&mut place` are
 a `borrow` of the place, its address. The checker also makes the spec's
 reborrow explicit: a `&mut` in a variable passed to a call becomes a `Borrow`
 of what it refers to, so the variable stays usable; a `let` moves it.
+`@place` is an `address` of the place: the same address as a `borrow`, and
+the place must be set, but it makes no loan, so nothing checks how the raw
+pointer is used. A `.*` of a typed raw pointer is the same `Dereference` step
+as a reference's.
 
-A use (`load`, `move`, `borrow`, or a read or write of a place) not set on
+A use (`load`, `move`, `borrow`, `address`, or a read or write of a place) not set on
 every path is T0034 ("`x` is used after it was moved", with each place it was
 moved) when the moved bit is on, else T0039 ("`x` is used before it is set").
 A write through a reference only reads its variable. A `move` of a field, or
 through a reference, is always T0035 ("cannot move a field out of its struct", or "cannot move out of
-a reference"). A `store` to
+a reference or pointer"). A `store` to
 a variable without `mut` that may already be set is T0007 ("cannot assign
 twice to immutable `x`"). So `let x: T;` may be set once later even without
 `mut`: check rejects other assignments to a variable without `mut` only when

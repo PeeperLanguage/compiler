@@ -137,7 +137,7 @@ fn limbs(value: &Value) -> Vec<u64> {
         Value::Bool(value) => vec![u64::from(*value)],
         Value::Integer(limbs) => limbs.as_slice().to_vec(),
         Value::Float(bits) => vec![*bits],
-        Value::Bytes(_) => unreachable!("no operation gives a string"),
+        Value::Bytes(_) | Value::Null => unreachable!("no operation gives a string or a pointer"),
     }
 }
 

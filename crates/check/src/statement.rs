@@ -542,7 +542,34 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 self.add_expr(value, TypeExpectation::Hint(None)); // for its own errors
                 None
             }
-            Some(value) => Some(self.add_expr(value, TypeExpectation::Required(self.result))),
+            Some(value) => {
+                let value = self.add_expr(value, TypeExpectation::Required(self.result));
+                // `@place` of the function's own storage, gone once it returns.
+                // shortcut: only a written `return @x`; an address kept in a
+                // variable or a field first (`let p = @x; return p;`) is
+                // missed. Track where addresses flow in MIR, as loans do,
+                // when that is decided.
+                if let ExprKind::Address(place) = self.body.exprs[value].kind
+                    && let Some((variable, None)) = self.place_root(place)
+                {
+                    let file = &self.checker.module().ast.file;
+                    let declared = self.body.variables.span(variable);
+                    let name = file.slice(declared);
+                    self.checker.report(
+                        Diagnostic::new(
+                            diagnostics::LOCAL_ADDRESS_RETURNED,
+                            "cannot return pointer to local storage",
+                        )
+                        .label(file, self.body.exprs.span(value), "")
+                        .label(
+                            file,
+                            declared,
+                            format!("`{name}` is gone once the function returns"),
+                        ),
+                    );
+                }
+                Some(value)
+            }
             None => {
                 if self.result != TypeId::VOID && self.result != TypeId::INVALID {
                     let result = self.checker.type_text(self.result);

@@ -255,6 +255,7 @@ pub fn report_variable_state_errors(
                 | mir::InstructionKind::Move(ref place)
                 | mir::InstructionKind::Store { ref place, .. }
                 | mir::InstructionKind::Borrow { ref place, .. }
+                | mir::InstructionKind::Address(ref place)
                     if !facts.always.has(place.variable) =>
                 {
                     let variable = place.variable;
@@ -622,11 +623,11 @@ fn moved_use(
 
 /// The error for a value whose type moves, read by value at `span` from a
 /// field, or from `behind_reference`: a value cannot be moved out of its
-/// struct, nor out of what a reference refers to.
+/// struct, nor out of what a reference or raw pointer points to.
 fn partial_move(file: &Arc<SourceFile>, span: Span, behind_reference: bool) -> Diagnostic {
     let (message, help) = if behind_reference {
         (
-            "cannot move out of a reference",
+            "cannot move out of a reference or pointer",
             "borrow it instead, or read only fields that copy",
         )
     } else {

@@ -58,7 +58,7 @@ impl Parser {
                 TokenKind::Asterisk => {
                     self.next();
                     let target = self.type_expr();
-                    self.add(t.span.start, Type::OwnedPointer(target))
+                    self.add(t.span.start, Type::Pointer(target))
                 }
                 TokenKind::Rawptr => {
                     self.next();

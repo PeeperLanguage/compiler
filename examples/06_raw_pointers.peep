@@ -1,0 +1,39 @@
+// Raw pointers: `*T` points to a `T`, `rawptr` to anything. Nothing checks
+// them; they are for C and low-level code. `@x` takes an address, `.*`
+// reads or writes through it, and `none` is null.
+#[extern("malloc")]
+fn allocate(size: usize) -> *i32;
+
+#[extern("free")]
+fn release(memory: rawptr);         // any `*T` passes as a `rawptr`
+
+fn read_twice(pp: **i32) -> i32 {
+    return pp.*.*;                  // through two levels
+}
+
+fn keep(slot: *rawptr, p: rawptr) {
+    slot.* = p;                     // an untyped pointer, written through a pointer
+}
+
+fn main() -> i32 {
+    let mut n = 7;
+    let p = @n;                     // `*i32`
+    p.* = p.* + 1;                  // n is 8
+    let mut q = p;
+    let total = read_twice(@q);     // 8; `@q` is `**i32`
+
+    let mut slot: rawptr = none;
+    keep(@slot, p);                 // `*i32` to `rawptr`, no `as` needed
+    if slot != p {
+        return 0;
+    }
+
+    let heap = allocate(4);
+    if heap == none {
+        return 0;
+    }
+    heap.* = 34;
+    let value = heap.*;
+    release(heap);
+    return total + value;           // 8 + 34 = 42
+}

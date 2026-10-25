@@ -303,7 +303,7 @@ impl Dumper<'_> {
                 ("generic type", None, children)
             }
             Type::Reference { mutable: m, target } => ("reference type", mutable(m), one(target)),
-            Type::OwnedPointer(target) => ("owned pointer type", None, one(target)),
+            Type::Pointer(target) => ("pointer type", None, one(target)),
             Type::Optional(inner) => ("optional type", None, one(inner)),
             Type::RawPointer => ("raw pointer type", None, vec![]),
             Type::FixedArray { length, element } => {

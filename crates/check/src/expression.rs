@@ -185,6 +185,33 @@ impl ThirBuilder<'_, '_> {
         Expr::INVALID
     }
 
+    /// `none`, written at `span`: the null raw pointer of the type
+    /// `expected`, which must be a raw pointer type.
+    fn check_none(&mut self, span: Span, expected: Option<TypeId>) -> Expr {
+        match expected.map(|ty| (ty, &self.checker.types[ty])) {
+            Some((ty, Type::RawPointer { .. })) => Expr {
+                ty,
+                kind: ExprKind::Constant(Value::Null),
+            },
+            Some((_, Type::Invalid)) => Expr::INVALID,
+            Some((ty, _)) => {
+                let message = format!(
+                    "mismatched types: expected `{}`, found `none`",
+                    self.checker.type_text(ty)
+                );
+                self.checker
+                    .error(diagnostics::TYPE_MISMATCH, message, span);
+                Expr::INVALID
+            }
+            None => {
+                let message =
+                    "`none` needs its type from where it is used: write `let p: *T = none`";
+                self.checker.error(diagnostics::MISSING_TYPE, message, span);
+                Expr::INVALID
+            }
+        }
+    }
+
     /// The THIR of `expression`, as `expectation` needs it, not yet added to
     /// the body, so that a folded operation leaves no nodes for its operands.
     pub(crate) fn check_expr(
@@ -249,10 +276,13 @@ impl ThirBuilder<'_, '_> {
                     break 'checked self.check_borrow(mutable, place, span);
                 }
                 ast::Expr::Cast { value, ty } => break 'checked self.check_cast(value, ty, span),
+                ast::Expr::None => break 'checked self.check_none(span, expected),
+                ast::Expr::RawAddress(value) => {
+                    let place = self.add_expr(value, TypeExpectation::Hint(None));
+                    break 'checked self.check_address(place, span);
+                }
                 ast::Expr::String { c_string: false } => "string literals",
                 ast::Expr::Char { .. } => "character literals",
-                ast::Expr::None => "`none` values",
-                ast::Expr::RawAddress(_) => "raw addresses",
                 ast::Expr::Free(_) => "`free` calls",
                 ast::Expr::Print { .. } => "`print` calls",
                 ast::Expr::Index { .. } => "index expressions",
@@ -422,11 +452,11 @@ impl ThirBuilder<'_, '_> {
     }
 
     /// `value.field`: the field of a struct value, or of the struct a
-    /// reference refers to.
+    /// reference or typed raw pointer points to.
     fn check_field(&mut self, value: Id<ast::Expr>, field: Ident) -> Expr {
         let mut value = self.add_expr(value, TypeExpectation::Hint(None));
         let mut ty = self.body.exprs[value].ty;
-        if let Type::Reference { target, .. } = self.checker.types[ty] {
+        if let Some(target) = self.checker.types[ty].pointee() {
             let referred = self.dereference(value, target);
             ty = referred.ty;
             value = self.body.add(referred, self.body.exprs.span(value));
@@ -452,16 +482,19 @@ impl ThirBuilder<'_, '_> {
         }
     }
 
-    /// `reference.*`, written at `span`: the value a reference refers to.
+    /// `reference.*`, written at `span`: the value a reference or a typed
+    /// raw pointer points to.
     fn check_dereference(&mut self, reference: Id<ast::Expr>, span: Span) -> Expr {
         let reference = self.add_expr(reference, TypeExpectation::Hint(None));
         let ty = self.body.exprs[reference].ty;
         match self.checker.types[ty] {
-            Type::Reference { target, .. } => self.dereference(reference, target),
+            ref pointer if let Some(target) = pointer.pointee() => {
+                self.dereference(reference, target)
+            }
             Type::Invalid => Expr::INVALID,
             _ => {
                 let message = format!(
-                    "`.*` needs a reference, found `{}`",
+                    "`.*` needs a reference or a typed raw pointer, found `{}`",
                     self.checker.type_text(ty)
                 );
                 self.checker
@@ -509,26 +542,48 @@ impl ThirBuilder<'_, '_> {
         }
     }
 
-    /// The variable that the place `place` starts from, and the reference
-    /// on its path that decides whether it can be written: a shared one if
-    /// any, else the nearest. `None` for a value not in a variable.
-    pub(crate) fn place_root(&self, place: Id<Expr>) -> Option<(Id<Variable>, Option<Id<Expr>>)> {
-        let shared = |reference: Id<Expr>| {
-            let ty = self.body.exprs[reference].ty;
-            matches!(
-                self.checker.types[ty],
-                Type::Reference { mutable: false, .. }
-            )
+    /// `@place`, written at `span`: the address of the checked place
+    /// `place`, in a variable, which must be a place that can be written.
+    fn check_address(&mut self, place: Id<Expr>, span: Span) -> Expr {
+        let target = self.body.exprs[place].ty;
+        let ty = self.checker.raw_pointer_type(target, span);
+        if ty == TypeId::INVALID {
+            return Expr::INVALID;
+        }
+        let Some((variable, reference)) = self.place_root(place) else {
+            self.checker
+                .not_supported(span, "addresses of values that are not in a variable");
+            return Expr::INVALID;
         };
+        self.report_unwritable(place, variable, reference, "take the address of");
+        Expr {
+            ty,
+            kind: ExprKind::Address(place),
+        }
+    }
+
+    /// The variable that the place `place` starts from, and the pointer on
+    /// its path that decides whether it can be written: up to the nearest
+    /// raw pointer, a shared reference if any, else the nearest reference or
+    /// that raw pointer. `None` for a value not in a variable.
+    pub(crate) fn place_root(&self, place: Id<Expr>) -> Option<(Id<Variable>, Option<Id<Expr>>)> {
+        let pointer = |reference: Id<Expr>| &self.checker.types[self.body.exprs[reference].ty];
+        let shared =
+            |reference| matches!(pointer(reference), Type::Reference { mutable: false, .. });
         let mut root = place;
         let mut deciding = None;
+        // Behind a raw pointer, which can always be written, what holds the
+        // pointer decides nothing.
+        let mut behind_raw = false;
         loop {
             match self.body.exprs[root].kind {
                 ExprKind::Field { value, .. } => root = value,
                 ExprKind::Dereference(reference) => {
-                    if deciding.is_none_or(|kept| !shared(kept) && shared(reference)) {
+                    if !behind_raw && deciding.is_none_or(|kept| !shared(kept) && shared(reference))
+                    {
                         deciding = Some(reference);
                     }
+                    behind_raw |= matches!(pointer(reference), Type::RawPointer { .. });
                     root = reference;
                 }
                 ExprKind::Variable(variable) => return Some((variable, deciding)),
@@ -554,7 +609,9 @@ impl ThirBuilder<'_, '_> {
         let (written, declared, label, help) = match reference {
             Some(reference) => {
                 let ty = self.body.exprs[reference].ty;
-                if let Type::Reference { mutable: true, .. } = self.checker.types[ty] {
+                if let Type::Reference { mutable: true, .. } | Type::RawPointer { .. } =
+                    self.checker.types[ty]
+                {
                     return;
                 }
                 let span = self.body.exprs.span(reference);
@@ -934,6 +991,14 @@ impl ThirBuilder<'_, '_> {
                 | BinaryOp::GreaterThan
                 | BinaryOp::GreaterOrEqual
         );
+        // `none` takes its type from the other operand, so `none == p` is
+        // checked as `p == none`: the same result, and `none` does nothing.
+        if matches!(op, BinaryOp::EqualTo | BinaryOp::NotEqualTo)
+            && matches!(tree.exprs[left_operand], ast::Expr::None)
+            && !matches!(tree.exprs[right_operand], ast::Expr::None)
+        {
+            return self.check_binary(op, right_operand, left_operand, span, expected);
+        }
         let shift = matches!(op, BinaryOp::ShiftLeft | BinaryOp::ShiftRight);
         let left_literal = unsuffixed_literal(tree, left_operand);
         let left = self.check_expr(
@@ -956,7 +1021,9 @@ impl ThirBuilder<'_, '_> {
             | BinaryOp::BitAnd
             | BinaryOp::BitOr
             | BinaryOp::BitXor => matches!(ty, Type::Integer(_)),
-            BinaryOp::EqualTo | BinaryOp::NotEqualTo => ty.is_number() || *ty == Type::Bool,
+            BinaryOp::EqualTo | BinaryOp::NotEqualTo => {
+                ty.is_number() || matches!(ty, Type::Bool | Type::RawPointer { .. })
+            }
             BinaryOp::LogicalAnd | BinaryOp::LogicalOr => *ty == Type::Bool,
         };
         let left_fits = fits(&left_type);
@@ -1077,6 +1144,7 @@ impl ThirBuilder<'_, '_> {
     ) -> Diagnostic {
         let tree = &self.checker.module().ast;
         let diagnostic = Diagnostic::new(code, message).label(&tree.file, span, "");
+        // Not a raw pointer's: it may be `none`, so `.*` is no safe fix.
         let Type::Reference { target, .. } = self.checker.types[found] else {
             return diagnostic;
         };

@@ -142,7 +142,8 @@ impl Loans<'_> {
         let (place, operands): (Option<&mir::Place>, &[mir::Operand]) = match *kind {
             mir::InstructionKind::Load(ref place)
             | mir::InstructionKind::Move(ref place)
-            | mir::InstructionKind::Borrow { ref place, .. } => (Some(place), &[]),
+            | mir::InstructionKind::Borrow { ref place, .. }
+            | mir::InstructionKind::Address(ref place) => (Some(place), &[]),
             // Setting a whole variable does not read it.
             mir::InstructionKind::Store {
                 ref place,

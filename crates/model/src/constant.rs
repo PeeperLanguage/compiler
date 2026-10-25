@@ -43,6 +43,8 @@ pub enum Value {
     /// The bytes of a string, such as a `c"..."` literal's (a `cstr`), without
     /// the zero byte that ends a C string.
     Bytes(Box<[u8]>),
+    /// The null address: `none` as a raw pointer.
+    Null,
 }
 
 /// A constant's type and value.
@@ -113,6 +115,10 @@ pub fn binary(
                 _ => unreachable!("check gives `{op:?}` no bool operands"),
             }))
         }
+        // The only constant pointer is `none`.
+        (Type::RawPointer { .. }, Value::Null, _, Value::Null) => {
+            Ok(Value::Bool(op == BinaryOp::EqualTo))
+        }
         _ => {
             unreachable!("check gives `{op:?}` operands of types {left_type:?} and {right_type:?}")
         }
@@ -171,6 +177,8 @@ pub fn convert(from: &Type, to: &Type, value: &Value) -> Value {
         (Type::Float(_), Type::Integer(to), &Value::Float(bits)) => {
             Value::Integer(saturated_integer(f64::from_bits(bits), *to))
         }
+        // The only constant pointer is `none`, null as every pointer type.
+        (Type::RawPointer { .. }, Type::RawPointer { .. }, Value::Null) => Value::Null,
         _ => unreachable!("check converts no {from:?} value to {to:?}"),
     }
 }

@@ -1,0 +1,7 @@
+name = "run_raw_pointers"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 59

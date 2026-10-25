@@ -13,7 +13,7 @@ stderr_contains = [
     "cannot mutably borrow `r.y` through shared reference `r`",
     "make `r` a `&mut` reference",
     "cannot mutably borrow immutable `p`",
-    "`.*` needs a reference, found `i32`",
+    "`.*` needs a reference or a typed raw pointer, found `i32`",
     "cannot mutably borrow immutable `later`",
     "operator `-` cannot be applied to `&i32`",
     "let negated = -count.*;",

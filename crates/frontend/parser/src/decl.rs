@@ -485,7 +485,7 @@ mod tests {
     fn parses_signatures() {
         let text = "fn (self: &mut Counter) Add<T, U>(mut delta: i32, scale: f64 = 1, &Self) -> &T from (self, delta) {}
 fn exit(code: i32);
-fn Use(callback: fn(value: &Box, i32) -> &Box from value, items: []?*T, view: [..]u8, grid: [4]rawptr) -> ?a::Box<Box<T>>;
+fn Use(callback: fn(value: &Box, i32) -> &Box from value, items: []?*T, view: [..]u8, grid: [4]rawptr, cell: **u8, untyped: *rawptr) -> ?a::Box<Box<T>>;
 ";
         let want = "module
   function declaration
@@ -534,7 +534,7 @@ fn Use(callback: fn(value: &Box, i32) -> &Box from value, items: []?*T, view: [.
       declared name items
       dynamic array type
         optional type
-          owned pointer type
+          pointer type
             type name T
     parameter
       declared name view
@@ -544,6 +544,15 @@ fn Use(callback: fn(value: &Box, i32) -> &Box from value, items: []?*T, view: [.
       declared name grid
       fixed array type
         number literal 4
+        raw pointer type rawptr
+    parameter
+      declared name cell
+      pointer type
+        pointer type
+          type name u8
+    parameter
+      declared name untyped
+      pointer type
         raw pointer type rawptr
     optional type
       path

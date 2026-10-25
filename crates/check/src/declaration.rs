@@ -159,6 +159,20 @@ impl Checker<'_> {
         }
     }
 
+    /// `*target`, written or taken at `span`: invalid when `target`
+    /// is, reported when it is a reference.
+    pub(crate) fn raw_pointer_type(&mut self, target: TypeId, span: Span) -> TypeId {
+        match self.types[target] {
+            Type::Invalid => TypeId::INVALID,
+            // shortcut: no loan follows a reference stored behind a raw
+            // pointer; allow it when lifetimes are checked (ownership step 4).
+            Type::Reference { .. } => self.not_supported(span, "raw pointers to references"),
+            _ => self.types.intern(Type::RawPointer {
+                target: Some(target),
+            }),
+        }
+    }
+
     /// The type a type expression of the module's tree stands for. A named
     /// type stays a name (`Type::Named`); a value's type is
     /// `resolve_value_type`.
@@ -203,9 +217,12 @@ impl Checker<'_> {
                 let target = self.resolve_value_type(target);
                 return self.reference_type(mutable, target, span);
             }
-            ast::Type::OwnedPointer(_) => "owned pointer types",
             ast::Type::Optional(_) => "optional types",
-            ast::Type::RawPointer => "raw pointers",
+            ast::Type::RawPointer => return TypeId::RAWPTR,
+            ast::Type::Pointer(target) => {
+                let target = self.resolve_value_type(target);
+                return self.raw_pointer_type(target, span);
+            }
             ast::Type::FixedArray { .. } => "array types",
             ast::Type::DynamicArray(_) => "dynamic array types",
             ast::Type::Slice(_) => "slice types",

@@ -126,6 +126,9 @@ pub enum InstructionKind {
         place: Place,
         mutable: bool,
     },
+    /// The place's address as a raw pointer (`@place`): as a `Borrow`, the
+    /// variable must already be set, but no loan is made.
+    Address(Place),
     Binary {
         op: BinaryOp,
         left: Operand,
@@ -248,6 +251,10 @@ impl Body {
                         printer
                             .out
                             .push_str(if *mutable { "borrow mut " } else { "borrow " });
+                        printer.write_place(place);
+                    }
+                    InstructionKind::Address(place) => {
+                        printer.out.push_str("address ");
                         printer.write_place(place);
                     }
                     InstructionKind::Load(place) => {
@@ -403,6 +410,7 @@ impl Printer<'_> {
                 Value::Integer(limbs) => write!(self.out, "{}", integer_text(limbs)),
                 Value::Float(bits) => write!(self.out, "{}", f64::from_bits(*bits)),
                 Value::Bytes(bytes) => write!(self.out, "c\"{}\"", bytes.escape_ascii()),
+                Value::Null => write!(self.out, "none"),
             },
             Operand::Argument(index) => write!(self.out, "arg{index}"),
             Operand::Value(value) => write!(self.out, "%{}", value.index()),

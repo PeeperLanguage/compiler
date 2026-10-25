@@ -446,7 +446,7 @@ impl Function<'_, '_, '_> {
                 self.write_place_address(out, &address, place, &location);
                 write!(out, "  store {}, ptr {address}", self.typed(value))
             }
-            InstructionKind::Borrow { ref place, .. } => {
+            InstructionKind::Borrow { ref place, .. } | InstructionKind::Address(ref place) => {
                 self.write_place_address(out, &name, place, &location);
                 return; // the address is the value
             }
@@ -509,10 +509,12 @@ impl Function<'_, '_, '_> {
                             (Some(_), Some(_), _) => "bitcast",
                             (Some(from), None, _) if from.signed => "sitofp",
                             (Some(_), None, _) => "uitofp",
+                            // A pointer cast keeps the address.
+                            (None, None, Type::RawPointer { .. }) => "bitcast",
                             (None, None, Type::Float(Float::F32)) => "fpext",
                             (None, None, _) => "fptrunc",
                             (None, Some(_), _) => {
-                                unreachable!("check converts only numbers and `bool`")
+                                unreachable!("check converts only numbers, `bool` and pointers")
                             }
                         };
                         write!(
@@ -627,8 +629,8 @@ impl Function<'_, '_, '_> {
                     };
                     ty = fields[index as usize];
                 }
-                let Type::Reference { target, .. } = self.types[ty] else {
-                    unreachable!("a dereference is taken of a reference")
+                let Some(target) = self.types[ty].pointee() else {
+                    unreachable!("a dereference is taken of a typed pointer")
                 };
                 _ = writeln!(
                     out,
