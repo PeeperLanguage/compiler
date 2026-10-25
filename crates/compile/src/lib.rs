@@ -223,7 +223,7 @@ fn compile_function(
         } => lower::lower(thir, parameters.len(), result, &checker.types).inspect(|mir| {
             let file = &modules[module].ast.file;
             let diagnostics = &mut checker.diagnostics[module];
-            flow::report_variable_state_errors(mir, &checker.types, file, diagnostics);
+            flow::report_variable_state_errors(mir, file, diagnostics);
             let origins_of = |definition: DefId| {
                 let State::Done(ty) =
                     checker.function_types[definition.module.index()][definition.index as usize]

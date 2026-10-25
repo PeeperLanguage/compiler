@@ -191,24 +191,20 @@ pub fn report_missing_return<'n>(
 /// Reports each variable used where it may not be set yet or was moved, and
 /// each variable without `mut` assigned where it may already be set, once per
 /// variable; and each move out of a field. Only a `let` without a value is
-/// unset at first, and only a variable whose type moves can be moved, so a
-/// function with neither is not walked.
+/// unset at first, and only a move unsets a variable or takes a part of a
+/// place, so a function with neither is not walked.
 ///
 /// Forward dataflow over the reachable blocks: `dataflow` finds the `Facts`
 /// at each block's start; the loop walks each block again from them and
 /// reports at each use and `store`.
 pub fn report_variable_state_errors(
     body: &mir::Body,
-    types: &Types,
     file: &Arc<SourceFile>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    if body.variables.ids().all(|variable| {
-        let mir::Variable {
-            ty, initialized, ..
-        } = body.variables[variable];
-        initialized && types.is_copy(ty)
-    }) {
+    let starts_set = |variable| body.variables[variable].initialized;
+    let moves = |id| matches!(body.instructions[id].kind, mir::InstructionKind::Move(_));
+    if body.variables.ids().all(starts_set) && !body.instructions.ids().any(moves) {
         return;
     }
     let instructions = |index: usize| {

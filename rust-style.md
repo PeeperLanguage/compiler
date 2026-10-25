@@ -142,9 +142,11 @@ field cannot be a parameter. Write the closure in the call: stored in a
 
 **Skip a pass that cannot find anything.** When a cheap fact proves a pass
 has nothing to report, do not run it: the variable state check runs only for a
-function with a `let` without a value or a variable whose type moves, since
-nothing else can be unset or moved. It made
-the check free for the usual function (a 20k-function file: +7% to +0%).
+function with a `let` without a value or a move, since nothing else can be
+unset or moved. It made the check free for the usual function (a 20k-function
+file: +7% to +0%). Prove it from what the pass reports on: deciding by the
+variables' types missed `return r.*` moving a struct out of a reference, in a
+function whose only variable, the reference, copies (2026-10-26).
 
 **Force inlining of a tiny helper every hot walk calls, once measured.**
 The inliner's choices can change when unrelated code moves: taking the path

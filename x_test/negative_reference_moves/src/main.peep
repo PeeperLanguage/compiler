@@ -1,6 +1,7 @@
 // A `&mut` moves when a `let` takes it, so the first variable is unusable; a
-// struct cannot be moved out of what a reference or raw pointer points to;
-// and a variable must be set before it is borrowed.
+// struct cannot be moved out of what a reference or raw pointer points to,
+// also in a function whose only variable, a reference, copies; and a variable
+// must be set before it is borrowed.
 struct Point { x: i32, y: i32 }
 
 fn touch(point: &mut Point) {}
@@ -11,6 +12,10 @@ fn take(point: &Point) {
 
 fn take_raw(point: *Point) {
     let moved = point.*;
+}
+
+fn give(point: &Point) -> Point {
+    return point.*;
 }
 
 fn main() {
