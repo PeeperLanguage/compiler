@@ -280,7 +280,8 @@ impl<'s> Server<'s> {
                 }
                 CachedTarget::Module(file) => {
                     let imported = program.module_of(file)?;
-                    let hover = code_block(&format!("module {}", imported.path));
+                    // A path, not code: a highlighter would read `06_x` as a number.
+                    let hover = format!("module `{}`\n", imported.path);
                     (&imported.ast.file, Span::at(0), hover)
                 }
             };
@@ -607,9 +608,9 @@ impl CachedName {
 }
 
 /// What hover shows for `declaration` of the module at `module`, in
-/// Markdown, as rust-analyzer does: the module's path; the attributes and a
-/// function's text up to its body, or another declaration's first line; then
-/// the doc comment as prose.
+/// Markdown, as rust-analyzer does: the module's path as inline code; the
+/// attributes and a function's text up to its body, or another
+/// declaration's first line, as a Peeper block; then the doc comment as prose.
 fn header(tree: &ast::Tree, declaration: Id<ast::Decl>, module: &str) -> String {
     let span = tree.decls.span(declaration);
     let end = match tree.decls[declaration] {
@@ -629,7 +630,8 @@ fn header(tree: &ast::Tree, declaration: Id<ast::Decl>, module: &str) -> String 
         .items(metadata.attributes)
         .next()
         .map_or(span.start, |first| tree.attributes.span(first).start);
-    let mut hover = code_block(module);
+    // Not a Peeper block: a path is not code (`06_raw_pointers`).
+    let mut hover = format!("`{module}`\n\n");
     hover.push_str(&code_block(
         tree.file.text[start as usize..end as usize].trim(),
     ));
@@ -1272,13 +1274,10 @@ fn main(count: i64) {
             declared(&server, "total", 1),
             ("main.peep".to_string(), json!(2))
         );
-        assert_eq!(
-            hover(&server, "utils", 1),
-            json!("```peeper\nmodule app:utils\n```\n")
-        );
+        assert_eq!(hover(&server, "utils", 1), json!("module `app:utils`\n"));
         assert_eq!(
             hover(&server, "main", 0),
-            json!("```peeper\napp:main\n```\n```peeper\nfn main(count: i64)\n```\n")
+            json!("`app:main`\n\n```peeper\nfn main(count: i64)\n```\n")
         );
         assert_eq!(
             declared(&server, "main", 0),
@@ -1286,7 +1285,7 @@ fn main(count: i64) {
         );
         assert_eq!(
             hover(&server, "Add", 0),
-            json!("```peeper\napp:utils\n```\n```peeper\nfn Add(a: i32, b: i32) -> i32\n```\n")
+            json!("`app:utils`\n\n```peeper\nfn Add(a: i32, b: i32) -> i32\n```\n")
         );
         assert_eq!(
             declared(&server, "Add", 0),
@@ -1295,7 +1294,7 @@ fn main(count: i64) {
         assert_eq!(
             hover(&server, "Limit", 0),
             json!(
-                "```peeper\napp:utils\n```\n```peeper\n#[deprecated]\nconst Limit: u8 = 200;\n```\n\n---\n\nThe cap.\n"
+                "`app:utils`\n\n```peeper\n#[deprecated]\nconst Limit: u8 = 200;\n```\n\n---\n\nThe cap.\n"
             )
         );
         // `main` has an error, and its names are still there.
