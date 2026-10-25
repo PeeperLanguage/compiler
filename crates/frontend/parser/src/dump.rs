@@ -388,7 +388,7 @@ impl Dumper<'_> {
                 body,
             } => {
                 let mut children: Vec<Item> = index.map(declared).into_iter().collect();
-                children.push(declared(value));
+                children.extend(value.map(declared));
                 children.push(Item::Expr(iterable));
                 children.extend(body.map(Item::Block));
                 ("for in statement", None, children)

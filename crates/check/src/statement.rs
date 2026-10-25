@@ -193,6 +193,48 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         closed
     }
 
+    /// `close_block` for a loop's `body`, in which `break` and `continue`
+    /// are allowed.
+    fn check_loop_body(
+        &mut self,
+        body: Id<ast::Block>,
+        enclosing: (Id<Block>, usize),
+        first: Option<Id<Stmt>>,
+    ) -> Id<Block> {
+        self.loops += 1;
+        let body = self.close_block(body, enclosing, first);
+        self.loops -= 1;
+        body
+    }
+
+    /// A loop's variable `name`, set each pass, declared in the current
+    /// block.
+    fn declare_loop_variable(&mut self, ty: TypeId, name: Ident) -> Id<Variable> {
+        let variable = Variable {
+            ty,
+            mutable: false,
+            initialized: true,
+            scope: self.block,
+            hidden: false,
+        };
+        let variable = self.body.add(variable, name.span);
+        self.declare(name, Local::Variable(variable));
+        variable
+    }
+
+    /// A variable of the current block with no name, made for the code at
+    /// `span`.
+    fn add_hidden_variable(&mut self, ty: TypeId, span: Span) -> Id<Variable> {
+        let variable = Variable {
+            ty,
+            mutable: false,
+            initialized: true,
+            scope: self.block,
+            hidden: true,
+        };
+        self.body.add(variable, span)
+    }
+
     /// Declares `name` in the current block. It may
     /// shadow a name of an outer block until the block ends. A name the block
     /// already declares is reported and keeps its first meaning; the
@@ -315,19 +357,14 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 }
                 return None;
             }
-            ast::Stmt::Loop {
-                condition: Some(range),
-                body,
-            } if matches!(tree.exprs[range], ast::Expr::Range { .. }) => {
-                self.check_for_in(None, None, range, body?)?
-            }
             ast::Stmt::Loop { condition, body } => {
                 let condition = condition.map(|condition| {
                     self.add_expr(condition, TypeExpectation::Required(TypeId::BOOL))
                 });
-                self.loops += 1;
-                let body = body.map(|body| self.check_block(body));
-                self.loops -= 1;
+                let body = body.map(|body| {
+                    let enclosing = self.open_block(body);
+                    self.check_loop_body(body, enclosing, None)
+                });
                 Stmt::Loop {
                     condition,
                     body: body?, // missing after a syntax error
@@ -338,15 +375,13 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 value,
                 iterable,
                 body,
-            } if matches!(tree.exprs[iterable], ast::Expr::Range { .. }) => {
-                self.check_for_in(index, Some(value), iterable, body?)?
-            }
-            ast::Stmt::ForIn {
-                index,
-                value,
-                iterable,
-                body,
-            } => self.check_for_array(index, value, iterable, body?)?,
+            } => match (value, &tree.exprs[iterable]) {
+                (_, ast::Expr::Range { .. }) => {
+                    self.check_for_range(index, value, iterable, body?)?
+                }
+                (Some(value), _) => self.check_for_array(index, value, iterable, body?)?,
+                (None, _) => unreachable!("the parser leaves out only a range loop's value"),
+            },
             ast::Stmt::Break | ast::Stmt::Continue if self.loops == 0 => {
                 let jump = match tree.stmts[statement] {
                     ast::Stmt::Break => "break",
@@ -453,7 +488,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
     /// { body }` without a `value`. A literal endpoint without a suffix takes
     /// the other endpoint's type, which must be an integer. A range without
     /// both ends, or an index, is reported as not supported yet.
-    fn check_for_in(
+    fn check_for_range(
         &mut self,
         index: Option<Ident>,
         value: Option<Ident>,
@@ -495,21 +530,8 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 .error(diagnostics::INVALID_OPERATION, message, span);
         }
         let enclosing = self.open_block(body);
-        let variable = value.map(|value| {
-            let variable = Variable {
-                ty,
-                mutable: false,
-                initialized: true,
-                scope: self.block,
-                hidden: false,
-            };
-            let variable = self.body.add(variable, value.span);
-            self.declare(value, Local::Variable(variable));
-            variable
-        });
-        self.loops += 1;
-        let body = self.close_block(body, enclosing, None);
-        self.loops -= 1;
+        let variable = value.map(|value| self.declare_loop_variable(ty, value));
+        let body = self.check_loop_body(body, enclosing, None);
         Some(Stmt::ForRange {
             value: variable,
             start,
@@ -591,14 +613,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         };
         let holder = self.body.add(holder, whole);
         let outer = std::mem::replace(&mut self.block, holder);
-        let items = Variable {
-            ty: items_type,
-            mutable: false,
-            initialized: true,
-            scope: holder,
-            hidden: true,
-        };
-        let items = self.body.add(items, span);
+        let items = self.add_hidden_variable(items_type, span);
         let let_items = Stmt::Let {
             variable: items,
             value: Some(iterable),
@@ -623,38 +638,19 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         };
         let (start, end) = (constant(0), constant(length));
         let enclosing = self.open_block(body);
-        let counter = Variable {
-            ty: usize,
-            mutable: false,
-            initialized: true,
-            scope: self.block,
-            hidden: index.is_none(),
+        let counter = match index {
+            Some(index) => self.declare_loop_variable(usize, index),
+            None => self.add_hidden_variable(usize, span),
         };
-        let counter = self
-            .body
-            .add(counter, index.map_or(span, |index| index.span));
-        if let Some(index) = index {
-            self.declare(index, Local::Variable(counter));
-        }
         let (element_value, value_type) =
             self.array_element(items, counter, array, element, borrow, span);
-        let variable = Variable {
-            ty: value_type,
-            mutable: false,
-            initialized: true,
-            scope: self.block,
-            hidden: false,
-        };
-        let variable = self.body.add(variable, value.span);
-        self.declare(value, Local::Variable(variable));
+        let variable = self.declare_loop_variable(value_type, value);
         let let_value = Stmt::Let {
             variable,
             value: Some(element_value),
         };
         let let_value = self.body.add(let_value, value.span);
-        self.loops += 1;
-        let body = self.close_block(body, enclosing, Some(let_value));
-        self.loops -= 1;
+        let body = self.check_loop_body(body, enclosing, Some(let_value));
         let range = Stmt::ForRange {
             value: Some(counter),
             start,

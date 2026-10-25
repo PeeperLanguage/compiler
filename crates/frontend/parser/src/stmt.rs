@@ -242,7 +242,7 @@ fn if_statement(p: &mut Parser) -> Id<Stmt> {
 
 /// Reads `for { }`, `for condition { }`, `for start..end { }`, `for value
 /// in items { }` or `for index, value in items { }`. The iterable may be a
-/// range.
+/// range; `for start..end { }` is a `ForIn` without a value.
 fn for_statement(p: &mut Parser) -> Id<Stmt> {
     let start = p.next().span.start;
     let unnamed_index = p.at(TokenKind::Underscore) && p.ahead(1).kind == TokenKind::Comma;
@@ -267,7 +267,7 @@ fn for_statement(p: &mut Parser) -> Id<Stmt> {
             start,
             Stmt::ForIn {
                 index,
-                value,
+                value: Some(value),
                 iterable,
                 body,
             },
@@ -285,6 +285,16 @@ fn for_statement(p: &mut Parser) -> Id<Stmt> {
                     "expected an identifier before `in`",
                 ),
             );
+        }
+        if let Expr::Range { .. } = p.tree.exprs[value] {
+            let body = p.body("for");
+            let range = Stmt::ForIn {
+                index: None,
+                value: None,
+                iterable: value,
+                body,
+            };
+            return p.add(start, range);
         }
         condition = Some(value);
     }
@@ -391,6 +401,7 @@ mod tests {
     for n < limit { continue; }
     for item in items { }
     for i, item in items[1..] { }
+    for 0..n { }
     match shape {
         Shape::Dot => { }
         Shape::Line with .{ end } => { }
@@ -457,6 +468,11 @@ mod tests {
           name reference items
           range ..
             number literal 1
+        block { }
+      for in statement
+        range ..
+          number literal 0
+          name reference n
         block { }
       match statement
         name reference shape

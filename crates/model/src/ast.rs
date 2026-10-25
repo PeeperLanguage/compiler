@@ -323,17 +323,17 @@ pub enum Stmt {
         then: Option<Id<Block>>,
         otherwise: Option<Id<Stmt>>,
     },
-    /// `for { }`, `for condition { }`, or `for start..end { }`, whose
-    /// condition is a `Range`
+    /// `for { }` or `for condition { }`
     Loop {
         condition: Option<Id<Expr>>,
         body: Option<Id<Block>>,
     },
     /// `for value in items { }` or `for index, value in items { }`, with no
-    /// index for `for _, value in`; the iterable may be an `Expr::Range`
+    /// index for `for _, value in`; the iterable may be an `Expr::Range`,
+    /// and only then is there no `value`: `for start..end { }`
     ForIn {
         index: Option<Ident>,
-        value: Ident,
+        value: Option<Ident>,
         iterable: Id<Expr>,
         body: Option<Id<Block>>,
     },
