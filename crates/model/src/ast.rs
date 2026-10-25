@@ -145,7 +145,7 @@ impl Ident {
     }
 }
 
-/// A name in a list of names: a type parameter, or an origin after `from`. Its
+/// A name in a list of names: a type parameter, or an origin after `in`. Its
 /// text is its span.
 #[derive(Clone, Copy, Debug)]
 pub struct Name;
@@ -188,7 +188,7 @@ impl Decl {
     }
 }
 
-/// `fn (receiver) name<T>(parameters) -> Result from origins { body }`, or
+/// `fn (receiver) name<T>(parameters) -> Result in origins { body }`, or
 /// with `;` for a body defined elsewhere; an interface method has no body.
 /// Everything but the name and body is its signature.
 #[derive(Clone, Copy, Debug)]
@@ -200,7 +200,7 @@ pub struct Function {
 }
 
 /// A function's type: its receiver, type parameters, parameters, result and
-/// the origins of a returned reference. A function type `fn(T) -> R from a`
+/// the origins of a returned reference. A function type `fn(T) -> R in a`
 /// has no receiver or type parameters, and its parameters only a name and a
 /// type.
 #[derive(Clone, Copy, Debug)]
@@ -266,7 +266,7 @@ pub enum Type {
     DynamicArray(Id<Type>),
     /// `[..]T`
     Slice(Id<Type>),
-    /// `fn(T) -> R from a`
+    /// `fn(T) -> R in a`
     Function(Signature),
     /// `struct { fields }`
     Struct(List<Field>),

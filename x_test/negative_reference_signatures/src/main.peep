@@ -1,0 +1,28 @@
+// What `in` and a reference result may not say: one error per function.
+fn Nothing(n: i32) -> &i32 {
+    return &n;
+}
+
+fn NoMutableSource(a: &i32) -> &mut i32 {
+    return a;
+}
+
+fn NotReferenceResult(a: &i32) -> i32 in a {
+    return a.*;
+}
+
+fn UnknownName(a: &i32) -> &i32 in c {
+    return a;
+}
+
+fn ValueSource(a: &i32, n: i32) -> &i32 in n {
+    return a;
+}
+
+fn SharedSourceOfMut(a: &i32, b: &mut i32) -> &mut i32 in (a, b) {
+    return b;
+}
+
+fn NamedTwice(a: &i32) -> &i32 in (a, a) {
+    return a;
+}

@@ -28,12 +28,21 @@
 //! may read the place (`update(&mut x, read(&x))`). When the call starts it
 //! takes hold, and a reference to the place still in use then, the call's
 //! other arguments included, is an error (`both(&mut x, &x)`).
+//!
+//! A reference a call returns holds the loans of the arguments its
+//! function's origins name (`in`), so they stay borrowed while it is in use;
+//! a `&mut` argument there is never reserved, as its loan outlives the call.
+//! Each reference parameter holds a parameter loan, numbered after the
+//! borrows, for what the caller lent; it conflicts with nothing here. A
+//! returned reference may hold only the parameter loans the origins name,
+//! and no loan of the function's own storage (T0036).
 
 use std::collections::VecDeque;
 use std::sync::Arc;
 
 use arena::Id;
 use diagnostics::Diagnostic;
+use model::DefId;
 use model::mir;
 use model::semantic_types::Type;
 use model::semantic_types::Types;
@@ -48,15 +57,20 @@ use crate::predecessors;
 /// that order. Only named by `Id<Holder>`.
 enum Holder {}
 
-/// One `Borrow`, numbered from 0 in instruction order. Only named by
-/// `Id<Loan>`.
+/// One `Borrow`, numbered from 0 in instruction order, then one parameter
+/// loan for each parameter. Only named by `Id<Loan>`.
 enum Loan {}
 
 /// Reports each access that a reference still in use forbids, once per
-/// loan; a body without a `Borrow` has no loan and is not walked.
-pub fn report_loan_errors(
+/// loan, in the body of `function`; `origins_of(definition)` gives the
+/// parameters a reference `definition` returns may point into. A body with
+/// no `Borrow` and no reference result has no loan to break and is not
+/// walked.
+pub fn report_loan_errors<'t>(
     body: &mir::Body,
     types: &Types,
+    function: DefId,
+    origins_of: &dyn Fn(DefId) -> &'t [u32],
     file: &Arc<SourceFile>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
@@ -70,7 +84,7 @@ pub fn report_loan_errors(
             )
         })
         .collect();
-    if borrows.is_empty() {
+    if borrows.is_empty() && !matches!(types[body.result], Type::Reference { .. }) {
         return;
     }
     let variables = body.variables.ids().map(|id| body.variables[id].ty);
@@ -88,6 +102,8 @@ pub fn report_loan_errors(
     }
     let mut loans = Loans {
         body,
+        origins_of,
+        origins: origins_of(function),
         reserved: Bits::new(0), // found below: it needs `Loans::uses`
         borrows,
         holders,
@@ -98,9 +114,11 @@ pub fn report_loan_errors(
 }
 
 /// One function's loans and holders.
-struct Loans<'b> {
+struct Loans<'b, 't> {
     body: &'b mir::Body,
-    borrows: Vec<Id<mir::Instruction>>, // each loan's `Borrow`, by `Id<Loan>`
+    origins_of: &'b dyn Fn(DefId) -> &'t [u32], // of a function it calls
+    origins: &'t [u32], // the parameters its returned reference may point into
+    borrows: Vec<Id<mir::Instruction>>, // each `Borrow` loan's instruction
     /// The holder of each variable, then of each instruction's value;
     /// `None` for one that is not a reference.
     holders: Vec<Option<Id<Holder>>>,
@@ -119,13 +137,30 @@ struct Access<'p> {
     span: Span,
 }
 
-impl Loans<'_> {
+impl Loans<'_, '_> {
+    /// The borrows, then one parameter loan per parameter.
+    fn loan_count(&self) -> usize {
+        self.borrows.len() + self.body.parameters
+    }
+
     fn variable_holder(&self, variable: Id<mir::Variable>) -> Option<Id<Holder>> {
         self.holders[variable.index()]
     }
 
     fn value_holder(&self, value: Id<mir::Instruction>) -> Option<Id<Holder>> {
         self.holders[self.body.variables.len() + value.index()]
+    }
+
+    /// The holder a `return` ending `block` hands back, used there, and
+    /// the `return`'s span.
+    fn returned(&self, block: Id<mir::Block>) -> Option<(Id<Holder>, Span)> {
+        match self.body.blocks[block].terminator {
+            mir::Terminator::Return {
+                value: Some(ref value),
+                span,
+            } => self.operand_holder(value).map(|holder| (holder, span)),
+            _ => None,
+        }
     }
 
     fn operand_holder(&self, operand: &mir::Operand) -> Option<Id<Holder>> {
@@ -211,10 +246,22 @@ impl Loans<'_> {
         let mut use_counts = vec![0_u32; self.holder_count];
         let mut call_arguments = Bits::new(self.holder_count);
         for id in self.body.instructions.ids() {
-            let call = matches!(
-                self.body.instructions[id].kind,
-                mir::InstructionKind::Call { .. }
-            );
+            let call = match self.body.instructions[id].kind {
+                mir::InstructionKind::Call {
+                    function,
+                    ref arguments,
+                } => {
+                    // Used again through the returned reference, so its loan
+                    // outlives the call.
+                    for &position in (self.origins_of)(function) {
+                        if let Some(holder) = self.operand_holder(&arguments[position as usize]) {
+                            use_counts[holder.index()] += 1;
+                        }
+                    }
+                    true
+                }
+                _ => false,
+            };
             self.uses(id, |holder| {
                 use_counts[holder.index()] += 1;
                 if call {
@@ -243,7 +290,8 @@ impl Loans<'_> {
     fn step_held(&self, held: &mut [Bits<Loan>], id: Id<mir::Instruction>) {
         // The holder given new loans, the holder whose loans it takes, and
         // a loan of its own. A reference read from a variable, or borrowed
-        // through one, holds that variable's loans.
+        // through one, holds that variable's loans; a parameter, its
+        // parameter loan.
         let (target, source, own) = match self.body.instructions[id].kind {
             mir::InstructionKind::Store {
                 ref place,
@@ -253,8 +301,30 @@ impl Loans<'_> {
                     .whole_variable()
                     .and_then(|variable| self.variable_holder(variable)),
                 self.operand_holder(value),
-                None,
+                match *value {
+                    // Its parameter loan, after the borrows.
+                    mir::Operand::Argument(position) => {
+                        Some(Id::from_index(self.borrows.len() + position as usize))
+                    }
+                    _ => None,
+                },
             ),
+            mir::InstructionKind::Call {
+                function,
+                ref arguments,
+            } => {
+                let Some(target) = self.value_holder(id) else {
+                    return;
+                };
+                let mut loans = Bits::new(self.loan_count());
+                for &position in (self.origins_of)(function) {
+                    if let Some(source) = self.operand_holder(&arguments[position as usize]) {
+                        loans = loans.combine(&held[source.index()], |a, b| a | b);
+                    }
+                }
+                held[target.index()] = loans;
+                return;
+            }
             mir::InstructionKind::Load(ref place) | mir::InstructionKind::Move(ref place) => (
                 self.value_holder(id),
                 self.variable_holder(place.variable),
@@ -277,7 +347,7 @@ impl Loans<'_> {
         };
         held[target.index()] = match source {
             Some(source) => held[source.index()].clone(),
-            None => Bits::new(self.borrows.len()),
+            None => Bits::new(self.loan_count()),
         };
         if let Some(loan) = own {
             held[target.index()].set(loan);
@@ -297,7 +367,7 @@ impl Loans<'_> {
         let instructions =
             |block: Id<mir::Block>| body.lists.items(body.blocks[block].instructions);
         let no_holders = Bits::new(self.holder_count);
-        let no_loans = vec![Bits::new(self.borrows.len()); self.holder_count];
+        let no_loans = vec![Bits::new(self.loan_count()); self.holder_count];
         let starts = dataflow(
             body.blocks.len(),
             [(Id::from_index(0), no_loans)],
@@ -314,10 +384,17 @@ impl Loans<'_> {
         );
         let predecessors = predecessors(body);
         // From every block, not only those that leave the function: a block
-        // of an endless `for {}` reaches no exit.
+        // of an endless `for {}` reaches no exit. A `return` block, which
+        // nothing follows, ends with its returned reference in use.
         let ends = dataflow(
             body.blocks.len(),
-            body.blocks.ids().map(|block| (block, no_holders.clone())),
+            body.blocks.ids().map(|block| {
+                let mut live = no_holders.clone();
+                if let Some((returned, _)) = self.returned(block) {
+                    live.set(returned);
+                }
+                (block, live)
+            }),
             |block| predecessors[block.index()].iter().copied(),
             |block, live| {
                 let ids: Vec<_> = instructions(block).collect();
@@ -327,13 +404,23 @@ impl Loans<'_> {
             },
             |a: &Bits<Holder>, b: &Bits<Holder>| a.combine(b, |a, b| a | b),
         );
-        let mut reported = Bits::new(self.borrows.len());
+        let mut reported = Bits::new(self.loan_count());
         let mut errors = Vec::new();
         for ((block, start), end) in body.blocks.ids().zip(starts).zip(ends) {
             let Some(mut held) = start else {
                 continue; // not reached
             };
             let ids: Vec<_> = instructions(block).collect();
+            // First, so a local whose reference is returned is reported as
+            // that, not as gone while its reference is in use.
+            if let Some((returned, span)) = self.returned(block) {
+                let mut at_return = held.clone();
+                for &id in &ids {
+                    self.step_held(&mut at_return, id);
+                }
+                let loans = &at_return[returned.index()];
+                self.return_errors(span, loans, &mut reported, file, &mut errors);
+            }
             // The holders used later, after each instruction.
             let mut live = end.unwrap_or_else(|| no_holders.clone());
             let mut live_after = vec![no_holders.clone(); ids.len()];
@@ -364,6 +451,69 @@ impl Loans<'_> {
         }
         errors.sort_by_key(|&(start, _)| start);
         diagnostics.extend(errors.into_iter().map(|(_, error)| error));
+    }
+
+    /// Adds to `errors` those of the `return` at `span`, whose reference
+    /// holds `loans`: one for each loan not yet `reported` of the function's
+    /// own storage (a borrow not through a reference), or of a parameter its
+    /// origins do not name.
+    fn return_errors(
+        &self,
+        span: Span,
+        loans: &Bits<Loan>,
+        reported: &mut Bits<Loan>,
+        file: &Arc<SourceFile>,
+        errors: &mut Vec<(u32, Diagnostic)>,
+    ) {
+        for loan in (0..self.loan_count()).map(Id::<Loan>::from_index) {
+            if !loans.has(loan) || reported.has(loan) {
+                continue;
+            }
+            let error = match self.borrows.get(loan.index()) {
+                Some(&borrow) => {
+                    let mir::InstructionKind::Borrow { ref place, .. } =
+                        self.body.instructions[borrow].kind
+                    else {
+                        unreachable!("each loan is a `Borrow`")
+                    };
+                    // Through a reference: what it points into is checked by
+                    // the loans it holds.
+                    if place.is_behind_reference() {
+                        continue;
+                    }
+                    let name = file.slice(self.body.variables.span(place.variable));
+                    let message = format!(
+                        "returns a reference into `{name}`, which is gone once the function returns"
+                    );
+                    let error = Diagnostic::new(diagnostics::LOCAL_ADDRESS_RETURNED, message)
+                        .label(file, span, "");
+                    // A borrow inside the `return` is already shown.
+                    // shortcut: the renderer draws a second label on one line
+                    // a line too high; label it too once that is fixed.
+                    let made = self.body.instructions.span(borrow);
+                    if made.start < span.start || made.end > span.end {
+                        error.label(file, made, "reference made here")
+                    } else {
+                        error
+                    }
+                }
+                None => {
+                    let position = (loan.index() - self.borrows.len()) as u32;
+                    if self.origins.contains(&position) {
+                        continue;
+                    }
+                    let parameter = self.body.variables.span(Id::from_index(position as usize));
+                    let name = file.slice(parameter);
+                    let message =
+                        format!("returns a reference into `{name}`, which `in` does not name");
+                    Diagnostic::new(diagnostics::INVALID_RETURN, message)
+                        .label(file, span, "")
+                        .help(format!("add `{name}` to `in`"), Vec::new())
+                }
+            };
+            reported.set(loan);
+            errors.push((span.start, error));
+        }
     }
 
     /// What the instruction `id` does to a place, if anything. A reserved
@@ -531,6 +681,11 @@ impl Loans<'_> {
                 if self.defines(id).contains(&Some(holder)) {
                     continue 'paths; // set again: this path does not use it
                 }
+            }
+            if let Some((returned, span)) = self.returned(block)
+                && returned == holder
+            {
+                return Some(span);
             }
             for target in body.blocks[block].terminator.targets() {
                 if !std::mem::replace(&mut seen[target.index()], true) {

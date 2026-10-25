@@ -1,0 +1,22 @@
+name = "negative_reference_results"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "T0036",
+    "returns a reference into `x`, which is gone once the function returns",
+    "returns a reference into `n`, which is gone once the function returns",
+    "returns a reference into `b`, which `in` does not name",
+    "add `b` to `in`",
+    "T0037",
+    "`x` is changed while a reference to it is still in use",
+    "`y` is changed while a reference to it is still in use",
+    "`x` is gone while a reference to it is still in use",
+    "`x` is read while a `&mut` reference to it is still in use",
+    "`a` is changed while a `&mut` reference to it is still in use",
+    "reference made here",
+    "reference used later here",
+    "Compilation failed with 8 error(s)",
+]

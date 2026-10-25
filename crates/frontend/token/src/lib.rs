@@ -129,7 +129,6 @@ tokens! {
         Fn = "fn",
         For = "for",
         Free = "free",
-        From = "from",
         If = "if",
         Iface = "iface",
         Import = "import",

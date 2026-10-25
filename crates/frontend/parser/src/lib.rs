@@ -686,7 +686,7 @@ fn main() {
         "fn f(a: [4",
         "fn f(a: fn(",
         "fn f() -> &mut",
-        "fn f() -> i32 from (a",
+        "fn f() -> i32 in (a",
         "fn f(a: ??) {}",
         "fn f(a: a::) {}",
         "fn f(mut mut) {}",

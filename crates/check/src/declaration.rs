@@ -87,9 +87,6 @@ impl Checker<'_> {
         if let Some(parameter) = tree.lists.items(signature.type_parameters).next() {
             return self.not_supported(tree.names.span(parameter), "generic functions");
         }
-        if let Some(origin) = tree.lists.items(signature.origins).next() {
-            return self.not_supported(tree.names.span(origin), "`from` origins");
-        }
         let external = project::extern_symbol(self.modules, definition).is_some();
         let mut parameters = Vec::with_capacity(signature.parameters.len());
         for parameter in tree.lists.items(signature.parameters) {
@@ -100,17 +97,112 @@ impl Checker<'_> {
             parameters.push(self.resolve_signature_type(parameter.ty, external));
         }
         let result = signature.result.map_or(TypeId::VOID, |result| {
-            let ty = self.resolve_signature_type(result, external);
-            if let Type::Reference { .. } = self.types[ty] {
-                // shortcut: a returned reference needs a `from` origin to be
-                // checked; allow it with `from`.
-                let span = tree.types.span(result);
-                return self.not_supported(span, "reference results");
-            }
-            ty
+            self.resolve_signature_type(result, external)
         });
+        let Some(origins) = self.result_origins(&signature, &parameters, result) else {
+            return TypeId::INVALID;
+        };
         let parameters = parameters.into();
-        self.types.intern(Type::Function { parameters, result })
+        self.types.intern(Type::Function {
+            parameters,
+            result,
+            origins,
+        })
+    }
+
+    /// The positions of the parameters a reference `result` of `signature`
+    /// may point into, in order: those `in` names, else every reference
+    /// parameter (every `&mut` one for a `&mut` result). `None` when an
+    /// error was reported.
+    fn result_origins(
+        &mut self,
+        signature: &ast::Signature,
+        parameters: &[TypeId],
+        result: TypeId,
+    ) -> Option<Box<[u32]>> {
+        let tree = &self.module().ast;
+        let file = &tree.file;
+        let mut names = tree.lists.items(signature.origins);
+        let Type::Reference { mutable, .. } = self.types[result] else {
+            if let Some(origin) = names.next() {
+                let span = tree.names.span(origin);
+                self.error(
+                    diagnostics::INVALID_RETURN,
+                    "`in` needs a reference result",
+                    span,
+                );
+                return None;
+            }
+            return Some(Box::default());
+        };
+        // `Some(mutable)` for a reference parameter.
+        let reference =
+            |types: &semantic_types::Types, position: usize| match types[parameters[position]] {
+                Type::Reference { mutable, .. } => Some(mutable),
+                _ => None,
+            };
+        let mut origins: Vec<u32> = Vec::new();
+        for origin in names {
+            let span = tree.names.span(origin);
+            let name = file.slice(span);
+            let position = tree
+                .lists
+                .items(signature.parameters)
+                .position(|parameter| {
+                    tree.params[parameter]
+                        .name
+                        .is_some_and(|written| written.text(file) == name)
+                });
+            let error = match position {
+                None => Some((
+                    diagnostics::UNDEFINED_NAME,
+                    format!("`{name}` is not a parameter"),
+                )),
+                Some(position) => match reference(&self.types, position) {
+                    None => Some((
+                        diagnostics::INVALID_RETURN,
+                        format!("`{name}` is not a reference, so a result cannot borrow from it"),
+                    )),
+                    Some(false) if mutable => Some((
+                        diagnostics::INVALID_RETURN,
+                        format!("a `&mut` result cannot borrow from shared reference `{name}`"),
+                    )),
+                    Some(_) if origins.contains(&(position as u32)) => Some((
+                        diagnostics::INVALID_RETURN,
+                        format!("`{name}` is named twice in `in`"),
+                    )),
+                    Some(_) => {
+                        origins.push(position as u32);
+                        None
+                    }
+                },
+            };
+            if let Some((code, message)) = error {
+                self.error(code, message, span);
+                return None;
+            }
+        }
+        if signature.origins.is_empty() {
+            origins = (0..parameters.len())
+                .filter(|&position| {
+                    reference(&self.types, position).is_some_and(|source| source || !mutable)
+                })
+                .map(|position| position as u32)
+                .collect();
+            if origins.is_empty() {
+                let kind = if mutable { "`&mut`" } else { "reference" };
+                let message = format!("a {kind} result needs a {kind} parameter to borrow from");
+                let result = signature.result.expect("a reference result is written");
+                self.error(
+                    diagnostics::INVALID_RETURN,
+                    message,
+                    tree.types.span(result),
+                );
+                return None;
+            }
+        }
+        origins.sort_unstable();
+        Some(origins.into())
     }
 
     /// The type and value of the module's constant `definition`; `None` when
@@ -272,7 +364,9 @@ mod tests {
             found
         });
         let text_of = |ty: TypeId| match &types[ty] {
-            Type::Function { parameters, result } => format!("fn{parameters:?} -> {result:?}"),
+            Type::Function {
+                parameters, result, ..
+            } => format!("fn{parameters:?} -> {result:?}"),
             other => format!("{other:?}"),
         };
         (found.into_iter().map(text_of).collect(), reported)
@@ -294,12 +388,12 @@ mod tests {
     #[test]
     fn errors_are_located() {
         let (found, found_reported) = declared_types(
-            "fn a(x: Missing) {}\nfn b(m: utils) {}\nfn c(r: &i32) -> &i32 {}\nfn d<T>(x: T) {}\nfn e(x: i32 = 1) {}\nstruct P { x: i32 }\n#[extern(\"f\")]\nfn f(p: P);\nfn ok(p: P) -> P { return p; }\nfn g(x: a) {}\nfn (p: i32) method() {}\nfn h(s: str) {}\n",
+            "fn a(x: Missing) {}\nfn b(m: utils) {}\nfn c(r: &i32) -> &i32 in q {}\nfn d<T>(x: T) {}\nfn e(x: i32 = 1) {}\nstruct P { x: i32 }\n#[extern(\"f\")]\nfn f(p: P);\nfn ok(p: P) -> P { return p; }\nfn g(x: a) {}\nfn (p: i32) method() {}\nfn h(s: str) {}\n",
         );
         let expected = reported(&[
             ("T0002", "unknown type `Missing`", "Missing"),
             ("T0021", "`utils` is a module, not a type", "utils"),
-            ("T0043", "reference results are not supported yet", "&i32"),
+            ("T0002", "`q` is not a parameter", "q"),
             ("T0043", "generic functions are not supported yet", "T"),
             ("T0043", "default parameters are not supported yet", "1"),
             (

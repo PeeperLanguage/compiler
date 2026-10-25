@@ -6,7 +6,6 @@ mode = "check"
 outcome = "failure"
 stderr_contains = [
     "references in struct fields are not supported yet",
-    "reference results are not supported yet",
     "references to references are not supported yet",
     "borrows of values that are not in a variable are not supported yet",
     "cannot assign to `r.x` through shared reference `r`",
@@ -29,5 +28,5 @@ stderr_contains = [
     "return count.*;",
     "a shift count must be an integer, found `&i32`",
     "let shifted = 1 << count.*;",
-    "Compilation failed with 18 error(s)",
+    "Compilation failed with 17 error(s)",
 ]

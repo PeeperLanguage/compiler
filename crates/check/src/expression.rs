@@ -800,7 +800,13 @@ impl ThirBuilder<'_, '_> {
             let ty = self.checker.function_type(function, callee_span);
             (function, self.checker.types[ty].clone())
         });
-        let Some((function, Type::Function { parameters, result })) = signature else {
+        let Some((
+            function,
+            Type::Function {
+                parameters, result, ..
+            },
+        )) = signature
+        else {
             for argument in tree.lists.items(arguments) {
                 self.add_expr(argument, TypeExpectation::Hint(None)); // for its own errors
             }

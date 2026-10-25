@@ -199,7 +199,7 @@ impl Parser {
         }
     }
 
-    /// Reads `fn(name: T, U) -> R from name`; parameter names are optional.
+    /// Reads `fn(name: T, U) -> R in name`; parameter names are optional.
     fn function_type(&mut self) -> Id<Type> {
         let start = self.next().span.start;
         let signature = self.signature(

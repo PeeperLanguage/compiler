@@ -1,0 +1,16 @@
+name = "negative_reference_signatures"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "a reference result needs a reference parameter to borrow from",
+    "a `&mut` result needs a `&mut` parameter to borrow from",
+    "`in` needs a reference result",
+    "`c` is not a parameter",
+    "`n` is not a reference, so a result cannot borrow from it",
+    "a `&mut` result cannot borrow from shared reference `a`",
+    "`a` is named twice in `in`",
+    "Compilation failed with 7 error(s)",
+]

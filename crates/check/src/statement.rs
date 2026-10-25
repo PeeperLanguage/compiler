@@ -67,7 +67,10 @@ impl Checker<'_> {
         };
         let module = self.current_module.index();
         let reported = self.diagnostics[module].len();
-        let Type::Function { parameters, result } = &self.types[ty] else {
+        let Type::Function {
+            parameters, result, ..
+        } = &self.types[ty]
+        else {
             return false; // the signature's error was reported
         };
         let (parameters, result) = (parameters.clone(), *result);

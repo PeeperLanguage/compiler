@@ -1,0 +1,80 @@
+// A function may return a reference. With no `in` the result borrows every
+// reference argument (only the `&mut` ones for a `&mut` result); `in` names
+// fewer, and the others are free again once the call ends. A `&mut` result
+// writes through to its source.
+struct Score { best: i32, last: i32 }
+struct Log { writes: i32 }
+
+// No `in`: the result may be `a` or `b`, so it borrows both.
+fn better(a: &Score, b: &Score) -> &Score {
+    if a.best > b.best {
+        return a;
+    }
+    return b;
+}
+
+// `in score`: the result points into `score` only, so `log` is free again
+// after the call.
+fn highest(score: &Score, log: &mut Log) -> &i32 in score {
+    log.writes = log.writes + 1;
+    if score.best > score.last {
+        return &score.best;
+    }
+    return &score.last;
+}
+
+// `in (a, b)`: the result is `a` or `b`, never `log`.
+fn pick(a: &mut Score, b: &mut Score, log: &mut Log, first: bool) -> &mut Score in (a, b) {
+    log.writes = log.writes + 1;
+    if first {
+        return a;
+    }
+    return b;
+}
+
+// No `in` on a `&mut` result: it borrows only the `&mut` arguments, so
+// `step` is free again after the call.
+fn raise(score: &mut Score, step: &Score) -> &mut i32 {
+    score.best = score.best + step.best;
+    return &mut score.best;
+}
+
+// A result passed on from another call keeps its source.
+fn same(score: &Score) -> &Score {
+    return better(score, score);
+}
+
+fn main() -> i32 {
+    let mut alice = Score.{ best = 9, last = 4 };
+    let mut bob = Score.{ best = 7, last = 8 };
+    let mut log = Log.{ writes = 0 };
+
+    let top = better(&alice, &bob);
+
+    let temp: Score;
+
+    {
+        temp = Score.{ best = 0, last = 0 };
+    }
+
+    better(&alice, &temp);
+
+    let top_best = top.best; // 9
+
+    let high = highest(&bob, &mut log);
+    log.writes = log.writes + 10; // valid: `high` does not borrow `log`
+    let bob_high = high.*; // 8
+
+    let chosen = pick(&mut alice, &mut bob, &mut log, false);
+    chosen.last = 20; // writes `bob.last`
+
+    let again = same(&alice);
+    let alice_best = again.best; // 9
+
+    let mut step = Score.{ best = 1, last = 0 };
+    let raised = raise(&mut alice, &step);
+    step.best = 5; // valid: `raised` does not borrow `step`
+    raised.* = raised.* + step.best; // 9 + 1 + 5
+
+    return top_best + bob_high + bob.last + log.writes + alice_best + alice.best; // 9 + 8 + 20 + 12 + 9 + 15
+}

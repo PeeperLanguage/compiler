@@ -301,8 +301,9 @@ fn is_main(program: &project::Program, definition: DefId) -> bool {
 /// i32`), gives none (`fn main()`), or cannot start a program (`None`).
 fn gives_exit_code(types: &Types, ty: TypeId) -> Option<bool> {
     match &types[ty] {
-        Type::Function { parameters, result } if parameters.is_empty() => match types.real(*result)
-        {
+        Type::Function {
+            parameters, result, ..
+        } if parameters.is_empty() => match types.real(*result) {
             TypeId::VOID => Some(false),
             TypeId::I32 => Some(true),
             _ => None,

@@ -1,0 +1,75 @@
+// What a returned reference may not do: one error per function.
+fn read(n: &i32) -> i32 {
+    return n.*;
+}
+
+fn larger(a: &i32, b: &i32) -> &i32 {
+    if a.* > b.* {
+        return a;
+    }
+    return b;
+}
+
+fn left(a: &i32, b: &i32) -> &i32 in a {
+    return a;
+}
+
+fn pick(a: &mut i32) -> &mut i32 {
+    return a;
+}
+
+// Body errors: the result points into the function's own storage, or into
+// a parameter `in` leaves out.
+fn ReturnsLocal(a: &i32) -> &i32 {
+    let x = 1;
+    return &x;
+}
+
+fn ValueParameter(n: i32, a: &i32) -> &i32 {
+    return &n;
+}
+
+fn UndeclaredSource(a: &i32, b: &i32) -> &i32 in a {
+    return b;
+}
+
+// The returned reference is in use until the `return`.
+fn ChangedBeforeReturn(a: &mut i32) -> &mut i32 {
+    let r = &mut a.*;
+    a.* = 3;
+    return r;
+}
+
+// Caller errors: the result keeps its sources borrowed while it is used.
+fn ChangeNamedSource() -> i32 {
+    let mut x = 1;
+    let y = 2;
+    let r = left(&x, &y);
+    x = 3;
+    return read(r);
+}
+
+fn DefaultBorrowsBoth() -> i32 {
+    let x = 1;
+    let mut y = 2;
+    let r = larger(&x, &y);
+    y = 3; // no `in`, so `r` borrows `y` too
+    return read(r);
+}
+
+fn OutlivesSource() -> i32 {
+    let r: &i32;
+    {
+        let x = 1;
+        r = larger(&x, &x);
+    }
+    return read(r); // `x` is gone, `r` still points into it
+}
+
+fn ReadUnderMutResult() -> i32 {
+    let mut x = 1;
+    let m = pick(&mut x);
+    let v = x;
+    m.* = 2;
+    return v;
+}

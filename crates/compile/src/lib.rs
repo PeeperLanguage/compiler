@@ -219,11 +219,31 @@ fn compile_function(
         Type::Function {
             ref parameters,
             result,
+            ..
         } => lower::lower(thir, parameters.len(), result, &checker.types).inspect(|mir| {
             let file = &modules[module].ast.file;
             let diagnostics = &mut checker.diagnostics[module];
             flow::report_variable_state_errors(mir, &checker.types, file, diagnostics);
-            flow::loans::report_loan_errors(mir, &checker.types, file, diagnostics);
+            let origins_of = |definition: DefId| {
+                let State::Done(ty) =
+                    checker.function_types[definition.module.index()][definition.index as usize]
+                else {
+                    unreachable!("a call is checked, and so its function")
+                };
+                match checker.types[ty] {
+                    Type::Function { ref origins, .. } => &**origins,
+                    // No origins would let a returned reference dangle unseen.
+                    _ => unreachable!("a call to a function with a signature error is not lowered"),
+                }
+            };
+            flow::loans::report_loan_errors(
+                mir,
+                &checker.types,
+                definition,
+                &origins_of,
+                file,
+                diagnostics,
+            );
             flow::warn_unreachable_code(mir, file, diagnostics);
             // Last: it points at the closing brace.
             flow::report_missing_return(
@@ -259,12 +279,17 @@ fn hash_type(checker: &Checker, ty: TypeId, hasher: &mut DefaultHasher) {
     match ty {
         Type::Integer(integer) => integer.hash(hasher),
         Type::Float(float) => float.hash(hasher),
-        Type::Function { parameters, result } => {
+        Type::Function {
+            parameters,
+            result,
+            origins,
+        } => {
             parameters.len().hash(hasher);
             for &parameter in parameters {
                 hash_type(checker, parameter, hasher);
             }
             hash_type(checker, *result, hasher);
+            origins.hash(hasher);
         }
         Type::Named(definition) | Type::Struct { definition, .. } => {
             checker.modules[definition.module.index()].path.hash(hasher);

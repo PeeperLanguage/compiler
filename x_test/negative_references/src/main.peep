@@ -1,6 +1,6 @@
-// What references cannot do yet, or ever: be held in a struct, be returned
-// without `from`, refer to a reference, borrow a value not in a variable,
-// write or lend `&mut` through `&`, or lend `&mut` of an immutable variable.
+// What references cannot do yet, or ever: be held in a struct, refer to a
+// reference, borrow a value not in a variable, write or lend `&mut` through
+// `&`, or lend `&mut` of an immutable variable.
 struct Holder { point: &Point }
 struct Point { x: i32, y: i32 }
 

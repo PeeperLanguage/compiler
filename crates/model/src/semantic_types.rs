@@ -71,9 +71,12 @@ pub enum Type {
     Float(Float),
     /// `cstr`: a pointer to a C string, as C functions take it.
     CString,
+    /// `origins`: the positions of the parameters a returned reference may
+    /// point into, in order; empty when the result is not a reference.
     Function {
         parameters: Box<[TypeId]>,
         result: TypeId,
+        origins: Box<[u32]>,
     },
     /// A type alias: the declaration that names it, and the type it names,
     /// never another alias (an alias of an alias names that alias's type).
@@ -381,7 +384,9 @@ impl Types {
                 text.to_string()
             }
             Type::Integer(integer) => integer.to_string(),
-            Type::Function { parameters, result } => {
+            Type::Function {
+                parameters, result, ..
+            } => {
                 let parameters: Vec<String> = parameters
                     .iter()
                     .map(|&parameter| self.real_text(parameter, name_of))
@@ -576,10 +581,12 @@ mod tests {
         let function = types.intern(Type::Function {
             parameters: [TypeId::I32, u24].into(),
             result: TypeId::BOOL,
+            origins: [].into(),
         });
         let procedure = types.intern(Type::Function {
             parameters: [].into(),
             result: TypeId::VOID,
+            origins: [].into(),
         });
         let declaration = |index| DefId {
             module: ModuleId::from_index(0),
@@ -622,6 +629,7 @@ mod tests {
         let function = |parameters: &[TypeId]| Type::Function {
             parameters: parameters.into(),
             result: TypeId::VOID,
+            origins: [].into(),
         };
         let f = types.intern(function(&[u24, TypeId::BOOL]));
         assert_eq!(types.intern(function(&[u24, TypeId::BOOL])), f);

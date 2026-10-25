@@ -208,7 +208,7 @@ impl Parser {
         })
     }
 
-    /// Reads `(receiver) name<T>(parameters) -> Result from origins` after a
+    /// Reads `(receiver) name<T>(parameters) -> Result in origins` after a
     /// function's `fn`: its name and signature.
     pub(crate) fn named_signature(&mut self) -> (Ident, Signature) {
         let receiver = self.at(TokenKind::LeftParen).then(|| {
@@ -327,10 +327,10 @@ impl Parser {
         name
     }
 
-    /// Reads `(parameters) -> Type from origins`, each parameter with
+    /// Reads `(parameters) -> Type in origins`, each parameter with
     /// `parameter`, into a signature with `receiver` and `type_parameters`
     /// read before it. The result and the origins of a returned reference,
-    /// `from name` or `from (a, b)`, may be left out.
+    /// `in name` or `in (a, b)`, may be left out.
     pub(crate) fn signature(
         &mut self,
         receiver: Option<Id<Param>>,
@@ -366,7 +366,7 @@ impl Parser {
             result = Some(self.type_expr());
         }
         let mut origins = List::EMPTY;
-        if self.at(TokenKind::From) {
+        if self.at(TokenKind::In) {
             self.next();
             if self.at(TokenKind::LeftParen) {
                 origins = self.delimited(
@@ -391,7 +391,7 @@ impl Parser {
     }
 }
 
-/// Reads `fn (receiver) name<T>(parameters) -> Result from origins` followed
+/// Reads `fn (receiver) name<T>(parameters) -> Result in origins` followed
 /// by a body, or by `;` for a function defined elsewhere.
 fn function_decl(p: &mut Parser, metadata: Metadata) -> Id<Decl> {
     let start = p.next().span.start;
@@ -483,9 +483,9 @@ mod tests {
 
     #[test]
     fn parses_signatures() {
-        let text = "fn (self: &mut Counter) Add<T, U>(mut delta: i32, scale: f64 = 1, &Self) -> &T from (self, delta) {}
+        let text = "fn (self: &mut Counter) Add<T, U>(mut delta: i32, scale: f64 = 1, &Self) -> &T in (self, delta) {}
 fn exit(code: i32);
-fn Use(callback: fn(value: &Box, i32) -> &Box from value, items: []?*T, view: [..]u8, grid: [4]rawptr, cell: **u8, untyped: *rawptr) -> ?a::Box<Box<T>>;
+fn Use(callback: fn(value: &Box, i32) -> &Box in value, items: []?*T, view: [..]u8, grid: [4]rawptr, cell: **u8, untyped: *rawptr) -> ?a::Box<Box<T>>;
 ";
         let want = "module
   function declaration

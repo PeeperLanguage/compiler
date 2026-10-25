@@ -377,10 +377,9 @@ A place (`mir::Place`) is a variable and the steps from it, each a field or a
 dereference (`mir::Projection`), as in Rust's MIR: `r.*.x` goes through the
 reference in `r`, then to a field. The checker makes the implicit step of
 `r.x` an explicit `Dereference` in THIR, and lowering turns each into a step,
-so neither the check nor the LLVM writer works it out from types. For now a
-reference is only in a variable (never in a field, never returned), so a
-dereference is only the first step; the shape already allows one anywhere,
-which returned references and `*T` fields need. `&place` and `&mut place` are
+so neither the check nor the LLVM writer works it out from types. A
+reference is never in a field yet, but a raw pointer may be, and `pp.*.*`
+takes two steps, so a dereference may be any step. `&place` and `&mut place` are
 a `borrow` of the place, its address. The checker also makes the spec's
 reborrow explicit: a `&mut` in a variable passed to a call becomes a `Borrow`
 of what it refers to, so the variable stays usable; a `let` moves it.
@@ -429,6 +428,22 @@ it acts as a shared loan, so `update(&mut x, read(&x))` and
 `&mut` borrow against every reference still in use there, the call's other
 arguments included, so `both(&mut x, &x)` is an error, with the note "a
 `&mut` argument takes hold when the call starts".
+
+A function may return a reference (owner, 2026-10-25). Its type's
+`origins` are the parameters the result may point into: those `-> &T in a`
+or `in (a, b)` names, else every reference parameter, or every `&mut` one
+for a `&mut` result; the signature errors are T0016 (and T0002 for a name
+that is no parameter). The loan check gives each reference parameter a
+parameter loan, numbered after the borrows, at the entry `store` of its
+argument; it conflicts with nothing in the body. A `return` uses its value,
+and a returned reference may hold no loan of the function's own storage
+(T0036, "returns a reference into `x`, which is gone once the function
+returns") and only the parameter loans the origins name (T0016, with the
+help "add `b` to `in`"); that check runs before a block's walk, so the
+local is not reported again as gone. At a call, the result holds the loans
+of the arguments at the callee's origins, so they stay borrowed while it
+is in use, and a `&mut` argument there is not reserved: its loan outlives
+the call. Callers read only the signature, never the callee's body.
 
 The unreachable-code check (W0001, `flow::warn_unreachable_code`)
 warns once at the first code of each stretch of blocks no path reaches, such
