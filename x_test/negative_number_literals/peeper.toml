@@ -1,0 +1,13 @@
+name = "negative_number_literals"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "invalid number literal 1abc",
+    "invalid number literal 06_raw",
+    "invalid number literal 5u8x",
+    "invalid hexadecimal literal 0xFG",
+    "Compilation failed with 4 error(s)",
+]

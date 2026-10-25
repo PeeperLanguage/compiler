@@ -153,7 +153,8 @@ impl Scanner<'_> {
 
     /// Reads a number literal: 0x, 0o and 0b numbers take letters and digits as
     /// digits (checked here against the base); a decimal number may have a
-    /// fraction, an exponent and a type suffix such as i32 or f64. A single `_`
+    /// fraction, an exponent and a type suffix such as i32 or f64, and letters
+    /// or digits after those make it invalid (`1abc`, `06_x`). A single `_`
     /// may sit between digits. The suffix is the parser's to check.
     fn number(&mut self) {
         let start = self.pos;
@@ -200,7 +201,24 @@ impl Scanner<'_> {
                 self.pos += 1;
             }
         }
+        // One bad number, not a number then a name, as after 0x.
+        let end = self.pos;
+        while self.at(0).is_ascii_alphanumeric() || self.at(0) == b'_' {
+            self.pos += 1;
+        }
         self.emit(TokenKind::Number, start);
+        if self.pos > end {
+            let message = format!(
+                "invalid number literal {}",
+                &self.file.text[start..self.pos]
+            );
+            self.fail(
+                Span::new(start, self.pos),
+                diagnostics::INVALID_NUMBER,
+                message,
+                "",
+            );
+        }
     }
 
     /// Reads one or more digits; `_` is taken only when a digit follows it.
@@ -459,8 +477,8 @@ mod tests {
             (
                 "numbers",
                 "0x1F_ff 0b1 1_000 1.5 1..2 1e5 1e 1i32 0x",
-                "number:0x1F_ff number:0b1 number:1_000 number:1.5 number:1 ..:.. number:2 number:1e5 number:1 identifier:e number:1i32 number:0 identifier:x",
-                &[],
+                "number:0x1F_ff number:0b1 number:1_000 number:1.5 number:1 ..:.. number:2 number:1e5 number:1e number:1i32 number:0x",
+                &["invalid number literal 1e", "invalid number literal 0x"],
             ),
             (
                 "unclosed block comment",
@@ -571,6 +589,12 @@ mod tests {
             ("0XAB", ""),
             ("1i", ""),
             ("007", ""),
+            ("1_000u16", ""),
+            ("2.5e-3f64", ""),
+            ("1abc", "invalid number literal 1abc"),
+            ("06_raw", "invalid number literal 06_raw"),
+            ("5u8x", "invalid number literal 5u8x"),
+            ("1e", "invalid number literal 1e"),
         ] {
             let file = Arc::new(SourceFile::new("t.peep", text));
             let (tokens, errors) = scan(&file);

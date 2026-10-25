@@ -1,0 +1,8 @@
+// Letters or digits right after a number make one bad number, not a number
+// followed by a name.
+fn main() {
+    let a = 1abc;
+    let b = 06_raw;
+    let c = 5u8x;
+    let d = 0xFG;
+}
