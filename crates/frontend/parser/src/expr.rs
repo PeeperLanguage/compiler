@@ -413,19 +413,25 @@ fn raw_address(p: &mut Parser) -> Id<Expr> {
     p.add(start, Expr::RawAddress(value))
 }
 
-/// Reads `free(x)`, `print(x)` or `println(x)`.
+/// Reads `free(x)`, or `print(values)` or `println(values)`, which take any
+/// number of values.
 fn builtin(p: &mut Parser) -> Id<Expr> {
     let keyword = p.next();
-    let value = p.expect(TokenKind::LeftParen).map(|open| {
-        let value = p.expr(Precedence::Lowest);
-        p.close(TokenKind::RightParen, open);
-        value
-    });
     let node = match keyword.kind {
-        TokenKind::Free => Expr::Free(value),
+        TokenKind::Free => Expr::Free(p.expect(TokenKind::LeftParen).map(|open| {
+            let value = p.expr(Precedence::Lowest);
+            p.close(TokenKind::RightParen, open);
+            value
+        })),
         _ => Expr::Print {
             newline: keyword.kind == TokenKind::Println,
-            value,
+            values: p.delimited(
+                TokenKind::LeftParen,
+                TokenKind::RightParen,
+                false,
+                starts_expression,
+                |p| p.expr(Precedence::Lowest),
+            ),
         },
     };
     p.add(keyword.span.start, node)

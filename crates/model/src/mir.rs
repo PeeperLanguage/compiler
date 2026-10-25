@@ -146,6 +146,12 @@ pub enum InstructionKind {
     },
     /// A struct value from its fields' values, in declaration order.
     Aggregate(Box<[Operand]>),
+    /// Writes the values to the standard output, a space between each,
+    /// then a newline when `newline`: as THIR's `Print`.
+    Print {
+        newline: bool,
+        values: Box<[Operand]>,
+    },
     /// The field its `fields` path leads to in a struct value that is not
     /// in a variable, as a `Place`'s path.
     Field {
@@ -299,6 +305,18 @@ impl Body {
                                 printer.out.push_str(", ");
                             }
                             printer.write_operand(field);
+                        }
+                        printer.out.push(')');
+                    }
+                    InstructionKind::Print { newline, values } => {
+                        printer
+                            .out
+                            .push_str(if *newline { "println(" } else { "print(" });
+                        for (index, value) in values.iter().enumerate() {
+                            if index > 0 {
+                                printer.out.push_str(", ");
+                            }
+                            printer.write_operand(value);
                         }
                         printer.out.push(')');
                     }

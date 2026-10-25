@@ -1,0 +1,12 @@
+name = "negative_print_loans"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "T0037",
+    "`point` is borrowed while a `&mut` reference to it is still in use",
+    "reference used later here",
+    "Compilation failed with 1 error(s)",
+]

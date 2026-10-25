@@ -1,0 +1,9 @@
+// What `print` cannot take: nothing, and `none` with no type. A plain
+// string literal works in `print` only.
+fn nothing() {}
+
+fn main() {
+    println(nothing());
+    println(none);
+    let text = "hi";
+}

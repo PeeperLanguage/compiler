@@ -411,11 +411,8 @@ pub enum Expr {
     RawAddress(Id<Expr>),
     /// `free(x)`; the value is missing when the `(` is
     Free(Option<Id<Expr>>),
-    /// `print(x)`, or `println(x)` when `newline`
-    Print {
-        newline: bool,
-        value: Option<Id<Expr>>,
-    },
+    /// `print(values)`, or `println(values)` when `newline`
+    Print { newline: bool, values: List<Expr> },
     /// `f(arguments)`
     Call {
         callee: Id<Expr>,

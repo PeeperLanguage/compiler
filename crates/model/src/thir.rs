@@ -162,6 +162,13 @@ pub enum ExprKind {
     /// `@place`: the place's address as a raw pointer, which no loan
     /// follows; the place is as a `Borrow`'s.
     Address(Id<Expr>),
+    /// `print(values)`, or `println(values)` when `newline`: each value a
+    /// number, `bool`, `cstr`, raw pointer, struct, or a reference to one; a
+    /// struct or `&mut` reference in a place is lent as `&`.
+    Print {
+        newline: bool,
+        values: List<Expr>,
+    },
     Invalid,
 }
 
@@ -488,6 +495,17 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
             ExprKind::Address(place) => {
                 self.out.push('@');
                 self.write_expr(place);
+            }
+            ExprKind::Print { newline, values } => {
+                self.out
+                    .push_str(if newline { "println(" } else { "print(" });
+                for (index, value) in self.body.lists.items(values).enumerate() {
+                    if index > 0 {
+                        self.out.push_str(", ");
+                    }
+                    self.write_expr(value);
+                }
+                self.out.push(')');
             }
             ExprKind::Invalid => self.out.push_str("invalid"),
         }

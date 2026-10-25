@@ -1,0 +1,58 @@
+// `print` writes its values with a space between each; `println` adds a
+// newline. It takes numbers of any width, `bool`, `cstr`, raw pointers,
+// structs, references to them, and plain string literals. Floats print as
+// the fewest digits that read back as the same number.
+type Meters = f64;
+struct Point { x: i32, y: i32 }
+struct Line { from: Point, to: Point, weight: f32 }
+struct Empty {}
+
+const Name = c"peeper";
+
+fn twice(n: i32) -> i32 {
+    return n * 2;
+}
+
+fn main() -> i32 {
+    let small: i8 = -5;
+    let big: u64 = 18446744073709551615;
+    let low: i64 = -9223372036854775808;
+    println("ints:", small, big, low, 42);
+
+    let huge: u128 = 340282366920938463463374607431768211455;
+    let lowest: i128 = -170141183460469231731687303715884105728;
+    let odd: i200 = -1;
+    println("wide:", huge, lowest, odd);
+    let round: u128 = 1000000000000000000000;
+    println("padded:", round, -1000000000000000000001i128);
+
+    let half: f32 = 0.1;
+    let far: Meters = 0.1 + 0.2;
+    println("floats:", half, far, 1.0, 1e16, 0.00001, 3.14159265);
+    let zero = 0.0;
+    println("special:", -0.0, 1.0 / zero, -1.0 / zero, zero / zero);
+
+    println("bools:", true, 1 > 2);
+    println("text:", Name, "100% sure");
+
+    let mut point = Point.{ x = 3, y = 4 };
+    let line = Line.{ from = Point.{ x = 3, y = 4 }, to = Point.{ x = 5, y = 6 }, weight = 1.5 };
+    println("structs:", point, line, Empty.{});
+    let shared = &point;
+    println("shared:", shared, shared.y);
+    let changed = &mut point;
+    println("changed:", changed);
+    let raw = @point;
+    println("raw:", raw.*);
+    changed.x = 30;
+    println("after:", point.x + point.y, twice(5));
+
+    print("no newline");
+    print();
+    Write(Stdout, c" | written\n", 11);
+    println();
+
+    let address: rawptr = none;
+    println("pointer:", address);
+    return 0;
+}

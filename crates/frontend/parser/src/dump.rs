@@ -467,14 +467,14 @@ impl Dumper<'_> {
                 None,
                 value.map(Item::Expr).into_iter().collect(),
             ),
-            Expr::Print { newline, value } => (
+            Expr::Print { newline, values } => (
                 "print expression",
                 Some(if newline {
                     TokenKind::Println.text()
                 } else {
                     TokenKind::Print.text()
                 }),
-                value.map(Item::Expr).into_iter().collect(),
+                t.lists.items(values).map(Item::Expr).collect(),
             ),
             Expr::Call { callee, arguments } => {
                 let mut children = one(callee);

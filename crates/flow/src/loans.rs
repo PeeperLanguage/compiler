@@ -203,7 +203,11 @@ impl Loans<'_, '_> {
             | mir::InstructionKind::Convert(ref value)
             | mir::InstructionKind::Field { ref value, .. } => (None, std::slice::from_ref(value)),
             mir::InstructionKind::Call { ref arguments, .. }
-            | mir::InstructionKind::Aggregate(ref arguments) => (None, arguments),
+            | mir::InstructionKind::Aggregate(ref arguments)
+            | mir::InstructionKind::Print {
+                values: ref arguments,
+                ..
+            } => (None, arguments),
             mir::InstructionKind::Phi(ref incoming) => {
                 for (_, operand) in incoming {
                     if let Some(holder) = self.operand_holder(operand) {

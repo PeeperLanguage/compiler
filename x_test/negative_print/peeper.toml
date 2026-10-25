@@ -1,0 +1,12 @@
+name = "negative_print"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "`void` cannot be printed",
+    "`none` needs its type from where it is used",
+    "string literals are not supported yet",
+    "Compilation failed with 3 error(s)",
+]

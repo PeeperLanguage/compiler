@@ -464,6 +464,15 @@ impl Lowering<'_> {
                     arguments,
                 }
             }
+            thir::ExprKind::Print { newline, values } => mir::InstructionKind::Print {
+                newline,
+                values: self
+                    .thir
+                    .lists
+                    .items(values)
+                    .map(|value| self.lower_expr(value))
+                    .collect::<Option<_>>()?,
+            },
             thir::ExprKind::StructLiteral(fields) => {
                 // Computed in the order written, given in declaration order.
                 let mut values = vec![None; fields.len()];

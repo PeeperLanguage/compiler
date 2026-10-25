@@ -36,6 +36,12 @@ use crate::type_text;
 /// (`core:global`) as `write` and `exit`.
 const WRITE: &str = "peeper_rt_v1_write";
 const EXIT: &str = "peeper_rt_v1_exit";
+/// The runtime functions `print` calls, with their LLVM parameters.
+const PRINT_TEXT: (&str, &str) = ("peeper_rt_v1_print_text", "ptr");
+const PRINT_INT: (&str, &str) = ("peeper_rt_v1_print_int", "i32, i32, ...");
+const PRINT_FLOAT: (&str, &str) = ("peeper_rt_v1_print_float", "double, i32");
+const PRINT_POINTER: (&str, &str) = ("peeper_rt_v1_print_pointer", "ptr");
+const FLUSH: (&str, &str) = ("peeper_rt_v1_flush", "");
 /// The exit code of a program that panics, as in Rust.
 const PANIC_EXIT_CODE: i32 = 101;
 
@@ -532,6 +538,13 @@ impl Function<'_, '_, '_> {
                 self.write_call(out, id, function, arguments);
                 Ok(())
             }
+            InstructionKind::Print {
+                newline,
+                ref values,
+            } => {
+                self.write_print(out, id, newline, values, &location);
+                return; // each line has its location
+            }
             // An empty struct has no field to insert, so it is frozen from
             // `poison` to one value.
             InstructionKind::Aggregate(ref fields) if fields.is_empty() => {
@@ -578,6 +591,180 @@ impl Function<'_, '_, '_> {
             InstructionKind::ScopeEnd(_) => unreachable!("returned above"),
         };
         _ = writeln!(out, "{location}");
+    }
+
+    /// Writes the runtime calls that print `values` for the `print` `id`,
+    /// a space between each, then a newline when `newline`, then a flush.
+    /// Text known at compile time (spaces, a struct's names, a constant
+    /// string up to its NUL) is gathered into one string between values.
+    fn write_print(
+        &mut self,
+        out: &mut String,
+        id: Id<mir::Instruction>,
+        newline: bool,
+        values: &[Operand],
+        location: &DebugLocation,
+    ) {
+        let mut text = Vec::new();
+        for (index, &value) in values.iter().enumerate() {
+            if index > 0 {
+                text.push(b' ');
+            }
+            if let Operand::Constant(constant) = value
+                && let Value::Bytes(bytes) = &self.body.constants[constant.index()].value
+            {
+                text.extend(bytes.split(|&byte| byte == 0).next().unwrap_or_default());
+                continue;
+            }
+            let path = format!("{}.{index}", value_name(id));
+            let ty = operand_type(self.body, value);
+            let value = self.operand(value).to_string();
+            self.write_printed(out, &mut text, &value, ty, &path, location);
+        }
+        if newline {
+            text.push(b'\n');
+        }
+        self.write_print_text(out, &mut text, location);
+        self.write_runtime_call(out, FLUSH, "", location);
+    }
+
+    /// Writes what prints `value`, of the type `ty`, after `text`; `path`
+    /// starts the names of the values computed on the way.
+    fn write_printed(
+        &mut self,
+        out: &mut String,
+        text: &mut Vec<u8>,
+        value: &str,
+        ty: TypeId,
+        path: &str,
+        location: &DebugLocation,
+    ) {
+        let types = self.types;
+        match types[ty] {
+            // As 64-bit limbs, least significant first, of the value
+            // extended to their width.
+            Type::Integer(Integer { signed, bits }) => {
+                let count = bits.div_ceil(64);
+                let width = count * 64;
+                let mut wide = value.to_string();
+                if bits < width {
+                    let extension = if signed { "sext" } else { "zext" };
+                    _ = writeln!(
+                        out,
+                        "  {path}.x = {extension} i{bits} {value} to i{width}{location}"
+                    );
+                    wide = format!("{path}.x");
+                }
+                let mut arguments = format!("i32 {}, i32 {count}", i32::from(signed));
+                if count == 1 {
+                    _ = write!(arguments, ", i64 {wide}");
+                } else {
+                    for limb in 0..count {
+                        let shift = limb * 64;
+                        _ = writeln!(
+                            out,
+                            "  {path}.s{limb} = lshr i{width} {wide}, {shift}{location}\n  \
+                             {path}.l{limb} = trunc i{width} {path}.s{limb} to i64{location}"
+                        );
+                        _ = write!(arguments, ", i64 {path}.l{limb}");
+                    }
+                }
+                self.write_print_text(out, text, location);
+                self.write_runtime_call(out, PRINT_INT, &arguments, location);
+            }
+            Type::Float(float) => {
+                let (value, bits) = match float {
+                    Float::F32 => {
+                        _ = writeln!(out, "  {path}.x = fpext float {value} to double{location}");
+                        (format!("{path}.x"), 32)
+                    }
+                    Float::F64 => (value.to_string(), 64),
+                };
+                self.write_print_text(out, text, location);
+                let arguments = format!("double {value}, i32 {bits}");
+                self.write_runtime_call(out, PRINT_FLOAT, &arguments, location);
+            }
+            Type::Bool => {
+                let yes = self.module.add_string(b"true");
+                let no = self.module.add_string(b"false");
+                _ = writeln!(
+                    out,
+                    "  {path}.b = select i1 {value}, ptr {yes}, ptr {no}{location}"
+                );
+                self.write_print_text(out, text, location);
+                let arguments = format!("ptr {path}.b");
+                self.write_runtime_call(out, PRINT_TEXT, &arguments, location);
+            }
+            Type::CString => {
+                self.write_print_text(out, text, location);
+                self.write_runtime_call(out, PRINT_TEXT, &format!("ptr {value}"), location);
+            }
+            Type::RawPointer { .. } => {
+                self.write_print_text(out, text, location);
+                self.write_runtime_call(out, PRINT_POINTER, &format!("ptr {value}"), location);
+            }
+            Type::Reference { target, .. } => {
+                let target_text = type_text(types, target);
+                _ = writeln!(
+                    out,
+                    "  {path}.d = load {target_text}, ptr {value}{location}"
+                );
+                let referred = format!("{path}.d");
+                self.write_printed(out, text, &referred, target, &referred, location);
+            }
+            Type::Struct {
+                definition,
+                ref fields,
+            } => {
+                let program = self.module.program;
+                let (name, file) = project::declared_name(&program.modules, definition);
+                text.extend_from_slice(name.text(file).as_bytes());
+                let names = project::field_names(&program.modules, definition);
+                let struct_text = type_text(types, ty);
+                for (index, (field_name, &field)) in names.zip(fields).enumerate() {
+                    text.extend_from_slice(if index == 0 { b" { " } else { b", " });
+                    text.extend_from_slice(field_name.as_bytes());
+                    text.extend_from_slice(b": ");
+                    let field_value = format!("{path}.f{index}");
+                    _ = writeln!(
+                        out,
+                        "  {field_value} = extractvalue {struct_text} {value}, {index}{location}"
+                    );
+                    self.write_printed(out, text, &field_value, field, &field_value, location);
+                }
+                text.extend_from_slice(if fields.is_empty() { b" {}" } else { b" }" });
+            }
+            _ => unreachable!("check prints only numbers, `bool`, `cstr`, pointers and structs"),
+        }
+    }
+
+    /// Writes the call that prints `text`, if any, and empties it.
+    fn write_print_text(&mut self, out: &mut String, text: &mut Vec<u8>, location: &DebugLocation) {
+        if text.is_empty() {
+            return;
+        }
+        let string = self.module.add_string(text);
+        text.clear();
+        self.write_runtime_call(out, PRINT_TEXT, &format!("ptr {string}"), location);
+    }
+
+    /// Writes the call of the runtime function `(symbol, parameters)` with
+    /// `arguments`, after noting the declaration the module needs for it.
+    fn write_runtime_call(
+        &mut self,
+        out: &mut String,
+        (symbol, parameters): (&str, &str),
+        arguments: &str,
+        location: &DebugLocation,
+    ) {
+        let callee = global(symbol);
+        self.module.declare(symbol, || {
+            format!("declare void {callee}({parameters})\n\n")
+        });
+        _ = writeln!(
+            out,
+            "  call void ({parameters}) {callee}({arguments}){location}"
+        );
     }
 
     /// Writes the lines computing `address`, the address of `place`: one

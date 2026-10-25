@@ -22,6 +22,7 @@ use model::semantic_types::Conversion;
 use model::semantic_types::Float;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
+use model::semantic_types::Types;
 use model::thir::Expr;
 use model::thir::ExprKind;
 use model::thir::FieldValue;
@@ -151,6 +152,68 @@ impl ThirBuilder<'_, '_> {
         Some(Expr { ty: to, kind })
     }
 
+    /// The string literal at `span` as a `cstr`: its bytes.
+    fn c_string(&self, span: Span) -> Expr {
+        let bytes = literal::value(self.checker.module().ast.file.slice(span));
+        Expr {
+            ty: TypeId::CSTR,
+            kind: ExprKind::Constant(Value::Bytes(bytes.into())),
+        }
+    }
+
+    /// `print(values)`, or `println(values)` when `newline`: each value of a
+    /// type `printable` takes. A plain string literal is printed as a `cstr`,
+    /// though it is not one anywhere else.
+    // shortcut: a built-in until a library function takes any number of
+    // values of any printable type; then delete it with THIR's and MIR's
+    // `Print`.
+    fn check_print(&mut self, newline: bool, values: List<ast::Expr>) -> Expr {
+        let tree = &self.checker.module().ast;
+        let mut checked: Vec<NonZeroU32> = Vec::with_capacity(values.len());
+        for value in tree.lists.items(values) {
+            let span = tree.exprs.span(value);
+            let expr = match tree.exprs[value] {
+                ast::Expr::String { c_string: false } => self.c_string(span),
+                _ => self.check_expr(value, TypeExpectation::Hint(None)),
+            };
+            let ty = expr.ty;
+            let types = &self.checker.types;
+            // On an error the others are still checked, for their own.
+            if !printable(types, ty) {
+                if ty != TypeId::INVALID {
+                    let message = format!("`{}` cannot be printed", self.checker.type_text(ty));
+                    self.checker
+                        .error(diagnostics::INVALID_OPERATION, message, span);
+                }
+                continue;
+            }
+            let mut printed = self.body.add(expr, span);
+            // Printing reads a value, never takes it: one that moves, in a
+            // place, is lent instead, a `&mut` reference as `&`.
+            if !types[ty].is_copy() && self.place_root(printed).is_some() {
+                let lent = match types[ty] {
+                    Type::Reference { .. } => {
+                        let reference = self.body.exprs[printed].clone();
+                        self.reborrow(reference, span, false)
+                    }
+                    _ => self.check_borrow(false, printed, span),
+                };
+                printed = self.body.add(lent, span);
+            }
+            checked.push(printed.into());
+        }
+        if checked.len() < values.len() {
+            return Expr::INVALID;
+        }
+        Expr {
+            ty: TypeId::VOID,
+            kind: ExprKind::Print {
+                newline,
+                values: self.body.lists.add(&checked),
+            },
+        }
+    }
+
     /// `value as ty`: `value` as a value of the type `ty`, which its type
     /// converts to with `as` or without it (`Types::conversion`). A number
     /// literal takes the type `ty` if it can, so `300 as u8` is an error.
@@ -238,13 +301,7 @@ impl ThirBuilder<'_, '_> {
                         kind: ExprKind::Constant(Value::Bool(value)),
                     };
                 }
-                ast::Expr::String { c_string: true } => {
-                    let bytes = literal::value(tree.file.slice(span));
-                    break 'checked Expr {
-                        ty: TypeId::CSTR,
-                        kind: ExprKind::Constant(Value::Bytes(bytes.into())),
-                    };
-                }
+                ast::Expr::String { c_string: true } => break 'checked self.c_string(span),
                 ast::Expr::Parentheses(inner) => {
                     break 'checked self.check_expr(inner, TypeExpectation::Hint(expected));
                 }
@@ -281,10 +338,12 @@ impl ThirBuilder<'_, '_> {
                     let place = self.add_expr(value, TypeExpectation::Hint(None));
                     break 'checked self.check_address(place, span);
                 }
+                ast::Expr::Print { newline, values } => {
+                    break 'checked self.check_print(newline, values);
+                }
                 ast::Expr::String { c_string: false } => "string literals",
                 ast::Expr::Char { .. } => "character literals",
                 ast::Expr::Free(_) => "`free` calls",
-                ast::Expr::Print { .. } => "`print` calls",
                 ast::Expr::Index { .. } => "index expressions",
                 ast::Expr::Range { .. } => "ranges",
                 ast::Expr::VariantLiteral { .. } => "variant literals",
@@ -1261,4 +1320,16 @@ pub(crate) fn unsuffixed_literal(tree: &ast::Tree, expression: Id<ast::Expr>) ->
     let text = tree.file.slice(tree.exprs.span(expression));
     let number = matches!(tree.exprs[expression], ast::Expr::Number);
     (number && literal::numeric::split(text).suffix.is_empty()).then_some(text)
+}
+
+/// Whether `print` writes a value of the type `ty`: a number, `bool`,
+/// `cstr` or raw pointer, a struct of such values, or a reference to one.
+fn printable(types: &Types, ty: TypeId) -> bool {
+    match types[ty] {
+        Type::Integer(_) | Type::Float(_) | Type::Bool | Type::CString => true,
+        Type::RawPointer { .. } => true,
+        Type::Reference { target, .. } => printable(types, target),
+        Type::Struct { ref fields, .. } => fields.iter().all(|&field| printable(types, field)),
+        _ => false,
+    }
 }

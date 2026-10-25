@@ -1,0 +1,10 @@
+// `print` lends a struct it prints, so a `&mut` reference still in use
+// conflicts with it.
+struct Point { x: i32 }
+
+fn main() {
+    let mut point = Point.{ x = 1 };
+    let changed = &mut point;
+    println(point);
+    changed.x = 2;
+}
