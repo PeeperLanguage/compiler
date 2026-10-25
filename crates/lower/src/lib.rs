@@ -74,6 +74,7 @@ pub fn lower(
                 mutable: variable.mutable,
                 initialized: variable.initialized,
                 debug_scope: Id::from_index(variable.scope.index()),
+                hidden: variable.hidden,
             },
             body.variables.span(id),
         );

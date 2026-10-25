@@ -1,0 +1,42 @@
+// `for` over arrays: an element that moves cannot be taken by value, the
+// array stays borrowed for the whole loop, and only ranges and arrays loop.
+// After an error in the header, the body is still checked.
+struct Point { x: i32, y: i32 }
+
+fn MovesElements() {
+    let points = [2]Point{Point.{ x = 1, y = 2 }, Point.{ x = 3, y = 4 }};
+    for point in points {
+        let x: bool = point.x;
+    }
+}
+
+fn ChangedWhileBorrowed() {
+    let mut values = [3]i32{1, 2, 3};
+    for value in &mut values {
+        values[0] = 5;
+        value.* = 1;
+    }
+}
+
+fn ReadWhileChanged() {
+    let mut values = [3]i32{1, 2, 3};
+    for value in &mut values {
+        let first = values[0];
+        value.* = first;
+    }
+}
+
+fn NotAnArray() {
+    for value in 5 {
+        missing(value);
+    }
+}
+
+fn ReadOnlyElement() {
+    let values = [3]i32{1, 2, 3};
+    for value in &values {
+        value.* = 1;
+    }
+}
+
+fn main() {}

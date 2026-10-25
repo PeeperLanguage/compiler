@@ -1,0 +1,18 @@
+name = "run_array_loops"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 0
+stdout_contains = [
+    "total: 10\n",
+    "copy: 1 2 3 4 then 100\n",
+    "doubled: 2 4 6 8\n",
+    "indexed: 0 5 1 6 2 7\n",
+    "grid: 21\n",
+    "made: 6 calls 1\n",
+    "points: 8\n",
+    "jumps: 10 30\n",
+    "kept: 3 2 9\n",
+]

@@ -42,6 +42,7 @@ pub struct Variable {
     pub mutable: bool,
     pub initialized: bool, // set where declared; false for a `let` without a value
     pub debug_scope: Id<DebugScope>, // the block it is declared in
+    pub hidden: bool,      // made by the checker; its span is not a name
 }
 
 /// A block of the source, as THIR's `Block` without its statements, for a
@@ -413,7 +414,10 @@ impl Printer<'_> {
     /// field path for fields next to each other and `[at index]` for an
     /// element (`line.2[1, 0]`, `r.3.*[0]`, `a.1[at %4][2]`).
     fn write_place(&mut self, place: &Place) {
-        let name = self.file.slice(self.body.variables.span(place.variable));
+        let name = match self.body.variables[place.variable].hidden {
+            true => "_",
+            false => self.file.slice(self.body.variables.span(place.variable)),
+        };
         _ = write!(self.out, "{name}.{}", place.variable.index());
         let mut fields = Vec::new();
         for &step in &place.projections {

@@ -5,10 +5,12 @@ use std::num::NonZeroU32;
 
 use arena::Id;
 use arena::List;
+use bigint::Limbs;
 use diagnostics::Diagnostic;
 use model::ast;
 use model::ast::Ident;
 use model::constant::Constant;
+use model::constant::Value;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::thir::Block;
@@ -95,12 +97,13 @@ impl Checker<'_> {
                     mutable: parameter.mutable,
                     initialized: true,
                     scope: outermost,
+                    hidden: false,
                 },
                 name.span,
             );
             builder.declare(name, Local::Variable(variable));
         }
-        let statements = builder.check_statements(tree.blocks[block].statements);
+        let statements = builder.check_statements(None, tree.blocks[block].statements);
         builder.body.blocks[outermost].statements = statements;
         // A part of the signature that failed was reported with the signature.
         body.has_errors = parameters.contains(&TypeId::INVALID)
@@ -133,9 +136,15 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         }
     }
 
-    /// The THIR of `statements`, in the current block.
-    fn check_statements(&mut self, statements: List<ast::Stmt>) -> List<Stmt> {
-        let mut checked: Vec<NonZeroU32> = Vec::with_capacity(statements.len());
+    /// The THIR of `statements`, in the current block, after `first`, a
+    /// statement the checker made for the block.
+    fn check_statements(
+        &mut self,
+        first: Option<Id<Stmt>>,
+        statements: List<ast::Stmt>,
+    ) -> List<Stmt> {
+        let mut checked: Vec<NonZeroU32> = Vec::with_capacity(statements.len() + 1);
+        checked.extend(first.map(NonZeroU32::from));
         for statement in self.checker.module().ast.lists.items(statements) {
             if let Some(statement) = self.check_statement(statement) {
                 checked.push(statement.into());
@@ -148,7 +157,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
     /// before the blocks inside it.
     fn check_block(&mut self, block: Id<ast::Block>) -> Id<Block> {
         let enclosing = self.open_block(block);
-        self.close_block(block, enclosing)
+        self.close_block(block, enclosing, None)
     }
 
     /// Makes `block` the current block, for names declared before its
@@ -166,10 +175,17 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         (std::mem::replace(&mut self.block, opened), start)
     }
 
-    /// Checks the statements of `block`, opened by `open_block`, and makes
-    /// `enclosing` the current block again.
-    fn close_block(&mut self, block: Id<ast::Block>, enclosing: (Id<Block>, usize)) -> Id<Block> {
-        let statements = self.check_statements(self.checker.module().ast.blocks[block].statements);
+    /// Checks the statements of `block`, opened by `open_block`, after
+    /// `first` (`check_statements`), and makes `enclosing` the current block
+    /// again.
+    fn close_block(
+        &mut self,
+        block: Id<ast::Block>,
+        enclosing: (Id<Block>, usize),
+        first: Option<Id<Stmt>>,
+    ) -> Id<Block> {
+        let statements =
+            self.check_statements(first, self.checker.module().ast.blocks[block].statements);
         let closed = self.block;
         self.names.truncate(self.block_start);
         (self.block, self.block_start) = enclosing;
@@ -291,6 +307,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                             mutable: true,
                             initialized: true,
                             scope: self.block,
+                            hidden: false,
                         };
                         let variable = self.body.add(unknown, name.span);
                         self.declare(name, Local::Variable(variable));
@@ -321,7 +338,15 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 value,
                 iterable,
                 body,
-            } => self.check_for_in(index, Some(value), iterable, body?)?,
+            } if matches!(tree.exprs[iterable], ast::Expr::Range { .. }) => {
+                self.check_for_in(index, Some(value), iterable, body?)?
+            }
+            ast::Stmt::ForIn {
+                index,
+                value,
+                iterable,
+                body,
+            } => self.check_for_array(index, value, iterable, body?)?,
             ast::Stmt::Break | ast::Stmt::Continue if self.loops == 0 => {
                 let jump = match tree.stmts[statement] {
                     ast::Stmt::Break => "break",
@@ -384,6 +409,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             mutable,
             initialized,
             scope: self.block,
+            hidden: false,
         };
         let text = name.text(&self.checker.module().ast.file);
         let shadowed = self
@@ -425,8 +451,8 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
 
     /// `for value in start..end { body }` or `..=`, or `for start..end
     /// { body }` without a `value`. A literal endpoint without a suffix takes
-    /// the other endpoint's type, which must be an integer. Over other
-    /// values, or with an index, it is reported as not supported yet.
+    /// the other endpoint's type, which must be an integer. A range without
+    /// both ends, or an index, is reported as not supported yet.
     fn check_for_in(
         &mut self,
         index: Option<Ident>,
@@ -441,11 +467,9 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             end: Some(end),
         } = tree.exprs[iterable]
         else {
-            let what = match tree.exprs[iterable] {
-                ast::Expr::Range { .. } => "`for` over ranges without both ends",
-                _ => "`for` over values other than ranges",
-            };
-            self.checker.not_supported(tree.exprs.span(iterable), what);
+            let span = tree.exprs.span(iterable);
+            self.checker
+                .not_supported(span, "`for` over ranges without both ends");
             return None;
         };
         if let Some(index) = index {
@@ -477,13 +501,14 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 mutable: false,
                 initialized: true,
                 scope: self.block,
+                hidden: false,
             };
             let variable = self.body.add(variable, value.span);
             self.declare(value, Local::Variable(variable));
             variable
         });
         self.loops += 1;
-        let body = self.close_block(body, enclosing);
+        let body = self.close_block(body, enclosing, None);
         self.loops -= 1;
         Some(Stmt::ForRange {
             value: variable,
@@ -492,6 +517,208 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             inclusive,
             body,
         })
+    }
+
+    /// `for value in items { body }` or `for index, value in items`, over an
+    /// array or a reference to one, computed once before the first pass.
+    /// Written as the code that runs it, a block of
+    ///
+    /// ```text
+    /// let items = <iterable>; // unnamed; ends after the loop
+    /// for index in 0..N { let value = items[index]; body }
+    /// ```
+    ///
+    /// where `value` is a copy of the element, which must copy, or
+    /// `&items.*[index]` or `&mut items.*[index]` when `items` is a `&` or
+    /// `&mut` reference, which keeps the array borrowed for the whole loop.
+    /// Without `index`, the counter is unnamed.
+    fn check_for_array(
+        &mut self,
+        index: Option<Ident>,
+        value: Ident,
+        iterable: Id<ast::Expr>,
+        body: Id<ast::Block>,
+    ) -> Option<Stmt> {
+        let iterable = self.add_expr(iterable, TypeExpectation::Hint(None));
+        self.lend_variable_again(iterable);
+        let (items_type, span) = (self.body.exprs[iterable].ty, self.body.exprs.span(iterable));
+        let types = &self.checker.types;
+        let (array, borrow) = match types[items_type] {
+            Type::Reference { target, mutable } => (target, Some(mutable)),
+            _ => (items_type, None),
+        };
+        // After an error, the body is still checked, with an invalid `value`.
+        let (element, length) = match types[array] {
+            Type::Array { element, length } => (element, length),
+            _ => {
+                if items_type != TypeId::INVALID {
+                    self.checker
+                        .not_supported(span, "`for` over values other than ranges and arrays");
+                }
+                (TypeId::INVALID, 0)
+            }
+        };
+        if borrow.is_none() && !self.checker.types.is_copy(element) {
+            let file = &self.checker.module().ast.file;
+            let array_text = self.checker.type_text(array);
+            let element_text = self.checker.type_text(element);
+            let diagnostic = Diagnostic::new(
+                diagnostics::PARTIAL_MOVE,
+                "cannot move an element out of its array",
+            )
+            .label(
+                file,
+                span,
+                format!(
+                    "`for` takes each element of this `{array_text}`, and `{element_text}` moves"
+                ),
+            )
+            .help(
+                format!(
+                    "loop over `&{}` for a reference to each element",
+                    file.slice(span)
+                ),
+                Vec::new(),
+            );
+            self.checker.report(diagnostic);
+        }
+        // The unnamed `items`, in a block of its own that ends after the loop.
+        let body_span = self.checker.module().ast.blocks.span(body);
+        let whole = Span::new(span.start as usize, body_span.end as usize);
+        let holder = Block {
+            parent: Some(self.block),
+            statements: List::EMPTY,
+        };
+        let holder = self.body.add(holder, whole);
+        let outer = std::mem::replace(&mut self.block, holder);
+        let items = Variable {
+            ty: items_type,
+            mutable: false,
+            initialized: true,
+            scope: holder,
+            hidden: true,
+        };
+        let items = self.body.add(items, span);
+        let let_items = Stmt::Let {
+            variable: items,
+            value: Some(iterable),
+        };
+        let let_items = self.body.add(let_items, span);
+        // `for index in 0..N`, each pass first setting `value`.
+        let usize = self
+            .checker
+            .types
+            .builtin("usize", self.checker.pointer_bits);
+        let usize = usize.expect("`usize` is built in");
+        let Type::Integer(integer) = self.checker.types[usize] else {
+            unreachable!("`usize` is an integer")
+        };
+        let mut constant = |number: u64| {
+            let value = Value::Integer(Limbs::new(integer.bits, &[number]));
+            let constant = Expr {
+                ty: usize,
+                kind: ExprKind::Constant(value),
+            };
+            self.body.add(constant, span)
+        };
+        let (start, end) = (constant(0), constant(length));
+        let enclosing = self.open_block(body);
+        let counter = Variable {
+            ty: usize,
+            mutable: false,
+            initialized: true,
+            scope: self.block,
+            hidden: index.is_none(),
+        };
+        let counter = self
+            .body
+            .add(counter, index.map_or(span, |index| index.span));
+        if let Some(index) = index {
+            self.declare(index, Local::Variable(counter));
+        }
+        let (element_value, value_type) =
+            self.array_element(items, counter, array, element, borrow, span);
+        let variable = Variable {
+            ty: value_type,
+            mutable: false,
+            initialized: true,
+            scope: self.block,
+            hidden: false,
+        };
+        let variable = self.body.add(variable, value.span);
+        self.declare(value, Local::Variable(variable));
+        let let_value = Stmt::Let {
+            variable,
+            value: Some(element_value),
+        };
+        let let_value = self.body.add(let_value, value.span);
+        self.loops += 1;
+        let body = self.close_block(body, enclosing, Some(let_value));
+        self.loops -= 1;
+        let range = Stmt::ForRange {
+            value: Some(counter),
+            start,
+            end,
+            inclusive: false,
+            body,
+        };
+        let range = self.body.add(range, whole);
+        self.block = outer;
+        let statements: [NonZeroU32; 2] = [let_items.into(), range.into()];
+        self.body.blocks[holder].statements = self.body.lists.add(&statements);
+        Some(Stmt::Block(holder))
+    }
+
+    /// The value `check_for_array` gives `value` each pass, and its type:
+    /// `items[counter]`, or `&items.*[counter]` or `&mut items.*[counter]`
+    /// when `borrow` says `items` is a `&` or `&mut` reference to an `array`
+    /// of `element`.
+    fn array_element(
+        &mut self,
+        items: Id<Variable>,
+        counter: Id<Variable>,
+        array: TypeId,
+        element: TypeId,
+        borrow: Option<bool>,
+        span: Span,
+    ) -> (Id<Expr>, TypeId) {
+        let read = Expr {
+            ty: self.body.variables[items].ty,
+            kind: ExprKind::Variable(items),
+        };
+        let mut place = self.body.add(read, span);
+        if borrow.is_some() {
+            let referred = Expr {
+                ty: array,
+                kind: ExprKind::Dereference(place),
+            };
+            place = self.body.add(referred, span);
+        }
+        let at = Expr {
+            ty: self.body.variables[counter].ty,
+            kind: ExprKind::Variable(counter),
+        };
+        let at = self.body.add(at, span);
+        let read = Expr {
+            ty: element,
+            kind: ExprKind::Index {
+                array: place,
+                index: at,
+            },
+        };
+        let read = self.body.add(read, span);
+        let Some(mutable) = borrow else {
+            return (read, element);
+        };
+        let ty = self.checker.reference_type(mutable, element, span);
+        let reference = Expr {
+            ty,
+            kind: ExprKind::Borrow {
+                place: read,
+                mutable,
+            },
+        };
+        (self.body.add(reference, span), ty)
     }
 
     /// `const name: ty = value;`: a name for a value known at compile time.

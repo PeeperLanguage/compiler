@@ -90,6 +90,12 @@ anywhere else. No later phase compares a name with `"_"` or remembers to skip
 it. Allowed today: `_ =>`, `.{ a, _ }`, `[_]T{ .. }`, `with _`, `for _, v in`,
 `fn f(_: T)`; `let _`, `const _` and `_ = x` have no use until tuples.
 
+**A variable the checker makes says so.** A variable's name is the text at
+its span. One the checker makes (`for v in a` keeps the array and the counter
+in two) has no name there, so `Variable::hidden` marks it: the IR printers
+write `_` and the debug info leaves it out. Do not give it a fake span to get
+a name.
+
 **Unsafe code is forbidden** (`unsafe_code = "forbid"`), so a number cannot be
 turned back into an enum variant. When code must walk a group of variants,
 generate the list of them.

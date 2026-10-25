@@ -91,7 +91,7 @@ pub struct Name {
     pub symbol: Symbol,
 }
 
-/// A parameter or a `let` binding.
+/// A parameter or a `let` binding, or one the checker makes.
 #[derive(Clone, Copy, Debug)]
 pub struct Variable {
     pub ty: TypeId,
@@ -102,6 +102,9 @@ pub struct Variable {
     /// The block it is declared in, whose end ends its name's scope; the
     /// function's block for a parameter.
     pub scope: Id<Block>,
+    /// Made by the checker, with no name: its span is the code it was made
+    /// for (a `for` loop's array or counter), not a name.
+    pub hidden: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -403,7 +406,10 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
     }
 
     fn write_variable(&mut self, variable: Id<Variable>) {
-        let name = self.file.slice(self.body.variables.span(variable));
+        let name = match self.body.variables[variable].hidden {
+            true => "_",
+            false => self.file.slice(self.body.variables.span(variable)),
+        };
         _ = write!(self.out, "{name}.{}", variable.index());
     }
 

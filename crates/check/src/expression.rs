@@ -1007,18 +1007,7 @@ impl ThirBuilder<'_, '_> {
                 Some(&parameter) => self.add_expr(argument, TypeExpectation::Required(parameter)),
                 None => self.add_expr(argument, TypeExpectation::Hint(None)),
             };
-            // A `&mut` in a variable is lent again, not moved: the variable
-            // stays usable after the call.
-            if let Expr {
-                ty,
-                kind: ExprKind::Variable(_),
-            } = self.body.exprs[argument]
-                && let Type::Reference { mutable: true, .. } = self.checker.types[ty]
-            {
-                let span = self.body.exprs.span(argument);
-                let reference = self.body.exprs[argument].clone();
-                self.body.exprs[argument] = self.reborrow(reference, span, true);
-            }
+            self.lend_variable_again(argument);
             checked.push(argument.into());
         }
         if !arity_matches {
@@ -1361,6 +1350,22 @@ impl ThirBuilder<'_, '_> {
                 insert(span.start, "(".to_string()),
                 insert(span.end, format!("){suffix}")),
             ]
+        }
+    }
+
+    /// Makes `expr`, when it is a `&mut` in a variable, lend it again, so it
+    /// is not moved: the variable stays usable after the call or loop that
+    /// takes `expr`.
+    pub(crate) fn lend_variable_again(&mut self, expr: Id<Expr>) {
+        if let Expr {
+            ty,
+            kind: ExprKind::Variable(_),
+        } = self.body.exprs[expr]
+            && let Type::Reference { mutable: true, .. } = self.checker.types[ty]
+        {
+            let span = self.body.exprs.span(expr);
+            let reference = self.body.exprs[expr].clone();
+            self.body.exprs[expr] = self.reborrow(reference, span, true);
         }
     }
 

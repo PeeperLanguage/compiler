@@ -307,12 +307,16 @@ struct Function<'m, 'p, 'b> {
 
 impl Function<'_, '_, '_> {
     /// The `alloca` of each variable but a parameter kept in memory
-    /// (`add_function`) and, in a debug build, its debug declaration.
+    /// (`add_function`) and, in a debug build, the debug declaration of
+    /// each one with a name.
     fn variables(&mut self, out: &mut String) {
         for variable in self.body.variables.ids() {
             let index = variable.index();
             let mir::Variable {
-                ty, debug_scope, ..
+                ty,
+                debug_scope,
+                hidden,
+                ..
             } = self.body.variables[variable];
             if index >= self.body.parameters || !in_memory(self.types, ty) {
                 _ = writeln!(out, "  %v{index} = alloca {}", type_text(self.types, ty));
@@ -320,6 +324,9 @@ impl Function<'_, '_, '_> {
             let Some(metadata) = &mut self.module.metadata else {
                 continue;
             };
+            if hidden {
+                continue;
+            }
             let span = self.body.variables.span(variable);
             let (program, pointer_bits) = (self.module.program, self.module.pointer_bits);
             let debug_type = metadata

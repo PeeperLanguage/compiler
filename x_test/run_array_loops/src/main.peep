@@ -1,0 +1,111 @@
+// `for` over an array: the array is computed once, before the first pass. By
+// value, each pass gets a copy of an element taken from a copy of the array;
+// over `&` or `&mut`, a reference to the element itself.
+struct Point { x: i32, y: i32 }
+
+fn make(calls: &mut i32) -> [3]i32 {
+    calls.* = calls.* + 1;
+    return [3]i32{1, 2, 3};
+}
+
+// A reference to an element outlives the loop: it borrows the array.
+fn first_big(values: &[3]i32) -> &i32 in values {
+    for value in values {
+        if value.* > 1 { return value; }
+    }
+    return &values[0];
+}
+
+// A `&mut` in a variable is lent again: it stays usable after a loop.
+fn double(values: &mut [4]i32) {
+    for value in values {
+        value.* = value.* * 3;
+    }
+    for value in values {
+        value.* = value.* - value.* / 3;
+    }
+    values[0] = values[0] + 0;
+}
+
+fn main() -> i32 {
+    let values = [4]i32{1, 2, 3, 4};
+    let mut total = 0;
+    for value in values {
+        total = total + value;
+    }
+    println("total:", total);
+
+    // The loop reads its own copy: a change to `changing` is not seen.
+    let mut changing = [4]i32{1, 2, 3, 4};
+    print("copy:");
+    for value in changing {
+        changing[3] = 100;
+        print("", value);
+    }
+    println(" then", changing[3]);
+
+    let mut doubled = [4]i32{1, 2, 3, 4};
+    double(&mut doubled);
+    print("doubled:");
+    for value in &doubled {
+        print("", value.*);
+    }
+    println();
+
+    print("indexed:");
+    for i, value in [3]i32{5, 6, 7} {
+        print("", i, value);
+    }
+    println();
+
+    let grid = [2][3]i32{[3]i32{1, 2, 3}, [3]i32{4, 5, 6}};
+    let mut sum = 0;
+    for row in &grid {
+        for cell in row {
+            sum = sum + cell.*;
+        }
+    }
+    println("grid:", sum);
+
+    let mut made = 0;
+    let mut calls = 0;
+    for value in make(&mut calls) {
+        made = made + value;
+    }
+    println("made:", made, "calls", calls);
+
+    let mut points = [2]Point{Point.{ x = 1, y = 2 }, Point.{ x = 3, y = 4 }};
+    for point in &mut points {
+        point.x = point.x - 1;
+    }
+    let mut sum_points = 0;
+    for point in &points {
+        sum_points = sum_points + point.x + point.y;
+    }
+    println("points:", sum_points);
+
+    print("jumps:");
+    for i, value in [5]i32{10, 20, 30, 40, 50} {
+        if i == 1 { continue; }
+        if value == 40 { break; }
+        print("", value);
+    }
+    println();
+
+    let small = [3]i32{1, 2, 3};
+    let outer = 0;
+    let mut last = &outer;
+    for value in &small { last = value; }
+    let mut other = [1]i32{0};
+    let mut changed = &mut other[0];
+    let mut pair = [2]i32{4, 5};
+    for value in &mut pair { changed = value; }
+    changed.* = 9;
+    let big = first_big(&small);
+    println("kept:", last.*, big.*, pair[1]);
+
+    for _, value in [0]i32{} {
+        println("never", value);
+    }
+    return 0;
+}

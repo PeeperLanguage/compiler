@@ -1,0 +1,17 @@
+name = "negative_array_loops"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "cannot move an element out of its array",
+    "loop over `&points` for a reference to each element",
+    "`values` is changed while a `&mut` reference to it is still in use",
+    "`values` is read while a `&mut` reference to it is still in use",
+    "`for` over values other than ranges and arrays are not supported yet",
+    "unknown name `missing`",
+    "expected `bool`, found `i32`",
+    "cannot assign to `value.*` through shared reference `value`",
+    "Compilation failed with 7 error(s)",
+]
