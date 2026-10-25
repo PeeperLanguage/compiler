@@ -1,0 +1,102 @@
+// Fixed arrays `[N]T`: literals, `[_]T` taking the number of values, reads
+// and writes at any integer index, nested arrays, arrays in structs and
+// structs in arrays, copies, parameters, results and references.
+type Meters = f64;
+struct Point { x: i32, y: i32 }
+struct Grid { cells: [2]Point, sizes: [3]u8 }
+
+fn sum(values: [3]i32) -> i32 {
+    return values[0] + values[1] + values[2];
+}
+
+fn tens() -> [3]i32 {
+    let mut values = [3]i32{0, 0, 0};
+    let start: usize = 0;
+    for i in start..3 {
+        values[i] = (i as i32) * 10;
+    }
+    return values;
+}
+
+fn bump(values: &mut [3]i32) {
+    values[0] = values[0] + 10;
+    values[1] = values[1] + 10;
+    values[2] = values[2] + 10;
+}
+
+struct Holder { tokens: [3]i32 }
+
+fn slot(holder: &mut Holder, at: usize) -> &mut i32 in holder {
+    return &mut holder.tokens[at];
+}
+
+fn main() -> i32 {
+    let a = [3]i32{1, 2, 3};
+    println("literal:", a[0], a[1], a[2]);
+
+    let b = [_]i64{4, 5};
+    println("inferred:", b[0], b[1]);
+
+    let mut c = [3]i32{1, 2, 3};
+    c[1] = 7;
+    println("written:", c[0], c[1], c[2]);
+
+    let small: u8 = 2;
+    let signed: i64 = 0;
+    let wide: i128 = 1;
+    let pointer: usize = 2;
+    println("indexes:", a[small], a[signed], a[wide], a[pointer], a[wide + wide - 1]);
+
+    let mut grid = [2][3]i32{[3]i32{1, 2, 3}, [3]i32{4, 5, 6}};
+    grid[1][0] = 9;
+    let row: u8 = 1;
+    println("nested:", grid[row][2], grid[0][0] - 1, grid[1][0]);
+
+    let mut shapes = Grid.{
+        cells = [2]Point{Point.{ x = 1, y = 2 }, Point.{ x = 3, y = 4 }},
+        sizes = [3]u8{5, 6, 7},
+    };
+    shapes.cells[1].x = 30;
+    println("fields:", shapes.cells[1].x, shapes.cells[0].y, shapes.sizes[0]);
+
+    let mut copy = a;
+    copy[0] = 9;
+    println("copied:", copy[0], a[0]);
+
+    println("passed:", sum(a), sum([_]i32{1, 1, 2}));
+
+    let ten = tens();
+    println("returned:", ten[0], ten[1], ten[2]);
+
+    let mut d = [3]i32{1, 2, 3};
+    bump(&mut d);
+    println("through:", d[0], d[1], d[2]);
+
+    let mut e = [2]i32{7, 0};
+    let first = &e[0];
+    let read = first.*;
+    let second = &mut e[1];
+    second.* = 8;
+    println("borrowed:", read, e[1]);
+
+    let mut f = [2]i32{20, 0};
+    let address = @f[1];
+    address.* = f[0] + 1;
+    println("raw:", f[1]);
+
+    let nothing = [0]i32{};
+    let kept = nothing;
+    println("empty: done");
+
+    let lengths = [2]Meters{1.5, 2.5};
+    let plain: [2]f64 = lengths;
+    let longest: &f64 = &lengths[1];
+    println("aliased:", plain[0], longest.*);
+
+    let mut holder = Holder.{ tokens = [3]i32{0, 0, 0} };
+    let at: usize = 1;
+    let token = slot(&mut holder, at);
+    token.* = 5;
+    println("slot:", holder.tokens[0], holder.tokens[1]);
+    return 0;
+}

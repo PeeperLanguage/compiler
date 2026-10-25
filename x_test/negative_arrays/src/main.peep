@@ -1,0 +1,26 @@
+// What check rejects in arrays.
+#[extern("takes")]
+fn takes(values: [2]i32);
+
+fn make() -> [2]i32 {
+    return [2]i32{1, 2};
+}
+
+fn main() {
+    let a = [3]i32{1, 2};
+    let b = [2]i32{1, true};
+    let c = [3]i32{1, 2, 3};
+    let d = c[3];
+    let negative = c[-1];
+    let typed = c[-1i64];
+    let e = c[true];
+    let number = 4;
+    let f = number[0];
+    let x = 1;
+    let h = [1]&i32{&x};
+    let i: [2u8]i32 = [2]i32{1, 2};
+    let j = make()[0];
+    c[0] = 5;
+    let k = []i32{};
+    takes(c);
+}

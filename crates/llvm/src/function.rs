@@ -78,7 +78,7 @@ impl Module<'_> {
                 .map(|block| {
                     let block = &body.blocks[block];
                     let instructions = body.lists.items(block.instructions);
-                    instructions.filter(|&id| traps(body, types, id)).count()
+                    instructions.map(|id| traps(body, types, id)).sum()
                 })
                 .collect(),
             block: 0,
@@ -186,20 +186,34 @@ impl Module<'_> {
     }
 }
 
-/// Whether the instruction `id` can trap at run time, so it checks first: a
-/// division or shift of integers by a value not known at compile time.
-/// Check rejects a constant that would trap.
-fn traps(body: &mir::Body, types: &Types, id: Id<mir::Instruction>) -> bool {
-    let InstructionKind::Binary { op, left, right } = body.instructions[id].kind else {
-        return false;
-    };
-    let divides_or_shifts = matches!(
-        op,
-        BinaryOp::Divide | BinaryOp::Remainder | BinaryOp::ShiftLeft | BinaryOp::ShiftRight
-    );
-    divides_or_shifts
-        && !matches!(right, Operand::Constant(_))
-        && matches!(types[operand_type(body, left)], Type::Integer(_))
+/// How many times the instruction `id` can trap at run time, so it checks
+/// first: a division or shift of integers by a value not known at compile
+/// time, and each element of its place at an index not known then. Check
+/// rejects a constant that would trap.
+fn traps(body: &mir::Body, types: &Types, id: Id<mir::Instruction>) -> usize {
+    match body.instructions[id].kind {
+        InstructionKind::Binary { op, left, right } => {
+            let divides_or_shifts = matches!(
+                op,
+                BinaryOp::Divide | BinaryOp::Remainder | BinaryOp::ShiftLeft | BinaryOp::ShiftRight
+            );
+            usize::from(
+                divides_or_shifts
+                    && !matches!(right, Operand::Constant(_))
+                    && matches!(types[operand_type(body, left)], Type::Integer(_)),
+            )
+        }
+        InstructionKind::Load(ref place)
+        | InstructionKind::Move(ref place)
+        | InstructionKind::Store { ref place, .. }
+        | InstructionKind::Borrow { ref place, .. }
+        | InstructionKind::Address(ref place) => (place.projections.iter())
+            .filter(|step| {
+                matches!(step, mir::Projection::Index(index) if !matches!(index, Operand::Constant(_)))
+            })
+            .count(),
+        _ => 0,
+    }
 }
 
 /// The type of `operand`'s value.
@@ -246,7 +260,7 @@ struct Function<'m, 'p, 'b> {
     scope_metadata: Vec<usize>, // by MIR debug scope (`Module::add_debug_info`)
     locations: HashMap<(usize, u32), usize>, // each scope and start offset's DILocation
     panics: String,             // the blocks that call the panic function, after the others
-    checks: Vec<usize>,         // how many instructions of each block check first (`traps`)
+    checks: Vec<usize>,         // how many checks each block writes (`traps`)
     block: usize,               // the MIR block being written
     checked: usize,             // its checks so far
 }
@@ -429,7 +443,7 @@ impl Function<'_, '_, '_> {
             }
             InstructionKind::Load(ref place) | InstructionKind::Move(ref place) => {
                 let address = fmt::from_fn(|out| write!(out, "{name}.f"));
-                self.write_place_address(out, &address, place, &location);
+                self.write_place_address(out, &address, place, &location, id);
                 write!(
                     out,
                     "  {name} = load {}, ptr {address}",
@@ -449,11 +463,11 @@ impl Function<'_, '_, '_> {
             }
             InstructionKind::Store { ref place, value } => {
                 let address = fmt::from_fn(|out| write!(out, "{name}.f"));
-                self.write_place_address(out, &address, place, &location);
+                self.write_place_address(out, &address, place, &location, id);
                 write!(out, "  store {}, ptr {address}", self.typed(value))
             }
             InstructionKind::Borrow { ref place, .. } | InstructionKind::Address(ref place) => {
-                self.write_place_address(out, &name, place, &location);
+                self.write_place_address(out, &name, place, &location, id);
                 return; // the address is the value
             }
             InstructionKind::Binary { op, left, right } => {
@@ -767,24 +781,87 @@ impl Function<'_, '_, '_> {
         );
     }
 
-    /// Writes the lines computing `address`, the address of `place`: one
-    /// `getelementptr` for each run of fields, and before each dereference
-    /// a load of the pointer there, `<address>.<n>` for the `n`th.
+    /// Writes the lines computing `address`, the address of `place`, for the
+    /// instruction `id`: one `getelementptr` for each run of fields and
+    /// elements, after a check of each index there not known at compile
+    /// time, and before each dereference a load of the pointer there,
+    /// `<address>.<n>` for the `n`th.
     fn write_place_address(
-        &self,
+        &mut self,
         out: &mut String,
         address: &dyn Display,
         place: &mir::Place,
         location: &DebugLocation,
+        id: Id<mir::Instruction>,
     ) {
         let variable = place.variable.index();
         let mut ty = self.body.variables[place.variable].ty;
+        let (types, body) = (self.types, self.body);
+        // Whether an element's index gets its own `i64`, named
+        // `<address>.<run>.<step>`: one not known at compile time and not an
+        // `i64` already.
+        let renamed = |index: Operand| {
+            !matches!(index, Operand::Constant(_))
+                && !matches!(
+                    types[operand_type(body, index)],
+                    Type::Integer(Integer { bits: 64, .. })
+                )
+        };
         let mut runs = place
             .projections
-            .split(|&step| step == mir::Projection::Dereference)
+            .split(|step| matches!(step, mir::Projection::Dereference))
             .enumerate()
             .peekable();
-        while let Some((run, fields)) = runs.next() {
+        while let Some((run, steps)) = runs.next() {
+            let run_type = ty;
+            // Each index not known at compile time, checked against its
+            // array's length, and `renamed` when it is not an `i64`.
+            for (position, &step) in steps.iter().enumerate() {
+                ty = match (step, &self.types[ty]) {
+                    (mir::Projection::Field(index), Type::Struct { fields, .. }) => {
+                        fields[index as usize]
+                    }
+                    (
+                        mir::Projection::Index(Operand::Constant(_)),
+                        &Type::Array { element, .. },
+                    ) => {
+                        element // check found it inside the array
+                    }
+                    (mir::Projection::Index(index), &Type::Array { element, length }) => {
+                        let Type::Integer(integer) = self.types[operand_type(self.body, index)]
+                        else {
+                            unreachable!("check takes only an integer index")
+                        };
+                        let (bits, value) = (integer.bits, self.operand(index).to_string());
+                        let name = format!("{address}.{run}.{position}");
+                        // Compared as an `i64`, or in its own type when wider; a
+                        // negative index, extended, is above any length.
+                        let compared = match bits {
+                            _ if !renamed(index) => format!("i64 {value}"),
+                            65.. => format!("i{bits} {value}"),
+                            _ => {
+                                let extension = if integer.signed { "sext" } else { "zext" };
+                                _ = writeln!(
+                                    out,
+                                    "  {name} = {extension} i{bits} {value} to i64{location}"
+                                );
+                                format!("i64 {name}")
+                            }
+                        };
+                        _ = writeln!(
+                            out,
+                            "  {name}.out = icmp uge {compared}, {length}{location}"
+                        );
+                        let message = format!("index out of bounds: the length is {length}");
+                        self.check(out, &format!("{name}.out"), &message, id);
+                        if bits > 64 {
+                            _ = writeln!(out, "  {name} = trunc {compared} to i64{location}");
+                        }
+                        element
+                    }
+                    _ => unreachable!("a field is taken of a struct, an element of an array"),
+                };
+            }
             // The address so far: the variable's, or the pointer loaded last.
             let base = fmt::from_fn(|out| match run {
                 0 => write!(out, "%v{variable}"),
@@ -798,24 +875,20 @@ impl Function<'_, '_, '_> {
             _ = write!(
                 out,
                 "  {run_address} = getelementptr inbounds {}, ptr {base}, i32 0",
-                type_text(self.types, ty)
+                type_text(self.types, run_type)
             );
-            let indices = fields.iter().map(|&step| match step {
-                mir::Projection::Field(index) => index,
-                mir::Projection::Dereference => unreachable!("split at each dereference"),
-            });
-            for index in indices.clone() {
-                _ = write!(out, ", i32 {index}");
+            for (position, &step) in steps.iter().enumerate() {
+                _ = match step {
+                    mir::Projection::Field(index) => write!(out, ", i32 {index}"),
+                    mir::Projection::Index(index) if renamed(index) => {
+                        write!(out, ", i64 {address}.{run}.{position}")
+                    }
+                    mir::Projection::Index(index) => write!(out, ", i64 {}", self.operand(index)),
+                    mir::Projection::Dereference => unreachable!("split at each dereference"),
+                };
             }
             _ = writeln!(out, "{location}");
             if !last {
-                // The type the pointer is loaded from, only needed here.
-                for index in indices {
-                    let Type::Struct { ref fields, .. } = self.types[ty] else {
-                        unreachable!("a field step is taken in a struct")
-                    };
-                    ty = fields[index as usize];
-                }
                 let Some(target) = self.types[ty].pointee() else {
                     unreachable!("a dereference is taken of a typed pointer")
                 };
@@ -889,7 +962,7 @@ impl Function<'_, '_, '_> {
         let name = value_name(id);
         let left_type = operand_type(self.body, left);
         let ty = type_text(self.types, left_type);
-        let checks = traps(self.body, self.types, id);
+        let checks = traps(self.body, self.types, id) > 0;
         // The value the right operand was converted to, if it was.
         let mut converted: Option<String> = None;
         let instruction = match self.types[left_type] {

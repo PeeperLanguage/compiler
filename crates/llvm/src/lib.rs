@@ -266,6 +266,17 @@ impl Metadata {
                     self.pointer_bits
                 )
             }
+            Type::Array { element, length } => {
+                let base = self.debug_type(program, types, types.real(element));
+                let base = base.expect("an element has a value's type");
+                let range = self.add(format_args!("!DISubrange(count: {length})"));
+                let (size, _) = layout(types, ty, self.pointer_bits);
+                format!(
+                    "!DICompositeType(tag: DW_TAG_array_type, baseType: !{base}, size: {}, \
+                     elements: !{{!{range}}})",
+                    size * 8
+                )
+            }
             Type::Invalid | Type::Void | Type::Function { .. } => {
                 unreachable!("MIR holds no value of this type")
             }
@@ -337,6 +348,9 @@ fn type_text(types: &Types, ty: TypeId) -> impl fmt::Display {
         Type::Float(Float::F64) => out.write_str("double"),
         Type::CString | Type::Reference { .. } | Type::RawPointer { .. } => out.write_str("ptr"),
         Type::Struct { ref fields, .. } => struct_type_text(types, fields, out),
+        Type::Array { element, length } => {
+            write!(out, "[{length} x {}]", type_text(types, element))
+        }
         Type::Invalid | Type::Function { .. } => unreachable!("MIR holds no value of this type"),
         Type::Alias { .. } => unreachable!("indexing looks through aliases"),
         Type::Named(_) => unreachable!("no value has a named type"),
@@ -344,9 +358,9 @@ fn type_text(types: &Types, ty: TypeId) -> impl fmt::Display {
 }
 
 /// A struct's LLVM type, `{ i32, i64 }`, of its `fields`' types. Out of
-/// line, so `type_text`, which writes every operand's type, stays small and
-/// not recursive (measured: 11 M fewer instructions per compile of the
-/// benchmark).
+/// line, so `type_text`, which writes every operand's type, stays small
+/// (measured: 11 M fewer instructions per compile of the benchmark); its
+/// array arm recursing in line measured flat.
 #[cold]
 #[inline(never)]
 fn struct_type_text(types: &Types, fields: &[TypeId], out: &mut fmt::Formatter) -> fmt::Result {
@@ -389,6 +403,12 @@ fn layout(types: &Types, ty: TypeId, pointer_bits: u32) -> (u64, u64) {
         Type::Struct { ref fields, .. } => {
             let (_, size, align) = struct_layout(types, fields, pointer_bits);
             (size, align)
+        }
+        Type::Array { element, length } => {
+            let (size, align) = layout(types, element, pointer_bits);
+            // shortcut: an array over 2^64 bytes overflows here; reject one
+            // past the target's address space at check when one is written.
+            (size * length, align)
         }
         Type::Invalid | Type::Void | Type::Function { .. } | Type::Named(_) => {
             unreachable!("no value is laid out with this type")

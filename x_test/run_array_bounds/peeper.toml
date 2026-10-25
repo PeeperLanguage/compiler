@@ -1,0 +1,12 @@
+name = "run_array_bounds"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 101
+stdout_contains = ["inside: 9 2 1\n"]
+stderr_contains = [
+    "panic: index out of bounds: the length is 3\n",
+    "src/main.peep:5:5\n",
+]

@@ -234,7 +234,7 @@ impl Lowering<'_> {
             }
             thir::Stmt::Assign { target, value } => {
                 let value = self.lower_expr(value)?;
-                let Ok(place) = self.place(target) else {
+                let Ok(place) = self.place(target)? else {
                     unreachable!("the checker assigns only a place in a variable")
                 };
                 let store = mir::InstructionKind::Store { place, value };
@@ -485,34 +485,39 @@ impl Lowering<'_> {
                     .map(|value| value.expect("check sets each field"));
                 mir::InstructionKind::Aggregate(values.collect())
             }
+            thir::ExprKind::ArrayLiteral(values) => mir::InstructionKind::Aggregate(
+                self.thir
+                    .lists
+                    .items(values)
+                    .map(|value| self.lower_expr(value))
+                    .collect::<Option<_>>()?,
+            ),
             thir::ExprKind::Variable(_)
             | thir::ExprKind::Field { .. }
-            | thir::ExprKind::Dereference(_) => {
+            | thir::ExprKind::Dereference(_)
+            | thir::ExprKind::Index { .. } => {
                 // A variable, the most read place, skips the walk, which
                 // cost a compile 10 M instructions (rust-style.md).
                 let place = match *kind {
                     thir::ExprKind::Variable(variable) => {
                         Ok(mir::Place::whole(Id::from_index(variable.index())))
                     }
-                    _ => self.place(expression),
+                    _ => self.place(expression)?,
                 };
                 match place {
-                    Ok(place) if self.types[ty].is_copy() => mir::InstructionKind::Load(place),
+                    Ok(place) if self.types.is_copy(ty) => mir::InstructionKind::Load(place),
                     Ok(place) => mir::InstructionKind::Move(place),
-                    Err((value, fields)) => mir::InstructionKind::Field {
-                        value: self.lower_expr(value)?,
-                        fields,
-                    },
+                    Err(field) => field,
                 }
             }
             thir::ExprKind::Borrow { place, mutable } => {
-                let Ok(place) = self.place(place) else {
+                let Ok(place) = self.place(place)? else {
                     unreachable!("the checker borrows only a place in a variable")
                 };
                 mir::InstructionKind::Borrow { place, mutable }
             }
             thir::ExprKind::Address(place) => {
-                let Ok(place) = self.place(place) else {
+                let Ok(place) = self.place(place)? else {
                     unreachable!("the checker takes only the address of a place in a variable")
                 };
                 mir::InstructionKind::Address(place)
@@ -521,43 +526,52 @@ impl Lowering<'_> {
         Some(self.emit(kind, ty, span))
     }
 
-    /// The place `expression` names: a variable, then each field and
-    /// dereference from it (`s.start.x` is one place, so one load or store).
-    /// For fields of a value not in a variable, that value and the field
-    /// path.
+    /// The place `expression` names: a variable, then each field,
+    /// dereference and element from it (`s.start.x` is one place, so one
+    /// load or store), each element's index computed here, in the order
+    /// written. For fields of a value not in a variable, the `Field`
+    /// instruction reading them from that value, computed here.
     fn place(
-        &self,
+        &mut self,
         expression: Id<thir::Expr>,
-    ) -> Result<mir::Place, (Id<thir::Expr>, Box<[u32]>)> {
-        let mut projections = Vec::new();
+    ) -> Option<Result<mir::Place, mir::InstructionKind>> {
+        // From the last step: each one, or the index expression of an element.
+        let mut steps = Vec::new();
         let mut outer = expression;
         let variable = loop {
             match self.thir.exprs[outer].kind {
                 thir::ExprKind::Field { value, index } => {
-                    projections.push(mir::Projection::Field(index));
+                    steps.push(Ok(mir::Projection::Field(index)));
                     outer = value;
                 }
                 thir::ExprKind::Dereference(reference) => {
-                    projections.push(mir::Projection::Dereference);
+                    steps.push(Ok(mir::Projection::Dereference));
                     outer = reference;
+                }
+                thir::ExprKind::Index { array, index } => {
+                    steps.push(Err(index));
+                    outer = array;
                 }
                 thir::ExprKind::Variable(variable) => break variable,
                 _ => {
-                    let fields = projections.iter().rev().map(|&step| match step {
-                        mir::Projection::Field(index) => index,
-                        mir::Projection::Dereference => {
-                            unreachable!("the checker dereferences only a place")
-                        }
+                    let fields = steps.iter().rev().map(|&step| match step {
+                        Ok(mir::Projection::Field(index)) => index,
+                        _ => unreachable!("the checker dereferences and indexes only a place"),
                     });
-                    return Err((outer, fields.collect()));
+                    let fields = fields.collect();
+                    let value = self.lower_expr(outer)?;
+                    return Some(Err(mir::InstructionKind::Field { value, fields }));
                 }
             }
         };
-        projections.reverse();
-        Ok(mir::Place {
+        let projections = steps.into_iter().rev().map(|step| match step {
+            Ok(step) => Some(step),
+            Err(index) => Some(mir::Projection::Index(self.lower_expr(index)?)),
+        });
+        Some(Ok(mir::Place {
             variable: Id::from_index(variable.index()),
-            projections: projections.into(),
-        })
+            projections: projections.collect::<Option<_>>()?,
+        }))
     }
 
     /// `left && right` or `left || right`: `right` runs only when `left` does

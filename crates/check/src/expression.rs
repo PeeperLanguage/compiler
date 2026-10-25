@@ -190,7 +190,7 @@ impl ThirBuilder<'_, '_> {
             let mut printed = self.body.add(expr, span);
             // Printing reads a value, never takes it: one that moves, in a
             // place, is lent instead, a `&mut` reference as `&`.
-            if !types[ty].is_copy() && self.place_root(printed).is_some() {
+            if !types.is_copy(ty) && self.place_root(printed).is_some() {
                 let lent = match types[ty] {
                     Type::Reference { .. } => {
                         let reference = self.body.exprs[printed].clone();
@@ -325,6 +325,10 @@ impl ThirBuilder<'_, '_> {
                 ast::Expr::Selector { value, field } => {
                     break 'checked self.check_field(value, field);
                 }
+                ast::Expr::ArrayLiteral { ty, values } => {
+                    break 'checked self.check_array_literal(ty, values, span);
+                }
+                ast::Expr::Index { value, index } => break 'checked self.check_index(value, index),
                 ast::Expr::Dereference(value) => {
                     break 'checked self.check_dereference(value, span);
                 }
@@ -344,10 +348,8 @@ impl ThirBuilder<'_, '_> {
                 ast::Expr::String { c_string: false } => "string literals",
                 ast::Expr::Char { .. } => "character literals",
                 ast::Expr::Free(_) => "`free` calls",
-                ast::Expr::Index { .. } => "index expressions",
                 ast::Expr::Range { .. } => "ranges",
                 ast::Expr::VariantLiteral { .. } => "variant literals",
-                ast::Expr::ArrayLiteral { .. } => "array literals",
                 ast::Expr::Is { .. } => "`is` tests",
                 ast::Expr::OrElse { .. } => "`orelse` fallbacks",
                 ast::Expr::Block(_) => "block expressions",
@@ -541,6 +543,120 @@ impl ThirBuilder<'_, '_> {
         }
     }
 
+    /// `[N]T{ values }`, written at `span`, or `[_]T{ values }`, whose length
+    /// is the number of values: an array of exactly its length of values,
+    /// each a `T`.
+    fn check_array_literal(
+        &mut self,
+        written: Id<ast::Type>,
+        values: List<ast::Expr>,
+        span: Span,
+    ) -> Expr {
+        let tree = &self.checker.module().ast;
+        let ty = match tree.types[written] {
+            ast::Type::FixedArray {
+                length: ast::Length::Inferred(_),
+                element,
+            } => {
+                let element = self.checker.resolve_value_type(element);
+                let span = tree.types.span(written);
+                self.checker.array_type(element, values.len() as u64, span)
+            }
+            _ => self.checker.resolve_value_type(written), // `[]T` is reported there
+        };
+        let mut checked: Vec<NonZeroU32> = Vec::with_capacity(values.len());
+        let element = match self.checker.types[ty] {
+            Type::Array { element, length } if length == values.len() as u64 => Some(element),
+            Type::Array { length, .. } => {
+                let message = format!(
+                    "`{}` needs {length} values, found {}",
+                    self.checker.type_text(ty),
+                    values.len()
+                );
+                self.checker
+                    .error(diagnostics::TYPE_MISMATCH, message, span);
+                None
+            }
+            _ => None,
+        };
+        // Without an element type, each value is checked for its own errors.
+        for value in tree.lists.items(values) {
+            let expectation =
+                element.map_or(TypeExpectation::Hint(None), TypeExpectation::Required);
+            checked.push(self.add_expr(value, expectation).into());
+        }
+        if element.is_none() {
+            return Expr::INVALID;
+        }
+        Expr {
+            ty,
+            kind: ExprKind::ArrayLiteral(self.body.lists.add(&checked)),
+        }
+    }
+
+    /// `array[index]`: the element at an integer index of an array in a
+    /// place, or of the array a reference or typed raw pointer points to. A
+    /// constant index must be inside the array.
+    fn check_index(&mut self, array: Id<ast::Expr>, index: Id<ast::Expr>) -> Expr {
+        let mut array = self.add_expr(array, TypeExpectation::Hint(None));
+        let mut ty = self.body.exprs[array].ty;
+        if let Some(target) = self.checker.types[ty].pointee() {
+            let referred = self.dereference(array, target);
+            ty = referred.ty;
+            array = self.body.add(referred, self.body.exprs.span(array));
+        }
+        let pointer_bits = self.checker.pointer_bits;
+        let usize = self.checker.types.builtin("usize", pointer_bits);
+        let index = self.add_expr(index, TypeExpectation::Hint(usize));
+        let index_type = self.body.exprs[index].ty;
+        let tree = &self.checker.module().ast;
+        let index_span = self.body.exprs.span(index);
+        let Type::Array { element, length } = self.checker.types[ty] else {
+            if ty != TypeId::INVALID {
+                let message = format!("`{}` cannot be indexed", self.checker.type_text(ty));
+                let span = self.body.exprs.span(array);
+                self.checker
+                    .error(diagnostics::INVALID_OPERATION, message, span);
+            }
+            return Expr::INVALID;
+        };
+        let Type::Integer(integer) = self.checker.types[index_type] else {
+            if index_type != TypeId::INVALID {
+                let message = format!(
+                    "an index must be an integer, found `{}`",
+                    self.checker.type_text(index_type)
+                );
+                self.checker
+                    .error(diagnostics::TYPE_MISMATCH, message, index_span);
+            }
+            return Expr::INVALID;
+        };
+        if let ExprKind::Constant(Value::Integer(ref value)) = self.body.exprs[index].kind
+            && bigint::to_u64(integer.bits, integer.signed, value).is_none_or(|at| at >= length)
+        {
+            let message = format!(
+                "index `{}` is outside `{}`, whose length is {length}",
+                tree.file.slice(index_span),
+                self.checker.type_text(ty)
+            );
+            self.checker
+                .error(diagnostics::INVALID_OPERATION, message, index_span);
+            return Expr::INVALID;
+        }
+        if self.place_root(array).is_none() {
+            // shortcut: an element is read through the array's address, so
+            // from a place; an array value gets one when a temporary can.
+            let span = self.body.exprs.span(array);
+            self.checker
+                .not_supported(span, "indexes of arrays that are not in a variable");
+            return Expr::INVALID;
+        }
+        Expr {
+            ty: element,
+            kind: ExprKind::Index { array, index },
+        }
+    }
+
     /// `reference.*`, written at `span`: the value a reference or a typed
     /// raw pointer points to.
     fn check_dereference(&mut self, reference: Id<ast::Expr>, span: Span) -> Expr {
@@ -636,7 +752,9 @@ impl ThirBuilder<'_, '_> {
         let mut behind_raw = false;
         loop {
             match self.body.exprs[root].kind {
-                ExprKind::Field { value, .. } => root = value,
+                ExprKind::Field { value, .. } | ExprKind::Index { array: value, .. } => {
+                    root = value
+                }
                 ExprKind::Dereference(reference) => {
                     if !behind_raw && deciding.is_none_or(|kept| !shared(kept) && shared(reference))
                     {

@@ -596,13 +596,13 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         Some(Stmt::Assign { target, value })
     }
 
-    /// The variable, field or referred value that `target` names, reporting
-    /// one that cannot be set (`report_unwritable`). One that cannot be set is
-    /// still given, so the value is checked against its type.
+    /// The variable, field, element or referred value that `target` names,
+    /// reporting one that cannot be set (`report_unwritable`). One that cannot
+    /// be set is still given, so the value is checked against its type.
     fn assigned_place(&mut self, target: Id<ast::Expr>) -> Option<Id<Expr>> {
         let tree = &self.checker.module().ast;
         let place = match tree.exprs[target] {
-            ast::Expr::Selector { .. } | ast::Expr::Dereference(_) => {
+            ast::Expr::Selector { .. } | ast::Expr::Dereference(_) | ast::Expr::Index { .. } => {
                 self.add_expr(target, TypeExpectation::Hint(None))
             }
             _ => {

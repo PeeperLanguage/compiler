@@ -302,6 +302,10 @@ fn hash_type(checker: &Checker, ty: TypeId, hasher: &mut DefaultHasher) {
                 }
             }
         }
+        Type::Array { element, length } => {
+            length.hash(hasher);
+            hash_type(checker, *element, hasher);
+        }
         Type::Reference { mutable, target } => {
             mutable.hash(hasher);
             hash_type(checker, *target, hasher);

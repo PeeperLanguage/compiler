@@ -1,0 +1,17 @@
+name = "negative_array_flow"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "T0035",
+    "cannot move an element out of its array",
+    "move the whole array, or read only parts that copy",
+    "T0037",
+    "`values` is changed while a `&mut` reference to it is still in use",
+    "T0039",
+    "cannot set an element of `values` before `values` is set",
+    "`holder` is read while a `&mut` reference to it is still in use",
+    "Compilation failed with 4 error(s)",
+]

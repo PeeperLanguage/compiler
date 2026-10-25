@@ -98,6 +98,12 @@ pub enum Type {
         definition: DefId,
         fields: Box<[TypeId]>,
     },
+    /// `[length]element`: `length` values of the `element` type, one after
+    /// another.
+    Array {
+        element: TypeId,
+        length: u64,
+    },
     /// `&T`, or `&mut T` when `mutable`: a view of a `target` value held
     /// elsewhere, never itself a reference.
     Reference {
@@ -112,26 +118,6 @@ pub enum Type {
 }
 
 impl Type {
-    /// Whether a value of this type copies when used by value: numbers,
-    /// `bool`, `cstr`, shared references and raw pointers. Any other value moves, and the
-    /// variable it moved from is unusable until set again.
-    pub fn is_copy(&self) -> bool {
-        match self {
-            Type::Bool
-            | Type::Integer(_)
-            | Type::Float(_)
-            | Type::CString
-            | Type::RawPointer { .. } => true,
-            Type::Reference { mutable, .. } => !mutable,
-            Type::Struct { .. } => false,
-            // No value of these is moved: an error, nothing, or not yet a value.
-            Type::Invalid | Type::Void | Type::Function { .. } => true,
-            Type::Alias { .. } | Type::Named(_) => {
-                unreachable!("indexing `Types` looks through aliases; no value is named")
-            }
-        }
-    }
-
     /// The type a `.*` of this type reads: a reference's target, or a typed
     /// raw pointer's.
     pub fn pointee(&self) -> Option<TypeId> {
@@ -346,6 +332,28 @@ impl Types {
     }
 
     /// The type `id` stands for: itself, or the type an alias names.
+    /// Whether a value of the type `id` copies when used by value: numbers,
+    /// `bool`, `cstr`, shared references, raw pointers, and arrays of values
+    /// that copy. Any other value moves, and the variable it moved from is
+    /// unusable until set again.
+    pub fn is_copy(&self, id: TypeId) -> bool {
+        match self[id] {
+            Type::Bool
+            | Type::Integer(_)
+            | Type::Float(_)
+            | Type::CString
+            | Type::RawPointer { .. } => true,
+            Type::Reference { mutable, .. } => !mutable,
+            Type::Array { element, .. } => self.is_copy(element),
+            Type::Struct { .. } => false,
+            // No value of these is moved: an error, nothing, or not yet a value.
+            Type::Invalid | Type::Void | Type::Function { .. } => true,
+            Type::Alias { .. } | Type::Named(_) => {
+                unreachable!("indexing `Types` looks through aliases; no value is named")
+            }
+        }
+    }
+
     pub fn real(&self, id: TypeId) -> TypeId {
         match self.types[id.0 as usize] {
             Type::Alias { real, .. } => real,
@@ -400,6 +408,9 @@ impl Types {
             }
             Type::Named(definition) | Type::Struct { definition, .. } => {
                 name_of(*definition).to_string()
+            }
+            Type::Array { element, length } => {
+                format!("[{length}]{}", self.real_text(*element, name_of))
             }
             Type::Reference { mutable, target } => {
                 let target = self.real_text(*target, name_of);

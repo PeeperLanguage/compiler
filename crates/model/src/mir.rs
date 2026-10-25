@@ -77,12 +77,28 @@ pub struct Place {
 }
 
 /// One step of a `Place`.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug)]
 pub enum Projection {
     /// The field at this index, in declaration order, of the struct here.
     Field(u32),
     /// What the reference here refers to.
     Dereference,
+    /// The element at this index, an integer computed before the place is
+    /// used, of the array here; outside the array, the program fails.
+    Index(Operand),
+}
+
+impl Projection {
+    /// Whether the two steps, from one storage, may lead to the same
+    /// storage: one field, or any two elements, whose indexes are not known.
+    pub fn may_overlap(self, other: Projection) -> bool {
+        match (self, other) {
+            (Projection::Field(left), Projection::Field(right)) => left == right,
+            (Projection::Dereference, Projection::Dereference)
+            | (Projection::Index(_), Projection::Index(_)) => true,
+            _ => unreachable!("one storage has one type, so one kind of step"),
+        }
+    }
 }
 
 impl Place {
@@ -102,20 +118,23 @@ impl Place {
     /// Whether the place goes through a reference, so it is not in its
     /// variable's own storage.
     pub fn is_behind_reference(&self) -> bool {
-        self.projections.contains(&Projection::Dereference)
+        self.projections
+            .iter()
+            .any(|step| matches!(step, Projection::Dereference))
     }
 }
 
 #[derive(Clone, Debug)]
 pub enum InstructionKind {
-    /// The value at the place, whose type copies (`Type::is_copy`).
+    /// The value at the place, whose type copies (`Types::is_copy`).
     Load(Place),
     /// The value at the place, whose type moves: a whole variable is unset
-    /// after; moving out of a struct's field or out of a reference is an
-    /// error.
+    /// after; moving out of a struct's field, an array's element or a
+    /// reference is an error.
     Move(Place),
     /// Sets the value at the place: a whole variable is set by it; a field,
-    /// or a value behind a reference, needs its variable already set.
+    /// an element, or a value behind a reference, needs its variable already
+    /// set.
     Store {
         place: Place,
         value: Operand,
@@ -144,7 +163,8 @@ pub enum InstructionKind {
         function: DefId,
         arguments: Box<[Operand]>,
     },
-    /// A struct value from its fields' values, in declaration order.
+    /// A struct value from its fields' values, in declaration order, or an
+    /// array value from its elements' values.
     Aggregate(Box<[Operand]>),
     /// Writes the values to the standard output, a space between each,
     /// then a newline when `newline`: as THIR's `Print`.
@@ -389,27 +409,29 @@ struct Printer<'b> {
 }
 
 impl Printer<'_> {
-    /// A place: its variable, then each step, `.*` for a dereference and a
-    /// field path for fields next to each other (`line.2[1, 0]`, `r.3.*[0]`).
+    /// A place: its variable, then each step, `.*` for a dereference, a
+    /// field path for fields next to each other and `[at index]` for an
+    /// element (`line.2[1, 0]`, `r.3.*[0]`, `a.1[at %4][2]`).
     fn write_place(&mut self, place: &Place) {
         let name = self.file.slice(self.body.variables.span(place.variable));
         _ = write!(self.out, "{name}.{}", place.variable.index());
-        let steps = place
-            .projections
-            .split(|&step| step == Projection::Dereference);
-        for (index, fields) in steps.enumerate() {
-            if index > 0 {
+        let mut fields = Vec::new();
+        for &step in &place.projections {
+            if let Projection::Field(index) = step {
+                fields.push(index);
+                continue;
+            }
+            self.write_fields(&fields);
+            fields.clear();
+            if let Projection::Index(index) = step {
+                self.out.push_str("[at ");
+                self.write_operand(&index);
+                self.out.push(']');
+            } else {
                 self.out.push_str(".*");
             }
-            let fields: Vec<u32> = fields
-                .iter()
-                .map(|&step| match step {
-                    Projection::Field(index) => index,
-                    Projection::Dereference => unreachable!("split at each dereference"),
-                })
-                .collect();
-            self.write_fields(&fields);
         }
+        self.write_fields(&fields);
     }
 
     /// A field path, `[1, 0]`; nothing for an empty one.

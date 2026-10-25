@@ -144,17 +144,25 @@ pub enum ExprKind {
     /// A value of the struct type `ty`, each field set once, in the order
     /// written, which is the order the values are computed in.
     StructLiteral(List<FieldValue>),
+    /// A value of the array type `ty` from each of its elements, in order.
+    ArrayLiteral(List<Expr>),
     /// The field at `index`, in declaration order, of a struct value.
     Field {
         value: Id<Expr>,
         index: u32,
     },
+    /// The element of the array, a place, at the index, an integer; outside
+    /// the array, the program fails.
+    Index {
+        array: Id<Expr>,
+        index: Id<Expr>,
+    },
     /// What the reference, a place, refers to: `r.*`, and the implicit step
-    /// of `r.x`.
+    /// of `r.x` and `r[i]`.
     Dereference(Id<Expr>),
     /// `&place` or `&mut place`, and a `&mut` variable passed to a call (lent
-    /// again, not moved); the place is a `Variable`, a `Dereference` or a
-    /// `Field` of a place.
+    /// again, not moved); the place is a `Variable`, a `Dereference`, or a
+    /// `Field` or `Index` of a place.
     Borrow {
         place: Id<Expr>,
         mutable: bool,
@@ -188,7 +196,7 @@ pub enum Stmt {
         value: Option<Id<Expr>>,
     },
     /// `target = value`; the target is a place: a `Variable`, a
-    /// `Dereference`, or a `Field` of a place.
+    /// `Dereference`, or a `Field` or `Index` of a place.
     Assign {
         target: Id<Expr>,
         value: Id<Expr>,
@@ -480,9 +488,23 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
                 }
                 self.out.push_str(" }");
             }
+            ExprKind::ArrayLiteral(values) => {
+                _ = write!(self.out, "{}{{", self.types.text(ty, self.name_of));
+                for (index, value) in self.body.lists.items(values).enumerate() {
+                    self.out.push_str(if index > 0 { ", " } else { " " });
+                    self.write_expr(value);
+                }
+                self.out.push_str(" }");
+            }
             ExprKind::Field { value, index } => {
                 self.write_expr(value);
                 _ = write!(self.out, "[{index}]");
+            }
+            ExprKind::Index { array, index } => {
+                self.write_expr(array);
+                self.out.push_str("[at ");
+                self.write_expr(index);
+                self.out.push(']');
             }
             ExprKind::Dereference(reference) => {
                 self.write_expr(reference);

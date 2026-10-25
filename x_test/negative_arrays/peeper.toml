@@ -1,0 +1,22 @@
+name = "negative_arrays"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "struct and array parameters and results of `extern` functions are not supported yet",
+    "`[3]i32` needs 3 values, found 2",
+    "mismatched types: expected `i32`, found `bool`",
+    "index `3` is outside `[3]i32`, whose length is 3",
+    "literal `-1` does not fit `u64`",
+    "index `-1i64` is outside `[3]i32`, whose length is 3",
+    "an index must be an integer, found `bool`",
+    "`i32` cannot be indexed",
+    "arrays of references are not supported yet",
+    "an array length is a whole number without a suffix",
+    "indexes of arrays that are not in a variable are not supported yet",
+    "cannot assign to `c[0]` of immutable `c`",
+    "dynamic array types are not supported yet",
+    "Compilation failed with 13 error(s)",
+]

@@ -1,0 +1,24 @@
+name = "run_arrays"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 0
+stdout_contains = [
+    "literal: 1 2 3\n",
+    "inferred: 4 5\n",
+    "written: 1 7 3\n",
+    "indexes: 3 1 2 3 2\n",
+    "nested: 6 0 9\n",
+    "fields: 30 2 5\n",
+    "copied: 9 1\n",
+    "passed: 6 4\n",
+    "returned: 0 10 20\n",
+    "through: 11 12 13\n",
+    "borrowed: 7 8\n",
+    "raw: 21\n",
+    "empty: done\n",
+    "aliased: 1.5 2.5\n",
+    "slot: 0 5\n",
+]

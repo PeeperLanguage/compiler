@@ -207,7 +207,7 @@ pub fn report_variable_state_errors(
         let mir::Variable {
             ty, initialized, ..
         } = body.variables[variable];
-        initialized && types[ty].is_copy()
+        initialized && types.is_copy(ty)
     }) {
         return;
     }
@@ -237,7 +237,7 @@ pub fn report_variable_state_errors(
             let kind = &body.instructions[instruction].kind;
             let error = match *kind {
                 mir::InstructionKind::Move(ref place) if place.whole_variable().is_none() => {
-                    let error = partial_move(file, span, place.is_behind_reference());
+                    let error = partial_move(file, span, place);
                     errors.push((span.start, error));
                     None
                 }
@@ -260,15 +260,16 @@ pub fn report_variable_state_errors(
                 {
                     let variable = place.variable;
                     // Writing through a reference only reads the variable.
-                    let writes_field = matches!(kind, mir::InstructionKind::Store { .. })
+                    let writes_part = matches!(kind, mir::InstructionKind::Store { .. })
                         && !place.is_behind_reference();
+                    let written = writes_part.then(|| part(place)[0]);
                     let error = if facts.moved.has(variable) {
                         let block = Id::from_index(index);
                         let moves = move_sites(body, variable, block, position);
-                        moved_use(body, file, variable, span, &moves, writes_field)
+                        moved_use(body, file, variable, span, &moves, written)
                     } else {
                         let on_some_path = facts.maybe.has(variable);
-                        unset_use(body, file, variable, span, on_some_path, writes_field)
+                        unset_use(body, file, variable, span, on_some_path, written)
                     };
                     Some((variable, error))
                 }
@@ -551,15 +552,15 @@ pub fn warn_unreachable_code(
 }
 
 /// The error for `variable`, used at `span` where it is not set on every path
-/// to there; `on_some_path` when some path did set it. A use that
-/// `writes_field` sets one of its fields, which needs the whole struct set.
+/// to there; `on_some_path` when some path did set it. A use that sets a
+/// `written` part, such as "a field", needs the whole value set.
 fn unset_use(
     body: &mir::Body,
     file: &Arc<SourceFile>,
     variable: Id<mir::Variable>,
     span: Span,
     on_some_path: bool,
-    writes_field: bool,
+    written: Option<&str>,
 ) -> Diagnostic {
     let declared = body.variables.span(variable);
     let name = file.slice(declared);
@@ -568,10 +569,9 @@ fn unset_use(
     } else {
         format!("`{name}` is not set yet here")
     };
-    let message = if writes_field {
-        format!("cannot set a field of `{name}` before `{name}` is set")
-    } else {
-        format!("`{name}` is used before it is set")
+    let message = match written {
+        Some(part) => format!("cannot set {part} of `{name}` before `{name}` is set"),
+        None => format!("`{name}` is used before it is set"),
     };
     Diagnostic::new(diagnostics::USED_BEFORE_SET, message)
         .label(file, span, here)
@@ -585,20 +585,19 @@ fn unset_use(
 }
 
 /// The error for `variable`, used at `span` where some path moved it at one
-/// of `moves`; a use that `writes_field` sets one of its fields.
+/// of `moves`; a use that sets a `written` part, such as "a field".
 fn moved_use(
     body: &mir::Body,
     file: &Arc<SourceFile>,
     variable: Id<mir::Variable>,
     span: Span,
     moves: &[Span],
-    writes_field: bool,
+    written: Option<&str>,
 ) -> Diagnostic {
     let name = file.slice(body.variables.span(variable));
-    let message = if writes_field {
-        format!("cannot set a field of `{name}` after `{name}` was moved")
-    } else {
-        format!("`{name}` is used after it was moved")
+    let message = match written {
+        Some(part) => format!("cannot set {part} of `{name}` after `{name}` was moved"),
+        None => format!("`{name}` is used after it was moved"),
     };
     let mut error = Diagnostic::new(diagnostics::USED_AFTER_MOVE, message).label(
         file,
@@ -621,24 +620,34 @@ fn moved_use(
         )
 }
 
-/// The error for a value whose type moves, read by value at `span` from a
-/// field, or from `behind_reference`: a value cannot be moved out of its
-/// struct, nor out of what a reference or raw pointer points to.
-fn partial_move(file: &Arc<SourceFile>, span: Span, behind_reference: bool) -> Diagnostic {
-    let (message, help) = if behind_reference {
+/// The error for a value whose type moves, read by value at `span` from
+/// `place`, a part of its variable: a value cannot be moved out of its
+/// struct or array, nor out of what a reference or raw pointer points to.
+fn partial_move(file: &Arc<SourceFile>, span: Span, place: &mir::Place) -> Diagnostic {
+    let (message, help) = if place.is_behind_reference() {
         (
-            "cannot move out of a reference or pointer",
-            "borrow it instead, or read only fields that copy",
+            "cannot move out of a reference or pointer".to_string(),
+            "borrow it instead, or read only parts that copy".to_string(),
         )
     } else {
+        let [part, whole] = part(place);
         (
-            "cannot move a field out of its struct",
-            "move the whole struct, or read only fields that copy",
+            format!("cannot move {part} out of its {whole}"),
+            format!("move the whole {whole}, or read only parts that copy"),
         )
     };
     Diagnostic::new(diagnostics::PARTIAL_MOVE, message)
         .label(file, span, "this value's type moves")
         .help(help, Vec::new())
+}
+
+/// The part of a value that `place`, not a whole variable, names last, and
+/// what holds it: "a field" of a "struct" or "an element" of an "array".
+fn part(place: &mir::Place) -> [&'static str; 2] {
+    match place.projections.last() {
+        Some(mir::Projection::Index(_)) => ["an element", "array"],
+        _ => ["a field", "struct"],
+    }
 }
 
 /// The error for `variable`, without `mut`, assigned at `span` where some path

@@ -8,7 +8,7 @@ stderr_contains = [
     "T0035",
     "cannot move out of a reference or pointer",
     "let moved = point.*;",
-    "borrow it instead, or read only fields that copy",
+    "borrow it instead, or read only parts that copy",
     "`first` is used after it was moved",
     "`first` is moved here",
     "`unset` is used before it is set",

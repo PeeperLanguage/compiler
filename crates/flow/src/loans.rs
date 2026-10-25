@@ -587,11 +587,13 @@ impl Loans<'_, '_> {
                 else {
                     unreachable!("each loan is a `Borrow`")
                 };
-                let common = access.projections.len().min(loaned.projections.len());
+                let mut steps = access.projections.iter().zip(&*loaned.projections);
                 let overlaps = access.variable == loaned.variable
-                    && access.projections[..common] == loaned.projections[..common];
+                    && steps.all(|(&left, &right)| left.may_overlap(right));
+                let common = access.projections.len().min(loaned.projections.len());
                 let past_storage = access.replaces
-                    && loaned.projections[common..].contains(&mir::Projection::Dereference);
+                    && (loaned.projections[common..].iter())
+                        .any(|step| matches!(step, mir::Projection::Dereference));
                 // A reserved loan acts as a shared one until its call.
                 let exclusive = mutable && !self.reserved.has(loan);
                 if !overlaps || past_storage || (access.reads && !exclusive) {

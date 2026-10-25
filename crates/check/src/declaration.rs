@@ -232,27 +232,54 @@ impl Checker<'_> {
     /// `external`.
     fn resolve_signature_type(&mut self, ty: Id<ast::Type>, external: bool) -> TypeId {
         let resolved = self.resolve_value_type(ty);
-        if external && let Type::Struct { .. } = self.types[resolved] {
-            // shortcut: structs pass as LLVM values, which the C ABI does not
-            // match; allow them when the C ABI's struct rules are written.
+        if external
+            && matches!(
+                self.types[resolved],
+                Type::Struct { .. } | Type::Array { .. }
+            )
+        {
+            // shortcut: structs and arrays pass as LLVM values, which the C
+            // ABI does not match; allow them when its aggregate rules are written.
             let span = self.module().ast.types.span(ty);
-            return self.not_supported(span, "struct parameters and results of `extern` functions");
+            let what = "struct and array parameters and results of `extern` functions";
+            return self.not_supported(span, what);
         }
         resolved
     }
 
     /// `&target`, or `&mut target` when `mutable`, written or borrowed at
     /// `span`: invalid when `target` is, reported when it is a reference.
+    /// Its target is the real type, so `&Meters` is `&f64` under an alias.
     pub(crate) fn reference_type(&mut self, mutable: bool, target: TypeId, span: Span) -> TypeId {
         match self.types[target] {
             Type::Invalid => TypeId::INVALID,
             Type::Reference { .. } => self.not_supported(span, "references to references"),
-            _ => self.types.intern(Type::Reference { mutable, target }),
+            _ => {
+                let target = self.types.real(target);
+                self.types.intern(Type::Reference { mutable, target })
+            }
+        }
+    }
+
+    /// `[length]element`, written at `span`: invalid when `element` is,
+    /// reported when it is a reference. Its element is the real type, as a
+    /// reference's target.
+    pub(crate) fn array_type(&mut self, element: TypeId, length: u64, span: Span) -> TypeId {
+        match self.types[element] {
+            Type::Invalid => TypeId::INVALID,
+            // shortcut: the loan check follows no reference held in an
+            // array, as in a struct field; allow both when it does.
+            Type::Reference { .. } => self.not_supported(span, "arrays of references"),
+            _ => {
+                let element = self.types.real(element);
+                self.types.intern(Type::Array { element, length })
+            }
         }
     }
 
     /// `*target`, written or taken at `span`: invalid when `target`
-    /// is, reported when it is a reference.
+    /// is, reported when it is a reference. Its target is the real type, as
+    /// a reference's.
     pub(crate) fn raw_pointer_type(&mut self, target: TypeId, span: Span) -> TypeId {
         match self.types[target] {
             Type::Invalid => TypeId::INVALID,
@@ -260,7 +287,7 @@ impl Checker<'_> {
             // pointer; allow it when lifetimes are checked (ownership step 4).
             Type::Reference { .. } => self.not_supported(span, "raw pointers to references"),
             _ => self.types.intern(Type::RawPointer {
-                target: Some(target),
+                target: Some(self.types.real(target)),
             }),
         }
     }
@@ -315,7 +342,27 @@ impl Checker<'_> {
                 let target = self.resolve_value_type(target);
                 return self.raw_pointer_type(target, span);
             }
-            ast::Type::FixedArray { .. } => "array types",
+            ast::Type::FixedArray {
+                length: ast::Length::Number(number),
+                element,
+            } => {
+                let literal = literal::numeric::split(tree.file.slice(number));
+                let value = literal.integer_value();
+                if !literal.suffix.is_empty() || literal.is_float() {
+                    let message = "an array length is a whole number without a suffix";
+                    return self.error(diagnostics::INVALID_TYPE, message, number);
+                }
+                if value[1..].iter().any(|&limb| limb != 0) {
+                    let message = "an array length must fit in 64 bits";
+                    return self.error(diagnostics::INVALID_TYPE, message, number);
+                }
+                let element = self.resolve_value_type(element);
+                return self.array_type(element, value[0], span);
+            }
+            ast::Type::FixedArray {
+                length: ast::Length::Inferred(_),
+                ..
+            } => unreachable!("the parser reads `[_]` only in an array literal, checked there"),
             ast::Type::DynamicArray(_) => "dynamic array types",
             ast::Type::Slice(_) => "slice types",
             ast::Type::Function(_) => "function types",
@@ -398,7 +445,7 @@ mod tests {
             ("T0043", "default parameters are not supported yet", "1"),
             (
                 "T0043",
-                "struct parameters and results of `extern` functions are not supported yet",
+                "struct and array parameters and results of `extern` functions are not supported yet",
                 "P",
             ),
             ("T0021", "`a` is a value, not a type", "a"),

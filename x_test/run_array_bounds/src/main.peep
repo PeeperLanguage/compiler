@@ -1,0 +1,16 @@
+// An index outside its array, known only at run time, fails the program
+// before the element is read or written. A negative one is outside too,
+// and an index wider than 64 bits is compared in its own width.
+fn set(values: &mut [3]i32, at: i128, value: i32) {
+    values[at] = value;
+}
+
+fn main() -> i32 {
+    let mut values = [3]i32{1, 2, 3};
+    let wide: i128 = 2;
+    set(&mut values, wide, 9);
+    let small: i8 = 0;
+    println("inside:", values[wide], values[wide - 1], values[small]);
+    set(&mut values, -1, 0);
+    return 0;
+}
