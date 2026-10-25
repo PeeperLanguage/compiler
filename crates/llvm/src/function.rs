@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Display;
 use std::fmt::Write;
+use std::iter::Peekable;
 
 use arena::Id;
 use model::DefId;
@@ -28,6 +29,8 @@ use source::Span;
 use crate::Module;
 use crate::c_extension;
 use crate::constant_text;
+use crate::in_memory;
+use crate::layout;
 use crate::quoted;
 use crate::symbol;
 use crate::type_text;
@@ -42,6 +45,8 @@ const PRINT_INT: (&str, &str) = ("peeper_rt_v1_print_int", "i32, i32, ...");
 const PRINT_FLOAT: (&str, &str) = ("peeper_rt_v1_print_float", "double, i32");
 const PRINT_POINTER: (&str, &str) = ("peeper_rt_v1_print_pointer", "ptr");
 const FLUSH: (&str, &str) = ("peeper_rt_v1_flush", "");
+/// The intrinsic that copies a value kept in memory (`in_memory`).
+const MEMCPY: &str = "llvm.memcpy.p0.p0.i64";
 /// The exit code of a program that panics, as in Rust.
 const PANIC_EXIT_CODE: i32 = 101;
 
@@ -83,35 +88,51 @@ impl Module<'_> {
                 .collect(),
             block: 0,
             checked: 0,
+            returned: None,
+            memory: String::new(),
         };
         // Written straight onto the module's functions, taken out while
         // `function` borrows the module.
         let mut out = std::mem::take(&mut function.module.functions);
-        // shortcut: a struct parameter or result is an LLVM value, which a
-        // big struct copies field by field; pass structs over 16 bytes by
-        // pointer (results through `sret`) when big ones show up in real code
-        // or benchmarks.
+        // A parameter kept in memory is the caller's private copy
+        // (`write_call`), so it is the variable's memory.
         let arguments = (0..body.parameters).map(|index| {
             let ty = body.variables[Id::from_index(index)].ty;
-            fmt::from_fn(move |out| write!(out, "{} %arg{index}", type_text(types, ty)))
+            fmt::from_fn(move |out| match in_memory(types, ty) {
+                true => write!(out, "ptr %v{index}"),
+                false => write!(out, "{} %arg{index}", type_text(types, ty)),
+            })
         });
-        _ = write!(
-            out,
-            "define {} {}({})",
-            type_text(types, body.result),
-            global(&symbol),
-            comma_separated(arguments)
-        );
+        // A result kept in memory is written where a first parameter
+        // points, as `write_call` passes it.
+        if in_memory(types, body.result) {
+            let separator = if body.parameters > 0 { ", " } else { "" };
+            _ = write!(
+                out,
+                "define void {}(ptr %result{separator}",
+                global(&symbol)
+            );
+        } else {
+            let result = type_text(types, body.result);
+            _ = write!(out, "define {result} {}(", global(&symbol));
+        }
+        _ = write!(out, "{})", comma_separated(arguments));
         if let Some(subprogram) = subprogram {
             _ = write!(out, " !dbg !{subprogram}");
         }
         out.push_str(" {\nentry:\n");
         function.variables(&mut out);
+        let entry_end = out.len();
         out.push_str("  br label %bb0\n");
         for block in body.blocks.ids() {
             function.write_block(&mut out, block);
         }
-        let Function { panics, .. } = function;
+        let Function { panics, memory, .. } = function;
+        // Most functions keep nothing in memory; inserting nothing would
+        // still move the whole function.
+        if !memory.is_empty() {
+            out.insert_str(entry_end, &memory);
+        }
         out.push_str(&panics);
         out.push_str("}\n\n");
         self.functions = out;
@@ -132,19 +153,31 @@ impl Module<'_> {
         body: &mir::Body,
         types: &Types,
     ) -> Option<(usize, Vec<usize>)> {
+        let pointer_bits = self.pointer_bits;
         let metadata = self.metadata.as_mut()?;
         let tree = &self.program.modules[definition.module.index()].ast;
         let name = tree.decls[tree.declaration(definition.index)].name();
         let (line, _) = tree.file.position(name.span.start as usize);
         let program = self.program;
-        let mut signature = vec![match metadata.debug_type(program, types, body.result) {
+        // As `add_function` passes them: a value kept in memory by its
+        // address, a result kept in memory where a first parameter points,
+        // so a debugger reads no result from the C ABI's registers.
+        let mut debug_type = |ty| match metadata.debug_type(program, types, ty, pointer_bits) {
+            Some(id) if in_memory(types, ty) => {
+                let address = metadata.add(format_args!(
+                    "!DIDerivedType(tag: DW_TAG_pointer_type, baseType: !{id}, size: {pointer_bits})"
+                ));
+                format!("!{address}")
+            }
             Some(id) => format!("!{id}"),
             None => "null".to_string(),
-        }];
+        };
+        let mut signature = match in_memory(types, body.result) {
+            true => vec!["null".to_string(), debug_type(body.result)],
+            false => vec![debug_type(body.result)],
+        };
         for parameter in body.variables.ids().take(body.parameters) {
-            let ty = body.variables[parameter].ty;
-            let id = metadata.debug_type(program, types, ty).unwrap_or_default();
-            signature.push(format!("!{id}"));
+            signature.push(debug_type(body.variables[parameter].ty));
         }
         let subroutine = metadata.add(format_args!(
             "!DISubroutineType(types: !{{{}}})",
@@ -263,25 +296,34 @@ struct Function<'m, 'p, 'b> {
     checks: Vec<usize>,         // how many checks each block writes (`traps`)
     block: usize,               // the MIR block being written
     checked: usize,             // its checks so far
+    returned: Option<Id<mir::Instruction>>, // its value built in `%result` (`write_block`)
+    /// The `alloca` of each instruction's value kept in memory (`in_memory`),
+    /// named as the value, for the entry block, so a loop reuses it.
+    // shortcut: one slot per such value, so a function copying a big array
+    // many times needs that many copies of stack; share slots or move
+    // without a copy when a real program hits the stack limit.
+    memory: String,
 }
 
 impl Function<'_, '_, '_> {
-    /// The `alloca` of each variable and, in a debug build, its debug
-    /// declaration.
+    /// The `alloca` of each variable but a parameter kept in memory
+    /// (`add_function`) and, in a debug build, its debug declaration.
     fn variables(&mut self, out: &mut String) {
         for variable in self.body.variables.ids() {
             let index = variable.index();
             let mir::Variable {
                 ty, debug_scope, ..
             } = self.body.variables[variable];
-            _ = writeln!(out, "  %v{index} = alloca {}", type_text(self.types, ty));
+            if index >= self.body.parameters || !in_memory(self.types, ty) {
+                _ = writeln!(out, "  %v{index} = alloca {}", type_text(self.types, ty));
+            }
             let Some(metadata) = &mut self.module.metadata else {
                 continue;
             };
             let span = self.body.variables.span(variable);
-            let program = self.module.program;
+            let (program, pointer_bits) = (self.module.program, self.module.pointer_bits);
             let debug_type = metadata
-                .debug_type(program, self.types, ty)
+                .debug_type(program, self.types, ty, pointer_bits)
                 .unwrap_or_default();
             let (line, _) = self.file.position(span.start as usize);
             let argument = if index < self.body.parameters {
@@ -364,10 +406,34 @@ impl Function<'_, '_, '_> {
         self.block = block.index();
         self.checked = 0;
         _ = writeln!(out, "bb{}:", block.index());
-        let body = self.body;
+        let (body, types) = (self.body, self.types);
         let mir = &body.blocks[block];
-        for instruction in body.lists.items(mir.instructions) {
-            self.write_instruction(out, instruction);
+        // A value kept in memory that the block returns as soon as it is
+        // made is built in `%result` (`value_address`).
+        self.returned = match mir.terminator {
+            Terminator::Return {
+                value: Some(Operand::Value(value)),
+                ..
+            } if in_memory(types, body.result)
+                && matches!(
+                    body.instructions[value].kind,
+                    InstructionKind::Load(_)
+                        | InstructionKind::Move(_)
+                        | InstructionKind::Aggregate(_)
+                        | InstructionKind::Call { .. }
+                )
+                && (body.lists.items(mir.instructions))
+                    .filter(|&id| body.instructions[id].kind.runs())
+                    .last()
+                    == Some(value) =>
+            {
+                Some(value)
+            }
+            _ => None,
+        };
+        let mut instructions = body.lists.items(mir.instructions).peekable();
+        while let Some(id) = instructions.next() {
+            self.write_instruction(out, id, &mut instructions);
         }
         // The line, then the location of its span, if it has one.
         let span = match mir.terminator {
@@ -388,6 +454,17 @@ impl Function<'_, '_, '_> {
                     then.index(),
                     otherwise.index()
                 );
+                Some(span)
+            }
+            Terminator::Return {
+                value: Some(value),
+                span,
+            } if in_memory(self.types, self.body.result) => {
+                if self.returned.is_none() {
+                    let location = self.location(span, mir.debug_scope);
+                    self.write_store(out, &"%result", value, &location);
+                }
+                out.push_str("  ret void");
                 Some(span)
             }
             Terminator::Return {
@@ -414,8 +491,13 @@ impl Function<'_, '_, '_> {
         _ = writeln!(out, "{location}");
     }
 
-    /// Writes the instruction `id`.
-    fn write_instruction(&mut self, out: &mut String, id: Id<mir::Instruction>) {
+    /// Writes the instruction `id`, before the `rest` of its block.
+    fn write_instruction(
+        &mut self,
+        out: &mut String,
+        id: Id<mir::Instruction>,
+        rest: &mut Peekable<impl Iterator<Item = Id<mir::Instruction>>>,
+    ) {
         let mir::Instruction {
             ty,
             ref kind,
@@ -429,10 +511,12 @@ impl Function<'_, '_, '_> {
         let name = value_name(id);
         let types = self.types;
         _ = match *kind {
-            // A whole variable's address is its own; another place's is
-            // computed first.
+            // A whole variable's value, the most read and written, skips
+            // `write_address` (measured: 35 M instructions a compile of the
+            // benchmark, with the store's).
             InstructionKind::Load(ref place) | InstructionKind::Move(ref place)
-                if let Some(variable) = place.whole_variable() =>
+                if !in_memory(types, ty)
+                    && let Some(variable) = place.whole_variable() =>
             {
                 write!(
                     out,
@@ -442,8 +526,12 @@ impl Function<'_, '_, '_> {
                 )
             }
             InstructionKind::Load(ref place) | InstructionKind::Move(ref place) => {
-                let address = fmt::from_fn(|out| write!(out, "{name}.f"));
-                self.write_place_address(out, &address, place, &location, id);
+                let address = self.write_address(out, place, &location, id);
+                if in_memory(types, ty) {
+                    let to = self.value_address(out, id, ty, rest);
+                    self.write_copy(out, &to, &address, ty, &location);
+                    return;
+                }
                 write!(
                     out,
                     "  {name} = load {}, ptr {address}",
@@ -451,20 +539,25 @@ impl Function<'_, '_, '_> {
                 )
             }
             InstructionKind::Store { ref place, value }
-                if let Some(variable) = place.whole_variable() =>
+                if !in_memory(types, operand_type(self.body, value))
+                    && let Some(variable) = place.whole_variable() =>
             {
                 write!(
                     out,
-                    "  store {} {}, ptr %v{}",
-                    type_text(types, self.body.variables[variable].ty),
-                    self.operand(value),
+                    "  store {}, ptr %v{}",
+                    self.typed(value),
                     variable.index()
                 )
             }
+            // The parameter's memory is the caller's copy (`add_function`).
+            InstructionKind::Store {
+                value: value @ Operand::Argument(_),
+                ..
+            } if in_memory(types, operand_type(self.body, value)) => return,
             InstructionKind::Store { ref place, value } => {
-                let address = fmt::from_fn(|out| write!(out, "{name}.f"));
-                self.write_place_address(out, &address, place, &location, id);
-                write!(out, "  store {}, ptr {address}", self.typed(value))
+                let address = self.write_address(out, place, &location, id);
+                self.write_store(out, &address, value, &location);
+                return;
             }
             InstructionKind::Borrow { ref place, .. } | InstructionKind::Address(ref place) => {
                 self.write_place_address(out, &name, place, &location, id);
@@ -549,7 +642,7 @@ impl Function<'_, '_, '_> {
                 function,
                 ref arguments,
             } => {
-                self.write_call(out, id, function, arguments);
+                self.write_call(out, id, function, arguments, rest);
                 Ok(())
             }
             InstructionKind::Print {
@@ -559,39 +652,52 @@ impl Function<'_, '_, '_> {
                 self.write_print(out, id, newline, values, &location);
                 return; // each line has its location
             }
-            // An empty struct has no field to insert, so it is frozen from
-            // `poison` to one value.
-            InstructionKind::Aggregate(ref fields) if fields.is_empty() => {
-                write!(out, "  {name} = freeze {} poison", type_text(types, ty))
-            }
-            InstructionKind::Aggregate(ref fields) => {
+            // Each part written where it goes in the value's memory.
+            InstructionKind::Aggregate(ref parts) => {
+                let memory = self.value_address(out, id, ty, rest);
                 let text = type_text(types, ty);
-                let mut previous = "poison".to_string();
-                for (index, &field) in fields.iter().enumerate() {
-                    if index > 0 {
-                        _ = writeln!(out, "{location}");
-                    }
-                    // The last insert gives the value its own name.
-                    let target = if index + 1 == fields.len() {
-                        name.to_string()
-                    } else {
-                        format!("{name}.{index}")
-                    };
-                    _ = write!(
+                let index_type = match types[ty] {
+                    Type::Array { .. } => "i64",
+                    _ => "i32",
+                };
+                for (index, &part) in parts.iter().enumerate() {
+                    let address = format!("{name}.{index}");
+                    _ = writeln!(
                         out,
-                        "  {target} = insertvalue {text} {previous}, {}, {index}",
-                        self.typed(field)
+                        "  {address} = getelementptr inbounds {text}, ptr {memory}, i32 0, \
+                         {index_type} {index}{location}"
                     );
-                    previous = target;
+                    self.write_store(out, &address, part, &location);
                 }
-                Ok(())
+                return;
             }
-            InstructionKind::Field { value, ref fields } => write!(
-                out,
-                "  {name} = extractvalue {}, {}",
-                self.typed(value),
-                comma_separated(fields.iter())
-            ),
+            // In the memory of the value it is part of, which no one changes:
+            // its address when it is kept in memory, else loaded from there.
+            InstructionKind::Field { value, ref fields } => {
+                let field_address = fmt::from_fn(|out| match in_memory(types, ty) {
+                    true => write!(out, "{name}"),
+                    false => write!(out, "{name}.f"),
+                });
+                _ = write!(
+                    out,
+                    "  {field_address} = getelementptr inbounds {}, ptr {}, i32 0",
+                    type_text(types, operand_type(self.body, value)),
+                    self.operand(value)
+                );
+                for index in fields {
+                    _ = write!(out, ", i32 {index}");
+                }
+                if in_memory(types, ty) {
+                    Ok(())
+                } else {
+                    _ = writeln!(out, "{location}");
+                    write!(
+                        out,
+                        "  {name} = load {}, ptr {field_address}",
+                        type_text(types, ty)
+                    )
+                }
+            }
             InstructionKind::Phi(ref incoming) => {
                 let function = &*self;
                 let incoming = incoming.iter().map(|&(block, value)| {
@@ -717,6 +823,10 @@ impl Function<'_, '_, '_> {
                 self.write_print_text(out, text, location);
                 self.write_runtime_call(out, PRINT_POINTER, &format!("ptr {value}"), location);
             }
+            // A value kept in memory is its address, which the reference is.
+            Type::Reference { target, .. } if in_memory(types, target) => {
+                self.write_printed(out, text, value, target, path, location);
+            }
             Type::Reference { target, .. } => {
                 let target_text = type_text(types, target);
                 _ = writeln!(
@@ -739,11 +849,25 @@ impl Function<'_, '_, '_> {
                     text.extend_from_slice(if index == 0 { b" { " } else { b", " });
                     text.extend_from_slice(field_name.as_bytes());
                     text.extend_from_slice(b": ");
-                    let field_value = format!("{path}.f{index}");
+                    // Its address, then its value unless that is kept in memory.
+                    let address = format!("{path}.p{index}");
                     _ = writeln!(
                         out,
-                        "  {field_value} = extractvalue {struct_text} {value}, {index}{location}"
+                        "  {address} = getelementptr inbounds {struct_text}, ptr {value}, i32 0, \
+                         i32 {index}{location}"
                     );
+                    let field_value = format!("{path}.f{index}");
+                    let field_value = match in_memory(types, field) {
+                        true => address,
+                        false => {
+                            let field_text = type_text(types, field);
+                            _ = writeln!(
+                                out,
+                                "  {field_value} = load {field_text}, ptr {address}{location}"
+                            );
+                            field_value
+                        }
+                    };
                     self.write_printed(out, text, &field_value, field, &field_value, location);
                 }
                 text.extend_from_slice(if fields.is_empty() { b" {}" } else { b" }" });
@@ -779,6 +903,110 @@ impl Function<'_, '_, '_> {
             out,
             "  call void ({parameters}) {callee}({arguments}){location}"
         );
+    }
+
+    /// The address of `place` for the instruction `id`, after writing the
+    /// lines that compute it: a whole variable's own, else `<id's name>.f`.
+    fn write_address(
+        &mut self,
+        out: &mut String,
+        place: &mir::Place,
+        location: &DebugLocation,
+        id: Id<mir::Instruction>,
+    ) -> impl Display + use<> {
+        let whole = place.whole_variable();
+        let address = fmt::from_fn(move |out| match whole {
+            Some(variable) => write!(out, "%v{}", variable.index()),
+            None => write!(out, "{}.f", value_name(id)),
+        });
+        if whole.is_none() {
+            self.write_place_address(out, &address, place, location, id);
+        }
+        address
+    }
+
+    /// Writes `value` to `address`: copied there when it is kept in memory
+    /// (`in_memory`), else stored.
+    fn write_store(
+        &mut self,
+        out: &mut String,
+        address: &dyn Display,
+        value: Operand,
+        location: &DebugLocation,
+    ) {
+        let ty = operand_type(self.body, value);
+        if in_memory(self.types, ty) {
+            let from = self.operand(value).to_string();
+            self.write_copy(out, address, &from, ty, location);
+        } else {
+            _ = writeln!(
+                out,
+                "  store {}, ptr {address}{location}",
+                self.typed(value)
+            );
+        }
+    }
+
+    /// Writes the copy of a value of type `ty`, kept in memory, from the
+    /// address `from` to `to`.
+    fn write_copy(
+        &mut self,
+        out: &mut String,
+        to: &dyn Display,
+        from: &dyn Display,
+        ty: TypeId,
+        location: &DebugLocation,
+    ) {
+        self.module.declare(MEMCPY, || {
+            format!("declare void @{MEMCPY}(ptr, ptr, i64, i1)\n\n")
+        });
+        // A number, not LLVM's `ptrtoint (getelementptr (T, ptr null, i32 1))`,
+        // which clang's optimizer splits no value by (measured: twice the
+        // `-release` build time of a program of structs).
+        let (size, _) = layout(self.types, ty, self.module.pointer_bits);
+        _ = writeln!(
+            out,
+            "  call void @{MEMCPY}(ptr {to}, ptr {from}, i64 {size}, i1 false){location}"
+        );
+    }
+
+    /// The address the value of the instruction `id`, of type `ty`, kept in
+    /// memory, is built at, before the `rest` of its block. When its only use
+    /// comes next at an address known before, it is built there, saving a
+    /// copy: `%result` for the block's return (`write_block`), or the place
+    /// of a store right after it, whose address lines are written and which
+    /// is taken from `rest`. Else its own memory, an `alloca` noted for the
+    /// entry block and named as the value.
+    fn value_address(
+        &mut self,
+        out: &mut String,
+        id: Id<mir::Instruction>,
+        ty: TypeId,
+        rest: &mut Peekable<impl Iterator<Item = Id<mir::Instruction>>>,
+    ) -> String {
+        let body = self.body;
+        if self.returned == Some(id) {
+            return "%result".to_owned();
+        }
+        if let Some(&store) = rest.peek()
+            && let InstructionKind::Store {
+                ref place,
+                value: Operand::Value(value),
+            } = body.instructions[store].kind
+            && value == id
+            // Computed before the value, so it must not load a reference or
+            // check an index.
+            && !place.is_behind_reference()
+            && traps(body, self.types, store) == 0
+        {
+            rest.next();
+            let span = body.instructions.span(store);
+            let location = self.location(span, body.instructions[store].debug_scope);
+            return self.write_address(out, place, &location, store).to_string();
+        }
+        let (name, text) = (value_name(id), type_text(self.types, ty));
+        _ = writeln!(self.memory, "  {name} = alloca {text}");
+        name.to_string()
     }
 
     /// Writes the lines computing `address`, the address of `place`, for the
@@ -903,13 +1131,15 @@ impl Function<'_, '_, '_> {
 
     /// Writes the line calling `function` with `arguments` for the
     /// instruction `id`, after noting the declaration the module needs for
-    /// it.
+    /// it; a result kept in memory is built where `value_address` says,
+    /// before the `rest` of the block.
     fn write_call(
         &mut self,
         out: &mut String,
         id: Id<mir::Instruction>,
         function: DefId,
         arguments: &[Operand],
+        rest: &mut Peekable<impl Iterator<Item = Id<mir::Instruction>>>,
     ) {
         let (ty, types, body) = (self.body.instructions[id].ty, self.types, self.body);
         let symbol = symbol(self.module.program, function);
@@ -918,7 +1148,13 @@ impl Function<'_, '_, '_> {
         // follows a parameter's type and comes before a result's.
         let external = project::extern_symbol(&self.module.program.modules, function).is_some();
         let extension = |ty| c_extension(types, ty).filter(|_| external);
+        // A result kept in memory is written where a first argument points
+        // (`add_function`). An argument kept in memory is always a private
+        // copy (a load's or move's, a struct's or array's value, a result,
+        // or a field of one), which the callee may change.
+        let returned_in_memory = in_memory(types, ty);
         let result = fmt::from_fn(|out| match extension(ty) {
+            _ if returned_in_memory => out.write_str("void"),
             Some(extension) => write!(out, "{extension} {}", type_text(types, ty)),
             None => type_text(types, ty).fmt(out),
         });
@@ -926,15 +1162,23 @@ impl Function<'_, '_, '_> {
             let ty = operand_type(body, argument);
             fmt::from_fn(move |out| match extension(ty) {
                 Some(extension) => write!(out, "{} {extension}", type_text(types, ty)),
+                None if in_memory(types, ty) => out.write_str("ptr"),
                 None => type_text(types, ty).fmt(out),
             })
         };
+        let separator = if arguments.is_empty() { "" } else { ", " };
         self.module.declare(&symbol, || {
             let parameters = comma_separated(arguments.iter().copied().map(parameter));
-            format!("declare {result} {callee}({parameters})\n\n")
+            let first = if returned_in_memory {
+                ["ptr", separator].concat()
+            } else {
+                String::new()
+            };
+            format!("declare {result} {callee}({first}{parameters})\n\n")
         });
+        let result_address = returned_in_memory.then(|| self.value_address(out, id, ty, rest));
         out.push_str("  ");
-        if ty != TypeId::VOID {
+        if !returned_in_memory && ty != TypeId::VOID {
             _ = write!(out, "{} = ", value_name(id));
         }
         let function = &*self;
@@ -942,11 +1186,15 @@ impl Function<'_, '_, '_> {
             let (parameter, value) = (parameter(argument), function.operand(argument));
             fmt::from_fn(move |out| write!(out, "{parameter} {value}"))
         });
-        _ = write!(
-            out,
-            "call {result} {callee}({})",
-            comma_separated(arguments)
-        );
+        let arguments = comma_separated(arguments);
+        if let Some(result_address) = result_address {
+            _ = write!(
+                out,
+                "call {result} {callee}(ptr {result_address}{separator}{arguments})"
+            );
+        } else {
+            _ = write!(out, "call {result} {callee}({arguments})");
+        }
     }
 
     /// Writes the line computing the binary operation `id`, after the checks

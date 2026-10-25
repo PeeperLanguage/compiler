@@ -44,6 +44,7 @@ pub struct Module<'p> {
     declarations: BTreeMap<String, String>,
     defined: HashSet<String>,
     metadata: Option<Metadata>, // the debug info, in a debug build
+    pointer_bits: u32,
 }
 
 /// The module's debug info: numbered metadata nodes.
@@ -53,7 +54,6 @@ struct Metadata {
     file: usize,                   // the DIFile of the module's source file
     unit: usize,                   // the DICompileUnit, the scope of every function
     types: HashMap<TypeId, usize>, // each type's debug type
-    pointer_bits: u32,
 }
 
 impl<'p> Module<'p> {
@@ -68,7 +68,7 @@ impl<'p> Module<'p> {
         let metadata = match mode {
             BuildMode::Debug => {
                 let path = Path::new(&program.modules[module.index()].ast.file.path);
-                Some(Metadata::new(path, pointer_bits))
+                Some(Metadata::new(path))
             }
             BuildMode::Release => None,
         };
@@ -81,6 +81,7 @@ impl<'p> Module<'p> {
             declarations: BTreeMap::new(),
             defined: HashSet::new(),
             metadata,
+            pointer_bits,
         }
     }
 
@@ -168,8 +169,7 @@ impl<'p> Module<'p> {
 
 impl Metadata {
     /// The debug info of a module in the file `path`, with no function yet.
-    /// Pointers have `pointer_bits` bits.
-    fn new(path: &Path, pointer_bits: u32) -> Metadata {
+    fn new(path: &Path) -> Metadata {
         let name = path.file_name().unwrap_or_default().to_string_lossy();
         let folder = path.parent().unwrap_or(Path::new("")).to_string_lossy();
         let mut metadata = Metadata {
@@ -178,7 +178,6 @@ impl Metadata {
             file: 0,
             unit: 0,
             types: HashMap::new(),
-            pointer_bits,
         };
         metadata.file = metadata.add(format_args!(
             "!DIFile(filename: {}, directory: {})",
@@ -213,12 +212,14 @@ impl Metadata {
         _ = writeln!(self.text, "!{id} = {node}");
     }
 
-    /// The debug type of `ty`, a type of `program`; `None` for `void`.
+    /// The debug type of `ty`, a type of `program` whose pointers have
+    /// `pointer_bits` bits; `None` for `void`.
     fn debug_type(
         &mut self,
         program: &project::Program,
         types: &Types,
         ty: TypeId,
+        pointer_bits: u32,
     ) -> Option<usize> {
         // An alias here would get a second debug type for its type.
         debug_assert_eq!(types.real(ty), ty, "MIR holds no aliases");
@@ -250,27 +251,28 @@ impl Metadata {
                 let char = self.add(basic("char", 8, "DW_ATE_signed_char"));
                 format!(
                     "!DIDerivedType(tag: DW_TAG_pointer_type, name: \"cstr\", baseType: !{char}, size: {})",
-                    self.pointer_bits
+                    pointer_bits
                 )
             }
             Type::Reference { .. } | Type::RawPointer { .. } => {
                 let base = match types[ty].pointee() {
                     Some(target) => {
-                        let target = self.debug_type(program, types, types.real(target));
+                        let target =
+                            self.debug_type(program, types, types.real(target), pointer_bits);
                         format!("!{}", target.expect("a pointer points to a value's type"))
                     }
                     None => "null".to_string(), // `rawptr`
                 };
                 format!(
                     "!DIDerivedType(tag: DW_TAG_pointer_type, baseType: {base}, size: {})",
-                    self.pointer_bits
+                    pointer_bits
                 )
             }
             Type::Array { element, length } => {
-                let base = self.debug_type(program, types, types.real(element));
+                let base = self.debug_type(program, types, types.real(element), pointer_bits);
                 let base = base.expect("an element has a value's type");
                 let range = self.add(format_args!("!DISubrange(count: {length})"));
-                let (size, _) = layout(types, ty, self.pointer_bits);
+                let (size, _) = layout(types, ty, pointer_bits);
                 format!(
                     "!DICompositeType(tag: DW_TAG_array_type, baseType: !{base}, size: {}, \
                      elements: !{{!{range}}})",
@@ -286,12 +288,12 @@ impl Metadata {
             } => {
                 // Its members name it, so its number comes first.
                 let composite = self.reserve();
-                let (offsets, size, _) = struct_layout(types, fields, self.pointer_bits);
+                let (offsets, size, _) = struct_layout(types, fields, pointer_bits);
                 let names = project::field_names(&program.modules, definition);
                 let mut members = Vec::with_capacity(fields.len());
                 for ((name, &field), offset) in names.zip(fields).zip(offsets) {
                     let field = types.real(field);
-                    let base = self.debug_type(program, types, field);
+                    let base = self.debug_type(program, types, field, pointer_bits);
                     let base = base.expect("a field has a value's type");
                     let member = self.add(format_args!(
                         "!DIDerivedType(tag: DW_TAG_member, name: {}, scope: !{composite}, \
@@ -357,6 +359,14 @@ fn type_text(types: &Types, ty: TypeId) -> impl fmt::Display {
     })
 }
 
+/// Whether a value of type `ty` is kept in memory, its LLVM value the
+/// address there: a struct or an array. LLVM splits a value of such a type
+/// into one operation per part, so a big array as one value made clang slow,
+/// then crash.
+fn in_memory(types: &Types, ty: TypeId) -> bool {
+    matches!(types[ty], Type::Struct { .. } | Type::Array { .. })
+}
+
 /// A struct's LLVM type, `{ i32, i64 }`, of its `fields`' types. Out of
 /// line, so `type_text`, which writes every operand's type, stays small
 /// (measured: 11 M fewer instructions per compile of the benchmark); its
@@ -375,11 +385,12 @@ fn struct_type_text(types: &Types, fields: &[TypeId], out: &mut fmt::Formatter) 
 /// The size and alignment in bytes of a value of type `ty` in memory, as LLVM
 /// lays it out: an integer is aligned as the next of 8, 16, 32, 64 and 128
 /// bits that holds it, and wider ones as 128; its size is rounded up to that.
-/// Only debug info needs it, to place each field.
+/// Debug info places each field with it, and a copy of a value kept in
+/// memory (`in_memory`) copies its size, so it must match LLVM's.
 ///
-/// shortcut: the alignments of 64-bit targets (x86-64, AArch64); 32-bit x86
-/// aligns `i64` and `f64` to 4. Read them from the target's data layout when
-/// a 32-bit target is built.
+/// shortcut: the alignments of 64-bit targets (x86-64, AArch64), the only
+/// ones built; 32-bit x86 aligns `i64` and `f64` to 4. Read them from the
+/// target's data layout when a 32-bit target is built.
 fn layout(types: &Types, ty: TypeId, pointer_bits: u32) -> (u64, u64) {
     match types[ty] {
         Type::Bool => (1, 1),

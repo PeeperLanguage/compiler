@@ -162,6 +162,18 @@ Likewise the LLVM writer loads and stores a whole variable at `%vN` directly:
 passing the address as a nested `Display` cost 40 M. A nested `write!` in a
 hot `Display` costs more than the line it writes.
 
+**Look ahead only where the rare case already runs.** The LLVM writer builds
+a struct or array straight into the place the next store writes. Deciding
+that in `write_block` for every instruction cost a program with no structs
+30 M instructions; deciding it in `Function::value_address`, which only the
+arms keeping a value in memory call, cost nothing (2026-10-25).
+
+**Give LLVM a size as a number.** A copy of a struct or array kept in memory
+passes its byte size from `layout`. `ptrtoint (getelementptr (T, ptr null, i32
+1))` is exact on any target, but clang's optimizer reads it as an expression,
+not a constant, and splits no copy by it: a struct-heavy program's `-release`
+build took twice as long (2026-10-25).
+
 **Do not guess capacities.** Reserving MIR arenas from THIR sizes over-allocated
 and made lowering slower; `Default` and normal growth won. Reserve only when the
 size is known, not estimated.

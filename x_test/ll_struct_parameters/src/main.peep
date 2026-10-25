@@ -1,5 +1,7 @@
-// A struct parameter and result are LLVM struct values; the debug info of a
-// struct parameter is its struct type.
+// A struct parameter and result pass by address: the parameter is the
+// caller's copy, and the result is built where a first parameter points. The
+// debug info gives the parameter its struct type, and the function's type
+// says so too: no result, and an address for each.
 struct Point { x: i32, y: i32 }
 
 fn swap(p: Point) -> Point {

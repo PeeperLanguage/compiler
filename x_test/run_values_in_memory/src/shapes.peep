@@ -1,0 +1,9 @@
+struct Size { width: i32, height: i32 }
+
+fn Square(side: i32) -> Size {
+    return Size.{ width = side, height = side };
+}
+
+fn Area(size: Size) -> i32 {
+    return size.width * size.height;
+}

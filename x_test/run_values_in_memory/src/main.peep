@@ -1,0 +1,126 @@
+// Structs and arrays are kept in memory and passed by address, a result
+// written where the caller points: a big array costs no more than a small
+// one, and every copy stays a copy of the value it was made from.
+import "run_values_in_memory:shapes";
+
+// C's `calloc`: zeroed memory for a big array, which no literal writes.
+#[extern("calloc")]
+fn zeroed(count: usize, size: usize) -> *[65536]u8;
+
+#[extern("free")]
+fn release(memory: rawptr);
+
+struct Inner { x: i32, y: i32 }
+struct Outer { inner: Inner, cells: [3]i32 }
+struct Pair { a: [2]i32, b: [2]i32 }
+
+fn make() -> Outer {
+    return Outer.{ inner = Inner.{ x = 7, y = 8 }, cells = [3]i32{1, 2, 3} };
+}
+
+// A field of a temporary is an address inside it, so it is copied out.
+fn inner() -> Inner {
+    return make().inner;
+}
+
+fn first(values: [3]i32, bumped: i32) -> i32 {
+    return values[0] * 100 + bumped;
+}
+
+fn bump(values: &mut [3]i32) -> i32 {
+    values[0] = values[0] + 1;
+    return values[0];
+}
+
+fn change(mut values: [3]i32) -> [3]i32 {
+    values[1] = 20;
+    return values;
+}
+
+fn total(outer: Outer) -> i32 {
+    return outer.inner.x + outer.cells[2];
+}
+
+fn reset(outer: &mut Outer) {
+    outer.inner = Inner.{ x = 0, y = 0 };
+    outer.cells = [3]i32{4, 5, 6};
+}
+
+fn replace(values: &mut [3]i32) {
+    values.* = [3]i32{30, 31, 32};
+}
+
+// Each builds its result where the caller points, which may be what `from`
+// refers to: every part is read before the result is written.
+fn swapped(from: &Inner) -> Inner {
+    return Inner.{ x = from.y, y = from.x };
+}
+
+fn passed(from: &Inner) -> Inner {
+    return swapped(from);
+}
+
+fn same(from: &[2]i32) -> [2]i32 {
+    return from.*;
+}
+
+fn fill(mut buffer: [65536]u8, value: u8) -> [65536]u8 {
+    buffer[65535] = value;
+    return buffer;
+}
+
+fn main() -> i32 {
+    // The array is read before `bump` changes it.
+    let mut values = [3]i32{1, 2, 3};
+    println("copied:", first(values, bump(&mut values)), values[0]);
+
+    let mut again = [3]i32{1, 2, 3};
+    again = change(again);
+    println("changed:", again[0], again[1]);
+
+    println("result:", make().inner.x, make().inner.y, total(make()));
+    println(make().inner);
+    let field = inner();
+    println("field result:", field.x, field.y);
+
+    // Whole parts at an index known only now, and through references.
+    let mut grid = [2][3]i32{[3]i32{1, 2, 3}, [3]i32{4, 5, 6}};
+    let row: usize = 1;
+    grid[row] = [3]i32{7, 8, 9};
+    let picked = grid[row];
+    grid[row][0] = 70;
+    println("rows:", picked[0], grid[row][0], grid[0][2]);
+    let mut outer = make();
+    reset(&mut outer);
+    replace(&mut grid[0]);
+    println("through:", outer.inner.x, outer.cells[2], grid[0][1]);
+    grid[1] = [3]i32{40, 41, 42};
+    println("known index:", grid[1][2]);
+
+    let memory = zeroed(1, 65536);
+    let buffer = memory.*;
+    let filled = fill(buffer, 9);
+    let copy = filled;
+    println("big:", copy[65535], copy[0], buffer[65535]);
+    release(memory);
+
+    // Values built straight into a place they are read from.
+    let mut point = Inner.{ x = 1, y = 2 };
+    point = Inner.{ x = point.y, y = point.x };
+    print("aliases:", point.x, point.y);
+    point = swapped(&point);
+    print("", point.x, point.y);
+    point = passed(&point);
+    print("", point.x, point.y);
+    point = point;
+    print("", point.x, point.y);
+    let mut pair = Pair.{ a = [2]i32{1, 2}, b = [2]i32{3, 4} };
+    pair.a = pair.b;
+    pair.a = same(&pair.a);
+    pair.b = [2]i32{pair.a[1], pair.a[0]};
+    println("", pair.a[0], pair.b[0]);
+
+    let size = shapes::Square(4);
+    println("modules:", shapes::Area(size));
+    return 0;
+}
