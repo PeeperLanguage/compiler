@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use llvm::BuildMode;
 
+use crate::driver::Goal;
 use crate::dump::Dump;
 
 pub const USAGE: &str = "\
@@ -31,21 +32,11 @@ Flags may come in any order, each with its value right after it.";
 
 /// What the arguments ask for.
 pub enum Args {
-    Check {
-        path: PathBuf,    // the project folder or file
-        dumps: Vec<Dump>, // what to dump; none for `check` and `fix`
-        fix: bool,        // apply the suggested fixes first
-        mode: BuildMode,  // the build the LLVM IR dump is of; release with -release
-    },
-    Build {
+    /// `check`, `fix`, `build` or `run`: `goal`, for the program in the
+    /// project folder or file `path`. A build is release with -release.
+    Program {
         path: PathBuf,
-        output: Option<PathBuf>, // the executable's path, from -o
-        mode: BuildMode,         // release with -release, else debug
-    },
-    Run {
-        path: PathBuf,
-        arguments: Vec<String>, // for the program
-        mode: BuildMode,
+        goal: Goal,
     },
     Init {
         name: Option<String>, // asked for when not given
@@ -99,19 +90,19 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
         ("-dump", dumps.is_some()),
     ];
     let path = |value: Option<&str>| PathBuf::from(value.unwrap_or("."));
-    let check = |values: &[&str], fix: bool| -> Result<Args, String> {
+    let check = |values: &[&str], apply_fixes: bool| -> Result<Args, String> {
         let dumps = Dump::ALL
             .into_iter()
             .zip(dumps.unwrap_or_default())
             .filter_map(|(dump, asked)| asked.then_some(dump))
             .collect();
         let path = path(value(values)?);
-        Ok(Args::Check {
-            path,
+        let goal = Goal::Check {
             dumps,
-            fix,
+            apply_fixes,
             mode,
-        })
+        };
+        Ok(Args::Program { path, goal })
     };
     // `-release` picks the build an LLVM IR dump is of.
     let check_takes = if dumps.is_some() {
@@ -126,20 +117,28 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
         }
         Some((&command @ "build", values)) => {
             let path = path(value(values)?);
-            let args = Args::Build { path, output, mode };
-            (command, args, ["-o", "-release"].as_slice())
+            let goal = Goal::Build { output, mode };
+            (
+                command,
+                Args::Program { path, goal },
+                ["-o", "-release"].as_slice(),
+            )
         }
         Some((&command @ "run", values)) => {
             let (path, arguments) = values.split_first().unwrap_or((&".", &[]));
-            let args = Args::Run {
-                path: PathBuf::from(path),
+            let goal = Goal::Run {
                 arguments: arguments
                     .iter()
                     .map(|argument| argument.to_string())
                     .collect(),
                 mode,
             };
-            (command, args, ["-release"].as_slice())
+            let path = PathBuf::from(path);
+            (
+                command,
+                Args::Program { path, goal },
+                ["-release"].as_slice(),
+            )
         }
         Some((&command @ "init", values)) => {
             let name = value(values)?.map(str::to_string);
@@ -178,6 +177,7 @@ mod tests {
 
     use super::Args;
     use super::parse;
+    use crate::driver::Goal;
 
     /// The path and dump extensions `args` ask for, with "fix" added for
     /// `peeper fix`, `("lsp", [])` for `peeper lsp`, `("init", [name])` for
@@ -186,11 +186,15 @@ mod tests {
     /// or the arguments.
     fn parsed(args: &[&str]) -> Option<(String, Vec<String>)> {
         let args: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
-        match parse(&args).ok()? {
-            Args::Check {
-                path,
+        let (path, goal) = match parse(&args).ok()? {
+            Args::Program { path, goal } => (path, goal),
+            Args::Lsp => return Some(("lsp".to_string(), Vec::new())),
+            Args::Init { name } => return Some(("init".to_string(), name.into_iter().collect())),
+        };
+        match goal {
+            Goal::Check {
                 dumps,
-                fix,
+                apply_fixes,
                 mode,
             } => {
                 let mut asked: Vec<String> = dumps
@@ -198,22 +202,18 @@ mod tests {
                     .map(|dump| dump.extension().to_string())
                     .collect();
                 asked.extend((mode == BuildMode::Release).then(|| "release".to_string()));
-                if fix {
+                if apply_fixes {
                     asked.push("fix".to_string());
                 }
                 Some((path.display().to_string(), asked))
             }
-            Args::Build { path, output, mode } => {
+            Goal::Build { output, mode } => {
                 let mut asked = vec!["build".to_string()];
                 asked.extend((mode == BuildMode::Release).then(|| "release".to_string()));
                 asked.extend(output.map(|output| output.display().to_string()));
                 Some((path.display().to_string(), asked))
             }
-            Args::Run {
-                path,
-                arguments,
-                mode,
-            } => {
+            Goal::Run { arguments, mode } => {
                 let release = (mode == BuildMode::Release).then(|| "release".to_string());
                 let asked = ["run".to_string()]
                     .into_iter()
@@ -222,8 +222,6 @@ mod tests {
                     .collect();
                 Some((path.display().to_string(), asked))
             }
-            Args::Lsp => Some(("lsp".to_string(), Vec::new())),
-            Args::Init { name } => Some(("init".to_string(), name.into_iter().collect())),
         }
     }
 
