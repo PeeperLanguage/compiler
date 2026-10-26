@@ -221,8 +221,8 @@ impl Module<'_> {
 
 /// How many times the instruction `id` can trap at run time, so it checks
 /// first: a division or shift of integers by a value not known at compile
-/// time, and each element of its place at an index not known then. Check
-/// rejects a constant that would trap.
+/// time, each element of its place at an index not known then, and a
+/// `Check`. Check rejects a constant that would trap.
 fn traps(body: &mir::Body, types: &Types, id: Id<mir::Instruction>) -> usize {
     match body.instructions[id].kind {
         InstructionKind::Binary { op, left, right } => {
@@ -245,6 +245,7 @@ fn traps(body: &mir::Body, types: &Types, id: Id<mir::Instruction>) -> usize {
                 matches!(step, mir::Projection::Index(index) if !matches!(index, Operand::Constant(_)))
             })
             .count(),
+        InstructionKind::Check { .. } => 1,
         _ => 0,
     }
 }
@@ -714,6 +715,11 @@ impl Function<'_, '_, '_> {
                 let incoming = comma_separated(incoming);
                 _ = writeln!(out, "  {name} = phi {} {incoming}", type_text(types, ty));
                 return; // no location: it runs where control arrives
+            }
+            InstructionKind::Check { failed, message } => {
+                let failed = self.operand(failed).to_string();
+                self.check(out, &failed, message, id);
+                return; // `check` ends the line with the next block's label
             }
             InstructionKind::ScopeEnd(_) => unreachable!("returned above"),
         };

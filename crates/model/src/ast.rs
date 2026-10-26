@@ -424,11 +424,13 @@ pub enum Expr {
     Dereference(Id<Expr>),
     /// `x[index]`; the index may be a `Range`
     Index { value: Id<Expr>, index: Id<Expr> },
-    /// `a..b`, or `a..=b` when `inclusive`, inside `[ ]` or after `in`
+    /// `a..b`, or `a..=b` when `inclusive`, inside `[ ]` or after `in`,
+    /// with `a..b:step` stepping by more than one
     Range {
         inclusive: bool,
         start: Option<Id<Expr>>,
         end: Option<Id<Expr>>,
+        step: Option<Id<Expr>>,
     },
     /// `Type.{ name = value }`, or `.{ ... }` without a type
     StructLiteral {

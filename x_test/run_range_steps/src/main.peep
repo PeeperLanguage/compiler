@@ -1,0 +1,57 @@
+// Ranges with a step: `a..b:step`, 1 when not written. A range counts down
+// when `start > end`: decided now for constant ends, on entry for ends known
+// only when the program runs. The counter steps only to values in the
+// range, so it never wraps past the type's end. `for i, v` counts the passes.
+fn count(end: i32, step: u32) -> i32 {
+    let mut passes = 0;
+    for v in 0..end:step {
+        passes = passes + 1;
+    }
+    return passes;
+}
+
+fn main() -> i32 {
+    let mut passes = 0;
+    for v in 0u8..=255 {
+        passes = passes + 1;
+    }
+    println("whole u8:", passes);
+    passes = 0;
+    for v in -128i8..=127 {
+        passes = passes + 1;
+    }
+    println("whole i8:", passes);
+
+    print("near the top:");
+    for v in 250u8..255:10 { print("", v); }
+    println();
+    print("down to zero:");
+    for v in 5u8..=0:2 { print("", v); }
+    println();
+    print("down across i8:");
+    for v in 127i8..=-128:100 { print("", v); }
+    println();
+
+    print("step past end:");
+    for v in 0..3:5 { print("", v); }
+    println();
+    print("inclusive:");
+    for v in 0..=10:5 { print("", v); }
+    println();
+    print("down:");
+    for v in 5..2 { print("", v); }
+    println();
+    print("empty:");
+    for v in 0..0 { print("", v); }
+    println();
+
+    print("indexed:");
+    for i, v in 100..0:25 { print("", i, v); }
+    println();
+    print("one pass:");
+    for i, v in 3..=3 { print("", i, v); }
+    println();
+
+    println("run time:", count(10, 3), count(-10, 3), count(0, 1));
+    return 0;
+}

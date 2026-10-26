@@ -232,7 +232,8 @@ impl Parser {
     }
 
     /// Reads what may stand inside `[ ]` or after `in`: an expression, or a
-    /// range `a..b`, `a..=b`, `..b` or `a..`. Ranges appear nowhere else, and
+    /// range `a..b`, `a..=b`, `..b` or `a..`, with an end followed by
+    /// `:step` to step by more than one. Ranges appear nowhere else, and
     /// only right before the `]` may a range leave out its end.
     pub(crate) fn index_operand(&mut self) -> Id<Expr> {
         let start = self.tok().span.start;
@@ -262,6 +263,11 @@ impl Parser {
                 ),
             );
         }
+        let mut step = None;
+        if high.is_some() && self.at(TokenKind::Colon) {
+            self.next();
+            step = Some(self.expr(Precedence::Lowest));
+        }
         let inclusive = op.kind == TokenKind::DotDotEqual;
         self.add(
             start,
@@ -269,6 +275,7 @@ impl Parser {
                 inclusive,
                 start: low,
                 end: high,
+                step,
             },
         )
     }

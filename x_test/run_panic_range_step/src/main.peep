@@ -1,0 +1,11 @@
+// A step known only when the program runs is checked on entry: zero would
+// never reach the end.
+fn walk(step: u32) {
+    for v in 0..10:step {}
+}
+
+fn main() {
+    Write(Stdout, c"before\n", 7);
+    walk(0);
+    Write(Stdout, c"after\n", 6);
+}

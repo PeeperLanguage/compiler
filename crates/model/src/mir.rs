@@ -182,6 +182,12 @@ pub enum InstructionKind {
     /// The value from whichever listed block control came from; first in its
     /// block. `&&` and `||` give their result this way.
     Phi(Box<[(Id<Block>, Operand)]>),
+    /// Stops the program with "panic: `message`" when `failed`, a `bool`
+    /// not known at compile time, is true.
+    Check {
+        failed: Operand,
+        message: &'static str,
+    },
     /// The variable's block ends here, or a `break`, `continue` or `return`
     /// leaves it, so its storage is gone: no reference may still use it
     /// (`flow::loans::report_loan_errors`), and a loop's next pass may set
@@ -345,6 +351,11 @@ impl Body {
                         printer.out.push_str("field ");
                         printer.write_operand(value);
                         printer.write_fields(fields);
+                    }
+                    InstructionKind::Check { failed, message } => {
+                        printer.out.push_str("check ");
+                        printer.write_operand(failed);
+                        _ = write!(printer.out, ", \"{message}\"");
                     }
                     InstructionKind::ScopeEnd(variable) => {
                         printer.out.push_str("scope end ");

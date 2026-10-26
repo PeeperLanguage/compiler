@@ -209,6 +209,202 @@ impl Lowering<'_> {
         ended
     }
 
+    /// Lowers the `thir::Stmt::ForRange` `statement`. On entry, once: whether
+    /// the range counts up (`start <= end`, known now when both are
+    /// constants), `left`, how far `end` is, as the step's unsigned type, and
+    /// `delta`, what a pass adds to the counter: `step` up, `0 - step` down,
+    /// both wrapping. The counter, `left`, the passes and whether a pass runs
+    /// are `phi`s. A next pass runs while `left` is more than `step` (at least
+    /// `step` for `..=`), so the counter steps only to a value in the range
+    /// and never overflows.
+    fn lower_for_range(&mut self, statement: Id<thir::Stmt>) -> Option<()> {
+        let thir::Stmt::ForRange {
+            index,
+            value,
+            start,
+            end,
+            step,
+            inclusive,
+            body,
+        } = self.thir.stmts[statement]
+        else {
+            unreachable!("only a range loop is lowered here")
+        };
+        let span = self.thir.stmts.span(statement);
+        let range_span = Span::new(
+            self.thir.exprs.span(start).start as usize,
+            self.thir.exprs.span(end).end as usize,
+        );
+        let step_span = self.thir.exprs.span(step);
+        let (ty, size) = (
+            self.types.real(self.thir.exprs[start].ty),
+            self.thir.exprs[step].ty,
+        );
+        let start = self.lower_expr(start)?;
+        let end = self.lower_expr(end)?;
+        let step = self.lower_expr(step)?;
+        let number = |lowering: &mut Self, ty: TypeId, number: u64| {
+            let Type::Integer(integer) = lowering.types[ty] else {
+                unreachable!("the checker allows only an integer range")
+            };
+            lowering.add_constant(Constant {
+                ty,
+                value: Value::Integer(Limbs::new(integer.bits, &[number])),
+            })
+        };
+        if !matches!(step, mir::Operand::Constant(_)) {
+            let zero = number(self, size, 0);
+            let failed = self.binary(BinaryOp::EqualTo, step, zero, TypeId::BOOL, step_span);
+            let message = "range step is zero";
+            let check = mir::InstructionKind::Check { failed, message };
+            self.emit(check, TypeId::VOID, step_span);
+        }
+        // `left` and `delta` counting up, or down; between the step's type
+        // and the counter's, the same bits read with the other sign.
+        let way = |lowering: &mut Self, up: bool| {
+            let convert = |lowering: &mut Self, value, to| match size == ty {
+                true => value, // an unsigned range
+                false => lowering.emit(mir::InstructionKind::Convert(value), to, range_span),
+            };
+            let (near, far) = if up { (start, end) } else { (end, start) };
+            let distance = lowering.binary(BinaryOp::Subtract, far, near, ty, range_span);
+            let left = convert(lowering, distance, size);
+            let delta = convert(lowering, step, ty);
+            if up {
+                return (left, delta);
+            }
+            let zero = number(lowering, ty, 0);
+            let back = lowering.binary(BinaryOp::Subtract, zero, delta, ty, range_span);
+            (left, back)
+        };
+        let known_up = match (start, end) {
+            (mir::Operand::Constant(start), mir::Operand::Constant(end)) => {
+                let (&Type::Integer(integer), Value::Integer(start), Value::Integer(end)) = (
+                    &self.types[ty],
+                    &self.mir.constants[start.index()].value,
+                    &self.mir.constants[end.index()].value,
+                ) else {
+                    unreachable!("the checker allows only an integer range")
+                };
+                Some(bigint::compare(integer.bits, integer.signed, start, end).is_le())
+            }
+            _ => None,
+        };
+        let (left_first, delta) = match known_up {
+            Some(up) => way(self, up),
+            None => {
+                let up = self.binary(BinaryOp::LessOrEqual, start, end, TypeId::BOOL, range_span);
+                let [upward, downward, counted] = [(); 3].map(|()| self.new_block(range_span));
+                self.finish(mir::Terminator::Branch {
+                    condition: up,
+                    span: range_span,
+                    then: upward,
+                    otherwise: downward,
+                });
+                self.block = upward;
+                let (left_up, delta_up) = way(self, true);
+                self.finish(mir::Terminator::Goto(counted));
+                self.block = downward;
+                let (left_down, delta_down) = way(self, false);
+                self.finish(mir::Terminator::Goto(counted));
+                self.block = counted;
+                let left =
+                    mir::InstructionKind::Phi(Box::new([(upward, left_up), (downward, left_down)]));
+                let delta = mir::InstructionKind::Phi(Box::new([
+                    (upward, delta_up),
+                    (downward, delta_down),
+                ]));
+                (
+                    self.emit(left, size, range_span),
+                    self.emit(delta, ty, range_span),
+                )
+            }
+        };
+        let first = if inclusive {
+            self.add_constant(Constant {
+                ty: TypeId::BOOL,
+                value: Value::Bool(true),
+            })
+        } else {
+            let zero = number(self, size, 0);
+            self.binary(
+                BinaryOp::NotEqualTo,
+                left_first,
+                zero,
+                TypeId::BOOL,
+                range_span,
+            )
+        };
+        let entry = self.block;
+        let test = self.new_block(span);
+        self.finish(mir::Terminator::Goto(test));
+        self.block = test;
+        let empty = || mir::InstructionKind::Phi(Box::new([]));
+        let counter = self.emit(empty(), ty, range_span);
+        let left = self.emit(empty(), size, range_span);
+        let index = index.map(|index| Id::from_index(index.index()));
+        let passes =
+            index.map(|index| self.emit(empty(), self.mir.variables[index].ty, range_span));
+        let going = self.emit(empty(), TypeId::BOOL, range_span);
+        let pass = self.new_block(self.thir.blocks.span(body));
+        let exit = self.new_block(span);
+        self.finish(mir::Terminator::Branch {
+            condition: going,
+            span: range_span,
+            then: pass,
+            otherwise: exit,
+        });
+        self.block = pass;
+        let value = value.map(|value| Id::from_index(value.index()));
+        for (variable, value) in [index.zip(passes), value.map(|value| (value, counter))]
+            .into_iter()
+            .flatten()
+        {
+            let place = mir::Place::whole(variable);
+            let store = mir::InstructionKind::Store { place, value };
+            self.emit(store, TypeId::VOID, self.mir.variables.span(variable));
+            self.declared.push(variable);
+        }
+        let op = if inclusive {
+            BinaryOp::GreaterOrEqual
+        } else {
+            BinaryOp::GreaterThan
+        };
+        let more = self.binary(op, left, step, TypeId::BOOL, range_span);
+        let next = self.binary(BinaryOp::Add, counter, delta, ty, range_span);
+        let left_next = self.binary(BinaryOp::Subtract, left, step, size, range_span);
+        let passes = index.zip(passes).map(|(index, passes)| {
+            let passes_type = self.mir.variables[index].ty;
+            let one = number(self, passes_type, 1);
+            let next = self.binary(BinaryOp::Add, passes, one, passes_type, range_span);
+            (passes, number(self, passes_type, 0), next)
+        });
+        // Every pass ends here, so each `phi` has one entry for them.
+        let step = self.new_block(span);
+        let targets = Loop {
+            next: step,
+            exit,
+            body,
+        };
+        self.lower_loop_body(body, targets)?;
+        self.block = step;
+        self.finish(mir::Terminator::Goto(test));
+        let phis = [
+            (counter, start, next),
+            (left, left_first, left_next),
+            (going, first, more),
+        ];
+        for (phi, first, next) in phis.into_iter().chain(passes) {
+            let mir::Operand::Value(phi) = phi else {
+                unreachable!("`emit` gives an instruction's value")
+            };
+            let incoming = [(entry, first), (step, next)];
+            self.mir.instructions[phi].kind = mir::InstructionKind::Phi(incoming.into());
+        }
+        self.block = exit;
+        Some(())
+    }
+
     /// Lowers the statements of `body`, one pass of the loop `targets`,
     /// then goes to its next pass.
     fn lower_loop_body(&mut self, body: Id<thir::Block>, targets: Loop) -> Option<()> {
@@ -309,102 +505,7 @@ impl Lowering<'_> {
                 self.lower_loop_body(body, targets)?;
                 self.block = exit;
             }
-            thir::Stmt::ForRange {
-                value,
-                start,
-                end,
-                inclusive,
-                body,
-            } => {
-                // The counter and whether a pass runs are `phi`s: on entry,
-                // `start` and whether the range holds a value; after a pass,
-                // the next value and whether it is in the range. The next
-                // value is found in the pass, while the counter is in the
-                // range, so it cannot overflow: `a..b` adds one to a counter
-                // below `b`, and `a..=b` adds one only below `b`.
-                let range_span = Span::new(
-                    self.thir.exprs.span(start).start as usize,
-                    self.thir.exprs.span(end).end as usize,
-                );
-                let ty = self.thir.exprs[start].ty;
-                let start = self.lower_expr(start)?;
-                let end = self.lower_expr(end)?;
-                let op = if inclusive {
-                    BinaryOp::LessOrEqual
-                } else {
-                    BinaryOp::LessThan
-                };
-                let first = self.binary(op, start, end, TypeId::BOOL, range_span);
-                let entry = self.block;
-                let test = self.new_block(span);
-                self.finish(mir::Terminator::Goto(test));
-                self.block = test;
-                let counter = self.emit(mir::InstructionKind::Phi(Box::new([])), ty, range_span);
-                let going = self.emit(
-                    mir::InstructionKind::Phi(Box::new([])),
-                    TypeId::BOOL,
-                    range_span,
-                );
-                let pass = self.new_block(self.thir.blocks.span(body));
-                let exit = self.new_block(span);
-                self.finish(mir::Terminator::Branch {
-                    condition: going,
-                    span: range_span,
-                    then: pass,
-                    otherwise: exit,
-                });
-                self.block = pass;
-                if let Some(value) = value {
-                    let value = Id::from_index(value.index());
-                    let place = mir::Place::whole(value);
-                    let store = mir::InstructionKind::Store {
-                        place,
-                        value: counter,
-                    };
-                    self.emit(store, TypeId::VOID, self.mir.variables.span(value));
-                    self.declared.push(value);
-                }
-                let (next, more) = if inclusive {
-                    let more =
-                        self.binary(BinaryOp::LessThan, counter, end, TypeId::BOOL, range_span);
-                    let step = self.emit(mir::InstructionKind::Convert(more), ty, range_span);
-                    let next = self.binary(BinaryOp::Add, counter, step, ty, range_span);
-                    (next, more)
-                } else {
-                    let Type::Integer(integer) = self.types[ty] else {
-                        unreachable!("the checker allows only an integer range")
-                    };
-                    let one = self.add_constant(Constant {
-                        ty,
-                        value: Value::Integer(Limbs::new(integer.bits, &[1])),
-                    });
-                    let next = self.binary(BinaryOp::Add, counter, one, ty, range_span);
-                    (
-                        next,
-                        self.binary(BinaryOp::LessThan, next, end, TypeId::BOOL, range_span),
-                    )
-                };
-                // Every pass ends here, so each `phi` has one entry for them.
-                let step = self.new_block(span);
-                let targets = Loop {
-                    next: step,
-                    exit,
-                    body,
-                };
-                self.lower_loop_body(body, targets)?;
-                self.block = step;
-                self.finish(mir::Terminator::Goto(test));
-                for (phi, incoming) in [
-                    (counter, [(entry, start), (step, next)]),
-                    (going, [(entry, first), (step, more)]),
-                ] {
-                    let mir::Operand::Value(phi) = phi else {
-                        unreachable!("`emit` gives an instruction's value")
-                    };
-                    self.mir.instructions[phi].kind = mir::InstructionKind::Phi(incoming.into());
-                }
-                self.block = exit;
-            }
+            thir::Stmt::ForRange { .. } => self.lower_for_range(statement)?,
             thir::Stmt::Break | thir::Stmt::Continue => {
                 let Some(&Loop { next, exit, body }) = self.loops.last() else {
                     unreachable!("the checker allows a jump only in a loop")

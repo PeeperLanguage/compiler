@@ -4,32 +4,35 @@ fn sum:
     store total.1, 0
     %2 = load values.0: &[3]i32
     store _.2, %2
-    %4 = LessThan 0, 3: bool
+    %4 = Subtract 3, 0: u64
+    %5 = NotEqualTo %4, 0: bool
     goto bb1
   bb1:
-    %5 = phi bb0: 0, bb4: %8: u64
-    %6 = phi bb0: %4, bb4: %9: bool
-    branch %6 (values) bb2 bb3
+    %6 = phi bb0: 0, bb4: %11: u64
+    %7 = phi bb0: %4, bb4: %12: u64
+    %8 = phi bb0: %5, bb4: %10: bool
+    branch %8 (values) bb2 bb3
   bb2:
-    store _.3, %5
-    %8 = Add %5, 1: u64
-    %9 = LessThan %8, 3: bool
-    %10 = load _.3: u64
-    %11 = borrow _.2.*[at %10]: &i32
-    store value.4, %11
-    %13 = load total.1: i32
-    %14 = load value.4.*: i32
-    %15 = Add %13, %14: i32
-    store total.1, %15
+    store _.3, %6
+    %10 = GreaterThan %7, 1: bool
+    %11 = Add %6, 1: u64
+    %12 = Subtract %7, 1: u64
+    %13 = load _.3: u64
+    %14 = borrow _.2.*[at %13]: &i32
+    store value.4, %14
+    %16 = load total.1: i32
+    %17 = load value.4.*: i32
+    %18 = Add %16, %17: i32
+    store total.1, %18
     scope end value.4
     scope end _.3
     goto bb4
   bb3:
     scope end _.2
-    %20 = load total.1: i32
+    %23 = load total.1: i32
     scope end total.1
     scope end values.0
-    return %20
+    return %23
   bb4:
     goto bb1
   bb5:
@@ -42,32 +45,35 @@ fn indexed:
     store total.1, 0
     %2 = load values.0: [2]i32
     store _.2, %2
-    %4 = LessThan 0, 2: bool
+    %4 = Subtract 2, 0: u64
+    %5 = NotEqualTo %4, 0: bool
     goto bb1
   bb1:
-    %5 = phi bb0: 0, bb4: %8: u64
-    %6 = phi bb0: %4, bb4: %9: bool
-    branch %6 (values) bb2 bb3
+    %6 = phi bb0: 0, bb4: %11: u64
+    %7 = phi bb0: %4, bb4: %12: u64
+    %8 = phi bb0: %5, bb4: %10: bool
+    branch %8 (values) bb2 bb3
   bb2:
-    store i.3, %5
-    %8 = Add %5, 1: u64
-    %9 = LessThan %8, 2: bool
-    %10 = load i.3: u64
-    %11 = load _.2[at %10]: i32
-    store value.4, %11
-    %13 = load total.1: u64
-    %14 = load i.3: u64
-    %15 = Add %13, %14: u64
-    store total.1, %15
+    store i.3, %6
+    %10 = GreaterThan %7, 1: bool
+    %11 = Add %6, 1: u64
+    %12 = Subtract %7, 1: u64
+    %13 = load i.3: u64
+    %14 = load _.2[at %13]: i32
+    store value.4, %14
+    %16 = load total.1: u64
+    %17 = load i.3: u64
+    %18 = Add %16, %17: u64
+    store total.1, %18
     scope end value.4
     scope end i.3
     goto bb4
   bb3:
     scope end _.2
-    %20 = load total.1: u64
+    %23 = load total.1: u64
     scope end total.1
     scope end values.0
-    return %20
+    return %23
   bb4:
     goto bb1
   bb5:

@@ -1,0 +1,11 @@
+// A range's step is a size of the ends' integer type made unsigned, never a
+// constant zero; counting down comes from the ends.
+fn main() {
+    let signed: i32 = 2;
+    for v in 0..10:0 {}
+    for v in 0..10:-1 {}
+    for v in 0..10:signed {}
+    for v in 0..10:1.5 {}
+    // Only the ends are reported: the step is checked for its own errors.
+    for v in 0.5..2.0:1 {}
+}

@@ -219,14 +219,18 @@ pub enum Stmt {
         condition: Option<Id<Expr>>,
         body: Id<Block>,
     },
-    /// `for value in start..end { }`: `value`, declared in `body`, is each
-    /// integer from `start` up to `end`, with `end` when `inclusive`
-    /// (`..=`). Both are computed once, before the first pass.
-    /// `for start..end { }` has no `value`.
+    /// `for index, value in start..end:step { }`: `value`, declared in
+    /// `body`, is each integer from `start` toward `end`, `step` apart, up
+    /// or down as `start <= end`, with `end` when `inclusive` (`..=`);
+    /// `index` counts the passes from 0. The ends and the step, an unsigned
+    /// integer as wide as the ends (1 when not written), are computed once,
+    /// before the first pass. `for start..end { }` has no `value`.
     ForRange {
+        index: Option<Id<Variable>>,
         value: Option<Id<Variable>>,
         start: Id<Expr>,
         end: Id<Expr>,
+        step: Id<Expr>,
         inclusive: bool,
         body: Id<Block>,
     },
@@ -373,13 +377,19 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
                 self.write_block(self.body.blocks[body].statements, depth);
             }
             Stmt::ForRange {
+                index,
                 value,
                 start,
                 end,
+                step,
                 inclusive,
                 body,
             } => {
                 self.out.push_str("for ");
+                if let Some(index) = index {
+                    self.write_variable(index);
+                    self.out.push_str(", ");
+                }
                 if let Some(value) = value {
                     self.write_variable(value);
                     self.out.push_str(" in ");
@@ -387,6 +397,8 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
                 self.write_expr(start);
                 self.out.push_str(if inclusive { "..=" } else { ".." });
                 self.write_expr(end);
+                self.out.push_str(" by ");
+                self.write_expr(step);
                 self.out.push(' ');
                 self.write_block(self.body.blocks[body].statements, depth);
             }

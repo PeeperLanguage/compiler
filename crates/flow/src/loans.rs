@@ -201,7 +201,10 @@ impl Loans<'_, '_> {
             }
             mir::InstructionKind::Unary { ref value, .. }
             | mir::InstructionKind::Convert(ref value)
-            | mir::InstructionKind::Field { ref value, .. } => (None, std::slice::from_ref(value)),
+            | mir::InstructionKind::Field { ref value, .. }
+            | mir::InstructionKind::Check {
+                failed: ref value, ..
+            } => (None, std::slice::from_ref(value)),
             mir::InstructionKind::Call { ref arguments, .. }
             | mir::InstructionKind::Aggregate(ref arguments)
             | mir::InstructionKind::Print {

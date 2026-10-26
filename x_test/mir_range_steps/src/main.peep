@@ -1,0 +1,12 @@
+// The MIR of a range whose ends and step are known only when the program
+// runs: the step is checked once, then the entry branches once on whether
+// the range counts up, for how far the end is and what each pass adds.
+fn walk(from: i32, to: i32, step: u32) -> usize {
+    let mut last: usize = 0;
+    for i, v in from..to:step {
+        last = i;
+    }
+    return last;
+}
+
+fn main() {}

@@ -1,0 +1,21 @@
+name = "run_range_steps"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 0
+stdout_contains = [
+    "whole u8: 256\n",
+    "whole i8: 256\n",
+    "near the top: 250\n",
+    "down to zero: 5 3 1\n",
+    "down across i8: 127 27 -73\n",
+    "step past end: 0\n",
+    "inclusive: 0 5 10\n",
+    "down: 5 4 3\n",
+    "empty:\n",
+    "indexed: 0 100 1 75 2 50 3 25\n",
+    "one pass: 0 3\n",
+    "run time: 4 4 0\n",
+]

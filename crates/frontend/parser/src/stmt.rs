@@ -402,6 +402,7 @@ mod tests {
     for item in items { }
     for i, item in items[1..] { }
     for 0..n { }
+    for v in n..=0:2 { }
     match shape {
         Shape::Dot => { }
         Shape::Line with .{ end } => { }
@@ -473,6 +474,13 @@ mod tests {
         range ..
           number literal 0
           name reference n
+        block { }
+      for in statement
+        declared name v
+        range ..=
+          name reference n
+          number literal 0
+          number literal 2
         block { }
       match statement
         name reference shape

@@ -11,6 +11,7 @@ use model::ast;
 use model::ast::Ident;
 use model::constant::Constant;
 use model::constant::Value;
+use model::semantic_types::Integer;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::thir::Block;
@@ -484,10 +485,12 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         Stmt::Let { variable, value }
     }
 
-    /// `for value in start..end { body }` or `..=`, or `for start..end
-    /// { body }` without a `value`. A literal endpoint without a suffix takes
-    /// the other endpoint's type, which must be an integer. A range without
-    /// both ends, or an index, is reported as not supported yet.
+    /// `for value in start..end { body }` or `..=`, `for index, value in`,
+    /// or `for start..end { body }` without a `value`, stepping by
+    /// `start..end:step`. A literal endpoint without a suffix takes the other
+    /// endpoint's type, which must be an integer; the step is that integer
+    /// made unsigned, and not a constant zero. A range without both ends is
+    /// reported as not supported yet.
     fn check_for_range(
         &mut self,
         index: Option<Ident>,
@@ -500,6 +503,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             inclusive,
             start: Some(start),
             end: Some(end),
+            step,
         } = tree.exprs[iterable]
         else {
             let span = tree.exprs.span(iterable);
@@ -507,11 +511,6 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 .not_supported(span, "`for` over ranges without both ends");
             return None;
         };
-        if let Some(index) = index {
-            self.checker
-                .not_supported(index.span, "indexes in a range `for`");
-            return None;
-        }
         let (start, end) = if unsuffixed_literal(tree, start).is_some() {
             let end = self.add_expr(end, TypeExpectation::Hint(None));
             let ty = self.body.exprs[end].ty;
@@ -522,20 +521,72 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             (start, self.add_expr(end, TypeExpectation::Required(ty)))
         };
         let ty = self.body.exprs[start].ty;
-        if ty != TypeId::INVALID && !matches!(self.checker.types[ty], Type::Integer(_)) {
-            let found = self.checker.type_text(ty);
-            let message = format!("a `for` range must be of integers, found `{found}`");
-            let span = self.checker.module().ast.exprs.span(iterable);
-            self.checker
-                .error(diagnostics::INVALID_OPERATION, message, span);
-        }
+        let integer = match self.checker.types[ty] {
+            Type::Integer(integer) => Some(integer),
+            _ if ty == TypeId::INVALID => None,
+            _ => {
+                let found = self.checker.type_text(ty);
+                let message = format!("a `for` range must be of integers, found `{found}`");
+                let span = self.checker.module().ast.exprs.span(iterable);
+                self.checker
+                    .error(diagnostics::INVALID_OPERATION, message, span);
+                None
+            }
+        };
+        // The step is a size, and after an error in the ends it is checked
+        // only for its own errors.
+        let step_type = integer.map(|integer| {
+            let unsigned = Integer {
+                signed: false,
+                ..integer
+            };
+            (unsigned, self.checker.types.intern(Type::Integer(unsigned)))
+        });
+        let step = match step {
+            Some(step) => {
+                let expectation = match step_type {
+                    Some((_, ty)) => TypeExpectation::Required(ty),
+                    None => TypeExpectation::Hint(None),
+                };
+                let step = self.add_expr(step, expectation);
+                if let ExprKind::Constant(Value::Integer(ref limbs)) = self.body.exprs[step].kind
+                    && limbs.as_slice().iter().all(|&limb| limb == 0)
+                {
+                    let span = self.body.exprs.span(step);
+                    let message = "a range's step must not be zero";
+                    self.checker
+                        .error(diagnostics::INVALID_OPERATION, message, span);
+                }
+                step
+            }
+            None => {
+                let one = match step_type {
+                    Some((unsigned, ty)) => Expr {
+                        ty,
+                        kind: ExprKind::Constant(Value::Integer(Limbs::new(unsigned.bits, &[1]))),
+                    },
+                    None => Expr::INVALID,
+                };
+                self.body
+                    .add(one, self.checker.module().ast.exprs.span(iterable))
+            }
+        };
         let enclosing = self.open_block(body);
+        let index = index.map(|index| {
+            let usize = self
+                .checker
+                .types
+                .builtin("usize", self.checker.pointer_bits);
+            self.declare_loop_variable(usize.expect("`usize` is built in"), index)
+        });
         let variable = value.map(|value| self.declare_loop_variable(ty, value));
         let body = self.check_loop_body(body, enclosing, None);
         Some(Stmt::ForRange {
+            index,
             value: variable,
             start,
             end,
+            step,
             inclusive,
             body,
         })
@@ -636,7 +687,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             };
             self.body.add(constant, span)
         };
-        let (start, end) = (constant(0), constant(length));
+        let (start, end, step) = (constant(0), constant(length), constant(1));
         let enclosing = self.open_block(body);
         let counter = match index {
             Some(index) => self.declare_loop_variable(usize, index),
@@ -652,9 +703,11 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         let let_value = self.body.add(let_value, value.span);
         let body = self.check_loop_body(body, enclosing, Some(let_value));
         let range = Stmt::ForRange {
+            index: None,
             value: Some(counter),
             start,
             end,
+            step,
             inclusive: false,
             body,
         };
@@ -972,8 +1025,9 @@ mod tests {
         );
     }
 
-    /// A range's literal start takes the end's type; its variable is
-    /// declared in the body.
+    /// A range's literal start takes the end's type; its variables are
+    /// declared in the body. Its step is the ends' type made unsigned, 1
+    /// when not written.
     #[test]
     fn loops() {
         let (bodies, reported) = bodies(
@@ -983,6 +1037,7 @@ mod tests {
                 for i in 0..n { let j = i; }
                 for 0..3 { }
                 for k in 1..=n { }
+                for i, m in n..0:2 { }
             }",
         );
         assert!(reported.is_empty(), "{reported:?}");
@@ -994,12 +1049,14 @@ mod tests {
     for (n.0 GreaterThan 0:i64) {
         continue
     }
-    for i.1 in 0:i64..n.0 {
+    for i.1 in 0:i64..n.0 by 1:u64 {
         let j.2 = i.1
     }
-    for 0:i32..3:i32 {
+    for 0:i32..3:i32 by 1:u32 {
     }
-    for k.3 in 1:i64..=n.0 {
+    for k.3 in 1:i64..=n.0 by 1:u64 {
+    }
+    for i.4, m.5 in n.0..0:i64 by 2:u64 {
     }
 "]
         );

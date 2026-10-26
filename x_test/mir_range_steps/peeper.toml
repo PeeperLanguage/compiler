@@ -1,0 +1,6 @@
+name = "mir_range_steps"
+build = "program"
+
+[test]
+mode = "mir"
+outcome = "success"

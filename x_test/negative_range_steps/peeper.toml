@@ -1,0 +1,14 @@
+name = "negative_range_steps"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "a range's step must not be zero",
+    "literal `-1` does not fit `u32`",
+    "mismatched types: expected `u32`, found `i32`",
+    "mismatched types: expected `u32`, found `f64`",
+    "a `for` range must be of integers, found `f64`",
+    "Compilation failed with 5 error(s)",
+]

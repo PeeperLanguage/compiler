@@ -494,6 +494,7 @@ impl Dumper<'_> {
                 inclusive,
                 start,
                 end,
+                step,
             } => (
                 "range",
                 Some(if inclusive {
@@ -501,7 +502,12 @@ impl Dumper<'_> {
                 } else {
                     TokenKind::DotDot.text()
                 }),
-                start.into_iter().chain(end).map(Item::Expr).collect(),
+                start
+                    .into_iter()
+                    .chain(end)
+                    .chain(step)
+                    .map(Item::Expr)
+                    .collect(),
             ),
             Expr::StructLiteral { ty, fields } => {
                 let mut children: Vec<Item> = ty.map(Item::Type).into_iter().collect();

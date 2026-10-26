@@ -1,0 +1,65 @@
+fn walk:
+  bb0:
+    store from.0, arg0
+    store to.1, arg1
+    store step.2, arg2
+    store last.3, 0
+    %4 = load from.0: i32
+    %5 = load to.1: i32
+    %6 = load step.2: u32
+    %7 = EqualTo %6, 0: bool
+    check %7, "range step is zero"
+    %9 = LessOrEqual %4, %5: bool
+    branch %9 (from..to) bb1 bb2
+  bb1:
+    %10 = Subtract %5, %4: i32
+    %11 = convert %10: u32
+    %12 = convert %6: i32
+    goto bb3
+  bb2:
+    %13 = Subtract %4, %5: i32
+    %14 = convert %13: u32
+    %15 = convert %6: i32
+    %16 = Subtract 0, %15: i32
+    goto bb3
+  bb3:
+    %17 = phi bb1: %11, bb2: %14: u32
+    %18 = phi bb1: %12, bb2: %16: i32
+    %19 = NotEqualTo %17, 0: bool
+    goto bb4
+  bb4:
+    %20 = phi bb3: %4, bb7: %27: i32
+    %21 = phi bb3: %17, bb7: %28: u32
+    %22 = phi bb3: 0, bb7: %29: u64
+    %23 = phi bb3: %19, bb7: %26: bool
+    branch %23 (from..to) bb5 bb6
+  bb5:
+    store i.4, %22
+    store v.5, %20
+    %26 = GreaterThan %21, %6: bool
+    %27 = Add %20, %18: i32
+    %28 = Subtract %21, %6: u32
+    %29 = Add %22, 1: u64
+    %30 = load i.4: u64
+    store last.3, %30
+    scope end v.5
+    scope end i.4
+    goto bb7
+  bb6:
+    %34 = load last.3: u64
+    scope end last.3
+    scope end step.2
+    scope end to.1
+    scope end from.0
+    return %34
+  bb7:
+    goto bb4
+  bb8:
+    scope end last.3
+    scope end step.2
+    scope end to.1
+    scope end from.0
+    fall off at `}`
+fn main:
+  bb0:
+    fall off at `}`
