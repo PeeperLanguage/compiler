@@ -1459,7 +1459,7 @@ mod tests {
         );
         // A token's own doc covers its uses that are not an operator of the
         // tree: `&` is a reference, but in `m & 3` a bit-and; the `*` of
-        // `r.*` reads through `r`.
+        // `r.*` reads through `r`, and its `.` reaches into `r`.
         let starts = |line: u32, character: u32, text: &str| {
             let found = hover(line, character);
             let found = found.as_str().unwrap();
@@ -1471,6 +1471,7 @@ mod tests {
         starts(19, 12, "```peeper\n[\n```\n\n---\n\n Indexes an array");
         starts(20, 18, "```peeper\n[\n```\n\n---\n\n Indexes an array");
         starts(20, 13, "```peeper\n*\n```\n\n---\n\n Points at a value");
+        starts(20, 12, "```peeper\n.\n```\n\n---\n\n Reaches into");
     }
 
     /// Names across modules: each kind of name answers where it is declared
