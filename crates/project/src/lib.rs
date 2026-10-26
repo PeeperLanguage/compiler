@@ -602,9 +602,9 @@ enum Visit {
 struct Sorter<'a> {
     modules: &'a HashMap<String, Loaded>,
     visits: HashMap<&'a str, Visit>,
-    stack: Vec<&'a str>, // the modules being visited, outermost first
-    /// The import each module on `stack` but the last takes to the next.
-    taken: Vec<ImportKind>,
+    /// The modules being visited, outermost first, each with the import that
+    /// reached it: none for the first.
+    stack: Vec<(&'a str, Option<ImportKind>)>,
     order: Vec<String>,
     cycles: Vec<Diagnostic>,
 }
@@ -647,7 +647,6 @@ fn sort_modules(modules: &HashMap<String, Loaded>) -> (Vec<String>, Vec<Diagnost
         modules,
         visits: HashMap::with_capacity(modules.len()),
         stack: Vec::new(),
-        taken: Vec::new(),
         order: Vec::with_capacity(modules.len()),
         cycles: Vec::new(),
     };
@@ -655,16 +654,17 @@ fn sort_modules(modules: &HashMap<String, Loaded>) -> (Vec<String>, Vec<Diagnost
     paths.sort_unstable();
     for path in paths {
         if !sorter.visits.contains_key(path) {
-            sorter.visit(path);
+            sorter.visit(path, None);
         }
     }
     (sorter.order, sorter.cycles)
 }
 
 impl<'a> Sorter<'a> {
-    fn visit(&mut self, path: &'a str) {
+    /// Visits the module `path`, reached by the import `reached_by`.
+    fn visit(&mut self, path: &'a str, reached_by: Option<ImportKind>) {
         self.visits.insert(path, Visit::Started);
-        self.stack.push(path);
+        self.stack.push((path, reached_by));
         let module = &self.modules[path];
         let mut imports: Vec<&'a (ImportKind, String)> = module.imports.iter().collect();
         imports.sort_by(|(_, a), (_, b)| a.cmp(b));
@@ -674,13 +674,11 @@ impl<'a> Sorter<'a> {
         imports.dedup_by(|(_, a), (_, b)| a == b);
         for &(kind, ref imported) in imports {
             match self.visits.get(imported.as_str()) {
-                None => {
-                    self.taken.push(kind);
-                    self.visit(imported);
-                    self.taken.pop();
-                }
+                None => self.visit(imported, Some(kind)),
                 Some(Visit::Started) => {
-                    let start = self.stack.iter().position(|&p| p == imported).unwrap_or(0);
+                    let start = (self.stack.iter())
+                        .position(|&(visiting, _)| visiting == imported)
+                        .unwrap_or(0);
                     self.report_cycle(start, kind);
                 }
                 Some(Visit::Finished) => {}
@@ -699,13 +697,19 @@ impl<'a> Sorter<'a> {
             diagnostics::CYCLIC_IMPORT,
             "modules import each other in a cycle",
         );
-        let importers = &self.stack[start..];
-        let kinds = self.taken[start..].iter().copied().chain([closing]);
-        let imported = importers[1..].iter().chain([&importers[0]]);
-        for (step, ((&importer, kind), imported)) in
-            importers.iter().zip(kinds).zip(imported).enumerate()
+        let cycle = &self.stack[start..];
+        // Each module of the cycle takes the import that reached the next;
+        // the last takes `closing` back to the first.
+        let kinds = (cycle[1..].iter())
+            .map(|&(_, reached_by)| {
+                reached_by.expect("only the outermost module is reached by no import")
+            })
+            .chain([closing]);
+        let imported = cycle[1..].iter().chain([&cycle[0]]);
+        for (step, ((&(importer, _), kind), &(imported, _))) in
+            cycle.iter().zip(kinds).zip(imported).enumerate()
         {
-            let closes = if step + 1 == importers.len() {
+            let closes = if step + 1 == cycle.len() {
                 ", closing the cycle"
             } else {
                 ""

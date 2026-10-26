@@ -15,9 +15,9 @@ use model::semantic_types::Types;
 use crate::BuildMode;
 use crate::Module;
 
-/// One module's functions, each with its MIR, and the types they name.
+/// One module's functions, each with its MIR, and the types they name. A
+/// batch sent to a worker has a function, so its first gives the module.
 struct Batch {
-    module: ModuleId,
     functions: Vec<(DefId, mir::Body)>,
     types: Types,
 }
@@ -35,13 +35,13 @@ impl FunctionQueue {
     /// program's functions come module by module, so a function of another
     /// module sends the one before to a worker.
     pub fn add(&mut self, definition: DefId, body: mir::Body, types: &Types) {
-        if definition.module != self.batch.module {
+        let coming = self.batch.functions.first().map(|&(first, _)| first.module);
+        if coming != Some(definition.module) {
             self.send();
             assert!(
                 !self.sent[definition.module.index()],
                 "a module's functions come together"
             );
-            self.batch.module = definition.module;
         }
         self.batch.types.extend_from(types);
         self.batch.functions.push((definition, body));
@@ -50,12 +50,11 @@ impl FunctionQueue {
     /// Sends the functions kept so far, with a copy of their types, to a
     /// worker.
     fn send(&mut self) {
-        if self.batch.functions.is_empty() {
+        let Some(&(first, _)) = self.batch.functions.first() else {
             return;
-        }
-        self.sent[self.batch.module.index()] = true;
+        };
+        self.sent[first.module.index()] = true;
         let batch = Batch {
-            module: self.batch.module,
             functions: std::mem::take(&mut self.batch.functions),
             types: self.batch.types.clone(),
         };
@@ -88,7 +87,8 @@ pub fn write_modules<'p, T>(
                         let Ok(batch) = next else {
                             return written; // the channel is closed and empty
                         };
-                        let mut module = Module::new(program, batch.module, pointer_bits, mode);
+                        let (first, _) = batch.functions[0];
+                        let mut module = Module::new(program, first.module, pointer_bits, mode);
                         for (definition, body) in &batch.functions {
                             module.add_function(*definition, body, &batch.types);
                         }
@@ -99,7 +99,6 @@ pub fn write_modules<'p, T>(
             .collect(); // every worker starts before any is waited for
         let mut queue = FunctionQueue {
             batch: Batch {
-                module: ModuleId::from_index(0),
                 functions: Vec::new(),
                 types: Types::new(),
             },
