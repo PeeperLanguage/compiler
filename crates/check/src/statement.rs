@@ -19,6 +19,7 @@ use model::thir::Block;
 use model::thir::Body;
 use model::thir::Expr;
 use model::thir::ExprKind;
+use model::thir::FactKind;
 use model::thir::Local;
 use model::thir::Stmt;
 use model::thir::Symbol;
@@ -273,7 +274,8 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             Some(Symbol::Builtin(_)) => None,
             Some(Symbol::Type(definition)) => Some(definition),
             _ => {
-                self.checker.record(name.span, Symbol::Local(local));
+                self.checker
+                    .record(name.span, FactKind::Name(Symbol::Local(local)));
                 self.names.push((text, local));
                 return;
             }
@@ -313,7 +315,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 }
             },
         };
-        self.checker.record(span, symbol);
+        self.checker.record(span, FactKind::Name(symbol));
         Some(symbol)
     }
 
@@ -356,7 +358,8 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                     }
                     return None;
                 }
-                Stmt::Panic(self.body.add(self.c_string(span), span))
+                let message = self.c_string(span);
+                Stmt::Panic(self.body.add(message, span))
             }
             ast::Stmt::Expression(value) => {
                 Stmt::Expression(self.add_expr(value, TypeExpectation::Hint(None)))

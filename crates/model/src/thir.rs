@@ -83,14 +83,21 @@ pub enum Local {
     Constant(Id<Option<Constant>>),
 }
 
-/// A name written in a module, where it is declared or used, and what it
-/// stands for. Recorded only for a caller that asks
-/// (`ModuleChecks::names`), such as an editor; neither the body nor the
-/// module keeps names.
+/// What the checker found about the text at `span` of a module. Recorded
+/// only for a caller that asks (`ModuleChecks::facts`), such as an editor;
+/// neither the body nor the module keeps facts.
 #[derive(Clone, Copy, Debug)]
-pub struct Name {
+pub struct Fact {
     pub span: Span,
-    pub symbol: Symbol,
+    pub kind: FactKind,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum FactKind {
+    /// A name, where it is declared or used: what it stands for.
+    Name(Symbol),
+    /// A number or string literal: the type it got.
+    Literal(TypeId),
 }
 
 /// A parameter or a `let` binding, or one the checker makes.

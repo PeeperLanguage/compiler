@@ -293,8 +293,9 @@ last keystroke; opening, saving and closing a file are checked at once.
 
 Go to definition and hover (owner's choice, 2026-10-18: the checker records
 names, not a second resolver). While checking a body, the checker appends a
-`thir::Name` for each name written in it (in `declare`, `resolve`, which
-looks every written name up, and module paths). Its `Symbol` is what the
+`thir::Fact` for each name written in it (in `declare`, `resolve`, which
+looks every written name up, and module paths), and for each number or string
+literal, with the type it got. A name's `Symbol` is what the
 checker resolved, not a copy: a local or body `const` by its id (the body's
 arenas hold its span and type, so body `const`s get an arena of their own,
 `constants`), else a module-level declaration or module. A body with an error

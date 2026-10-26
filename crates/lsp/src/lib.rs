@@ -69,6 +69,7 @@ use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use model::semantic_types::builtin_doc;
 use model::thir;
+use model::thir::FactKind;
 use model::thir::Local;
 use model::thir::Symbol;
 use source::SourceFile;
@@ -265,28 +266,28 @@ impl<'s> Server<'s> {
                 return Response::new_err(id, code, format!("unknown request `{method}`"));
             }
         };
-        // A keyword or an operator is a token, not a name: asked first, so
-        // `/` in `a/2` is not read as the end of `a`.
+        // A keyword, an operator or a literal is a token, not a name: asked
+        // first, so `/` in `a/2` is not read as the end of `a`.
         if method == "textDocument/hover"
             && let Some(hover) = self.token_doc_at(&place)
         {
             return Response::new_ok(id, markdown_hover(hover));
         }
         let answer = self.name_at(&place).and_then(|(checked, module, name)| {
-            let CachedName { span, target } = name;
+            let CachedFact { span, kind } = name;
             let program = checked.program.as_ref()?;
-            let (file, declared, hover) = match target {
-                CachedTarget::Variable { mutable, ty } => {
+            let (file, declared, hover) = match kind {
+                CachedKind::Variable { mutable, ty } => {
                     let (file, declared) = (&module.ast.file, span);
                     let name = file.slice(declared);
-                    let facts = match mutable {
+                    let binding = match mutable {
                         true => format!("mut {name}: {ty}"),
                         false => format!("{name}: {ty}"),
                     };
-                    let hover = hover_text(file, &module.path, declared, &facts, None, None);
+                    let hover = hover_text(file, &module.path, declared, &binding, None, None);
                     (file, declared, hover)
                 }
-                CachedTarget::Constant { text } => {
+                CachedKind::Constant { text } => {
                     let (tree, declared) = (&module.ast, span);
                     let mut declarations = tree.decls.ids();
                     let declaration = declarations
@@ -294,7 +295,7 @@ impl<'s> Server<'s> {
                     let hover = declaration_hover(tree, declaration, &module.path, text.as_ref());
                     (&tree.file, declared, hover)
                 }
-                CachedTarget::Declaration { file, position } => {
+                CachedKind::Declaration { file, position } => {
                     let declared_in = program.module_of(&file)?;
                     let tree = &declared_in.ast;
                     // In range: a module whose declarations changed changes
@@ -302,24 +303,23 @@ impl<'s> Server<'s> {
                     let declaration = tree.declaration(position);
                     let declared = tree.decls[declaration].name().span;
                     // A module constant's checked value is cached with its name.
-                    let mut names = checked.names.get(&file).into_iter().flatten();
-                    let constant = names.find_map(|name| match name.target {
-                        CachedTarget::Constant { ref text } if name.span == declared => {
-                            text.as_ref()
-                        }
+                    let mut facts = checked.facts.get(&file).into_iter().flatten();
+                    let constant = facts.find_map(|fact| match fact.kind {
+                        CachedKind::Constant { ref text } if fact.span == declared => text.as_ref(),
                         _ => None,
                     });
                     let hover = declaration_hover(tree, declaration, &declared_in.path, constant);
                     (&tree.file, declared, hover)
                 }
-                CachedTarget::Local { .. } => unreachable!("`name_at` gives a local's declaration"),
-                CachedTarget::Module(file) => {
+                CachedKind::Local { .. } => unreachable!("`name_at` gives a local's declaration"),
+                CachedKind::Literal { .. } => unreachable!("`name_at` gives no literal"),
+                CachedKind::Module(file) => {
                     let imported = program.module_of(&file)?;
                     // In a string: a highlighter would read `06_x` as a number.
                     let hover = format!("```peeper\nimport \"{}\"\n```\n", imported.path);
                     (&imported.ast.file, Span::at(0), hover)
                 }
-                CachedTarget::Builtin => {
+                CachedKind::Builtin => {
                     if method == "textDocument/definition" {
                         return None; // declared nowhere
                     }
@@ -338,11 +338,12 @@ impl<'s> Server<'s> {
         Response::new_ok(id, answer)
     }
 
-    /// What hover shows for the keyword or operator at `place`, if one is
-    /// there: its text as a Peeper block, then what it does.
+    /// What hover shows for the keyword, operator or literal at `place`, if
+    /// one is there: its text, or a literal's type, as a Peeper block, then
+    /// what it is.
     fn token_doc_at(&self, place: &TextDocumentPositionParams) -> Option<String> {
         let file = file_path(&place.text_document.uri)?;
-        let (_, module) = self.modules_of(&file).next()?;
+        let (checked, module) = self.modules_of(&file).next()?;
         let tree = &module.ast;
         let offset = offset(&tree.file, place.position) as u32;
         // Only the lexer tells a keyword from the same word in a comment or
@@ -367,11 +368,20 @@ impl<'s> Server<'s> {
             _ => None,
         };
         let mut operators = tree.exprs.ids().filter_map(operator);
-        let (symbol, doc) = match operators.find(|&(symbol, _)| symbol == token.kind.text()) {
+        let (shown, doc) = match operators.find(|&(symbol, _)| symbol == token.kind.text()) {
             Some(found) => found,
-            None => (token.kind.text(), token.kind.doc()?),
+            None => {
+                let doc = token.kind.doc()?;
+                // A literal shows the type its check gave it.
+                let mut facts = checked.facts.get(&file).into_iter().flatten();
+                let literal = facts.find_map(|fact| match fact.kind {
+                    CachedKind::Literal { ref ty } if fact.span == token.span => Some(ty.as_str()),
+                    _ => None,
+                });
+                (literal.unwrap_or(token.kind.text()), doc)
+            }
         };
-        Some(doc_hover(symbol, doc))
+        Some(doc_hover(shown, doc))
     }
 
     /// The module read from `file` in each program last checked that holds
@@ -394,16 +404,19 @@ impl<'s> Server<'s> {
     fn name_at(
         &self,
         place: &TextDocumentPositionParams,
-    ) -> Option<(&Checked, &project::Module, CachedName)> {
+    ) -> Option<(&Checked, &project::Module, CachedFact)> {
         let file = file_path(&place.text_document.uri)?;
         self.modules_of(&file).find_map(|(checked, module)| {
             let offset = offset(&module.ast.file, place.position) as u32;
             let contains_offset = |span: Span| span.start <= offset && offset <= span.end;
-            let names = checked.names.get(&file).map_or(&[][..], Vec::as_slice);
-            if let Some(name) = names.iter().find(|name| contains_offset(name.span)) {
-                let name = match name.target {
-                    CachedTarget::Local { declared } => {
-                        names.iter().find(|name| name.span == declared)?
+            let facts = checked.facts.get(&file).map_or(&[][..], Vec::as_slice);
+            let mut names = facts.iter().filter(|fact| {
+                !matches!(fact.kind, CachedKind::Literal { .. }) && contains_offset(fact.span)
+            });
+            if let Some(name) = names.next() {
+                let name = match name.kind {
+                    CachedKind::Local { declared } => {
+                        facts.iter().find(|fact| fact.span == declared)?
                     }
                     _ => name,
                 };
@@ -416,11 +429,11 @@ impl<'s> Server<'s> {
                 contains_offset(span).then_some((index, span))
             });
             let (position, span) = declared?;
-            let target = CachedTarget::Declaration {
+            let kind = CachedKind::Declaration {
                 file: file.clone(),
                 position: position as u32,
             };
-            Some((checked, module, CachedName { span, target }))
+            Some((checked, module, CachedFact { span, kind }))
         })
     }
 
@@ -585,34 +598,34 @@ impl<'s> Server<'s> {
 struct Checked {
     results: compile::Results,   // reused by the next compile
     published: HashSet<PathBuf>, // the files last given diagnostics
-    /// The program as last compiled, and the names written in the bodies of
-    /// each of its modules and the names of its constants, by file: what
-    /// definition and hover read.
+    /// The program as last compiled, and the facts of each of its modules'
+    /// text and the names of its constants, by file: what definition and
+    /// hover read.
     program: Option<project::Program>,
-    names: HashMap<PathBuf, Vec<CachedName>>,
+    facts: HashMap<PathBuf, Vec<CachedFact>>,
     fix_all: HashMap<PathBuf, CodeAction>, // each file's sure fixes, as of the last check
 }
 
 impl Checked {
     /// Compiles `program` again, reusing what the last compile found, and
-    /// keeps the names written in each module and the names of its
-    /// constants: a module the compile reused gave no names, and the names
-    /// found before still fit it; a module checked again gets its new names.
+    /// keeps the facts of each module's text and the names of its
+    /// constants: a module the compile reused gave no facts, and the facts
+    /// found before still fit it; a module checked again gets its new facts.
     fn update(&mut self, program: &project::Program) {
-        let mut found: HashMap<ModuleId, Vec<CachedName>> = HashMap::new();
+        let mut found: HashMap<ModuleId, Vec<CachedFact>> = HashMap::new();
         let previous = std::mem::take(&mut self.results);
-        let cache_names = |output: compile::Output| match output {
+        let cache_facts = |output: compile::Output| match output {
             compile::Output::Function(compile::CheckedFunction {
                 definition,
                 thir,
-                names,
+                facts,
                 types,
                 ..
             }) => {
-                let names = names
+                let facts = facts
                     .iter()
-                    .map(|name| CachedName::new(program, name, Some((thir, types))));
-                found.entry(definition.module).or_default().extend(names);
+                    .map(|fact| CachedFact::new(program, fact, Some(thir), types));
+                found.entry(definition.module).or_default().extend(facts);
             }
             compile::Output::Constant {
                 definition,
@@ -622,45 +635,50 @@ impl Checked {
                 let tree = &program.modules[definition.module.index()].ast;
                 let declared = tree.decls[tree.declaration(definition.index)].name().span;
                 let text = constant.map(|constant| ConstantText::new(program, constant, types));
-                let target = CachedTarget::Constant { text };
-                let name = CachedName {
+                let kind = CachedKind::Constant { text };
+                let name = CachedFact {
                     span: declared,
-                    target,
+                    kind,
                 };
                 found.entry(definition.module).or_default().push(name);
             }
-            compile::Output::Names { module, names } => {
-                let names = names
+            compile::Output::Facts {
+                module,
+                facts,
+                types,
+            } => {
+                let facts = facts
                     .iter()
-                    .map(|name| CachedName::new(program, name, None));
-                found.entry(module).or_default().extend(names);
+                    .map(|fact| CachedFact::new(program, fact, None, types));
+                found.entry(module).or_default().extend(facts);
             }
         };
-        self.results = compile::run(program, compile::POINTER_BITS, previous, true, cache_names);
+        self.results = compile::run(program, compile::POINTER_BITS, previous, true, cache_facts);
         let reused: HashSet<&Path> = self
             .results
             .reused()
             .map(|file| Path::new(&file.path))
             .collect();
-        self.names.retain(|file, _| reused.contains(file.as_path()));
-        self.names.extend(found.into_iter().map(|(module, found)| {
+        self.facts.retain(|file, _| reused.contains(file.as_path()));
+        self.facts.extend(found.into_iter().map(|(module, found)| {
             let file = &program.modules[module.index()].ast.file.path;
             (PathBuf::from(file), found)
         }));
     }
 }
 
-/// A name written in a module, or a module constant's name, and what it stands
-/// for, kept as long as its module is reused: by file and place, not by the
-/// ids of one compile.
+/// What the check found about the text at `span` of a module: a name and
+/// what it stands for, a module constant's name, or a literal's type. Kept as
+/// long as its module is reused: by file and place, not by the ids of one
+/// compile.
 #[derive(Clone)]
-struct CachedName {
+struct CachedFact {
     span: Span,
-    target: CachedTarget,
+    kind: CachedKind,
 }
 
 #[derive(Clone)]
-enum CachedTarget {
+enum CachedKind {
     /// A variable of a body, this name being its declaration: whether it is
     /// `mut`, and its type's text.
     Variable { mutable: bool, ty: String },
@@ -680,49 +698,57 @@ enum CachedTarget {
     Module(PathBuf),
     /// A built-in type, named as written.
     Builtin,
+    /// A number or string literal, with its type's text.
+    Literal { ty: String },
 }
 
-impl CachedName {
-    /// `name`, written in a module of `program`; a local's name comes with
-    /// the `body` it belongs to and the types it names.
+impl CachedFact {
+    /// `fact`, about the text of a module of `program`, whose types are of
+    /// `types`; a local's name comes with the `body` it belongs to.
     fn new(
         program: &project::Program,
-        name: &thir::Name,
-        body: Option<(&thir::Body, &Types)>,
-    ) -> CachedName {
+        fact: &thir::Fact,
+        body: Option<&thir::Body>,
+        types: &Types,
+    ) -> CachedFact {
         let file = |module: ModuleId| PathBuf::from(&program.modules[module.index()].ast.file.path);
-        let target = match name.symbol {
-            Symbol::Local(local) => {
-                let (body, types) = body
-                    .expect("a local's name comes with its function (`CheckedFunction::names`)");
+        let kind = match fact.kind {
+            FactKind::Literal(ty) => CachedKind::Literal {
+                ty: type_text(program, types, ty),
+            },
+            FactKind::Name(Symbol::Local(local)) => {
+                let body = body
+                    .expect("a local's name comes with its function (`CheckedFunction::facts`)");
                 let declared = body.declared(local);
                 match local {
-                    _ if name.span != declared => CachedTarget::Local { declared },
+                    _ if fact.span != declared => CachedKind::Local { declared },
                     Local::Variable(variable) => {
                         let variable = body.variables[variable];
-                        CachedTarget::Variable {
+                        CachedKind::Variable {
                             mutable: variable.mutable,
                             ty: type_text(program, types, variable.ty),
                         }
                     }
-                    Local::Constant(constant) => CachedTarget::Constant {
+                    Local::Constant(constant) => CachedKind::Constant {
                         text: (body.constants[constant].as_ref())
                             .map(|constant| ConstantText::new(program, constant, types)),
                     },
                 }
             }
-            Symbol::Module(module) => CachedTarget::Module(file(module)),
-            Symbol::Function(definition)
-            | Symbol::Constant(definition)
-            | Symbol::Type(definition) => CachedTarget::Declaration {
+            FactKind::Name(Symbol::Module(module)) => CachedKind::Module(file(module)),
+            FactKind::Name(
+                Symbol::Function(definition)
+                | Symbol::Constant(definition)
+                | Symbol::Type(definition),
+            ) => CachedKind::Declaration {
                 file: file(definition.module),
                 position: definition.index,
             },
-            Symbol::Builtin(_) => CachedTarget::Builtin,
+            FactKind::Name(Symbol::Builtin(_)) => CachedKind::Builtin,
         };
-        CachedName {
-            span: name.span,
-            target,
+        CachedFact {
+            span: fact.span,
+            kind,
         }
     }
 }
@@ -1068,7 +1094,7 @@ mod tests {
     use source::SourceFile;
     use source::Span;
 
-    use super::CachedTarget;
+    use super::CachedKind;
     use super::DEBOUNCE;
     use super::OpenFile;
     use super::Server;
@@ -1372,7 +1398,7 @@ mod tests {
         let uri = Url::from_file_path(&file).unwrap();
         let (connection, _client) = Connection::memory();
         let mut server = Server::new(&connection, Path::new(""));
-        let text = "type Meters = i64;\nfn main() {\n    let total: Meters = 1;\n    let more = total;\n}\n// let me\nstruct Run {\n    length: Meters,\n}\nfn ops(a: i32, x: f64) -> f64 {\n    let q = a/2;\n    const C = -(7 / 2);\n    return x - -1.0;\n}\nfn refs(m: i32) -> i32 {\n    let r = &m;\n    let both = m & 3;\n    let mut x = 1;\n    let p = @x;\n    let s = [2]i32{1, 2};\n    return r.* + s[0];\n}\n";
+        let text = "type Meters = i64;\nfn main() {\n    let total: Meters = 1;\n    let more = total;\n}\n// let me\nstruct Run {\n    length: Meters,\n}\nfn ops(a: i32, x: f64) -> f64 {\n    let q = a/2;\n    const C = -(7 / 2);\n    return x - -1.0;\n}\nfn refs(m: i32) -> i32 {\n    let r = &m;\n    let both = m & 3;\n    let mut x = 1;\n    let p = @x;\n    let s = [2]i32{1, 2};\n    return r.* + s[0];\n}\nconst SMALL: u8 = 200;\nfn literals(n: u8) -> u8 {\n    let wide: f32 = 2;\n    let low: i8 = -128;\n    println(\"hi\", c\"x\");\n    let big: u8 = 300;\n    return n * 3;\n}\n";
         let document = json!({ "uri": uri, "languageId": "peeper", "version": 1, "text": text });
         let open = Notification::new(
             "textDocument/didOpen".to_string(),
@@ -1472,6 +1498,25 @@ mod tests {
         starts(20, 18, "```peeper\n[\n```\n\n---\n\n Indexes an array");
         starts(20, 13, "```peeper\n*\n```\n\n---\n\n Points at a value");
         starts(20, 12, "```peeper\n.\n```\n\n---\n\n Reaches into");
+        // A literal shows the type its check gave it, the type its place
+        // expects or its own, though its value does not fit; an array
+        // length, which is not checked as a value, its kind. Neither is declared anywhere, and the place after
+        // one is not a name.
+        let number = |ty: &str| format!("```peeper\n{ty}\n```\n\n---\n\n A number literal.\n");
+        starts(22, 18, &number("u8"));
+        starts(24, 20, &number("f32"));
+        assert_eq!(hover(25, 18), doc("-", UnaryOp::Negate.doc()));
+        starts(25, 20, &number("i8"));
+        starts(26, 13, "```peeper\ncstr\n```\n\n---\n\n A string literal");
+        starts(26, 19, "```peeper\ncstr\n```\n\n---\n\n A c string literal");
+        starts(27, 18, &number("u8"));
+        starts(28, 15, &number("u8"));
+        starts(19, 13, &number("number"));
+        assert_eq!(
+            ask("textDocument/definition", 28, 15),
+            serde_json::Value::Null
+        );
+        assert_eq!(ask("textDocument/hover", 28, 16), serde_json::Value::Null);
     }
 
     /// Names across modules: each kind of name answers where it is declared
@@ -1565,11 +1610,11 @@ const BIG = utils::Twice(21);
         );
         // What is known of a variable is kept once, with its declaration:
         // `count`, `total`, `sum`, `wide`, `wrong`, `ratio`, `broken`.
-        let names = &server.checked[&main_file].names[&main_file];
-        let facts = names
+        let facts = &server.checked[&main_file].facts[&main_file];
+        let variables = facts
             .iter()
-            .filter(|name| matches!(name.target, CachedTarget::Variable { .. }));
-        assert_eq!(facts.count(), 7);
+            .filter(|fact| matches!(fact.kind, CachedKind::Variable { .. }));
+        assert_eq!(variables.count(), 7);
         assert_eq!(
             hover(&server, "utils", 1),
             json!("```peeper\nimport \"app:utils\"\n```\n")

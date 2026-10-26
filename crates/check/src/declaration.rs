@@ -10,6 +10,7 @@ use model::semantic_types;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::thir::Body;
+use model::thir::FactKind;
 use model::thir::Symbol;
 use source::Span;
 
@@ -304,7 +305,7 @@ impl Checker<'_> {
                 let name = tree.file.slice(span);
                 let symbol = self.global(name);
                 if let Some(symbol) = symbol {
-                    self.record(span, symbol);
+                    self.record(span, FactKind::Name(symbol));
                 }
                 match symbol {
                     Some(Symbol::Builtin(builtin)) => return builtin,

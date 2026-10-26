@@ -52,11 +52,11 @@ sequenceDiagram
     participant Flow as flow
     participant Callback as Caller's closure
 
-    Caller->>Compile: run(program, pointer_bits, previous, record_names, use_function)
+    Caller->>Compile: run(program, pointer_bits, previous, record_facts, use_function)
     loop Each function with THIR in a module checked this compile
         Compile->>Compile: Check the function's signature
-        Compile->>Check: Check body, recording names when record_names
-        Check-->>Compile: THIR and recorded names
+        Compile->>Check: Check body, recording facts when record_facts
+        Check-->>Compile: THIR and recorded facts
         Compile->>Lower: Lower THIR
         Lower-->>Compile: Some(MIR) or None
         Compile->>Flow: Check the paths through the MIR
@@ -65,10 +65,10 @@ sequenceDiagram
         alt CLI caller
             Callback->>Callback: Append requested dumps and LLVM text
         else LSP caller
-            Callback->>Callback: Convert names to cached editor information
+            Callback->>Callback: Convert facts to cached editor information
         end
         Callback-->>Compile: Return - borrowed results no longer needed
-        Compile->>Compile: Drop this function's THIR, MIR and recorded names
+        Compile->>Compile: Drop this function's THIR, MIR and recorded facts
     end
     Compile-->>Caller: Results: diagnostics and module reuse information
 ```

@@ -24,6 +24,7 @@ use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use model::thir::Expr;
 use model::thir::ExprKind;
+use model::thir::FactKind;
 use model::thir::FieldValue;
 use model::thir::Local;
 use model::thir::Symbol;
@@ -152,7 +153,8 @@ impl ThirBuilder<'_, '_> {
     }
 
     /// The string literal at `span` as a `cstr`: its bytes.
-    pub(crate) fn c_string(&self, span: Span) -> Expr {
+    pub(crate) fn c_string(&mut self, span: Span) -> Expr {
+        self.checker.record(span, FactKind::Literal(TypeId::CSTR));
         let bytes = literal::value(self.checker.module().ast.file.slice(span));
         Expr {
             ty: TypeId::CSTR,
@@ -876,7 +878,7 @@ impl ThirBuilder<'_, '_> {
             (tree.file.slice(module_span), tree.file.slice(member_span));
         let imported = match self.checker.global(module_name) {
             Some(symbol @ Symbol::Module(imported)) => {
-                self.checker.record(module_span, symbol);
+                self.checker.record(module_span, FactKind::Name(symbol));
                 imported
             }
             Some(Symbol::Type(_)) => {
@@ -907,7 +909,7 @@ impl ThirBuilder<'_, '_> {
                 .report_unknown(diagnostics::UNDEFINED_NAME, member_span, message, meant);
             return None;
         };
-        self.checker.record(member_span, symbol);
+        self.checker.record(member_span, FactKind::Name(symbol));
         if !scope::is_exported(member_name) {
             let file = &tree.file;
             self.checker.report(
@@ -1047,7 +1049,7 @@ impl ThirBuilder<'_, '_> {
     /// The number literal at `number`, or its negation written at `negated`
     /// (`-128`, which fits `i8` where `128` does not). It takes its suffix's
     /// type, else the type `expected` if it can (`takes_type`), else `i32` or
-    /// `f64`.
+    /// `f64`. Its type is recorded even when its value does not fit.
     fn check_number(
         &mut self,
         number: Span,
@@ -1072,8 +1074,9 @@ impl ThirBuilder<'_, '_> {
                 .error(diagnostics::INVALID_NUMBER_SUFFIX, message, number);
             return Expr::INVALID;
         };
+        self.checker.record(number, FactKind::Literal(ty));
         let negative = negated.is_some();
-        let value = match types[ty] {
+        let value = match self.checker.types[ty] {
             Type::Integer(integer) => {
                 let magnitude = literal.integer_value();
                 integer.fits(&magnitude, negative).then(|| {

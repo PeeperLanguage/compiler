@@ -24,7 +24,8 @@ use model::constant::Constant;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
-use model::thir::Name;
+use model::thir::Fact;
+use model::thir::FactKind;
 use model::thir::Symbol;
 use scope::Scope;
 use source::Span;
@@ -41,9 +42,9 @@ pub struct Checker<'p> {
     /// How wide a pointer is on the target, in bits: the width of `isize` and
     /// `usize`.
     pub pointer_bits: u32,
-    /// Whether the names found are recorded (`ModuleChecks::names`), as for
+    /// Whether the facts found are recorded (`ModuleChecks::facts`), as for
     /// an editor.
-    record_names: bool,
+    record_facts: bool,
     /// The declarations being checked, outermost first: the innermost's
     /// module is the module being checked (`current_module`). One asked for
     /// again while it is here depends on itself.
@@ -57,10 +58,10 @@ struct Checking {
     /// own sake).
     used_at: Span,
     /// Whether it is a function's body built only to run at compile time
-    /// (`evaluate_call`). Its names are not recorded (`Checker::record`): the
+    /// (`evaluate_call`). Its facts are not recorded (`Checker::record`): the
     /// compile builds the body again and records them with the THIR that
     /// explains its locals. A declaration it checks is checked once, in an
-    /// entry of its own, which records its names.
+    /// entry of its own, which records its facts.
     to_run: bool,
 }
 
@@ -85,10 +86,10 @@ pub struct ModuleChecks {
     /// (`evaluate_call`), so a constant's value depends on their bodies,
     /// which no interface holds.
     pub ran_modules: Vec<ModuleId>,
-    /// The names found in it (`Checker::record`), when they are recorded.
+    /// The facts found in it (`Checker::record`), when they are recorded.
     /// Declarations are checked as they are asked for, in any order, so the
-    /// names wait here until the compile hands them over.
-    pub names: Vec<Name>,
+    /// facts wait here until the compile hands them over.
+    pub facts: Vec<Fact>,
     /// What checking it reported, in order.
     pub diagnostics: Vec<Diagnostic>,
 }
@@ -103,11 +104,11 @@ pub enum State<T> {
 impl<'p> Checker<'p> {
     /// Nothing checked yet of `modules` but their scopes, whose errors are
     /// each module's first diagnostics. Pointers have `pointer_bits` bits.
-    /// Names are recorded when `record_names`, as for an editor.
+    /// Facts are recorded when `record_facts`, as for an editor.
     pub fn new(
         modules: &'p [project::Module],
         pointer_bits: u32,
-        record_names: bool,
+        record_facts: bool,
     ) -> Checker<'p> {
         let module_checks = (0..modules.len())
             .map(|index| {
@@ -121,7 +122,7 @@ impl<'p> Checker<'p> {
                     constants: vec![State::NotStarted; declarations],
                     bodies: (0..declarations).map(|_| Built::NotYet).collect(),
                     ran_modules: Vec::new(),
-                    names: Vec::new(),
+                    facts: Vec::new(),
                     diagnostics,
                 }
             })
@@ -131,7 +132,7 @@ impl<'p> Checker<'p> {
             module_checks,
             types: Types::new(),
             pointer_bits,
-            record_names,
+            record_facts,
             checking: Vec::new(),
         }
     }
@@ -331,16 +332,16 @@ impl<'p> Checker<'p> {
         TypeId::INVALID
     }
 
-    /// Records that the name written at `span` in the module being checked
-    /// stands for `symbol`, when names are recorded (`new`), unless it is in
-    /// a body built only to run (`Checking::to_run`).
-    pub(crate) fn record(&mut self, span: Span, symbol: Symbol) {
-        let Some(checking) = self.checking.last().filter(|_| self.record_names) else {
+    /// Records the fact `kind` about the text at `span` in the module being
+    /// checked, when facts are recorded (`new`), unless it is in a body
+    /// built only to run (`Checking::to_run`).
+    pub(crate) fn record(&mut self, span: Span, kind: FactKind) {
+        let Some(checking) = self.checking.last().filter(|_| self.record_facts) else {
             return;
         };
         if !checking.to_run {
             let module = checking.definition.module.index();
-            self.module_checks[module].names.push(Name { span, symbol });
+            self.module_checks[module].facts.push(Fact { span, kind });
         }
     }
 

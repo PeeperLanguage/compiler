@@ -13,11 +13,14 @@ pub struct Token {
 /// Declares every token kind once, with its text: the `TokenKind` enum,
 /// `TokenKind::text`, and the lexer's `OPERATORS` and `KEYWORDS` lists, which
 /// hold the kinds after the `#[operators]` and `#[keywords]` headers, in the
-/// order written. Each keyword has a doc comment, and an operator may have
-/// one, which `TokenKind::doc` gives.
+/// order written. Each keyword has a doc comment, and a named kind or an
+/// operator may have one, which `TokenKind::doc` gives.
 macro_rules! tokens {
     (pub enum TokenKind {
-        $($named:ident = $named_text:literal,)*
+        $(
+            $(#[doc = $named_doc:literal] $(#[doc = $named_doc_more:literal])*)?
+            $named:ident = $named_text:literal,
+        )*
         #[operators]
         $(
             $(#[doc = $operator_doc:literal] $(#[doc = $operator_doc_more:literal])*)?
@@ -33,7 +36,10 @@ macro_rules! tokens {
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
         #[repr(u8)] // parser tables are indexed by kind
         pub enum TokenKind {
-            $($named,)*
+            $(
+                $(#[doc = $named_doc] $(#[doc = $named_doc_more])*)?
+                $named,
+            )*
             $(
                 $(#[doc = $operator_doc] $(#[doc = $operator_doc_more])*)?
                 $operator,
@@ -56,12 +62,17 @@ macro_rules! tokens {
                 }
             }
 
-            /// What this keyword or operator does, as Markdown: a first line
-            /// that says it, then more and an example; `None` for a token
+            /// What this keyword, operator or literal is, as Markdown: a first
+            /// line that says it, then more and an example; `None` for a token
             /// without a doc. Each line keeps the space after its `///`, which
             /// Markdown drops.
             pub const fn doc(self) -> Option<&'static str> {
                 match self {
+                    $($(
+                        TokenKind::$named => {
+                            Some(concat!($named_doc $(, "\n", $named_doc_more)*))
+                        }
+                    )?)*
                     $($(
                         TokenKind::$operator => {
                             Some(concat!($operator_doc $(, "\n", $operator_doc_more)*))
@@ -88,10 +99,54 @@ tokens! {
         // Kinds whose text varies: `text` describes them.
         Eof = "end of file",
         Ident = "identifier",
+        /// A number literal.
+        ///
+        /// Without a suffix it takes the type its place expects, if it can: a whole number an integer type, and a base-10 number a float type; elsewhere it is `i32`, or `f64` with a `.` or an exponent. A suffix names the type, as in `0xFFu8` or `7f32`. The value must fit the type, and a `-` right before the literal counts: `-128` fits `i8`.
+        ///
+        /// `0x`, `0o` and `0b` start a base-16, base-8 and base-2 number, and `_` may separate digits.
+        ///
+        /// ```peeper
+        /// let count = 42;      // i32
+        /// let half = 2.5;      // f64
+        /// let byte = 0xFFu8;   // 255
+        /// let small: u8 = 200; // u8
+        /// let whole: f32 = 2;  // 2.0
+        /// let big = 1_000;     // 1000
+        /// ```
         Number = "number",
+        /// A string literal: text in double quotes.
+        ///
+        /// For now only `print`, `println` and `panic` take one, as a `cstr`; other string literals are not supported yet. Its escapes are a c string's.
+        ///
+        /// ```peeper
+        /// println("hello");
+        /// panic "stop";
+        /// ```
         String = "string",
+        /// A c string literal: its bytes and a zero byte after them, as a `cstr`.
+        ///
+        /// Each escape is one byte: `\n`, `\r`, `\t`, `\0`, `\\`, `\"`, or `\xHH` for the byte with the hex value `HH`.
+        ///
+        /// ```peeper
+        /// let greeting = c"hi\n";
+        /// let letters = c"\x41\x42"; // AB
+        /// ```
         CString = "c string",
+        /// A character literal: one character in single quotes.
+        ///
+        /// Not supported yet.
+        ///
+        /// ```peeper
+        /// let letter = 'a';
+        /// ```
         Char = "character",
+        /// A byte literal: one byte in single quotes, after `b`.
+        ///
+        /// Not supported yet.
+        ///
+        /// ```peeper
+        /// let letter = b'a';
+        /// ```
         ByteChar = "byte character",
         DocComment = "document comment",
 
