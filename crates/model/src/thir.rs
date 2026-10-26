@@ -54,7 +54,7 @@ pub struct Body {
 }
 
 /// What a name stands for: first where it is declared, then its kind. A
-/// module's scope holds all but `Local`; a body adds its own.
+/// module's scope holds the declared ones but `Local`; a body adds its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Symbol {
     /// An imported module.
@@ -68,6 +68,8 @@ pub enum Symbol {
     Type(DefId),
     /// A name declared in a body.
     Local(Local),
+    /// A built-in type, such as `i32`, which no declaration hides.
+    Builtin(TypeId),
 }
 
 /// A name declared in a body, by its kind: checked in place with the
@@ -80,10 +82,10 @@ pub enum Local {
     Constant(Id<Option<Constant>>),
 }
 
-/// A name written in a body, where it is declared or used, and what it
+/// A name written in a module, where it is declared or used, and what it
 /// stands for. Recorded only for a caller that asks
-/// (`Checker::check_body`), such as an editor; the body itself does not keep
-/// names.
+/// (`ModuleChecks::names`), such as an editor; neither the body nor the
+/// module keeps names.
 #[derive(Clone, Copy, Debug)]
 pub struct Name {
     pub span: Span,

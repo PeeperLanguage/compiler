@@ -1,0 +1,7 @@
+name = "negative_check_value_takes_type_name"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = ["T0003", "`Meters` is a type; a value can't take its name", "`i32` is a type; a value can't take its name", "T0004", "`i32` is a type, not a value"]

@@ -4,7 +4,6 @@
 //! Names of the prelude (`core:global`) are not copied in; a lookup that
 //! misses here goes on to the prelude's exported names.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use diagnostics::Diagnostic;
@@ -14,6 +13,7 @@ use model::ModuleId;
 use model::ast;
 use model::thir::Symbol;
 use project::ImportKind;
+use rustc_hash::FxHashMap;
 use source::SourceFile;
 use source::Span;
 
@@ -24,14 +24,16 @@ pub struct Scope {
     /// The module whose scope comes next: the prelude (`core:global`), for
     /// every module but the prelude.
     pub parent: Option<ModuleId>,
-    names: HashMap<Box<str>, (Symbol, Span)>,
+    /// Fx hashing: every name a body uses that is not a local is looked up
+    /// here, and the default hash costs about 1% of a compile.
+    names: FxHashMap<Box<str>, (Symbol, Span)>,
 }
 
 impl Scope {
     pub fn new(parent: Option<ModuleId>) -> Scope {
         Scope {
             parent,
-            names: HashMap::new(),
+            names: FxHashMap::default(),
         }
     }
 

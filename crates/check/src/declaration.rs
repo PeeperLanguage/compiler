@@ -211,7 +211,7 @@ impl Checker<'_> {
     pub(crate) fn check_constant(&mut self, definition: DefId) -> Option<Constant> {
         let declaration = self.module().ast.declaration(definition.index);
         let mut body = Body::default();
-        ThirBuilder::new(self, &mut body, TypeId::VOID, None).check_const_statement(declaration)
+        ThirBuilder::new(self, &mut body, TypeId::VOID).check_const_statement(declaration)
     }
 
     /// The type of a value whose type is written `ty`: a named type is the
@@ -292,20 +292,22 @@ impl Checker<'_> {
         }
     }
 
-    /// The type a type expression of the module's tree stands for. A named
-    /// type stays a name (`Type::Named`); a value's type is
-    /// `resolve_value_type`.
+    /// The type a type expression of the module's tree stands for, its names
+    /// recorded (`record`). A named type stays a name (`Type::Named`); a
+    /// value's type is `resolve_value_type`. A local never names a type
+    /// (`ThirBuilder::declare`), so only top-level names are looked up.
     fn resolve_type(&mut self, ty: Id<ast::Type>) -> TypeId {
         let tree = &self.module().ast;
         let span = tree.types.span(ty);
         let what = match tree.types[ty] {
             ast::Type::Name => {
                 let name = tree.file.slice(span);
-                let pointer_bits = self.pointer_bits;
-                if let Some(builtin) = self.types.builtin(name, pointer_bits) {
-                    return builtin;
+                let symbol = self.global(name);
+                if let Some(symbol) = symbol {
+                    self.record(span, symbol);
                 }
-                match self.global(name) {
+                match symbol {
+                    Some(Symbol::Builtin(builtin)) => return builtin,
                     Some(Symbol::Type(definition)) => return self.named_type(definition, span),
                     Some(Symbol::Function(_) | Symbol::Constant(_) | Symbol::Local(_)) => {
                         let message = format!("`{name}` is a value, not a type");
@@ -388,19 +390,19 @@ mod tests {
     /// The type of every function and type declaration of `text`, as type
     /// text, and the diagnostics.
     fn declared_types(text: &str) -> (Vec<String>, Vec<Reported>) {
-        let (found, types, reported) = with_checker(text, |checker| {
-            let tree = &checker.module().ast;
+        let (found, types, reported) = with_checker(text, |checker, main| {
+            let tree = &checker.modules[main.index()].ast;
             let declarations: Vec<_> = tree.lists.items(tree.top_level).collect();
             let found: Vec<TypeId> = declarations
                 .into_iter()
                 .enumerate()
                 .map(|(index, declaration)| {
                     let definition = DefId {
-                        module: checker.current_module,
+                        module: main,
                         index: index as u32,
                     };
                     // As a compile asks, so a use does not report it again.
-                    let written = checker.module().ast.decls[declaration];
+                    let written = tree.decls[declaration];
                     let name_span = written.name().span;
                     match written {
                         ast::Decl::Function(_) => checker.function_type(definition, name_span),

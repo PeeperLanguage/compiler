@@ -77,14 +77,40 @@ impl ModuleResults {
     }
 }
 
+/// What a compile hands on as it goes (`run`), each piece used once and
+/// dropped after.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "each is moved once into the callback, never stored; a box would allocate per function"
+)]
+pub enum Output<'c> {
+    Function(CheckedFunction<'c>),
+    /// A module constant `definition`, of a module checked, with its type and
+    /// value; `None` when it had an error.
+    Constant {
+        definition: DefId,
+        constant: Option<&'c Constant>,
+        types: &'c Types, // the program's types so far, which `constant` names
+    },
+    /// The names of `module` found after its last function was handed on;
+    /// none unless the compile records names (`ModuleChecks::names`), and
+    /// none stands for a local.
+    Names {
+        module: ModuleId,
+        names: &'c [thir::Name],
+    },
+}
+
 /// A function with a body, as a compile hands it on: built, used once, and
 /// dropped after, except its MIR, which is handed over.
 pub struct CheckedFunction<'c> {
     pub definition: DefId,
     pub signature: TypeId, // its function type
     pub thir: &'c thir::Body,
-    /// The names written in it, when the compile records names (as for an
-    /// editor); otherwise none.
+    /// The names of its module found since the last function was handed on:
+    /// those written in it, and in the declarations checked meanwhile, when
+    /// the compile records names (as for an editor); otherwise none. Only
+    /// this function's locals are among them, explained by `thir`.
     pub names: &'c [thir::Name],
     pub mir: Option<mir::Body>, // `None` when checking it found an error
     pub types: &'c Types,       // the program's types so far, which `signature` and the bodies name
@@ -100,23 +126,23 @@ pub const POINTER_BITS: u32 = usize::BITS;
 /// gives what it found. A module of `previous` (a compile of the same program
 /// with the same `pointer_bits`, or `Results::default()`) whose text and
 /// whose imports' interfaces are unchanged keeps its diagnostics, and its
-/// bodies are not checked again. Each checked function with a body goes to
-/// `use_function` as soon as it is built, in declaration order, module by
-/// module, with its names when `record_names`; its THIR is dropped after and
-/// its MIR is `use_function`'s: nothing here holds every function's bodies at
-/// once. Each module constant of a module checked goes to `use_constant`,
-/// with its type and value, `None` when it had an error. Integers as wide as
-/// a pointer (`isize`, `usize`) have `pointer_bits` bits.
+/// bodies are not checked again. What it checks goes to `use_output` in
+/// declaration order, module by module: each function with a body as soon as
+/// it is built, with the names found so far when `record_names`, then
+/// dropped except its MIR, which is `use_output`'s: nothing here holds every
+/// function's bodies at once. Each module constant goes once checked, with
+/// its type and value, and last the module's remaining names, none unless
+/// `record_names`. Integers as wide as a pointer (`isize`, `usize`) have
+/// `pointer_bits` bits.
 pub fn run(
     program: &project::Program,
     pointer_bits: u32,
     previous: Results,
     record_names: bool,
-    mut use_function: impl FnMut(CheckedFunction),
-    mut use_constant: impl FnMut(DefId, Option<&Constant>, &Types),
+    mut use_output: impl FnMut(Output),
 ) -> Results {
     let modules = program.modules.as_slice();
-    let mut checker = Checker::new(modules, pointer_bits);
+    let mut checker = Checker::new(modules, pointer_bits, record_names);
     let mut results: Vec<ModuleResults> = modules
         .iter()
         .map(|module| ModuleResults::new(module.ast.file.clone()))
@@ -165,20 +191,14 @@ pub fn run(
             changed.push(false);
             continue;
         }
-        compile_module(
-            &mut checker,
-            id,
-            &mut thir,
-            record_names,
-            &mut use_function,
-            &mut use_constant,
-        );
+        compile_module(&mut checker, id, &mut thir, &mut use_output);
         let interface = interface(&checker, id);
         changed.push(previous_interface != Some(interface));
         let found = &mut results[index];
         found.interface = interface;
-        found.diagnostics = std::mem::take(&mut checker.diagnostics[index]);
-        let ran = checker.ran_modules[index].iter();
+        let checked = &mut checker.module_checks[index];
+        found.diagnostics = std::mem::take(&mut checked.diagnostics);
+        let ran = checked.ran_modules.iter();
         found.ran_modules = ran
             .map(|ran| modules[ran.index()].ast.file.path.clone())
             .collect();
@@ -187,15 +207,13 @@ pub fn run(
 }
 
 /// Checks every declaration of `module`, each where it is declared, used or
-/// not, compiles each function (`compile_function`) and gives each constant
-/// to `use_constant`.
+/// not, compiles each function (`compile_function`) and gives each constant,
+/// then the module's remaining names, to `use_output`.
 fn compile_module(
     checker: &mut Checker,
     module: ModuleId,
     thir: &mut thir::Body,
-    record_names: bool,
-    use_function: &mut impl FnMut(CheckedFunction),
-    use_constant: &mut impl FnMut(DefId, Option<&Constant>, &Types),
+    use_output: &mut impl FnMut(Output),
 ) {
     let tree = &checker.modules[module.index()].ast;
     for (index, declaration) in tree.lists.items(tree.top_level).enumerate() {
@@ -204,50 +222,52 @@ fn compile_module(
             index: index as u32,
         };
         match tree.decls[declaration] {
-            ast::Decl::Function(function) => compile_function(
-                checker,
-                definition,
-                &function,
-                thir,
-                record_names,
-                use_function,
-            ),
+            ast::Decl::Function(function) => {
+                compile_function(checker, definition, &function, thir, use_output);
+            }
             ast::Decl::Const { name, .. } => {
                 let constant = checker.constant(definition, name.span);
-                use_constant(definition, constant.as_ref(), &checker.types);
+                use_output(Output::Constant {
+                    definition,
+                    constant: constant.as_ref(),
+                    types: &checker.types,
+                });
             }
             ast::Decl::Type(written) | ast::Decl::Alias(written) => {
                 checker.declared_type(definition, written.name.span);
             }
         }
     }
+    let names = std::mem::take(&mut checker.module_checks[module.index()].names);
+    use_output(Output::Names {
+        module,
+        names: &names,
+    });
 }
 
 /// Builds the function `definition`, written `function`, into `thir`
-/// (`Checker::build_function`) and gives it to `use_function` with its MIR,
-/// and with its names when `record_names`. A function without a body, or
-/// whose signature had an error, is not given.
+/// (`Checker::build_function`) and gives it to `use_output` with its MIR,
+/// and with the names found so far when the checker records names. A
+/// function without a body, or whose signature had an error, is not given.
 fn compile_function(
     checker: &mut Checker,
     definition: DefId,
     function: &ast::Function,
     thir: &mut thir::Body,
-    record_names: bool,
-    use_function: &mut impl FnMut(CheckedFunction),
+    use_output: &mut impl FnMut(Output),
 ) {
-    let mut names = Vec::new(); // allocates only when a name is recorded
-    let recorded = record_names.then_some(&mut names);
-    let Some(mir) = checker.build_function(definition, function.name.span, thir, recorded) else {
+    let Some(mir) = checker.build_function(definition, function.name.span, thir, false) else {
         return;
     };
-    use_function(CheckedFunction {
+    let names = std::mem::take(&mut checker.module_checks[definition.module.index()].names);
+    use_output(Output::Function(CheckedFunction {
         definition,
         signature: checker.function_type(definition, function.name.span),
         thir,
         names: &names,
         mir,
         types: &checker.types,
-    });
+    }));
 }
 
 /// Feeds `ty` to `hasher` by what it is, not by its id, which differs between
@@ -306,8 +326,8 @@ fn hash_type(checker: &Checker, ty: TypeId, hasher: &mut DefaultHasher) {
 /// or struct fields. Its bodies are not part of it.
 fn interface(checker: &Checker, module: ModuleId) -> u64 {
     let modules = checker.modules;
-    let declared_types = &checker.declared_types[module.index()];
-    let constants = &checker.constants[module.index()];
+    let checked = &checker.module_checks[module.index()];
+    let (declared_types, constants) = (&checked.declared_types, &checked.constants);
     let module = &modules[module.index()];
     let tree = &module.ast;
     let mut hasher = DefaultHasher::new();
@@ -349,6 +369,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::CheckedFunction;
+    use super::Output;
     use super::Results;
     use super::run;
 
@@ -393,14 +414,7 @@ mod tests {
     /// Checks the program of `modules` (see `load`) and gives each
     /// diagnostic as its code, message and the text of its first label.
     fn diagnostics(modules: &[(&str, &str)]) -> Vec<(&'static str, String, String)> {
-        let found = run(
-            &load(modules),
-            64,
-            Results::default(),
-            false,
-            |_| {},
-            |_, _, _| {},
-        );
+        let found = run(&load(modules), 64, Results::default(), false, |_| {});
         found
             .diagnostics()
             .map(|diagnostic| {
@@ -544,14 +558,7 @@ mod tests {
             const D = B;
             fn main() { let x = A + B; }",
         )]);
-        let found = run(
-            &program,
-            64,
-            Results::default(),
-            false,
-            |_| {},
-            |_, _, _| {},
-        );
+        let found = run(&program, 64, Results::default(), false, |_| {});
         let errors: Vec<(String, Vec<(String, String)>)> = found
             .diagnostics()
             .map(|diagnostic| {
@@ -681,19 +688,15 @@ mod tests {
     fn recompile(modules: &[(&str, &str)], previous: Results) -> (Results, Vec<String>) {
         let loaded = load(modules);
         let mut checked: Vec<String> = Vec::new();
-        let results = run(
-            &loaded,
-            64,
-            previous,
-            false,
-            |CheckedFunction { definition, .. }| {
-                let path = &loaded.modules[definition.module.index()].path;
-                if !checked.contains(path) {
-                    checked.push(path.clone());
-                }
-            },
-            |_, _, _| {},
-        );
+        let results = run(&loaded, 64, previous, false, |output| {
+            let Output::Function(CheckedFunction { definition, .. }) = output else {
+                return;
+            };
+            let path = &loaded.modules[definition.module.index()].path;
+            if !checked.contains(path) {
+                checked.push(path.clone());
+            }
+        });
         (results, checked)
     }
 
@@ -853,6 +856,52 @@ mod tests {
         let (second, checked) = recompile(&[utils, edited], first);
         assert_eq!(checked, ["app:main"]);
         assert_eq!(messages(&second), found);
+    }
+
+    /// A function run at compile time and then compiled records its names
+    /// once, each with the function that explains its locals; a declaration
+    /// first checked while such a function is built (`inner`'s signature)
+    /// records its names too.
+    #[test]
+    fn a_function_run_at_compile_time_records_its_names_once() {
+        let program = load(&[(
+            "app:main",
+            "const BIG = twice(2);
+            fn twice(n: i32) -> i32 { let doubled = inner(n) * 2; return doubled; }
+            fn inner(n: i32) -> i32 { return n; }",
+        )]);
+        let tree = &program.modules[0].ast;
+        let mut found: Vec<(&str, &str)> = Vec::new();
+        run(&program, 64, Results::default(), true, |output| {
+            let (owner, names) = match output {
+                Output::Function(CheckedFunction {
+                    definition, names, ..
+                }) => {
+                    let declaration = &tree.decls[tree.declaration(definition.index)];
+                    (declaration.name().text(&tree.file), names)
+                }
+                Output::Names { names, .. } => ("module", names),
+                Output::Constant { .. } => return,
+            };
+            found.extend(names.iter().map(|name| (tree.file.slice(name.span), owner)));
+        });
+        // `twice` gets the names found until it is handed on: `BIG`'s value,
+        // both signatures, its body; `inner` its body.
+        let expected = [
+            ("twice", "twice"),
+            ("i32", "twice"),
+            ("i32", "twice"),
+            ("i32", "twice"),
+            ("i32", "twice"),
+            ("n", "twice"),
+            ("inner", "twice"),
+            ("n", "twice"),
+            ("doubled", "twice"),
+            ("doubled", "twice"),
+            ("n", "inner"),
+            ("n", "inner"),
+        ];
+        assert_eq!(found, expected);
     }
 
     #[test]

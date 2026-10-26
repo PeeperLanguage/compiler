@@ -390,7 +390,7 @@ impl ThirBuilder<'_, '_> {
                 self.checker.not_supported(span, "functions as values");
                 return Expr::INVALID;
             }
-            Some(Symbol::Type(_)) => "a type",
+            Some(Symbol::Type(_) | Symbol::Builtin(_)) => "a type",
             Some(Symbol::Module(_)) => "a module",
         };
         let text = self.checker.module().ast.file.slice(span);
@@ -876,7 +876,7 @@ impl ThirBuilder<'_, '_> {
             (tree.file.slice(module_span), tree.file.slice(member_span));
         let imported = match self.checker.global(module_name) {
             Some(symbol @ Symbol::Module(imported)) => {
-                self.record(module_span, symbol);
+                self.checker.record(module_span, symbol);
                 imported
             }
             Some(Symbol::Type(_)) => {
@@ -894,7 +894,7 @@ impl ThirBuilder<'_, '_> {
                 return None;
             }
         };
-        let members = &self.checker.scopes[imported.index()];
+        let members = &self.checker.module_checks[imported.index()].scope;
         let Some(symbol) = members.get(member_name) else {
             let exported = members.symbols().map(|(declared, _)| declared);
             let meant = scope::nearest(
@@ -907,7 +907,7 @@ impl ThirBuilder<'_, '_> {
                 .report_unknown(diagnostics::UNDEFINED_NAME, member_span, message, meant);
             return None;
         };
-        self.record(member_span, symbol);
+        self.checker.record(member_span, symbol);
         if !scope::is_exported(member_name) {
             let file = &tree.file;
             self.checker.report(

@@ -47,6 +47,7 @@ lsp-server = "0.7.9"
 lsp-types = "0.95.1"
 serde_json = "1.0.140"
 toml_edit = "0.25.13"
+rustc-hash = "2.1.1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

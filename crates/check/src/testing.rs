@@ -26,14 +26,15 @@ pub(crate) fn module(path: &str, text: &str, imports: Vec<project::Import>) -> p
 /// A diagnostic as its code, message and the text of its first label.
 pub(crate) type Reported = (&'static str, String, String);
 
-/// Runs `work` on a checker of the module `app:main` written as `text`, which
+/// Runs `work` on a checker of the module `app:main` written as `text`, given
+/// its id, which
 /// imports `app:utils` as `utils` (an import added after `text`, so the
 /// places in `text` stay as written), which declares `Shown` and the private
 /// `hidden`. Gives what `work` gives, the program's
 /// types and the diagnostics.
 pub(crate) fn with_checker<T>(
     text: &str,
-    work: impl FnOnce(&mut Checker) -> T,
+    work: impl FnOnce(&mut Checker, ModuleId) -> T,
 ) -> (T, Types, Vec<Reported>) {
     let (utils_id, main_id) = (ModuleId::from_index(0), ModuleId::from_index(1));
     let imports = vec![project::Import {
@@ -46,12 +47,12 @@ pub(crate) fn with_checker<T>(
         module("app:main", &text, imports),
     ];
     let file = modules[1].ast.file.clone();
-    let mut checker = Checker::new(&modules, 64);
-    let result = checker.in_module(main_id, work);
+    let mut checker = Checker::new(&modules, 64, false);
+    let result = work(&mut checker, main_id);
     let reported = checker
-        .diagnostics
+        .module_checks
         .iter()
-        .flatten()
+        .flat_map(|module| &module.diagnostics)
         .map(|diagnostic| {
             let text = file.slice(diagnostic.labels[0].span).to_string();
             (diagnostic.code.id, diagnostic.message.clone(), text)

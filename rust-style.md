@@ -142,7 +142,7 @@ place. The command line passes `Results::default()`.
 
 **Pick a field with a closure when one routine serves several tables.**
 `Checker::check_once` runs the check state machine for every declaration;
-each caller names its table as `|checker| &mut checker.declared_types`, since a
+each caller names its table as `|module| &mut module.declared_types`, since a
 field cannot be a parameter. Write the closure in the call: stored in a
 `let`, its returned borrow does not get the right lifetime.
 
@@ -181,6 +181,14 @@ passes its byte size from `layout`. `ptrtoint (getelementptr (T, ptr null, i32
 1))` is exact on any target, but clang's optimizer reads it as an expression,
 not a constant, and splits no copy by it: a struct-heavy program's `-release`
 build took twice as long (2026-10-25).
+
+**Hash a hot name table with `FxHashMap`.** The checker looks up every
+non-local name a body uses, and every value it declares, in `Scope.names`.
+The standard hash (SipHash) made checking each declaration cost about 1% of
+a compile; `rustc_hash::FxHashMap`, as rustc uses, made it free (3,857 M to
+3,802 M instructions, 2026-10-26). Source text is not an attacker, so the
+standard hash's resistance to crafted keys buys nothing here. Switch another
+map only once a measurement shows it is hot.
 
 **Do not guess capacities.** Reserving MIR arenas from THIR sizes over-allocated
 and made lowering slower; `Default` and normal growth won. Reserve only when the
@@ -242,3 +250,10 @@ and Cranelift (`filetests`) work the same way.
   `format!("{ty} {extension}").trim_end()` hiding a missing part.
 - **Never write a concatenated string into a `String` builder**
   (`out.push_str(&(a + b))`); push each part, or use `write!`.
+- **A language fact's doc sits on the row that defines it.** What a keyword
+  does is a `///` comment on its row of `tokens!`, and what a built-in type
+  holds on its row of `fixed_types!`; the macro gathers the lines into a
+  `doc` function (`TokenKind::doc`, `semantic_types::builtin_doc`). An
+  editor only lays them out. A keyword without a doc does not build. Each
+  line keeps the space after its `///`, which Markdown drops (owner,
+  2026-10-26, after the old Go compiler's `token/keywords.go`).

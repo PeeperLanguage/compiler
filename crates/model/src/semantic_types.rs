@@ -162,10 +162,14 @@ const fn integer(signed: bool, bits: u32) -> Type {
 
 /// Declares the types with fixed ids: `FIXED`, the types in id order (they
 /// need no lookup); a `TypeId` constant for each, numbered in the order
-/// written; and `NAMED`, the name a program writes for each type given one.
-/// Other integers are named by rule (`Types::builtin`).
+/// written; `NAMED`, the name a program writes for each type given one; and
+/// `fixed_doc`, the doc comment written on a type's row. Other integers are
+/// named by rule (`Types::builtin`).
 macro_rules! fixed_types {
-    ($($name:ident $($text:literal)? => $ty:expr,)*) => {
+    ($(
+        $(#[doc = $doc:literal] $(#[doc = $doc_more:literal])*)?
+        $name:ident $($text:literal)? => $ty:expr,
+    )*) => {
         const FIXED: &[Type] = &[$($ty,)*];
 
         /// The position of each fixed type in `FIXED`, counted by the compiler.
@@ -175,16 +179,32 @@ macro_rules! fixed_types {
         }
 
         impl TypeId {
-            $(pub const $name: TypeId = TypeId(Position::$name as u32);)*
+            $(
+                $(#[doc = $doc] $(#[doc = $doc_more])*)?
+                pub const $name: TypeId = TypeId(Position::$name as u32);
+            )*
         }
 
         const NAMED: &[(&str, TypeId)] = &[$($(($text, TypeId::$name),)?)*];
+
+        /// The doc comment on the row of the fixed type `id`, as Markdown,
+        /// each line with the space after its `///`, which Markdown drops;
+        /// `None` when its row has none.
+        fn fixed_doc(id: TypeId) -> Option<&'static str> {
+            match id {
+                $($(TypeId::$name => Some(concat!($doc $(, "\n", $doc_more)*)),)?)*
+                _ => None,
+            }
+        }
     };
 }
 
+// A named type that is not an integer has a doc; an integer's is worked out
+// (`builtin_doc`).
 fixed_types! {
     INVALID => Type::Invalid,
     VOID => Type::Void,
+    /// A truth value: `true` or `false`.
     BOOL "bool" => Type::Bool,
     I8 "i8" => integer(true, 8),
     I16 "i16" => integer(true, 16),
@@ -196,8 +216,12 @@ fixed_types! {
     U32 "u32" => integer(false, 32),
     U64 "u64" => integer(false, 64),
     U128 "u128" => integer(false, 128),
+    /// A 32-bit floating-point number (IEEE 754 single precision).
     F32 "f32" => Type::Float(Float::F32),
+    /// A 64-bit floating-point number (IEEE 754 double precision).
     F64 "f64" => Type::Float(Float::F64),
+    /// A pointer to a C string, bytes ending in a zero byte, as C functions
+    /// take it.
     CSTR "cstr" => Type::CString,
     // No name: `rawptr` is a keyword, not a type name.
     RAWPTR => Type::RawPointer { target: None },
@@ -211,6 +235,59 @@ const POINTER_SIZED: [(&str, bool); 2] = [("isize", true), ("usize", false)];
 pub fn builtin_names() -> impl Iterator<Item = &'static str> {
     let named = NAMED.iter().map(|&(text, _)| text);
     named.chain(POINTER_SIZED.iter().map(|&(text, _)| text))
+}
+
+/// The integer type `name` stands for when it is not in `NAMED`: `isize` and
+/// `usize` (as wide as a pointer, `pointer_bits`), or `iN` and `uN` for N
+/// from 1 to `Integer::MAX_BITS`, written without leading zeros.
+fn integer_named(name: &str, pointer_bits: u32) -> Option<Integer> {
+    if let Some(&(_, signed)) = POINTER_SIZED.iter().find(|(text, _)| *text == name) {
+        return Some(Integer {
+            signed,
+            bits: pointer_bits,
+        });
+    }
+    let (signed, width) = match name.split_at_checked(1)? {
+        ("i", width) => (true, width),
+        ("u", width) => (false, width),
+        _ => return None,
+    };
+    let digits = !width.is_empty() && width.bytes().all(|b| b.is_ascii_digit());
+    if !digits || width.starts_with('0') {
+        return None; // `u`, `i8x`, `u08`
+    }
+    let bits = (width.parse().ok()).filter(|&bits| bits <= Integer::MAX_BITS)?;
+    Some(Integer { signed, bits })
+}
+
+/// What the built-in type `name` is (`Types::builtin`), as Markdown, as an
+/// editor shows it: an integer's range, worked out, and whether it is as
+/// wide as a pointer, `pointer_bits`; another type's doc, from its row
+/// (`fixed_doc`). `None` when `name` is not a built-in type.
+pub fn builtin_doc(name: &str, pointer_bits: u32) -> Option<String> {
+    let Integer { signed, bits } = match NAMED.iter().find(|&&(text, _)| text == name) {
+        Some(&(_, id)) => match FIXED[id.0 as usize] {
+            Type::Integer(integer) => integer,
+            _ => return fixed_doc(id).map(str::to_string),
+        },
+        None => integer_named(name, pointer_bits)?,
+    };
+    let (min, max) = match (signed, bits) {
+        (true, ..=128) => (
+            (i128::MIN >> (128 - bits)).to_string(),
+            (i128::MAX >> (128 - bits)).to_string(),
+        ),
+        (false, ..=128) => ("0".to_string(), (u128::MAX >> (128 - bits)).to_string()),
+        // Too many digits to read.
+        (true, _) => (format!("-2^{}", bits - 1), format!("2^{} - 1", bits - 1)),
+        (false, _) => ("0".to_string(), format!("2^{bits} - 1")),
+    };
+    let kind = if signed { "A signed" } else { "An unsigned" };
+    let size = match POINTER_SIZED.iter().any(|&(text, _)| text == name) {
+        true => format!("integer as wide as a pointer, {bits} bits on the target"),
+        false => format!("{bits}-bit integer"),
+    };
+    Some(format!("{kind} {size}: from `{min}` to `{max}`."))
 }
 
 /// The types of a program, for one compile (`check::Checker` holds them).
@@ -269,27 +346,7 @@ impl Types {
         if let Some(&(_, id)) = NAMED.iter().find(|(text, _)| *text == name) {
             return Some(id);
         }
-        let pointer_sized = POINTER_SIZED.iter().find(|(text, _)| *text == name);
-        let (signed, bits) = match pointer_sized {
-            Some(&(_, signed)) => (signed, pointer_bits),
-            None => {
-                let (signed, width) = match name.split_at_checked(1)? {
-                    ("i", width) => (true, width),
-                    ("u", width) => (false, width),
-                    _ => return None,
-                };
-                let digits = !width.is_empty() && width.bytes().all(|b| b.is_ascii_digit());
-                if !digits || width.starts_with('0') {
-                    return None; // `u`, `i8x`, `u08`
-                }
-                let bits = width
-                    .parse()
-                    .ok()
-                    .filter(|&bits| bits <= Integer::MAX_BITS)?;
-                (signed, bits)
-            }
-        };
-        Some(self.intern(integer(signed, bits)))
+        Some(self.intern(Type::Integer(integer_named(name, pointer_bits)?)))
     }
 
     /// Whether `a` and `b` are one type, aliases looked through.
@@ -453,9 +510,36 @@ mod tests {
     use super::Type;
     use super::TypeId;
     use super::Types;
+    use super::builtin_doc;
     use super::integer;
     use crate::DefId;
     use crate::ModuleId;
+
+    /// Every built-in type name has a doc; an integer's range is right at
+    /// each edge of how it is worked out, and one as wide as a pointer says
+    /// so.
+    #[test]
+    fn builtin_docs() {
+        for name in super::builtin_names() {
+            assert!(builtin_doc(name, 64).is_some(), "{name}");
+        }
+        assert_eq!(builtin_doc("Meters", 64), None);
+        let doc = |name: &str, pointer_bits: u32| builtin_doc(name, pointer_bits).unwrap();
+        assert_eq!(doc("i1", 64), "A signed 1-bit integer: from `-1` to `0`.");
+        assert_eq!(
+            doc("u8", 64),
+            "An unsigned 8-bit integer: from `0` to `255`."
+        );
+        assert!(doc("i128", 64).ends_with("from `-170141183460469231731687303715884105728` to `170141183460469231731687303715884105727`."));
+        assert!(doc("u128", 64).ends_with("to `340282366920938463463374607431768211455`."));
+        assert!(doc("i129", 64).ends_with("from `-2^128` to `2^128 - 1`."));
+        assert!(doc("u256", 64).ends_with("from `0` to `2^256 - 1`."));
+        assert_eq!(
+            doc("usize", 64),
+            "An unsigned integer as wide as a pointer, 64 bits on the target: from `0` to `18446744073709551615`."
+        );
+        assert!(doc("isize", 32).starts_with("A signed integer as wide as a pointer, 32 bits"));
+    }
 
     #[test]
     fn fixed_ids_are_the_interned_ids() {

@@ -7,6 +7,7 @@ use arena::Id;
 use arena::List;
 use bigint::Limbs;
 use diagnostics::Diagnostic;
+use model::DefId;
 use model::ast;
 use model::ast::Ident;
 use model::constant::Constant;
@@ -19,15 +20,16 @@ use model::thir::Body;
 use model::thir::Expr;
 use model::thir::ExprKind;
 use model::thir::Local;
-use model::thir::Name;
 use model::thir::Stmt;
 use model::thir::Symbol;
 use model::thir::Variable;
 use source::Span;
 
 use crate::Checker;
+use crate::Checking;
 use crate::expression::TypeExpectation;
 use crate::expression::unsuffixed_literal;
+use crate::function::function_declaration;
 use crate::scope::report_redeclared;
 
 /// Building the THIR of one piece of code: a function's body, or a
@@ -37,9 +39,6 @@ pub(crate) struct ThirBuilder<'a, 'p> {
     /// diagnostics.
     pub(crate) checker: &'a mut Checker<'p>,
     pub(crate) body: &'a mut Body,
-    /// The names written in the body, in the order checked, for a caller that
-    /// wants them (`Checker::check_body`); `None` records nothing.
-    recorded: Option<&'a mut Vec<Name>>,
     /// The names declared in the enclosing blocks so far, innermost last. Few
     /// names are in scope at once, so a search from the end beats hashing.
     pub(crate) names: Vec<(&'p str, Local)>,
@@ -55,24 +54,26 @@ pub(crate) struct ThirBuilder<'a, 'p> {
 }
 
 impl Checker<'_> {
-    /// Puts in `body` the THIR of `function`'s body, given its type `ty`
-    /// (`function_type`), with `has_errors` set when checking it reported an
-    /// error; what `body` held is dropped, its memory kept. False, with
+    /// Puts in `body` the THIR of the body of the function `definition`,
+    /// asked for at `used_at` and built only to run at compile time when
+    /// `to_run` (`Checking`), with `has_errors` set when checking it reported
+    /// an error; what `body` held is dropped, its memory kept. False, with
     /// `body` untouched, for a function without a body or whose signature had
-    /// an error. The names written in it go to `names` when given, as for an
-    /// editor.
+    /// an error.
     pub fn check_body(
         &mut self,
-        function: &ast::Function,
-        ty: TypeId,
+        definition: DefId,
+        used_at: Span,
         body: &mut Body,
-        names: Option<&mut Vec<Name>>,
+        to_run: bool,
     ) -> bool {
+        let function = function_declaration(self.modules, definition);
         let Some(block) = function.body else {
             return false;
         };
-        let module = self.current_module.index();
-        let reported = self.diagnostics[module].len();
+        let ty = self.function_type(definition, used_at);
+        let module = definition.module.index();
+        let reported = self.module_checks[module].diagnostics.len();
         let Type::Function {
             parameters, result, ..
         } = &self.types[ty]
@@ -80,9 +81,14 @@ impl Checker<'_> {
             return false; // the signature's error was reported
         };
         let (parameters, result) = (parameters.clone(), *result);
-        let tree = &self.module().ast;
+        let tree = &self.modules[module].ast;
+        self.checking.push(Checking {
+            definition,
+            used_at,
+            to_run,
+        });
         body.clear();
-        let mut builder = ThirBuilder::new(self, body, result, names);
+        let mut builder = ThirBuilder::new(self, body, result);
         let outermost = Block {
             parent: None,
             statements: List::EMPTY,
@@ -110,9 +116,10 @@ impl Checker<'_> {
         let statements = builder.check_statements(None, tree.blocks[block].statements);
         builder.body.blocks[outermost].statements = statements;
         // A part of the signature that failed was reported with the signature.
+        self.checking.pop();
         body.has_errors = parameters.contains(&TypeId::INVALID)
             || result == TypeId::INVALID
-            || self.diagnostics[module][reported..]
+            || self.module_checks[module].diagnostics[reported..]
                 .iter()
                 .any(Diagnostic::is_error);
         true
@@ -120,18 +127,15 @@ impl Checker<'_> {
 }
 
 impl<'a, 'p> ThirBuilder<'a, 'p> {
-    /// Building code into `body` whose `return` gives `result`, recording
-    /// its names into `recorded` when given.
+    /// Building code into `body` whose `return` gives `result`.
     pub(crate) fn new(
         checker: &'a mut Checker<'p>,
         body: &'a mut Body,
         result: TypeId,
-        recorded: Option<&'a mut Vec<Name>>,
     ) -> ThirBuilder<'a, 'p> {
         ThirBuilder {
             checker,
             body,
-            recorded,
             names: Vec::new(),
             block_start: 0,
             block: Id::from_index(0), // the function's, added first (`Checker::check_body`)
@@ -243,7 +247,9 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
     /// Declares `name` in the current block. It may
     /// shadow a name of an outer block until the block ends. A name the block
     /// already declares is reported and keeps its first meaning; the
-    /// parameters are in the body's outermost block, as in Go.
+    /// parameters are in the body's outermost block, as in Go. A type's name,
+    /// built-in or declared, is reported and stays the type's: a value never
+    /// hides a type.
     fn declare(&mut self, name: Ident, local: Local) {
         let text = name.text(&self.checker.module().ast.file);
         if text.is_empty() {
@@ -262,21 +268,34 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             self.checker.report(diagnostic);
             return;
         }
-        self.record(name.span, Symbol::Local(local));
-        self.names.push((text, local));
-    }
-
-    /// Records that the name written at `span` stands for `symbol`, when the
-    /// caller asked for names (`Checker::check_body`).
-    pub(crate) fn record(&mut self, span: Span, symbol: Symbol) {
-        if let Some(names) = &mut self.recorded {
-            names.push(Name { span, symbol });
+        // No local holds a type's name, so only top-level names can clash.
+        let ty = match self.checker.global(text) {
+            Some(Symbol::Builtin(_)) => None,
+            Some(Symbol::Type(definition)) => Some(definition),
+            _ => {
+                self.checker.record(name.span, Symbol::Local(local));
+                self.names.push((text, local));
+                return;
+            }
+        };
+        let file = &self.checker.module().ast.file;
+        let message = format!("`{text}` is a type; a value can't take its name");
+        let mut diagnostic = Diagnostic::new(diagnostics::ALREADY_DECLARED, message).label(
+            file,
+            name.span,
+            "declared here",
+        );
+        if let Some(definition) = ty {
+            let (declared, declared_in) = project::declared_name(self.checker.modules, definition);
+            diagnostic = diagnostic.label(declared_in, declared.span, "the type is declared here");
         }
+        self.checker.report(diagnostic);
     }
 
     /// What the name written at `span` stands for: a name of the current
-    /// block or an outer one, else of the module or the prelude, recorded
-    /// (`record`). `None` after reporting that nothing declares it.
+    /// block or an outer one, else a top-level name (`Checker::global`),
+    /// recorded (`Checker::record`). `None` after reporting that nothing
+    /// declares it.
     pub(crate) fn resolve(&mut self, span: Span) -> Option<Symbol> {
         let name = self.checker.module().ast.file.slice(span);
         let found = self
@@ -294,7 +313,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 }
             },
         };
-        self.record(span, symbol);
+        self.checker.record(span, symbol);
         Some(symbol)
     }
 
@@ -989,20 +1008,22 @@ mod tests {
     /// The THIR of every function body of `text`, as text, and the
     /// diagnostics.
     fn bodies(text: &str) -> (Vec<String>, Vec<Reported>) {
-        let ((bodies, declared), types, reported) = with_checker(text, |checker| {
-            let tree = &checker.module().ast;
+        let ((bodies, declared), types, reported) = with_checker(text, |checker, main| {
+            let tree = &checker.modules[main.index()].ast;
             let declarations: Vec<_> = tree.lists.items(tree.top_level).collect();
             let declared = declarations.len();
             let mut bodies = Vec::new();
             for (index, declaration) in declarations.into_iter().enumerate() {
-                let ast::Decl::Function(function) = checker.module().ast.decls[declaration] else {
+                let ast::Decl::Function(function) = tree.decls[declaration] else {
                     continue;
                 };
-                let module = checker.current_module;
-                let index = index as u32;
-                let signature = checker.function_type(DefId { module, index }, function.name.span);
+                let definition = DefId {
+                    module: main,
+                    index: index as u32,
+                };
                 let mut body = Body::default();
-                if checker.check_body(&function, signature, &mut body, None) && !body.has_errors {
+                let checked = checker.check_body(definition, function.name.span, &mut body, false);
+                if checked && !body.has_errors {
                     bodies.push(body);
                 }
             }
@@ -1113,6 +1134,29 @@ mod tests {
     }
 "]
         );
+    }
+
+    /// Types and values share names, and a value can't take a type's name,
+    /// declared or built-in: the name stays the type's.
+    #[test]
+    fn types_and_values_share_names() {
+        let (_, found) = bodies(
+            "type Meters = i64;
+            fn f() {
+                let Meters = 1;
+                let far: Meters = 2;
+                let i32 = 3;
+                let near: i32 = 4;
+                let n = i32;
+            }",
+        );
+        let taken = "is a type; a value can't take its name";
+        let expected = reported(&[
+            ("T0003", &format!("`Meters` {taken}"), "Meters"),
+            ("T0003", &format!("`i32` {taken}"), "i32"),
+            ("T0004", "`i32` is a type, not a value", "i32"),
+        ]);
+        assert_eq!(found, expected);
     }
 
     /// A block declares each name once; the parameters are in the body's
@@ -1292,15 +1336,17 @@ mod tests {
     /// The diagnostics of the body of `text`'s first function, as each
     /// message with its first note.
     fn notes(text: &str) -> Vec<(String, Option<String>)> {
-        let (notes, _, _) = with_checker(text, |checker| {
-            let tree = &checker.module().ast;
+        let (notes, _, _) = with_checker(text, |checker, main| {
+            let tree = &checker.modules[main.index()].ast;
             let declaration = tree.lists.items(tree.top_level).next().unwrap();
             let ast::Decl::Function(function) = tree.decls[declaration] else {
                 unreachable!("the first declaration is a function")
             };
-            let module = checker.current_module;
-            let signature = checker.function_type(DefId { module, index: 0 }, function.name.span);
-            checker.check_body(&function, signature, &mut Body::default(), None);
+            let definition = DefId {
+                module: main,
+                index: 0,
+            };
+            checker.check_body(definition, function.name.span, &mut Body::default(), false);
             let note = |diagnostic: &diagnostics::Diagnostic| {
                 let first = diagnostic.notes.first();
                 (
@@ -1308,8 +1354,11 @@ mod tests {
                     first.map(|note| note.text.clone()),
                 )
             };
-            let module = checker.current_module.index();
-            checker.diagnostics[module].iter().map(note).collect()
+            checker.module_checks[main.index()]
+                .diagnostics
+                .iter()
+                .map(note)
+                .collect()
         });
         notes
     }

@@ -243,14 +243,18 @@ fn compile<'p>(
             compile::POINTER_BITS,
             compile::Results::default(),
             false, // names are for editors
-            |compile::CheckedFunction {
-                 definition,
-                 signature,
-                 thir,
-                 mir,
-                 types,
-                 ..
-             }| {
+            |output| {
+                let compile::Output::Function(compile::CheckedFunction {
+                    definition,
+                    signature,
+                    thir,
+                    mir,
+                    types,
+                    ..
+                }) = output
+                else {
+                    return; // constants and names are for editors
+                };
                 if links && Some(definition.module.index()) == entry && is_main(program, definition)
                 {
                     main = Some((definition, gives_exit_code(types, signature)));
@@ -263,7 +267,6 @@ fn compile<'p>(
                     queue.add(definition, mir, types);
                 }
             },
-            |_, _, _| {}, // constants are for editors
         )
     };
     let (mut ll, results) = if writes_ll {

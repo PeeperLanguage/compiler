@@ -62,12 +62,16 @@ fn main() {
                 POINTER_BITS,
                 compile::Results::default(),
                 false,
-                |compile::CheckedFunction {
-                     definition,
-                     mir,
-                     types,
-                     ..
-                 }| {
+                |output| {
+                    let compile::Output::Function(compile::CheckedFunction {
+                        definition,
+                        mir,
+                        types,
+                        ..
+                    }) = output
+                    else {
+                        return;
+                    };
                     let mir = mir.expect("the program has no errors");
                     if Path::new(&program.modules[definition.module.index()].ast.file.path)
                         == project.entry
@@ -76,7 +80,6 @@ fn main() {
                     }
                     queue.add(definition, mir, types);
                 },
-                |_, _, _| {},
             )
         });
         assert_eq!(

@@ -67,12 +67,12 @@ use model::constant::Constant;
 use model::constant::value_text;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
+use model::semantic_types::builtin_doc;
 use model::thir;
 use model::thir::Local;
 use model::thir::Symbol;
 use source::SourceFile;
 use source::Span;
-use token::TokenKind;
 
 type BoxError = Box<dyn Error + Send + Sync>;
 
@@ -265,15 +265,12 @@ impl<'s> Server<'s> {
                 return Response::new_err(id, code, format!("unknown request `{method}`"));
             }
         };
-        let answer = self.name_at(&place).and_then(|(checked, module, target)| {
+        let answer = self.name_at(&place).and_then(|(checked, module, name)| {
+            let CachedName { span, target } = name;
             let program = checked.program.as_ref()?;
             let (file, declared, hover) = match target {
-                CachedTarget::Variable {
-                    declared,
-                    mutable,
-                    ty,
-                } => {
-                    let file = &module.ast.file;
+                CachedTarget::Variable { mutable, ty } => {
+                    let (file, declared) = (&module.ast.file, span);
                     let name = file.slice(declared);
                     let facts = match mutable {
                         true => format!("mut {name}: {ty}"),
@@ -282,8 +279,8 @@ impl<'s> Server<'s> {
                     let hover = hover_text(file, &module.path, declared, &facts, None, None);
                     (file, declared, hover)
                 }
-                CachedTarget::Constant { declared, text } => {
-                    let tree = &module.ast;
+                CachedTarget::Constant { text } => {
+                    let (tree, declared) = (&module.ast, span);
                     let mut declarations = tree.decls.ids();
                     let declaration = declarations
                         .find(|&declaration| tree.decls[declaration].name().span == declared)?;
@@ -300,20 +297,28 @@ impl<'s> Server<'s> {
                     // A module constant's checked value is cached with its name.
                     let mut names = checked.names.get(&file).into_iter().flatten();
                     let constant = names.find_map(|name| match name.target {
-                        CachedTarget::Constant {
-                            declared: at,
-                            ref text,
-                        } if at == declared => text.as_ref(),
+                        CachedTarget::Constant { ref text } if name.span == declared => {
+                            text.as_ref()
+                        }
                         _ => None,
                     });
                     let hover = declaration_hover(tree, declaration, &declared_in.path, constant);
                     (&tree.file, declared, hover)
                 }
+                CachedTarget::Local { .. } => unreachable!("`name_at` gives a local's declaration"),
                 CachedTarget::Module(file) => {
                     let imported = program.module_of(&file)?;
                     // In a string: a highlighter would read `06_x` as a number.
                     let hover = format!("```peeper\nimport \"{}\"\n```\n", imported.path);
                     (&imported.ast.file, Span::at(0), hover)
+                }
+                CachedTarget::Builtin => {
+                    if method == "textDocument/definition" {
+                        return None; // declared nowhere
+                    }
+                    let written = module.ast.file.slice(span);
+                    let doc = builtin_doc(written, compile::POINTER_BITS)?;
+                    return markdown_hover(doc_hover(written, &doc));
                 }
             };
             if method == "textDocument/definition" {
@@ -341,9 +346,7 @@ impl<'s> Server<'s> {
         let (tokens, _) = lexer::scan(&module.ast.file);
         let mut tokens = tokens.iter();
         let token = tokens.find(|token| token.span.start <= offset && offset <= token.span.end)?;
-        let doc = keyword_doc(token.kind)?;
-        let keyword = token.kind.text();
-        Some(format!("```peeper\n{keyword}\n```\n\n---\n\n{doc}\n"))
+        Some(doc_hover(token.kind.text(), token.kind.doc()?))
     }
 
     /// The module read from `file` in each program last checked that holds
@@ -358,36 +361,41 @@ impl<'s> Server<'s> {
         })
     }
 
-    /// What the name at `place` stands for: a name the last check of a
-    /// program holding its file recorded, else the name of one of the
-    /// module's declarations; with what that check keeps and the file's
+    /// The name at `place` and what it stands for: a name the last check of
+    /// a program holding its file recorded, a local's use giving the local's
+    /// declaration, which holds what is known of it; else the name of one of
+    /// the module's declarations; with what that check keeps and the file's
     /// module.
     fn name_at(
         &self,
         place: &TextDocumentPositionParams,
-    ) -> Option<(&Checked, &project::Module, CachedTarget)> {
+    ) -> Option<(&Checked, &project::Module, CachedName)> {
         let file = file_path(&place.text_document.uri)?;
         self.modules_of(&file).find_map(|(checked, module)| {
             let offset = offset(&module.ast.file, place.position) as u32;
             let contains_offset = |span: Span| span.start <= offset && offset <= span.end;
-            let in_body = checked
-                .names
-                .get(&file)
-                .and_then(|names| names.iter().find(|name| contains_offset(name.span)));
-            let target = match in_body {
-                Some(name) => name.target.clone(),
-                None => {
-                    let tree = &module.ast;
-                    let position = tree.lists.items(tree.top_level).position(|declaration| {
-                        contains_offset(tree.decls[declaration].name().span)
-                    })?;
-                    CachedTarget::Declaration {
-                        file: file.clone(),
-                        position: position as u32,
+            let names = checked.names.get(&file).map_or(&[][..], Vec::as_slice);
+            if let Some(name) = names.iter().find(|name| contains_offset(name.span)) {
+                let name = match name.target {
+                    CachedTarget::Local { declared } => {
+                        names.iter().find(|name| name.span == declared)?
                     }
-                }
+                    _ => name,
+                };
+                return Some((checked, module, name.clone()));
+            }
+            let tree = &module.ast;
+            let declarations = tree.lists.items(tree.top_level);
+            let declared = declarations.enumerate().find_map(|(index, declaration)| {
+                let span = tree.decls[declaration].name().span;
+                contains_offset(span).then_some((index, span))
+            });
+            let (position, span) = declared?;
+            let target = CachedTarget::Declaration {
+                file: file.clone(),
+                position: position as u32,
             };
-            Some((checked, module, target))
+            Some((checked, module, CachedName { span, target }))
         })
     }
 
@@ -562,49 +570,48 @@ struct Checked {
 
 impl Checked {
     /// Compiles `program` again, reusing what the last compile found, and
-    /// keeps the names written in the bodies of each module and the names of
-    /// its constants: a module the compile reused gave no names, and the
-    /// names found before still fit it; a module checked again gets its new
-    /// names.
+    /// keeps the names written in each module and the names of its
+    /// constants: a module the compile reused gave no names, and the names
+    /// found before still fit it; a module checked again gets its new names.
     fn update(&mut self, program: &project::Program) {
         let mut found: HashMap<ModuleId, Vec<CachedName>> = HashMap::new();
-        let mut constants: Vec<(ModuleId, CachedName)> = Vec::new();
         let previous = std::mem::take(&mut self.results);
-        self.results = compile::run(
-            program,
-            compile::POINTER_BITS,
-            previous,
-            true,
-            |compile::CheckedFunction {
-                 definition,
-                 thir,
-                 names,
-                 types,
-                 ..
-             }| {
-                let body_names = names
+        let cache_names = |output: compile::Output| match output {
+            compile::Output::Function(compile::CheckedFunction {
+                definition,
+                thir,
+                names,
+                types,
+                ..
+            }) => {
+                let names = names
                     .iter()
-                    .map(|name| CachedName::new(program, thir, name, types));
-                found
-                    .entry(definition.module)
-                    .or_default()
-                    .extend(body_names);
-            },
-            |definition, constant, types| {
+                    .map(|name| CachedName::new(program, name, Some((thir, types))));
+                found.entry(definition.module).or_default().extend(names);
+            }
+            compile::Output::Constant {
+                definition,
+                constant,
+                types,
+            } => {
                 let tree = &program.modules[definition.module.index()].ast;
                 let declared = tree.decls[tree.declaration(definition.index)].name().span;
                 let text = constant.map(|constant| ConstantText::new(program, constant, types));
-                let target = CachedTarget::Constant { declared, text };
+                let target = CachedTarget::Constant { text };
                 let name = CachedName {
                     span: declared,
                     target,
                 };
-                constants.push((definition.module, name));
-            },
-        );
-        for (module, name) in constants {
-            found.entry(module).or_default().push(name);
-        }
+                found.entry(definition.module).or_default().push(name);
+            }
+            compile::Output::Names { module, names } => {
+                let names = names
+                    .iter()
+                    .map(|name| CachedName::new(program, name, None));
+                found.entry(module).or_default().extend(names);
+            }
+        };
+        self.results = compile::run(program, compile::POINTER_BITS, previous, true, cache_names);
         let reused: HashSet<&Path> = self
             .results
             .reused()
@@ -618,9 +625,10 @@ impl Checked {
     }
 }
 
-/// A name written in a body, or a module constant's name, and what it stands
+/// A name written in a module, or a module constant's name, and what it stands
 /// for, kept as long as its module is reused: by file and place, not by the
 /// ids of one compile.
+#[derive(Clone)]
 struct CachedName {
     span: Span,
     target: CachedTarget,
@@ -628,19 +636,16 @@ struct CachedName {
 
 #[derive(Clone)]
 enum CachedTarget {
-    /// A variable of the body, declared at `declared`: whether it is `mut`,
-    /// and its type's text.
-    Variable {
-        declared: Span,
-        mutable: bool,
-        ty: String,
-    },
-    /// A `const` of a body or of the module, declared at `declared`, with
-    /// its checked type and value; `None` when it had an error.
-    Constant {
-        declared: Span,
-        text: Option<ConstantText>,
-    },
+    /// A variable of a body, this name being its declaration: whether it is
+    /// `mut`, and its type's text.
+    Variable { mutable: bool, ty: String },
+    /// A `const` of a body or of the module, this name being its
+    /// declaration, with its checked type and value; `None` when it had an
+    /// error.
+    Constant { text: Option<ConstantText> },
+    /// A use of a local declared at `declared`, whose name holds what is
+    /// known of it, kept once.
+    Local { declared: Span },
     /// The declaration at `position` among the top-level declarations of the
     /// module read from `file`. Its importer is reused only while those keep
     /// their kinds and names (`compile::run`), so the position stays right;
@@ -648,31 +653,39 @@ enum CachedTarget {
     Declaration { file: PathBuf, position: u32 },
     /// The module read from this file.
     Module(PathBuf),
+    /// A built-in type, named as written.
+    Builtin,
 }
 
 impl CachedName {
-    /// `name` of `body`, a body of `program` whose types are in `types`.
+    /// `name`, written in a module of `program`; a local's name comes with
+    /// the `body` it belongs to and the types it names.
     fn new(
         program: &project::Program,
-        body: &thir::Body,
         name: &thir::Name,
-        types: &Types,
+        body: Option<(&thir::Body, &Types)>,
     ) -> CachedName {
         let file = |module: ModuleId| PathBuf::from(&program.modules[module.index()].ast.file.path);
         let target = match name.symbol {
-            Symbol::Local(local @ Local::Variable(variable)) => {
-                let variable = body.variables[variable];
-                CachedTarget::Variable {
-                    declared: body.declared(local),
-                    mutable: variable.mutable,
-                    ty: type_text(program, types, variable.ty),
+            Symbol::Local(local) => {
+                let (body, types) = body
+                    .expect("a local's name comes with its function (`CheckedFunction::names`)");
+                let declared = body.declared(local);
+                match local {
+                    _ if name.span != declared => CachedTarget::Local { declared },
+                    Local::Variable(variable) => {
+                        let variable = body.variables[variable];
+                        CachedTarget::Variable {
+                            mutable: variable.mutable,
+                            ty: type_text(program, types, variable.ty),
+                        }
+                    }
+                    Local::Constant(constant) => CachedTarget::Constant {
+                        text: (body.constants[constant].as_ref())
+                            .map(|constant| ConstantText::new(program, constant, types)),
+                    },
                 }
             }
-            Symbol::Local(local @ Local::Constant(constant)) => CachedTarget::Constant {
-                declared: body.declared(local),
-                text: (body.constants[constant].as_ref())
-                    .map(|constant| ConstantText::new(program, constant, types)),
-            },
             Symbol::Module(module) => CachedTarget::Module(file(module)),
             Symbol::Function(definition)
             | Symbol::Constant(definition)
@@ -680,6 +693,7 @@ impl CachedName {
                 file: file(definition.module),
                 position: definition.index,
             },
+            Symbol::Builtin(_) => CachedTarget::Builtin,
         };
         CachedName {
             span: name.span,
@@ -804,6 +818,13 @@ fn hover_text(
     hover
 }
 
+/// What hover shows for a word the language gives, `word`, such as a
+/// keyword or a built-in type: the word as a Peeper block, then `doc`,
+/// Markdown.
+fn doc_hover(word: &str, doc: &str) -> String {
+    format!("```peeper\n{word}\n```\n\n---\n\n{doc}\n")
+}
+
 /// A hover answer holding `value`, Markdown.
 fn markdown_hover(value: String) -> Option<serde_json::Value> {
     let hover = Hover {
@@ -814,309 +835,6 @@ fn markdown_hover(value: String) -> Option<serde_json::Value> {
         range: None,
     };
     serde_json::to_value(hover).ok()
-}
-
-/// What the keyword `kind` does, as Markdown: a first line that says it,
-/// then more and an example; `None` for a token that is not a keyword.
-/// Every keyword has one (`keyword_docs`).
-fn keyword_doc(kind: TokenKind) -> Option<&'static str> {
-    Some(match kind {
-        TokenKind::Underscore => {
-            r#"Leaves out something the compiler works out.
-
-As an array literal's length, `_` is the number of values written.
-
-```peeper
-let squares = [_]i32{1, 4, 9}; // a [3]i32
-```"#
-        }
-        TokenKind::As => {
-            r#"Converts a value to another type.
-
-A conversion that keeps every value, such as `i32` to `i64`, needs no `as`. One that can change the value must be written with `as`: a float to an integer drops the fraction, toward zero.
-
-```peeper
-let whole = 3.7 as i32; // 3
-let wide: i64 = whole;  // no `as` needed
-```"#
-        }
-        TokenKind::Break => {
-            r#"Leaves the innermost loop at once.
-
-```peeper
-for {
-    if done {
-        break;
-    }
-}
-```"#
-        }
-        TokenKind::Const => {
-            r#"Names a value known while compiling.
-
-A constant is declared in a module or in a function body. Its value may use other constants, operators and calls: a call whose arguments are constants runs while compiling, and the program gets only its result.
-
-```peeper
-const LIMIT = 10 * 2;
-const FIB_20 = fib(20);
-```"#
-        }
-        TokenKind::Continue => {
-            r#"Skips the rest of the loop's block and goes on with the next pass of the innermost loop.
-
-```peeper
-for v in 0..10 {
-    if v == 3 {
-        continue;
-    }
-    println(v);
-}
-```"#
-        }
-        TokenKind::Else => {
-            r#"Runs its block when the condition of the `if` before it is false. `else if` tests another condition.
-
-```peeper
-if n > 0 {
-    println(1);
-} else if n < 0 {
-    println(-1);
-} else {
-    println(0);
-}
-```"#
-        }
-        TokenKind::Enum => {
-            r#"Declares a type whose value is one of its cases.
-
-Not supported yet.
-
-```peeper
-enum Shape {
-    Circle,
-    Square,
-}
-```"#
-        }
-        TokenKind::False => {
-            r#"The `bool` value false.
-
-```peeper
-let done = false;
-```"#
-        }
-        TokenKind::Fn => {
-            r#"Declares a function.
-
-A function takes parameters, each with its type, and gives a result of the type after `->`; without `->` it gives nothing. A function whose name starts with an upper case letter is exported: other modules can call it.
-
-```peeper
-fn add(a: i32, b: i32) -> i32 {
-    return a + b;
-}
-```"#
-        }
-        TokenKind::For => {
-            r#"Repeats its block.
-
-- `for { }` repeats until `break`.
-- `for condition { }` repeats while the condition is true.
-- `for v in a..b { }` runs once for each value from `a` up to, but not including, `b`; `a..=b` includes `b`, and `a..b:step` steps by more than one. A range whose start is past its end counts down.
-- `for v in array { }` runs once for each element.
-- `for i, v in ... { }` also counts the passes, from 0.
-
-```peeper
-for v in 0..10:2 {
-    println(v); // 0, 2, 4, 6, 8
-}
-```"#
-        }
-        TokenKind::Free => {
-            r#"Gives back memory that was allocated.
-
-Not supported yet.
-
-```peeper
-free(p);
-```"#
-        }
-        TokenKind::If => {
-            r#"Runs its block when its condition, a `bool`, is true. Parentheses around the condition are allowed but not needed.
-
-```peeper
-if n > 0 {
-    println(n);
-}
-```"#
-        }
-        TokenKind::Iface => {
-            r#"Declares an interface: the methods a type must have.
-
-Not supported yet.
-
-```peeper
-iface Shape {
-}
-```"#
-        }
-        TokenKind::Import => {
-            r#"Makes another module's exported names usable here, through the module's name.
-
-```peeper
-import "app:utils";
-
-fn main() {
-    let sum = utils::Add(1, 2);
-}
-```"#
-        }
-        TokenKind::In => {
-            r#"Names what a `for` loop goes over.
-
-After a function's result type, `in` names the parameters that a returned reference may point into.
-
-```peeper
-for v in values {
-}
-
-fn slot(holder: &mut Holder) -> &mut i32 in holder
-```"#
-        }
-        TokenKind::Is => {
-            r#"Tests whether a value is a given enum case.
-
-Not supported yet.
-
-```peeper
-if shape is Shape::Circle {
-}
-```"#
-        }
-        TokenKind::Let => {
-            r#"Declares a variable.
-
-Its type comes from its value, unless written after `:`. Without `mut` it cannot change once it is set. `let x: T;` declares it without a value: its first assignment sets it.
-
-```peeper
-let count = 0;
-let mut total: i64 = 0;
-total = total + 1;
-```"#
-        }
-        TokenKind::Match => {
-            r#"Picks a block by which case a value is.
-
-Not supported yet."#
-        }
-        TokenKind::Mut => {
-            r#"Lets something change.
-
-`let mut` declares a variable that can be assigned again. `&mut T` is a reference through which the value can be changed.
-
-```peeper
-let mut n = 0;
-n = n + 1;
-```"#
-        }
-        TokenKind::None => {
-            r#"The null address: a pointer that points nowhere.
-
-It takes its pointer type from where it is used.
-
-```peeper
-let p: rawptr = none;
-```"#
-        }
-        TokenKind::Orelse => {
-            r#"Gives the value on its left, or the one on its right when the left one is `none`.
-
-Not supported yet."#
-        }
-        TokenKind::Panic => {
-            r#"Stops the program.
-
-It writes `panic:` and the message to the standard error, with where the `panic` is written, and exits with code 101. Code after it does not run.
-
-```peeper
-if index >= length {
-    panic "index out of range";
-}
-```"#
-        }
-        TokenKind::Print => {
-            r#"Writes its values to the standard output, separated by spaces, with no new line after them.
-
-```peeper
-print(n, total);
-```"#
-        }
-        TokenKind::Println => {
-            r#"Writes its values to the standard output, separated by spaces, then a new line.
-
-```peeper
-println(n, total);
-```"#
-        }
-        TokenKind::Rawptr => {
-            r#"A pointer that does not say what it points to, like C's `void *`.
-
-Convert it with `as` to a typed pointer before reading through it.
-
-```peeper
-fn read(p: rawptr) -> i32 {
-    let typed = p as *i32;
-    return typed.*;
-}
-```"#
-        }
-        TokenKind::Return => {
-            r#"Ends the function. In a function with a result, it gives the value after it to the caller.
-
-```peeper
-fn square(n: i32) -> i32 {
-    return n * n;
-}
-```"#
-        }
-        TokenKind::Struct => {
-            r#"Declares a type made of named fields.
-
-A struct literal sets each field.
-
-```peeper
-struct Point {
-    x: i32,
-    y: i32,
-}
-
-let origin = Point.{ x = 0, y = 0 };
-```"#
-        }
-        TokenKind::True => {
-            r#"The `bool` value true.
-
-```peeper
-let done = true;
-```"#
-        }
-        TokenKind::Type => {
-            r#"Gives another name to a type. The two names stand for the same type.
-
-```peeper
-type Meters = i64;
-```"#
-        }
-        TokenKind::With => {
-            r#"Gives an enum case its payload, in a value or a pattern.
-
-Not supported yet.
-
-```peeper
-let shape = Shape::Circle with 2.0;
-```"#
-        }
-        _ => return None,
-    })
 }
 
 /// The answer to the request `id` whose parameters are not what it takes.
@@ -1323,10 +1041,10 @@ mod tests {
     use source::SourceFile;
     use source::Span;
 
+    use super::CachedTarget;
     use super::DEBOUNCE;
     use super::OpenFile;
     use super::Server;
-    use super::keyword_doc;
     use super::lsp_diagnostic;
     use super::offset;
     use super::position;
@@ -1626,7 +1344,7 @@ mod tests {
         let uri = Url::from_file_path(&file).unwrap();
         let (connection, _client) = Connection::memory();
         let mut server = Server::new(&connection, Path::new(""));
-        let text = "type Meters = i64;\nfn main() {\n    let total: Meters = 1;\n    let more = total;\n}\n// let me\n";
+        let text = "type Meters = i64;\nfn main() {\n    let total: Meters = 1;\n    let more = total;\n}\n// let me\nstruct Run {\n    length: Meters,\n}\n";
         let document = json!({ "uri": uri, "languageId": "peeper", "version": 1, "text": text });
         let open = Notification::new(
             "textDocument/didOpen".to_string(),
@@ -1659,10 +1377,35 @@ mod tests {
             json!("```peeper\ntotal: Meters (aka i64)\n```\n\n---\n\n*in* `main` *· line 3*\n")
         );
         assert_eq!(ask("textDocument/hover", 2, 1), serde_json::Value::Null);
+        // A type's name: a declared one answers as its declaration does; a
+        // built-in one, what it holds, and is declared nowhere.
+        assert_eq!(
+            ask("textDocument/hover", 2, 15)["contents"]["value"],
+            json!("```peeper\ntype Meters = i64;\n```\n\n---\n\n*in* `main` *· line 1*\n")
+        );
+        assert_eq!(
+            ask("textDocument/definition", 2, 15)["range"]["start"],
+            json!({ "line": 0, "character": 5 })
+        );
+        // In a struct field, outside any body.
+        assert_eq!(
+            ask("textDocument/hover", 7, 12)["contents"]["value"],
+            ask("textDocument/hover", 2, 15)["contents"]["value"]
+        );
+        assert_eq!(
+            ask("textDocument/hover", 0, 14)["contents"]["value"],
+            json!(
+                "```peeper\ni64\n```\n\n---\n\nA signed 64-bit integer: from `-9223372036854775808` to `9223372036854775807`.\n"
+            )
+        );
+        assert_eq!(
+            ask("textDocument/definition", 0, 14),
+            serde_json::Value::Null
+        );
         // A keyword answers what it does; the same word in a comment, nothing.
         let keyword = ask("textDocument/hover", 2, 5);
         let keyword = keyword["contents"]["value"].as_str().unwrap();
-        assert!(keyword.starts_with("```peeper\nlet\n```\n\n---\n\nDeclares a variable."));
+        assert!(keyword.starts_with("```peeper\nlet\n```\n\n---\n\n Declares a variable."));
         assert_eq!(
             ask("textDocument/definition", 2, 5),
             serde_json::Value::Null
@@ -1670,13 +1413,6 @@ mod tests {
         assert_eq!(ask("textDocument/hover", 5, 4), serde_json::Value::Null);
     }
 
-    /// Every keyword says what it does.
-    #[test]
-    fn keyword_docs() {
-        for &keyword in token::KEYWORDS {
-            assert!(keyword_doc(keyword).is_some(), "{keyword:?}");
-        }
-    }
     /// Names across modules: each kind of name answers where it is declared
     /// and what it is, in a body with an error too; a constant with its
     /// value. After an edit of `main` only, `utils` is reused and `Limit`
@@ -1766,6 +1502,13 @@ const BIG = utils::Twice(21);
             declared(&server, "total", 1),
             ("main.peep".to_string(), json!(2))
         );
+        // What is known of a variable is kept once, with its declaration:
+        // `count`, `total`, `sum`, `wide`, `wrong`, `ratio`, `broken`.
+        let names = &server.checked[&main_file].names[&main_file];
+        let facts = names
+            .iter()
+            .filter(|name| matches!(name.target, CachedTarget::Variable { .. }));
+        assert_eq!(facts.count(), 7);
         assert_eq!(
             hover(&server, "utils", 1),
             json!("```peeper\nimport \"app:utils\"\n```\n")
@@ -1807,6 +1550,19 @@ const BIG = utils::Twice(21);
             )
         };
         assert_eq!(hover(&server, "BIG", 0), json!(big("42")));
+        // A name in a module constant's value, outside any body.
+        assert_eq!(
+            hover(&server, "Twice", 0),
+            json!(
+                "```peeper\nfn Twice(n: i32) -> i32\n```\n\n---\n\n*in* `app:utils` *· line 5*\n"
+            )
+        );
+        let i64_hover = "```peeper\ni64\n```\n\n---\n\nA signed 64-bit integer: from `-9223372036854775808` to `9223372036854775807`.\n";
+        assert_eq!(hover(&server, "i64", 0), json!(i64_hover));
+        assert_eq!(
+            hover(&server, "bool", 0),
+            json!("```peeper\nbool\n```\n\n---\n\n A truth value: `true` or `false`.\n")
+        );
         // An `f32` in its own precision, so its initializer says no more; a
         // constant with an error, as written.
         assert_eq!(
@@ -1841,6 +1597,7 @@ const BIG = utils::Twice(21);
             declared(&server, "Add", 0),
             ("utils.peep".to_string(), json!(1))
         );
+        assert_eq!(hover(&server, "i64", 0), json!(i64_hover), "`main` reused");
         // A `const` in a body shifts the arena index of the declarations after
         // it, but `main` is still reused and `Limit` is still `Limit`.
         let with_const = utils.replace("{ return", "{ const K = 1; return");

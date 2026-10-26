@@ -24,6 +24,7 @@ use model::constant::Constant;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
+use model::thir::Name;
 use model::thir::Symbol;
 use scope::Scope;
 use source::Span;
@@ -34,36 +35,62 @@ use source::Span;
 /// own names (`Symbol::Local`) are checked in place with the body.
 pub struct Checker<'p> {
     pub modules: &'p [project::Module], // in the program's order
-    /// The names each module declares and imports, by `ModuleId`, collected
-    /// before anything is asked for: a body can use a name declared below it
-    /// or in another module.
-    scopes: Vec<Scope>,
+    /// What checking each module found so far, by `ModuleId`.
+    pub module_checks: Vec<ModuleChecks>,
     pub types: Types, // the program's types, built-in and declared
     /// How wide a pointer is on the target, in bits: the width of `isize` and
     /// `usize`.
     pub pointer_bits: u32,
-    /// Each type declaration, alias and function, by its place: the type it
-    /// declares (`check_type_declaration`), or the function's type
-    /// (`check_function`). Another declaration's slot stays `NotStarted`, as
-    /// in each table.
-    pub declared_types: Vec<Vec<State<TypeId>>>,
-    /// Each module constant, by its place: its type and value, `None` when it
-    /// had an error (`check_constant`).
-    pub constants: Vec<Vec<State<Option<Constant>>>>,
-    /// Each function, by its place: how far its body is built
-    /// (`build_function`).
-    bodies: Vec<Vec<Built>>,
-    /// Each module's: the modules whose functions its constants may run at
-    /// compile time (`evaluate_call`), so a constant's value depends on their
-    /// bodies, which no interface holds.
-    pub ran_modules: Vec<Vec<ModuleId>>,
-    /// What checking each module reported, by `ModuleId`, in order.
-    pub diagnostics: Vec<Vec<Diagnostic>>,
-    pub(crate) current_module: ModuleId, // the module being checked
-    /// The declarations being checked, outermost first, each with the span
-    /// where its asker wrote its name (its own name, when checked for its own
-    /// sake). One asked for again while it is here depends on itself.
-    checking: Vec<(DefId, Span)>,
+    /// Whether the names found are recorded (`ModuleChecks::names`), as for
+    /// an editor.
+    record_names: bool,
+    /// The declarations being checked, outermost first: the innermost's
+    /// module is the module being checked (`current_module`). One asked for
+    /// again while it is here depends on itself.
+    checking: Vec<Checking>,
+}
+
+/// A declaration being checked (`Checker::checking`).
+struct Checking {
+    definition: DefId,
+    /// Where its asker wrote its name (its own name, when checked for its
+    /// own sake).
+    used_at: Span,
+    /// Whether it is a function's body built only to run at compile time
+    /// (`evaluate_call`). Its names are not recorded (`Checker::record`): the
+    /// compile builds the body again and records them with the THIR that
+    /// explains its locals. A declaration it checks is checked once, in an
+    /// entry of its own, which records its names.
+    to_run: bool,
+}
+
+/// What checking one module found so far (`Checker::module_checks`). A
+/// table of declarations holds a slot for each top-level declaration, by
+/// its place; a slot whose declaration's kind it does not hold stays
+/// `NotStarted`.
+pub struct ModuleChecks {
+    /// The names the module declares and imports, collected before anything
+    /// is asked for: a body can use a name declared below it or in another
+    /// module.
+    scope: Scope,
+    /// Each type declaration, alias and function: the type it declares
+    /// (`check_type_declaration`), or the function's type (`check_function`).
+    pub declared_types: Vec<State<TypeId>>,
+    /// Each module constant: its type and value, `None` when it had an error
+    /// (`check_constant`).
+    pub constants: Vec<State<Option<Constant>>>,
+    /// Each function: how far its body is built (`build_function`).
+    bodies: Vec<Built>,
+    /// The modules whose functions its constants may run at compile time
+    /// (`evaluate_call`), so a constant's value depends on their bodies,
+    /// which no interface holds.
+    pub ran_modules: Vec<ModuleId>,
+    /// The names found in it (`Checker::record`), when they are recorded.
+    /// Declarations are checked as they are asked for, in any order, so the
+    /// names wait here until the compile hands them over.
+    pub names: Vec<Name>,
+    /// What checking it reported, in order.
+    pub diagnostics: Vec<Diagnostic>,
 }
 
 /// Where the check of one declaration is.
@@ -76,38 +103,35 @@ pub enum State<T> {
 impl<'p> Checker<'p> {
     /// Nothing checked yet of `modules` but their scopes, whose errors are
     /// each module's first diagnostics. Pointers have `pointer_bits` bits.
-    pub fn new(modules: &'p [project::Module], pointer_bits: u32) -> Checker<'p> {
-        let mut diagnostics = vec![Vec::new(); modules.len()];
-        let scopes = (0..modules.len())
+    /// Names are recorded when `record_names`, as for an editor.
+    pub fn new(
+        modules: &'p [project::Module],
+        pointer_bits: u32,
+        record_names: bool,
+    ) -> Checker<'p> {
+        let module_checks = (0..modules.len())
             .map(|index| {
+                let mut diagnostics = Vec::new();
                 let id = ModuleId::from_index(index);
-                scope::collect(id, modules, &mut diagnostics[index])
+                let scope = scope::collect(id, modules, &mut diagnostics);
+                let declarations = modules[index].ast.top_level.len();
+                ModuleChecks {
+                    scope,
+                    declared_types: vec![State::NotStarted; declarations],
+                    constants: vec![State::NotStarted; declarations],
+                    bodies: (0..declarations).map(|_| Built::NotYet).collect(),
+                    ran_modules: Vec::new(),
+                    names: Vec::new(),
+                    diagnostics,
+                }
             })
             .collect();
-        // A slot for each declaration of each module, in a table of any kind.
-        fn table<T: Clone>(modules: &[project::Module]) -> Vec<Vec<State<T>>> {
-            modules
-                .iter()
-                .map(|module| vec![State::NotStarted; module.ast.top_level.len()])
-                .collect()
-        }
         Checker {
             modules,
-            scopes,
+            module_checks,
             types: Types::new(),
             pointer_bits,
-            declared_types: table(modules),
-            constants: table(modules),
-            bodies: (modules.iter())
-                .map(|module| {
-                    (0..module.ast.top_level.len())
-                        .map(|_| Built::NotYet)
-                        .collect()
-                })
-                .collect(),
-            ran_modules: vec![Vec::new(); modules.len()],
-            diagnostics,
-            current_module: ModuleId::from_index(0),
+            record_names,
             checking: Vec::new(),
         }
     }
@@ -118,7 +142,7 @@ impl<'p> Checker<'p> {
         self.check_once(
             definition,
             used_at,
-            |checker| &mut checker.declared_types,
+            |module| &mut module.declared_types,
             TypeId::INVALID,
             Checker::check_type_declaration,
         )
@@ -149,7 +173,7 @@ impl<'p> Checker<'p> {
         self.check_once(
             definition,
             used_at,
-            |checker| &mut checker.declared_types,
+            |module| &mut module.declared_types,
             TypeId::INVALID,
             Checker::check_function,
         )
@@ -161,19 +185,10 @@ impl<'p> Checker<'p> {
         self.check_once(
             definition,
             used_at,
-            |checker| &mut checker.constants,
+            |module| &mut module.constants,
             None,
             Checker::check_constant,
         )
-    }
-
-    /// Runs `work` with `module` as the module being checked, then goes back
-    /// to the one before.
-    pub fn in_module<T>(&mut self, module: ModuleId, work: impl FnOnce(&mut Self) -> T) -> T {
-        let outer = std::mem::replace(&mut self.current_module, module);
-        let result = work(self);
-        self.current_module = outer;
-        result
     }
 
     /// The result of `definition`, named at `used_at`, in `table`: the one
@@ -184,23 +199,27 @@ impl<'p> Checker<'p> {
         &mut self,
         definition: DefId,
         used_at: Span,
-        table: fn(&mut Self) -> &mut Vec<Vec<State<T>>>,
+        table: fn(&mut ModuleChecks) -> &mut Vec<State<T>>,
         on_cycle: T,
         check: fn(&mut Self, DefId) -> T,
     ) -> T {
         let (module, index) = (definition.module.index(), definition.index as usize);
-        if let State::Done(result) = &table(self)[module][index] {
+        if let State::Done(result) = &table(&mut self.module_checks[module])[index] {
             return result.clone();
         }
         let mut checking = self.checking.iter();
-        if let Some(start) = checking.position(|&(running, _)| running == definition) {
+        if let Some(start) = checking.position(|checking| checking.definition == definition) {
             self.report_cycle(start, used_at);
             return on_cycle;
         }
-        self.checking.push((definition, used_at));
-        let result = self.in_module(definition.module, |checker| check(checker, definition));
+        self.checking.push(Checking {
+            definition,
+            used_at,
+            to_run: false,
+        });
+        let result = check(self, definition);
         self.checking.pop();
-        table(self)[module][index] = State::Done(result.clone());
+        table(&mut self.module_checks[module])[index] = State::Done(result.clone());
         result
     }
 
@@ -222,11 +241,10 @@ impl<'p> Checker<'p> {
             &tree.decls[tree.declaration(definition.index)]
         };
         let cycle = &self.checking[start..];
-        let (first, _) = cycle[0];
+        let first = cycle[0].definition;
         let (first_name, first_file) = project::declared_name(modules, first);
-        let only_aliases = cycle
-            .iter()
-            .all(|&(asker, _)| matches!(declaration(asker), ast::Decl::Alias(_)));
+        let only_aliases = (cycle.iter())
+            .all(|asker| matches!(declaration(asker.definition), ast::Decl::Alias(_)));
         let what = match declaration(first) {
             ast::Decl::Alias(_) if only_aliases => "is an alias of itself",
             ast::Decl::Type(_) | ast::Decl::Alias(_) => "holds itself",
@@ -244,8 +262,11 @@ impl<'p> Checker<'p> {
         );
         // Each declaration of the cycle asks for the next, the last for the
         // first again.
-        let asked = cycle[1..].iter().copied().chain([(first, closing)]);
-        for (step, (&(asker, _), (asked, span))) in cycle.iter().zip(asked).enumerate() {
+        let asked = (cycle[1..].iter())
+            .map(|asked| (asked.definition, asked.used_at))
+            .chain([(first, closing)]);
+        for (step, (asker, (asked, span))) in cycle.iter().zip(asked).enumerate() {
+            let asker = asker.definition;
             let verb = match declaration(asker) {
                 ast::Decl::Type(_) => "holds",
                 ast::Decl::Alias(_) => "is an alias of",
@@ -271,25 +292,35 @@ impl<'p> Checker<'p> {
                 && (earlier.labels.iter().zip(labels).rev().skip(1))
                     .all(|(a, b)| a.span == b.span && Arc::ptr_eq(&a.file, &b.file))
         };
-        let found = &mut self.diagnostics[first.module.index()];
+        let found = &mut self.module_checks[first.module.index()].diagnostics;
         if !found.iter().any(same_path) {
             found.push(diagnostic);
         }
     }
 
+    /// The module being checked: the innermost declaration's (`checking`).
+    pub(crate) fn current_module(&self) -> ModuleId {
+        let checking = self.checking.last();
+        checking
+            .expect("a declaration is being checked")
+            .definition
+            .module
+    }
+
     /// The module being checked.
     pub(crate) fn module(&self) -> &'p project::Module {
-        &self.modules[self.current_module.index()]
+        &self.modules[self.current_module().index()]
     }
 
     /// The names the module being checked declares and imports.
     pub(crate) fn scope(&self) -> &Scope {
-        &self.scopes[self.current_module.index()]
+        &self.module_checks[self.current_module().index()].scope
     }
 
     /// Adds `diagnostic` to what the module being checked reported.
     fn report(&mut self, diagnostic: Diagnostic) {
-        self.diagnostics[self.current_module.index()].push(diagnostic);
+        let module = self.current_module().index();
+        self.module_checks[module].diagnostics.push(diagnostic);
     }
 
     /// Reports the error `message` at `span` of the module, and gives the type
@@ -300,9 +331,26 @@ impl<'p> Checker<'p> {
         TypeId::INVALID
     }
 
-    /// What `name` stands for at the top level: in the module's scope, else
-    /// an exported name of the prelude.
-    fn global(&self, name: &str) -> Option<Symbol> {
+    /// Records that the name written at `span` in the module being checked
+    /// stands for `symbol`, when names are recorded (`new`), unless it is in
+    /// a body built only to run (`Checking::to_run`).
+    pub(crate) fn record(&mut self, span: Span, symbol: Symbol) {
+        let Some(checking) = self.checking.last().filter(|_| self.record_names) else {
+            return;
+        };
+        if !checking.to_run {
+            let module = checking.definition.module.index();
+            self.module_checks[module].names.push(Name { span, symbol });
+        }
+    }
+
+    /// What `name` stands for at the top level: a built-in type, which no
+    /// declaration hides; else a name in the module's scope; else an
+    /// exported name of the prelude.
+    pub(crate) fn global(&mut self, name: &str) -> Option<Symbol> {
+        if let Some(builtin) = self.types.builtin(name, self.pointer_bits) {
+            return Some(Symbol::Builtin(builtin));
+        }
         let in_prelude = || {
             self.prelude()?
                 .get(name)
@@ -321,7 +369,7 @@ impl<'p> Checker<'p> {
 
     /// The prelude's scope; `None` while checking the prelude itself.
     fn prelude(&self) -> Option<&Scope> {
-        Some(&self.scopes[self.scope().parent?.index()])
+        Some(&self.module_checks[self.scope().parent?.index()].scope)
     }
 
     /// Reports the error `message` about the name at `span`, which names

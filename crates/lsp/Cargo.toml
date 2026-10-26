@@ -14,7 +14,6 @@ diagnostics.workspace = true
 project.workspace = true
 compile.workspace = true
 lexer.workspace = true
-token.workspace = true
 lsp-server.workspace = true
 lsp-types.workspace = true
 serde_json.workspace = true

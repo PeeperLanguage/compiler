@@ -534,19 +534,17 @@ mod tests {
         assert!(program.checkable);
         let (modules, results) =
             super::write::write_modules(&program, 64, super::BuildMode::Debug, |queue| {
-                compile::run(
-                    &program,
-                    64,
-                    compile::Results::default(),
-                    false,
-                    |compile::CheckedFunction {
-                         definition,
-                         mir,
-                         types,
-                         ..
-                     }| queue.add(definition, mir.unwrap(), types),
-                    |_, _, _| {},
-                )
+                compile::run(&program, 64, compile::Results::default(), false, |output| {
+                    if let compile::Output::Function(compile::CheckedFunction {
+                        definition,
+                        mir,
+                        types,
+                        ..
+                    }) = output
+                    {
+                        queue.add(definition, mir.unwrap(), types);
+                    }
+                })
             });
         assert_eq!(results.diagnostics().count(), 0);
         modules.last().unwrap().text()
