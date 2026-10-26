@@ -13,13 +13,16 @@ pub struct Token {
 /// Declares every token kind once, with its text: the `TokenKind` enum,
 /// `TokenKind::text`, and the lexer's `OPERATORS` and `KEYWORDS` lists, which
 /// hold the kinds after the `#[operators]` and `#[keywords]` headers, in the
-/// order written. Each keyword has a doc comment, which `TokenKind::doc`
-/// gives.
+/// order written. Each keyword has a doc comment, and an operator may have
+/// one, which `TokenKind::doc` gives.
 macro_rules! tokens {
     (pub enum TokenKind {
         $($named:ident = $named_text:literal,)*
         #[operators]
-        $($operator:ident = $operator_text:literal,)*
+        $(
+            $(#[doc = $operator_doc:literal] $(#[doc = $operator_doc_more:literal])*)?
+            $operator:ident = $operator_text:literal,
+        )*
         #[keywords]
         $(
             #[doc = $keyword_doc:literal]
@@ -31,7 +34,10 @@ macro_rules! tokens {
         #[repr(u8)] // parser tables are indexed by kind
         pub enum TokenKind {
             $($named,)*
-            $($operator,)*
+            $(
+                $(#[doc = $operator_doc] $(#[doc = $operator_doc_more])*)?
+                $operator,
+            )*
             $(
                 #[doc = $keyword_doc]
                 $(#[doc = $keyword_doc_more])*
@@ -50,12 +56,17 @@ macro_rules! tokens {
                 }
             }
 
-            /// What this keyword does, as Markdown: a first line that says
-            /// it, then more and an example; `None` for a token that is not
-            /// a keyword. Each line keeps the space after its `///`, which
+            /// What this keyword or operator does, as Markdown: a first line
+            /// that says it, then more and an example; `None` for a token
+            /// without a doc. Each line keeps the space after its `///`, which
             /// Markdown drops.
             pub const fn doc(self) -> Option<&'static str> {
                 match self {
+                    $($(
+                        TokenKind::$operator => {
+                            Some(concat!($operator_doc $(, "\n", $operator_doc_more)*))
+                        }
+                    )?)*
                     $(
                         TokenKind::$keyword => {
                             Some(concat!($keyword_doc $(, "\n", $keyword_doc_more)*))
@@ -103,8 +114,29 @@ tokens! {
         ShiftRight = ">>",
         Greater = ">",
         AndAnd = "&&",
+        /// Refers to a value without copying it.
+        ///
+        /// `&x` borrows `x` to read it, and `&mut x` to change it, while the reference is used. `&T` and `&mut T` are the types of these references; `.*` reads or writes the value through one.
+        ///
+        /// ```peeper
+        /// fn double(n: &mut i32) {
+        ///     n.* = n.* * 2;
+        /// }
+        ///
+        /// let mut n = 5;
+        /// double(&mut n); // n is 10
+        /// ```
         Ampersand = "&",
         OrOr = "||",
+        /// Passes the value on its left to the call on its right, as its first argument.
+        ///
+        /// `x |> f(a)` calls `f(x, a)`. The call must be of a function, not a method.
+        ///
+        /// Not supported yet.
+        ///
+        /// ```peeper
+        /// let doubled = 21 |> times(2); // times(21, 2)
+        /// ```
         PipeArrow = "|>",
         Pipe = "|",
         QuestionQuestion = "??",
@@ -117,15 +149,55 @@ tokens! {
         PlusAssign = "+=",
         Plus = "+",
         AsteriskAssign = "*=",
+        /// Points at a value: `*T` is a pointer type, and `.*` reads through a reference or pointer.
+        ///
+        /// A `*T` points at a `T`, as `@x` and C functions give. After a reference or pointer, `.*` is the value it refers to: `r.*` reads it, and `r.* = v` writes it through a `&mut` reference or a pointer.
+        ///
+        /// ```peeper
+        /// fn set(p: *i32, value: i32) {
+        ///     p.* = value;
+        /// }
+        ///
+        /// let n = 5;
+        /// let r = &n;
+        /// let copy = r.*; // 5
+        /// ```
         Asterisk = "*",
         SlashAssign = "/=",
         Slash = "/",
         PercentAssign = "%=",
         Percent = "%",
         Ellipsis = "...",
+        /// A range from the left value up to the right one, with it.
+        ///
+        /// A `for` loop counts each value of it, even the type's largest, and counts down when the left value is larger. `a..=b:step` steps by more than one. Ranges outside a `for` loop are not supported yet.
+        ///
+        /// ```peeper
+        /// for b in 250u8..=255 {
+        ///     print(b); // 250 up to 255
+        /// }
+        /// ```
         DotDotEqual = "..=",
+        /// A range from the left value up to the right one, without it.
+        ///
+        /// A `for` loop counts each value of it, and counts down when the left value is larger. `a..b:step` steps by more than one. In a type, `[..]T` is a slice. Ranges outside a `for` loop, and slices, are not supported yet.
+        ///
+        /// ```peeper
+        /// for i in 0..3 {
+        ///     print(i); // 0, 1, 2
+        /// }
+        /// ```
         DotDot = "..",
         Dot = ".",
+        /// The address of a variable's value, as a pointer.
+        ///
+        /// `@x` gives a `*T` that points at `x`, which must be a place that can be written. A write through it is a write to `x`.
+        ///
+        /// ```peeper
+        /// let mut x = 1;
+        /// let p = @x;
+        /// p.* = 7; // x is 7
+        /// ```
         At = "@",
         Caret = "^",
         Tilde = "~",
@@ -136,6 +208,14 @@ tokens! {
         RightParen = ")",
         LeftBrace = "{",
         RightBrace = "}",
+        /// Indexes an array, or writes an array type.
+        ///
+        /// `a[i]` is the value at index `i`, counted from 0. An index outside the array stops the program, or is an error when it is a constant. In a type, `[N]T` is an array of `N` values of type `T`.
+        ///
+        /// ```peeper
+        /// let squares = [3]i32{1, 4, 9};
+        /// let middle = squares[1]; // 4
+        /// ```
         LeftBracket = "[",
         RightBracket = "]",
 

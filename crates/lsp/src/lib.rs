@@ -339,7 +339,7 @@ impl<'s> Server<'s> {
     }
 
     /// What hover shows for the keyword or operator at `place`, if one is
-    /// there: it as a Peeper block, then what it does.
+    /// there: its text as a Peeper block, then what it does.
     fn token_doc_at(&self, place: &TextDocumentPositionParams) -> Option<String> {
         let file = file_path(&place.text_document.uri)?;
         let (_, module) = self.modules_of(&file).next()?;
@@ -350,12 +350,10 @@ impl<'s> Server<'s> {
         let (tokens, _) = lexer::scan(&tree.file);
         let mut tokens = tokens.iter();
         let token = tokens.find(|token| token.span.start <= offset && offset < token.span.end)?;
-        if let Some(doc) = token.kind.doc() {
-            return Some(doc_hover(token.kind.text(), doc));
-        }
         // Which operator a token is (`-` subtracts or negates) the tree
         // tells: a binary one sits between its operands, a unary one starts
-        // its expression.
+        // its expression. It wins over the token's own doc, which is for its
+        // other uses (`&` is a bit-and or a reference).
         let (start, end) = (token.span.start, token.span.end);
         let operator = |expression| match tree.exprs[expression] {
             ast::Expr::Binary { op, left, right }
@@ -369,7 +367,10 @@ impl<'s> Server<'s> {
             _ => None,
         };
         let mut operators = tree.exprs.ids().filter_map(operator);
-        let (symbol, doc) = operators.find(|&(symbol, _)| symbol == token.kind.text())?;
+        let (symbol, doc) = match operators.find(|&(symbol, _)| symbol == token.kind.text()) {
+            Some(found) => found,
+            None => (token.kind.text(), token.kind.doc()?),
+        };
         Some(doc_hover(symbol, doc))
     }
 
@@ -1371,7 +1372,7 @@ mod tests {
         let uri = Url::from_file_path(&file).unwrap();
         let (connection, _client) = Connection::memory();
         let mut server = Server::new(&connection, Path::new(""));
-        let text = "type Meters = i64;\nfn main() {\n    let total: Meters = 1;\n    let more = total;\n}\n// let me\nstruct Run {\n    length: Meters,\n}\nfn ops(a: i32, x: f64) -> f64 {\n    let q = a/2;\n    const C = -(7 / 2);\n    return x - -1.0;\n}\n";
+        let text = "type Meters = i64;\nfn main() {\n    let total: Meters = 1;\n    let more = total;\n}\n// let me\nstruct Run {\n    length: Meters,\n}\nfn ops(a: i32, x: f64) -> f64 {\n    let q = a/2;\n    const C = -(7 / 2);\n    return x - -1.0;\n}\nfn refs(m: i32) -> i32 {\n    let r = &m;\n    let both = m & 3;\n    let mut x = 1;\n    let p = @x;\n    let s = [2]i32{1, 2};\n    return r.* + s[0];\n}\n";
         let document = json!({ "uri": uri, "languageId": "peeper", "version": 1, "text": text });
         let open = Notification::new(
             "textDocument/didOpen".to_string(),
@@ -1456,6 +1457,20 @@ mod tests {
             ask("textDocument/definition", 11, 18),
             serde_json::Value::Null
         );
+        // A token's own doc covers its uses that are not an operator of the
+        // tree: `&` is a reference, but in `m & 3` a bit-and; the `*` of
+        // `r.*` reads through `r`.
+        let starts = |line: u32, character: u32, text: &str| {
+            let found = hover(line, character);
+            let found = found.as_str().unwrap();
+            assert!(found.starts_with(text), "{line}:{character}: {found}");
+        };
+        starts(15, 12, "```peeper\n&\n```\n\n---\n\n Refers to a value");
+        assert_eq!(hover(16, 17), doc("&", BinaryOp::BitAnd.doc()));
+        starts(18, 12, "```peeper\n@\n```\n\n---\n\n The address");
+        starts(19, 12, "```peeper\n[\n```\n\n---\n\n Indexes an array");
+        starts(20, 18, "```peeper\n[\n```\n\n---\n\n Indexes an array");
+        starts(20, 13, "```peeper\n*\n```\n\n---\n\n Points at a value");
     }
 
     /// Names across modules: each kind of name answers where it is declared
