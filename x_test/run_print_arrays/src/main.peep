@@ -1,0 +1,33 @@
+// An array prints as its elements in brackets, `, ` between each; nested
+// arrays, arrays of structs and arrays in structs too.
+struct Point {
+    x: i32,
+    y: f64,
+}
+
+struct Holder {
+    items: [2]u8,
+    flag: bool,
+}
+
+fn show(values: &[3]i32) {
+    println("borrowed:", values);
+}
+
+fn main() {
+    let numbers = [3]i32{1, 2, 3};
+    println("numbers:", numbers);
+    let grid = [2][3]i32{[3]i32{1, 2, 3}, [3]i32{4, 5, 6}};
+    println("grid:", grid);
+    let points = [2]Point{.{x = 1, y = 1.5}, .{x = 2, y = 2.5}};
+    println("points:", points);
+    let holder: Holder = .{items = [2]u8{7, 8}, flag = true};
+    println("holder:", holder);
+    let empty = [0]i32{};
+    println("empty:", empty, "after");
+    show(&numbers);
+    let flags = [2]bool{true, false};
+    println("flags:", flags, c"text");
+    let wide = [2]i128{-170141183460469231731687303715884105728, 5};
+    println("wide:", wide);
+}

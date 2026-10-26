@@ -186,8 +186,8 @@ pub enum ExprKind {
     /// follows; the place is as a `Borrow`'s.
     Address(Id<Expr>),
     /// `print(values)`, or `println(values)` when `newline`: each value a
-    /// number, `bool`, `cstr`, raw pointer, struct, or a reference to one; a
-    /// struct or `&mut` reference in a place is lent as `&`.
+    /// number, `bool`, `cstr`, raw pointer, a struct or array of such values,
+    /// or a reference to one; a value that moves, in a place, is lent as `&`.
     Print {
         newline: bool,
         values: List<Expr>,

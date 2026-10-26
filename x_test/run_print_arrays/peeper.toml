@@ -1,0 +1,17 @@
+name = "run_print_arrays"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 0
+stdout_contains = [
+    "numbers: [1, 2, 3]\n",
+    "grid: [[1, 2, 3], [4, 5, 6]]\n",
+    "points: [Point { x: 1, y: 1.5 }, Point { x: 2, y: 2.5 }]\n",
+    "holder: Holder { items: [7, 8], flag: true }\n",
+    "empty: [] after\n",
+    "borrowed: [1, 2, 3]\n",
+    "flags: [true, false] text\n",
+    "wide: [-170141183460469231731687303715884105728, 5]\n",
+]

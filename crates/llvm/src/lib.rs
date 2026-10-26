@@ -40,6 +40,10 @@ pub struct Module<'p> {
     functions: String, // each `define`
     strings: String,   // each string constant's global
     string_ids: HashMap<Vec<u8>, usize>,
+    /// Each array type's printer (`Function::array_printer`) by its number,
+    /// and their `define`s.
+    array_printer_ids: HashMap<TypeId, usize>,
+    array_printers: String,
     /// The `declare` of each function called, by symbol; sorted, so the text
     /// is the same every run. Those the module defines are left out.
     declarations: BTreeMap<String, String>,
@@ -79,6 +83,8 @@ impl<'p> Module<'p> {
             functions: String::new(),
             strings: String::new(),
             string_ids: HashMap::new(),
+            array_printer_ids: HashMap::new(),
+            array_printers: String::new(),
             declarations: BTreeMap::new(),
             defined: HashSet::new(),
             metadata,
@@ -121,6 +127,7 @@ impl<'p> Module<'p> {
             out.push('\n');
         }
         out.push_str(&self.functions);
+        out.push_str(&self.array_printers);
         for (symbol, declaration) in &self.declarations {
             if !self.defined.contains(symbol) {
                 out.push_str(declaration);

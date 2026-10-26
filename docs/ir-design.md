@@ -519,8 +519,11 @@ per function (`peeper -dump ll` shows it):
   constant made at compile time (`panic: division by zero` or `panic:
   message`, then `  --> file:line:column`) through the prelude's `write` to the
   standard error and calls its `exit` with 101: no runtime function of its own.
-- Output goes through the prelude's `write` with a `cstr` (`c"..."`); there
-  is no `print` yet (owner, 2026-10-19).
+- `print` and `println` call the runtime's print functions, one per number,
+  `bool`, `cstr` or pointer, with the text known at compile time (spaces,
+  struct names, brackets) gathered into one string between them. An array
+  prints through a private function per array type that loops over its
+  elements, so the code does not grow with the length.
 
 `peeper build [-o program] [path]` and `peeper run [path] [arguments...]`
 work as the Go compiler's did. The entry file needs `fn main()` or `fn main()

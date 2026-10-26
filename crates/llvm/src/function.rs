@@ -847,6 +847,8 @@ impl Function<'_, '_, '_> {
                 let referred = format!("{path}.d");
                 self.write_printed(out, text, &referred, target, &referred, location);
             }
+            // shortcut: structs and arrays print built in until a trait or
+            // interface does (`check` `printable`).
             Type::Struct {
                 definition,
                 ref fields,
@@ -883,8 +885,75 @@ impl Function<'_, '_, '_> {
                 }
                 text.extend_from_slice(if fields.is_empty() { b" {}" } else { b" }" });
             }
-            _ => unreachable!("check prints only numbers, `bool`, `cstr`, pointers and structs"),
+            Type::Array { length: 0, .. } => text.extend_from_slice(b"[]"),
+            Type::Array { .. } => {
+                let printer = self.array_printer(ty);
+                text.push(b'[');
+                self.write_print_text(out, text, location);
+                _ = writeln!(out, "  call void {printer}(ptr {value}){location}");
+                text.push(b']');
+            }
+            _ => unreachable!(
+                "check prints only numbers, `bool`, `cstr`, pointers, structs and arrays"
+            ),
         }
+    }
+
+    /// The private function that prints the elements of an array of the
+    /// type `ty`, given its address, with `, ` between each, as
+    /// `write_printed` prints any value: a loop, so the code does not grow
+    /// with the length. Written into the module the first time its type is
+    /// printed, then reused.
+    // shortcut: built in until a trait or interface prints arrays (`check`
+    // `printable`).
+    fn array_printer(&mut self, ty: TypeId) -> String {
+        let count = self.module.array_printer_ids.len();
+        let number = *self.module.array_printer_ids.entry(ty).or_insert(count);
+        let name = format!("@print.array.{number}");
+        if number < count {
+            return name;
+        }
+        let types = self.types;
+        let Type::Array { element, length } = types[ty] else {
+            unreachable!("only an array type has an array printer")
+        };
+        let (first, between) = (self.module.add_string(b""), self.module.add_string(b", "));
+        let none = DebugLocation(None);
+        let mut body = String::new();
+        // The pass ends in `step`, so the `phi` is right whatever blocks
+        // printing an element adds.
+        _ = writeln!(
+            body,
+            "define private void {name}(ptr %array) {{\nentry:\n  br label %loop\nloop:\n  \
+             %index = phi i64 [ 0, %entry ], [ %next, %step ]\n  \
+             %first = icmp eq i64 %index, 0\n  \
+             %separator = select i1 %first, ptr {first}, ptr {between}"
+        );
+        self.write_runtime_call(&mut body, PRINT_TEXT, "ptr %separator", &none);
+        _ = writeln!(
+            body,
+            "  %address = getelementptr inbounds {}, ptr %array, i64 0, i64 %index",
+            type_text(types, ty)
+        );
+        let value = match in_memory(types, element) {
+            true => "%address",
+            false => {
+                let element_text = type_text(types, element);
+                _ = writeln!(body, "  %element = load {element_text}, ptr %address");
+                "%element"
+            }
+        };
+        let mut text = Vec::new();
+        self.write_printed(&mut body, &mut text, value, element, "%element", &none);
+        self.write_print_text(&mut body, &mut text, &none);
+        _ = writeln!(
+            body,
+            "  br label %step\nstep:\n  %next = add i64 %index, 1\n  \
+             %more = icmp ult i64 %next, {length}\n  \
+             br i1 %more, label %loop, label %done\ndone:\n  ret void\n}}\n"
+        );
+        self.module.array_printers.push_str(&body);
+        name
     }
 
     /// Writes the call that prints `text`, if any, and empties it.

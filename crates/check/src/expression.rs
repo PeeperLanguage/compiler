@@ -1475,13 +1475,18 @@ pub(crate) fn unsuffixed_literal(tree: &ast::Tree, expression: Id<ast::Expr>) ->
 }
 
 /// Whether `print` writes a value of the type `ty`: a number, `bool`,
-/// `cstr` or raw pointer, a struct of such values, or a reference to one.
+/// `cstr` or raw pointer, a struct or array of such values, or a reference
+/// to one.
+// shortcut: structs and arrays print built in until a trait or interface
+// lets each type say how it prints; then this rule and the backend's struct
+// and array printing (`llvm` `write_printed`, `array_printer`) go.
 fn printable(types: &Types, ty: TypeId) -> bool {
     match types[ty] {
         Type::Integer(_) | Type::Float(_) | Type::Bool | Type::CString => true,
         Type::RawPointer { .. } => true,
         Type::Reference { target, .. } => printable(types, target),
         Type::Struct { ref fields, .. } => fields.iter().all(|&field| printable(types, field)),
+        Type::Array { element, .. } => printable(types, element),
         _ => false,
     }
 }
