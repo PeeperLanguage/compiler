@@ -1,0 +1,21 @@
+// A `panic` ends its block with no successor and no scope ends; the code
+// after it gets a block of its own that nothing reaches.
+fn check(n: i32) -> i32 {
+    let doubled = n * 2;
+    if doubled > 10 {
+        panic "too big";
+    }
+    return doubled;
+}
+
+// A loop whose body always panics: its step is in a block nothing reaches.
+fn each() {
+    for v in 0..3 {
+        panic "in a loop";
+    }
+}
+
+fn main() {
+    println(check(2));
+    each();
+}

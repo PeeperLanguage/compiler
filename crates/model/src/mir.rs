@@ -219,6 +219,12 @@ pub enum Terminator {
         value: Option<Operand>,
         span: Span,
     },
+    /// `panic message` at `span`: writes the constant `message`, a
+    /// `Value::Bytes`, and where, then ends the program; nothing runs after.
+    Panic {
+        message: Id<Constant>,
+        span: Span,
+    },
     /// The end of the function, at its closing brace, reached without a
     /// `return`: a function without a result returns there, and one with a
     /// result is missing a `return` (`flow::report_missing_return`). Every
@@ -242,7 +248,9 @@ impl Terminator {
             Terminator::Branch {
                 then, otherwise, ..
             } => [Some(then), Some(otherwise)],
-            Terminator::Return { .. } | Terminator::FallOff(_) => [None, None],
+            Terminator::Return { .. } | Terminator::Panic { .. } | Terminator::FallOff(_) => {
+                [None, None]
+            }
         };
         targets.into_iter().flatten()
     }
@@ -402,6 +410,10 @@ impl Body {
                         printer.out.push(' ');
                         printer.write_operand(value);
                     }
+                }
+                Terminator::Panic { message, .. } => {
+                    printer.out.push_str("panic ");
+                    printer.write_operand(&Operand::Constant(*message));
                 }
                 Terminator::FallOff(span) => {
                     _ = write!(printer.out, "fall off at `{}`", file.slice(*span));

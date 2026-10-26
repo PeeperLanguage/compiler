@@ -34,6 +34,12 @@ static STATEMENTS: [Option<StatementRule>; 256] = {
         p.tree.add(Stmt::Const(decl), span)
     });
     statements[TokenKind::Return as usize] = Some(return_statement);
+    statements[TokenKind::Panic as usize] = Some(|p| {
+        let start = p.next().span.start;
+        let message = p.expr(Precedence::Lowest);
+        p.end();
+        p.add(start, Stmt::Panic(message))
+    });
     statements[TokenKind::If as usize] = Some(if_statement);
     statements[TokenKind::For as usize] = Some(for_statement);
     statements[TokenKind::Break as usize] = Some(jump_statement);
@@ -410,6 +416,7 @@ mod tests {
         Shape::Wrap with Inner::Leaf with value => { }
         _ => { }
     }
+    panic \"stop\";
     { }
 }
 ";
@@ -520,6 +527,8 @@ mod tests {
         match arm
           wildcard pattern _
           block { }
+      panic statement
+        string literal \"stop\"
       block { }
 ";
         assert!(messages(text).is_empty());

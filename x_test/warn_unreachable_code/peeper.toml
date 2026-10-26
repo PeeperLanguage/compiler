@@ -4,4 +4,4 @@ build = "lib"
 [test]
 mode = "check"
 outcome = "success"
-stderr_contains = ["[W0001]: unreachable code", "this never runs", "7 |     let unused = 2;", "28 |         let later = 1;", "35 |     if ready {", "Compilation succeeded with 5 warning(s)"]
+stderr_contains = ["[W0001]: unreachable code", "this never runs", "7 |     let unused = 2;", "28 |         let later = 1;", "35 |     if ready {", "63 |     Work();", "Compilation succeeded with 6 warning(s)"]

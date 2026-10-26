@@ -139,6 +139,7 @@ tokens! {
         Mut = "mut",
         None = "none",
         Orelse = "orelse",
+        Panic = "panic",
         Print = "print",
         Println = "println",
         Rawptr = "rawptr",

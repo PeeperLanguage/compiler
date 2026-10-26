@@ -325,7 +325,9 @@ and debuggers; the logic lives in a `lower` crate, the data in `model::mir`.
   instruction keeps the span of the expression it came from: LLVM's `!dbg`
   line, and where an error points.
 - **Terminators.** Each block ends in one: `br` (goto), `condbr` (with the span
-  of its condition), `ret` for a written `return`, or `fall off` at the closing
+  of its condition), `ret` for a written `return`, `panic` for a written
+  `panic "message"` (no successor and no scope ends: a panic does not
+  unwind), or `fall off` at the closing
   `}` of every function (LLVM gets `ret void` without a result; with one, the
   missing-return check reports it when it is reachable, and LLVM gets
   `unreachable`). `&&` and `||` lower to `condbr` and a `phi` where both paths
@@ -491,8 +493,9 @@ per function (`peeper -dump ll` shows it):
   where its incoming MIR block ends. Division by zero and a shift count
   outside 0 to width - 1 panic; signed `MIN / -1` is `MIN` and `MIN % -1` is
   0, as check folds them.
-- A panic writes one string constant made at compile time (`panic: division
-  by zero` and `  --> file:line:column`) through the prelude's `write` to the
+- A panic, a failed check or a written `panic "message"`, writes one string
+  constant made at compile time (`panic: division by zero` or `panic:
+  message`, then `  --> file:line:column`) through the prelude's `write` to the
   standard error and calls its `exit` with 101: no runtime function of its own.
 - Output goes through the prelude's `write` with a `cstr` (`c"..."`); there
   is no `print` yet (owner, 2026-10-19).

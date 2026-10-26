@@ -206,6 +206,8 @@ pub enum Stmt {
     },
     Expression(Id<Expr>),
     Return(Option<Id<Expr>>),
+    /// `panic message`: the message is a constant `Value::Bytes`
+    Panic(Id<Expr>),
     /// the else is a `Block` or an `If`
     If {
         condition: Id<Expr>,
@@ -352,6 +354,10 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
                     self.out.push(' ');
                     self.write_expr(value);
                 }
+            }
+            Stmt::Panic(message) => {
+                self.out.push_str("panic ");
+                self.write_expr(message);
             }
             Stmt::If {
                 condition,

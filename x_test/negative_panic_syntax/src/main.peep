@@ -1,0 +1,7 @@
+// `panic message;` is a statement, as `return value;` is: the keyword takes
+// one message and gives no value, so it is not an expression.
+fn main() {
+    panic;
+    panic "a", "b";
+    let a = panic "x";
+}

@@ -317,6 +317,24 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 return None;
             }
             ast::Stmt::Return(value) => Stmt::Return(self.check_return_value(span, value)),
+            ast::Stmt::Panic(mut message) => {
+                // Parentheses only group, as around any expression.
+                while let ast::Expr::Parentheses(inner) = tree.exprs[message] {
+                    message = inner;
+                }
+                let span = tree.exprs.span(message);
+                // shortcut: a plain string literal only, as there are no
+                // run-time strings; take a string value once there are.
+                if !matches!(tree.exprs[message], ast::Expr::String { c_string: false }) {
+                    let checked = self.add_expr(message, TypeExpectation::Hint(None));
+                    if self.body.exprs[checked].ty != TypeId::INVALID {
+                        let what = "`panic` messages other than string literals";
+                        self.checker.not_supported(span, what);
+                    }
+                    return None;
+                }
+                Stmt::Panic(self.body.add(self.c_string(span), span))
+            }
             ast::Stmt::Expression(value) => {
                 Stmt::Expression(self.add_expr(value, TypeExpectation::Hint(None)))
             }

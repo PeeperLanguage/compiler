@@ -1,0 +1,53 @@
+fn check:
+  bb0:
+    store n.0, arg0
+    %1 = load n.0: i32
+    %2 = Multiply %1, 2: i32
+    store doubled.1, %2
+    %4 = load doubled.1: i32
+    %5 = GreaterThan %4, 10: bool
+    branch %5 (doubled > 10) bb1 bb2
+  bb1:
+    panic c"too big"
+  bb2:
+    %6 = load doubled.1: i32
+    scope end doubled.1
+    scope end n.0
+    return %6
+  bb3:
+    goto bb2
+  bb4:
+    scope end doubled.1
+    scope end n.0
+    fall off at `}`
+fn each:
+  bb0:
+    %0 = Subtract 3, 0: i32
+    %1 = convert %0: u32
+    %2 = convert 1: i32
+    %3 = NotEqualTo %1, 0: bool
+    goto bb1
+  bb1:
+    %4 = phi bb0: 0, bb4: %9: i32
+    %5 = phi bb0: %1, bb4: %10: u32
+    %6 = phi bb0: %3, bb4: %8: bool
+    branch %6 (0..3) bb2 bb3
+  bb2:
+    store v.0, %4
+    %8 = GreaterThan %5, 1: bool
+    %9 = Add %4, %2: i32
+    %10 = Subtract %5, 1: u32
+    panic c"in a loop"
+  bb3:
+    fall off at `}`
+  bb4:
+    goto bb1
+  bb5:
+    scope end v.0
+    goto bb4
+fn main:
+  bb0:
+    %0 = call check(2): i32
+    println(%0)
+    call each()
+    fall off at `}`

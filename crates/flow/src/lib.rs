@@ -515,9 +515,9 @@ pub fn warn_unreachable_code(
                 ..
             } = body.blocks[block];
             let terminator = match *terminator {
-                mir::Terminator::Return { span, .. } | mir::Terminator::Branch { span, .. } => {
-                    Some(span)
-                }
+                mir::Terminator::Return { span, .. }
+                | mir::Terminator::Panic { span, .. }
+                | mir::Terminator::Branch { span, .. } => Some(span),
                 mir::Terminator::Goto(_) | mir::Terminator::FallOff(_) => None,
             };
             let spans = body.lists.items(instructions);

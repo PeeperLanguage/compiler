@@ -355,6 +355,7 @@ impl Dumper<'_> {
                 None,
                 value.map(Item::Expr).into_iter().collect(),
             ),
+            Stmt::Panic(message) => ("panic statement", None, vec![Item::Expr(message)]),
             Stmt::Expression(e) => ("expression statement", None, vec![Item::Expr(e)]),
             Stmt::Assign { target, value } => (
                 "assign statement",

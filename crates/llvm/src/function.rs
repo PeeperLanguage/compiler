@@ -482,6 +482,13 @@ impl Function<'_, '_, '_> {
                 _ = write!(out, "  ret {}", self.typed(value));
                 Some(span)
             }
+            Terminator::Panic { message, span } => {
+                let Value::Bytes(ref text) = body.constants[message.index()].value else {
+                    unreachable!("a panic's message is bytes")
+                };
+                self.write_panic(out, text, span, mir.debug_scope);
+                None
+            }
             // Reachable with a result only in a function with an error,
             // which is not lowered.
             Terminator::FallOff(_) if self.body.result != TypeId::VOID => {
@@ -1389,9 +1396,8 @@ impl Function<'_, '_, '_> {
     }
 
     /// Goes on in the next block of the MIR block being written when
-    /// `failed` is false, else panics: writes `message` and where the
-    /// instruction `id` is written to the standard error and exits with `PANIC_EXIT_CODE`. The text is
-    /// known at compile time, so it is one string constant.
+    /// `failed` is false, else panics (`write_panic`) with `message` where
+    /// the instruction `id` is written.
     fn check(&mut self, out: &mut String, failed: &str, message: &str, id: Id<mir::Instruction>) {
         self.checked += 1;
         let next = format!("bb{}.{}", self.block, self.checked);
@@ -1401,21 +1407,40 @@ impl Function<'_, '_, '_> {
             "  br i1 {failed}, label %{panic}, label %{next}\n{next}:"
         );
         let span = self.body.instructions.span(id);
-        let location = self.location(span, self.body.instructions[id].debug_scope);
+        let debug_scope = self.body.instructions[id].debug_scope;
+        let mut panics = std::mem::take(&mut self.panics);
+        _ = writeln!(panics, "{panic}:");
+        self.write_panic(&mut panics, message.as_bytes(), span, debug_scope);
+        panics.push('\n');
+        self.panics = panics;
+    }
+
+    /// Writes the calls that write `message` and where `span` is to the
+    /// standard error and exit with `PANIC_EXIT_CODE`, then `unreachable`,
+    /// with no newline after it. The text is known at compile time, so it is
+    /// one string constant.
+    fn write_panic(
+        &mut self,
+        out: &mut String,
+        message: &[u8],
+        span: Span,
+        debug_scope: Id<mir::DebugScope>,
+    ) {
+        let location = self.location(span, debug_scope);
         let (line, column) = self.file.position(span.start as usize);
-        let text = format!(
-            "panic: {message}\n  --> {}:{line}:{column}\n",
-            self.file.path
-        );
-        let string = self.module.add_string(text.as_bytes());
+        let mut text = b"panic: ".to_vec();
+        text.extend_from_slice(message);
+        let place = format!("\n  --> {}:{line}:{column}\n", self.file.path);
+        text.extend_from_slice(place.as_bytes());
+        let string = self.module.add_string(&text);
         self.module.declare(WRITE, || {
             format!("declare i32 {}(i32, ptr, i32)\n\n", global(WRITE))
         });
         self.module
             .declare(EXIT, || format!("declare void {}(i32)\n\n", global(EXIT)));
-        _ = writeln!(
-            self.panics,
-            "{panic}:\n  call i32 {}(i32 2, ptr {string}, i32 {}){location}\n  \
+        _ = write!(
+            out,
+            "  call i32 {}(i32 2, ptr {string}, i32 {}){location}\n  \
              call void {}(i32 {PANIC_EXIT_CODE}){location}\n  unreachable",
             global(WRITE),
             text.len(),

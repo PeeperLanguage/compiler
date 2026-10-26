@@ -450,6 +450,14 @@ impl Lowering<'_> {
                 // What follows a `return` is unreachable; it still gets a block.
                 self.block = self.new_block(span);
             }
+            thir::Stmt::Panic(message) => {
+                let mir::Operand::Constant(message) = self.lower_expr(message)? else {
+                    unreachable!("the checker gives a panic a constant message")
+                };
+                // No `ScopeEnd`s: a panic ends the program without unwinding.
+                self.finish(mir::Terminator::Panic { message, span });
+                self.block = self.new_block(span); // unreachable, as after a `return`
+            }
             thir::Stmt::If {
                 condition,
                 then,

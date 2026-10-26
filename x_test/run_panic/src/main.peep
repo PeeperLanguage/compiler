@@ -1,0 +1,23 @@
+// `panic` ends the program where it is written, with exit code 101. A path
+// ending in one needs no `return`, and nothing after it runs.
+
+fn half(n: i32) -> i32 {
+    if n % 2 == 0 {
+        return n / 2;
+    }
+    // A string literal's escapes are written as their bytes: a tab here.
+    panic "odd number\tgiven";
+}
+
+// Parentheses around the message only group it, as around any expression.
+fn check(ok: bool) {
+    if !ok {
+        panic ("not ok");
+    }
+}
+
+fn main() {
+    check(true);
+    println("even", half(4));
+    println("odd", half(3));
+}

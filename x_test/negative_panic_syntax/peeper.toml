@@ -1,0 +1,12 @@
+name = "negative_panic_syntax"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "expected expression, found `;`",
+    "expected `;`, found `,`",
+    "expected expression, found `panic`",
+    "Compilation failed with 3 error(s)",
+]

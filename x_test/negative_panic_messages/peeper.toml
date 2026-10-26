@@ -1,0 +1,13 @@
+name = "negative_panic_messages"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "src/main.peep:5:11",
+    "src/main.peep:6:11",
+    "`panic` messages other than string literals are not supported yet",
+    "unknown name `missing`",
+    "Compilation failed with 3 error(s)",
+]

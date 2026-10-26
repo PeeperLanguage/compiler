@@ -1,0 +1,9 @@
+name = "run_panic"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 101
+stdout_contains = ["even 2\n"]
+stderr_contains = ["panic: odd number\tgiven\n", "src/main.peep:9:5\n"]

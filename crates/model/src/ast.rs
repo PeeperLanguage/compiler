@@ -305,6 +305,8 @@ pub enum Stmt {
     /// a `Decl::Const`
     Const(Id<Decl>),
     Return(Option<Id<Expr>>),
+    /// `panic message;`
+    Panic(Id<Expr>),
     /// an expression followed by `;`
     Expression(Id<Expr>),
     /// `target = value;`

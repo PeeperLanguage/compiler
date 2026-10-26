@@ -153,7 +153,7 @@ impl ThirBuilder<'_, '_> {
     }
 
     /// The string literal at `span` as a `cstr`: its bytes.
-    fn c_string(&self, span: Span) -> Expr {
+    pub(crate) fn c_string(&self, span: Span) -> Expr {
         let bytes = literal::value(self.checker.module().ast.file.slice(span));
         Expr {
             ty: TypeId::CSTR,
