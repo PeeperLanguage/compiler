@@ -1,6 +1,6 @@
 [package]
 name = "compile"
-description = "A compile of a program up to MIR: checks every declaration once, in the order they ask for each other, and lowers each function"
+description = "A compile of a program up to MIR: checks every declaration once, in the order they ask for each other, and builds each function"
 version.workspace = true
 edition.workspace = true
 license-file.workspace = true
@@ -12,8 +12,6 @@ arena.workspace = true
 project.workspace = true
 model.workspace = true
 check.workspace = true
-lower.workspace = true
-flow.workspace = true
 source.workspace = true
 
 [lints]

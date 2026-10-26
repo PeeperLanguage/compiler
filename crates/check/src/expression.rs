@@ -12,7 +12,6 @@ use diagnostics::fix::Fix;
 use diagnostics::suggest::nearest_name;
 use model::ast;
 use model::ast::Ident;
-use model::constant;
 use model::constant::Constant;
 use model::constant::Value;
 use model::operators::BinaryOp;
@@ -142,7 +141,7 @@ impl ThirBuilder<'_, '_> {
             Conversion::Implicit | Conversion::NeedsCast => match expr.kind {
                 ExprKind::Constant(constant) => {
                     let types = &self.checker.types;
-                    ExprKind::Constant(constant::convert(&types[expr.ty], &types[to], &constant))
+                    ExprKind::Constant(eval::convert(&types[expr.ty], &types[to], &constant))
                 }
                 _ => ExprKind::Convert(self.body.add(expr, span)),
             },
@@ -1013,11 +1012,34 @@ impl ThirBuilder<'_, '_> {
         if !arity_matches {
             return Expr::INVALID;
         }
+        let arguments = self.body.lists.add(&checked);
+        // In a constant's value, a call on constants runs now.
+        let constant_arguments = || {
+            let values = self.body.lists.items(arguments).map(|argument| {
+                match self.body.exprs[argument].kind {
+                    ExprKind::Constant(ref value) => Some(value.clone()),
+                    _ => None,
+                }
+            });
+            values.collect::<Option<Vec<Value>>>()
+        };
+        if self.in_constant
+            && result != TypeId::VOID
+            && let Some(values) = constant_arguments()
+        {
+            return match self.checker.evaluate_call(function, values, span) {
+                Some(value) => Expr {
+                    ty: result,
+                    kind: ExprKind::Constant(value),
+                },
+                None => Expr::INVALID,
+            };
+        }
         Expr {
             ty: result,
             kind: ExprKind::Call {
                 function,
-                arguments: self.body.lists.add(&checked),
+                arguments,
             },
         }
     }
@@ -1125,7 +1147,7 @@ impl ThirBuilder<'_, '_> {
         let result = checked.ty;
         let kind = match checked.kind {
             ExprKind::Constant(constant) => ExprKind::Constant(
-                constant::unary(op, &ty, &constant).expect("unary operators do not trap"),
+                eval::unary(op, &ty, &constant).expect("unary operators do not trap"),
             ),
             kind => ExprKind::Unary {
                 op,
@@ -1249,7 +1271,10 @@ impl ThirBuilder<'_, '_> {
             self.checker.report(diagnostic);
             return Expr::INVALID;
         }
-        if let Some(message) = known_trap(op, &left_type, &right_type, &right) {
+        if let ExprKind::Constant(ref value) = right.kind
+            && let Some(trap) = eval::known_trap(op, &left_type, &right_type, value)
+        {
+            let message = eval::trap_message(trap, &left_type);
             self.checker
                 .error(diagnostics::INVALID_OPERATION, message, right_span);
             return Expr::INVALID;
@@ -1258,7 +1283,7 @@ impl ThirBuilder<'_, '_> {
         if let (ExprKind::Constant(left_value), ExprKind::Constant(right_value)) =
             (&left.kind, &right.kind)
         {
-            let folded = constant::binary(op, &left_type, left_value, &right_type, right_value)
+            let folded = eval::binary(op, &left_type, left_value, &right_type, right_value)
                 .expect("known traps were reported before folding");
             return Expr {
                 ty,
@@ -1399,31 +1424,6 @@ fn constant_expr(constant: Option<Constant>) -> Expr {
             kind: ExprKind::Constant(value),
         },
         None => Expr::INVALID,
-    }
-}
-
-/// Why `op` on a left operand of `left_type` and `right` of `right_type`
-/// traps whatever the left value is: a division by a constant zero, or a
-/// shift by a constant count out of range.
-fn known_trap(op: BinaryOp, left_type: &Type, right_type: &Type, right: &Expr) -> Option<String> {
-    let (Type::Integer(shifted), Type::Integer(count_type)) = (left_type, right_type) else {
-        return None; // float division gives an infinity or NaN
-    };
-    let ExprKind::Constant(Value::Integer(right)) = &right.kind else {
-        return None;
-    };
-    match op {
-        BinaryOp::Divide | BinaryOp::Remainder
-            if right.as_slice().iter().all(|&limb| limb == 0) =>
-        {
-            Some("division by zero".to_string())
-        }
-        BinaryOp::ShiftLeft | BinaryOp::ShiftRight => {
-            constant::shift_count(*shifted, *count_type, right)
-                .is_err()
-                .then(|| format!("a shift count must be from 0 to {}", shifted.bits - 1))
-        }
-        _ => None,
     }
 }
 

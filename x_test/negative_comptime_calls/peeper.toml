@@ -1,0 +1,24 @@
+name = "negative_comptime_calls"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "[T0044]: this call cannot be evaluated at compile time",
+    "src/main.peep:28:11",
+    "odd number",
+    "src/main.peep:29:11",
+    "----- division by zero",
+    "this ran more than 1000000 steps",
+    "`print` calls cannot run at compile time yet",
+    "src/main.peep:32:11",
+    "---- range step is zero",
+    "an `extern` function cannot run at compile time",
+    "`back` uses `LOOP`, closing the cycle",
+    "`self_call` uses `self_call`, closing the cycle",
+    "`ping` uses `ping`, closing the cycle",
+    "mismatched types: expected `i32`, found `bool`",
+    "the value of a constant must be known at compile time",
+    "Compilation failed with 12 error(s)",
+]

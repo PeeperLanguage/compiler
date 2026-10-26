@@ -5,6 +5,7 @@ members = [
     "crates/frontend/*",
     "crates/pkg/*",
     "crates/model",
+    "crates/eval",
     "crates/check",
     "crates/lower",
     "crates/flow",
@@ -32,6 +33,7 @@ bigint = { path = "crates/pkg/bigint" }
 parser = { path = "crates/frontend/parser" }
 literal = { path = "crates/pkg/literal" }
 model = { path = "crates/model" }
+eval = { path = "crates/eval" }
 check = { path = "crates/check" }
 lower = { path = "crates/lower" }
 flow = { path = "crates/flow" }

@@ -1,0 +1,7 @@
+name = "run_comptime_calls"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "success"
+stdout_contains = ["2880067194370816120\n2432902008176640001\n144\n110\n-75 4\n6765\n2\n"]

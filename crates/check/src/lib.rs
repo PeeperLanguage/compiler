@@ -5,6 +5,7 @@
 pub mod builtin;
 pub mod declaration;
 mod expression;
+mod function;
 pub mod scope;
 mod statement;
 #[cfg(test)]
@@ -15,6 +16,7 @@ use std::sync::Arc;
 use diagnostics::Code;
 use diagnostics::Diagnostic;
 use diagnostics::fix::Fix;
+use function::Built;
 use model::DefId;
 use model::ModuleId;
 use model::ast;
@@ -40,15 +42,21 @@ pub struct Checker<'p> {
     /// How wide a pointer is on the target, in bits: the width of `isize` and
     /// `usize`.
     pub pointer_bits: u32,
-    /// Each type declaration and alias, by its place: the type it declares
-    /// (`check_type_declaration`). Another declaration's slot stays
-    /// `NotStarted`, as in each table.
+    /// Each type declaration, alias and function, by its place: the type it
+    /// declares (`check_type_declaration`), or the function's type
+    /// (`check_function`). Another declaration's slot stays `NotStarted`, as
+    /// in each table.
     pub declared_types: Vec<Vec<State<TypeId>>>,
-    /// Each function, by its place: its type (`check_function`).
-    pub function_types: Vec<Vec<State<TypeId>>>,
     /// Each module constant, by its place: its type and value, `None` when it
     /// had an error (`check_constant`).
     pub constants: Vec<Vec<State<Option<Constant>>>>,
+    /// Each function, by its place: how far its body is built
+    /// (`build_function`).
+    bodies: Vec<Vec<Built>>,
+    /// Each module's: the modules whose functions its constants may run at
+    /// compile time (`evaluate_call`), so a constant's value depends on their
+    /// bodies, which no interface holds.
+    pub ran_modules: Vec<Vec<ModuleId>>,
     /// What checking each module reported, by `ModuleId`, in order.
     pub diagnostics: Vec<Vec<Diagnostic>>,
     pub(crate) current_module: ModuleId, // the module being checked
@@ -89,8 +97,15 @@ impl<'p> Checker<'p> {
             types: Types::new(),
             pointer_bits,
             declared_types: table(modules),
-            function_types: table(modules),
             constants: table(modules),
+            bodies: (modules.iter())
+                .map(|module| {
+                    (0..module.ast.top_level.len())
+                        .map(|_| Built::NotYet)
+                        .collect()
+                })
+                .collect(),
+            ran_modules: vec![Vec::new(); modules.len()],
             diagnostics,
             current_module: ModuleId::from_index(0),
             checking: Vec::new(),
@@ -134,7 +149,7 @@ impl<'p> Checker<'p> {
         self.check_once(
             definition,
             used_at,
-            |checker| &mut checker.function_types,
+            |checker| &mut checker.declared_types,
             TypeId::INVALID,
             Checker::check_function,
         )

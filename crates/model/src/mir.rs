@@ -257,6 +257,15 @@ impl Terminator {
 }
 
 impl Body {
+    /// The type of the value `operand` stands for.
+    pub fn operand_type(&self, operand: Operand) -> TypeId {
+        match operand {
+            Operand::Constant(constant) => self.constants[constant.index()].ty,
+            Operand::Argument(index) => self.variables[Id::from_index(index as usize)].ty,
+            Operand::Value(instruction) => self.instructions[instruction].ty,
+        }
+    }
+
     /// The body as text, one block after another, for `peeper -dump`. `file` is
     /// where the body is written; `name_of` gives a declaration's name. A
     /// variable shows as its name and index (`sum.2`), an integer constant as

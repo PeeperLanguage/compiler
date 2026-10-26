@@ -12,6 +12,9 @@ diagnostics.workspace = true
 arena.workspace = true
 project.workspace = true
 model.workspace = true
+eval.workspace = true
+lower.workspace = true
+flow.workspace = true
 bigint.workspace = true
 literal.workspace = true
 

@@ -49,6 +49,9 @@ pub(crate) struct ThirBuilder<'a, 'p> {
     block: Id<Block>,
     result: TypeId, // the function's result type
     loops: u32,     // how many loops the code being checked is in
+    /// Whether the code being checked is a constant's value, whose calls run
+    /// at compile time (`Checker::evaluate_call`).
+    pub(crate) in_constant: bool,
 }
 
 impl Checker<'_> {
@@ -134,6 +137,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             block: Id::from_index(0), // the function's, added first (`Checker::check_body`)
             result,
             loops: 0,
+            in_constant: false,
         }
     }
 
@@ -807,10 +811,12 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             return None;
         };
         let span = self.checker.module().ast.exprs.span(value);
+        let outer = std::mem::replace(&mut self.in_constant, true);
         let checked = match declared {
             Some(ty) => self.check_expr(value, TypeExpectation::Required(ty)),
             None => self.check_expr(value, TypeExpectation::Hint(None)),
         };
+        self.in_constant = outer;
         match checked.kind {
             ExprKind::Constant(value) => Some(Constant {
                 ty: checked.ty,

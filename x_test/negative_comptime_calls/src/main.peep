@@ -1,0 +1,73 @@
+// A call in a constant that cannot run at compile time is an error at the
+// call, pointing at where it stopped.
+
+fn half(n: i32) -> i32 {
+    if n % 2 != 0 {
+        panic "odd number";
+    }
+    return n / 2;
+}
+
+fn divide(a: i32, b: i32) -> i32 {
+    return a / b;
+}
+
+fn forever() -> i32 {
+    for { }
+}
+
+fn noisy() -> i32 {
+    println(1);
+    return 1;
+}
+
+fn twice(n: i32) -> i32 {
+    return half(n) * 2;
+}
+
+const A = half(3);
+const B = divide(1, 0);
+const C = forever();
+const D = noisy();
+const E = twice(5);
+// A run-time check fails at compile time too.
+fn steps(step: u32) -> u32 {
+    for v in 0..10:step { }
+    return 1;
+}
+const Z = steps(0);
+// C functions cannot run while compiling.
+const W = Write(Stdout, c"x", 1);
+// A constant that needs itself to be computed.
+const LOOP = back();
+fn back() -> i32 {
+    return LOOP;
+}
+fn self_call() -> i32 {
+    const SELF = self_call();
+    return SELF;
+}
+// A cycle through another function, which the run really takes.
+fn ping() -> i32 {
+    const P = pong(1);
+    return P;
+}
+fn pong(n: i32) -> i32 {
+    if n > 0 {
+        return ping();
+    }
+    return 0;
+}
+// A called function with an error: only that error is reported.
+fn broken() -> i32 {
+    return true;
+}
+fn calls_broken() -> i32 {
+    return broken();
+}
+const BAD = calls_broken();
+// Only calls on constants run: this one is still an error.
+fn main() {
+    let n = 2;
+    const F = half(n);
+}

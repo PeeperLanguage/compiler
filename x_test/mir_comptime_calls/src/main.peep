@@ -1,0 +1,10 @@
+// A constant's call runs while compiling: MIR holds only its value.
+fn cube(n: i64) -> i64 {
+    return n * n * n;
+}
+
+const BIG = cube(1000) + 1;
+
+fn main() {
+    println(BIG);
+}

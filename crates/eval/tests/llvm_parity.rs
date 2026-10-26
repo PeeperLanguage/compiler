@@ -1,21 +1,21 @@
-//! Folding in `ir` must give the values LLVM computes at run time, for every
+//! `eval` must give the values LLVM computes at run time, for every
 //! integer width and both float precisions. This test runs thousands of
-//! operations both ways: `ir` folds them, `lli` runs them on values it cannot
+//! operations both ways: `eval` computes them, `lli` runs them on values it cannot
 //! fold (volatile loads), and the bits must match; a NaN matches any NaN, as
 //! LLVM does not specify which NaN an operation gives. Cases the runtime traps
 //! on (division by zero, out-of-range shifts) or guards (`MIN / -1`) are left
-//! out; the unit tests in constant.rs cover them.
+//! out; the unit tests in lib.rs cover them.
 //!
-//! Needs `lli` on the path: `cargo test -p ir -- --ignored`.
+//! Needs `lli` on the path: `cargo test -p eval -- --ignored`.
 
 use std::fmt::Write;
 use std::process::Command;
 
 use bigint::Limbs;
+use eval::binary;
+use eval::convert;
+use eval::unary;
 use model::constant::Value;
-use model::constant::binary;
-use model::constant::convert;
-use model::constant::unary;
 use model::operators::BinaryOp;
 use model::operators::UnaryOp;
 use model::semantic_types::Float;

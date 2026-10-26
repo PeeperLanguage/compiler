@@ -1,0 +1,76 @@
+// A constant's value may call a function: the call runs while compiling,
+// and the program gets only its result.
+
+fn fib(n: u32) -> u64 {
+    let mut a: u64 = 0;
+    let mut b: u64 = 1;
+    for 0..n {
+        let next = a + b;
+        a = b;
+        b = next;
+    }
+    return a;
+}
+
+// Recursion, branches and a call inside an operator.
+fn factorial(n: u64) -> u64 {
+    if n <= 1 {
+        return 1;
+    }
+    return n * factorial(n - 1);
+}
+
+// Short-circuit operators, negation and casts.
+fn pick(a: i32, b: bool) -> i32 {
+    if b && a > 0 || !b {
+        return -a;
+    }
+    return a as i64 as i32;
+}
+
+// A range with a step given as an argument.
+fn steps(step: u32) -> u32 {
+    let mut n: u32 = 0;
+    for v in 0..10:step {
+        n = n + 1;
+    }
+    return n;
+}
+
+const FIB_90 = fib(90);
+const PICKED = pick(5, true) + pick(-7, true) * 10;
+const STEPS = steps(3);
+const BIG = factorial(20) + 1;
+// A function declared below the constant that calls it.
+const SQUARE = square(12);
+
+fn square(n: i32) -> i32 {
+    return n * n;
+}
+
+// A function that may call back into one still being checked: only a call
+// that really happens is a cycle.
+fn twice_one() -> i32 {
+    const ONE = one_unless(0);
+    return ONE * 2;
+}
+
+fn one_unless(n: i32) -> i32 {
+    if n > 0 {
+        return twice_one();
+    }
+    return 1;
+}
+
+fn main() {
+    // A constant in a body calls a function too.
+    const LOCAL = fib(10) * 2;
+    println(FIB_90);
+    println(BIG);
+    println(SQUARE);
+    println(LOCAL);
+    println(PICKED, STEPS);
+    // The same function still runs as usual.
+    println(fib(20));
+    println(twice_one());
+}

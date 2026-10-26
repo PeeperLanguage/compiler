@@ -142,7 +142,7 @@ place. The command line passes `Results::default()`.
 
 **Pick a field with a closure when one routine serves several tables.**
 `Checker::check_once` runs the check state machine for every declaration;
-each caller names its table as `|checker| &mut checker.function_types`, since a
+each caller names its table as `|checker| &mut checker.declared_types`, since a
 field cannot be a parameter. Write the closure in the call: stored in a
 `let`, its returned borrow does not get the right lifetime.
 

@@ -1,0 +1,17 @@
+[package]
+name = "eval"
+description = "Evaluation: what operators mean on constant values, and running MIR at compile time"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+arena.workspace = true
+bigint.workspace = true
+model.workspace = true
+source.workspace = true
+stacker.workspace = true
+
+[lints]
+workspace = true

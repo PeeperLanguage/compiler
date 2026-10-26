@@ -1,0 +1,17 @@
+fn cube:
+  bb0:
+    store n.0, arg0
+    %1 = load n.0: i64
+    %2 = load n.0: i64
+    %3 = Multiply %1, %2: i64
+    %4 = load n.0: i64
+    %5 = Multiply %3, %4: i64
+    scope end n.0
+    return %5
+  bb1:
+    scope end n.0
+    fall off at `}`
+fn main:
+  bb0:
+    println(1000000001)
+    fall off at `}`

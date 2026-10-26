@@ -59,6 +59,9 @@ struct ModuleResults {
     /// whole program (`project::Program`), since every load is done anew.
     diagnostics: Vec<Diagnostic>,
     reused: bool, // kept from the previous compile, not checked
+    /// The files of the modules whose functions its constants ran at compile
+    /// time (`Checker::ran_modules`): it is reused only if they are.
+    ran_modules: Vec<String>,
 }
 
 impl ModuleResults {
@@ -69,6 +72,7 @@ impl ModuleResults {
             interface: 0,
             diagnostics: Vec::new(),
             reused: false,
+            ran_modules: Vec::new(),
         }
     }
 }
@@ -133,12 +137,25 @@ pub fn run(
             .all(|import| changed.get(import.module.index()) == Some(&false));
         let cached = previous.remove(&module.ast.file.path);
         let previous_interface = cached.as_ref().map(|cached| cached.interface);
+        // A constant's value depends on the bodies it ran, whose modules come
+        // before (each was imported, by it or by one of those).
+        let ran_unchanged = |cached: &ModuleResults| {
+            let reused = |path: &String| {
+                *path == module.ast.file.path
+                    || results
+                        .iter()
+                        .any(|done| done.file.path == *path && done.reused)
+            };
+            cached.ran_modules.iter().all(reused)
+        };
         if let Some(cached) = cached
             && imports_unchanged
             && cached.file.text == module.ast.file.text
+            && ran_unchanged(&cached)
         {
             let found = &mut results[index];
             found.reused = true;
+            found.ran_modules = cached.ran_modules;
             // Its scope's errors come from the same text, so are the same;
             // what asking for its declarations found again is dropped.
             found.diagnostics = cached.diagnostics;
@@ -152,6 +169,10 @@ pub fn run(
         let found = &mut results[index];
         found.interface = interface;
         found.diagnostics = std::mem::take(&mut checker.diagnostics[index]);
+        let ran = checker.ran_modules[index].iter();
+        found.ran_modules = ran
+            .map(|ran| modules[ran.index()].ast.file.path.clone())
+            .collect();
     }
     Results { modules: results }
 }
@@ -190,10 +211,10 @@ fn compile_module(
     }
 }
 
-/// Checks the function `definition`, written `function`, into `thir`, and
-/// gives it to `use_function` with its MIR, path-checked, and with its names
-/// when `record_names`. A function without a body, or whose signature had an
-/// error, is not given.
+/// Builds the function `definition`, written `function`, into `thir`
+/// (`Checker::build_function`) and gives it to `use_function` with its MIR,
+/// and with its names when `record_names`. A function without a body, or
+/// whose signature had an error, is not given.
 fn compile_function(
     checker: &mut Checker,
     definition: DefId,
@@ -202,67 +223,14 @@ fn compile_function(
     record_names: bool,
     use_function: &mut impl FnMut(CheckedFunction),
 ) {
-    let modules = checker.modules;
-    let module = definition.module.index();
-    let ty = checker.function_type(definition, function.name.span);
     let mut names = Vec::new(); // allocates only when a name is recorded
     let recorded = record_names.then_some(&mut names);
-    let checked = checker.in_module(definition.module, |checker| {
-        checker.check_body(function, ty, thir, recorded)
-    });
-    if !checked {
+    let Some(mir) = checker.build_function(definition, function.name.span, thir, recorded) else {
         return;
-    }
-    // Its MIR, path-checked; none when the signature had an error
-    // (reported) or it cannot be lowered (`lower::lower`).
-    let mir = match checker.types[ty] {
-        Type::Function {
-            ref parameters,
-            result,
-            ..
-        } => lower::lower(thir, parameters.len(), result, &checker.types).inspect(|mir| {
-            let file = &modules[module].ast.file;
-            let diagnostics = &mut checker.diagnostics[module];
-            flow::report_variable_state_errors(mir, file, diagnostics);
-            let origins_of = |definition: DefId| {
-                let State::Done(ty) =
-                    checker.function_types[definition.module.index()][definition.index as usize]
-                else {
-                    unreachable!("a call is checked, and so its function")
-                };
-                match checker.types[ty] {
-                    Type::Function { ref origins, .. } => &**origins,
-                    // No origins would let a returned reference dangle unseen.
-                    _ => unreachable!("a call to a function with a signature error is not lowered"),
-                }
-            };
-            flow::loans::report_loan_errors(
-                mir,
-                &checker.types,
-                definition,
-                &origins_of,
-                file,
-                diagnostics,
-            );
-            flow::warn_unreachable_code(mir, file, diagnostics);
-            // Last: it points at the closing brace.
-            flow::report_missing_return(
-                mir,
-                file,
-                &checker.types,
-                result,
-                |definition| {
-                    let (name, file) = project::declared_name(modules, definition);
-                    name.text(file)
-                },
-                diagnostics,
-            );
-        }),
-        _ => None,
     };
     use_function(CheckedFunction {
         definition,
-        signature: ty,
+        signature: checker.function_type(definition, function.name.span),
         thir,
         names: &names,
         mir,
@@ -327,7 +295,6 @@ fn hash_type(checker: &Checker, ty: TypeId, hasher: &mut DefaultHasher) {
 fn interface(checker: &Checker, module: ModuleId) -> u64 {
     let modules = checker.modules;
     let declared_types = &checker.declared_types[module.index()];
-    let function_types = &checker.function_types[module.index()];
     let constants = &checker.constants[module.index()];
     let module = &modules[module.index()];
     let tree = &module.ast;
@@ -346,9 +313,6 @@ fn interface(checker: &Checker, module: ModuleId) -> u64 {
         // A declaration's result is in one table; the other slots are
         // `NotStarted`.
         if let State::Done(ty) = declared_types[index] {
-            hash_type(checker, ty, &mut hasher);
-        }
-        if let State::Done(ty) = function_types[index] {
             hash_type(checker, ty, &mut hasher);
         }
         // `Type::Struct` holds only the fields' types; their names are in the tree.
@@ -798,6 +762,47 @@ mod tests {
         let (third, checked) = recompile(&[UTILS, OTHER, MAIN], second);
         assert_eq!(checked, ["app:utils"]);
         assert_eq!(messages(&third), [mismatch("i32")]);
+    }
+
+    /// A constant's value from a call depends on the called body, which no
+    /// interface holds: an edit of it checks the constant's module again.
+    #[test]
+    fn a_body_edit_checks_the_modules_whose_constants_ran_it() {
+        let main = (
+            "app:main",
+            "import \"app:utils\";
+            const DIVISOR = utils::Divisor();
+            fn main() { let half = 1 / DIVISOR; }",
+        );
+        let zero = ("app:utils", "fn Divisor() -> i32 { return 0; }");
+        let (first, _) = recompile(&[zero, main], Results::default());
+        assert_eq!(messages(&first), ["division by zero"]);
+        let two = ("app:utils", "fn Divisor() -> i32 { return 2; }");
+        let (second, checked) = recompile(&[two, main], first);
+        assert_eq!(checked, ["app:utils", "app:main"]);
+        assert!(messages(&second).is_empty(), "{:?}", messages(&second));
+    }
+
+    /// The same through a function of another module that the call reaches.
+    #[test]
+    fn a_body_edit_checks_constants_that_reach_it_through_others() {
+        let utils = (
+            "app:utils",
+            "import \"app:other\";\nfn Divisor() -> i32 { return other::Value(); }",
+        );
+        let main = (
+            "app:main",
+            "import \"app:utils\";
+            const DIVISOR = utils::Divisor();
+            fn main() { let half = 1 / DIVISOR; }",
+        );
+        let zero = ("app:other", "fn Value() -> i32 { return 0; }");
+        let (first, _) = recompile(&[zero, utils, main], Results::default());
+        assert_eq!(messages(&first), ["division by zero"]);
+        let two = ("app:other", "fn Value() -> i32 { return 2; }");
+        let (second, checked) = recompile(&[two, utils, main], first);
+        assert_eq!(checked, ["app:other", "app:main"]);
+        assert!(messages(&second).is_empty(), "{:?}", messages(&second));
     }
 
     #[test]

@@ -40,7 +40,8 @@ scheduled per declaration, on demand (Zig, Rust), not module by module.
 - **decided** LLVM IR is written as text and compiled by clang.
 - **decided** One `model` crate owns the program's data: the syntax tree, the
   THIR and MIR node types, the type model, definition ids, constant values
-  with their arithmetic, and operator kinds. The crates that build them
+  and operator kinds. What operators mean on constant values is `eval`'s
+  (owner, 2026-10-26: "move them to eval"). The crates that build them
   (`parser`, `check`, `lower` and later `llvm`) hold only logic. THIR and
   MIR keep their own node types: a tree and a graph have different shapes.
   (Until 2026-10-17 this was an `ir` crate, with the tree in `ast` and THIR in
@@ -74,9 +75,10 @@ that is built once and kept.
 ```
 peeper ─► build ─► project ─► parser ─► model ─► arena
             │
-            ├─► check ─► model, project   AST -> THIR and signatures; folding
-            ├─► lower ─► model            THIR -> MIR; path checks; (later) interpreter
-            └─► llvm ──► model            MIR -> LLVM text; clang
+            ├─► check ─► model, project, eval, lower, flow   AST -> THIR, signatures, folding; builds bodies
+            ├─► eval ──► model            operators on constant values; the MIR interpreter
+            ├─► lower ─► model            THIR -> MIR; path checks
+            └─► llvm ──► model, eval      MIR -> LLVM text (trap messages from eval); clang
 ```
 
 Every phase reads and writes its data in `model`; only `lower` reads THIR, and
@@ -85,9 +87,10 @@ enum variants, function types) are `model` data, written by check.
 
 | crate | owns |
 |---|---|
-| `model` | data only: `ast` (the syntax tree), `thir` (THIR nodes), `mir` (MIR graphs); `semantic_types` (`TypeId`, the type interner, the built-in types table); `constant` (constant values and their arithmetic); `ModuleId`, `DefId`; `operators` (`BinaryOp`, `UnaryOp`); signatures |
+| `model` | data only: `ast` (the syntax tree), `thir` (THIR nodes), `mir` (MIR graphs); `semantic_types` (`TypeId`, the type interner, the built-in types table); `constant` (constant values); `ModuleId`, `DefId`; `operators` (`BinaryOp`, `UnaryOp`); signatures |
 | `check` | the checker: scopes, name lookup, building THIR, writing signatures; the declaration tables (`Checker`) |
-| `lower` | lowering from THIR; path checks; later the interpreter |
+| `eval` | what operators mean on constant values (`binary`, `unary`, `convert`, `known_trap`, the trap messages `trap_message`); the MIR interpreter (`interpreter::run`) |
+| `lower` | lowering from THIR; path checks |
 | `llvm` | LLVM text for a module; running clang and the linker |
 | `compile` | a compile: walks the modules in order, reuses unchanged ones, lowers each body (the `build` of `overall-design.md`, renamed) |
 
@@ -139,17 +142,25 @@ body and a MIR body each list their arenas once with it.
 
 ## Constant evaluation
 
-One owner for the meaning of every operation: `model`'s value functions, on top
-of `pkg/bigint` for integer arithmetic (add,
-compare, cast, build an aggregate, read a field). Two drivers call them, each for
+One owner for the meaning of every operation: the `eval` crate's functions, on
+top of `pkg/bigint` for integer arithmetic (add, compare, cast; later build an
+aggregate, read a field). Two drivers call them, each for
 what the other cannot do:
 
-- **Check folds** literals, operators, casts, struct and enum literals, field
-  reads and references to other constants, while it builds THIR. A `const`
+- **Check folds** literals, operators, casts and references to other
+  constants, while it builds THIR (not yet struct and enum literals or field
+  reads: a value has no struct or array form yet). A `const`
   declaration's value comes from this today.
-- **The interpreter** (later) runs what folding cannot: calls and control flow,
-  over MIR. Once comptime exists, a `const` whose value needs a call is handed to
-  it; everything else still folds in check.
+- **The interpreter** (`eval::interpreter::run`) runs what folding cannot: calls and control
+  flow, over MIR. In a constant's value (a module `const` or one in a body), a
+  call whose arguments are all constants is run at once
+  (`Checker::evaluate_call`), so its result folds on (`f(3) + 2`). It runs
+  integers, bools and floats in whole variables, branches, loops, phis and
+  calls; struct and array values, references, `print` and `extern` functions
+  are errors at compile time (T0044), as are a `panic`, a failed check and
+  more than 1,000,000 steps (owner, 2026-10-26: a fixed limit, no setting
+  until a program needs one). The error is at the call, with a label where
+  the run stopped.
 
 Neither driver implements an operation itself, so the two cannot disagree.
 
@@ -173,7 +184,7 @@ computed differed (issues #154, #155, PR #158). The rules that prevent them:
    width; the Go guard wrote the width as a constant of the count's type, so a
    `u2` count compared against 8 cut to 0.
 5. **Constants are written from the same bits** (`iN u0x...`), and
-   `crates/model/tests/llvm_parity.rs` runs every operator on widths 1 to 1000 in
+   `crates/eval/tests/llvm_parity.rs` runs every operator on widths 1 to 1000 in
    `lli` and in `model` and requires equal bits.
 
 Floats (`f32`, `f64`) follow the same idea:
@@ -206,7 +217,7 @@ function_type(d)  the function type of function or method d
 constant(d)       the type and value of module constant d (without a written
                   type, its type is its value's)
 body(d)           THIR of function d (needs the function types it calls)
-mir(d)            MIR of function d (needs body(d)); later also comptime calls
+mir(d)            MIR of function d (needs body(d)); also asked for by a call run at compile time
 ```
 
 - Module-scope declarations (`DefId`) are checked on demand, one table per
@@ -238,10 +249,16 @@ mir(d)            MIR of function d (needs body(d)); later also comptime calls
   contract of `architecture.md`.
 - Every declaration is checked, used or not, so errors in unused code are still
   reported (unlike Zig).
-- Comptime later: check asks `mir(f)` and runs it in the interpreter, without
-  depending on the `lower` crate. How it reaches `lower` is open, since the
-  declaration tables now live in `check`: a callback that `compile` passes in, or
-  another owner for the tables.
+- A function's body is built (THIR, MIR, the path checks) by
+  `Checker::build_function`, for the compile's walk and for a call run at
+  compile time; check calls `lower` and `flow` itself (owner, 2026-10-26).
+  Its first build reports what its checks find; a later one finds the same
+  and drops it. MIR built for a run is kept in `Checker::bodies` for the
+  next run; the compile's walk still hands its MIR on and keeps none. A run
+  first builds every function it may reach, except one still being checked,
+  then only reads the table. A run that calls a function still being checked
+  (its body asks, through a constant, for a run that reaches it) is a cycle
+  (T0013); one that only may call it is not.
 
 ## Reuse between compiles and the language server
 
@@ -252,7 +269,11 @@ compile pays nothing extra. A module is not checked again when its text is
 unchanged and the interface of each module it imports (the prelude included)
 is unchanged: it keeps its diagnostics. A module's interface is a hash of what
 other modules see: its imports, and each declaration's kind, name, and type or
-constant value, types hashed by structure. Bodies are not part of it.
+constant value, types hashed by structure. Bodies are not part of it, so a
+module whose constants ran functions at compile time also remembers those
+functions' modules, and is reused only if each of them was
+(`Checker::ran_modules`): such a constant's value, and an error pointing into
+the function's file, depend on the function's body.
 
 Only the source, the interface hash and the diagnostics are kept between
 compiles. Ids, types, THIR and MIR are rebuilt, since their numbering shifts
@@ -553,7 +574,7 @@ it), and the manifest's `build = "program"`.
   even; a float becomes an integer cut toward zero, saturated at the ends
   of its range, NaN as 0 (Rust's rule, as LLVM's plain `fptosi` gives
   poison there). Folding and LLVM agree for every width
-  (`crates/model/tests/llvm_parity.rs`): `llvm` writes LLVM's own
+  (`crates/eval/tests/llvm_parity.rs`): `llvm` writes LLVM's own
   `sitofp`/`uitofp` and `llvm.fpto{s,u}i.sat`, which need LLVM 23 or newer
   above 128 bits (LLVM 22 crashes on the one and gives a wrong finite float
   for the other, llvm/llvm-project#189054), so the bundled toolchain is LLVM

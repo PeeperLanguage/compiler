@@ -10,6 +10,8 @@ use std::fmt::Write;
 use std::iter::Peekable;
 
 use arena::Id;
+use eval::ValueError;
+use eval::trap_message;
 use model::DefId;
 use model::constant::Value;
 use model::mir;
@@ -233,7 +235,7 @@ fn traps(body: &mir::Body, types: &Types, id: Id<mir::Instruction>) -> usize {
             usize::from(
                 divides_or_shifts
                     && !matches!(right, Operand::Constant(_))
-                    && matches!(types[operand_type(body, left)], Type::Integer(_)),
+                    && matches!(types[body.operand_type(left)], Type::Integer(_)),
             )
         }
         InstructionKind::Load(ref place)
@@ -247,15 +249,6 @@ fn traps(body: &mir::Body, types: &Types, id: Id<mir::Instruction>) -> usize {
             .count(),
         InstructionKind::Check { .. } => 1,
         _ => 0,
-    }
-}
-
-/// The type of `operand`'s value.
-fn operand_type(body: &mir::Body, operand: Operand) -> TypeId {
-    match operand {
-        Operand::Constant(constant) => body.constants[constant.index()].ty,
-        Operand::Argument(index) => body.variables[Id::from_index(index as usize)].ty,
-        Operand::Value(instruction) => body.instructions[instruction].ty,
     }
 }
 
@@ -398,7 +391,7 @@ impl Function<'_, '_, '_> {
 
     /// `operand` with its type before it, as a call argument.
     fn typed(&self, operand: Operand) -> impl Display {
-        let ty = operand_type(self.body, operand);
+        let ty = self.body.operand_type(operand);
         fmt::from_fn(move |out| {
             write!(
                 out,
@@ -554,7 +547,7 @@ impl Function<'_, '_, '_> {
                 )
             }
             InstructionKind::Store { ref place, value }
-                if !in_memory(types, operand_type(self.body, value))
+                if !in_memory(types, self.body.operand_type(value))
                     && let Some(variable) = place.whole_variable() =>
             {
                 write!(
@@ -568,7 +561,7 @@ impl Function<'_, '_, '_> {
             InstructionKind::Store {
                 value: value @ Operand::Argument(_),
                 ..
-            } if in_memory(types, operand_type(self.body, value)) => return,
+            } if in_memory(types, self.body.operand_type(value)) => return,
             InstructionKind::Store { ref place, value } => {
                 let address = self.write_address(out, place, &location, id);
                 self.write_store(out, &address, value, &location);
@@ -595,7 +588,7 @@ impl Function<'_, '_, '_> {
                 }
             }
             InstructionKind::Convert(value) => {
-                let from = operand_type(self.body, value);
+                let from = self.body.operand_type(value);
                 // `bool` is LLVM's `i1`: a 1-bit unsigned integer.
                 let integer = |ty: TypeId| match types[ty] {
                     Type::Integer(integer) => Some(integer),
@@ -696,7 +689,7 @@ impl Function<'_, '_, '_> {
                 _ = write!(
                     out,
                     "  {field_address} = getelementptr inbounds {}, ptr {}, i32 0",
-                    type_text(types, operand_type(self.body, value)),
+                    type_text(types, self.body.operand_type(value)),
                     self.operand(value)
                 );
                 for index in fields {
@@ -757,7 +750,7 @@ impl Function<'_, '_, '_> {
                 continue;
             }
             let path = format!("{}.{index}", value_name(id));
-            let ty = operand_type(self.body, value);
+            let ty = self.body.operand_type(value);
             let value = self.operand(value).to_string();
             self.write_printed(out, &mut text, &value, ty, &path, location);
         }
@@ -954,7 +947,7 @@ impl Function<'_, '_, '_> {
         value: Operand,
         location: &DebugLocation,
     ) {
-        let ty = operand_type(self.body, value);
+        let ty = self.body.operand_type(value);
         if in_memory(self.types, ty) {
             let from = self.operand(value).to_string();
             self.write_copy(out, address, &from, ty, location);
@@ -1051,7 +1044,7 @@ impl Function<'_, '_, '_> {
         let renamed = |index: Operand| {
             !matches!(index, Operand::Constant(_))
                 && !matches!(
-                    types[operand_type(body, index)],
+                    types[body.operand_type(index)],
                     Type::Integer(Integer { bits: 64, .. })
                 )
         };
@@ -1076,7 +1069,7 @@ impl Function<'_, '_, '_> {
                         element // check found it inside the array
                     }
                     (mir::Projection::Index(index), &Type::Array { element, length }) => {
-                        let Type::Integer(integer) = self.types[operand_type(self.body, index)]
+                        let Type::Integer(integer) = self.types[self.body.operand_type(index)]
                         else {
                             unreachable!("check takes only an integer index")
                         };
@@ -1179,7 +1172,7 @@ impl Function<'_, '_, '_> {
             None => type_text(types, ty).fmt(out),
         });
         let parameter = |argument| {
-            let ty = operand_type(body, argument);
+            let ty = body.operand_type(argument);
             fmt::from_fn(move |out| match extension(ty) {
                 Some(extension) => write!(out, "{} {extension}", type_text(types, ty)),
                 None if in_memory(types, ty) => out.write_str("ptr"),
@@ -1228,7 +1221,7 @@ impl Function<'_, '_, '_> {
         right: Operand,
     ) {
         let name = value_name(id);
-        let left_type = operand_type(self.body, left);
+        let left_type = self.body.operand_type(left);
         let ty = type_text(self.types, left_type);
         let checks = traps(self.body, self.types, id) > 0;
         // The value the right operand was converted to, if it was.
@@ -1255,7 +1248,8 @@ impl Function<'_, '_, '_> {
                         if checks {
                             let zero = format!("{name}.z");
                             _ = writeln!(out, "  {zero} = icmp eq {ty} {}, 0", self.operand(right));
-                            self.check(out, &zero, "division by zero", id);
+                            let message = trap_message(ValueError::DivisionByZero, integer);
+                            self.check(out, &zero, &message, id);
                         }
                         let (l, r) = (self.operand(left), self.operand(right));
                         if signed && (checks || self.is_minus_one(right)) {
@@ -1357,7 +1351,7 @@ impl Function<'_, '_, '_> {
     ) -> Option<String> {
         let (Type::Integer(shifted_type), Type::Integer(count_type)) = (
             &self.types[shifted],
-            &self.types[operand_type(self.body, count)],
+            &self.types[self.body.operand_type(count)],
         ) else {
             unreachable!("check accepts shifts of integers by integers only");
         };
@@ -1380,7 +1374,7 @@ impl Function<'_, '_, '_> {
                     self.operand(count)
                 );
             }
-            let message = format!("a shift count must be from 0 to {}", width - 1);
+            let message = trap_message(ValueError::ShiftOutOfRange, &self.types[shifted]);
             self.check(out, &too_far, &message, id);
         }
         if count_bits == width {
