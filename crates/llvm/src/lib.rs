@@ -23,6 +23,7 @@ use model::semantic_types::Float;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
+use source::SourceFile;
 
 /// What a program is built for: debugging, with debug info, or release,
 /// without it.
@@ -100,6 +101,11 @@ impl<'p> Module<'p> {
         );
     }
 
+    /// The source file the module is read from.
+    fn file(&self) -> &'p SourceFile {
+        &self.program.modules[self.module.index()].ast.file
+    }
+
     /// Whether no function was added.
     pub fn is_empty(&self) -> bool {
         self.functions.is_empty()
@@ -107,7 +113,7 @@ impl<'p> Module<'p> {
 
     /// The module's LLVM text.
     pub fn text(&self) -> String {
-        let path = &self.program.modules[self.module.index()].ast.file.path;
+        let path = &self.file().path;
         let mut out = String::new();
         _ = writeln!(out, "source_filename = {}\n", quoted(path.as_bytes()));
         out.push_str(&self.strings);

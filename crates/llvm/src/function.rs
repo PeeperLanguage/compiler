@@ -25,7 +25,6 @@ use model::semantic_types::Integer;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
-use source::SourceFile;
 use source::Span;
 
 use crate::Module;
@@ -56,7 +55,6 @@ impl Module<'_> {
     /// Adds the function `definition` of this module, whose MIR is `body`.
     pub(crate) fn add_function(&mut self, definition: DefId, body: &mir::Body, types: &Types) {
         let program = self.program;
-        let tree = &program.modules[definition.module.index()].ast;
         let symbol = symbol(program, definition);
         let (subprogram, scope_metadata) = self
             .add_debug_info(definition, &symbol, body, types)
@@ -75,7 +73,6 @@ impl Module<'_> {
             strings,
             body,
             types,
-            file: &tree.file,
             scope_metadata: scope_metadata.unwrap_or_default(),
             locations: HashMap::new(),
             panics: String::new(),
@@ -283,7 +280,6 @@ struct Function<'m, 'p, 'b> {
     strings: Vec<Option<String>>, // by constant: the global of each string
     body: &'b mir::Body,
     types: &'b Types,
-    file: &'b SourceFile,
     scope_metadata: Vec<usize>, // by MIR debug scope (`Module::add_debug_info`)
     locations: HashMap<(usize, u32), usize>, // each scope and start offset's DILocation
     panics: String,             // the blocks that call the panic function, after the others
@@ -304,6 +300,7 @@ impl Function<'_, '_, '_> {
     /// (`add_function`) and, in a debug build, the debug declaration of
     /// each one with a name.
     fn variables(&mut self, out: &mut String) {
+        let file = self.module.file();
         for variable in self.body.variables.ids() {
             let index = variable.index();
             let mir::Variable {
@@ -326,16 +323,16 @@ impl Function<'_, '_, '_> {
             let debug_type = metadata
                 .debug_type(program, self.types, ty, pointer_bits)
                 .unwrap_or_default();
-            let (line, _) = self.file.position(span.start as usize);
+            let (line, _) = file.position(span.start as usize);
             let argument = if index < self.body.parameters {
                 format!("arg: {}, ", index + 1)
             } else {
                 String::new()
             };
-            let file = metadata.file;
+            let file_metadata = metadata.file;
             let declared = metadata.add(format_args!(
-                "!DILocalVariable(name: {}, {argument}scope: !{}, file: !{file}, line: {line}, type: !{debug_type})",
-                quoted(self.file.slice(span).as_bytes()),
+                "!DILocalVariable(name: {}, {argument}scope: !{}, file: !{file_metadata}, line: {line}, type: !{debug_type})",
+                quoted(file.slice(span).as_bytes()),
                 self.scope_metadata[debug_scope.index()],
             ));
             let location = self.location(span, debug_scope);
@@ -350,6 +347,7 @@ impl Function<'_, '_, '_> {
     /// The DILocation of where `span` starts, in the MIR debug scope
     /// `debug_scope`, as the end of a line; nothing in a release build.
     fn location(&mut self, span: Span, debug_scope: Id<mir::DebugScope>) -> DebugLocation {
+        let file = self.module.file();
         let Some(metadata) = &mut self.module.metadata else {
             return DebugLocation(None);
         };
@@ -360,7 +358,7 @@ impl Function<'_, '_, '_> {
             .locations
             .entry((scope, span.start))
             .or_insert_with(|| {
-                let (line, column) = self.file.position(span.start as usize);
+                let (line, column) = file.position(span.start as usize);
                 metadata.add(format_args!(
                     "!DILocation(line: {line}, column: {column}, scope: !{scope})"
                 ))
@@ -1421,10 +1419,11 @@ impl Function<'_, '_, '_> {
         debug_scope: Id<mir::DebugScope>,
     ) {
         let location = self.location(span, debug_scope);
-        let (line, column) = self.file.position(span.start as usize);
+        let file = self.module.file();
+        let (line, column) = file.position(span.start as usize);
         let mut text = b"panic: ".to_vec();
         text.extend_from_slice(message);
-        let place = format!("\n  --> {}:{line}:{column}\n", self.file.path);
+        let place = format!("\n  --> {}:{line}:{column}\n", file.path);
         text.extend_from_slice(place.as_bytes());
         let string = self.module.add_string(&text);
         self.module.declare(WRITE, || {
