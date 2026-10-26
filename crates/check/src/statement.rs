@@ -1156,7 +1156,9 @@ mod tests {
             }",
         );
         assert!(reported.is_empty(), "{reported:?}");
-        let precise = f64::from(0.1f32 + 0.2f32);
+        // Folded in `f32`: in `f64` it would not be an `f32` and would show
+        // as 0.30000000000000004.
+        let precise = 0.1f32 + 0.2f32;
         assert_eq!(
             bodies,
             [format!(

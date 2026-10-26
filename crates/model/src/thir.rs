@@ -9,10 +9,9 @@ use crate::DefId;
 use crate::ModuleId;
 use crate::constant::Constant;
 use crate::constant::Value;
-use crate::constant::integer_text;
+use crate::constant::value_text;
 use crate::operators::BinaryOp;
 use crate::operators::UnaryOp;
-use crate::semantic_types::Type;
 use crate::semantic_types::TypeId;
 use crate::semantic_types::Types;
 use arena::Arena;
@@ -434,42 +433,11 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
     fn write_expr(&mut self, expr: Id<Expr>) {
         let Expr { ty, ref kind } = self.body.exprs[expr];
         match *kind {
-            ExprKind::Constant(Value::Bool(value)) => _ = write!(self.out, "{value}"),
-            ExprKind::Constant(Value::Null) => {
-                _ = write!(self.out, "none:{}", self.types.text(ty, self.name_of));
-            }
-            ExprKind::Constant(Value::Bytes(ref bytes)) => {
-                _ = write!(self.out, "c\"{}\"", bytes.escape_ascii());
-            }
-            ExprKind::Constant(Value::Float(bits)) => {
-                _ = write!(
-                    self.out,
-                    "{}:{}",
-                    f64::from_bits(bits),
-                    self.types.text(ty, self.name_of)
-                );
-            }
-            ExprKind::Constant(Value::Integer(ref limbs)) => {
-                let Type::Integer(integer) = self.types[ty] else {
-                    unreachable!("an integer constant has an integer type")
-                };
-                let value = match integer.bits {
-                    ..=128 => bigint::extend(integer.bits, integer.signed, limbs, 128),
-                    _ => limbs.clone(),
-                };
-                let [low, high, rest @ ..] = value.as_slice() else {
-                    unreachable!("an integer constant has at least two limbs")
-                };
-                // Decimal when 128 bits hold it, else every limb in hex.
-                let low = *low as u128 | (*high as u128) << 64;
-                _ = if !rest.iter().all(|&limb| limb == 0) {
-                    write!(self.out, "{}", integer_text(&value))
-                } else if integer.signed && integer.bits <= 128 {
-                    write!(self.out, "{}", low as i128)
-                } else {
-                    write!(self.out, "{low}")
-                };
-                _ = write!(self.out, ":{}", self.types.text(ty, self.name_of));
+            ExprKind::Constant(ref value) => {
+                _ = write!(self.out, "{}", value_text(value, &self.types[ty]));
+                if !matches!(value, Value::Bool(_) | Value::Bytes(_)) {
+                    _ = write!(self.out, ":{}", self.types.text(ty, self.name_of));
+                }
             }
             ExprKind::Variable(variable) => self.write_variable(variable),
             ExprKind::Binary { op, left, right } => {

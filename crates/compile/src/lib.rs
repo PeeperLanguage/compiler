@@ -104,14 +104,16 @@ pub const POINTER_BITS: u32 = usize::BITS;
 /// `use_function` as soon as it is built, in declaration order, module by
 /// module, with its names when `record_names`; its THIR is dropped after and
 /// its MIR is `use_function`'s: nothing here holds every function's bodies at
-/// once. Integers as
-/// wide as a pointer (`isize`, `usize`) have `pointer_bits` bits.
+/// once. Each module constant of a module checked goes to `use_constant`,
+/// with its type and value, `None` when it had an error. Integers as wide as
+/// a pointer (`isize`, `usize`) have `pointer_bits` bits.
 pub fn run(
     program: &project::Program,
     pointer_bits: u32,
     previous: Results,
     record_names: bool,
     mut use_function: impl FnMut(CheckedFunction),
+    mut use_constant: impl FnMut(DefId, Option<&Constant>, &Types),
 ) -> Results {
     let modules = program.modules.as_slice();
     let mut checker = Checker::new(modules, pointer_bits);
@@ -163,7 +165,14 @@ pub fn run(
             changed.push(false);
             continue;
         }
-        compile_module(&mut checker, id, &mut thir, record_names, &mut use_function);
+        compile_module(
+            &mut checker,
+            id,
+            &mut thir,
+            record_names,
+            &mut use_function,
+            &mut use_constant,
+        );
         let interface = interface(&checker, id);
         changed.push(previous_interface != Some(interface));
         let found = &mut results[index];
@@ -178,13 +187,15 @@ pub fn run(
 }
 
 /// Checks every declaration of `module`, each where it is declared, used or
-/// not, and compiles each function (`compile_function`).
+/// not, compiles each function (`compile_function`) and gives each constant
+/// to `use_constant`.
 fn compile_module(
     checker: &mut Checker,
     module: ModuleId,
     thir: &mut thir::Body,
     record_names: bool,
     use_function: &mut impl FnMut(CheckedFunction),
+    use_constant: &mut impl FnMut(DefId, Option<&Constant>, &Types),
 ) {
     let tree = &checker.modules[module.index()].ast;
     for (index, declaration) in tree.lists.items(tree.top_level).enumerate() {
@@ -202,7 +213,8 @@ fn compile_module(
                 use_function,
             ),
             ast::Decl::Const { name, .. } => {
-                checker.constant(definition, name.span);
+                let constant = checker.constant(definition, name.span);
+                use_constant(definition, constant.as_ref(), &checker.types);
             }
             ast::Decl::Type(written) | ast::Decl::Alias(written) => {
                 checker.declared_type(definition, written.name.span);
@@ -381,7 +393,14 @@ mod tests {
     /// Checks the program of `modules` (see `load`) and gives each
     /// diagnostic as its code, message and the text of its first label.
     fn diagnostics(modules: &[(&str, &str)]) -> Vec<(&'static str, String, String)> {
-        let found = run(&load(modules), 64, Results::default(), false, |_| {});
+        let found = run(
+            &load(modules),
+            64,
+            Results::default(),
+            false,
+            |_| {},
+            |_, _, _| {},
+        );
         found
             .diagnostics()
             .map(|diagnostic| {
@@ -525,7 +544,14 @@ mod tests {
             const D = B;
             fn main() { let x = A + B; }",
         )]);
-        let found = run(&program, 64, Results::default(), false, |_| {});
+        let found = run(
+            &program,
+            64,
+            Results::default(),
+            false,
+            |_| {},
+            |_, _, _| {},
+        );
         let errors: Vec<(String, Vec<(String, String)>)> = found
             .diagnostics()
             .map(|diagnostic| {
@@ -666,6 +692,7 @@ mod tests {
                     checked.push(path.clone());
                 }
             },
+            |_, _, _| {},
         );
         (results, checked)
     }

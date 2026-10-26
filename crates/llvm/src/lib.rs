@@ -545,6 +545,7 @@ mod tests {
                          types,
                          ..
                      }| queue.add(definition, mir.unwrap(), types),
+                    |_, _, _| {},
                 )
             });
         assert_eq!(results.diagnostics().count(), 0);

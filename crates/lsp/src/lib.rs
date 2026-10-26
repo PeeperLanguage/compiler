@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::error::Error;
+use std::fmt::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -62,6 +63,8 @@ use lsp_types::Url;
 use lsp_types::WorkspaceEdit;
 use model::ModuleId;
 use model::ast;
+use model::constant::Constant;
+use model::constant::value_text;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use model::thir;
@@ -69,6 +72,7 @@ use model::thir::Local;
 use model::thir::Symbol;
 use source::SourceFile;
 use source::Span;
+use token::TokenKind;
 
 type BoxError = Box<dyn Error + Send + Sync>;
 
@@ -243,8 +247,8 @@ impl<'s> Server<'s> {
     }
 
     /// Answers go to definition with where the name at the given place is
-    /// declared, and hover with a line about it; both answer null when no
-    /// name is there. Other requests are unknown.
+    /// declared, and hover with what it is, or what the keyword there does;
+    /// both answer null when neither is there. Other requests are unknown.
     fn answer_request(&self, request: Request) -> Response {
         let Request { id, method, params } = request;
         let place: TextDocumentPositionParams = match method.as_str() {
@@ -261,27 +265,54 @@ impl<'s> Server<'s> {
                 return Response::new_err(id, code, format!("unknown request `{method}`"));
             }
         };
-        let answer = self.name_at(&place).and_then(|(program, module, target)| {
-            let (file, declared, hover) = match &target {
-                CachedTarget::InBody { declared, ty } => {
+        let answer = self.name_at(&place).and_then(|(checked, module, target)| {
+            let program = checked.program.as_ref()?;
+            let (file, declared, hover) = match target {
+                CachedTarget::Variable {
+                    declared,
+                    mutable,
+                    ty,
+                } => {
                     let file = &module.ast.file;
-                    let text = format!("{}: {ty}", file.slice(*declared));
-                    (file, *declared, code_block(&text))
+                    let name = file.slice(declared);
+                    let facts = match mutable {
+                        true => format!("mut {name}: {ty}"),
+                        false => format!("{name}: {ty}"),
+                    };
+                    let hover = hover_text(file, &module.path, declared, &facts, None, None);
+                    (file, declared, hover)
+                }
+                CachedTarget::Constant { declared, text } => {
+                    let tree = &module.ast;
+                    let mut declarations = tree.decls.ids();
+                    let declaration = declarations
+                        .find(|&declaration| tree.decls[declaration].name().span == declared)?;
+                    let hover = declaration_hover(tree, declaration, &module.path, text.as_ref());
+                    (&tree.file, declared, hover)
                 }
                 CachedTarget::Declaration { file, position } => {
-                    let declared_in = program.module_of(file)?;
+                    let declared_in = program.module_of(&file)?;
                     let tree = &declared_in.ast;
                     // In range: a module whose declarations changed changes
                     // its interface, so its importers' names are found again.
-                    let declaration = tree.declaration(*position);
+                    let declaration = tree.declaration(position);
                     let declared = tree.decls[declaration].name().span;
-                    let hover = header(tree, declaration, &declared_in.path);
+                    // A module constant's checked value is cached with its name.
+                    let mut names = checked.names.get(&file).into_iter().flatten();
+                    let constant = names.find_map(|name| match name.target {
+                        CachedTarget::Constant {
+                            declared: at,
+                            ref text,
+                        } if at == declared => text.as_ref(),
+                        _ => None,
+                    });
+                    let hover = declaration_hover(tree, declaration, &declared_in.path, constant);
                     (&tree.file, declared, hover)
                 }
                 CachedTarget::Module(file) => {
-                    let imported = program.module_of(file)?;
-                    // A path, not code: a highlighter would read `06_x` as a number.
-                    let hover = format!("module `{}`\n", imported.path);
+                    let imported = program.module_of(&file)?;
+                    // In a string: a highlighter would read `06_x` as a number.
+                    let hover = format!("```peeper\nimport \"{}\"\n```\n", imported.path);
                     (&imported.ast.file, Span::at(0), hover)
                 }
             };
@@ -290,29 +321,53 @@ impl<'s> Server<'s> {
                 let range = range(file, declared);
                 return serde_json::to_value(Location { uri, range }).ok();
             }
-            let hover = Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: hover,
-                }),
-                range: None,
-            };
-            serde_json::to_value(hover).ok()
+            markdown_hover(hover)
+        });
+        let answer = answer.or_else(|| match method.as_str() {
+            "textDocument/hover" => markdown_hover(self.keyword_at(&place)?),
+            _ => None,
         });
         Response::new_ok(id, answer)
     }
 
+    /// What hover shows for the keyword at `place`, if one is there: the
+    /// keyword as a Peeper block, then what it does.
+    fn keyword_at(&self, place: &TextDocumentPositionParams) -> Option<String> {
+        let file = file_path(&place.text_document.uri)?;
+        let (_, module) = self.modules_of(&file).next()?;
+        let offset = offset(&module.ast.file, place.position) as u32;
+        // A keyword is a token, not a name: only the lexer tells it from
+        // the same word in a comment or a string.
+        let (tokens, _) = lexer::scan(&module.ast.file);
+        let mut tokens = tokens.iter();
+        let token = tokens.find(|token| token.span.start <= offset && offset <= token.span.end)?;
+        let doc = keyword_doc(token.kind)?;
+        let keyword = token.kind.text();
+        Some(format!("```peeper\n{keyword}\n```\n\n---\n\n{doc}\n"))
+    }
+
+    /// The module read from `file` in each program last checked that holds
+    /// it, with what that check keeps.
+    fn modules_of<'a>(
+        &'a self,
+        file: &Path,
+    ) -> impl Iterator<Item = (&'a Checked, &'a project::Module)> {
+        self.checked.values().filter_map(|checked| {
+            let module = checked.program.as_ref()?.module_of(file)?;
+            Some((checked, module))
+        })
+    }
+
     /// What the name at `place` stands for: a name the last check of a
-    /// program holding its file recorded in a body, else the name of one of
-    /// the module's declarations; with that program and the file's module.
+    /// program holding its file recorded, else the name of one of the
+    /// module's declarations; with what that check keeps and the file's
+    /// module.
     fn name_at(
         &self,
         place: &TextDocumentPositionParams,
-    ) -> Option<(&project::Program, &project::Module, CachedTarget)> {
+    ) -> Option<(&Checked, &project::Module, CachedTarget)> {
         let file = file_path(&place.text_document.uri)?;
-        self.checked.values().find_map(|checked| {
-            let program = checked.program.as_ref()?;
-            let module = program.module_of(&file)?;
+        self.modules_of(&file).find_map(|(checked, module)| {
             let offset = offset(&module.ast.file, place.position) as u32;
             let contains_offset = |span: Span| span.start <= offset && offset <= span.end;
             let in_body = checked
@@ -332,7 +387,7 @@ impl<'s> Server<'s> {
                     }
                 }
             };
-            Some((program, module, target))
+            Some((checked, module, target))
         })
     }
 
@@ -498,7 +553,8 @@ struct Checked {
     results: compile::Results,   // reused by the next compile
     published: HashSet<PathBuf>, // the files last given diagnostics
     /// The program as last compiled, and the names written in the bodies of
-    /// each of its modules, by file: what definition and hover read.
+    /// each of its modules and the names of its constants, by file: what
+    /// definition and hover read.
     program: Option<project::Program>,
     names: HashMap<PathBuf, Vec<CachedName>>,
     fix_all: HashMap<PathBuf, CodeAction>, // each file's sure fixes, as of the last check
@@ -506,11 +562,13 @@ struct Checked {
 
 impl Checked {
     /// Compiles `program` again, reusing what the last compile found, and
-    /// keeps the names written in the bodies of each module: a module the
-    /// compile reused gave no names, and the names found before still fit it;
-    /// a module checked again gets its new names.
+    /// keeps the names written in the bodies of each module and the names of
+    /// its constants: a module the compile reused gave no names, and the
+    /// names found before still fit it; a module checked again gets its new
+    /// names.
     fn update(&mut self, program: &project::Program) {
         let mut found: HashMap<ModuleId, Vec<CachedName>> = HashMap::new();
+        let mut constants: Vec<(ModuleId, CachedName)> = Vec::new();
         let previous = std::mem::take(&mut self.results);
         self.results = compile::run(
             program,
@@ -532,7 +590,21 @@ impl Checked {
                     .or_default()
                     .extend(body_names);
             },
+            |definition, constant, types| {
+                let tree = &program.modules[definition.module.index()].ast;
+                let declared = tree.decls[tree.declaration(definition.index)].name().span;
+                let text = constant.map(|constant| ConstantText::new(program, constant, types));
+                let target = CachedTarget::Constant { declared, text };
+                let name = CachedName {
+                    span: declared,
+                    target,
+                };
+                constants.push((definition.module, name));
+            },
         );
+        for (module, name) in constants {
+            found.entry(module).or_default().push(name);
+        }
         let reused: HashSet<&Path> = self
             .results
             .reused()
@@ -546,8 +618,9 @@ impl Checked {
     }
 }
 
-/// A name written in a body and what it stands for, kept as long as its
-/// module is reused: by file and place, not by the ids of one compile.
+/// A name written in a body, or a module constant's name, and what it stands
+/// for, kept as long as its module is reused: by file and place, not by the
+/// ids of one compile.
 struct CachedName {
     span: Span,
     target: CachedTarget,
@@ -555,9 +628,19 @@ struct CachedName {
 
 #[derive(Clone)]
 enum CachedTarget {
-    /// A parameter, `let` or `const` of the body, declared at `declared`, with
-    /// its type's text.
-    InBody { declared: Span, ty: String },
+    /// A variable of the body, declared at `declared`: whether it is `mut`,
+    /// and its type's text.
+    Variable {
+        declared: Span,
+        mutable: bool,
+        ty: String,
+    },
+    /// A `const` of a body or of the module, declared at `declared`, with
+    /// its checked type and value; `None` when it had an error.
+    Constant {
+        declared: Span,
+        text: Option<ConstantText>,
+    },
     /// The declaration at `position` among the top-level declarations of the
     /// module read from `file`. Its importer is reused only while those keep
     /// their kinds and names (`compile::run`), so the position stays right;
@@ -577,20 +660,18 @@ impl CachedName {
     ) -> CachedName {
         let file = |module: ModuleId| PathBuf::from(&program.modules[module.index()].ast.file.path);
         let target = match name.symbol {
-            Symbol::Local(local) => CachedTarget::InBody {
+            Symbol::Local(local @ Local::Variable(variable)) => {
+                let variable = body.variables[variable];
+                CachedTarget::Variable {
+                    declared: body.declared(local),
+                    mutable: variable.mutable,
+                    ty: type_text(program, types, variable.ty),
+                }
+            }
+            Symbol::Local(local @ Local::Constant(constant)) => CachedTarget::Constant {
                 declared: body.declared(local),
-                ty: types.text(
-                    match local {
-                        Local::Variable(variable) => body.variables[variable].ty,
-                        Local::Constant(constant) => body.constants[constant]
-                            .as_ref()
-                            .map_or(TypeId::INVALID, |constant| constant.ty),
-                    },
-                    |definition| {
-                        let (name, source) = project::declared_name(&program.modules, definition);
-                        name.text(source)
-                    },
-                ),
+                text: (body.constants[constant].as_ref())
+                    .map(|constant| ConstantText::new(program, constant, types)),
             },
             Symbol::Module(module) => CachedTarget::Module(file(module)),
             Symbol::Function(definition)
@@ -607,37 +688,113 @@ impl CachedName {
     }
 }
 
-/// What hover shows for `declaration` of the module at `module`, in
-/// Markdown, as rust-analyzer does: the module's path as inline code; the
-/// attributes and a function's text up to its body, or another
-/// declaration's first line, as a Peeper block; then the doc comment as prose.
-fn header(tree: &ast::Tree, declaration: Id<ast::Decl>, module: &str) -> String {
+/// A constant's checked type and value, as text, which outlives the compile
+/// that found them.
+#[derive(Clone)]
+struct ConstantText {
+    ty: String,
+    value: String,
+}
+
+impl ConstantText {
+    /// `constant`, of `program`, whose type is in `types`.
+    fn new(program: &project::Program, constant: &Constant, types: &Types) -> ConstantText {
+        ConstantText {
+            ty: type_text(program, types, constant.ty),
+            value: value_text(&constant.value, &types[constant.ty]).to_string(),
+        }
+    }
+}
+
+/// The text of `ty`, of `types`, with the names `program` declares.
+fn type_text(program: &project::Program, types: &Types, ty: TypeId) -> String {
+    types.text(ty, |definition| {
+        let (name, source) = project::declared_name(&program.modules, definition);
+        name.text(source)
+    })
+}
+
+/// What hover shows for `declaration` of the module at `module`
+/// (`hover_text`), its attributes first: a constant as its name, type and
+/// value, from `constant`, worked out from its initializer; a function up to
+/// its body; another declaration, or a constant with an error, whole.
+fn declaration_hover(
+    tree: &ast::Tree,
+    declaration: Id<ast::Decl>,
+    module: &str,
+    constant: Option<&ConstantText>,
+) -> String {
     let span = tree.decls.span(declaration);
-    let end = match tree.decls[declaration] {
-        ast::Decl::Function(ast::Function {
-            body: Some(body), ..
-        }) => tree.blocks.span(body).start,
-        _ => tree
-            .file
-            .slice(span)
-            .find('\n')
-            .map_or(span.end, |line_end| span.start + line_end as u32),
-    };
+    let decl = &tree.decls[declaration];
+    let metadata = decl.metadata();
     // The attributes are written before the declaration's span.
-    let metadata = tree.decls[declaration].metadata();
     let start = tree
         .lists
         .items(metadata.attributes)
         .next()
         .map_or(span.start, |first| tree.attributes.span(first).start);
-    // Not a Peeper block: a path is not code (`06_raw_pointers`).
-    let mut hover = format!("`{module}`\n\n");
-    hover.push_str(&code_block(
-        tree.file.text[start as usize..end as usize].trim(),
-    ));
-    if let Some(doc_comment) = metadata.doc_comment {
-        hover.push_str("\n---\n\n");
-        for line in tree.file.slice(doc_comment).lines() {
+    let written = |end: u32| tree.file.text[start as usize..end as usize].trim();
+    let (facts, from) = match (decl, constant) {
+        (
+            ast::Decl::Const {
+                name,
+                value: Some(value),
+                ..
+            },
+            Some(ConstantText { ty, value: checked }),
+        ) => {
+            let mut facts = written(span.start).to_string(); // the attributes
+            if !facts.is_empty() {
+                facts.push('\n');
+            }
+            _ = write!(facts, "const {}: {ty} = {checked}", name.text(&tree.file));
+            let initializer = tree.file.slice(tree.exprs.span(*value));
+            (facts, (initializer != checked).then_some(initializer))
+        }
+        (
+            ast::Decl::Function(ast::Function {
+                body: Some(body), ..
+            }),
+            _,
+        ) => (written(tree.blocks.span(*body).start).to_string(), None),
+        _ => (written(span.end).to_string(), None),
+    };
+    let declared = decl.name().span;
+    hover_text(
+        &tree.file,
+        module,
+        declared,
+        &facts,
+        from,
+        metadata.doc_comment,
+    )
+}
+
+/// What hover shows, in Markdown: `facts`, what the compiler knows of a name,
+/// as a Peeper block, ending with the text they were worked out `from`, as an
+/// expansion shows its macro; then where the name `declared` is, in the module
+/// `module` read from `file`, and its doc comment `doc_comment` as prose.
+fn hover_text(
+    file: &SourceFile,
+    module: &str,
+    declared: Span,
+    facts: &str,
+    from: Option<&str>,
+    doc_comment: Option<Span>,
+) -> String {
+    let mut hover = String::from("```peeper\n");
+    hover.push_str(facts);
+    if let Some(from) = from {
+        hover.push_str("\n\n// from\n");
+        hover.push_str(from);
+    }
+    hover.push_str("\n```\n\n---\n\n");
+    // Not in the block: a highlighter would read a path's `06_x` as a number.
+    let line = file.line(declared.start as usize);
+    _ = writeln!(hover, "*in* `{module}` *· line {line}*");
+    if let Some(doc_comment) = doc_comment {
+        hover.push('\n');
+        for line in file.slice(doc_comment).lines() {
             let line = line.trim_start();
             let line = line.strip_prefix("///").unwrap_or(line);
             hover.push_str(line.strip_prefix(' ').unwrap_or(line));
@@ -647,9 +804,319 @@ fn header(tree: &ast::Tree, declaration: Id<ast::Decl>, module: &str) -> String 
     hover
 }
 
-/// `text` as a Markdown block of Peeper code.
-fn code_block(text: &str) -> String {
-    format!("```peeper\n{text}\n```\n")
+/// A hover answer holding `value`, Markdown.
+fn markdown_hover(value: String) -> Option<serde_json::Value> {
+    let hover = Hover {
+        contents: HoverContents::Markup(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value,
+        }),
+        range: None,
+    };
+    serde_json::to_value(hover).ok()
+}
+
+/// What the keyword `kind` does, as Markdown: a first line that says it,
+/// then more and an example; `None` for a token that is not a keyword.
+/// Every keyword has one (`keyword_docs`).
+fn keyword_doc(kind: TokenKind) -> Option<&'static str> {
+    Some(match kind {
+        TokenKind::Underscore => {
+            r#"Leaves out something the compiler works out.
+
+As an array literal's length, `_` is the number of values written.
+
+```peeper
+let squares = [_]i32{1, 4, 9}; // a [3]i32
+```"#
+        }
+        TokenKind::As => {
+            r#"Converts a value to another type.
+
+A conversion that keeps every value, such as `i32` to `i64`, needs no `as`. One that can change the value must be written with `as`: a float to an integer drops the fraction, toward zero.
+
+```peeper
+let whole = 3.7 as i32; // 3
+let wide: i64 = whole;  // no `as` needed
+```"#
+        }
+        TokenKind::Break => {
+            r#"Leaves the innermost loop at once.
+
+```peeper
+for {
+    if done {
+        break;
+    }
+}
+```"#
+        }
+        TokenKind::Const => {
+            r#"Names a value known while compiling.
+
+A constant is declared in a module or in a function body. Its value may use other constants, operators and calls: a call whose arguments are constants runs while compiling, and the program gets only its result.
+
+```peeper
+const LIMIT = 10 * 2;
+const FIB_20 = fib(20);
+```"#
+        }
+        TokenKind::Continue => {
+            r#"Skips the rest of the loop's block and goes on with the next pass of the innermost loop.
+
+```peeper
+for v in 0..10 {
+    if v == 3 {
+        continue;
+    }
+    println(v);
+}
+```"#
+        }
+        TokenKind::Else => {
+            r#"Runs its block when the condition of the `if` before it is false. `else if` tests another condition.
+
+```peeper
+if n > 0 {
+    println(1);
+} else if n < 0 {
+    println(-1);
+} else {
+    println(0);
+}
+```"#
+        }
+        TokenKind::Enum => {
+            r#"Declares a type whose value is one of its cases.
+
+Not supported yet.
+
+```peeper
+enum Shape {
+    Circle,
+    Square,
+}
+```"#
+        }
+        TokenKind::False => {
+            r#"The `bool` value false.
+
+```peeper
+let done = false;
+```"#
+        }
+        TokenKind::Fn => {
+            r#"Declares a function.
+
+A function takes parameters, each with its type, and gives a result of the type after `->`; without `->` it gives nothing. A function whose name starts with an upper case letter is exported: other modules can call it.
+
+```peeper
+fn add(a: i32, b: i32) -> i32 {
+    return a + b;
+}
+```"#
+        }
+        TokenKind::For => {
+            r#"Repeats its block.
+
+- `for { }` repeats until `break`.
+- `for condition { }` repeats while the condition is true.
+- `for v in a..b { }` runs once for each value from `a` up to, but not including, `b`; `a..=b` includes `b`, and `a..b:step` steps by more than one. A range whose start is past its end counts down.
+- `for v in array { }` runs once for each element.
+- `for i, v in ... { }` also counts the passes, from 0.
+
+```peeper
+for v in 0..10:2 {
+    println(v); // 0, 2, 4, 6, 8
+}
+```"#
+        }
+        TokenKind::Free => {
+            r#"Gives back memory that was allocated.
+
+Not supported yet.
+
+```peeper
+free(p);
+```"#
+        }
+        TokenKind::If => {
+            r#"Runs its block when its condition, a `bool`, is true. Parentheses around the condition are allowed but not needed.
+
+```peeper
+if n > 0 {
+    println(n);
+}
+```"#
+        }
+        TokenKind::Iface => {
+            r#"Declares an interface: the methods a type must have.
+
+Not supported yet.
+
+```peeper
+iface Shape {
+}
+```"#
+        }
+        TokenKind::Import => {
+            r#"Makes another module's exported names usable here, through the module's name.
+
+```peeper
+import "app:utils";
+
+fn main() {
+    let sum = utils::Add(1, 2);
+}
+```"#
+        }
+        TokenKind::In => {
+            r#"Names what a `for` loop goes over.
+
+After a function's result type, `in` names the parameters that a returned reference may point into.
+
+```peeper
+for v in values {
+}
+
+fn slot(holder: &mut Holder) -> &mut i32 in holder
+```"#
+        }
+        TokenKind::Is => {
+            r#"Tests whether a value is a given enum case.
+
+Not supported yet.
+
+```peeper
+if shape is Shape::Circle {
+}
+```"#
+        }
+        TokenKind::Let => {
+            r#"Declares a variable.
+
+Its type comes from its value, unless written after `:`. Without `mut` it cannot change once it is set. `let x: T;` declares it without a value: its first assignment sets it.
+
+```peeper
+let count = 0;
+let mut total: i64 = 0;
+total = total + 1;
+```"#
+        }
+        TokenKind::Match => {
+            r#"Picks a block by which case a value is.
+
+Not supported yet."#
+        }
+        TokenKind::Mut => {
+            r#"Lets something change.
+
+`let mut` declares a variable that can be assigned again. `&mut T` is a reference through which the value can be changed.
+
+```peeper
+let mut n = 0;
+n = n + 1;
+```"#
+        }
+        TokenKind::None => {
+            r#"The null address: a pointer that points nowhere.
+
+It takes its pointer type from where it is used.
+
+```peeper
+let p: rawptr = none;
+```"#
+        }
+        TokenKind::Orelse => {
+            r#"Gives the value on its left, or the one on its right when the left one is `none`.
+
+Not supported yet."#
+        }
+        TokenKind::Panic => {
+            r#"Stops the program.
+
+It writes `panic:` and the message to the standard error, with where the `panic` is written, and exits with code 101. Code after it does not run.
+
+```peeper
+if index >= length {
+    panic "index out of range";
+}
+```"#
+        }
+        TokenKind::Print => {
+            r#"Writes its values to the standard output, separated by spaces, with no new line after them.
+
+```peeper
+print(n, total);
+```"#
+        }
+        TokenKind::Println => {
+            r#"Writes its values to the standard output, separated by spaces, then a new line.
+
+```peeper
+println(n, total);
+```"#
+        }
+        TokenKind::Rawptr => {
+            r#"A pointer that does not say what it points to, like C's `void *`.
+
+Convert it with `as` to a typed pointer before reading through it.
+
+```peeper
+fn read(p: rawptr) -> i32 {
+    let typed = p as *i32;
+    return typed.*;
+}
+```"#
+        }
+        TokenKind::Return => {
+            r#"Ends the function. In a function with a result, it gives the value after it to the caller.
+
+```peeper
+fn square(n: i32) -> i32 {
+    return n * n;
+}
+```"#
+        }
+        TokenKind::Struct => {
+            r#"Declares a type made of named fields.
+
+A struct literal sets each field.
+
+```peeper
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+let origin = Point.{ x = 0, y = 0 };
+```"#
+        }
+        TokenKind::True => {
+            r#"The `bool` value true.
+
+```peeper
+let done = true;
+```"#
+        }
+        TokenKind::Type => {
+            r#"Gives another name to a type. The two names stand for the same type.
+
+```peeper
+type Meters = i64;
+```"#
+        }
+        TokenKind::With => {
+            r#"Gives an enum case its payload, in a value or a pattern.
+
+Not supported yet.
+
+```peeper
+let shape = Shape::Circle with 2.0;
+```"#
+        }
+        _ => return None,
+    })
 }
 
 /// The answer to the request `id` whose parameters are not what it takes.
@@ -859,6 +1326,7 @@ mod tests {
     use super::DEBOUNCE;
     use super::OpenFile;
     use super::Server;
+    use super::keyword_doc;
     use super::lsp_diagnostic;
     use super::offset;
     use super::position;
@@ -1158,7 +1626,7 @@ mod tests {
         let uri = Url::from_file_path(&file).unwrap();
         let (connection, _client) = Connection::memory();
         let mut server = Server::new(&connection, Path::new(""));
-        let text = "type Meters = i64;\nfn main() {\n    let total: Meters = 1;\n    let more = total;\n}\n";
+        let text = "type Meters = i64;\nfn main() {\n    let total: Meters = 1;\n    let more = total;\n}\n// let me\n";
         let document = json!({ "uri": uri, "languageId": "peeper", "version": 1, "text": text });
         let open = Notification::new(
             "textDocument/didOpen".to_string(),
@@ -1188,14 +1656,34 @@ mod tests {
         let hover = ask("textDocument/hover", 3, 16);
         assert_eq!(
             hover["contents"]["value"],
-            json!("```peeper\ntotal: Meters (aka i64)\n```\n")
+            json!("```peeper\ntotal: Meters (aka i64)\n```\n\n---\n\n*in* `main` *· line 3*\n")
         );
-        assert_eq!(ask("textDocument/hover", 0, 0), serde_json::Value::Null);
+        assert_eq!(ask("textDocument/hover", 2, 1), serde_json::Value::Null);
+        // A keyword answers what it does; the same word in a comment, nothing.
+        let keyword = ask("textDocument/hover", 2, 5);
+        let keyword = keyword["contents"]["value"].as_str().unwrap();
+        assert!(keyword.starts_with("```peeper\nlet\n```\n\n---\n\nDeclares a variable."));
+        assert_eq!(
+            ask("textDocument/definition", 2, 5),
+            serde_json::Value::Null
+        );
+        assert_eq!(ask("textDocument/hover", 5, 4), serde_json::Value::Null);
+    }
+
+    /// Every keyword says what it does.
+    #[test]
+    fn keyword_docs() {
+        for &keyword in token::KEYWORDS {
+            assert!(keyword_doc(keyword).is_some(), "{keyword:?}");
+        }
     }
     /// Names across modules: each kind of name answers where it is declared
-    /// and what it is, in a body with an error too. After an edit that moves
-    /// `Add` but leaves `utils`' declarations as they were, `main` is reused,
-    /// and its use of `Add` still finds where `Add` is now.
+    /// and what it is, in a body with an error too; a constant with its
+    /// value. After an edit of `main` only, `utils` is reused and `Limit`
+    /// keeps its value. After an edit that moves `Add` but leaves `utils`'
+    /// declarations as they were, `main` is reused, and its use of `Add`
+    /// still finds where `Add` is now. After an edit of only `Twice`'s body,
+    /// `BIG`, which ran it, has its new value.
     #[test]
     fn names_across_modules() {
         let folder =
@@ -1207,7 +1695,7 @@ mod tests {
             "name = \"app\"\nbuild = \"bin\"\n",
         )
         .unwrap();
-        let utils = "fn Add(a: i32, b: i32) -> i32 { return a + b; }\n/// The cap.\n#[deprecated]\nconst Limit: u8 = 200;\n";
+        let utils = "fn Add(a: i32, b: i32) -> i32 { return a + b; }\n/// The cap.\n#[deprecated]\nconst Limit: u8 = 200;\nfn Twice(n: i32) -> i32 { return n * 2; }\nconst Ratio: f32 = 0.1;\nconst Broken: i32 = true;\n";
         let main = "import \"app:utils\";
 fn main(count: i64) {
     let mut total = count;
@@ -1215,7 +1703,11 @@ fn main(count: i64) {
     let sum = utils::Add(1, 2);
     let wide = utils::Limit;
     let wrong: bool = total;
+    const DOUBLE = 2 * 21;
+    let ratio = utils::Ratio;
+    let broken = utils::Broken;
 }
+const BIG = utils::Twice(21);
 ";
         let (main_file, utils_file) = (folder.join("src/main.peep"), folder.join("src/utils.peep"));
         std::fs::write(&main_file, main).unwrap();
@@ -1260,7 +1752,7 @@ fn main(count: i64) {
         };
         assert_eq!(
             hover(&server, "count", 1),
-            json!("```peeper\ncount: i64\n```\n")
+            json!("```peeper\ncount: i64\n```\n\n---\n\n*in* `app:main` *· line 2*\n")
         );
         assert_eq!(
             declared(&server, "count", 1),
@@ -1268,16 +1760,19 @@ fn main(count: i64) {
         );
         assert_eq!(
             hover(&server, "total", 1),
-            json!("```peeper\ntotal: i64\n```\n")
+            json!("```peeper\nmut total: i64\n```\n\n---\n\n*in* `app:main` *· line 3*\n")
         );
         assert_eq!(
             declared(&server, "total", 1),
             ("main.peep".to_string(), json!(2))
         );
-        assert_eq!(hover(&server, "utils", 1), json!("module `app:utils`\n"));
+        assert_eq!(
+            hover(&server, "utils", 1),
+            json!("```peeper\nimport \"app:utils\"\n```\n")
+        );
         assert_eq!(
             hover(&server, "main", 0),
-            json!("`app:main`\n\n```peeper\nfn main(count: i64)\n```\n")
+            json!("```peeper\nfn main(count: i64)\n```\n\n---\n\n*in* `app:main` *· line 2*\n")
         );
         assert_eq!(
             declared(&server, "main", 0),
@@ -1285,23 +1780,56 @@ fn main(count: i64) {
         );
         assert_eq!(
             hover(&server, "Add", 0),
-            json!("`app:utils`\n\n```peeper\nfn Add(a: i32, b: i32) -> i32\n```\n")
+            json!(
+                "```peeper\nfn Add(a: i32, b: i32) -> i32\n```\n\n---\n\n*in* `app:utils` *· line 1*\n"
+            )
         );
         assert_eq!(
             declared(&server, "Add", 0),
             ("utils.peep".to_string(), json!(0))
         );
-        assert_eq!(
-            hover(&server, "Limit", 0),
-            json!(
-                "`app:utils`\n\n```peeper\n#[deprecated]\nconst Limit: u8 = 200;\n```\n\n---\n\nThe cap.\n"
-            )
-        );
+        let limit = "```peeper\n#[deprecated]\nconst Limit: u8 = 200\n```\n\n---\n\n*in* `app:utils` *· line 4*\n\nThe cap.\n";
+        assert_eq!(hover(&server, "Limit", 0), json!(limit));
         // `main` has an error, and its names are still there.
         assert_eq!(
             hover(&server, "total", 2),
-            json!("```peeper\ntotal: i64\n```\n")
+            json!("```peeper\nmut total: i64\n```\n\n---\n\n*in* `app:main` *· line 3*\n")
         );
+        assert_eq!(
+            hover(&server, "DOUBLE", 0),
+            json!(
+                "```peeper\nconst DOUBLE: i32 = 42\n\n// from\n2 * 21\n```\n\n---\n\n*in* `app:main` *· line 8*\n"
+            )
+        );
+        let big = |value: &str| {
+            format!(
+                "```peeper\nconst BIG: i32 = {value}\n\n// from\nutils::Twice(21)\n```\n\n---\n\n*in* `app:main` *· line 12*\n"
+            )
+        };
+        assert_eq!(hover(&server, "BIG", 0), json!(big("42")));
+        // An `f32` in its own precision, so its initializer says no more; a
+        // constant with an error, as written.
+        assert_eq!(
+            hover(&server, "Ratio", 0),
+            json!("```peeper\nconst Ratio: f32 = 0.1\n```\n\n---\n\n*in* `app:utils` *· line 6*\n")
+        );
+        assert_eq!(
+            hover(&server, "Broken", 0),
+            json!(
+                "```peeper\nconst Broken: i32 = true;\n```\n\n---\n\n*in* `app:utils` *· line 7*\n"
+            )
+        );
+
+        let edited = format!("{main}// edited\n");
+        notify(
+            &mut server,
+            "textDocument/didOpen",
+            open(&main_file, &edited),
+        );
+        let checked = server.checked.values().next().unwrap();
+        let utils_reused = (checked.results.reused()).any(|file| file.path.ends_with("utils.peep"));
+        assert!(utils_reused);
+        assert_eq!(hover(&server, "Limit", 0), json!(limit));
 
         let moved = format!("// moved down\n{utils}");
         notify(
@@ -1331,6 +1859,13 @@ fn main(count: i64) {
                 .unwrap()
                 .contains("const Limit")
         );
+        let tripled = with_const.replace("n * 2", "n * 3");
+        notify(
+            &mut server,
+            "textDocument/didOpen",
+            open(&utils_file, &tripled),
+        );
+        assert_eq!(hover(&server, "BIG", 0), json!(big("63")));
     }
 
     /// A file the project's entry does not import is checked while it is open.

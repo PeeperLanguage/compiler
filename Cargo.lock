@@ -343,12 +343,14 @@ dependencies = [
  "arena",
  "compile",
  "diagnostics",
+ "lexer",
  "lsp-server",
  "lsp-types",
  "model",
  "project",
  "serde_json",
  "source",
+ "token",
 ]
 
 [[package]]

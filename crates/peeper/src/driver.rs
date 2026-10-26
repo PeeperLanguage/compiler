@@ -263,6 +263,7 @@ fn compile<'p>(
                     queue.add(definition, mir, types);
                 }
             },
+            |_, _, _| {}, // constants are for editors
         )
     };
     let (mut ll, results) = if writes_ll {

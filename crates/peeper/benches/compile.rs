@@ -76,6 +76,7 @@ fn main() {
                     }
                     queue.add(definition, mir, types);
                 },
+                |_, _, _| {},
             )
         });
         assert_eq!(
