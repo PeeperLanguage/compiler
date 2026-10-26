@@ -908,6 +908,20 @@ mod tests {
         assert_eq!(found, expected);
     }
 
+    /// An array's length must fit the target's `usize`, which its `len` is:
+    /// 2^32 does on a 64-bit target, not on a 32-bit one, where 2^32 - 1
+    /// still does.
+    #[test]
+    fn array_lengths_fit_the_target_usize() {
+        let program = load(&[(
+            "app:main",
+            "fn main() { let a: [4294967296]u8; let b: [4294967295]u8; }",
+        )]);
+        let at = |bits| messages(&run(&program, bits, Results::default(), false, |_| {}));
+        assert_eq!(at(32), ["an array length must fit `usize`, of 32 bits"]);
+        assert!(at(64).is_empty(), "{:?}", at(64));
+    }
+
     #[test]
     fn a_prelude_edit_checks_what_it_changes() {
         let prelude = ("core:global", "const stdout: i32 = 1;\nfn Helper() {}");

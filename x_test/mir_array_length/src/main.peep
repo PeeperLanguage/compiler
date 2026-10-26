@@ -1,0 +1,22 @@
+// `.len` folds to a `usize` constant, so a loop to it has a constant end;
+// an array with a call in it is computed for the call and never read.
+fn make() -> [3]i32 {
+    return [3]i32{1, 2, 3};
+}
+
+fn pick() -> i32 {
+    return 1;
+}
+
+fn sum(values: &[4]i32) -> i32 {
+    let mut total = 0;
+    for i in 0..values.len {
+        total = total + values[i];
+    }
+    return total;
+}
+
+fn lengths() -> usize {
+    let grid = [2][3]i32{[3]i32{1, 2, 3}, [3]i32{4, 5, 6}};
+    return grid[pick()].len + make().len;
+}

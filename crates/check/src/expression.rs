@@ -514,11 +514,38 @@ impl ThirBuilder<'_, '_> {
     }
 
     /// `value.field`: the field of a struct value, or of the struct a
-    /// reference or typed raw pointer points to.
+    /// reference or typed raw pointer points to; or `len`, an array's only
+    /// field, which its type gives, so the array is not read.
     fn check_field(&mut self, value: Id<ast::Expr>, field: Ident) -> Expr {
         let mut value = self.add_expr(value, TypeExpectation::Hint(None));
         let mut ty = self.body.exprs[value].ty;
-        if let Some(target) = self.checker.types[ty].pointee() {
+        let pointee = self.checker.types[ty].pointee();
+        // shortcut: `len` as a field until the language can write it as a
+        // free function over any array; then move it there.
+        if let Type::Array { length, .. } = self.checker.types[pointee.unwrap_or(ty)] {
+            let text = field.text(&self.checker.module().ast.file);
+            if text != "len" {
+                let array = self.checker.type_text(pointee.unwrap_or(ty));
+                let message = format!("`{array}` has no field `{text}`");
+                let meant = nearest_name(text, [("len", 0)]).map(str::to_string);
+                self.checker
+                    .report_unknown(diagnostics::UNKNOWN_FIELD, field.span, message, meant);
+                return Expr::INVALID;
+            }
+            let usize = self.checker.usize_type();
+            if self.body.calls(value) {
+                return Expr {
+                    ty: usize,
+                    kind: ExprKind::Length(value),
+                };
+            }
+            let length = Limbs::new(self.checker.pointer_bits, &[length]);
+            return Expr {
+                ty: usize,
+                kind: ExprKind::Constant(Value::Integer(length)),
+            };
+        }
+        if let Some(target) = pointee {
             let referred = self.dereference(value, target);
             ty = referred.ty;
             value = self.body.add(referred, self.body.exprs.span(value));
@@ -606,9 +633,8 @@ impl ThirBuilder<'_, '_> {
             ty = referred.ty;
             array = self.body.add(referred, self.body.exprs.span(array));
         }
-        let pointer_bits = self.checker.pointer_bits;
-        let usize = self.checker.types.builtin("usize", pointer_bits);
-        let index = self.add_expr(index, TypeExpectation::Hint(usize));
+        let usize = self.checker.usize_type();
+        let index = self.add_expr(index, TypeExpectation::Hint(Some(usize)));
         let index_type = self.body.exprs[index].ty;
         let tree = &self.checker.module().ast;
         let index_span = self.body.exprs.span(index);

@@ -1,0 +1,60 @@
+fn make:
+  bb0:
+    %0 = aggregate(1, 2, 3): [3]i32
+    return %0
+  bb1:
+    fall off at `}`
+fn pick:
+  bb0:
+    return 1
+  bb1:
+    fall off at `}`
+fn sum:
+  bb0:
+    store values.0, arg0
+    store total.1, 0
+    %2 = Subtract 4, 0: u64
+    %3 = NotEqualTo %2, 0: bool
+    goto bb1
+  bb1:
+    %4 = phi bb0: 0, bb4: %9: u64
+    %5 = phi bb0: %2, bb4: %10: u64
+    %6 = phi bb0: %3, bb4: %8: bool
+    branch %6 (0..values.len) bb2 bb3
+  bb2:
+    store i.2, %4
+    %8 = GreaterThan %5, 1: bool
+    %9 = Add %4, 1: u64
+    %10 = Subtract %5, 1: u64
+    %11 = load total.1: i32
+    %12 = load i.2: u64
+    %13 = load values.0.*[at %12]: i32
+    %14 = Add %11, %13: i32
+    store total.1, %14
+    scope end i.2
+    goto bb4
+  bb3:
+    %17 = load total.1: i32
+    scope end total.1
+    scope end values.0
+    return %17
+  bb4:
+    goto bb1
+  bb5:
+    scope end total.1
+    scope end values.0
+    fall off at `}`
+fn lengths:
+  bb0:
+    %0 = aggregate(1, 2, 3): [3]i32
+    %1 = aggregate(4, 5, 6): [3]i32
+    %2 = aggregate(%0, %1): [2][3]i32
+    store grid.0, %2
+    %4 = call pick(): i32
+    %5 = call make(): [3]i32
+    %6 = Add 3, 3: u64
+    scope end grid.0
+    return %6
+  bb1:
+    scope end grid.0
+    fall off at `}`

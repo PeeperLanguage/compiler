@@ -163,6 +163,12 @@ pub enum ExprKind {
         value: Id<Expr>,
         index: u32,
     },
+    /// `array.len` where computing `array`, an array or a reference or raw
+    /// pointer to one, calls a function: the array is computed, never read,
+    /// and the value is its type's length, a `usize`. Without a call
+    /// `.len` is a `Constant` and the array is not computed, as Go's `len`
+    /// (`Body::calls`).
+    Length(Id<Expr>),
     /// The element of the array, a place, at the index, an integer; outside
     /// the array, the program fails.
     Index {
@@ -281,6 +287,33 @@ impl Body {
     /// Adds `node` with `span` to its arena.
     pub fn add<T: Node<Container = Body>>(&mut self, node: T, span: Span) -> Id<T> {
         T::arena(self).push(node, span)
+    }
+
+    /// Whether computing `expression` calls a function, `print` too: then
+    /// it runs even where only its type is needed (`ExprKind::Length`).
+    pub fn calls(&self, expression: Id<Expr>) -> bool {
+        match self.exprs[expression].kind {
+            ExprKind::Call { .. } | ExprKind::Print { .. } => true,
+            ExprKind::Constant(_) | ExprKind::Variable(_) | ExprKind::Invalid => false,
+            ExprKind::Binary { left, right, .. }
+            | ExprKind::Index {
+                array: left,
+                index: right,
+            } => self.calls(left) || self.calls(right),
+            ExprKind::Unary { value, .. }
+            | ExprKind::Convert(value)
+            | ExprKind::Field { value, .. }
+            | ExprKind::Length(value)
+            | ExprKind::Dereference(value)
+            | ExprKind::Borrow(value)
+            | ExprKind::Address(value) => self.calls(value),
+            ExprKind::StructLiteral(fields) => {
+                (self.lists.items(fields)).any(|field| self.calls(self.field_values[field].value))
+            }
+            ExprKind::ArrayLiteral(values) => {
+                self.lists.items(values).any(|value| self.calls(value))
+            }
+        }
     }
 
     /// Where the body declares `local`: its name.
@@ -498,6 +531,10 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
             ExprKind::Field { value, index } => {
                 self.write_expr(value);
                 _ = write!(self.out, "[{index}]");
+            }
+            ExprKind::Length(array) => {
+                self.write_expr(array);
+                self.out.push_str(".len");
             }
             ExprKind::Index { array, index } => {
                 self.write_expr(array);

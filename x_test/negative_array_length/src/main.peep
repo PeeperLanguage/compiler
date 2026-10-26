@@ -1,0 +1,14 @@
+// `len` is an array's only field, and it cannot be set.
+fn make() -> [3]i32 {
+    return [3]i32{1, 2, 3};
+}
+
+fn main() {
+    let mut values = [3]i32{1, 2, 3};
+    values.len = 4;
+    make().len = 3;
+    let size = values.lem;
+    let number = 5;
+    let count = number.len;
+    let reference = &values.len;
+}

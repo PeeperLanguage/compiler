@@ -224,6 +224,12 @@ impl<'p> Checker<'p> {
         result
     }
 
+    /// `usize`, as wide as a pointer of the target.
+    pub(crate) fn usize_type(&mut self) -> TypeId {
+        let usize = self.types.builtin("usize", self.pointer_bits);
+        usize.expect("`usize` is built in")
+    }
+
     /// The type `ty` as a message names it (`Types::text`).
     pub(crate) fn type_text(&self, ty: TypeId) -> String {
         self.types.text(ty, |definition| {

@@ -7,6 +7,7 @@ use model::DefId;
 use model::ast;
 use model::constant::Constant;
 use model::semantic_types;
+use model::semantic_types::Integer;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::thir::Body;
@@ -355,8 +356,14 @@ impl Checker<'_> {
                     let message = "an array length is a whole number without a suffix";
                     return self.error(diagnostics::INVALID_TYPE, message, number);
                 }
-                if value[1..].iter().any(|&limb| limb != 0) {
-                    let message = "an array length must fit in 64 bits";
+                // Its `len` is a `usize` (`check_field`).
+                let usize = Integer {
+                    signed: false,
+                    bits: self.pointer_bits,
+                };
+                if !usize.fits(&value, false) {
+                    let bits = self.pointer_bits;
+                    let message = format!("an array length must fit `usize`, of {bits} bits");
                     return self.error(diagnostics::INVALID_TYPE, message, number);
                 }
                 let element = self.resolve_value_type(element);

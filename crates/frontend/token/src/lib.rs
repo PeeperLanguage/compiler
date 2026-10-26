@@ -245,13 +245,14 @@ tokens! {
         DotDot = "..",
         /// Reaches into the value on its left.
         ///
-        /// `p.x` is the field `x` of the struct `p`, or of the struct a reference `p` refers to. `r.*` is the value the reference or pointer `r` refers to. Before `{`, as in `.{x = 1}`, it starts a struct literal whose type its place gives. Methods are not supported yet.
+        /// `p.x` is the field `x` of the struct `p`, or of the struct a reference `p` refers to, and `a.len` is the length of the array `a`, a `usize`. `r.*` is the value the reference or pointer `r` refers to. Before `{`, as in `.{x = 1}`, it starts a struct literal whose type its place gives. Methods are not supported yet.
         ///
         /// ```peeper
         /// let p: Point = .{x = 3, y = 4};
         /// let r = &p;
-        /// let a = p.x;   // 3
-        /// let b = r.*.y; // 4
+        /// let a = p.x;              // 3
+        /// let b = r.*.y;            // 4
+        /// let n = [2]i32{1, 2}.len; // 2
         /// ```
         Dot = ".",
         /// The address of a variable's value, as a pointer.

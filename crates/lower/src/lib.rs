@@ -542,6 +542,20 @@ impl Lowering<'_> {
                 let value = value.clone();
                 return Some(self.add_constant(Constant { ty, value }));
             }
+            // The array is computed for the call in it and never read, so
+            // no element moves out and no large array is copied.
+            thir::ExprKind::Length(array) => {
+                _ = self.place(array)?;
+                let array = self.thir.exprs[array].ty;
+                let array = self.types[array].pointee().unwrap_or(array);
+                let (Type::Array { length, .. }, Type::Integer(usize)) =
+                    (&self.types[array], &self.types[ty])
+                else {
+                    unreachable!("`.len` is the `usize` length of an array")
+                };
+                let value = Value::Integer(Limbs::new(usize.bits, &[*length]));
+                return Some(self.add_constant(Constant { ty, value }));
+            }
             thir::ExprKind::Binary {
                 op: op @ (BinaryOp::LogicalAnd | BinaryOp::LogicalOr),
                 left,

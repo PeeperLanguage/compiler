@@ -1,0 +1,14 @@
+name = "negative_array_length"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "an array's `len` cannot be set",
+    "`[3]i32` has no field `lem`",
+    "did you mean `len`?",
+    "`i32` has no fields",
+    "borrows of values that are not in a variable are not supported yet",
+    "Compilation failed with 5 error(s)",
+]

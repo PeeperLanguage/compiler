@@ -617,11 +617,8 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         };
         let enclosing = self.open_block(body);
         let index = index.map(|index| {
-            let usize = self
-                .checker
-                .types
-                .builtin("usize", self.checker.pointer_bits);
-            self.declare_loop_variable(usize.expect("`usize` is built in"), index)
+            let usize = self.checker.usize_type();
+            self.declare_loop_variable(usize, index)
         });
         let variable = value.map(|value| self.declare_loop_variable(ty, value));
         let body = self.check_loop_body(body, enclosing, None);
@@ -715,11 +712,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         };
         let let_items = self.body.add(let_items, span);
         // `for index in 0..N`, each pass first setting `value`.
-        let usize = self
-            .checker
-            .types
-            .builtin("usize", self.checker.pointer_bits);
-        let usize = usize.expect("`usize` is built in");
+        let usize = self.checker.usize_type();
         let Type::Integer(integer) = self.checker.types[usize] else {
             unreachable!("`usize` is an integer")
         };
@@ -943,7 +936,11 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             return None; // its error was reported
         }
         let Some((variable, reference)) = self.place_root(place) else {
-            let message = "only a variable's fields can be set";
+            let message = match self.body.exprs[place].kind {
+                // A field read that is no place: an array's `len` (`check_field`).
+                ExprKind::Constant(_) | ExprKind::Length(_) => "an array's `len` cannot be set",
+                _ => "only a variable's fields can be set",
+            };
             let span = self.body.exprs.span(place);
             self.checker
                 .error(diagnostics::INVALID_ASSIGNMENT, message, span);
