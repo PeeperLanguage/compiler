@@ -620,7 +620,10 @@ impl Lowering<'_> {
                     Err(field) => field,
                 }
             }
-            thir::ExprKind::Borrow { place, mutable } => {
+            thir::ExprKind::Borrow(place) => {
+                let Type::Reference { mutable, .. } = self.types[ty] else {
+                    unreachable!("a borrow's type is a reference")
+                };
                 let Ok(place) = self.place(place)? else {
                     unreachable!("the checker borrows only a place in a variable")
                 };

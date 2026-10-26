@@ -12,6 +12,7 @@ use crate::constant::Value;
 use crate::constant::value_text;
 use crate::operators::BinaryOp;
 use crate::operators::UnaryOp;
+use crate::semantic_types::Type;
 use crate::semantic_types::TypeId;
 use crate::semantic_types::Types;
 use arena::Arena;
@@ -164,13 +165,10 @@ pub enum ExprKind {
     /// What the reference, a place, refers to: `r.*`, and the implicit step
     /// of `r.x` and `r[i]`.
     Dereference(Id<Expr>),
-    /// `&place` or `&mut place`, and a `&mut` variable passed to a call (lent
-    /// again, not moved); the place is a `Variable`, a `Dereference`, or a
-    /// `Field` or `Index` of a place.
-    Borrow {
-        place: Id<Expr>,
-        mutable: bool,
-    },
+    /// `&place` or `&mut place`, as its reference type says, and a `&mut`
+    /// variable passed to a call (lent again, not moved); the place is a
+    /// `Variable`, a `Dereference`, or a `Field` or `Index` of a place.
+    Borrow(Id<Expr>),
     /// `@place`: the place's address as a raw pointer, which no loan
     /// follows; the place is as a `Borrow`'s.
     Address(Id<Expr>),
@@ -504,7 +502,8 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
                 self.write_expr(reference);
                 self.out.push_str(".*");
             }
-            ExprKind::Borrow { place, mutable } => {
+            ExprKind::Borrow(place) => {
+                let mutable = matches!(self.types[ty], Type::Reference { mutable: true, .. });
                 self.out.push_str(if mutable { "&mut " } else { "&" });
                 self.write_expr(place);
             }

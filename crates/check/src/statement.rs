@@ -803,10 +803,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         let ty = self.checker.reference_type(mutable, element, span);
         let reference = Expr {
             ty,
-            kind: ExprKind::Borrow {
-                place: read,
-                mutable,
-            },
+            kind: ExprKind::Borrow(read),
         };
         (self.body.add(reference, span), ty)
     }

@@ -712,7 +712,7 @@ impl ThirBuilder<'_, '_> {
         }
         Expr {
             ty,
-            kind: ExprKind::Borrow { place, mutable },
+            kind: ExprKind::Borrow(place),
         }
     }
 
@@ -1399,7 +1399,7 @@ impl ThirBuilder<'_, '_> {
     /// is not moved. A written `&mut place` borrows `place` itself.
     fn reborrow(&mut self, reference: Expr, span: Span, mutable: bool) -> Expr {
         let place = match reference.kind {
-            ExprKind::Borrow { place, .. } => place,
+            ExprKind::Borrow(place) => place,
             _ => {
                 let Type::Reference { target, .. } = self.checker.types[reference.ty] else {
                     unreachable!("only a reference is lent again")
