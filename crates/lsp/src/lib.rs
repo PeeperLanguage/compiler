@@ -265,6 +265,13 @@ impl<'s> Server<'s> {
                 return Response::new_err(id, code, format!("unknown request `{method}`"));
             }
         };
+        // A keyword or an operator is a token, not a name: asked first, so
+        // `/` in `a/2` is not read as the end of `a`.
+        if method == "textDocument/hover"
+            && let Some(hover) = self.token_doc_at(&place)
+        {
+            return Response::new_ok(id, markdown_hover(hover));
+        }
         let answer = self.name_at(&place).and_then(|(checked, module, name)| {
             let CachedName { span, target } = name;
             let program = checked.program.as_ref()?;
@@ -328,25 +335,42 @@ impl<'s> Server<'s> {
             }
             markdown_hover(hover)
         });
-        let answer = answer.or_else(|| match method.as_str() {
-            "textDocument/hover" => markdown_hover(self.keyword_at(&place)?),
-            _ => None,
-        });
         Response::new_ok(id, answer)
     }
 
-    /// What hover shows for the keyword at `place`, if one is there: the
-    /// keyword as a Peeper block, then what it does.
-    fn keyword_at(&self, place: &TextDocumentPositionParams) -> Option<String> {
+    /// What hover shows for the keyword or operator at `place`, if one is
+    /// there: it as a Peeper block, then what it does.
+    fn token_doc_at(&self, place: &TextDocumentPositionParams) -> Option<String> {
         let file = file_path(&place.text_document.uri)?;
         let (_, module) = self.modules_of(&file).next()?;
-        let offset = offset(&module.ast.file, place.position) as u32;
-        // A keyword is a token, not a name: only the lexer tells it from
-        // the same word in a comment or a string.
-        let (tokens, _) = lexer::scan(&module.ast.file);
+        let tree = &module.ast;
+        let offset = offset(&tree.file, place.position) as u32;
+        // Only the lexer tells a keyword from the same word in a comment or
+        // a string.
+        let (tokens, _) = lexer::scan(&tree.file);
         let mut tokens = tokens.iter();
-        let token = tokens.find(|token| token.span.start <= offset && offset <= token.span.end)?;
-        Some(doc_hover(token.kind.text(), token.kind.doc()?))
+        let token = tokens.find(|token| token.span.start <= offset && offset < token.span.end)?;
+        if let Some(doc) = token.kind.doc() {
+            return Some(doc_hover(token.kind.text(), doc));
+        }
+        // Which operator a token is (`-` subtracts or negates) the tree
+        // tells: a binary one sits between its operands, a unary one starts
+        // its expression.
+        let (start, end) = (token.span.start, token.span.end);
+        let operator = |expression| match tree.exprs[expression] {
+            ast::Expr::Binary { op, left, right }
+                if tree.exprs.span(left).end <= start && end <= tree.exprs.span(right).start =>
+            {
+                Some((op.symbol(), op.doc()))
+            }
+            ast::Expr::Unary { op, .. } if tree.exprs.span(expression).start == start => {
+                Some((op.symbol(), op.doc()))
+            }
+            _ => None,
+        };
+        let mut operators = tree.exprs.ids().filter_map(operator);
+        let (symbol, doc) = operators.find(|&(symbol, _)| symbol == token.kind.text())?;
+        Some(doc_hover(symbol, doc))
     }
 
     /// The module read from `file` in each program last checked that holds
@@ -1037,6 +1061,8 @@ mod tests {
     use lsp_types::Position;
     use lsp_types::PublishDiagnosticsParams;
     use lsp_types::Url;
+    use model::operators::BinaryOp;
+    use model::operators::UnaryOp;
     use serde_json::json;
     use source::SourceFile;
     use source::Span;
@@ -1333,7 +1359,8 @@ mod tests {
         assert!(server.pending.is_empty());
     }
     /// Go to definition and hover over a name answer where it is declared and
-    /// its type, from the open text; elsewhere they answer null.
+    /// its type, from the open text; hover over a keyword or an operator,
+    /// it alone and what it does; elsewhere they answer null.
     #[test]
     fn answers_definition_and_hover() {
         let folder = std::env::temp_dir().join(format!("peeper-lsp-name-{}", std::process::id()));
@@ -1344,7 +1371,7 @@ mod tests {
         let uri = Url::from_file_path(&file).unwrap();
         let (connection, _client) = Connection::memory();
         let mut server = Server::new(&connection, Path::new(""));
-        let text = "type Meters = i64;\nfn main() {\n    let total: Meters = 1;\n    let more = total;\n}\n// let me\nstruct Run {\n    length: Meters,\n}\n";
+        let text = "type Meters = i64;\nfn main() {\n    let total: Meters = 1;\n    let more = total;\n}\n// let me\nstruct Run {\n    length: Meters,\n}\nfn ops(a: i32, x: f64) -> f64 {\n    let q = a/2;\n    const C = -(7 / 2);\n    return x - -1.0;\n}\n";
         let document = json!({ "uri": uri, "languageId": "peeper", "version": 1, "text": text });
         let open = Notification::new(
             "textDocument/didOpen".to_string(),
@@ -1411,6 +1438,24 @@ mod tests {
             serde_json::Value::Null
         );
         assert_eq!(ask("textDocument/hover", 5, 4), serde_json::Value::Null);
+        // An operator right after a name is the operator; the name is still
+        // the name. `-` subtracts or negates, as the tree says.
+        let hover = |line: u32, character: u32| {
+            ask("textDocument/hover", line, character)["contents"]["value"].clone()
+        };
+        let doc =
+            |symbol: &str, doc: &str| json!(format!("```peeper\n{symbol}\n```\n\n---\n\n{doc}\n"));
+        assert_eq!(hover(10, 13), doc("/", BinaryOp::Divide.doc()));
+        let name = hover(10, 12);
+        assert!(name.as_str().unwrap().starts_with("```peeper\na: i32\n```"));
+        assert_eq!(hover(11, 14), doc("-", UnaryOp::Negate.doc()));
+        assert_eq!(hover(11, 18), doc("/", BinaryOp::Divide.doc()));
+        assert_eq!(hover(12, 13), doc("-", BinaryOp::Subtract.doc()));
+        assert_eq!(hover(12, 15), doc("-", UnaryOp::Negate.doc()));
+        assert_eq!(
+            ask("textDocument/definition", 11, 18),
+            serde_json::Value::Null
+        );
     }
 
     /// Names across modules: each kind of name answers where it is declared

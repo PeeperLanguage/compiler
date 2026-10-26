@@ -251,9 +251,14 @@ and Cranelift (`filetests`) work the same way.
 - **Never write a concatenated string into a `String` builder**
   (`out.push_str(&(a + b))`); push each part, or use `write!`.
 - **A language fact's doc sits on the row that defines it.** What a keyword
-  does is a `///` comment on its row of `tokens!`, and what a built-in type
-  holds on its row of `fixed_types!`; the macro gathers the lines into a
-  `doc` function (`TokenKind::doc`, `semantic_types::builtin_doc`). An
+  does is a `///` comment on its row of `tokens!`, what a built-in type
+  holds on its row of `fixed_types!`, and what an operator does on its row
+  of `operators!` (one text for every operand type, no flag to pick the
+  wording); the macro gathers the lines into a `doc` function
+  (`TokenKind::doc`, `semantic_types::builtin_doc`, `BinaryOp::doc`).
+  Each doc has one shape: a first line that says what it does, then the
+  details, then a `peeper` example at the bottom, each paragraph one line;
+  hover's top block shows only the keyword or operator itself. An
   editor only lays them out. A keyword without a doc does not build. Each
   line keeps the space after its `///`, which Markdown drops (owner,
   2026-10-26, after the old Go compiler's `token/keywords.go`).
