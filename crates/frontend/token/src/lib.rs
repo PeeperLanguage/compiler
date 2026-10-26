@@ -245,7 +245,7 @@ tokens! {
         DotDot = "..",
         /// Reaches into the value on its left.
         ///
-        /// `p.x` is the field `x` of the struct `p`, or of the struct a reference `p` refers to, and `utils.Add` is the declaration `Add` of the imported module `utils`. `r.*` is the value the reference or pointer `r` refers to. Before `{`, as in `.{x = 1}`, it starts a struct literal whose type its place gives. Methods are not supported yet.
+        /// `p.x` is the field `x` of the struct `p`, or of the struct a reference `p` refers to. `r.*` is the value the reference or pointer `r` refers to. Before `{`, as in `.{x = 1}`, it starts a struct literal whose type its place gives. Methods are not supported yet.
         ///
         /// ```peeper
         /// let p: Point = .{x = 3, y = 4};
