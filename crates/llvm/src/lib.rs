@@ -42,19 +42,24 @@ pub struct Module<'p> {
     module: ModuleId,
     functions: String, // each `define`
     strings: String,   // each string constant's global
-    string_ids: HashMap<Vec<u8>, usize>,
-    /// Each array type's printer (`Function::array_printer`) and each
-    /// element type's range filler (`Function::range_filler`) by its
-    /// number, and the `define`s of both.
-    array_printer_ids: HashMap<TypeId, usize>,
-    range_filler_ids: HashMap<TypeId, usize>,
+    /// The `define` of each array printer (`Function::array_printer`) and
+    /// range filler (`Function::range_filler`).
     private_functions: String,
     /// The `declare` of each function called, by symbol; sorted, so the text
     /// is the same every run. Those the module defines are left out.
     declarations: BTreeMap<String, String>,
-    defined: HashSet<String>,
+    written: Written,
     metadata: Option<Metadata>, // the debug info, in a debug build
     pointer_bits: u32,
+}
+
+/// What the module has written so far, so each is written once.
+#[derive(Default)]
+struct Written {
+    strings: HashMap<Vec<u8>, usize>,       // each string's number
+    array_printers: HashMap<TypeId, usize>, // each array type's printer number
+    range_fillers: HashMap<TypeId, usize>,  // each element type's filler number
+    functions: HashSet<String>,             // each `define`'s symbol
 }
 
 /// The module's debug info: numbered metadata nodes.
@@ -87,12 +92,9 @@ impl<'p> Module<'p> {
             module,
             functions: String::new(),
             strings: String::new(),
-            string_ids: HashMap::new(),
-            array_printer_ids: HashMap::new(),
-            range_filler_ids: HashMap::new(),
             private_functions: String::new(),
             declarations: BTreeMap::new(),
-            defined: HashSet::new(),
+            written: Written::default(),
             metadata,
             pointer_bits,
         }
@@ -135,7 +137,7 @@ impl<'p> Module<'p> {
         out.push_str(&self.functions);
         out.push_str(&self.private_functions);
         for (symbol, declaration) in &self.declarations {
-            if !self.defined.contains(symbol) {
+            if !self.written.functions.contains(symbol) {
                 out.push_str(declaration);
             }
         }
@@ -163,18 +165,22 @@ impl<'p> Module<'p> {
     /// A pointer to the string constant `bytes`, ended by a zero byte; each
     /// string gets one global.
     fn add_string(&mut self, bytes: &[u8]) -> String {
-        let count = self.string_ids.len();
-        let id = *self.string_ids.entry(bytes.to_vec()).or_insert_with(|| {
-            let mut text = bytes.to_vec();
-            text.push(0);
-            _ = writeln!(
-                self.strings,
-                "@.str.{count} = private unnamed_addr constant [{} x i8] c{}",
-                text.len(),
-                quoted(&text)
-            );
-            count
-        });
+        let count = self.written.strings.len();
+        let id = *self
+            .written
+            .strings
+            .entry(bytes.to_vec())
+            .or_insert_with(|| {
+                let mut text = bytes.to_vec();
+                text.push(0);
+                _ = writeln!(
+                    self.strings,
+                    "@.str.{count} = private unnamed_addr constant [{} x i8] c{}",
+                    text.len(),
+                    quoted(&text)
+                );
+                count
+            });
         format!("@.str.{id}")
     }
 

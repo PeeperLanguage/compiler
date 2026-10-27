@@ -141,7 +141,7 @@ impl Module<'_> {
         out.push_str(&panics);
         out.push_str("}\n\n");
         self.functions = out;
-        self.defined.insert(symbol);
+        self.written.functions.insert(symbol);
     }
 
     /// Adds the debug info of the function `definition`, linked as `symbol`,
@@ -951,8 +951,9 @@ impl Function<'_, '_, '_> {
     // shortcut: built in until a trait or interface prints arrays (`check`
     // `printable`).
     fn array_printer(&mut self, ty: TypeId) -> String {
-        let count = self.module.array_printer_ids.len();
-        let number = *self.module.array_printer_ids.entry(ty).or_insert(count);
+        let printers = &mut self.module.written.array_printers;
+        let count = printers.len();
+        let number = *printers.entry(ty).or_insert(count);
         let name = format!("@print.array.{number}");
         if number < count {
             return name;
@@ -1197,8 +1198,9 @@ impl Function<'_, '_, '_> {
     /// than the one before, wrapping. Written into the module the first
     /// time its type fills a range, then reused.
     fn range_filler(&mut self, element: TypeId) -> String {
-        let count = self.module.range_filler_ids.len();
-        let number = *self.module.range_filler_ids.entry(element).or_insert(count);
+        let fillers = &mut self.module.written.range_fillers;
+        let count = fillers.len();
+        let number = *fillers.entry(element).or_insert(count);
         let name = format!("@fill.range.{number}");
         if number < count {
             return name;
