@@ -2,6 +2,7 @@
 //! the value of each constant, built into THIR in one walk per body
 //! (docs/ir-design.md). It starts with each module's scope.
 
+mod builder;
 pub mod builtin;
 pub mod declaration;
 mod expression;

@@ -16,10 +16,10 @@ use model::thir::Symbol;
 use source::Span;
 
 use crate::Checker;
+use crate::builder::ThirBuilder;
 use crate::builtin::unsupported_type;
 use crate::scope;
 use crate::scope::report_redeclared;
-use crate::statement::ThirBuilder;
 
 impl Checker<'_> {
     /// The type the module's type declaration or alias `definition` declares:
