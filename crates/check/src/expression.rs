@@ -19,6 +19,7 @@ use model::operators::Precedence;
 use model::operators::UnaryOp;
 use model::semantic_types::Conversion;
 use model::semantic_types::Float;
+use model::semantic_types::Integer;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
@@ -332,11 +333,18 @@ impl ThirBuilder<'_, '_> {
                     break 'checked self.check_array_literal(ty, entries, span);
                 }
                 ast::Expr::Range { .. } => break 'checked self.check_range(expression, expected),
-                ast::Expr::Index { value, index } => break 'checked self.check_index(value, index),
+                ast::Expr::Index { value, index } => {
+                    break 'checked self.check_index(value, index, span);
+                }
                 ast::Expr::Dereference(value) => {
                     break 'checked self.check_dereference(value, span);
                 }
                 ast::Expr::Reference { mutable, value } => {
+                    if let ast::Expr::Index { index, .. } = tree.exprs[value]
+                        && let ast::Expr::Range { .. } = tree.exprs[index]
+                    {
+                        break 'checked self.check_slice(mutable, value, span);
+                    }
                     let place = self.add_expr(value, TypeExpectation::Hint(None));
                     break 'checked self.check_borrow(mutable, place, span);
                 }
@@ -798,15 +806,7 @@ impl ThirBuilder<'_, '_> {
             Type::Range { element, .. } => Some(element),
             _ => None,
         });
-        let (start, end) = if unsuffixed_literal(tree, start).is_some() {
-            let end = self.add_expr(end, TypeExpectation::Hint(hint));
-            let ty = self.body.exprs[end].ty;
-            (self.add_expr(start, TypeExpectation::Required(ty)), end)
-        } else {
-            let start = self.add_expr(start, TypeExpectation::Hint(hint));
-            let ty = self.body.exprs[start].ty;
-            (start, self.add_expr(end, TypeExpectation::Required(ty)))
-        };
+        let (start, end) = self.check_range_ends(start, end, hint);
         let ty = self.checker.range_type(self.body.exprs[start].ty, span);
         let step_type = match self.checker.types[ty] {
             Type::Range { step, .. } => step,
@@ -827,11 +827,40 @@ impl ThirBuilder<'_, '_> {
         }
     }
 
+    /// A range's or slice's ends `start` and `end`, of one type: a literal
+    /// without a suffix takes the other end's type, or `hint` when both are
+    /// such literals.
+    fn check_range_ends(
+        &mut self,
+        start: Id<ast::Expr>,
+        end: Id<ast::Expr>,
+        hint: Option<TypeId>,
+    ) -> (Id<Expr>, Id<Expr>) {
+        let tree = &self.checker.module().ast;
+        if unsuffixed_literal(tree, start).is_some() {
+            let end = self.add_expr(end, TypeExpectation::Hint(hint));
+            let ty = self.body.exprs[end].ty;
+            (self.add_expr(start, TypeExpectation::Required(ty)), end)
+        } else {
+            let start = self.add_expr(start, TypeExpectation::Hint(hint));
+            let ty = self.body.exprs[start].ty;
+            (start, self.add_expr(end, TypeExpectation::Required(ty)))
+        }
+    }
+
     /// `array[index]`: the element at an integer index of an array in a
     /// place, of the array a reference or typed raw pointer points to, or of
-    /// a slice. A constant index must be inside an array; a slice's must be
-    /// at least 0 and fit a `u64`, and is checked when the program runs.
-    fn check_index(&mut self, array: Id<ast::Expr>, index: Id<ast::Expr>) -> Expr {
+    /// a slice, written at `span`. A constant index must be inside an array;
+    /// a slice's must be at least 0 and fit a `u64`, and is checked when the
+    /// program runs. A written range slices, which only `&` does.
+    fn check_index(&mut self, array: Id<ast::Expr>, index: Id<ast::Expr>, span: Span) -> Expr {
+        let tree = &self.checker.module().ast;
+        if let ast::Expr::Range { .. } = tree.exprs[index] {
+            let message = format!("slicing borrows; write `&{}`", tree.file.slice(span));
+            self.checker
+                .error(diagnostics::INVALID_OPERATION, message, span);
+            return Expr::INVALID;
+        }
         let mut array = self.add_expr(array, TypeExpectation::Hint(None));
         let mut ty = self.body.exprs[array].ty;
         if let Some(target) = self.checker.types[ty].pointee() {
@@ -858,15 +887,12 @@ impl ThirBuilder<'_, '_> {
             }
             return Expr::INVALID;
         }
-        let Type::Integer(integer) = self.checker.types[index_type] else {
-            if index_type != TypeId::INVALID {
-                let message = format!(
-                    "an index must be an integer, found `{}`",
-                    self.checker.type_text(index_type)
-                );
-                self.checker
-                    .error(diagnostics::TYPE_MISMATCH, message, index_span);
-            }
+        if let Type::Range { .. } = self.checker.types[index_type] {
+            self.checker
+                .not_supported(index_span, "range values as indexes");
+            return Expr::INVALID;
+        }
+        let Some(integer) = self.integer_index(index) else {
             return Expr::INVALID;
         };
         // A negative constant, or one past `u64`, is outside every slice.
@@ -897,6 +923,173 @@ impl ThirBuilder<'_, '_> {
             ty: element,
             kind: ExprKind::Index { array, index },
         }
+    }
+
+    /// The integer type of the checked index `index`; `None` after an error,
+    /// reported here for a type that is not an integer.
+    fn integer_index(&mut self, index: Id<Expr>) -> Option<Integer> {
+        let ty = self.body.exprs[index].ty;
+        match self.checker.types[ty] {
+            Type::Integer(integer) => Some(integer),
+            Type::Invalid => None,
+            _ => {
+                let message = format!(
+                    "an index must be an integer, found `{}`",
+                    self.checker.type_text(ty)
+                );
+                let span = self.body.exprs.span(index);
+                self.checker
+                    .error(diagnostics::TYPE_MISMATCH, message, span);
+                None
+            }
+        }
+    }
+
+    /// `&array[start..end]`, `&mut` when `mutable`, at `span`, where
+    /// `indexed` is `array[start..end]`, its index a written range: a slice
+    /// of the elements of an array in a place, or of one a reference points
+    /// to, from `start` up to `end`, each left out or an integer as an index
+    /// is (`ExprKind::Slice`). Ends known at compile time must be inside the
+    /// array and in order; others are checked when the program runs. A step
+    /// is an error.
+    fn check_slice(&mut self, mutable: bool, indexed: Id<ast::Expr>, span: Span) -> Expr {
+        let tree = &self.checker.module().ast;
+        let ast::Expr::Index {
+            value: array,
+            index: range,
+        } = tree.exprs[indexed]
+        else {
+            unreachable!("the caller found an index")
+        };
+        let ast::Expr::Range {
+            inclusive,
+            start,
+            end,
+            step,
+        } = tree.exprs[range]
+        else {
+            unreachable!("the caller found a written range")
+        };
+        if let Some(step) = step {
+            let step_span = tree.exprs.span(step);
+            self.checker.error(
+                diagnostics::INVALID_OPERATION,
+                "a slice has no step",
+                step_span,
+            );
+            return Expr::INVALID;
+        }
+        let mut array = self.add_expr(array, TypeExpectation::Hint(None));
+        let mut ty = self.body.exprs[array].ty;
+        let array_span = self.body.exprs.span(array);
+        match self.checker.types[ty] {
+            // shortcut: a slice through a raw pointer holds no loan; allow
+            // it, as `&p.*` is, when a program needs it.
+            Type::RawPointer { .. } => {
+                self.checker
+                    .not_supported(array_span, "slices taken through raw pointers");
+                return Expr::INVALID;
+            }
+            // Written `r[i..j]`, so a message names that, as `r[i]`.
+            Type::Reference { target, .. } => {
+                let referred = self.dereference(array, target);
+                ty = referred.ty;
+                array = self.body.add(referred, tree.exprs.span(indexed));
+            }
+            _ => {}
+        }
+        let (element, length) = match self.checker.types[ty] {
+            Type::Array { element, length } => (element, length),
+            Type::Slice { .. } => {
+                self.checker
+                    .not_supported(array_span, "slices taken from slices");
+                return Expr::INVALID;
+            }
+            Type::Invalid => return Expr::INVALID,
+            _ => {
+                let message = format!("`{}` cannot be sliced", self.checker.type_text(ty));
+                self.checker
+                    .error(diagnostics::INVALID_OPERATION, message, array_span);
+                return Expr::INVALID;
+            }
+        };
+        let ends = self.check_slice_ends([start, end], inclusive, ty, length, range);
+        let Some([start, end]) = ends else {
+            return Expr::INVALID;
+        };
+        let slice = self.checker.types.intern(Type::Slice { mutable, element });
+        if !self.check_lending(slice, array, span) {
+            return Expr::INVALID;
+        }
+        Expr {
+            ty: slice,
+            kind: ExprKind::Slice {
+                array,
+                start,
+                end,
+                inclusive,
+            },
+        }
+    }
+
+    /// The ends, each left out or written, of the slice of `viewed`, an
+    /// array type of `length` elements, by the written range `range`, `..=`
+    /// when `inclusive`: integers of one type, `usize` for literals without
+    /// a suffix. Ends known at compile time must be inside the array, and
+    /// in order when both are; `None` after an error.
+    fn check_slice_ends(
+        &mut self,
+        ends: [Option<Id<ast::Expr>>; 2],
+        inclusive: bool,
+        viewed: TypeId,
+        length: u64,
+        range: Id<ast::Expr>,
+    ) -> Option<[Option<Id<Expr>>; 2]> {
+        let usize = Some(self.checker.usize_type());
+        let ends = match ends {
+            [Some(start), Some(end)] => {
+                let (start, end) = self.check_range_ends(start, end, usize);
+                [Some(start), Some(end)]
+            }
+            ends => ends.map(|end| end.map(|end| self.add_expr(end, TypeExpectation::Hint(usize)))),
+        };
+        // How many elements come before each end when known at compile
+        // time: a missing start is 0, a missing end the length; a written
+        // `..=` end has one more, past it.
+        let mut before_ends = [Some(0), Some(length)];
+        let mut outside = false;
+        let past = [0, u64::from(inclusive)];
+        for ((before, end), past) in before_ends.iter_mut().zip(ends).zip(past) {
+            let Some(end) = end else {
+                continue;
+            };
+            let integer = self.integer_index(end)?;
+            let ExprKind::Constant(Value::Integer(ref value)) = self.body.exprs[end].kind else {
+                *before = None;
+                continue;
+            };
+            // A negative end, or one past `u64`, is outside every array.
+            let known = bigint::to_u64(integer.bits, integer.signed, value)
+                .and_then(|at| at.checked_add(past));
+            outside |= known.is_none_or(|known| known > length);
+            *before = known;
+        }
+        let tree = &self.checker.module().ast;
+        let range_span = tree.exprs.span(range);
+        let written = tree.file.slice(range_span);
+        let error = if outside {
+            let viewed = self.checker.type_text(viewed);
+            format!("slice `{written}` is outside `{viewed}`, whose length is {length}")
+        } else if let [Some(first), Some(last)] = before_ends
+            && first > last
+        {
+            format!("slice `{written}` starts after it ends")
+        } else {
+            return Some(ends);
+        };
+        self.checker
+            .error(diagnostics::INVALID_OPERATION, error, range_span);
+        None
     }
 
     /// `reference.*`, written at `span`: the value a reference or a typed
@@ -948,25 +1141,36 @@ impl ThirBuilder<'_, '_> {
         self.borrow_as(ty, place, span)
     }
 
-    /// A borrow of the checked place `place`, in a variable, as `ty`, a
-    /// reference or slice, reported at `span`. A `&mut` or `[&mut]` needs a
-    /// place that can be written; a slice place is lent again, and writing
-    /// through it writes its elements, never the variable holding it.
+    /// A borrow of the checked place `place` as `ty`, a reference or slice,
+    /// reported at `span` (`check_lending`).
     fn borrow_as(&mut self, ty: TypeId, place: Id<Expr>, span: Span) -> Expr {
+        if !self.check_lending(ty, place, span) {
+            return Expr::INVALID;
+        }
+        Expr {
+            ty,
+            kind: ExprKind::Borrow(place),
+        }
+    }
+
+    /// Whether the checked place `place` can be lent as `ty`, a reference or
+    /// slice, written at `span`: only a place in a variable can. A `&mut` or
+    /// `[&mut]` needs a place that can be written, else that is reported but
+    /// the place is still lent, so checking goes on; a slice place is lent
+    /// again, and writing through it writes its elements, never the
+    /// variable holding it.
+    fn check_lending(&mut self, ty: TypeId, place: Id<Expr>, span: Span) -> bool {
         let Some((variable, decider)) = self.place_root(place) else {
             self.checker
                 .not_supported(span, "borrows of values that are not in a variable");
-            return Expr::INVALID;
+            return false;
         };
         let types = &self.checker.types;
         let relends_slice = matches!(types[self.body.exprs[place].ty], Type::Slice { .. });
         if types[ty].borrows() == Some(true) && !relends_slice {
             self.report_unwritable(place, variable, decider, "mutably borrow");
         }
-        Expr {
-            ty,
-            kind: ExprKind::Borrow(place),
-        }
+        true
     }
 
     /// `@place`, written at `span`: the address of the checked place
@@ -1660,14 +1864,15 @@ impl ThirBuilder<'_, '_> {
 
     /// `reference`, a reference or slice checked at `span`, lent again as
     /// `to` (`Conversion::Reborrow`, or its own type), so a `&mut` or
-    /// `[&mut]` itself is not moved. A written `&place`, already checked,
-    /// borrows `place` itself as `to`; a slice lends its own elements.
+    /// `[&mut]` itself is not moved. A written `&place` or `&a[i..j]`,
+    /// already checked, borrows its place itself as `to`; a slice lends its
+    /// own elements.
     fn reborrow(&mut self, reference: Expr, span: Span, to: TypeId) -> Expr {
         let place = match (&reference.kind, &self.checker.types[reference.ty]) {
-            (&ExprKind::Borrow(place), _) => {
+            (ExprKind::Borrow(_) | ExprKind::Slice { .. }, _) => {
                 return Expr {
                     ty: to,
-                    kind: ExprKind::Borrow(place),
+                    ..reference
                 };
             }
             (_, Type::Slice { .. }) => self.body.add(reference, span),

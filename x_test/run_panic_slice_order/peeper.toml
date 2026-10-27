@@ -1,0 +1,11 @@
+name = "run_panic_slice_order"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 101
+stderr_contains = [
+    "panic: slice starts after it ends\n",
+    "src/main.peep:6:16\n",
+]

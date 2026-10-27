@@ -1,0 +1,8 @@
+// A `..=` end at the length stops the program before one past it is
+// counted, so the largest `usize` does not wrap to 0.
+fn main() -> i32 {
+    let values = [4]i32{1, 2, 3, 4};
+    let last: usize = 18446744073709551615;
+    let view = &values[0..=last];
+    return view[0];
+}

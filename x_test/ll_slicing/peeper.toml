@@ -1,0 +1,6 @@
+name = "ll_slicing"
+build = "program"
+
+[test]
+mode = "ll"
+outcome = "success"

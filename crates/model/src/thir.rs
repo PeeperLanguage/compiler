@@ -201,6 +201,17 @@ pub enum ExprKind {
     /// `@place`: the place's address as a raw pointer, which no loan
     /// follows; the place is as a `Borrow`'s.
     Address(Id<Expr>),
+    /// `&array[start..end]`, `&mut` as the slice type `ty` says, or `..=`
+    /// when `inclusive`: a slice of the elements of the array, a place as a
+    /// `Borrow`'s, from `start`, or 0 when not written, up to `end`, or its
+    /// length. The ends are integers of one type; outside the array or out
+    /// of order, the program fails.
+    Slice {
+        array: Id<Expr>,
+        start: Option<Id<Expr>>,
+        end: Option<Id<Expr>>,
+        inclusive: bool,
+    },
     /// `start..end`, or `..=` when `inclusive`, a value of the type
     /// `range[T]` (`ty`): integers from `start` toward `end`, `step` apart,
     /// up or down as `start <= end`. The ends are `T`s, the step is of the
@@ -336,6 +347,15 @@ impl Body {
             ExprKind::Range {
                 start, end, step, ..
             } => self.calls(start) || self.calls(end) || self.calls(step),
+            ExprKind::Slice {
+                array, start, end, ..
+            } => {
+                self.calls(array)
+                    || [start, end]
+                        .into_iter()
+                        .flatten()
+                        .any(|end| self.calls(end))
+            }
             ExprKind::StructLiteral(fields) => (self.children.lists.items(fields))
                 .any(|field| self.calls(self.children.field_values[field].value)),
             ExprKind::ArrayLiteral(parts) => {
@@ -590,6 +610,25 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
             ExprKind::Address(place) => {
                 self.out.push('@');
                 self.write_expr(place);
+            }
+            ExprKind::Slice {
+                array,
+                start,
+                end,
+                inclusive,
+            } => {
+                let mutable = self.types[ty].borrows() == Some(true);
+                self.out.push_str(if mutable { "&mut " } else { "&" });
+                self.write_expr(array);
+                self.out.push('[');
+                if let Some(start) = start {
+                    self.write_expr(start);
+                }
+                self.out.push_str(if inclusive { "..=" } else { ".." });
+                if let Some(end) = end {
+                    self.write_expr(end);
+                }
+                self.out.push(']');
             }
             ExprKind::Range {
                 start,

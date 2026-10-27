@@ -1,0 +1,10 @@
+// The MIR of a slice whose start is known only when the program runs: the
+// start is converted to a `usize` and checked against the length, then
+// against the constant end, and the borrow's last step is the subslice,
+// printed with its start and count.
+fn middle(values: [4]i32, start: i32) -> i32 {
+    let view = &values[start..3];
+    return view[0];
+}
+
+fn main() {}

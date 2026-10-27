@@ -68,6 +68,7 @@ impl Checker<'_> {
     ) -> Option<mir::Body> {
         let modules = self.modules;
         let module = definition.module.index();
+        let usize = self.usize_type();
         let Type::Function {
             ref parameters,
             result,
@@ -76,7 +77,7 @@ impl Checker<'_> {
         else {
             unreachable!("a checked body has a function type")
         };
-        let mir = lower::lower(thir, parameters.len(), result, &self.types)?;
+        let mir = lower::lower(thir, parameters.len(), result, usize, &self.types)?;
         let file = &modules[module].ast.file;
         // Reported here, then added: a call's origins are read from any
         // module's checks, this one's too.

@@ -1,0 +1,11 @@
+name = "run_panic_slice_inclusive_end"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 101
+stderr_contains = [
+    "panic: slice out of bounds\n",
+    "src/main.peep:6:28\n",
+]

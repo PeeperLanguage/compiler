@@ -1,0 +1,26 @@
+fn middle:
+  bb0:
+    store values.0, arg0
+    store start.1, arg1
+    %2 = load start.1: i32
+    %3 = convert %2: u64
+    %4 = GreaterThan %3, 4: bool
+    check %4, "slice out of bounds"
+    %6 = GreaterThan %3, 3: bool
+    check %6, "slice starts after it ends"
+    %8 = Subtract 3, %3: u64
+    %9 = borrow values.0[from %3, count %8]: [&]i32
+    store view.2, %9
+    %11 = load view.2.*[at 0]: i32
+    scope end view.2
+    scope end start.1
+    scope end values.0
+    return %11
+  bb1:
+    scope end view.2
+    scope end start.1
+    scope end values.0
+    fall off at `}`
+fn main:
+  bb0:
+    fall off at `}`

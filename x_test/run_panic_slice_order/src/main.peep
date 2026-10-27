@@ -1,0 +1,8 @@
+// Ends known only when the program runs are checked then: a start after
+// the end stops it.
+fn main() -> i32 {
+    let values = [4]i32{1, 2, 3, 4};
+    let start: usize = 3;
+    let view = &values[start..2];
+    return view[0];
+}

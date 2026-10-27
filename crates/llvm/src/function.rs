@@ -640,12 +640,16 @@ impl Function<'_, '_, '_> {
                 }
                 // A slice: the elements' address, then their count.
                 let address = format!("{name}.p");
-                let length =
-                    match types[self.write_place_address(out, &address, place, &location, id)] {
-                        Type::Array { length, .. } => length.to_string(),
-                        Type::Slice { .. } => format!("{address}.0.len"),
-                        _ => unreachable!("a slice is taken of an array or a slice's elements"),
-                    };
+                let viewed = self.write_place_address(out, &address, place, &location, id);
+                let length = match (place.projections.last(), &types[viewed]) {
+                    (Some(&mir::Projection::Subslice(subslice)), _) => {
+                        let count = self.body.subslices[subslice.index()].count;
+                        self.operand(count).to_string()
+                    }
+                    (_, Type::Array { length, .. }) => length.to_string(),
+                    (_, Type::Slice { .. }) => format!("{address}.0.len"),
+                    _ => unreachable!("a slice is taken of an array or a slice's elements"),
+                };
                 let bits = self.module.pointer_bits;
                 _ = writeln!(
                     out,
@@ -1464,6 +1468,9 @@ impl Function<'_, '_, '_> {
                     ) => {
                         element // check found it inside the array
                     }
+                    // Lowering checked its start and count.
+                    (mir::Projection::Subslice(_), &Type::Array { element, .. })
+                    | (mir::Projection::Subslice(_), &Type::Slice { element, .. }) => element,
                     (mir::Projection::Index(index), &Type::Array { element, .. })
                     | (mir::Projection::Index(index), &Type::Slice { element, .. }) => {
                         let Type::Integer(integer) = self.types[self.body.operand_type(index)]
@@ -1548,6 +1555,11 @@ impl Function<'_, '_, '_> {
                         write!(out, ", i64 {address}.{run}.{position}")
                     }
                     mir::Projection::Index(index) => write!(out, ", i64 {}", self.operand(index)),
+                    mir::Projection::Subslice(subslice) => {
+                        let start = self.body.subslices[subslice.index()].start;
+                        let bits = self.module.pointer_bits;
+                        write!(out, ", i{bits} {}", self.operand(start))
+                    }
                     mir::Projection::Dereference => unreachable!("split at each dereference"),
                 };
             }

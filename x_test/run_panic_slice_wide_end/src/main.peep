@@ -1,0 +1,8 @@
+// An end wider than a `usize` is checked in its own type, before it is cut
+// to one: 2^64 + 1 is not 1.
+fn main() -> i32 {
+    let values = [4]i32{1, 2, 3, 4};
+    let start: u128 = 18446744073709551617;
+    let view = &values[start..];
+    return view[0];
+}

@@ -1,0 +1,15 @@
+// `&a[i..j]` starts its slice at element `i` and counts `j - i`: a constant
+// end gets no check, an `i32` start is extended to a `usize` and checked
+// against the length, and the ends against each other; `..=` checks its
+// end below the length before it adds one.
+fn total(view: [&]i32) -> i32 {
+    return view[0] + view.len as i32;
+}
+
+fn main() {
+    let values = [4]i32{1, 2, 3, 4};
+    let start: i32 = 1;
+    let end: usize = 2;
+    let middle = total(&values[start..3]);
+    let through = total(&values[..=end]);
+}

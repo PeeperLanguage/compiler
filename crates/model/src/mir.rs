@@ -32,6 +32,7 @@ pub struct Body {
     /// info reads them.
     pub debug_scopes: Arena<DebugScope>,
     pub constants: Vec<Constant>, // what `Operand::Constant` names; no spans, so not an arena
+    pub subslices: Vec<Subslice>, // what `Projection::Subslice` names; rare, so out of the step
     pub lists: Lists,
 }
 
@@ -89,16 +90,23 @@ pub enum Projection {
     /// used, of the array here, or of the slice elements; outside them, the
     /// program fails.
     Index(Operand),
+    /// Some of the elements of the array here, or of the slice elements:
+    /// the last step of a slice `Borrow` written `&a[i..j]`.
+    Subslice(Id<Subslice>),
 }
 
 impl Projection {
     /// Whether the two steps, from one storage, may lead to the same
-    /// storage: one field, or any two elements, whose indexes are not known.
+    /// storage: one field, or any two elements or subslices, whose indexes
+    /// are not known.
     pub fn may_overlap(self, other: Projection) -> bool {
         match (self, other) {
             (Projection::Field(left), Projection::Field(right)) => left == right,
             (Projection::Dereference, Projection::Dereference)
-            | (Projection::Index(_), Projection::Index(_)) => true,
+            | (
+                Projection::Index(_) | Projection::Subslice(_),
+                Projection::Index(_) | Projection::Subslice(_),
+            ) => true,
             _ => unreachable!("one storage has one type, so one kind of step"),
         }
     }
@@ -127,6 +135,15 @@ impl Place {
     }
 }
 
+/// The part of the elements a slice `Borrow` views (`Projection::Subslice`):
+/// `count` of them from the one at `start`, both `usize`s that lowering
+/// checked to be inside them.
+#[derive(Clone, Copy, Debug)]
+pub struct Subslice {
+    pub start: Operand,
+    pub count: Operand,
+}
+
 #[derive(Clone, Debug)]
 pub enum InstructionKind {
     /// The value at the place, whose type copies (`Types::is_copy`), or a
@@ -144,8 +161,8 @@ pub enum InstructionKind {
         value: Operand,
     },
     /// A reference to the place, `&mut` when `mutable`, or a slice of it,
-    /// as `ty` says: of an array, or of the elements a slice views; the
-    /// variable must already be set.
+    /// as `ty` says: of an array, or of the elements a slice views, or of a
+    /// `Projection::Subslice` of them; the variable must already be set.
     Borrow {
         place: Place,
         mutable: bool,
@@ -482,12 +499,22 @@ impl Printer<'_> {
             }
             self.write_fields(&fields);
             fields.clear();
-            if let Projection::Index(index) = step {
-                self.out.push_str("[at ");
-                self.write_operand(&index);
-                self.out.push(']');
-            } else {
-                self.out.push_str(".*");
+            match step {
+                Projection::Index(index) => {
+                    self.out.push_str("[at ");
+                    self.write_operand(&index);
+                    self.out.push(']');
+                }
+                Projection::Subslice(subslice) => {
+                    let Subslice { start, count } = self.body.subslices[subslice.index()];
+                    self.out.push_str("[from ");
+                    self.write_operand(&start);
+                    self.out.push_str(", count ");
+                    self.write_operand(&count);
+                    self.out.push(']');
+                }
+                Projection::Dereference => self.out.push_str(".*"),
+                Projection::Field(_) => unreachable!("gathered into `fields` above"),
             }
         }
         self.write_fields(&fields);

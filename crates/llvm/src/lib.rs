@@ -610,9 +610,10 @@ mod tests {
     use model::semantic_types::TypeId;
     use model::semantic_types::Types;
 
-    /// The LLVM text of the module `app:main` holding `text`, with a prelude
-    /// declaring the runtime's `Exit`.
-    fn ll(text: &str) -> String {
+    /// The LLVM text of the module `app:main` holding `text`, for a target
+    /// whose pointers have `pointer_bits` bits, with a prelude declaring the
+    /// runtime's `Exit`.
+    fn ll(text: &str, pointer_bits: u32) -> String {
         let folder = PathBuf::from("/peeper-llvm-test");
         let prelude = "#[extern(\"peeper_rt_v1_exit\")]\nfn Exit(code: i32);\n";
         let project = project::Project {
@@ -631,18 +632,24 @@ mod tests {
         let program = project::load(&project, &open_files);
         assert!(program.checkable);
         let (modules, results) =
-            super::write::write_modules(&program, 64, super::BuildMode::Debug, |queue| {
-                compile::run(&program, 64, compile::Results::default(), false, |output| {
-                    if let compile::Output::Function(compile::CheckedFunction {
-                        definition,
-                        mir,
-                        types,
-                        ..
-                    }) = output
-                    {
-                        queue.add(definition, mir.unwrap(), types);
-                    }
-                })
+            super::write::write_modules(&program, pointer_bits, super::BuildMode::Debug, |queue| {
+                compile::run(
+                    &program,
+                    pointer_bits,
+                    compile::Results::default(),
+                    false,
+                    |output| {
+                        if let compile::Output::Function(compile::CheckedFunction {
+                            definition,
+                            mir,
+                            types,
+                            ..
+                        }) = output
+                        {
+                            queue.add(definition, mir.unwrap(), types);
+                        }
+                    },
+                )
             });
         assert_eq!(results.diagnostics().count(), 0);
         modules.last().unwrap().text()
@@ -652,7 +659,10 @@ mod tests {
     /// a new block, which the `phi` after `&&` names.
     #[test]
     fn traps_continue_in_a_new_block() {
-        let text = ll("fn both(a: i32, b: i32) -> bool { return a > 0 && a / b > 1; }");
+        let text = ll(
+            "fn both(a: i32, b: i32) -> bool { return a > 0 && a / b > 1; }",
+            64,
+        );
         for line in [
             "br i1 %i6.z, label %bb1.1.panic, label %bb1.1\nbb1.1:",
             "%i6.d = select i1 %i6.n, i32 1, i32 %i5",
@@ -663,7 +673,7 @@ mod tests {
         ] {
             assert!(text.contains(line), "{line}\n{text}");
         }
-        let constant = ll("fn f(a: u8) -> u8 { return a / 3u8 << 2u8; }");
+        let constant = ll("fn f(a: u8) -> u8 { return a / 3u8 << 2u8; }", 64);
         assert!(!constant.contains("panic"), "{constant}");
     }
 
@@ -671,13 +681,39 @@ mod tests {
     /// its `#[extern]` name.
     #[test]
     fn strings_and_extern_calls() {
-        let text = ll("fn f(a: u8, b: f32) { let s = c\"hi\\n\"; Exit(3); }");
+        let text = ll("fn f(a: u8, b: f32) { let s = c\"hi\\n\"; Exit(3); }", 64);
         for line in [
             "@.str.0 = private unnamed_addr constant [4 x i8] c\"hi\\0A\\00\"",
             "store ptr @.str.0, ptr %v2",
             "call void @\"peeper_rt_v1_exit\"(i32 3)",
             "declare void @\"peeper_rt_v1_exit\"(i32)",
             "define void @\"app:main.f\"(i8 %arg0, float %arg1)",
+        ] {
+            assert!(text.contains(line), "{line}\n{text}");
+        }
+    }
+
+    /// A slice's start and count are `usize`s, `i32`s on a 32-bit target:
+    /// a wider `i64` end is checked in its own type before it is cut to
+    /// one, a narrower `i8` one is extended first.
+    #[test]
+    fn slice_bounds_are_target_sized() {
+        let text = ll(
+            "fn f(a: [4]i32, wide: i64, narrow: i8) {\n\
+             let from: [&]i32 = &a[wide..];\n\
+             let to: [&]i32 = &a[..narrow];\n}",
+            32,
+        );
+        for line in [
+            "%i4 = icmp slt i64 %i3, 0",
+            "%i6 = icmp sgt i64 %i3, 4",
+            "%i8 = trunc i64 %i3 to i32",
+            "%i9 = sub i32 4, %i8",
+            "%i10.p = getelementptr inbounds [4 x i32], ptr %v0, i32 0, i32 %i8",
+            "%i10 = insertvalue %slice %i10.a, i32 %i9, 1",
+            "%i13 = sext i8 %i12 to i32",
+            "%i14 = icmp ugt i32 %i13, 4",
+            "%i16 = insertvalue %slice %i16.a, i32 %i13, 1",
         ] {
             assert!(text.contains(line), "{line}\n{text}");
         }
@@ -691,6 +727,7 @@ mod tests {
             "#[extern(\"c_narrow\")]\nfn narrow(a: i8, b: u8, c: bool, d: i32) -> i16;\n\
              fn local(a: i8) {}\n\
              fn f() { local(1i8); let x = narrow(1i8, 2u8, true, 4); }",
+            64,
         );
         for line in [
             "declare signext i16 @\"c_narrow\"(i8 signext, i8 zeroext, i1 zeroext, i32)",
@@ -706,7 +743,7 @@ mod tests {
     /// declares nothing gets no scope: the inner one is in the function's.
     #[test]
     fn variables_have_the_scope_of_their_block() {
-        let text = ll("fn f(p: i32) { let x = 1; { { let x = 2; } } }");
+        let text = ll("fn f(p: i32) { let x = 1; { { let x = 2; } } }", 64);
         let blocks: Vec<&str> = text
             .lines()
             .filter(|line| line.contains("!DILexicalBlock("))

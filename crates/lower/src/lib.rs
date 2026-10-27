@@ -21,7 +21,7 @@ use model::thir;
 use source::Span;
 
 /// The MIR of a function's checked body, which has `parameters` parameters
-/// and gives `result`.
+/// and gives `result`; `usize` is the target's pointer-sized unsigned type.
 /// `None` when checking it reported an error (`has_errors`), or an error left
 /// it incomplete: what was reported is all there is to say about it. Its
 /// types, from `types`, are each the type itself: THIR's aliases are looked
@@ -30,6 +30,7 @@ pub fn lower(
     body: &thir::Body,
     parameters: usize,
     result: TypeId,
+    usize: TypeId,
     types: &Types,
 ) -> Option<mir::Body> {
     if body.has_errors {
@@ -38,6 +39,7 @@ pub fn lower(
     let mut lowering = Lowering {
         thir: body,
         types,
+        usize,
         mir: mir::Body {
             blocks: Arena::default(),
             instructions: Arena::default(),
@@ -46,6 +48,7 @@ pub fn lower(
             result: types.real(result),
             debug_scopes: Arena::default(),
             constants: Vec::new(),
+            subslices: Vec::new(),
             lists: Lists::default(),
         },
         block: Id::from_index(0),
@@ -103,6 +106,7 @@ pub fn lower(
 struct Lowering<'t> {
     thir: &'t thir::Body,
     types: &'t Types, // to look through aliases
+    usize: TypeId,    // what slice bounds become once checked
     mir: mir::Body,
     block: Id<mir::Block>,            // the block being filled
     instructions: Vec<NonZeroU32>,    // that block's instructions so far
@@ -186,6 +190,16 @@ impl Lowering<'_> {
         self.emit(mir::InstructionKind::Binary { op, left, right }, ty, span)
     }
 
+    /// Stops the program with "panic: `message`" when `failed`, a `bool`
+    /// written at `span`, is true.
+    fn check(&mut self, failed: mir::Operand, message: &'static str, span: Span) {
+        self.emit(
+            mir::InstructionKind::Check { failed, message },
+            TypeId::VOID,
+            span,
+        );
+    }
+
     /// `constant` as an operand: the body's next constant.
     fn add_constant(&mut self, constant: Constant) -> mir::Operand {
         let id = Id::from_index(self.mir.constants.len());
@@ -248,9 +262,7 @@ impl Lowering<'_> {
         }
         let zero = self.integer_constant(size, 0);
         let failed = self.binary(BinaryOp::EqualTo, step, zero, TypeId::BOOL, span);
-        let message = "range step is zero";
-        let check = mir::InstructionKind::Check { failed, message };
-        self.emit(check, TypeId::VOID, span);
+        self.check(failed, "range step is zero", span);
     }
 
     /// The parts of the range `range` written as `start..end:step`
@@ -809,6 +821,7 @@ impl Lowering<'_> {
                 }
                 mir::InstructionKind::Borrow { place, mutable }
             }
+            thir::ExprKind::Slice { .. } => return self.lower_slice(expression),
             thir::ExprKind::Address(place) => {
                 let Ok(place) = self.place(place)? else {
                     unreachable!("the checker takes only the address of a place in a variable")
@@ -817,6 +830,159 @@ impl Lowering<'_> {
             }
         };
         Some(self.emit(kind, ty, span))
+    }
+
+    /// The slice `&array[start..end]` (`thir::ExprKind::Slice`) at
+    /// `expression`: the borrow of the elements from the start, after
+    /// stopping the program when an end not known at compile time is
+    /// outside the array or the ends are out of order. The checker rejected
+    /// such ends known then, so they get no check.
+    // Takes only the id and gives the operand: an arm of `lower_expr` that
+    // passed the parts and took the instruction back cost a compile 9 M
+    // instructions, with no slice in it.
+    fn lower_slice(&mut self, expression: Id<thir::Expr>) -> Option<mir::Operand> {
+        let span = self.thir.exprs.span(expression);
+        let thir::Expr {
+            ty,
+            kind:
+                thir::ExprKind::Slice {
+                    array,
+                    start,
+                    end,
+                    inclusive,
+                },
+        } = self.thir.exprs[expression]
+        else {
+            unreachable!("the caller found a slice")
+        };
+        let Some(mutable) = self.types[ty].borrows() else {
+            unreachable!("a slice's type is a slice")
+        };
+        let Ok(mut place) = self.place(array)? else {
+            unreachable!("the checker slices only an array in a variable")
+        };
+        let Type::Array { length, .. } = self.types[self.thir.exprs[array].ty] else {
+            unreachable!("the checker slices only an array")
+        };
+        // How many elements come before each end when known at compile
+        // time: a missing start is 0, a missing end the length.
+        let before = |end: Id<thir::Expr>| match self.thir.exprs[end].kind {
+            thir::ExprKind::Constant(Value::Integer(ref value)) => {
+                let Type::Integer(integer) = self.types[self.thir.exprs[end].ty] else {
+                    unreachable!("a slice's end is an integer")
+                };
+                let before = bigint::to_u64(integer.bits, integer.signed, value);
+                Some(before.expect("the checker took only ends inside the array"))
+            }
+            _ => None,
+        };
+        let known_start = start.map_or(Some(0), before);
+        let known_end = end.map_or(Some(length), |end| {
+            before(end).map(|end| end + u64::from(inclusive))
+        });
+        let start_operand = match (known_start, start) {
+            (Some(known), _) => self.integer_constant(self.usize, known),
+            (None, Some(start)) => self.lower_slice_end(start, BinaryOp::GreaterThan, length)?,
+            (None, None) => unreachable!("a missing start is known"),
+        };
+        let end_operand = match (known_end, end) {
+            (Some(known), _) => self.integer_constant(self.usize, known),
+            (None, Some(end)) => {
+                // A `..=` end is below the length, so one past it fits.
+                let op = if inclusive {
+                    BinaryOp::GreaterOrEqual
+                } else {
+                    BinaryOp::GreaterThan
+                };
+                let end = self.lower_slice_end(end, op, length)?;
+                if inclusive {
+                    let one = self.integer_constant(self.usize, 1);
+                    self.binary(BinaryOp::Add, end, one, self.usize, span)
+                } else {
+                    end
+                }
+            }
+            (None, None) => unreachable!("a missing end is known"),
+        };
+        // Each end is inside the array, so a start of 0 or an end at the
+        // length is in order with any other.
+        let in_order = known_start == Some(0)
+            || known_end == Some(length)
+            || known_start.is_some() && known_end.is_some();
+        if !in_order {
+            let failed = self.binary(
+                BinaryOp::GreaterThan,
+                start_operand,
+                end_operand,
+                TypeId::BOOL,
+                span,
+            );
+            let message = "slice starts after it ends";
+            self.check(failed, message, span);
+        }
+        let count = match (known_start, known_end) {
+            (Some(start), Some(end)) => self.integer_constant(self.usize, end - start),
+            (Some(0), None) => end_operand,
+            _ => self.binary(
+                BinaryOp::Subtract,
+                end_operand,
+                start_operand,
+                self.usize,
+                span,
+            ),
+        };
+        let subslice = Id::from_index(self.mir.subslices.len());
+        self.mir.subslices.push(mir::Subslice {
+            start: start_operand,
+            count,
+        });
+        let mut projections = place.projections.into_vec();
+        projections.push(mir::Projection::Subslice(subslice));
+        place.projections = projections.into();
+        let borrow = mir::InstructionKind::Borrow { place, mutable };
+        Some(self.emit(borrow, ty, span))
+    }
+
+    /// The end `end` of a slice of an array of `length` elements, an integer
+    /// not known at compile time, as a `usize`, after stopping the program
+    /// when it is negative or `op` the length. One no wider than a `usize`
+    /// is converted first, a negative one, extended, above any length; a
+    /// wider one is compared in its own type before it is cut to one.
+    fn lower_slice_end(
+        &mut self,
+        end: Id<thir::Expr>,
+        op: BinaryOp,
+        length: u64,
+    ) -> Option<mir::Operand> {
+        let span = self.thir.exprs.span(end);
+        let ty = self.types.real(self.thir.exprs[end].ty);
+        let value = self.lower_expr(end)?;
+        let (&Type::Integer(integer), &Type::Integer(size)) =
+            (&self.types[ty], &self.types[self.usize])
+        else {
+            unreachable!("a slice's end and `usize` are integers")
+        };
+        let wide = integer.bits > size.bits;
+        let message = "slice out of bounds";
+        if wide && integer.signed {
+            let zero = self.integer_constant(ty, 0);
+            let failed = self.binary(BinaryOp::LessThan, value, zero, TypeId::BOOL, span);
+            self.check(failed, message, span);
+        }
+        let compared = if wide || ty == self.usize {
+            value
+        } else {
+            self.emit(mir::InstructionKind::Convert(value), self.usize, span)
+        };
+        let compared_type = if wide { ty } else { self.usize };
+        let limit = self.integer_constant(compared_type, length);
+        let failed = self.binary(op, compared, limit, TypeId::BOOL, span);
+        self.check(failed, message, span);
+        Some(if wide {
+            self.emit(mir::InstructionKind::Convert(value), self.usize, span)
+        } else {
+            compared
+        })
     }
 
     /// The place `expression` names: a variable, then each field,

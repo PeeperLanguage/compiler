@@ -426,6 +426,21 @@ slice place (a `[&mut]` lent again, or used as a `[&]`) is a `Borrow` of its
 elements, `s.*`. `s.len` loads the slice, never moving a `[&mut]`, and takes
 its field 1. Slices do not run at compile time: making one needs a `Borrow`.
 
+`&a[i..j]` (or `&mut`, or `..=`) is THIR's `Slice` of the array place `a`,
+each end left out or an integer of any type, as an index is; ends known at
+compile time are checked there. Lowering makes it one `Borrow` of the place
+`a[from i, count n]`, as the MIR prints it: its last step, a `Subslice`,
+names an entry of the body's `subslices`, which starts at `i` and counts
+`n = j - i`, both `usize`s. The loan rules see one borrow of `a`, two-phase
+`&mut` included, and a subslice may overlap any element. The start and count
+sit in that side table, being rare, so no place step grows. Each end not
+known at compile time is checked before that by `Check`s that lowering
+writes: an end no wider than a `usize` is converted first (a negative one,
+extended, is above any length), a wider one is compared in its own type
+before it is cut down; a `..=` end is checked below the length before one is
+added, and the ends against each other unless a start of 0 or an end at the
+length makes them in order.
+
 A use (`load`, `move`, `borrow`, `address`, or a read or write of a place) not set on
 every path is T0034 ("`x` is used after it was moved", with each place it was
 moved) when the moved bit is on, else T0039 ("`x` is used before it is set").
@@ -538,7 +553,9 @@ per function (`peeper -dump ll` shows it):
   like an array, so a slice argument is never copied. At a place's step
   through a slice the walker loads both parts and checks the next index
   against the count when the program runs, even a constant one; a borrow of
-  a slice builds both parts with `insertvalue`. A debugger shows it as a
+  a slice builds both parts with `insertvalue`; a subslice step is a
+  `getelementptr` index at its start, an `iN` checked before, and the slice
+  takes its count. A debugger shows it as a
   struct with `ptr` and `len`.
 - `print` and `println` call the runtime's print functions, one per number,
   `bool`, `cstr` or pointer, with the text known at compile time (spaces,

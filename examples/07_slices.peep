@@ -1,0 +1,36 @@
+// Slices: `[&]T` views some elements, `[&mut]T` can also change them. A
+// slice is the elements' address and their count; it borrows, as a
+// reference does, so the array must outlive it and is not changed while the
+// slice is in use.
+fn total(values: [&]i32) -> i32 {
+    let mut sum = 0;
+    for i in 0..values.len {
+        sum = sum + values[i];      // checked against the count at run time
+    }
+    return sum;
+}
+
+fn fill(values: [&mut]i32, value: i32) {
+    for i in 0..values.len {
+        values[i] = value;
+    }
+}
+
+fn main() -> i32 {
+    let mut numbers = [6]i32{1, 2, 3, 4, 5, 6};
+    let all = total(&numbers);              // `&numbers` turns into `[&]i32`: 21
+
+    let middle = total(&numbers[1..3]);     // elements 1 and 2: 2 + 3 = 5
+    let through = total(&numbers[1..=3]);   // `..=` takes the end too: 9
+    let front = total(&numbers[..2]);       // a missing start is 0: 3
+    let back = total(&numbers[4..]);        // a missing end is the length: 11
+    let empty = total(&numbers[3..3]);      // no elements: 0
+
+    let start: usize = 2;
+    fill(&mut numbers[start..4], 0);        // numbers is [1, 2, 0, 0, 5, 6]
+    let after = total(&numbers[..]);        // all of it, as `&numbers`: 14
+
+    // `&numbers[0..7]` is an error, the array has 6 elements; with an end
+    // known only at run time, the program stops: "slice out of bounds".
+    return all + middle + through + front + back + empty + after - 21; // 42
+}
