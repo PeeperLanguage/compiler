@@ -75,7 +75,7 @@ sequenceDiagram
 
 The callback can update state captured from its caller. The
 [`CLI closure`](crates/peeper/src/driver.rs) keeps generated text; the
-[`LSP closure`](crates/lsp/src/lib.rs) keeps name locations and display text.
+[`LSP closure`](crates/lsp/src/checked.rs) keeps name locations and display text.
 Neither needs to retain every function's IR. Types remain owned by the
 compile for its whole duration; a callback must copy any information
 it needs afterward into its own storage.
