@@ -18,7 +18,6 @@ use std::time::Instant;
 
 const MODULES: usize = 10;
 const FUNCTIONS: usize = 2000; // in each module
-const POINTER_BITS: u32 = 64;
 
 fn main() {
     let folder = PathBuf::from("/peeper-bench");
@@ -41,10 +40,11 @@ fn main() {
     let files = files(&folder);
     let lines: usize = files.values().map(|text| text.lines().count()).sum();
     println!("{MODULES} modules, {FUNCTIONS} functions each, {lines} lines; {runs} runs, {mode:?}");
+    let target = llvm::Target::host().expect("this machine is a target");
     // The runtime library the program links with, unless clang is left out.
     let built = Path::new(env!("CARGO_TARGET_TMPDIR")).join("bench");
     let runtime = (std::env::var("PEEPER_BENCH_CLANG").map_or(true, |clang| clang != "0"))
-        .then(|| llvm::runtime::build(&built).expect("the runtime builds"));
+        .then(|| llvm::runtime::build(&built, target).expect("the runtime builds"));
     let mut load = Vec::new();
     // Checking, lowering and LLVM text, which overlap: modules are written on
     // other threads while the next one is checked.
@@ -57,10 +57,10 @@ fn main() {
         assert!(program.checkable, "{:?}", program.diagnostics);
         let mut main = None;
         let start = Instant::now();
-        let (mut ll, results) = llvm::write::write_modules(&program, POINTER_BITS, mode, |queue| {
+        let (mut ll, results) = llvm::write::write_modules(&program, target, mode, |queue| {
             compile::run(
                 &program,
-                POINTER_BITS,
+                target.pointer_bits,
                 compile::Results::default(),
                 false,
                 |output| {
@@ -95,7 +95,7 @@ fn main() {
         std::hint::black_box(text);
         if let Some(runtime) = &runtime {
             let start = Instant::now();
-            llvm::link::link_executable(&ll, mode, runtime, &built.join("program"))
+            llvm::link::link_executable(&ll, mode, target, runtime, &built.join("program"))
                 .expect("clang builds the program");
             clang.push(start.elapsed());
         }

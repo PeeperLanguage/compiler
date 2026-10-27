@@ -21,6 +21,7 @@ use diagnostics::NoteKind;
 use diagnostics::Severity;
 use diagnostics::fix;
 use diagnostics::fix::Fix;
+use llvm::Target;
 use lsp_server::Connection;
 use lsp_server::ErrorCode;
 use lsp_server::Message;
@@ -85,10 +86,17 @@ const DEBOUNCE: Duration = Duration::from_millis(200);
 /// Serves the editor on stdin and stdout until it shuts the server down.
 /// `libraries` holds the bundled libraries, as for `project::find`.
 pub fn serve(libraries: &Path) -> Result<(), BoxError> {
+    Target::host()?; // the checks are for it
     let (connection, io_threads) = Connection::stdio();
     serve_connection(connection, libraries)?;
     io_threads.join()?;
     Ok(())
+}
+
+/// How many bits a pointer has on the host, which the editor checks for;
+/// `serve` does not start on a machine with no target.
+fn host_pointer_bits() -> u32 {
+    Target::host().expect("`serve` found the host").pointer_bits
 }
 
 /// Serves `connection` until the client shuts the server down. It takes the
@@ -327,7 +335,7 @@ impl<'s> Server<'s> {
                         return None; // declared nowhere
                     }
                     let written = module.ast.file.slice(span);
-                    let doc = builtin_doc(written, compile::POINTER_BITS)?;
+                    let doc = builtin_doc(written, host_pointer_bits())?;
                     return markdown_hover(doc_hover(written, &doc));
                 }
             };
@@ -653,7 +661,10 @@ impl Checked {
                 found.entry(module).or_default().extend(facts);
             }
         };
-        self.results = compile::run(program, compile::POINTER_BITS, previous, true, cache_facts);
+        // shortcut: the editor checks for the host, so a `usize` constant that
+        // fits it but not a `-target i686-linux` build is reported only by that
+        // build; check for a project's target when a project can name one.
+        self.results = compile::run(program, host_pointer_bits(), previous, true, cache_facts);
         let reused: HashSet<&Path> = self
             .results
             .reused()

@@ -1,0 +1,43 @@
+// Built for 32-bit x86 (`-target i686-linux`): `usize` is a `u32`, a slice is a
+// 32-bit address and length, and an `i64` field aligns to 4. Slices, loops
+// and spreads give what they give on 64 bits; a slice end past every `u32`
+// is compared in its own type, never cut to 32 bits, so it stops the
+// program.
+struct Pair { tag: u8, value: i64 }
+
+fn total(values: [&]i64) -> i64 {
+    let mut sum: i64 = 0;
+    for value in values {
+        sum = sum + value.*;
+    }
+    return sum;
+}
+
+fn tail(values: [&]i64, from: u64) -> i64 {
+    return total(&values[from..]);
+}
+
+fn value_of(pair: Pair) -> i64 {
+    return pair.value;
+}
+
+fn main() {
+    let mut numbers = [5]i64{1, 2, 3, 4, 5000000000};
+    let all: [&mut]i64 = &mut numbers;
+    for i, v in all {
+        v.* = v.* + i as i64;
+    }
+    let copied = [6]i64{&all[1..]..., 7, 8};
+    println("slices:", all.len, total(all), copied);
+
+    // Copied whole, at the size LLVM gives `Pair` here: 12 bytes, not 16.
+    let pairs = [2]Pair{Pair.{ tag = 1, value = 10 }, Pair.{ tag = 2, value = 20 }};
+    let moved = pairs;
+    let view: [&]Pair = &moved;
+    println("pairs:", view[1].tag, view[1].value, moved);
+    println("passed:", value_of(Pair.{ tag = 3, value = 6000000000 }));
+    println("wide:", 340282366920938463463374607431768211455u128, -9223372036854775807i64);
+
+    println("tail:", tail(&numbers, 1));
+    println("never:", tail(&numbers, 4294967296));
+}

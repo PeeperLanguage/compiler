@@ -1,17 +1,33 @@
-//! Builds the runtime library into the folder given, as runtime/runtime.toml
-//! says; scripts/build.sh runs it.
+//! Builds the runtime library into the installation's runtime folder given,
+//! as runtime/runtime.toml says, for the host or the target named;
+//! scripts/build.sh runs it.
 //!
-//! cargo run -p llvm --bin build-runtime -- <folder>
+//! cargo run -p llvm --bin build-runtime -- <folder> [target]
 
 use std::path::Path;
 use std::process::ExitCode;
 
+use llvm::Target;
+
 fn main() -> ExitCode {
-    let Some(folder) = std::env::args_os().nth(1) else {
-        eprintln!("usage: build-runtime <folder>");
+    let mut args = std::env::args_os().skip(1);
+    let usage = "usage: build-runtime <folder> [target]";
+    let Some(folder) = args.next() else {
+        eprintln!("{usage}");
         return ExitCode::from(2);
     };
-    match llvm::runtime::build(Path::new(&folder)) {
+    let target = match args.next() {
+        None => Target::host(),
+        Some(name) => Target::named(&name.to_string_lossy()),
+    };
+    let target = match target {
+        Ok(target) => target,
+        Err(error) => {
+            eprintln!("build-runtime: {error}\n{usage}");
+            return ExitCode::from(2);
+        }
+    };
+    match llvm::runtime::build(Path::new(&folder), target) {
         Ok(_) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("build-runtime: {error}");

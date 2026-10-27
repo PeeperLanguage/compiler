@@ -36,6 +36,129 @@ pub enum BuildMode {
     Release,
 }
 
+/// A machine a program is built for: one row of `TARGETS`.
+#[derive(PartialEq, Eq, Debug)]
+pub struct Target {
+    /// Its name for `-target` and its runtime's folder.
+    name: &'static str,
+    /// Its architecture and system as `std::env::consts` spells them, which
+    /// find the host's row; `os` also picks the executables' suffix and
+    /// whether the math library is linked.
+    arch: &'static str,
+    os: &'static str,
+    /// What clang's `--target` names it.
+    triple: &'static str,
+    /// How many bits its pointers, and so `usize`, have.
+    pub pointer_bits: u32,
+    /// The bytes an `i64`, an `f64` or another 33- to 64-bit integer aligns
+    /// to in a struct.
+    i64_align: u64,
+}
+
+/// Every machine a program can be built for. A new one is a row here, and
+/// its runtime built with `build-runtime <folder> <name>`.
+const TARGETS: [Target; 7] = [
+    Target {
+        name: "x86_64-linux",
+        arch: "x86_64",
+        os: "linux",
+        triple: "x86_64-linux-gnu",
+        pointer_bits: 64,
+        i64_align: 8,
+    },
+    Target {
+        name: "aarch64-linux",
+        arch: "aarch64",
+        os: "linux",
+        triple: "aarch64-linux-gnu",
+        pointer_bits: 64,
+        i64_align: 8,
+    },
+    // A 64-bit x86 Linux runs it with its 32-bit C library.
+    Target {
+        name: "i686-linux",
+        arch: "x86",
+        os: "linux",
+        triple: "i686-linux-gnu",
+        pointer_bits: 32,
+        i64_align: 4,
+    },
+    Target {
+        name: "x86_64-macos",
+        arch: "x86_64",
+        os: "macos",
+        triple: "x86_64-apple-macos",
+        pointer_bits: 64,
+        i64_align: 8,
+    },
+    Target {
+        name: "aarch64-macos",
+        arch: "aarch64",
+        os: "macos",
+        triple: "arm64-apple-macos",
+        pointer_bits: 64,
+        i64_align: 8,
+    },
+    Target {
+        name: "x86_64-windows",
+        arch: "x86_64",
+        os: "windows",
+        triple: "x86_64-w64-windows-gnu",
+        pointer_bits: 64,
+        i64_align: 8,
+    },
+    Target {
+        name: "aarch64-windows",
+        arch: "aarch64",
+        os: "windows",
+        triple: "aarch64-w64-windows-gnu",
+        pointer_bits: 64,
+        i64_align: 8,
+    },
+];
+
+impl Target {
+    /// The machine the compiler runs on, or the error saying it has no row.
+    pub fn host() -> Result<&'static Target, String> {
+        let (arch, os) = (std::env::consts::ARCH, std::env::consts::OS);
+        TARGETS
+            .iter()
+            .find(|target| target.arch == arch && target.os == os)
+            .ok_or_else(|| format!("peeper has no target for this machine, {arch}-{os}"))
+    }
+
+    /// The target named `name`, or the error naming them all.
+    pub fn named(name: &str) -> Result<&'static Target, String> {
+        TARGETS
+            .iter()
+            .find(|target| target.name == name)
+            .ok_or_else(|| {
+                let names: Vec<&str> = TARGETS.iter().map(|target| target.name).collect();
+                format!(
+                    "unknown target `{name}`; the targets are {}",
+                    names.join(", ")
+                )
+            })
+    }
+
+    /// Clang's flag for compiling and linking code for it; none for the
+    /// host, so the host's clang keeps its own triple and system files.
+    fn clang_flag(&self) -> Option<String> {
+        (Target::host() != Ok(self)).then(|| format!("--target={}", self.triple))
+    }
+
+    /// What its executables' names end with.
+    pub fn executable_suffix(&self) -> &'static str {
+        if self.os == "windows" { ".exe" } else { "" }
+    }
+
+    /// Its runtime library, in its folder in the folder `runtime` of an
+    /// installation.
+    pub fn runtime_library(&self, runtime: &Path) -> std::path::PathBuf {
+        runtime.join(self.name).join(runtime::LIBRARY)
+    }
+}
+
 /// The LLVM text of one module, built a function at a time.
 pub struct Module<'p> {
     program: &'p project::Program,
@@ -50,7 +173,7 @@ pub struct Module<'p> {
     declarations: BTreeMap<String, String>,
     written: Written,
     metadata: Option<Metadata>, // the debug info, in a debug build
-    pointer_bits: u32,
+    target: &'static Target,
 }
 
 /// What the module has written so far, so each is written once.
@@ -73,11 +196,11 @@ struct Metadata {
 
 impl<'p> Module<'p> {
     /// The module `module` of `program`, with no functions yet, built in
-    /// `mode`. Pointers have `pointer_bits` bits.
+    /// `mode`, for `target`.
     fn new(
         program: &'p project::Program,
         module: ModuleId,
-        pointer_bits: u32,
+        target: &'static Target,
         mode: BuildMode,
     ) -> Module<'p> {
         let metadata = match mode {
@@ -96,7 +219,7 @@ impl<'p> Module<'p> {
             declarations: BTreeMap::new(),
             written: Written::default(),
             metadata,
-            pointer_bits,
+            target,
         }
     }
 
@@ -131,7 +254,11 @@ impl<'p> Module<'p> {
         let mut out = String::new();
         _ = writeln!(out, "source_filename = {}\n", quoted(path.as_bytes()));
         // Every slice type's: its elements' address and their count.
-        _ = writeln!(out, "%slice = type {{ ptr, i{} }}\n", self.pointer_bits);
+        _ = writeln!(
+            out,
+            "%slice = type {{ ptr, i{} }}\n",
+            self.target.pointer_bits
+        );
         out.push_str(&self.strings);
         if !self.strings.is_empty() {
             out.push('\n');
@@ -239,15 +366,16 @@ impl Metadata {
         _ = writeln!(self.text, "!{id} = {node}");
     }
 
-    /// The debug type of `ty`, a type of `program` whose pointers have
-    /// `pointer_bits` bits; `None` for `void`.
+    /// The debug type of `ty`, a type of `program` laid out for `target`;
+    /// `None` for `void`.
     fn debug_type(
         &mut self,
         program: &project::Program,
         types: &Types,
         ty: TypeId,
-        pointer_bits: u32,
+        target: &Target,
     ) -> Option<usize> {
+        let pointer_bits = target.pointer_bits;
         // An alias here would get a second debug type for its type.
         debug_assert_eq!(types.real(ty), ty, "MIR holds no aliases");
         if ty == TypeId::VOID {
@@ -282,10 +410,9 @@ impl Metadata {
             }
             Type::Reference { .. } | Type::RawPointer { .. } => {
                 let base = match types[ty].pointee() {
-                    Some(target) => {
-                        let target =
-                            self.debug_type(program, types, types.real(target), pointer_bits);
-                        format!("!{}", target.expect("a pointer points to a value's type"))
+                    Some(pointee) => {
+                        let base = self.debug_type(program, types, types.real(pointee), target);
+                        format!("!{}", base.expect("a pointer points to a value's type"))
                     }
                     None => "null".to_string(), // `rawptr`
                 };
@@ -294,7 +421,7 @@ impl Metadata {
                 )
             }
             Type::Slice { element, .. } => {
-                let base = self.debug_type(program, types, types.real(element), pointer_bits);
+                let base = self.debug_type(program, types, types.real(element), target);
                 let base = base.expect("an element has a value's type");
                 let name = types.text(ty, |definition| {
                     let (name, file) = project::declared_name(&program.modules, definition);
@@ -328,10 +455,10 @@ impl Metadata {
                 return Some(composite);
             }
             Type::Array { element, length } => {
-                let base = self.debug_type(program, types, types.real(element), pointer_bits);
+                let base = self.debug_type(program, types, types.real(element), target);
                 let base = base.expect("an element has a value's type");
                 let range = self.add(format_args!("!DISubrange(count: {length})"));
-                let (size, _) = layout(types, ty, pointer_bits);
+                let (size, _) = layout(types, ty, target);
                 format!(
                     "!DICompositeType(tag: DW_TAG_array_type, baseType: !{base}, size: {}, \
                      elements: !{{!{range}}})",
@@ -349,7 +476,7 @@ impl Metadata {
                 let names = project::field_names(&program.modules, definition);
                 let parts = (names.zip(fields.iter().copied())).collect::<Vec<_>>();
                 let shape = (ty, name.text(file), &parts[..]);
-                return Some(self.debug_struct(program, types, shape, pointer_bits));
+                return Some(self.debug_struct(program, types, shape, target));
             }
             Type::Range { element, step } => {
                 let Type::Integer(integer) = types[element] else {
@@ -359,7 +486,7 @@ impl Metadata {
                 let fields = range_fields(element, step);
                 let parts = (RANGE_FIELD_NAMES.into_iter().zip(fields)).collect::<Vec<_>>();
                 let shape = (ty, name.as_str(), &parts[..]);
-                return Some(self.debug_struct(program, types, shape, pointer_bits));
+                return Some(self.debug_struct(program, types, shape, target));
             }
             Type::Alias { .. } => unreachable!("indexing looks through aliases"),
             Type::Named(_) => unreachable!("no value has a named type"),
@@ -377,15 +504,15 @@ impl Metadata {
         program: &project::Program,
         types: &Types,
         (ty, name, fields): (TypeId, &str, &[(&str, TypeId)]),
-        pointer_bits: u32,
+        target: &Target,
     ) -> usize {
         // Its members name it, so its number comes first.
         let composite = self.reserve();
         let field_types = fields.iter().map(|&(_, field)| field).collect::<Vec<_>>();
-        let (offsets, size, _) = struct_layout(types, &field_types, pointer_bits);
+        let (offsets, size, _) = struct_layout(types, &field_types, target);
         let mut members = Vec::with_capacity(fields.len());
         for (&(field_name, field), offset) in fields.iter().zip(offsets) {
-            let base = self.debug_type(program, types, types.real(field), pointer_bits);
+            let base = self.debug_type(program, types, types.real(field), target);
             let base = base.expect("a field has a value's type");
             let member = self.add(format_args!(
                 "!DIDerivedType(tag: DW_TAG_member, name: {}, scope: !{composite}, \
@@ -472,15 +599,12 @@ fn struct_type_text(types: &Types, fields: &[TypeId], out: &mut fmt::Formatter) 
 }
 
 /// The size and alignment in bytes of a value of type `ty` in memory, as LLVM
-/// lays it out: an integer is aligned as the next of 8, 16, 32, 64 and 128
-/// bits that holds it, and wider ones as 128; its size is rounded up to that.
-/// Debug info places each field with it, and a copy of a value kept in
-/// memory (`in_memory`) copies its size, so it must match LLVM's.
-///
-/// shortcut: the alignments of 64-bit targets (x86-64, AArch64), the only
-/// ones built; 32-bit x86 aligns `i64` and `f64` to 4. Read them from the
-/// target's data layout when a 32-bit target is built.
-fn layout(types: &Types, ty: TypeId, pointer_bits: u32) -> (u64, u64) {
+/// lays it out for `target`: an integer is aligned as the next of 8, 16, 32,
+/// 64 and 128 bits that holds it, a 64-bit one as `target` says, and wider
+/// ones as 128; its size is rounded up to that. Debug info places each field
+/// with it, and a copy of a value kept in memory (`in_memory`) copies its
+/// size, so it must match LLVM's.
+fn layout(types: &Types, ty: TypeId, target: &Target) -> (u64, u64) {
     match types[ty] {
         Type::Bool => (1, 1),
         Type::Integer(integer) => {
@@ -488,33 +612,33 @@ fn layout(types: &Types, ty: TypeId, pointer_bits: u32) -> (u64, u64) {
                 1..=8 => 1,
                 9..=16 => 2,
                 17..=32 => 4,
-                33..=64 => 8,
+                33..=64 => target.i64_align,
                 _ => 16,
             };
             let bytes = u64::from(integer.bits.div_ceil(8));
             (bytes.next_multiple_of(align), align)
         }
         Type::Float(Float::F32) => (4, 4),
-        Type::Float(Float::F64) => (8, 8),
+        Type::Float(Float::F64) => (8, target.i64_align),
         Type::CString | Type::Reference { .. } | Type::RawPointer { .. } => {
-            let bytes = u64::from(pointer_bits / 8);
+            let bytes = u64::from(target.pointer_bits / 8);
             (bytes, bytes)
         }
         Type::Slice { .. } => {
-            let bytes = u64::from(pointer_bits / 8);
+            let bytes = u64::from(target.pointer_bits / 8);
             (2 * bytes, bytes)
         }
         Type::Struct { ref fields, .. } => {
-            let (_, size, align) = struct_layout(types, fields, pointer_bits);
+            let (_, size, align) = struct_layout(types, fields, target);
             (size, align)
         }
         Type::Range { element, step } => {
             let fields = range_fields(element, step);
-            let (_, size, align) = struct_layout(types, &fields, pointer_bits);
+            let (_, size, align) = struct_layout(types, &fields, target);
             (size, align)
         }
         Type::Array { element, length } => {
-            let (size, align) = layout(types, element, pointer_bits);
+            let (size, align) = layout(types, element, target);
             // shortcut: an array over 2^64 bytes overflows here; reject one
             // past the target's address space at check when one is written.
             (size * length, align)
@@ -529,10 +653,10 @@ fn layout(types: &Types, ty: TypeId, pointer_bits: u32) -> (u64, u64) {
 /// The offset of each of `fields` in a struct holding them in order, and the
 /// struct's size and alignment, in bytes (`layout`): each field at the next
 /// multiple of its alignment, the size rounded up to the largest.
-fn struct_layout(types: &Types, fields: &[TypeId], pointer_bits: u32) -> (Vec<u64>, u64, u64) {
+fn struct_layout(types: &Types, fields: &[TypeId], target: &Target) -> (Vec<u64>, u64, u64) {
     let (mut offsets, mut end, mut align) = (Vec::with_capacity(fields.len()), 0u64, 1);
     for &field in fields {
-        let (size, field_align) = layout(types, field, pointer_bits);
+        let (size, field_align) = layout(types, field, target);
         let offset = end.next_multiple_of(field_align);
         offsets.push(offset);
         end = offset + size;
@@ -610,10 +734,10 @@ mod tests {
     use model::semantic_types::TypeId;
     use model::semantic_types::Types;
 
-    /// The LLVM text of the module `app:main` holding `text`, for a target
-    /// whose pointers have `pointer_bits` bits, with a prelude declaring the
-    /// runtime's `Exit`.
-    fn ll(text: &str, pointer_bits: u32) -> String {
+    /// The LLVM text of the module `app:main` holding `text`, for the
+    /// target named `target`, with a prelude declaring the runtime's `Exit`.
+    fn ll(text: &str, target: &str) -> String {
+        let target = super::Target::named(target).unwrap();
         let folder = PathBuf::from("/peeper-llvm-test");
         let prelude = "#[extern(\"peeper_rt_v1_exit\")]\nfn Exit(code: i32);\n";
         let project = project::Project {
@@ -632,10 +756,10 @@ mod tests {
         let program = project::load(&project, &open_files);
         assert!(program.checkable);
         let (modules, results) =
-            super::write::write_modules(&program, pointer_bits, super::BuildMode::Debug, |queue| {
+            super::write::write_modules(&program, target, super::BuildMode::Debug, |queue| {
                 compile::run(
                     &program,
-                    pointer_bits,
+                    target.pointer_bits,
                     compile::Results::default(),
                     false,
                     |output| {
@@ -661,7 +785,7 @@ mod tests {
     fn traps_continue_in_a_new_block() {
         let text = ll(
             "fn both(a: i32, b: i32) -> bool { return a > 0 && a / b > 1; }",
-            64,
+            "x86_64-linux",
         );
         for line in [
             "br i1 %i6.z, label %bb1.1.panic, label %bb1.1\nbb1.1:",
@@ -673,7 +797,10 @@ mod tests {
         ] {
             assert!(text.contains(line), "{line}\n{text}");
         }
-        let constant = ll("fn f(a: u8) -> u8 { return a / 3u8 << 2u8; }", 64);
+        let constant = ll(
+            "fn f(a: u8) -> u8 { return a / 3u8 << 2u8; }",
+            "x86_64-linux",
+        );
         assert!(!constant.contains("panic"), "{constant}");
     }
 
@@ -681,7 +808,10 @@ mod tests {
     /// its `#[extern]` name.
     #[test]
     fn strings_and_extern_calls() {
-        let text = ll("fn f(a: u8, b: f32) { let s = c\"hi\\n\"; Exit(3); }", 64);
+        let text = ll(
+            "fn f(a: u8, b: f32) { let s = c\"hi\\n\"; Exit(3); }",
+            "x86_64-linux",
+        );
         for line in [
             "@.str.0 = private unnamed_addr constant [4 x i8] c\"hi\\0A\\00\"",
             "store ptr @.str.0, ptr %v2",
@@ -702,7 +832,7 @@ mod tests {
             "fn f(a: [4]i32, wide: i64, narrow: i8) {\n\
              let from: [&]i32 = &a[wide..];\n\
              let to: [&]i32 = &a[..narrow];\n}",
-            32,
+            "i686-linux",
         );
         for line in [
             "%i4 = icmp slt i64 %i3, 0",
@@ -727,7 +857,7 @@ mod tests {
         let text = ll(
             "fn f(view: [&]i64) -> [2]i64 {\n\
              return [2]i64{view...};\n}",
-            32,
+            "i686-linux",
         );
         for line in [
             "%i2.r0.len = extractvalue %slice %i1, 1",
@@ -749,7 +879,7 @@ mod tests {
             "#[extern(\"c_narrow\")]\nfn narrow(a: i8, b: u8, c: bool, d: i32) -> i16;\n\
              fn local(a: i8) {}\n\
              fn f() { local(1i8); let x = narrow(1i8, 2u8, true, 4); }",
-            64,
+            "x86_64-linux",
         );
         for line in [
             "declare signext i16 @\"c_narrow\"(i8 signext, i8 zeroext, i1 zeroext, i32)",
@@ -765,7 +895,10 @@ mod tests {
     /// declares nothing gets no scope: the inner one is in the function's.
     #[test]
     fn variables_have_the_scope_of_their_block() {
-        let text = ll("fn f(p: i32) { let x = 1; { { let x = 2; } } }", 64);
+        let text = ll(
+            "fn f(p: i32) { let x = 1; { { let x = 2; } } }",
+            "x86_64-linux",
+        );
         let blocks: Vec<&str> = text
             .lines()
             .filter(|line| line.contains("!DILexicalBlock("))
@@ -795,7 +928,8 @@ mod tests {
     }
 
     /// Each struct's field offsets and size match what LLVM gives on x86-64
-    /// and AArch64 (measured with `getelementptr` folded by clang `-O1`).
+    /// and AArch64, and with 32-bit pointers on i686 (measured with
+    /// `getelementptr` folded by clang `-O1`, `-m32` for i686).
     #[test]
     fn struct_layout_matches_llvm() {
         let mut types = Types::new();
@@ -808,7 +942,11 @@ mod tests {
             integer("i200"),
         );
         let layout = |fields: &[TypeId]| {
-            let (offsets, size, _) = super::struct_layout(&types, fields, 64);
+            let (offsets, size, _) = super::struct_layout(
+                &types,
+                fields,
+                super::Target::named("x86_64-linux").unwrap(),
+            );
             (offsets, size)
         };
         assert_eq!(layout(&[TypeId::I32, TypeId::I64]), (vec![0, 8], 16));
@@ -824,6 +962,20 @@ mod tests {
             (vec![0, 8, 16], 24)
         );
         assert_eq!(layout(&[]), (vec![], 0));
+        let i686 = |fields: &[TypeId]| {
+            let (offsets, size, _) =
+                super::struct_layout(&types, fields, super::Target::named("i686-linux").unwrap());
+            (offsets, size)
+        };
+        assert_eq!(i686(&[TypeId::I32, TypeId::I64]), (vec![0, 4], 12));
+        assert_eq!(
+            i686(&[TypeId::BOOL, i128, TypeId::I32]),
+            (vec![0, 16, 32], 48)
+        );
+        assert_eq!(i686(&[i8, i24, i8]), (vec![0, 4, 8], 12));
+        assert_eq!(i686(&[i8, i200, i8]), (vec![0, 16, 48], 64));
+        assert_eq!(i686(&[i8, i40]), (vec![0, 4], 12));
+        assert_eq!(i686(&[i8, TypeId::F64, TypeId::CSTR]), (vec![0, 4, 12], 16));
     }
 
     #[test]

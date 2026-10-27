@@ -158,7 +158,7 @@ impl Module<'_> {
         body: &mir::Body,
         types: &Types,
     ) -> Option<(usize, Vec<usize>)> {
-        let pointer_bits = self.pointer_bits;
+        let target = self.target;
         let metadata = self.metadata.as_mut()?;
         let tree = &self.program.modules[definition.module.index()].ast;
         let name = tree.decls[tree.declaration(definition.index)].name();
@@ -167,10 +167,11 @@ impl Module<'_> {
         // As `add_function` passes them: a value kept in memory by its
         // address, a result kept in memory where a first parameter points,
         // so a debugger reads no result from the C ABI's registers.
-        let mut debug_type = |ty| match metadata.debug_type(program, types, ty, pointer_bits) {
+        let mut debug_type = |ty| match metadata.debug_type(program, types, ty, target) {
             Some(id) if in_memory(types, ty) => {
                 let address = metadata.add(format_args!(
-                    "!DIDerivedType(tag: DW_TAG_pointer_type, baseType: !{id}, size: {pointer_bits})"
+                    "!DIDerivedType(tag: DW_TAG_pointer_type, baseType: !{id}, size: {})",
+                    target.pointer_bits
                 ));
                 format!("!{address}")
             }
@@ -407,9 +408,9 @@ impl Function<'_, '_, '_> {
                 continue;
             }
             let span = self.body.variables.span(variable);
-            let (program, pointer_bits) = (self.module.program, self.module.pointer_bits);
+            let (program, target) = (self.module.program, self.module.target);
             let debug_type = metadata
-                .debug_type(program, self.types, ty, pointer_bits)
+                .debug_type(program, self.types, ty, target)
                 .unwrap_or_default();
             let (line, _) = file.position(span.start as usize);
             let argument = if index < self.body.parameters {
@@ -676,7 +677,7 @@ impl Function<'_, '_, '_> {
                     (_, Type::Slice { .. }) => format!("{address}.0.len"),
                     _ => unreachable!("a slice is taken of an array or a slice's elements"),
                 };
-                let bits = self.module.pointer_bits;
+                let bits = self.module.target.pointer_bits;
                 _ = writeln!(
                     out,
                     "  {name}.a = insertvalue %slice poison, ptr {address}, 0{location}"
@@ -1109,7 +1110,7 @@ impl Function<'_, '_, '_> {
         let Type::Array { element, .. } = types[ty] else {
             unreachable!("array parts make an array")
         };
-        let (pointer, number) = (self.module.pointer_bits, type_text(types, element));
+        let (pointer, number) = (self.module.target.pointer_bits, type_text(types, element));
         let memory = self.value_address(out, id, ty, rest);
         let array = type_text(types, ty);
         let mut offset = "0".to_string();
@@ -1133,7 +1134,7 @@ impl Function<'_, '_, '_> {
             } else if let Type::Slice { .. } = types[self.body.operand_type(part)] {
                 // The count was checked to fit, so the bytes do too.
                 let from = format!("{name}.s{index}");
-                let (size, _) = layout(types, element, pointer);
+                let (size, _) = layout(types, element, self.module.target);
                 _ = writeln!(
                     out,
                     "  {from} = extractvalue %slice {}, 0{location}\n  \
@@ -1180,7 +1181,7 @@ impl Function<'_, '_, '_> {
         let Type::Array { element, length } = types[self.body.instructions[id].ty] else {
             unreachable!("array parts make an array")
         };
-        let pointer = self.module.pointer_bits;
+        let pointer = self.module.target.pointer_bits;
         let wide = match types[element] {
             Type::Integer(integer) => (integer.bits + 1).max(pointer),
             _ => pointer, // no range to count
@@ -1332,7 +1333,10 @@ impl Function<'_, '_, '_> {
         if number < count {
             return name;
         }
-        let (ty, pointer) = (type_text(self.types, element), self.module.pointer_bits);
+        let (ty, pointer) = (
+            type_text(self.types, element),
+            self.module.target.pointer_bits,
+        );
         _ = writeln!(
             self.module.private_functions,
             "define private void {name}(ptr %dest, {ty} %start, {ty} %delta, i{pointer} %count) {{\n\
@@ -1438,7 +1442,7 @@ impl Function<'_, '_, '_> {
         // A number, not LLVM's `ptrtoint (getelementptr (T, ptr null, i32 1))`,
         // which clang's optimizer splits no value by (measured: twice the
         // `-release` build time of a program of structs).
-        let (size, _) = layout(self.types, ty, self.module.pointer_bits);
+        let (size, _) = layout(self.types, ty, self.module.target);
         self.write_memcpy(out, to, from, &size, location);
     }
 
@@ -1585,7 +1589,7 @@ impl Function<'_, '_, '_> {
                             (length.to_string(), message)
                         } else {
                             let mut bound = format!("{address}.{}.len", run - 1);
-                            let pointer_bits = self.module.pointer_bits;
+                            let pointer_bits = self.module.target.pointer_bits;
                             if compared_bits > pointer_bits {
                                 _ = writeln!(
                                     out,
@@ -1643,7 +1647,7 @@ impl Function<'_, '_, '_> {
                     mir::Projection::Index(index) => write!(out, ", i64 {}", self.operand(index)),
                     mir::Projection::Subslice(subslice) => {
                         let start = self.body.subslices[subslice.index()].start;
-                        let bits = self.module.pointer_bits;
+                        let bits = self.module.target.pointer_bits;
                         write!(out, ", i{bits} {}", self.operand(start))
                     }
                     mir::Projection::Dereference => unreachable!("split at each dereference"),

@@ -14,6 +14,7 @@ use model::semantic_types::Types;
 
 use crate::BuildMode;
 use crate::Module;
+use crate::Target;
 
 /// One module's functions, each with its MIR, and the types they name. A
 /// batch sent to a worker has a function, so its first gives the module.
@@ -62,13 +63,13 @@ impl FunctionQueue {
     }
 }
 
-/// The LLVM text of each module of `program`, built in `mode` with pointers
-/// of `pointer_bits` bits, in the program's order, and what `compile` gave.
+/// The LLVM text of each module of `program`, built in `mode` for `target`,
+/// in the program's order, and what `compile` gave.
 /// `compile` runs on this thread and puts each function it checks in the
 /// queue; up to one worker per core writes the modules meanwhile.
 pub fn write_modules<'p, T>(
     program: &'p project::Program,
-    pointer_bits: u32,
+    target: &'static Target,
     mode: BuildMode,
     compile: impl FnOnce(&mut FunctionQueue) -> T,
 ) -> (Vec<Module<'p>>, T) {
@@ -88,7 +89,7 @@ pub fn write_modules<'p, T>(
                             return written; // the channel is closed and empty
                         };
                         let (first, _) = batch.functions[0];
-                        let mut module = Module::new(program, first.module, pointer_bits, mode);
+                        let mut module = Module::new(program, first.module, target, mode);
                         for (definition, body) in &batch.functions {
                             module.add_function(*definition, body, &batch.types);
                         }
@@ -116,7 +117,7 @@ pub fn write_modules<'p, T>(
     });
     // A module with no function to write is empty.
     let mut modules: Vec<Module> = (0..count)
-        .map(|index| Module::new(program, ModuleId::from_index(index), pointer_bits, mode))
+        .map(|index| Module::new(program, ModuleId::from_index(index), target, mode))
         .collect();
     for module in written {
         let index = module.module.index();

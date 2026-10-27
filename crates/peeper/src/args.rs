@@ -4,16 +4,18 @@
 use std::path::PathBuf;
 
 use llvm::BuildMode;
+use llvm::Target;
 
 use crate::driver::Goal;
 use crate::dump::Dump;
 
 pub const USAGE: &str = "\
-usage: peeper check [project folder | file.peep]
-       peeper fix [project folder | file.peep]
-       peeper build [-release] [-o program] [project folder | file.peep]
-       peeper run [-release] [project folder | file.peep] [arguments...]
-       peeper [check | fix] -dump [thir | mir | ll] [-release] [project folder | file.peep]
+usage: peeper check [-target name] [project folder | file.peep]
+       peeper fix [-target name] [project folder | file.peep]
+       peeper build [-release] [-target name] [-o program] [project folder | file.peep]
+       peeper run [-release] [-target name] [project folder | file.peep] [arguments...]
+       peeper [check | fix] -dump [thir | mir | ll] [-release] [-target name]
+              [project folder | file.peep]
        peeper init [name]
        peeper lsp
   check  report the program's errors
@@ -22,6 +24,9 @@ usage: peeper check [project folder | file.peep]
          project or file unless -o names it; -release builds it optimized,
          without debug info
   run    build the program to a temporary file and run it with the arguments
+  -target  check and build the program for another machine than this one,
+         such as i686-linux, 32-bit x86 Linux, which a 64-bit x86 Linux runs
+         with its 32-bit C library; an unknown name lists them all
   -dump  also write each module's THIR, MIR and LLVM IR, or only the one named, to
          build/debug/dumps beside the project or file, when there are no errors;
          the LLVM IR of a debug build unless -release
@@ -33,10 +38,12 @@ Flags may come in any order, each with its value right after it.";
 /// What the arguments ask for.
 pub enum Args {
     /// `check`, `fix`, `build` or `run`: `goal`, for the program in the
-    /// project folder or file `path`. A build is release with -release.
+    /// project folder or file `path`, built for `target`. A build is
+    /// release with -release.
     Program {
         path: PathBuf,
         goal: Goal,
+        target: &'static Target,
     },
     Init {
         name: Option<String>, // asked for when not given
@@ -45,13 +52,15 @@ pub enum Args {
 }
 
 /// The arguments after the program's name, or what is wrong with them.
-/// Flags come anywhere, each with its value right after it: `-o` must have
-/// one, `-dump` takes the next word when it names a dump. The words left,
-/// in order, are the command and its value; `run` gives the words after its
-/// path to the program. With no command, `-dump` means `check`.
+/// Flags come anywhere, each with its value right after it: `-o` and
+/// `-target` must have one, `-dump` takes the next word when it names a
+/// dump. The words left, in order, are the command and its value; `run`
+/// gives the words after its path to the program. With no command, `-dump`
+/// means `check`.
 pub fn parse(args: &[String]) -> Result<Args, String> {
     let kind = |name: &str| Dump::ALL.iter().position(|kind| kind.extension() == name);
     let mut output = None;
+    let mut target = None;
     let mut release = false;
     let mut dumps: Option<[bool; Dump::ALL.len()]> = None; // which were asked for, by -dump
     let mut words = Vec::new();
@@ -62,6 +71,11 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
             "-o" => match args.next_if(|value| !value.starts_with('-')) {
                 Some(value) => output = Some(PathBuf::from(value)),
                 None => return Err("-o needs the program's path after it".to_string()),
+            },
+            "-target" if target.is_some() => return Err("-target is given twice".to_string()),
+            "-target" => match args.next_if(|value| !value.starts_with('-')) {
+                Some(name) => target = Some(Target::named(name)?),
+                None => return Err("-target needs a target's name after it".to_string()),
             },
             "-release" if release => return Err("-release is given twice".to_string()),
             "-release" => release = true,
@@ -86,9 +100,14 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
     };
     let given = [
         ("-o", output.is_some()),
+        ("-target", target.is_some()),
         ("-release", release),
         ("-dump", dumps.is_some()),
     ];
+    let target = match target {
+        Some(target) => target,
+        None => Target::host()?,
+    };
     let path = |value: Option<&str>| PathBuf::from(value.unwrap_or("."));
     let check = |values: &[&str], apply_fixes: bool| -> Result<Args, String> {
         let dumps = Dump::ALL
@@ -102,13 +121,13 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
             apply_fixes,
             mode,
         };
-        Ok(Args::Program { path, goal })
+        Ok(Args::Program { path, goal, target })
     };
     // `-release` picks the build an LLVM IR dump is of.
     let check_takes = if dumps.is_some() {
-        ["-dump", "-release"].as_slice()
+        ["-dump", "-release", "-target"].as_slice()
     } else {
-        &["-dump"]
+        &["-dump", "-target"]
     };
     // The command, its arguments and the flags it takes.
     let (command, args, takes) = match words.split_first() {
@@ -120,8 +139,8 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
             let goal = Goal::Build { output, mode };
             (
                 command,
-                Args::Program { path, goal },
-                ["-o", "-release"].as_slice(),
+                Args::Program { path, goal, target },
+                ["-o", "-release", "-target"].as_slice(),
             )
         }
         Some((&command @ "run", values)) => {
@@ -136,8 +155,8 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
             let path = PathBuf::from(path);
             (
                 command,
-                Args::Program { path, goal },
-                ["-release"].as_slice(),
+                Args::Program { path, goal, target },
+                ["-release", "-target"].as_slice(),
             )
         }
         Some((&command @ "init", values)) => {
@@ -174,6 +193,7 @@ fn value<'a>(values: &[&'a str]) -> Result<Option<&'a str>, String> {
 #[cfg(test)]
 mod tests {
     use llvm::BuildMode;
+    use llvm::Target;
 
     use super::Args;
     use super::parse;
@@ -187,7 +207,7 @@ mod tests {
     fn parsed(args: &[&str]) -> Option<(String, Vec<String>)> {
         let args: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
         let (path, goal) = match parse(&args).ok()? {
-            Args::Program { path, goal } => (path, goal),
+            Args::Program { path, goal, .. } => (path, goal),
             Args::Lsp => return Some(("lsp".to_string(), Vec::new())),
             Args::Init { name } => return Some(("init".to_string(), name.into_iter().collect())),
         };
@@ -271,6 +291,19 @@ mod tests {
         assert_eq!(parsed(&["lsp"]), some("lsp", &[]));
         assert_eq!(parsed(&["init"]), some("init", &[]));
         assert_eq!(parsed(&["init", "app"]), some("init", &["app"]));
+        assert_eq!(parsed(&["check", "-target", "i686-linux"]), some(".", &[]));
+        assert_eq!(
+            parsed(&["-dump", "ll", "-target", "i686-linux", "app"]),
+            some("app", &["ll"])
+        );
+        assert_eq!(
+            parsed(&["build", "-target", "i686-linux", "-o", "out", "app"]),
+            some("app", &["build", "out"])
+        );
+        assert_eq!(
+            parsed(&["run", "-target", "i686-linux", "-release", "app", "x"]),
+            some("app", &["run", "release", "x"])
+        );
         for wrong in [
             &[][..],
             &["build", "-o"],
@@ -283,6 +316,31 @@ mod tests {
         ] {
             assert_eq!(parsed(wrong), None, "{wrong:?}");
         }
+    }
+
+    /// `-target` picks the target it names, and the host is the target
+    /// without it.
+    #[test]
+    fn targets() {
+        let target = |args: &[&str]| {
+            let args: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
+            match parse(&args) {
+                Ok(Args::Program { target, .. }) => target,
+                _ => panic!("{args:?} names a program"),
+            }
+        };
+        let i686 = Target::named("i686-linux").unwrap();
+        assert_eq!(target(&["check", "-target", "i686-linux"]), i686);
+        assert_eq!(
+            target(&["-dump", "ll", "-target", "i686-linux", "app"]),
+            i686
+        );
+        assert_eq!(
+            target(&["build", "-target", "i686-linux", "-o", "out"]),
+            i686
+        );
+        assert_eq!(target(&["run", "app", "-target", "i686-linux", "x"]), i686);
+        assert_eq!(Ok(target(&["run", "app"])), Target::host());
     }
 
     /// Flags come anywhere; the words left are the command and its value.
@@ -337,6 +395,9 @@ mod tests {
             let args: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
             parse(&args).err()
         };
+        // It lists every target, so a new one changes it.
+        let unknown = Target::named("arm").unwrap_err();
+        assert!(unknown.starts_with("unknown target `arm`; the targets are x86_64-linux, "));
         for (args, wanted) in [
             (&[][..], "no command given"),
             (&["app"], "unknown command `app`"),
@@ -351,6 +412,19 @@ mod tests {
                 "-o needs the program's path after it",
             ),
             (&["build", "-o", "a", "-o", "b"], "-o is given twice"),
+            (
+                &["run", "-target"],
+                "-target needs a target's name after it",
+            ),
+            (&["build", "-target", "arm"], unknown.as_str()),
+            (
+                &["run", "-target", "i686-linux", "-target", "i686-linux"],
+                "-target is given twice",
+            ),
+            (
+                &["init", "-target", "i686-linux"],
+                "`init` does not take -target",
+            ),
             (&["run", "-release", "-release"], "-release is given twice"),
             (&["check", "-o", "out"], "`check` does not take -o"),
             (&["check", "-release"], "`check` does not take -release"),

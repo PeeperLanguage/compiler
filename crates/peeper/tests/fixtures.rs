@@ -10,8 +10,9 @@
 //! debug build and once with `-release`. `outcome` is "success" (exit code
 //! 0), "failure" (1, or any other code for `run`) or, for `run`,
 //! "exit_code" with `exit_code`; the
-//! output must hold each of `stdout_contains` and `stderr_contains`. The
-//! compiler is `$PEEPER` if set (the bundled build/bin/peeper, which finds
+//! output must hold each of `stdout_contains` and `stderr_contains`. With
+//! `target = "i686-linux"`, each command builds for that target (`-target
+//! i686-linux`). The compiler is `$PEEPER` if set (the bundled build/bin/peeper, which finds
 //! its libraries and runtime), else the one cargo built, bundled with the
 //! libraries and runtime of this checkout.
 
@@ -32,8 +33,23 @@ fn bundle() -> String {
         root.join("libs"),
     )
     .expect("the libraries are linked");
-    llvm::runtime::build(&root.join("runtime")).expect("the runtime builds");
+    let host = llvm::Target::host().expect("this machine is a target");
+    llvm::runtime::build(&root.join("runtime"), host).expect("the runtime builds");
+    // Without the 32-bit C library the `target = "i686-linux"` fixtures fail,
+    // their runtime missing.
+    let i686 = llvm::Target::named("i686-linux").expect("i686-linux is a target");
+    if runs_i686()
+        && let Err(error) = llvm::runtime::build(&root.join("runtime"), i686)
+    {
+        eprintln!("the i686 runtime is not built: {error}");
+    }
     compiler.to_string_lossy().into_owned()
+}
+
+/// Whether this machine runs `i686-linux` programs, the only target a
+/// fixture names: an x86-64 Linux does, with its 32-bit C library.
+fn runs_i686() -> bool {
+    llvm::Target::host() == llvm::Target::named("x86_64-linux")
 }
 
 #[test]
@@ -58,6 +74,13 @@ fn fixtures() {
         let Some(mode @ ("check" | "mir" | "ll" | "run")) = text("mode") else {
             continue;
         };
+        if text("target").is_some() && !runs_i686() {
+            eprintln!(
+                "skipped {}: only x86-64 Linux runs its target",
+                folder.display()
+            );
+            continue;
+        }
         checked += 1;
         let texts = |key: &str| -> Vec<&str> {
             match test(key).and_then(toml_edit::Item::as_array) {
@@ -73,8 +96,10 @@ fn fixtures() {
             _ if release_dump => &[Some("-release")],
             _ => &[None],
         };
+        let target = text("target").map(|name| ["-target", name]);
         for &release in builds {
             let mut command = Command::new(&compiler);
+            command.args(target.iter().flatten());
             match mode {
                 "mir" | "ll" => command.args(["-dump", mode]).args(release).arg(folder),
                 "run" => command

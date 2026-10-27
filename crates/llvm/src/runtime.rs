@@ -6,6 +6,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
+use crate::Target;
 use crate::link::call_tool;
 
 // LIBRARY (the archive's file name, which the driver looks for), SOURCES (C
@@ -13,22 +14,26 @@ use crate::link::call_tool;
 // written by build.rs from runtime/runtime.toml.
 include!(concat!(env!("OUT_DIR"), "/runtime.rs"));
 
-/// Builds the library from this checkout's runtime folder into `folder`
-/// and gives its path. The objects in between are removed.
-pub fn build(folder: &Path) -> Result<PathBuf, String> {
-    let runtime = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime");
+/// Builds the library for `target` from this checkout's runtime folder
+/// into the installation's runtime folder `runtime`, where
+/// `Target::runtime_library` finds it, and gives its path. The objects in
+/// between are removed.
+pub fn build(runtime: &Path, target: &Target) -> Result<PathBuf, String> {
+    let library = target.runtime_library(runtime);
+    let folder = library.parent().expect("a library is in a folder");
+    let sources = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime");
     std::fs::create_dir_all(folder)
         .map_err(|error| format!("cannot make {}: {error}", folder.display()))?;
-    let library = folder.join(LIBRARY);
     _ = std::fs::remove_file(&library); // an archiver adds to an archive that is there
     let mut objects = Vec::with_capacity(SOURCES.len());
     for source in SOURCES {
         let object = folder.join(Path::new(source).with_extension("o"));
         let mut clang = Command::new("clang");
         clang
+            .args(target.clang_flag())
             .args(FLAGS)
             .arg("-c")
-            .arg(runtime.join(source))
+            .arg(sources.join(source))
             .arg("-o")
             .arg(&object);
         call_tool(clang, "compile the runtime")?;

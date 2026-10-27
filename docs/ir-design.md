@@ -590,15 +590,24 @@ work as the Go compiler's did. The entry file needs `fn main()` or `fn main()
 `main` that calls it and returns its result, or 0. `llvm::link::link_executable`
 writes each module's text to a temporary folder, compiles each with `clang -c`
 and links the objects with the runtime library (`<installation>/runtime/
-libpeeper_rt_v1.a`, built as `runtime/runtime.toml` says (read by `llvm`'s build.rs) by `llvm::runtime`,
+<target>/libpeeper_rt_v1.a`, built as `runtime/runtime.toml` says (read by `llvm`'s build.rs) by `llvm::runtime`,
 which `scripts/build.sh` runs)
 and `-lm`; the program is linked beside its output and renamed into place.
 Clang is the one on the PATH until peeper ships its toolchain. `build` names
 the program after the project or file in the current folder; `run` links to a
 temporary file, runs it and exits with its code (a signal gives 128 plus its
-number). Not brought back yet: target flags (`-target-os`, `-m32`), managed
-toolchain profiles, linker response files, `-keep-gen` (`-dump ll` covers
-it), and the manifest's `build = "program"`.
+number). `-target <name>` checks and builds for a row of `llvm::TARGETS`,
+the host's row otherwise: each row is a machine's name, clang triple,
+pointer bits and the alignment of `i64` and `f64` in a struct (4 on
+`i686-linux`, 8 elsewhere), so a new target is a new row. Clang gets
+`--target=<triple>` only for a target that is not the host, and the runtime
+library of each is in `<installation>/runtime/<name>`; `scripts/build.sh`
+builds the host's and `i686-linux`'s, the latter when the 32-bit C library
+is installed. Only the Linux rows are run here; a build for another system
+needs that system's C library and linker, which clang on the PATH does not
+have. The language server checks for the host only. Not brought back yet:
+managed toolchains and sysroots for cross builds, linker response files,
+`-keep-gen` (`-dump ll` covers it), and the manifest's `build = "program"`.
 
 ## Cost on the hot path
 

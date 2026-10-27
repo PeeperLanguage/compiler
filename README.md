@@ -172,7 +172,10 @@ or an existing `peeper.toml` stops it; an existing `src/main.peep` is kept.
 | `peeper lsp` | Serve editors as a language server over standard input and output. |
 
 `path` is a project folder or a single `.peep` file, and defaults to the
-current folder.
+current folder. `check`, `fix`, `build` and `run` take `-target <name>` to
+check and build for another machine, such as `-target i686-linux` for 32-bit
+x86 Linux, which a 64-bit x86 Linux runs once its 32-bit C library is
+installed (Fedora: `glibc-devel.i686`).
 
 ## Development
 

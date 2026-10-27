@@ -27,8 +27,8 @@ pub fn parse_command() -> Result<(Command<StderrLock<'static>>, Goal), ExitCode>
     let installation = driver::installation_dir();
     let stderr = std::io::stderr();
     let colored = stderr.is_terminal();
-    let (path, goal) = match args {
-        Args::Program { path, goal } => (path, goal),
+    let (path, goal, target) = match args {
+        Args::Program { path, goal, target } => (path, goal, target),
         Args::Init { name } => {
             let folder = std::env::current_dir().unwrap_or_default();
             let name = name.unwrap_or_else(|| {
@@ -72,6 +72,7 @@ pub fn parse_command() -> Result<(Command<StderrLock<'static>>, Goal), ExitCode>
     };
     let command = Command {
         path,
+        target,
         installation,
         out: stderr.lock(),
         colored,

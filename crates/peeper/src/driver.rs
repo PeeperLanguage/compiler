@@ -12,6 +12,7 @@ use diagnostics::Diagnostic;
 use diagnostics::fix;
 use diagnostics::printer;
 use llvm::BuildMode;
+use llvm::Target;
 use model::DefId;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
@@ -46,13 +47,15 @@ pub enum Goal {
     },
 }
 
-/// Where a `peeper` command runs: the program it is given, the installation
-/// it uses and where it prints. What it does there is a `Goal`.
+/// Where a `peeper` command runs: the program it is given, the machine it
+/// is built for, the installation it uses and where it prints. What it does
+/// there is a `Goal`.
 pub struct Command<W: Write> {
-    pub path: PathBuf,         // the project folder or file
-    pub installation: PathBuf, // the bundled libraries and runtime (`installation_dir`)
-    pub out: W,                // where diagnostics and messages are printed
-    pub colored: bool,         // whether diagnostics are printed in color
+    pub path: PathBuf,           // the project folder or file
+    pub target: &'static Target, // what it is checked and built for (`-target`)
+    pub installation: PathBuf,   // the bundled libraries and runtime (`installation_dir`)
+    pub out: W,                  // where diagnostics and messages are printed
+    pub colored: bool,           // whether diagnostics are printed in color
 }
 
 impl<W: Write> Command<W> {
@@ -97,7 +100,7 @@ impl<W: Write> Command<W> {
         apply_fixes: bool,
         mode: BuildMode,
     ) -> u8 {
-        let (diagnostics, ll, dumped) = compile(project, program, dumps, mode, false);
+        let (diagnostics, ll, dumped) = compile(project, program, dumps, mode, self.target, false);
         // Dumps are written only for a program without errors.
         if !diagnostics.iter().any(Diagnostic::is_error)
             && let Err(error) =
@@ -133,12 +136,18 @@ impl<W: Write> Command<W> {
         output: Option<&Path>,
         mode: BuildMode,
     ) -> u8 {
-        let (diagnostics, ll, _) = compile(project, program, &[], mode, true);
+        let (diagnostics, ll, _) = compile(project, program, &[], mode, self.target, true);
         if !self.print(&diagnostics) {
             return 1;
         }
         let output = output.map_or_else(
-            || PathBuf::from(format!("{}{}", project.name, std::env::consts::EXE_SUFFIX)),
+            || {
+                PathBuf::from(format!(
+                    "{}{}",
+                    project.name,
+                    self.target.executable_suffix()
+                ))
+            },
             Path::to_path_buf,
         );
         if !self.link(&ll, mode, &output) {
@@ -157,14 +166,14 @@ impl<W: Write> Command<W> {
         arguments: &[String],
         mode: BuildMode,
     ) -> u8 {
-        let (diagnostics, ll, _) = compile(project, program, &[], mode, true);
+        let (diagnostics, ll, _) = compile(project, program, &[], mode, self.target, true);
         if !self.print(&diagnostics) {
             return 1;
         }
         let output = std::env::temp_dir().join(format!(
             "peeper-run-{}{}",
             std::process::id(),
-            std::env::consts::EXE_SUFFIX
+            self.target.executable_suffix()
         ));
         if !self.link(&ll, mode, &output) {
             return 1;
@@ -195,13 +204,13 @@ impl<W: Write> Command<W> {
     }
 
     /// Links the modules' LLVM text `ll`, built in `mode`, with the runtime
-    /// into the program `output`; gives whether it did, a failure reported.
+    /// of the command's target into the program `output`; gives whether it
+    /// did, a failure reported.
     fn link(&mut self, ll: &[llvm::Module], mode: BuildMode, output: &Path) -> bool {
         let runtime = self
-            .installation
-            .join("runtime")
-            .join(llvm::runtime::LIBRARY);
-        if let Err(error) = llvm::link::link_executable(ll, mode, &runtime, output) {
+            .target
+            .runtime_library(&self.installation.join("runtime"));
+        if let Err(error) = llvm::link::link_executable(ll, mode, self.target, &runtime, output) {
             _ = writeln!(self.out, "peeper: {error}");
             return false;
         }
@@ -209,16 +218,17 @@ impl<W: Write> Command<W> {
     }
 }
 
-/// Checks and lowers `program`, of `project`, unless loading it found an
-/// error, gathering the `dumps` of its functions. With `links`, it also
-/// needs the entry file's `main`. Gives every diagnostic, loading's first;
-/// each module's LLVM text for a build in `mode`, when linking or a dump
-/// needs it; and the dumps, to write when there is no error.
+/// Checks and lowers `program`, of `project`, for `target` unless loading
+/// it found an error, gathering the `dumps` of its functions. With `links`,
+/// it also needs the entry file's `main`. Gives every diagnostic, loading's
+/// first; each module's LLVM text for a build in `mode`, when linking or a
+/// dump needs it; and the dumps, to write when there is no error.
 fn compile<'p>(
     project: &project::Project,
     program: &'p project::Program,
     dumps: &'p [Dump],
     mode: BuildMode,
+    target: &'static Target,
     links: bool,
 ) -> (Vec<Diagnostic>, Vec<llvm::Module<'p>>, Dumps<'p>) {
     let mut all: Vec<Diagnostic> = program.diagnostics.clone();
@@ -240,7 +250,7 @@ fn compile<'p>(
     let mut check_and_lower = |mut queue: Option<&mut llvm::write::FunctionQueue>| {
         compile::run(
             program,
-            compile::POINTER_BITS,
+            target.pointer_bits,
             compile::Results::default(),
             false, // names are for editors
             |output| {
@@ -270,9 +280,7 @@ fn compile<'p>(
         )
     };
     let (mut ll, results) = if writes_ll {
-        llvm::write::write_modules(program, compile::POINTER_BITS, mode, |queue| {
-            check_and_lower(Some(queue))
-        })
+        llvm::write::write_modules(program, target, mode, |queue| check_and_lower(Some(queue)))
     } else {
         (Vec::new(), check_and_lower(None))
     };
@@ -355,6 +363,7 @@ mod tests {
     use std::path::PathBuf;
 
     use llvm::BuildMode;
+    use llvm::Target;
 
     use super::Command;
     use super::Goal;
@@ -379,6 +388,7 @@ mod tests {
     fn checked(path: &Path, installation: &Path) -> (u8, String) {
         let mut command = Command {
             path: path.to_path_buf(),
+            target: Target::host().unwrap(),
             installation: installation.to_path_buf(),
             out: Vec::new(),
             colored: false,
@@ -402,6 +412,7 @@ mod tests {
         let file = root.join("app.peep");
         let mut command = Command {
             path: file.clone(),
+            target: Target::host().unwrap(),
             installation: PathBuf::new(),
             out: Vec::new(),
             colored: false,
@@ -534,6 +545,7 @@ mod tests {
             let path = root.join(file);
             let mut command = Command {
                 path: path.clone(),
+                target: Target::host().unwrap(),
                 installation: PathBuf::new(),
                 out: Vec::new(),
                 colored: false,
