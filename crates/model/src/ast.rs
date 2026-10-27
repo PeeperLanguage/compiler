@@ -33,6 +33,7 @@ nodes! {
     Field => fields,
     Variant => variants,
     FieldValue => field_values,
+    Entry => entries,
     MatchArm => match_arms,
 }
 
@@ -56,6 +57,7 @@ pub struct Tree {
     pub fields: Arena<Field>,
     pub variants: Arena<Variant>,
     pub field_values: Arena<FieldValue>,
+    pub entries: Arena<Entry>,
     pub match_arms: Arena<MatchArm>,
 
     pub lists: Lists,
@@ -84,6 +86,7 @@ impl Tree {
             fields: Arena::default(),
             variants: Arena::default(),
             field_values: Arena::default(),
+            entries: Arena::default(),
             match_arms: Arena::default(),
             lists: Lists::default(),
             complete: false,
@@ -94,6 +97,14 @@ impl Tree {
     /// `DefId` names.
     pub fn declaration(&self, index: u32) -> Id<Decl> {
         self.lists.get(self.top_level, index as usize)
+    }
+
+    /// `expr` without the parentheses written around it, which only group.
+    pub fn unparenthesized(&self, mut expr: Id<Expr>) -> Id<Expr> {
+        while let Expr::Parentheses(inner) = self.exprs[expr] {
+            expr = inner;
+        }
+        expr
     }
 
     /// Adds `node` with `span` to its arena.
@@ -426,8 +437,8 @@ pub enum Expr {
     Dereference(Id<Expr>),
     /// `x[index]`; the index may be a `Range`
     Index { value: Id<Expr>, index: Id<Expr> },
-    /// `a..b`, or `a..=b` when `inclusive`, inside `[ ]` or after `in`,
-    /// with `a..b:step` stepping by more than one
+    /// `a..b`, or `a..=b` when `inclusive`, inside `[ ]`, after `in` or as
+    /// an array literal's value, with `a..b:step` stepping by more than one
     Range {
         inclusive: bool,
         start: Option<Id<Expr>>,
@@ -441,8 +452,8 @@ pub enum Expr {
     },
     /// `Enum::Variant with payload`; the case is a `Type::Path`
     VariantLiteral { case: Id<Type>, payload: Id<Expr> },
-    /// `[N]T{ values }`; the type is a fixed array, dynamic array or slice type
-    ArrayLiteral { ty: Id<Type>, values: List<Expr> },
+    /// `[N]T{ entries }`; the type is a fixed array, dynamic array or slice type
+    ArrayLiteral { ty: Id<Type>, entries: List<Entry> },
     /// `x as T`
     Cast { value: Id<Expr>, ty: Id<Type> },
     /// `x is Enum::Variant`
@@ -497,6 +508,14 @@ impl Expr {
             | Expr::Invalid => Precedence::Call,
         }
     }
+}
+
+/// One entry of an array literal: a value, or `values...`, each value of
+/// the array or range `values` in order.
+#[derive(Clone, Copy, Debug)]
+pub enum Entry {
+    Value(Id<Expr>),
+    Spread(Id<Expr>),
 }
 
 /// `name = value` in a struct literal.

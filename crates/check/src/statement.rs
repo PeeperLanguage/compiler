@@ -342,11 +342,8 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 return None;
             }
             ast::Stmt::Return(value) => Stmt::Return(self.check_return_value(span, value)),
-            ast::Stmt::Panic(mut message) => {
-                // Parentheses only group, as around any expression.
-                while let ast::Expr::Parentheses(inner) = tree.exprs[message] {
-                    message = inner;
-                }
+            ast::Stmt::Panic(message) => {
+                let message = tree.unparenthesized(message);
                 let span = tree.exprs.span(message);
                 // shortcut: a plain string literal only, as there are no
                 // run-time strings; take a string value once there are.
@@ -420,13 +417,16 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 value,
                 iterable,
                 body,
-            } => match (value, &tree.exprs[iterable]) {
-                (_, ast::Expr::Range { .. }) => {
-                    self.check_for_range(index, value, iterable, body?)?
+            } => {
+                let written = tree.unparenthesized(iterable);
+                match (value, &tree.exprs[written]) {
+                    (_, ast::Expr::Range { .. }) => {
+                        self.check_for_range(index, value, written, body?)?
+                    }
+                    (Some(value), _) => self.check_for_array(index, value, iterable, body?)?,
+                    (None, _) => unreachable!("the parser leaves out only a range loop's value"),
                 }
-                (Some(value), _) => self.check_for_array(index, value, iterable, body?)?,
-                (None, _) => unreachable!("the parser leaves out only a range loop's value"),
-            },
+            }
             ast::Stmt::Break | ast::Stmt::Continue if self.loops == 0 => {
                 let jump = match tree.stmts[statement] {
                     ast::Stmt::Break => "break",
@@ -577,44 +577,8 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 None
             }
         };
-        // The step is a size, and after an error in the ends it is checked
-        // only for its own errors.
-        let step_type = integer.map(|integer| {
-            let unsigned = Integer {
-                signed: false,
-                ..integer
-            };
-            (unsigned, self.checker.types.intern(Type::Integer(unsigned)))
-        });
-        let step = match step {
-            Some(step) => {
-                let expectation = match step_type {
-                    Some((_, ty)) => TypeExpectation::Required(ty),
-                    None => TypeExpectation::Hint(None),
-                };
-                let step = self.add_expr(step, expectation);
-                if let ExprKind::Constant(Value::Integer(ref limbs)) = self.body.exprs[step].kind
-                    && limbs.as_slice().iter().all(|&limb| limb == 0)
-                {
-                    let span = self.body.exprs.span(step);
-                    let message = "a range's step must not be zero";
-                    self.checker
-                        .error(diagnostics::INVALID_OPERATION, message, span);
-                }
-                step
-            }
-            None => {
-                let one = match step_type {
-                    Some((unsigned, ty)) => Expr {
-                        ty,
-                        kind: ExprKind::Constant(Value::Integer(Limbs::new(unsigned.bits, &[1]))),
-                    },
-                    None => Expr::INVALID,
-                };
-                self.body
-                    .add(one, self.checker.module().ast.exprs.span(iterable))
-            }
-        };
+        let range_span = self.checker.module().ast.exprs.span(iterable);
+        let step = self.check_range_step(step, integer, range_span);
         let enclosing = self.open_block(body);
         let index = index.map(|index| {
             let usize = self.checker.usize_type();
@@ -631,6 +595,49 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             inclusive,
             body,
         })
+    }
+
+    /// The step of a range of `integer`, written `step` or else 1 at
+    /// `range_span`: a size, so of the unsigned type of the same width, and
+    /// not a constant zero. Without `integer`, after an error in the ends,
+    /// it is checked only for its own errors.
+    pub(crate) fn check_range_step(
+        &mut self,
+        step: Option<Id<ast::Expr>>,
+        integer: Option<Integer>,
+        range_span: Span,
+    ) -> Id<Expr> {
+        let step_type = integer.map(|integer| {
+            let unsigned = Integer {
+                signed: false,
+                ..integer
+            };
+            (unsigned, self.checker.types.intern(Type::Integer(unsigned)))
+        });
+        let Some(step) = step else {
+            let one = match step_type {
+                Some((unsigned, ty)) => Expr {
+                    ty,
+                    kind: ExprKind::Constant(Value::Integer(Limbs::new(unsigned.bits, &[1]))),
+                },
+                None => Expr::INVALID,
+            };
+            return self.body.add(one, range_span);
+        };
+        let expectation = match step_type {
+            Some((_, ty)) => TypeExpectation::Required(ty),
+            None => TypeExpectation::Hint(None),
+        };
+        let step = self.add_expr(step, expectation);
+        if let ExprKind::Constant(Value::Integer(ref limbs)) = self.body.exprs[step].kind
+            && limbs.as_slice().iter().all(|&limb| limb == 0)
+        {
+            let span = self.body.exprs.span(step);
+            let message = "a range's step must not be zero";
+            self.checker
+                .error(diagnostics::INVALID_OPERATION, message, span);
+        }
+        step
     }
 
     /// `for value in items { body }` or `for index, value in items`, over an

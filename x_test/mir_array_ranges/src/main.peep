@@ -1,0 +1,14 @@
+// A range with run-time ends starts as `for` starts: step checked, then a
+// branch on its direction; it stays a part of the array for LLVM to count.
+fn make(n: i32, step: u32) -> [4]i32 {
+    return [4]i32{9, (n..n + 6:step)...};
+}
+
+// A spread array is a part too, its elements copied in place.
+fn join(pair: [2]i32) -> [3]i32 {
+    return [3]i32{pair..., 7};
+}
+
+fn main() {
+    println(make(1, 2), join([2]i32{5, 6}));
+}

@@ -469,6 +469,12 @@ mod tests {
                 &[],
             ),
             (
+                "spread after a number",
+                "a... 0..3... 0..=9:3...",
+                "identifier:a ...:... number:0 ..:.. number:3 ...:... number:0 ..=:..= number:9 ::: number:3 ...:...",
+                &[],
+            ),
+            (
                 "literals",
                 r#""s" c"c" 'x' b'y' 42"#,
                 r#"string:"s" c string:c"c" character:'x' byte character:b'y' number:42"#,

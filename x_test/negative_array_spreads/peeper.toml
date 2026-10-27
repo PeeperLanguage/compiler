@@ -1,0 +1,13 @@
+name = "negative_array_spreads"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "ranges are not supported yet",
+    "`...` here spreads a range or an array of `u8`, found `[3]i32`",
+    "`...` here spreads a range or an array of `i32`, found `i32`",
+    "`[2]i32` needs 2 values, found 3",
+    "Compilation failed with 4 error(s)",
+]

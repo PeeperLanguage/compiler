@@ -1,0 +1,20 @@
+// `values...` in an array literal gives each value of an array or a range,
+// in order, between the other entries; a range may stand in parentheses.
+struct Point { x: i32, y: i32 }
+
+fn tail(n: i32) -> [4]i32 {
+    return [4]i32{9, (n..n + 3)...};
+}
+
+fn main() {
+    let a = [_]i32{1, 2, 3};
+    println("ranges:", [_]i32{(0..3)..., 9}, [_]i32{0..3..., 9}, [_]i32{0..10:3...});
+    println("arrays:", [_]i32{a..., 4}, [_]i32{a..., a...}, [_]i32{0, a..., (5..2)...});
+    let points = [_]Point{Point.{ x = 1, y = 2 }};
+    let more = [_]Point{Point.{ x = 0, y = 0 }, points..., Point.{ x = 3, y = 4 }};
+    println("moved:", more[0].x, more[1].y, more[2].x, more.len);
+    let grid = [_][2]i32{[2]i32{1, 2}};
+    let rows = [_][2]i32{grid..., [2]i32{(5..7)...}};
+    let empty = [0]i32{};
+    println("nested:", rows[0], rows[1], [_]i32{empty..., 7, empty...}, tail(1));
+}

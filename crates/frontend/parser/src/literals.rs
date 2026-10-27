@@ -3,6 +3,7 @@
 
 use arena::Id;
 use diagnostics::Diagnostic;
+use model::ast::Entry;
 use model::ast::Expr;
 use model::ast::FieldValue;
 use model::ast::Length;
@@ -115,8 +116,9 @@ pub(crate) fn anonymous_struct_literal(p: &mut Parser) -> Id<Expr> {
     p.struct_literal(None, start)
 }
 
-/// Reads `[N]T{ values }`, `[_]T{ values }` (the length is the number of
-/// values) or `[]T{ values }`.
+/// Reads `[N]T{ entries }`, `[_]T{ entries }` (the length is the number of
+/// values they give) or `[]T{ entries }`; an entry is a value, or
+/// `values...`, which spreads an array or a range: `(0..3)...` or `0..3...`.
 pub(crate) fn array_literal(p: &mut Parser) -> Id<Expr> {
     let start = p.tok().span.start;
     let after = p.ahead(1);
@@ -129,12 +131,20 @@ pub(crate) fn array_literal(p: &mut Parser) -> Id<Expr> {
     } else {
         p.array_type()
     };
-    let values = p.delimited(
+    let entries = p.delimited(
         TokenKind::LeftBrace,
         TokenKind::RightBrace,
         false,
         starts_expression,
-        |p| p.expr(Precedence::Lowest),
+        |p| {
+            let start = p.tok().span.start;
+            let value = p.index_operand();
+            if !p.at(TokenKind::Ellipsis) {
+                return p.add(start, Entry::Value(value));
+            }
+            p.next();
+            p.add(start, Entry::Spread(value))
+        },
     );
-    p.add(start, Expr::ArrayLiteral { ty, values })
+    p.add(start, Expr::ArrayLiteral { ty, entries })
 }

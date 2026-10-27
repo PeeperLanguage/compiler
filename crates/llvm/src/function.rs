@@ -221,7 +221,11 @@ impl Module<'_> {
 /// How many times the instruction `id` can trap at run time, so it checks
 /// first: a division or shift of integers by a value not known at compile
 /// time, each element of its place at an index not known then, and a
-/// `Check`. Check rejects a constant that would trap.
+/// `Check`, and array parts whose ranges are not all known then. Check
+/// rejects a constant that would trap.
+// Called for every instruction; the array parts arm made the inliner drop it,
+// costing a compile about 10 M instructions.
+#[inline(always)]
 fn traps(body: &mir::Body, types: &Types, id: Id<mir::Instruction>) -> usize {
     match body.instructions[id].kind {
         InstructionKind::Binary { op, left, right } => {
@@ -245,6 +249,10 @@ fn traps(body: &mir::Body, types: &Types, id: Id<mir::Instruction>) -> usize {
             })
             .count(),
         InstructionKind::Check { .. } => 1,
+        InstructionKind::ArrayParts(ref parts) => usize::from(parts.iter().any(|part| {
+            matches!(part, mir::ArrayPart::Range { left, step, .. }
+                if [left, step].iter().any(|operand| !matches!(operand, Operand::Constant(_))))
+        })),
         _ => 0,
     }
 }
@@ -419,6 +427,7 @@ impl Function<'_, '_, '_> {
                     InstructionKind::Load(_)
                         | InstructionKind::Move(_)
                         | InstructionKind::Aggregate(_)
+                        | InstructionKind::ArrayParts(_)
                         | InstructionKind::Call { .. }
                 )
                 && (body.lists.items(mir.instructions))
@@ -657,6 +666,10 @@ impl Function<'_, '_, '_> {
             } => {
                 self.write_print(out, id, newline, values, &location);
                 return; // each line has its location
+            }
+            InstructionKind::ArrayParts(ref parts) => {
+                self.write_array_parts(out, id, parts, rest, &location);
+                return;
             }
             // Each part written where it goes in the value's memory.
             InstructionKind::Aggregate(ref parts) => {
@@ -952,7 +965,219 @@ impl Function<'_, '_, '_> {
              %more = icmp ult i64 %next, {length}\n  \
              br i1 %more, label %loop, label %done\ndone:\n  ret void\n}}\n"
         );
-        self.module.array_printers.push_str(&body);
+        self.module.private_functions.push_str(&body);
+        name
+    }
+
+    /// Writes the array value `id` from `parts`
+    /// (`InstructionKind::ArrayParts`): counts them and checks the count
+    /// (`write_part_counts`), then writes each value at its place, copies
+    /// each array to its place, and fills each range through its element
+    /// type's filler. Out of line, so `write_instruction` stays small enough
+    /// to inline into `write_block` (measured: 10 M fewer instructions per
+    /// compile).
+    #[cold]
+    #[inline(never)]
+    fn write_array_parts(
+        &mut self,
+        out: &mut String,
+        id: Id<mir::Instruction>,
+        parts: &[mir::ArrayPart],
+        rest: &mut Peekable<impl Iterator<Item = Id<mir::Instruction>>>,
+        location: &DebugLocation,
+    ) {
+        let counts = self.write_part_counts(out, id, parts, location);
+        let (types, name) = (self.types, value_name(id));
+        let ty = self.body.instructions[id].ty;
+        let Type::Array { element, .. } = types[ty] else {
+            unreachable!("array parts make an array")
+        };
+        let (pointer, number) = (self.module.pointer_bits, type_text(types, element));
+        let memory = self.value_address(out, id, ty, rest);
+        let array = type_text(types, ty);
+        let mut offset = "0".to_string();
+        for (index, (&part, count)) in parts.iter().zip(&counts).enumerate() {
+            let address = format!("{name}.{index}");
+            _ = writeln!(
+                out,
+                "  {address} = getelementptr inbounds {array}, ptr {memory}, i32 0, \
+                 i{pointer} {offset}{location}"
+            );
+            match part {
+                mir::ArrayPart::Value(value) | mir::ArrayPart::Array(value) => {
+                    self.write_store(out, &address, value, location);
+                }
+                mir::ArrayPart::Range { start, delta, .. } => {
+                    let filler = self.range_filler(element);
+                    _ = writeln!(
+                        out,
+                        "  call void {filler}(ptr {address}, {number} {}, {number} {}, \
+                         i{pointer} {count}){location}",
+                        self.operand(start),
+                        self.operand(delta)
+                    );
+                }
+            }
+            if index + 1 < parts.len() {
+                let next = format!("{name}.o{index}");
+                _ = writeln!(out, "  {next} = add i{pointer} {offset}, {count}{location}");
+                offset = next;
+            }
+        }
+    }
+
+    /// How many elements each of `parts`, of the array value `id`, gives,
+    /// as pointer-wide LLVM operands: one for a value, an array's length,
+    /// and each range's count (`write_range_count`), in an integer wider
+    /// than its element and at least as wide as a pointer, so it never
+    /// overflows. When a range is
+    /// not known at compile time, also writes the check that the parts give
+    /// exactly the array's length, before any element is written.
+    fn write_part_counts(
+        &mut self,
+        out: &mut String,
+        id: Id<mir::Instruction>,
+        parts: &[mir::ArrayPart],
+        location: &DebugLocation,
+    ) -> Vec<String> {
+        let (types, name) = (self.types, value_name(id));
+        let Type::Array { element, length } = types[self.body.instructions[id].ty] else {
+            unreachable!("array parts make an array")
+        };
+        let pointer = self.module.pointer_bits;
+        let wide = match types[element] {
+            Type::Integer(integer) => (integer.bits + 1).max(pointer),
+            _ => pointer, // no range to count
+        };
+        let fixed = |part: &mir::ArrayPart| match *part {
+            mir::ArrayPart::Value(_) => Some(1),
+            mir::ArrayPart::Array(array) => match types[self.body.operand_type(array)] {
+                Type::Array { length, .. } => Some(length),
+                _ => unreachable!("the checker spreads only an array or a range"),
+            },
+            mir::ArrayPart::Range { .. } => None,
+        };
+        let mut remaining = (length - parts.iter().filter_map(fixed).sum::<u64>()).to_string();
+        let mut failed = "false".to_string();
+        let checked = traps(self.body, types, id) > 0;
+        let mut counts = Vec::with_capacity(parts.len());
+        for (index, part) in parts.iter().enumerate() {
+            if let Some(count) = fixed(part) {
+                counts.push(count.to_string());
+                continue;
+            }
+            let range = format!("{name}.r{index}");
+            self.write_range_count(out, &range, *part, element, wide, location);
+            if checked {
+                _ = writeln!(
+                    out,
+                    "  {range}.over = icmp ugt i{wide} {range}.count, {remaining}{location}\n  \
+                     {range}.failed = or i1 {failed}, {range}.over{location}\n  \
+                     {range}.left.after = sub i{wide} {remaining}, {range}.count{location}"
+                );
+                (remaining, failed) = (format!("{range}.left.after"), format!("{range}.failed"));
+            }
+            let count = match wide > pointer {
+                true => {
+                    _ = writeln!(
+                        out,
+                        "  {range}.n = trunc i{wide} {range}.count to i{pointer}{location}"
+                    );
+                    format!("{range}.n")
+                }
+                false => format!("{range}.count"),
+            };
+            counts.push(count);
+        }
+        if checked {
+            _ = writeln!(
+                out,
+                "  {name}.short = icmp ne i{wide} {remaining}, 0{location}\n  \
+                 {name}.failed = or i1 {failed}, {name}.short{location}"
+            );
+            let message = format!("array literal needs exactly {length} values");
+            self.check(out, &format!("{name}.failed"), &message, id);
+        }
+        counts
+    }
+
+    /// Writes the lines that count the values of the range `part`, named
+    /// `range`, of `element`s, as `Stmt::ForRange` counts them, into
+    /// `{range}.count`, an `i{wide}`: its `left` over its `step`, one more
+    /// when `inclusive` or when that leaves a rest (`write_part_counts`).
+    fn write_range_count(
+        &self,
+        out: &mut String,
+        range: &str,
+        part: mir::ArrayPart,
+        element: TypeId,
+        wide: u32,
+        location: &DebugLocation,
+    ) {
+        let mir::ArrayPart::Range {
+            left,
+            step,
+            inclusive,
+            ..
+        } = part
+        else {
+            unreachable!("only a range is counted")
+        };
+        let (left, step) = (self.operand(left), self.operand(step));
+        let number = type_text(self.types, element);
+        _ = writeln!(
+            out,
+            "  {range}.whole = udiv {number} {left}, {step}{location}\n  \
+             {range}.wide = zext {number} {range}.whole to i{wide}{location}"
+        );
+        let extra = match inclusive {
+            true => "1".to_string(),
+            false => {
+                _ = writeln!(
+                    out,
+                    "  {range}.rest = urem {number} {left}, {step}{location}\n  \
+                     {range}.more = icmp ne {number} {range}.rest, 0{location}\n  \
+                     {range}.extra = zext i1 {range}.more to i{wide}{location}"
+                );
+                format!("{range}.extra")
+            }
+        };
+        _ = writeln!(
+            out,
+            "  {range}.count = add i{wide} {range}.wide, {extra}{location}"
+        );
+    }
+
+    /// The private function that writes `count` integers of the type
+    /// `element` from the address `dest` on: `start`, then each `delta` more
+    /// than the one before, wrapping. Written into the module the first
+    /// time its type fills a range, then reused.
+    fn range_filler(&mut self, element: TypeId) -> String {
+        let count = self.module.range_filler_ids.len();
+        let number = *self.module.range_filler_ids.entry(element).or_insert(count);
+        let name = format!("@fill.range.{number}");
+        if number < count {
+            return name;
+        }
+        let (ty, pointer) = (type_text(self.types, element), self.module.pointer_bits);
+        _ = writeln!(
+            self.module.private_functions,
+            "define private void {name}(ptr %dest, {ty} %start, {ty} %delta, i{pointer} %count) {{\n\
+             entry:\n  \
+             %empty = icmp eq i{pointer} %count, 0\n  \
+             br i1 %empty, label %done, label %loop\n\
+             loop:\n  \
+             %index = phi i{pointer} [ 0, %entry ], [ %next, %loop ]\n  \
+             %value = phi {ty} [ %start, %entry ], [ %after, %loop ]\n  \
+             %address = getelementptr inbounds {ty}, ptr %dest, i{pointer} %index\n  \
+             store {ty} %value, ptr %address\n  \
+             %after = add {ty} %value, %delta\n  \
+             %next = add i{pointer} %index, 1\n  \
+             %more = icmp ult i{pointer} %next, %count\n  \
+             br i1 %more, label %loop, label %done\n\
+             done:\n  \
+             ret void\n}}\n"
+        );
         name
     }
 

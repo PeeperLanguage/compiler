@@ -222,10 +222,18 @@ tokens! {
         Slash = "/",
         PercentAssign = "%=",
         Percent = "%",
+        /// Spreads the values on its left into an array literal.
+        ///
+        /// `a...` gives each element of the array `a`, which must hold the literal's element type, and `(0..3)...` each value of the range, as a `for` loop counts it; the parentheses may be left out. Under `[_]`, a spread range's ends and step must be known at compile time; under `[N]T`, a range known only at run time is counted then, and the program stops unless the entries give exactly `N` values. Spreading anywhere else is not supported yet.
+        ///
+        /// ```peeper
+        /// let a = [_]i32{1, 2};
+        /// let b = [_]i32{a..., (5..=7)..., 0}; // [1, 2, 5, 6, 7, 0]
+        /// ```
         Ellipsis = "...",
         /// A range from the left value up to the right one, with it.
         ///
-        /// A `for` loop counts each value of it, even the type's largest, and counts down when the left value is larger. `a..=b:step` steps by more than one. Ranges outside a `for` loop are not supported yet.
+        /// A `for` loop counts each value of it, even the type's largest, and counts down when the left value is larger. `a..=b:step` steps by more than one. In an array literal, `(1..=3)...` spreads those values (`...`). Ranges elsewhere are not supported yet.
         ///
         /// ```peeper
         /// for b in 250u8..=255 {
@@ -235,7 +243,7 @@ tokens! {
         DotDotEqual = "..=",
         /// A range from the left value up to the right one, without it.
         ///
-        /// A `for` loop counts each value of it, and counts down when the left value is larger. `a..b:step` steps by more than one. In a type, `[..]T` is a slice. Ranges outside a `for` loop, and slices, are not supported yet.
+        /// A `for` loop counts each value of it, and counts down when the left value is larger. `a..b:step` steps by more than one. In an array literal, `(0..3)...` spreads those values (`...`). In a type, `[..]T` is a slice. Ranges elsewhere, and slices, are not supported yet.
         ///
         /// ```peeper
         /// for i in 0..3 {

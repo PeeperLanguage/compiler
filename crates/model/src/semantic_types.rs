@@ -55,7 +55,9 @@ impl Integer {
 
     /// Whether a range of this type from the constant `start` to `end`
     /// counts up (`start <= end`), and how far apart the two are, read as
-    /// unsigned of the same width, so it never overflows.
+    /// unsigned of the same width, so it never overflows. The checker's
+    /// count of a constant range and lowering's walk of one both start
+    /// here, so they agree on how many values it has.
     pub fn range_distance(self, start: &Limbs, end: &Limbs) -> (bool, Limbs) {
         let up = bigint::compare(self.bits, self.signed, start, end).is_le();
         let (near, far) = if up { (start, end) } else { (end, start) };

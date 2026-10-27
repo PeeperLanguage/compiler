@@ -1,0 +1,10 @@
+name = "negative_array_spread_move"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "`points` is used after it was moved",
+    "Compilation failed with 1 error(s)",
+]

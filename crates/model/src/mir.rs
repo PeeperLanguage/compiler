@@ -167,6 +167,12 @@ pub enum InstructionKind {
     /// A struct value from its fields' values, in declaration order, or an
     /// array value from its elements' values.
     Aggregate(Box<[Operand]>),
+    /// An array value from its parts, in order, one of them a spread. When a
+    /// range is not known at compile time, the program stops before writing
+    /// any element unless the parts give exactly the array's length; its
+    /// step is checked not to be zero, and its direction found, before
+    /// (`Check`, `ArrayPart::Range`).
+    ArrayParts(Box<[ArrayPart]>),
     /// Writes the values to the standard output, a space between each,
     /// then a newline when `newline`: as THIR's `Print`.
     Print {
@@ -193,6 +199,24 @@ pub enum InstructionKind {
     /// (`flow::loans::report_loan_errors`), and a loop's next pass may set
     /// it again (`flow::report_variable_state_errors`). Writes no code.
     ScopeEnd(Id<Variable>),
+}
+
+/// One part of an array value (`InstructionKind::ArrayParts`).
+#[derive(Clone, Copy, Debug)]
+pub enum ArrayPart {
+    Value(Operand),
+    /// Each element of the array `Operand`, in order.
+    Array(Operand),
+    /// The values of a range from `start` on, each `delta` more than the
+    /// one before, wrapping, while `left`, how far the end is, lasts by
+    /// `step` (`lower::Lowering::walk_range`); `inclusive` for `..=`.
+    Range {
+        start: Operand,
+        left: Operand,
+        step: Operand,
+        delta: Operand,
+        inclusive: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -349,6 +373,42 @@ impl Body {
                                 printer.out.push_str(", ");
                             }
                             printer.write_operand(field);
+                        }
+                        printer.out.push(')');
+                    }
+                    InstructionKind::ArrayParts(parts) => {
+                        printer.out.push_str("array(");
+                        for (index, part) in parts.iter().enumerate() {
+                            if index > 0 {
+                                printer.out.push_str(", ");
+                            }
+                            match *part {
+                                ArrayPart::Value(value) => printer.write_operand(&value),
+                                ArrayPart::Array(array) => {
+                                    printer.write_operand(&array);
+                                    printer.out.push_str("...");
+                                }
+                                ArrayPart::Range {
+                                    start,
+                                    left,
+                                    step,
+                                    delta,
+                                    inclusive,
+                                } => {
+                                    printer.out.push_str("range(");
+                                    printer.write_operand(&start);
+                                    printer.out.push_str(", left ");
+                                    printer.write_operand(&left);
+                                    if inclusive {
+                                        printer.out.push_str(" inclusive");
+                                    }
+                                    printer.out.push_str(", step ");
+                                    printer.write_operand(&step);
+                                    printer.out.push_str(", delta ");
+                                    printer.write_operand(&delta);
+                                    printer.out.push_str(")...");
+                                }
+                            }
                         }
                         printer.out.push(')');
                     }

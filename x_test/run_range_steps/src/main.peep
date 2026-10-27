@@ -53,5 +53,15 @@ fn main() -> i32 {
     println();
 
     println("run time:", count(10, 3), count(-10, 3), count(0, 1));
+
+    // Parentheses around a range only group.
+    print("grouped:");
+    for v in (0..2) {
+        print("", v);
+    }
+    for i, v in ((5..=4)) {
+        print("", i, v);
+    }
+    println();
     return 0;
 }

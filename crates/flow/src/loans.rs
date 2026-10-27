@@ -219,6 +219,28 @@ impl Loans<'_, '_> {
                 }
                 (None, &[])
             }
+            mir::InstructionKind::ArrayParts(ref parts) => {
+                for part in parts {
+                    let operands = match *part {
+                        mir::ArrayPart::Value(value) | mir::ArrayPart::Array(value) => {
+                            [Some(value), None, None, None]
+                        }
+                        mir::ArrayPart::Range {
+                            start,
+                            left,
+                            step,
+                            delta,
+                            ..
+                        } => [Some(start), Some(left), Some(step), Some(delta)],
+                    };
+                    for operand in operands.iter().flatten() {
+                        if let Some(holder) = self.operand_holder(operand) {
+                            used(holder);
+                        }
+                    }
+                }
+                (None, &[])
+            }
             mir::InstructionKind::ScopeEnd(_) => (None, &[]),
         };
         let place = place.and_then(|place| self.variable_holder(place.variable));

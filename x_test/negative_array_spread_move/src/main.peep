@@ -1,0 +1,7 @@
+// Spreading an array uses it by value: an array of structs moves.
+struct Point { x: i32 }
+
+fn main() {
+    let points = [_]Point{Point.{ x = 1 }};
+    let twice = [_]Point{points..., points...};
+}

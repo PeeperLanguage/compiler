@@ -9,6 +9,7 @@ use model::ast;
 use model::ast::Attribute;
 use model::ast::Block;
 use model::ast::Decl;
+use model::ast::Entry;
 use model::ast::Expr;
 use model::ast::Field;
 use model::ast::FieldValue;
@@ -57,6 +58,7 @@ enum Item {
     Pattern(Id<Pattern>),
     Expr(Id<Expr>),
     FieldValue(Id<FieldValue>),
+    Entry(Id<Entry>),
     Leaf(&'static str, Span),
 }
 
@@ -264,6 +266,12 @@ impl Dumper<'_> {
                     vec![Item::Leaf("field name", f.name.span), Item::Expr(f.value)],
                 )
             }
+            Item::Entry(id) => match t.entries[id] {
+                Entry::Value(value) => return self.item(Item::Expr(value), depth),
+                Entry::Spread(values) => {
+                    ("spread", None, t.entries.span(id), vec![Item::Expr(values)])
+                }
+            },
         };
         self.write(kind, op, span, &children, depth);
     }
@@ -520,9 +528,9 @@ impl Dumper<'_> {
                 None,
                 vec![Item::Type(case), Item::Expr(payload)],
             ),
-            Expr::ArrayLiteral { ty, values } => {
+            Expr::ArrayLiteral { ty, entries } => {
                 let mut children = vec![Item::Type(ty)];
-                children.extend(t.lists.items(values).map(Item::Expr));
+                children.extend(t.lists.items(entries).map(Item::Entry));
                 ("array literal", None, children)
             }
             Expr::Cast { value, ty } => ("cast expression", None, two(value, Item::Type(ty))),

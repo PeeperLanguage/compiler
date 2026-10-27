@@ -279,6 +279,22 @@ impl Checker<'_> {
         }
     }
 
+    /// Whether an array may have `length` elements, as its `len` is a
+    /// `usize` (`check_field`); reported at `span` when not.
+    pub(crate) fn length_fits(&mut self, length: &[u64], span: Span) -> bool {
+        let usize = Integer {
+            signed: false,
+            bits: self.pointer_bits,
+        };
+        let fits = usize.fits(length, false);
+        if !fits {
+            let bits = self.pointer_bits;
+            let message = format!("an array length must fit `usize`, of {bits} bits");
+            self.error(diagnostics::INVALID_TYPE, message, span);
+        }
+        fits
+    }
+
     /// `*target`, written or taken at `span`: invalid when `target`
     /// is, reported when it is a reference. Its target is the real type, as
     /// a reference's.
@@ -356,15 +372,8 @@ impl Checker<'_> {
                     let message = "an array length is a whole number without a suffix";
                     return self.error(diagnostics::INVALID_TYPE, message, number);
                 }
-                // Its `len` is a `usize` (`check_field`).
-                let usize = Integer {
-                    signed: false,
-                    bits: self.pointer_bits,
-                };
-                if !usize.fits(&value, false) {
-                    let bits = self.pointer_bits;
-                    let message = format!("an array length must fit `usize`, of {bits} bits");
-                    return self.error(diagnostics::INVALID_TYPE, message, number);
+                if !self.length_fits(&value, number) {
+                    return TypeId::INVALID;
                 }
                 let element = self.resolve_value_type(element);
                 return self.array_type(element, value[0], span);

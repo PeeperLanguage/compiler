@@ -161,6 +161,14 @@ MIR instruction), and a compile cost 10 M more instructions. `#[inline]` did
 not help; `#[inline(always)]` did. Find such a helper with `perf record -e instructions:u`
 on two builds and diff the functions; do not add it on a guess.
 
+**Keep a rare, big arm of a hot function out of line, once measured.**
+Writing array literals with ranges inline in `Function::write_instruction`
+made it too big to inline into `write_block`, and a compile of the
+benchmark, which has no arrays, cost 10 M more instructions. `#[cold]` and
+`#[inline(never)]` on the arm's own function brought it back, as on
+`struct_type_text`. The arm's case in `traps` made the inliner drop that
+too (10 M more), and `#[inline(always)]` on it brought that back (2026-10-27).
+
 **Give the common case of a general walk its own entry, once measured.**
 A plain variable is a place with no steps, but sending every variable read
 through `Lowering::place` (a loop, a `Vec`, a `Result`) cost a compile about

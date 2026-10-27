@@ -1,0 +1,9 @@
+name = "run_panic_array_step"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 101
+stdout_contains = ["first: [0, 2]\n"]
+stderr_contains = ["panic: range step is zero\n", "src/main.peep:4:25\n"]

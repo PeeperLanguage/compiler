@@ -1,0 +1,10 @@
+// A step known only when the program runs is checked as in `for`: zero would
+// never reach the end.
+fn make(step: u32) -> [2]i32 {
+    return [2]i32{(0..4:step)...};
+}
+
+fn main() {
+    println("first:", make(2));
+    println("second:", make(0));
+}

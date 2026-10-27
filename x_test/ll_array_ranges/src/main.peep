@@ -1,0 +1,10 @@
+// A range with constant ends needs no check: its count is known, and one
+// shared loop per element type fills it.
+fn known() -> [6]i32 {
+    let arr = [_]i32{(0..3)..., 9, (5..=4)...};
+    return arr;
+}
+
+fn main() {
+    println(known());
+}

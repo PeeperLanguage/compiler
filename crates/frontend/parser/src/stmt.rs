@@ -292,7 +292,7 @@ fn for_statement(p: &mut Parser) -> Id<Stmt> {
                 ),
             );
         }
-        if let Expr::Range { .. } = p.tree.exprs[value] {
+        if let Expr::Range { .. } = p.tree.exprs[p.tree.unparenthesized(value)] {
             let body = p.body("for");
             let range = Stmt::ForIn {
                 index: None,

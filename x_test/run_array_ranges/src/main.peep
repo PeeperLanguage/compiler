@@ -1,0 +1,140 @@
+// A spread range in an array literal counts as `for` does. Each case is
+// built with constant ends and with ends known only at run time
+// (parameters), and each element is compared with a `for` loop over the same
+// range.
+fn full(start: u8, end: u8) -> [256]u8 {
+    return [256]u8{(start..=end)...};
+}
+
+fn signed(start: i8, end: i8) -> [256]i8 {
+    return [256]i8{(start..=end)...};
+}
+
+fn stepped(start: u8, end: u8, step: u8) -> [1]u8 {
+    return [1]u8{(start..end:step)...};
+}
+
+fn down(start: u8, end: u8, step: u8) -> [3]u8 {
+    return [3]u8{(start..=end:step)...};
+}
+
+fn short(start: i32, end: i32, step: u32) -> [1]i32 {
+    return [1]i32{(start..end:step)...};
+}
+
+fn empty(start: i32, end: i32) -> [0]i32 {
+    return [0]i32{(start..end)...};
+}
+
+fn back(start: i32, end: i32) -> [3]i32 {
+    return [3]i32{(start..end)...};
+}
+
+struct Holder { values: [3]i32, tag: i32 }
+
+fn total(values: [3]i32) -> i32 {
+    return values[0] + values[1] + values[2];
+}
+
+fn mixed(n: i32) -> [5]i32 {
+    return [5]i32{1, (n..=n + 2)..., 20};
+}
+
+fn main() {
+    {
+        let constant = [_]u8{(0..=255)...};
+        let runtime = full(0, 255);
+        let mut passes = 0;
+        for i, v in 0u8..=255 {
+            if constant[i] != v || runtime[i] != v {
+                println("differ at", i);
+            }
+            passes = passes + 1;
+        }
+        println("0..=255:", constant.len, passes, constant[255], runtime[255]);
+    }
+    {
+        let constant = [_]i8{(-128..=127)...};
+        let runtime = signed(-128, 127);
+        let mut passes = 0;
+        for i, v in -128i8..=127 {
+            if constant[i] != v || runtime[i] != v {
+                println("differ at", i);
+            }
+            passes = passes + 1;
+        }
+        println("-128..=127:", constant.len, passes, constant[0], runtime[255]);
+    }
+    {
+        let constant = [_]u8{(250..255:10)...};
+        let runtime = stepped(250, 255, 10);
+        let mut passes = 0;
+        for i, v in 250u8..255:10 {
+            if constant[i] != v || runtime[i] != v {
+                println("differ at", i);
+            }
+            passes = passes + 1;
+        }
+        println("250..255:10:", constant, runtime, passes);
+    }
+    {
+        let constant = [_]u8{(5..=0:2)...};
+        let runtime = down(5, 0, 2);
+        let mut passes = 0;
+        for i, v in 5u8..=0:2 {
+            if constant[i] != v || runtime[i] != v {
+                println("differ at", i);
+            }
+            passes = passes + 1;
+        }
+        println("5..=0:2:", constant, runtime, passes);
+    }
+    {
+        let constant = [_]i32{(0..3:5)...};
+        let runtime = short(0, 3, 5);
+        let mut passes = 0;
+        for i, v in 0..3:5 {
+            if constant[i] != v || runtime[i] != v {
+                println("differ at", i);
+            }
+            passes = passes + 1;
+        }
+        println("0..3:5:", constant, runtime, passes);
+    }
+    {
+        let constant = [_]i32{(0..0)...};
+        let runtime = empty(0, 0);
+        let mut passes = 0;
+        for v in 0..0 {
+            passes = passes + 1;
+        }
+        println("0..0:", constant, runtime, passes);
+    }
+    {
+        let constant = [_]i32{(5..2)...};
+        let runtime = back(5, 2);
+        let mut passes = 0;
+        for i, v in 5..2 {
+            if constant[i] != v || runtime[i] != v {
+                println("differ at", i);
+            }
+            passes = passes + 1;
+        }
+        println("5..2:", constant, runtime, passes);
+    }
+    println("mixed:", [_]i32{1, (10..=12)..., 20}, mixed(10));
+
+    // Built in place: inside another literal, a field, an argument, and an
+    // element or a variable set again.
+    let n = 7;
+    let grid = [_][3]i32{[3]i32{(0..3)...}, [3]i32{(n..n + 3)...}};
+    let holder = Holder.{ values = [3]i32{(n..n + 3)...}, tag = 5 };
+    println("places:", grid[0], grid[1], holder.values, holder.tag, total([3]i32{(n..n + 3)...}));
+    let mut rows = [2][3]i32{[3]i32{0, 0, 0}, [3]i32{0, 0, 0}};
+    let i: usize = 1;
+    rows[i] = [3]i32{(n..n + 3)...};
+    let mut v = [3]i32{1, 2, 3};
+    v = [3]i32{(n..=n + 2)...};
+    println("set:", rows[0], rows[1], v);
+    println("sizes:", [_]usize{(0..3)...}, [2]isize{(n as isize - 9..n as isize - 7)...});
+}

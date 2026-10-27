@@ -18,4 +18,5 @@ stdout_contains = [
     "indexed: 0 100 1 75 2 50 3 25\n",
     "one pass: 0 3\n",
     "run time: 4 4 0\n",
+    "grouped: 0 1 0 5 1 4\n",
 ]

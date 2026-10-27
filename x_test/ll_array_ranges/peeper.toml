@@ -1,0 +1,6 @@
+name = "ll_array_ranges"
+build = "program"
+
+[test]
+mode = "ll"
+outcome = "success"

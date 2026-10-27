@@ -231,10 +231,11 @@ impl Parser {
         false
     }
 
-    /// Reads what may stand inside `[ ]` or after `in`: an expression, or a
-    /// range `a..b`, `a..=b`, `..b` or `a..`, with an end followed by
-    /// `:step` to step by more than one. Ranges appear nowhere else, and
-    /// only right before the `]` may a range leave out its end.
+    /// Reads what may stand inside `[ ]` or `( )`, after `in` or as an array
+    /// literal's entry: an expression, or a range `a..b`, `a..=b`, `..b` or
+    /// `a..`, with an end followed by `:step` to step by more than one.
+    /// Ranges appear nowhere else, and only right before the `]` may a range
+    /// leave out its end.
     pub(crate) fn index_operand(&mut self) -> Id<Expr> {
         let start = self.tok().span.start;
         let is_range = |p: &Self| p.at(TokenKind::DotDot) || p.at(TokenKind::DotDotEqual);
@@ -322,10 +323,11 @@ fn name_or_path(p: &mut Parser) -> Id<Expr> {
     p.add(start, Expr::Path(path))
 }
 
-/// Reads `( expression )`.
+/// Reads `( expression )`, or a range in parentheses, which a spread may
+/// follow: `(0..3)...`.
 fn parentheses(p: &mut Parser) -> Id<Expr> {
     let open = p.next();
-    let inner = p.expr(Precedence::Lowest);
+    let inner = p.index_operand();
     p.close(TokenKind::RightParen, open);
     p.add(open.span.start, Expr::Parentheses(inner))
 }
@@ -692,7 +694,7 @@ mod tests {
     Point.{ x = 1, y = -2 };
     .{ a = &mut v, b = @raw };
     Shape::Line with .{ end = Box<i32>::new(1) };
-    [_]u8{ 1, 2 };
+    [_]u8{ 1, 2, 4..=8:2..., (0..3)..., a... };
     []str{};
     free(p);
     println(items[1..=n]);
@@ -754,6 +756,18 @@ mod tests {
             type name u8
           number literal 1
           number literal 2
+          spread
+            range ..=
+              number literal 4
+              number literal 8
+              number literal 2
+          spread
+            parentheses
+              range ..
+                number literal 0
+                number literal 3
+          spread
+            name reference a
       expression statement
         array literal
           dynamic array type
@@ -786,6 +800,7 @@ mod tests {
             ),
             ("[x]i32{};", "expected array length"),
             ("a.;", "expected `identifier`, found `;`"),
+            ("f(a...);", "expected `)`, found `...`"),
         ] {
             one_error(&format!("fn f() {{ {text} }}"), message, None);
         }

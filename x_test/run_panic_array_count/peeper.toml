@@ -1,0 +1,12 @@
+name = "run_panic_array_count"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 101
+stdout_contains = ["first: [0, 1, 2, 9]\n", "joined: [7, 8, 9, 0, 1]\n"]
+stderr_contains = [
+    "panic: array literal needs exactly 5 values\n",
+    "src/main.peep:10:12\n",
+]

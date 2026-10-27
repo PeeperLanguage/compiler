@@ -179,7 +179,9 @@ impl<'b> Machine<'b, '_> {
                         InstructionKind::Borrow { .. } | InstructionKind::Address(_) => {
                             return unsupported("references and addresses");
                         }
-                        InstructionKind::Aggregate(_) | InstructionKind::Field { .. } => {
+                        InstructionKind::Aggregate(_)
+                        | InstructionKind::ArrayParts(_)
+                        | InstructionKind::Field { .. } => {
                             return unsupported("struct and array values");
                         }
                         InstructionKind::Print { .. } => return unsupported("`print` calls"),

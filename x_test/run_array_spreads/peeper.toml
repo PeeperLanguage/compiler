@@ -1,0 +1,13 @@
+name = "run_array_spreads"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 0
+stdout_contains = [
+    "ranges: [0, 1, 2, 9] [0, 1, 2, 9] [0, 3, 6, 9]\n",
+    "arrays: [1, 2, 3, 4] [1, 2, 3, 1, 2, 3] [0, 1, 2, 3, 5, 4, 3]\n",
+    "moved: 0 2 3 3\n",
+    "nested: [1, 2] [5, 6] [7] [9, 1, 2, 3]\n",
+]

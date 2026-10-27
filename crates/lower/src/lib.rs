@@ -5,6 +5,7 @@ use std::num::NonZeroU32;
 
 use arena::Arena;
 use arena::Id;
+use arena::List;
 use arena::Lists;
 use bigint::Limbs;
 use model::constant::Constant;
@@ -240,7 +241,8 @@ impl Lowering<'_> {
     /// constants), `left`, how far `end` is, as `size`, and `delta`, what
     /// each next value adds: `step` up, `0 - step` down, both wrapping.
     /// Gives `(start, step, left, delta)`, each a constant when what it is
-    /// computed from is.
+    /// computed from is. `for` and an array's ranges both start here, so
+    /// they count alike.
     fn walk_range(
         &mut self,
         [start, end, step]: [Id<thir::Expr>; 3],
@@ -560,6 +562,49 @@ impl Lowering<'_> {
         Some(())
     }
 
+    /// The instruction that makes the array literal of `parts`: an
+    /// `Aggregate` when each part is one value, as a struct literal; else
+    /// `ArrayParts`, with each range's step checked and its walk started
+    /// (`walk_range`) before the array is made.
+    fn lower_array_literal(
+        &mut self,
+        parts: List<thir::ArrayPart>,
+    ) -> Option<mir::InstructionKind> {
+        let mut lowered = Vec::with_capacity(parts.len());
+        for part in self.thir.lists.items(parts) {
+            let part = match self.thir.array_parts[part] {
+                thir::ArrayPart::Value(value) => mir::ArrayPart::Value(self.lower_expr(value)?),
+                thir::ArrayPart::Array(array) => mir::ArrayPart::Array(self.lower_expr(array)?),
+                thir::ArrayPart::Range {
+                    start,
+                    end,
+                    step,
+                    inclusive,
+                } => {
+                    let span = self.thir.array_parts.span(part);
+                    let (start, step, left, delta) = self.walk_range([start, end, step], span)?;
+                    mir::ArrayPart::Range {
+                        start,
+                        left,
+                        step,
+                        delta,
+                        inclusive,
+                    }
+                }
+            };
+            lowered.push(part);
+        }
+        // Without a spread, as a struct literal.
+        let values = (lowered.iter()).map(|part| match *part {
+            mir::ArrayPart::Value(value) => Some(value),
+            _ => None,
+        });
+        Some(match values.collect::<Option<Box<[_]>>>() {
+            Some(values) => mir::InstructionKind::Aggregate(values),
+            None => mir::InstructionKind::ArrayParts(lowered.into()),
+        })
+    }
+
     /// The value of `expression`, computed in the block being filled.
     fn lower_expr(&mut self, expression: Id<thir::Expr>) -> Option<mir::Operand> {
         let span = self.thir.exprs.span(expression);
@@ -635,13 +680,7 @@ impl Lowering<'_> {
                     .map(|value| value.expect("check sets each field"));
                 mir::InstructionKind::Aggregate(values.collect())
             }
-            thir::ExprKind::ArrayLiteral(values) => mir::InstructionKind::Aggregate(
-                self.thir
-                    .lists
-                    .items(values)
-                    .map(|value| self.lower_expr(value))
-                    .collect::<Option<_>>()?,
-            ),
+            thir::ExprKind::ArrayLiteral(parts) => self.lower_array_literal(parts)?,
             thir::ExprKind::Variable(_)
             | thir::ExprKind::Field { .. }
             | thir::ExprKind::Dereference(_)
