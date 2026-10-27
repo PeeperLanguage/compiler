@@ -246,9 +246,9 @@ fn if_statement(p: &mut Parser) -> Id<Stmt> {
     })
 }
 
-/// Reads `for { }`, `for condition { }`, `for start..end { }`, `for value
-/// in items { }` or `for index, value in items { }`. The iterable may be a
-/// range; `for start..end { }` is a `ForIn` without a value.
+/// Reads `for { }`, `for control { }`, `for value in items { }` or `for
+/// index, value in items { }`. Whether `control` is a condition or a range
+/// to count through is its type's to say, which the checker decides.
 fn for_statement(p: &mut Parser) -> Id<Stmt> {
     let start = p.next().span.start;
     let unnamed_index = p.at(TokenKind::Underscore) && p.ahead(1).kind == TokenKind::Comma;
@@ -273,15 +273,15 @@ fn for_statement(p: &mut Parser) -> Id<Stmt> {
             start,
             Stmt::ForIn {
                 index,
-                value: Some(value),
+                value,
                 iterable,
                 body,
             },
         );
     }
-    let mut condition = None;
+    let mut control = None;
     if !p.at(TokenKind::LeftBrace) {
-        let value = p.expr(Precedence::Lowest); // a condition, or a range: `for 0..n { }`
+        let value = p.expr(Precedence::Lowest);
         if p.at(TokenKind::In) {
             let span = p.tree.exprs.span(value);
             p.fail(
@@ -292,20 +292,10 @@ fn for_statement(p: &mut Parser) -> Id<Stmt> {
                 ),
             );
         }
-        if let Expr::Range { .. } = p.tree.exprs[p.tree.unparenthesized(value)] {
-            let body = p.body("for");
-            let range = Stmt::ForIn {
-                index: None,
-                value: None,
-                iterable: value,
-                body,
-            };
-            return p.add(start, range);
-        }
-        condition = Some(value);
+        control = Some(value);
     }
     let body = p.body("for");
-    p.add(start, Stmt::Loop { condition, body })
+    p.add(start, Stmt::Loop { control, body })
 }
 
 /// Reads `break;` or `continue;`. Loop labels are not part of the language
@@ -477,7 +467,7 @@ mod tests {
           range ..
             number literal 1
         block { }
-      for in statement
+      loop statement
         range ..
           number literal 0
           name reference n

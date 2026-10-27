@@ -343,17 +343,18 @@ pub enum Stmt {
         then: Option<Id<Block>>,
         otherwise: Option<Id<Stmt>>,
     },
-    /// `for { }` or `for condition { }`
+    /// `for { }` or `for control { }`, where `control` is a `bool`
+    /// condition or a range to count through (`for 0..n { }`, `for r { }`),
+    /// as its type says.
     Loop {
-        condition: Option<Id<Expr>>,
+        control: Option<Id<Expr>>,
         body: Option<Id<Block>>,
     },
     /// `for value in items { }` or `for index, value in items { }`, with no
-    /// index for `for _, value in`; the iterable may be an `Expr::Range`,
-    /// and only then is there no `value`: `for start..end { }`
+    /// index for `for _, value in`; the iterable may be a range.
     ForIn {
         index: Option<Ident>,
-        value: Option<Ident>,
+        value: Ident,
         iterable: Id<Expr>,
         body: Option<Id<Block>>,
     },

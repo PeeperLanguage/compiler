@@ -413,8 +413,8 @@ impl Dumper<'_> {
                 nested.extend(otherwise.map(Item::Stmt));
                 ("if statement", None, nested)
             }
-            Stmt::Loop { condition, body } => {
-                let mut nested: Vec<Item> = condition.map(Item::Expr).into_iter().collect();
+            Stmt::Loop { control, body } => {
+                let mut nested: Vec<Item> = control.map(Item::Expr).into_iter().collect();
                 nested.extend(body.map(Item::Block));
                 ("loop statement", None, nested)
             }
@@ -425,7 +425,7 @@ impl Dumper<'_> {
                 body,
             } => {
                 let mut nested: Vec<Item> = index.map(declared).into_iter().collect();
-                nested.extend(value.map(declared));
+                nested.push(declared(value));
                 nested.push(Item::Expr(iterable));
                 nested.extend(body.map(Item::Block));
                 ("for in statement", None, nested)

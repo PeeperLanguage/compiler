@@ -11,6 +11,7 @@ stdout_contains = [
     "ends: 3 6 6 9\n",
     "passes: 3 4 4 3\n",
     "field: 254 7\n",
+    "counted: 44 55 44 3 false\n",
     "filled: [0, 1, 2, 3] [7, 6, 5, 4] [0, 2, 4, 6]\n",
     "spread: [100, 9, 6, 3, 0]\n",
 ]

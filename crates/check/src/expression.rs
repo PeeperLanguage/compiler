@@ -361,9 +361,16 @@ impl ThirBuilder<'_, '_> {
             self.checker.not_supported(span, what);
             Expr::INVALID
         };
-        let TypeExpectation::Required(ty) = expectation else {
-            return checked;
-        };
+        match expectation {
+            TypeExpectation::Required(ty) => self.require(checked, expression, ty),
+            TypeExpectation::Hint(_) => checked,
+        }
+    }
+
+    /// `checked`, from `expression`, as a value of the type `ty` (`coerce`);
+    /// a mismatch is reported, with a guess that adds `as` when only `as`
+    /// converts it.
+    pub(crate) fn require(&mut self, checked: Expr, expression: Id<ast::Expr>, ty: TypeId) -> Expr {
         let found = checked.ty;
         self.coerce(checked, expression, ty)
             .unwrap_or_else(|mismatch| {

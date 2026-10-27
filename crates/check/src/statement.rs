@@ -397,10 +397,18 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 }
                 return None;
             }
-            ast::Stmt::Loop { condition, body } => {
-                let condition = condition.map(|condition| {
-                    self.add_expr(condition, TypeExpectation::Required(TypeId::BOOL))
-                });
+            ast::Stmt::Loop { control, body } => 'checked: {
+                let mut condition = None;
+                if let Some(control) = control {
+                    let checked = self.check_expr(control, TypeExpectation::Hint(None));
+                    let control_span = tree.exprs.span(control);
+                    if let Type::Range { .. } = self.checker.types[checked.ty] {
+                        let range = self.body.add(checked, control_span);
+                        break 'checked self.check_for_range(None, None, range, body?);
+                    }
+                    let checked = self.require(checked, control, TypeId::BOOL);
+                    condition = Some(self.body.add(checked, control_span));
+                }
                 let body = body.map(|body| {
                     let enclosing = self.open_block(body);
                     self.check_loop_body(body, enclosing, None)
@@ -418,12 +426,9 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             } => {
                 let iterable = self.add_expr(iterable, TypeExpectation::Hint(None));
                 let ty = self.body.exprs[iterable].ty;
-                match (value, &self.checker.types[ty]) {
-                    // The parser leaves out only a range loop's value.
-                    (None, _) | (_, Type::Range { .. }) => {
-                        self.check_for_range(index, value, iterable, body?)
-                    }
-                    (Some(value), _) => self.check_for_array(index, value, iterable, body?)?,
+                match self.checker.types[ty] {
+                    Type::Range { .. } => self.check_for_range(index, Some(value), iterable, body?),
+                    _ => self.check_for_array(index, value, iterable, body?)?,
                 }
             }
             ast::Stmt::Break | ast::Stmt::Continue if self.loops == 0 => {

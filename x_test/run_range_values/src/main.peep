@@ -2,6 +2,7 @@
 // held in a field, and it copies. A `for` or a spread over a range value
 // counts it as one over the same range written in place, `..=` included,
 // though whether it includes its end is known only when the program runs.
+// `for r { }` counts a range value as `for 0..n { }` counts a written one.
 struct Span { values: range[u8], tag: i32 }
 
 fn evens(n: i32) -> range[i32] {
@@ -24,6 +25,17 @@ fn passes(r: range[i32]) -> usize {
     return count;
 }
 
+fn count(r: range[i32]) -> i32 {
+    let mut n = 0;
+    for r {
+        n = n + 1;
+    }
+    for (r) {
+        n = n + 10;
+    }
+    return n;
+}
+
 fn fill(r: range[i32]) -> [4]i32 {
     return [4]i32{r...};
 }
@@ -41,6 +53,15 @@ fn main() {
         last = v;
     }
     println("field:", last, span.tag);
+    let mut counted: u8 = 0;
+    for span.values {
+        counted = counted + 1;
+    }
+    let mut again = true;
+    for again {
+        again = false;
+    }
+    println("counted:", count(r), count(evens(9)), count(3..=0), counted, again);
     println("filled:", fill(0..4), fill(7..=4), fill(evens(8)));
     let down: range[i32] = 9..=0:3;
     println("spread:", [5]i32{100, down...});
