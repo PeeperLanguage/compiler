@@ -26,6 +26,21 @@ fn untyped_none() { let p = none; }
 // No loan follows a reference behind a raw pointer.
 fn reference_target(r: &i32) { let mut s = r; let p = @s; }
 
+// `@x` can write `x`, so no reference to it may be in use then.
+fn while_lent(r: &mut [3]i32) {
+    for v in r {
+        let p = @r.*[0];
+        v.* = 1;
+    }
+}
+
+fn while_shared() -> i32 {
+    let mut x = 1;
+    let shared = &x;
+    let p = @x;
+    return shared.*;
+}
+
 fn escape() -> *i32 {
     let mut local = 1;
     return @local;

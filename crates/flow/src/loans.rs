@@ -157,9 +157,11 @@ const SLICE_WORDS: BorrowWords = BorrowWords {
 struct Access<'p> {
     variable: Id<mir::Variable>,
     projections: &'p [mir::Projection],
-    event: &'static str, // for the message: "changed", "read", ...
-    reads: bool,         // only reads it, which a shared loan allows
-    replaces: bool,      // replaces or ends the place's own storage
+    subject: &'static str, // what is done to: "" (the place) or "address of "
+    event: &'static str,   // for the message: "changed", "read", ...
+    label: &'static str,   // where it is done: "read", "address taken", ...
+    reads: bool,           // only reads it, which a shared loan allows
+    replaces: bool,        // replaces or ends the place's own storage
     span: Span,
 }
 
@@ -601,11 +603,27 @@ impl Loans<'_, '_> {
                 let event = self.words(self.body.instructions[id].ty).mutably_borrowed;
                 (place, event, reserves, false)
             }
+            // `@x` can write `x`, so no reference to it may be in use; it
+            // looks like no borrow, so the message names the address.
+            mir::InstructionKind::Address(ref place) => {
+                return Some(Access {
+                    variable: place.variable,
+                    projections: &place.projections,
+                    subject: "address of ",
+                    event: "being taken",
+                    label: "address taken",
+                    reads: false,
+                    replaces: false,
+                    span: self.body.instructions.span(id),
+                });
+            }
             mir::InstructionKind::ScopeEnd(variable) => {
                 return Some(Access {
                     variable,
                     projections: &[],
+                    subject: "",
                     event: "gone",
+                    label: "gone",
                     reads: false,
                     replaces: true,
                     span: self.body.instructions.span(id),
@@ -616,7 +634,9 @@ impl Loans<'_, '_> {
         Some(Access {
             variable: place.variable,
             projections: &place.projections,
+            subject: "",
             event,
+            label: event,
             reads,
             replaces,
             span: self.body.instructions.span(id),
@@ -673,10 +693,11 @@ impl Loans<'_, '_> {
                 } else {
                     format!("a {noun}")
                 };
-                let event = access.event;
-                let message = format!("`{name}` is {event} while {kind} {to} it is still in use");
+                let (subject, event) = (access.subject, access.event);
+                let message =
+                    format!("{subject}`{name}` is {event} while {kind} {to} it is still in use");
                 let error = Diagnostic::new(diagnostics::BORROW_CONFLICT, message)
-                    .label(file, access.span, format!("{event} here"))
+                    .label(file, access.span, format!("{} here", access.label))
                     .label(
                         file,
                         self.body.instructions.span(borrow),

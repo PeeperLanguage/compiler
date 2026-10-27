@@ -40,10 +40,10 @@ fn main() -> i32 {
     println("structs:", point, line, Empty.{});
     let shared = &point;
     println("shared:", shared, shared.y);
-    let changed = &mut point;
-    println("changed:", changed);
     let raw = @point;
     println("raw:", raw.*);
+    let changed = &mut point;
+    println("changed:", changed);
     changed.x = 30;
     println("after:", point.x + point.y, twice(5));
 
