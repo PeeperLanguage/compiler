@@ -141,7 +141,8 @@ impl Loans<'_, '_> {
         self.borrows.len() + self.body.parameters
     }
 
-    /// The variables and values that are references, numbered in order.
+    /// How many holders there are: the variables and values that are
+    /// references.
     fn holder_count(&self) -> usize {
         self.holders.iter().flatten().count()
     }
