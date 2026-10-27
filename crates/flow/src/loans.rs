@@ -107,7 +107,6 @@ pub fn report_loan_errors<'t>(
         reserved: Bits::new(0), // found below: it needs `Loans::uses`
         borrows,
         holders,
-        holder_count,
     };
     loans.reserved = loans.reserved_loans();
     loans.report(file, diagnostics);
@@ -122,7 +121,6 @@ struct Loans<'b, 't> {
     /// The holder of each variable, then of each instruction's value;
     /// `None` for one that is not a reference.
     holders: Vec<Option<Id<Holder>>>,
-    holder_count: usize,
     /// The `&mut` loans reserved until their call (two-phase).
     reserved: Bits<Loan>,
 }
@@ -141,6 +139,11 @@ impl Loans<'_, '_> {
     /// The borrows, then one parameter loan per parameter.
     fn loan_count(&self) -> usize {
         self.borrows.len() + self.body.parameters
+    }
+
+    /// The variables and values that are references, numbered in order.
+    fn holder_count(&self) -> usize {
+        self.holders.iter().flatten().count()
     }
 
     fn variable_holder(&self, variable: Id<mir::Variable>) -> Option<Id<Holder>> {
@@ -251,8 +254,9 @@ impl Loans<'_, '_> {
 
     /// The `&mut` loans whose reference is used once, as a call argument.
     fn reserved_loans(&self) -> Bits<Loan> {
-        let mut use_counts = vec![0_u32; self.holder_count];
-        let mut call_arguments = Bits::new(self.holder_count);
+        let holder_count = self.holder_count();
+        let mut use_counts = vec![0_u32; holder_count];
+        let mut call_arguments = Bits::new(holder_count);
         for id in self.body.instructions.ids() {
             let call = match self.body.instructions[id].kind {
                 mir::InstructionKind::Call {
@@ -374,8 +378,9 @@ impl Loans<'_, '_> {
         let body = self.body;
         let instructions =
             |block: Id<mir::Block>| body.lists.items(body.blocks[block].instructions);
-        let no_holders = Bits::new(self.holder_count);
-        let no_loans = vec![Bits::new(self.loan_count()); self.holder_count];
+        let holder_count = self.holder_count();
+        let no_holders = Bits::new(holder_count);
+        let no_loans = vec![Bits::new(self.loan_count()); holder_count];
         let starts = dataflow(
             body.blocks.len(),
             [(Id::from_index(0), no_loans)],
@@ -574,12 +579,15 @@ impl Loans<'_, '_> {
         reported: &mut Bits<Loan>,
         file: &Arc<SourceFile>,
     ) -> Option<(Id<Holder>, Diagnostic)> {
-        let holders = (0..self.holder_count).map(Id::from_index);
-        let holders = holders.filter(|&holder| live.has(holder) && !skip.contains(&Some(holder)));
-        for holder in holders {
+        let holders = held
+            .iter()
+            .enumerate()
+            .map(|(index, holding)| (Id::from_index(index), holding));
+        let holders =
+            holders.filter(|&(holder, _)| live.has(holder) && !skip.contains(&Some(holder)));
+        for (holder, holding) in holders {
             let loans = (0..self.borrows.len()).map(Id::from_index);
-            let held = &held[holder.index()];
-            for loan in loans.filter(|&loan| held.has(loan) && !reported.has(loan)) {
+            for loan in loans.filter(|&loan| holding.has(loan) && !reported.has(loan)) {
                 let borrow = self.borrows[loan.index()];
                 let mir::InstructionKind::Borrow {
                     place: ref loaned,
