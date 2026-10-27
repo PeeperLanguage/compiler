@@ -219,7 +219,8 @@ pub enum InstructionKind {
     /// The variable's block ends here, or a `break`, `continue` or `return`
     /// leaves it, so its storage is gone: no reference may still use it
     /// (`flow::loans::report_loan_errors`), and a loop's next pass may set
-    /// it again (`flow::report_variable_state_errors`). Writes no code.
+    /// it again (`flow::variable_state::report_variable_state_errors`).
+    /// Writes no code.
     ScopeEnd(Id<Variable>),
 }
 

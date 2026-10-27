@@ -386,10 +386,11 @@ end block itself has instructions, only the end is named, since one `return`
 there fixes every path. `Checker::check_body` gives no THIR for a body whose check
 reported an error, so such a function is neither lowered nor path-checked.
 
-The variable state check (`flow::report_variable_state_errors`) is forward
-dataflow with three bits per variable at each block's start: set on every path
-to it ("and" at joins), set on some path ("or"), and moved on some path and not
-set since ("or"). A `store` to a whole variable sets the first two and clears
+The variable state check
+(`flow::variable_state::report_variable_state_errors`) is forward dataflow
+with three bits per variable at each block's start: set on every path to it
+("and" at joins), set on some path ("or"), and moved on some path and not set
+since ("or"). A `store` to a whole variable sets the first two and clears
 the third; a `move` of one clears the first and sets the third.
 
 Lowering decides what copies (`Type::is_copy`: numbers, `bool`, `cstr`,

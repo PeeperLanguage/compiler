@@ -83,7 +83,7 @@ impl Checker<'_> {
         // module's checks, this one's too.
         let mut found = Vec::new();
         let diagnostics = &mut found;
-        flow::report_variable_state_errors(&mir, file, diagnostics);
+        flow::variable_state::report_variable_state_errors(&mir, file, diagnostics);
         let module_checks = &self.module_checks;
         let types = &self.types;
         let origins_of = |definition: DefId| {
