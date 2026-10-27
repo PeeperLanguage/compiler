@@ -13,31 +13,30 @@ fn sum:
   bb0:
     store values.0, arg0
     store total.1, 0
-    %2 = Subtract 4, 0: u64
-    %3 = NotEqualTo %2, 0: bool
+    %2 = NotEqualTo 4, 0: bool
     goto bb1
   bb1:
-    %4 = phi bb0: 0, bb4: %9: u64
-    %5 = phi bb0: %2, bb4: %10: u64
-    %6 = phi bb0: %3, bb4: %8: bool
-    branch %6 (0..values.len) bb2 bb3
+    %3 = phi bb0: 0, bb4: %8: u64
+    %4 = phi bb0: 4, bb4: %9: u64
+    %5 = phi bb0: %2, bb4: %7: bool
+    branch %5 (0..values.len) bb2 bb3
   bb2:
-    store i.2, %4
-    %8 = GreaterThan %5, 1: bool
-    %9 = Add %4, 1: u64
-    %10 = Subtract %5, 1: u64
-    %11 = load total.1: i32
-    %12 = load i.2: u64
-    %13 = load values.0.*[at %12]: i32
-    %14 = Add %11, %13: i32
-    store total.1, %14
+    store i.2, %3
+    %7 = GreaterThan %4, 1: bool
+    %8 = Add %3, 1: u64
+    %9 = Subtract %4, 1: u64
+    %10 = load total.1: i32
+    %11 = load i.2: u64
+    %12 = load values.0.*[at %11]: i32
+    %13 = Add %10, %12: i32
+    store total.1, %13
     scope end i.2
     goto bb4
   bb3:
-    %17 = load total.1: i32
+    %16 = load total.1: i32
     scope end total.1
     scope end values.0
-    return %17
+    return %16
   bb4:
     goto bb1
   bb5:

@@ -5,6 +5,8 @@ use std::collections::HashMap;
 use std::fmt;
 use std::ops::Index;
 
+use bigint::Limbs;
+
 use crate::DefId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -49,6 +51,15 @@ impl Integer {
                 length < bits || length == bits && power_of_two
             }
         }
+    }
+
+    /// Whether a range of this type from the constant `start` to `end`
+    /// counts up (`start <= end`), and how far apart the two are, read as
+    /// unsigned of the same width, so it never overflows.
+    pub fn range_distance(self, start: &Limbs, end: &Limbs) -> (bool, Limbs) {
+        let up = bigint::compare(self.bits, self.signed, start, end).is_le();
+        let (near, far) = if up { (start, end) } else { (end, start) };
+        (up, bigint::subtract(self.bits, far, near))
     }
 }
 

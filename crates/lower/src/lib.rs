@@ -179,6 +179,17 @@ impl Lowering<'_> {
         mir::Operand::Constant(id)
     }
 
+    /// The integer `value`, of the integer type `ty`, as an operand.
+    fn integer_constant(&mut self, ty: TypeId, value: u64) -> mir::Operand {
+        let Type::Integer(integer) = self.types[ty] else {
+            unreachable!("an integer constant has an integer type")
+        };
+        self.add_constant(Constant {
+            ty,
+            value: Value::Integer(Limbs::new(integer.bits, &[value])),
+        })
+    }
+
     /// Lowers the statements of the source block `block`, whose MIR debug
     /// scope has the same id.
     fn lower_block(&mut self, block: Id<thir::Block>) -> Option<()> {
@@ -209,14 +220,112 @@ impl Lowering<'_> {
         ended
     }
 
-    /// Lowers the `thir::Stmt::ForRange` `statement`. On entry, once: whether
-    /// the range counts up (`start <= end`, known now when both are
-    /// constants), `left`, how far `end` is, as the step's unsigned type, and
-    /// `delta`, what a pass adds to the counter: `step` up, `0 - step` down,
-    /// both wrapping. The counter, `left`, the passes and whether a pass runs
-    /// are `phi`s. A next pass runs while `left` is more than `step` (at least
-    /// `step` for `..=`), so the counter steps only to a value in the range
-    /// and never overflows.
+    /// Stops the program when a range's `step`, of the unsigned type `size`
+    /// and written at `span`, is zero; a constant one the checker rejected.
+    fn check_step(&mut self, step: mir::Operand, size: TypeId, span: Span) {
+        if matches!(step, mir::Operand::Constant(_)) {
+            return;
+        }
+        let zero = self.integer_constant(size, 0);
+        let failed = self.binary(BinaryOp::EqualTo, step, zero, TypeId::BOOL, span);
+        let message = "range step is zero";
+        let check = mir::InstructionKind::Check { failed, message };
+        self.emit(check, TypeId::VOID, span);
+    }
+
+    /// Starts walking the range `start` to `end` by `step`, written at
+    /// `span`, of an integer type `ty` with `step` of its unsigned type
+    /// `size`: lowers the three, checks the step (`check_step`), then
+    /// whether the range counts up (`start <= end`, known now when both are
+    /// constants), `left`, how far `end` is, as `size`, and `delta`, what
+    /// each next value adds: `step` up, `0 - step` down, both wrapping.
+    /// Gives `(start, step, left, delta)`, each a constant when what it is
+    /// computed from is.
+    fn walk_range(
+        &mut self,
+        [start, end, step]: [Id<thir::Expr>; 3],
+        span: Span,
+    ) -> Option<(mir::Operand, mir::Operand, mir::Operand, mir::Operand)> {
+        let (ty, size) = (
+            self.types.real(self.thir.exprs[start].ty),
+            self.thir.exprs[step].ty,
+        );
+        let Type::Integer(integer) = self.types[ty] else {
+            unreachable!("the checker allows only an integer range")
+        };
+        let step_span = self.thir.exprs.span(step);
+        let start = self.lower_expr(start)?;
+        let end = self.lower_expr(end)?;
+        let step = self.lower_expr(step)?;
+        self.check_step(step, size, step_span);
+        let known = |lowering: &Self, operand| match operand {
+            mir::Operand::Constant(id) => match lowering.mir.constants[id.index()].value {
+                Value::Integer(ref value) => Some(value.clone()),
+                _ => unreachable!("the checker allows only an integer range"),
+            },
+            _ => None,
+        };
+        // Between the step's type and the counter's, the same bits read
+        // with the other sign.
+        let convert = |lowering: &mut Self, value, to| match size == ty {
+            true => value, // an unsigned range
+            false => lowering.emit(mir::InstructionKind::Convert(value), to, span),
+        };
+        let delta = |lowering: &mut Self, up: bool| match known(lowering, step) {
+            Some(step) => lowering.add_constant(Constant {
+                ty,
+                value: Value::Integer(match up {
+                    true => step,
+                    false => bigint::negate(integer.bits, &step),
+                }),
+            }),
+            None if up => convert(lowering, step, ty),
+            None => {
+                let delta = convert(lowering, step, ty);
+                let zero = lowering.integer_constant(ty, 0);
+                lowering.binary(BinaryOp::Subtract, zero, delta, ty, span)
+            }
+        };
+        if let (Some(first), Some(last)) = (known(self, start), known(self, end)) {
+            let (up, distance) = integer.range_distance(&first, &last);
+            let left = self.add_constant(Constant {
+                ty: size,
+                value: Value::Integer(distance),
+            });
+            return Some((start, step, left, delta(self, up)));
+        }
+        let way = |lowering: &mut Self, up: bool| {
+            let (near, far) = if up { (start, end) } else { (end, start) };
+            let distance = lowering.binary(BinaryOp::Subtract, far, near, ty, span);
+            (convert(lowering, distance, size), delta(lowering, up))
+        };
+        let up = self.binary(BinaryOp::LessOrEqual, start, end, TypeId::BOOL, span);
+        let [upward, downward, counted] = [(); 3].map(|()| self.new_block(span));
+        self.finish(mir::Terminator::Branch {
+            condition: up,
+            span,
+            then: upward,
+            otherwise: downward,
+        });
+        self.block = upward;
+        let (left_up, delta_up) = way(self, true);
+        self.finish(mir::Terminator::Goto(counted));
+        self.block = downward;
+        let (left_down, delta_down) = way(self, false);
+        self.finish(mir::Terminator::Goto(counted));
+        self.block = counted;
+        let left = mir::InstructionKind::Phi(Box::new([(upward, left_up), (downward, left_down)]));
+        let delta =
+            mir::InstructionKind::Phi(Box::new([(upward, delta_up), (downward, delta_down)]));
+        let (left, delta) = (self.emit(left, size, span), self.emit(delta, ty, span));
+        Some((start, step, left, delta))
+    }
+
+    /// Lowers the `thir::Stmt::ForRange` `statement`. On entry, once:
+    /// `left` and `delta` (`walk_range`). The counter, `left`, the passes
+    /// and whether a pass runs are `phi`s. A next pass runs while `left` is
+    /// more than `step` (at least `step` for `..=`), so the counter steps
+    /// only to a value in the range and never overflows.
     fn lower_for_range(&mut self, statement: Id<thir::Stmt>) -> Option<()> {
         let thir::Stmt::ForRange {
             index,
@@ -235,98 +344,18 @@ impl Lowering<'_> {
             self.thir.exprs.span(start).start as usize,
             self.thir.exprs.span(end).end as usize,
         );
-        let step_span = self.thir.exprs.span(step);
         let (ty, size) = (
             self.types.real(self.thir.exprs[start].ty),
             self.thir.exprs[step].ty,
         );
-        let start = self.lower_expr(start)?;
-        let end = self.lower_expr(end)?;
-        let step = self.lower_expr(step)?;
-        let number = |lowering: &mut Self, ty: TypeId, number: u64| {
-            let Type::Integer(integer) = lowering.types[ty] else {
-                unreachable!("the checker allows only an integer range")
-            };
-            lowering.add_constant(Constant {
-                ty,
-                value: Value::Integer(Limbs::new(integer.bits, &[number])),
-            })
-        };
-        if !matches!(step, mir::Operand::Constant(_)) {
-            let zero = number(self, size, 0);
-            let failed = self.binary(BinaryOp::EqualTo, step, zero, TypeId::BOOL, step_span);
-            let message = "range step is zero";
-            let check = mir::InstructionKind::Check { failed, message };
-            self.emit(check, TypeId::VOID, step_span);
-        }
-        // `left` and `delta` counting up, or down; between the step's type
-        // and the counter's, the same bits read with the other sign.
-        let way = |lowering: &mut Self, up: bool| {
-            let convert = |lowering: &mut Self, value, to| match size == ty {
-                true => value, // an unsigned range
-                false => lowering.emit(mir::InstructionKind::Convert(value), to, range_span),
-            };
-            let (near, far) = if up { (start, end) } else { (end, start) };
-            let distance = lowering.binary(BinaryOp::Subtract, far, near, ty, range_span);
-            let left = convert(lowering, distance, size);
-            let delta = convert(lowering, step, ty);
-            if up {
-                return (left, delta);
-            }
-            let zero = number(lowering, ty, 0);
-            let back = lowering.binary(BinaryOp::Subtract, zero, delta, ty, range_span);
-            (left, back)
-        };
-        let known_up = match (start, end) {
-            (mir::Operand::Constant(start), mir::Operand::Constant(end)) => {
-                let (&Type::Integer(integer), Value::Integer(start), Value::Integer(end)) = (
-                    &self.types[ty],
-                    &self.mir.constants[start.index()].value,
-                    &self.mir.constants[end.index()].value,
-                ) else {
-                    unreachable!("the checker allows only an integer range")
-                };
-                Some(bigint::compare(integer.bits, integer.signed, start, end).is_le())
-            }
-            _ => None,
-        };
-        let (left_first, delta) = match known_up {
-            Some(up) => way(self, up),
-            None => {
-                let up = self.binary(BinaryOp::LessOrEqual, start, end, TypeId::BOOL, range_span);
-                let [upward, downward, counted] = [(); 3].map(|()| self.new_block(range_span));
-                self.finish(mir::Terminator::Branch {
-                    condition: up,
-                    span: range_span,
-                    then: upward,
-                    otherwise: downward,
-                });
-                self.block = upward;
-                let (left_up, delta_up) = way(self, true);
-                self.finish(mir::Terminator::Goto(counted));
-                self.block = downward;
-                let (left_down, delta_down) = way(self, false);
-                self.finish(mir::Terminator::Goto(counted));
-                self.block = counted;
-                let left =
-                    mir::InstructionKind::Phi(Box::new([(upward, left_up), (downward, left_down)]));
-                let delta = mir::InstructionKind::Phi(Box::new([
-                    (upward, delta_up),
-                    (downward, delta_down),
-                ]));
-                (
-                    self.emit(left, size, range_span),
-                    self.emit(delta, ty, range_span),
-                )
-            }
-        };
+        let (start, step, left_first, delta) = self.walk_range([start, end, step], range_span)?;
         let first = if inclusive {
             self.add_constant(Constant {
                 ty: TypeId::BOOL,
                 value: Value::Bool(true),
             })
         } else {
-            let zero = number(self, size, 0);
+            let zero = self.integer_constant(size, 0);
             self.binary(
                 BinaryOp::NotEqualTo,
                 left_first,
@@ -375,9 +404,9 @@ impl Lowering<'_> {
         let left_next = self.binary(BinaryOp::Subtract, left, step, size, range_span);
         let passes = index.zip(passes).map(|(index, passes)| {
             let passes_type = self.mir.variables[index].ty;
-            let one = number(self, passes_type, 1);
+            let one = self.integer_constant(passes_type, 1);
             let next = self.binary(BinaryOp::Add, passes, one, passes_type, range_span);
-            (passes, number(self, passes_type, 0), next)
+            (passes, self.integer_constant(passes_type, 0), next)
         });
         // Every pass ends here, so each `phi` has one entry for them.
         let step = self.new_block(span);
@@ -548,13 +577,10 @@ impl Lowering<'_> {
                 _ = self.place(array)?;
                 let array = self.thir.exprs[array].ty;
                 let array = self.types[array].pointee().unwrap_or(array);
-                let (Type::Array { length, .. }, Type::Integer(usize)) =
-                    (&self.types[array], &self.types[ty])
-                else {
-                    unreachable!("`.len` is the `usize` length of an array")
+                let Type::Array { length, .. } = self.types[array] else {
+                    unreachable!("`.len` is the length of an array")
                 };
-                let value = Value::Integer(Limbs::new(usize.bits, &[*length]));
-                return Some(self.add_constant(Constant { ty, value }));
+                return Some(self.integer_constant(ty, length));
             }
             thir::ExprKind::Binary {
                 op: op @ (BinaryOp::LogicalAnd | BinaryOp::LogicalOr),

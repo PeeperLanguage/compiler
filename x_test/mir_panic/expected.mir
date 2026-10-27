@@ -22,21 +22,18 @@ fn check:
     fall off at `}`
 fn each:
   bb0:
-    %0 = Subtract 3, 0: i32
-    %1 = convert %0: u32
-    %2 = convert 1: i32
-    %3 = NotEqualTo %1, 0: bool
+    %0 = NotEqualTo 3, 0: bool
     goto bb1
   bb1:
-    %4 = phi bb0: 0, bb4: %9: i32
-    %5 = phi bb0: %1, bb4: %10: u32
-    %6 = phi bb0: %3, bb4: %8: bool
-    branch %6 (0..3) bb2 bb3
+    %1 = phi bb0: 0, bb4: %6: i32
+    %2 = phi bb0: 3, bb4: %7: u32
+    %3 = phi bb0: %0, bb4: %5: bool
+    branch %3 (0..3) bb2 bb3
   bb2:
-    store v.0, %4
-    %8 = GreaterThan %5, 1: bool
-    %9 = Add %4, %2: i32
-    %10 = Subtract %5, 1: u32
+    store v.0, %1
+    %5 = GreaterThan %2, 1: bool
+    %6 = Add %1, 1: i32
+    %7 = Subtract %2, 1: u32
     panic c"in a loop"
   bb3:
     fall off at `}`
