@@ -1,9 +1,16 @@
-// `values...` in an array literal gives each value of an array or a range,
-// in order, between the other entries; a range may stand in parentheses.
+// `values...` in an array literal gives each value of an array, a slice or a
+// range, in order, between the other entries; a range may stand in
+// parentheses. A slice's elements are copied; a `[&mut]` is only read, so
+// it is usable after.
 struct Point { x: i32, y: i32 }
 
 fn tail(n: i32) -> [4]i32 {
     return [4]i32{9, (n..n + 3)...};
+}
+
+// Built apart from the caller's result, which `view` may view.
+fn shift(view: [&]i32) -> [4]i32 {
+    return [4]i32{0, &view[0..3]...};
 }
 
 fn main() {
@@ -17,4 +24,18 @@ fn main() {
     let rows = [_][2]i32{grid..., [2]i32{(5..7)...}};
     let empty = [0]i32{};
     println("nested:", rows[0], rows[1], [_]i32{empty..., 7, empty...}, tail(1));
+
+    let mut b = [4]i32{1, 2, 3, 4};
+    let edit: [&mut]i32 = &mut b;
+    let copy = [5]i32{edit..., 9};
+    edit[0] = 7;
+    // The literal is built before `b` is written, though `view` views it.
+    let view: [&]i32 = &b[0..3];
+    b = [4]i32{0, view...};
+    let wide = [3]i64{10, 20, 30};
+    let slices: [&][2]i32 = &grid;
+    let mixed = [5]i64{&wide[1..]..., 0..3...};
+    println("slices:", copy, b, mixed, [2][2]i32{slices..., [2]i32{3, 4}}, [2]i32{&b[1..1]..., 8, 9});
+    b = shift(&b);
+    println("shifted:", b);
 }

@@ -6,5 +6,7 @@ mode = "check"
 outcome = "failure"
 stderr_contains = [
     "`points` is used after it was moved",
-    "Compilation failed with 1 error(s)",
+    "cannot move an element out of a slice",
+    "`...` copies each element of this `[&]Point`, and `Point` moves",
+    "Compilation failed with 2 error(s)",
 ]

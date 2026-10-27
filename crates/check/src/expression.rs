@@ -602,10 +602,10 @@ impl ThirBuilder<'_, '_> {
 
     /// `[N]T{ entries }`, written at `span`, or `[_]T{ entries }`, whose
     /// length is the number of values its entries give: each entry a `T`, or
-    /// a spread of a range or an array (`check_spread`). They must give
-    /// exactly its length. A range whose count is not known now is counted
-    /// when the program runs, so its literal needs a written length, which
-    /// the entries known now must not already pass.
+    /// a spread of a range, an array or a slice (`check_spread`). They must
+    /// give exactly its length. A slice, or a range whose count is not known
+    /// now, is counted when the program runs, so its literal needs a written
+    /// length, which the entries known now must not already pass.
     fn check_array_literal(
         &mut self,
         written: Id<ast::Type>,
@@ -632,14 +632,14 @@ impl ThirBuilder<'_, '_> {
             element => TypeExpectation::Required(element),
         };
         let mut parts: Vec<NonZeroU32> = Vec::with_capacity(entries.len());
-        // The values known now, and the first range not counted until the
-        // program runs; `None` after an error in a spread. Each count fits a
-        // `usize`, so their sum fits a `u128`.
+        // The values known now, and the first spread not counted until the
+        // program runs, with why `[_]` cannot count it; `None` after an error
+        // in a spread. Each count fits a `usize`, so their sum fits a `u128`.
         let (mut known, mut later) = (Some(0u128), None);
         for entry in tree.children.lists.items(entries) {
             let entry_span = tree.children.entries.span(entry);
             let (part, count) = match tree.children.entries[entry] {
-                ast::Entry::Value(value) => (self.add_expr(value, expectation), Some(1)),
+                ast::Entry::Value(value) => (self.add_expr(value, expectation), Ok(1)),
                 ast::Entry::Spread(values) => {
                     let Some(checked) = self.check_spread(values, element) else {
                         known = None;
@@ -649,8 +649,8 @@ impl ThirBuilder<'_, '_> {
                 }
             };
             match count {
-                Some(count) => known = known.map(|known| known + u128::from(count)),
-                None => later = later.or(Some(entry_span)),
+                Ok(count) => known = known.map(|known| known + u128::from(count)),
+                Err(reason) => later = later.or(Some((entry_span, reason))),
             }
             parts.push(part.into());
         }
@@ -670,21 +670,22 @@ impl ThirBuilder<'_, '_> {
     /// The type of the array literal written at `span` as `written`, of
     /// `element`s, with `length` when written (`[N]`, as its type), whose
     /// entries give `known` values now and more when the program runs if a
-    /// range, first at `later`, is counted then; `None` after reporting
-    /// that they do not fit it (`check_array_literal`).
+    /// spread, first at `later` with why `[_]` cannot count it, is counted
+    /// then; `None` after reporting that they do not fit it
+    /// (`check_array_literal`).
     fn array_literal_type(
         &mut self,
         written: Id<ast::Type>,
         element: TypeId,
         length: Option<(TypeId, u64)>,
-        (known, later): (u128, Option<Span>),
+        (known, later): (u128, Option<(Span, &'static str)>),
         span: Span,
     ) -> Option<TypeId> {
         match (length, later) {
-            (None, Some(range)) => {
-                let message = "a range in `[_]` needs constant ends and step; write the length";
+            (None, Some((spread, reason))) => {
+                let message = format!("{reason}; write the length");
                 self.checker
-                    .error(diagnostics::TYPE_MISMATCH, message, range);
+                    .error(diagnostics::TYPE_MISMATCH, message, spread);
                 None
             }
             (None, None) => {
@@ -715,15 +716,16 @@ impl ThirBuilder<'_, '_> {
     }
 
     /// The spread `values...` in an array literal of `element`s, checked,
-    /// with how many values it gives when that is known now; `None` after
-    /// an error. An array gives its elements, which must be
-    /// `element`s; a range its values, counted now when it is written with
+    /// with how many values it gives when that is known now, else why `[_]`
+    /// cannot count it; `None` after an error. An array gives its elements,
+    /// which must be `element`s; a slice copies its elements, which must
+    /// copy; a range its values, counted now when it is written with
     /// constant ends and step; a count no array can hold is reported.
     fn check_spread(
         &mut self,
         values: Id<ast::Expr>,
         element: TypeId,
-    ) -> Option<(Id<Expr>, Option<u64>)> {
+    ) -> Option<(Id<Expr>, Result<u64, &'static str>)> {
         let tree = &self.checker.module().ast;
         let values = tree.unparenthesized(values);
         let span = tree.exprs.span(values);
@@ -740,13 +742,51 @@ impl ThirBuilder<'_, '_> {
             } if element == TypeId::INVALID
                 || types.conversion(from, element) == Conversion::Same =>
             {
-                return Some((spread, Some(length)));
+                return Some((spread, Ok(length)));
+            }
+            Type::Slice {
+                mutable,
+                element: from,
+            } if element == TypeId::INVALID
+                || types.conversion(from, element) == Conversion::Same =>
+            {
+                if !types.is_copy(from) {
+                    let file = &self.checker.module().ast.file;
+                    let slice_text = self.checker.type_text(ty);
+                    let element_text = self.checker.type_text(from);
+                    let diagnostic = Diagnostic::new(
+                        diagnostics::PARTIAL_MOVE,
+                        "cannot move an element out of a slice",
+                    )
+                    .label(
+                        file,
+                        span,
+                        format!(
+                            "`...` copies each element of this `{slice_text}`, and \
+                             `{element_text}` moves"
+                        ),
+                    );
+                    self.checker.report(diagnostic);
+                    return None;
+                }
+                // Read only, as Rust's `<[T; N]>::try_from(&*s)`, so a
+                // `[&mut]` in a variable is usable after.
+                if mutable && let ExprKind::Variable(_) = self.body.exprs[spread].kind {
+                    let shared = self.checker.types.intern(Type::Slice {
+                        mutable: false,
+                        element: from,
+                    });
+                    let reference = self.body.exprs[spread].clone();
+                    self.body.exprs[spread] = self.reborrow(reference, span, shared);
+                }
+                let reason = "a slice in `[_]` has a length known only when the program runs";
+                return Some((spread, Err(reason)));
             }
             Type::Range { element: from, .. }
                 if element == TypeId::INVALID || types.same(from, element) => {}
             _ => {
                 let message = format!(
-                    "`...` here spreads a range or an array of `{}`, found `{}`",
+                    "`...` here spreads a range, an array or a slice of `{}`, found `{}`",
                     self.checker.type_text(element),
                     self.checker.type_text(ty)
                 );
@@ -755,6 +795,7 @@ impl ThirBuilder<'_, '_> {
                 return None;
             }
         }
+        let uncounted = "a range in `[_]` needs constant ends and step";
         let exprs = &self.body.exprs;
         let constant = |id: Id<Expr>| match exprs[id].kind {
             ExprKind::Constant(Value::Integer(ref limbs)) => Some(limbs),
@@ -767,11 +808,11 @@ impl ThirBuilder<'_, '_> {
             inclusive,
         } = exprs[spread].kind
         else {
-            return Some((spread, None)); // a range value, counted when the program runs
+            return Some((spread, Err(uncounted))); // a range value
         };
         let (Some(first), Some(last), Some(by)) = (constant(start), constant(end), constant(step))
         else {
-            return Some((spread, None));
+            return Some((spread, Err(uncounted)));
         };
         let Type::Integer(integer) = types[exprs[start].ty] else {
             unreachable!("a range is of integers")
@@ -780,7 +821,7 @@ impl ThirBuilder<'_, '_> {
         if !self.checker.length_fits(count.as_slice(), span) {
             return None;
         }
-        Some((spread, Some(count.as_slice()[0]))) // it fits a `usize`
+        Some((spread, Ok(count.as_slice()[0]))) // it fits a `usize`
     }
 
     /// The range `start..end`, or `..=`, stepping by `start..end:step`, at

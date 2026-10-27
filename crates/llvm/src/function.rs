@@ -228,7 +228,7 @@ impl Module<'_> {
 /// How many times the instruction `id` can trap at run time, so it checks
 /// first: a division or shift of integers by a value not known at compile
 /// time, each element of its place at an index not known then, and a
-/// `Check`, and array parts whose ranges are not all known then. Check
+/// `Check`, and array parts whose counts are not all known then. Check
 /// rejects a constant that would trap.
 // Called for every instruction; the array parts arm made the inliner drop it,
 // costing a compile about 10 M instructions.
@@ -267,21 +267,46 @@ fn traps(body: &mir::Body, types: &Types, id: Id<mir::Instruction>) -> usize {
             unknown + usize::from(in_slice)
         }
         InstructionKind::Check { .. } => 1,
-        // A range is counted when the program runs unless it is written here
-        // with constant `left`, `step` and `inclusive`.
-        InstructionKind::ArrayParts(ref parts) => usize::from(parts.iter().any(|&part| {
-            matches!(types[body.operand_type(part)], Type::Range { .. })
-                && [range_field::LEFT, range_field::STEP, range_field::INCLUSIVE]
-                    .into_iter()
-                    .any(|field| {
-                        !matches!(
-                            written_range_field(body, part, field),
-                            Some(Operand::Constant(_))
-                        )
-                    })
-        })),
+        // Any part but an element or an array is counted when the program
+        // runs, as is a range unless it is written here with constant
+        // `left`, `step` and `inclusive`; a new kind of part is checked
+        // until it is listed here.
+        InstructionKind::ArrayParts(ref parts) => {
+            let Type::Array { element, .. } = types[body.instructions[id].ty] else {
+                unreachable!("array parts make an array")
+            };
+            usize::from(parts.iter().any(|&part| {
+                let ty = body.operand_type(part);
+                match types[ty] {
+                    _ if types.same(ty, element) => false,
+                    Type::Array { .. } => false,
+                    Type::Range { .. } => {
+                        [range_field::LEFT, range_field::STEP, range_field::INCLUSIVE]
+                            .into_iter()
+                            .any(|field| {
+                                !matches!(
+                                    written_range_field(body, part, field),
+                                    Some(Operand::Constant(_))
+                                )
+                            })
+                    }
+                    _ => true,
+                }
+            }))
+        }
         _ => 0,
     }
+}
+
+/// Whether the instruction `id` spreads a slice into an array. The slice
+/// may view the memory the array would be built in, a stored place
+/// (`a = [4]i32{0, s...}` of `s = &a[0..3]`) or `%result` (`a = f(&a)`), so
+/// that array is built in its own memory and then copied (`value_address`).
+fn spreads_slice(body: &mir::Body, types: &Types, id: Id<mir::Instruction>) -> bool {
+    let InstructionKind::ArrayParts(ref parts) = body.instructions[id].kind else {
+        return false;
+    };
+    (parts.iter()).any(|&part| matches!(types[body.operand_type(part)], Type::Slice { .. }))
 }
 
 /// Field `field` of the range value `range` (`range_fields`) as the
@@ -484,6 +509,7 @@ impl Function<'_, '_, '_> {
                         | InstructionKind::ArrayParts(_)
                         | InstructionKind::Call { .. }
                 )
+                && !spreads_slice(body, types, value)
                 && (body.lists.items(mir.instructions))
                     .filter(|&id| body.instructions[id].kind.runs())
                     .last()
@@ -1063,10 +1089,10 @@ impl Function<'_, '_, '_> {
     /// Writes the array value `id` from `parts`
     /// (`InstructionKind::ArrayParts`): counts them and checks the count
     /// (`write_part_counts`), then writes each element at its place, copies
-    /// each array to its place, and fills each range through its element
-    /// type's filler. Out of line, so `write_instruction` stays small enough
-    /// to inline into `write_block` (measured: 10 M fewer instructions per
-    /// compile).
+    /// each array and each slice's elements to its place, and fills each
+    /// range through its element type's filler. Out of line, so
+    /// `write_instruction` stays small enough to inline into `write_block`
+    /// (measured: 10 M fewer instructions per compile).
     #[cold]
     #[inline(never)]
     fn write_array_parts(
@@ -1104,6 +1130,25 @@ impl Function<'_, '_, '_> {
                     "  call void {filler}(ptr {address}, {number} {start}, {number} {delta}, \
                      i{pointer} {count}){location}"
                 );
+            } else if let Type::Slice { .. } = types[self.body.operand_type(part)] {
+                // The count was checked to fit, so the bytes do too.
+                let from = format!("{name}.s{index}");
+                let (size, _) = layout(types, element, pointer);
+                _ = writeln!(
+                    out,
+                    "  {from} = extractvalue %slice {}, 0{location}\n  \
+                     {from}.bytes = mul i{pointer} {count}, {size}{location}",
+                    self.operand(part)
+                );
+                let mut bytes = format!("{from}.bytes");
+                if pointer < 64 {
+                    _ = writeln!(
+                        out,
+                        "  {from}.size = zext i{pointer} {bytes} to i64{location}"
+                    );
+                    bytes = format!("{from}.size");
+                }
+                self.write_memcpy(out, &address, &from, &bytes, location);
             } else {
                 // An element, or an array of them copied whole.
                 self.write_store(out, &address, part, location);
@@ -1118,10 +1163,12 @@ impl Function<'_, '_, '_> {
 
     /// How many elements each of `parts`, of the array value `id`, gives,
     /// as pointer-wide LLVM operands: one for an element, an array's
-    /// length, and each range's count (`write_range_count`), in an integer
-    /// wider than its element and at least as wide as a pointer, so it
-    /// never overflows. With a range, also writes the check that the parts
-    /// give exactly the array's length, before any element is written.
+    /// length, a slice's length, and each range's count
+    /// (`write_range_count`), counted in an integer wider than its element
+    /// and at least as wide as a pointer, so it never overflows. With a
+    /// part counted when the program runs (`traps`), also writes the check
+    /// that the parts give exactly the array's length, before any element
+    /// is written.
     fn write_part_counts(
         &mut self,
         out: &mut String,
@@ -1143,8 +1190,8 @@ impl Function<'_, '_, '_> {
             match types[ty] {
                 _ if types.same(ty, element) => Some(1),
                 Type::Array { length, .. } => Some(length),
-                Type::Range { .. } => None,
-                _ => unreachable!("the checker spreads only an array or a range"),
+                Type::Range { .. } | Type::Slice { .. } => None,
+                _ => unreachable!("the checker spreads only an array, a slice or a range"),
             }
         };
         let fixed_total: u64 = parts.iter().filter_map(|&part| fixed(part)).sum();
@@ -1157,25 +1204,45 @@ impl Function<'_, '_, '_> {
                 counts.push(count.to_string());
                 continue;
             }
-            let range = format!("{name}.r{index}");
-            self.write_range_count(out, &range, part, element, wide, location);
+            let part_name = format!("{name}.r{index}");
+            if let Type::Slice { .. } = types[self.body.operand_type(part)] {
+                let length = if wide > pointer { "len" } else { "count" };
+                _ = writeln!(
+                    out,
+                    "  {part_name}.{length} = extractvalue %slice {}, 1{location}",
+                    self.operand(part)
+                );
+                if wide > pointer {
+                    _ = writeln!(
+                        out,
+                        "  {part_name}.count = zext i{pointer} {part_name}.len to i{wide}{location}"
+                    );
+                }
+            } else {
+                self.write_range_count(out, &part_name, part, element, wide, location);
+            }
             if checked {
                 _ = writeln!(
                     out,
-                    "  {range}.over = icmp ugt i{wide} {range}.count, {remaining}{location}\n  \
-                     {range}.failed = or i1 {failed}, {range}.over{location}\n  \
-                     {range}.left.after = sub i{wide} {remaining}, {range}.count{location}"
+                    "  {part_name}.over = icmp ugt i{wide} {part_name}.count, {remaining}{location}\n  \
+                     {part_name}.failed = or i1 {failed}, {part_name}.over{location}\n  \
+                     {part_name}.left.after = sub i{wide} {remaining}, {part_name}.count{location}"
                 );
-                (remaining, failed) = (format!("{range}.left.after"), format!("{range}.failed"));
+                (remaining, failed) = (
+                    format!("{part_name}.left.after"),
+                    format!("{part_name}.failed"),
+                );
             }
-            let count = if wide > pointer {
-                _ = writeln!(
-                    out,
-                    "  {range}.n = trunc i{wide} {range}.count to i{pointer}{location}"
-                );
-                format!("{range}.n")
-            } else {
-                format!("{range}.count")
+            let count = match types[self.body.operand_type(part)] {
+                _ if wide == pointer => format!("{part_name}.count"),
+                Type::Slice { .. } => format!("{part_name}.len"),
+                _ => {
+                    _ = writeln!(
+                        out,
+                        "  {part_name}.n = trunc i{wide} {part_name}.count to i{pointer}{location}"
+                    );
+                    format!("{part_name}.n")
+                }
             };
             counts.push(count);
         }
@@ -1368,16 +1435,29 @@ impl Function<'_, '_, '_> {
         ty: TypeId,
         location: &DebugLocation,
     ) {
-        self.module.declare(MEMCPY, || {
-            format!("declare void @{MEMCPY}(ptr, ptr, i64, i1)\n\n")
-        });
         // A number, not LLVM's `ptrtoint (getelementptr (T, ptr null, i32 1))`,
         // which clang's optimizer splits no value by (measured: twice the
         // `-release` build time of a program of structs).
         let (size, _) = layout(self.types, ty, self.module.pointer_bits);
+        self.write_memcpy(out, to, from, &size, location);
+    }
+
+    /// Writes the copy of `bytes`, an `i64`, from the address `from` to
+    /// `to`, which do not overlap.
+    fn write_memcpy(
+        &mut self,
+        out: &mut String,
+        to: &dyn Display,
+        from: &dyn Display,
+        bytes: &dyn Display,
+        location: &DebugLocation,
+    ) {
+        self.module.declare(MEMCPY, || {
+            format!("declare void @{MEMCPY}(ptr, ptr, i64, i1)\n\n")
+        });
         _ = writeln!(
             out,
-            "  call void @{MEMCPY}(ptr {to}, ptr {from}, i64 {size}, i1 false){location}"
+            "  call void @{MEMCPY}(ptr {to}, ptr {from}, i64 {bytes}, i1 false){location}"
         );
     }
 
@@ -1409,6 +1489,7 @@ impl Function<'_, '_, '_> {
             // check an index.
             && !place.is_behind_reference()
             && traps(body, self.types, store) == 0
+            && !spreads_slice(body, self.types, id)
         {
             rest.next();
             let span = body.instructions.span(store);

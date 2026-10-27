@@ -1,9 +1,14 @@
 // `&a[i..j]` starts its slice at element `i` and counts `j - i`: a constant
 // end gets no check, an `i32` start is extended to a `usize` and checked
 // against the length, and the ends against each other; `..=` checks its
-// end below the length before it adds one.
+// end below the length before it adds one. `[N]T{s...}` checks the slice's
+// length, counted one bit wider than an `i64`, then copies its elements.
 fn total(view: [&]i32) -> i32 {
     return view[0] + view.len as i32;
+}
+
+fn spread(view: [&]i64) -> [4]i64 {
+    return [4]i64{view...};
 }
 
 fn main() {

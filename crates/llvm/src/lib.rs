@@ -719,6 +719,28 @@ mod tests {
         }
     }
 
+    /// A slice spread into an array is counted in an integer one bit wider
+    /// than its `i64` elements, its length an `i32` on a 32-bit target, and
+    /// copied by a byte count extended to the `i64` `memcpy` takes.
+    #[test]
+    fn slice_spreads_are_target_sized() {
+        let text = ll(
+            "fn f(view: [&]i64) -> [2]i64 {\n\
+             return [2]i64{view...};\n}",
+            32,
+        );
+        for line in [
+            "%i2.r0.len = extractvalue %slice %i1, 1",
+            "%i2.r0.count = zext i32 %i2.r0.len to i65",
+            "%i2.r0.over = icmp ugt i65 %i2.r0.count, 2",
+            "%i2.s0.bytes = mul i32 %i2.r0.len, 8",
+            "%i2.s0.size = zext i32 %i2.s0.bytes to i64",
+            "call void @llvm.memcpy.p0.p0.i64(ptr %i2.0, ptr %i2.s0, i64 %i2.s0.size, i1 false)",
+        ] {
+            assert!(text.contains(line), "{line}\n{text}");
+        }
+    }
+
     /// C code gets a narrow integer extended to `int` by its signedness; a
     /// Peeper function gets it as it is.
     #[test]

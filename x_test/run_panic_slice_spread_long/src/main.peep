@@ -1,0 +1,11 @@
+// A slice longer than the literal stops the program before any element is
+// copied, so no copy goes past the array.
+fn make(s: [&]i32) -> [3]i32 {
+    return [3]i32{s...};
+}
+
+fn main() {
+    let a = [4]i32{1, 2, 3, 4};
+    println("fits:", make(&a[1..]));
+    println("never:", make(&a));
+}

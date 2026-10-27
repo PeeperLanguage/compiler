@@ -1,0 +1,12 @@
+name = "run_panic_slice_spread_long"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 101
+stdout_contains = ["fits: [2, 3, 4]\n"]
+stderr_contains = [
+    "panic: array literal needs exactly 3 values\n",
+    "src/main.peep:4:12\n",
+]

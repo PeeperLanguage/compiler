@@ -1,7 +1,12 @@
-// Spreading an array uses it by value: an array of structs moves.
+// Spreading an array uses it by value: an array of structs moves. A slice
+// only views its elements, so they must copy.
 struct Point { x: i32 }
 
 fn main() {
     let points = [_]Point{Point.{ x = 1 }};
     let twice = [_]Point{points..., points...};
+}
+
+fn viewed(view: [&]Point) {
+    let copied = [1]Point{view...};
 }

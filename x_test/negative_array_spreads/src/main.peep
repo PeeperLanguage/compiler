@@ -1,5 +1,8 @@
 // Only `values...` spreads: a range alone is one value, a `range[i32]`, not
-// an `i32`. A spread array must hold the literal's element type.
+// an `i32`. A spread array or slice must hold the literal's element type. A
+// slice's length is known only when the program runs, so `[_]` cannot count
+// it, and the values known now must not already pass the length. A spread
+// reads its slice, which cannot happen while a `&mut` of it is in use.
 fn count(n: i32) -> i32 {
     let a = [_]i32{1, 2, 3};
     let bare = [_]i32{0..3};
@@ -7,6 +10,18 @@ fn count(n: i32) -> i32 {
     let number = [_]i32{n...};
     let short = [2]i32{a...};
     return n;
+}
+
+fn slices(s: [&]i32, f: [&]f64) {
+    let inferred = [_]i32{s...};
+    let floats = [2]i32{f...};
+    let past = [2]i32{1, 2, 3, s...};
+}
+
+fn kept(m: [&mut]i32) {
+    let element = &mut m[0];
+    let read = [2]i32{m...};
+    element.* = 1;
 }
 
 fn main() {

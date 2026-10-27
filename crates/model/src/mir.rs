@@ -189,9 +189,10 @@ pub enum InstructionKind {
     /// array value from its elements' values.
     Aggregate(Box<[Operand]>),
     /// An array value from its parts, in order, at least one a spread: a
-    /// part of the element type is one element, an array gives each of its
-    /// elements and a range each of its values. The program stops before
-    /// writing any element unless the parts give exactly the array's length.
+    /// part of the element type is one element, an array or a slice gives
+    /// each of its elements and a range each of its values. The program
+    /// stops before writing any element unless the parts give exactly the
+    /// array's length.
     ArrayParts(Box<[Operand]>),
     /// Writes the values to the standard output, a space between each,
     /// then a newline when `newline`: as THIR's `Print`.

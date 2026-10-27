@@ -165,9 +165,9 @@ pub enum ExprKind {
     StructLiteral(List<FieldValue>),
     /// A value of the array type `ty` from its parts, in order, which give
     /// exactly its length of elements: a part of the element type is one
-    /// element, and any other a spread, an array of elements or a range of
-    /// them, giving each element or value, as `Stmt::ForRange` counts a
-    /// range's.
+    /// element, and any other a spread, an array or a slice of elements or
+    /// a range of them, giving each element or value, as `Stmt::ForRange`
+    /// counts a range's.
     ArrayLiteral(List<Expr>),
     /// The field at `index`, in declaration order, of a struct value.
     Field {

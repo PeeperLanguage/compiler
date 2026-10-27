@@ -6,8 +6,12 @@ mode = "check"
 outcome = "failure"
 stderr_contains = [
     "mismatched types: expected `i32`, found `range[i32]`",
-    "`...` here spreads a range or an array of `u8`, found `[3]i32`",
-    "`...` here spreads a range or an array of `i32`, found `i32`",
+    "`...` here spreads a range, an array or a slice of `u8`, found `[3]i32`",
+    "`...` here spreads a range, an array or a slice of `i32`, found `i32`",
     "`[2]i32` needs 2 values, found 3",
-    "Compilation failed with 4 error(s)",
+    "a slice in `[_]` has a length known only when the program runs; write the length",
+    "`...` here spreads a range, an array or a slice of `i32`, found `[&]f64`",
+    "`[2]i32` needs 2 values, found at least 3",
+    "`m` is borrowed while a `&mut` reference to it is still in use",
+    "Compilation failed with 8 error(s)",
 ]
