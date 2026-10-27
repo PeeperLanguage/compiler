@@ -128,7 +128,10 @@ Exit: one edited file re-checks only what its interface change affects.
 
 - Package manager commands, toolchain, `peeper fix`, formatter if wanted.
 - CI workflows rebuilt for the new layout (until then they reference removed
-  code and fail).
+  code and fail): on `feature/rust-rewrite`, build with cargo and
+  `scripts/build.sh`, then run `cargo test --workspace`, whose fixtures build
+  and run the `x_test` programs with clang, on Linux (with the 32-bit C
+  library, for `target = "i686-linux"`), macOS and Windows.
 - Fixture suite (`x_test`) brought back as the language acceptance target.
 
 ## Open decisions
