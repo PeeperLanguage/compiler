@@ -1,0 +1,8 @@
+name = "run_slices"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 32
+stdout_contains = ["3 4 12\n8 4 16\n7\n"]

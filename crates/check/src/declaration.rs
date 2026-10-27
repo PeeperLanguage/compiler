@@ -53,16 +53,20 @@ impl Checker<'_> {
                         self.report(diagnostic);
                     }
                     // A struct held by value is checked here: one that holds
-                    // itself, however deep, is a cycle. A reference is
-                    // rejected before its type is, which may be this struct.
-                    let reference = matches!(tree.types[ty], ast::Type::Reference { .. });
+                    // itself, however deep, is a cycle. A reference or slice
+                    // is rejected before its type is, which may be this struct.
+                    let borrows = matches!(
+                        tree.types[ty],
+                        ast::Type::Reference { .. } | ast::Type::Slice { .. }
+                    );
                     let mut field_type = TypeId::INVALID;
-                    if !reference {
+                    if !borrows {
                         field_type = self.resolve_value_type(ty);
                     }
-                    if reference || matches!(self.types[field_type], Type::Reference { .. }) {
+                    if borrows || self.types[field_type].borrows().is_some() {
                         let span = tree.types.span(ty);
-                        field_type = self.not_supported(span, "references in struct fields");
+                        let what = "references and slices in struct fields";
+                        field_type = self.not_supported(span, what);
                     }
                     field_types.push(field_type);
                 }
@@ -125,24 +129,21 @@ impl Checker<'_> {
         let tree = &self.module().ast;
         let file = &tree.file;
         let mut names = tree.children.lists.items(signature.origins);
-        let Type::Reference { mutable, .. } = self.types[result] else {
+        let Some(mutable) = self.types[result].borrows() else {
             if let Some(origin) = names.next() {
                 let span = tree.children.names.span(origin);
                 self.error(
                     diagnostics::INVALID_RETURN,
-                    "`in` needs a reference result",
+                    "`in` needs a reference or slice result",
                     span,
                 );
                 return None;
             }
             return Some(Box::default());
         };
-        // `Some(mutable)` for a reference parameter.
+        // `Some(mutable)` for a reference or slice parameter.
         let reference =
-            |types: &semantic_types::Types, position: usize| match types[parameters[position]] {
-                Type::Reference { mutable, .. } => Some(mutable),
-                _ => None,
-            };
+            |types: &semantic_types::Types, position: usize| types[parameters[position]].borrows();
         let mut origins: Vec<u32> = Vec::new();
         for origin in names {
             let span = tree.children.names.span(origin);
@@ -164,7 +165,9 @@ impl Checker<'_> {
                 Some(position) => match reference(&self.types, position) {
                     None => Some((
                         diagnostics::INVALID_RETURN,
-                        format!("`{name}` is not a reference, so a result cannot borrow from it"),
+                        format!(
+                            "`{name}` is not a reference or a slice, so a result cannot borrow from it"
+                        ),
                     )),
                     Some(false) if mutable => Some((
                         diagnostics::INVALID_RETURN,
@@ -193,7 +196,11 @@ impl Checker<'_> {
                 .map(|position| position as u32)
                 .collect();
             if origins.is_empty() {
-                let kind = if mutable { "`&mut`" } else { "reference" };
+                let kind = if mutable {
+                    "`&mut` or `[&mut]`"
+                } else {
+                    "reference or slice"
+                };
                 let message = format!("a {kind} result needs a {kind} parameter to borrow from");
                 let result = signature.result.expect("a reference result is written");
                 self.error(
@@ -238,14 +245,16 @@ impl Checker<'_> {
         if external
             && matches!(
                 self.types[resolved],
-                Type::Struct { .. } | Type::Array { .. } | Type::Range { .. }
+                Type::Struct { .. } | Type::Array { .. } | Type::Range { .. } | Type::Slice { .. }
             )
         {
-            // shortcut: structs, arrays and ranges pass as LLVM values, which
-            // the C ABI does not match; allow structs and arrays when its
-            // aggregate rules are written (a range has no C type).
+            // shortcut: structs, arrays, ranges and slices pass as LLVM
+            // values, which the C ABI does not match; allow structs and arrays
+            // when its aggregate rules are written (a range or slice has no C
+            // type).
             let span = self.module().ast.types.span(ty);
-            let what = "struct, array and range parameters and results of `extern` functions";
+            let what =
+                "struct, array, range and slice parameters and results of `extern` functions";
             return self.not_supported(span, what);
         }
         resolved
@@ -258,6 +267,7 @@ impl Checker<'_> {
         match self.types[target] {
             Type::Invalid => target,
             Type::Reference { .. } => self.not_supported(span, "references to references"),
+            Type::Slice { .. } => self.not_supported(span, "references to slices"),
             _ => {
                 let target = self.types.real(target);
                 self.types.intern(Type::Reference { mutable, target })
@@ -274,6 +284,7 @@ impl Checker<'_> {
             // shortcut: the loan check follows no reference held in an
             // array, as in a struct field; allow both when it does.
             Type::Reference { .. } => self.not_supported(span, "arrays of references"),
+            Type::Slice { .. } => self.not_supported(span, "arrays of slices"),
             _ => {
                 let element = self.types.real(element);
                 self.types.intern(Type::Array { element, length })
@@ -320,6 +331,7 @@ impl Checker<'_> {
             // shortcut: no loan follows a reference stored behind a raw
             // pointer; allow it when lifetimes are checked (ownership step 4).
             Type::Reference { .. } => self.not_supported(span, "raw pointers to references"),
+            Type::Slice { .. } => self.not_supported(span, "raw pointers to slices"),
             _ => self.types.intern(Type::RawPointer {
                 target: Some(self.types.real(target)),
             }),
@@ -414,7 +426,22 @@ impl Checker<'_> {
                 ..
             } => unreachable!("the parser reads `[_]` only in an array literal, checked there"),
             ast::Type::DynamicArray(_) => "dynamic array types",
-            ast::Type::Slice(_) => "slice types",
+            // Invalid when `element` is, reported when it borrows. Its
+            // element is the real type, as an array's.
+            ast::Type::Slice { mutable, element } => {
+                let element = self.resolve_value_type(element);
+                return match self.types[element] {
+                    Type::Invalid => element,
+                    // shortcut: as for arrays, the loan check follows no
+                    // reference held in a slice's elements.
+                    Type::Reference { .. } => self.not_supported(span, "slices of references"),
+                    Type::Slice { .. } => self.not_supported(span, "slices of slices"),
+                    _ => {
+                        let element = self.types.real(element);
+                        self.types.intern(Type::Slice { mutable, element })
+                    }
+                };
+            }
             ast::Type::Function(_) => "function types",
             ast::Type::Struct(_) => "struct types",
             ast::Type::Enum(_) => "enum types",
@@ -494,7 +521,7 @@ mod tests {
             ("T0043", "default parameters are not supported yet", "1"),
             (
                 "T0043",
-                "struct, array and range parameters and results of `extern` functions are not supported yet",
+                "struct, array, range and slice parameters and results of `extern` functions are not supported yet",
                 "P",
             ),
             ("T0021", "`a` is a value, not a type", "a"),

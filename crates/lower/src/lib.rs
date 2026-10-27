@@ -683,16 +683,31 @@ impl Lowering<'_> {
                 let value = value.clone();
                 return Some(self.add_constant(Constant { ty, value }));
             }
-            // The array is computed for the call in it and never read, so
-            // no element moves out and no large array is copied.
-            thir::ExprKind::Length(array) => {
-                _ = self.place(array)?;
-                let array = self.thir.exprs[array].ty;
-                let array = self.types[array].pointee().unwrap_or(array);
-                let Type::Array { length, .. } = self.types[array] else {
-                    unreachable!("`.len` is the length of an array")
+            // An array's length is its type's: the array is computed for the
+            // call in it and never read, so no element moves out and no large
+            // array is copied. A slice's is in it: the slice is read, never
+            // moved, so a `[&mut]` stays usable.
+            thir::ExprKind::Length(value) => {
+                let value_type = self.thir.exprs[value].ty;
+                if !matches!(self.types[value_type], Type::Slice { .. }) {
+                    _ = self.place(value)?;
+                    let array = self.types[value_type].pointee().unwrap_or(value_type);
+                    let Type::Array { length, .. } = self.types[array] else {
+                        unreachable!("`.len` is the length of an array or slice")
+                    };
+                    return Some(self.integer_constant(ty, length));
+                }
+                let slice = match self.thir.exprs[value].kind {
+                    thir::ExprKind::Variable(variable) => {
+                        let place = mir::Place::whole(Id::from_index(variable.index()));
+                        self.emit(mir::InstructionKind::Load(place), value_type, span)
+                    }
+                    _ => self.lower_expr(value)?,
                 };
-                return Some(self.integer_constant(ty, length));
+                mir::InstructionKind::Field {
+                    value: slice,
+                    fields: Box::new([1]),
+                }
             }
             thir::ExprKind::Binary {
                 op: op @ (BinaryOp::LogicalAnd | BinaryOp::LogicalOr),
@@ -779,13 +794,19 @@ impl Lowering<'_> {
                     Err(field) => field,
                 }
             }
-            thir::ExprKind::Borrow(place) => {
-                let Type::Reference { mutable, .. } = self.types[ty] else {
-                    unreachable!("a borrow's type is a reference")
+            thir::ExprKind::Borrow(borrowed) => {
+                let Some(mutable) = self.types[ty].borrows() else {
+                    unreachable!("a borrow's type is a reference or slice")
                 };
-                let Ok(place) = self.place(place)? else {
+                let Ok(mut place) = self.place(borrowed)? else {
                     unreachable!("the checker borrows only a place in a variable")
                 };
+                // Borrowing a slice lends its elements again.
+                if let Type::Slice { .. } = self.types[self.thir.exprs[borrowed].ty] {
+                    let mut projections = place.projections.into_vec();
+                    projections.push(mir::Projection::Dereference);
+                    place.projections = projections.into();
+                }
                 mir::InstructionKind::Borrow { place, mutable }
             }
             thir::ExprKind::Address(place) => {
@@ -822,6 +843,10 @@ impl Lowering<'_> {
                 }
                 thir::ExprKind::Index { array, index } => {
                     steps.push(Err(index));
+                    // A slice's elements are behind it.
+                    if let Type::Slice { .. } = self.types[self.thir.exprs[array].ty] {
+                        steps.push(Ok(mir::Projection::Dereference));
+                    }
                     outer = array;
                 }
                 thir::ExprKind::Variable(variable) => break variable,

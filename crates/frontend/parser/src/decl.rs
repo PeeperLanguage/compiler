@@ -485,7 +485,7 @@ mod tests {
     fn parses_signatures() {
         let text = "fn (self: &mut Counter) Add<T, U>(mut delta: i32, scale: f64 = 1, &Self) -> &T in (self, delta) {}
 fn exit(code: i32);
-fn Use(callback: fn(value: &Box, i32) -> &Box in value, items: []?*T, view: [..]u8, grid: [4]rawptr, cell: **u8, untyped: *rawptr) -> ?a::Box<Box<T>>;
+fn Use(callback: fn(value: &Box, i32) -> &Box in value, items: []?*T, view: [&]u8, edit: [&mut]u8, grid: [4]rawptr, cell: **u8, untyped: *rawptr) -> ?a::Box<Box<T>>;
 ";
         let want = "module
   function declaration
@@ -539,6 +539,10 @@ fn Use(callback: fn(value: &Box, i32) -> &Box in value, items: []?*T, view: [..]
     parameter
       declared name view
       slice type
+        type name u8
+    parameter
+      declared name edit
+      slice type mut
         type name u8
     parameter
       declared name grid

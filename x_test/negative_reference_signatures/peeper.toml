@@ -5,8 +5,8 @@ build = "lib"
 mode = "check"
 outcome = "failure"
 stderr_contains = [
-    "a reference result needs a reference parameter to borrow from",
-    "a `&mut` result needs a `&mut` parameter to borrow from",
+    "a reference or slice result needs a reference or slice parameter to borrow from",
+    "a `&mut` or `[&mut]` result needs a `&mut` or `[&mut]` parameter to borrow from",
     "`in` needs a reference result",
     "`c` is not a parameter",
     "`n` is not a reference, so a result cannot borrow from it",

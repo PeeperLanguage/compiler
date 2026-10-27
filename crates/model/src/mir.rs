@@ -82,10 +82,12 @@ pub struct Place {
 pub enum Projection {
     /// The field at this index, in declaration order, of the struct here.
     Field(u32),
-    /// What the reference here refers to.
+    /// What the reference here refers to, or the elements the slice here
+    /// views.
     Dereference,
     /// The element at this index, an integer computed before the place is
-    /// used, of the array here; outside the array, the program fails.
+    /// used, of the array here, or of the slice elements; outside them, the
+    /// program fails.
     Index(Operand),
 }
 
@@ -127,7 +129,8 @@ impl Place {
 
 #[derive(Clone, Debug)]
 pub enum InstructionKind {
-    /// The value at the place, whose type copies (`Types::is_copy`).
+    /// The value at the place, whose type copies (`Types::is_copy`), or a
+    /// slice read only for its length, which leaves a `[&mut]` usable.
     Load(Place),
     /// The value at the place, whose type moves: a whole variable is unset
     /// after; moving out of a struct's field, an array's element or a
@@ -140,8 +143,9 @@ pub enum InstructionKind {
         place: Place,
         value: Operand,
     },
-    /// A reference to the place, `&mut` when `mutable`; the variable must
-    /// already be set.
+    /// A reference to the place, `&mut` when `mutable`, or a slice of it,
+    /// as `ty` says: of an array, or of the elements a slice views; the
+    /// variable must already be set.
     Borrow {
         place: Place,
         mutable: bool,
@@ -179,7 +183,8 @@ pub enum InstructionKind {
         values: Box<[Operand]>,
     },
     /// The field its `fields` path leads to in a struct value that is not
-    /// in a variable, as a `Place`'s path.
+    /// in a variable, as a `Place`'s path; or a slice value's length, its
+    /// field 1 (after its elements' address).
     Field {
         value: Operand,
         fields: Box<[u32]>,

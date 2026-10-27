@@ -1,5 +1,7 @@
 source_filename = "<fixture>/src/main.peep"
 
+%slice = type { ptr, i64 }
+
 @.str.0 = private unnamed_addr constant [7 x i8] c"twice\0A\00"
 
 define i32 @"ll_release:main.twice"(i32 %arg0) {

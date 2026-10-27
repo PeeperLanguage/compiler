@@ -282,8 +282,8 @@ pub enum Type {
     FixedArray { length: Length, element: Id<Type> },
     /// `[]T`
     DynamicArray(Id<Type>),
-    /// `[..]T`
-    Slice(Id<Type>),
+    /// `[&]T`, or `[&mut]T` when `mutable`
+    Slice { mutable: bool, element: Id<Type> },
     /// `fn(T) -> R in a`
     Function(Signature),
     /// `struct { fields }`

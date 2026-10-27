@@ -1,5 +1,7 @@
 source_filename = "<fixture>/src/main.peep"
 
+%slice = type { ptr, i64 }
+
 define void @"ll_struct_parameters:main.swap"(ptr %result, ptr %v0) !dbg !10 {
 entry:
   call void @llvm.dbg.declare(metadata ptr %v0, metadata !11, metadata !DIExpression()), !dbg !12

@@ -156,6 +156,14 @@ pub enum Type {
         mutable: bool,
         target: TypeId,
     },
+    /// `[&]T`, or `[&mut]T` when `mutable`: a view of some `element`
+    /// values held elsewhere, one after another, with how many there are
+    /// known only when the program runs. The loan rules hold for it as for
+    /// a reference (`Type::borrows`).
+    Slice {
+        mutable: bool,
+        element: TypeId,
+    },
     /// `*T`, or `rawptr` without a `target`: an address that nothing
     /// checks, `none` when null; what it points to can always be written.
     RawPointer {
@@ -170,6 +178,15 @@ impl Type {
         match *self {
             Type::Reference { target, .. } => Some(target),
             Type::RawPointer { target } => target,
+            _ => None,
+        }
+    }
+
+    /// `Some(mutable)` for a type whose values borrow what they view, a
+    /// reference or a slice: the loan rules hold for both.
+    pub fn borrows(&self) -> Option<bool> {
+        match *self {
+            Type::Reference { mutable, .. } | Type::Slice { mutable, .. } => Some(mutable),
             _ => None,
         }
     }
@@ -190,8 +207,9 @@ pub enum Conversion {
     /// without `as`: to a wider integer of the same signedness, from unsigned
     /// to a wider signed integer, and from `f32` to `f64`.
     Implicit,
-    /// A `&mut T` used as a `&T`: lent again as a shared reference, so the
-    /// `&mut` itself is not moved.
+    /// A `&mut T` used as a `&T`, a reference to an array used as a slice
+    /// of it, or a `[&mut]T` used as a `[&]T`: lent again, so the reference
+    /// or slice itself is not moved.
     Reborrow,
     /// Converts only when written with `as`: between integers that lose
     /// values, between floats and integers, from `f64` to `f32`, from
@@ -483,6 +501,28 @@ impl Types {
                     target: to,
                 },
             ) if self.same(from, to) => Conversion::Reborrow,
+            (
+                &Type::Reference {
+                    mutable: from_mutable,
+                    target,
+                },
+                &Type::Slice { mutable, element },
+            ) if from_mutable || !mutable => match self[target] {
+                Type::Array { element: from, .. } if self.same(from, element) => {
+                    Conversion::Reborrow
+                }
+                _ => Conversion::Never,
+            },
+            (
+                &Type::Slice {
+                    mutable: true,
+                    element: from,
+                },
+                &Type::Slice {
+                    mutable: false,
+                    element: to,
+                },
+            ) if self.same(from, to) => Conversion::Reborrow,
             (Type::RawPointer { target: Some(_) }, Type::RawPointer { target: None }) => {
                 Conversion::Same
             }
@@ -493,7 +533,7 @@ impl Types {
 
     /// The type `id` stands for: itself, or the type an alias names.
     /// Whether a value of the type `id` copies when used by value: numbers,
-    /// `bool`, `cstr`, shared references, raw pointers, ranges, and arrays of values
+    /// `bool`, `cstr`, shared references and slices, raw pointers, ranges, and arrays of values
     /// that copy. Any other value moves, and the variable it moved from is
     /// unusable until set again.
     pub fn is_copy(&self, id: TypeId) -> bool {
@@ -504,7 +544,7 @@ impl Types {
             | Type::CString
             | Type::RawPointer { .. }
             | Type::Range { .. } => true,
-            Type::Reference { mutable, .. } => !mutable,
+            Type::Reference { mutable, .. } | Type::Slice { mutable, .. } => !mutable,
             Type::Array { element, .. } => self.is_copy(element),
             Type::Struct { .. } => false,
             // No value of these is moved: an error, nothing, or not yet a value.
@@ -582,6 +622,14 @@ impl Types {
                     format!("&mut {target}")
                 } else {
                     format!("&{target}")
+                }
+            }
+            Type::Slice { mutable, element } => {
+                let element = self.real_text(*element, name_of);
+                if *mutable {
+                    format!("[&mut]{element}")
+                } else {
+                    format!("[&]{element}")
                 }
             }
             Type::RawPointer { target: None } => "rawptr".to_string(),
@@ -708,6 +756,30 @@ mod tests {
             mutable: false,
             target: TypeId::I64,
         });
+        let array = types.intern(Type::Array {
+            element: TypeId::I32,
+            length: 3,
+        });
+        let to_array = types.intern(Type::Reference {
+            mutable: false,
+            target: array,
+        });
+        let to_mutable_array = types.intern(Type::Reference {
+            mutable: true,
+            target: array,
+        });
+        let view = types.intern(Type::Slice {
+            mutable: false,
+            element: TypeId::I32,
+        });
+        let edit = types.intern(Type::Slice {
+            mutable: true,
+            element: TypeId::I32,
+        });
+        let wide_view = types.intern(Type::Slice {
+            mutable: false,
+            element: TypeId::I64,
+        });
         let untyped = TypeId::RAWPTR;
         let to_i32 = types.intern(Type::RawPointer {
             target: Some(TypeId::I32),
@@ -734,6 +806,16 @@ mod tests {
             (shared, mutable, Conversion::Never),
             (mutable, other, Conversion::Never),
             (shared, TypeId::I32, Conversion::Never),
+            (to_array, view, Conversion::Reborrow),
+            (to_mutable_array, edit, Conversion::Reborrow),
+            (to_mutable_array, view, Conversion::Reborrow),
+            (edit, view, Conversion::Reborrow),
+            (to_array, edit, Conversion::Never),
+            (view, edit, Conversion::Never),
+            (to_array, wide_view, Conversion::Never),
+            (edit, wide_view, Conversion::Never),
+            (shared, view, Conversion::Never), // `&i32` is no array
+            (array, view, Conversion::Never),  // a slice is made only with `&`
             (TypeId::CSTR, TypeId::I64, Conversion::Never),
             (to_i32, untyped, Conversion::Same),
             (untyped, to_i32, Conversion::NeedsCast),

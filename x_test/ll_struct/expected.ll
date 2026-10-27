@@ -1,5 +1,7 @@
 source_filename = "<fixture>/src/main.peep"
 
+%slice = type { ptr, i64 }
+
 define void @"ll_struct:main.main"() !dbg !3 {
 entry:
   %v0 = alloca { i32, i32 }

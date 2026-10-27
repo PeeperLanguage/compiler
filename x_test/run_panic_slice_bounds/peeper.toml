@@ -1,0 +1,12 @@
+name = "run_panic_slice_bounds"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 101
+stdout_contains = ["9\n"]
+stderr_contains = [
+    "panic: index out of bounds of the slice\n",
+    "src/main.peep:5:12\n",
+]

@@ -174,14 +174,17 @@ pub enum ExprKind {
         value: Id<Expr>,
         index: u32,
     },
-    /// `array.len` where computing `array`, an array or a reference or raw
-    /// pointer to one, calls a function: the array is computed, never read,
-    /// and the value is its type's length, a `usize`. Without a call
+    /// `array.len`, a `usize`. For a slice, its length, read when the
+    /// program runs. For an array, or a reference or raw pointer to one, only
+    /// where computing `array` calls a function: the array is computed, never
+    /// read, and the value is its type's length. Without a call an array's
     /// `.len` is a `Constant` and the array is not computed, as Go's `len`
     /// (`Body::calls`).
     Length(Id<Expr>),
-    /// The element of the array, a place, at the index, an integer; outside
-    /// the array, the program fails.
+    /// The element of the array, a place, or of the slice at the index, an
+    /// integer; outside the array or slice, the program fails. A slice's
+    /// elements are behind it, as a reference's target: lowering adds that
+    /// step, which THIR does not write.
     Index {
         array: Id<Expr>,
         index: Id<Expr>,
@@ -189,9 +192,11 @@ pub enum ExprKind {
     /// What the reference, a place, refers to: `r.*`, and the implicit step
     /// of `r.x` and `r[i]`.
     Dereference(Id<Expr>),
-    /// `&place` or `&mut place`, as its reference type says, and a `&mut`
-    /// variable passed to a call (lent again, not moved); the place is a
-    /// `Variable`, a `Dereference`, or a `Field` or `Index` of a place.
+    /// `&place` or `&mut place`, as its reference or slice type says, and a
+    /// `&mut` or `[&mut]` variable passed to a call (lent again, not moved);
+    /// the place is a `Variable`, a `Dereference`, or a `Field` or `Index` of
+    /// a place. As a slice, the place is an array, whose elements it views,
+    /// or a slice, whose elements it lends again.
     Borrow(Id<Expr>),
     /// `@place`: the place's address as a raw pointer, which no loan
     /// follows; the place is as a `Borrow`'s.
@@ -578,7 +583,7 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
                 self.out.push_str(".*");
             }
             ExprKind::Borrow(place) => {
-                let mutable = matches!(self.types[ty], Type::Reference { mutable: true, .. });
+                let mutable = self.types[ty].borrows() == Some(true);
                 self.out.push_str(if mutable { "&mut " } else { "&" });
                 self.write_expr(place);
             }

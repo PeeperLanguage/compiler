@@ -147,7 +147,7 @@ impl ThirBuilder<'_, '_> {
                 }
                 _ => ExprKind::Convert(self.body.add(expr, span)),
             },
-            Conversion::Reborrow => return Some(self.reborrow(expr, span, false)),
+            Conversion::Reborrow => return Some(self.reborrow(expr, span, to)),
             Conversion::Never => return None,
         };
         Some(Expr { ty: to, kind })
@@ -194,9 +194,10 @@ impl ThirBuilder<'_, '_> {
             // place, is lent instead, a `&mut` reference as `&`.
             if !types.is_copy(ty) && self.place_root(printed).is_some() {
                 let lent = match types[ty] {
-                    Type::Reference { .. } => {
+                    Type::Reference { target, .. } => {
                         let reference = self.body.exprs[printed].clone();
-                        self.reborrow(reference, span, false)
+                        let shared = self.checker.reference_type(false, target, span);
+                        self.reborrow(reference, span, shared)
                     }
                     _ => self.check_borrow(false, printed, span),
                 };
@@ -518,31 +519,40 @@ impl ThirBuilder<'_, '_> {
     }
 
     /// `value.field`: the field of a struct value, or of the struct a
-    /// reference or typed raw pointer points to; or `len`, an array's only
-    /// field, which its type gives, so the array is not read.
+    /// reference or typed raw pointer points to; or `len`, an array's or a
+    /// slice's only field. An array's type gives it, so the array is not
+    /// read.
     fn check_field(&mut self, value: Id<ast::Expr>, field: Ident) -> Expr {
         let mut value = self.add_expr(value, TypeExpectation::Hint(None));
         let mut ty = self.body.exprs[value].ty;
         let pointee = self.checker.types[ty].pointee();
+        let viewed = pointee.unwrap_or(ty);
+        // `Some(length)` for an array, `Some(None)` for a slice, whose
+        // length is known only when the program runs.
+        let length = match self.checker.types[viewed] {
+            Type::Array { length, .. } => Some(Some(length)),
+            Type::Slice { .. } => Some(None),
+            _ => None,
+        };
         // shortcut: `len` as a field until the language can write it as a
         // free function over any array; then move it there.
-        if let Type::Array { length, .. } = self.checker.types[pointee.unwrap_or(ty)] {
+        if let Some(length) = length {
             let text = field.text(&self.checker.module().ast.file);
             if text != "len" {
-                let array = self.checker.type_text(pointee.unwrap_or(ty));
-                let message = format!("`{array}` has no field `{text}`");
+                let viewed = self.checker.type_text(viewed);
+                let message = format!("`{viewed}` has no field `{text}`");
                 let meant = nearest_name(text, [("len", 0)]).map(str::to_string);
                 self.checker
                     .report_unknown(diagnostics::UNKNOWN_FIELD, field.span, message, meant);
                 return Expr::INVALID;
             }
             let usize = self.checker.usize_type();
-            if self.body.calls(value) {
+            let Some(length) = length.filter(|_| !self.body.calls(value)) else {
                 return Expr {
                     ty: usize,
                     kind: ExprKind::Length(value),
                 };
-            }
+            };
             let length = Limbs::new(self.checker.pointer_bits, &[length]);
             return Expr {
                 ty: usize,
@@ -811,8 +821,9 @@ impl ThirBuilder<'_, '_> {
     }
 
     /// `array[index]`: the element at an integer index of an array in a
-    /// place, or of the array a reference or typed raw pointer points to. A
-    /// constant index must be inside the array.
+    /// place, of the array a reference or typed raw pointer points to, or of
+    /// a slice. A constant index must be inside an array; a slice's must be
+    /// at least 0 and fit a `u64`, and is checked when the program runs.
     fn check_index(&mut self, array: Id<ast::Expr>, index: Id<ast::Expr>) -> Expr {
         let mut array = self.add_expr(array, TypeExpectation::Hint(None));
         let mut ty = self.body.exprs[array].ty;
@@ -826,7 +837,12 @@ impl ThirBuilder<'_, '_> {
         let index_type = self.body.exprs[index].ty;
         let tree = &self.checker.module().ast;
         let index_span = self.body.exprs.span(index);
-        let Type::Array { element, length } = self.checker.types[ty] else {
+        let (element, length) = match self.checker.types[ty] {
+            Type::Array { element, length } => (element, Some(length)),
+            Type::Slice { element, .. } => (element, None),
+            _ => (TypeId::INVALID, None),
+        };
+        if element == TypeId::INVALID {
             if ty != TypeId::INVALID {
                 let message = format!("`{}` cannot be indexed", self.checker.type_text(ty));
                 let span = self.body.exprs.span(array);
@@ -834,7 +850,7 @@ impl ThirBuilder<'_, '_> {
                     .error(diagnostics::INVALID_OPERATION, message, span);
             }
             return Expr::INVALID;
-        };
+        }
         let Type::Integer(integer) = self.checker.types[index_type] else {
             if index_type != TypeId::INVALID {
                 let message = format!(
@@ -846,14 +862,18 @@ impl ThirBuilder<'_, '_> {
             }
             return Expr::INVALID;
         };
+        // A negative constant, or one past `u64`, is outside every slice.
         if let ExprKind::Constant(Value::Integer(ref value)) = self.body.exprs[index].kind
-            && bigint::to_u64(integer.bits, integer.signed, value).is_none_or(|at| at >= length)
+            && bigint::to_u64(integer.bits, integer.signed, value)
+                .is_none_or(|at| length.is_some_and(|length| at >= length))
         {
-            let message = format!(
-                "index `{}` is outside `{}`, whose length is {length}",
-                tree.file.slice(index_span),
-                self.checker.type_text(ty)
-            );
+            let (written, viewed) = (tree.file.slice(index_span), self.checker.type_text(ty));
+            let message = match length {
+                Some(length) => {
+                    format!("index `{written}` is outside `{viewed}`, whose length is {length}")
+                }
+                None => format!("index `{written}` is outside every `{viewed}`"),
+            };
             self.checker
                 .error(diagnostics::INVALID_OPERATION, message, index_span);
             return Expr::INVALID;
@@ -918,13 +938,23 @@ impl ThirBuilder<'_, '_> {
         if ty == TypeId::INVALID {
             return Expr::INVALID;
         }
-        let Some((variable, reference)) = self.place_root(place) else {
+        self.borrow_as(ty, place, span)
+    }
+
+    /// A borrow of the checked place `place`, in a variable, as `ty`, a
+    /// reference or slice, reported at `span`. A `&mut` or `[&mut]` needs a
+    /// place that can be written; a slice place is lent again, and writing
+    /// through it writes its elements, never the variable holding it.
+    fn borrow_as(&mut self, ty: TypeId, place: Id<Expr>, span: Span) -> Expr {
+        let Some((variable, decider)) = self.place_root(place) else {
             self.checker
                 .not_supported(span, "borrows of values that are not in a variable");
             return Expr::INVALID;
         };
-        if mutable {
-            self.report_unwritable(place, variable, reference, "mutably borrow");
+        let types = &self.checker.types;
+        let relends_slice = matches!(types[self.body.exprs[place].ty], Type::Slice { .. });
+        if types[ty].borrows() == Some(true) && !relends_slice {
+            self.report_unwritable(place, variable, decider, "mutably borrow");
         }
         Expr {
             ty,
@@ -940,12 +970,12 @@ impl ThirBuilder<'_, '_> {
         if ty == TypeId::INVALID {
             return Expr::INVALID;
         }
-        let Some((variable, reference)) = self.place_root(place) else {
+        let Some((variable, decider)) = self.place_root(place) else {
             self.checker
                 .not_supported(span, "addresses of values that are not in a variable");
             return Expr::INVALID;
         };
-        self.report_unwritable(place, variable, reference, "take the address of");
+        self.report_unwritable(place, variable, decider, "take the address of");
         Expr {
             ty,
             kind: ExprKind::Address(place),
@@ -954,12 +984,13 @@ impl ThirBuilder<'_, '_> {
 
     /// The variable that the place `place` starts from, and the pointer on
     /// its path that decides whether it can be written: up to the nearest
-    /// raw pointer, a shared reference if any, else the nearest reference or
-    /// that raw pointer. `None` for a value not in a variable.
+    /// raw pointer, a shared reference or slice if any, else the nearest
+    /// reference, slice or that raw pointer. `None` for a value not in a
+    /// variable. A slice's element is behind the slice, as a reference's
+    /// target is behind it.
     pub(crate) fn place_root(&self, place: Id<Expr>) -> Option<(Id<Variable>, Option<Id<Expr>>)> {
         let pointer = |reference: Id<Expr>| &self.checker.types[self.body.exprs[reference].ty];
-        let shared =
-            |reference| matches!(pointer(reference), Type::Reference { mutable: false, .. });
+        let shared = |reference| pointer(reference).borrows() == Some(false);
         let mut root = place;
         let mut deciding = None;
         // Behind a raw pointer, which can always be written, what holds the
@@ -967,6 +998,14 @@ impl ThirBuilder<'_, '_> {
         let mut behind_raw = false;
         loop {
             match self.body.exprs[root].kind {
+                ExprKind::Index { array: slice, .. }
+                    if matches!(pointer(slice), Type::Slice { .. }) =>
+                {
+                    if !behind_raw && deciding.is_none_or(|kept| !shared(kept) && shared(slice)) {
+                        deciding = Some(slice);
+                    }
+                    root = slice;
+                }
                 ExprKind::Field { value, .. } | ExprKind::Index { array: value, .. } => {
                     root = value;
                 }
@@ -986,34 +1025,38 @@ impl ThirBuilder<'_, '_> {
 
     /// Reports `action` (`"assign to"`, `"mutably borrow"`) on the place
     /// `place`, which starts from `variable`, where it cannot write the
-    /// place: through `reference` only when that is a `&mut`, else in the
-    /// variable's own storage only when it is `mut`.
+    /// place: through `decider` (`place_root`) only when that is a `&mut`,
+    /// a `[&mut]` or a raw pointer, else in the variable's own storage only
+    /// when it is `mut`.
     pub(crate) fn report_unwritable(
         &mut self,
         place: Id<Expr>,
         variable: Id<Variable>,
-        reference: Option<Id<Expr>>,
+        decider: Option<Id<Expr>>,
         action: &str,
     ) {
         let file = &self.checker.module().ast.file;
         let place_span = self.body.exprs.span(place);
         let place_text = file.slice(place_span);
-        let (written, declared, label, help) = if let Some(reference) = reference {
-            let ty = self.body.exprs[reference].ty;
-            if let Type::Reference { mutable: true, .. } | Type::RawPointer { .. } =
-                self.checker.types[ty]
-            {
+        let (written, declared, label, help) = if let Some(decider) = decider {
+            let ty = self.body.exprs[decider].ty;
+            let types = &self.checker.types;
+            if types[ty].borrows() == Some(true) || matches!(types[ty], Type::RawPointer { .. }) {
                 return;
             }
-            let span = self.body.exprs.span(reference);
-            let declared = match self.body.exprs[reference].kind {
+            let span = self.body.exprs.span(decider);
+            let declared = match self.body.exprs[decider].kind {
                 ExprKind::Variable(variable) => self.body.variables.span(variable),
                 _ => span,
             };
             let holder = file.slice(span);
-            let written = format!("`{place_text}` through shared reference `{holder}`");
-            let help = format!("make `{holder}` a `&mut` reference");
-            let label = "declared as a shared reference here";
+            let (kind, writable) = match types[ty] {
+                Type::Slice { .. } => ("slice", "`[&mut]` slice"),
+                _ => ("reference", "`&mut` reference"),
+            };
+            let written = format!("`{place_text}` through shared {kind} `{holder}`");
+            let help = format!("make `{holder}` a {writable}");
+            let label = format!("declared as a shared {kind} here");
             (written, declared, label, help)
         } else {
             if self.body.variables[variable].mutable {
@@ -1026,7 +1069,7 @@ impl ThirBuilder<'_, '_> {
                 _ => format!("`{place_text}` of immutable `{holder}`"),
             };
             let help = format!("write `let mut {holder}`");
-            let label = "declared without `mut` here";
+            let label = "declared without `mut` here".to_string();
             (written, declared, label, help)
         };
         let message = format!("cannot {action} {written}");
@@ -1592,40 +1635,46 @@ impl ThirBuilder<'_, '_> {
         }
     }
 
-    /// Makes `expr`, when it is a `&mut` in a variable, lend it again, so it
-    /// is not moved: the variable stays usable after the call or loop that
-    /// takes `expr`.
+    /// Makes `expr`, when it is a `&mut` or `[&mut]` in a variable, lend it
+    /// again, so it is not moved: the variable stays usable after the call
+    /// or loop that takes `expr`.
     pub(crate) fn lend_variable_again(&mut self, expr: Id<Expr>) {
         if let Expr {
             ty,
             kind: ExprKind::Variable(_),
         } = self.body.exprs[expr]
-            && let Type::Reference { mutable: true, .. } = self.checker.types[ty]
+            && self.checker.types[ty].borrows() == Some(true)
         {
             let span = self.body.exprs.span(expr);
             let reference = self.body.exprs[expr].clone();
-            self.body.exprs[expr] = self.reborrow(reference, span, true);
+            self.body.exprs[expr] = self.reborrow(reference, span, ty);
         }
     }
 
-    /// `reference`, a `&mut` checked at `span`, lent again as a `&mut` when
-    /// `mutable`, else as a `&`, to what it refers to, so the `&mut` itself
-    /// is not moved. A written `&mut place` borrows `place` itself.
-    fn reborrow(&mut self, reference: Expr, span: Span, mutable: bool) -> Expr {
-        let place = if let ExprKind::Borrow(place) = reference.kind {
-            place
-        } else {
-            let Type::Reference { target, .. } = self.checker.types[reference.ty] else {
-                unreachable!("only a reference is lent again")
-            };
-            let reference = self.body.add(reference, span);
-            let referred = self.dereference(reference, target);
-            if referred.ty == TypeId::INVALID {
-                return Expr::INVALID;
+    /// `reference`, a reference or slice checked at `span`, lent again as
+    /// `to` (`Conversion::Reborrow`, or its own type), so a `&mut` or
+    /// `[&mut]` itself is not moved. A written `&place`, already checked,
+    /// borrows `place` itself as `to`; a slice lends its own elements.
+    fn reborrow(&mut self, reference: Expr, span: Span, to: TypeId) -> Expr {
+        let place = match (&reference.kind, &self.checker.types[reference.ty]) {
+            (&ExprKind::Borrow(place), _) => {
+                return Expr {
+                    ty: to,
+                    kind: ExprKind::Borrow(place),
+                };
             }
-            self.body.add(referred, span)
+            (_, Type::Slice { .. }) => self.body.add(reference, span),
+            (_, &Type::Reference { target, .. }) => {
+                let reference = self.body.add(reference, span);
+                let referred = self.dereference(reference, target);
+                if referred.ty == TypeId::INVALID {
+                    return Expr::INVALID;
+                }
+                self.body.add(referred, span)
+            }
+            _ => unreachable!("only a reference or slice is lent again"),
         };
-        self.check_borrow(mutable, place, span)
+        self.borrow_as(to, place, span)
     }
 }
 

@@ -1,0 +1,24 @@
+name = "negative_slice_loans"
+build = "lib"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "T0036",
+    "returns a slice of `values`, which is gone once the function returns",
+    "`values` is not a reference or a slice, so a result cannot borrow from it",
+    "returns a reference into `local`, which is gone once the function returns",
+    "returns a reference into `other`, which `in` does not name",
+    "T0037",
+    "`inner` is gone while a slice of it is still in use",
+    "`values` is changed while a slice of it is still in use",
+    "`values` is borrowed as `[&mut]` while a `[&mut]` slice of it is still in use",
+    "`values` is borrowed as `[&mut]` while a slice of it is still in use",
+    "`values` is read while a `[&mut]` slice of it is still in use",
+    "slice made here",
+    "slice used later here",
+    "reference used later here",
+    "a `[&mut]` argument takes hold when the call starts",
+    "Compilation failed with 11 error(s)",
+]

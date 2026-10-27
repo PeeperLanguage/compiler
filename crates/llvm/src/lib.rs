@@ -130,6 +130,8 @@ impl<'p> Module<'p> {
         let path = &self.file().path;
         let mut out = String::new();
         _ = writeln!(out, "source_filename = {}\n", quoted(path.as_bytes()));
+        // Every slice type's: its elements' address and their count.
+        _ = writeln!(out, "%slice = type {{ ptr, i{} }}\n", self.pointer_bits);
         out.push_str(&self.strings);
         if !self.strings.is_empty() {
             out.push('\n');
@@ -291,6 +293,40 @@ impl Metadata {
                     "!DIDerivedType(tag: DW_TAG_pointer_type, baseType: {base}, size: {pointer_bits})"
                 )
             }
+            Type::Slice { element, .. } => {
+                let base = self.debug_type(program, types, types.real(element), pointer_bits);
+                let base = base.expect("an element has a value's type");
+                let name = types.text(ty, |definition| {
+                    let (name, file) = project::declared_name(&program.modules, definition);
+                    name.text(file)
+                });
+                // Its members name it, so its number comes first.
+                let composite = self.reserve();
+                let pointer = self.add(format_args!(
+                    "!DIDerivedType(tag: DW_TAG_pointer_type, baseType: !{base}, size: {pointer_bits})"
+                ));
+                let usize = self.add(basic("usize", pointer_bits, "DW_ATE_unsigned"));
+                let member = |field: &str, base: usize, offset: u32| {
+                    format!(
+                        "!DIDerivedType(tag: DW_TAG_member, name: \"{field}\", \
+                         scope: !{composite}, baseType: !{base}, offset: {offset})"
+                    )
+                };
+                let address = self.add(member("ptr", pointer, 0));
+                let length = self.add(member("len", usize, pointer_bits));
+                let elements = self.add(format_args!("!{{!{address}, !{length}}}"));
+                self.define(
+                    composite,
+                    format_args!(
+                        "distinct !DICompositeType(tag: DW_TAG_structure_type, name: {}, \
+                         size: {}, elements: !{elements})",
+                        quoted(name.as_bytes()),
+                        2 * pointer_bits
+                    ),
+                );
+                self.types.insert(ty, composite);
+                return Some(composite);
+            }
             Type::Array { element, length } => {
                 let base = self.debug_type(program, types, types.real(element), pointer_bits);
                 let base = base.expect("an element has a value's type");
@@ -397,6 +433,7 @@ fn type_text(types: &Types, ty: TypeId) -> impl fmt::Display {
         Type::Float(Float::F32) => out.write_str("float"),
         Type::Float(Float::F64) => out.write_str("double"),
         Type::CString | Type::Reference { .. } | Type::RawPointer { .. } => out.write_str("ptr"),
+        Type::Slice { .. } => out.write_str("%slice"),
         Type::Struct { ref fields, .. } => struct_type_text(types, fields, out),
         Type::Range { element, step } => struct_type_text(types, &range_fields(element, step), out),
         Type::Array { element, length } => {
@@ -462,6 +499,10 @@ fn layout(types: &Types, ty: TypeId, pointer_bits: u32) -> (u64, u64) {
         Type::CString | Type::Reference { .. } | Type::RawPointer { .. } => {
             let bytes = u64::from(pointer_bits / 8);
             (bytes, bytes)
+        }
+        Type::Slice { .. } => {
+            let bytes = u64::from(pointer_bits / 8);
+            (2 * bytes, bytes)
         }
         Type::Struct { ref fields, .. } => {
             let (_, size, align) = struct_layout(types, fields, pointer_bits);

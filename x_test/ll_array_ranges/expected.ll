@@ -1,5 +1,7 @@
 source_filename = "<fixture>/src/main.peep"
 
+%slice = type { ptr, i64 }
+
 @.str.0 = private unnamed_addr constant [1 x i8] c"\00"
 @.str.1 = private unnamed_addr constant [3 x i8] c", \00"
 @.str.2 = private unnamed_addr constant [2 x i8] c"[\00"

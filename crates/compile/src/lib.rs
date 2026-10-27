@@ -309,7 +309,11 @@ fn hash_type(checker: &Checker, ty: TypeId, hasher: &mut DefaultHasher) {
             hash_type(checker, *element, hasher);
         }
         Type::Range { element, .. } => hash_type(checker, *element, hasher), // `step` follows
-        Type::Reference { mutable, target } => {
+        Type::Reference { mutable, target }
+        | Type::Slice {
+            mutable,
+            element: target,
+        } => {
             mutable.hash(hasher);
             hash_type(checker, *target, hasher);
         }

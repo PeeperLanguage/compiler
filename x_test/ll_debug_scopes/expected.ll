@@ -1,5 +1,7 @@
 source_filename = "<fixture>/src/main.peep"
 
+%slice = type { ptr, i64 }
+
 @.str.0 = private unnamed_addr constant [8 x i8] c"scaled\0A\00"
 
 define i32 @"ll_debug_scopes:main.scale"(i32 %arg0, i32 %arg1) !dbg !4 {

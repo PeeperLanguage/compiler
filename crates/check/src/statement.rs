@@ -899,9 +899,18 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         if let ExprKind::Invalid = self.body.exprs[place].kind {
             return None; // its error was reported
         }
-        let Some((variable, reference)) = self.place_root(place) else {
+        let Some((variable, decider)) = self.place_root(place) else {
             let message = match self.body.exprs[place].kind {
-                // A field read that is no place: an array's `len` (`check_field`).
+                // A field read that is no place: an array's or a slice's
+                // `len` (`check_field`).
+                ExprKind::Length(value)
+                    if matches!(
+                        self.checker.types[self.body.exprs[value].ty],
+                        Type::Slice { .. }
+                    ) =>
+                {
+                    "a slice's `len` cannot be set"
+                }
                 ExprKind::Constant(_) | ExprKind::Length(_) => "an array's `len` cannot be set",
                 _ => "only a variable's fields can be set",
             };
@@ -910,7 +919,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 .error(diagnostics::INVALID_ASSIGNMENT, message, span);
             return None;
         };
-        self.report_unwritable(place, variable, reference, "assign to");
+        self.report_unwritable(place, variable, decider, "assign to");
         Some(place)
     }
 

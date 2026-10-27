@@ -1,0 +1,11 @@
+// A slice's length is known only when the program runs, so even a constant
+// index is checked then.
+fn last(view: [&]i32, at: usize) -> i32 {
+    println(view[at]);
+    return view[3];
+}
+
+fn main() -> i32 {
+    let values = [3]i32{7, 8, 9};
+    return last(&values, 2);
+}

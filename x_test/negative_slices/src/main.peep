@@ -1,0 +1,46 @@
+// What slices cannot do yet, or ever: be held in a struct, an array, a
+// reference or another slice, cross to C, be written through `[&]`, become
+// writable from `[&]`, change element type, run at compile time.
+struct Holder { view: [&]i32 }
+
+#[extern("takes")]
+fn takes(values: [&]i32);
+
+fn nested(values: [&][&]i32) {}
+fn of_references(values: [&]&i32) {}
+fn to_slice(values: &[&]i32) {}
+fn in_array(values: [2][&]i32) {}
+
+fn first(view: [&]i32) -> i32 {
+    view[0] = 1;
+    let mut count = 0;
+    for value in view {
+        count = count + value;
+    }
+    view = view;
+    view.len = 2;
+    let negative = view[-1];
+    let wide = view[-1i128];
+    let past = view[18446744073709551616u128];
+    return view.length;
+}
+
+fn edit(values: [&mut]i32) {}
+fn wide(values: [&]i64) {}
+
+// Arrays cannot run at compile time yet, so no slice can be made there.
+fn count() -> usize {
+    let values = [3]i32{1, 2, 3};
+    let view: [&]i32 = &values;
+    return view.len;
+}
+
+const COUNT: usize = count();
+
+fn main() {
+    let fixed = [3]i32{1, 2, 3};
+    let view: [&]i32 = &fixed;
+    edit(view);
+    edit(&mut fixed);
+    wide(&fixed);
+}

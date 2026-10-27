@@ -412,6 +412,20 @@ the place must be set, but it makes no loan, so nothing checks how the raw
 pointer is used. A `.*` of a typed raw pointer is the same `Dereference` step
 as a reference's.
 
+A slice (`[&]T`, `[&mut]T`) is its own type, not a reference to some
+unsized `[T]`: the address of some elements and their count, known only when
+the program runs. The loan rules hold for it as for a reference: both answer
+`Type::borrows`, which the holder, origin and write checks ask, so no rule is
+copied. A slice is never in a field, an array element or behind a reference
+or raw pointer, so a slice place is always all of a variable. THIR writes
+`s[i]` as an `Index` of `s` with no dereference; lowering adds the
+`Dereference` step before the index, so a write through a slice is behind a
+reference for every check, as `r.*[i]` is. `&a` where a slice is expected is
+a `Borrow` of `a` with the slice type (`Conversion::Reborrow`); a borrow of a
+slice place (a `[&mut]` lent again, or used as a `[&]`) is a `Borrow` of its
+elements, `s.*`. `s.len` loads the slice, never moving a `[&mut]`, and takes
+its field 1. Slices do not run at compile time: making one needs a `Borrow`.
+
 A use (`load`, `move`, `borrow`, `address`, or a read or write of a place) not set on
 every path is T0034 ("`x` is used after it was moved", with each place it was
 moved) when the moved bit is on, else T0039 ("`x` is used before it is set").
@@ -519,6 +533,13 @@ per function (`peeper -dump ll` shows it):
   constant made at compile time (`panic: division by zero` or `panic:
   message`, then `  --> file:line:column`) through the prelude's `write` to the
   standard error and calls its `exit` with 101: no runtime function of its own.
+- A slice is `%slice = type { ptr, iN }`, N the pointer's width, written at
+  the top of every module, and passed as that one value, not kept in memory
+  like an array, so a slice argument is never copied. At a place's step
+  through a slice the walker loads both parts and checks the next index
+  against the count when the program runs, even a constant one; a borrow of
+  a slice builds both parts with `insertvalue`. A debugger shows it as a
+  struct with `ptr` and `len`.
 - `print` and `println` call the runtime's print functions, one per number,
   `bool`, `cstr` or pointer, with the text known at compile time (spaces,
   struct names, brackets) gathered into one string between them. An array

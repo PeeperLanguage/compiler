@@ -1,0 +1,16 @@
+// A slice is `%slice`, its elements' address and their count, passed as one
+// value: `&a` fills it from the array, `s[i]` loads the address and checks
+// the index against the count, `.len` reads the count.
+fn get(view: [&]i32, at: usize) -> i32 {
+    return view[at] + view.len as i32;
+}
+
+fn set(edit: [&mut]i32) {
+    edit[0] = 1;
+}
+
+fn main() {
+    let mut values = [2]i32{3, 4};
+    set(&mut values);
+    let read = get(&values, 1);
+}

@@ -45,6 +45,7 @@ use diagnostics::Diagnostic;
 use model::DefId;
 use model::mir;
 use model::semantic_types::Type;
+use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use source::SourceFile;
 use source::Span;
@@ -84,7 +85,7 @@ pub fn report_loan_errors<'t>(
             )
         })
         .collect();
-    if borrows.is_empty() && !matches!(types[body.result], Type::Reference { .. }) {
+    if borrows.is_empty() && types[body.result].borrows().is_none() {
         return;
     }
     let variables = body.variables.ids().map(|id| body.variables[id].ty);
@@ -92,16 +93,16 @@ pub fn report_loan_errors<'t>(
     let mut holder_count = 0;
     let mut holders = Vec::with_capacity(variables.len() + values.len());
     for ty in variables.chain(values) {
-        match types[ty] {
-            Type::Reference { .. } => {
-                holders.push(Some(Id::from_index(holder_count)));
-                holder_count += 1;
-            }
-            _ => holders.push(None),
+        if types[ty].borrows().is_some() {
+            holders.push(Some(Id::from_index(holder_count)));
+            holder_count += 1;
+        } else {
+            holders.push(None);
         }
     }
     let mut loans = Loans {
         body,
+        types,
         origins_of,
         origins: origins_of(function),
         reserved: Bits::new(0), // found below: it needs `Loans::uses`
@@ -115,6 +116,7 @@ pub fn report_loan_errors<'t>(
 /// One function's loans and holders.
 struct Loans<'b, 't> {
     body: &'b mir::Body,
+    types: &'b Types, // to name a reference or a slice in a message
     origins_of: &'b dyn Fn(DefId) -> &'t [u32], // of a function it calls
     origins: &'t [u32], // the parameters its returned reference may point into
     borrows: Vec<Id<mir::Instruction>>, // each `Borrow` loan's instruction
@@ -124,6 +126,32 @@ struct Loans<'b, 't> {
     /// The `&mut` loans reserved until their call (two-phase).
     reserved: Bits<Loan>,
 }
+
+/// The words a message names a borrow with, by its type: a reference's or
+/// a slice's.
+struct BorrowWords {
+    noun: &'static str,     // "reference made here"
+    writable: &'static str, // "a `&mut` argument"
+    to: &'static str,       // "a reference to it"
+    into: &'static str,     // "returns a reference into `x`"
+    mutably_borrowed: &'static str,
+}
+
+const REFERENCE_WORDS: BorrowWords = BorrowWords {
+    noun: "reference",
+    writable: "`&mut`",
+    to: "to",
+    into: "into",
+    mutably_borrowed: "borrowed as `&mut`",
+};
+
+const SLICE_WORDS: BorrowWords = BorrowWords {
+    noun: "slice",
+    writable: "`[&mut]`",
+    to: "of",
+    into: "of",
+    mutably_borrowed: "borrowed as `[&mut]`",
+};
 
 /// What an instruction does to a place, as the loan rules see it.
 struct Access<'p> {
@@ -136,6 +164,14 @@ struct Access<'p> {
 }
 
 impl Loans<'_, '_> {
+    /// The words for a borrow of the type `ty`, a reference or slice.
+    fn words(&self, ty: TypeId) -> &'static BorrowWords {
+        match self.types[ty] {
+            Type::Slice { .. } => &SLICE_WORDS,
+            _ => &REFERENCE_WORDS,
+        }
+    }
+
     /// The borrows, then one parameter loan per parameter.
     fn loan_count(&self) -> usize {
         self.borrows.len() + self.body.parameters
@@ -455,7 +491,20 @@ impl Loans<'_, '_> {
                 if let Some((holder, error)) = error {
                     let later = self.next_use(holder, block, position);
                     let error = match later {
-                        Some(later) => error.label(file, later, "reference used later here"),
+                        Some(later) => {
+                            // The holder's variable or value, found only for
+                            // an error.
+                            let index = (self.holders.iter())
+                                .position(|&found| found == Some(holder))
+                                .expect("each holder is a variable's or a value's");
+                            let variables = body.variables.len();
+                            let ty = match index.checked_sub(variables) {
+                                None => body.variables[Id::from_index(index)].ty,
+                                Some(value) => body.instructions[Id::from_index(value)].ty,
+                            };
+                            let noun = self.words(ty).noun;
+                            error.label(file, later, format!("{noun} used later here"))
+                        }
                         None => error,
                     };
                     errors.push((body.instructions.span(id).start, error));
@@ -479,6 +528,10 @@ impl Loans<'_, '_> {
         file: &Arc<SourceFile>,
         errors: &mut Vec<(u32, Diagnostic)>,
     ) {
+        // Named by what the function returns: a reference into a slice's
+        // elements is still a reference.
+        let words = self.words(self.body.result);
+        let (returned, into) = (words.noun, words.into);
         for loan in (0..self.loan_count()).map(Id::<Loan>::from_index) {
             if !loans.has(loan) || reported.has(loan) {
                 continue;
@@ -496,7 +549,7 @@ impl Loans<'_, '_> {
                 }
                 let name = file.slice(self.body.variables.span(place.variable));
                 let message = format!(
-                    "returns a reference into `{name}`, which is gone once the function returns"
+                    "returns a {returned} {into} `{name}`, which is gone once the function returns"
                 );
                 let error = Diagnostic::new(diagnostics::LOCAL_ADDRESS_RETURNED, message)
                     .label(file, span, "");
@@ -505,7 +558,8 @@ impl Loans<'_, '_> {
                 // a line too high; label it too once that is fixed.
                 let made = self.body.instructions.span(borrow);
                 if made.start < span.start || made.end > span.end {
-                    error.label(file, made, "reference made here")
+                    let made_noun = self.words(self.body.instructions[borrow].ty).noun;
+                    error.label(file, made, format!("{made_noun} made here"))
                 } else {
                     error
                 }
@@ -517,7 +571,7 @@ impl Loans<'_, '_> {
                 let parameter = self.body.variables.span(Id::from_index(position as usize));
                 let name = file.slice(parameter);
                 let message =
-                    format!("returns a reference into `{name}`, which `in` does not name");
+                    format!("returns a {returned} {into} `{name}`, which `in` does not name");
                 Diagnostic::new(diagnostics::INVALID_RETURN, message)
                     .label(file, span, "")
                     .help(format!("add `{name}` to `in`"), Vec::new())
@@ -544,7 +598,8 @@ impl Loans<'_, '_> {
                 mutable: true,
             } => {
                 let reserves = self.reserved.has(self.loan(id));
-                (place, "borrowed as `&mut`", reserves, false)
+                let event = self.words(self.body.instructions[id].ty).mutably_borrowed;
+                (place, event, reserves, false)
             }
             mir::InstructionKind::ScopeEnd(variable) => {
                 return Some(Access {
@@ -611,20 +666,21 @@ impl Loans<'_, '_> {
                 }
                 reported.set(loan);
                 let name = file.slice(self.body.variables.span(access.variable));
-                let reference = if mutable {
-                    "a `&mut` reference"
+                let words = self.words(self.body.instructions[borrow].ty);
+                let (noun, to) = (words.noun, words.to);
+                let kind = if mutable {
+                    format!("a {} {noun}", words.writable)
                 } else {
-                    "a reference"
+                    format!("a {noun}")
                 };
                 let event = access.event;
-                let message =
-                    format!("`{name}` is {event} while {reference} to it is still in use");
+                let message = format!("`{name}` is {event} while {kind} {to} it is still in use");
                 let error = Diagnostic::new(diagnostics::BORROW_CONFLICT, message)
                     .label(file, access.span, format!("{event} here"))
                     .label(
                         file,
                         self.body.instructions.span(borrow),
-                        "reference made here",
+                        format!("{noun} made here"),
                     );
                 return Some((holder, error));
             }
@@ -673,7 +729,8 @@ impl Loans<'_, '_> {
             if let Some((holder, error)) =
                 self.broken_loan(&access, held, live_before, skip, reported, file)
             {
-                let note = "a `&mut` argument takes hold when the call starts";
+                let writable = self.words(self.body.instructions[borrow].ty).writable;
+                let note = format!("a {writable} argument takes hold when the call starts");
                 return Some((holder, error.note(note)));
             }
         }

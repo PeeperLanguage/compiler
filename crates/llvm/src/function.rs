@@ -250,11 +250,22 @@ fn traps(body: &mir::Body, types: &Types, id: Id<mir::Instruction>) -> usize {
         | InstructionKind::Move(ref place)
         | InstructionKind::Store { ref place, .. }
         | InstructionKind::Borrow { ref place, .. }
-        | InstructionKind::Address(ref place) => (place.projections.iter())
-            .filter(|step| {
-                matches!(step, mir::Projection::Index(index) if !matches!(index, Operand::Constant(_)))
-            })
-            .count(),
+        | InstructionKind::Address(ref place) => {
+            let unknown = (place.projections.iter())
+                .filter(|step| {
+                    matches!(step, mir::Projection::Index(index) if !matches!(index, Operand::Constant(_)))
+                })
+                .count();
+            // A slice is only ever all of a variable, so its elements are the
+            // first step; an element there is checked even at a constant
+            // index, as no length is known at compile time.
+            let in_slice =
+                matches!(
+                    place.projections.get(1),
+                    Some(mir::Projection::Index(Operand::Constant(_)))
+                ) && matches!(types[body.variables[place.variable].ty], Type::Slice { .. });
+            unknown + usize::from(in_slice)
+        }
         InstructionKind::Check { .. } => 1,
         // A range is counted when the program runs unless it is written here
         // with constant `left`, `step` and `inclusive`.
@@ -263,8 +274,11 @@ fn traps(body: &mir::Body, types: &Types, id: Id<mir::Instruction>) -> usize {
                 && [range_field::LEFT, range_field::STEP, range_field::INCLUSIVE]
                     .into_iter()
                     .any(|field| {
-                    !matches!(written_range_field(body, part, field), Some(Operand::Constant(_)))
-                })
+                        !matches!(
+                            written_range_field(body, part, field),
+                            Some(Operand::Constant(_))
+                        )
+                    })
         })),
         _ => 0,
     }
@@ -620,8 +634,27 @@ impl Function<'_, '_, '_> {
                 return;
             }
             InstructionKind::Borrow { ref place, .. } | InstructionKind::Address(ref place) => {
-                self.write_place_address(out, &name, place, &location, id);
-                return; // the address is the value
+                if !matches!(types[ty], Type::Slice { .. }) {
+                    self.write_place_address(out, &name, place, &location, id);
+                    return; // the address is the value
+                }
+                // A slice: the elements' address, then their count.
+                let address = format!("{name}.p");
+                let length =
+                    match types[self.write_place_address(out, &address, place, &location, id)] {
+                        Type::Array { length, .. } => length.to_string(),
+                        Type::Slice { .. } => format!("{address}.0.len"),
+                        _ => unreachable!("a slice is taken of an array or a slice's elements"),
+                    };
+                let bits = self.module.pointer_bits;
+                _ = writeln!(
+                    out,
+                    "  {name}.a = insertvalue %slice poison, ptr {address}, 0{location}"
+                );
+                write!(
+                    out,
+                    "  {name} = insertvalue %slice {name}.a, i{bits} {length}, 1"
+                )
             }
             InstructionKind::Binary { op, left, right } => {
                 self.write_binary(out, id, op, left, right);
@@ -735,34 +768,41 @@ impl Function<'_, '_, '_> {
                 }
                 return;
             }
-            // In the memory of the value it is part of, which no one changes:
-            // its address when it is kept in memory, else loaded from there.
+            // A slice's length is in its value. Another field is in the memory
+            // of the value it is part of, which no one changes: its address
+            // when it is kept in memory, else loaded from there.
             InstructionKind::Field { value, ref fields } => {
-                let field_address = fmt::from_fn(|out| {
-                    if in_memory(types, ty) {
-                        write!(out, "{name}")
-                    } else {
-                        write!(out, "{name}.f")
-                    }
-                });
-                _ = write!(
-                    out,
-                    "  {field_address} = getelementptr inbounds {}, ptr {}, i32 0",
-                    type_text(types, self.body.operand_type(value)),
-                    self.operand(value)
-                );
-                for index in fields {
-                    _ = write!(out, ", i32 {index}");
-                }
-                if in_memory(types, ty) {
-                    Ok(())
+                let value_type = self.body.operand_type(value);
+                if let Type::Slice { .. } = types[value_type] {
+                    let value = self.operand(value);
+                    write!(out, "  {name} = extractvalue %slice {value}, {}", fields[0])
                 } else {
-                    _ = writeln!(out, "{location}");
-                    write!(
+                    let field_address = fmt::from_fn(|out| {
+                        if in_memory(types, ty) {
+                            write!(out, "{name}")
+                        } else {
+                            write!(out, "{name}.f")
+                        }
+                    });
+                    _ = write!(
                         out,
-                        "  {name} = load {}, ptr {field_address}",
-                        type_text(types, ty)
-                    )
+                        "  {field_address} = getelementptr inbounds {}, ptr {}, i32 0",
+                        type_text(types, value_type),
+                        self.operand(value)
+                    );
+                    for index in fields {
+                        _ = write!(out, ", i32 {index}");
+                    }
+                    if in_memory(types, ty) {
+                        Ok(())
+                    } else {
+                        _ = writeln!(out, "{location}");
+                        write!(
+                            out,
+                            "  {name} = load {}, ptr {field_address}",
+                            type_text(types, ty)
+                        )
+                    }
                 }
             }
             InstructionKind::Phi(ref incoming) => {
@@ -1379,8 +1419,10 @@ impl Function<'_, '_, '_> {
     /// Writes the lines computing `address`, the address of `place`, for the
     /// instruction `id`: one `getelementptr` for each run of fields and
     /// elements, after a check of each index there not known at compile
-    /// time, and before each dereference a load of the pointer there,
-    /// `<address>.<n>` for the `n`th.
+    /// time, or into a slice's elements, and before each dereference a load
+    /// of the pointer there, `<address>.<n>` for the `n`th; for a slice's
+    /// elements, its length too, `<address>.<n>.len`. Gives the place's
+    /// type, a slice's for its elements.
     fn write_place_address(
         &mut self,
         out: &mut String,
@@ -1388,7 +1430,7 @@ impl Function<'_, '_, '_> {
         place: &mir::Place,
         location: &DebugLocation,
         id: Id<mir::Instruction>,
-    ) {
+    ) -> TypeId {
         let variable = place.variable.index();
         let mut ty = self.body.variables[place.variable].ty;
         let (types, body) = (self.types, self.body);
@@ -1422,7 +1464,8 @@ impl Function<'_, '_, '_> {
                     ) => {
                         element // check found it inside the array
                     }
-                    (mir::Projection::Index(index), &Type::Array { element, length }) => {
+                    (mir::Projection::Index(index), &Type::Array { element, .. })
+                    | (mir::Projection::Index(index), &Type::Slice { element, .. }) => {
                         let Type::Integer(integer) = self.types[self.body.operand_type(index)]
                         else {
                             unreachable!("check takes only an integer index")
@@ -1431,30 +1474,44 @@ impl Function<'_, '_, '_> {
                         let name = format!("{address}.{run}.{position}");
                         // Compared as an `i64`, or in its own type when wider; a
                         // negative index, extended, is above any length.
-                        let compared = match bits {
-                            _ if !renamed(index) => format!("i64 {value}"),
-                            65.. => format!("i{bits} {value}"),
+                        let (compared, compared_bits) = match bits {
+                            _ if !renamed(index) => (format!("i64 {value}"), 64),
+                            65.. => (format!("i{bits} {value}"), bits),
                             _ => {
                                 let extension = if integer.signed { "sext" } else { "zext" };
                                 _ = writeln!(
                                     out,
                                     "  {name} = {extension} i{bits} {value} to i64{location}"
                                 );
-                                format!("i64 {name}")
+                                (format!("i64 {name}"), 64)
                             }
                         };
-                        _ = writeln!(
-                            out,
-                            "  {name}.out = icmp uge {compared}, {length}{location}"
-                        );
-                        let message = format!("index out of bounds: the length is {length}");
+                        // A slice's length was loaded at its dereference.
+                        let (bound, message) = if let Type::Array { length, .. } = self.types[ty] {
+                            let message = format!("index out of bounds: the length is {length}");
+                            (length.to_string(), message)
+                        } else {
+                            let mut bound = format!("{address}.{}.len", run - 1);
+                            let pointer_bits = self.module.pointer_bits;
+                            if compared_bits > pointer_bits {
+                                _ = writeln!(
+                                    out,
+                                    "  {name}.len = zext i{pointer_bits} {bound} to i{compared_bits}{location}"
+                                );
+                                bound = format!("{name}.len");
+                            }
+                            (bound, "index out of bounds of the slice".to_string())
+                        };
+                        _ = writeln!(out, "  {name}.out = icmp uge {compared}, {bound}{location}");
                         self.check(out, &format!("{name}.out"), &message, id);
-                        if bits > 64 {
+                        if bits > 64 && renamed(index) {
                             _ = writeln!(out, "  {name} = trunc {compared} to i64{location}");
                         }
                         element
                     }
-                    _ => unreachable!("a field is taken of a struct, an element of an array"),
+                    _ => unreachable!(
+                        "a field is taken of a struct, an element of an array or slice"
+                    ),
                 };
             }
             // The address so far: the variable's, or the pointer loaded last.
@@ -1470,11 +1527,20 @@ impl Function<'_, '_, '_> {
                     write!(out, "{address}.{run}.f")
                 }
             });
-            _ = write!(
-                out,
-                "  {run_address} = getelementptr inbounds {}, ptr {base}, i32 0",
-                type_text(self.types, run_type)
-            );
+            // A slice's elements, after its dereference, start at the loaded
+            // address, so the first index steps from there.
+            _ = match self.types[run_type] {
+                Type::Slice { element, .. } if run > 0 => write!(
+                    out,
+                    "  {run_address} = getelementptr inbounds {}, ptr {base}",
+                    type_text(self.types, element)
+                ),
+                _ => write!(
+                    out,
+                    "  {run_address} = getelementptr inbounds {}, ptr {base}, i32 0",
+                    type_text(self.types, run_type)
+                ),
+            };
             for (position, &step) in steps.iter().enumerate() {
                 _ = match step {
                     mir::Projection::Field(index) => write!(out, ", i32 {index}"),
@@ -1486,17 +1552,31 @@ impl Function<'_, '_, '_> {
                 };
             }
             _ = writeln!(out, "{location}");
-            if !last {
-                let Some(target) = self.types[ty].pointee() else {
-                    unreachable!("a dereference is taken of a typed pointer")
-                };
+            if last {
+                continue;
+            }
+            // A slice's elements keep the slice's type: the next run indexes
+            // them with the length loaded here.
+            if let Type::Slice { .. } = self.types[ty] {
+                let slice = format!("{address}.{run}.s");
                 _ = writeln!(
                     out,
-                    "  {address}.{run} = load ptr, ptr {run_address}{location}"
+                    "  {slice} = load %slice, ptr {run_address}{location}\n  \
+                     {address}.{run} = extractvalue %slice {slice}, 0{location}\n  \
+                     {address}.{run}.len = extractvalue %slice {slice}, 1{location}"
                 );
-                ty = target;
+                continue;
             }
+            let Some(target) = self.types[ty].pointee() else {
+                unreachable!("a dereference is taken of a typed pointer")
+            };
+            _ = writeln!(
+                out,
+                "  {address}.{run} = load ptr, ptr {run_address}{location}"
+            );
+            ty = target;
         }
+        ty
     }
 
     /// Writes the line calling `function` with `arguments` for the

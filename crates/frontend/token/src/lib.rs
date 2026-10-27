@@ -243,7 +243,7 @@ tokens! {
         DotDotEqual = "..=",
         /// A range from the left value up to the right one, without it.
         ///
-        /// A `for` loop counts each value of it, and counts down when the left value is larger. `a..b:step` steps by more than one. In an array literal, `(0..3)...` spreads those values (`...`). A range is a value of the type `range[T]`, `T` the integer type of its values: it can be kept, passed and returned, and it copies. In a type, `[..]T` is a slice. Slices are not supported yet.
+        /// A `for` loop counts each value of it, and counts down when the left value is larger. `a..b:step` steps by more than one. In an array literal, `(0..3)...` spreads those values (`...`). A range is a value of the type `range[T]`, `T` the integer type of its values: it can be kept, passed and returned, and it copies.
         ///
         /// ```peeper
         /// for i in 0..3 {

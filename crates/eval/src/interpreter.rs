@@ -247,7 +247,7 @@ impl<'b> Machine<'b, '_> {
             }
             InstructionKind::ScopeEnd(_) => None,
             InstructionKind::Borrow { .. } | InstructionKind::Address(_) => {
-                return unsupported(frame, "references and addresses");
+                return unsupported(frame, "references, slices and addresses");
             }
             InstructionKind::Aggregate(_)
             | InstructionKind::ArrayParts(_)
