@@ -441,6 +441,14 @@ before it is cut down; a `..=` end is checked below the length before one is
 added, and the ends against each other unless a start of 0 or an end at the
 length makes them in order.
 
+`&s[i..j]` of a slice `s` is the same `Slice`, of the slice place, and the
+same `Borrow`, of `s.*[from i, count n]`: its elements, behind it. The
+length is the slice's, loaded once before (field 1), so every end but a
+start of 0 is checked when the program runs, even a constant one; the
+checker rejects only constant ends that no slice can hold (negative, past
+the target's `usize`) or that are out of order. `&mut` needs a `[&mut]`
+source, as writing through a slice does.
+
 A use (`load`, `move`, `borrow`, `address`, or a read or write of a place) not set on
 every path is T0034 ("`x` is used after it was moved", with each place it was
 moved) when the moved bit is on, else T0039 ("`x` is used before it is set").

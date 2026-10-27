@@ -556,6 +556,29 @@ mod tests {
         );
     }
 
+    /// No slice is longer than the largest `usize`, `u32::MAX` on a 32-bit
+    /// target: a constant end past it is outside every slice, though it
+    /// fits a `u64`, which lowering would cut to the target's width.
+    #[test]
+    fn slice_ends_fit_the_target_usize() {
+        let program = load(&[(
+            "app:main",
+            "fn f(s: [&]i32) {
+                let fits = &s[4294967295u64..];
+                let past = &s[4294967296u64..];
+            }
+            fn main() {}",
+        )]);
+        let found = run(&program, 32, Results::default(), false, |_| {});
+        let messages: Vec<&str> = (found.diagnostics())
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect();
+        assert_eq!(
+            messages,
+            ["slice `4294967296u64..` is outside every `[&]i32`"]
+        );
+    }
+
     /// A cycle gets one error with a place for each step, however often it
     /// is closed (`A + A` closes it twice); a figure 8 is two cycles.
     #[test]

@@ -12,4 +12,7 @@ stdout_contains = [
     "widths: 18 2 6\n",
     "written: [3, 2, 0, 0, 9, 9]\n",
     "as shared: 2 5\n",
+    "of slices: 14 12 3 2 0 18\n",
+    "through slices: 6 4 6\n",
+    "resliced: [1, 0, 8, 4, 7, 6]\n",
 ]

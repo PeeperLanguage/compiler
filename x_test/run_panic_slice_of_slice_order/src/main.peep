@@ -1,0 +1,9 @@
+// Ends of a slice's slice known only when the program runs are checked
+// then: a start after the end stops it.
+fn main() -> i32 {
+    let values = [4]i32{1, 2, 3, 4};
+    let all: [&]i32 = &values;
+    let start: usize = 2;
+    let view = &all[start..1];
+    return view[0];
+}

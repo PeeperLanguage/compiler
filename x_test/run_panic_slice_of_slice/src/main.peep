@@ -1,0 +1,8 @@
+// A slice's length is known only when the program runs, so even an end
+// known at compile time is checked then: past the length stops it.
+fn main() -> i32 {
+    let values = [4]i32{1, 2, 3, 4};
+    let all: [&]i32 = &values[1..];
+    let view = &all[0..5];
+    return view[0];
+}

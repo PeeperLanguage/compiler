@@ -947,11 +947,11 @@ impl ThirBuilder<'_, '_> {
 
     /// `&array[start..end]`, `&mut` when `mutable`, at `span`, where
     /// `indexed` is `array[start..end]`, its index a written range: a slice
-    /// of the elements of an array in a place, or of one a reference points
-    /// to, from `start` up to `end`, each left out or an integer as an index
-    /// is (`ExprKind::Slice`). Ends known at compile time must be inside the
-    /// array and in order; others are checked when the program runs. A step
-    /// is an error.
+    /// of the elements of an array in a place, of one a reference points
+    /// to, or of a slice's, from `start` up to `end`, each left out or an
+    /// integer as an index is (`ExprKind::Slice`). Ends known at compile
+    /// time must be inside the array and in order; others, and every end of
+    /// a slice's, are checked when the program runs. A step is an error.
     fn check_slice(&mut self, mutable: bool, indexed: Id<ast::Expr>, span: Span) -> Expr {
         let tree = &self.checker.module().ast;
         let ast::Expr::Index {
@@ -999,12 +999,8 @@ impl ThirBuilder<'_, '_> {
             _ => {}
         }
         let (element, length) = match self.checker.types[ty] {
-            Type::Array { element, length } => (element, length),
-            Type::Slice { .. } => {
-                self.checker
-                    .not_supported(array_span, "slices taken from slices");
-                return Expr::INVALID;
-            }
+            Type::Array { element, length } => (element, Some(length)),
+            Type::Slice { element, .. } => (element, None),
             Type::Invalid => return Expr::INVALID,
             _ => {
                 let message = format!("`{}` cannot be sliced", self.checker.type_text(ty));
@@ -1033,19 +1029,26 @@ impl ThirBuilder<'_, '_> {
     }
 
     /// The ends, each left out or written, of the slice of `viewed`, an
-    /// array type of `length` elements, by the written range `range`, `..=`
-    /// when `inclusive`: integers of one type, `usize` for literals without
-    /// a suffix. Ends known at compile time must be inside the array, and
-    /// in order when both are; `None` after an error.
+    /// array type of `length` elements or a slice type (no `length`), by
+    /// the written range `range`, `..=` when `inclusive`: integers of one
+    /// type, `usize` for literals without a suffix. Ends known at compile
+    /// time must be inside the array, or fit a `usize` for a slice, and in
+    /// order when both are; `None` after an error.
     fn check_slice_ends(
         &mut self,
         ends: [Option<Id<ast::Expr>>; 2],
         inclusive: bool,
         viewed: TypeId,
-        length: u64,
+        length: Option<u64>,
         range: Id<ast::Expr>,
     ) -> Option<[Option<Id<Expr>>; 2]> {
-        let usize = Some(self.checker.usize_type());
+        let usize_type = self.checker.usize_type();
+        let Type::Integer(size) = self.checker.types[usize_type] else {
+            unreachable!("`usize` is an integer")
+        };
+        // No slice is longer than the largest `usize`.
+        let limit = length.unwrap_or(u64::MAX >> (64 - size.bits));
+        let usize = Some(usize_type);
         let ends = match ends {
             [Some(start), Some(end)] => {
                 let (start, end) = self.check_range_ends(start, end, usize);
@@ -1056,7 +1059,7 @@ impl ThirBuilder<'_, '_> {
         // How many elements come before each end when known at compile
         // time: a missing start is 0, a missing end the length; a written
         // `..=` end has one more, past it.
-        let mut before_ends = [Some(0), Some(length)];
+        let mut before_ends = [Some(0), length];
         let mut outside = false;
         let past = [0, u64::from(inclusive)];
         for ((before, end), past) in before_ends.iter_mut().zip(ends).zip(past) {
@@ -1071,7 +1074,7 @@ impl ThirBuilder<'_, '_> {
             // A negative end, or one past `u64`, is outside every array.
             let known = bigint::to_u64(integer.bits, integer.signed, value)
                 .and_then(|at| at.checked_add(past));
-            outside |= known.is_none_or(|known| known > length);
+            outside |= known.is_none_or(|known| known > limit);
             *before = known;
         }
         let tree = &self.checker.module().ast;
@@ -1079,7 +1082,12 @@ impl ThirBuilder<'_, '_> {
         let written = tree.file.slice(range_span);
         let error = if outside {
             let viewed = self.checker.type_text(viewed);
-            format!("slice `{written}` is outside `{viewed}`, whose length is {length}")
+            match length {
+                Some(length) => {
+                    format!("slice `{written}` is outside `{viewed}`, whose length is {length}")
+                }
+                None => format!("slice `{written}` is outside every `{viewed}`"),
+            }
         } else if let [Some(first), Some(last)] = before_ends
             && first > last
         {
@@ -1102,13 +1110,25 @@ impl ThirBuilder<'_, '_> {
                 self.dereference(reference, target)
             }
             Type::Invalid => Expr::INVALID,
-            _ => {
+            ref found => {
                 let message = format!(
                     "`.*` needs a reference or a typed raw pointer, found `{}`",
                     self.checker.type_text(ty)
                 );
-                self.checker
-                    .error(diagnostics::INVALID_OPERATION, message, span);
+                let file = &self.checker.module().ast.file;
+                let mut error =
+                    Diagnostic::new(diagnostics::INVALID_OPERATION, message).label(file, span, "");
+                // Rust writes `&*s` to lend a slice again; Peeper has no bare
+                // element type for `.*` to give, so the help names what does.
+                if let Type::Slice { .. } = found {
+                    let text = file.slice(self.body.exprs.span(reference));
+                    let help = format!(
+                        "a slice is lent again as it is (`f({text})`), or as `&{text}[..]` / \
+                         `&mut {text}[..]`"
+                    );
+                    error = error.help(help, Vec::new());
+                }
+                self.checker.report(error);
                 Expr::INVALID
             }
         }
@@ -1157,8 +1177,7 @@ impl ThirBuilder<'_, '_> {
     /// slice, written at `span`: only a place in a variable can. A `&mut` or
     /// `[&mut]` needs a place that can be written, else that is reported but
     /// the place is still lent, so checking goes on; a slice place is lent
-    /// again, and writing through it writes its elements, never the
-    /// variable holding it.
+    /// again, so its own type decides, never the variable holding it.
     fn check_lending(&mut self, ty: TypeId, place: Id<Expr>, span: Span) -> bool {
         let Some((variable, decider)) = self.place_root(place) else {
             self.checker
@@ -1166,8 +1185,11 @@ impl ThirBuilder<'_, '_> {
             return false;
         };
         let types = &self.checker.types;
-        let relends_slice = matches!(types[self.body.exprs[place].ty], Type::Slice { .. });
-        if types[ty].borrows() == Some(true) && !relends_slice {
+        let decider = match types[self.body.exprs[place].ty] {
+            Type::Slice { .. } => Some(place),
+            _ => decider,
+        };
+        if types[ty].borrows() == Some(true) {
             self.report_unwritable(place, variable, decider, "mutably borrow");
         }
         true
@@ -1265,7 +1287,12 @@ impl ThirBuilder<'_, '_> {
                 Type::Slice { .. } => ("slice", "`[&mut]` slice"),
                 _ => ("reference", "`&mut` reference"),
             };
-            let written = format!("`{place_text}` through shared {kind} `{holder}`");
+            // Only a slice lends itself again.
+            let written = if decider == place {
+                format!("the elements of shared slice `{holder}`")
+            } else {
+                format!("`{place_text}` through shared {kind} `{holder}`")
+            };
             let help = format!("make `{holder}` a {writable}");
             let label = format!("declared as a shared {kind} here");
             (written, declared, label, help)

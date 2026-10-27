@@ -1469,8 +1469,13 @@ impl Function<'_, '_, '_> {
                         element // check found it inside the array
                     }
                     // Lowering checked its start and count.
-                    (mir::Projection::Subslice(_), &Type::Array { element, .. })
-                    | (mir::Projection::Subslice(_), &Type::Slice { element, .. }) => element,
+                    (mir::Projection::Subslice(_), &Type::Array { element, .. }) => element,
+                    // A slice's elements are past its dereference, so never
+                    // in the first run, which would step into its header.
+                    (mir::Projection::Subslice(_), &Type::Slice { element, .. }) => {
+                        assert!(run > 0, "a slice is taken of a slice's elements");
+                        element
+                    }
                     (mir::Projection::Index(index), &Type::Array { element, .. })
                     | (mir::Projection::Index(index), &Type::Slice { element, .. }) => {
                         let Type::Integer(integer) = self.types[self.body.operand_type(index)]

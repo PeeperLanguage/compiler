@@ -24,3 +24,21 @@ fn middle:
 fn main:
   bb0:
     fall off at `}`
+fn tail:
+  bb0:
+    store view.0, arg0
+    %1 = load view.0: [&]i32
+    %2 = field %1[1]: u64
+    %3 = GreaterThan 1, %2: bool
+    check %3, "slice out of bounds"
+    %5 = Subtract %2, 1: u64
+    %6 = borrow view.0.*[from 1, count %5]: [&]i32
+    store rest.1, %6
+    %8 = load rest.1.*[at 0]: i32
+    scope end rest.1
+    scope end view.0
+    return %8
+  bb1:
+    scope end rest.1
+    scope end view.0
+    fall off at `}`

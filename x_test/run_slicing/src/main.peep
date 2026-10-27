@@ -1,6 +1,7 @@
 // `&a[i..j]` views the elements from `i` up to `j`, `..=` takes `j` too; a
 // missing start is 0 and a missing end the length. Ends of any integer type
-// known only when the program runs are checked then.
+// known only when the program runs are checked then. A slice is sliced the
+// same way, its ends always checked against its length when it runs.
 fn total(view: [&]i32) -> i32 {
     let mut sum = 0;
     let mut i: usize = 0;
@@ -46,4 +47,25 @@ fn main() {
     println("written:", a);
     let shared: [&]i32 = &mut a[1..];
     println("as shared:", count(&mut a[0..2]), shared.len);
+
+    let mut b = [6]i32{1, 2, 3, 4, 5, 6};
+    let all: [&]i32 = &b;
+    let inner = &all[1..5];
+    let deeper = &inner[1..];
+    println("of slices:", total(inner), total(deeper), total(&deeper[..=0]), count(&inner[i..]), count(&inner[4..]), total(&all[wide..]));
+    let mut rest: [&]i32 = &b;
+    let mut steps = 0;
+    for rest.len > 0 {
+        rest = &rest[1..];
+        steps = steps + 1;
+    }
+    let w: [&mut]i32 = &mut b;
+    fill(&mut w[1..3], 0);
+    update(&mut w[4..], 7);
+    let view = &w[0..2];
+    println("through slices:", steps, view[1] + w[3], w.len);
+    let mut tail: [&mut]i32 = &mut b;
+    tail = &mut tail[2..];
+    tail[0] = 8;
+    println("resliced:", b);
 }

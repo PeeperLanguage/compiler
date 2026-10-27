@@ -130,6 +130,14 @@ struct RangeWalk {
     inclusive: mir::Operand,
 }
 
+/// The length of what a slice is taken of: an array's, from its type, or
+/// a slice's, read when the program runs.
+#[derive(Clone, Copy)]
+enum Length {
+    Known(u64),
+    Read(mir::Operand),
+}
+
 /// Where a loop's `continue` and `break` go, and the block they leave.
 struct Loop {
     next: Id<mir::Block>, // the start of the next pass
@@ -716,10 +724,7 @@ impl Lowering<'_> {
                     }
                     _ => self.lower_expr(value)?,
                 };
-                mir::InstructionKind::Field {
-                    value: slice,
-                    fields: Box::new([1]),
-                }
+                return Some(self.slice_length(slice, span));
             }
             thir::ExprKind::Binary {
                 op: op @ (BinaryOp::LogicalAnd | BinaryOp::LogicalOr),
@@ -815,9 +820,7 @@ impl Lowering<'_> {
                 };
                 // Borrowing a slice lends its elements again.
                 if let Type::Slice { .. } = self.types[self.thir.exprs[borrowed].ty] {
-                    let mut projections = place.projections.into_vec();
-                    projections.push(mir::Projection::Dereference);
-                    place.projections = projections.into();
+                    place = slice_elements(place);
                 }
                 mir::InstructionKind::Borrow { place, mutable }
             }
@@ -833,13 +836,25 @@ impl Lowering<'_> {
     }
 
     /// The slice `&array[start..end]` (`thir::ExprKind::Slice`) at
-    /// `expression`: the borrow of the elements from the start, after
-    /// stopping the program when an end not known at compile time is
-    /// outside the array or the ends are out of order. The checker rejected
-    /// such ends known then, so they get no check.
+    /// `expression`, of an array or a slice: the borrow of the elements from
+    /// the start, after stopping the program when an end is outside them or
+    /// the ends are out of order. The checker rejected such ends known at
+    /// compile time for an array, so they get no check; a slice's length
+    /// is known only when the program runs, so each of its ends but a start
+    /// of 0 is checked.
     // Takes only the id and gives the operand: an arm of `lower_expr` that
     // passed the parts and took the instruction back cost a compile 9 M
     // instructions, with no slice in it.
+    /// The length of `slice`, its second field.
+    fn slice_length(&mut self, slice: mir::Operand, span: Span) -> mir::Operand {
+        let fields = Box::new([1]);
+        let length = mir::InstructionKind::Field {
+            value: slice,
+            fields,
+        };
+        self.emit(length, self.usize, span)
+    }
+
     fn lower_slice(&mut self, expression: Id<thir::Expr>) -> Option<mir::Operand> {
         let span = self.thir.exprs.span(expression);
         let thir::Expr {
@@ -859,10 +874,24 @@ impl Lowering<'_> {
             unreachable!("a slice's type is a slice")
         };
         let Ok(mut place) = self.place(array)? else {
-            unreachable!("the checker slices only an array in a variable")
+            unreachable!("the checker slices only an array or a slice in a variable")
         };
-        let Type::Array { length, .. } = self.types[self.thir.exprs[array].ty] else {
-            unreachable!("the checker slices only an array")
+        let viewed = self.thir.exprs[array].ty;
+        let length = match self.types[viewed] {
+            Type::Array { length, .. } => Length::Known(length),
+            // Read once, which leaves a `[&mut]` usable; its elements are
+            // behind it.
+            Type::Slice { .. } => {
+                let slice = mir::InstructionKind::Load(place.clone());
+                let slice = self.emit(slice, viewed, span);
+                place = slice_elements(place);
+                Length::Read(self.slice_length(slice, span))
+            }
+            _ => unreachable!("the checker slices only an array or a slice"),
+        };
+        let known_length = match length {
+            Length::Known(length) => Some(length),
+            Length::Read(_) => None,
         };
         // How many elements come before each end when known at compile
         // time: a missing start is 0, a missing end the length.
@@ -872,22 +901,29 @@ impl Lowering<'_> {
                     unreachable!("a slice's end is an integer")
                 };
                 let before = bigint::to_u64(integer.bits, integer.signed, value);
-                Some(before.expect("the checker took only ends inside the array"))
+                Some(before.expect("the checker took only ends that fit a `usize`"))
             }
             _ => None,
         };
         let known_start = start.map_or(Some(0), before);
-        let known_end = end.map_or(Some(length), |end| {
+        let known_end = end.map_or(known_length, |end| {
             before(end).map(|end| end + u64::from(inclusive))
         });
-        let start_operand = match (known_start, start) {
-            (Some(known), _) => self.integer_constant(self.usize, known),
-            (None, Some(start)) => self.lower_slice_end(start, BinaryOp::GreaterThan, length)?,
-            (None, None) => unreachable!("a missing start is known"),
+        // A written end is checked unless it is known inside the array; no
+        // start of 0 is outside.
+        let checked =
+            |known: Option<u64>| known.is_none() || known_length.is_none() && known != Some(0);
+        let start_operand = match start {
+            Some(start) if checked(known_start) => {
+                self.lower_slice_end(start, BinaryOp::GreaterThan, length)?
+            }
+            _ => self.integer_constant(
+                self.usize,
+                known_start.expect("an unchecked start is known"),
+            ),
         };
-        let end_operand = match (known_end, end) {
-            (Some(known), _) => self.integer_constant(self.usize, known),
-            (None, Some(end)) => {
+        let end_operand = match (end, known_end) {
+            (Some(end), known) if checked(known) => {
                 // A `..=` end is below the length, so one past it fits.
                 let op = if inclusive {
                     BinaryOp::GreaterOrEqual
@@ -902,13 +938,18 @@ impl Lowering<'_> {
                     end
                 }
             }
-            (None, None) => unreachable!("a missing end is known"),
+            (_, Some(known)) => self.integer_constant(self.usize, known),
+            // A slice's missing end is its length.
+            (_, None) => match length {
+                Length::Read(length) => length,
+                Length::Known(_) => unreachable!("an array's missing end is known"),
+            },
         };
-        // Each end is inside the array, so a start of 0 or an end at the
+        // Each end is inside the elements, so a start of 0 or an end at the
         // length is in order with any other.
-        let in_order = known_start == Some(0)
-            || known_end == Some(length)
-            || known_start.is_some() && known_end.is_some();
+        let at_length = end.is_none() || known_end.is_some() && known_end == known_length;
+        let in_order =
+            known_start == Some(0) || at_length || known_start.is_some() && known_end.is_some();
         if !in_order {
             let failed = self.binary(
                 BinaryOp::GreaterThan,
@@ -943,16 +984,16 @@ impl Lowering<'_> {
         Some(self.emit(borrow, ty, span))
     }
 
-    /// The end `end` of a slice of an array of `length` elements, an integer
-    /// not known at compile time, as a `usize`, after stopping the program
-    /// when it is negative or `op` the length. One no wider than a `usize`
-    /// is converted first, a negative one, extended, above any length; a
-    /// wider one is compared in its own type before it is cut to one.
+    /// The end `end` of a slice of `length` elements, an integer, as a
+    /// `usize`, after stopping the program when it is negative or `op` the
+    /// length. One no wider than a `usize` is converted first, a negative
+    /// one, extended, above any length; a wider one is compared in its own
+    /// type before it is cut to one.
     fn lower_slice_end(
         &mut self,
         end: Id<thir::Expr>,
         op: BinaryOp,
-        length: u64,
+        length: Length,
     ) -> Option<mir::Operand> {
         let span = self.thir.exprs.span(end);
         let ty = self.types.real(self.thir.exprs[end].ty);
@@ -975,7 +1016,13 @@ impl Lowering<'_> {
             self.emit(mir::InstructionKind::Convert(value), self.usize, span)
         };
         let compared_type = if wide { ty } else { self.usize };
-        let limit = self.integer_constant(compared_type, length);
+        let limit = match length {
+            Length::Known(length) => self.integer_constant(compared_type, length),
+            Length::Read(length) if wide => {
+                self.emit(mir::InstructionKind::Convert(length), ty, span)
+            }
+            Length::Read(length) => length,
+        };
         let failed = self.binary(op, compared, limit, TypeId::BOOL, span);
         self.check(failed, message, span);
         Some(if wide {
@@ -1074,4 +1121,12 @@ impl Lowering<'_> {
         let phi = mir::InstructionKind::Phi([(left_end, decided), (right_end, right)].into());
         Some(self.emit(phi, TypeId::BOOL, span))
     }
+}
+
+/// The elements of the slice at `place`, which are behind it.
+fn slice_elements(mut place: mir::Place) -> mir::Place {
+    let mut projections = place.projections.into_vec();
+    projections.push(mir::Projection::Dereference);
+    place.projections = projections.into();
+    place
 }
