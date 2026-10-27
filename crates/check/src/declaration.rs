@@ -41,12 +41,12 @@ impl Checker<'_> {
         let what = match tree.types[written.ty] {
             ast::Type::Struct(fields) => {
                 let mut field_types = Vec::with_capacity(fields.len());
-                let name_of = |field: Id<ast::Field>| tree.fields[field].name;
-                for (index, field) in tree.lists.items(fields).enumerate() {
-                    let ast::Field { name, ty } = tree.fields[field];
+                let name_of = |field: Id<ast::Field>| tree.children.fields[field].name;
+                for (index, field) in tree.children.lists.items(fields).enumerate() {
+                    let ast::Field { name, ty } = tree.children.fields[field];
                     let text = name.text(&tree.file);
                     // A struct has few fields, so the ones before are searched.
-                    let mut before = tree.lists.items(fields).take(index).map(name_of);
+                    let mut before = tree.children.lists.items(fields).take(index).map(name_of);
                     if let Some(first) = before.find(|first| first.text(&tree.file) == text) {
                         let diagnostic =
                             report_redeclared(&tree.file, text, "struct", name.span, first.span);
@@ -84,15 +84,15 @@ impl Checker<'_> {
             unreachable!("`{definition:?}` is a function declaration")
         };
         if let Some(receiver) = signature.receiver {
-            return self.not_supported(tree.params.span(receiver), "methods");
+            return self.not_supported(tree.children.params.span(receiver), "methods");
         }
-        if let Some(parameter) = tree.lists.items(signature.type_parameters).next() {
-            return self.not_supported(tree.names.span(parameter), "generic functions");
+        if let Some(parameter) = tree.children.lists.items(signature.type_parameters).next() {
+            return self.not_supported(tree.children.names.span(parameter), "generic functions");
         }
         let external = project::extern_symbol(self.modules, definition).is_some();
         let mut parameters = Vec::with_capacity(signature.parameters.len());
-        for parameter in tree.lists.items(signature.parameters) {
-            let parameter = tree.params[parameter];
+        for parameter in tree.children.lists.items(signature.parameters) {
+            let parameter = tree.children.params[parameter];
             if let Some(default) = parameter.default {
                 return self.not_supported(tree.exprs.span(default), "default parameters");
             }
@@ -124,10 +124,10 @@ impl Checker<'_> {
     ) -> Option<Box<[u32]>> {
         let tree = &self.module().ast;
         let file = &tree.file;
-        let mut names = tree.lists.items(signature.origins);
+        let mut names = tree.children.lists.items(signature.origins);
         let Type::Reference { mutable, .. } = self.types[result] else {
             if let Some(origin) = names.next() {
-                let span = tree.names.span(origin);
+                let span = tree.children.names.span(origin);
                 self.error(
                     diagnostics::INVALID_RETURN,
                     "`in` needs a reference result",
@@ -145,13 +145,14 @@ impl Checker<'_> {
             };
         let mut origins: Vec<u32> = Vec::new();
         for origin in names {
-            let span = tree.names.span(origin);
+            let span = tree.children.names.span(origin);
             let name = file.slice(span);
             let position = tree
+                .children
                 .lists
                 .items(signature.parameters)
                 .position(|parameter| {
-                    tree.params[parameter]
+                    tree.children.params[parameter]
                         .name
                         .is_some_and(|written| written.text(file) == name)
                 });
@@ -440,8 +441,7 @@ mod tests {
         let (found, types, reported) = with_checker(text, |checker, main| {
             let tree = &checker.modules[main.index()].ast;
             let found: Vec<TypeId> = tree
-                .lists
-                .items(tree.top_level)
+                .declarations()
                 .enumerate()
                 .map(|(index, declaration)| {
                     let definition = DefId {

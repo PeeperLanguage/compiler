@@ -217,7 +217,7 @@ fn compile_module(
     use_output: &mut impl FnMut(Output),
 ) {
     let tree = &checker.modules[module.index()].ast;
-    for (index, declaration) in tree.lists.items(tree.top_level).enumerate() {
+    for (index, declaration) in tree.declarations().enumerate() {
         let definition = DefId {
             module,
             index: index as u32,
@@ -341,7 +341,7 @@ fn interface(checker: &Checker, module: ModuleId) -> u64 {
             .map(|(name, _)| name)
             .hash(&mut hasher);
     }
-    for (index, declaration) in tree.lists.items(tree.top_level).enumerate() {
+    for (index, declaration) in tree.declarations().enumerate() {
         let decl = &tree.decls[declaration];
         std::mem::discriminant(decl).hash(&mut hasher);
         decl.name().text(&tree.file).hash(&mut hasher);
@@ -354,8 +354,11 @@ fn interface(checker: &Checker, module: ModuleId) -> u64 {
         if let ast::Decl::Type(declaration) = decl
             && let ast::Type::Struct(fields) = tree.types[declaration.ty]
         {
-            for field in tree.lists.items(fields) {
-                tree.fields[field].name.text(&tree.file).hash(&mut hasher);
+            for field in tree.children.lists.items(fields) {
+                tree.children.fields[field]
+                    .name
+                    .text(&tree.file)
+                    .hash(&mut hasher);
             }
         }
         if let State::Done(Some(Constant { ty, value })) = &constants[index] {

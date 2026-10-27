@@ -27,14 +27,14 @@ nodes! {
     Block => blocks,
     Expr => exprs,
     Pattern => patterns,
-    Name => names,
-    Attribute => attributes,
-    Param => params,
-    Field => fields,
-    Variant => variants,
-    FieldValue => field_values,
-    Entry => entries,
-    MatchArm => match_arms,
+    Name => children.names,
+    Attribute => children.attributes,
+    Param => children.params,
+    Field => children.fields,
+    Variant => children.variants,
+    FieldValue => children.field_values,
+    Entry => children.entries,
+    MatchArm => children.match_arms,
 }
 
 /// The syntax tree of one file. It never changes once the parser returns it.
@@ -51,6 +51,18 @@ pub struct Tree {
     pub blocks: Arena<Block>,
     pub exprs: Arena<Expr>,
     pub patterns: Arena<Pattern>,
+    pub children: Children,
+
+    /// Whether every token of the text is in the tree: false after a lexical
+    /// error, after a syntax error the parser skipped text for, and for text
+    /// that was never parsed (a file that could not be read).
+    pub complete: bool,
+}
+
+/// How a node holds several others: storage reached only through the node
+/// that holds it, never by an id from elsewhere.
+#[derive(Default)]
+pub struct Children {
     pub names: Arena<Name>,
     pub attributes: Arena<Attribute>,
     pub params: Arena<Param>,
@@ -59,13 +71,7 @@ pub struct Tree {
     pub field_values: Arena<FieldValue>,
     pub entries: Arena<Entry>,
     pub match_arms: Arena<MatchArm>,
-
     pub lists: Lists,
-
-    /// Whether every token of the text is in the tree: false after a lexical
-    /// error, after a syntax error the parser skipped text for, and for text
-    /// that was never parsed (a file that could not be read).
-    pub complete: bool,
 }
 
 impl Tree {
@@ -80,15 +86,7 @@ impl Tree {
             blocks: Arena::default(),
             exprs: Arena::default(),
             patterns: Arena::default(),
-            names: Arena::default(),
-            attributes: Arena::default(),
-            params: Arena::default(),
-            fields: Arena::default(),
-            variants: Arena::default(),
-            field_values: Arena::default(),
-            entries: Arena::default(),
-            match_arms: Arena::default(),
-            lists: Lists::default(),
+            children: Children::default(),
             complete: false,
         }
     }
@@ -96,7 +94,12 @@ impl Tree {
     /// The top-level declaration at `index` of `top_level`, the place a
     /// `DefId` names.
     pub fn declaration(&self, index: u32) -> Id<Decl> {
-        self.lists.get(self.top_level, index as usize)
+        self.children.lists.get(self.top_level, index as usize)
+    }
+
+    /// The module's own declarations, in source order (`top_level`).
+    pub fn declarations(&self) -> impl ExactSizeIterator<Item = Id<Decl>> + '_ {
+        self.children.lists.items(self.top_level)
     }
 
     /// `expr` without the parentheses written around it, which only group.

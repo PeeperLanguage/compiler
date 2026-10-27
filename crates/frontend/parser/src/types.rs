@@ -289,10 +289,10 @@ impl Parser {
                 let parameters: Vec<_> = signature
                     .receiver
                     .into_iter()
-                    .chain(p.tree.lists.items(signature.parameters))
+                    .chain(p.tree.children.lists.items(signature.parameters))
                     .collect();
                 for parameter in parameters {
-                    if let Some(value) = p.tree.params[parameter].default {
+                    if let Some(value) = p.tree.children.params[parameter].default {
                         let span = p.tree.exprs.span(value);
                         p.repair(
                             Diagnostic::new(

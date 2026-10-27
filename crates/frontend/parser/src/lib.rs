@@ -406,7 +406,7 @@ impl Parser {
 
     /// Moves the ids that `scratch` holds from `mark` on into a list.
     fn finish_list<T>(&mut self, mark: usize) -> List<T> {
-        let list = self.tree.lists.add(&self.scratch[mark..]);
+        let list = self.tree.children.lists.add(&self.scratch[mark..]);
         self.scratch.truncate(mark);
         list
     }

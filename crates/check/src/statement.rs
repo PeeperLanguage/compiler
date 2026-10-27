@@ -94,11 +94,12 @@ impl Checker<'_> {
         };
         let outermost = builder.body.add(outermost, tree.blocks.span(block));
         for (parameter, &ty) in tree
+            .children
             .lists
             .items(function.signature.parameters)
             .zip(&parameters)
         {
-            let parameter = tree.params[parameter];
+            let parameter = tree.children.params[parameter];
             let name = parameter.name.unwrap_or_default();
             let variable = builder.body.add(
                 Variable {
@@ -153,7 +154,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
     ) -> List<Stmt> {
         let mut checked: Vec<NonZeroU32> = Vec::with_capacity(statements.len() + 1);
         checked.extend(first.map(NonZeroU32::from));
-        for statement in self.checker.module().ast.lists.items(statements) {
+        for statement in self.checker.module().ast.children.lists.items(statements) {
             if let Some(statement) = self.check_statement(statement) {
                 checked.push(statement.into());
             }
@@ -380,7 +381,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 let ast::Pattern::Struct(fields) = tree.patterns[pattern] else {
                     return None; // the parser reported it
                 };
-                for field in tree.lists.items(fields) {
+                for field in tree.children.lists.items(fields) {
                     if let ast::Pattern::Field { field, binding } = tree.patterns[field] {
                         let name = binding.unwrap_or(field);
                         let unknown = Variable {
@@ -970,7 +971,7 @@ mod tests {
     fn bodies(text: &str) -> (Vec<String>, Vec<Reported>) {
         let ((bodies, declared), types, reported) = with_checker(text, |checker, main| {
             let tree = &checker.modules[main.index()].ast;
-            let declarations: Vec<_> = tree.lists.items(tree.top_level).collect();
+            let declarations: Vec<_> = tree.declarations().collect();
             let declared = declarations.len();
             let mut bodies = Vec::new();
             for (index, declaration) in declarations.into_iter().enumerate() {
@@ -1298,7 +1299,7 @@ mod tests {
     fn notes(text: &str) -> Vec<(String, Option<String>)> {
         let (notes, _, _) = with_checker(text, |checker, main| {
             let tree = &checker.modules[main.index()].ast;
-            let declaration = tree.lists.items(tree.top_level).next().unwrap();
+            let declaration = tree.declarations().next().unwrap();
             let ast::Decl::Function(function) = tree.decls[declaration] else {
                 unreachable!("the first declaration is a function")
             };

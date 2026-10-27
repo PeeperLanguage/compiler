@@ -423,7 +423,7 @@ impl<'s> Server<'s> {
                 return Some((checked, module, name.clone()));
             }
             let tree = &module.ast;
-            let declarations = tree.lists.items(tree.top_level);
+            let declarations = tree.declarations();
             let declared = declarations.enumerate().find_map(|(index, declaration)| {
                 let span = tree.decls[declaration].name().span;
                 contains_offset(span).then_some((index, span))
@@ -794,10 +794,13 @@ fn declaration_hover(
     let metadata = decl.metadata();
     // The attributes are written before the declaration's span.
     let start = tree
+        .children
         .lists
         .items(metadata.attributes)
         .next()
-        .map_or(span.start, |first| tree.attributes.span(first).start);
+        .map_or(span.start, |first| {
+            tree.children.attributes.span(first).start
+        });
     let written = |end: u32| tree.file.text[start as usize..end as usize].trim();
     let (facts, from) = match (decl, constant) {
         (

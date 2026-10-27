@@ -581,11 +581,12 @@ mod tests {
 
     /// The expression of the first statement of the first function.
     fn first_expression(tree: &Tree) -> Id<Expr> {
-        let decl = tree.lists.items(tree.top_level).next().unwrap();
+        let decl = tree.declarations().next().unwrap();
         let Decl::Function(f) = tree.decls[decl] else {
             panic!("not a function")
         };
         let statement = tree
+            .children
             .lists
             .items(tree.blocks[f.body.unwrap()].statements)
             .next()
@@ -649,7 +650,12 @@ mod tests {
                 format!("{}[{}]", grouped(t, value), text(t.exprs.span(index)))
             }
             Expr::Call { callee, arguments } => {
-                let arguments: Vec<_> = t.lists.items(arguments).map(|a| grouped(t, a)).collect();
+                let arguments: Vec<_> = t
+                    .children
+                    .lists
+                    .items(arguments)
+                    .map(|a| grouped(t, a))
+                    .collect();
                 format!("{}({})", grouped(t, callee), arguments.join(", "))
             }
             _ => text(t.exprs.span(id)),

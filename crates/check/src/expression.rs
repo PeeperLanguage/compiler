@@ -172,7 +172,7 @@ impl ThirBuilder<'_, '_> {
     fn check_print(&mut self, newline: bool, values: List<ast::Expr>) -> Expr {
         let tree = &self.checker.module().ast;
         let mut checked: Vec<NonZeroU32> = Vec::with_capacity(values.len());
-        for value in tree.lists.items(values) {
+        for value in tree.children.lists.items(values) {
             let span = tree.exprs.span(value);
             let expr = match tree.exprs[value] {
                 ast::Expr::String { c_string: false } => self.c_string(span),
@@ -456,8 +456,11 @@ impl ThirBuilder<'_, '_> {
                 self.checker
                     .error(diagnostics::TYPE_MISMATCH, message, span);
             }
-            for field in tree.lists.items(fields) {
-                self.add_expr(tree.field_values[field].value, TypeExpectation::Hint(None)); // for its own errors
+            for field in tree.children.lists.items(fields) {
+                self.add_expr(
+                    tree.children.field_values[field].value,
+                    TypeExpectation::Hint(None),
+                ); // for its own errors
             }
             return Expr::INVALID;
         };
@@ -465,8 +468,8 @@ impl ThirBuilder<'_, '_> {
         // Where each field is set, by its index.
         let mut set: Vec<Option<Span>> = vec![None; field_types.len()];
         let mut checked: Vec<NonZeroU32> = Vec::with_capacity(fields.len());
-        for field in tree.lists.items(fields) {
-            let ast::FieldValue { name, value } = tree.field_values[field];
+        for field in tree.children.lists.items(fields) {
+            let ast::FieldValue { name, value } = tree.children.field_values[field];
             let Some(index) = self.field_index(ty, name) else {
                 self.add_expr(value, TypeExpectation::Hint(None)); // for its own errors
                 continue;
@@ -608,9 +611,9 @@ impl ThirBuilder<'_, '_> {
         // program runs; `None` after an error in a spread. Each count fits a
         // `usize`, so their sum fits a `u128`.
         let (mut known, mut later) = (Some(0u128), None);
-        for entry in tree.lists.items(entries) {
-            let entry_span = tree.entries.span(entry);
-            let (part, count) = match tree.entries[entry] {
+        for entry in tree.children.lists.items(entries) {
+            let entry_span = tree.children.entries.span(entry);
+            let (part, count) = match tree.children.entries[entry] {
                 ast::Entry::Value(value) => (self.add_expr(value, expectation), Some(1)),
                 ast::Entry::Spread(values) => {
                     let Some(checked) = self.check_spread(values, element) else {
@@ -1065,7 +1068,7 @@ impl ThirBuilder<'_, '_> {
         let span = tree.types.span(path);
         // A `Type::Generic` alone, as `Box<T>`, is one segment.
         let segments: Vec<Id<ast::Type>> = match tree.types[path] {
-            ast::Type::Path(segments) => tree.lists.items(segments).collect(),
+            ast::Type::Path(segments) => tree.children.lists.items(segments).collect(),
             _ => vec![path],
         };
         if !segments
@@ -1193,7 +1196,7 @@ impl ThirBuilder<'_, '_> {
             },
         )) = signature
         else {
-            for argument in tree.lists.items(arguments) {
+            for argument in tree.children.lists.items(arguments) {
                 self.add_expr(argument, TypeExpectation::Hint(None)); // for its own errors
             }
             return Expr::INVALID;
@@ -1211,7 +1214,7 @@ impl ThirBuilder<'_, '_> {
                 .error(diagnostics::WRONG_ARGUMENT_COUNT, message, span);
         }
         let mut checked: Vec<NonZeroU32> = Vec::with_capacity(arguments.len());
-        for (index, argument) in tree.lists.items(arguments).enumerate() {
+        for (index, argument) in tree.children.lists.items(arguments).enumerate() {
             let argument = match parameters.get(index) {
                 Some(&parameter) => self.add_expr(argument, TypeExpectation::Required(parameter)),
                 None => self.add_expr(argument, TypeExpectation::Hint(None)),

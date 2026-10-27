@@ -64,14 +64,15 @@ pub fn extern_symbol(modules: &[Module], definition: DefId) -> Option<String> {
     let ast::Decl::Function(function) = &tree.decls[tree.declaration(definition.index)] else {
         return None;
     };
-    tree.lists
+    tree.children
+        .lists
         .items(function.metadata.attributes)
         .find_map(|attribute| {
-            let attribute = &tree.attributes[attribute];
+            let attribute = &tree.children.attributes[attribute];
             if attribute.name.text(&tree.file) != "extern" {
                 return None;
             }
-            let argument = tree.lists.items(attribute.arguments).next()?;
+            let argument = tree.children.lists.items(attribute.arguments).next()?;
             let ast::Expr::String { .. } = tree.exprs[argument] else {
                 return None;
             };
@@ -90,8 +91,8 @@ pub fn field_names(modules: &[Module], definition: DefId) -> impl Iterator<Item 
     let ast::Type::Struct(fields) = tree.types[written.ty] else {
         unreachable!("`{definition:?}` declares a struct")
     };
-    let names = tree.lists.items(fields);
-    names.map(move |field| tree.fields[field].name.text(&tree.file))
+    let names = tree.children.lists.items(fields);
+    names.map(move |field| tree.children.fields[field].name.text(&tree.file))
 }
 
 /// One resolved import of a module.

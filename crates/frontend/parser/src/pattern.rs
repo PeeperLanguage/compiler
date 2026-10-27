@@ -102,7 +102,7 @@ impl Parser {
                 p.add(field_token.span.start, Pattern::Field { field, binding })
             },
         );
-        let ids: Vec<_> = self.tree.lists.items(fields).collect();
+        let ids: Vec<_> = self.tree.children.lists.items(fields).collect();
         for &field in ids.iter().take(ids.len().saturating_sub(1)) {
             if let Pattern::Rest = self.tree.patterns[field] {
                 let span = self.tree.patterns.span(field);

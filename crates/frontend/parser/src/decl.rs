@@ -378,7 +378,7 @@ impl Parser {
                 );
             } else {
                 let origin = self.name_node();
-                origins = self.tree.lists.add(&[origin.into()]);
+                origins = self.tree.children.lists.add(&[origin.into()]);
             }
         }
         Signature {
