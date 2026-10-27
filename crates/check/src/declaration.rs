@@ -372,13 +372,15 @@ impl Checker<'_> {
             ast::Type::Path(_) => "types of other modules",
             ast::Type::Generic { .. } => "generic types",
             ast::Type::Bracketed { name, inner } => {
-                let name = tree.file.slice(name.span);
-                if name != semantic_types::RANGE {
-                    let message = format!("`{name}` takes no type in brackets");
+                let written = tree.file.slice(name.span);
+                if written != semantic_types::RANGE {
+                    let message = format!("`{written}` takes no type in brackets");
                     return self.error(diagnostics::INVALID_TYPE, message, span);
                 }
                 let element = self.resolve_value_type(inner);
-                return self.range_type(element, span);
+                let range = self.range_type(element, span);
+                self.record(name.span, FactKind::Name(Symbol::Builtin(range)));
+                return range;
             }
             ast::Type::Reference { mutable, target } => {
                 let target = self.resolve_value_type(target);

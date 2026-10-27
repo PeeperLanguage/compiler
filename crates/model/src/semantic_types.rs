@@ -277,6 +277,18 @@ fixed_types! {
 /// after it in brackets: `range[i32]`.
 pub const RANGE: &str = "range";
 
+/// What `range[T]` is, as `builtin_doc` gives it: in the shape of a row's
+/// doc, each line keeping the space after its `///`.
+const RANGE_DOC: &str = " The integers from a start toward an end, a step apart: the type of `a..b`, `a..=b` and `a..b:step`.
+
+ `range[T]` holds integers of the type `T`. It counts up or down, as its ends say, includes its end when written with `..=`, and copies. `for v in r` counts each of its values, and `[N]T{r...}` spreads them into an array.
+
+ ```peeper
+ fn evens(n: i32) -> range[i32] {
+     return 0..n:2;
+ }
+ ```";
+
 /// The fields of a value of `Type::Range { element, step }`, in order: its
 /// walk, found once when the range is made (`lower::Lowering::walk_range`).
 /// Its values are `start`, then each `delta` more than the one before,
@@ -332,11 +344,14 @@ fn integer_named(name: &str, pointer_bits: u32) -> Option<Integer> {
     Some(Integer { signed, bits })
 }
 
-/// What the built-in type `name` is (`Types::builtin`), as Markdown, as an
-/// editor shows it: an integer's range, worked out, and whether it is as
-/// wide as a pointer, `pointer_bits`; another type's doc, from its row
-/// (`fixed_doc`). `None` when `name` is not a built-in type.
+/// What the built-in type `name` is (`Types::builtin`), or `range`, as
+/// Markdown, as an editor shows it: an integer's range, worked out, and
+/// whether it is as wide as a pointer, `pointer_bits`; another type's doc,
+/// from its row (`fixed_doc`). `None` when `name` is not a built-in type.
 pub fn builtin_doc(name: &str, pointer_bits: u32) -> Option<String> {
+    if name == RANGE {
+        return Some(RANGE_DOC.to_string());
+    }
     let Integer { signed, bits } = match NAMED.iter().find(|&&(text, _)| text == name) {
         Some(&(_, id)) => match FIXED[id.0 as usize] {
             Type::Integer(integer) => integer,
@@ -616,6 +631,7 @@ mod tests {
             assert!(builtin_doc(name, 64).is_some(), "{name}");
         }
         assert_eq!(builtin_doc("Meters", 64), None);
+        assert!(builtin_doc(super::RANGE, 64).is_some());
         let doc = |name: &str, pointer_bits: u32| builtin_doc(name, pointer_bits).unwrap();
         assert_eq!(doc("i1", 64), "A signed 1-bit integer: from `-1` to `0`.");
         assert_eq!(
