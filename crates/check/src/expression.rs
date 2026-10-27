@@ -22,7 +22,6 @@ use model::semantic_types::Float;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
-use model::thir::ArrayPart;
 use model::thir::Expr;
 use model::thir::ExprKind;
 use model::thir::FactKind;
@@ -612,9 +611,7 @@ impl ThirBuilder<'_, '_> {
         for entry in tree.lists.items(entries) {
             let entry_span = tree.entries.span(entry);
             let (part, count) = match tree.entries[entry] {
-                ast::Entry::Value(value) => {
-                    (ArrayPart::Value(self.add_expr(value, expectation)), Some(1))
-                }
+                ast::Entry::Value(value) => (self.add_expr(value, expectation), Some(1)),
                 ast::Entry::Spread(values) => {
                     let Some(checked) = self.check_spread(values, element) else {
                         known = None;
@@ -627,7 +624,7 @@ impl ThirBuilder<'_, '_> {
                 Some(count) => known = known.map(|known| known + u128::from(count)),
                 None => later = later.or(Some(entry_span)),
             }
-            parts.push(self.body.add(part, entry_span).into());
+            parts.push(part.into());
         }
         let Some(known) = known.filter(|_| element != TypeId::INVALID) else {
             return Expr::INVALID;
@@ -689,16 +686,16 @@ impl ThirBuilder<'_, '_> {
         }
     }
 
-    /// The spread `values...` in an array literal of `element`s, as its
-    /// part, with how many values it gives when that is known now; `None`
-    /// after an error. An array gives its elements, which must be
+    /// The spread `values...` in an array literal of `element`s, checked,
+    /// with how many values it gives when that is known now; `None` after
+    /// an error. An array gives its elements, which must be
     /// `element`s; a range its values, counted now when it is written with
     /// constant ends and step; a count no array can hold is reported.
     fn check_spread(
         &mut self,
         values: Id<ast::Expr>,
         element: TypeId,
-    ) -> Option<(ArrayPart, Option<u64>)> {
+    ) -> Option<(Id<Expr>, Option<u64>)> {
         let tree = &self.checker.module().ast;
         let values = tree.unparenthesized(values);
         let span = tree.exprs.span(values);
@@ -707,7 +704,7 @@ impl ThirBuilder<'_, '_> {
         let spread = self.add_expr(values, TypeExpectation::Hint(hint));
         let ty = self.body.exprs[spread].ty;
         let types = &self.checker.types;
-        let part = match types[ty] {
+        match types[ty] {
             Type::Invalid => return None,
             Type::Array {
                 element: from,
@@ -715,13 +712,10 @@ impl ThirBuilder<'_, '_> {
             } if element == TypeId::INVALID
                 || types.conversion(from, element) == Conversion::Same =>
             {
-                return Some((ArrayPart::Array(spread), Some(length)));
+                return Some((spread, Some(length)));
             }
             Type::Range { element: from, .. }
-                if element == TypeId::INVALID || types.same(from, element) =>
-            {
-                ArrayPart::Range(spread)
-            }
+                if element == TypeId::INVALID || types.same(from, element) => {}
             _ => {
                 let message = format!(
                     "`...` here spreads a range or an array of `{}`, found `{}`",
@@ -732,7 +726,7 @@ impl ThirBuilder<'_, '_> {
                     .error(diagnostics::TYPE_MISMATCH, message, span);
                 return None;
             }
-        };
+        }
         let exprs = &self.body.exprs;
         let constant = |id: Id<Expr>| match exprs[id].kind {
             ExprKind::Constant(Value::Integer(ref limbs)) => Some(limbs),
@@ -745,11 +739,11 @@ impl ThirBuilder<'_, '_> {
             inclusive,
         } = exprs[spread].kind
         else {
-            return Some((part, None)); // a range value, counted when the program runs
+            return Some((spread, None)); // a range value, counted when the program runs
         };
         let (Some(first), Some(last), Some(by)) = (constant(start), constant(end), constant(step))
         else {
-            return Some((part, None));
+            return Some((spread, None));
         };
         let Type::Integer(integer) = types[exprs[start].ty] else {
             unreachable!("a range is of integers")
@@ -758,7 +752,7 @@ impl ThirBuilder<'_, '_> {
         if !self.checker.length_fits(count.as_slice(), span) {
             return None;
         }
-        Some((part, Some(count.as_slice()[0]))) // it fits a `usize`
+        Some((spread, Some(count.as_slice()[0]))) // it fits a `usize`
     }
 
     /// The range `start..end`, or `..=`, stepping by `start..end:step`, at

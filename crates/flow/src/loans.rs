@@ -207,6 +207,7 @@ impl Loans<'_, '_> {
             } => (None, std::slice::from_ref(value)),
             mir::InstructionKind::Call { ref arguments, .. }
             | mir::InstructionKind::Aggregate(ref arguments)
+            | mir::InstructionKind::ArrayParts(ref arguments)
             | mir::InstructionKind::Print {
                 values: ref arguments,
                 ..
@@ -215,24 +216,6 @@ impl Loans<'_, '_> {
                 for (_, operand) in incoming {
                     if let Some(holder) = self.operand_holder(operand) {
                         used(holder);
-                    }
-                }
-                (None, &[])
-            }
-            mir::InstructionKind::ArrayParts(ref parts) => {
-                for part in parts {
-                    let operands = match *part {
-                        mir::ArrayPart::Value(value) | mir::ArrayPart::Array(value) => {
-                            [Some(value), None, None, None, None]
-                        }
-                        mir::ArrayPart::Range(walk) => {
-                            [walk.start, walk.left, walk.step, walk.delta, walk.inclusive].map(Some)
-                        }
-                    };
-                    for operand in operands.iter().flatten() {
-                        if let Some(holder) = self.operand_holder(operand) {
-                            used(holder);
-                        }
                     }
                 }
                 (None, &[])

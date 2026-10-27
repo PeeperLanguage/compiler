@@ -167,12 +167,11 @@ pub enum InstructionKind {
     /// A struct value from its fields' values, in declaration order, or an
     /// array value from its elements' values.
     Aggregate(Box<[Operand]>),
-    /// An array value from its parts, in order, one of them a spread. When a
-    /// range is not known at compile time, the program stops before writing
-    /// any element unless the parts give exactly the array's length; its
-    /// step is checked not to be zero, and its direction found, before
-    /// (`Check`, `ArrayPart::Range`).
-    ArrayParts(Box<[ArrayPart]>),
+    /// An array value from its parts, in order, at least one a spread: a
+    /// part of the element type is one element, an array gives each of its
+    /// elements and a range each of its values. The program stops before
+    /// writing any element unless the parts give exactly the array's length.
+    ArrayParts(Box<[Operand]>),
     /// Writes the values to the standard output, a space between each,
     /// then a newline when `newline`: as THIR's `Print`.
     Print {
@@ -199,29 +198,6 @@ pub enum InstructionKind {
     /// (`flow::loans::report_loan_errors`), and a loop's next pass may set
     /// it again (`flow::report_variable_state_errors`). Writes no code.
     ScopeEnd(Id<Variable>),
-}
-
-/// One part of an array value (`InstructionKind::ArrayParts`).
-#[derive(Clone, Copy, Debug)]
-pub enum ArrayPart {
-    Value(Operand),
-    /// Each element of the array `Operand`, in order.
-    Array(Operand),
-    /// The values of a range, as its walk gives them.
-    Range(RangeWalk),
-}
-
-/// A range's walk, started once before its first value
-/// (`lower::Lowering::walk_range`): its values are `start`, then each
-/// `delta` more than the one before, wrapping, while `left`, how far its
-/// end is, lasts by `step`, the end counted when `inclusive`, a `bool`.
-#[derive(Clone, Copy, Debug)]
-pub struct RangeWalk {
-    pub start: Operand,
-    pub left: Operand,
-    pub step: Operand,
-    pub delta: Operand,
-    pub inclusive: Operand,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -292,19 +268,6 @@ impl Body {
             Operand::Constant(constant) => self.constants[constant.index()].ty,
             Operand::Argument(index) => self.variables[Id::from_index(index as usize)].ty,
             Operand::Value(instruction) => self.instructions[instruction].ty,
-        }
-    }
-
-    /// Whether a range walk includes its end, when its `inclusive` is
-    /// known at compile time: a range written where it is walked; `None`
-    /// for a range value made elsewhere.
-    pub fn included(&self, walk: &RangeWalk) -> Option<bool> {
-        match walk.inclusive {
-            Operand::Constant(constant) => match self.constants[constant.index()].value {
-                Value::Bool(included) => Some(included),
-                _ => unreachable!("`inclusive` is a `bool`"),
-            },
-            _ => None,
         }
     }
 
@@ -413,37 +376,7 @@ impl Printer<'_> {
             }
             InstructionKind::ArrayParts(parts) => {
                 self.out.push_str("array(");
-                for (index, part) in parts.iter().enumerate() {
-                    if index > 0 {
-                        self.out.push_str(", ");
-                    }
-                    match *part {
-                        ArrayPart::Value(value) => self.write_operand(&value),
-                        ArrayPart::Array(array) => {
-                            self.write_operand(&array);
-                            self.out.push_str("...");
-                        }
-                        ArrayPart::Range(RangeWalk {
-                            start,
-                            left,
-                            step,
-                            delta,
-                            inclusive,
-                        }) => {
-                            self.out.push_str("range(");
-                            self.write_operand(&start);
-                            self.out.push_str(", left ");
-                            self.write_operand(&left);
-                            self.out.push_str(", inclusive ");
-                            self.write_operand(&inclusive);
-                            self.out.push_str(", step ");
-                            self.write_operand(&step);
-                            self.out.push_str(", delta ");
-                            self.write_operand(&delta);
-                            self.out.push_str(")...");
-                        }
-                    }
-                }
+                self.write_operands(parts);
                 self.out.push(')');
             }
             InstructionKind::Print { newline, values } => {

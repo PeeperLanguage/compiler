@@ -277,15 +277,27 @@ fixed_types! {
 /// after it in brackets: `range[i32]`.
 pub const RANGE: &str = "range";
 
-/// The fields of a value of `Type::Range { element, step }`, in order:
-/// `start`, `end`, `step` and whether `end` is included (`inclusive`), as
-/// `RANGE_FIELD_NAMES` names them.
-pub fn range_fields(element: TypeId, step: TypeId) -> [TypeId; 4] {
-    [element, element, step, TypeId::BOOL]
+/// The fields of a value of `Type::Range { element, step }`, in order: its
+/// walk, found once when the range is made (`lower::Lowering::walk_range`).
+/// Its values are `start`, then each `delta` more than the one before,
+/// wrapping, while `left`, how far its end is, lasts by `step`, the end
+/// counted when `inclusive`. `RANGE_FIELD_NAMES` names them, and
+/// `range_field` gives where each one is.
+pub fn range_fields(element: TypeId, step: TypeId) -> [TypeId; 5] {
+    [element, step, step, element, TypeId::BOOL]
+}
+
+/// Where each field of a range value is in `range_fields`.
+pub mod range_field {
+    pub const START: usize = 0;
+    pub const LEFT: usize = 1;
+    pub const STEP: usize = 2;
+    pub const DELTA: usize = 3;
+    pub const INCLUSIVE: usize = 4;
 }
 
 /// The names of `range_fields`, as debug info shows them.
-pub const RANGE_FIELD_NAMES: [&str; 4] = ["start", "end", "step", "inclusive"];
+pub const RANGE_FIELD_NAMES: [&str; 5] = ["start", "left", "step", "delta", "inclusive"];
 
 /// The integer types as wide as a pointer, and whether each is signed.
 const POINTER_SIZED: [(&str, bool); 2] = [("isize", true), ("usize", false)];

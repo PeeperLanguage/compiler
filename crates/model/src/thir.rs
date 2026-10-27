@@ -31,7 +31,6 @@ nodes! {
     Block => blocks,
     Variable => variables,
     FieldValue => field_values,
-    ArrayPart => array_parts,
 }
 
 /// One function's checked body. The function's parameters are its first
@@ -46,7 +45,6 @@ pub struct Body {
     pub blocks: Arena<Block>,
     pub variables: Arena<Variable>,      // with the span of each name
     pub field_values: Arena<FieldValue>, // with the span of each field's name
-    pub array_parts: Arena<ArrayPart>,   // with the span of each part
     /// Each `const` of the body, by its type and value, with the span of its
     /// name; `None` when its value had an error. Uses of it are folded.
     pub constants: Arena<Option<Constant>>,
@@ -159,8 +157,11 @@ pub enum ExprKind {
     /// written, which is the order the values are computed in.
     StructLiteral(List<FieldValue>),
     /// A value of the array type `ty` from its parts, in order, which give
-    /// exactly its length of elements.
-    ArrayLiteral(List<ArrayPart>),
+    /// exactly its length of elements: a part of the element type is one
+    /// element, and any other a spread, an array of elements or a range of
+    /// them, giving each element or value, as `Stmt::ForRange` counts a
+    /// range's.
+    ArrayLiteral(List<Expr>),
     /// The field at `index`, in declaration order, of a struct value.
     Field {
         value: Id<Expr>,
@@ -208,18 +209,6 @@ pub enum ExprKind {
         values: List<Expr>,
     },
     Invalid,
-}
-
-/// One part of an array literal: an element, or the elements a spread
-/// gives, of a range or an array value.
-#[derive(Clone, Copy, Debug)]
-pub enum ArrayPart {
-    Value(Id<Expr>),
-    /// Each element of an array value of the same element type, in order.
-    Array(Id<Expr>),
-    /// Each value of a range value of the element type, as `Stmt::ForRange`
-    /// counts them.
-    Range(Id<Expr>),
 }
 
 /// `name = value` in a struct literal: the field by its index in declaration
@@ -293,7 +282,6 @@ impl Body {
             blocks,
             variables,
             field_values,
-            array_parts,
             constants,
             lists,
             has_errors,
@@ -303,7 +291,6 @@ impl Body {
         blocks.clear();
         variables.clear();
         field_values.clear();
-        array_parts.clear();
         constants.clear();
         lists.clear();
         *has_errors = false;
@@ -338,15 +325,7 @@ impl Body {
             ExprKind::StructLiteral(fields) => {
                 (self.lists.items(fields)).any(|field| self.calls(self.field_values[field].value))
             }
-            ExprKind::ArrayLiteral(parts) => {
-                self.lists
-                    .items(parts)
-                    .any(|part| match self.array_parts[part] {
-                        ArrayPart::Value(value)
-                        | ArrayPart::Array(value)
-                        | ArrayPart::Range(value) => self.calls(value),
-                    })
-            }
+            ExprKind::ArrayLiteral(parts) => self.lists.items(parts).any(|part| self.calls(part)),
         }
     }
 
@@ -555,19 +534,17 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
             }
             ExprKind::ArrayLiteral(parts) => {
                 _ = write!(self.out, "{}{{", self.types.text(ty, self.name_of));
+                let Type::Array { element, .. } = self.types[ty] else {
+                    unreachable!("an array literal makes an array")
+                };
                 for (index, part) in self.body.lists.items(parts).enumerate() {
                     self.out.push_str(if index > 0 { ", " } else { " " });
-                    match self.body.array_parts[part] {
-                        ArrayPart::Value(value) => self.write_expr(value),
-                        ArrayPart::Array(array) => {
-                            self.write_expr(array);
-                            self.out.push_str("...");
-                        }
-                        ArrayPart::Range(range) => {
-                            self.out.push('(');
-                            self.write_expr(range);
-                            self.out.push_str(")...");
-                        }
+                    if self.types.same(self.body.exprs[part].ty, element) {
+                        self.write_expr(part);
+                    } else {
+                        self.out.push('(');
+                        self.write_expr(part);
+                        self.out.push_str(")...");
                     }
                 }
                 self.out.push_str(" }");

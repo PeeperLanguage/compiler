@@ -22,9 +22,12 @@ use model::operators::BinaryOp;
 use model::operators::UnaryOp;
 use model::semantic_types::Float;
 use model::semantic_types::Integer;
+use model::semantic_types::RANGE_FIELD_NAMES;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
+use model::semantic_types::range_field;
+use model::semantic_types::range_fields;
 use source::Span;
 
 use crate::Module;
@@ -253,11 +256,33 @@ fn traps(body: &mir::Body, types: &Types, id: Id<mir::Instruction>) -> usize {
             })
             .count(),
         InstructionKind::Check { .. } => 1,
-        InstructionKind::ArrayParts(ref parts) => usize::from(parts.iter().any(|part| {
-            matches!(part, mir::ArrayPart::Range(walk)
-                if [walk.left, walk.step, walk.inclusive].iter().any(|operand| !matches!(operand, Operand::Constant(_))))
+        // A range is counted when the program runs unless it is written here
+        // with constant `left`, `step` and `inclusive`.
+        InstructionKind::ArrayParts(ref parts) => usize::from(parts.iter().any(|&part| {
+            matches!(types[body.operand_type(part)], Type::Range { .. })
+                && [range_field::LEFT, range_field::STEP, range_field::INCLUSIVE]
+                    .into_iter()
+                    .any(|field| {
+                    !matches!(written_range_field(body, part, field), Some(Operand::Constant(_)))
+                })
         })),
         _ => 0,
+    }
+}
+
+/// Field `field` of the range value `range` (`range_fields`) as the
+/// `Aggregate` that makes it in `body` gives it: a range written where it
+/// is spread; `None` for a range value from elsewhere.
+// shortcut: the `Aggregate` still writes the range to memory, which nothing
+// then reads (an alloca and a store per field in a debug build); skip
+// writing an `Aggregate` whose only use is `ArrayParts` if debug size matters.
+fn written_range_field(body: &mir::Body, range: Operand, field: usize) -> Option<Operand> {
+    let Operand::Value(id) = range else {
+        return None;
+    };
+    match body.instructions[id].kind {
+        InstructionKind::Aggregate(ref fields) => Some(fields[field]),
+        _ => None,
     }
 }
 
@@ -976,7 +1001,7 @@ impl Function<'_, '_, '_> {
 
     /// Writes the array value `id` from `parts`
     /// (`InstructionKind::ArrayParts`): counts them and checks the count
-    /// (`write_part_counts`), then writes each value at its place, copies
+    /// (`write_part_counts`), then writes each element at its place, copies
     /// each array to its place, and fills each range through its element
     /// type's filler. Out of line, so `write_instruction` stays small enough
     /// to inline into `write_block` (measured: 10 M fewer instructions per
@@ -987,7 +1012,7 @@ impl Function<'_, '_, '_> {
         &mut self,
         out: &mut String,
         id: Id<mir::Instruction>,
-        parts: &[mir::ArrayPart],
+        parts: &[Operand],
         rest: &mut Peekable<impl Iterator<Item = Id<mir::Instruction>>>,
         location: &DebugLocation,
     ) {
@@ -1008,20 +1033,19 @@ impl Function<'_, '_, '_> {
                 "  {address} = getelementptr inbounds {array}, ptr {memory}, i32 0, \
                  i{pointer} {offset}{location}"
             );
-            match part {
-                mir::ArrayPart::Value(value) | mir::ArrayPart::Array(value) => {
-                    self.write_store(out, &address, value, location);
-                }
-                mir::ArrayPart::Range(walk) => {
-                    let filler = self.range_filler(element);
-                    _ = writeln!(
-                        out,
-                        "  call void {filler}(ptr {address}, {number} {}, {number} {}, \
-                         i{pointer} {count}){location}",
-                        self.operand(walk.start),
-                        self.operand(walk.delta)
-                    );
-                }
+            if let Type::Range { .. } = types[self.body.operand_type(part)] {
+                let range = format!("{name}.r{index}");
+                let start = self.read_range_field(out, &range, part, range_field::START, location);
+                let delta = self.read_range_field(out, &range, part, range_field::DELTA, location);
+                let filler = self.range_filler(element);
+                _ = writeln!(
+                    out,
+                    "  call void {filler}(ptr {address}, {number} {start}, {number} {delta}, \
+                     i{pointer} {count}){location}"
+                );
+            } else {
+                // An element, or an array of them copied whole.
+                self.write_store(out, &address, part, location);
             }
             if index + 1 < parts.len() {
                 let next = format!("{name}.o{index}");
@@ -1032,17 +1056,16 @@ impl Function<'_, '_, '_> {
     }
 
     /// How many elements each of `parts`, of the array value `id`, gives,
-    /// as pointer-wide LLVM operands: one for a value, an array's length,
-    /// and each range's count (`write_range_count`), in an integer wider
-    /// than its element and at least as wide as a pointer, so it never
-    /// overflows. When a range is
-    /// not known at compile time, also writes the check that the parts give
-    /// exactly the array's length, before any element is written.
+    /// as pointer-wide LLVM operands: one for an element, an array's
+    /// length, and each range's count (`write_range_count`), in an integer
+    /// wider than its element and at least as wide as a pointer, so it
+    /// never overflows. With a range, also writes the check that the parts
+    /// give exactly the array's length, before any element is written.
     fn write_part_counts(
         &mut self,
         out: &mut String,
         id: Id<mir::Instruction>,
-        parts: &[mir::ArrayPart],
+        parts: &[Operand],
         location: &DebugLocation,
     ) -> Vec<String> {
         let (types, name) = (self.types, value_name(id));
@@ -1054,28 +1077,27 @@ impl Function<'_, '_, '_> {
             Type::Integer(integer) => (integer.bits + 1).max(pointer),
             _ => pointer, // no range to count
         };
-        let fixed = |part: &mir::ArrayPart| match *part {
-            mir::ArrayPart::Value(_) => Some(1),
-            mir::ArrayPart::Array(array) => match types[self.body.operand_type(array)] {
+        let fixed = |part: Operand| {
+            let ty = self.body.operand_type(part);
+            match types[ty] {
+                _ if types.same(ty, element) => Some(1),
                 Type::Array { length, .. } => Some(length),
+                Type::Range { .. } => None,
                 _ => unreachable!("the checker spreads only an array or a range"),
-            },
-            mir::ArrayPart::Range { .. } => None,
+            }
         };
-        let mut remaining = (length - parts.iter().filter_map(fixed).sum::<u64>()).to_string();
+        let fixed_total: u64 = parts.iter().filter_map(|&part| fixed(part)).sum();
+        let mut remaining = (length - fixed_total).to_string();
         let mut failed = "false".to_string();
         let checked = traps(self.body, types, id) > 0;
         let mut counts = Vec::with_capacity(parts.len());
-        for (index, part) in parts.iter().enumerate() {
+        for (index, &part) in parts.iter().enumerate() {
             if let Some(count) = fixed(part) {
                 counts.push(count.to_string());
                 continue;
             }
             let range = format!("{name}.r{index}");
-            let mir::ArrayPart::Range(walk) = *part else {
-                unreachable!("a part not counted is a range")
-            };
-            self.write_range_count(out, &range, walk, element, wide, location);
+            self.write_range_count(out, &range, part, element, wide, location);
             if checked {
                 _ = writeln!(
                     out,
@@ -1108,53 +1130,66 @@ impl Function<'_, '_, '_> {
         counts
     }
 
-    /// Writes the lines that count the values of the range `walk`, named
-    /// `range`, of `element`s, as `Stmt::ForRange` counts them, into
-    /// `{range}.count`, an `i{wide}`: its `left` over its `step`, one more
+    /// Writes the lines that count the values of the range value `range`,
+    /// named `name`, of `element`s, as `Stmt::ForRange` counts them, into
+    /// `{name}.count`, an `i{wide}`: its `left` over its `step`, one more
     /// when it includes its end or when that leaves a rest
     /// (`write_part_counts`).
     fn write_range_count(
         &self,
         out: &mut String,
-        range: &str,
-        walk: mir::RangeWalk,
+        name: &str,
+        range: Operand,
         element: TypeId,
         wide: u32,
         location: &DebugLocation,
     ) {
-        let (left, step) = (self.operand(walk.left), self.operand(walk.step));
+        let left = self.read_range_field(out, name, range, range_field::LEFT, location);
+        let step = self.read_range_field(out, name, range, range_field::STEP, location);
+        let inclusive = self.read_range_field(out, name, range, range_field::INCLUSIVE, location);
         let number = type_text(self.types, element);
         _ = writeln!(
             out,
-            "  {range}.whole = udiv {number} {left}, {step}{location}\n  \
-             {range}.wide = zext {number} {range}.whole to i{wide}{location}"
+            "  {name}.whole = udiv {number} {left}, {step}{location}\n  \
+             {name}.wide = zext {number} {name}.whole to i{wide}{location}\n  \
+             {name}.rest = urem {number} {left}, {step}{location}\n  \
+             {name}.more = icmp ne {number} {name}.rest, 0{location}\n  \
+             {name}.last = or i1 {inclusive}, {name}.more{location}\n  \
+             {name}.extra = zext i1 {name}.last to i{wide}{location}\n  \
+             {name}.count = add i{wide} {name}.wide, {name}.extra{location}"
         );
-        let included = self.body.included(&walk);
-        let extra = if included == Some(true) {
-            "1".to_string()
-        } else {
-            _ = writeln!(
-                out,
-                "  {range}.rest = urem {number} {left}, {step}{location}\n  \
-                 {range}.more = icmp ne {number} {range}.rest, 0{location}"
-            );
-            let more = if included.is_some() {
-                format!("{range}.more")
-            } else {
-                _ = writeln!(
-                    out,
-                    "  {range}.last = or i1 {}, {range}.more{location}",
-                    self.operand(walk.inclusive)
-                );
-                format!("{range}.last")
-            };
-            _ = writeln!(out, "  {range}.extra = zext i1 {more} to i{wide}{location}");
-            format!("{range}.extra")
+    }
+
+    /// Writes the lines that read field `field` of the range value `range`,
+    /// named `name` (`range_fields`), and gives the value read; a range
+    /// written where it is spread gives the field as written, so its
+    /// constants stay constants (`written_range_field`).
+    fn read_range_field(
+        &self,
+        out: &mut String,
+        name: &str,
+        range: Operand,
+        field: usize,
+        location: &DebugLocation,
+    ) -> String {
+        if let Some(written) = written_range_field(self.body, range, field) {
+            return self.operand(written).to_string();
+        }
+        let types = self.types;
+        let ty = self.body.operand_type(range);
+        let Type::Range { element, step } = types[ty] else {
+            unreachable!("only a range has range fields")
         };
+        let read = format!("{name}.{}", RANGE_FIELD_NAMES[field]);
         _ = writeln!(
             out,
-            "  {range}.count = add i{wide} {range}.wide, {extra}{location}"
+            "  {read}.at = getelementptr inbounds {}, ptr {}, i32 0, i32 {field}{location}\n  \
+             {read} = load {}, ptr {read}.at{location}",
+            type_text(types, ty),
+            self.operand(range),
+            type_text(types, range_fields(element, step)[field])
         );
+        read
     }
 
     /// The private function that writes `count` integers of the type

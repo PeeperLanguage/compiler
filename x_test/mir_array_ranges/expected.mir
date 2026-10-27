@@ -24,10 +24,11 @@ fn make:
   bb3:
     %16 = phi bb1: %10, bb2: %13: u32
     %17 = phi bb1: %11, bb2: %15: i32
-    %18 = array(9, range(%2, left %16, inclusive false, step %5, delta %17)...): [4]i32
+    %18 = aggregate(%2, %16, %5, %17, false): range[i32]
+    %19 = array(9, %18): [4]i32
     scope end step.1
     scope end n.0
-    return %18
+    return %19
   bb4:
     scope end step.1
     scope end n.0
@@ -36,7 +37,7 @@ fn join:
   bb0:
     store pair.0, arg0
     %1 = load pair.0: [2]i32
-    %2 = array(%1..., 7): [3]i32
+    %2 = array(%1, 7): [3]i32
     scope end pair.0
     return %2
   bb1:
