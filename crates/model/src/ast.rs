@@ -263,6 +263,10 @@ pub enum Type {
     Path(List<Type>),
     /// `Box<T>`
     Generic { name: Ident, arguments: List<Type> },
+    /// `range[T]`: a built-in type's name with a type in brackets after it,
+    /// part of how that type is written, not type arguments; the checker
+    /// says which names take one
+    Bracketed { name: Ident, inner: Id<Type> },
     /// `&T` or `&mut T`
     Reference { mutable: bool, target: Id<Type> },
     /// `*T`, a raw pointer to a `T`
@@ -485,9 +489,8 @@ impl Expr {
             Expr::Cast { .. } => Precedence::Cast,
             Expr::Is { .. } => Precedence::Equality,
             // These end in an expression read at the lowest precedence.
-            Expr::OrElse { .. } | Expr::VariantLiteral { .. } | Expr::Range { .. } => {
-                Precedence::Lowest
-            }
+            Expr::OrElse { .. } | Expr::VariantLiteral { .. } => Precedence::Lowest,
+            Expr::Range { .. } => Precedence::Range,
             Expr::Name
             | Expr::Path(_)
             | Expr::Number

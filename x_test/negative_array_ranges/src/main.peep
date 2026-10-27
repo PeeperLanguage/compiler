@@ -1,6 +1,6 @@
-// A spread range in an array literal needs integer elements, a non-zero
-// step, and constant ends under `[_]`; the entries must give exactly `N`
-// values.
+// A spread range in an array literal needs the literal's (integer) element
+// type, a non-zero step, and constant ends under `[_]`; the entries must
+// give exactly `N` values.
 fn count(n: i32) -> i32 {
     let unknown = [_]i32{(0..n)...};
     let over = [3]i32{(0..n)..., 1, 2, 3, 4, 5};

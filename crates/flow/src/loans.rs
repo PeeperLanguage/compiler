@@ -223,15 +223,11 @@ impl Loans<'_, '_> {
                 for part in parts {
                     let operands = match *part {
                         mir::ArrayPart::Value(value) | mir::ArrayPart::Array(value) => {
-                            [Some(value), None, None, None]
+                            [Some(value), None, None, None, None]
                         }
-                        mir::ArrayPart::Range {
-                            start,
-                            left,
-                            step,
-                            delta,
-                            ..
-                        } => [Some(start), Some(left), Some(step), Some(delta)],
+                        mir::ArrayPart::Range(walk) => {
+                            [walk.start, walk.left, walk.step, walk.delta, walk.inclusive].map(Some)
+                        }
                     };
                     for operand in operands.iter().flatten() {
                         if let Some(holder) = self.operand_holder(operand) {

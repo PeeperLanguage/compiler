@@ -331,6 +331,7 @@ impl ThirBuilder<'_, '_> {
                 ast::Expr::ArrayLiteral { ty, entries } => {
                     break 'checked self.check_array_literal(ty, entries, span);
                 }
+                ast::Expr::Range { .. } => break 'checked self.check_range(expression, expected),
                 ast::Expr::Index { value, index } => break 'checked self.check_index(value, index),
                 ast::Expr::Dereference(value) => {
                     break 'checked self.check_dereference(value, span);
@@ -351,7 +352,6 @@ impl ThirBuilder<'_, '_> {
                 ast::Expr::String { c_string: false } => "string literals",
                 ast::Expr::Char { .. } => "character literals",
                 ast::Expr::Free(_) => "`free` calls",
-                ast::Expr::Range { .. } => "ranges",
                 ast::Expr::VariantLiteral { .. } => "variant literals",
                 ast::Expr::Is { .. } => "`is` tests",
                 ast::Expr::OrElse { .. } => "`orelse` fallbacks",
@@ -692,8 +692,8 @@ impl ThirBuilder<'_, '_> {
     /// The spread `values...` in an array literal of `element`s, as its
     /// part, with how many values it gives when that is known now; `None`
     /// after an error. An array gives its elements, which must be
-    /// `element`s; a range, in parentheses or not, its values
-    /// (`check_range_spread`).
+    /// `element`s; a range its values, counted now when it is written with
+    /// constant ends and step; a count no array can hold is reported.
     fn check_spread(
         &mut self,
         values: Id<ast::Expr>,
@@ -702,21 +702,25 @@ impl ThirBuilder<'_, '_> {
         let tree = &self.checker.module().ast;
         let values = tree.unparenthesized(values);
         let span = tree.exprs.span(values);
-        if let ast::Expr::Range { .. } = tree.exprs[values] {
-            return self.check_range_spread(values, element);
-        }
-        let array = self.add_expr(values, TypeExpectation::Hint(None));
-        let ty = self.body.exprs[array].ty;
+        // Only an integer element has ranges, whose ends then take its type.
+        let hint = self.checker.types.range(element);
+        let spread = self.add_expr(values, TypeExpectation::Hint(hint));
+        let ty = self.body.exprs[spread].ty;
         let types = &self.checker.types;
-        match types[ty] {
-            Type::Invalid => None,
+        let part = match types[ty] {
+            Type::Invalid => return None,
             Type::Array {
                 element: from,
                 length,
             } if element == TypeId::INVALID
                 || types.conversion(from, element) == Conversion::Same =>
             {
-                Some((ArrayPart::Array(array), Some(length)))
+                return Some((ArrayPart::Array(spread), Some(length)));
+            }
+            Type::Range { element: from, .. }
+                if element == TypeId::INVALID || types.same(from, element) =>
+            {
+                ArrayPart::Range(spread)
             }
             _ => {
                 let message = format!(
@@ -726,90 +730,87 @@ impl ThirBuilder<'_, '_> {
                 );
                 self.checker
                     .error(diagnostics::TYPE_MISMATCH, message, span);
-                None
+                return None;
             }
-        }
-    }
-
-    /// The spread of the range `values` in an array literal of `element`s,
-    /// as `check_spread` gives it: its values must be integers, and are
-    /// counted when its ends and step are constants; a count no array can
-    /// hold is reported.
-    fn check_range_spread(
-        &mut self,
-        values: Id<ast::Expr>,
-        element: TypeId,
-    ) -> Option<(ArrayPart, Option<u64>)> {
-        let span = self.checker.module().ast.exprs.span(values);
-        let ast::Expr::Range {
-            inclusive,
-            start,
-            end,
-            step,
-        } = self.checker.module().ast.exprs[values]
-        else {
-            unreachable!("`check_spread` gives only a range")
-        };
-        let integer = match self.checker.types[self.checker.types.real(element)] {
-            Type::Integer(integer) => Some(integer),
-            Type::Invalid => None,
-            _ => {
-                let found = self.checker.type_text(element);
-                let message =
-                    format!("a range in an array literal needs integer elements, found `{found}`");
-                self.checker
-                    .error(diagnostics::INVALID_OPERATION, message, span);
-                None
-            }
-        };
-        let expectation = match integer {
-            Some(_) => TypeExpectation::Required(element),
-            None => TypeExpectation::Hint(None),
-        };
-        let (Some(start), Some(end)) = (start, end) else {
-            self.checker
-                .not_supported(span, "array literal ranges without both ends");
-            return None;
-        };
-        let start = self.add_expr(start, expectation);
-        let end = self.add_expr(end, expectation);
-        let step = self.check_range_step(step, integer, span);
-        let integer = integer?;
-        let part = ArrayPart::Range {
-            start,
-            end,
-            step,
-            inclusive,
         };
         let exprs = &self.body.exprs;
-        if [start, end, step]
-            .iter()
-            .any(|&id| exprs[id].ty == TypeId::INVALID)
-        {
-            return None;
-        }
         let constant = |id: Id<Expr>| match exprs[id].kind {
             ExprKind::Constant(Value::Integer(ref limbs)) => Some(limbs),
             _ => None,
+        };
+        let ExprKind::Range {
+            start,
+            end,
+            step,
+            inclusive,
+        } = exprs[spread].kind
+        else {
+            return Some((part, None)); // a range value, counted when the program runs
         };
         let (Some(first), Some(last), Some(by)) = (constant(start), constant(end), constant(step))
         else {
             return Some((part, None));
         };
-        let bits = integer.bits;
-        let (_, distance) = integer.range_distance(first, last);
-        let whole = bigint::divide(bits, false, &distance, by)?; // a zero step was reported
-        let rest = bigint::remainder(bits, false, &distance, by)?;
-        let extra = inclusive || rest.as_slice().iter().any(|&limb| limb != 0);
-        // One bit wider, so `0..=u64::MAX`, 2^64 values, is counted exactly.
-        let wide = bits + 1;
-        let whole = bigint::extend(bits, false, &whole, wide);
-        let count = bigint::add(wide, &whole, &Limbs::new(wide, &[u64::from(extra)]));
+        let Type::Integer(integer) = types[exprs[start].ty] else {
+            unreachable!("a range is of integers")
+        };
+        let count = integer.range_count(first, last, by, inclusive)?; // a zero step was reported
         if !self.checker.length_fits(count.as_slice(), span) {
             return None;
         }
-        let count = bigint::to_u64(wide, false, &count).expect("a `usize` fits a `u64`");
-        Some((part, Some(count)))
+        Some((part, Some(count.as_slice()[0]))) // it fits a `usize`
+    }
+
+    /// The range `start..end`, or `..=`, stepping by `start..end:step`, at
+    /// `range`: a `range[T]` of its ends' integer type `T`. A literal end
+    /// without a suffix takes the other end's type, or `T` when a
+    /// `range[T]` is `expected`; the step is of the range type's step type
+    /// and not a constant zero (`check_range_step`). A range without both
+    /// ends is not supported yet.
+    fn check_range(&mut self, range: Id<ast::Expr>, expected: Option<TypeId>) -> Expr {
+        let tree = &self.checker.module().ast;
+        let span = tree.exprs.span(range);
+        let ast::Expr::Range {
+            inclusive,
+            start: Some(start),
+            end: Some(end),
+            step,
+        } = tree.exprs[range]
+        else {
+            self.checker.not_supported(span, "ranges without both ends");
+            return Expr::INVALID;
+        };
+        let hint = expected.and_then(|ty| match self.checker.types[ty] {
+            Type::Range { element, .. } => Some(element),
+            _ => None,
+        });
+        let (start, end) = if unsuffixed_literal(tree, start).is_some() {
+            let end = self.add_expr(end, TypeExpectation::Hint(hint));
+            let ty = self.body.exprs[end].ty;
+            (self.add_expr(start, TypeExpectation::Required(ty)), end)
+        } else {
+            let start = self.add_expr(start, TypeExpectation::Hint(hint));
+            let ty = self.body.exprs[start].ty;
+            (start, self.add_expr(end, TypeExpectation::Required(ty)))
+        };
+        let ty = self.checker.range_type(self.body.exprs[start].ty, span);
+        let step_type = match self.checker.types[ty] {
+            Type::Range { step, .. } => step,
+            _ => TypeId::INVALID,
+        };
+        let step = self.check_range_step(step, step_type, span);
+        if ty == TypeId::INVALID {
+            return Expr::INVALID;
+        }
+        Expr {
+            ty,
+            kind: ExprKind::Range {
+                start,
+                end,
+                step,
+                inclusive,
+            },
+        }
     }
 
     /// `array[index]`: the element at an integer index of an array in a

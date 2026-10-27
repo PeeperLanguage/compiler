@@ -233,7 +233,7 @@ tokens! {
         Ellipsis = "...",
         /// A range from the left value up to the right one, with it.
         ///
-        /// A `for` loop counts each value of it, even the type's largest, and counts down when the left value is larger. `a..=b:step` steps by more than one. In an array literal, `(1..=3)...` spreads those values (`...`). Ranges elsewhere are not supported yet.
+        /// A `for` loop counts each value of it, even the type's largest, and counts down when the left value is larger. `a..=b:step` steps by more than one. In an array literal, `(1..=3)...` spreads those values (`...`). A range is a value of the type `range[T]`, `T` the integer type of its values: it can be kept, passed and returned, and it copies.
         ///
         /// ```peeper
         /// for b in 250u8..=255 {
@@ -243,7 +243,7 @@ tokens! {
         DotDotEqual = "..=",
         /// A range from the left value up to the right one, without it.
         ///
-        /// A `for` loop counts each value of it, and counts down when the left value is larger. `a..b:step` steps by more than one. In an array literal, `(0..3)...` spreads those values (`...`). In a type, `[..]T` is a slice. Ranges elsewhere, and slices, are not supported yet.
+        /// A `for` loop counts each value of it, and counts down when the left value is larger. `a..b:step` steps by more than one. In an array literal, `(0..3)...` spreads those values (`...`). A range is a value of the type `range[T]`, `T` the integer type of its values: it can be kept, passed and returned, and it copies. In a type, `[..]T` is a slice. Slices are not supported yet.
         ///
         /// ```peeper
         /// for i in 0..3 {

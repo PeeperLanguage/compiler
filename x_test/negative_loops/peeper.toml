@@ -7,7 +7,7 @@ outcome = "failure"
 stderr_contains = [
     "`break` outside a loop",
     "`continue` outside a loop",
-    "a `for` range must be of integers, found `f64`",
+    "a range's values must be integers, found `f64`",
     "cannot assign twice to immutable `x`",
     "`p` is used after it was moved",
     "`v` is gone while a reference to it is still in use",

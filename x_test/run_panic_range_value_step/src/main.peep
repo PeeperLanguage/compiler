@@ -1,0 +1,11 @@
+// A range value's step is checked when the range is made, not when it is
+// walked: a zero step stops the program at the `a..b:step` that made it.
+fn make(step: u32) -> range[i32] {
+    return 0..10:step;
+}
+
+fn main() {
+    Write(Stdout, c"before\n", 7);
+    let r = make(0);
+    Write(Stdout, c"after\n", 6);
+}

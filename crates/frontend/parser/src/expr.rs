@@ -78,7 +78,11 @@ static RULES: Rules = {
     rules.prefix(TokenKind::Print, builtin);
     rules.prefix(TokenKind::Println, builtin);
 
-    // fallback and pipe
+    // ranges, fallback and pipe
+    rules.prefix(TokenKind::DotDot, open_range);
+    rules.prefix(TokenKind::DotDotEqual, open_range);
+    rules.infix(TokenKind::DotDot, Precedence::Range, range);
+    rules.infix(TokenKind::DotDotEqual, Precedence::Range, range);
     rules.infix(TokenKind::Orelse, Precedence::OrElse, or_else);
     rules.infix(TokenKind::PipeArrow, Precedence::Pipe, pipe);
 
@@ -231,56 +235,6 @@ impl Parser {
         false
     }
 
-    /// Reads what may stand inside `[ ]` or `( )`, after `in` or as an array
-    /// literal's entry: an expression, or a range `a..b`, `a..=b`, `..b` or
-    /// `a..`, with an end followed by `:step` to step by more than one.
-    /// Ranges appear nowhere else, and only right before the `]` may a range
-    /// leave out its end.
-    pub(crate) fn index_operand(&mut self) -> Id<Expr> {
-        let start = self.tok().span.start;
-        let is_range = |p: &Self| p.at(TokenKind::DotDot) || p.at(TokenKind::DotDotEqual);
-        let mut low = None;
-        if !is_range(self) {
-            let value = self.expr(Precedence::Lowest);
-            if !is_range(self) {
-                return value;
-            }
-            low = Some(value);
-        }
-        let op = self.next();
-        let mut high = None;
-        if !self.at(TokenKind::RightBracket) {
-            high = Some(self.expr(Precedence::Lowest));
-        } else if op.kind == TokenKind::DotDotEqual {
-            self.repair(
-                Diagnostic::new(
-                    diagnostics::INVALID_EXPRESSION,
-                    "inclusive range requires an end bound",
-                )
-                .label(
-                    &self.tree.file,
-                    op.span,
-                    "add the inclusive end bound after `..=`",
-                ),
-            );
-        }
-        let mut step = None;
-        if high.is_some() && self.at(TokenKind::Colon) {
-            self.next();
-            step = Some(self.expr(Precedence::Lowest));
-        }
-        let inclusive = op.kind == TokenKind::DotDotEqual;
-        self.add(
-            start,
-            Expr::Range {
-                inclusive,
-                start: low,
-                end: high,
-                step,
-            },
-        )
-    }
-
     /// Reports `case` unless it is a full path `Enum::Case` (or a type already
     /// reported as invalid).
     pub(crate) fn require_path(&mut self, case: Id<Type>) {
@@ -323,11 +277,58 @@ fn name_or_path(p: &mut Parser) -> Id<Expr> {
     p.add(start, Expr::Path(path))
 }
 
-/// Reads `( expression )`, or a range in parentheses, which a spread may
-/// follow: `(0..3)...`.
+/// Reads a range with no start: `..b`, `..=b`, or `..` before `]`.
+fn open_range(p: &mut Parser) -> Id<Expr> {
+    let start = p.tok().span.start;
+    range_from(p, start, None)
+}
+
+/// Reads a range from `low`: `a..b`, `a..=b`, or `a..` before `]`.
+fn range(p: &mut Parser, low: Id<Expr>) -> Id<Expr> {
+    range_from(p, p.start_of(low), Some(low))
+}
+
+/// Reads `..` or `..=` and what follows it: an end, then `:step` to step by
+/// more than one. Only right before the `]` may a range leave out its end.
+fn range_from(p: &mut Parser, start: u32, low: Option<Id<Expr>>) -> Id<Expr> {
+    let op = p.next();
+    let mut high = None;
+    if !p.at(TokenKind::RightBracket) {
+        high = Some(p.expr(Precedence::Range));
+    } else if op.kind == TokenKind::DotDotEqual {
+        p.repair(
+            Diagnostic::new(
+                diagnostics::INVALID_EXPRESSION,
+                "inclusive range requires an end bound",
+            )
+            .label(
+                &p.tree.file,
+                op.span,
+                "add the inclusive end bound after `..=`",
+            ),
+        );
+    }
+    let mut step = None;
+    if high.is_some() && p.at(TokenKind::Colon) {
+        p.next();
+        step = Some(p.expr(Precedence::Range));
+    }
+    let inclusive = op.kind == TokenKind::DotDotEqual;
+    p.add(
+        start,
+        Expr::Range {
+            inclusive,
+            start: low,
+            end: high,
+            step,
+        },
+    )
+}
+
+/// Reads `( expression )`.
 fn parentheses(p: &mut Parser) -> Id<Expr> {
     let open = p.next();
-    let inner = p.index_operand();
+    let inner = p.expr(Precedence::Lowest);
     p.close(TokenKind::RightParen, open);
     p.add(open.span.start, Expr::Parentheses(inner))
 }
@@ -449,7 +450,7 @@ fn builtin(p: &mut Parser) -> Id<Expr> {
 /// Reads `[index]` after `value`.
 fn index(p: &mut Parser, value: Id<Expr>) -> Id<Expr> {
     let open = p.next();
-    let index = p.index_operand();
+    let index = p.expr(Precedence::Lowest);
     p.close(TokenKind::RightBracket, open);
     p.add(p.start_of(value), Expr::Index { value, index })
 }
@@ -620,6 +621,17 @@ mod tests {
             Expr::Pipe { value, call } => {
                 format!("({} |> {})", grouped(t, value), grouped(t, call))
             }
+            Expr::Range {
+                inclusive,
+                start,
+                end,
+                step,
+            } => {
+                let part = |part: Option<Id<Expr>>| part.map_or(String::new(), |e| grouped(t, e));
+                let op = if inclusive { "..=" } else { ".." };
+                let step = step.map_or(String::new(), |e| format!(":{}", grouped(t, e)));
+                format!("({}{op}{}{step})", part(start), part(end))
+            }
             Expr::Unary { value, .. } | Expr::Reference { value, .. } => {
                 let (span, inner) = (t.exprs.span(id), t.exprs.span(value));
                 let prefix = t.file.text[span.start as usize..inner.start as usize].trim();
@@ -674,6 +686,12 @@ mod tests {
             ("a |> len() as i32", "((a |> len()) as i32)"),
             ("a + b |> f()", "((a + b) |> f())"),
             ("x.y.z[0][i..j]", "x.y.z[0][i..j]"),
+            ("a + b..c * d", "((a + b)..(c * d))"),
+            ("a orelse b..c", "(a orelse (b..c))"),
+            ("a..b orelse c", "(a..(b orelse c))"),
+            ("a..=b:c + d", "(a..=b:(c + d))"),
+            ("..b as i64", "(..(b as i64))"),
+            ("a..b..c", "((a..b)..c)"),
             ("-r.* * r.x.*", "(-r.* * r.x.*)"),
             ("&mut r.*.x", "&mut r.*.x"),
         ] {

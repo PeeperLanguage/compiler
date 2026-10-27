@@ -15,6 +15,7 @@ use model::operators::BinaryOp;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
+use model::semantic_types::range_fields;
 use model::thir;
 use source::Span;
 
@@ -234,32 +235,64 @@ impl Lowering<'_> {
         self.emit(check, TypeId::VOID, span);
     }
 
-    /// Starts walking the range `start` to `end` by `step`, written at
-    /// `span`, of an integer type `ty` with `step` of its unsigned type
-    /// `size`: lowers the three, checks the step (`check_step`), then
-    /// whether the range counts up (`start <= end`, known now when both are
-    /// constants), `left`, how far `end` is, as `size`, and `delta`, what
-    /// each next value adds: `step` up, `0 - step` down, both wrapping.
-    /// Gives `(start, step, left, delta)`, each a constant when what it is
-    /// computed from is. `for` and an array's ranges both start here, so
-    /// they count alike.
-    fn walk_range(
-        &mut self,
-        [start, end, step]: [Id<thir::Expr>; 3],
-        span: Span,
-    ) -> Option<(mir::Operand, mir::Operand, mir::Operand, mir::Operand)> {
-        let (ty, size) = (
-            self.types.real(self.thir.exprs[start].ty),
-            self.thir.exprs[step].ty,
-        );
-        let Type::Integer(integer) = self.types[ty] else {
-            unreachable!("the checker allows only an integer range")
+    /// The parts of the range `range` written as `start..end:step`
+    /// (`thir::ExprKind::Range`), in the order of `range_fields`, after
+    /// stopping the program when its step is zero (`check_step`).
+    fn lower_range_parts(&mut self, range: Id<thir::Expr>) -> Option<[mir::Operand; 4]> {
+        let thir::ExprKind::Range {
+            start,
+            end,
+            step,
+            inclusive,
+        } = self.thir.exprs[range].kind
+        else {
+            unreachable!("only a written range has parts to lower")
         };
-        let step_span = self.thir.exprs.span(step);
+        let (size, step_span) = (self.thir.exprs[step].ty, self.thir.exprs.span(step));
         let start = self.lower_expr(start)?;
         let end = self.lower_expr(end)?;
         let step = self.lower_expr(step)?;
         self.check_step(step, size, step_span);
+        let inclusive = self.add_constant(Constant {
+            ty: TypeId::BOOL,
+            value: Value::Bool(inclusive),
+        });
+        Some([start, end, step, inclusive])
+    }
+
+    /// Starts walking the range value `range`, of the type `range[T]` with
+    /// the step type `size`: its parts, then whether it counts up (`start
+    /// <= end`, known now when both are constants), `left`, how far `end`
+    /// is, as `size`, and `delta`, what each next value adds: `step` up,
+    /// `0 - step` down, both wrapping, each a constant when what it is
+    /// computed from is. A range written here gives its parts as written
+    /// (`lower_range_parts`), so constants fold; any other range value is
+    /// read field by field, its step checked when it was made. `for` and an
+    /// array's ranges both start here, so they count alike.
+    fn walk_range(&mut self, range: Id<thir::Expr>) -> Option<mir::RangeWalk> {
+        let span = self.thir.exprs.span(range);
+        let Type::Range {
+            element: ty,
+            step: size,
+        } = self.types[self.thir.exprs[range].ty]
+        else {
+            unreachable!("only a range is walked")
+        };
+        let Type::Integer(integer) = self.types[ty] else {
+            unreachable!("a range is of integers")
+        };
+        let [start, end, step, inclusive] = match self.thir.exprs[range].kind {
+            thir::ExprKind::Range { .. } => self.lower_range_parts(range)?,
+            _ => {
+                let value = self.lower_expr(range)?;
+                let types = range_fields(ty, size);
+                [0, 1, 2, 3].map(|index| {
+                    let fields = Box::new([index as u32]);
+                    let field = mir::InstructionKind::Field { value, fields };
+                    self.emit(field, types[index], span)
+                })
+            }
+        };
         let known = |lowering: &Self, operand| match operand {
             mir::Operand::Constant(id) => match lowering.mir.constants[id.index()].value {
                 Value::Integer(ref value) => Some(value.clone()),
@@ -294,7 +327,14 @@ impl Lowering<'_> {
                 ty: size,
                 value: Value::Integer(distance),
             });
-            return Some((start, step, left, delta(self, up)));
+            let delta = delta(self, up);
+            return Some(mir::RangeWalk {
+                start,
+                left,
+                step,
+                delta,
+                inclusive,
+            });
         }
         let way = |lowering: &mut Self, up: bool| {
             let (near, far) = if up { (start, end) } else { (end, start) };
@@ -320,7 +360,13 @@ impl Lowering<'_> {
         let delta =
             mir::InstructionKind::Phi(Box::new([(upward, delta_up), (downward, delta_down)]));
         let (left, delta) = (self.emit(left, size, span), self.emit(delta, ty, span));
-        Some((start, step, left, delta))
+        Some(mir::RangeWalk {
+            start,
+            left,
+            step,
+            delta,
+            inclusive,
+        })
     }
 
     /// Lowers the `thir::Stmt::ForRange` `statement`. On entry, once:
@@ -332,39 +378,41 @@ impl Lowering<'_> {
         let thir::Stmt::ForRange {
             index,
             value,
-            start,
-            end,
-            step,
-            inclusive,
+            range,
             body,
         } = self.thir.stmts[statement]
         else {
             unreachable!("only a range loop is lowered here")
         };
         let span = self.thir.stmts.span(statement);
-        let range_span = Span::new(
-            self.thir.exprs.span(start).start as usize,
-            self.thir.exprs.span(end).end as usize,
-        );
-        let (ty, size) = (
-            self.types.real(self.thir.exprs[start].ty),
-            self.thir.exprs[step].ty,
-        );
-        let (start, step, left_first, delta) = self.walk_range([start, end, step], range_span)?;
-        let first = if inclusive {
-            self.add_constant(Constant {
-                ty: TypeId::BOOL,
-                value: Value::Bool(true),
-            })
-        } else {
-            let zero = self.integer_constant(size, 0);
-            self.binary(
-                BinaryOp::NotEqualTo,
-                left_first,
-                zero,
-                TypeId::BOOL,
-                range_span,
-            )
+        let range_span = self.thir.exprs.span(range);
+        let Type::Range {
+            element: ty,
+            step: size,
+        } = self.types[self.thir.exprs[range].ty]
+        else {
+            unreachable!("a range loop walks a range")
+        };
+        let walk = self.walk_range(range)?;
+        let included = self.mir.included(&walk);
+        let mir::RangeWalk {
+            start,
+            left: left_first,
+            step,
+            delta,
+            inclusive,
+        } = walk;
+        let first = match included {
+            Some(true) => inclusive,
+            _ => {
+                let zero = self.integer_constant(size, 0);
+                let bool = TypeId::BOOL;
+                let away = self.binary(BinaryOp::NotEqualTo, left_first, zero, bool, range_span);
+                match included {
+                    Some(_) => away,
+                    None => self.binary(BinaryOp::BitOr, inclusive, away, bool, range_span),
+                }
+            }
         };
         let entry = self.block;
         let test = self.new_block(span);
@@ -396,12 +444,17 @@ impl Lowering<'_> {
             self.emit(store, TypeId::VOID, self.mir.variables.span(variable));
             self.declared.push(variable);
         }
-        let op = if inclusive {
-            BinaryOp::GreaterOrEqual
-        } else {
-            BinaryOp::GreaterThan
+        let bool = TypeId::BOOL;
+        let more = match included {
+            Some(true) => self.binary(BinaryOp::GreaterOrEqual, left, step, bool, range_span),
+            Some(false) => self.binary(BinaryOp::GreaterThan, left, step, bool, range_span),
+            None => {
+                let beyond = self.binary(BinaryOp::GreaterThan, left, step, bool, range_span);
+                let at = self.binary(BinaryOp::EqualTo, left, step, bool, range_span);
+                let last = self.binary(BinaryOp::BitAnd, inclusive, at, bool, range_span);
+                self.binary(BinaryOp::BitOr, beyond, last, bool, range_span)
+            }
         };
-        let more = self.binary(op, left, step, TypeId::BOOL, range_span);
         let next = self.binary(BinaryOp::Add, counter, delta, ty, range_span);
         let left_next = self.binary(BinaryOp::Subtract, left, step, size, range_span);
         let passes = index.zip(passes).map(|(index, passes)| {
@@ -575,22 +628,7 @@ impl Lowering<'_> {
             let part = match self.thir.array_parts[part] {
                 thir::ArrayPart::Value(value) => mir::ArrayPart::Value(self.lower_expr(value)?),
                 thir::ArrayPart::Array(array) => mir::ArrayPart::Array(self.lower_expr(array)?),
-                thir::ArrayPart::Range {
-                    start,
-                    end,
-                    step,
-                    inclusive,
-                } => {
-                    let span = self.thir.array_parts.span(part);
-                    let (start, step, left, delta) = self.walk_range([start, end, step], span)?;
-                    mir::ArrayPart::Range {
-                        start,
-                        left,
-                        step,
-                        delta,
-                        inclusive,
-                    }
-                }
+                thir::ArrayPart::Range(range) => mir::ArrayPart::Range(self.walk_range(range)?),
             };
             lowered.push(part);
         }
@@ -681,6 +719,9 @@ impl Lowering<'_> {
                 mir::InstructionKind::Aggregate(values.collect())
             }
             thir::ExprKind::ArrayLiteral(parts) => self.lower_array_literal(parts)?,
+            thir::ExprKind::Range { .. } => {
+                mir::InstructionKind::Aggregate(self.lower_range_parts(expression)?.into())
+            }
             thir::ExprKind::Variable(_)
             | thir::ExprKind::Field { .. }
             | thir::ExprKind::Dereference(_)

@@ -207,16 +207,21 @@ pub enum ArrayPart {
     Value(Operand),
     /// Each element of the array `Operand`, in order.
     Array(Operand),
-    /// The values of a range from `start` on, each `delta` more than the
-    /// one before, wrapping, while `left`, how far the end is, lasts by
-    /// `step` (`lower::Lowering::walk_range`); `inclusive` for `..=`.
-    Range {
-        start: Operand,
-        left: Operand,
-        step: Operand,
-        delta: Operand,
-        inclusive: bool,
-    },
+    /// The values of a range, as its walk gives them.
+    Range(RangeWalk),
+}
+
+/// A range's walk, started once before its first value
+/// (`lower::Lowering::walk_range`): its values are `start`, then each
+/// `delta` more than the one before, wrapping, while `left`, how far its
+/// end is, lasts by `step`, the end counted when `inclusive`, a `bool`.
+#[derive(Clone, Copy, Debug)]
+pub struct RangeWalk {
+    pub start: Operand,
+    pub left: Operand,
+    pub step: Operand,
+    pub delta: Operand,
+    pub inclusive: Operand,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -287,6 +292,19 @@ impl Body {
             Operand::Constant(constant) => self.constants[constant.index()].ty,
             Operand::Argument(index) => self.variables[Id::from_index(index as usize)].ty,
             Operand::Value(instruction) => self.instructions[instruction].ty,
+        }
+    }
+
+    /// Whether a range walk includes its end, when its `inclusive` is
+    /// known at compile time: a range written where it is walked; `None`
+    /// for a range value made elsewhere.
+    pub fn included(&self, walk: &RangeWalk) -> Option<bool> {
+        match walk.inclusive {
+            Operand::Constant(constant) => match self.constants[constant.index()].value {
+                Value::Bool(included) => Some(included),
+                _ => unreachable!("`inclusive` is a `bool`"),
+            },
+            _ => None,
         }
     }
 
@@ -388,20 +406,19 @@ impl Body {
                                     printer.write_operand(&array);
                                     printer.out.push_str("...");
                                 }
-                                ArrayPart::Range {
+                                ArrayPart::Range(RangeWalk {
                                     start,
                                     left,
                                     step,
                                     delta,
                                     inclusive,
-                                } => {
+                                }) => {
                                     printer.out.push_str("range(");
                                     printer.write_operand(&start);
                                     printer.out.push_str(", left ");
                                     printer.write_operand(&left);
-                                    if inclusive {
-                                        printer.out.push_str(" inclusive");
-                                    }
+                                    printer.out.push_str(", inclusive ");
+                                    printer.write_operand(&inclusive);
                                     printer.out.push_str(", step ");
                                     printer.write_operand(&step);
                                     printer.out.push_str(", delta ");

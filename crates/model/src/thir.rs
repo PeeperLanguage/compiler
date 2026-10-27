@@ -188,6 +188,18 @@ pub enum ExprKind {
     /// `@place`: the place's address as a raw pointer, which no loan
     /// follows; the place is as a `Borrow`'s.
     Address(Id<Expr>),
+    /// `start..end`, or `..=` when `inclusive`, a value of the type
+    /// `range[T]` (`ty`): integers from `start` toward `end`, `step` apart,
+    /// up or down as `start <= end`. The ends are `T`s, the step is of the
+    /// range type's step type (1 when not written); a step of zero stops
+    /// the program when the range is made, so a range value's step is
+    /// never zero.
+    Range {
+        start: Id<Expr>,
+        end: Id<Expr>,
+        step: Id<Expr>,
+        inclusive: bool,
+    },
     /// `print(values)`, or `println(values)` when `newline`: each value a
     /// number, `bool`, `cstr`, raw pointer, a struct or array of such values,
     /// or a reference to one; a value that moves, in a place, is lent as `&`.
@@ -205,16 +217,9 @@ pub enum ArrayPart {
     Value(Id<Expr>),
     /// Each element of an array value of the same element type, in order.
     Array(Id<Expr>),
-    /// `start..end`, or `..=` when `inclusive`, stepping by `step`, of the
-    /// unsigned type of the same width, counting down when `start` is
-    /// larger: as `Stmt::ForRange` counts. The ends are of the integer
-    /// element type.
-    Range {
-        start: Id<Expr>,
-        end: Id<Expr>,
-        step: Id<Expr>,
-        inclusive: bool,
-    },
+    /// Each value of a range value of the element type, as `Stmt::ForRange`
+    /// counts them.
+    Range(Id<Expr>),
 }
 
 /// `name = value` in a struct literal: the field by its index in declaration
@@ -255,19 +260,15 @@ pub enum Stmt {
         condition: Option<Id<Expr>>,
         body: Id<Block>,
     },
-    /// `for index, value in start..end:step { }`: `value`, declared in
-    /// `body`, is each integer from `start` toward `end`, `step` apart, up
-    /// or down as `start <= end`, with `end` when `inclusive` (`..=`);
-    /// `index` counts the passes from 0. The ends and the step, an unsigned
-    /// integer as wide as the ends (1 when not written), are computed once,
-    /// before the first pass. `for start..end { }` has no `value`.
+    /// `for index, value in range { }`: `value`, declared in `body`, is
+    /// each integer of the range value `range` (`ExprKind::Range`), with
+    /// `end` when the range includes it; `index` counts the passes from 0.
+    /// The range is computed once, before the first pass. `for start..end
+    /// { }` has no `value`.
     ForRange {
         index: Option<Id<Variable>>,
         value: Option<Id<Variable>>,
-        start: Id<Expr>,
-        end: Id<Expr>,
-        step: Id<Expr>,
-        inclusive: bool,
+        range: Id<Expr>,
         body: Id<Block>,
     },
     /// Leaves the innermost loop.
@@ -331,6 +332,9 @@ impl Body {
             | ExprKind::Dereference(value)
             | ExprKind::Borrow(value)
             | ExprKind::Address(value) => self.calls(value),
+            ExprKind::Range {
+                start, end, step, ..
+            } => self.calls(start) || self.calls(end) || self.calls(step),
             ExprKind::StructLiteral(fields) => {
                 (self.lists.items(fields)).any(|field| self.calls(self.field_values[field].value))
             }
@@ -338,10 +342,9 @@ impl Body {
                 self.lists
                     .items(parts)
                     .any(|part| match self.array_parts[part] {
-                        ArrayPart::Value(value) | ArrayPart::Array(value) => self.calls(value),
-                        ArrayPart::Range {
-                            start, end, step, ..
-                        } => self.calls(start) || self.calls(end) || self.calls(step),
+                        ArrayPart::Value(value)
+                        | ArrayPart::Array(value)
+                        | ArrayPart::Range(value) => self.calls(value),
                     })
             }
         }
@@ -455,10 +458,7 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
             Stmt::ForRange {
                 index,
                 value,
-                start,
-                end,
-                step,
-                inclusive,
+                range,
                 body,
             } => {
                 self.out.push_str("for ");
@@ -470,11 +470,7 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
                     self.write_variable(value);
                     self.out.push_str(" in ");
                 }
-                self.write_expr(start);
-                self.out.push_str(if inclusive { "..=" } else { ".." });
-                self.write_expr(end);
-                self.out.push_str(" by ");
-                self.write_expr(step);
+                self.write_expr(range);
                 self.out.push(' ');
                 self.write_block(self.body.blocks[body].statements, depth);
             }
@@ -561,18 +557,9 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
                             self.write_expr(array);
                             self.out.push_str("...");
                         }
-                        ArrayPart::Range {
-                            start,
-                            end,
-                            step,
-                            inclusive,
-                        } => {
+                        ArrayPart::Range(range) => {
                             self.out.push('(');
-                            self.write_expr(start);
-                            self.out.push_str(if inclusive { "..=" } else { ".." });
-                            self.write_expr(end);
-                            self.out.push_str(" by ");
-                            self.write_expr(step);
+                            self.write_expr(range);
                             self.out.push_str(")...");
                         }
                     }
@@ -605,6 +592,18 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
             ExprKind::Address(place) => {
                 self.out.push('@');
                 self.write_expr(place);
+            }
+            ExprKind::Range {
+                start,
+                end,
+                step,
+                inclusive,
+            } => {
+                self.write_expr(start);
+                self.out.push_str(if inclusive { "..=" } else { ".." });
+                self.write_expr(end);
+                self.out.push_str(" by ");
+                self.write_expr(step);
             }
             ExprKind::Print { newline, values } => {
                 self.out

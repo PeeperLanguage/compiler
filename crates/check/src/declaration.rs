@@ -237,13 +237,14 @@ impl Checker<'_> {
         if external
             && matches!(
                 self.types[resolved],
-                Type::Struct { .. } | Type::Array { .. }
+                Type::Struct { .. } | Type::Array { .. } | Type::Range { .. }
             )
         {
-            // shortcut: structs and arrays pass as LLVM values, which the C
-            // ABI does not match; allow them when its aggregate rules are written.
+            // shortcut: structs, arrays and ranges pass as LLVM values, which
+            // the C ABI does not match; allow structs and arrays when its
+            // aggregate rules are written (a range has no C type).
             let span = self.module().ast.types.span(ty);
-            let what = "struct and array parameters and results of `extern` functions";
+            let what = "struct, array and range parameters and results of `extern` functions";
             return self.not_supported(span, what);
         }
         resolved
@@ -277,6 +278,20 @@ impl Checker<'_> {
                 self.types.intern(Type::Array { element, length })
             }
         }
+    }
+
+    /// `range[element]`, written or made at `span`: invalid when `element`
+    /// is, reported when it is not an integer.
+    pub(crate) fn range_type(&mut self, element: TypeId, span: Span) -> TypeId {
+        if element == TypeId::INVALID {
+            return element;
+        }
+        if let Some(range) = self.types.range(element) {
+            return range;
+        }
+        let found = self.type_text(element);
+        let message = format!("a range's values must be integers, found `{found}`");
+        self.error(diagnostics::INVALID_TYPE, message, span)
     }
 
     /// Whether an array may have `length` elements, as its `len` is a
@@ -335,6 +350,10 @@ impl Checker<'_> {
                         let message = format!("`{name}` is a module, not a type");
                         return self.error(diagnostics::NOT_A_TYPE, message, span);
                     }
+                    None if name == semantic_types::RANGE => {
+                        let message = format!("`{name}` needs the type of its values: `{name}[T]`");
+                        return self.error(diagnostics::INVALID_TYPE, message, span);
+                    }
                     None if let Some(what) = unsupported_type(name) => what,
                     None => {
                         let symbols = self.visible_symbols();
@@ -352,6 +371,15 @@ impl Checker<'_> {
             ast::Type::Invalid => return TypeId::INVALID, // the parser reported it
             ast::Type::Path(_) => "types of other modules",
             ast::Type::Generic { .. } => "generic types",
+            ast::Type::Bracketed { name, inner } => {
+                let name = tree.file.slice(name.span);
+                if name != semantic_types::RANGE {
+                    let message = format!("`{name}` takes no type in brackets");
+                    return self.error(diagnostics::INVALID_TYPE, message, span);
+                }
+                let element = self.resolve_value_type(inner);
+                return self.range_type(element, span);
+            }
             ast::Type::Reference { mutable, target } => {
                 let target = self.resolve_value_type(target);
                 return self.reference_type(mutable, target, span);
@@ -464,7 +492,7 @@ mod tests {
             ("T0043", "default parameters are not supported yet", "1"),
             (
                 "T0043",
-                "struct and array parameters and results of `extern` functions are not supported yet",
+                "struct, array and range parameters and results of `extern` functions are not supported yet",
                 "P",
             ),
             ("T0021", "`a` is a value, not a type", "a"),

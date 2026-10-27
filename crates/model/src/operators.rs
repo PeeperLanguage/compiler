@@ -224,6 +224,7 @@ impl BinaryOp {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Precedence {
     Lowest,
+    Range,
     OrElse,
     Pipe,
     LogicalOr,

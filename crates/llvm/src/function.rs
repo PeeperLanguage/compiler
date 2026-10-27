@@ -250,8 +250,8 @@ fn traps(body: &mir::Body, types: &Types, id: Id<mir::Instruction>) -> usize {
             .count(),
         InstructionKind::Check { .. } => 1,
         InstructionKind::ArrayParts(ref parts) => usize::from(parts.iter().any(|part| {
-            matches!(part, mir::ArrayPart::Range { left, step, .. }
-                if [left, step].iter().any(|operand| !matches!(operand, Operand::Constant(_))))
+            matches!(part, mir::ArrayPart::Range(walk)
+                if [walk.left, walk.step, walk.inclusive].iter().any(|operand| !matches!(operand, Operand::Constant(_))))
         })),
         _ => 0,
     }
@@ -1007,14 +1007,14 @@ impl Function<'_, '_, '_> {
                 mir::ArrayPart::Value(value) | mir::ArrayPart::Array(value) => {
                     self.write_store(out, &address, value, location);
                 }
-                mir::ArrayPart::Range { start, delta, .. } => {
+                mir::ArrayPart::Range(walk) => {
                     let filler = self.range_filler(element);
                     _ = writeln!(
                         out,
                         "  call void {filler}(ptr {address}, {number} {}, {number} {}, \
                          i{pointer} {count}){location}",
-                        self.operand(start),
-                        self.operand(delta)
+                        self.operand(walk.start),
+                        self.operand(walk.delta)
                     );
                 }
             }
@@ -1067,7 +1067,10 @@ impl Function<'_, '_, '_> {
                 continue;
             }
             let range = format!("{name}.r{index}");
-            self.write_range_count(out, &range, *part, element, wide, location);
+            let mir::ArrayPart::Range(walk) = *part else {
+                unreachable!("a part not counted is a range")
+            };
+            self.write_range_count(out, &range, walk, element, wide, location);
             if checked {
                 _ = writeln!(
                     out,
@@ -1101,44 +1104,48 @@ impl Function<'_, '_, '_> {
         counts
     }
 
-    /// Writes the lines that count the values of the range `part`, named
+    /// Writes the lines that count the values of the range `walk`, named
     /// `range`, of `element`s, as `Stmt::ForRange` counts them, into
     /// `{range}.count`, an `i{wide}`: its `left` over its `step`, one more
-    /// when `inclusive` or when that leaves a rest (`write_part_counts`).
+    /// when it includes its end or when that leaves a rest
+    /// (`write_part_counts`).
     fn write_range_count(
         &self,
         out: &mut String,
         range: &str,
-        part: mir::ArrayPart,
+        walk: mir::RangeWalk,
         element: TypeId,
         wide: u32,
         location: &DebugLocation,
     ) {
-        let mir::ArrayPart::Range {
-            left,
-            step,
-            inclusive,
-            ..
-        } = part
-        else {
-            unreachable!("only a range is counted")
-        };
-        let (left, step) = (self.operand(left), self.operand(step));
+        let (left, step) = (self.operand(walk.left), self.operand(walk.step));
         let number = type_text(self.types, element);
         _ = writeln!(
             out,
             "  {range}.whole = udiv {number} {left}, {step}{location}\n  \
              {range}.wide = zext {number} {range}.whole to i{wide}{location}"
         );
-        let extra = match inclusive {
-            true => "1".to_string(),
-            false => {
+        let included = self.body.included(&walk);
+        let extra = match included {
+            Some(true) => "1".to_string(),
+            _ => {
                 _ = writeln!(
                     out,
                     "  {range}.rest = urem {number} {left}, {step}{location}\n  \
-                     {range}.more = icmp ne {number} {range}.rest, 0{location}\n  \
-                     {range}.extra = zext i1 {range}.more to i{wide}{location}"
+                     {range}.more = icmp ne {number} {range}.rest, 0{location}"
                 );
+                let more = match included {
+                    Some(_) => format!("{range}.more"),
+                    None => {
+                        _ = writeln!(
+                            out,
+                            "  {range}.last = or i1 {}, {range}.more{location}",
+                            self.operand(walk.inclusive)
+                        );
+                        format!("{range}.last")
+                    }
+                };
+                _ = writeln!(out, "  {range}.extra = zext i1 {more} to i{wide}{location}");
                 format!("{range}.extra")
             }
         };

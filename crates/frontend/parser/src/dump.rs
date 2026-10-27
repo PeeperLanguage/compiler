@@ -310,6 +310,11 @@ impl Dumper<'_> {
                 children.extend(t.lists.items(arguments).map(Item::Type));
                 ("generic type", None, children)
             }
+            Type::Bracketed { name, inner } => (
+                "bracketed type",
+                None,
+                vec![Item::Leaf("type name", name.span), Item::Type(inner)],
+            ),
             Type::Reference { mutable: m, target } => ("reference type", mutable(m), one(target)),
             Type::Pointer(target) => ("pointer type", None, one(target)),
             Type::Optional(inner) => ("optional type", None, one(inner)),

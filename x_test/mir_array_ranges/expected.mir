@@ -9,7 +9,7 @@ fn make:
     %6 = EqualTo %5, 0: bool
     check %6, "range step is zero"
     %8 = LessOrEqual %2, %4: bool
-    branch %8 ((n..n + 6:step)...) bb1 bb2
+    branch %8 (n..n + 6:step) bb1 bb2
   bb1:
     %9 = Subtract %4, %2: i32
     %10 = convert %9: u32
@@ -24,7 +24,7 @@ fn make:
   bb3:
     %16 = phi bb1: %10, bb2: %13: u32
     %17 = phi bb1: %11, bb2: %15: i32
-    %18 = array(9, range(%2, left %16, step %5, delta %17)...): [4]i32
+    %18 = array(9, range(%2, left %16, inclusive false, step %5, delta %17)...): [4]i32
     scope end step.1
     scope end n.0
     return %18

@@ -1,5 +1,5 @@
-// Only `values...` spreads: a range alone is one value, which ranges cannot
-// be yet. A spread array must hold the literal's element type.
+// Only `values...` spreads: a range alone is one value, a `range[i32]`, not
+// an `i32`. A spread array must hold the literal's element type.
 fn count(n: i32) -> i32 {
     let a = [_]i32{1, 2, 3};
     let bare = [_]i32{0..3};

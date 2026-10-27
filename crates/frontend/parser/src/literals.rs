@@ -138,7 +138,7 @@ pub(crate) fn array_literal(p: &mut Parser) -> Id<Expr> {
         starts_expression,
         |p| {
             let start = p.tok().span.start;
-            let value = p.index_operand();
+            let value = p.expr(Precedence::Lowest);
             if !p.at(TokenKind::Ellipsis) {
                 return p.add(start, Entry::Value(value));
             }

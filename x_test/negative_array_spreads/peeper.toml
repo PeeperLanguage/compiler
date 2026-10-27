@@ -5,7 +5,7 @@ build = "program"
 mode = "check"
 outcome = "failure"
 stderr_contains = [
-    "ranges are not supported yet",
+    "mismatched types: expected `i32`, found `range[i32]`",
     "`...` here spreads a range or an array of `u8`, found `[3]i32`",
     "`...` here spreads a range or an array of `i32`, found `i32`",
     "`[2]i32` needs 2 values, found 3",

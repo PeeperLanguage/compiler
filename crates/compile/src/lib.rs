@@ -308,6 +308,7 @@ fn hash_type(checker: &Checker, ty: TypeId, hasher: &mut DefaultHasher) {
             length.hash(hasher);
             hash_type(checker, *element, hasher);
         }
+        Type::Range { element, .. } => hash_type(checker, *element, hasher), // `step` follows
         Type::Reference { mutable, target } => {
             mutable.hash(hasher);
             hash_type(checker, *target, hasher);

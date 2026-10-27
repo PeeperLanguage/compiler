@@ -7,12 +7,12 @@ outcome = "failure"
 stderr_contains = [
     "a range in `[_]` needs constant ends and step; write the length",
     "`[3]i32` needs 3 values, found at least 5",
-    "a range in an array literal needs integer elements, found `f64`",
+    "`...` here spreads a range or an array of `f64`, found `range[i32]`",
     "`[3]i32` needs 3 values, found 5",
     "a range's step must not be zero",
     "literal `256` does not fit `u8`",
     "`[2]i32` needs 2 values, found 3",
-    "a range in an array literal needs integer elements, found `bool`",
+    "`...` here spreads a range or an array of `bool`, found `range[i32]`",
     "an array length must fit `usize`, of 64 bits",
     "Compilation failed with 10 error(s)",
 ]

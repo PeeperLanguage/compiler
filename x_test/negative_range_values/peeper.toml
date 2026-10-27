@@ -1,0 +1,19 @@
+name = "negative_range_values"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "struct, array and range parameters and results of `extern` functions are not supported yet",
+    "a range's values must be integers, found `f32`",
+    "`range` needs the type of its values: `range[T]`",
+    "unknown type `Nope`",
+    "`i32` takes no type in brackets",
+    "ranges without both ends are not supported yet",
+    "a range in `[_]` needs constant ends and step; write the length",
+    "`range[i32]` cannot be printed",
+    "mismatched types: expected `range[i64]`, found `range[u8]`",
+    "the value of a constant must be known at compile time",
+    "Compilation failed with 10 error(s)",
+]

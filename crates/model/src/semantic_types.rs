@@ -55,13 +55,37 @@ impl Integer {
 
     /// Whether a range of this type from the constant `start` to `end`
     /// counts up (`start <= end`), and how far apart the two are, read as
-    /// unsigned of the same width, so it never overflows. The checker's
-    /// count of a constant range and lowering's walk of one both start
-    /// here, so they agree on how many values it has.
+    /// unsigned of the same width, so it never overflows. `range_count`
+    /// and lowering's walk of a constant range both start here, so they
+    /// agree on how many values it has.
     pub fn range_distance(self, start: &Limbs, end: &Limbs) -> (bool, Limbs) {
         let up = bigint::compare(self.bits, self.signed, start, end).is_le();
         let (near, far) = if up { (start, end) } else { (end, start) };
         (up, bigint::subtract(self.bits, far, near))
+    }
+
+    /// How many values a range of this type from the constant `start` to
+    /// `end` by `step` has, `end` counted when `inclusive`, as `for` counts
+    /// them: one bit wider than the type, so `0..=u64::MAX`, 2^64 values,
+    /// is exact. `None` for a zero step.
+    pub fn range_count(
+        self,
+        start: &Limbs,
+        end: &Limbs,
+        step: &Limbs,
+        inclusive: bool,
+    ) -> Option<Limbs> {
+        let (_, distance) = self.range_distance(start, end);
+        let whole = bigint::divide(self.bits, false, &distance, step)?;
+        let rest = bigint::remainder(self.bits, false, &distance, step)?;
+        let extra = inclusive || rest.as_slice().iter().any(|&limb| limb != 0);
+        let wide = self.bits + 1;
+        let whole = bigint::extend(self.bits, false, &whole, wide);
+        Some(bigint::add(
+            wide,
+            &whole,
+            &Limbs::new(wide, &[u64::from(extra)]),
+        ))
     }
 }
 
@@ -116,6 +140,15 @@ pub enum Type {
     Array {
         element: TypeId,
         length: u64,
+    },
+    /// `range[element]`: the integers from a start toward an end, a step
+    /// apart, up or down; its fields are `range_fields`. `step` is the
+    /// unsigned integer type as wide as `element`, the step's type, kept
+    /// here so a reader of the types finds it without adding it
+    /// (`Types::range` makes both).
+    Range {
+        element: TypeId,
+        step: TypeId,
     },
     /// `&T`, or `&mut T` when `mutable`: a view of a `target` value held
     /// elsewhere, never itself a reference.
@@ -240,6 +273,20 @@ fixed_types! {
     RAWPTR => Type::RawPointer { target: None },
 }
 
+/// The name of the built-in range type, written with its values' type
+/// after it in brackets: `range[i32]`.
+pub const RANGE: &str = "range";
+
+/// The fields of a value of `Type::Range { element, step }`, in order:
+/// `start`, `end`, `step` and whether `end` is included (`inclusive`), as
+/// `RANGE_FIELD_NAMES` names them.
+pub fn range_fields(element: TypeId, step: TypeId) -> [TypeId; 4] {
+    [element, element, step, TypeId::BOOL]
+}
+
+/// The names of `range_fields`, as debug info shows them.
+pub const RANGE_FIELD_NAMES: [&str; 4] = ["start", "end", "step", "inclusive"];
+
 /// The integer types as wide as a pointer, and whether each is signed.
 const POINTER_SIZED: [(&str, bool); 2] = [("isize", true), ("usize", false)];
 
@@ -362,6 +409,21 @@ impl Types {
         Some(self.intern(Type::Integer(integer_named(name, pointer_bits)?)))
     }
 
+    /// `range[element]`, of the integer type `element` (an alias looked
+    /// through), with its step type; `None` when `element` is not an
+    /// integer.
+    pub fn range(&mut self, element: TypeId) -> Option<TypeId> {
+        let Type::Integer(integer) = self[element] else {
+            return None;
+        };
+        let element = self.real(element);
+        let step = self.intern(Type::Integer(Integer {
+            signed: false,
+            ..integer
+        }));
+        Some(self.intern(Type::Range { element, step }))
+    }
+
     /// Whether `a` and `b` are one type, aliases looked through.
     pub fn same(&self, a: TypeId, b: TypeId) -> bool {
         self.real(a) == self.real(b)
@@ -403,7 +465,7 @@ impl Types {
 
     /// The type `id` stands for: itself, or the type an alias names.
     /// Whether a value of the type `id` copies when used by value: numbers,
-    /// `bool`, `cstr`, shared references, raw pointers, and arrays of values
+    /// `bool`, `cstr`, shared references, raw pointers, ranges, and arrays of values
     /// that copy. Any other value moves, and the variable it moved from is
     /// unusable until set again.
     pub fn is_copy(&self, id: TypeId) -> bool {
@@ -412,7 +474,8 @@ impl Types {
             | Type::Integer(_)
             | Type::Float(_)
             | Type::CString
-            | Type::RawPointer { .. } => true,
+            | Type::RawPointer { .. }
+            | Type::Range { .. } => true,
             Type::Reference { mutable, .. } => !mutable,
             Type::Array { element, .. } => self.is_copy(element),
             Type::Struct { .. } => false,
@@ -481,6 +544,9 @@ impl Types {
             }
             Type::Array { element, length } => {
                 format!("[{length}]{}", self.real_text(*element, name_of))
+            }
+            Type::Range { element, .. } => {
+                format!("{RANGE}[{}]", self.real_text(*element, name_of))
             }
             Type::Reference { mutable, target } => {
                 let target = self.real_text(*target, name_of);

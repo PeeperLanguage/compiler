@@ -10,7 +10,7 @@ fn walk:
     %7 = EqualTo %6, 0: bool
     check %7, "range step is zero"
     %9 = LessOrEqual %4, %5: bool
-    branch %9 (from..to) bb1 bb2
+    branch %9 (from..to:step) bb1 bb2
   bb1:
     %10 = Subtract %5, %4: i32
     %11 = convert %10: u32
@@ -32,7 +32,7 @@ fn walk:
     %21 = phi bb3: %17, bb7: %28: u32
     %22 = phi bb3: 0, bb7: %29: u64
     %23 = phi bb3: %19, bb7: %26: bool
-    branch %23 (from..to) bb5 bb6
+    branch %23 (from..to:step) bb5 bb6
   bb5:
     store i.4, %22
     store v.5, %20

@@ -267,7 +267,7 @@ fn for_statement(p: &mut Parser) -> Id<Stmt> {
             value = p.name();
         }
         p.expect(TokenKind::In);
-        let iterable = p.index_operand();
+        let iterable = p.expr(Precedence::Lowest);
         let body = p.body("for");
         return p.add(
             start,
@@ -281,7 +281,7 @@ fn for_statement(p: &mut Parser) -> Id<Stmt> {
     }
     let mut condition = None;
     if !p.at(TokenKind::LeftBrace) {
-        let value = p.index_operand(); // a condition, or a range: `for 0..n { }`
+        let value = p.expr(Precedence::Lowest); // a condition, or a range: `for 0..n { }`
         if p.at(TokenKind::In) {
             let span = p.tree.exprs.span(value);
             p.fail(

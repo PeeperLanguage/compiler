@@ -44,6 +44,13 @@ impl Parser {
         grow(|| {
             let t = self.tok();
             match t.kind {
+                TokenKind::Ident if self.ahead(1).kind == TokenKind::LeftBracket => {
+                    let name = self.name();
+                    let open = self.next();
+                    let inner = self.type_expr();
+                    self.close(TokenKind::RightBracket, open);
+                    self.add(t.span.start, Type::Bracketed { name, inner })
+                }
                 TokenKind::Ident => self.named_type(),
                 TokenKind::Ampersand => {
                     self.next();

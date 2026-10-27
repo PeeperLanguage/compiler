@@ -1,0 +1,30 @@
+// A range holds integers, and its type names them: `range[T]`. Only `range`
+// takes a type in brackets. A spread of a range that is not written in place
+// has no length the checker can count, a range does not print, and a range
+// value cannot be made at compile time yet, as an array cannot.
+#[extern("walk")]
+fn walk(r: range[i32]);
+
+fn floats(r: range[f32]) {}
+
+fn bare(r: range) {}
+
+// One error: the unknown name, not also a non-integer range.
+fn unknown(r: range[Nope]) {}
+
+fn bracketed(n: i32[u8]) {}
+
+fn first(r: range[i32]) -> i32 {
+    return 0;
+}
+
+const FIRST = first(0..3);
+
+fn main() {
+    let r = 0..3;
+    let open = ..5;
+    let values = [_]i32{r...};
+    println(r);
+    let mixed: range[u8] = 0..3;
+    let wrong: range[i64] = mixed;
+}

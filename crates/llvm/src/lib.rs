@@ -20,9 +20,12 @@ use model::ModuleId;
 use model::constant::Constant;
 use model::constant::Value;
 use model::semantic_types::Float;
+use model::semantic_types::RANGE;
+use model::semantic_types::RANGE_FIELD_NAMES;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
+use model::semantic_types::range_fields;
 use source::SourceFile;
 
 /// What a program is built for: debugging, with debug info, or release,
@@ -302,36 +305,21 @@ impl Metadata {
                 definition,
                 ref fields,
             } => {
-                // Its members name it, so its number comes first.
-                let composite = self.reserve();
-                let (offsets, size, _) = struct_layout(types, fields, pointer_bits);
-                let names = project::field_names(&program.modules, definition);
-                let mut members = Vec::with_capacity(fields.len());
-                for ((name, &field), offset) in names.zip(fields).zip(offsets) {
-                    let field = types.real(field);
-                    let base = self.debug_type(program, types, field, pointer_bits);
-                    let base = base.expect("a field has a value's type");
-                    let member = self.add(format_args!(
-                        "!DIDerivedType(tag: DW_TAG_member, name: {}, scope: !{composite}, \
-                         baseType: !{base}, offset: {})",
-                        quoted(name.as_bytes()),
-                        offset * 8
-                    ));
-                    members.push(format!("!{member}"));
-                }
-                let elements = self.add(format_args!("!{{{}}}", members.join(", ")));
                 let (name, file) = project::declared_name(&program.modules, definition);
-                self.define(
-                    composite,
-                    format_args!(
-                        "distinct !DICompositeType(tag: DW_TAG_structure_type, name: {}, \
-                         size: {}, elements: !{elements})",
-                        quoted(name.text(file).as_bytes()),
-                        size * 8
-                    ),
-                );
-                self.types.insert(ty, composite);
-                return Some(composite);
+                let names = project::field_names(&program.modules, definition);
+                let parts = (names.zip(fields.iter().copied())).collect::<Vec<_>>();
+                let shape = (ty, name.text(file), &parts[..]);
+                return Some(self.debug_struct(program, types, shape, pointer_bits));
+            }
+            Type::Range { element, step } => {
+                let Type::Integer(integer) = types[element] else {
+                    unreachable!("a range is of integers")
+                };
+                let name = format!("{RANGE}[{integer}]");
+                let fields = range_fields(element, step);
+                let parts = (RANGE_FIELD_NAMES.into_iter().zip(fields)).collect::<Vec<_>>();
+                let shape = (ty, name.as_str(), &parts[..]);
+                return Some(self.debug_struct(program, types, shape, pointer_bits));
             }
             Type::Alias { .. } => unreachable!("indexing looks through aliases"),
             Type::Named(_) => unreachable!("no value has a named type"),
@@ -339,6 +327,46 @@ impl Metadata {
         let id = self.add(text);
         self.types.insert(ty, id);
         Some(id)
+    }
+
+    /// The debug type of `ty`, a struct named `name` with `fields` (each
+    /// field's name and type, in order): a struct declaration's, or a
+    /// range's (`range_fields`).
+    fn debug_struct(
+        &mut self,
+        program: &project::Program,
+        types: &Types,
+        (ty, name, fields): (TypeId, &str, &[(&str, TypeId)]),
+        pointer_bits: u32,
+    ) -> usize {
+        // Its members name it, so its number comes first.
+        let composite = self.reserve();
+        let field_types = fields.iter().map(|&(_, field)| field).collect::<Vec<_>>();
+        let (offsets, size, _) = struct_layout(types, &field_types, pointer_bits);
+        let mut members = Vec::with_capacity(fields.len());
+        for (&(field_name, field), offset) in fields.iter().zip(offsets) {
+            let base = self.debug_type(program, types, types.real(field), pointer_bits);
+            let base = base.expect("a field has a value's type");
+            let member = self.add(format_args!(
+                "!DIDerivedType(tag: DW_TAG_member, name: {}, scope: !{composite}, \
+                 baseType: !{base}, offset: {})",
+                quoted(field_name.as_bytes()),
+                offset * 8
+            ));
+            members.push(format!("!{member}"));
+        }
+        let elements = self.add(format_args!("!{{{}}}", members.join(", ")));
+        self.define(
+            composite,
+            format_args!(
+                "distinct !DICompositeType(tag: DW_TAG_structure_type, name: {}, \
+                 size: {}, elements: !{elements})",
+                quoted(name.as_bytes()),
+                size * 8
+            ),
+        );
+        self.types.insert(ty, composite);
+        composite
     }
 }
 
@@ -366,6 +394,7 @@ fn type_text(types: &Types, ty: TypeId) -> impl fmt::Display {
         Type::Float(Float::F64) => out.write_str("double"),
         Type::CString | Type::Reference { .. } | Type::RawPointer { .. } => out.write_str("ptr"),
         Type::Struct { ref fields, .. } => struct_type_text(types, fields, out),
+        Type::Range { element, step } => struct_type_text(types, &range_fields(element, step), out),
         Type::Array { element, length } => {
             write!(out, "[{length} x {}]", type_text(types, element))
         }
@@ -376,11 +405,14 @@ fn type_text(types: &Types, ty: TypeId) -> impl fmt::Display {
 }
 
 /// Whether a value of type `ty` is kept in memory, its LLVM value the
-/// address there: a struct or an array. LLVM splits a value of such a type
+/// address there: a struct, an array or a range. LLVM splits a value of such a type
 /// into one operation per part, so a big array as one value made clang slow,
 /// then crash.
 fn in_memory(types: &Types, ty: TypeId) -> bool {
-    matches!(types[ty], Type::Struct { .. } | Type::Array { .. })
+    matches!(
+        types[ty],
+        Type::Struct { .. } | Type::Array { .. } | Type::Range { .. }
+    )
 }
 
 /// A struct's LLVM type, `{ i32, i64 }`, of its `fields`' types. Out of
@@ -429,6 +461,11 @@ fn layout(types: &Types, ty: TypeId, pointer_bits: u32) -> (u64, u64) {
         }
         Type::Struct { ref fields, .. } => {
             let (_, size, align) = struct_layout(types, fields, pointer_bits);
+            (size, align)
+        }
+        Type::Range { element, step } => {
+            let fields = range_fields(element, step);
+            let (_, size, align) = struct_layout(types, &fields, pointer_bits);
             (size, align)
         }
         Type::Array { element, length } => {

@@ -9,6 +9,6 @@ stderr_contains = [
     "literal `-1` does not fit `u32`",
     "mismatched types: expected `u32`, found `i32`",
     "mismatched types: expected `u32`, found `f64`",
-    "a `for` range must be of integers, found `f64`",
+    "a range's values must be integers, found `f64`",
     "Compilation failed with 5 error(s)",
 ]
