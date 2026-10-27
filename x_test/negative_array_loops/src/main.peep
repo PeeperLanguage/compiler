@@ -65,6 +65,17 @@ fn SliceElementKept(s: [&mut]i32) {
     keep.* = 3;
 }
 
+// `keep` holds an element of `s` after the loop, so `s` cannot change.
+fn SliceElementOutlivesLoop(s: [&mut]i32) {
+    let mut other = [1]i32{0};
+    let mut keep = &mut other[0];
+    for v in s {
+        keep = v;
+    }
+    s[1] = 2;
+    keep.* = 3;
+}
+
 fn ReadOnlySliceElement(s: [&]i32) {
     for v in s {
         v.* = 1;

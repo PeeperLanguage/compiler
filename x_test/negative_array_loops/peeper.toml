@@ -18,5 +18,5 @@ stderr_contains = [
     "`s` is borrowed while a `[&mut]` slice of it is still in use",
     "`s` is borrowed as `[&mut]` while a `&mut` reference to it is still in use",
     "cannot assign to `v.*` through shared reference `v`",
-    "Compilation failed with 12 error(s)",
+    "Compilation failed with 13 error(s)",
 ]

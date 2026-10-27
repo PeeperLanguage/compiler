@@ -449,6 +449,15 @@ checker rejects only constant ends that no slice can hold (negative, past
 the target's `usize`) or that are out of order. `&mut` needs a `[&mut]`
 source, as writing through a slice does.
 
+`for v in s` over a slice is THIR's array loop: the slice is held in a
+hidden variable (a `[&mut]` lent again, so `s` is usable after), the range
+ends at its `len`, read once before the first pass, and each pass sets `v`
+to `&items[i]` or `&mut items[i]`, as for a loop over a reference. The loop
+lends the slice for all its passes, so its body cannot use `s`.
+`[N]T{s...}` is one part of an `ArrayParts`, its elements copied; they must
+copy, and a `[&mut]` variable is lent as a `[&]`, so it is usable after. Its
+count is known only when the program runs, so `[_]T{s...}` is rejected.
+
 A use (`load`, `move`, `borrow`, `address`, or a read or write of a place) not set on
 every path is T0034 ("`x` is used after it was moved", with each place it was
 moved) when the moved bit is on, else T0039 ("`x` is used before it is set").
@@ -564,7 +573,11 @@ per function (`peeper -dump ll` shows it):
   a slice builds both parts with `insertvalue`; a subslice step is a
   `getelementptr` index at its start, an `iN` checked before, and the slice
   takes its count. A debugger shows it as a
-  struct with `ptr` and `len`.
+  struct with `ptr` and `len`. A slice spread in an array literal is
+  counted from its length, one bit wider than the element, checked with the
+  other parts before any element is written, and copied with one `memcpy`;
+  that array is built in its own memory, never at the place it is stored to
+  or `%result`, which the slice may view.
 - `print` and `println` call the runtime's print functions, one per number,
   `bool`, `cstr` or pointer, with the text known at compile time (spaces,
   struct names, brackets) gathered into one string between them. An array
