@@ -490,11 +490,22 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
     }
 
     fn write_variable(&mut self, variable: Id<Variable>) {
-        let name = match self.body.variables[variable].hidden {
-            true => "_",
-            false => self.file.slice(self.body.variables.span(variable)),
+        let name = if self.body.variables[variable].hidden {
+            "_"
+        } else {
+            self.file.slice(self.body.variables.span(variable))
         };
         _ = write!(self.out, "{name}.{}", variable.index());
+    }
+
+    /// `exprs`, separated by commas.
+    fn write_exprs(&mut self, exprs: List<Expr>) {
+        for (index, expr) in self.body.lists.items(exprs).enumerate() {
+            if index > 0 {
+                self.out.push_str(", ");
+            }
+            self.write_expr(expr);
+        }
     }
 
     fn write_expr(&mut self, expr: Id<Expr>) {
@@ -529,12 +540,7 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
                 arguments,
             } => {
                 _ = write!(self.out, "call {}(", (self.name_of)(function));
-                for (index, argument) in self.body.lists.items(arguments).enumerate() {
-                    if index > 0 {
-                        self.out.push_str(", ");
-                    }
-                    self.write_expr(argument);
-                }
+                self.write_exprs(arguments);
                 _ = write!(self.out, "):{}", self.types.text(ty, self.name_of));
             }
             ExprKind::StructLiteral(fields) => {
@@ -608,12 +614,7 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
             ExprKind::Print { newline, values } => {
                 self.out
                     .push_str(if newline { "println(" } else { "print(" });
-                for (index, value) in self.body.lists.items(values).enumerate() {
-                    if index > 0 {
-                        self.out.push_str(", ");
-                    }
-                    self.write_expr(value);
-                }
+                self.write_exprs(values);
                 self.out.push(')');
             }
             ExprKind::Invalid => self.out.push_str("invalid"),

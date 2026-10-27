@@ -281,9 +281,10 @@ impl Lowering<'_> {
         let Type::Integer(integer) = self.types[ty] else {
             unreachable!("a range is of integers")
         };
-        let [start, end, step, inclusive] = match self.thir.exprs[range].kind {
-            thir::ExprKind::Range { .. } => self.lower_range_parts(range)?,
-            _ => {
+        let [start, end, step, inclusive] =
+            if let thir::ExprKind::Range { .. } = self.thir.exprs[range].kind {
+                self.lower_range_parts(range)?
+            } else {
                 let value = self.lower_expr(range)?;
                 let types = range_fields(ty, size);
                 [0, 1, 2, 3].map(|index| {
@@ -291,8 +292,7 @@ impl Lowering<'_> {
                     let field = mir::InstructionKind::Field { value, fields };
                     self.emit(field, types[index], span)
                 })
-            }
-        };
+            };
         let known = |lowering: &Self, operand| match operand {
             mir::Operand::Constant(id) => match lowering.mir.constants[id.index()].value {
                 Value::Integer(ref value) => Some(value.clone()),
@@ -302,16 +302,20 @@ impl Lowering<'_> {
         };
         // Between the step's type and the counter's, the same bits read
         // with the other sign.
-        let convert = |lowering: &mut Self, value, to| match size == ty {
-            true => value, // an unsigned range
-            false => lowering.emit(mir::InstructionKind::Convert(value), to, span),
+        let convert = |lowering: &mut Self, value, to| {
+            if size == ty {
+                value
+            } else {
+                lowering.emit(mir::InstructionKind::Convert(value), to, span)
+            }
         };
         let delta = |lowering: &mut Self, up: bool| match known(lowering, step) {
             Some(step) => lowering.add_constant(Constant {
                 ty,
-                value: Value::Integer(match up {
-                    true => step,
-                    false => bigint::negate(integer.bits, &step),
+                value: Value::Integer(if up {
+                    step
+                } else {
+                    bigint::negate(integer.bits, &step)
                 }),
             }),
             None if up => convert(lowering, step, ty),
@@ -402,16 +406,15 @@ impl Lowering<'_> {
             delta,
             inclusive,
         } = walk;
-        let first = match included {
-            Some(true) => inclusive,
-            _ => {
-                let zero = self.integer_constant(size, 0);
-                let bool = TypeId::BOOL;
-                let away = self.binary(BinaryOp::NotEqualTo, left_first, zero, bool, range_span);
-                match included {
-                    Some(_) => away,
-                    None => self.binary(BinaryOp::BitOr, inclusive, away, bool, range_span),
-                }
+        let first = if included == Some(true) {
+            inclusive
+        } else {
+            let zero = self.integer_constant(size, 0);
+            let bool = TypeId::BOOL;
+            let away = self.binary(BinaryOp::NotEqualTo, left_first, zero, bool, range_span);
+            match included {
+                Some(_) => away,
+                None => self.binary(BinaryOp::BitOr, inclusive, away, bool, range_span),
             }
         };
         let entry = self.block;

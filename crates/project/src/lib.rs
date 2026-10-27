@@ -732,6 +732,8 @@ impl<'a> Sorter<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write;
+
     use super::*;
 
     /// The module of `program` at the import path `path`.
@@ -1147,10 +1149,10 @@ mod tests {
         let mut files = vec![("libs/core/src/global.peep".to_string(), String::new())];
         let mut main = String::new();
         for i in 0..200 {
-            main.push_str(&format!("import \"myapp:m{i}\";\n"));
+            _ = writeln!(main, "import \"myapp:m{i}\";");
             let mut module = String::new();
             for j in i + 1..(i + 4).min(200) {
-                module.push_str(&format!("import \"myapp:m{j}\";\n"));
+                _ = writeln!(module, "import \"myapp:m{j}\";");
             }
             module.push_str("fn f() {}\n");
             files.push((format!("src/m{i}.peep"), module));

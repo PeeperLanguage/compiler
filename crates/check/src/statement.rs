@@ -303,15 +303,14 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             .iter()
             .rev()
             .find(|&&(declared, _)| declared == name);
-        let symbol = match found {
-            Some(&(_, local)) => Symbol::Local(local),
-            None => match self.checker.global(name) {
-                Some(symbol) => symbol,
-                None => {
-                    self.report_undeclared(name, span);
-                    return None;
-                }
-            },
+        let symbol = if let Some(&(_, local)) = found {
+            Symbol::Local(local)
+        } else {
+            let Some(symbol) = self.checker.global(name) else {
+                self.report_undeclared(name, span);
+                return None;
+            };
+            symbol
         };
         self.checker.record(span, FactKind::Name(symbol));
         Some(symbol)
@@ -465,14 +464,14 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             (None, Some(value)) => {
                 let value = self.add_expr(value, TypeExpectation::Hint(None));
                 let ty = self.body.exprs[value].ty;
-                if ty != TypeId::VOID {
-                    (ty, Some(value))
-                } else {
+                if ty == TypeId::VOID {
                     let span = self.body.exprs.span(value);
                     let message = "this expression has no value to bind";
                     self.checker
                         .error(diagnostics::INVALID_OPERATION, message, span);
                     (TypeId::INVALID, None)
+                } else {
+                    (ty, Some(value))
                 }
             }
             (None, None) => {
@@ -621,15 +620,14 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             _ => (items_type, None),
         };
         // After an error, the body is still checked, with an invalid `value`.
-        let (element, length) = match types[array] {
-            Type::Array { element, length } => (element, length),
-            _ => {
-                if items_type != TypeId::INVALID {
-                    self.checker
-                        .not_supported(span, "`for` over values other than ranges and arrays");
-                }
-                (TypeId::INVALID, 0)
+        let (element, length) = if let Type::Array { element, length } = types[array] {
+            (element, length)
+        } else {
+            if items_type != TypeId::INVALID {
+                self.checker
+                    .not_supported(span, "`for` over values other than ranges and arrays");
             }
+            (TypeId::INVALID, 0)
         };
         if borrow.is_none() && !self.checker.types.is_copy(element) {
             let file = &self.checker.module().ast.file;

@@ -3,6 +3,8 @@
 //! node without children. This is the Go parser's dump format, so trees can be
 //! compared with it. With `spans`, each line also shows the node's span.
 
+use std::fmt::Write;
+
 use arena::Id;
 use arena::List;
 use model::ast;
@@ -94,7 +96,7 @@ impl Dumper<'_> {
             self.out.push_str(op);
         }
         if self.spans {
-            self.out.push_str(&format!(" @{}-{}", span.start, span.end));
+            _ = write!(self.out, " @{}-{}", span.start, span.end);
         }
         if children.is_empty() {
             self.out.push(' ');

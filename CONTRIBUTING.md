@@ -34,7 +34,7 @@ build/bin/peeper check x_test/<fixture>
 Use each guidance file for its stated concern; do not copy its rules into new documents:
 
 - [`RULES.md`](RULES.md): mandatory, durable code-quality and delivery requirements.
-- [`rust-style.md`](rust-style.md): Rust patterns the project has settled on.
+- [`rust-style.md`](rust-style.md): general rules for clean, idiomatic Rust.
 - [`COMPILER_GUIDELINES.md`](COMPILER_GUIDELINES.md): compiler design-review guidance.
 
 For a change that touches compiler flow or semantic model, inspect current implementation and read [`docs/ir-design.md`](docs/ir-design.md) and [`docs/architecture.md`](docs/architecture.md) as design notes to check against source, not permanent design authority.

@@ -255,7 +255,7 @@ impl Checker<'_> {
     /// Its target is the real type, so `&Meters` is `&f64` under an alias.
     pub(crate) fn reference_type(&mut self, mutable: bool, target: TypeId, span: Span) -> TypeId {
         match self.types[target] {
-            Type::Invalid => TypeId::INVALID,
+            Type::Invalid => target,
             Type::Reference { .. } => self.not_supported(span, "references to references"),
             _ => {
                 let target = self.types.real(target);
@@ -269,7 +269,7 @@ impl Checker<'_> {
     /// reference's target.
     pub(crate) fn array_type(&mut self, element: TypeId, length: u64, span: Span) -> TypeId {
         match self.types[element] {
-            Type::Invalid => TypeId::INVALID,
+            Type::Invalid => element,
             // shortcut: the loan check follows no reference held in an
             // array, as in a struct field; allow both when it does.
             Type::Reference { .. } => self.not_supported(span, "arrays of references"),
@@ -315,7 +315,7 @@ impl Checker<'_> {
     /// a reference's.
     pub(crate) fn raw_pointer_type(&mut self, target: TypeId, span: Span) -> TypeId {
         match self.types[target] {
-            Type::Invalid => TypeId::INVALID,
+            Type::Invalid => target,
             // shortcut: no loan follows a reference stored behind a raw
             // pointer; allow it when lifetimes are checked (ownership step 4).
             Type::Reference { .. } => self.not_supported(span, "raw pointers to references"),
@@ -437,9 +437,9 @@ mod tests {
     fn declared_types(text: &str) -> (Vec<String>, Vec<Reported>) {
         let (found, types, reported) = with_checker(text, |checker, main| {
             let tree = &checker.modules[main.index()].ast;
-            let declarations: Vec<_> = tree.lists.items(tree.top_level).collect();
-            let found: Vec<TypeId> = declarations
-                .into_iter()
+            let found: Vec<TypeId> = tree
+                .lists
+                .items(tree.top_level)
                 .enumerate()
                 .map(|(index, declaration)| {
                     let definition = DefId {

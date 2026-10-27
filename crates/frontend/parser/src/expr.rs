@@ -502,15 +502,14 @@ fn pipe(p: &mut Parser, value: Id<Expr>) -> Id<Expr> {
     p.next();
     let call = p.expr(Precedence::Prefix);
     match p.tree.exprs[call] {
-        Expr::Call { callee, .. } => {
-            if let Expr::Selector { .. } = p.tree.exprs[callee] {
-                let span = p.tree.exprs.span(callee);
-                p.repair(
-                    Diagnostic::new(diagnostics::INVALID_EXPRESSION, "pipe cannot call a method")
-                        .label(&p.tree.file, span, "use `value.method(...)`"),
-                );
-            }
+        Expr::Call { callee, .. } if matches!(p.tree.exprs[callee], Expr::Selector { .. }) => {
+            let span = p.tree.exprs.span(callee);
+            p.repair(
+                Diagnostic::new(diagnostics::INVALID_EXPRESSION, "pipe cannot call a method")
+                    .label(&p.tree.file, span, "use `value.method(...)`"),
+            );
         }
+        Expr::Call { .. } => {}
         _ => {
             let span = p.tree.exprs.span(call);
             p.repair(

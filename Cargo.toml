@@ -54,6 +54,18 @@ unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+# Idioms from rust-style.md, kept by the `-D warnings` gate.
+format_push_string = "warn"
+if_not_else = "warn"
+implicit_clone = "warn"
+manual_let_else = "warn"
+match_bool = "warn"
+needless_collect = "warn"
+needless_continue = "warn"
+redundant_else = "warn"
+semicolon_if_nothing_returned = "warn"
+single_match_else = "warn"
+uninlined_format_args = "warn"
 
 [profile.release]
 debug = "line-tables-only"

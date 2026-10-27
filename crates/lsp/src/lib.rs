@@ -91,7 +91,9 @@ pub fn serve(libraries: &Path) -> Result<(), BoxError> {
     Ok(())
 }
 
-/// Serves `connection` until the client shuts the server down.
+/// Serves `connection` until the client shuts the server down. It takes the
+/// connection so it drops on return, which lets the IO threads end before
+/// `serve` joins them.
 fn serve_connection(connection: Connection, libraries: &Path) -> Result<(), BoxError> {
     let capabilities = ServerCapabilities {
         text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
@@ -280,9 +282,10 @@ impl<'s> Server<'s> {
                 CachedKind::Variable { mutable, ty } => {
                     let (file, declared) = (&module.ast.file, span);
                     let name = file.slice(declared);
-                    let binding = match mutable {
-                        true => format!("mut {name}: {ty}"),
-                        false => format!("{name}: {ty}"),
+                    let binding = if mutable {
+                        format!("mut {name}: {ty}")
+                    } else {
+                        format!("{name}: {ty}")
                     };
                     let hover = hover_text(file, &module.path, declared, &binding, None, None);
                     (file, declared, hover)
@@ -368,20 +371,17 @@ impl<'s> Server<'s> {
             _ => None,
         };
         let mut operators = tree.exprs.ids().filter_map(operator);
-        let (shown, doc) = match operators.find(|&(symbol, _)| symbol == token.kind.text()) {
-            Some(found) => found,
-            None => {
-                let doc = token.kind.doc()?;
-                // A literal shows the type its check gave it.
-                let mut facts = checked.facts.get(&file).into_iter().flatten();
-                let literal = facts.find_map(|fact| match fact.kind {
-                    CachedKind::Literal { ref ty } if fact.span == token.span => Some(ty.as_str()),
-                    _ => None,
-                });
-                (literal.unwrap_or(token.kind.text()), doc)
-            }
-        };
-        Some(doc_hover(shown, doc))
+        if let Some((shown, doc)) = operators.find(|&(symbol, _)| symbol == token.kind.text()) {
+            return Some(doc_hover(shown, doc));
+        }
+        let doc = token.kind.doc()?;
+        // A literal shows the type its check gave it.
+        let mut facts = checked.facts.get(&file).into_iter().flatten();
+        let literal = facts.find_map(|fact| match fact.kind {
+            CachedKind::Literal { ref ty } if fact.span == token.span => Some(ty.as_str()),
+            _ => None,
+        });
+        Some(doc_hover(literal.unwrap_or(token.kind.text()), doc))
     }
 
     /// The module read from `file` in each program last checked that holds
@@ -955,22 +955,21 @@ fn workspace_edit<'f>(
             range: range(&fix.file, fix.span),
             new_text: fix.new_text.clone(),
         });
-        match documents
+        if let Some(document) = documents
             .iter_mut()
             .find(|document| document.text_document.uri == uri)
         {
-            Some(document) => document.edits.push(edit),
-            None => {
-                let open = open_files.get(Path::new(&fix.file.path));
-                let text_document = OptionalVersionedTextDocumentIdentifier {
-                    uri,
-                    version: open.map(|open| open.version), // none: not open
-                };
-                documents.push(TextDocumentEdit {
-                    text_document,
-                    edits: vec![edit],
-                });
-            }
+            document.edits.push(edit);
+        } else {
+            let open = open_files.get(Path::new(&fix.file.path));
+            let text_document = OptionalVersionedTextDocumentIdentifier {
+                uri,
+                version: open.map(|open| open.version), // none: not open
+            };
+            documents.push(TextDocumentEdit {
+                text_document,
+                edits: vec![edit],
+            });
         }
     }
     (!documents.is_empty()).then(|| WorkspaceEdit {
@@ -1181,7 +1180,7 @@ mod tests {
             .guess("did you mean `count`?", vec![fix])
             .help("a help line without a fix", Vec::new());
         let open = OpenFile {
-            text: file.text.to_string(),
+            text: file.text.clone(),
             version: 7,
         };
         let open_files = HashMap::from([(PathBuf::from("/app/main.peep"), open)]);

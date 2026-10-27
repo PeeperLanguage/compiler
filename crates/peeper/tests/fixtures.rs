@@ -55,9 +55,8 @@ fn fixtures() {
             text.parse().expect("a fixture's peeper.toml parses");
         let test = |key: &str| document.get("test").and_then(|test| test.get(key));
         let text = |key: &str| test(key).and_then(toml_edit::Item::as_str);
-        let mode = match text("mode") {
-            Some(mode @ ("check" | "mir" | "ll" | "run")) => mode,
-            _ => continue,
+        let Some(mode @ ("check" | "mir" | "ll" | "run")) = text("mode") else {
+            continue;
         };
         checked += 1;
         let texts = |key: &str| -> Vec<&str> {

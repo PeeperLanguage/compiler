@@ -133,7 +133,7 @@ struct Snippet<'a> {
 impl Printer<'_> {
     fn paint(&mut self, color: &str, text: impl std::fmt::Display) {
         if self.colored.is_some() {
-            _ = write!(self.out, "{color}{text}{}", RESET);
+            _ = write!(self.out, "{color}{text}{RESET}");
         } else {
             _ = write!(self.out, "{text}");
         }
@@ -436,20 +436,19 @@ impl Printer<'_> {
 fn snippets(d: &Diagnostic) -> Vec<Snippet<'_>> {
     let mut snippets: Vec<Snippet> = Vec::new();
     for (index, label) in d.labels.iter().enumerate() {
-        let at = match snippets
+        let at = if let Some(at) = snippets
             .iter()
             .position(|s| Arc::ptr_eq(s.file, &label.file))
         {
-            Some(at) => at,
-            None => {
-                snippets.push(Snippet {
-                    file: &label.file,
-                    line: 0,
-                    column: 0,
-                    lines: Vec::new(),
-                });
-                snippets.len() - 1
-            }
+            at
+        } else {
+            snippets.push(Snippet {
+                file: &label.file,
+                line: 0,
+                column: 0,
+                lines: Vec::new(),
+            });
+            snippets.len() - 1
         };
         let snippet = &mut snippets[at];
         let span = clamp(&label.file, label.span);

@@ -269,8 +269,7 @@ impl Metadata {
             Type::CString => {
                 let char = self.add(basic("char", 8, "DW_ATE_signed_char"));
                 format!(
-                    "!DIDerivedType(tag: DW_TAG_pointer_type, name: \"cstr\", baseType: !{char}, size: {})",
-                    pointer_bits
+                    "!DIDerivedType(tag: DW_TAG_pointer_type, name: \"cstr\", baseType: !{char}, size: {pointer_bits})"
                 )
             }
             Type::Reference { .. } | Type::RawPointer { .. } => {
@@ -283,8 +282,7 @@ impl Metadata {
                     None => "null".to_string(), // `rawptr`
                 };
                 format!(
-                    "!DIDerivedType(tag: DW_TAG_pointer_type, baseType: {base}, size: {})",
-                    pointer_bits
+                    "!DIDerivedType(tag: DW_TAG_pointer_type, baseType: {base}, size: {pointer_bits})"
                 )
             }
             Type::Array { element, length } => {

@@ -10,6 +10,7 @@
 //! cargo bench -p peeper --bench compile
 
 use std::collections::HashMap;
+use std::fmt::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -140,7 +141,7 @@ fn files(folder: &Path) -> HashMap<PathBuf, String> {
     for module in 0..MODULES {
         let mut text = String::new();
         if module > 0 {
-            text.push_str(&format!("import \"app:m{}\" as previous;\n", module - 1));
+            _ = writeln!(text, "import \"app:m{}\" as previous;", module - 1);
         }
         for function in 0..FUNCTIONS {
             let call = match (module, function) {
@@ -148,7 +149,8 @@ fn files(folder: &Path) -> HashMap<PathBuf, String> {
                 (_, 0) => format!("previous::F{}(x, b)", FUNCTIONS - 1),
                 _ => format!("F{}(x, b)", function - 1),
             };
-            text.push_str(&format!(
+            _ = write!(
+                text,
                 "const C{function}: i32 = {} + 1;\n\
                  fn F{function}(a: i32, b: i32) -> i32 {{\n    \
                      let x = a + C{function};\n    \
@@ -159,7 +161,7 @@ fn files(folder: &Path) -> HashMap<PathBuf, String> {
                      return {call} + 1;\n\
                  }}\n",
                 function % 1000
-            ));
+            );
         }
         files.insert(folder.join(format!("src/m{module}.peep")), text);
     }

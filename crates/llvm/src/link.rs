@@ -94,18 +94,18 @@ fn compile_modules(
                             return failures;
                         };
                         let file = folder.join(format!("module_{index}.ll"));
-                        let compiled = std::fs::write(&file, module.text())
-                            .map_err(|error| format!("cannot write {}: {error}", file.display()))
-                            .and_then(|()| {
-                                let mut clang = Command::new("clang");
-                                clang
-                                    .args(["-c", optimization, "-x", "ir"])
-                                    .arg(&file)
-                                    .arg("-o")
-                                    .arg(&objects[index]);
-                                call_tool(clang, "compile a module")
-                            });
-                        if let Err(error) = compiled {
+                        if let Err(error) = std::fs::write(&file, module.text()) {
+                            let error = format!("cannot write {}: {error}", file.display());
+                            failures.push((index, error));
+                            continue;
+                        }
+                        let mut clang = Command::new("clang");
+                        clang
+                            .args(["-c", optimization, "-x", "ir"])
+                            .arg(&file)
+                            .arg("-o")
+                            .arg(&objects[index]);
+                        if let Err(error) = call_tool(clang, "compile a module") {
                             failures.push((index, error));
                         }
                     }

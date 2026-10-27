@@ -52,12 +52,11 @@ impl Scope {
     /// Brings `name` in as `symbol`, written at `span`. A name already in
     /// keeps its first meaning, and gives where that was written.
     pub fn declare(&mut self, name: &str, symbol: Symbol, span: Span) -> Result<(), Span> {
-        match self.names.get(name) {
-            Some(&(_, first)) => Err(first),
-            None => {
-                self.names.insert(name.into(), (symbol, span));
-                Ok(())
-            }
+        if let Some(&(_, first)) = self.names.get(name) {
+            Err(first)
+        } else {
+            self.names.insert(name.into(), (symbol, span));
+            Ok(())
         }
     }
 }

@@ -343,9 +343,10 @@ pub fn builtin_doc(name: &str, pointer_bits: u32) -> Option<String> {
         (false, _) => ("0".to_string(), format!("2^{bits} - 1")),
     };
     let kind = if signed { "A signed" } else { "An unsigned" };
-    let size = match POINTER_SIZED.iter().any(|&(text, _)| text == name) {
-        true => format!("integer as wide as a pointer, {bits} bits on the target"),
-        false => format!("{bits}-bit integer"),
+    let size = if POINTER_SIZED.iter().any(|&(text, _)| text == name) {
+        format!("integer as wide as a pointer, {bits} bits on the target")
+    } else {
+        format!("{bits}-bit integer")
     };
     Some(format!("{kind} {size}: from `{min}` to `{max}`."))
 }

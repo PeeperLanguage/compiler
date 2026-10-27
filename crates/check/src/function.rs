@@ -122,7 +122,7 @@ impl Checker<'_> {
     pub(crate) fn evaluate_call(
         &mut self,
         function: DefId,
-        arguments: Vec<Value>,
+        arguments: &[Value],
         span: Span,
     ) -> Option<Value> {
         // Every function the run may reach, built first: the run then only

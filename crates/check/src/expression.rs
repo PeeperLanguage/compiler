@@ -615,13 +615,13 @@ impl ThirBuilder<'_, '_> {
                 ast::Entry::Value(value) => {
                     (ArrayPart::Value(self.add_expr(value, expectation)), Some(1))
                 }
-                ast::Entry::Spread(values) => match self.check_spread(values, element) {
-                    Some((part, count)) => (part, count),
-                    None => {
+                ast::Entry::Spread(values) => {
+                    let Some(checked) = self.check_spread(values, element) else {
                         known = None;
                         continue;
-                    }
-                },
+                    };
+                    checked
+                }
             };
             match count {
                 Some(count) => known = known.map(|known| known + u128::from(count)),
@@ -971,7 +971,7 @@ impl ThirBuilder<'_, '_> {
         loop {
             match self.body.exprs[root].kind {
                 ExprKind::Field { value, .. } | ExprKind::Index { array: value, .. } => {
-                    root = value
+                    root = value;
                 }
                 ExprKind::Dereference(reference) => {
                     if !behind_raw && deciding.is_none_or(|kept| !shared(kept) && shared(reference))
@@ -1001,39 +1001,36 @@ impl ThirBuilder<'_, '_> {
         let file = &self.checker.module().ast.file;
         let place_span = self.body.exprs.span(place);
         let place_text = file.slice(place_span);
-        let (written, declared, label, help) = match reference {
-            Some(reference) => {
-                let ty = self.body.exprs[reference].ty;
-                if let Type::Reference { mutable: true, .. } | Type::RawPointer { .. } =
-                    self.checker.types[ty]
-                {
-                    return;
-                }
-                let span = self.body.exprs.span(reference);
-                let declared = match self.body.exprs[reference].kind {
-                    ExprKind::Variable(variable) => self.body.variables.span(variable),
-                    _ => span,
-                };
-                let holder = file.slice(span);
-                let written = format!("`{place_text}` through shared reference `{holder}`");
-                let help = format!("make `{holder}` a `&mut` reference");
-                let label = "declared as a shared reference here";
-                (written, declared, label, help)
+        let (written, declared, label, help) = if let Some(reference) = reference {
+            let ty = self.body.exprs[reference].ty;
+            if let Type::Reference { mutable: true, .. } | Type::RawPointer { .. } =
+                self.checker.types[ty]
+            {
+                return;
             }
-            None => {
-                if self.body.variables[variable].mutable {
-                    return;
-                }
-                let declared = self.body.variables.span(variable);
-                let holder = file.slice(declared);
-                let written = match self.body.exprs[place].kind {
-                    ExprKind::Variable(_) => format!("immutable `{holder}`"),
-                    _ => format!("`{place_text}` of immutable `{holder}`"),
-                };
-                let help = format!("write `let mut {holder}`");
-                let label = "declared without `mut` here";
-                (written, declared, label, help)
+            let span = self.body.exprs.span(reference);
+            let declared = match self.body.exprs[reference].kind {
+                ExprKind::Variable(variable) => self.body.variables.span(variable),
+                _ => span,
+            };
+            let holder = file.slice(span);
+            let written = format!("`{place_text}` through shared reference `{holder}`");
+            let help = format!("make `{holder}` a `&mut` reference");
+            let label = "declared as a shared reference here";
+            (written, declared, label, help)
+        } else {
+            if self.body.variables[variable].mutable {
+                return;
             }
+            let declared = self.body.variables.span(variable);
+            let holder = file.slice(declared);
+            let written = match self.body.exprs[place].kind {
+                ExprKind::Variable(_) => format!("immutable `{holder}`"),
+                _ => format!("`{place_text}` of immutable `{holder}`"),
+            };
+            let help = format!("write `let mut {holder}`");
+            let label = "declared without `mut` here";
+            (written, declared, label, help)
         };
         let message = format!("cannot {action} {written}");
         self.checker.report(
@@ -1246,7 +1243,7 @@ impl ThirBuilder<'_, '_> {
             && result != TypeId::VOID
             && let Some(values) = constant_arguments()
         {
-            return match self.checker.evaluate_call(function, values, span) {
+            return match self.checker.evaluate_call(function, &values, span) {
                 Some(value) => Expr {
                     ty: result,
                     kind: ExprKind::Constant(value),
@@ -1618,19 +1615,18 @@ impl ThirBuilder<'_, '_> {
     /// `mutable`, else as a `&`, to what it refers to, so the `&mut` itself
     /// is not moved. A written `&mut place` borrows `place` itself.
     fn reborrow(&mut self, reference: Expr, span: Span, mutable: bool) -> Expr {
-        let place = match reference.kind {
-            ExprKind::Borrow(place) => place,
-            _ => {
-                let Type::Reference { target, .. } = self.checker.types[reference.ty] else {
-                    unreachable!("only a reference is lent again")
-                };
-                let reference = self.body.add(reference, span);
-                let referred = self.dereference(reference, target);
-                if referred.ty == TypeId::INVALID {
-                    return Expr::INVALID;
-                }
-                self.body.add(referred, span)
+        let place = if let ExprKind::Borrow(place) = reference.kind {
+            place
+        } else {
+            let Type::Reference { target, .. } = self.checker.types[reference.ty] else {
+                unreachable!("only a reference is lent again")
+            };
+            let reference = self.body.add(reference, span);
+            let referred = self.dereference(reference, target);
+            if referred.ty == TypeId::INVALID {
+                return Expr::INVALID;
             }
+            self.body.add(referred, span)
         };
         self.check_borrow(mutable, place, span)
     }

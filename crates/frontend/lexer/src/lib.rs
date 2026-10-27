@@ -57,9 +57,10 @@ impl Scanner<'_> {
                     self.emit(TokenKind::DocComment, start);
                 }
             }
-            b'/' if self.at(1) == b'*' => match self.file.text[start + 2..].find("*/") {
-                Some(end) => self.pos = start + 2 + end + 2,
-                None => {
+            b'/' if self.at(1) == b'*' => {
+                if let Some(end) = self.file.text[start + 2..].find("*/") {
+                    self.pos = start + 2 + end + 2;
+                } else {
                     self.fail(
                         Span::new(start, start + 2),
                         diagnostics::UNTERMINATED_COMMENT,
@@ -68,7 +69,7 @@ impl Scanner<'_> {
                     );
                     self.pos = self.bytes.len();
                 }
-            },
+            }
             b'"' => self.quoted(0, TokenKind::String),
             b'c' if self.at(1) == b'"' => self.quoted(1, TokenKind::CString),
             b'b' if self.at(1) == b'\'' => self.quoted(1, TokenKind::ByteChar),

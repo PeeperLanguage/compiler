@@ -494,47 +494,44 @@ impl Loans<'_, '_> {
             if !loans.has(loan) || reported.has(loan) {
                 continue;
             }
-            let error = match self.borrows.get(loan.index()) {
-                Some(&borrow) => {
-                    let mir::InstructionKind::Borrow { ref place, .. } =
-                        self.body.instructions[borrow].kind
-                    else {
-                        unreachable!("each loan is a `Borrow`")
-                    };
-                    // Through a reference: what it points into is checked by
-                    // the loans it holds.
-                    if place.is_behind_reference() {
-                        continue;
-                    }
-                    let name = file.slice(self.body.variables.span(place.variable));
-                    let message = format!(
-                        "returns a reference into `{name}`, which is gone once the function returns"
-                    );
-                    let error = Diagnostic::new(diagnostics::LOCAL_ADDRESS_RETURNED, message)
-                        .label(file, span, "");
-                    // A borrow inside the `return` is already shown.
-                    // shortcut: the renderer draws a second label on one line
-                    // a line too high; label it too once that is fixed.
-                    let made = self.body.instructions.span(borrow);
-                    if made.start < span.start || made.end > span.end {
-                        error.label(file, made, "reference made here")
-                    } else {
-                        error
-                    }
+            let error = if let Some(&borrow) = self.borrows.get(loan.index()) {
+                let mir::InstructionKind::Borrow { ref place, .. } =
+                    self.body.instructions[borrow].kind
+                else {
+                    unreachable!("each loan is a `Borrow`")
+                };
+                // Through a reference: what it points into is checked by
+                // the loans it holds.
+                if place.is_behind_reference() {
+                    continue;
                 }
-                None => {
-                    let position = (loan.index() - self.borrows.len()) as u32;
-                    if self.origins.contains(&position) {
-                        continue;
-                    }
-                    let parameter = self.body.variables.span(Id::from_index(position as usize));
-                    let name = file.slice(parameter);
-                    let message =
-                        format!("returns a reference into `{name}`, which `in` does not name");
-                    Diagnostic::new(diagnostics::INVALID_RETURN, message)
-                        .label(file, span, "")
-                        .help(format!("add `{name}` to `in`"), Vec::new())
+                let name = file.slice(self.body.variables.span(place.variable));
+                let message = format!(
+                    "returns a reference into `{name}`, which is gone once the function returns"
+                );
+                let error = Diagnostic::new(diagnostics::LOCAL_ADDRESS_RETURNED, message)
+                    .label(file, span, "");
+                // A borrow inside the `return` is already shown.
+                // shortcut: the renderer draws a second label on one line
+                // a line too high; label it too once that is fixed.
+                let made = self.body.instructions.span(borrow);
+                if made.start < span.start || made.end > span.end {
+                    error.label(file, made, "reference made here")
+                } else {
+                    error
                 }
+            } else {
+                let position = (loan.index() - self.borrows.len()) as u32;
+                if self.origins.contains(&position) {
+                    continue;
+                }
+                let parameter = self.body.variables.span(Id::from_index(position as usize));
+                let name = file.slice(parameter);
+                let message =
+                    format!("returns a reference into `{name}`, which `in` does not name");
+                Diagnostic::new(diagnostics::INVALID_RETURN, message)
+                    .label(file, span, "")
+                    .help(format!("add `{name}` to `in`"), Vec::new())
             };
             reported.set(loan);
             errors.push((span.start, error));

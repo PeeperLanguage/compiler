@@ -97,9 +97,12 @@ impl Module<'_> {
         // (`write_call`), so it is the variable's memory.
         let arguments = (0..body.parameters).map(|index| {
             let ty = body.variables[Id::from_index(index)].ty;
-            fmt::from_fn(move |out| match in_memory(types, ty) {
-                true => write!(out, "ptr %v{index}"),
-                false => write!(out, "{} %arg{index}", type_text(types, ty)),
+            fmt::from_fn(move |out| {
+                if in_memory(types, ty) {
+                    write!(out, "ptr %v{index}")
+                } else {
+                    write!(out, "{} %arg{index}", type_text(types, ty))
+                }
             })
         });
         // A result kept in memory is written where a first parameter
@@ -171,9 +174,10 @@ impl Module<'_> {
             Some(id) => format!("!{id}"),
             None => "null".to_string(),
         };
-        let mut signature = match in_memory(types, body.result) {
-            true => vec!["null".to_string(), debug_type(body.result)],
-            false => vec![debug_type(body.result)],
+        let mut signature = if in_memory(types, body.result) {
+            vec!["null".to_string(), debug_type(body.result)]
+        } else {
+            vec![debug_type(body.result)]
         };
         for parameter in body.variables.ids().take(body.parameters) {
             signature.push(debug_type(body.variables[parameter].ty));
@@ -693,9 +697,12 @@ impl Function<'_, '_, '_> {
             // In the memory of the value it is part of, which no one changes:
             // its address when it is kept in memory, else loaded from there.
             InstructionKind::Field { value, ref fields } => {
-                let field_address = fmt::from_fn(|out| match in_memory(types, ty) {
-                    true => write!(out, "{name}"),
-                    false => write!(out, "{name}.f"),
+                let field_address = fmt::from_fn(|out| {
+                    if in_memory(types, ty) {
+                        write!(out, "{name}")
+                    } else {
+                        write!(out, "{name}.f")
+                    }
                 });
                 _ = write!(
                     out,
@@ -883,16 +890,15 @@ impl Function<'_, '_, '_> {
                          i32 {index}{location}"
                     );
                     let field_value = format!("{path}.f{index}");
-                    let field_value = match in_memory(types, field) {
-                        true => address,
-                        false => {
-                            let field_text = type_text(types, field);
-                            _ = writeln!(
-                                out,
-                                "  {field_value} = load {field_text}, ptr {address}{location}"
-                            );
-                            field_value
-                        }
+                    let field_value = if in_memory(types, field) {
+                        address
+                    } else {
+                        let field_text = type_text(types, field);
+                        _ = writeln!(
+                            out,
+                            "  {field_value} = load {field_text}, ptr {address}{location}"
+                        );
+                        field_value
                     };
                     self.write_printed(out, text, &field_value, field, &field_value, location);
                 }
@@ -948,13 +954,12 @@ impl Function<'_, '_, '_> {
             "  %address = getelementptr inbounds {}, ptr %array, i64 0, i64 %index",
             type_text(types, ty)
         );
-        let value = match in_memory(types, element) {
-            true => "%address",
-            false => {
-                let element_text = type_text(types, element);
-                _ = writeln!(body, "  %element = load {element_text}, ptr %address");
-                "%element"
-            }
+        let value = if in_memory(types, element) {
+            "%address"
+        } else {
+            let element_text = type_text(types, element);
+            _ = writeln!(body, "  %element = load {element_text}, ptr %address");
+            "%element"
         };
         let mut text = Vec::new();
         self.write_printed(&mut body, &mut text, value, element, "%element", &none);
@@ -1080,15 +1085,14 @@ impl Function<'_, '_, '_> {
                 );
                 (remaining, failed) = (format!("{range}.left.after"), format!("{range}.failed"));
             }
-            let count = match wide > pointer {
-                true => {
-                    _ = writeln!(
-                        out,
-                        "  {range}.n = trunc i{wide} {range}.count to i{pointer}{location}"
-                    );
-                    format!("{range}.n")
-                }
-                false => format!("{range}.count"),
+            let count = if wide > pointer {
+                _ = writeln!(
+                    out,
+                    "  {range}.n = trunc i{wide} {range}.count to i{pointer}{location}"
+                );
+                format!("{range}.n")
+            } else {
+                format!("{range}.count")
             };
             counts.push(count);
         }
@@ -1126,28 +1130,26 @@ impl Function<'_, '_, '_> {
              {range}.wide = zext {number} {range}.whole to i{wide}{location}"
         );
         let included = self.body.included(&walk);
-        let extra = match included {
-            Some(true) => "1".to_string(),
-            _ => {
+        let extra = if included == Some(true) {
+            "1".to_string()
+        } else {
+            _ = writeln!(
+                out,
+                "  {range}.rest = urem {number} {left}, {step}{location}\n  \
+                 {range}.more = icmp ne {number} {range}.rest, 0{location}"
+            );
+            let more = if included.is_some() {
+                format!("{range}.more")
+            } else {
                 _ = writeln!(
                     out,
-                    "  {range}.rest = urem {number} {left}, {step}{location}\n  \
-                     {range}.more = icmp ne {number} {range}.rest, 0{location}"
+                    "  {range}.last = or i1 {}, {range}.more{location}",
+                    self.operand(walk.inclusive)
                 );
-                let more = match included {
-                    Some(_) => format!("{range}.more"),
-                    None => {
-                        _ = writeln!(
-                            out,
-                            "  {range}.last = or i1 {}, {range}.more{location}",
-                            self.operand(walk.inclusive)
-                        );
-                        format!("{range}.last")
-                    }
-                };
-                _ = writeln!(out, "  {range}.extra = zext i1 {more} to i{wide}{location}");
-                format!("{range}.extra")
-            }
+                format!("{range}.last")
+            };
+            _ = writeln!(out, "  {range}.extra = zext i1 {more} to i{wide}{location}");
+            format!("{range}.extra")
         };
         _ = writeln!(
             out,
@@ -1408,9 +1410,12 @@ impl Function<'_, '_, '_> {
                 _ => write!(out, "{address}.{}", run - 1),
             });
             let last = runs.peek().is_none();
-            let run_address = fmt::from_fn(|out| match last {
-                true => write!(out, "{address}"),
-                false => write!(out, "{address}.{run}.f"),
+            let run_address = fmt::from_fn(|out| {
+                if last {
+                    write!(out, "{address}")
+                } else {
+                    write!(out, "{address}.{run}.f")
+                }
             });
             _ = write!(
                 out,

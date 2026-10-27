@@ -332,179 +332,14 @@ impl Body {
                 if *ty != TypeId::VOID {
                     _ = write!(printer.out, "%{} = ", instruction.index());
                 }
-                match kind {
-                    InstructionKind::Store { place, value } => {
-                        printer.out.push_str("store ");
-                        printer.write_place(place);
-                        printer.out.push_str(", ");
-                        printer.write_operand(value);
-                    }
-                    InstructionKind::Borrow { place, mutable } => {
-                        printer
-                            .out
-                            .push_str(if *mutable { "borrow mut " } else { "borrow " });
-                        printer.write_place(place);
-                    }
-                    InstructionKind::Address(place) => {
-                        printer.out.push_str("address ");
-                        printer.write_place(place);
-                    }
-                    InstructionKind::Load(place) => {
-                        printer.out.push_str("load ");
-                        printer.write_place(place);
-                    }
-                    InstructionKind::Move(place) => {
-                        printer.out.push_str("move ");
-                        printer.write_place(place);
-                    }
-                    InstructionKind::Binary { op, left, right } => {
-                        _ = write!(printer.out, "{op:?} ");
-                        printer.write_operand(left);
-                        printer.out.push_str(", ");
-                        printer.write_operand(right);
-                    }
-                    InstructionKind::Unary { op, value } => {
-                        _ = write!(printer.out, "{op:?} ");
-                        printer.write_operand(value);
-                    }
-                    InstructionKind::Convert(value) => {
-                        printer.out.push_str("convert ");
-                        printer.write_operand(value);
-                    }
-                    InstructionKind::Call {
-                        function,
-                        arguments,
-                    } => {
-                        _ = write!(printer.out, "call {}(", name_of(*function));
-                        for (index, argument) in arguments.iter().enumerate() {
-                            if index > 0 {
-                                printer.out.push_str(", ");
-                            }
-                            printer.write_operand(argument);
-                        }
-                        printer.out.push(')');
-                    }
-                    InstructionKind::Aggregate(fields) => {
-                        printer.out.push_str("aggregate(");
-                        for (index, field) in fields.iter().enumerate() {
-                            if index > 0 {
-                                printer.out.push_str(", ");
-                            }
-                            printer.write_operand(field);
-                        }
-                        printer.out.push(')');
-                    }
-                    InstructionKind::ArrayParts(parts) => {
-                        printer.out.push_str("array(");
-                        for (index, part) in parts.iter().enumerate() {
-                            if index > 0 {
-                                printer.out.push_str(", ");
-                            }
-                            match *part {
-                                ArrayPart::Value(value) => printer.write_operand(&value),
-                                ArrayPart::Array(array) => {
-                                    printer.write_operand(&array);
-                                    printer.out.push_str("...");
-                                }
-                                ArrayPart::Range(RangeWalk {
-                                    start,
-                                    left,
-                                    step,
-                                    delta,
-                                    inclusive,
-                                }) => {
-                                    printer.out.push_str("range(");
-                                    printer.write_operand(&start);
-                                    printer.out.push_str(", left ");
-                                    printer.write_operand(&left);
-                                    printer.out.push_str(", inclusive ");
-                                    printer.write_operand(&inclusive);
-                                    printer.out.push_str(", step ");
-                                    printer.write_operand(&step);
-                                    printer.out.push_str(", delta ");
-                                    printer.write_operand(&delta);
-                                    printer.out.push_str(")...");
-                                }
-                            }
-                        }
-                        printer.out.push(')');
-                    }
-                    InstructionKind::Print { newline, values } => {
-                        printer
-                            .out
-                            .push_str(if *newline { "println(" } else { "print(" });
-                        for (index, value) in values.iter().enumerate() {
-                            if index > 0 {
-                                printer.out.push_str(", ");
-                            }
-                            printer.write_operand(value);
-                        }
-                        printer.out.push(')');
-                    }
-                    InstructionKind::Field { value, fields } => {
-                        printer.out.push_str("field ");
-                        printer.write_operand(value);
-                        printer.write_fields(fields);
-                    }
-                    InstructionKind::Check { failed, message } => {
-                        printer.out.push_str("check ");
-                        printer.write_operand(failed);
-                        _ = write!(printer.out, ", \"{message}\"");
-                    }
-                    InstructionKind::ScopeEnd(variable) => {
-                        printer.out.push_str("scope end ");
-                        printer.write_place(&Place::whole(*variable));
-                    }
-                    InstructionKind::Phi(incoming) => {
-                        printer.out.push_str("phi ");
-                        for (index, (block, value)) in incoming.iter().enumerate() {
-                            if index > 0 {
-                                printer.out.push_str(", ");
-                            }
-                            _ = write!(printer.out, "bb{}: ", block.index());
-                            printer.write_operand(value);
-                        }
-                    }
-                }
+                printer.write_instruction(kind, name_of);
                 if *ty != TypeId::VOID {
                     _ = write!(printer.out, ": {}", types.text(*ty, name_of));
                 }
                 printer.out.push('\n');
             }
             printer.out.push_str("    ");
-            match &block.terminator {
-                Terminator::Goto(target) => _ = write!(printer.out, "goto bb{}", target.index()),
-                Terminator::Branch {
-                    condition,
-                    span,
-                    then,
-                    otherwise,
-                } => {
-                    printer.out.push_str("branch ");
-                    printer.write_operand(condition);
-                    _ = write!(
-                        printer.out,
-                        " ({}) bb{} bb{}",
-                        file.slice(*span),
-                        then.index(),
-                        otherwise.index()
-                    );
-                }
-                Terminator::Return { value, .. } => {
-                    printer.out.push_str("return");
-                    if let Some(value) = value {
-                        printer.out.push(' ');
-                        printer.write_operand(value);
-                    }
-                }
-                Terminator::Panic { message, .. } => {
-                    printer.out.push_str("panic ");
-                    printer.write_operand(&Operand::Constant(*message));
-                }
-                Terminator::FallOff(span) => {
-                    _ = write!(printer.out, "fall off at `{}`", file.slice(*span));
-                }
-            }
+            printer.write_terminator(&block.terminator);
             printer.out.push('\n');
         }
         printer.out
@@ -519,13 +354,186 @@ struct Printer<'b> {
 }
 
 impl Printer<'_> {
+    /// What one instruction does, after its `%n = ` and before its type.
+    fn write_instruction<'n>(
+        &mut self,
+        kind: &InstructionKind,
+        name_of: impl Fn(DefId) -> &'n str,
+    ) {
+        match kind {
+            InstructionKind::Store { place, value } => {
+                self.out.push_str("store ");
+                self.write_place(place);
+                self.out.push_str(", ");
+                self.write_operand(value);
+            }
+            InstructionKind::Borrow { place, mutable } => {
+                self.out
+                    .push_str(if *mutable { "borrow mut " } else { "borrow " });
+                self.write_place(place);
+            }
+            InstructionKind::Address(place) => {
+                self.out.push_str("address ");
+                self.write_place(place);
+            }
+            InstructionKind::Load(place) => {
+                self.out.push_str("load ");
+                self.write_place(place);
+            }
+            InstructionKind::Move(place) => {
+                self.out.push_str("move ");
+                self.write_place(place);
+            }
+            InstructionKind::Binary { op, left, right } => {
+                _ = write!(self.out, "{op:?} ");
+                self.write_operand(left);
+                self.out.push_str(", ");
+                self.write_operand(right);
+            }
+            InstructionKind::Unary { op, value } => {
+                _ = write!(self.out, "{op:?} ");
+                self.write_operand(value);
+            }
+            InstructionKind::Convert(value) => {
+                self.out.push_str("convert ");
+                self.write_operand(value);
+            }
+            InstructionKind::Call {
+                function,
+                arguments,
+            } => {
+                _ = write!(self.out, "call {}(", name_of(*function));
+                self.write_operands(arguments);
+                self.out.push(')');
+            }
+            InstructionKind::Aggregate(fields) => {
+                self.out.push_str("aggregate(");
+                self.write_operands(fields);
+                self.out.push(')');
+            }
+            InstructionKind::ArrayParts(parts) => {
+                self.out.push_str("array(");
+                for (index, part) in parts.iter().enumerate() {
+                    if index > 0 {
+                        self.out.push_str(", ");
+                    }
+                    match *part {
+                        ArrayPart::Value(value) => self.write_operand(&value),
+                        ArrayPart::Array(array) => {
+                            self.write_operand(&array);
+                            self.out.push_str("...");
+                        }
+                        ArrayPart::Range(RangeWalk {
+                            start,
+                            left,
+                            step,
+                            delta,
+                            inclusive,
+                        }) => {
+                            self.out.push_str("range(");
+                            self.write_operand(&start);
+                            self.out.push_str(", left ");
+                            self.write_operand(&left);
+                            self.out.push_str(", inclusive ");
+                            self.write_operand(&inclusive);
+                            self.out.push_str(", step ");
+                            self.write_operand(&step);
+                            self.out.push_str(", delta ");
+                            self.write_operand(&delta);
+                            self.out.push_str(")...");
+                        }
+                    }
+                }
+                self.out.push(')');
+            }
+            InstructionKind::Print { newline, values } => {
+                self.out
+                    .push_str(if *newline { "println(" } else { "print(" });
+                self.write_operands(values);
+                self.out.push(')');
+            }
+            InstructionKind::Field { value, fields } => {
+                self.out.push_str("field ");
+                self.write_operand(value);
+                self.write_fields(fields);
+            }
+            InstructionKind::Check { failed, message } => {
+                self.out.push_str("check ");
+                self.write_operand(failed);
+                _ = write!(self.out, ", \"{message}\"");
+            }
+            InstructionKind::ScopeEnd(variable) => {
+                self.out.push_str("scope end ");
+                self.write_place(&Place::whole(*variable));
+            }
+            InstructionKind::Phi(incoming) => {
+                self.out.push_str("phi ");
+                for (index, (block, value)) in incoming.iter().enumerate() {
+                    if index > 0 {
+                        self.out.push_str(", ");
+                    }
+                    _ = write!(self.out, "bb{}: ", block.index());
+                    self.write_operand(value);
+                }
+            }
+        }
+    }
+
+    /// How a block ends.
+    fn write_terminator(&mut self, terminator: &Terminator) {
+        match terminator {
+            Terminator::Goto(target) => _ = write!(self.out, "goto bb{}", target.index()),
+            Terminator::Branch {
+                condition,
+                span,
+                then,
+                otherwise,
+            } => {
+                self.out.push_str("branch ");
+                self.write_operand(condition);
+                _ = write!(
+                    self.out,
+                    " ({}) bb{} bb{}",
+                    self.file.slice(*span),
+                    then.index(),
+                    otherwise.index()
+                );
+            }
+            Terminator::Return { value, .. } => {
+                self.out.push_str("return");
+                if let Some(value) = value {
+                    self.out.push(' ');
+                    self.write_operand(value);
+                }
+            }
+            Terminator::Panic { message, .. } => {
+                self.out.push_str("panic ");
+                self.write_operand(&Operand::Constant(*message));
+            }
+            Terminator::FallOff(span) => {
+                _ = write!(self.out, "fall off at `{}`", self.file.slice(*span));
+            }
+        }
+    }
+
+    /// `operands`, separated by commas.
+    fn write_operands(&mut self, operands: &[Operand]) {
+        for (index, operand) in operands.iter().enumerate() {
+            if index > 0 {
+                self.out.push_str(", ");
+            }
+            self.write_operand(operand);
+        }
+    }
+
     /// A place: its variable, then each step, `.*` for a dereference, a
     /// field path for fields next to each other and `[at index]` for an
     /// element (`line.2[1, 0]`, `r.3.*[0]`, `a.1[at %4][2]`).
     fn write_place(&mut self, place: &Place) {
-        let name = match self.body.variables[place.variable].hidden {
-            true => "_",
-            false => self.file.slice(self.body.variables.span(place.variable)),
+        let name = if self.body.variables[place.variable].hidden {
+            "_"
+        } else {
+            self.file.slice(self.body.variables.span(place.variable))
         };
         _ = write!(self.out, "{name}.{}", place.variable.index());
         let mut fields = Vec::new();
