@@ -69,7 +69,7 @@ pub fn print(
         match d.code.severity {
             Severity::Error => errors += 1,
             Severity::Warning => warnings += 1,
-            Severity::Info => {}
+            Severity::Info | Severity::Hint => {}
         }
     }
     match (errors, warnings) {
@@ -103,7 +103,7 @@ struct Printer<'a> {
 struct Mark<'a> {
     start: usize,
     end: usize,
-    primary: bool,
+    severity: Severity, // its label's
     messages: Vec<&'a str>,
 }
 
@@ -113,7 +113,7 @@ struct Stroke<'a> {
     cell: usize,
     glyph: &'static str,
     length: usize,
-    primary: bool,
+    severity: Severity, // its mark's
     message: Option<&'a str>,
 }
 
@@ -157,10 +157,10 @@ impl Printer<'_> {
     fn write_diagnostic(&mut self, d: &Diagnostic) {
         let snippets = snippets(d);
         self.width = line_number_width(d, &snippets);
-        let (header, mark_color) = match d.code.severity {
-            Severity::Error => (BOLD_RED, RED),
-            Severity::Warning => (BOLD_YELLOW, YELLOW),
-            Severity::Info => (BOLD_CYAN, BLUE),
+        let header = match d.code.severity {
+            Severity::Error => BOLD_RED,
+            Severity::Warning => BOLD_YELLOW,
+            Severity::Info | Severity::Hint => BOLD_CYAN,
         };
         self.paint(header, format_args!("[{}]", d.code.id));
         self.out.push_str(": ");
@@ -195,7 +195,7 @@ impl Printer<'_> {
                     self.write_source_line(snippet.file, line.number - 1);
                     self.out.push('\n');
                 }
-                self.write_marked_line(snippet.file, line, mark_color);
+                self.write_marked_line(snippet.file, line);
                 last_shown = line.number;
             }
         }
@@ -225,7 +225,7 @@ impl Printer<'_> {
     /// Writes the line with its marks: a mark inside a longer one goes above
     /// the line and the rest below, so every mark shows in full
     /// (`mark_rows`).
-    fn write_marked_line(&mut self, file: &Arc<SourceFile>, line: &MarkedLine, mark_color: &str) {
+    fn write_marked_line(&mut self, file: &Arc<SourceFile>, line: &MarkedLine) {
         let text = line_text(file, line.number);
         let cells: Vec<Range<usize>> = line
             .marks
@@ -265,18 +265,18 @@ impl Printer<'_> {
         let mut rows = mark_rows(text, &line.marks, &cells, |index| above[index]);
         rows.reverse();
         for row in &rows {
-            self.write_strokes(row, mark_color);
+            self.write_strokes(row);
         }
         self.write_gutter(WHITE, line.number);
         self.write_source_line(file, line.number);
         self.out.push('\n');
         for row in &mark_rows(text, &line.marks, &cells, |index| !above[index]) {
-            self.write_strokes(row, mark_color);
+            self.write_strokes(row);
         }
     }
 
     /// Writes one row of marks, `|`s and messages, left to right.
-    fn write_strokes(&mut self, row: &[Stroke], mark_color: &str) {
+    fn write_strokes(&mut self, row: &[Stroke]) {
         self.write_blank_gutter();
         let mut cell = 0;
         for stroke in row {
@@ -286,7 +286,11 @@ impl Printer<'_> {
             // a column can pass the 65,535 that a format width allows
             self.out
                 .extend(std::iter::repeat_n(' ', stroke.cell - cell));
-            let color = if stroke.primary { mark_color } else { BLUE };
+            let color = match stroke.severity {
+                Severity::Error => RED,
+                Severity::Warning => YELLOW,
+                Severity::Info | Severity::Hint => BLUE,
+            };
             if stroke.length > 0 {
                 self.paint(color, stroke.glyph.repeat(stroke.length));
             }
@@ -465,7 +469,7 @@ fn snippets(d: &Diagnostic) -> Vec<Snippet<'_>> {
                     1
                 },
                 end: 0,
-                primary: index == 0,
+                severity: label.severity,
                 messages: Vec::new(),
             };
             if number == end_line {
@@ -486,7 +490,7 @@ fn snippets(d: &Diagnostic) -> Vec<Snippet<'_>> {
     for snippet in &mut snippets {
         snippet.lines.sort_by_key(|l| l.number);
         for line in &mut snippet.lines {
-            line.marks.sort_by_key(|m| (m.start, !m.primary));
+            line.marks.sort_by_key(|m| (m.start, m.severity)); // a hint last
             line.marks = merge_same_span(std::mem::take(&mut line.marks));
         }
     }
@@ -552,7 +556,10 @@ fn mark_rows<'a>(
             Some(index) != stays && (!in_full[index] || !marks[index].messages.is_empty())
         })
         .collect();
-    let glyph = |index: usize| if marks[index].primary { "^" } else { "-" };
+    let glyph = |index: usize| match marks[index].severity {
+        Severity::Hint => "-",
+        _ => "^",
+    };
     dropping.sort_by_key(|&index| std::cmp::Reverse((cells[index].start, cells[index].end)));
     // The `|`s of the marks from `dropping[from]` on, left to right.
     let pipes = |from: usize| -> Vec<Stroke<'a>> {
@@ -563,7 +570,7 @@ fn mark_rows<'a>(
                 cell: cells[index].start,
                 glyph: "|",
                 length: 1,
-                primary: marks[index].primary,
+                severity: marks[index].severity,
                 message: None,
             })
             .collect()
@@ -577,7 +584,7 @@ fn mark_rows<'a>(
                 cell: range.start,
                 glyph: glyph(index),
                 length: range.len(),
-                primary: mark.primary,
+                severity: mark.severity,
                 message: mark.messages.first().copied(),
             });
             rows.push(row);
@@ -587,7 +594,7 @@ fn mark_rows<'a>(
                     cell: range.end,
                     glyph: "",
                     length: 0,
-                    primary: mark.primary,
+                    severity: mark.severity,
                     message: Some(message),
                 });
                 rows.push(row);
@@ -601,7 +608,7 @@ fn mark_rows<'a>(
             cell: range.start,
             glyph: glyph(*index),
             length: range.len(),
-            primary: marks[*index].primary,
+            severity: marks[*index].severity,
             message: None,
         })
         .collect();
@@ -628,7 +635,7 @@ fn merge_same_span(marks: Vec<Mark>) -> Vec<Mark> {
             .find(|kept| kept.start == mark.start && kept.end == mark.end)
         {
             Some(kept) => {
-                kept.primary |= mark.primary;
+                kept.severity = kept.severity.min(mark.severity); // the most severe
                 kept.messages.extend(mark.messages);
             }
             None => merged.push(mark),

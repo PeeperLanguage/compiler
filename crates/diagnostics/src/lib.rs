@@ -13,11 +13,13 @@ pub mod fix;
 pub mod printer;
 pub mod suggest;
 
+/// From the most severe; the printer compares them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Severity {
     Error,
     Warning,
     Info,
+    Hint,
 }
 
 /// What kind of problem a diagnostic reports. Each code is declared once,
@@ -109,6 +111,7 @@ pub struct Label {
     pub file: Arc<SourceFile>,
     pub span: Span,
     pub message: String,
+    pub severity: Severity, // the code's for the primary place, else `Hint`
 }
 
 /// A note or help line. A help line may carry fixes; all of them are applied
@@ -163,17 +166,24 @@ impl Diagnostic {
         self.code.severity == Severity::Error
     }
 
-    /// Adds a place; the first place added is the primary one.
+    /// Adds a place; the first place added is the primary one, each other
+    /// one a hint.
     pub fn label(
         mut self,
         file: &Arc<SourceFile>,
         span: Span,
         message: impl Into<String>,
     ) -> Diagnostic {
+        let severity = if self.labels.is_empty() {
+            self.code.severity
+        } else {
+            Severity::Hint
+        };
         self.labels.push(Label {
             file: file.clone(),
             span,
             message: message.into(),
+            severity,
         });
         self
     }

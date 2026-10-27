@@ -576,7 +576,7 @@ impl<'s> Server<'s> {
             let in_file = by_file.remove(file).unwrap_or_default();
             let diagnostics = in_file
                 .into_iter()
-                .map(|diagnostic| lsp_diagnostic(diagnostic, &self.open_files))
+                .flat_map(|diagnostic| lsp_diagnostics(diagnostic, &self.open_files))
                 .collect();
             let params = PublishDiagnosticsParams {
                 uri,
@@ -983,11 +983,12 @@ fn workspace_edit<'f>(
 
 /// `diagnostic` in LSP form: the primary label gives the range, the other
 /// labels are related information, the notes follow the message, and the
-/// quick fixes go in `data` for a later code action request.
-fn lsp_diagnostic(
+/// quick fixes go in `data` for a later code action request. Then a hint
+/// for each span of hint labels with text in the primary label's file.
+fn lsp_diagnostics(
     diagnostic: &diagnostics::Diagnostic,
     open_files: &HashMap<PathBuf, OpenFile>,
-) -> lsp_types::Diagnostic {
+) -> Vec<lsp_types::Diagnostic> {
     let mut message = diagnostic.message.clone();
     for note in &diagnostic.notes {
         message.push_str(match note.kind {
@@ -1000,30 +1001,67 @@ fn lsp_diagnostic(
         .labels
         .first()
         .map_or(Range::default(), |label| range(&label.file, label.span));
-    let related = diagnostic
-        .labels
-        .iter()
-        .skip(1)
-        .filter_map(|label| {
-            Some(DiagnosticRelatedInformation {
-                location: Location {
-                    uri: Url::from_file_path(&label.file.path).ok()?,
-                    range: range(&label.file, label.span),
-                },
+    // Labels on one span are one entry with their texts in order, as the
+    // terminal draws them, so the editor's hover and inline text agree.
+    let mut related: Vec<DiagnosticRelatedInformation> = Vec::new();
+    let hint_labels = (diagnostic.labels.iter()).filter(|label| label.severity == Severity::Hint);
+    for label in hint_labels {
+        let Ok(uri) = Url::from_file_path(&label.file.path) else {
+            continue;
+        };
+        let location = Location {
+            uri,
+            range: range(&label.file, label.span),
+        };
+        let Some(entry) = related.iter_mut().find(|entry| entry.location == location) else {
+            related.push(DiagnosticRelatedInformation {
+                location,
                 message: label.message.clone(),
-            })
-        })
-        .collect();
-    let severity = match diagnostic.code.severity {
+            });
+            continue;
+        };
+        if !entry.message.is_empty() && !label.message.is_empty() {
+            entry.message.push_str(", ");
+        }
+        entry.message.push_str(&label.message);
+    }
+    let severity = |severity| match severity {
         Severity::Error => DiagnosticSeverity::ERROR,
         Severity::Warning => DiagnosticSeverity::WARNING,
         Severity::Info => DiagnosticSeverity::INFORMATION,
+        Severity::Hint => DiagnosticSeverity::HINT,
     };
-    lsp_types::Diagnostic {
+    let code = Some(NumberOrString::String(diagnostic.code.id.to_string()));
+    let source = Some("peeper".to_string());
+    // A hint points back to its diagnostic, as rust-analyzer's do, so an
+    // editor shows it as part of it: Zed then draws the label as a hint
+    // (grey), not as related information (blue).
+    let primary_uri =
+        (diagnostic.labels.first()).and_then(|label| Url::from_file_path(&label.file.path).ok());
+    let hints = (related.iter())
+        .filter(|entry| Some(&entry.location.uri) == primary_uri.as_ref())
+        .filter(|entry| !entry.message.is_empty())
+        .map(|entry| lsp_types::Diagnostic {
+            range: entry.location.range,
+            severity: Some(severity(Severity::Hint)),
+            code: code.clone(),
+            source: source.clone(),
+            message: entry.message.clone(),
+            related_information: Some(vec![DiagnosticRelatedInformation {
+                location: Location {
+                    uri: entry.location.uri.clone(),
+                    range: primary,
+                },
+                message: diagnostic.message.clone(),
+            }]),
+            ..lsp_types::Diagnostic::default()
+        })
+        .collect::<Vec<_>>();
+    let main = lsp_types::Diagnostic {
         range: primary,
-        severity: Some(severity),
-        code: Some(NumberOrString::String(diagnostic.code.id.to_string())),
-        source: Some("peeper".to_string()),
+        severity: Some(severity(diagnostic.code.severity)),
+        code,
+        source,
         message,
         related_information: Some(related),
         data: match quick_fixes(diagnostic, open_files) {
@@ -1031,7 +1069,8 @@ fn lsp_diagnostic(
             fixes => serde_json::to_value(fixes).ok(),
         },
         ..lsp_types::Diagnostic::default()
-    }
+    };
+    std::iter::once(main).chain(hints).collect()
 }
 
 fn range(file: &SourceFile, span: Span) -> Range {
@@ -1100,7 +1139,7 @@ mod tests {
     use super::DEBOUNCE;
     use super::OpenFile;
     use super::Server;
-    use super::lsp_diagnostic;
+    use super::lsp_diagnostics;
     use super::offset;
     use super::position;
     use super::serve_connection;
@@ -1143,9 +1182,14 @@ mod tests {
         let diagnostic = Diagnostic::new(diagnostics::UNREACHABLE_CODE, "unreachable code")
             .label(&file, Span::new(11, 16), "this never runs")
             .label(&file, Span::new(4, 5), "declared here")
+            .label(&file, Span::new(4, 5), "")
+            .label(&file, Span::new(4, 5), "used later here")
             .note("a note")
             .help("a help line", Vec::new());
-        let converted = lsp_diagnostic(&diagnostic, &HashMap::new());
+        let converted = lsp_diagnostics(&diagnostic, &HashMap::new());
+        let [converted, hint] = converted.as_slice() else {
+            panic!("one diagnostic and one hint: {converted:?}");
+        };
         assert_eq!(converted.range.start, Position::new(1, 0));
         assert_eq!(converted.range.end, Position::new(1, 5));
         assert_eq!(converted.severity, Some(DiagnosticSeverity::WARNING));
@@ -1157,9 +1201,21 @@ mod tests {
             converted.message,
             "unreachable code\nnote: a note\nhelp: a help line"
         );
-        let related = converted.related_information.unwrap();
-        assert_eq!(related.len(), 1);
-        assert_eq!(related[0].message, "declared here");
+        let related = converted.related_information.as_ref().unwrap();
+        assert_eq!(related.len(), 1, "labels on one span are one entry");
+        assert_eq!(related[0].message, "declared here, used later here");
+        assert_eq!(hint.severity, Some(DiagnosticSeverity::HINT));
+        let shown = (&hint.message, hint.range);
+        assert_eq!(shown, (&related[0].message, related[0].location.range));
+        assert_eq!(
+            (&hint.code, &hint.source),
+            (&converted.code, &converted.source)
+        );
+        let back = &hint.related_information.as_ref().unwrap()[0];
+        assert_eq!(
+            back.location.range, converted.range,
+            "points back to the error"
+        );
         assert_eq!(related[0].location.range.start, Position::new(0, 4));
         assert_eq!(
             related[0].location.uri,
@@ -1187,7 +1243,7 @@ mod tests {
             version: 7,
         };
         let open_files = HashMap::from([(PathBuf::from("/app/main.peep"), open)]);
-        let published = lsp_diagnostic(&diagnostic, &open_files);
+        let published = lsp_diagnostics(&diagnostic, &open_files).remove(0);
         let uri = Url::from_file_path("/app/main.peep").unwrap();
         let params = json!({
             "textDocument": { "uri": uri },
@@ -1213,7 +1269,7 @@ mod tests {
             &json!([{ "range": { "start": { "line": 0, "character": 8 }, "end": { "line": 0, "character": 12 } }, "newText": "count" }])
         );
         let plain = Diagnostic::new(diagnostics::UNDEFINED_NAME, "no help");
-        let plain = lsp_diagnostic(&plain, &open_files);
+        let plain = lsp_diagnostics(&plain, &open_files).remove(0);
         assert_eq!(plain.data, None, "nothing to fix, nothing in `data`");
     }
 
