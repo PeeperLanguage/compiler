@@ -209,7 +209,12 @@ impl Lowering<'_> {
     /// scope has the same id.
     fn lower_block(&mut self, block: Id<thir::Block>) -> Option<()> {
         let outer = std::mem::replace(&mut self.debug_scope, Id::from_index(block.index()));
-        for statement in self.thir.lists.items(self.thir.blocks[block].statements) {
+        for statement in self
+            .thir
+            .children
+            .lists
+            .items(self.thir.blocks[block].statements)
+        {
             self.lower_statement(statement)?;
         }
         // A variable is borrowed only inside its block, so its borrows are
@@ -656,7 +661,7 @@ impl Lowering<'_> {
         };
         let mut spread = false;
         let mut operands = Vec::with_capacity(parts.len());
-        for part in self.thir.lists.items(parts) {
+        for part in self.thir.children.lists.items(parts) {
             spread |= !self.types.same(self.thir.exprs[part].ty, element);
             operands.push(self.lower_expr(part)?);
         }
@@ -712,6 +717,7 @@ impl Lowering<'_> {
             } => {
                 let arguments = self
                     .thir
+                    .children
                     .lists
                     .items(arguments)
                     .map(|argument| self.lower_expr(argument))
@@ -725,6 +731,7 @@ impl Lowering<'_> {
                 newline,
                 values: self
                     .thir
+                    .children
                     .lists
                     .items(values)
                     .map(|value| self.lower_expr(value))
@@ -733,8 +740,8 @@ impl Lowering<'_> {
             thir::ExprKind::StructLiteral(fields) => {
                 // Computed in the order written, given in declaration order.
                 let mut values = vec![None; fields.len()];
-                for field in self.thir.lists.items(fields) {
-                    let thir::FieldValue { index, value } = self.thir.field_values[field];
+                for field in self.thir.children.lists.items(fields) {
+                    let thir::FieldValue { index, value } = self.thir.children.field_values[field];
                     values[index as usize] = Some(self.lower_expr(value)?);
                 }
                 let values = values

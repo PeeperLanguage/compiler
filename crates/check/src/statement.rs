@@ -158,7 +158,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 checked.push(statement.into());
             }
         }
-        self.body.lists.add(&checked)
+        self.body.children.lists.add(&checked)
     }
 
     /// The THIR of `block`; the names it declares end with it. It is added
@@ -714,7 +714,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         let range = self.body.add(range, whole);
         self.block = outer;
         let statements: [NonZeroU32; 2] = [let_items.into(), range.into()];
-        self.body.blocks[holder].statements = self.body.lists.add(&statements);
+        self.body.blocks[holder].statements = self.body.children.lists.add(&statements);
         Some(Stmt::Block(holder))
     }
 

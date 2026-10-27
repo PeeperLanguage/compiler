@@ -30,7 +30,7 @@ nodes! {
     Stmt => stmts,
     Block => blocks,
     Variable => variables,
-    FieldValue => field_values,
+    FieldValue => children.field_values,
 }
 
 /// One function's checked body. The function's parameters are its first
@@ -43,15 +43,22 @@ pub struct Body {
     /// declares. The first is the function's, which also holds the parameters;
     /// a block comes before the blocks inside it.
     pub blocks: Arena<Block>,
-    pub variables: Arena<Variable>,      // with the span of each name
-    pub field_values: Arena<FieldValue>, // with the span of each field's name
+    pub variables: Arena<Variable>, // with the span of each name
     /// Each `const` of the body, by its type and value, with the span of its
     /// name; `None` when its value had an error. Uses of it are folded.
     pub constants: Arena<Option<Constant>>,
-    pub lists: Lists,
+    pub children: Children,
     /// Checking it reported an error: later phases would only find what
     /// follows from that, so it is not lowered.
     pub has_errors: bool,
+}
+
+/// How a node holds several others: storage reached only through the node
+/// that holds it, never by an id from elsewhere.
+#[derive(Default)]
+pub struct Children {
+    pub field_values: Arena<FieldValue>, // with the span of each field's name
+    pub lists: Lists,
 }
 
 /// What a name stands for: first where it is declared, then its kind. A
@@ -281,9 +288,11 @@ impl Body {
             stmts,
             blocks,
             variables,
-            field_values,
             constants,
-            lists,
+            children: Children {
+                field_values,
+                lists,
+            },
             has_errors,
         } = self;
         exprs.clear();
@@ -322,10 +331,11 @@ impl Body {
             ExprKind::Range {
                 start, end, step, ..
             } => self.calls(start) || self.calls(end) || self.calls(step),
-            ExprKind::StructLiteral(fields) => {
-                (self.lists.items(fields)).any(|field| self.calls(self.field_values[field].value))
+            ExprKind::StructLiteral(fields) => (self.children.lists.items(fields))
+                .any(|field| self.calls(self.children.field_values[field].value)),
+            ExprKind::ArrayLiteral(parts) => {
+                (self.children.lists.items(parts)).any(|part| self.calls(part))
             }
-            ExprKind::ArrayLiteral(parts) => self.lists.items(parts).any(|part| self.calls(part)),
         }
     }
 
@@ -372,7 +382,7 @@ struct Printer<'b, F> {
 impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
     /// Each of `statements` on its own line, `depth` levels in.
     fn write_statements(&mut self, statements: List<Stmt>, depth: usize) {
-        for statement in self.body.lists.items(statements) {
+        for statement in self.body.children.lists.items(statements) {
             for _ in 0..depth {
                 self.out.push_str("    ");
             }
@@ -479,7 +489,7 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
 
     /// `exprs`, separated by commas.
     fn write_exprs(&mut self, exprs: List<Expr>) {
-        for (index, expr) in self.body.lists.items(exprs).enumerate() {
+        for (index, expr) in self.body.children.lists.items(exprs).enumerate() {
             if index > 0 {
                 self.out.push_str(", ");
             }
@@ -524,8 +534,8 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
             }
             ExprKind::StructLiteral(fields) => {
                 _ = write!(self.out, "{}.{{", self.types.text(ty, self.name_of));
-                for (position, field) in self.body.lists.items(fields).enumerate() {
-                    let FieldValue { index, value } = self.body.field_values[field];
+                for (position, field) in self.body.children.lists.items(fields).enumerate() {
+                    let FieldValue { index, value } = self.body.children.field_values[field];
                     let separator = if position > 0 { ", " } else { " " };
                     _ = write!(self.out, "{separator}[{index}] = ");
                     self.write_expr(value);
@@ -537,7 +547,7 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
                 let Type::Array { element, .. } = self.types[ty] else {
                     unreachable!("an array literal makes an array")
                 };
-                for (index, part) in self.body.lists.items(parts).enumerate() {
+                for (index, part) in self.body.children.lists.items(parts).enumerate() {
                     self.out.push_str(if index > 0 { ", " } else { " " });
                     if self.types.same(self.body.exprs[part].ty, element) {
                         self.write_expr(part);

@@ -214,14 +214,14 @@ pub trait Node: Sized {
 }
 
 /// `nodes!(Tree; Expr => exprs, ...)`: each node type lives in the named arena
-/// field of the container.
+/// field of the container, or of a field of it (`children.field_values`).
 #[macro_export]
 macro_rules! nodes {
-    ($container:ty; $($node:ty => $arena:ident),* $(,)?) => {
+    ($container:ty; $($node:ty => $($arena:ident).+),* $(,)?) => {
         $(impl $crate::Node for $node {
             type Container = $container;
             fn arena(container: &mut $container) -> &mut $crate::Arena<$node> {
-                &mut container.$arena
+                &mut container.$($arena).+
             }
         })*
     };

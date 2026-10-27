@@ -211,7 +211,7 @@ impl ThirBuilder<'_, '_> {
             ty: TypeId::VOID,
             kind: ExprKind::Print {
                 newline,
-                values: self.body.lists.add(&checked),
+                values: self.body.children.lists.add(&checked),
             },
         }
     }
@@ -510,7 +510,7 @@ impl ThirBuilder<'_, '_> {
         }
         Expr {
             ty,
-            kind: ExprKind::StructLiteral(self.body.lists.add(&checked)),
+            kind: ExprKind::StructLiteral(self.body.children.lists.add(&checked)),
         }
     }
 
@@ -635,7 +635,7 @@ impl ThirBuilder<'_, '_> {
         };
         Expr {
             ty,
-            kind: ExprKind::ArrayLiteral(self.body.lists.add(&parts)),
+            kind: ExprKind::ArrayLiteral(self.body.children.lists.add(&parts)),
         }
     }
 
@@ -1222,10 +1222,10 @@ impl ThirBuilder<'_, '_> {
         if !arity_matches {
             return Expr::INVALID;
         }
-        let arguments = self.body.lists.add(&checked);
+        let arguments = self.body.children.lists.add(&checked);
         // In a constant's value, a call on constants runs now.
         let constant_arguments = || {
-            let values = self.body.lists.items(arguments).map(|argument| {
+            let values = self.body.children.lists.items(arguments).map(|argument| {
                 match self.body.exprs[argument].kind {
                     ExprKind::Constant(ref value) => Some(value.clone()),
                     _ => None,
