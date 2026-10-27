@@ -76,8 +76,10 @@ impl Module<'_> {
             strings,
             body,
             types,
-            scope_metadata: scope_metadata.unwrap_or_default(),
-            locations: HashMap::new(),
+            debug: DebugNodes {
+                scopes: scope_metadata.unwrap_or_default(),
+                locations: HashMap::new(),
+            },
             panics: String::new(),
             checks: body
                 .blocks
@@ -88,9 +90,7 @@ impl Module<'_> {
                     instructions.map(|id| traps(body, types, id)).sum()
                 })
                 .collect(),
-            block: 0,
-            checked: 0,
-            returned: None,
+            current: CurrentBlock::default(),
             memory: String::new(),
         };
         // Written straight onto the module's functions, taken out while
@@ -317,19 +317,31 @@ struct Function<'m, 'p, 'b> {
     strings: Vec<Option<String>>, // by constant: the global of each string
     body: &'b mir::Body,
     types: &'b Types,
-    scope_metadata: Vec<usize>, // by MIR debug scope (`Module::add_debug_info`)
-    locations: HashMap<(usize, u32), usize>, // each scope and start offset's DILocation
-    panics: String,             // the blocks that call the panic function, after the others
-    checks: Vec<usize>,         // how many checks each block writes (`traps`)
-    block: usize,               // the MIR block being written
-    checked: usize,             // its checks so far
-    returned: Option<Id<mir::Instruction>>, // its value built in `%result` (`write_block`)
+    debug: DebugNodes,
+    panics: String,     // the blocks that call the panic function, after the others
+    checks: Vec<usize>, // how many checks each block writes (`traps`)
+    current: CurrentBlock,
     /// The `alloca` of each instruction's value kept in memory (`in_memory`),
     /// named as the value, for the entry block, so a loop reuses it.
     // shortcut: one slot per such value, so a function copying a big array
     // many times needs that many copies of stack; share slots or move
     // without a copy when a real program hits the stack limit.
     memory: String,
+}
+
+/// The function's debug info nodes, by what they describe; empty in a
+/// release build.
+struct DebugNodes {
+    scopes: Vec<usize>, // by MIR debug scope (`Module::add_debug_info`)
+    locations: HashMap<(usize, u32), usize>, // each scope and start offset's DILocation
+}
+
+/// The MIR block being written (`write_block`).
+#[derive(Default)]
+struct CurrentBlock {
+    block: usize,
+    checked: usize,                         // its checks so far
+    returned: Option<Id<mir::Instruction>>, // its value built in `%result`
 }
 
 impl Function<'_, '_, '_> {
@@ -370,7 +382,7 @@ impl Function<'_, '_, '_> {
             let declared = metadata.add(format_args!(
                 "!DILocalVariable(name: {}, {argument}scope: !{}, file: !{file_metadata}, line: {line}, type: !{debug_type})",
                 quoted(file.slice(span).as_bytes()),
-                self.scope_metadata[debug_scope.index()],
+                self.debug.scopes[debug_scope.index()],
             ));
             let location = self.location(span, debug_scope);
             _ = writeln!(
@@ -388,10 +400,11 @@ impl Function<'_, '_, '_> {
         let Some(metadata) = &mut self.module.metadata else {
             return DebugLocation(None);
         };
-        let scope = self.scope_metadata[debug_scope.index()];
+        let scope = self.debug.scopes[debug_scope.index()];
         // An offset has one line and column, so it is the key: they are
         // found only for a new node.
         let id = *self
+            .debug
             .locations
             .entry((scope, span.start))
             .or_insert_with(|| {
@@ -439,14 +452,12 @@ impl Function<'_, '_, '_> {
 
     /// Writes the block `block`.
     fn write_block(&mut self, out: &mut String, block: Id<mir::Block>) {
-        self.block = block.index();
-        self.checked = 0;
         _ = writeln!(out, "bb{}:", block.index());
         let (body, types) = (self.body, self.types);
         let mir = &body.blocks[block];
         // A value kept in memory that the block returns as soon as it is
         // made is built in `%result` (`value_address`).
-        self.returned = match mir.terminator {
+        let returned = match mir.terminator {
             Terminator::Return {
                 value: Some(Operand::Value(value)),
                 ..
@@ -467,6 +478,11 @@ impl Function<'_, '_, '_> {
                 Some(value)
             }
             _ => None,
+        };
+        self.current = CurrentBlock {
+            block: block.index(),
+            checked: 0,
+            returned,
         };
         let mut instructions = body.lists.items(mir.instructions).peekable();
         while let Some(id) = instructions.next() {
@@ -497,7 +513,7 @@ impl Function<'_, '_, '_> {
                 value: Some(value),
                 span,
             } if in_memory(self.types, self.body.result) => {
-                if self.returned.is_none() {
+                if self.current.returned.is_none() {
                     let location = self.location(span, mir.debug_scope);
                     self.write_store(out, &"%result", value, &location);
                 }
@@ -1336,7 +1352,7 @@ impl Function<'_, '_, '_> {
         rest: &mut Peekable<impl Iterator<Item = Id<mir::Instruction>>>,
     ) -> String {
         let body = self.body;
-        if self.returned == Some(id) {
+        if self.current.returned == Some(id) {
             return "%result".to_owned();
         }
         if let Some(&store) = rest.peek()
@@ -1734,8 +1750,8 @@ impl Function<'_, '_, '_> {
     /// `failed` is false, else panics (`write_panic`) with `message` where
     /// the instruction `id` is written.
     fn check(&mut self, out: &mut String, failed: &str, message: &str, id: Id<mir::Instruction>) {
-        self.checked += 1;
-        let next = format!("bb{}.{}", self.block, self.checked);
+        self.current.checked += 1;
+        let next = format!("bb{}.{}", self.current.block, self.current.checked);
         let panic = format!("{next}.panic");
         _ = writeln!(
             out,
