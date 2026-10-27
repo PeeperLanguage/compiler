@@ -1,0 +1,34 @@
+// Variables: `let` names a value and `mut` lets it change. A `let` without
+// a value is set by its first assignment, once on every path before it is
+// read. A block may declare names of its own.
+// Run: peeper run examples/04_variables.peep
+fn sign(value: i32) -> i32 {
+    let result: i32;                // set below, once on each path
+    if value > 0 {
+        result = 1;
+    } else if value < 0 {
+        result = -1;
+    } else {
+        result = 0;
+    }
+    return result;
+}
+
+fn next(mut count: i32) -> i32 {    // a `mut` parameter
+    count = count + 1;
+    return count;
+}
+
+fn main() {
+    let fixed = 5;                  // `i32`, from the value
+    let mut total: i64 = 0;
+    total = total + fixed;
+    total = total * 2;
+    {
+        let fixed = 100;            // hides the outer `fixed` in this block
+        total = total + fixed;
+    }
+    println("total:", total, "fixed:", fixed);
+    println("signs:", sign(-8), sign(0), sign(3));
+    println("next:", next(fixed));
+}

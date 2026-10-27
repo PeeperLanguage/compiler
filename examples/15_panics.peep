@@ -1,0 +1,20 @@
+// Panics: `panic "message"` stops the program with exit code 101, and a
+// path ending in one needs no `return`. The program also stops this way on
+// a failed run-time check: a division by zero, an index or slice out of
+// bounds, or a range step of 0. This program ends in a panic.
+// Run: peeper run examples/15_panics.peep
+fn half(n: i32) -> i32 {
+    if n % 2 == 0 {
+        return n / 2;
+    }
+    panic "odd number given";
+}
+
+fn main() {
+    println("half of 8:", half(8));
+    let values = [3]i32{1, 2, 3};
+    let at: usize = 2;
+    println("last:", values[at]);   // checked: an index of 3 would stop here
+    println("half of 7:", half(7)); // stops: "panic: odd number given"
+    println("never printed");
+}

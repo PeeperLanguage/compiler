@@ -2,6 +2,7 @@
 // slice is the elements' address and their count; it borrows, as a
 // reference does, so the array must outlive it and is not changed while the
 // slice is in use.
+// Run: peeper run examples/12_slices.peep
 fn total(values: [&]i32) -> i32 {
     let mut sum = 0;
     for value in values {               // `value` is a `&i32`
@@ -20,7 +21,7 @@ fn first(values: [&]i32) -> i32 {
     return values[0];                   // checked against the count at run time
 }
 
-fn main() -> i32 {
+fn main() {
     let mut numbers = [6]i32{1, 2, 3, 4, 5, 6};
     let all = total(&numbers);              // `&numbers` turns into `[&]i32`: 21
 
@@ -42,6 +43,6 @@ fn main() -> i32 {
     // `&numbers[0..7]` is an error, the array has 6 elements; with an end
     // known only at run time, the program stops: "slice out of bounds".
     // `[3]i32{view...}` stops it too: the literal needs exactly 3 values.
-    return all + middle + through + front + back + empty + after
-        + last + copied[2] - 34; // 42
+    println("totals:", all, middle, through, front, back, empty, after);
+    println("numbers:", numbers, "last:", last, "copied:", copied);
 }

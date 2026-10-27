@@ -1,0 +1,20 @@
+// C functions: `#[extern("name")]` declares a function the C library or the
+// runtime defines, with no body. Its parameters and result are numbers,
+// `bool`, `cstr` or pointers. The core library declares `Write`, `Read` and
+// `Exit` this way.
+// Run: peeper run examples/17_c_functions.peep
+#[extern("abs")]
+fn absolute(n: i32) -> i32;
+
+#[extern("strlen")]
+fn length(text: cstr) -> usize;
+
+#[extern("toupper")]
+fn upper(character: i32) -> i32;
+
+fn main() {
+    let text = c"hello\n";
+    println("abs:", absolute(-42), "strlen:", length(text), "toupper:", upper(97));
+    Write(Stdout, text, 6);
+    Exit(3);                        // ends the program with exit code 3
+}

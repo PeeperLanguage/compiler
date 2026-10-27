@@ -1,0 +1,4 @@
+// A module in a folder: `import "modules:shapes/square"`.
+fn Of(side: i64) -> i64 {
+    return side * side;
+}

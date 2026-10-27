@@ -1,0 +1,26 @@
+// Printing: `print` writes its values with a space between each, and
+// `println` adds a newline. They take numbers, `bool`, `cstr` (a C string,
+// `c"..."`), plain string literals, raw pointers, arrays, structs and
+// references to them. `Write` from the core library writes bytes to a file
+// descriptor: `Stdout` or `Stderr`.
+// Run: peeper run examples/14_printing.peep
+struct Point { x: i32, y: i32 }
+
+const Name: cstr = c"peeper";
+
+fn main() {
+    println("numbers:", -5i8, 18446744073709551615u64, 0.1 + 0.2, 1e16);
+    println("bools:", true, 1 > 2);
+    println("text:", Name, "100% sure");
+    let point = Point.{ x = 3, y = 4 };
+    println("values:", point, &point, [3]i32{1, 2, 3});
+    let nothing: rawptr = none;
+    println("pointer:", nothing);
+
+    print("no newline,");
+    print(" then one");
+    println();
+
+    Write(Stdout, c"written to stdout\n", 18);
+    Write(Stderr, c"written to stderr\n", 18);
+}

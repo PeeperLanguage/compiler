@@ -1,0 +1,36 @@
+// Compile-time calls: a constant's value may call a function. The call runs
+// while compiling, and the program holds only its result. Such a function
+// may use numbers, `bool`, variables, loops, branches, calls and panics;
+// structs, arrays, references and printing run only in the program for now.
+// Run: peeper run examples/16_compile_time_calls.peep
+fn fib(n: u32) -> u64 {
+    let mut a: u64 = 0;
+    let mut b: u64 = 1;
+    for 0..n {
+        let next = a + b;
+        a = b;
+        b = next;
+    }
+    return a;
+}
+
+fn factorial(n: u64) -> u64 {
+    if n <= 1 {
+        return 1;
+    }
+    return n * factorial(n - 1);
+}
+
+const Fib90 = fib(90);
+const Big = factorial(20) + 1;
+const Square = square(12);          // declared below
+
+fn square(n: i32) -> i32 {
+    return n * n;
+}
+
+fn main() {
+    const Local = fib(10) * 2;      // in a body too
+    println("constants:", Fib90, Big, Square, Local);
+    println("at run time:", fib(20)); // the same function, run as usual
+}

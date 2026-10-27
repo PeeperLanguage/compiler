@@ -1,26 +1,35 @@
-// Number types, literal suffixes, safe widening and constant folding.
-const Bits: u8 = 1u8 << 7;      // 128, folded at compile time
+// Numbers: signed `i` and unsigned `u` integers of any width from 1 to 2^23
+// bits (`i8`, `u24`, `i200`, ...), `usize` as wide as a pointer, and `f32`
+// and `f64` floats. A literal takes the type it is used as, or the one its
+// suffix names; constants fold while compiling.
+// Run: peeper run examples/02_numbers.peep
+const Bits: u8 = 1u8 << 7;          // 128
 const Big: i128 = 1i128 << 100;
-const Odd: u24 = 0xFF_FFFF;     // any width from 1 to 2^23 bits
+const Odd: u24 = 0xFF_FFFF;         // hex, with `_` between digits
 const Half: f32 = 0.5f32;
 
-
-
-/// This is the program entrypoint
-/// This runs the program.
 fn main() {
-    let ok: bool = !(Bits == 0) || Big > 0;
-    let x = widen(200, -5, Half);
-    let wrapped = 127i8 + 1i8;  // folds to -128 (wraps like the hardware)
-}
+    println("constants:", Bits, Big, Odd, Half);
 
-fn widen(small: u8, signed_small: i8, ratio: f32) -> f64 {
-    let a: i16 = small;         // u8 -> i16 keeps every value
-    let b: i16 = signed_small;  // i8 -> i16
-    let c: u16 = small;         // u8 -> u16
-    let d: f64 = ratio;         // f32 -> f64
-    /// the result has the left operand's type: i16
-    let sum = a + b;
-    let mask = ~c & 0x0F0F;
-    return d;
+    // A value widens on its own when the new type holds every value of the
+    // old one; anything else needs `as` (examples/03_casts.peep).
+    let small: u8 = 200;
+    let signed: i16 = small;
+    let unsigned: u32 = small;
+    let float: f64 = Half;
+    println("widened:", signed, unsigned, float);
+
+    // The result of an operator has the left operand's type.
+    let x: i32 = 17;
+    println("arithmetic:", x + 3, x - 20, x * 2, x / 5, x % 5, -x);
+    println("bitwise:", x & 0xF, x | 0x100, x ^ 1, ~x, x << 2, x >> 1);
+    println("compare:", x == 17, x != 17, x < 20, x >= 18);
+
+    let wide: i200 = -1;
+    let top: u128 = 340282366920938463463374607431768211455;
+    let size: usize = 4096;
+    println("wide:", wide, top, size);
+
+    let third = 1.0 / 3.0;          // `f64` unless used as an `f32`
+    println("floats:", third, 0.1 + 0.2, 1e16, 2.5e-3);
 }

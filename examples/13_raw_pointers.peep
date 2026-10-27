@@ -1,6 +1,7 @@
 // Raw pointers: `*T` points to a `T`, `rawptr` to anything. Nothing checks
 // them; they are for C and low-level code. `@x` takes an address, `.*`
 // reads or writes through it, and `none` is null.
+// Run: peeper run examples/13_raw_pointers.peep
 #[extern("malloc")]
 fn allocate(size: usize) -> *i32;
 
@@ -15,7 +16,7 @@ fn keep(slot: *rawptr, p: rawptr) {
     slot.* = p;                     // an untyped pointer, written through a pointer
 }
 
-fn main() -> i32 {
+fn main() {
     let mut n = 7;
     let p = @n;                     // `*i32`
     p.* = p.* + 1;                  // n is 8
@@ -25,15 +26,15 @@ fn main() -> i32 {
     let mut slot: rawptr = none;
     keep(@slot, p);                 // `*i32` to `rawptr`, no `as` needed
     if slot != p {
-        return 0;
+        panic "the slot was not written";
     }
 
     let heap = allocate(4);
     if heap == none {
-        return 0;
+        panic "out of memory";
     }
     heap.* = 34;
     let value = heap.*;
     release(heap);
-    return total + value;           // 8 + 34 = 42
+    println("n:", n, "total:", total, "heap:", value);
 }

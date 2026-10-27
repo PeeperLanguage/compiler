@@ -1,0 +1,50 @@
+// Loops: `for` is the only loop. It goes over a range, an array or a slice,
+// runs while a condition holds, or runs until `break`. `continue` goes on
+// to the next pass.
+// Run: peeper run examples/06_loops.peep
+fn main() {
+    print("range:");
+    for i in 0..5 {
+        print("", i);
+    }
+    println();
+
+    print("numbered:");
+    for i, v in 10..13 {            // the pass number, from 0, and the value
+        print("", i, v);
+    }
+    println();
+
+    let mut passes = 0;
+    for 0..3 {                      // no name for the value
+        passes = passes + 1;
+    }
+    println("passes:", passes);
+
+    let mut n = 1;
+    for n < 100 {                   // while `n < 100`
+        n = n * 3;
+    }
+    println("while:", n);
+
+    let mut x = 0;
+    for {                           // until `break`
+        x = x + 1;
+        if x == 4 {
+            break;
+        }
+    }
+    println("forever:", x);
+
+    print("odd:");
+    for v in 0..10 {
+        if v % 2 == 0 {
+            continue;
+        }
+        if v > 7 {
+            break;
+        }
+        print("", v);
+    }
+    println();
+}

@@ -1,0 +1,29 @@
+// Structs: `struct` names a group of fields. `Name.{ field = value }` makes
+// one, with the fields in any order, and `.{ ... }` takes the type from
+// where it goes. A struct moves when assigned or passed: the old variable
+// is then unset, until a `mut` one is set again.
+// Run: peeper run examples/09_structs.peep
+struct Point { x: i32, y: i32 }
+struct Line { start: Point, end: Point, weight: f32 }
+struct Empty {}
+
+fn length(line: Line) -> i32 {      // takes the line, moved in
+    return line.end.x - line.start.x + line.end.y - line.start.y;
+}
+
+fn main() {
+    let start = Point.{ y = 2, x = 1 };
+    let end: Point = .{ x = 4, y = 6 };
+    let mut line = Line.{ start = start, end = end, weight = 1.5 };
+    line.start.x = 0;               // a field of a field
+    line.weight = 2.0;
+    println("line:", line);
+    println("fields:", line.start.x, line.end.y, line.weight);
+    println("length:", length(line));   // `line` moves; it is unset now
+
+    let mut point = Point.{ x = 1, y = 1 };
+    let taken = point;              // moves `point`
+    point = Point.{ x = taken.y, y = 5 };   // set again, so usable
+    println("again:", point, taken);
+    println("empty:", Empty.{});
+}

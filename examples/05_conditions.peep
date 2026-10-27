@@ -1,0 +1,27 @@
+// Conditions: `if`, `else if` and `else` take a `bool`. `&&` and `||` skip
+// their right side when the left decides, and `!` negates.
+// Run: peeper run examples/05_conditions.peep
+fn describe(n: i32) {
+    if n < 0 {
+        println(n, "is negative");
+    } else if n == 0 {
+        println(n, "is zero");
+    } else {
+        println(n, "is positive");
+    }
+}
+
+fn noisy(value: bool) -> bool {
+    println("  noisy runs");
+    return value;
+}
+
+fn main() {
+    describe(-3);
+    describe(0);
+    describe(8);
+    println("and:", false && noisy(true));  // `noisy` does not run
+    println("or:", true || noisy(false));   // nor here
+    println("both:", true && noisy(true));  // here it does
+    println("not:", !(1 > 2));
+}

@@ -1,0 +1,19 @@
+// Casts: `value as T` turns any number or `bool` into any number type. An
+// integer cast keeps the low bits; a float cast to an integer drops the
+// fraction and saturates at the type's ends, and NaN gives 0.
+// Run: peeper run examples/03_casts.peep
+fn main() {
+    let big: i32 = 300;
+    let negative: i32 = -1;
+    println("integers:", big as u8, negative as u32, negative as i64);
+
+    let half: f64 = -2.5;
+    let huge: f64 = 1e20;
+    let zero = 0.0;
+    println("floats to integers:", half as i32, half as u16, huge as i32, (zero / zero) as i32);
+
+    let count: i64 = 7;
+    println("integers to floats:", count as f64 / 2.0, 0.1 as f32);
+
+    println("bools:", true as u8, false as i32);
+}

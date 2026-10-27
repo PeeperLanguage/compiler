@@ -1,0 +1,20 @@
+// Type aliases: `type Name = T` gives `T` another name. A value of the alias
+// and of `T` mix freely; an alias may name one declared after it.
+// Run: peeper run examples/10_type_aliases.peep
+type Distance = Meters;
+type Meters = i32;
+type Origin = Point;
+struct Point { x: Meters, y: Meters }
+
+const Limit: Meters = 40;
+
+fn double(length: Meters) -> Distance {
+    return length * 2;
+}
+
+fn main() {
+    let half: Meters = 21;
+    let whole: i32 = double(half);  // a `Distance` is an `i32`
+    let home: Origin = Point.{ x = 0, y = whole };
+    println("whole:", whole, "over limit:", whole > Limit, "home:", home);
+}

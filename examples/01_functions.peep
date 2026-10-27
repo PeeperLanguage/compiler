@@ -1,0 +1,38 @@
+// Functions and constants. A function takes typed parameters and may give a
+// result. The program starts at `main`; its `i32` result is the exit code.
+// A constant's value is computed while compiling.
+// Run: peeper run examples/01_functions.peep
+const Limit = 10;                   // its type comes from where it is used
+const Answer: i32 = Limit * 4 + 2;  // or is written
+
+fn square(x: i64) -> i64 {
+    return x * x;
+}
+
+fn main() -> i32 {
+    const Local = 3;                // a constant inside a body
+    println("square:", square(Limit));
+    println("gcd:", gcd(48, 18));
+    println("first:", first(Local, 99));
+    greet();
+    return Answer - 42;             // exit code 0
+}
+
+// A function may be declared after the code that calls it, and may call
+// itself.
+fn gcd(a: i64, b: i64) -> i64 {
+    if b == 0 {
+        return a;
+    }
+    return gcd(b, a % b);
+}
+
+// A parameter written `_` is taken and names nothing.
+fn first(value: i32, _: i32) -> i32 {
+    return value;
+}
+
+// Without a result, a function ends at its last line.
+fn greet() {
+    println("hello from peeper");
+}

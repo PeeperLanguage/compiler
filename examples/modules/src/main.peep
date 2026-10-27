@@ -1,0 +1,23 @@
+// Modules: each file of a project is a module, and the folder `src` holds
+// them. `import "package:path"` brings one in, where `path` is the file's
+// path in `src` without `.peep`; its names are used as `module::Name`. A
+// name starting with an uppercase letter is exported, a lowercase one stays
+// in its module. The core library is the package `core`.
+// Build: peeper build examples/modules      (writes ./modules)
+// Run:   peeper run examples/modules
+import "modules:geometry";
+import "modules:shapes/square";
+import "core:allocator";
+
+// A constant may use one declared later, in another module.
+const Perimeter = geometry::Side * 4;
+
+fn main() {
+    println("perimeter:", Perimeter);
+    println("area:", geometry::Area(geometry::Side, 3u8));
+    println("square:", square::Of(geometry::Side));
+
+    let memory = allocator::Malloc(16);
+    allocator::Free(memory);
+    println("allocated and freed 16 bytes");
+}

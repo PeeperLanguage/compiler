@@ -1,0 +1,47 @@
+// Ranges: `a..b` counts from `a` up to `b`, `a..=b` takes `b` too, and
+// `:step` steps by more than 1. A range counts down when `a > b`, and never
+// wraps past its type's end. A range is a value of type `range[T]`: it is
+// kept, passed, returned and copied like a number.
+// Run: peeper run examples/07_ranges.peep
+struct Window { values: range[u8], tag: i32 }
+
+fn evens(below: i32) -> range[i32] {
+    return 0..below:2;
+}
+
+fn total(values: range[i32]) -> i32 {
+    let mut sum = 0;
+    for v in values {
+        sum = sum + v;
+    }
+    return sum;
+}
+
+fn main() {
+    print("up:");
+    for v in 0..5 { print("", v); }
+    println();
+    print("inclusive:");
+    for v in 0..=5 { print("", v); }
+    println();
+    print("step:");
+    for v in 0..10:3 { print("", v); }
+    println();
+    print("down:");
+    for v in 5..=0:2 { print("", v); }
+    println();
+    print("top of u8:");
+    for v in 250u8..=255 { print("", v); }
+    println();
+
+    let r = 1..=4;
+    let copy = r;
+    println("totals:", total(r), total(copy), total(evens(9)));
+
+    let window = Window.{ values = 10..=20:5, tag = 1 };
+    print("field:");
+    for v in window.values { print("", v); }
+    println(" tag", window.tag);
+
+    println("spread:", [5]i32{(0..4)..., 100});   // a range's values in an array
+}

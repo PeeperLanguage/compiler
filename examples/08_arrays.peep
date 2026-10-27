@@ -1,0 +1,59 @@
+// Arrays: `[N]T` holds `N` values of type `T`, and `.len` is `N`. An array
+// copies when assigned or passed. An index is checked against the length
+// when the program runs, and `values...` in an array literal gives each of
+// another array's values.
+// Run: peeper run examples/08_arrays.peep
+fn sum(values: [3]i32) -> i32 {     // gets a copy
+    return values[0] + values[1] + values[2];
+}
+
+fn tens() -> [3]i32 {
+    let mut values = [3]i32{0, 0, 0};
+    for i in 0..values.len {
+        values[i] = i as i32 * 10;
+    }
+    return values;
+}
+
+fn bump(values: &mut [3]i32) {      // changes the caller's array
+    for value in values {
+        value.* = value.* + 1;
+    }
+}
+
+fn main() {
+    let a = [3]i32{1, 2, 3};
+    let b = [_]i64{4, 5};           // `_` counts the values
+    println("arrays:", a, b, a.len);
+
+    let mut c = a;                  // a copy: `a` stays as it is
+    c[0] = 9;
+    let at: u8 = 2;                 // any integer type indexes
+    println("copy:", a[0], c[0], c[at]);
+
+    let mut grid = [2][3]i32{[3]i32{1, 2, 3}, [3]i32{4, 5, 6}};
+    grid[1][0] = 40;
+    println("nested:", grid, grid[1].len);
+
+    println("passed:", sum(a), "returned:", tens());
+    bump(&mut c);
+    println("through &mut:", c);
+
+    let mut total = 0;
+    for value in a {                // each value, copied
+        total = total + value;
+    }
+    for value in &a {               // a reference to each value
+        total = total + value.*;
+    }
+    println("loops:", total);
+    print("numbered:");
+    for i, value in a {
+        print("", i, value);
+    }
+    println();
+
+    println("spread:", [_]i32{a..., 0, a...});
+    let empty = [0]i32{};
+    println("empty:", empty.len);
+}
