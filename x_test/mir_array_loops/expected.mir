@@ -78,6 +78,59 @@ fn indexed:
     scope end total.1
     scope end values.0
     fall off at `}`
+fn sum_slice:
+  bb0:
+    store values.0, arg0
+    store total.1, 0
+    %2 = load values.0: [&]i32
+    store _.2, %2
+    %4 = load _.2: [&]i32
+    %5 = field %4[1]: u64
+    %6 = LessOrEqual 0, %5: bool
+    branch %6 (values) bb1 bb2
+  bb1:
+    %7 = Subtract %5, 0: u64
+    goto bb3
+  bb2:
+    %8 = Subtract 0, %5: u64
+    goto bb3
+  bb3:
+    %9 = phi bb1: %7, bb2: %8: u64
+    %10 = phi bb1: 1, bb2: 18446744073709551615: u64
+    %11 = NotEqualTo %9, 0: bool
+    goto bb4
+  bb4:
+    %12 = phi bb3: 0, bb7: %17: u64
+    %13 = phi bb3: %9, bb7: %18: u64
+    %14 = phi bb3: %11, bb7: %16: bool
+    branch %14 (values) bb5 bb6
+  bb5:
+    store _.3, %12
+    %16 = GreaterThan %13, 1: bool
+    %17 = Add %12, %10: u64
+    %18 = Subtract %13, 1: u64
+    %19 = load _.3: u64
+    %20 = borrow _.2.*[at %19]: &i32
+    store value.4, %20
+    %22 = load total.1: i32
+    %23 = load value.4.*: i32
+    %24 = Add %22, %23: i32
+    store total.1, %24
+    scope end value.4
+    scope end _.3
+    goto bb7
+  bb6:
+    scope end _.2
+    %29 = load total.1: i32
+    scope end total.1
+    scope end values.0
+    return %29
+  bb7:
+    goto bb4
+  bb8:
+    scope end total.1
+    scope end values.0
+    fall off at `}`
 fn main:
   bb0:
     fall off at `}`

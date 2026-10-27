@@ -17,7 +17,6 @@ stderr_contains = [
     "mismatched types: expected `[&mut]i32`, found `[&]i32`",
     "mismatched types: expected `[&]i64`, found `&[3]i32`",
     "`[&]i32` has no field `length`",
-    "`for` over values other than ranges and arrays are not supported yet",
     "cannot assign to immutable `view`",
     "a slice's `len` cannot be set",
     "literal `-1` does not fit `u64`",
@@ -25,5 +24,5 @@ stderr_contains = [
     "index `18446744073709551616u128` is outside every `[&]i32`",
     "this call cannot be evaluated at compile time",
     "struct and array values cannot run at compile time yet",
-    "Compilation failed with 18 error(s)",
+    "Compilation failed with 17 error(s)",
 ]

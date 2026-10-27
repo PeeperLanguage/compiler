@@ -13,10 +13,6 @@ fn in_array(values: [2][&]i32) {}
 
 fn first(view: [&]i32) -> i32 {
     view[0] = 1;
-    let mut count = 0;
-    for value in view {
-        count = count + value;
-    }
     view = view;
     view.len = 2;
     let negative = view[-1];

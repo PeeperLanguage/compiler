@@ -599,18 +599,21 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
     }
 
     /// `for value in items { body }` or `for index, value in items`, over an
-    /// array or a reference to one, computed once before the first pass.
-    /// Written as the code that runs it, a block of
+    /// array, a reference to one or a slice, computed once before the first
+    /// pass. Written as the code that runs it, a block of
     ///
     /// ```text
     /// let items = <iterable>; // unnamed; ends after the loop
     /// for index in 0..N { let value = items[index]; body }
     /// ```
     ///
-    /// where `value` is a copy of the element, which must copy, or
-    /// `&items.*[index]` or `&mut items.*[index]` when `items` is a `&` or
-    /// `&mut` reference, which keeps the array borrowed for the whole loop.
-    /// Without `index`, the counter is unnamed.
+    /// where `N` is the array's length or `items.len`, and `value` is a copy
+    /// of the element, which must copy, or `&items.*[index]` or
+    /// `&mut items.*[index]` when `items` is a `&` or `&mut` reference
+    /// (`&items[index]` or `&mut items[index]` for a slice), which keeps the
+    /// elements borrowed for the whole loop. A `[&mut]` variable is lent
+    /// again, so it is usable after the loop. Without `index`, the counter
+    /// is unnamed.
     fn check_for_array(
         &mut self,
         index: Option<Ident>,
@@ -623,17 +626,23 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         let types = &self.checker.types;
         let (array, borrow) = match types[items_type] {
             Type::Reference { target, mutable } => (target, Some(mutable)),
+            Type::Slice { mutable, .. } => (items_type, Some(mutable)),
             _ => (items_type, None),
         };
         // After an error, the body is still checked, with an invalid `value`.
-        let (element, length) = if let Type::Array { element, length } = types[array] {
-            (element, length)
-        } else {
-            if items_type != TypeId::INVALID {
-                self.checker
-                    .not_supported(span, "`for` over values other than ranges and arrays");
+        // A slice's length is read when the loop starts.
+        let (element, length) = match types[array] {
+            Type::Array { element, length } => (element, Some(length)),
+            Type::Slice { element, .. } => (element, None),
+            _ => {
+                if items_type != TypeId::INVALID {
+                    self.checker.not_supported(
+                        span,
+                        "`for` over values other than ranges, arrays and slices",
+                    );
+                }
+                (TypeId::INVALID, Some(0))
             }
-            (TypeId::INVALID, 0)
         };
         if borrow.is_none() && !self.checker.types.is_copy(element) {
             let file = &self.checker.module().ast.file;
@@ -687,12 +696,28 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             };
             self.body.add(constant, span)
         };
+        let start = constant(0);
+        let step = constant(1); // `usize` is its own step type
+        let end = if let Some(length) = length {
+            constant(length)
+        } else {
+            let read = Expr {
+                ty: items_type,
+                kind: ExprKind::Variable(items),
+            };
+            let read = self.body.add(read, span);
+            let length = Expr {
+                ty: usize,
+                kind: ExprKind::Length(read),
+            };
+            self.body.add(length, span)
+        };
         let range = Expr {
             ty: (self.checker.types.range(usize)).expect("`usize` is an integer"),
             kind: ExprKind::Range {
-                start: constant(0),
-                end: constant(length),
-                step: constant(1), // `usize` is its own step type
+                start,
+                end,
+                step,
                 inclusive: false,
             },
         };
@@ -702,8 +727,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             Some(index) => self.declare_loop_variable(usize, index),
             None => self.add_hidden_variable(usize, span),
         };
-        let (element_value, value_type) =
-            self.array_element(items, counter, array, element, borrow, span);
+        let (element_value, value_type) = self.array_element(items, counter, element, borrow, span);
         let variable = self.declare_loop_variable(value_type, value);
         let let_value = Stmt::Let {
             variable,
@@ -726,13 +750,13 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
 
     /// The value `check_for_array` gives `value` each pass, and its type:
     /// `items[counter]`, or `&items.*[counter]` or `&mut items.*[counter]`
-    /// when `borrow` says `items` is a `&` or `&mut` reference to an `array`
-    /// of `element`.
+    /// when `borrow` says `items` is a `&` or `&mut` reference to an array
+    /// of `element` (`&items[counter]` or `&mut items[counter]` for a
+    /// slice, as `s[i]` is written).
     fn array_element(
         &mut self,
         items: Id<Variable>,
         counter: Id<Variable>,
-        array: TypeId,
         element: TypeId,
         borrow: Option<bool>,
         span: Span,
@@ -742,9 +766,9 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             kind: ExprKind::Variable(items),
         };
         let mut place = self.body.add(read, span);
-        if borrow.is_some() {
+        if let Type::Reference { target, .. } = self.checker.types[self.body.variables[items].ty] {
             let referred = Expr {
-                ty: array,
+                ty: target,
                 kind: ExprKind::Dereference(place),
             };
             place = self.body.add(referred, span);

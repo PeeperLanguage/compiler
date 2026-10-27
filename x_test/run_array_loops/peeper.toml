@@ -15,4 +15,5 @@ stdout_contains = [
     "points: 8\n",
     "jumps: 10 30\n",
     "kept: 3 2 9\n",
+    "slices: 18 [1, 2, 4, 6] 52 0 2\n",
 ]

@@ -1,6 +1,8 @@
 // `for` over an array: the array is computed once, before the first pass. By
 // value, each pass gets a copy of an element taken from a copy of the array;
-// over `&` or `&mut`, a reference to the element itself.
+// over `&` or `&mut`, a reference to the element itself. Over a slice, each
+// pass gets a reference too, and a slice's length is read before the first
+// pass.
 struct Point { x: i32, y: i32 }
 
 fn make(calls: &mut i32) -> [3]i32 {
@@ -25,6 +27,35 @@ fn double(values: &mut [4]i32) {
         value.* = value.* - value.* / 3;
     }
     values[0] = values[0] + 0;
+}
+
+// A `[&mut]` is lent again, so it is usable after the loop; it can be read
+// in the body of a loop over `&edit[..]`.
+fn shift(edit: [&mut]i32) -> i32 {
+    for at, value in edit {
+        value.* = value.* + at as i32;
+    }
+    let mut seen = 0;
+    for value in &edit[..] {
+        seen = seen + value.* + edit[0];
+    }
+    return seen;
+}
+
+// A reference to an element of a slice outlives the loop too.
+fn first_big_in(view: [&]i32) -> &i32 in view {
+    for value in view {
+        if value.* > 1 { return value; }
+    }
+    return &view[0];
+}
+
+fn looped(view: [&]i32) -> i32 {
+    let mut total = 0;
+    for value in view {
+        total = total + value.* * view.len as i32;
+    }
+    return total;
 }
 
 fn main() -> i32 {
@@ -103,6 +134,11 @@ fn main() -> i32 {
     changed.* = 9;
     let big = first_big(&small);
     println("kept:", last.*, big.*, pair[1]);
+
+    let mut row = [4]i32{1, 2, 3, 4};
+    let seen = shift(&mut row[1..]);
+    let found = first_big_in(&row);
+    println("slices:", seen, row, looped(&row), looped(&row[2..2]), found.*);
 
     for _, value in [0]i32{} {
         println("never", value);
