@@ -138,7 +138,7 @@ Exit: one edited file re-checks only what its interface change affects.
   or link an installed LLVM 23. The packs pinned now are the Go pipeline's
   (LLVM 23.1.3): they have no `lli`, so the ignored `llvm_parity` test cannot
   run until the new packs are pinned. `check-toolchain-updates.yml` keeps the
-  upstream pins current, as on main.
+  upstream pins current, as the Go pipeline on `legacy` did.
 - Fixture suite (`x_test`) brought back as the language acceptance target.
 
 ## Open decisions
