@@ -1,4 +1,3 @@
-
 use super::*;
 
 pub(crate) fn parse_text(text: &str) -> (Tree, Vec<Diagnostic>) {
