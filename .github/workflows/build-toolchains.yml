@@ -1,189 +1,92 @@
 name: Build Peeper toolchains
 
+# Builds each machine's toolchain pack from the LLVM release that
+# toolchains/toolchain-sources.lock.json pins, publishes it as a release of
+# this repository named by its id, and opens a pull request that pins the
+# packs in toolchains/toolchains.lock.json. A pack's id comes from its
+# sha256, so a pack already published is not published again.
 on:
   workflow_dispatch:
-    inputs:
-      family:
-        description: Toolchain family to rebuild
-        type: choice
-        required: false
-        default: auto
-        options:
-          - auto
-          - all
-          - linux
-          - darwin
-          - windows
-      force_all:
-        description: Rebuild every supported toolchain
-        type: boolean
-        required: false
-        default: false
   push:
     branches:
       - main
+      - feature/rust-rewrite
     paths:
       - toolchains/toolchain-sources.lock.json
-      - scripts/toolchain-fingerprint.sh
-      - scripts/plan-toolchains.sh
-      - scripts/update-toolchain-lock.sh
-      - scripts/toolchains/**
-      - cmd/release-profile/**
-      - internal/toolchain/**
+      - crates/tools/toolchain/**
       - .github/workflows/build-toolchains.yml
-      - .github/workflows/toolchain-target.yml
+
+concurrency:
+  group: build-toolchains
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  plan:
-    name: Plan affected toolchains
-    runs-on: ubuntu-24.04
-    outputs:
-      linux_amd64: ${{ steps.plan.outputs.linux_amd64 }}
-      linux_arm64: ${{ steps.plan.outputs.linux_arm64 }}
-      darwin_amd64: ${{ steps.plan.outputs.darwin_amd64 }}
-      darwin_arm64: ${{ steps.plan.outputs.darwin_arm64 }}
-      windows_amd64: ${{ steps.plan.outputs.windows_amd64 }}
-      windows_arm64: ${{ steps.plan.outputs.windows_arm64 }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-      - id: plan
-        env:
-          EVENT_BEFORE: ${{ github.event.before }}
-          FORCE_ALL: ${{ inputs.force_all || false }}
-          TOOLCHAIN_FAMILY: ${{ inputs.family || 'auto' }}
-        run: bash scripts/plan-toolchains.sh
-
-  linux_amd64:
-    name: Linux amd64 toolchain
-    needs: plan
-    if: needs.plan.outputs.linux_amd64 == 'true'
+  pack:
+    name: Pack ${{ matrix.runner }}
+    strategy:
+      matrix:
+        # shortcut: Linux only; macOS and Windows packs come with their own
+        # rows once `toolchain pack` builds them.
+        runner:
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
     permissions:
       contents: write
-    uses: ./.github/workflows/toolchain-target.yml
-    with:
-      runner: ubuntu-24.04
-      os: linux
-      arch: amd64
-
-  linux_arm64:
-    name: Linux arm64 toolchain
-    needs: plan
-    if: needs.plan.outputs.linux_arm64 == 'true'
-    permissions:
-      contents: write
-    uses: ./.github/workflows/toolchain-target.yml
-    with:
-      runner: ubuntu-24.04-arm
-      os: linux
-      arch: arm64
-
-  darwin_amd64:
-    name: macOS amd64 toolchain
-    needs: plan
-    if: needs.plan.outputs.darwin_amd64 == 'true'
-    permissions:
-      contents: write
-    uses: ./.github/workflows/toolchain-target.yml
-    with:
-      runner: macos-15-intel
-      os: darwin
-      arch: amd64
-      llvm-target: X86
-      minimum-macos: "13.0"
-
-  darwin_arm64:
-    name: macOS arm64 toolchain
-    needs: plan
-    if: needs.plan.outputs.darwin_arm64 == 'true'
-    permissions:
-      contents: write
-    uses: ./.github/workflows/toolchain-target.yml
-    with:
-      runner: macos-15
-      os: darwin
-      arch: arm64
-      llvm-target: AArch64
-      minimum-macos: "13.0"
-
-  windows_amd64:
-    name: Windows amd64 toolchain
-    needs: plan
-    if: needs.plan.outputs.windows_amd64 == 'true'
-    permissions:
-      contents: write
-    uses: ./.github/workflows/toolchain-target.yml
-    with:
-      runner: windows-2025
-      os: windows
-      arch: amd64
-
-  windows_arm64:
-    name: Windows arm64 toolchain
-    needs: plan
-    if: needs.plan.outputs.windows_arm64 == 'true'
-    permissions:
-      contents: write
-    uses: ./.github/workflows/toolchain-target.yml
-    with:
-      runner: windows-11-arm
-      os: windows
-      arch: arm64
-
-  update_lock:
-    name: Prepare toolchain lock update
-    if: >-
-      always() && needs.plan.result == 'success' &&
-      (needs.plan.outputs.linux_amd64 == 'true' ||
-       needs.plan.outputs.linux_arm64 == 'true' ||
-       needs.plan.outputs.darwin_amd64 == 'true' ||
-       needs.plan.outputs.darwin_arm64 == 'true' ||
-       needs.plan.outputs.windows_amd64 == 'true' ||
-       needs.plan.outputs.windows_arm64 == 'true')
-    needs:
-      - plan
-      - linux_amd64
-      - linux_arm64
-      - darwin_amd64
-      - darwin_arm64
-      - windows_amd64
-      - windows_arm64
-    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v7
+      - uses: Swatinem/rust-cache@v2
+      # The pack's check links an i686 program on x86-64.
+      - if: runner.arch == 'X64'
+        run: sudo apt-get update && sudo apt-get install -y gcc-multilib
+      - id: pack
+        run: echo "id=$(cargo run --release --quiet -p toolchain -- pack "$GITHUB_REPOSITORY" dist)" >> "$GITHUB_OUTPUT"
+      - name: Publish the pack
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ID: ${{ steps.pack.outputs.id }}
+        run: |
+          if gh release view "$ID" >/dev/null 2>&1; then
+            echo "$ID is already published"
+          else
+            gh release create "$ID" "dist/$ID.tar.gz" \
+              --target "$GITHUB_SHA" \
+              --prerelease \
+              --latest=false \
+              --title "Peeper $ID" \
+              --notes "Peeper toolchain pack, built from $(git rev-parse --short HEAD)."
+          fi
+      - uses: actions/upload-artifact@v7
         with:
-          go-version-file: go.mod
-          cache: true
+          name: toolchain-record-${{ runner.arch }}
+          path: dist/${{ steps.pack.outputs.id }}.json
+          if-no-files-found: error
+
+  lock:
+    name: Pin the packs
+    # Only when every pack was built, so the lock never pins half a set.
+    needs: pack
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@v2
       - uses: actions/download-artifact@v8
-        continue-on-error: true
         with:
           pattern: toolchain-record-*
           path: records
-          merge-multiple: false
-      - name: Reject failed selected toolchains and merge records
-        env:
-          SELECTED_linux_amd64: ${{ needs.plan.outputs.linux_amd64 }}
-          SELECTED_linux_arm64: ${{ needs.plan.outputs.linux_arm64 }}
-          SELECTED_darwin_amd64: ${{ needs.plan.outputs.darwin_amd64 }}
-          SELECTED_darwin_arm64: ${{ needs.plan.outputs.darwin_arm64 }}
-          SELECTED_windows_amd64: ${{ needs.plan.outputs.windows_amd64 }}
-          SELECTED_windows_arm64: ${{ needs.plan.outputs.windows_arm64 }}
-          RESULT_linux_amd64: ${{ needs.linux_amd64.result }}
-          RESULT_linux_arm64: ${{ needs.linux_arm64.result }}
-          RESULT_darwin_amd64: ${{ needs.darwin_amd64.result }}
-          RESULT_darwin_arm64: ${{ needs.darwin_arm64.result }}
-          RESULT_windows_amd64: ${{ needs.windows_amd64.result }}
-          RESULT_windows_arm64: ${{ needs.windows_arm64.result }}
-        run: bash scripts/update-toolchain-lock.sh toolchains/toolchains.lock.json records
+          merge-multiple: true
       - id: changed
         run: |
+          cargo run --release --quiet -p toolchain -- lock records/*.json > summary.md
           if git diff --quiet -- toolchains/toolchains.lock.json; then
             echo "value=false" >> "$GITHUB_OUTPUT"
           else
@@ -196,19 +99,18 @@ jobs:
         with:
           app-id: ${{ secrets.PEEPER_BOT_APP_ID }}
           private-key: ${{ secrets.PEEPER_BOT_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: compiler
+          # Without owner and repositories, the token is for this repository only.
       - name: Open lock update pull request
         if: steps.changed.outputs.value == 'true'
         env:
           GH_TOKEN: ${{ steps.mint-token.outputs.token }}
+          BASE: ${{ github.ref_name }} # the branch whose lock the run updated
         run: |
           {
-            echo "Records rebuilt toolchain artifacts."
+            echo "Pins the rebuilt toolchain packs."
             echo
-            cat toolchains/toolchains.lock.json.summary
+            cat summary.md
             echo
-            echo "All selected builds passed."
             echo "Run [$GITHUB_RUN_ID]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."
           } > pr-body.md
           branch="automation/toolchains-${GITHUB_RUN_ID}"
@@ -220,7 +122,7 @@ jobs:
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git push origin "$branch"
           gh pr create \
-            --base main \
+            --base "$BASE" \
             --head "$branch" \
             --title "Update Peeper toolchain lock" \
             --label "Toolchain Update" \

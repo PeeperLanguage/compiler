@@ -1,0 +1,16 @@
+[package]
+name = "toolchain"
+description = "Builds the LLVM toolchain packs peeper ships and keeps the toolchain locks up to date; CI runs it"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+model.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[lints]
+workspace = true

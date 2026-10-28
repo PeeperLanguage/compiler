@@ -1,5 +1,8 @@
 name: Check toolchain updates
 
+# Pins the latest upstream LLVM and llvm-mingw releases in
+# toolchains/toolchain-sources.lock.json through a peeper-bot pull request;
+# merging it builds the new packs (build-toolchains.yml).
 on:
   schedule:
     - cron: "23 3 * * 1"
@@ -38,7 +41,7 @@ jobs:
           if [ "$EVENT_NAME" = workflow_dispatch ]; then
             active=true
           elif git log -1 --since="30 days ago" --format=%H -- \
-            cmd internal pkg runtime x_test scripts/build.sh scripts/bundle.go go.mod go.sum \
+            crates runtime _builtin_library x_test scripts Cargo.toml Cargo.lock \
             | grep -q .; then
             active=true
           fi
@@ -52,21 +55,18 @@ jobs:
         run: |
           exists="$(gh pr list --state open --search 'Update toolchain sources in:title' --json number --jq 'length > 0')"
           echo "exists=$exists" >> "$GITHUB_OUTPUT"
-      - name: Resolve stable upstream metadata
+      - uses: Swatinem/rust-cache@v2
+        if: inputs.force == true || (steps.activity.outputs.active == 'true' && steps.existing.outputs.exists != 'true')
+      - id: changed
+        name: Pin the latest releases
         if: inputs.force == true || (steps.activity.outputs.active == 'true' && steps.existing.outputs.exists != 'true')
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bash scripts/update-toolchain-sources.sh toolchains/toolchain-sources.lock.json candidate-sources.lock.json
-      - id: changed
-        name: Check candidate change
-        if: inputs.force == true || (steps.activity.outputs.active == 'true' && steps.existing.outputs.exists != 'true')
+          FORCE: ${{ inputs.force }}
         run: |
+          cargo run --release --quiet -p toolchain -- update-sources > summary.md
           changed=false
-          if [ "${{ inputs.force }}" = "true" ]; then
-            changed=true
-          fi
-          # Semantic compare: formatting-only differences must not open a PR.
-          if ! jq -S . toolchains/toolchain-sources.lock.json | cmp -s - <(jq -S . candidate-sources.lock.json); then
+          if [ "$FORCE" = true ] || ! git diff --quiet -- toolchains/toolchain-sources.lock.json; then
             changed=true
           fi
           echo "value=$changed" >> "$GITHUB_OUTPUT"
@@ -78,26 +78,26 @@ jobs:
         with:
           app-id: ${{ secrets.PEEPER_BOT_APP_ID }}
           private-key: ${{ secrets.PEEPER_BOT_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: compiler
+          # Without owner and repositories, the token is for this repository only.
       - name: Open source update pull request
         if: steps.changed.outputs.value == 'true'
         env:
           GH_TOKEN: ${{ steps.mint-token.outputs.token }}
+          BASE: ${{ github.ref_name }} # the branch whose lock the run updated
+          FORCE: ${{ inputs.force }}
         run: |
           {
             echo "Updates stable upstream toolchain sources."
             echo
-            cat candidate-sources.lock.json.summary
+            cat summary.md
             echo
-            echo "Merging builds affected toolchains; failed builds leave the finished lock unchanged."
+            echo "Merging builds the affected packs; a failed build leaves the toolchain lock unchanged."
             echo "Run [$GITHUB_RUN_ID]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."
           } > pr-body.md
-          if [ "${{ inputs.force }}" = "true" ]; then
-            echo "Forced validation run: upstream sources are unchanged; this PR validates the bot push path." >> pr-body.md
+          if [ "$FORCE" = true ]; then
+            echo "Forced validation run: upstream sources may be unchanged; this PR validates the bot push path." >> pr-body.md
           fi
           branch="automation/toolchain-sources-${GITHUB_RUN_ID}"
-          mv candidate-sources.lock.json toolchains/toolchain-sources.lock.json
           git config user.name "peeper-bot[bot]"
           git config user.email "5118601+peeper-bot[bot]@users.noreply.github.com"
           git switch -c "$branch"
@@ -106,7 +106,7 @@ jobs:
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git push origin "$branch"
           gh pr create \
-            --base main \
+            --base "$BASE" \
             --head "$branch" \
             --title "Update toolchain sources" \
             --label "Toolchain Update" \

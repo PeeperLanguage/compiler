@@ -102,8 +102,7 @@ jobs:
         with:
           app-id: ${{ secrets.PEEPER_BOT_APP_ID }}
           private-key: ${{ secrets.PEEPER_BOT_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: compiler
+          # Without owner and repositories, the token is for this repository only.
       - name: Merge pull request as peeper-bot
         if: steps.gate.outputs.ready == 'true'
         env:

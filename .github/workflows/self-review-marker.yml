@@ -6,8 +6,6 @@ name: Self-review marker
 # comment through the same API.
 on:
   pull_request_target:
-    branches:
-      - main
     types:
       - opened
       - reopened
@@ -20,7 +18,7 @@ permissions:
 jobs:
   check:
     name: Verify self-review marker removed
-    if: github.repository == 'PeeperLanguage/compiler' && github.event.pull_request.draft == false
+    if: github.repository_owner == 'PeeperLanguage' && github.event.pull_request.draft == false
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -30,8 +28,7 @@ jobs:
         with:
           app-id: ${{ secrets.PEEPER_BOT_APP_ID }}
           private-key: ${{ secrets.PEEPER_BOT_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: compiler
+          # Without owner and repositories, the token is for this repository only.
 
       - name: Check marker and report
         uses: actions/github-script@v7

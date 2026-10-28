@@ -5,6 +5,7 @@ members = [
     "crates/middle/*",
     "crates/backend/*",
     "crates/driver/*",
+    "crates/tools/*",
 ]
 resolver = "3"
 
@@ -36,7 +37,9 @@ unicode-general-category = "1.1.0"
 stacker = "0.1.25"
 lsp-server = "0.7.9"
 lsp-types = "0.95.1"
+serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.140"
+sha2 = "0.11.1"
 toml_edit = "0.25.13"
 rustc-hash = "2.1.1"
 
