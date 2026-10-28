@@ -13,8 +13,8 @@
 //! output must hold each of `stdout_contains` and `stderr_contains`. With
 //! `target = "i686-linux"`, each command builds for that target (`-target
 //! i686-linux`). The compiler is `$PEEPER` if set (the bundled build/bin/peeper, which finds
-//! its libraries and runtime), else the one cargo built, bundled with the
-//! libraries and runtime of this checkout.
+//! its libraries, runtime and toolchain), else the one cargo built, bundled
+//! with the libraries and runtime of this checkout and build/toolchains/native.
 
 use std::path::Path;
 use std::process::Command;
@@ -22,7 +22,8 @@ use std::process::Command;
 use model::machine::Machine;
 
 /// Bundles the compiler cargo built as peeper expects to be installed: in
-/// <root>/bin, beside <root>/libs and <root>/runtime. Returns its path.
+/// <root>/bin, beside <root>/libs, <root>/runtime and <root>/toolchains/native,
+/// the toolchain scripts/build.sh links into build/. Returns its path.
 fn bundle() -> String {
     let checkout = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join("bundle");
@@ -35,13 +36,22 @@ fn bundle() -> String {
         root.join("libs"),
     )
     .expect("the libraries are linked");
+    let toolchain = checkout.join("build/toolchains/native");
+    std::fs::create_dir_all(root.join("toolchains")).expect("the toolchains folder is made");
+    std::os::unix::fs::symlink(
+        toolchain
+            .canonicalize()
+            .expect("scripts/build.sh links build/toolchains/native"),
+        root.join("toolchains/native"),
+    )
+    .expect("the toolchain is linked");
     let host = Machine::host().expect("this machine is a target");
-    llvm::runtime::build(&root.join("runtime"), host).expect("the runtime builds");
+    llvm::runtime::build(&root, host).expect("the runtime builds");
     // Without the 32-bit C library the `target = "i686-linux"` fixtures fail,
     // their runtime missing.
     let i686 = Machine::named("i686-linux").expect("i686-linux is a target");
     if runs_i686()
-        && let Err(error) = llvm::runtime::build(&root.join("runtime"), i686)
+        && let Err(error) = llvm::runtime::build(&root, i686)
     {
         eprintln!("the i686 runtime is not built: {error}");
     }

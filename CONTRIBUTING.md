@@ -18,8 +18,9 @@ review.
 Required tools:
 
 - Rust, the edition and toolchain [`Cargo.toml`](Cargo.toml) declares.
-- LLVM Clang 23 or newer available as `clang` (with `lli` for the ignored
-  LLVM parity test) for native compilation and runtime fixtures.
+- The LLVM 23.1.4 release unpacked in `target/llvm-23/LLVM-23.1.4-Linux-X64`;
+  `scripts/build.sh` links it as `build/toolchains/native`, the only clang
+  peeper, the runtime fixtures and the ignored LLVM parity test (`lli`) use.
 - Git.
 
 Build compiler and bundled library:

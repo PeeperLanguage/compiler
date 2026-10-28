@@ -6,9 +6,11 @@
 //! on (division by zero, out-of-range shifts) or guards (`MIN / -1`) are left
 //! out; the unit tests in lib.rs cover them.
 //!
-//! Needs `lli` on the path: `cargo test -p eval -- --ignored`.
+//! Runs the `lli` of build/toolchains/native, which scripts/build.sh links:
+//! `cargo test -p eval -- --ignored`.
 
 use std::fmt::Write;
+use std::path::Path;
 use std::process::Command;
 
 use bigint::Limbs;
@@ -353,9 +355,11 @@ define i32 @main() {{
 }}
 "
     );
-    let path = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("llvm_parity.ll");
+    let path = Path::new(env!("CARGO_TARGET_TMPDIR")).join("llvm_parity.ll");
     std::fs::write(&path, program).unwrap();
-    let output = Command::new("lli").arg(&path).output().expect("lli runs");
+    let lli =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../build/toolchains/native/bin/lli");
+    let output = Command::new(lli).arg(&path).output().expect("lli runs");
     assert!(
         output.status.success(),
         "lli failed:\n{}",

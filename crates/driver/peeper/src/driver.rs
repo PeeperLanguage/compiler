@@ -53,9 +53,9 @@ pub enum Goal {
 pub struct Command<W: Write> {
     pub path: PathBuf,            // the project folder or file
     pub target: &'static Machine, // what it is checked and built for (`-target`)
-    pub installation: PathBuf,    // the bundled libraries and runtime (`installation_dir`)
-    pub out: W,                   // where diagnostics and messages are printed
-    pub colored: bool,            // whether diagnostics are printed in color
+    pub installation: PathBuf, // the bundled libraries, runtime and toolchain (`installation_dir`)
+    pub out: W,                // where diagnostics and messages are printed
+    pub colored: bool,         // whether diagnostics are printed in color
 }
 
 impl<W: Write> Command<W> {
@@ -207,8 +207,9 @@ impl<W: Write> Command<W> {
     /// of the command's target into the program `output`; gives whether it
     /// did, a failure reported.
     fn link(&mut self, ll: &[llvm::Module], mode: BuildMode, output: &Path) -> bool {
-        let runtime = llvm::runtime::library(self.target, &self.installation.join("runtime"));
-        if let Err(error) = llvm::link::link_executable(ll, mode, self.target, &runtime, output) {
+        if let Err(error) =
+            llvm::link::link_executable(ll, mode, self.target, &self.installation, output)
+        {
             _ = writeln!(self.out, "peeper: {error}");
             return false;
         }
@@ -343,7 +344,8 @@ fn exit_code_of(status: std::process::ExitStatus) -> u8 {
 }
 
 /// The installation peeper runs from: the executable is in <root>/bin, the
-/// libraries in <root>/libs and the runtime in <root>/runtime.
+/// libraries in <root>/libs, the runtime in <root>/runtime and the LLVM
+/// toolchain in <root>/toolchains/native.
 pub fn installation_dir() -> PathBuf {
     let Ok(exe) = std::env::current_exe() else {
         return PathBuf::new();

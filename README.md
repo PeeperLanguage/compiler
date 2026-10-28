@@ -115,7 +115,9 @@ modify its parent environment.
 
 - A Rust toolchain (`cargo`, with `rustfmt` and `clippy`) for the edition in
   [`Cargo.toml`](Cargo.toml).
-- LLVM Clang available as `clang` for native `build` and `run` commands.
+- The LLVM 23.1.4 release unpacked in `target/llvm-23/LLVM-23.1.4-Linux-X64`,
+  which `scripts/build.sh` links as `build/toolchains/native`: peeper runs
+  only that clang, never one on the PATH.
 - Git for cloning the compiler and fetching packages.
 
 ## Build from source

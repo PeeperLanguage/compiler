@@ -10,18 +10,19 @@ use model::machine::Machine;
 
 use crate::clang_flag;
 use crate::link::call_tool;
+use crate::link::tool;
 
 // LIBRARY (the archive's file name, which the driver looks for), SOURCES (C
 // files in the runtime folder) and FLAGS (clang's flags for each source),
 // written by build.rs from runtime/runtime.toml.
 include!(concat!(env!("OUT_DIR"), "/runtime.rs"));
 
-/// Builds the library for `target` from this checkout's runtime folder
-/// into the installation's runtime folder `runtime`, where
-/// `library` finds it, and gives its path. The objects in
-/// between are removed.
-pub fn build(runtime: &Path, target: &Machine) -> Result<PathBuf, String> {
-    let library = library(target, runtime);
+/// Builds the library for `target` from this checkout's runtime folder,
+/// with the clang and llvm-ar of `installation`, into its runtime folder,
+/// where `library` finds it, and gives its path. The objects in between are
+/// removed.
+pub fn build(installation: &Path, target: &Machine) -> Result<PathBuf, String> {
+    let library = library(target, installation);
     let folder = library.parent().expect("a library is in a folder");
     let sources = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../runtime");
     std::fs::create_dir_all(folder)
@@ -30,7 +31,7 @@ pub fn build(runtime: &Path, target: &Machine) -> Result<PathBuf, String> {
     let mut objects = Vec::with_capacity(SOURCES.len());
     for source in SOURCES {
         let object = folder.join(Path::new(source).with_extension("o"));
-        let mut clang = Command::new("clang");
+        let mut clang = Command::new(tool(installation, "clang"));
         clang
             .args(clang_flag(target))
             .args(FLAGS)
@@ -41,12 +42,7 @@ pub fn build(runtime: &Path, target: &Machine) -> Result<PathBuf, String> {
         call_tool(clang, "compile the runtime")?;
         objects.push(object);
     }
-    // llvm-ar comes with LLVM; Xcode's clang has only the system's ar.
-    let archiver = ["llvm-ar", "ar"]
-        .into_iter()
-        .find(|tool| Command::new(tool).arg("--version").output().is_ok())
-        .ok_or("cannot archive the runtime: neither llvm-ar nor ar runs")?;
-    let mut archive = Command::new(archiver);
+    let mut archive = Command::new(tool(installation, "llvm-ar"));
     archive.arg("rcs").arg(&library).args(&objects);
     let archived = call_tool(archive, "archive the runtime");
     for object in &objects {
@@ -55,8 +51,8 @@ pub fn build(runtime: &Path, target: &Machine) -> Result<PathBuf, String> {
     archived.map(|()| library)
 }
 
-/// The runtime library of `target`, in its folder in the folder `runtime` of
-/// an installation.
-pub fn library(target: &Machine, runtime: &Path) -> PathBuf {
-    runtime.join(target.name).join(LIBRARY)
+/// The runtime library of `target` in `installation`: in its folder in the
+/// installation's runtime folder.
+pub(crate) fn library(target: &Machine, installation: &Path) -> PathBuf {
+    installation.join("runtime").join(target.name).join(LIBRARY)
 }

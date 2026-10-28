@@ -43,10 +43,24 @@ fn main() {
     let lines: usize = files.values().map(|text| text.lines().count()).sum();
     println!("{MODULES} modules, {FUNCTIONS} functions each, {lines} lines; {runs} runs, {mode:?}");
     let target = Machine::host().expect("this machine is a target");
-    // The runtime library the program links with, unless clang is left out.
+    // An installation to link in, unless clang is left out: its runtime is
+    // built, and its toolchain is the one scripts/build.sh links.
     let built = Path::new(env!("CARGO_TARGET_TMPDIR")).join("bench");
-    let runtime = (std::env::var("PEEPER_BENCH_CLANG").map_or(true, |clang| clang != "0"))
-        .then(|| llvm::runtime::build(&built, target).expect("the runtime builds"));
+    let link = std::env::var("PEEPER_BENCH_CLANG").map_or(true, |clang| clang != "0");
+    if link {
+        let toolchain =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../build/toolchains/native");
+        std::fs::create_dir_all(built.join("toolchains")).expect("the bench folder is made");
+        _ = std::fs::remove_file(built.join("toolchains/native"));
+        std::os::unix::fs::symlink(
+            toolchain
+                .canonicalize()
+                .expect("scripts/build.sh links build/toolchains/native"),
+            built.join("toolchains/native"),
+        )
+        .expect("the toolchain is linked");
+        llvm::runtime::build(&built, target).expect("the runtime builds");
+    }
     let mut load = Vec::new();
     // Checking, lowering and LLVM text, which overlap: modules are written on
     // other threads while the next one is checked.
@@ -95,9 +109,9 @@ fn main() {
         let text: usize = ll.iter().map(|module| module.text().len()).sum();
         compile.push(start.elapsed());
         std::hint::black_box(text);
-        if let Some(runtime) = &runtime {
+        if link {
             let start = Instant::now();
-            llvm::link::link_executable(&ll, mode, target, runtime, &built.join("program"))
+            llvm::link::link_executable(&ll, mode, target, &built, &built.join("program"))
                 .expect("clang builds the program");
             clang.push(start.elapsed());
         }
@@ -108,7 +122,7 @@ fn main() {
         ("check+lower+llvm text", compile),
         ("total", total),
     ];
-    if runtime.is_some() {
+    if link {
         phases.push(("clang", clang));
     }
     for (phase, times) in phases {

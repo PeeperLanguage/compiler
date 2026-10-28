@@ -22,7 +22,7 @@ pub struct Machine {
 }
 
 /// Every machine a program can be built for. A new one is a row here, and
-/// its runtime built with `build-runtime <folder> <name>`.
+/// its runtime built with `build-runtime <installation> <name>`.
 const MACHINES: [Machine; 7] = [
     Machine {
         name: "x86_64-linux",
