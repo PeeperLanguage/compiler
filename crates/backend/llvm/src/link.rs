@@ -66,7 +66,11 @@ fn link(
     let mut linker = Command::new(clang);
     // The toolchain's own linker; without this clang runs the `ld` on the PATH.
     linker.arg("-fuse-ld=lld");
-    linker.args(clang_flag(target)).args(objects).arg(runtime);
+    linker
+        .args(sdk_flags(target)?)
+        .args(clang_flag(target))
+        .args(objects)
+        .arg(runtime);
     if target.os != "windows" {
         linker.arg("-lm"); // LLVM turns a float `%` into a call of `fmod`
     }
@@ -140,6 +144,28 @@ fn compile_modules(
         Some((_, error)) => Err(error),
         None => Ok(objects),
     }
+}
+
+/// Clang's flags for the system files a program for `target` is built
+/// with: on a Mac, the macOS SDK, which holds the C library and headers;
+/// none for every other system. LLVM's own clang, unlike Apple's, does not
+/// look for the SDK, so it is asked of the system's `xcrun`, which is part of
+/// macOS, not of a toolchain.
+pub fn sdk_flags(target: &Machine) -> Result<Vec<String>, String> {
+    if target.os != "macos" {
+        return Ok(Vec::new());
+    }
+    let cannot =
+        "cannot find the macOS SDK: install Xcode's command line tools (`xcode-select --install`)";
+    let output = Command::new("/usr/bin/xcrun")
+        .arg("--show-sdk-path")
+        .output()
+        .map_err(|error| format!("{cannot}: {error}"))?;
+    let sdk = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if !output.status.success() || sdk.is_empty() {
+        return Err(cannot.to_owned());
+    }
+    Ok(vec!["-isysroot".to_owned(), sdk])
 }
 
 /// The LLVM tool `name` of `installation`, in its toolchain folder; peeper

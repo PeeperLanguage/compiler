@@ -1,6 +1,6 @@
 //! The pack of this machine's toolchain: from the LLVM release the sources
-//! lock pins for it, only the tools peeper runs (clang, ld.lld, llvm-ar) and
-//! lli, which the LLVM parity test runs, with clang's headers and the LLVM
+//! lock pins for it, only the tools peeper runs (clang, its linker lld,
+//! llvm-ar) and lli, which the LLVM parity test runs, with clang's headers and the LLVM
 //! license, in `toolchains/native` as scripts/setup.sh unpacks it.
 
 use std::fs;
@@ -120,15 +120,23 @@ fn stage(source: &Source, folder: &Path) -> Result<PathBuf, String> {
     _ = fs::remove_dir_all(&stage);
     fs::create_dir_all(&native).map_err(|error| cannot("make", &native, &error))?;
     // Only what the pack keeps: the whole release unpacks to several GB.
-    // `bin/clang` and `bin/ld.lld` are links to these, so the pack renames
-    // them instead.
-    let kept = [
+    // `bin/clang` and the linker's names are links to `clang-<major>` and
+    // `lld`, so the pack renames those instead.
+    let mut kept = vec![
         format!("bin/clang-{major}"),
         "bin/lld".to_owned(),
         "bin/llvm-ar".to_owned(),
         "bin/lli".to_owned(),
         format!("lib/clang/{major}/include"),
     ];
+    // The name `-fuse-ld=lld` runs on this system; lld picks its object format by it.
+    let linker = if cfg!(target_os = "macos") {
+        // clang links every macOS program with its builtins library.
+        kept.push(format!("lib/clang/{major}/lib/darwin/libclang_rt.osx.a"));
+        "ld64.lld"
+    } else {
+        "ld.lld"
+    };
     run(Command::new("tar")
         .arg("-xJf")
         .arg(&release)
@@ -140,7 +148,7 @@ fn stage(source: &Source, folder: &Path) -> Result<PathBuf, String> {
     let bin = native.join("bin");
     for (file, tool) in [
         (format!("clang-{major}"), "clang"),
-        ("lld".to_owned(), "ld.lld"),
+        ("lld".to_owned(), linker),
     ] {
         fs::rename(bin.join(&file), bin.join(tool))
             .map_err(|error| cannot("rename", &bin.join(&file), &error))?;
@@ -155,7 +163,7 @@ fn stage(source: &Source, folder: &Path) -> Result<PathBuf, String> {
 
 /// Checks the pack `pack` works as peeper uses it, unpacked fresh into
 /// `folder`: its clang compiles a C program, its llvm-ar archives it, and its
-/// clang links it with its ld.lld into a program that runs, for this machine
+/// clang links it with its lld into a program that runs, for this machine
 /// and, on x86-64 Linux, for i686 too; its lli runs LLVM text. Each tool runs
 /// with no environment, so none on the PATH can stand in for a missing one.
 fn check(pack: &Path, folder: &Path) -> Result<(), String> {
@@ -192,6 +200,7 @@ fn check(pack: &Path, folder: &Path) -> Result<(), String> {
         "hello.c",
         "#include <stdio.h>\nint main(void) { puts(\"peeper\"); return 0; }\n",
     )?;
+    let sdk = llvm::link::sdk_flags(Machine::host()?)?;
     let mut targets = vec![None];
     if Machine::host() == Machine::named("x86_64-linux") {
         let i686 = Machine::named("i686-linux")?;
@@ -200,11 +209,15 @@ fn check(pack: &Path, folder: &Path) -> Result<(), String> {
     for target in &targets {
         run(tool("clang")
             .args(target)
+            .args(&sdk)
             .args(["-c", "hello.c", "-o", "hello.o"]))?;
         run(tool("llvm-ar").args(["rc", "libhello.a", "hello.o"]))?;
-        run(tool("clang")
-            .args(target)
-            .args(["-fuse-ld=lld", "libhello.a", "-o", "hello"]))?;
+        run(tool("clang").args(target).args(&sdk).args([
+            "-fuse-ld=lld",
+            "libhello.a",
+            "-o",
+            "hello",
+        ]))?;
         let mut program = Command::new(unpacked.join("hello"));
         expect(run(program.env_clear())?, "the linked program")?;
     }

@@ -18,7 +18,7 @@ use crate::write_json;
 /// latest release it follows, what that release's tag has before the
 /// version, and the file's name in the release, `{version}` standing for the
 /// version.
-const SOURCES: [(&str, &str, &str, &str); 4] = [
+const SOURCES: [(&str, &str, &str, &str); 5] = [
     (
         "llvm-linux-amd64",
         "llvm/llvm-project",
@@ -30,6 +30,12 @@ const SOURCES: [(&str, &str, &str, &str); 4] = [
         "llvm/llvm-project",
         "llvmorg-",
         "LLVM-{version}-Linux-ARM64.tar.xz",
+    ),
+    (
+        "llvm-darwin-arm64",
+        "llvm/llvm-project",
+        "llvmorg-",
+        "LLVM-{version}-macOS-ARM64.tar.xz",
     ),
     (
         "llvm-mingw-windows-amd64",

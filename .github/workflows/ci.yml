@@ -16,15 +16,22 @@ permissions:
 
 jobs:
   check:
-    name: Check, test and bundle
-    runs-on: ubuntu-24.04
+    name: Check, test and bundle (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-24.04
+          - macos-15
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
       - run: rustup component add rustfmt clippy
       - uses: Swatinem/rust-cache@v2
       # The i686-linux fixtures link against the 32-bit C library.
-      - run: sudo apt-get update && sudo apt-get install -y gcc-multilib
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y gcc-multilib
       # Holds the pack-id stamp too, so setup.sh keeps a cached pack.
       - uses: actions/cache@v4
         with:

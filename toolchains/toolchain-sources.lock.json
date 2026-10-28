@@ -21,6 +21,15 @@
       "license_url": "https://github.com/llvm/llvm-project/blob/llvmorg-23.1.4/LICENSE.TXT"
     },
     {
+      "id": "llvm-darwin-arm64",
+      "version": "23.1.4",
+      "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.4/LLVM-23.1.4-macOS-ARM64.tar.xz",
+      "size": 1570051292,
+      "sha256": "5d3179db39adeca5b17a34d82708fe976bc60e055b05fe557878fb3fb64d39ef",
+      "license": "Apache-2.0 WITH LLVM-exception",
+      "license_url": "https://github.com/llvm/llvm-project/blob/llvmorg-23.1.4/LICENSE.TXT"
+    },
+    {
       "id": "llvm-mingw-windows-amd64",
       "version": "20261020",
       "url": "https://github.com/mstorsjo/llvm-mingw/releases/download/20261020/llvm-mingw-20261020-ucrt-x86_64.zip",
