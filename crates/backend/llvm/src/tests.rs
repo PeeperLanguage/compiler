@@ -8,16 +8,28 @@ use model::machine::Machine;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 
-/// The LLVM text of the module `app:main` holding `text`, for the
-/// target named `target`, with a prelude declaring the runtime's `Exit`.
+/// The LLVM text of the module `app:main` holding `text`, for the target
+/// named `target` (`program_ll`).
 fn ll(text: &str, target: &str) -> String {
+    program_ll(text, target)
+        .remove("app:main")
+        .expect("the program has `app:main`")
+}
+
+/// The LLVM text of each module, by import path, of the program whose
+/// module `app:main` holds `text`, for the target named `target`, with a
+/// prelude declaring the runtime's `Exit` and the library `lib:half`, which
+/// is outside the project folder as the bundled libraries are.
+fn program_ll(text: &str, target: &str) -> HashMap<String, String> {
     let target = Machine::named(target).unwrap();
     let folder = PathBuf::from("/peeper-llvm-test");
+    let library = PathBuf::from("/peeper-llvm-libs/lib");
     let prelude = "#[extern(\"peeper_rt_v1_exit\")]\nfn Exit(code: i32);\n";
     let project = project::Project {
         packages: HashMap::from([
             ("app".to_string(), folder.join("src")),
             ("core".to_string(), folder.join("core")),
+            ("lib".to_string(), library.clone()),
         ]),
         entry: folder.join("src/main.peep"),
         root: folder.clone(),
@@ -26,6 +38,10 @@ fn ll(text: &str, target: &str) -> String {
     let open_files = HashMap::from([
         (folder.join("src/main.peep"), text.to_string()),
         (folder.join("core/global.peep"), prelude.to_string()),
+        (
+            library.join("half.peep"),
+            "fn Half(a: i32, b: i32) -> i32 { return a / b; }\n".to_string(),
+        ),
     ]);
     let program = project::load(&project, &open_files);
     assert!(program.checkable);
@@ -50,7 +66,15 @@ fn ll(text: &str, target: &str) -> String {
             )
         });
     assert_eq!(results.diagnostics().count(), 0);
-    modules.last().unwrap().text()
+    modules
+        .iter()
+        .map(|module| {
+            (
+                program.modules[module.module.index()].path.clone(),
+                module.text(),
+            )
+        })
+        .collect()
 }
 
 /// A division not known at compile time checks first and continues in
@@ -65,9 +89,9 @@ fn traps_continue_in_a_new_block() {
         "br i1 %i6.z, label %bb1.1.panic, label %bb1.1\nbb1.1:",
         "%i6.d = select i1 %i6.n, i32 1, i32 %i5",
         "%i8 = phi i1 [ false, %bb0 ], [ %i7, %bb1.1 ]",
-        "call i32 @\"peeper_rt_v1_write\"(i32 2, ptr @.str.0, i32 67)",
+        "call i32 @\"peeper_rt_v1_write\"(i32 2, ptr @.str.0, i32 49)",
         "call void @\"peeper_rt_v1_exit\"(i32 101)",
-        "c\"panic: division by zero\\0A  --> /peeper-llvm-test/src/main.peep:1:51\\0A\\00\"",
+        "c\"panic: division by zero\\0A  --> src/main.peep:1:51\\0A\\00\"",
     ] {
         assert!(text.contains(line), "{line}\n{text}");
     }
@@ -76,6 +100,22 @@ fn traps_continue_in_a_new_block() {
         "x86_64-linux",
     );
     assert!(!constant.contains("panic"), "{constant}");
+}
+
+/// A panic names its file from the project folder; a file outside it, such
+/// as a library's, by its whole path.
+#[test]
+fn panics_name_files_from_the_project_folder() {
+    let text = program_ll(
+        "fn f(a: i32, b: i32) -> i32 { return a / b; }",
+        "x86_64-linux",
+    );
+    let (main, library) = (&text["app:main"], &text["lib:half"]);
+    assert!(main.contains("--> src/main.peep:1:"), "{main}");
+    assert!(
+        library.contains("--> /peeper-llvm-libs/lib/half.peep:1:"),
+        "{library}"
+    );
 }
 
 /// A `c"..."` is a global string; a call of an extern function uses

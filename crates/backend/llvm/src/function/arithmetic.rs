@@ -2,6 +2,7 @@
 //! traps of division and shifts, and the panic a failed check jumps to.
 
 use std::fmt::Write;
+use std::path::Path;
 
 use arena::Id;
 use eval::ValueError;
@@ -245,7 +246,9 @@ impl Function<'_, '_, '_> {
         let (line, column) = file.position(span.start as usize);
         let mut text = b"panic: ".to_vec();
         text.extend_from_slice(message);
-        let place = format!("\n  --> {}:{line}:{column}\n", file.path);
+        let path = Path::new(&file.path);
+        let path = path.strip_prefix(&self.module.program.root).unwrap_or(path);
+        let place = format!("\n  --> {}:{line}:{column}\n", path.display());
         text.extend_from_slice(place.as_bytes());
         let string = self.module.add_string(&text);
         self.module.declare(WRITE, || {

@@ -3,9 +3,8 @@
 //! `mode = "check"` checks it; `mode = "mir"` or `"ll"` dumps its MIR or LLVM
 //! text (`peeper -dump mir`) and compares the main module's with the folder's
 //! expected.mir or expected.ll, which `PEEPER_BLESS=1` rewrites; the folder's
-//! path shows as `<fixture>` there, so they read the same in every checkout
-//! (an `ll` fixture must not panic: a panic message's length counts the path);
-//! with `release = true`, the dump is of a release build (`-dump -release`).
+//! path, in debug info and `source_filename`, shows as `<fixture>` there, so
+//! they read the same in every checkout; with `release = true`, the dump is of a release build (`-dump -release`).
 //! `mode = "run"` runs it (`peeper run`) with the `program_args`, once in a
 //! debug build and once with `-release`. `outcome` is "success" (exit code
 //! 0), "failure" (1, or any other code for `run`) or, for `run`,
