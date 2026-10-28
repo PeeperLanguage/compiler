@@ -48,17 +48,19 @@ fn main() {
     let built = Path::new(env!("CARGO_TARGET_TMPDIR")).join("bench");
     let link = std::env::var("PEEPER_BENCH_CLANG").map_or(true, |clang| clang != "0");
     if link {
-        let toolchain =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../build/toolchains/native");
+        let toolchain = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../build/toolchains/native")
+            .canonicalize()
+            .expect("scripts/setup.sh fills build/toolchains/native");
+        _ = std::fs::remove_dir_all(&built); // the link of a run before, not what it names
         std::fs::create_dir_all(built.join("toolchains")).expect("the bench folder is made");
-        _ = std::fs::remove_file(built.join("toolchains/native"));
-        std::os::unix::fs::symlink(
-            toolchain
-                .canonicalize()
-                .expect("scripts/setup.sh fills build/toolchains/native"),
-            built.join("toolchains/native"),
-        )
-        .expect("the toolchain is linked");
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(toolchain, built.join("toolchains/native"));
+        // shortcut: a folder symlink needs admin rights or Developer Mode on
+        // Windows; make a junction instead once std's `junction_point` is stable.
+        #[cfg(windows)]
+        let linked = std::os::windows::fs::symlink_dir(toolchain, built.join("toolchains/native"));
+        linked.expect("the toolchain is linked");
         llvm::runtime::build(&built, target).expect("the runtime builds");
     }
     let mut load = Vec::new();

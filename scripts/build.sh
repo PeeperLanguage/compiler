@@ -7,16 +7,21 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*) exe=.exe ;; # Git Bash on Windows
+    *) exe= ;;
+esac
+
 # Peeper runs only this toolchain, never a clang on the PATH.
-if [ ! -x build/toolchains/native/bin/clang ]; then
+if [ ! -x "build/toolchains/native/bin/clang$exe" ]; then
     echo "no toolchain in build/toolchains/native: run scripts/setup.sh first" >&2
     exit 1
 fi
 
 cargo build --release
 mkdir -p build/bin
-rm -f build/bin/peeper # a running peeper (the language server) keeps the old file
-cp target/release/peeper build/bin/peeper
+rm -f "build/bin/peeper$exe" # a running peeper (the language server) keeps the old file
+cp "target/release/peeper$exe" "build/bin/peeper$exe"
 rm -rf build/libs
 mkdir -p build/libs
 cp -R _builtin_library/. build/libs/

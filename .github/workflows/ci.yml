@@ -23,8 +23,12 @@ jobs:
         runner:
           - ubuntu-24.04
           - macos-15
+          - windows-2025
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash # Git Bash on Windows, for scripts/build.sh
     steps:
       - uses: actions/checkout@v6
       - run: rustup component add rustfmt clippy
@@ -37,7 +41,10 @@ jobs:
         with:
           path: build/toolchains
           key: toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('toolchains/toolchains.lock.json') }}
-      - run: bash scripts/setup.sh
+      - if: runner.os != 'Windows'
+        run: bash scripts/setup.sh
+      - if: runner.os == 'Windows'
+        run: pwsh scripts/setup.ps1
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace

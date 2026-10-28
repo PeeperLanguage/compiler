@@ -28,20 +28,20 @@ fn bundle() -> String {
     let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join("bundle");
     _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("bin")).expect("the bundle folder is made");
-    let compiler = root.join("bin/peeper");
+    let compiler = root.join(format!("bin/peeper{}", std::env::consts::EXE_SUFFIX));
     std::fs::copy(env!("CARGO_BIN_EXE_peeper"), &compiler).expect("the compiler is copied");
-    std::os::unix::fs::symlink(
-        checkout.join("_builtin_library").canonicalize().unwrap(),
-        root.join("libs"),
+    link_folder(
+        &checkout.join("_builtin_library").canonicalize().unwrap(),
+        &root.join("libs"),
     )
     .expect("the libraries are linked");
     let toolchain = checkout.join("build/toolchains/native");
     std::fs::create_dir_all(root.join("toolchains")).expect("the toolchains folder is made");
-    std::os::unix::fs::symlink(
-        toolchain
+    link_folder(
+        &toolchain
             .canonicalize()
             .expect("scripts/setup.sh fills build/toolchains/native"),
-        root.join("toolchains/native"),
+        &root.join("toolchains/native"),
     )
     .expect("the toolchain is linked");
     let host = Machine::host().expect("this machine is a target");
@@ -55,6 +55,17 @@ fn bundle() -> String {
         eprintln!("the i686 runtime is not built: {error}");
     }
     compiler.to_string_lossy().into_owned()
+}
+
+/// Makes `link` a link to the folder `original`.
+fn link_folder(original: &Path, link: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    let linked = std::os::unix::fs::symlink(original, link);
+    // shortcut: a folder symlink needs admin rights or Developer Mode on
+    // Windows; make a junction instead once std's `junction_point` is stable.
+    #[cfg(windows)]
+    let linked = std::os::windows::fs::symlink_dir(original, link);
+    linked
 }
 
 /// Whether this machine runs `i686-linux` programs, the only target a
