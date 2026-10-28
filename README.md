@@ -121,6 +121,7 @@ modify its parent environment.
   newer. Peeper runs only that clang, never one on the PATH.
 - On macOS, Xcode's command line tools (`xcode-select --install`): their SDK
   holds the C library and headers programs are built with.
+- On Windows, Git Bash, which runs `scripts/build.sh`.
 - Git for cloning the compiler and fetching packages.
 
 ## Build from source

@@ -28,16 +28,20 @@ jobs:
     strategy:
       matrix:
         # shortcut: no macOS x86-64 (LLVM publishes no release for it) and
-        # no Windows yet; each comes with its own row once `toolchain pack`
-        # builds it.
+        # no Windows ARM64 yet; each comes with its own row once `toolchain
+        # pack` is checked on it.
         runner:
           - ubuntu-24.04
           - ubuntu-24.04-arm
           - macos-15
+          - windows-2025
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     permissions:
       contents: write
+    defaults:
+      run:
+        shell: bash # Git Bash on Windows
     steps:
       - uses: actions/checkout@v6
         with:
@@ -46,15 +50,6 @@ jobs:
       # The pack's check links an i686 program on x86-64.
       - if: runner.os == 'Linux' && runner.arch == 'X64'
         run: sudo apt-get update && sudo apt-get install -y gcc-multilib
-      # `toolchain pack` uses GNU tar's flags for a pack that is the same
-      # every time, which macOS's own tar lacks, and GNU tar runs `xz` to
-      # unpack the release.
-      - if: runner.os == 'macOS'
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: "1"
-        run: |
-          brew install gnu-tar xz
-          echo "$(brew --prefix gnu-tar)/libexec/gnubin" >> "$GITHUB_PATH"
       - id: pack
         run: echo "id=$(cargo run --release --quiet -p toolchain -- pack "$GITHUB_REPOSITORY" dist)" >> "$GITHUB_OUTPUT"
       - name: Publish the pack
