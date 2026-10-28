@@ -44,7 +44,7 @@ fn main() {
     println!("{MODULES} modules, {FUNCTIONS} functions each, {lines} lines; {runs} runs, {mode:?}");
     let target = Machine::host().expect("this machine is a target");
     // An installation to link in, unless clang is left out: its runtime is
-    // built, and its toolchain is the one scripts/build.sh links.
+    // built, and its toolchain is the one scripts/setup.sh puts in build/.
     let built = Path::new(env!("CARGO_TARGET_TMPDIR")).join("bench");
     let link = std::env::var("PEEPER_BENCH_CLANG").map_or(true, |clang| clang != "0");
     if link {
@@ -55,7 +55,7 @@ fn main() {
         std::os::unix::fs::symlink(
             toolchain
                 .canonicalize()
-                .expect("scripts/build.sh links build/toolchains/native"),
+                .expect("scripts/setup.sh fills build/toolchains/native"),
             built.join("toolchains/native"),
         )
         .expect("the toolchain is linked");

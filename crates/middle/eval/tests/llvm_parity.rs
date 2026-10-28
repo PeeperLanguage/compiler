@@ -6,8 +6,9 @@
 //! on (division by zero, out-of-range shifts) or guards (`MIN / -1`) are left
 //! out; the unit tests in lib.rs cover them.
 //!
-//! Runs the `lli` of build/toolchains/native, which scripts/build.sh links:
-//! `cargo test -p eval -- --ignored`.
+//! Runs the `lli` of build/toolchains/native, which scripts/setup.sh puts
+//! there: `cargo test -p eval -- --ignored`. The CI pack has no `lli` yet
+//! (docs/roadmap.md, M8), so this test cannot run with it.
 
 use std::fmt::Write;
 use std::path::Path;
@@ -359,7 +360,10 @@ define i32 @main() {{
     std::fs::write(&path, program).unwrap();
     let lli =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../build/toolchains/native/bin/lli");
-    let output = Command::new(lli).arg(&path).output().expect("lli runs");
+    let output = Command::new(lli)
+        .arg(&path)
+        .output()
+        .expect("build/toolchains/native has lli (the CI pack does not yet)");
     assert!(
         output.status.success(),
         "lli failed:\n{}",

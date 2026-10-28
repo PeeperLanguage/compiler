@@ -115,9 +115,10 @@ modify its parent environment.
 
 - A Rust toolchain (`cargo`, with `rustfmt` and `clippy`) for the edition in
   [`Cargo.toml`](Cargo.toml).
-- The LLVM 23.1.4 release unpacked in `target/llvm-23/LLVM-23.1.4-Linux-X64`,
-  which `scripts/build.sh` links as `build/toolchains/native`: peeper runs
-  only that clang, never one on the PATH.
+- `curl`, `tar` and `jq` (on Windows, PowerShell), with which
+  `scripts/setup.sh` (`scripts/setup.ps1`) puts the LLVM toolchain in
+  `build/toolchains/native`: the pack CI builds, else an installed LLVM 23 or
+  newer. Peeper runs only that clang, never one on the PATH.
 - Git for cloning the compiler and fetching packages.
 
 ## Build from source
@@ -125,10 +126,12 @@ modify its parent environment.
 ```bash
 git clone https://github.com/PeeperLanguage/compiler.git
 cd compiler
+bash scripts/setup.sh
 bash scripts/build.sh
 build/bin/peeper
 ```
 
+`scripts/setup.sh` puts the toolchain in `build/toolchains/native`, once;
 `scripts/build.sh` builds:
 
 - compiler binary: `build/bin/peeper`

@@ -596,15 +596,15 @@ which `scripts/build.sh` runs)
 and `-lm`; the program is linked beside its output and renamed into place.
 Clang and llvm-ar are the installation's own, in
 `<installation>/toolchains/native/bin` (`llvm::link::tool`), never ones on the
-PATH; `scripts/build.sh` links `build/toolchains/native` to the LLVM 23 release
-unpacked in `target/llvm-23`. `build` names the program after the project or file in the
-current folder; `run` links to a temporary file, runs it and exits with its
-code (a signal gives 128 plus its number). `-target <name>` checks and builds
-for a row of `model::machine::MACHINES`, the host's row otherwise: each row is a
-machine's name, clang triple, pointer bits and the alignment of `i64` and `f64`
-in a struct (4 on `i686-linux`, 8 elsewhere), so a new target is a new row.
-Clang gets `--target=<triple>` only for a target that is not the host, and the
-runtime library of each is in `<installation>/runtime/<name>`;
+PATH; `scripts/setup.sh` puts the CI-built pack, or an installed LLVM 23, in
+`build/toolchains/native`. `build` names the program after the project or file
+in the current folder; `run` links to a temporary file, runs it and exits with
+its code (a signal gives 128 plus its number). `-target <name>` checks and
+builds for a row of `model::machine::MACHINES`, the host's row otherwise: each
+row is a machine's name, clang triple, pointer bits and the alignment of `i64`
+and `f64` in a struct (4 on `i686-linux`, 8 elsewhere), so a new target is a new
+row. Clang gets `--target=<triple>` only for a target that is not the host, and
+the runtime library of each is in `<installation>/runtime/<name>`;
 `scripts/build.sh` builds the host's and `i686-linux`'s, the latter when the
 32-bit C library is installed. Only the Linux rows are run here; a build for
 another system needs that system's C library and linker, which the toolchain

@@ -18,14 +18,20 @@ review.
 Required tools:
 
 - Rust, the edition and toolchain [`Cargo.toml`](Cargo.toml) declares.
-- The LLVM 23.1.4 release unpacked in `target/llvm-23/LLVM-23.1.4-Linux-X64`;
-  `scripts/build.sh` links it as `build/toolchains/native`, the only clang
-  peeper, the runtime fixtures and the ignored LLVM parity test (`lli`) use.
+- `curl`, `tar` and `jq` (on Windows, PowerShell) for `scripts/setup.sh`
+  (`scripts/setup.ps1`), which puts the LLVM toolchain in
+  `build/toolchains/native`: first the pack CI builds for the machine, pinned
+  in `toolchains/toolchains.lock.json`; else an installed LLVM 23 or newer,
+  with clang, ld.lld and llvm-ar side by side, which it offers to install
+  into `~/.peeper-dev` when there is none. It is the only clang peeper and the
+  runtime fixtures use. The ignored LLVM parity test needs its `lli`, which
+  the CI pack does not have yet, so it cannot run with the pack.
 - Git.
 
-Build compiler and bundled library:
+Set up the toolchain once, then build the compiler and bundled library:
 
 ```bash
+bash scripts/setup.sh
 bash scripts/build.sh
 build/bin/peeper check x_test/<fixture>
 ```

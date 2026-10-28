@@ -132,6 +132,12 @@ Exit: one edited file re-checks only what its interface change affects.
   `scripts/build.sh`, then run `cargo test --workspace`, whose fixtures build
   and run the `x_test` programs with clang, on Linux (with the 32-bit C
   library, for `target = "i686-linux"`), macOS and Windows.
+- Toolchain packs built by CI for the Rust compiler, replacing the Go
+  pipeline's: `scripts/setup.sh` and `setup.ps1` download the pack pinned in
+  `toolchains/toolchains.lock.json`, or link an installed LLVM 23. The packs
+  pinned now are the Go pipeline's (LLVM 23.1.3): they have no `lli`, so the
+  ignored `llvm_parity` test cannot run until the new packs add it.
+  An updater keeps the pins current, as on main.
 - Fixture suite (`x_test`) brought back as the language acceptance target.
 
 ## Open decisions

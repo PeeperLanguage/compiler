@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # Builds the compiler from source into build/: build/bin/peeper, with the
-# bundled libraries copied to build/libs, the LLVM 23 toolchain linked as
-# build/toolchains/native and the runtime library built with it into
-# build/runtime, where the compiler looks for them (next to its bin folder).
+# bundled libraries copied to build/libs and the runtime library built into
+# build/runtime with the toolchain scripts/setup.sh puts in
+# build/toolchains/native, where the compiler looks for them (next to its bin
+# folder).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# The unpacked LLVM 23 release peeper uses; it never uses a clang on the PATH.
-llvm="target/llvm-23/LLVM-23.1.4-Linux-X64"
-if [ ! -x "$llvm/bin/clang" ]; then
-    echo "missing $llvm: unpack the LLVM 23.1.4 release from github.com/llvm/llvm-project there" >&2
+# Peeper runs only this toolchain, never a clang on the PATH.
+if [ ! -x build/toolchains/native/bin/clang ]; then
+    echo "no toolchain in build/toolchains/native: run scripts/setup.sh first" >&2
     exit 1
 fi
 
@@ -20,9 +20,6 @@ cp target/release/peeper build/bin/peeper
 rm -rf build/libs
 mkdir -p build/libs
 cp -R _builtin_library/. build/libs/
-
-mkdir -p build/toolchains
-ln -sfn "$PWD/$llvm" build/toolchains/native
 
 rm -rf build/runtime
 cargo run --release --quiet -p llvm --bin build-runtime -- build

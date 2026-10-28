@@ -23,7 +23,7 @@ use model::machine::Machine;
 
 /// Bundles the compiler cargo built as peeper expects to be installed: in
 /// <root>/bin, beside <root>/libs, <root>/runtime and <root>/toolchains/native,
-/// the toolchain scripts/build.sh links into build/. Returns its path.
+/// the toolchain scripts/setup.sh puts in build/. Returns its path.
 fn bundle() -> String {
     let checkout = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join("bundle");
@@ -41,7 +41,7 @@ fn bundle() -> String {
     std::os::unix::fs::symlink(
         toolchain
             .canonicalize()
-            .expect("scripts/build.sh links build/toolchains/native"),
+            .expect("scripts/setup.sh fills build/toolchains/native"),
         root.join("toolchains/native"),
     )
     .expect("the toolchain is linked");
