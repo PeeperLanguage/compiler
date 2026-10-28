@@ -50,8 +50,12 @@ jobs:
       # The pack's check links an i686 program on x86-64.
       - if: runner.os == 'Linux' && runner.arch == 'X64'
         run: sudo apt-get update && sudo apt-get install -y gcc-multilib
+      # On its own line, so a failed pack fails the step (bash -e) instead
+      # of giving an empty id.
       - id: pack
-        run: echo "id=$(cargo run --release --quiet -p toolchain -- pack "$GITHUB_REPOSITORY" dist)" >> "$GITHUB_OUTPUT"
+        run: |
+          id=$(cargo run --release --quiet -p toolchain -- pack "$GITHUB_REPOSITORY" dist)
+          echo "id=$id" >> "$GITHUB_OUTPUT"
       - name: Publish the pack
         env:
           GH_TOKEN: ${{ github.token }}
