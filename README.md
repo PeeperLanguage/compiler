@@ -119,6 +119,8 @@ modify its parent environment.
   `scripts/setup.sh` (`scripts/setup.ps1`) puts the LLVM toolchain in
   `build/toolchains/native`: the pack CI builds, else an installed LLVM 23 or
   newer. Peeper runs only that clang, never one on the PATH.
+- On macOS, Xcode's command line tools (`xcode-select --install`): their SDK
+  holds the C library and headers programs are built with.
 - Git for cloning the compiler and fetching packages.
 
 ## Build from source

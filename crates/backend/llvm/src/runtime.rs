@@ -10,6 +10,7 @@ use model::machine::Machine;
 
 use crate::clang_flag;
 use crate::link::call_tool;
+use crate::link::sdk_flags;
 use crate::link::tool;
 
 // LIBRARY (the archive's file name, which the driver looks for), SOURCES (C
@@ -28,11 +29,13 @@ pub fn build(installation: &Path, target: &Machine) -> Result<PathBuf, String> {
     std::fs::create_dir_all(folder)
         .map_err(|error| format!("cannot make {}: {error}", folder.display()))?;
     _ = std::fs::remove_file(&library); // an archiver adds to an archive that is there
+    let sdk = sdk_flags(target)?;
     let mut objects = Vec::with_capacity(SOURCES.len());
     for source in SOURCES {
         let object = folder.join(Path::new(source).with_extension("o"));
         let mut clang = Command::new(tool(installation, "clang"));
         clang
+            .args(&sdk)
             .args(clang_flag(target))
             .args(FLAGS)
             .arg("-c")

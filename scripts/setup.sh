@@ -4,8 +4,8 @@
 # find it. The first way that works:
 #   1. the pack CI built for this machine, pinned in
 #      toolchains/toolchains.lock.json, downloaded and checked;
-#   2. an installed LLVM 23 or newer, with clang, ld.lld and llvm-ar side by
-#      side, linked in. With none, it offers to install the LLVM release
+#   2. an installed LLVM 23 or newer, with clang, its linker (ld.lld; ld64.lld
+#      on macOS) and llvm-ar side by side, linked in. With none, it offers to install the LLVM release
 #      pinned in toolchains/toolchain-sources.lock.json into ~/.peeper-dev.
 # On Windows, run scripts/setup.ps1.
 set -euo pipefail
@@ -25,6 +25,9 @@ case "$(uname -m)" in
     aarch64 | arm64) arch=arm64 ;;
     *) echo "unsupported machine $(uname -m)" >&2; exit 1 ;;
 esac
+# The name clang's `-fuse-ld=lld` runs on this system.
+linker=ld.lld
+[ "$os" = darwin ] && linker=ld64.lld
 
 sha256() {
     if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | awk '{print $1}'
@@ -73,7 +76,7 @@ use_pack() {
 }
 
 # Way 2: prints the folder of an installed LLVM $minimum or newer, the one
-# whose bin holds clang, ld.lld and llvm-ar. ccache's clang is skipped.
+# whose bin holds clang, $linker and llvm-ar. ccache's clang is skipped.
 installed_llvm() {
     local clang bin version
     for clang in $(type -ap clang) "$HOME"/.peeper-dev/llvm-*/bin/clang; do
@@ -81,7 +84,7 @@ installed_llvm() {
         clang=$(realpath "$clang")
         bin=$(dirname "$clang")
         [ "$(basename "$clang")" != ccache ] || continue
-        [ -x "$bin/ld.lld" ] && [ -x "$bin/llvm-ar" ] || continue
+        [ -x "$bin/$linker" ] && [ -x "$bin/llvm-ar" ] || continue
         version=$("$clang" -dumpversion) || continue
         [ "${version%%.*}" -ge "$minimum" ] || continue
         dirname "$bin"
@@ -130,5 +133,5 @@ if llvm=$(installed_llvm) || { install_llvm && llvm=$(installed_llvm); }; then
     echo "build/toolchains/native links $llvm"
     exit 0
 fi
-echo "no toolchain: install LLVM $minimum or newer with clang, ld.lld and llvm-ar, then run this again" >&2
+echo "no toolchain: install LLVM $minimum or newer with clang, $linker and llvm-ar, then run this again" >&2
 exit 1

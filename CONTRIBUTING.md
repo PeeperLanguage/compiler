@@ -22,10 +22,13 @@ Required tools:
   (`scripts/setup.ps1`), which puts the LLVM toolchain in
   `build/toolchains/native`: first the pack CI builds for the machine, pinned
   in `toolchains/toolchains.lock.json`; else an installed LLVM 23 or newer,
-  with clang, ld.lld and llvm-ar side by side, which it offers to install
-  into `~/.peeper-dev` when there is none. It is the only clang peeper and the
-  runtime fixtures use. The CI pack also has `lli`, which the ignored LLVM
-  parity test runs; an installed LLVM needs it too for that test.
+  with clang, its linker (ld.lld; ld64.lld on macOS) and llvm-ar side by
+  side, which it offers to install into `~/.peeper-dev` when there is none.
+  It is the only clang peeper and the runtime fixtures use. The CI pack also
+  has `lli`, which the ignored LLVM parity test runs; an installed LLVM needs
+  it too for that test.
+- On macOS, Xcode's command line tools (`xcode-select --install`): their SDK
+  holds the C library and headers programs are built with.
 - Git.
 
 Set up the toolchain once, then build the compiler and bundled library:
