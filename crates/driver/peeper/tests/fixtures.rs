@@ -24,7 +24,7 @@ use model::machine::Machine;
 /// Bundles the compiler cargo built as peeper expects to be installed: in
 /// <root>/bin, beside <root>/libs and <root>/runtime. Returns its path.
 fn bundle() -> String {
-    let checkout = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let checkout = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join("bundle");
     _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("bin")).expect("the bundle folder is made");
@@ -56,7 +56,7 @@ fn runs_i686() -> bool {
 
 #[test]
 fn fixtures() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../x_test");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../x_test");
     let compiler = std::env::var("PEEPER").unwrap_or_else(|_| bundle());
     let mut folders: Vec<_> = std::fs::read_dir(&root)
         .expect("x_test exists")

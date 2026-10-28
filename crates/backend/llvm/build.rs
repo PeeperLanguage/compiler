@@ -6,7 +6,7 @@ use std::fmt::Write;
 use std::path::Path;
 
 fn main() {
-    let runtime = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime");
+    let runtime = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../runtime");
     let file = runtime.join("runtime.toml");
     println!("cargo:rerun-if-changed={}", file.display());
     let text = std::fs::read_to_string(&file)

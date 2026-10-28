@@ -23,7 +23,7 @@ include!(concat!(env!("OUT_DIR"), "/runtime.rs"));
 pub fn build(runtime: &Path, target: &Machine) -> Result<PathBuf, String> {
     let library = library(target, runtime);
     let folder = library.parent().expect("a library is in a folder");
-    let sources = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime");
+    let sources = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../runtime");
     std::fs::create_dir_all(folder)
         .map_err(|error| format!("cannot make {}: {error}", folder.display()))?;
     _ = std::fs::remove_file(&library); // an archiver adds to an archive that is there

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Counts the user-space instructions of one compile in the compile benchmark
-(crates/peeper/benches/compile.rs), all threads included. Unlike time, the
-count barely moves with machine load, so two versions compare to a fraction
+(crates/driver/peeper/benches/compile.rs), all threads included. Unlike time,
+the count barely moves with machine load, so two versions compare to a fraction
 of a percent. The benchmark runs once with one compile and once with two; the
 difference is one compile, without the setup around it. Linux only, like
 `perf stat`, whose way of counting it follows.

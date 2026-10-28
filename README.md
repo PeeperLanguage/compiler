@@ -37,11 +37,12 @@ details against the source when extending it.
 
 ### How the per-function callback works
 
-The CLI and language server call [`compile::run`](crates/compile/src/lib.rs)
-with a closure named `use_function`. It checks and lowers one
-function, calls that closure with borrowed results, then drops the function's
-THIR and MIR. The callback runs synchronously inside `compile`; it is not a
-separate thread or a task queued for later.
+The CLI and language server call
+[`compile::run`](crates/driver/compile/src/lib.rs) with a closure named
+`use_function`. It checks and lowers one function, calls that closure with
+borrowed results, then drops the function's THIR and MIR. The callback runs
+synchronously inside `compile`; it is not a separate thread or a task queued for
+later.
 
 ```mermaid
 sequenceDiagram
@@ -74,11 +75,11 @@ sequenceDiagram
 ```
 
 The callback can update state captured from its caller. The
-[`CLI closure`](crates/peeper/src/driver.rs) keeps generated text; the
-[`LSP closure`](crates/lsp/src/checked.rs) keeps name locations and display text.
-Neither needs to retain every function's IR. Types remain owned by the
-compile for its whole duration; a callback must copy any information
-it needs afterward into its own storage.
+[`CLI closure`](crates/driver/peeper/src/driver.rs) keeps generated text; the
+[`LSP closure`](crates/driver/lsp/src/checked.rs) keeps name locations and
+display text. Neither needs to retain every function's IR. Types remain owned
+by the compile for its whole duration; a callback must copy any information it
+needs afterward into its own storage.
 
 This is a per-function handoff, not a whole-program success notification.
 Broken bodies can still provide THIR and names for editor recovery, with no

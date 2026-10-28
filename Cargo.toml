@@ -1,19 +1,10 @@
 [workspace]
 members = [
-    "crates/source",
-    "crates/diagnostics",
+    "crates/base/*",
     "crates/frontend/*",
-    "crates/pkg/*",
-    "crates/model",
-    "crates/eval",
-    "crates/check",
-    "crates/lower",
-    "crates/flow",
-    "crates/llvm",
-    "crates/compile",
-    "crates/project",
-    "crates/lsp",
-    "crates/peeper",
+    "crates/middle/*",
+    "crates/backend/*",
+    "crates/driver/*",
 ]
 resolver = "3"
 
@@ -24,23 +15,23 @@ license-file = "LICENSE"
 publish = false
 
 [workspace.dependencies]
-source = { path = "crates/source" }
-diagnostics = { path = "crates/diagnostics" }
+source = { path = "crates/base/source" }
+diagnostics = { path = "crates/base/diagnostics" }
 token = { path = "crates/frontend/token" }
 lexer = { path = "crates/frontend/lexer" }
-arena = { path = "crates/pkg/arena" }
-bigint = { path = "crates/pkg/bigint" }
+arena = { path = "crates/base/arena" }
+bigint = { path = "crates/base/bigint" }
 parser = { path = "crates/frontend/parser" }
-literal = { path = "crates/pkg/literal" }
-model = { path = "crates/model" }
-eval = { path = "crates/eval" }
-check = { path = "crates/check" }
-lower = { path = "crates/lower" }
-flow = { path = "crates/flow" }
-llvm = { path = "crates/llvm" }
-compile = { path = "crates/compile" }
-project = { path = "crates/project" }
-lsp = { path = "crates/lsp" }
+literal = { path = "crates/base/literal" }
+model = { path = "crates/middle/model" }
+eval = { path = "crates/middle/eval" }
+check = { path = "crates/middle/check" }
+lower = { path = "crates/middle/lower" }
+flow = { path = "crates/middle/flow" }
+llvm = { path = "crates/backend/llvm" }
+compile = { path = "crates/driver/compile" }
+project = { path = "crates/frontend/project" }
+lsp = { path = "crates/driver/lsp" }
 unicode-general-category = "1.1.0"
 stacker = "0.1.25"
 lsp-server = "0.7.9"

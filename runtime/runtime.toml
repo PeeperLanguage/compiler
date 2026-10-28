@@ -1,8 +1,8 @@
 # How the runtime library that every program links with is built. Only the
-# compiler's own build reads this file (crates/llvm/build.rs): its values are
-# fixed into the compiler, which builds the library with them and finds it by
-# `library` in <installation>/runtime/<target>. Changing it means rebuilding
-# peeper.
+# compiler's own build reads this file (crates/backend/llvm/build.rs): its
+# values are fixed into the compiler, which builds the library with them and
+# finds it by `library` in <installation>/runtime/<target>. Changing it means
+# rebuilding peeper.
 
 # The archive's file name.
 library = "libpeeper_rt_v1.a"

@@ -184,8 +184,8 @@ computed differed (issues #154, #155, PR #158). The rules that prevent them:
    width; the Go guard wrote the width as a constant of the count's type, so a
    `u2` count compared against 8 cut to 0.
 5. **Constants are written from the same bits** (`iN u0x...`), and
-   `crates/eval/tests/llvm_parity.rs` runs every operator on widths 1 to 1000 in
-   `lli` and in `model` and requires equal bits.
+   `crates/middle/eval/tests/llvm_parity.rs` runs every operator on widths 1
+   to 1000 in `lli` and in `model` and requires equal bits.
 
 Floats (`f32`, `f64`) follow the same idea:
 
@@ -550,8 +550,8 @@ folders with `mode = "mir"` and an `expected.mir` file, as in rustc's
 
 ## LLVM
 
-`crates/llvm` writes one module's LLVM text from its functions' MIR, one walk
-per function (`peeper -dump ll` shows it):
+`crates/backend/llvm` writes one module's LLVM text from its functions' MIR,
+one walk per function (`peeper -dump ll` shows it):
 
 - Each variable is an `alloca` in an `entry` block, with `llvm.dbg.declare`;
   each instruction gets a `!dbg` line from its span; each function a
@@ -647,7 +647,7 @@ managed toolchains and sysroots for cross builds, linker response files,
   even; a float becomes an integer cut toward zero, saturated at the ends
   of its range, NaN as 0 (Rust's rule, as LLVM's plain `fptosi` gives
   poison there). Folding and LLVM agree for every width
-  (`crates/eval/tests/llvm_parity.rs`): `llvm` writes LLVM's own
+  (`crates/middle/eval/tests/llvm_parity.rs`): `llvm` writes LLVM's own
   `sitofp`/`uitofp` and `llvm.fpto{s,u}i.sat`, which need LLVM 23 or newer
   above 128 bits (LLVM 22 crashes on the one and gives a wrong finite float
   for the other, llvm/llvm-project#189054), so the bundled toolchain is LLVM
