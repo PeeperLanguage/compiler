@@ -6,4 +6,4 @@ mode = "run"
 outcome = "exit_code"
 exit_code = 101
 stdout_contains = ["before\n"]
-stderr_contains = ["panic: division by zero\n", "src/main.peep:2:12\n"]
+stderr_contains = ["panic: division by zero\n", "  --> src/main.peep:2:12\n"]

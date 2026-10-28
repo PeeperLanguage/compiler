@@ -159,6 +159,10 @@ pub struct Program {
     /// reports of it. A syntax error the parser read past, such as a missing
     /// `;` at a line end, leaves no hole.
     pub checkable: bool,
+    /// The project folder the program was loaded from (`Project::root`),
+    /// which panic messages name its files from, so a program is the same
+    /// wherever its project is.
+    pub root: PathBuf,
 }
 
 impl Program {
@@ -437,6 +441,7 @@ pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + S
         modules,
         diagnostics,
         checkable,
+        root: project.root.clone(),
     }
 }
 

@@ -2,8 +2,8 @@ source_filename = "<fixture>/src/main.peep"
 
 %slice = type { ptr, i64 }
 
-@.str.0 = private unnamed_addr constant [117 x i8] c"panic: index out of bounds of the slice\0A  --> <fixture>/src/main.peep:5:12\0A\00"
-@.str.1 = private unnamed_addr constant [116 x i8] c"panic: index out of bounds of the slice\0A  --> <fixture>/src/main.peep:9:5\0A\00"
+@.str.0 = private unnamed_addr constant [66 x i8] c"panic: index out of bounds of the slice\0A  --> src/main.peep:5:12\0A\00"
+@.str.1 = private unnamed_addr constant [65 x i8] c"panic: index out of bounds of the slice\0A  --> src/main.peep:9:5\0A\00"
 
 define i32 @"ll_slices:main.get"(%slice %arg0, i64 %arg1) !dbg !11 {
 entry:
@@ -33,7 +33,7 @@ bb0.1:
 bb1:
   unreachable
 bb0.1.panic:
-  call i32 @"peeper_rt_v1_write"(i32 2, ptr @.str.0, i32 116), !dbg !17
+  call i32 @"peeper_rt_v1_write"(i32 2, ptr @.str.0, i32 65), !dbg !17
   call void @"peeper_rt_v1_exit"(i32 101), !dbg !17
   unreachable
 }
@@ -56,7 +56,7 @@ bb0.1:
   store i32 1, ptr %i1.f, !dbg !30
   ret void, !dbg !31
 bb0.1.panic:
-  call i32 @"peeper_rt_v1_write"(i32 2, ptr @.str.1, i32 115), !dbg !30
+  call i32 @"peeper_rt_v1_write"(i32 2, ptr @.str.1, i32 64), !dbg !30
   call void @"peeper_rt_v1_exit"(i32 101), !dbg !30
   unreachable
 }

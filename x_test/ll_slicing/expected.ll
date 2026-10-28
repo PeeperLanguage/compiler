@@ -2,11 +2,11 @@ source_filename = "<fixture>/src/main.peep"
 
 %slice = type { ptr, i64 }
 
-@.str.0 = private unnamed_addr constant [118 x i8] c"panic: index out of bounds of the slice\0A  --> <fixture>/src/main.peep:7:12\0A\00"
-@.str.1 = private unnamed_addr constant [123 x i8] c"panic: array literal needs exactly 4 values\0A  --> <fixture>/src/main.peep:11:12\0A\00"
-@.str.2 = private unnamed_addr constant [106 x i8] c"panic: slice out of bounds\0A  --> <fixture>/src/main.peep:18:32\0A\00"
-@.str.3 = private unnamed_addr constant [113 x i8] c"panic: slice starts after it ends\0A  --> <fixture>/src/main.peep:18:24\0A\00"
-@.str.4 = private unnamed_addr constant [106 x i8] c"panic: slice out of bounds\0A  --> <fixture>/src/main.peep:19:36\0A\00"
+@.str.0 = private unnamed_addr constant [66 x i8] c"panic: index out of bounds of the slice\0A  --> src/main.peep:7:12\0A\00"
+@.str.1 = private unnamed_addr constant [71 x i8] c"panic: array literal needs exactly 4 values\0A  --> src/main.peep:11:12\0A\00"
+@.str.2 = private unnamed_addr constant [54 x i8] c"panic: slice out of bounds\0A  --> src/main.peep:18:32\0A\00"
+@.str.3 = private unnamed_addr constant [61 x i8] c"panic: slice starts after it ends\0A  --> src/main.peep:18:24\0A\00"
+@.str.4 = private unnamed_addr constant [54 x i8] c"panic: slice out of bounds\0A  --> src/main.peep:19:36\0A\00"
 
 define i32 @"ll_slicing:main.total"(%slice %arg0) !dbg !10 {
 entry:
@@ -32,7 +32,7 @@ bb0.1:
 bb1:
   unreachable
 bb0.1.panic:
-  call i32 @"peeper_rt_v1_write"(i32 2, ptr @.str.0, i32 117), !dbg !13
+  call i32 @"peeper_rt_v1_write"(i32 2, ptr @.str.0, i32 65), !dbg !13
   call void @"peeper_rt_v1_exit"(i32 101), !dbg !13
   unreachable
 }
@@ -64,7 +64,7 @@ bb0.1:
 bb1:
   unreachable
 bb0.1.panic:
-  call i32 @"peeper_rt_v1_write"(i32 2, ptr @.str.1, i32 122), !dbg !31
+  call i32 @"peeper_rt_v1_write"(i32 2, ptr @.str.1, i32 70), !dbg !31
   call void @"peeper_rt_v1_exit"(i32 101), !dbg !31
   unreachable
 }
@@ -119,15 +119,15 @@ bb0.3:
   store i32 %i19, ptr %v4, !dbg !60
   ret void, !dbg !61
 bb0.1.panic:
-  call i32 @"peeper_rt_v1_write"(i32 2, ptr @.str.2, i32 105), !dbg !53
+  call i32 @"peeper_rt_v1_write"(i32 2, ptr @.str.2, i32 53), !dbg !53
   call void @"peeper_rt_v1_exit"(i32 101), !dbg !53
   unreachable
 bb0.2.panic:
-  call i32 @"peeper_rt_v1_write"(i32 2, ptr @.str.3, i32 112), !dbg !54
+  call i32 @"peeper_rt_v1_write"(i32 2, ptr @.str.3, i32 60), !dbg !54
   call void @"peeper_rt_v1_exit"(i32 101), !dbg !54
   unreachable
 bb0.3.panic:
-  call i32 @"peeper_rt_v1_write"(i32 2, ptr @.str.4, i32 105), !dbg !57
+  call i32 @"peeper_rt_v1_write"(i32 2, ptr @.str.4, i32 53), !dbg !57
   call void @"peeper_rt_v1_exit"(i32 101), !dbg !57
   unreachable
 }
