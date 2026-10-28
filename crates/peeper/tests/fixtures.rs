@@ -19,6 +19,8 @@
 use std::path::Path;
 use std::process::Command;
 
+use model::machine::Machine;
+
 /// Bundles the compiler cargo built as peeper expects to be installed: in
 /// <root>/bin, beside <root>/libs and <root>/runtime. Returns its path.
 fn bundle() -> String {
@@ -33,11 +35,11 @@ fn bundle() -> String {
         root.join("libs"),
     )
     .expect("the libraries are linked");
-    let host = llvm::Target::host().expect("this machine is a target");
+    let host = Machine::host().expect("this machine is a target");
     llvm::runtime::build(&root.join("runtime"), host).expect("the runtime builds");
     // Without the 32-bit C library the `target = "i686-linux"` fixtures fail,
     // their runtime missing.
-    let i686 = llvm::Target::named("i686-linux").expect("i686-linux is a target");
+    let i686 = Machine::named("i686-linux").expect("i686-linux is a target");
     if runs_i686()
         && let Err(error) = llvm::runtime::build(&root.join("runtime"), i686)
     {
@@ -49,7 +51,7 @@ fn bundle() -> String {
 /// Whether this machine runs `i686-linux` programs, the only target a
 /// fixture names: an x86-64 Linux does, with its 32-bit C library.
 fn runs_i686() -> bool {
-    llvm::Target::host() == llvm::Target::named("x86_64-linux")
+    Machine::host() == Machine::named("x86_64-linux")
 }
 
 #[test]

@@ -4,13 +4,14 @@ use std::path::PathBuf;
 use bigint::Limbs;
 use model::constant::Constant;
 use model::constant::Value;
+use model::machine::Machine;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 
 /// The LLVM text of the module `app:main` holding `text`, for the
 /// target named `target`, with a prelude declaring the runtime's `Exit`.
 fn ll(text: &str, target: &str) -> String {
-    let target = super::Target::named(target).unwrap();
+    let target = Machine::named(target).unwrap();
     let folder = PathBuf::from("/peeper-llvm-test");
     let prelude = "#[extern(\"peeper_rt_v1_exit\")]\nfn Exit(code: i32);\n";
     let project = project::Project {
@@ -215,11 +216,8 @@ fn struct_layout_matches_llvm() {
         integer("i200"),
     );
     let layout = |fields: &[TypeId]| {
-        let (offsets, size, _) = crate::layout::struct_layout(
-            &types,
-            fields,
-            super::Target::named("x86_64-linux").unwrap(),
-        );
+        let (offsets, size, _) =
+            crate::layout::struct_layout(&types, fields, Machine::named("x86_64-linux").unwrap());
         (offsets, size)
     };
     assert_eq!(layout(&[TypeId::I32, TypeId::I64]), (vec![0, 8], 16));
@@ -236,11 +234,8 @@ fn struct_layout_matches_llvm() {
     );
     assert_eq!(layout(&[]), (vec![], 0));
     let i686 = |fields: &[TypeId]| {
-        let (offsets, size, _) = crate::layout::struct_layout(
-            &types,
-            fields,
-            super::Target::named("i686-linux").unwrap(),
-        );
+        let (offsets, size, _) =
+            crate::layout::struct_layout(&types, fields, Machine::named("i686-linux").unwrap());
         (offsets, size)
     };
     assert_eq!(i686(&[TypeId::I32, TypeId::I64]), (vec![0, 4], 12));

@@ -12,8 +12,8 @@ use diagnostics::Diagnostic;
 use diagnostics::fix;
 use diagnostics::printer;
 use llvm::BuildMode;
-use llvm::Target;
 use model::DefId;
+use model::machine::Machine;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
@@ -51,11 +51,11 @@ pub enum Goal {
 /// is built for, the installation it uses and where it prints. What it does
 /// there is a `Goal`.
 pub struct Command<W: Write> {
-    pub path: PathBuf,           // the project folder or file
-    pub target: &'static Target, // what it is checked and built for (`-target`)
-    pub installation: PathBuf,   // the bundled libraries and runtime (`installation_dir`)
-    pub out: W,                  // where diagnostics and messages are printed
-    pub colored: bool,           // whether diagnostics are printed in color
+    pub path: PathBuf,            // the project folder or file
+    pub target: &'static Machine, // what it is checked and built for (`-target`)
+    pub installation: PathBuf,    // the bundled libraries and runtime (`installation_dir`)
+    pub out: W,                   // where diagnostics and messages are printed
+    pub colored: bool,            // whether diagnostics are printed in color
 }
 
 impl<W: Write> Command<W> {
@@ -207,9 +207,7 @@ impl<W: Write> Command<W> {
     /// of the command's target into the program `output`; gives whether it
     /// did, a failure reported.
     fn link(&mut self, ll: &[llvm::Module], mode: BuildMode, output: &Path) -> bool {
-        let runtime = self
-            .target
-            .runtime_library(&self.installation.join("runtime"));
+        let runtime = llvm::runtime::library(self.target, &self.installation.join("runtime"));
         if let Err(error) = llvm::link::link_executable(ll, mode, self.target, &runtime, output) {
             _ = writeln!(self.out, "peeper: {error}");
             return false;
@@ -228,7 +226,7 @@ fn compile<'p>(
     program: &'p project::Program,
     dumps: &'p [Dump],
     mode: BuildMode,
-    target: &'static Target,
+    target: &'static Machine,
     links: bool,
 ) -> (Vec<Diagnostic>, Vec<llvm::Module<'p>>, Dumps<'p>) {
     let mut all: Vec<Diagnostic> = program.diagnostics.clone();

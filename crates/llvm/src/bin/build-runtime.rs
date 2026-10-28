@@ -7,7 +7,7 @@
 use std::path::Path;
 use std::process::ExitCode;
 
-use llvm::Target;
+use model::machine::Machine;
 
 fn main() -> ExitCode {
     let mut args = std::env::args_os().skip(1);
@@ -17,8 +17,8 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     };
     let target = match args.next() {
-        None => Target::host(),
-        Some(name) => Target::named(&name.to_string_lossy()),
+        None => Machine::host(),
+        Some(name) => Machine::named(&name.to_string_lossy()),
     };
     let target = match target {
         Ok(target) => target,

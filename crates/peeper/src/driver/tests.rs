@@ -1,11 +1,10 @@
 use std::path::Path;
 use std::path::PathBuf;
 
-use llvm::BuildMode;
-use llvm::Target;
-
 use super::Command;
 use super::Goal;
+use llvm::BuildMode;
+use model::machine::Machine;
 
 fn temp_dir(test: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!("peeper-check-{}-{test}", std::process::id()));
@@ -27,7 +26,7 @@ fn write(root: &Path, files: &[(&str, &[u8])]) {
 fn checked(path: &Path, installation: &Path) -> (u8, String) {
     let mut command = Command {
         path: path.to_path_buf(),
-        target: Target::host().unwrap(),
+        target: Machine::host().unwrap(),
         installation: installation.to_path_buf(),
         out: Vec::new(),
         colored: false,
@@ -51,7 +50,7 @@ fn fixes_a_file() {
     let file = root.join("app.peep");
     let mut command = Command {
         path: file.clone(),
-        target: Target::host().unwrap(),
+        target: Machine::host().unwrap(),
         installation: PathBuf::new(),
         out: Vec::new(),
         colored: false,
@@ -184,7 +183,7 @@ fn needs_an_entry_point() {
         let path = root.join(file);
         let mut command = Command {
             path: path.clone(),
-            target: Target::host().unwrap(),
+            target: Machine::host().unwrap(),
             installation: PathBuf::new(),
             out: Vec::new(),
             colored: false,

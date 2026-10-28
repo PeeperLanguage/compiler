@@ -9,12 +9,12 @@ use std::sync::mpsc;
 
 use model::DefId;
 use model::ModuleId;
+use model::machine::Machine;
 use model::mir;
 use model::semantic_types::Types;
 
 use crate::BuildMode;
 use crate::Module;
-use crate::Target;
 
 /// One module's functions, each with its MIR, and the types they name. A
 /// batch sent to a worker has a function, so its first gives the module.
@@ -69,7 +69,7 @@ impl FunctionQueue {
 /// queue; up to one worker per core writes the modules meanwhile.
 pub fn write_modules<'p, T>(
     program: &'p project::Program,
-    target: &'static Target,
+    target: &'static Machine,
     mode: BuildMode,
     compile: impl FnOnce(&mut FunctionQueue) -> T,
 ) -> (Vec<Module<'p>>, T) {

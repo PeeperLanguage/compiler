@@ -345,7 +345,6 @@ dependencies = [
  "compile",
  "diagnostics",
  "lexer",
- "llvm",
  "lsp-server",
  "lsp-types",
  "model",

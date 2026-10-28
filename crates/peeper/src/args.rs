@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 use llvm::BuildMode;
-use llvm::Target;
+use model::machine::Machine;
 
 use crate::driver::Goal;
 use crate::dump::Dump;
@@ -43,7 +43,7 @@ pub enum Args {
     Program {
         path: PathBuf,
         goal: Goal,
-        target: &'static Target,
+        target: &'static Machine,
     },
     Init {
         name: Option<String>, // asked for when not given
@@ -74,7 +74,7 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
             },
             "-target" if target.is_some() => return Err("-target is given twice".to_string()),
             "-target" => match args.next_if(|value| !value.starts_with('-')) {
-                Some(name) => target = Some(Target::named(name)?),
+                Some(name) => target = Some(Machine::named(name)?),
                 None => return Err("-target needs a target's name after it".to_string()),
             },
             "-release" if release => return Err("-release is given twice".to_string()),
@@ -106,7 +106,7 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
     ];
     let target = match target {
         Some(target) => target,
-        None => Target::host()?,
+        None => Machine::host()?,
     };
     let path = |value: Option<&str>| PathBuf::from(value.unwrap_or("."));
     let check = |values: &[&str], apply_fixes: bool| -> Result<Args, String> {

@@ -16,6 +16,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
 
+use model::machine::Machine;
+
 const MODULES: usize = 10;
 const FUNCTIONS: usize = 2000; // in each module
 
@@ -40,7 +42,7 @@ fn main() {
     let files = files(&folder);
     let lines: usize = files.values().map(|text| text.lines().count()).sum();
     println!("{MODULES} modules, {FUNCTIONS} functions each, {lines} lines; {runs} runs, {mode:?}");
-    let target = llvm::Target::host().expect("this machine is a target");
+    let target = Machine::host().expect("this machine is a target");
     // The runtime library the program links with, unless clang is left out.
     let built = Path::new(env!("CARGO_TARGET_TMPDIR")).join("bench");
     let runtime = (std::env::var("PEEPER_BENCH_CLANG").map_or(true, |clang| clang != "0"))

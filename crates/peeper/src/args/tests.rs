@@ -1,8 +1,8 @@
-use llvm::BuildMode;
-use llvm::Target;
-
 use super::Args;
 use super::parse;
+use llvm::BuildMode;
+use model::machine::Machine;
+
 use crate::driver::Goal;
 
 /// The path and dump extensions `args` ask for, with "fix" added for
@@ -135,7 +135,7 @@ fn targets() {
             _ => panic!("{args:?} names a program"),
         }
     };
-    let i686 = Target::named("i686-linux").unwrap();
+    let i686 = Machine::named("i686-linux").unwrap();
     assert_eq!(target(&["check", "-target", "i686-linux"]), i686);
     assert_eq!(
         target(&["-dump", "ll", "-target", "i686-linux", "app"]),
@@ -146,7 +146,7 @@ fn targets() {
         i686
     );
     assert_eq!(target(&["run", "app", "-target", "i686-linux", "x"]), i686);
-    assert_eq!(Ok(target(&["run", "app"])), Target::host());
+    assert_eq!(Ok(target(&["run", "app"])), Machine::host());
 }
 
 /// Flags come anywhere; the words left are the command and its value.
@@ -202,7 +202,7 @@ fn errors() {
         parse(&args).err()
     };
     // It lists every target, so a new one changes it.
-    let unknown = Target::named("arm").unwrap_err();
+    let unknown = Machine::named("arm").unwrap_err();
     assert!(unknown.starts_with("unknown target `arm`; the targets are x86_64-linux, "));
     for (args, wanted) in [
         (&[][..], "no command given"),

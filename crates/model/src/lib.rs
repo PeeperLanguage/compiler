@@ -6,6 +6,7 @@
 
 pub mod ast;
 pub mod constant;
+pub mod machine;
 pub mod mir;
 pub mod operators;
 pub mod semantic_types;

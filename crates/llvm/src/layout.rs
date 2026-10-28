@@ -1,13 +1,12 @@
 //! How values are laid out in memory, as LLVM lays them out for the target:
 //! each type's size and alignment, and which values are kept in memory.
 
+use model::machine::Machine;
 use model::semantic_types::Float;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use model::semantic_types::range_fields;
-
-use crate::Target;
 
 /// Whether a value of type `ty` is kept in memory, its LLVM value the
 /// address there: a struct, an array or a range. LLVM splits a value of such a type
@@ -25,7 +24,7 @@ pub(crate) fn in_memory(types: &Types, ty: TypeId) -> bool {
 /// ones as 128; its size is rounded up to that. Debug info places each field
 /// with it, and a copy of a value kept in memory (`in_memory`) copies its
 /// size, so it must match LLVM's.
-pub(crate) fn layout(types: &Types, ty: TypeId, target: &Target) -> (u64, u64) {
+pub(crate) fn layout(types: &Types, ty: TypeId, target: &Machine) -> (u64, u64) {
     match types[ty] {
         Type::Bool => (1, 1),
         Type::Integer(integer) => {
@@ -76,7 +75,7 @@ pub(crate) fn layout(types: &Types, ty: TypeId, target: &Target) -> (u64, u64) {
 pub(crate) fn struct_layout(
     types: &Types,
     fields: &[TypeId],
-    target: &Target,
+    target: &Machine,
 ) -> (Vec<u64>, u64, u64) {
     let (mut offsets, mut end, mut align) = (Vec::with_capacity(fields.len()), 0u64, 1);
     for &field in fields {

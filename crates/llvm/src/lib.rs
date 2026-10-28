@@ -19,6 +19,7 @@ use std::path::Path;
 
 use model::DefId;
 use model::ModuleId;
+use model::machine::Machine;
 use model::semantic_types::TypeId;
 use source::SourceFile;
 
@@ -34,127 +35,10 @@ pub enum BuildMode {
     Release,
 }
 
-/// A machine a program is built for: one row of `TARGETS`.
-#[derive(PartialEq, Eq, Debug)]
-pub struct Target {
-    /// Its name for `-target` and its runtime's folder.
-    name: &'static str,
-    /// Its architecture and system as `std::env::consts` spells them, which
-    /// find the host's row; `os` also picks the executables' suffix and
-    /// whether the math library is linked.
-    arch: &'static str,
-    os: &'static str,
-    /// What clang's `--target` names it.
-    triple: &'static str,
-    /// How many bits its pointers, and so `usize`, have.
-    pub pointer_bits: u32,
-    /// The bytes an `i64`, an `f64` or another 33- to 64-bit integer aligns
-    /// to in a struct.
-    i64_align: u64,
-}
-
-/// Every machine a program can be built for. A new one is a row here, and
-/// its runtime built with `build-runtime <folder> <name>`.
-const TARGETS: [Target; 7] = [
-    Target {
-        name: "x86_64-linux",
-        arch: "x86_64",
-        os: "linux",
-        triple: "x86_64-linux-gnu",
-        pointer_bits: 64,
-        i64_align: 8,
-    },
-    Target {
-        name: "aarch64-linux",
-        arch: "aarch64",
-        os: "linux",
-        triple: "aarch64-linux-gnu",
-        pointer_bits: 64,
-        i64_align: 8,
-    },
-    // A 64-bit x86 Linux runs it with its 32-bit C library.
-    Target {
-        name: "i686-linux",
-        arch: "x86",
-        os: "linux",
-        triple: "i686-linux-gnu",
-        pointer_bits: 32,
-        i64_align: 4,
-    },
-    Target {
-        name: "x86_64-macos",
-        arch: "x86_64",
-        os: "macos",
-        triple: "x86_64-apple-macos",
-        pointer_bits: 64,
-        i64_align: 8,
-    },
-    Target {
-        name: "aarch64-macos",
-        arch: "aarch64",
-        os: "macos",
-        triple: "arm64-apple-macos",
-        pointer_bits: 64,
-        i64_align: 8,
-    },
-    Target {
-        name: "x86_64-windows",
-        arch: "x86_64",
-        os: "windows",
-        triple: "x86_64-w64-windows-gnu",
-        pointer_bits: 64,
-        i64_align: 8,
-    },
-    Target {
-        name: "aarch64-windows",
-        arch: "aarch64",
-        os: "windows",
-        triple: "aarch64-w64-windows-gnu",
-        pointer_bits: 64,
-        i64_align: 8,
-    },
-];
-
-impl Target {
-    /// The machine the compiler runs on, or the error saying it has no row.
-    pub fn host() -> Result<&'static Target, String> {
-        let (arch, os) = (std::env::consts::ARCH, std::env::consts::OS);
-        TARGETS
-            .iter()
-            .find(|target| target.arch == arch && target.os == os)
-            .ok_or_else(|| format!("peeper has no target for this machine, {arch}-{os}"))
-    }
-
-    /// The target named `name`, or the error naming them all.
-    pub fn named(name: &str) -> Result<&'static Target, String> {
-        TARGETS
-            .iter()
-            .find(|target| target.name == name)
-            .ok_or_else(|| {
-                let names: Vec<&str> = TARGETS.iter().map(|target| target.name).collect();
-                format!(
-                    "unknown target `{name}`; the targets are {}",
-                    names.join(", ")
-                )
-            })
-    }
-
-    /// Clang's flag for compiling and linking code for it; none for the
-    /// host, so the host's clang keeps its own triple and system files.
-    fn clang_flag(&self) -> Option<String> {
-        (Target::host() != Ok(self)).then(|| format!("--target={}", self.triple))
-    }
-
-    /// What its executables' names end with.
-    pub fn executable_suffix(&self) -> &'static str {
-        if self.os == "windows" { ".exe" } else { "" }
-    }
-
-    /// Its runtime library, in its folder in the folder `runtime` of an
-    /// installation.
-    pub fn runtime_library(&self, runtime: &Path) -> std::path::PathBuf {
-        runtime.join(self.name).join(runtime::LIBRARY)
-    }
+/// Clang's flag for compiling and linking code for `target`; none for the
+/// host, so the host's clang keeps its own triple and system files.
+fn clang_flag(target: &Machine) -> Option<String> {
+    (Machine::host() != Ok(target)).then(|| format!("--target={}", target.triple))
 }
 
 /// The LLVM text of one module, built a function at a time.
@@ -171,7 +55,7 @@ pub struct Module<'p> {
     declarations: BTreeMap<String, String>,
     written: Written,
     metadata: Option<Metadata>, // the debug info, in a debug build
-    target: &'static Target,
+    target: &'static Machine,
 }
 
 /// What the module has written so far, so each is written once.
@@ -189,7 +73,7 @@ impl<'p> Module<'p> {
     fn new(
         program: &'p project::Program,
         module: ModuleId,
-        target: &'static Target,
+        target: &'static Machine,
         mode: BuildMode,
     ) -> Module<'p> {
         let metadata = match mode {

@@ -12,9 +12,11 @@ use std::sync::atomic::Ordering;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
+use model::machine::Machine;
+
 use crate::BuildMode;
 use crate::Module;
-use crate::Target;
+use crate::clang_flag;
 
 /// Compiles each of `modules` that has a function for `target`, several at
 /// once, optimized in a release `mode`, and links the objects with the
@@ -23,7 +25,7 @@ use crate::Target;
 pub fn link_executable(
     modules: &[Module],
     mode: BuildMode,
-    target: &Target,
+    target: &Machine,
     runtime: &Path,
     output: &Path,
 ) -> Result<(), String> {
@@ -48,11 +50,16 @@ pub fn link_executable(
 /// Links `objects` with the runtime library `runtime` into the program
 /// `output` for `target`. The program is linked beside `output` and then
 /// renamed to it, so a failed link leaves no half-written program.
-fn link(objects: &[PathBuf], target: &Target, runtime: &Path, output: &Path) -> Result<(), String> {
+fn link(
+    objects: &[PathBuf],
+    target: &Machine,
+    runtime: &Path,
+    output: &Path,
+) -> Result<(), String> {
     let name = output.file_name().unwrap_or_default().to_string_lossy();
     let staged = output.with_file_name(format!(".{name}-link-{}", std::process::id()));
     let mut clang = Command::new("clang");
-    clang.args(target.clang_flag()).args(objects).arg(runtime);
+    clang.args(clang_flag(target)).args(objects).arg(runtime);
     if target.os != "windows" {
         clang.arg("-lm"); // LLVM turns a float `%` into a call of `fmod`
     }
@@ -73,7 +80,7 @@ fn link(objects: &[PathBuf], target: &Target, runtime: &Path, output: &Path) -> 
 fn compile_modules(
     modules: &[Module],
     mode: BuildMode,
-    target: &Target,
+    target: &Machine,
     folder: &Path,
 ) -> Result<Vec<PathBuf>, String> {
     let optimization = match mode {
@@ -104,7 +111,7 @@ fn compile_modules(
                         }
                         let mut clang = Command::new("clang");
                         clang
-                            .args(target.clang_flag())
+                            .args(clang_flag(target))
                             .args(["-c", optimization, "-x", "ir"])
                             .arg(&file)
                             .arg("-o")

@@ -6,6 +6,7 @@ use std::fmt;
 use std::fmt::Write;
 use std::path::Path;
 
+use model::machine::Machine;
 use model::semantic_types::Float;
 use model::semantic_types::RANGE;
 use model::semantic_types::RANGE_FIELD_NAMES;
@@ -14,7 +15,6 @@ use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use model::semantic_types::range_fields;
 
-use crate::Target;
 use crate::layout::layout;
 use crate::layout::struct_layout;
 use crate::text::quoted;
@@ -79,7 +79,7 @@ impl Metadata {
         program: &project::Program,
         types: &Types,
         ty: TypeId,
-        target: &Target,
+        target: &Machine,
     ) -> Option<usize> {
         let pointer_bits = target.pointer_bits;
         // An alias here would get a second debug type for its type.
@@ -210,7 +210,7 @@ impl Metadata {
         program: &project::Program,
         types: &Types,
         (ty, name, fields): (TypeId, &str, &[(&str, TypeId)]),
-        target: &Target,
+        target: &Machine,
     ) -> usize {
         // Its members name it, so its number comes first.
         let composite = self.reserve();

@@ -17,7 +17,6 @@ use std::path::Path;
 use std::time::Duration;
 use std::time::Instant;
 
-use llvm::Target;
 use lsp_server::Connection;
 use lsp_server::Message;
 use lsp_types::CodeActionKind;
@@ -28,6 +27,7 @@ use lsp_types::OneOf;
 use lsp_types::ServerCapabilities;
 use lsp_types::TextDocumentSyncCapability;
 use lsp_types::TextDocumentSyncKind;
+use model::machine::Machine;
 
 use crate::server::Server;
 
@@ -41,7 +41,7 @@ const DEBOUNCE: Duration = Duration::from_millis(200);
 /// Serves the editor on stdin and stdout until it shuts the server down.
 /// `libraries` holds the bundled libraries, as for `project::find`.
 pub fn serve(libraries: &Path) -> Result<(), BoxError> {
-    Target::host()?; // the checks are for it
+    Machine::host()?; // the checks are for it
     let (connection, io_threads) = Connection::stdio();
     serve_connection(connection, libraries)?;
     io_threads.join()?;
@@ -51,7 +51,9 @@ pub fn serve(libraries: &Path) -> Result<(), BoxError> {
 /// How many bits a pointer has on the host, which the editor checks for;
 /// `serve` does not start on a machine with no target.
 fn host_pointer_bits() -> u32 {
-    Target::host().expect("`serve` found the host").pointer_bits
+    Machine::host()
+        .expect("`serve` found the host")
+        .pointer_bits
 }
 
 /// Serves `connection` until the client shuts the server down. It takes the

@@ -597,10 +597,10 @@ and `-lm`; the program is linked beside its output and renamed into place.
 Clang is the one on the PATH until peeper ships its toolchain. `build` names
 the program after the project or file in the current folder; `run` links to a
 temporary file, runs it and exits with its code (a signal gives 128 plus its
-number). `-target <name>` checks and builds for a row of `llvm::TARGETS`,
-the host's row otherwise: each row is a machine's name, clang triple,
-pointer bits and the alignment of `i64` and `f64` in a struct (4 on
-`i686-linux`, 8 elsewhere), so a new target is a new row. Clang gets
+number). `-target <name>` checks and builds for a row of
+`model::machine::MACHINES`, the host's row otherwise: each row is a machine's
+name, clang triple, pointer bits and the alignment of `i64` and `f64` in a
+struct (4 on `i686-linux`, 8 elsewhere), so a new target is a new row. Clang gets
 `--target=<triple>` only for a target that is not the host, and the runtime
 library of each is in `<installation>/runtime/<name>`; `scripts/build.sh`
 builds the host's and `i686-linux`'s, the latter when the 32-bit C library

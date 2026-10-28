@@ -6,7 +6,9 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
-use crate::Target;
+use model::machine::Machine;
+
+use crate::clang_flag;
 use crate::link::call_tool;
 
 // LIBRARY (the archive's file name, which the driver looks for), SOURCES (C
@@ -16,10 +18,10 @@ include!(concat!(env!("OUT_DIR"), "/runtime.rs"));
 
 /// Builds the library for `target` from this checkout's runtime folder
 /// into the installation's runtime folder `runtime`, where
-/// `Target::runtime_library` finds it, and gives its path. The objects in
+/// `library` finds it, and gives its path. The objects in
 /// between are removed.
-pub fn build(runtime: &Path, target: &Target) -> Result<PathBuf, String> {
-    let library = target.runtime_library(runtime);
+pub fn build(runtime: &Path, target: &Machine) -> Result<PathBuf, String> {
+    let library = library(target, runtime);
     let folder = library.parent().expect("a library is in a folder");
     let sources = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime");
     std::fs::create_dir_all(folder)
@@ -30,7 +32,7 @@ pub fn build(runtime: &Path, target: &Target) -> Result<PathBuf, String> {
         let object = folder.join(Path::new(source).with_extension("o"));
         let mut clang = Command::new("clang");
         clang
-            .args(target.clang_flag())
+            .args(clang_flag(target))
             .args(FLAGS)
             .arg("-c")
             .arg(sources.join(source))
@@ -51,4 +53,10 @@ pub fn build(runtime: &Path, target: &Target) -> Result<PathBuf, String> {
         _ = std::fs::remove_file(object);
     }
     archived.map(|()| library)
+}
+
+/// The runtime library of `target`, in its folder in the folder `runtime` of
+/// an installation.
+pub fn library(target: &Machine, runtime: &Path) -> PathBuf {
+    runtime.join(target.name).join(LIBRARY)
 }
