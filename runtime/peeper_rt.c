@@ -7,7 +7,15 @@
 #include <string.h>
 
 #ifdef _WIN32
+#include <fcntl.h>
 #include <io.h>
+
+// A Windows C runtime writes "\r\n" for each "\n" to a text-mode file;
+// a Peeper program writes the bytes it is given, as on every other system.
+__attribute__((constructor)) static void peeper_rt_binary_output(void) {
+    _setmode(1, _O_BINARY);
+    _setmode(2, _O_BINARY);
+}
 #else
 #include <unistd.h>
 #endif
