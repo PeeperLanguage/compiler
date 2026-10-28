@@ -47,6 +47,6 @@ jobs:
         run: pwsh scripts/setup.ps1
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      - run: cargo test --workspace --no-fail-fast # every failing crate in one run
       - run: bash scripts/build.sh
       - run: PEEPER="$PWD/build/bin/peeper" cargo test -p peeper --test fixtures
