@@ -16,38 +16,43 @@ use crate::write_json;
 
 /// Each file the sources lock pins: its id, the GitHub repository whose
 /// latest release it follows, what that release's tag has before the
-/// version, and the file's name in the release, `{version}` standing for the
-/// version.
-const SOURCES: [(&str, &str, &str, &str); 5] = [
+/// version, the file's name in the release, `{version}` standing for the
+/// version, and the name of the repository's license file.
+const SOURCES: [(&str, &str, &str, &str, &str); 5] = [
     (
         "llvm-linux-amd64",
         "llvm/llvm-project",
         "llvmorg-",
         "LLVM-{version}-Linux-X64.tar.xz",
+        "LICENSE.TXT",
     ),
     (
         "llvm-linux-arm64",
         "llvm/llvm-project",
         "llvmorg-",
         "LLVM-{version}-Linux-ARM64.tar.xz",
+        "LICENSE.TXT",
     ),
     (
         "llvm-darwin-arm64",
         "llvm/llvm-project",
         "llvmorg-",
         "LLVM-{version}-macOS-ARM64.tar.xz",
+        "LICENSE.TXT",
     ),
     (
         "llvm-mingw-windows-amd64",
         "mstorsjo/llvm-mingw",
         "",
         "llvm-mingw-{version}-ucrt-x86_64.zip",
+        "LICENSE.txt",
     ),
     (
         "llvm-mingw-windows-arm64",
         "mstorsjo/llvm-mingw",
         "",
         "llvm-mingw-{version}-ucrt-aarch64.zip",
+        "LICENSE.txt",
     ),
 ];
 
@@ -75,7 +80,7 @@ pub(crate) fn update() -> Result<(), String> {
     let mut lock: SourcesLock = read_json(Path::new(SOURCES_LOCK))?;
     let mut releases: HashMap<&str, Release> = HashMap::new();
     let mut changed = false;
-    for (id, repository, tag_prefix, file) in SOURCES {
+    for (id, repository, tag_prefix, file, license) in SOURCES {
         let release = match releases.entry(repository) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
@@ -137,7 +142,7 @@ pub(crate) fn update() -> Result<(), String> {
         source.size = asset.size;
         sha256.clone_into(&mut source.sha256);
         source.license_url = format!(
-            "https://github.com/{repository}/blob/{}/LICENSE.TXT",
+            "https://github.com/{repository}/blob/{}/{license}",
             release.tag_name
         );
     }

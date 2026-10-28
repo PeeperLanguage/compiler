@@ -5,6 +5,7 @@ use super::Command;
 use super::Goal;
 use llvm::BuildMode;
 use model::machine::Machine;
+use project::path_text;
 
 fn temp_dir(test: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!("peeper-check-{}-{test}", std::process::id()));
@@ -67,7 +68,7 @@ fn fixes_a_file() {
         fixed,
         "fn main() {\n    let count = 1;\n    let a = cout;\n    let b = gone;\n}\n"
     );
-    let first = format!("fixed {}:3:17: ", file.display());
+    let first = format!("fixed {}:3:17: ", path_text(&file));
     assert!(out.starts_with(&first), "{out}");
     assert!(out.contains("unknown name `gone`"), "{out}");
     assert_eq!(code, 1, "`gone` has no fix");
@@ -93,8 +94,8 @@ fn checks_a_project() {
     let main = root.join("app/src/main.peep");
     let want = format!(
         "[M0001]: module not found: {}\n  --> {}:2:1\n",
-        gone.display(),
-        main.display()
+        path_text(&gone),
+        path_text(&main)
     );
     assert_eq!(code, 1);
     assert!(
@@ -196,7 +197,7 @@ fn needs_an_entry_point() {
         assert_eq!(code, 1, "{file}: {out}");
         assert!(
             out.starts_with("[M0006]: program entrypoint must be")
-                && out.contains(&format!("{}{at}\n", path.display())),
+                && out.contains(&format!("{}{at}\n", path_text(&path))),
             "{file}: {out}"
         );
         assert_eq!(

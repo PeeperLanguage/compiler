@@ -130,14 +130,15 @@ Exit: one edited file re-checks only what its interface change affects.
 - CI rebuilt for the new layout (`ci.yml`): fmt, clippy, `cargo test
   --workspace`, whose fixtures build and run the `x_test` programs (with the
   32-bit C library, for `target = "i686-linux"`), and `scripts/build.sh`, on
-  Linux and macOS ARM64; Windows still to come. The Go release workflows are gone;
+  Linux, macOS ARM64 and Windows x86-64. The Go release workflows are gone;
   a release that ships the compiler with its pack is still to come.
 - Toolchain packs built by CI for the Rust compiler (`crates/tools/toolchain`,
-  run by `build-toolchains.yml`), for Linux and macOS ARM64 so far (LLVM
-  publishes no macOS x86-64 release; Windows to come): `scripts/setup.sh` and
+  run by `build-toolchains.yml`), for Linux, macOS ARM64 and Windows x86-64
+  (from llvm-mingw) so far; LLVM publishes no macOS x86-64 release, and
+  Windows ARM64 is to come: `scripts/setup.sh` and
   `setup.ps1` download the pack pinned in `toolchains/toolchains.lock.json`,
-  or link an installed LLVM 23. The packs have `lli`, which the ignored
-  `llvm_parity` test runs. `check-toolchain-updates.yml` keeps the upstream
+  or link an installed LLVM 23. The Linux and macOS packs have `lli`, which
+  the ignored `llvm_parity` test runs; llvm-mingw has none. `check-toolchain-updates.yml` keeps the upstream
   pins current, as the Go pipeline on `legacy` did.
 - Fixture suite (`x_test`) brought back as the language acceptance target.
 

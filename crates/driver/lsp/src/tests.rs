@@ -33,6 +33,13 @@ use crate::convert::position;
 use crate::serve_connection;
 use crate::server::Server;
 
+/// A file named from the root, as an editor names files; on Windows that
+/// needs a drive.
+#[cfg(unix)]
+const MAIN_FILE: &str = "/app/main.peep";
+#[cfg(windows)]
+const MAIN_FILE: &str = "C:/app/main.peep";
+
 #[test]
 fn positions_count_utf16_units() {
     // Line 2 is "çd𝄞x": `ç` is 2 bytes and 1 unit, `𝄞` 4 bytes and 2 units.
@@ -67,7 +74,7 @@ fn positions_count_utf16_units() {
 
 #[test]
 fn converts_labels_and_notes() {
-    let file = Arc::new(SourceFile::new("/app/main.peep", "let x = 1;\nx = 2;\n"));
+    let file = Arc::new(SourceFile::new(MAIN_FILE, "let x = 1;\nx = 2;\n"));
     let diagnostic = Diagnostic::new(diagnostics::UNREACHABLE_CODE, "unreachable code")
         .label(&file, Span::new(11, 16), "this never runs")
         .label(&file, Span::new(4, 5), "declared here")
@@ -108,7 +115,7 @@ fn converts_labels_and_notes() {
     assert_eq!(related[0].location.range.start, Position::new(0, 4));
     assert_eq!(
         related[0].location.uri,
-        Url::from_file_path("/app/main.peep").unwrap()
+        Url::from_file_path(MAIN_FILE).unwrap()
     );
 }
 
@@ -116,7 +123,7 @@ fn converts_labels_and_notes() {
 /// back as one quick fix when the editor asks for code actions there.
 #[test]
 fn help_fixes_become_quick_fixes() {
-    let file = Arc::new(SourceFile::new("/app/main.peep", "let a = cout;\n"));
+    let file = Arc::new(SourceFile::new(MAIN_FILE, "let a = cout;\n"));
     let at = Span::new(8, 12);
     let fix = Fix {
         file: file.clone(),
@@ -131,9 +138,9 @@ fn help_fixes_become_quick_fixes() {
         text: file.text.clone(),
         version: 7,
     };
-    let open_files = HashMap::from([(PathBuf::from("/app/main.peep"), open)]);
+    let open_files = HashMap::from([(PathBuf::from(MAIN_FILE), open)]);
     let published = lsp_diagnostics(&diagnostic, &open_files).remove(0);
-    let uri = Url::from_file_path("/app/main.peep").unwrap();
+    let uri = Url::from_file_path(MAIN_FILE).unwrap();
     let params = json!({
         "textDocument": { "uri": uri },
         "range": published.range,

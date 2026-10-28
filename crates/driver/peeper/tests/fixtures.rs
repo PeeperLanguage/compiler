@@ -19,6 +19,8 @@ use std::path::Path;
 use std::process::Command;
 
 use model::machine::Machine;
+use project::canonical_path;
+use project::path_text;
 
 /// Bundles the compiler cargo built as peeper expects to be installed: in
 /// <root>/bin, beside <root>/libs, <root>/runtime and <root>/toolchains/native,
@@ -28,20 +30,20 @@ fn bundle() -> String {
     let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join("bundle");
     _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("bin")).expect("the bundle folder is made");
-    let compiler = root.join("bin/peeper");
+    let compiler = root.join(format!("bin/peeper{}", std::env::consts::EXE_SUFFIX));
     std::fs::copy(env!("CARGO_BIN_EXE_peeper"), &compiler).expect("the compiler is copied");
-    std::os::unix::fs::symlink(
-        checkout.join("_builtin_library").canonicalize().unwrap(),
-        root.join("libs"),
+    link_folder(
+        &checkout.join("_builtin_library").canonicalize().unwrap(),
+        &root.join("libs"),
     )
     .expect("the libraries are linked");
     let toolchain = checkout.join("build/toolchains/native");
     std::fs::create_dir_all(root.join("toolchains")).expect("the toolchains folder is made");
-    std::os::unix::fs::symlink(
-        toolchain
+    link_folder(
+        &toolchain
             .canonicalize()
             .expect("scripts/setup.sh fills build/toolchains/native"),
-        root.join("toolchains/native"),
+        &root.join("toolchains/native"),
     )
     .expect("the toolchain is linked");
     let host = Machine::host().expect("this machine is a target");
@@ -55,6 +57,17 @@ fn bundle() -> String {
         eprintln!("the i686 runtime is not built: {error}");
     }
     compiler.to_string_lossy().into_owned()
+}
+
+/// Makes `link` a link to the folder `original`.
+fn link_folder(original: &Path, link: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    let linked = std::os::unix::fs::symlink(original, link);
+    // shortcut: a folder symlink needs admin rights or Developer Mode on
+    // Windows; make a junction instead once std's `junction_point` is stable.
+    #[cfg(windows)]
+    let linked = std::os::windows::fs::symlink_dir(original, link);
+    linked
 }
 
 /// Whether this machine runs `i686-linux` programs, the only target a
@@ -155,10 +168,11 @@ fn fixtures() {
                 let package = document.get("name").and_then(toml_edit::Item::as_str);
                 let package = package.expect("a fixture's peeper.toml has a name");
                 let dumped = folder.join(format!("build/debug/dumps/{package}/main.{mode}"));
-                let folder_path = folder.canonicalize().expect("the fixture folder exists");
+                // Spelled as the compiler spells the files in it.
+                let folder_path = canonical_path(folder).expect("the fixture folder exists");
                 let dump = std::fs::read_to_string(&dumped)
                     .unwrap_or_default()
-                    .replace(&*folder_path.to_string_lossy(), "<fixture>");
+                    .replace(&path_text(&folder_path), "<fixture>");
                 if std::env::var_os("PEEPER_BLESS").is_some() {
                     std::fs::write(&file, &dump).expect("the expected dump is written");
                 } else if std::fs::read_to_string(&file).ok() != Some(dump.clone()) {

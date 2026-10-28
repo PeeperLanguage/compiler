@@ -40,6 +40,8 @@ lsp-types = "0.95.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.140"
 sha2 = "0.11.1"
+tar = { version = "0.4.46", default-features = false }
+flate2 = "1.1.10"
 toml_edit = "0.25.13"
 rustc-hash = "2.1.1"
 

@@ -82,12 +82,24 @@ fn imports(program: &Program, module: &Module) -> Vec<String> {
 fn canonical_paths() {
     let here = std::env::current_dir().unwrap();
     for (path, want) in [
-        ("/a/./b/../c", PathBuf::from("/a/c")),
-        ("/a/b/../../..", PathBuf::from("/")),
+        // On Windows a path from the root is on the current drive.
+        ("/a/./b/../c", std::path::absolute("/a/c").unwrap()),
+        ("/a/b/../../..", std::path::absolute("/").unwrap()),
         ("x/../y", here.join("y")),
     ] {
         assert_eq!(canonical_path(Path::new(path)).unwrap(), want, "{path}");
     }
+}
+
+/// A path's text has `/` between its parts; on Windows a `\` is one, and
+/// elsewhere a `\` is part of a name and kept.
+#[test]
+fn path_texts() {
+    #[cfg(windows)]
+    let (path, want) = (r"C:\a\b.peep", "C:/a/b.peep");
+    #[cfg(unix)]
+    let (path, want) = (r"/a/b\c.peep", r"/a/b\c.peep");
+    assert_eq!(path_text(Path::new(path)), want);
 }
 
 /// On Windows a drive letter is upper case and a `\\?\` prefix is dropped,
@@ -209,7 +221,10 @@ fn import_errors() {
     let program = load(&project, &HashMap::<PathBuf, String>::new());
     let missing = project.root.join("src/missing.peep");
     let want = [
-        format!("myapp:main: M0001 module not found: {}", missing.display()),
+        format!(
+            "myapp:main: M0001 module not found: {}",
+            path_text(&missing)
+        ),
         "myapp:main: M0003 import path needs a package, such as `myapp:utils/file`".to_string(),
         "myapp:main: M0003 import path parts cannot be empty, `.` or `..`".to_string(),
         "myapp:main: M0003 import path parts cannot be empty, `.` or `..`".to_string(),

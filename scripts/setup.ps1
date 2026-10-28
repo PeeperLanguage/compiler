@@ -64,12 +64,15 @@ function Use-Pack {
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $work
     New-Item -ItemType Directory -Force $work | Out-Null
     Write-Host "downloading $($entry.id)"
-    if (-not (Get-Pinned $entry "$work\pack.zip")) {
+    if (-not (Get-Pinned $entry "$work\pack")) {
         Write-Host "cannot download $($entry.id), or it is not the file the lock pins"
         Remove-Item -Recurse -Force $work
         return $false
     }
-    Expand-Archive -Path "$work\pack.zip" -DestinationPath $work
+    # Windows' own tar reads a tar.gz pack and the zip packs before them; a
+    # GNU tar on the PATH would take `C:` for another machine.
+    & "$env:SystemRoot\System32\tar.exe" -xf "$work\pack" -C $work
+    if ($LASTEXITCODE -ne 0) { throw "cannot unpack $($entry.id)" }
     Remove-Toolchain
     New-Item -ItemType Directory -Force "build\toolchains" | Out-Null
     Move-Item "$work\toolchains\native" $native
