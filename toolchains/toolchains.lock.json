@@ -25,25 +25,25 @@
       "format": "tar.gz"
     },
     {
-      "id": "toolchain-linux-amd64-llvm23.1.3-musl1.2.6-reb4a2c8ba025",
+      "id": "toolchain-linux-amd64-llvm23.1.3-r5e0378b47d41",
       "kind": "toolchain",
-      "version": "llvm23.1.3-musl1.2.6-reb4a2c8ba025",
+      "version": "llvm23.1.3-r5e0378b47d41",
       "os": "linux",
       "arch": "amd64",
-      "url": "https://github.com/PeeperLanguage/compiler/releases/download/toolchain-linux-amd64-eb4a2c8ba02563d98472b9b5d3801993dc3e1809b69b4b7c453441aee5903664/toolchain-linux-amd64-llvm23.1.3-musl1.2.6-reb4a2c8ba025.tar.gz",
-      "size": 174241907,
-      "sha256": "777dcc5341c348deae5e8b2aa7c86f462b3583afd366fd4d21580cbd1ff57e39",
+      "url": "https://github.com/PeeperLanguage/compiler/releases/download/toolchain-linux-amd64-llvm23.1.3-r5e0378b47d41/toolchain-linux-amd64-llvm23.1.3-r5e0378b47d41.tar.gz",
+      "size": 190925931,
+      "sha256": "5e0378b47d41d53d741d977f341cbcc1cabff66f91b0a1431103afc34f633e1e",
       "format": "tar.gz"
     },
     {
-      "id": "toolchain-linux-arm64-llvm23.1.3-musl1.2.6-ra1d9dcdc3fa9",
+      "id": "toolchain-linux-arm64-llvm23.1.3-r9e7002381c9f",
       "kind": "toolchain",
-      "version": "llvm23.1.3-musl1.2.6-ra1d9dcdc3fa9",
+      "version": "llvm23.1.3-r9e7002381c9f",
       "os": "linux",
       "arch": "arm64",
-      "url": "https://github.com/PeeperLanguage/compiler/releases/download/toolchain-linux-arm64-a1d9dcdc3fa9ffcdbfd600f8424c5c631b89adc1d3912f538b5d0c8826d0e8f7/toolchain-linux-arm64-llvm23.1.3-musl1.2.6-ra1d9dcdc3fa9.tar.gz",
-      "size": 169985278,
-      "sha256": "7212eb657771840889ab2f57091ae1bb752d21d0cf2bfe2eca63a2c461162d76",
+      "url": "https://github.com/PeeperLanguage/compiler/releases/download/toolchain-linux-arm64-llvm23.1.3-r9e7002381c9f/toolchain-linux-arm64-llvm23.1.3-r9e7002381c9f.tar.gz",
+      "size": 213958098,
+      "sha256": "9e7002381c9f4b40dcf68073206da726260e134abb304cce1c67fbba4317b26f",
       "format": "tar.gz"
     },
     {
