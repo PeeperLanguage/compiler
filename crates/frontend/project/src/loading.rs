@@ -24,6 +24,7 @@ use crate::PRELUDE_PATH;
 use crate::default_alias;
 use crate::packages::SOURCE_EXTENSION;
 use crate::packages::resolve;
+use crate::path_text;
 
 /// Reads, parses and resolves the imports of one module, taking its text from
 /// `open_files` when it is open there. A file that cannot be read, or is not
@@ -34,7 +35,7 @@ pub(crate) fn load_file(
     job: Job,
     with_prelude: bool,
 ) -> Loaded {
-    let path = job.file.to_string_lossy().into_owned();
+    let path = path_text(&job.file);
     let text = match open_files.get(&job.file) {
         // Copied: every worker shares the map, and a source file owns its text.
         Some(text) => Ok(Ok(text.as_ref().to_string())),

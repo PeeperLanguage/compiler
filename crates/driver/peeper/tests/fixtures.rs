@@ -19,6 +19,8 @@ use std::path::Path;
 use std::process::Command;
 
 use model::machine::Machine;
+use project::canonical_path;
+use project::path_text;
 
 /// Bundles the compiler cargo built as peeper expects to be installed: in
 /// <root>/bin, beside <root>/libs, <root>/runtime and <root>/toolchains/native,
@@ -166,10 +168,11 @@ fn fixtures() {
                 let package = document.get("name").and_then(toml_edit::Item::as_str);
                 let package = package.expect("a fixture's peeper.toml has a name");
                 let dumped = folder.join(format!("build/debug/dumps/{package}/main.{mode}"));
-                let folder_path = folder.canonicalize().expect("the fixture folder exists");
+                // Spelled as the compiler spells the files in it.
+                let folder_path = canonical_path(folder).expect("the fixture folder exists");
                 let dump = std::fs::read_to_string(&dumped)
                     .unwrap_or_default()
-                    .replace(&*folder_path.to_string_lossy(), "<fixture>");
+                    .replace(&path_text(&folder_path), "<fixture>");
                 if std::env::var_os("PEEPER_BLESS").is_some() {
                     std::fs::write(&file, &dump).expect("the expected dump is written");
                 } else if std::fs::read_to_string(&file).ok() != Some(dump.clone()) {

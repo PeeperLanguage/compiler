@@ -90,6 +90,17 @@ fn canonical_paths() {
     }
 }
 
+/// A path's text has `/` between its parts; on Windows a `\` is one, and
+/// elsewhere a `\` is part of a name and kept.
+#[test]
+fn path_texts() {
+    #[cfg(windows)]
+    let (path, want) = (r"C:\a\b.peep", "C:/a/b.peep");
+    #[cfg(unix)]
+    let (path, want) = (r"/a/b\c.peep", r"/a/b\c.peep");
+    assert_eq!(path_text(Path::new(path)), want);
+}
+
 /// On Windows a drive letter is upper case and a `\\?\` prefix is dropped,
 /// as an editor and `std::fs::canonicalize` spell the same file apart.
 #[cfg(windows)]
