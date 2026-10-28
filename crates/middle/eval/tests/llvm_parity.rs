@@ -7,8 +7,8 @@
 //! out; the unit tests in lib.rs cover them.
 //!
 //! Runs the `lli` of build/toolchains/native, which scripts/setup.sh puts
-//! there: `cargo test -p eval -- --ignored`. The CI pack has no `lli` yet
-//! (docs/roadmap.md, M8), so this test cannot run with it.
+//! there: `cargo test -p eval -- --ignored`. The CI pack has it; an installed
+//! LLVM that setup.sh links in must have it too.
 
 use std::fmt::Write;
 use std::path::Path;
@@ -363,7 +363,7 @@ define i32 @main() {{
     let output = Command::new(lli)
         .arg(&path)
         .output()
-        .expect("build/toolchains/native has lli (the CI pack does not yet)");
+        .expect("build/toolchains/native has lli (scripts/setup.sh puts it there)");
     assert!(
         output.status.success(),
         "lli failed:\n{}",
