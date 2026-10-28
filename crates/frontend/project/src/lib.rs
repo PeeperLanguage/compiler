@@ -217,9 +217,9 @@ pub fn canonical_path(path: &Path) -> std::io::Result<PathBuf> {
     Ok(canonical)
 }
 
-/// The text a source file's `path` is shown and told apart by: its parts
-/// joined with `/` on every system, which Windows reads too, so messages,
-/// panics and debug info read the same on each.
+/// The text a source file's `path`, one `canonical_path` gives, is shown and
+/// told apart by: its parts joined with `/` on every system, which Windows
+/// reads too, so messages, panics and debug info read the same on each.
 pub fn path_text(path: &Path) -> String {
     path.to_string_lossy()
         .replace(std::path::MAIN_SEPARATOR, "/")
