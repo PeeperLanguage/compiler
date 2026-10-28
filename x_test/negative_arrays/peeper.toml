@@ -5,7 +5,7 @@ build = "program"
 mode = "check"
 outcome = "failure"
 stderr_contains = [
-    "struct, array and range parameters and results of `extern` functions are not supported yet",
+    "struct, array, range and slice parameters and results of `extern` functions are not supported yet",
     "`[3]i32` needs 3 values, found 2",
     "mismatched types: expected `i32`, found `bool`",
     "index `3` is outside `[3]i32`, whose length is 3",

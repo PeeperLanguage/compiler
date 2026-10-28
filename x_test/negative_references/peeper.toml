@@ -5,7 +5,7 @@ build = "program"
 mode = "check"
 outcome = "failure"
 stderr_contains = [
-    "references in struct fields are not supported yet",
+    "references and slices in struct fields are not supported yet",
     "references to references are not supported yet",
     "borrows of values that are not in a variable are not supported yet",
     "cannot assign to `r.x` through shared reference `r`",

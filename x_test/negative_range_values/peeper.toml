@@ -5,7 +5,7 @@ build = "program"
 mode = "check"
 outcome = "failure"
 stderr_contains = [
-    "struct, array and range parameters and results of `extern` functions are not supported yet",
+    "struct, array, range and slice parameters and results of `extern` functions are not supported yet",
     "a range's values must be integers, found `f32`",
     "`range` needs the type of its values: `range[T]`",
     "unknown type `Nope`",

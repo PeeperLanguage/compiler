@@ -7,9 +7,9 @@ outcome = "failure"
 stderr_contains = [
     "a reference or slice result needs a reference or slice parameter to borrow from",
     "a `&mut` or `[&mut]` result needs a `&mut` or `[&mut]` parameter to borrow from",
-    "`in` needs a reference result",
+    "`in` needs a reference or slice result",
     "`c` is not a parameter",
-    "`n` is not a reference, so a result cannot borrow from it",
+    "`n` is not a reference or a slice, so a result cannot borrow from it",
     "a `&mut` result cannot borrow from shared reference `a`",
     "`a` is named twice in `in`",
     "Compilation failed with 7 error(s)",
