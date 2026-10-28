@@ -136,7 +136,7 @@ impl Loaded {
                 }
             };
             if !imported_file.is_file() && !open_files.contains_key(&imported_file) {
-                let message = format!("module not found: {}", imported_file.display());
+                let message = format!("module not found: {}", path_text(&imported_file));
                 let diagnostic = error(diagnostics::MODULE_NOT_FOUND, message);
                 let meant = nearest_module(&imported_file, &path, &self.path, open_files);
                 self.diagnostics.push(guess(diagnostic, meant));
