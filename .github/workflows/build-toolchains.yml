@@ -74,7 +74,7 @@ jobs:
           fi
       - uses: actions/upload-artifact@v7
         with:
-          name: toolchain-record-${{ runner.arch }}
+          name: toolchain-record-${{ runner.os }}-${{ runner.arch }}
           path: dist/${{ steps.pack.outputs.id }}.json
           if-no-files-found: error
 
