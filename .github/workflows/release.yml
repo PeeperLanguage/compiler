@@ -30,9 +30,6 @@ jobs:
     defaults:
       run:
         shell: bash # Git Bash on Windows, for scripts/build.sh
-    env:
-      # A peeper.exe that needs no Visual C++ runtime installed.
-      RUSTFLAGS: ${{ runner.os == 'Windows' && '-C target-feature=+crt-static' || '' }}
     steps:
       - uses: actions/checkout@v6
       # The i686-linux fixtures link against the 32-bit C library.
@@ -43,6 +40,9 @@ jobs:
       - if: runner.os == 'Windows'
         run: pwsh scripts/setup.ps1
       - run: bash scripts/build.sh
+        env:
+          # A peeper.exe that needs no Visual C++ runtime installed.
+          RUSTFLAGS: ${{ runner.os == 'Windows' && '-C target-feature=+crt-static' || '' }}
       - name: Pack build/
         run: |
           # An installed LLVM linked in by setup would not be in the archive.
