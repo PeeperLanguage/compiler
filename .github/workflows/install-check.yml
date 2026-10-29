@@ -1,0 +1,54 @@
+name: Install check
+
+# Once a release is published, installs it on each machine it has an archive
+# for with the README's command, then, in a shell started afresh as a new
+# terminal would be, makes a project with `peeper init` and runs it.
+
+on:
+  release:
+    types:
+      - released # published as the latest release, not as a pre-release
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unix:
+    name: Install on ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-24.04
+          - macos-15
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - run: curl --proto '=https' --tlsv1.2 -fsSL https://github.com/PeeperLanguage/compiler/releases/latest/download/install.sh | sh
+      # Interactive, so the shell reads the startup file install.sh wrote.
+      - run: |
+          mkdir "$RUNNER_TEMP/demo"
+          cd "$RUNNER_TEMP/demo"
+          "$SHELL" -ic 'peeper init demo && peeper run .' | tee output
+          grep -Fx 'Hello from Peeper!' output
+
+  windows:
+    name: Install on windows-2025
+    runs-on: windows-2025
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - run: irm https://github.com/PeeperLanguage/compiler/releases/latest/download/install.ps1 | iex
+      # A step starts with the runner's PATH; a new terminal reads the saved one.
+      - run: |
+          $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
+          New-Item -ItemType Directory "$env:RUNNER_TEMP\demo"
+          Set-Location "$env:RUNNER_TEMP\demo"
+          peeper init demo
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $output = peeper run .
+          $output
+          if ($LASTEXITCODE -ne 0 -or $output -notcontains "Hello from Peeper!") { exit 1 }
