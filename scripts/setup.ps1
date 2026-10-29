@@ -73,6 +73,12 @@ function Use-Pack {
     # GNU tar on the PATH would take `C:` for another machine.
     & "$env:SystemRoot\System32\tar.exe" -xf "$work\pack" -C $work
     if ($LASTEXITCODE -ne 0) { throw "cannot unpack $($entry.id)" }
+    # The old toolchain goes only once the new one is all there.
+    $tools = "$work\toolchains\native\bin"
+    if (-not ((Test-Path "$tools\clang.exe") -and (Test-Path "$tools\ld.lld.exe") -and
+            (Test-Path "$tools\llvm-ar.exe"))) {
+        throw "$($entry.id) holds no toolchains\native with clang, ld.lld and llvm-ar"
+    }
     Remove-Toolchain
     New-Item -ItemType Directory -Force "build\toolchains" | Out-Null
     Move-Item "$work\toolchains\native" $native
