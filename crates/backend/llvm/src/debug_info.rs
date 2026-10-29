@@ -11,7 +11,6 @@ use model::layout::struct_layout;
 use model::machine::Machine;
 use model::semantic_types::Float;
 use model::semantic_types::RANGE;
-use model::semantic_types::RANGE_FIELD_NAMES;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
@@ -189,8 +188,7 @@ impl Metadata {
                     unreachable!("a range is of integers")
                 };
                 let name = format!("{RANGE}[{integer}]");
-                let fields = range_fields(element, step);
-                let parts = (RANGE_FIELD_NAMES.into_iter().zip(fields)).collect::<Vec<_>>();
+                let parts = range_fields(element, step);
                 let shape = (ty, name.as_str(), &parts[..]);
                 return Some(self.debug_struct(program, types, shape, target));
             }

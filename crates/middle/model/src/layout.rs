@@ -46,7 +46,7 @@ pub fn layout(types: &Types, ty: TypeId, target: &Machine) -> (u64, u64) {
             (size, align)
         }
         Type::Range { element, step } => {
-            let fields = range_fields(element, step);
+            let fields = range_fields(element, step).map(|(_, ty)| ty);
             let (_, size, align) = struct_layout(types, &fields, target);
             (size, align)
         }

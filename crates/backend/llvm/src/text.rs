@@ -38,7 +38,10 @@ pub(crate) fn type_text(types: &Types, ty: TypeId) -> impl fmt::Display {
         Type::CString | Type::Reference { .. } | Type::RawPointer { .. } => out.write_str("ptr"),
         Type::Slice { .. } => out.write_str("%slice"),
         Type::Struct { ref fields, .. } => struct_type_text(types, fields, out),
-        Type::Range { element, step } => struct_type_text(types, &range_fields(element, step), out),
+        Type::Range { element, step } => {
+            let fields = range_fields(element, step).map(|(_, ty)| ty);
+            struct_type_text(types, &fields, out)
+        }
         Type::Array { element, length } => {
             write!(out, "[{length} x {}]", type_text(types, element))
         }

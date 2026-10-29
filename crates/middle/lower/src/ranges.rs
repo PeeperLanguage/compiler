@@ -88,7 +88,7 @@ impl Lowering<'_> {
         };
         if !matches!(self.thir.exprs[range].kind, thir::ExprKind::Range { .. }) {
             let value = self.lower_expr(range)?;
-            let types = range_fields(ty, size);
+            let types = range_fields(ty, size).map(|(_, field_type)| field_type);
             let mut field = |index: usize| {
                 let fields = Box::new([index as u32]);
                 let field = mir::InstructionKind::Field { value, fields };
