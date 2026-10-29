@@ -446,6 +446,27 @@ fn unreadable_and_non_utf8_entries() {
     );
 }
 
+/// A long chain of imports is ordered, not a stack overflow.
+#[test]
+fn orders_a_long_import_chain() {
+    const DEPTH: usize = 5000;
+    let project = write("chain", &[]);
+    let mut open_files: HashMap<PathBuf, String> = (0..DEPTH)
+        .map(|i| {
+            let file = project.root.join(format!("src/m{i}.peep"));
+            (file, format!("import \"myapp:m{}\";", i + 1))
+        })
+        .collect();
+    open_files.insert(
+        project.root.join(format!("src/m{DEPTH}.peep")),
+        String::new(),
+    );
+    open_files.insert(project.entry.clone(), "import \"myapp:m0\";".to_string());
+    let program = load(&project, &open_files);
+    assert_eq!(messages(&program), Vec::<String>::new());
+    assert_eq!(order(&program).last(), Some(&"myapp:main"));
+}
+
 /// A wide, deep project; the order must be the same every run.
 #[test]
 fn loads_many_modules_in_a_stable_order() {

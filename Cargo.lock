@@ -75,6 +75,7 @@ dependencies = [
  "project",
  "rustc-hash",
  "source",
+ "stacker",
 ]
 
 [[package]]
@@ -565,6 +566,7 @@ dependencies = [
  "model",
  "parser",
  "source",
+ "stacker",
  "toml_edit",
 ]
 

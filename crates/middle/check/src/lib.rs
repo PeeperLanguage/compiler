@@ -220,7 +220,11 @@ impl<'p> Checker<'p> {
             used_at,
             to_run: false,
         });
-        let result = check(self, definition);
+        // A long chain of declarations, each asking for the next, is a deep
+        // recursion here.
+        const RED_ZONE: usize = 128 * 1024;
+        const SEGMENT: usize = 1024 * 1024;
+        let result = stacker::maybe_grow(RED_ZONE, SEGMENT, || check(self, definition));
         self.checking.pop();
         table(&mut self.module_checks[module])[index] = State::Done(result.clone());
         result

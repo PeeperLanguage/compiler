@@ -214,6 +214,18 @@ fn constants_short_circuit() {
     );
 }
 
+/// A long chain of constants, each naming the next, is checked, not a
+/// stack overflow.
+#[test]
+fn checks_a_long_chain_of_constants() {
+    const DEPTH: usize = 5000;
+    let text: String = (0..DEPTH)
+        .map(|i| format!("const C{i} = C{};\n", i + 1))
+        .chain([format!("const C{DEPTH} = 1;\nfn main() {{}}")])
+        .collect();
+    assert_eq!(diagnostics(&[("app:main", &text)]), []);
+}
+
 /// No slice is longer than the largest `usize`, `u32::MAX` on a 32-bit
 /// target: a constant end past it is outside every slice, though it
 /// fits a `u64`, which lowering would cut to the target's width.
