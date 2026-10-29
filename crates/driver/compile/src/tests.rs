@@ -702,6 +702,29 @@ fn extern_integers_are_ones_c_has() {
     assert!(at("x86_64-linux").is_empty(), "{:?}", at("x86_64-linux"));
 }
 
+/// A diagnostic may point into another module's file, here where the type
+/// a local is named after is declared; moving that declaration changes no
+/// interface, but the importer is checked again, so the label is where the
+/// type now is.
+#[test]
+fn a_label_in_another_file_follows_its_edit() {
+    let main = ("app:main", "fn main() { let Point = 1; }");
+    let prelude = ("core:global", "struct Point {}");
+    let (first, _) = recompile(&[prelude, main], Results::default());
+    let moved = ("core:global", "// moved down\nstruct Point {}");
+    let (second, checked) = recompile(&[moved, main], first);
+    assert_eq!(checked, ["app:main"]);
+    let labels: Vec<(String, u32)> = (second.diagnostics())
+        .flat_map(|diagnostic| &diagnostic.labels)
+        .map(|label| (label.file.path.clone(), label.span.start))
+        .collect();
+    let declared = (
+        "/peeper-build-test/libs/core/src/global.peep".to_owned(),
+        21,
+    );
+    assert!(labels.contains(&declared), "{labels:?}");
+}
+
 #[test]
 fn a_prelude_edit_checks_what_it_changes() {
     let prelude = ("core:global", "const stdout: i32 = 1;\nfn Helper() {}");

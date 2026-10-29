@@ -161,21 +161,28 @@ pub fn run(
             .all(|import| changed.get(import.module.index()) == Some(&false));
         let cached = previous.remove(&module.ast.file.path);
         let previous_interface = cached.as_ref().map(|cached| cached.interface);
-        // A constant's value depends on the bodies it ran, whose modules come
-        // before (each was imported, by it or by one of those).
-        let ran_unchanged = |cached: &ModuleResults| {
+        // A constant's value depends on the bodies it ran, and a diagnostic
+        // on the text of each file it points into, whose modules come before
+        // (each was imported, by it or by one of those).
+        let others_unchanged = |cached: &ModuleResults| {
             let reused = |path: &String| {
                 *path == module.ast.file.path
                     || results
                         .iter()
                         .any(|done| done.file.path == *path && done.reused)
             };
-            cached.ran_modules.iter().all(reused)
+            let pointed = cached.diagnostics.iter().flat_map(|diagnostic| {
+                let fixes = diagnostic.notes.iter().flat_map(|note| note.fixes());
+                let labels = diagnostic.labels.iter().map(|label| &label.file);
+                labels.chain(fixes.map(|fix| &fix.file))
+            });
+            let pointed = pointed.map(|file| &file.path);
+            cached.ran_modules.iter().chain(pointed).all(reused)
         };
         if let Some(cached) = cached
             && imports_unchanged
             && cached.file.text == module.ast.file.text
-            && ran_unchanged(&cached)
+            && others_unchanged(&cached)
         {
             let found = &mut results[index];
             found.reused = true;

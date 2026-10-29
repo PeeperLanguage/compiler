@@ -277,9 +277,10 @@ the function's file, depend on the function's body.
 
 Only the source, the interface hash and the diagnostics are kept between
 compiles. Ids, types, THIR and MIR are rebuilt, since their numbering shifts
-with every edit. Spans stay absolute: a module is redone whole, and its
-diagnostics only point into its own file. A diagnostic pointing into another
-module's file would break reuse of it after an edit there.
+with every edit. Spans stay absolute: a module is redone whole. A diagnostic
+may point into another module's file (where a type is declared, the function
+a constant ran), so a module is also reused only if each module its
+diagnostics point into is.
 
 Measured on a generated 20k-function program (100-function modules): a full
 check costs about 160 ms; after a body edit the next compile takes about 9 ms,
