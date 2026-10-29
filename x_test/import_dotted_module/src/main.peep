@@ -1,0 +1,6 @@
+// A dot before `.peep` is part of the module's name: `app:v1.2`.
+import "import_dotted_module:v1.2.peep" as v;
+
+fn main() -> i32 {
+    return v::Seven();
+}

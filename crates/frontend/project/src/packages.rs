@@ -41,11 +41,11 @@ pub(crate) fn resolve(
         let message = "import path needs a package, such as `myapp:utils/file`";
         return Err((message.to_string(), None));
     };
-    let Some(dir) = packages.get(name) else {
+    if !packages.contains_key(name) {
         let known = packages.keys().map(|known| (known.as_str(), 0));
         let meant = nearest_name(name, known).map(|known| format!("{known}:{rest}"));
         return Err((format!("unknown package `{name}`"), meant));
-    };
+    }
     let last = rest.rsplit('/').next().unwrap_or(rest);
     let rest = match last.rfind('.').map(|dot| &last[dot..]) {
         Some(SOURCE_EXTENSION) => &rest[..rest.len() - SOURCE_EXTENSION.len()],
@@ -54,13 +54,24 @@ pub(crate) fn resolve(
         }
         None => rest,
     };
+    // `\` and `:` would let Windows read a part as a folder or a drive of its
+    // own, outside the package's folder.
     if rest
         .split('/')
-        .any(|part| part.is_empty() || part == "." || part == "..")
+        .any(|part| part.is_empty() || part == "." || part == ".." || part.contains(['\\', ':']))
     {
-        let message = "import path parts cannot be empty, `.` or `..`";
+        let message = "import path parts cannot be empty, `.` or `..`, or hold `\\` or `:`";
         return Err((message.to_string(), None));
     }
-    let file = dir.join(format!("{rest}{SOURCE_EXTENSION}"));
-    Ok((format!("{name}:{rest}"), file))
+    let path = format!("{name}:{rest}");
+    let file = file_of(packages, &path).expect("the package is known");
+    Ok((path, file))
+}
+
+/// The file of the module at `path`, a canonical import path as `resolve`
+/// gives it; none when its package is unknown.
+pub(crate) fn file_of(packages: &HashMap<String, PathBuf>, path: &str) -> Option<PathBuf> {
+    let (name, rest) = path.split_once(':')?;
+    let folder = packages.get(name)?;
+    Some(folder.join(format!("{rest}{SOURCE_EXTENSION}")))
 }
