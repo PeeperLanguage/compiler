@@ -249,7 +249,7 @@ fn compile<'p>(
     let mut check_and_lower = |mut queue: Option<&mut llvm::write::FunctionQueue>| {
         compile::run(
             program,
-            target.pointer_bits,
+            target,
             compile::Results::default(),
             false, // names are for editors
             |output| {

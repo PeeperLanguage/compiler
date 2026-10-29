@@ -41,7 +41,7 @@ use crate::convert::lsp_diagnostics;
 use crate::convert::offset;
 use crate::convert::range;
 use crate::convert::workspace_edit;
-use crate::host_pointer_bits;
+use crate::host;
 use crate::hover::declaration_hover;
 use crate::hover::doc_hover;
 use crate::hover::hover_text;
@@ -52,6 +52,8 @@ pub(crate) struct Server<'s> {
     connection: &'s Connection,
     libraries: &'s Path,
     open_files: HashMap<PathBuf, OpenFile>,
+    /// Whether the editor takes versioned edits (`workspace_edit`).
+    versioned_edits: bool,
     pub(crate) checked: HashMap<PathBuf, Checked>, // by the entry file of each program
     /// Files changed and not checked yet; their programs are checked once
     /// `deadline` passes.
@@ -59,11 +61,16 @@ pub(crate) struct Server<'s> {
     pub(crate) deadline: Option<Instant>,
 }
 impl<'s> Server<'s> {
-    pub(crate) fn new(connection: &'s Connection, libraries: &'s Path) -> Server<'s> {
+    pub(crate) fn new(
+        connection: &'s Connection,
+        libraries: &'s Path,
+        versioned_edits: bool,
+    ) -> Server<'s> {
         Server {
             connection,
             libraries,
             open_files: HashMap::new(),
+            versioned_edits,
             checked: HashMap::new(),
             pending: HashSet::new(),
             deadline: None,
@@ -128,12 +135,12 @@ impl<'s> Server<'s> {
             self.deadline = Some(Instant::now() + DEBOUNCE);
             return Ok(());
         }
-        // Other pending files of its program are still checked once more.
+        // Other pending files of its programs are still checked once more.
         self.pending.remove(&file);
-        match self.project_of(&file) {
-            Some(project) => self.check(project, &file),
-            None => Ok(()),
+        for project in self.projects_holding(&file) {
+            self.check(project, &file)?;
         }
+        Ok(())
     }
 
     /// Answers go to definition with where the name at the given place is
@@ -214,7 +221,7 @@ impl<'s> Server<'s> {
                         return None; // declared nowhere
                     }
                     let written = module.ast.file.slice(span);
-                    let doc = builtin_doc(written, host_pointer_bits())?;
+                    let doc = builtin_doc(written, host().pointer_bits)?;
                     return markdown_hover(doc_hover(written, &doc));
                 }
             };
@@ -272,14 +279,21 @@ impl<'s> Server<'s> {
     }
 
     /// The module read from `file` in each program last checked that holds
-    /// it, with what that check keeps.
+    /// it, by the program's entry file, with what that check keeps. A module
+    /// read from other text than the editor now has, before a check or after
+    /// one that could not load, is left out: its places are not the
+    /// editor's.
     pub(crate) fn modules_of<'a>(
         &'a self,
         file: &Path,
     ) -> impl Iterator<Item = (&'a Checked, &'a project::Module)> {
-        self.checked.values().filter_map(|checked| {
+        let open = self.open_files.get(file);
+        let mut programs: Vec<(&PathBuf, &Checked)> = self.checked.iter().collect();
+        programs.sort_unstable_by_key(|&(entry, _)| entry);
+        programs.into_iter().filter_map(move |(_, checked)| {
             let module = checked.program.as_ref()?.module_of(file)?;
-            Some((checked, module))
+            let current = open.is_none_or(|open| open.text == module.ast.file.text);
+            current.then_some((checked, module))
         })
     }
 
@@ -287,40 +301,47 @@ impl<'s> Server<'s> {
     /// a program holding its file recorded, a local's use giving the local's
     /// declaration, which holds what is known of it; else the name of one of
     /// the module's declarations; with what that check keeps and the file's
-    /// module.
+    /// module. A name holds the bytes of its span, and else one ending at
+    /// `place` is taken, as a cursor right after a word is on it.
     pub(crate) fn name_at(
         &self,
         place: &TextDocumentPositionParams,
     ) -> Option<(&Checked, &project::Module, CachedFact)> {
         let file = file_path(&place.text_document.uri)?;
-        self.modules_of(&file).find_map(|(checked, module)| {
-            let offset = offset(&module.ast.file, place.position) as u32;
-            let contains_offset = |span: Span| span.start <= offset && offset <= span.end;
-            let facts = checked.facts.get(&file).map_or(&[][..], Vec::as_slice);
-            let mut names = facts.iter().filter(|fact| {
-                !matches!(fact.kind, CachedKind::Literal { .. }) && contains_offset(fact.span)
-            });
-            if let Some(name) = names.next() {
-                let name = match name.kind {
-                    CachedKind::Local { declared } => {
-                        facts.iter().find(|fact| fact.span == declared)?
-                    }
-                    _ => name,
+        let holds: [fn(Span, u32) -> bool; 2] = [
+            |span, offset| span.start <= offset && offset < span.end,
+            |span, offset| span.end == offset,
+        ];
+        holds.into_iter().find_map(|holds| {
+            self.modules_of(&file).find_map(|(checked, module)| {
+                let offset = offset(&module.ast.file, place.position) as u32;
+                let contains_offset = |span: Span| holds(span, offset);
+                let facts = checked.facts.get(&file).map_or(&[][..], Vec::as_slice);
+                let mut names = facts.iter().filter(|fact| {
+                    !matches!(fact.kind, CachedKind::Literal { .. }) && contains_offset(fact.span)
+                });
+                if let Some(name) = names.next() {
+                    let name = match name.kind {
+                        CachedKind::Local { declared } => {
+                            facts.iter().find(|fact| fact.span == declared)?
+                        }
+                        _ => name,
+                    };
+                    return Some((checked, module, name.clone()));
+                }
+                let tree = &module.ast;
+                let declarations = tree.declarations();
+                let declared = declarations.enumerate().find_map(|(index, declaration)| {
+                    let span = tree.decls[declaration].name().span;
+                    contains_offset(span).then_some((index, span))
+                });
+                let (position, span) = declared?;
+                let kind = CachedKind::Declaration {
+                    file: file.clone(),
+                    position: position as u32,
                 };
-                return Some((checked, module, name.clone()));
-            }
-            let tree = &module.ast;
-            let declarations = tree.declarations();
-            let declared = declarations.enumerate().find_map(|(index, declaration)| {
-                let span = tree.decls[declaration].name().span;
-                contains_offset(span).then_some((index, span))
-            });
-            let (position, span) = declared?;
-            let kind = CachedKind::Declaration {
-                file: file.clone(),
-                position: position as u32,
-            };
-            Some((checked, module, CachedFact { span, kind }))
+                Some((checked, module, CachedFact { span, kind }))
+            })
         })
     }
 
@@ -329,16 +350,35 @@ impl<'s> Server<'s> {
         self.deadline = None;
         let mut programs = HashMap::new();
         for file in std::mem::take(&mut self.pending) {
-            if let Some(project) = self.project_of(&file) {
+            for project in self.projects_holding(&file) {
                 programs
                     .entry(project.entry.clone())
-                    .or_insert((project, file));
+                    .or_insert((project, file.clone()));
             }
         }
         for (project, file) in programs.into_values() {
             self.check(project, &file)?;
         }
         Ok(())
+    }
+
+    /// The projects to check after `file` changed: its own (`project_of`),
+    /// and each one whose program last checked holds it, as every program
+    /// holds a bundled library's module; by entry file, once each.
+    fn projects_holding(&self, file: &Path) -> Vec<project::Project> {
+        let holding = (self.checked.iter())
+            .filter(|(_, checked)| {
+                let program = checked.program.as_ref();
+                program.is_some_and(|program| program.module_of(file).is_some())
+            })
+            .map(|(entry, _)| entry.as_path());
+        let mut projects: Vec<project::Project> = std::iter::once(file)
+            .chain(holding)
+            .filter_map(|file| self.project_of(file))
+            .collect();
+        projects.sort_unstable_by(|one, other| one.entry.cmp(&other.entry));
+        projects.dedup_by(|one, other| one.entry == other.entry);
+        projects
     }
 
     /// The project `file` belongs to: the one of the nearest folder above it
@@ -362,14 +402,22 @@ impl<'s> Server<'s> {
     /// fixes of the diagnostics it names, which the published diagnostics
     /// carry in their `data`, and the file's sure fixes as one `source.fixAll`
     /// action. A fix-on-save request asks for `source.fixAll` only, so it gets
-    /// no guesses.
+    /// no guesses. An editor that takes no versioned edits cannot refuse a
+    /// fix made for older text, so it gets none until its text is checked.
     pub(crate) fn answer_code_actions(&self, id: RequestId, params: serde_json::Value) -> Response {
         let params: CodeActionParams = match serde_json::from_value(params) {
             Ok(params) => params,
             Err(error) => return invalid_params(id, &error),
         };
-        let only = params.context.only.as_ref();
         let mut actions = Vec::new();
+        let file = file_path(&params.text_document.uri);
+        let checked = file
+            .as_ref()
+            .is_some_and(|file| self.modules_of(file).next().is_some());
+        if !self.versioned_edits && !checked {
+            return Response::new_ok(id, actions);
+        }
+        let only = params.context.only.as_ref();
         let named = params.context.diagnostics.into_iter();
         for diagnostic in named.filter(|_| asks_for(only, &CodeActionKind::QUICKFIX)) {
             let fixes = diagnostic
@@ -383,12 +431,11 @@ impl<'s> Server<'s> {
                 }));
             }
         }
-        let fix_all = file_path(&params.text_document.uri)
+        let fix_all = file
             .filter(|_| asks_for(only, &CodeActionKind::SOURCE_FIX_ALL))
             .and_then(|file| {
-                let mut checked = self.checked.values();
-                checked
-                    .find_map(|checked| checked.fix_all.get(&file))
+                (self.modules_of(&file))
+                    .find_map(|(checked, _)| checked.fix_all.get(&file))
                     .cloned()
             });
         actions.extend(fix_all.map(CodeActionOrCommand::CodeAction));
@@ -449,7 +496,11 @@ impl<'s> Server<'s> {
                 let action = CodeAction {
                     title: "Apply all sure fixes".to_string(),
                     kind: Some(CodeActionKind::SOURCE_FIX_ALL),
-                    edit: Some(workspace_edit(fixes, &self.open_files)?),
+                    edit: Some(workspace_edit(
+                        fixes,
+                        &self.open_files,
+                        self.versioned_edits,
+                    )?),
                     ..CodeAction::default()
                 };
                 Some((file.clone(), action))
@@ -463,7 +514,9 @@ impl<'s> Server<'s> {
             let in_file = by_file.remove(file).unwrap_or_default();
             let diagnostics = in_file
                 .into_iter()
-                .flat_map(|diagnostic| lsp_diagnostics(diagnostic, &self.open_files))
+                .flat_map(|diagnostic| {
+                    lsp_diagnostics(diagnostic, &self.open_files, self.versioned_edits)
+                })
                 .collect();
             let params = PublishDiagnosticsParams {
                 uri,

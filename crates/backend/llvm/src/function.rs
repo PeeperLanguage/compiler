@@ -10,7 +10,6 @@ mod debug_info;
 mod memory;
 mod print;
 
-use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Display;
 use std::fmt::Write;
@@ -31,6 +30,7 @@ use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use model::semantic_types::range_field;
+use rustc_hash::FxHashMap;
 
 use crate::Module;
 use crate::function::debug_info::DebugLocation;
@@ -79,7 +79,7 @@ impl Module<'_> {
             types,
             debug: DebugNodes {
                 scopes: scope_metadata.unwrap_or_default(),
-                locations: HashMap::new(),
+                locations: FxHashMap::default(),
             },
             panics: String::new(),
             checks: body
@@ -293,7 +293,7 @@ struct Function<'m, 'p, 'b> {
 /// release build.
 struct DebugNodes {
     scopes: Vec<usize>, // by MIR debug scope (`Module::add_debug_info`)
-    locations: HashMap<(usize, u32), usize>, // each scope and start offset's DILocation
+    locations: FxHashMap<(usize, u32), usize>, // each scope and start offset's DILocation
 }
 
 /// The MIR block being written (`write_block`).
@@ -663,7 +663,7 @@ impl Function<'_, '_, '_> {
                 function,
                 ref arguments,
             } => {
-                self.write_call(out, id, function, arguments, rest);
+                self.write_call(out, id, function, arguments, rest, &location);
                 Ok(())
             }
             InstructionKind::Print {

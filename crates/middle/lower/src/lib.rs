@@ -99,7 +99,7 @@ pub fn lower(
         lowering.emit(store, TypeId::VOID, span);
         lowering.declared.push(variable);
     }
-    lowering.lower_block(function)?;
+    lowering.lower_block(function, 0)?; // the parameters are its variables too
     let end = Span::new(span.end as usize - 1, span.end as usize); // the `}`
     lowering.finish(mir::Terminator::FallOff(end));
     Some(lowering.mir)
@@ -114,17 +114,17 @@ struct Lowering<'t> {
     instructions: Vec<NonZeroU32>,    // that block's instructions so far
     debug_scope: Id<mir::DebugScope>, // the one new instructions are written in
     loops: Vec<Loop>,                 // the loops being lowered, innermost last
-    /// The variables of the enclosing blocks declared so far, in order. A
-    /// block comes before the blocks inside it, so those of the blocks a
-    /// scope end leaves are at the end.
+    /// The variables in scope, in the order declared: those of a block,
+    /// from where it starts (`lower_block`), are the last.
     declared: Vec<Id<mir::Variable>>,
 }
 
-/// Where a loop's `continue` and `break` go, and the block they leave.
+/// Where a loop's `continue` and `break` go, and where the variables they
+/// leave start in `declared`.
 struct Loop {
     next: Id<mir::Block>, // the start of the next pass
     exit: Id<mir::Block>,
-    body: Id<thir::Block>,
+    declared: usize,
 }
 
 impl Lowering<'_> {

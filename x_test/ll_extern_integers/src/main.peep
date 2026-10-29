@@ -1,0 +1,42 @@
+// C functions' integers pass as clang passes C's on x86-64 Linux: a narrow
+// one extended to `int`, up to 64 bits as itself, 65 to 127 as two `i64`
+// limbs (whole on the stack when the registers run out), `i128` as itself,
+// a wider one in memory. This text, linked with C functions checking each
+// value, ran correctly in a debug and a release build.
+#[extern("c_b")]
+fn b(a: bool) -> bool;
+#[extern("c_s8")]
+fn s8(a: i8) -> i8;
+#[extern("c_u16")]
+fn u16f(a: u16) -> u16;
+#[extern("c_s5")]
+fn s5(a: i5) -> i5;
+#[extern("c_s33")]
+fn s33(a: i33) -> i33;
+#[extern("c_u65")]
+fn u65f(a: u65) -> u65;
+#[extern("c_s100")]
+fn s100(a: i100) -> i100;
+#[extern("c_s128")]
+fn s128(a: i128) -> i128;
+#[extern("c_s200")]
+fn s200(a: i200, b: i65) -> i200;
+#[extern("c_many")]
+fn many(a: i65, b: i65, c: i32, d: i65, e: i65, f: i64) -> i65;
+#[extern("c_mix")]
+fn mix(a: i65, x: f64, c: i65, d: i65, y: f64, f: i32, g: u65) -> u200;
+
+fn main() {
+    if b(true) { Exit(20); }
+    if s8(-3i8) != -4i8 { Exit(21); }
+    if u16f(65000u16) != 65001u16 { Exit(22); }
+    if s5(-7i5) != -8i5 { Exit(23); }
+    if s33(-(1i33 << 31) + 5i33) != (1i33 << 31) - 6i33 { Exit(24); }
+    if u65f((1u65 << 64) + 3u65) != (1u65 << 64) + 4u65 { Exit(25); }
+    if s100(-(1i100 << 70) - 9i100) != (1i100 << 90) + 1i100 { Exit(26); }
+    if s128(-(1i128 << 100) - 1i128) != (1i128 << 120) + 7i128 { Exit(27); }
+    if s200(-(1i200 << 150) - 2i200, -(1i65 << 63) - 1i65) != (1i200 << 190) + 11i200 { Exit(28); }
+    if many(1i65, -2i65, 3, (1i65 << 64) - 1i65, -5i65, 6) != -(1i65 << 63) - 7i65 { Exit(29); }
+    if mix(-1i65, 1.5, 2i65, -(1i65 << 64), 2.5, -9, (1u65 << 64) + 1u65) != (1u200 << 199) + 13u200 { Exit(30); }
+    Exit(0);
+}

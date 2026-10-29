@@ -5,6 +5,12 @@ use super::CheckedFunction;
 use super::Output;
 use super::Results;
 use super::run;
+use model::machine::Machine;
+
+/// The machine the tests check for, but where they test another.
+fn x86_64() -> &'static Machine {
+    Machine::named("x86_64-linux").unwrap()
+}
 
 /// The program of `modules`, each an import path and its text, loaded as
 /// `peeper check` loads it from `app:main`, with every file given as open
@@ -47,7 +53,7 @@ fn load(modules: &[(&str, &str)]) -> project::Program {
 /// Checks the program of `modules` (see `load`) and gives each
 /// diagnostic as its code, message and the text of its first label.
 fn diagnostics(modules: &[(&str, &str)]) -> Vec<(&'static str, String, String)> {
-    let found = run(&load(modules), 64, Results::default(), false, |_| {});
+    let found = run(&load(modules), x86_64(), Results::default(), false, |_| {});
     found
         .diagnostics()
         .map(|diagnostic| {
@@ -179,6 +185,47 @@ fn module_constants() {
     );
 }
 
+/// A constant's `false && x` and `true || x` do not run `x`, as the
+/// program would not; `x` is still checked.
+#[test]
+fn constants_short_circuit() {
+    let found = diagnostics(&[(
+        "app:main",
+        "fn bad() -> bool { panic \"bad\"; }
+            const Skipped = false && bad() || true || bad();
+            const Checked = false && 1;
+            const Run = true && bad();
+            fn main() {}",
+    )]);
+    assert_eq!(
+        found,
+        expected(&[
+            (
+                "T0001",
+                "mismatched types: expected `bool`, found `i32`",
+                "1"
+            ),
+            (
+                "T0044",
+                "this call cannot be evaluated at compile time",
+                "bad()"
+            ),
+        ])
+    );
+}
+
+/// A long chain of constants, each naming the next, is checked, not a
+/// stack overflow.
+#[test]
+fn checks_a_long_chain_of_constants() {
+    const DEPTH: usize = 5000;
+    let text: String = (0..DEPTH)
+        .map(|i| format!("const C{i} = C{};\n", i + 1))
+        .chain([format!("const C{DEPTH} = 1;\nfn main() {{}}")])
+        .collect();
+    assert_eq!(diagnostics(&[("app:main", &text)]), []);
+}
+
 /// No slice is longer than the largest `usize`, `u32::MAX` on a 32-bit
 /// target: a constant end past it is outside every slice, though it
 /// fits a `u64`, which lowering would cut to the target's width.
@@ -192,7 +239,13 @@ fn slice_ends_fit_the_target_usize() {
             }
             fn main() {}",
     )]);
-    let found = run(&program, 32, Results::default(), false, |_| {});
+    let found = run(
+        &program,
+        Machine::named("i686-linux").unwrap(),
+        Results::default(),
+        false,
+        |_| {},
+    );
     let messages: Vec<&str> = (found.diagnostics())
         .map(|diagnostic| diagnostic.message.as_str())
         .collect();
@@ -214,7 +267,7 @@ fn a_cycle_is_reported_once_with_its_path() {
             const D = B;
             fn main() { let x = A + B; }",
     )]);
-    let found = run(&program, 64, Results::default(), false, |_| {});
+    let found = run(&program, x86_64(), Results::default(), false, |_| {});
     let errors: Vec<(String, Vec<(String, String)>)> = found
         .diagnostics()
         .map(|diagnostic| {
@@ -338,13 +391,38 @@ fn a_prelude_struct_has_its_own_fields() {
     );
 }
 
+/// A struct with a field of no type, and a function with a malformed
+/// `extern`, are invalid, so no function using them is lowered for a
+/// backend to lay out or name.
+#[test]
+fn an_invalid_declaration_lowers_nothing_using_it() {
+    let program = load(&[(
+        "app:main",
+        "struct S { x: Missing }
+            fn f(s: S) {}
+            #[extern(1)]
+            fn Puts(code: i32) -> i32;
+            fn g() -> i32 { return Puts(1); }
+            fn main() {}",
+    )]);
+    let mut lowered = 0;
+    let found = run(&program, x86_64(), Results::default(), false, |output| {
+        if let Output::Function(CheckedFunction { mir: Some(_), .. }) = output {
+            lowered += 1;
+        }
+    });
+    let extern_shape = "write `#[extern(\"name\")]` once, with the C function's name";
+    assert_eq!(messages(&found), ["unknown type `Missing`", extern_shape]);
+    assert_eq!(lowered, 1, "only `main` is lowered");
+}
+
 /// Compiles the program of `modules` (see `load`) after `previous`;
 /// gives what it found and the paths of the modules whose bodies were
 /// checked, which every module of these tests has.
 fn recompile(modules: &[(&str, &str)], previous: Results) -> (Results, Vec<String>) {
     let loaded = load(modules);
     let mut checked: Vec<String> = Vec::new();
-    let results = run(&loaded, 64, previous, false, |output| {
+    let results = run(&loaded, x86_64(), previous, false, |output| {
         let Output::Function(CheckedFunction { definition, .. }) = output else {
             return;
         };
@@ -527,7 +605,7 @@ fn a_function_run_at_compile_time_records_its_facts_once() {
     )]);
     let tree = &program.modules[0].ast;
     let mut found: Vec<(&str, &str)> = Vec::new();
-    run(&program, 64, Results::default(), true, |output| {
+    run(&program, x86_64(), Results::default(), true, |output| {
         let (owner, facts) = match output {
             Output::Function(CheckedFunction {
                 definition, facts, ..
@@ -568,11 +646,83 @@ fn a_function_run_at_compile_time_records_its_facts_once() {
 fn array_lengths_fit_the_target_usize() {
     let program = load(&[(
         "app:main",
-        "fn main() { let a: [4294967296]u8; let b: [4294967295]u8; }",
+        // Of values that take no bytes, so only the length is too big.
+        "struct Empty {}
+            fn main() { let a: [4294967296]Empty; let b: [4294967295]Empty; }",
     )]);
-    let at = |bits| messages(&run(&program, bits, Results::default(), false, |_| {}));
-    assert_eq!(at(32), ["an array length must fit `usize`, of 32 bits"]);
-    assert!(at(64).is_empty(), "{:?}", at(64));
+    let at = |name| {
+        let target = Machine::named(name).unwrap();
+        messages(&run(&program, target, Results::default(), false, |_| {}))
+    };
+    assert_eq!(
+        at("i686-linux"),
+        ["an array length must fit `usize`, of 32 bits"]
+    );
+    assert!(at("x86_64-linux").is_empty(), "{:?}", at("x86_64-linux"));
+}
+
+/// A value must take at most `isize::MAX` bytes of the target, as LLVM
+/// counts the bytes of a copy as signed.
+#[test]
+fn values_fit_the_target() {
+    let program = load(&[(
+        "app:main",
+        "struct Halves { a: [1073741824]u8, b: [1073741824]u8 }
+            fn main() { let fits: [2147483647]u8; let over: [2147483648]u8; }",
+    )]);
+    let at = |name| {
+        let target = Machine::named(name).unwrap();
+        messages(&run(&program, target, Results::default(), false, |_| {}))
+    };
+    let too_big = |text| {
+        format!("`{text}` is too big for i686-linux, where a value takes at most 2147483647 bytes")
+    };
+    assert_eq!(
+        at("i686-linux"),
+        [too_big("Halves"), too_big("[2147483648]u8")]
+    );
+    assert!(at("x86_64-linux").is_empty(), "{:?}", at("x86_64-linux"));
+}
+
+/// An `extern` integer must be one C has on the target: at most 128 bits
+/// on AArch64.
+#[test]
+fn extern_integers_are_ones_c_has() {
+    let program = load(&[(
+        "app:main",
+        "#[extern(\"c_wide\")]\nfn wide(a: i128, b: i129) -> i200;",
+    )]);
+    let at = |name| {
+        let target = Machine::named(name).unwrap();
+        messages(&run(&program, target, Results::default(), false, |_| {}))
+    };
+    let none =
+        |text| format!("C has no `{text}` on aarch64-linux, whose integers have at most 128 bits");
+    assert_eq!(at("aarch64-linux"), [none("i129"), none("i200")]);
+    assert!(at("x86_64-linux").is_empty(), "{:?}", at("x86_64-linux"));
+}
+
+/// A diagnostic may point into another module's file, here where the type
+/// a local is named after is declared; moving that declaration changes no
+/// interface, but the importer is checked again, so the label is where the
+/// type now is.
+#[test]
+fn a_label_in_another_file_follows_its_edit() {
+    let main = ("app:main", "fn main() { let Point = 1; }");
+    let prelude = ("core:global", "struct Point {}");
+    let (first, _) = recompile(&[prelude, main], Results::default());
+    let moved = ("core:global", "// moved down\nstruct Point {}");
+    let (second, checked) = recompile(&[moved, main], first);
+    assert_eq!(checked, ["app:main"]);
+    let labels: Vec<(String, u32)> = (second.diagnostics())
+        .flat_map(|diagnostic| &diagnostic.labels)
+        .map(|label| (label.file.path.clone(), label.span.start))
+        .collect();
+    let declared = (
+        "/peeper-build-test/libs/core/src/global.peep".to_owned(),
+        21,
+    );
+    assert!(labels.contains(&declared), "{labels:?}");
 }
 
 #[test]

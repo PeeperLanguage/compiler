@@ -6,6 +6,7 @@ use arena::Id;
 use model::DefId;
 use model::ast;
 use model::constant::Constant;
+use model::layout::layout;
 use model::semantic_types;
 use model::semantic_types::Integer;
 use model::semantic_types::Type;
@@ -70,8 +71,14 @@ impl Checker<'_> {
                     }
                     field_types.push(field_type);
                 }
+                // Invalid when a field is, as an array is when its element
+                // is, so no later phase lays out a field it cannot.
+                if field_types.contains(&TypeId::INVALID) {
+                    return TypeId::INVALID;
+                }
                 let fields = field_types.into();
-                return self.types.intern(Type::Struct { definition, fields });
+                let ty = self.types.intern(Type::Struct { definition, fields });
+                return self.fits_target(ty, written.name.span);
             }
             ast::Type::Enum(_) => "enum declarations",
             ast::Type::Interface(_) => "interface declarations",
@@ -80,11 +87,36 @@ impl Checker<'_> {
         self.not_supported(written.name.span, what)
     }
 
+    /// Reports each attribute of the declaration `definition` but an
+    /// `extern` on a function, the one attribute there is; `check_function`
+    /// checks the `extern`'s shape.
+    pub(crate) fn check_attributes(&mut self, definition: DefId) {
+        let tree = &self.module().ast;
+        let declaration = &tree.decls[tree.declaration(definition.index)];
+        let function = matches!(declaration, ast::Decl::Function(_));
+        for attribute in tree.children.lists.items(declaration.metadata().attributes) {
+            let name = tree.children.attributes[attribute].name.text(&tree.file);
+            let message = match name {
+                "extern" if function => continue,
+                "extern" => "`extern` names a C function, so only a function has it".to_owned(),
+                _ => format!("unknown attribute `{name}`"),
+            };
+            let span = tree.children.attributes.span(attribute);
+            self.error(diagnostics::INVALID_DECLARATION, message, span);
+        }
+    }
+
     /// The type of the module's function or method `definition`.
     pub(crate) fn check_function(&mut self, definition: DefId) -> TypeId {
         let tree = &self.module().ast;
         let declaration = tree.declaration(definition.index);
-        let ast::Decl::Function(ast::Function { signature, .. }) = tree.decls[declaration] else {
+        let ast::Decl::Function(ast::Function {
+            name,
+            signature,
+            body,
+            ..
+        }) = tree.decls[declaration]
+        else {
             unreachable!("`{definition:?}` is a function declaration")
         };
         if let Some(receiver) = signature.receiver {
@@ -93,7 +125,14 @@ impl Checker<'_> {
         if let Some(parameter) = tree.children.lists.items(signature.type_parameters).next() {
             return self.not_supported(tree.children.names.span(parameter), "generic functions");
         }
-        let external = project::extern_symbol(self.modules, definition).is_some();
+        let symbol = project::extern_symbol(self.modules, definition);
+        if let Err(span) = symbol {
+            let message = "write `#[extern(\"name\")]` once, with the C function's name";
+            self.error(diagnostics::INVALID_DECLARATION, message, span);
+        }
+        // A malformed `extern` is still read as one, so its signature gets
+        // the C rules.
+        let external = symbol != Ok(None);
         let mut parameters = Vec::with_capacity(signature.parameters.len());
         for parameter in tree.children.lists.items(signature.parameters) {
             let parameter = tree.children.params[parameter];
@@ -108,6 +147,18 @@ impl Checker<'_> {
         let Some(origins) = self.result_origins(&signature, &parameters, result) else {
             return TypeId::INVALID;
         };
+        if external == body.is_some() {
+            let message = if external {
+                "an `extern` function is defined in C, so it has no body"
+            } else {
+                "a function needs a body, or `#[extern(\"name\")]` when C defines it"
+            };
+            return self.error(diagnostics::INVALID_DECLARATION, message, name.span);
+        }
+        // Reported above; invalid, so no call of it is lowered.
+        if symbol.is_err() {
+            return TypeId::INVALID;
+        }
         let parameters = parameters.into();
         self.types.intern(Type::Function {
             parameters,
@@ -257,6 +308,17 @@ impl Checker<'_> {
                 "struct, array, range and slice parameters and results of `extern` functions";
             return self.not_supported(span, what);
         }
+        if external
+            && let Type::Integer(integer) = self.types[resolved]
+            && integer.bits > self.target.widest_c_integer()
+        {
+            let (span, target) = (self.module().ast.types.span(ty), self.target.name);
+            let widest = self.target.widest_c_integer();
+            let message = format!(
+                "C has no `{integer}` on {target}, whose integers have at most {widest} bits"
+            );
+            return self.error(diagnostics::INVALID_TYPE, message, span);
+        }
         resolved
     }
 
@@ -287,9 +349,26 @@ impl Checker<'_> {
             Type::Slice { .. } => self.not_supported(span, "arrays of slices"),
             _ => {
                 let element = self.types.real(element);
-                self.types.intern(Type::Array { element, length })
+                let ty = self.types.intern(Type::Array { element, length });
+                self.fits_target(ty, span)
             }
         }
+    }
+
+    /// `ty`, made at `span`, or invalid after an error there when a value of
+    /// it takes more bytes than the target allows, which no copy of it could
+    /// count.
+    fn fits_target(&mut self, ty: TypeId, span: Span) -> TypeId {
+        let (size, _) = layout(&self.types, ty, self.target);
+        let largest = self.target.largest_object();
+        if size <= largest {
+            return ty;
+        }
+        let (text, target) = (self.type_text(ty), self.target.name);
+        let message = format!(
+            "`{text}` is too big for {target}, where a value takes at most {largest} bytes"
+        );
+        self.error(diagnostics::INVALID_TYPE, message, span)
     }
 
     /// `range[element]`, written or made at `span`: invalid when `element`
@@ -311,11 +390,11 @@ impl Checker<'_> {
     pub(crate) fn length_fits(&mut self, length: &[u64], span: Span) -> bool {
         let usize = Integer {
             signed: false,
-            bits: self.pointer_bits,
+            bits: self.target.pointer_bits,
         };
         let fits = usize.fits(length, false);
         if !fits {
-            let bits = self.pointer_bits;
+            let bits = self.target.pointer_bits;
             let message = format!("an array length must fit `usize`, of {bits} bits");
             self.error(diagnostics::INVALID_TYPE, message, span);
         }
@@ -536,5 +615,73 @@ mod tests {
             "an error stays inside the signature"
         );
         assert_eq!(found[3], "Invalid");
+    }
+
+    /// An `extern` function is C's, so it has no body here, and any other
+    /// function has one; their calls are not lowered.
+    #[test]
+    fn only_an_extern_function_has_no_body() {
+        let (found, found_reported) =
+            declared_types("#[extern(\"f\")]\nfn f(a: i8) -> i8 { return a; }\nfn g();\n");
+        assert_eq!(
+            found_reported,
+            reported(&[
+                (
+                    "P0005",
+                    "an `extern` function is defined in C, so it has no body",
+                    "f"
+                ),
+                (
+                    "P0005",
+                    "a function needs a body, or `#[extern(\"name\")]` when C defines it",
+                    "g"
+                ),
+            ])
+        );
+        assert_eq!(found, ["Invalid", "Invalid"]);
+    }
+
+    /// `extern` on a function is the one attribute there is.
+    #[test]
+    fn other_attributes_are_reported() {
+        let (_, found_reported) =
+            declared_types("#[inline]\nfn f();\n#[extern(\"s\")]\nstruct S {}\n");
+        assert_eq!(
+            found_reported,
+            reported(&[
+                ("P0005", "unknown attribute `inline`", "#[inline]"),
+                (
+                    "P0005",
+                    "a function needs a body, or `#[extern(\"name\")]` when C defines it",
+                    "f"
+                ),
+                (
+                    "P0005",
+                    "`extern` names a C function, so only a function has it",
+                    "#[extern(\"s\")]"
+                ),
+            ])
+        );
+    }
+
+    /// An `extern` of another shape is reported, and its function still gets
+    /// the C rules.
+    #[test]
+    fn a_malformed_extern_is_reported() {
+        let (_, found_reported) = declared_types(
+            "struct P { x: i32 }\n#[extern(1)]\nfn a();\n#[extern(\"b\", 2)]\nfn b();\n#[extern(\"c\")]\n#[extern(\"d\")]\nfn c(p: P);\n",
+        );
+        let shape = "write `#[extern(\"name\")]` once, with the C function's name";
+        let expected = reported(&[
+            ("P0005", shape, "#[extern(1)]"),
+            ("P0005", shape, "#[extern(\"b\", 2)]"),
+            ("P0005", shape, "#[extern(\"d\")]"),
+            (
+                "T0043",
+                "struct, array, range and slice parameters and results of `extern` functions are not supported yet",
+                "P",
+            ),
+        ]);
+        assert_eq!(found_reported, expected);
     }
 }

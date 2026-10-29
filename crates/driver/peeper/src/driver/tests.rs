@@ -170,7 +170,7 @@ fn needs_an_entry_point() {
         &root,
         &[
             ("none.peep", b"fn helper() {}\n"),
-            ("bodyless.peep", b"fn main();\n"),
+            ("bodyless.peep", b"#[extern(\"main\")]\nfn main();\n"),
             ("takes.peep", b"fn main(x: i32) {}\n"),
             ("wide.peep", b"fn main() -> i64 { return 0; }\n"),
         ],

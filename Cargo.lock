@@ -75,6 +75,7 @@ dependencies = [
  "project",
  "rustc-hash",
  "source",
+ "stacker",
 ]
 
 [[package]]
@@ -406,6 +407,7 @@ dependencies = [
  "eval",
  "model",
  "project",
+ "rustc-hash",
  "source",
  "toml_edit",
 ]
@@ -490,6 +492,7 @@ version = "0.1.0"
 dependencies = [
  "arena",
  "bigint",
+ "rustc-hash",
  "source",
 ]
 
@@ -565,6 +568,7 @@ dependencies = [
  "model",
  "parser",
  "source",
+ "stacker",
  "toml_edit",
 ]
 

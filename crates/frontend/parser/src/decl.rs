@@ -61,6 +61,19 @@ impl Parser {
             if starts_declaration(kind) {
                 self.recovering = false;
             }
+            let first = self.tree.children.lists.items(metadata.attributes).next();
+            if DECLARATIONS[kind as usize].is_none()
+                && let Some(attribute) = first
+            {
+                let span = self.tree.children.attributes.span(attribute);
+                self.repair(
+                    Diagnostic::new(
+                        diagnostics::INVALID_DECLARATION,
+                        "an attribute needs a declaration after it",
+                    )
+                    .label(&self.tree.file, span, ""),
+                );
+            }
             match kind {
                 TokenKind::Eof => {
                     self.tree.imports = imports;
@@ -313,18 +326,19 @@ impl Parser {
     }
 
     /// Reads the `name:` in front of a parameter's type, if it is there; `_:`
-    /// names no parameter.
+    /// names no parameter. `_` is no type, so a `:` must follow it.
     pub(crate) fn parameter_name(&mut self) -> Option<Ident> {
-        let named = self.at(TokenKind::Ident);
-        if !named && !self.at(TokenKind::Underscore) || self.ahead(1).kind != TokenKind::Colon {
+        if self.at(TokenKind::Underscore) {
+            self.next();
+            self.expect(TokenKind::Colon);
             return None;
         }
-        let name = named.then(|| self.name());
-        if !named {
-            self.next(); // `_`
+        if !self.at(TokenKind::Ident) || self.ahead(1).kind != TokenKind::Colon {
+            return None;
         }
+        let name = self.name();
         self.next(); // `:`
-        name
+        Some(name)
     }
 
     /// Reads `(parameters) -> Type in origins`, each parameter with

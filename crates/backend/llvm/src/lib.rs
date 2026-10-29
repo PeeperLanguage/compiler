@@ -12,7 +12,6 @@ mod text;
 pub mod write;
 
 use std::collections::BTreeMap;
-use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt::Write;
 use std::path::Path;
@@ -21,6 +20,7 @@ use model::DefId;
 use model::ModuleId;
 use model::machine::Machine;
 use model::semantic_types::TypeId;
+use rustc_hash::FxHashMap;
 use source::SourceFile;
 
 use crate::debug_info::Metadata;
@@ -61,10 +61,10 @@ pub struct Module<'p> {
 /// What the module has written so far, so each is written once.
 #[derive(Default)]
 struct Written {
-    strings: HashMap<Vec<u8>, usize>,       // each string's number
-    array_printers: HashMap<TypeId, usize>, // each array type's printer number
-    range_fillers: HashMap<TypeId, usize>,  // each element type's filler number
-    functions: HashSet<String>,             // each `define`'s symbol
+    strings: FxHashMap<Vec<u8>, usize>,       // each string's number
+    array_printers: FxHashMap<TypeId, usize>, // each array type's printer number
+    range_fillers: FxHashMap<TypeId, usize>,  // each element type's filler number
+    functions: HashSet<String>,               // each `define`'s symbol
 }
 
 impl<'p> Module<'p> {

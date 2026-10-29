@@ -1,0 +1,7 @@
+name = "import_dotted_module"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 7

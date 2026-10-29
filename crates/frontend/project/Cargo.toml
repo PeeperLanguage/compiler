@@ -12,6 +12,7 @@ diagnostics.workspace = true
 literal.workspace = true
 model.workspace = true
 parser.workspace = true
+stacker.workspace = true
 toml_edit.workspace = true
 
 [lints]

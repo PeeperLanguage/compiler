@@ -1,0 +1,12 @@
+name = "negative_underscore_parameter"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "main.peep:5:24",
+    "main.peep:7:10",
+    "expected `:`, found `)`",
+    "Compilation failed with 2 error(s)",
+]

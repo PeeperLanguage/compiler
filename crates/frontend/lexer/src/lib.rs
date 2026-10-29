@@ -25,7 +25,7 @@ pub fn scan(file: &Arc<SourceFile>) -> (Vec<Token>, Vec<Diagnostic>) {
         file,
         bytes: file.text.as_bytes(),
         pos: 0,
-        tokens: Vec::with_capacity(file.text.len() / 3 + 1),
+        tokens: Vec::new(),
         diagnostics: Vec::new(),
     };
     while scanner.pos < scanner.bytes.len() {

@@ -1,11 +1,11 @@
 //! Interned types: equal types have equal ids, so comparing types is comparing
 //! two numbers.
 
-use std::collections::HashMap;
 use std::fmt;
 use std::ops::Index;
 
 use bigint::Limbs;
+use rustc_hash::FxHashMap;
 
 use crate::DefId;
 
@@ -307,14 +307,20 @@ const RANGE_DOC: &str = " The integers from a start toward an end, a step apart:
  }
  ```";
 
-/// The fields of a value of `Type::Range { element, step }`, in order: its
-/// walk, found once when the range is made (`lower::Lowering::walk_range`).
-/// Its values are `start`, then each `delta` more than the one before,
-/// wrapping, while `left`, how far its end is, lasts by `step`, the end
-/// counted when `inclusive`. `RANGE_FIELD_NAMES` names them, and
-/// `range_field` gives where each one is.
-pub fn range_fields(element: TypeId, step: TypeId) -> [TypeId; 5] {
-    [element, step, step, element, TypeId::BOOL]
+/// The fields of a value of `Type::Range { element, step }`, in order, each
+/// with its name, as debug info shows it, and type: its walk, found once
+/// when the range is made (`lower::Lowering::walk_range`). Its values are
+/// `start`, then each `delta` more than the one before, wrapping, while
+/// `left`, how far its end is, lasts by `step`, the end counted when
+/// `inclusive`. `range_field` gives where each one is.
+pub fn range_fields(element: TypeId, step: TypeId) -> [(&'static str, TypeId); 5] {
+    [
+        ("start", element),
+        ("left", step),
+        ("step", step),
+        ("delta", element),
+        ("inclusive", TypeId::BOOL),
+    ]
 }
 
 /// Where each field of a range value is in `range_fields`.
@@ -325,9 +331,6 @@ pub mod range_field {
     pub const DELTA: usize = 3;
     pub const INCLUSIVE: usize = 4;
 }
-
-/// The names of `range_fields`, as debug info shows them.
-pub const RANGE_FIELD_NAMES: [&str; 5] = ["start", "left", "step", "delta", "inclusive"];
 
 /// The integer types as wide as a pointer, and whether each is signed.
 const POINTER_SIZED: [(&str, bool); 2] = [("isize", true), ("usize", false)];
@@ -402,21 +405,10 @@ pub fn builtin_doc(name: &str, pointer_bits: u32) -> Option<String> {
 #[derive(Clone)]
 pub struct Types {
     types: Vec<Type>,
-    ids: HashMap<Type, TypeId>,
+    ids: FxHashMap<Type, TypeId>,
 }
 
 impl Types {
-    pub fn new() -> Types {
-        let mut types = Types {
-            types: Vec::new(),
-            ids: HashMap::new(),
-        };
-        for ty in FIXED {
-            types.intern(ty.clone());
-        }
-        types
-    }
-
     /// Adds the types `other` has after these: keeps a copy of a table that
     /// only grows, as `other` is when this was made from it, up to date.
     ///
@@ -641,9 +633,17 @@ impl Types {
     }
 }
 
+/// The fixed types alone, each at its `TypeId` constant.
 impl Default for Types {
     fn default() -> Types {
-        Types::new()
+        let mut types = Types {
+            types: Vec::new(),
+            ids: FxHashMap::default(),
+        };
+        for ty in FIXED {
+            types.intern(ty.clone());
+        }
+        types
     }
 }
 

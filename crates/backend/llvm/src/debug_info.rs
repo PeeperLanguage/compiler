@@ -1,31 +1,30 @@
 //! Debug info: a module's numbered metadata nodes, and the debug type of
 //! each type it describes.
 
-use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Write;
 use std::path::Path;
 
+use model::layout::layout;
+use model::layout::struct_layout;
 use model::machine::Machine;
 use model::semantic_types::Float;
 use model::semantic_types::RANGE;
-use model::semantic_types::RANGE_FIELD_NAMES;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use model::semantic_types::range_fields;
+use rustc_hash::FxHashMap;
 
-use crate::layout::layout;
-use crate::layout::struct_layout;
 use crate::text::quoted;
 
 /// The module's debug info: numbered metadata nodes.
 pub(crate) struct Metadata {
-    pub(crate) text: String,       // each node's line, `!N = ...`, in order
-    pub(crate) count: usize,       // the nodes so far; the next one's number
-    pub(crate) file: usize,        // the DIFile of the module's source file
-    pub(crate) unit: usize,        // the DICompileUnit, the scope of every function
-    types: HashMap<TypeId, usize>, // each type's debug type
+    pub(crate) text: String,         // each node's line, `!N = ...`, in order
+    pub(crate) count: usize,         // the nodes so far; the next one's number
+    pub(crate) file: usize,          // the DIFile of the module's source file
+    pub(crate) unit: usize,          // the DICompileUnit, the scope of every function
+    types: FxHashMap<TypeId, usize>, // each type's debug type
 }
 impl Metadata {
     /// The debug info of a module in the file `path`, with no function yet.
@@ -37,7 +36,7 @@ impl Metadata {
             count: 0,
             file: 0,
             unit: 0,
-            types: HashMap::new(),
+            types: FxHashMap::default(),
         };
         metadata.file = metadata.add(format_args!(
             "!DIFile(filename: {}, directory: {})",
@@ -189,8 +188,7 @@ impl Metadata {
                     unreachable!("a range is of integers")
                 };
                 let name = format!("{RANGE}[{integer}]");
-                let fields = range_fields(element, step);
-                let parts = (RANGE_FIELD_NAMES.into_iter().zip(fields)).collect::<Vec<_>>();
+                let parts = range_fields(element, step);
                 let shape = (ty, name.as_str(), &parts[..]);
                 return Some(self.debug_struct(program, types, shape, target));
             }

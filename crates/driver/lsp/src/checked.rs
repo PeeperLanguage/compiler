@@ -18,7 +18,7 @@ use model::thir::Local;
 use model::thir::Symbol;
 use source::Span;
 
-use crate::host_pointer_bits;
+use crate::host;
 
 /// What the server keeps of a program between checks.
 #[derive(Default)]
@@ -82,7 +82,7 @@ impl Checked {
         // shortcut: the editor checks for the host, so a `usize` constant that
         // fits it but not a `-target i686-linux` build is reported only by that
         // build; check for a project's target when a project can name one.
-        self.results = compile::run(program, host_pointer_bits(), previous, true, cache_facts);
+        self.results = compile::run(program, host(), previous, true, cache_facts);
         let reused: HashSet<&Path> = self
             .results
             .reused()

@@ -13,7 +13,8 @@
 //!    loan and, when it goes through a reference (`&mut r.*`), the loans of
 //!    `r`, so what `r` refers to stays borrowed while the new reference is in
 //!    use. Copying a reference copies its loans; a `store` to a variable
-//!    replaces them.
+//!    replaces them and ends each loan of a place through it, which now
+//!    names what the new reference points to.
 //! 2. Backward: the holders used again later (liveness).
 //! 3. Each access, checked against the loans of the holders in use after it.
 //!
@@ -21,7 +22,7 @@
 //! place; a `&mut` loan forbids every access. Places conflict when one's
 //! steps start with the other's (`p` and `p.x`, not `p.x` and `p.y`).
 //! Changing a variable or ending its scope only touches its own storage, so
-//! a loan reached through the reference stored there is not affected.
+//! a loan reached through the reference stored there is not broken.
 //!
 //! A `&mut` borrow used only as a call argument is reserved until the call
 //! (two-phase): until then it acts as a shared loan, so the other arguments
@@ -100,6 +101,14 @@ pub fn report_loan_errors<'t>(
             holders.push(None);
         }
     }
+    let mut loans_through = vec![Vec::new(); body.variables.len()];
+    for (index, &borrow) in borrows.iter().enumerate() {
+        if let mir::InstructionKind::Borrow { ref place, .. } = body.instructions[borrow].kind
+            && place.is_behind_reference()
+        {
+            loans_through[place.variable.index()].push(Id::from_index(index));
+        }
+    }
     let mut loans = Loans {
         body,
         types,
@@ -108,6 +117,7 @@ pub fn report_loan_errors<'t>(
         reserved: Bits::new(0), // found below: it needs `Loans::uses`
         borrows,
         holders,
+        loans_through,
     };
     loans.reserved = loans.reserved_loans();
     loans.report(file, diagnostics);
@@ -125,6 +135,9 @@ struct Loans<'b, 't> {
     holders: Vec<Option<Id<Holder>>>,
     /// The `&mut` loans reserved until their call (two-phase).
     reserved: Bits<Loan>,
+    /// By variable, the loans of places through the reference in it
+    /// (`&mut r.*`), which a store to it ends.
+    loans_through: Vec<Vec<Id<Loan>>>,
 }
 
 /// The words a message names a borrow with, by its type: a reference's or
@@ -393,15 +406,24 @@ impl Loans<'_, '_> {
             }
             _ => (self.value_holder(id), None, None),
         };
-        let Some(target) = target else {
-            return;
-        };
-        held[target.index()] = match source {
-            Some(source) => held[source.index()].clone(),
-            None => Bits::new(self.loan_count()),
-        };
-        if let Some(loan) = own {
-            held[target.index()].set(loan);
+        if let Some(target) = target {
+            held[target.index()] = match source {
+                Some(source) => held[source.index()].clone(),
+                None => Bits::new(self.loan_count()),
+            };
+            if let Some(loan) = own {
+                held[target.index()].set(loan);
+            }
+        }
+        // A store to `r` repoints it, so `r.*` no longer names what a loan
+        // of it borrowed: that loan ends. What it points into stays borrowed
+        // by the loans its reference took from `r`.
+        if let mir::InstructionKind::Store { ref place, .. } = self.body.instructions[id].kind
+            && let Some(variable) = place.whole_variable()
+        {
+            for &loan in &self.loans_through[variable.index()] {
+                held.iter_mut().for_each(|holding| holding.clear(loan));
+            }
         }
     }
 

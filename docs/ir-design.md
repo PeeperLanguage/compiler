@@ -277,9 +277,10 @@ the function's file, depend on the function's body.
 
 Only the source, the interface hash and the diagnostics are kept between
 compiles. Ids, types, THIR and MIR are rebuilt, since their numbering shifts
-with every edit. Spans stay absolute: a module is redone whole, and its
-diagnostics only point into its own file. A diagnostic pointing into another
-module's file would break reuse of it after an edit there.
+with every edit. Spans stay absolute: a module is redone whole. A diagnostic
+may point into another module's file (where a type is declared, the function
+a constant ran), so a module is also reused only if each module its
+diagnostics point into is.
 
 Measured on a generated 20k-function program (100-function modules): a full
 check costs about 160 ms; after a body edit the next compile takes about 9 ms,
@@ -404,10 +405,13 @@ reference in `r`, then to a field. The checker makes the implicit step of
 `r.x` an explicit `Dereference` in THIR, and lowering turns each into a step,
 so neither the check nor the LLVM writer works it out from types. A
 reference is never in a field yet, but a raw pointer may be, and `pp.*.*`
-takes two steps, so a dereference may be any step. `&place` and `&mut place` are
-a `borrow` of the place, its address. The checker also makes the spec's
-reborrow explicit: a `&mut` in a variable passed to a call becomes a `Borrow`
-of what it refers to, so the variable stays usable; a `let` moves it.
+takes two steps, so a dereference may be any step. Each element's index is
+computed before the place is used, in the order written, and each dereference
+reads its pointer only then, as rustc does: in `p.*[f(@p)]` a call that
+repoints `p` changes which array is read (owner, 2026-10-29). `&place` and
+`&mut place` are a `borrow` of the place, its address. The checker also makes
+the spec's reborrow explicit: a `&mut` in a variable passed to a call becomes a
+`Borrow` of what it refers to, so the variable stays usable; a `let` moves it.
 `@place` is an `address` of the place: the same address as a `borrow`, and
 the place must be set, but it makes no loan, so nothing checks how the raw
 pointer is used. A `.*` of a typed raw pointer is the same `Dereference` step
@@ -488,7 +492,10 @@ that outlives its variable is caught. The variable state check forgets a
 variable at its `scope end`, so a loop's next pass may set it again. Changing a variable, or its
 scope ending, does not touch a loan reached through the reference stored
 in it: `r = &mut b` while `s = &mut r.*` is in use is valid (owner,
-2026-10-24). The message names the variable: "`x` is changed while a
+2026-10-24). After it, `r.*` names `b`, so the loan of `r.*` ends there and
+`s` keeps `a` borrowed through the loans it took from `r`: `r.* = 4` then
+`s.* = 3` is valid, as rustc's kill of loans through an overwritten reference
+(owner, 2026-10-29). The message names the variable: "`x` is changed while a
 `&mut` reference to it is still in use" (events: read, changed, moved,
 borrowed, borrowed as `&mut`, gone), with "reference made here" and
 "reference used later here" (owner, 2026-10-24). A function with no
@@ -557,6 +564,14 @@ one walk per function (`peeper -dump ll` shows it):
   each instruction gets a `!dbg` line from its span; each function a
   `DISubprogram`. A debugger shows variables by name.
 - Symbols: a function's `#[extern("name")]`, else `module_path.name`, quoted.
+- An `extern` function is C's, so it has no body, and every other function
+  has one; `extern` on a function is the one attribute there is, and any
+  other is an error (owner, 2026-10-29). Its integers pass as clang passes
+  C's `_BitInt(N)` on the target (`Machine::c_abi`): extended to `int`, as
+  themselves, as two `i64` limbs, or in memory (`sret`, `byval`), with x86-64
+  System V's register count; `i128` passes as `__int128` (on Windows x64 too,
+  owner, 2026-10-29). An integer wider than C has on the target (128 bits on
+  AArch64) is an error.
 - Integer division, remainder and shifts by a value not known at compile time
   check first and continue in a new block (`bb3.1`); a `phi` names the block
   where its incoming MIR block ends. Division by zero and a shift count

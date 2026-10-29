@@ -1,0 +1,7 @@
+// `_` names no parameter but is no type: `_: i32` is a parameter, `_` alone
+// is a mistake, in a function and in a function type.
+fn ignore(_: i32) {}
+
+fn apply(callback: fn(_)) {}
+
+fn main(_) {}

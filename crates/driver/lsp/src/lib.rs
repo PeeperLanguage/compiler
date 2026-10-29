@@ -48,12 +48,10 @@ pub fn serve(libraries: &Path) -> Result<(), BoxError> {
     Ok(())
 }
 
-/// How many bits a pointer has on the host, which the editor checks for;
-/// `serve` does not start on a machine with no target.
-fn host_pointer_bits() -> u32 {
-    Machine::host()
-        .expect("`serve` found the host")
-        .pointer_bits
+/// The host, the machine the editor checks for; `serve` does not start on
+/// a machine with no target.
+fn host() -> &'static Machine {
+    Machine::host().expect("`serve` found the host")
 }
 
 /// Serves `connection` until the client shuts the server down. It takes the
@@ -73,8 +71,10 @@ fn serve_connection(connection: Connection, libraries: &Path) -> Result<(), BoxE
         })),
         ..ServerCapabilities::default()
     };
-    connection.initialize(serde_json::to_value(capabilities)?)?;
-    let mut server = Server::new(&connection, libraries);
+    let editor = connection.initialize(serde_json::to_value(capabilities)?)?;
+    let document_changes = editor.pointer("/capabilities/workspace/workspaceEdit/documentChanges");
+    let versioned_edits = document_changes == Some(&serde_json::Value::Bool(true));
+    let mut server = Server::new(&connection, libraries, versioned_edits);
     loop {
         let message = match server.deadline {
             None => match connection.receiver.recv() {

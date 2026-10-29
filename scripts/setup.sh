@@ -67,6 +67,13 @@ use_pack() {
         return 1
     fi
     tar -xzf "$work/pack.tar.gz" -C "$work" || { echo "cannot unpack $id" >&2; return 1; }
+    # The old toolchain goes only once the new one is all there.
+    local tools=$work/toolchains/native/bin
+    if [ ! -x "$tools/clang" ] || [ ! -x "$tools/$linker" ] || [ ! -x "$tools/llvm-ar" ]; then
+        echo "$id holds no toolchains/native with clang, $linker and llvm-ar" >&2
+        rm -rf "$work"
+        return 1
+    fi
     rm -rf "$native" "$stamp"
     mkdir -p build/toolchains
     mv "$work/toolchains/native" "$native" || return 1

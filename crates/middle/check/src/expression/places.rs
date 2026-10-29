@@ -53,7 +53,7 @@ impl ThirBuilder<'_, '_> {
                     kind: ExprKind::Length(value),
                 };
             };
-            let length = Limbs::new(self.checker.pointer_bits, &[length]);
+            let length = Limbs::new(self.checker.target.pointer_bits, &[length]);
             return Expr {
                 ty: usize,
                 kind: ExprKind::Constant(Value::Integer(length)),

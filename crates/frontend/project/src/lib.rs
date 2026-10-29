@@ -27,8 +27,8 @@ use model::ast;
 use model::ast::Ident;
 use model::ast::Tree;
 use packages::SOURCE_EXTENSION;
+use packages::file_of;
 use packages::path_of;
-use packages::resolve;
 use source::SourceFile;
 use source::Span;
 
@@ -60,27 +60,32 @@ pub fn declared_name(modules: &[Module], definition: DefId) -> (Ident, &Arc<Sour
 }
 
 /// The name in `#[extern("name")]` on the function `definition` of
-/// `modules`, if it has one: it is a C function, linked by that name.
-pub fn extern_symbol(modules: &[Module], definition: DefId) -> Option<String> {
+/// `modules`, if it has one: it is a C function, linked by that name. The
+/// error is where an `extern` attribute of another shape, or a second one,
+/// is written; the checker reports it, so later phases never see one.
+pub fn extern_symbol(modules: &[Module], definition: DefId) -> Result<Option<String>, Span> {
     let tree = &modules[definition.module.index()].ast;
     let ast::Decl::Function(function) = &tree.decls[tree.declaration(definition.index)] else {
-        return None;
+        return Ok(None);
     };
-    tree.children
-        .lists
-        .items(function.metadata.attributes)
-        .find_map(|attribute| {
-            let attribute = &tree.children.attributes[attribute];
-            if attribute.name.text(&tree.file) != "extern" {
-                return None;
-            }
-            let argument = tree.children.lists.items(attribute.arguments).next()?;
-            let ast::Expr::String { .. } = tree.exprs[argument] else {
-                return None;
-            };
-            let text = tree.file.slice(tree.exprs.span(argument));
-            Some(String::from_utf8_lossy(&literal::value(text)).into_owned())
-        })
+    let mut symbol = None;
+    for attribute in tree.children.lists.items(function.metadata.attributes) {
+        let span = tree.children.attributes.span(attribute);
+        let attribute = &tree.children.attributes[attribute];
+        if attribute.name.text(&tree.file) != "extern" {
+            continue;
+        }
+        let mut arguments = tree.children.lists.items(attribute.arguments);
+        let (None, Some(argument), None) = (&symbol, arguments.next(), arguments.next()) else {
+            return Err(span);
+        };
+        let ast::Expr::String { .. } = tree.exprs[argument] else {
+            return Err(span);
+        };
+        let text = tree.file.slice(tree.exprs.span(argument));
+        symbol = Some(String::from_utf8_lossy(&literal::value(text)).into_owned());
+    }
+    Ok(symbol)
 }
 
 /// The names of the fields of the struct declaration `definition` of
@@ -356,8 +361,8 @@ struct Job {
 /// Each `.peep` file of a package in it is loaded too, imported or not, so an
 /// editor checks the file it has open.
 pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + Sync>) -> Program {
-    let with_prelude = resolve(&project.packages, PRELUDE_PATH)
-        .is_ok_and(|(_, file)| file.is_file() || open_files.contains_key(&file));
+    let with_prelude = file_of(&project.packages, PRELUDE_PATH)
+        .is_some_and(|file| file.is_file() || open_files.contains_key(&file));
     let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
 
     let mut modules = HashMap::new();
@@ -411,8 +416,8 @@ pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + S
             pending -= 1;
             for (_, path) in &loaded.imports {
                 if seen.insert(path.clone()) {
-                    let (_, file) =
-                        resolve(&project.packages, path).expect("an import path is resolved");
+                    let file =
+                        file_of(&project.packages, path).expect("an import's package is known");
                     _ = send_job.send(Job {
                         path: path.clone(),
                         file,

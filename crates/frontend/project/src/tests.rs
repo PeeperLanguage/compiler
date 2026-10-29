@@ -1,6 +1,7 @@
 use std::fmt::Write;
 
 use super::*;
+use crate::packages::resolve;
 
 /// The module of `program` at the import path `path`.
 fn module_named<'p>(program: &'p Program, path: &str) -> &'p Module {
@@ -193,6 +194,21 @@ fn loads_nested_imports() {
     );
 }
 
+/// A dot before the extension is part of the module's name.
+#[test]
+fn loads_a_module_with_a_dot_in_its_name() {
+    let project = write(
+        "dotted",
+        &[
+            ("src/main.peep", "import \"myapp:a.b.peep\";\nfn main() {}"),
+            ("src/a.b.peep", "fn X() {}"),
+        ],
+    );
+    let program = load(&project, &HashMap::<PathBuf, String>::new());
+    assert_eq!(messages(&program), Vec::<String>::new());
+    assert_eq!(order(&program).join(" "), "myapp:a.b myapp:main");
+}
+
 #[test]
 fn import_errors() {
     let main = [
@@ -200,6 +216,8 @@ fn import_errors() {
         r#"import "myapp:./x";"#,
         r#"import "myapp:../x";"#,
         r#"import "myapp:";"#,
+        r#"import "myapp:C:/x";"#,
+        r#"import "myapp:a\\b";"#,
         r#"import "other:x";"#,
         r#"import "x/y";"#,
         r#"import "myapp:x.txt";"#,
@@ -220,15 +238,20 @@ fn import_errors() {
     );
     let program = load(&project, &HashMap::<PathBuf, String>::new());
     let missing = project.root.join("src/missing.peep");
+    let parts =
+        "myapp:main: M0003 import path parts cannot be empty, `.` or `..`, or hold `\\` or `:`"
+            .to_string();
     let want = [
         format!(
             "myapp:main: M0001 module not found: {}",
             path_text(&missing)
         ),
         "myapp:main: M0003 import path needs a package, such as `myapp:utils/file`".to_string(),
-        "myapp:main: M0003 import path parts cannot be empty, `.` or `..`".to_string(),
-        "myapp:main: M0003 import path parts cannot be empty, `.` or `..`".to_string(),
-        "myapp:main: M0003 import path parts cannot be empty, `.` or `..`".to_string(),
+        parts.clone(),
+        parts.clone(),
+        parts.clone(),
+        parts.clone(),
+        parts.clone(),
         r#"myapp:main: M0003 invalid import extension ".txt""#.to_string(),
         "myapp:main: M0003 unknown package `other`".to_string(),
         "myapp:main: M0005 import alias already in use".to_string(),
@@ -421,6 +444,27 @@ fn unreadable_and_non_utf8_entries() {
         messages(&program),
         ["myapp:bad: L0001 file is not valid UTF-8"]
     );
+}
+
+/// A long chain of imports is ordered, not a stack overflow.
+#[test]
+fn orders_a_long_import_chain() {
+    const DEPTH: usize = 5000;
+    let project = write("chain", &[]);
+    let mut open_files: HashMap<PathBuf, String> = (0..DEPTH)
+        .map(|i| {
+            let file = project.root.join(format!("src/m{i}.peep"));
+            (file, format!("import \"myapp:m{}\";", i + 1))
+        })
+        .collect();
+    open_files.insert(
+        project.root.join(format!("src/m{DEPTH}.peep")),
+        String::new(),
+    );
+    open_files.insert(project.entry.clone(), "import \"myapp:m0\";".to_string());
+    let program = load(&project, &open_files);
+    assert_eq!(messages(&program), Vec::<String>::new());
+    assert_eq!(order(&program).last(), Some(&"myapp:main"));
 }
 
 /// A wide, deep project; the order must be the same every run.

@@ -81,7 +81,14 @@ void peeper_rt_v1_print_int(int32_t is_signed, int32_t count, ...) {
         }
         return;
     }
-    uint64_t *limbs = malloc((size_t)count * sizeof *limbs);
+    // The limbs, then the nine-digit chunks of the decimal text, in one
+    // block; a program that cannot get it stops as a panic does.
+    size_t chunk_bytes = ((size_t)count * 3 + 1) * sizeof(uint32_t);
+    uint64_t *limbs = malloc((size_t)count * sizeof *limbs + chunk_bytes);
+    if (!limbs) {
+        fputs("panic: out of memory\n", stderr);
+        exit(101);
+    }
     for (int32_t i = 0; i < count; i++) {
         limbs[i] = va_arg(args, uint64_t);
     }
@@ -96,7 +103,7 @@ void peeper_rt_v1_print_int(int32_t is_signed, int32_t count, ...) {
     }
     // Nine decimal digits at a time, least significant first: each limb, in
     // halves of 32 bits, divided by 10^9 with the remainder carried down.
-    uint32_t *chunks = malloc(((size_t)count * 3 + 1) * sizeof *chunks);
+    uint32_t *chunks = (uint32_t *)(limbs + count);
     size_t chunk_count = 0;
     int32_t top = count;
     do {
@@ -120,7 +127,6 @@ void peeper_rt_v1_print_int(int32_t is_signed, int32_t count, ...) {
     for (size_t i = chunk_count - 1; i-- > 0;) {
         printf("%09u", chunks[i]);
     }
-    free(chunks);
     free(limbs);
 }
 

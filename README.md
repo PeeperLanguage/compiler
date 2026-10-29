@@ -89,6 +89,9 @@ their previously cached names.
 
 ## Binary installation
 
+> Not available yet for the rewritten compiler (`docs/roadmap.md`). Use
+> [Build from source](#build-from-source).
+
 Linux and macOS:
 
 ```

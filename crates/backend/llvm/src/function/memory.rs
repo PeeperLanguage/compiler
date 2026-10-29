@@ -7,6 +7,7 @@ use std::fmt::Write;
 use std::iter::Peekable;
 
 use arena::Id;
+use model::layout::layout;
 use model::mir;
 use model::mir::InstructionKind;
 use model::mir::Operand;
@@ -21,7 +22,6 @@ use crate::function::spreads_slice;
 use crate::function::traps;
 use crate::function::value_name;
 use crate::layout::in_memory;
-use crate::layout::layout;
 use crate::text::type_text;
 
 impl Function<'_, '_, '_> {

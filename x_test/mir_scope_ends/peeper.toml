@@ -1,0 +1,6 @@
+name = "mir_scope_ends"
+build = "program"
+
+[test]
+mode = "mir"
+outcome = "success"

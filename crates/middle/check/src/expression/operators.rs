@@ -72,7 +72,7 @@ impl ThirBuilder<'_, '_> {
     ) -> Expr {
         let tree = &self.checker.module().ast;
         let literal = literal::numeric::split(tree.file.slice(number));
-        let pointer_bits = self.checker.pointer_bits;
+        let pointer_bits = self.checker.target.pointer_bits;
         let types = &mut self.checker.types;
         let ty = if literal.suffix.is_empty() {
             match expected {
@@ -238,6 +238,16 @@ impl ThirBuilder<'_, '_> {
             BinaryOp::LogicalAnd | BinaryOp::LogicalOr => *ty == Type::Bool,
         };
         let left_fits = fits(&left_type);
+        // In a constant's value, `false && x` and `true || x` are the left
+        // operand: `x` is checked but, as when the program runs, not run.
+        let skips_right = self.in_constant
+            && matches!(
+                (op, &left.kind),
+                (BinaryOp::LogicalAnd, ExprKind::Constant(Value::Bool(false)))
+                    | (BinaryOp::LogicalOr, ExprKind::Constant(Value::Bool(true)))
+            );
+        let in_constant = self.in_constant;
+        self.in_constant = in_constant && !skips_right;
         // Matching the right operand to a left one the operator rejects would
         // blame the right one.
         let right = if shift || !left_fits {
@@ -266,6 +276,7 @@ impl ThirBuilder<'_, '_> {
                 }
             }
         };
+        self.in_constant = in_constant;
         if left.ty == TypeId::INVALID || right.ty == TypeId::INVALID {
             return Expr::INVALID;
         }
@@ -295,6 +306,9 @@ impl ThirBuilder<'_, '_> {
             self.checker
                 .error(diagnostics::INVALID_OPERATION, message, right_span);
             return Expr::INVALID;
+        }
+        if skips_right {
+            return left;
         }
         let ty = if comparison { TypeId::BOOL } else { left.ty };
         if let (ExprKind::Constant(left_value), ExprKind::Constant(right_value)) =

@@ -15,15 +15,17 @@ use model::semantic_types::range_fields;
 /// The name the linker knows the function `definition` by: its `#[extern]`
 /// name, else its module's path and its name (`myapp:util.Parse`).
 pub(crate) fn symbol(program: &project::Program, definition: DefId) -> String {
-    project::extern_symbol(&program.modules, definition).unwrap_or_else(|| {
-        let module = &program.modules[definition.module.index()];
-        let declaration = &module.ast.decls[module.ast.declaration(definition.index)];
-        format!(
-            "{}.{}",
-            module.path,
-            declaration.name().text(&module.ast.file)
-        )
-    })
+    project::extern_symbol(&program.modules, definition)
+        .expect("the checker reported a malformed `extern`")
+        .unwrap_or_else(|| {
+            let module = &program.modules[definition.module.index()];
+            let declaration = &module.ast.decls[module.ast.declaration(definition.index)];
+            format!(
+                "{}.{}",
+                module.path,
+                declaration.name().text(&module.ast.file)
+            )
+        })
 }
 /// The LLVM type of a value of type `ty`, written where it is printed.
 pub(crate) fn type_text(types: &Types, ty: TypeId) -> impl fmt::Display {
@@ -36,7 +38,10 @@ pub(crate) fn type_text(types: &Types, ty: TypeId) -> impl fmt::Display {
         Type::CString | Type::Reference { .. } | Type::RawPointer { .. } => out.write_str("ptr"),
         Type::Slice { .. } => out.write_str("%slice"),
         Type::Struct { ref fields, .. } => struct_type_text(types, fields, out),
-        Type::Range { element, step } => struct_type_text(types, &range_fields(element, step), out),
+        Type::Range { element, step } => {
+            let fields = range_fields(element, step).map(|(_, ty)| ty);
+            struct_type_text(types, &fields, out)
+        }
         Type::Array { element, length } => {
             write!(out, "[{length} x {}]", type_text(types, element))
         }
@@ -62,17 +67,6 @@ pub(crate) fn struct_type_text(
         write!(out, "{separator}{}", type_text(types, field))?;
     }
     out.write_str(if fields.is_empty() { "}" } else { " }" })
-}
-/// The attribute that extends a value of type `ty` to C's `int` when it
-/// passes to or from C code, as the C ABI requires of a narrower type; `None`
-/// for any other type.
-pub(crate) fn c_extension(types: &Types, ty: TypeId) -> Option<&'static str> {
-    match types[ty] {
-        Type::Bool => Some("zeroext"),
-        Type::Integer(integer) if integer.bits < 32 && integer.signed => Some("signext"),
-        Type::Integer(integer) if integer.bits < 32 => Some("zeroext"),
-        _ => None,
-    }
 }
 /// `constant` as an LLVM constant of its type, written from its bits
 /// (docs/ir-design.md, "Integer values must match LLVM"): an integer up to

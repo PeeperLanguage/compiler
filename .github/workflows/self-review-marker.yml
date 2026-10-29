@@ -43,7 +43,8 @@ jobs:
             const headSha = pull.head.sha;
             const commentTag = "<!-- self-review-marker-check -->";
 
-            let content = "";
+            // A README that cannot be read, or is gone, shows no review.
+            let content;
             try {
               const response = await github.rest.repos.getContent({
                 owner,
@@ -53,7 +54,8 @@ jobs:
               });
               content = Buffer.from(response.data.content, response.data.encoding).toString("utf8");
             } catch (error) {
-              core.warning(`could not read README.md at ${headSha}: ${error.message}`);
+              core.setFailed(`cannot read README.md at ${headSha}: ${error.message}`);
+              return;
             }
 
             const markerPresent = content.includes(marker);

@@ -5,9 +5,9 @@ use std::fmt::Write;
 use std::iter::Peekable;
 
 use arena::Id;
+use model::layout::layout;
 use model::mir;
 use model::mir::Operand;
-use model::semantic_types::RANGE_FIELD_NAMES;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::range_field;
@@ -18,7 +18,6 @@ use crate::function::debug_info::DebugLocation;
 use crate::function::traps;
 use crate::function::value_name;
 use crate::function::written_range_field;
-use crate::layout::layout;
 use crate::text::type_text;
 
 impl Function<'_, '_, '_> {
@@ -244,14 +243,15 @@ impl Function<'_, '_, '_> {
         let Type::Range { element, step } = types[ty] else {
             unreachable!("only a range has range fields")
         };
-        let read = format!("{name}.{}", RANGE_FIELD_NAMES[field]);
+        let (field_name, field_type) = range_fields(element, step)[field];
+        let read = format!("{name}.{field_name}");
         _ = writeln!(
             out,
             "  {read}.at = getelementptr inbounds {}, ptr {}, i32 0, i32 {field}{location}\n  \
              {read} = load {}, ptr {read}.at{location}",
             type_text(types, ty),
             self.operand(range),
-            type_text(types, range_fields(element, step)[field])
+            type_text(types, field_type)
         );
         read
     }

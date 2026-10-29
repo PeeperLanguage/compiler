@@ -88,7 +88,7 @@ impl Lowering<'_> {
         };
         if !matches!(self.thir.exprs[range].kind, thir::ExprKind::Range { .. }) {
             let value = self.lower_expr(range)?;
-            let types = range_fields(ty, size);
+            let types = range_fields(ty, size).map(|(_, field_type)| field_type);
             let mut field = |index: usize| {
                 let fields = Box::new([index as u32]);
                 let field = mir::InstructionKind::Field { value, fields };
@@ -255,6 +255,7 @@ impl Lowering<'_> {
         });
         self.block = pass;
         let value = value.map(|value| Id::from_index(value.index()));
+        let declared = self.declared.len(); // the pass's variables, then its body's
         for (variable, value) in [index.zip(passes), value.map(|value| (value, counter))]
             .into_iter()
             .flatten()
@@ -288,7 +289,7 @@ impl Lowering<'_> {
         let targets = Loop {
             next: step,
             exit,
-            body,
+            declared,
         };
         self.lower_loop_body(body, targets)?;
         self.block = step;

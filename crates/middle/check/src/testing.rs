@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use model::ModuleId;
+use model::machine::Machine;
 use model::semantic_types::Types;
 use project::ImportKind;
 use source::SourceFile;
@@ -47,7 +48,7 @@ pub(crate) fn with_checker<T>(
         module("app:main", &text, imports),
     ];
     let file = modules[1].ast.file.clone();
-    let mut checker = Checker::new(&modules, 64, false);
+    let mut checker = Checker::new(&modules, Machine::named("x86_64-linux").unwrap(), false);
     let result = work(&mut checker, main_id);
     let reported = checker
         .module_checks
