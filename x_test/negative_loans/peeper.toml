@@ -21,5 +21,7 @@ stderr_contains = [
     "`p` is moved while a `&mut` reference to it is still in use",
     "a `&mut` argument takes hold when the call starts",
     "`m` is changed while a reference to it is still in use",
-    "Compilation failed with 16 error(s)",
+    "`a` is changed while a `&mut` reference to it is still in use",
+    "`r` is changed while a `&mut` reference to it is still in use",
+    "Compilation failed with 18 error(s)",
 ]

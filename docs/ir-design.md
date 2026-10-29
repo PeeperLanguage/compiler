@@ -488,7 +488,10 @@ that outlives its variable is caught. The variable state check forgets a
 variable at its `scope end`, so a loop's next pass may set it again. Changing a variable, or its
 scope ending, does not touch a loan reached through the reference stored
 in it: `r = &mut b` while `s = &mut r.*` is in use is valid (owner,
-2026-10-24). The message names the variable: "`x` is changed while a
+2026-10-24). After it, `r.*` names `b`, so the loan of `r.*` ends there and
+`s` keeps `a` borrowed through the loans it took from `r`: `r.* = 4` then
+`s.* = 3` is valid, as rustc's kill of loans through an overwritten reference
+(owner, 2026-10-29). The message names the variable: "`x` is changed while a
 `&mut` reference to it is still in use" (events: read, changed, moved,
 borrowed, borrowed as `&mut`, gone), with "reference made here" and
 "reference used later here" (owner, 2026-10-24). A function with no
