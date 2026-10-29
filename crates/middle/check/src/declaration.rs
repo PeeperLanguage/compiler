@@ -87,6 +87,25 @@ impl Checker<'_> {
         self.not_supported(written.name.span, what)
     }
 
+    /// Reports each attribute of the declaration `definition` but an
+    /// `extern` on a function, the one attribute there is; `check_function`
+    /// checks the `extern`'s shape.
+    pub(crate) fn check_attributes(&mut self, definition: DefId) {
+        let tree = &self.module().ast;
+        let declaration = &tree.decls[tree.declaration(definition.index)];
+        let function = matches!(declaration, ast::Decl::Function(_));
+        for attribute in tree.children.lists.items(declaration.metadata().attributes) {
+            let name = tree.children.attributes[attribute].name.text(&tree.file);
+            let message = match name {
+                "extern" if function => continue,
+                "extern" => "`extern` names a C function, so only a function has it".to_owned(),
+                _ => format!("unknown attribute `{name}`"),
+            };
+            let span = tree.children.attributes.span(attribute);
+            self.error(diagnostics::INVALID_DECLARATION, message, span);
+        }
+    }
+
     /// The type of the module's function or method `definition`.
     pub(crate) fn check_function(&mut self, definition: DefId) -> TypeId {
         let tree = &self.module().ast;
@@ -128,8 +147,12 @@ impl Checker<'_> {
         let Some(origins) = self.result_origins(&signature, &parameters, result) else {
             return TypeId::INVALID;
         };
-        if external && body.is_some() {
-            let message = "an `extern` function is defined in C, so it has no body";
+        if external == body.is_some() {
+            let message = if external {
+                "an `extern` function is defined in C, so it has no body"
+            } else {
+                "a function needs a body, or `#[extern(\"name\")]` when C defines it"
+            };
             return self.error(diagnostics::INVALID_DECLARATION, message, name.span);
         }
         // Reported above; invalid, so no call of it is lowered.
@@ -594,21 +617,51 @@ mod tests {
         assert_eq!(found[3], "Invalid");
     }
 
-    /// An `extern` function is C's, so it has no body here; its calls are not
-    /// lowered.
+    /// An `extern` function is C's, so it has no body here, and any other
+    /// function has one; their calls are not lowered.
     #[test]
-    fn an_extern_function_has_no_body() {
+    fn only_an_extern_function_has_no_body() {
         let (found, found_reported) =
-            declared_types("#[extern(\"f\")]\nfn f(a: i8) -> i8 { return a; }\n");
+            declared_types("#[extern(\"f\")]\nfn f(a: i8) -> i8 { return a; }\nfn g();\n");
         assert_eq!(
             found_reported,
-            reported(&[(
-                "P0005",
-                "an `extern` function is defined in C, so it has no body",
-                "f"
-            )])
+            reported(&[
+                (
+                    "P0005",
+                    "an `extern` function is defined in C, so it has no body",
+                    "f"
+                ),
+                (
+                    "P0005",
+                    "a function needs a body, or `#[extern(\"name\")]` when C defines it",
+                    "g"
+                ),
+            ])
         );
-        assert_eq!(found, ["Invalid"]);
+        assert_eq!(found, ["Invalid", "Invalid"]);
+    }
+
+    /// `extern` on a function is the one attribute there is.
+    #[test]
+    fn other_attributes_are_reported() {
+        let (_, found_reported) =
+            declared_types("#[inline]\nfn f();\n#[extern(\"s\")]\nstruct S {}\n");
+        assert_eq!(
+            found_reported,
+            reported(&[
+                ("P0005", "unknown attribute `inline`", "#[inline]"),
+                (
+                    "P0005",
+                    "a function needs a body, or `#[extern(\"name\")]` when C defines it",
+                    "f"
+                ),
+                (
+                    "P0005",
+                    "`extern` names a C function, so only a function has it",
+                    "#[extern(\"s\")]"
+                ),
+            ])
+        );
     }
 
     /// An `extern` of another shape is reported, and its function still gets

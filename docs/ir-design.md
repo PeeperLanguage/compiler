@@ -563,12 +563,14 @@ one walk per function (`peeper -dump ll` shows it):
   each instruction gets a `!dbg` line from its span; each function a
   `DISubprogram`. A debugger shows variables by name.
 - Symbols: a function's `#[extern("name")]`, else `module_path.name`, quoted.
-- An `extern` function is C's, so it has no body (owner, 2026-10-29). Its
-  integers pass as clang passes C's `_BitInt(N)` on the target
-  (`Machine::c_abi`): extended to `int`, as themselves, as two `i64` limbs, or
-  in memory (`sret`, `byval`), with x86-64 System V's register count; `i128`
-  passes as `__int128` (on Windows x64 too, owner, 2026-10-29). An integer
-  wider than C has on the target (128 bits on AArch64) is an error.
+- An `extern` function is C's, so it has no body, and every other function
+  has one; `extern` on a function is the one attribute there is, and any
+  other is an error (owner, 2026-10-29). Its integers pass as clang passes
+  C's `_BitInt(N)` on the target (`Machine::c_abi`): extended to `int`, as
+  themselves, as two `i64` limbs, or in memory (`sret`, `byval`), with x86-64
+  System V's register count; `i128` passes as `__int128` (on Windows x64 too,
+  owner, 2026-10-29). An integer wider than C has on the target (128 bits on
+  AArch64) is an error.
 - Integer division, remainder and shifts by a value not known at compile time
   check first and continue in a new block (`bb3.1`); a `phi` names the block
   where its incoming MIR block ends. Division by zero and a shift count

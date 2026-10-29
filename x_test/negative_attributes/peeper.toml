@@ -1,0 +1,18 @@
+name = "negative_attributes"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "main.peep:4:1",
+    "main.peep:7:1",
+    "write `#[extern(\"name\")]` once, with the C function's name",
+    "main.peep:10:1",
+    "`extern` names a C function, so only a function has it",
+    "main.peep:13:1",
+    "unknown attribute `inline`",
+    "main.peep:16:1",
+    "an attribute needs a declaration after it",
+    "Compilation failed with 5 error(s)",
+]

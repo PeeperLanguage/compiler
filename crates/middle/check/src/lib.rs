@@ -197,7 +197,7 @@ impl<'p> Checker<'p> {
     /// The result of `definition`, named at `used_at`, in `table`: the one
     /// already found, `on_cycle` when it is asked for while its check runs
     /// (a cycle, reported), or else what `check` finds in its module, kept
-    /// for the next ask.
+    /// for the next ask, after its attributes are checked.
     fn check_once<T: Clone>(
         &mut self,
         definition: DefId,
@@ -224,7 +224,10 @@ impl<'p> Checker<'p> {
         // recursion here.
         const RED_ZONE: usize = 128 * 1024;
         const SEGMENT: usize = 1024 * 1024;
-        let result = stacker::maybe_grow(RED_ZONE, SEGMENT, || check(self, definition));
+        let result = stacker::maybe_grow(RED_ZONE, SEGMENT, || {
+            self.check_attributes(definition);
+            check(self, definition)
+        });
         self.checking.pop();
         table(&mut self.module_checks[module])[index] = State::Done(result.clone());
         result

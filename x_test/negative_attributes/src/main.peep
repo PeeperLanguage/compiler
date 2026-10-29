@@ -1,0 +1,16 @@
+// `#[extern("name")]` is written once, with one string, and only on a
+// function: it is the one attribute there is. An attribute needs a
+// declaration after it.
+#[extern(123)]
+fn Numbered(code: i32) -> i32;
+
+#[extern("puts", 1)]
+fn Extra(text: cstr) -> i32;
+
+#[extern("limit")]
+const Limit: i32 = 1;
+
+#[inline]
+fn main() {}
+
+#[extern("puts")]

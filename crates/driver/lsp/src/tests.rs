@@ -351,7 +351,7 @@ fn answers_definition_and_hover() {
     let uri = Url::from_file_path(&file).unwrap();
     let (connection, _client) = Connection::memory();
     let mut server = Server::new(&connection, Path::new(""));
-    let text = "type Meters = i64;\nfn main() {\n    let total: Meters = 1;\n    let more = total;\n}\n// let me\nstruct Run {\n    length: Meters,\n}\nfn ops(a: i32, x: f64) -> f64 {\n    let q = a/2;\n    const C = -(7 / 2);\n    return x - -1.0;\n}\nfn refs(m: i32) -> i32 {\n    let r = &m;\n    let both = m & 3;\n    let mut x = 1;\n    let p = @x;\n    let s = [2]i32{1, 2};\n    return r.* + s[0];\n}\nconst SMALL: u8 = 200;\nfn literals(n: u8) -> u8 {\n    let wide: f32 = 2;\n    let low: i8 = -128;\n    println(\"hi\", c\"x\");\n    let big: u8 = 300;\n    return n * 3;\n}\nfn walks(r: range[i32]) {}\n";
+    let text = "type Meters = i64;\nfn main() {\n    let total: Meters = 1;\n    let more = total;\n}\n// let me\nstruct Run {\n    length: Meters,\n}\nfn ops(a: i32, x: f64) -> f64 {\n    let q = a/2;\n    const C = -(7 / 2);\n    return x - -1.0;\n}\nfn refs(m: i32) -> i32 {\n    let r = &m;\n    let both = m & 3;\n    let mut x = 1;\n    let p = @x;\n    let s = [2]i32{1, 2};\n    return r.* + s[0];\n}\nconst SMALL: u8 = 200;\nfn literals(n: u8) -> u8 {\n    let wide: f32 = 2;\n    let low: i8 = -128;\n    println(\"hi\", c\"x\");\n    let big: u8 = 300;\n    return n * 3;\n}\nfn walks(r: range[i32]) {}\n#[extern(\"cap\")]\nfn cap() -> u8;\n";
     let document = json!({ "uri": uri, "languageId": "peeper", "version": 1, "text": text });
     let open = Notification::new(
         "textDocument/didOpen".to_string(),
@@ -470,6 +470,8 @@ fn answers_definition_and_hover() {
         serde_json::Value::Null
     );
     assert_eq!(ask("textDocument/hover", 28, 16), serde_json::Value::Null);
+    // A declaration shows its attributes.
+    starts(32, 3, "```peeper\n#[extern(\"cap\")]\nfn cap() -> u8");
     // `range` is a built-in type, declared nowhere.
     starts(
         30,
@@ -499,7 +501,7 @@ fn names_across_modules() {
         "name = \"app\"\nbuild = \"bin\"\n",
     )
     .unwrap();
-    let utils = "fn Add(a: i32, b: i32) -> i32 { return a + b; }\n/// The cap.\n#[deprecated]\nconst Limit: u8 = 200;\nfn Twice(n: i32) -> i32 { return n * 2; }\nconst Ratio: f32 = 0.1;\nconst Broken: i32 = true;\n";
+    let utils = "fn Add(a: i32, b: i32) -> i32 { return a + b; }\n#[extern(\"cap\")] fn Cap() -> u8;\n/// The cap.\nconst Limit: u8 = 200;\nfn Twice(n: i32) -> i32 { return n * 2; }\nconst Ratio: f32 = 0.1;\nconst Broken: i32 = true;\n";
     let main = "import \"app:utils\";
 fn main(count: i64) {
     let mut total = count;
@@ -599,7 +601,8 @@ const BIG = utils::Twice(21);
         declared(&server, "Add", 0),
         ("utils.peep".to_string(), json!(0))
     );
-    let limit = "```peeper\n#[deprecated]\nconst Limit: u8 = 200\n```\n\n---\n\n*in* `app:utils` *· line 4*\n\nThe cap.\n";
+    let limit =
+        "```peeper\nconst Limit: u8 = 200\n```\n\n---\n\n*in* `app:utils` *· line 4*\n\nThe cap.\n";
     assert_eq!(hover(&server, "Limit", 0), json!(limit));
     // `main` has an error, and its names are still there.
     assert_eq!(
