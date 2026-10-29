@@ -2,7 +2,8 @@
 //! project whose `[test]` section says what the compiler must do with it.
 //! `mode = "check"` checks it; `mode = "mir"` or `"ll"` dumps its MIR or LLVM
 //! text (`peeper -dump mir`) and compares the main module's with the folder's
-//! expected.mir or expected.ll, which `PEEPER_BLESS=1` rewrites; the folder's
+//! expected.mir or expected.ll, which `PEEPER_BLESS=1` rewrites (each run's
+//! dump is removed first, so an old one never passes); the folder's
 //! path, in debug info and `source_filename`, shows as `<fixture>` there, so
 //! they read the same in every checkout; with `release = true`, the dump is of a release build (`-dump -release`).
 //! `mode = "run"` runs it (`peeper run`) with the `program_args`, once in a
@@ -121,7 +122,16 @@ fn fixtures() {
             _ => &[None],
         };
         let target = text("target").map(|name| ["-target", name]);
+        let dumped = matches!(mode, "mir" | "ll").then(|| {
+            let package = document.get("name").and_then(toml_edit::Item::as_str);
+            let package = package.expect("a fixture's peeper.toml has a name");
+            folder.join(format!("build/debug/dumps/{package}/main.{mode}"))
+        });
         for &release in builds {
+            // Removed first, so only this run's dump can match.
+            if let Some(dumped) = &dumped {
+                _ = std::fs::remove_file(dumped);
+            }
             let mut command = Command::new(&compiler);
             command.args(target.iter().flatten());
             match mode {
@@ -163,16 +173,17 @@ fn fixtures() {
                     }
                 }
             }
-            if mode == "mir" || mode == "ll" {
+            if let Some(dumped) = &dumped {
                 let file = folder.join(format!("expected.{mode}"));
-                let package = document.get("name").and_then(toml_edit::Item::as_str);
-                let package = package.expect("a fixture's peeper.toml has a name");
-                let dumped = folder.join(format!("build/debug/dumps/{package}/main.{mode}"));
                 // Spelled as the compiler spells the files in it.
                 let folder_path = canonical_path(folder).expect("the fixture folder exists");
-                let dump = std::fs::read_to_string(&dumped)
-                    .unwrap_or_default()
-                    .replace(&path_text(&folder_path), "<fixture>");
+                let dump = match std::fs::read_to_string(dumped) {
+                    Ok(dump) => dump.replace(&path_text(&folder_path), "<fixture>"),
+                    Err(error) => {
+                        failures.push(format!("{name}: no dump at {}: {error}", dumped.display()));
+                        continue;
+                    }
+                };
                 if std::env::var_os("PEEPER_BLESS").is_some() {
                     std::fs::write(&file, &dump).expect("the expected dump is written");
                 } else if std::fs::read_to_string(&file).ok() != Some(dump.clone()) {
