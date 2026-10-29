@@ -684,6 +684,24 @@ fn values_fit_the_target() {
     assert!(at("x86_64-linux").is_empty(), "{:?}", at("x86_64-linux"));
 }
 
+/// An `extern` integer must be one C has on the target: at most 128 bits
+/// on AArch64.
+#[test]
+fn extern_integers_are_ones_c_has() {
+    let program = load(&[(
+        "app:main",
+        "#[extern(\"c_wide\")]\nfn wide(a: i128, b: i129) -> i200;",
+    )]);
+    let at = |name| {
+        let target = Machine::named(name).unwrap();
+        messages(&run(&program, target, Results::default(), false, |_| {}))
+    };
+    let none =
+        |text| format!("C has no `{text}` on aarch64-linux, whose integers have at most 128 bits");
+    assert_eq!(at("aarch64-linux"), [none("i129"), none("i200")]);
+    assert!(at("x86_64-linux").is_empty(), "{:?}", at("x86_64-linux"));
+}
+
 #[test]
 fn a_prelude_edit_checks_what_it_changes() {
     let prelude = ("core:global", "const stdout: i32 = 1;\nfn Helper() {}");

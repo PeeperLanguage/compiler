@@ -1,0 +1,8 @@
+name = "ll_extern_integers"
+build = "program"
+
+[test]
+target = "x86_64-linux"
+mode = "ll"
+outcome = "success"
+release = true

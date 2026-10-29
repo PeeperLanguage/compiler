@@ -1,0 +1,12 @@
+name = "negative_extern"
+build = "program"
+
+[test]
+target = "aarch64-linux"
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "an `extern` function is defined in C, so it has no body",
+    "C has no `i129` on aarch64-linux, whose integers have at most 128 bits",
+    "Compilation failed with 2 error(s)",
+]

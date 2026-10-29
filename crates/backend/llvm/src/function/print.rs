@@ -73,34 +73,10 @@ impl Function<'_, '_, '_> {
     ) {
         let types = self.types;
         match types[ty] {
-            // As 64-bit limbs, least significant first, of the value
-            // extended to their width.
-            Type::Integer(Integer { signed, bits }) => {
-                let count = bits.div_ceil(64);
-                let width = count * 64;
-                let mut wide = value.to_string();
-                if bits < width {
-                    let extension = if signed { "sext" } else { "zext" };
-                    _ = writeln!(
-                        out,
-                        "  {path}.x = {extension} i{bits} {value} to i{width}{location}"
-                    );
-                    wide = format!("{path}.x");
-                }
-                let mut arguments = format!("i32 {}, i32 {count}", i32::from(signed));
-                if count == 1 {
-                    _ = write!(arguments, ", i64 {wide}");
-                } else {
-                    for limb in 0..count {
-                        let shift = limb * 64;
-                        _ = writeln!(
-                            out,
-                            "  {path}.s{limb} = lshr i{width} {wide}, {shift}{location}\n  \
-                             {path}.l{limb} = trunc i{width} {path}.s{limb} to i64{location}"
-                        );
-                        _ = write!(arguments, ", i64 {path}.l{limb}");
-                    }
-                }
+            Type::Integer(integer) => {
+                let limbs = write_limbs(out, value, integer, path, location);
+                let (signed, count) = (i32::from(integer.signed), integer.bits.div_ceil(64));
+                let arguments = format!("i32 {signed}, i32 {count}, {limbs}");
                 self.write_print_text(out, text, location);
                 self.write_runtime_call(out, PRINT_INT, &arguments, location);
             }
@@ -289,4 +265,57 @@ impl Function<'_, '_, '_> {
             "  call void ({parameters}) {callee}({arguments}){location}"
         );
     }
+}
+
+/// Writes `value`, an integer of type `integer`, as 64-bit limbs, least
+/// significant first, of it extended to their width (`write_extended`), and
+/// gives them as call arguments: `i64 %p.l0, i64 %p.l1`.
+pub(super) fn write_limbs(
+    out: &mut String,
+    value: &str,
+    integer: Integer,
+    path: &str,
+    location: &DebugLocation,
+) -> String {
+    let count = integer.bits.div_ceil(64);
+    let width = count * 64;
+    let wide = write_extended(out, value, integer, width, path, location);
+    if count == 1 {
+        return format!("i64 {wide}");
+    }
+    let mut limbs = String::new();
+    for limb in 0..count {
+        let shift = limb * 64;
+        _ = writeln!(
+            out,
+            "  {path}.s{limb} = lshr i{width} {wide}, {shift}{location}\n  \
+             {path}.l{limb} = trunc i{width} {path}.s{limb} to i64{location}"
+        );
+        let separator = if limb > 0 { ", " } else { "" };
+        _ = write!(limbs, "{separator}i64 {path}.l{limb}");
+    }
+    limbs
+}
+
+/// Writes `value`, an integer of type `integer`, extended by its sign to
+/// `width` bits as `<path>.x`, and gives that name; `value` itself when it
+/// has `width` bits.
+pub(super) fn write_extended(
+    out: &mut String,
+    value: &str,
+    integer: Integer,
+    width: u32,
+    path: &str,
+    location: &DebugLocation,
+) -> String {
+    let Integer { signed, bits } = integer;
+    if bits == width {
+        return value.to_string();
+    }
+    let extension = if signed { "sext" } else { "zext" };
+    _ = writeln!(
+        out,
+        "  {path}.x = {extension} i{bits} {value} to i{width}{location}"
+    );
+    format!("{path}.x")
 }

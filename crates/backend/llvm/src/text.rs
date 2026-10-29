@@ -65,17 +65,6 @@ pub(crate) fn struct_type_text(
     }
     out.write_str(if fields.is_empty() { "}" } else { " }" })
 }
-/// The attribute that extends a value of type `ty` to C's `int` when it
-/// passes to or from C code, as the C ABI requires of a narrower type; `None`
-/// for any other type.
-pub(crate) fn c_extension(types: &Types, ty: TypeId) -> Option<&'static str> {
-    match types[ty] {
-        Type::Bool => Some("zeroext"),
-        Type::Integer(integer) if integer.bits < 32 && integer.signed => Some("signext"),
-        Type::Integer(integer) if integer.bits < 32 => Some("zeroext"),
-        _ => None,
-    }
-}
 /// `constant` as an LLVM constant of its type, written from its bits
 /// (docs/ir-design.md, "Integer values must match LLVM"): an integer up to
 /// 64 bits in decimal, a wider one in hexadecimal, a float as its `f64` bits.

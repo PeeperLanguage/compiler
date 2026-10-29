@@ -1,0 +1,14 @@
+// An `extern` function is C's: it has no body here, and its integers are
+// ones C has on the target, at most 128 bits on AArch64.
+#[extern("twice")]
+fn twice(value: i32) -> i32 {
+    return value * 2;
+}
+
+#[extern("widest")]
+fn widest(value: i128) -> i128;
+
+#[extern("too_wide")]
+fn too_wide(value: i129);
+
+fn main() {}

@@ -185,22 +185,90 @@ fn slice_spreads_are_target_sized() {
     }
 }
 
-/// C code gets a narrow integer extended to `int` by its signedness; a
-/// Peeper function gets it as it is.
+/// A C function's integers pass as clang passes C's on each target, as
+/// measured with clang 23 (its `i128` and `i256` sizes written as bytes):
+/// a narrow one extended to `int`, a wider one as itself, as two `i64`
+/// limbs, or in memory, and `i128` as `__int128`. A Peeper function gets
+/// them as they are.
 #[test]
-fn extern_calls_extend_narrow_integers() {
-    let text = ll(
-        "#[extern(\"c_narrow\")]\nfn narrow(a: i8, b: u8, c: bool, d: i32) -> i16;\n\
-             fn local(a: i8) {}\n\
-             fn f() { local(1i8); let x = narrow(1i8, 2u8, true, 4); }",
-        "x86_64-linux",
-    );
-    for line in [
-        "declare signext i16 @\"c_narrow\"(i8 signext, i8 zeroext, i1 zeroext, i32)",
-        "call signext i16 @\"c_narrow\"(i8 signext 1, i8 zeroext 2, i1 zeroext true, i32 4)",
-        "call void @\"app:main.local\"(i8 1)",
-    ] {
-        assert!(text.contains(line), "{line}\n{text}");
+fn extern_calls_pass_integers_as_c_does() {
+    let externs = "#[extern(\"c_narrow\")]\nfn narrow(a: i8, b: u8, c: bool, d: i32) -> i16;\n\
+         #[extern(\"c_limbs\")]\nfn limbs(a: u65) -> i100;\n\
+         #[extern(\"c_i128\")]\nfn wide(a: i128) -> i128;\n\
+         #[extern(\"c_full\")]\nfn full(a: i65, b: i65, c: i32, d: i65, e: i65, f: i64) -> i65;\n\
+         fn local(a: i8) {}\n";
+    let calls = "local(1i8); narrow(1i8, 2u8, true, 4); limbs(5u65); wide(6i128); \
+         full(1i65, 2i65, 3, 4i65, 5i65, 6);";
+    // C has no integer wider than 128 bits on AArch64.
+    let memory = "#[extern(\"c_memory\")]\nfn memory(a: i200, b: i65) -> i200;\n";
+    let program = |wider: bool| {
+        if wider {
+            format!("{externs}{memory}fn f() {{ {calls} memory(7i200, 8i65); }}")
+        } else {
+            format!("{externs}fn f() {{ {calls} }}")
+        }
+    };
+    let expected: [(&str, &[&str]); 5] = [
+        (
+            "x86_64-linux",
+            &[
+                "declare signext i16 @\"c_narrow\"(i8 signext, i8 zeroext, i1 zeroext, i32)",
+                "declare { i64, i64 } @\"c_limbs\"(i64, i64)",
+                "declare i128 @\"c_i128\"(i128)",
+                // Two limbs that no longer fit in registers go whole on the stack.
+                "declare { i64, i64 } @\"c_full\"(i64, i64, i64, i64, i32, \
+                 ptr byval([16 x i8]) align 8, ptr byval([16 x i8]) align 8, i64)",
+                "declare void @\"c_memory\"(ptr sret([32 x i8]) align 8, \
+                 ptr byval([32 x i8]) align 8, i64, i64)",
+                "call void @\"app:main.local\"(i8 1)",
+                "%i2.0.x = zext i65 u0x00000000000000000000000000000005 to i128",
+                "%i2.c = call { i64, i64 } @\"c_limbs\"(i64 %i2.0.l0, i64 %i2.0.l1)",
+                "store { i64, i64 } %i2.c, ptr %i2.r, align 16",
+                "%i2 = trunc i128 %i2.w to i100",
+                "store i256 %i5.0.x, ptr %i5.0, align 8",
+                "%i5.w = load i256, ptr %i5.r, align 8",
+            ],
+        ),
+        (
+            "i686-linux",
+            &[
+                "declare signext i16 @\"c_narrow\"(i8 signext, i8 zeroext, i1 zeroext, i32)",
+                "declare void @\"c_limbs\"(ptr sret([16 x i8]) align 4, ptr)",
+                "declare void @\"c_i128\"(ptr sret([16 x i8]) align 4, ptr)",
+                "declare void @\"c_full\"(ptr sret([12 x i8]) align 4, ptr, ptr, i32, ptr, ptr, i64)",
+                "declare void @\"c_memory\"(ptr sret([28 x i8]) align 4, ptr, ptr)",
+                "store i96 %i2.0.x, ptr %i2.0, align 4",
+            ],
+        ),
+        (
+            "x86_64-windows",
+            &[
+                "declare i16 @\"c_narrow\"(i8, i8, i1 zeroext, i32)",
+                "declare void @\"c_limbs\"(ptr sret([16 x i8]) align 8, ptr)",
+                "declare <2 x i64> @\"c_i128\"(ptr)",
+                "declare void @\"c_full\"(ptr sret([16 x i8]) align 8, ptr, ptr, i32, ptr, ptr, i64)",
+                "declare void @\"c_memory\"(ptr sret([32 x i8]) align 8, ptr, ptr)",
+                "%i3.0 = alloca [16 x i8], align 16",
+            ],
+        ),
+        (
+            "aarch64-linux",
+            &[
+                "declare i16 @\"c_narrow\"(i8, i8, i1, i32)",
+                "declare i100 @\"c_limbs\"(i65)",
+                "declare i65 @\"c_full\"(i65, i65, i32, i65, i65, i64)",
+            ],
+        ),
+        (
+            "aarch64-macos",
+            &["declare signext i16 @\"c_narrow\"(i8 signext, i8 zeroext, i1 zeroext, i32)"],
+        ),
+    ];
+    for (target, lines) in expected {
+        let text = ll(&program(!target.starts_with("aarch64")), target);
+        for line in lines {
+            assert!(text.contains(line), "{target}: {line}\n{text}");
+        }
     }
 }
 

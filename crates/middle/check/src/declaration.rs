@@ -91,7 +91,13 @@ impl Checker<'_> {
     pub(crate) fn check_function(&mut self, definition: DefId) -> TypeId {
         let tree = &self.module().ast;
         let declaration = tree.declaration(definition.index);
-        let ast::Decl::Function(ast::Function { signature, .. }) = tree.decls[declaration] else {
+        let ast::Decl::Function(ast::Function {
+            name,
+            signature,
+            body,
+            ..
+        }) = tree.decls[declaration]
+        else {
             unreachable!("`{definition:?}` is a function declaration")
         };
         if let Some(receiver) = signature.receiver {
@@ -122,6 +128,10 @@ impl Checker<'_> {
         let Some(origins) = self.result_origins(&signature, &parameters, result) else {
             return TypeId::INVALID;
         };
+        if external && body.is_some() {
+            let message = "an `extern` function is defined in C, so it has no body";
+            return self.error(diagnostics::INVALID_DECLARATION, message, name.span);
+        }
         // Reported above; invalid, so no call of it is lowered.
         if symbol.is_err() {
             return TypeId::INVALID;
@@ -274,6 +284,17 @@ impl Checker<'_> {
             let what =
                 "struct, array, range and slice parameters and results of `extern` functions";
             return self.not_supported(span, what);
+        }
+        if external
+            && let Type::Integer(integer) = self.types[resolved]
+            && integer.bits > self.target.widest_c_integer()
+        {
+            let (span, target) = (self.module().ast.types.span(ty), self.target.name);
+            let widest = self.target.widest_c_integer();
+            let message = format!(
+                "C has no `{integer}` on {target}, whose integers have at most {widest} bits"
+            );
+            return self.error(diagnostics::INVALID_TYPE, message, span);
         }
         resolved
     }
@@ -571,6 +592,23 @@ mod tests {
             "an error stays inside the signature"
         );
         assert_eq!(found[3], "Invalid");
+    }
+
+    /// An `extern` function is C's, so it has no body here; its calls are not
+    /// lowered.
+    #[test]
+    fn an_extern_function_has_no_body() {
+        let (found, found_reported) =
+            declared_types("#[extern(\"f\")]\nfn f(a: i8) -> i8 { return a; }\n");
+        assert_eq!(
+            found_reported,
+            reported(&[(
+                "P0005",
+                "an `extern` function is defined in C, so it has no body",
+                "f"
+            )])
+        );
+        assert_eq!(found, ["Invalid"]);
     }
 
     /// An `extern` of another shape is reported, and its function still gets
