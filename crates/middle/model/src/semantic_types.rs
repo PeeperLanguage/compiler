@@ -409,17 +409,6 @@ pub struct Types {
 }
 
 impl Types {
-    pub fn new() -> Types {
-        let mut types = Types {
-            types: Vec::new(),
-            ids: FxHashMap::default(),
-        };
-        for ty in FIXED {
-            types.intern(ty.clone());
-        }
-        types
-    }
-
     /// Adds the types `other` has after these: keeps a copy of a table that
     /// only grows, as `other` is when this was made from it, up to date.
     ///
@@ -644,9 +633,17 @@ impl Types {
     }
 }
 
+/// The fixed types alone, each at its `TypeId` constant.
 impl Default for Types {
     fn default() -> Types {
-        Types::new()
+        let mut types = Types {
+            types: Vec::new(),
+            ids: FxHashMap::default(),
+        };
+        for ty in FIXED {
+            types.intern(ty.clone());
+        }
+        types
     }
 }
 

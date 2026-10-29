@@ -101,7 +101,7 @@ pub fn write_modules<'p, T>(
         let mut queue = FunctionQueue {
             batch: Batch {
                 functions: Vec::new(),
-                types: Types::new(),
+                types: Types::default(),
             },
             sent: vec![false; count],
             batches: sender,

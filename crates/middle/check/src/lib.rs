@@ -132,7 +132,7 @@ impl<'p> Checker<'p> {
         Checker {
             modules,
             module_checks,
-            types: Types::new(),
+            types: Types::default(),
             target,
             record_facts,
             checking: Vec::new(),
