@@ -1,0 +1,114 @@
+fn walk:
+  bb0:
+    store limit.0, arg0
+    store total.1, 0
+    %2 = load limit.0: i32
+    %3 = LessOrEqual 0, %2: bool
+    branch %3 (0..limit) bb1 bb2
+  bb1:
+    %4 = Subtract %2, 0: i32
+    %5 = convert %4: u32
+    goto bb3
+  bb2:
+    %6 = Subtract 0, %2: i32
+    %7 = convert %6: u32
+    goto bb3
+  bb3:
+    %8 = phi bb1: %5, bb2: %7: u32
+    %9 = phi bb1: 1, bb2: 4294967295: i32
+    %10 = NotEqualTo %8, 0: bool
+    goto bb4
+  bb4:
+    %11 = phi bb3: 0, bb7: %18: i32
+    %12 = phi bb3: %8, bb7: %19: u32
+    %13 = phi bb3: 0, bb7: %20: u64
+    %14 = phi bb3: %10, bb7: %17: bool
+    branch %14 (0..limit) bb5 bb6
+  bb5:
+    store i.2, %13
+    store value.3, %11
+    %17 = GreaterThan %12, 1: bool
+    %18 = Add %11, %9: i32
+    %19 = Subtract %12, 1: u32
+    %20 = Add %13, 1: u64
+    %21 = load value.3: i32
+    %22 = Multiply %21, 2: i32
+    store doubled.4, %22
+    %24 = load doubled.4: i32
+    %25 = GreaterThan %24, 6: bool
+    branch %25 (doubled > 6) bb8 bb9
+  bb6:
+    goto bb14
+  bb7:
+    goto bb4
+  bb8:
+    %26 = load doubled.4: i32
+    store early.5, %26
+    scope end early.5
+    scope end doubled.4
+    scope end value.3
+    scope end i.2
+    goto bb6
+  bb9:
+    %33 = load doubled.4: i32
+    %34 = EqualTo %33, 2: bool
+    branch %34 (doubled == 2) bb11 bb12
+  bb10:
+    scope end early.5
+    goto bb9
+  bb11:
+    scope end doubled.4
+    scope end value.3
+    scope end i.2
+    goto bb7
+  bb12:
+    %38 = load total.1: i32
+    %39 = load doubled.4: i32
+    %40 = Add %38, %39: i32
+    store total.1, %40
+    scope end doubled.4
+    scope end value.3
+    scope end i.2
+    goto bb7
+  bb13:
+    goto bb12
+  bb14:
+    %45 = load total.1: i32
+    %46 = LessThan %45, 100: bool
+    branch %46 (total < 100) bb16 bb15
+  bb15:
+    %63 = load total.1: i32
+    scope end total.1
+    scope end limit.0
+    return %63
+  bb16:
+    store step.6, 10
+    %48 = load total.1: i32
+    %49 = GreaterThan %48, 50: bool
+    branch %49 (total > 50) bb17 bb18
+  bb17:
+    %50 = load step.6: i32
+    store late.7, %50
+    %52 = load late.7: i32
+    scope end late.7
+    scope end step.6
+    scope end total.1
+    scope end limit.0
+    return %52
+  bb18:
+    %58 = load total.1: i32
+    %59 = load step.6: i32
+    %60 = Add %58, %59: i32
+    store total.1, %60
+    scope end step.6
+    goto bb14
+  bb19:
+    scope end late.7
+    goto bb18
+  bb20:
+    scope end total.1
+    scope end limit.0
+    fall off at `}`
+fn main:
+  bb0:
+    fall off at `}`

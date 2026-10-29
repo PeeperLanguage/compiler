@@ -1,0 +1,27 @@
+// Each way out of a block ends the scopes of the variables it leaves,
+// newest first: its end, `break`, `continue` and `return`.
+fn walk(limit: i32) -> i32 {
+    let mut total: i32 = 0;
+    for i, value in 0..limit {
+        let doubled: i32 = value * 2;
+        if doubled > 6 {
+            let early: i32 = doubled;
+            break;
+        }
+        if doubled == 2 {
+            continue;
+        }
+        total = total + doubled;
+    }
+    for total < 100 {
+        let step: i32 = 10;
+        if total > 50 {
+            let late: i32 = step;
+            return late;
+        }
+        total = total + step;
+    }
+    return total;
+}
+
+fn main() {}

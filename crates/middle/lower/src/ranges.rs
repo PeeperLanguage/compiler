@@ -255,6 +255,7 @@ impl Lowering<'_> {
         });
         self.block = pass;
         let value = value.map(|value| Id::from_index(value.index()));
+        let declared = self.declared.len(); // the pass's variables, then its body's
         for (variable, value) in [index.zip(passes), value.map(|value| (value, counter))]
             .into_iter()
             .flatten()
@@ -288,7 +289,7 @@ impl Lowering<'_> {
         let targets = Loop {
             next: step,
             exit,
-            body,
+            declared,
         };
         self.lower_loop_body(body, targets)?;
         self.block = step;
