@@ -1,0 +1,16 @@
+// A constant's `false && x` and `true || x` do not run `x`, as the program
+// would not.
+fn bad() -> bool {
+    panic "bad";
+}
+
+const Never = false && bad();
+const Always = true || bad();
+
+fn main() -> i32 {
+    const Local = false && bad() || Always;
+    if Never || !Always || !Local {
+        return 1;
+    }
+    return 3;
+}

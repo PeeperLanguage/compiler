@@ -185,6 +185,35 @@ fn module_constants() {
     );
 }
 
+/// A constant's `false && x` and `true || x` do not run `x`, as the
+/// program would not; `x` is still checked.
+#[test]
+fn constants_short_circuit() {
+    let found = diagnostics(&[(
+        "app:main",
+        "fn bad() -> bool { panic \"bad\"; }
+            const Skipped = false && bad() || true || bad();
+            const Checked = false && 1;
+            const Run = true && bad();
+            fn main() {}",
+    )]);
+    assert_eq!(
+        found,
+        expected(&[
+            (
+                "T0001",
+                "mismatched types: expected `bool`, found `i32`",
+                "1"
+            ),
+            (
+                "T0044",
+                "this call cannot be evaluated at compile time",
+                "bad()"
+            ),
+        ])
+    );
+}
+
 /// No slice is longer than the largest `usize`, `u32::MAX` on a 32-bit
 /// target: a constant end past it is outside every slice, though it
 /// fits a `u64`, which lowering would cut to the target's width.
