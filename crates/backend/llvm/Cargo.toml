@@ -11,6 +11,7 @@ arena.workspace = true
 eval.workspace = true
 model.workspace = true
 project.workspace = true
+rustc-hash.workspace = true
 source.workspace = true
 
 [build-dependencies]

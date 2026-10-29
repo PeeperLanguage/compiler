@@ -1,11 +1,11 @@
 //! Interned types: equal types have equal ids, so comparing types is comparing
 //! two numbers.
 
-use std::collections::HashMap;
 use std::fmt;
 use std::ops::Index;
 
 use bigint::Limbs;
+use rustc_hash::FxHashMap;
 
 use crate::DefId;
 
@@ -405,14 +405,14 @@ pub fn builtin_doc(name: &str, pointer_bits: u32) -> Option<String> {
 #[derive(Clone)]
 pub struct Types {
     types: Vec<Type>,
-    ids: HashMap<Type, TypeId>,
+    ids: FxHashMap<Type, TypeId>,
 }
 
 impl Types {
     pub fn new() -> Types {
         let mut types = Types {
             types: Vec::new(),
-            ids: HashMap::new(),
+            ids: FxHashMap::default(),
         };
         for ty in FIXED {
             types.intern(ty.clone());

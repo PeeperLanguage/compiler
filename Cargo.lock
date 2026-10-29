@@ -407,6 +407,7 @@ dependencies = [
  "eval",
  "model",
  "project",
+ "rustc-hash",
  "source",
  "toml_edit",
 ]
@@ -491,6 +492,7 @@ version = "0.1.0"
 dependencies = [
  "arena",
  "bigint",
+ "rustc-hash",
  "source",
 ]
 
