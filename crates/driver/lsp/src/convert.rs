@@ -28,13 +28,12 @@ use source::Span;
 use crate::OpenFile;
 
 /// Each help line of `diagnostic` that has fixes, as one quick fix whose
-/// edits apply together. Each file's edits name the version of the open text
-/// they were made for (`open_files`), so the editor refuses them once that
-/// text has changed. A help line with a fix in a file that has no URI is left
-/// out, so a fix is never applied in part.
+/// edits apply together (`workspace_edit`). A help line with a fix in a file
+/// that has no URI is left out, so a fix is never applied in part.
 pub(crate) fn quick_fixes(
     diagnostic: &diagnostics::Diagnostic,
     open_files: &HashMap<PathBuf, OpenFile>,
+    versioned: bool,
 ) -> Vec<CodeAction> {
     let fixable = diagnostic
         .notes
@@ -46,18 +45,21 @@ pub(crate) fn quick_fixes(
                 title: note.text.clone(),
                 kind: Some(CodeActionKind::QUICKFIX),
                 is_preferred: Some(note.has_sure_fix()),
-                edit: Some(workspace_edit(note.fixes(), open_files)?),
+                edit: Some(workspace_edit(note.fixes(), open_files, versioned)?),
                 ..CodeAction::default()
             })
         })
         .collect()
 }
-/// `fixes` as one edit of the files they touch, each file's edits naming the
-/// version of the open text they were made for (`open_files`). `None` when a
-/// fix is in a file that has no URI, or there are no fixes.
+/// `fixes` as one edit of the files they touch. When the editor takes
+/// `versioned` edits (`documentChanges`), each file's edits name the version
+/// of the open text they were made for (`open_files`), so the editor refuses
+/// them once that text has changed; else they go in `changes`, unversioned.
+/// `None` when a fix is in a file that has no URI, or there are no fixes.
 pub(crate) fn workspace_edit<'f>(
     fixes: impl IntoIterator<Item = &'f Fix>,
     open_files: &HashMap<PathBuf, OpenFile>,
+    versioned: bool,
 ) -> Option<WorkspaceEdit> {
     let mut documents: Vec<TextDocumentEdit> = Vec::new();
     for fix in fixes {
@@ -83,20 +85,44 @@ pub(crate) fn workspace_edit<'f>(
             });
         }
     }
-    (!documents.is_empty()).then(|| WorkspaceEdit {
-        document_changes: Some(DocumentChanges::Edits(documents)),
+    if documents.is_empty() {
+        return None;
+    }
+    if versioned {
+        return Some(WorkspaceEdit {
+            document_changes: Some(DocumentChanges::Edits(documents)),
+            ..WorkspaceEdit::default()
+        });
+    }
+    let changes = documents.into_iter().map(|document| {
+        let edits = document.edits.into_iter().map(|edit| match edit {
+            OneOf::Left(edit) => edit,
+            OneOf::Right(annotated) => annotated.text_edit,
+        });
+        (document.text_document.uri, edits.collect())
+    });
+    Some(WorkspaceEdit {
+        changes: Some(changes.collect()),
         ..WorkspaceEdit::default()
     })
 }
-/// `diagnostic` in LSP form: the primary label gives the range, the other
-/// labels are related information, the notes follow the message, and the
-/// quick fixes go in `data` for a later code action request. Then a hint
-/// for each span of hint labels with text in the primary label's file.
+/// `diagnostic` in LSP form: the primary label gives the range and its text
+/// the message's second line, the other labels are related information, the
+/// notes follow the message, and the quick fixes go in `data` for a later
+/// code action request. Then a hint for each span of hint labels with text in
+/// the primary label's file.
 pub(crate) fn lsp_diagnostics(
     diagnostic: &diagnostics::Diagnostic,
     open_files: &HashMap<PathBuf, OpenFile>,
+    versioned: bool,
 ) -> Vec<lsp_types::Diagnostic> {
     let mut message = diagnostic.message.clone();
+    if let Some(label) = diagnostic.labels.first()
+        && !label.message.is_empty()
+    {
+        message.push('\n');
+        message.push_str(&label.message);
+    }
     for note in &diagnostic.notes {
         message.push_str(match note.kind {
             NoteKind::Note => "\nnote: ",
@@ -171,7 +197,7 @@ pub(crate) fn lsp_diagnostics(
         source,
         message,
         related_information: Some(related),
-        data: match quick_fixes(diagnostic, open_files) {
+        data: match quick_fixes(diagnostic, open_files, versioned) {
             fixes if fixes.is_empty() => None,
             fixes => serde_json::to_value(fixes).ok(),
         },

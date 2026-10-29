@@ -82,7 +82,7 @@ fn converts_labels_and_notes() {
         .label(&file, Span::new(4, 5), "used later here")
         .note("a note")
         .help("a help line", Vec::new());
-    let converted = lsp_diagnostics(&diagnostic, &HashMap::new());
+    let converted = lsp_diagnostics(&diagnostic, &HashMap::new(), true);
     let [converted, hint] = converted.as_slice() else {
         panic!("one diagnostic and one hint: {converted:?}");
     };
@@ -95,7 +95,7 @@ fn converts_labels_and_notes() {
     );
     assert_eq!(
         converted.message,
-        "unreachable code\nnote: a note\nhelp: a help line"
+        "unreachable code\nthis never runs\nnote: a note\nhelp: a help line"
     );
     let related = converted.related_information.as_ref().unwrap();
     assert_eq!(related.len(), 1, "labels on one span are one entry");
@@ -120,7 +120,8 @@ fn converts_labels_and_notes() {
 }
 
 /// A help line's fixes are published in the diagnostic's `data` and come
-/// back as one quick fix when the editor asks for code actions there.
+/// back as one quick fix when the editor asks for code actions there,
+/// versioned when the editor takes that.
 #[test]
 fn help_fixes_become_quick_fixes() {
     let file = Arc::new(SourceFile::new(MAIN_FILE, "let a = cout;\n"));
@@ -139,7 +140,7 @@ fn help_fixes_become_quick_fixes() {
         version: 7,
     };
     let open_files = HashMap::from([(PathBuf::from(MAIN_FILE), open)]);
-    let published = lsp_diagnostics(&diagnostic, &open_files).remove(0);
+    let published = lsp_diagnostics(&diagnostic, &open_files, true).remove(0);
     let uri = Url::from_file_path(MAIN_FILE).unwrap();
     let params = json!({
         "textDocument": { "uri": uri },
@@ -147,8 +148,9 @@ fn help_fixes_become_quick_fixes() {
         "context": { "diagnostics": [published] },
     });
     let (connection, _client) = Connection::memory();
-    let server = Server::new(&connection, Path::new(""));
-    let Response { result, error, .. } = server.answer_code_actions(RequestId::from(1), params);
+    let server = Server::new(&connection, Path::new(""), true);
+    let Response { result, error, .. } =
+        server.answer_code_actions(RequestId::from(1), params.clone());
     assert!(error.is_none(), "{error:?}");
     let result = result.unwrap();
     let document = &result[0]["edit"]["documentChanges"][0];
@@ -164,8 +166,17 @@ fn help_fixes_become_quick_fixes() {
         edits,
         &json!([{ "range": { "start": { "line": 0, "character": 8 }, "end": { "line": 0, "character": 12 } }, "newText": "count" }])
     );
+    // An editor that takes no versioned edits gets none for text not
+    // checked, as this file is not; else it gets them in `changes`.
+    let unchecked = Server::new(&connection, Path::new(""), false);
+    let refused = unchecked.answer_code_actions(RequestId::from(2), params);
+    assert_eq!(refused.result, Some(json!([])));
+    let unversioned = lsp_diagnostics(&diagnostic, &open_files, false).remove(0);
+    let edit = &unversioned.data.unwrap()[0]["edit"];
+    assert_eq!(edit.get("documentChanges"), None);
+    assert_eq!(&edit["changes"][uri.as_str()], edits);
     let plain = Diagnostic::new(diagnostics::UNDEFINED_NAME, "no help");
-    let plain = lsp_diagnostics(&plain, &open_files).remove(0);
+    let plain = lsp_diagnostics(&plain, &open_files, true).remove(0);
     assert_eq!(plain.data, None, "nothing to fix, nothing in `data`");
 }
 
@@ -266,7 +277,7 @@ fn fixes_all_sure_problems() {
     std::fs::write(&file, text).unwrap();
     let uri = Url::from_file_path(&file).unwrap();
     let (connection, client) = Connection::memory();
-    let mut server = Server::new(&connection, Path::new(""));
+    let mut server = Server::new(&connection, Path::new(""), true);
     let document = json!({ "uri": uri, "languageId": "peeper", "version": 3, "text": text });
     let open = json!({ "textDocument": document });
     let open = Notification::new("textDocument/didOpen".to_string(), open);
@@ -311,7 +322,7 @@ fn a_save_checks_at_once() {
     std::fs::write(&file, "fn main() {}\n").unwrap();
     let uri = Url::from_file_path(&file).unwrap();
     let (connection, client) = Connection::memory();
-    let mut server = Server::new(&connection, Path::new(""));
+    let mut server = Server::new(&connection, Path::new(""), true);
     let change = json!({
         "textDocument": { "uri": uri, "version": 2 },
         "contentChanges": [{ "text": "fn main() { a $ b; }\n" }],
@@ -350,7 +361,7 @@ fn answers_definition_and_hover() {
     std::fs::write(&file, "fn main() {}\n").unwrap();
     let uri = Url::from_file_path(&file).unwrap();
     let (connection, _client) = Connection::memory();
-    let mut server = Server::new(&connection, Path::new(""));
+    let mut server = Server::new(&connection, Path::new(""), true);
     let text = "type Meters = i64;\nfn main() {\n    let total: Meters = 1;\n    let more = total;\n}\n// let me\nstruct Run {\n    length: Meters,\n}\nfn ops(a: i32, x: f64) -> f64 {\n    let q = a/2;\n    const C = -(7 / 2);\n    return x - -1.0;\n}\nfn refs(m: i32) -> i32 {\n    let r = &m;\n    let both = m & 3;\n    let mut x = 1;\n    let p = @x;\n    let s = [2]i32{1, 2};\n    return r.* + s[0];\n}\nconst SMALL: u8 = 200;\nfn literals(n: u8) -> u8 {\n    let wide: f32 = 2;\n    let low: i8 = -128;\n    println(\"hi\", c\"x\");\n    let big: u8 = 300;\n    return n * 3;\n}\nfn walks(r: range[i32]) {}\n#[extern(\"cap\")]\nfn cap() -> u8;\n";
     let document = json!({ "uri": uri, "languageId": "peeper", "version": 1, "text": text });
     let open = Notification::new(
@@ -378,6 +389,8 @@ fn answers_definition_and_hover() {
         definition["range"]["end"],
         json!({ "line": 2, "character": 13 })
     );
+    // Right after a name, before the `;`, is on the name.
+    assert_eq!(ask("textDocument/definition", 3, 20), definition);
     let hover = ask("textDocument/hover", 3, 16);
     assert_eq!(
         hover["contents"]["value"],
@@ -519,7 +532,7 @@ const BIG = utils::Twice(21);
     std::fs::write(&main_file, main).unwrap();
     std::fs::write(&utils_file, utils).unwrap();
     let (connection, _client) = Connection::memory();
-    let mut server = Server::new(&connection, Path::new(""));
+    let mut server = Server::new(&connection, Path::new(""), true);
     let notify = |server: &mut Server, method: &str, params: serde_json::Value| {
         server
             .handle_notification(Notification::new(method.to_string(), params))
@@ -709,7 +722,7 @@ fn checks_an_open_file_nothing_imports() {
     std::fs::write(&unused, text).unwrap();
     let uri = Url::from_file_path(&unused).unwrap();
     let (connection, client) = Connection::memory();
-    let mut server = Server::new(&connection, Path::new(""));
+    let mut server = Server::new(&connection, Path::new(""), true);
     let document = json!({ "uri": uri, "languageId": "peeper", "version": 1, "text": text });
     let open = Notification::new(
         "textDocument/didOpen".to_string(),
@@ -730,5 +743,84 @@ fn checks_an_open_file_nothing_imports() {
     assert_eq!(
         published.diagnostics[0].code,
         Some(NumberOrString::String("T0001".to_string()))
+    );
+}
+
+/// A request answers only from a check of the text the editor has now:
+/// not while an edit waits for its check, nor after an edit that could not
+/// be loaded. An edit of a bundled library's module checks every program
+/// holding it, so each answers with what the module now says.
+#[test]
+fn answers_only_from_the_current_text() {
+    let folder = std::env::temp_dir().join(format!("peeper-lsp-current-{}", std::process::id()));
+    _ = std::fs::remove_dir_all(&folder);
+    let libraries = folder.join("libs");
+    std::fs::create_dir_all(libraries.join("shared/src")).unwrap();
+    let library = libraries.join("shared/src/values.peep");
+    std::fs::write(&library, "const Value: i32 = 1;\n").unwrap();
+    let uses = "import \"shared:values\";\nfn main() { let v = values::Value; }\n";
+    // Two projects, each with a `main` using the library.
+    let project = |name: &str| {
+        let main = folder.join(name).join("src/main.peep");
+        std::fs::create_dir_all(main.parent().unwrap()).unwrap();
+        let manifest = format!("name = \"{name}\"\nbuild = \"bin\"\n");
+        std::fs::write(folder.join(name).join("peeper.toml"), manifest).unwrap();
+        std::fs::write(&main, uses).unwrap();
+        main
+    };
+    let (first, second) = (project("first"), project("second"));
+    let (connection, _client) = Connection::memory();
+    let mut server = Server::new(&connection, &libraries, true);
+    let notify = |server: &mut Server, method: &str, file: &Path, text: &str| {
+        let uri = Url::from_file_path(file).unwrap();
+        let document = json!({ "uri": uri, "languageId": "peeper", "version": 1, "text": text });
+        let params = match method {
+            "textDocument/didOpen" => json!({ "textDocument": document }),
+            _ => json!({ "textDocument": document, "contentChanges": [{ "text": text }] }),
+        };
+        let notification = Notification::new(method.to_string(), params);
+        server.handle_notification(notification).unwrap();
+    };
+    // Hover on `Value` in `file`.
+    let hover = |server: &Server, file: &Path| {
+        let place = json!({
+            "textDocument": { "uri": Url::from_file_path(file).unwrap() },
+            "position": { "line": 1, "character": 30 },
+        });
+        let request = Request::new(RequestId::from(1), "textDocument/hover".to_string(), place);
+        let Response { result, .. } = server.answer_request(request);
+        result.unwrap()["contents"]["value"].clone()
+    };
+    notify(&mut server, "textDocument/didOpen", &first, uses);
+    notify(&mut server, "textDocument/didOpen", &second, uses);
+    let value = |value: &str| {
+        let hover = format!(
+            "```peeper\nconst Value: i32 = {value}\n```\n\n---\n\n*in* `shared:values` *· line 1*\n"
+        );
+        json!(hover)
+    };
+    assert_eq!(hover(&server, &second), value("1"));
+    notify(
+        &mut server,
+        "textDocument/didOpen",
+        &library,
+        "const Value: i32 = 2;\n",
+    );
+    assert_eq!(hover(&server, &first), value("2"));
+    assert_eq!(hover(&server, &second), value("2"), "both programs checked");
+    let moved = format!("\n{uses}");
+    notify(&mut server, "textDocument/didChange", &second, &moved);
+    assert_eq!(
+        hover(&server, &second),
+        serde_json::Value::Null,
+        "not checked yet"
+    );
+    server.check_pending().unwrap();
+    let broken = format!("{uses}fn (\n");
+    notify(&mut server, "textDocument/didOpen", &second, &broken);
+    assert_eq!(
+        hover(&server, &second),
+        serde_json::Value::Null,
+        "not loaded"
     );
 }

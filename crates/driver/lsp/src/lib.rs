@@ -71,8 +71,10 @@ fn serve_connection(connection: Connection, libraries: &Path) -> Result<(), BoxE
         })),
         ..ServerCapabilities::default()
     };
-    connection.initialize(serde_json::to_value(capabilities)?)?;
-    let mut server = Server::new(&connection, libraries);
+    let editor = connection.initialize(serde_json::to_value(capabilities)?)?;
+    let document_changes = editor.pointer("/capabilities/workspace/workspaceEdit/documentChanges");
+    let versioned_edits = document_changes == Some(&serde_json::Value::Bool(true));
+    let mut server = Server::new(&connection, libraries, versioned_edits);
     loop {
         let message = match server.deadline {
             None => match connection.receiver.recv() {
