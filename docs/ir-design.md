@@ -404,10 +404,13 @@ reference in `r`, then to a field. The checker makes the implicit step of
 `r.x` an explicit `Dereference` in THIR, and lowering turns each into a step,
 so neither the check nor the LLVM writer works it out from types. A
 reference is never in a field yet, but a raw pointer may be, and `pp.*.*`
-takes two steps, so a dereference may be any step. `&place` and `&mut place` are
-a `borrow` of the place, its address. The checker also makes the spec's
-reborrow explicit: a `&mut` in a variable passed to a call becomes a `Borrow`
-of what it refers to, so the variable stays usable; a `let` moves it.
+takes two steps, so a dereference may be any step. Each element's index is
+computed before the place is used, in the order written, and each dereference
+reads its pointer only then, as rustc does: in `p.*[f(@p)]` a call that
+repoints `p` changes which array is read (owner, 2026-10-29). `&place` and
+`&mut place` are a `borrow` of the place, its address. The checker also makes
+the spec's reborrow explicit: a `&mut` in a variable passed to a call becomes a
+`Borrow` of what it refers to, so the variable stays usable; a `let` moves it.
 `@place` is an `address` of the place: the same address as a `borrow`, and
 the place must be set, but it makes no loan, so nothing checks how the raw
 pointer is used. A `.*` of a typed raw pointer is the same `Dereference` step

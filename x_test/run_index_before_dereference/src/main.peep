@@ -1,0 +1,13 @@
+// A place's index runs before its pointer is read, as in Rust: `retarget`
+// repoints `p` to `b`, so `p.*[...]` reads `b`.
+fn retarget(slot: **[1]i32, next: *[1]i32) -> usize {
+    slot.* = next;
+    return 0;
+}
+
+fn main() -> i32 {
+    let mut a = [1]i32{11};
+    let mut b = [1]i32{22};
+    let mut p = @a;
+    return p.*[retarget(@p, @b)];
+}
