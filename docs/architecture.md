@@ -138,12 +138,13 @@ phases follow the same rule: a phase returns its diagnostics with its result.
 
 ### LSP and incremental reuse
 
-Because a `Module` never changes, the LSP keeps the last `Program` and, after an
-edit, re-loads only the edited file (and any file whose import list now names a
-new path). Every other `*Module` is reused by pointer; sharing it is safe because
-nobody writes it. The graph is rebuilt from the map, which is cheap. Later phases
-reuse their results the same way: a result is reused when its inputs (the
-module's own syntax and the results of its imports) are the same values.
+Each compile loads the whole program again: `project::load` reads and parses
+every file, taking an open file's text from the editor, and keeps no syntax
+tree from the compile before. What a compile reuses is the check: a module whose
+text and imported interfaces are unchanged keeps its diagnostics and is not
+checked again (`compile::run`; "Reuse between compiles and the language server"
+in [`ir-design.md`](ir-design.md)). Keeping an unchanged module's syntax tree as
+well is not built.
 
 ## Later phases (contract only)
 
