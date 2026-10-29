@@ -1,6 +1,6 @@
 //! The machines a program can be checked and built for: what the checker
-//! needs of one (the width of `usize`) and what the backend needs (clang's
-//! name for it, its system, alignment).
+//! needs of one (the width of `usize`, how values are laid out) and what the
+//! backend needs (clang's name for it, its system).
 
 /// A machine a program is built for: one row of `MACHINES`.
 #[derive(PartialEq, Eq, Debug)]
@@ -91,6 +91,12 @@ impl Machine {
             .iter()
             .find(|machine| machine.arch == arch && machine.os == os)
             .ok_or_else(|| format!("peeper has no target for this machine, {arch}-{os}"))
+    }
+
+    /// The most bytes one value may take, `isize::MAX`: LLVM reads offsets
+    /// in memory as signed.
+    pub fn largest_object(&self) -> u64 {
+        (1 << (self.pointer_bits - 1)) - 1
     }
 
     /// The machine named `name`, or the error naming them all.

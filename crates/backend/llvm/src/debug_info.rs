@@ -6,6 +6,8 @@ use std::fmt;
 use std::fmt::Write;
 use std::path::Path;
 
+use model::layout::layout;
+use model::layout::struct_layout;
 use model::machine::Machine;
 use model::semantic_types::Float;
 use model::semantic_types::RANGE;
@@ -15,8 +17,6 @@ use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use model::semantic_types::range_fields;
 
-use crate::layout::layout;
-use crate::layout::struct_layout;
 use crate::text::quoted;
 
 /// The module's debug info: numbered metadata nodes.

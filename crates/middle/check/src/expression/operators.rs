@@ -72,7 +72,7 @@ impl ThirBuilder<'_, '_> {
     ) -> Expr {
         let tree = &self.checker.module().ast;
         let literal = literal::numeric::split(tree.file.slice(number));
-        let pointer_bits = self.checker.pointer_bits;
+        let pointer_bits = self.checker.target.pointer_bits;
         let types = &mut self.checker.types;
         let ty = if literal.suffix.is_empty() {
             match expected {

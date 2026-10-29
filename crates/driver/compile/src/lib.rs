@@ -22,6 +22,7 @@ use model::DefId;
 use model::ModuleId;
 use model::ast;
 use model::constant::Constant;
+use model::machine::Machine;
 use model::mir;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
@@ -119,7 +120,7 @@ pub struct CheckedFunction<'c> {
 
 /// Checks every declaration of `program`, lowers each function to MIR and
 /// gives what it found. A module of `previous` (a compile of the same program
-/// with the same `pointer_bits`, or `Results::default()`) whose text and
+/// for the same `target`, or `Results::default()`) whose text and
 /// whose imports' interfaces are unchanged keeps its diagnostics, and its
 /// bodies are not checked again. What it checks goes to `use_output` in
 /// declaration order, module by module: each function with a body as soon as
@@ -128,16 +129,16 @@ pub struct CheckedFunction<'c> {
 /// function's bodies at once. Each module constant goes once checked, with
 /// its type and value, and last the module's remaining facts, none unless
 /// `record_facts`. Integers as wide as a pointer (`isize`, `usize`) have
-/// `pointer_bits` bits.
+/// `target`'s `pointer_bits` bits.
 pub fn run(
     program: &project::Program,
-    pointer_bits: u32,
+    target: &'static Machine,
     previous: Results,
     record_facts: bool,
     mut use_output: impl FnMut(Output),
 ) -> Results {
     let modules = program.modules.as_slice();
-    let mut checker = Checker::new(modules, pointer_bits, record_facts);
+    let mut checker = Checker::new(modules, target, record_facts);
     let mut results: Vec<ModuleResults> = modules
         .iter()
         .map(|module| ModuleResults::new(module.ast.file.clone()))

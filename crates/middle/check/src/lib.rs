@@ -22,6 +22,7 @@ use model::DefId;
 use model::ModuleId;
 use model::ast;
 use model::constant::Constant;
+use model::machine::Machine;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
@@ -40,9 +41,9 @@ pub struct Checker<'p> {
     /// What checking each module found so far, by `ModuleId`.
     pub module_checks: Vec<ModuleChecks>,
     pub types: Types, // the program's types, built-in and declared
-    /// How wide a pointer is on the target, in bits: the width of `isize` and
-    /// `usize`.
-    pub pointer_bits: u32,
+    /// The machine the program is for: the width of `isize` and `usize` is
+    /// its `pointer_bits`, and a value may take its `largest_object` bytes.
+    pub target: &'static Machine,
     /// Whether the facts found are recorded (`ModuleChecks::facts`), as for
     /// an editor.
     record_facts: bool,
@@ -104,11 +105,11 @@ pub enum State<T> {
 
 impl<'p> Checker<'p> {
     /// Nothing checked yet of `modules` but their scopes, whose errors are
-    /// each module's first diagnostics. Pointers have `pointer_bits` bits.
+    /// each module's first diagnostics, for `target`.
     /// Facts are recorded when `record_facts`, as for an editor.
     pub fn new(
         modules: &'p [project::Module],
-        pointer_bits: u32,
+        target: &'static Machine,
         record_facts: bool,
     ) -> Checker<'p> {
         let module_checks = (0..modules.len())
@@ -132,7 +133,7 @@ impl<'p> Checker<'p> {
             modules,
             module_checks,
             types: Types::new(),
-            pointer_bits,
+            target,
             record_facts,
             checking: Vec::new(),
         }
@@ -227,7 +228,7 @@ impl<'p> Checker<'p> {
 
     /// `usize`, as wide as a pointer of the target.
     pub(crate) fn usize_type(&mut self) -> TypeId {
-        let usize = self.types.builtin("usize", self.pointer_bits);
+        let usize = self.types.builtin("usize", self.target.pointer_bits);
         usize.expect("`usize` is built in")
     }
 
@@ -356,7 +357,7 @@ impl<'p> Checker<'p> {
     /// declaration hides; else a name in the module's scope; else an
     /// exported name of the prelude.
     pub(crate) fn global(&mut self, name: &str) -> Option<Symbol> {
-        if let Some(builtin) = self.types.builtin(name, self.pointer_bits) {
+        if let Some(builtin) = self.types.builtin(name, self.target.pointer_bits) {
             return Some(Symbol::Builtin(builtin));
         }
         let in_prelude = || {

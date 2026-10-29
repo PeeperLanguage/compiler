@@ -48,12 +48,10 @@ pub fn serve(libraries: &Path) -> Result<(), BoxError> {
     Ok(())
 }
 
-/// How many bits a pointer has on the host, which the editor checks for;
-/// `serve` does not start on a machine with no target.
-fn host_pointer_bits() -> u32 {
-    Machine::host()
-        .expect("`serve` found the host")
-        .pointer_bits
+/// The host, the machine the editor checks for; `serve` does not start on
+/// a machine with no target.
+fn host() -> &'static Machine {
+    Machine::host().expect("`serve` found the host")
 }
 
 /// Serves `connection` until the client shuts the server down. It takes the

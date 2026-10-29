@@ -78,7 +78,7 @@ fn main() {
         let (mut ll, results) = llvm::write::write_modules(&program, target, mode, |queue| {
             compile::run(
                 &program,
-                target.pointer_bits,
+                target,
                 compile::Results::default(),
                 false,
                 |output| {

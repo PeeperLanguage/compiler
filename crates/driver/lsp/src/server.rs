@@ -41,7 +41,7 @@ use crate::convert::lsp_diagnostics;
 use crate::convert::offset;
 use crate::convert::range;
 use crate::convert::workspace_edit;
-use crate::host_pointer_bits;
+use crate::host;
 use crate::hover::declaration_hover;
 use crate::hover::doc_hover;
 use crate::hover::hover_text;
@@ -214,7 +214,7 @@ impl<'s> Server<'s> {
                         return None; // declared nowhere
                     }
                     let written = module.ast.file.slice(span);
-                    let doc = builtin_doc(written, host_pointer_bits())?;
+                    let doc = builtin_doc(written, host().pointer_bits)?;
                     return markdown_hover(doc_hover(written, &doc));
                 }
             };

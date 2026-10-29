@@ -1,0 +1,12 @@
+name = "negative_value_too_big"
+build = "program"
+
+[test]
+target = "x86_64-linux"
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "`Halves` is too big for x86_64-linux, where a value takes at most 9223372036854775807 bytes",
+    "`[18446744073709551615]u64` is too big for x86_64-linux",
+    "Compilation failed with 2 error(s)",
+]

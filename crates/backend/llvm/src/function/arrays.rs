@@ -5,6 +5,7 @@ use std::fmt::Write;
 use std::iter::Peekable;
 
 use arena::Id;
+use model::layout::layout;
 use model::mir;
 use model::mir::Operand;
 use model::semantic_types::RANGE_FIELD_NAMES;
@@ -18,7 +19,6 @@ use crate::function::debug_info::DebugLocation;
 use crate::function::traps;
 use crate::function::value_name;
 use crate::function::written_range_field;
-use crate::layout::layout;
 use crate::text::type_text;
 
 impl Function<'_, '_, '_> {

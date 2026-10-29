@@ -5,6 +5,12 @@ use super::CheckedFunction;
 use super::Output;
 use super::Results;
 use super::run;
+use model::machine::Machine;
+
+/// The machine the tests check for, but where they test another.
+fn x86_64() -> &'static Machine {
+    Machine::named("x86_64-linux").unwrap()
+}
 
 /// The program of `modules`, each an import path and its text, loaded as
 /// `peeper check` loads it from `app:main`, with every file given as open
@@ -47,7 +53,7 @@ fn load(modules: &[(&str, &str)]) -> project::Program {
 /// Checks the program of `modules` (see `load`) and gives each
 /// diagnostic as its code, message and the text of its first label.
 fn diagnostics(modules: &[(&str, &str)]) -> Vec<(&'static str, String, String)> {
-    let found = run(&load(modules), 64, Results::default(), false, |_| {});
+    let found = run(&load(modules), x86_64(), Results::default(), false, |_| {});
     found
         .diagnostics()
         .map(|diagnostic| {
@@ -192,7 +198,13 @@ fn slice_ends_fit_the_target_usize() {
             }
             fn main() {}",
     )]);
-    let found = run(&program, 32, Results::default(), false, |_| {});
+    let found = run(
+        &program,
+        Machine::named("i686-linux").unwrap(),
+        Results::default(),
+        false,
+        |_| {},
+    );
     let messages: Vec<&str> = (found.diagnostics())
         .map(|diagnostic| diagnostic.message.as_str())
         .collect();
@@ -214,7 +226,7 @@ fn a_cycle_is_reported_once_with_its_path() {
             const D = B;
             fn main() { let x = A + B; }",
     )]);
-    let found = run(&program, 64, Results::default(), false, |_| {});
+    let found = run(&program, x86_64(), Results::default(), false, |_| {});
     let errors: Vec<(String, Vec<(String, String)>)> = found
         .diagnostics()
         .map(|diagnostic| {
@@ -349,7 +361,7 @@ fn a_struct_with_an_invalid_field_is_invalid() {
             fn main() {}",
     )]);
     let mut lowered = 0;
-    let found = run(&program, 64, Results::default(), false, |output| {
+    let found = run(&program, x86_64(), Results::default(), false, |output| {
         if let Output::Function(CheckedFunction { mir: Some(_), .. }) = output {
             lowered += 1;
         }
@@ -364,7 +376,7 @@ fn a_struct_with_an_invalid_field_is_invalid() {
 fn recompile(modules: &[(&str, &str)], previous: Results) -> (Results, Vec<String>) {
     let loaded = load(modules);
     let mut checked: Vec<String> = Vec::new();
-    let results = run(&loaded, 64, previous, false, |output| {
+    let results = run(&loaded, x86_64(), previous, false, |output| {
         let Output::Function(CheckedFunction { definition, .. }) = output else {
             return;
         };
@@ -547,7 +559,7 @@ fn a_function_run_at_compile_time_records_its_facts_once() {
     )]);
     let tree = &program.modules[0].ast;
     let mut found: Vec<(&str, &str)> = Vec::new();
-    run(&program, 64, Results::default(), true, |output| {
+    run(&program, x86_64(), Results::default(), true, |output| {
         let (owner, facts) = match output {
             Output::Function(CheckedFunction {
                 definition, facts, ..
@@ -588,11 +600,42 @@ fn a_function_run_at_compile_time_records_its_facts_once() {
 fn array_lengths_fit_the_target_usize() {
     let program = load(&[(
         "app:main",
-        "fn main() { let a: [4294967296]u8; let b: [4294967295]u8; }",
+        // Of values that take no bytes, so only the length is too big.
+        "struct Empty {}
+            fn main() { let a: [4294967296]Empty; let b: [4294967295]Empty; }",
     )]);
-    let at = |bits| messages(&run(&program, bits, Results::default(), false, |_| {}));
-    assert_eq!(at(32), ["an array length must fit `usize`, of 32 bits"]);
-    assert!(at(64).is_empty(), "{:?}", at(64));
+    let at = |name| {
+        let target = Machine::named(name).unwrap();
+        messages(&run(&program, target, Results::default(), false, |_| {}))
+    };
+    assert_eq!(
+        at("i686-linux"),
+        ["an array length must fit `usize`, of 32 bits"]
+    );
+    assert!(at("x86_64-linux").is_empty(), "{:?}", at("x86_64-linux"));
+}
+
+/// A value must take at most `isize::MAX` bytes of the target, as LLVM
+/// counts the bytes of a copy as signed.
+#[test]
+fn values_fit_the_target() {
+    let program = load(&[(
+        "app:main",
+        "struct Halves { a: [1073741824]u8, b: [1073741824]u8 }
+            fn main() { let fits: [2147483647]u8; let over: [2147483648]u8; }",
+    )]);
+    let at = |name| {
+        let target = Machine::named(name).unwrap();
+        messages(&run(&program, target, Results::default(), false, |_| {}))
+    };
+    let too_big = |text| {
+        format!("`{text}` is too big for i686-linux, where a value takes at most 2147483647 bytes")
+    };
+    assert_eq!(
+        at("i686-linux"),
+        [too_big("Halves"), too_big("[2147483648]u8")]
+    );
+    assert!(at("x86_64-linux").is_empty(), "{:?}", at("x86_64-linux"));
 }
 
 #[test]

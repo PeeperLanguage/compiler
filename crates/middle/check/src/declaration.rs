@@ -6,6 +6,7 @@ use arena::Id;
 use model::DefId;
 use model::ast;
 use model::constant::Constant;
+use model::layout::layout;
 use model::semantic_types;
 use model::semantic_types::Integer;
 use model::semantic_types::Type;
@@ -76,7 +77,8 @@ impl Checker<'_> {
                     return TypeId::INVALID;
                 }
                 let fields = field_types.into();
-                return self.types.intern(Type::Struct { definition, fields });
+                let ty = self.types.intern(Type::Struct { definition, fields });
+                return self.fits_target(ty, written.name.span);
             }
             ast::Type::Enum(_) => "enum declarations",
             ast::Type::Interface(_) => "interface declarations",
@@ -292,9 +294,26 @@ impl Checker<'_> {
             Type::Slice { .. } => self.not_supported(span, "arrays of slices"),
             _ => {
                 let element = self.types.real(element);
-                self.types.intern(Type::Array { element, length })
+                let ty = self.types.intern(Type::Array { element, length });
+                self.fits_target(ty, span)
             }
         }
+    }
+
+    /// `ty`, made at `span`, or invalid after an error there when a value of
+    /// it takes more bytes than the target allows, which no copy of it could
+    /// count.
+    fn fits_target(&mut self, ty: TypeId, span: Span) -> TypeId {
+        let (size, _) = layout(&self.types, ty, self.target);
+        let largest = self.target.largest_object();
+        if size <= largest {
+            return ty;
+        }
+        let (text, target) = (self.type_text(ty), self.target.name);
+        let message = format!(
+            "`{text}` is too big for {target}, where a value takes at most {largest} bytes"
+        );
+        self.error(diagnostics::INVALID_TYPE, message, span)
     }
 
     /// `range[element]`, written or made at `span`: invalid when `element`
@@ -316,11 +335,11 @@ impl Checker<'_> {
     pub(crate) fn length_fits(&mut self, length: &[u64], span: Span) -> bool {
         let usize = Integer {
             signed: false,
-            bits: self.pointer_bits,
+            bits: self.target.pointer_bits,
         };
         let fits = usize.fits(length, false);
         if !fits {
-            let bits = self.pointer_bits;
+            let bits = self.target.pointer_bits;
             let message = format!("an array length must fit `usize`, of {bits} bits");
             self.error(diagnostics::INVALID_TYPE, message, span);
         }
