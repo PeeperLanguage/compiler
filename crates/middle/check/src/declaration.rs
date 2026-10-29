@@ -70,6 +70,11 @@ impl Checker<'_> {
                     }
                     field_types.push(field_type);
                 }
+                // Invalid when a field is, as an array is when its element
+                // is, so no later phase lays out a field it cannot.
+                if field_types.contains(&TypeId::INVALID) {
+                    return TypeId::INVALID;
+                }
                 let fields = field_types.into();
                 return self.types.intern(Type::Struct { definition, fields });
             }

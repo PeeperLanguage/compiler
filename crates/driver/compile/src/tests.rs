@@ -338,6 +338,26 @@ fn a_prelude_struct_has_its_own_fields() {
     );
 }
 
+/// A struct with a field of no type is invalid, so no function using it is
+/// lowered for a backend to lay out.
+#[test]
+fn a_struct_with_an_invalid_field_is_invalid() {
+    let program = load(&[(
+        "app:main",
+        "struct S { x: Missing }
+            fn f(s: S) {}
+            fn main() {}",
+    )]);
+    let mut lowered = 0;
+    let found = run(&program, 64, Results::default(), false, |output| {
+        if let Output::Function(CheckedFunction { mir: Some(_), .. }) = output {
+            lowered += 1;
+        }
+    });
+    assert_eq!(messages(&found), ["unknown type `Missing`"]);
+    assert_eq!(lowered, 1, "only `main` is lowered");
+}
+
 /// Compiles the program of `modules` (see `load`) after `previous`;
 /// gives what it found and the paths of the modules whose bodies were
 /// checked, which every module of these tests has.
