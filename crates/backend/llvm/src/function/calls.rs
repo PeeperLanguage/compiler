@@ -38,7 +38,7 @@ impl Function<'_, '_, '_> {
         let callee = global(&symbol);
         // Only C code needs the C ABI's extension of narrow integers; it
         // follows a parameter's type and comes before a result's.
-        let external = project::extern_symbol(&self.module.program.modules, function).is_some();
+        let external = project::extern_symbol(&self.module.program.modules, function) != Ok(None);
         let extension = |ty| c_extension(types, ty).filter(|_| external);
         // A result kept in memory is written where a first argument points
         // (`add_function`). An argument kept in memory is always a private

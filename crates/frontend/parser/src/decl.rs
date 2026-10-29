@@ -61,6 +61,19 @@ impl Parser {
             if starts_declaration(kind) {
                 self.recovering = false;
             }
+            let first = self.tree.children.lists.items(metadata.attributes).next();
+            if DECLARATIONS[kind as usize].is_none()
+                && let Some(attribute) = first
+            {
+                let span = self.tree.children.attributes.span(attribute);
+                self.repair(
+                    Diagnostic::new(
+                        diagnostics::INVALID_DECLARATION,
+                        "an attribute needs a declaration after it",
+                    )
+                    .label(&self.tree.file, span, ""),
+                );
+            }
             match kind {
                 TokenKind::Eof => {
                     self.tree.imports = imports;

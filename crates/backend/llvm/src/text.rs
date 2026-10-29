@@ -15,15 +15,17 @@ use model::semantic_types::range_fields;
 /// The name the linker knows the function `definition` by: its `#[extern]`
 /// name, else its module's path and its name (`myapp:util.Parse`).
 pub(crate) fn symbol(program: &project::Program, definition: DefId) -> String {
-    project::extern_symbol(&program.modules, definition).unwrap_or_else(|| {
-        let module = &program.modules[definition.module.index()];
-        let declaration = &module.ast.decls[module.ast.declaration(definition.index)];
-        format!(
-            "{}.{}",
-            module.path,
-            declaration.name().text(&module.ast.file)
-        )
-    })
+    project::extern_symbol(&program.modules, definition)
+        .expect("the checker reported a malformed `extern`")
+        .unwrap_or_else(|| {
+            let module = &program.modules[definition.module.index()];
+            let declaration = &module.ast.decls[module.ast.declaration(definition.index)];
+            format!(
+                "{}.{}",
+                module.path,
+                declaration.name().text(&module.ast.file)
+            )
+        })
 }
 /// The LLVM type of a value of type `ty`, written where it is printed.
 pub(crate) fn type_text(types: &Types, ty: TypeId) -> impl fmt::Display {

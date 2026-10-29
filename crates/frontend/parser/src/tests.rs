@@ -292,6 +292,14 @@ fn one_error_per_mistake() {
         ("fn f() { g(1 2); }", &["expected `,`"]),
         ("fn f(a: i32 b: i32) {}", &["expected `,`"]),
         ("fn f(_) {}", &["expected `:`, found `)`"]),
+        (
+            "fn f() {}\n#[a]",
+            &["an attribute needs a declaration after it"],
+        ),
+        (
+            "#[a] import \"x:y\";",
+            &["an attribute needs a declaration after it"],
+        ),
         ("fn f(g: fn(_, _)) {}", &["expected `:`, found `,`"]),
         ("fn f() { a$b; }", &["illegal character \"$\""]), // the parser adds nothing
         (

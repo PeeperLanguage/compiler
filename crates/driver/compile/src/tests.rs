@@ -391,14 +391,18 @@ fn a_prelude_struct_has_its_own_fields() {
     );
 }
 
-/// A struct with a field of no type is invalid, so no function using it is
-/// lowered for a backend to lay out.
+/// A struct with a field of no type, and a function with a malformed
+/// `extern`, are invalid, so no function using them is lowered for a
+/// backend to lay out or name.
 #[test]
-fn a_struct_with_an_invalid_field_is_invalid() {
+fn an_invalid_declaration_lowers_nothing_using_it() {
     let program = load(&[(
         "app:main",
         "struct S { x: Missing }
             fn f(s: S) {}
+            #[extern(1)]
+            fn Puts(code: i32) -> i32;
+            fn g() -> i32 { return Puts(1); }
             fn main() {}",
     )]);
     let mut lowered = 0;
@@ -407,7 +411,8 @@ fn a_struct_with_an_invalid_field_is_invalid() {
             lowered += 1;
         }
     });
-    assert_eq!(messages(&found), ["unknown type `Missing`"]);
+    let extern_shape = "write `#[extern(\"name\")]` once, with the C function's name";
+    assert_eq!(messages(&found), ["unknown type `Missing`", extern_shape]);
     assert_eq!(lowered, 1, "only `main` is lowered");
 }
 

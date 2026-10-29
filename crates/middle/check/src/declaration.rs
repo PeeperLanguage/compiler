@@ -100,7 +100,14 @@ impl Checker<'_> {
         if let Some(parameter) = tree.children.lists.items(signature.type_parameters).next() {
             return self.not_supported(tree.children.names.span(parameter), "generic functions");
         }
-        let external = project::extern_symbol(self.modules, definition).is_some();
+        let symbol = project::extern_symbol(self.modules, definition);
+        if let Err(span) = symbol {
+            let message = "write `#[extern(\"name\")]` once, with the C function's name";
+            self.error(diagnostics::INVALID_DECLARATION, message, span);
+        }
+        // A malformed `extern` is still read as one, so its signature gets
+        // the C rules.
+        let external = symbol != Ok(None);
         let mut parameters = Vec::with_capacity(signature.parameters.len());
         for parameter in tree.children.lists.items(signature.parameters) {
             let parameter = tree.children.params[parameter];
@@ -115,6 +122,10 @@ impl Checker<'_> {
         let Some(origins) = self.result_origins(&signature, &parameters, result) else {
             return TypeId::INVALID;
         };
+        // Reported above; invalid, so no call of it is lowered.
+        if symbol.is_err() {
+            return TypeId::INVALID;
+        }
         let parameters = parameters.into();
         self.types.intern(Type::Function {
             parameters,
@@ -560,5 +571,26 @@ mod tests {
             "an error stays inside the signature"
         );
         assert_eq!(found[3], "Invalid");
+    }
+
+    /// An `extern` of another shape is reported, and its function still gets
+    /// the C rules.
+    #[test]
+    fn a_malformed_extern_is_reported() {
+        let (_, found_reported) = declared_types(
+            "struct P { x: i32 }\n#[extern(1)]\nfn a();\n#[extern(\"b\", 2)]\nfn b();\n#[extern(\"c\")]\n#[extern(\"d\")]\nfn c(p: P);\n",
+        );
+        let shape = "write `#[extern(\"name\")]` once, with the C function's name";
+        let expected = reported(&[
+            ("P0005", shape, "#[extern(1)]"),
+            ("P0005", shape, "#[extern(\"b\", 2)]"),
+            ("P0005", shape, "#[extern(\"d\")]"),
+            (
+                "T0043",
+                "struct, array, range and slice parameters and results of `extern` functions are not supported yet",
+                "P",
+            ),
+        ]);
+        assert_eq!(found_reported, expected);
     }
 }
