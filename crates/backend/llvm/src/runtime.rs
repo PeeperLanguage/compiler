@@ -20,38 +20,44 @@ include!(concat!(env!("OUT_DIR"), "/runtime.rs"));
 
 /// Builds the library for `target` from this checkout's runtime folder,
 /// with the clang and llvm-ar of `installation`, into its runtime folder,
-/// where `library` finds it, and gives its path. The objects in between are
-/// removed.
+/// where `library` finds it, and gives its path. It is built in a folder of
+/// this process's and then renamed into place, so a failed build keeps the
+/// library that was there, and builds at once share no objects; that folder
+/// is removed.
 pub fn build(installation: &Path, target: &Machine) -> Result<PathBuf, String> {
     let library = library(target, installation);
     let folder = library.parent().expect("a library is in a folder");
     let sources = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../runtime");
-    std::fs::create_dir_all(folder)
-        .map_err(|error| format!("cannot make {}: {error}", folder.display()))?;
-    _ = std::fs::remove_file(&library); // an archiver adds to an archive that is there
-    let sdk = sdk_flags(target)?;
-    let mut objects = Vec::with_capacity(SOURCES.len());
-    for source in SOURCES {
-        let object = folder.join(Path::new(source).with_extension("o"));
-        let mut clang = Command::new(tool(installation, "clang"));
-        clang
-            .args(&sdk)
-            .args(clang_flag(target))
-            .args(FLAGS)
-            .arg("-c")
-            .arg(sources.join(source))
-            .arg("-o")
-            .arg(&object);
-        call_tool(clang, "compile the runtime")?;
-        objects.push(object);
-    }
-    let mut archive = Command::new(tool(installation, "llvm-ar"));
-    archive.arg("rcs").arg(&library).args(&objects);
-    let archived = call_tool(archive, "archive the runtime");
-    for object in &objects {
-        _ = std::fs::remove_file(object);
-    }
-    archived.map(|()| library)
+    let staging = folder.join(format!(".build-{}", std::process::id()));
+    _ = std::fs::remove_dir_all(&staging); // an archiver adds to an archive that is there
+    std::fs::create_dir_all(&staging)
+        .map_err(|error| format!("cannot make {}: {error}", staging.display()))?;
+    let staged = staging.join(LIBRARY);
+    let built = (|| {
+        let sdk = sdk_flags(target)?;
+        let mut objects = Vec::with_capacity(SOURCES.len());
+        for source in SOURCES {
+            let object = staging.join(Path::new(source).with_extension("o"));
+            let mut clang = Command::new(tool(installation, "clang"));
+            clang
+                .args(&sdk)
+                .args(clang_flag(target))
+                .args(FLAGS)
+                .arg("-c")
+                .arg(sources.join(source))
+                .arg("-o")
+                .arg(&object);
+            call_tool(clang, "compile the runtime")?;
+            objects.push(object);
+        }
+        let mut archive = Command::new(tool(installation, "llvm-ar"));
+        archive.arg("rcs").arg(&staged).args(&objects);
+        call_tool(archive, "archive the runtime")?;
+        std::fs::rename(&staged, &library)
+            .map_err(|error| format!("cannot write {}: {error}", library.display()))
+    })();
+    _ = std::fs::remove_dir_all(&staging);
+    built.map(|()| library)
 }
 
 /// The runtime library of `target` in `installation`: in its folder in the
