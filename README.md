@@ -89,8 +89,8 @@ their previously cached names.
 
 ## Binary installation
 
-> Not available yet for the rewritten compiler (`docs/roadmap.md`). Use
-> [Build from source](#build-from-source).
+> The first release of the rewritten compiler is not published yet; until
+> then use [Build from source](#build-from-source).
 
 Linux and macOS:
 
@@ -104,15 +104,18 @@ Windows PowerShell:
 irm https://github.com/PeeperLanguage/compiler/releases/latest/download/install.ps1 | iex
 ```
 
-Bootstrap scripts detect `amd64` or `arm64` automatically, download the
-release manifest and the compiler and toolchain packs for the detected host,
-verify every SHA-256 digest, and activate the installation atomically. macOS
-running under Rosetta installs the native `arm64` build. macOS requires
-Command Line Tools and working `xcrun --sdk macosx --show-sdk-path`.
+A release holds one archive per machine, Linux x86-64, macOS ARM64 and
+Windows x86-64, with the compiler, its libraries, runtime and LLVM toolchain
+(`.github/workflows/release.yml`, run by pushing a `v*` tag). The install
+script downloads this machine's archive, checks it against the release's
+`SHA256SUMS`, and replaces the installation, `~/.peeper` (on Windows
+`%LOCALAPPDATA%\Peeper`), only once the new one is unpacked. A Mac running
+it under Rosetta gets the ARM64 build. On macOS, linking programs needs
+Xcode's command line tools (`xcode-select --install`).
 
-Bootstrap scripts persist the Peeper binary directory in the user PATH
-idempotently; restart your terminal afterward, because a piped shell cannot
-modify its parent environment.
+The script adds the installation's `bin` folder to the PATH of your shell's
+startup file (on Windows, your user PATH) once; open a new terminal to use
+`peeper`, because a piped script cannot change the shell that ran it.
 
 ## Source build requirements
 

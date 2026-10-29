@@ -1,0 +1,89 @@
+name: Release
+
+# On a version tag, builds peeper with its libraries, runtime and toolchain
+# on each machine CI tests, runs the fixtures with the archive unpacked
+# fresh, and drafts a GitHub release of the archives, their SHA256SUMS and
+# the install scripts that download them. A maintainer publishes the draft.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.machine }}
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            machine: linux-amd64
+          - runner: macos-15
+            machine: darwin-arm64
+          - runner: windows-2025
+            machine: windows-amd64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash # Git Bash on Windows, for scripts/build.sh
+    env:
+      # A peeper.exe that needs no Visual C++ runtime installed.
+      RUSTFLAGS: ${{ runner.os == 'Windows' && '-C target-feature=+crt-static' || '' }}
+    steps:
+      - uses: actions/checkout@v6
+      # The i686-linux fixtures link against the 32-bit C library.
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y gcc-multilib
+      - if: runner.os != 'Windows'
+        run: bash scripts/setup.sh
+      - if: runner.os == 'Windows'
+        run: pwsh scripts/setup.ps1
+      - run: bash scripts/build.sh
+      - name: Pack build/
+        run: |
+          # An installed LLVM linked in by setup would not be in the archive.
+          test ! -L build/toolchains/native
+          mkdir dist
+          tar -czf dist/peeper-${{ matrix.machine }}.tar.gz -C build bin libs runtime toolchains/native -C .. LICENSE
+      - name: Run the fixtures with the archive unpacked
+        run: |
+          mkdir unpacked
+          tar -xzf dist/peeper-${{ matrix.machine }}.tar.gz -C unpacked
+          PEEPER="$PWD/unpacked/bin/peeper" cargo test -p peeper --test fixtures
+      - uses: actions/upload-artifact@v7
+        with:
+          name: peeper-${{ matrix.machine }}
+          path: dist/peeper-${{ matrix.machine }}.tar.gz
+          if-no-files-found: error
+          compression-level: 0 # already gzipped
+
+  release:
+    name: Draft the release
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: peeper-*
+          path: dist
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp scripts/install.sh scripts/install.ps1 dist/
+          (cd dist && sha256sum -- * > SHA256SUMS)
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --draft \
+            --verify-tag \
+            --title "Peeper $GITHUB_REF_NAME" \
+            --notes "Install with scripts/install.sh or scripts/install.ps1 (README.md)."
