@@ -1,7 +1,7 @@
 # Roadmap: the fresh compiler
 
 Status: PROPOSAL, kept current as work lands. Design: `architecture.md`,
-`overall-design.md`.
+`overall-design.md`. Which features each milestone covers so far: `PROGRESS.md`.
 
 Each milestone ends in something that runs and is tested. Every piece brought
 back from the old compiler passes three questions (needed now? simplest form?
@@ -9,15 +9,15 @@ something else already does it?) and is optimized before the next piece starts.
 
 ```mermaid
 flowchart LR
-    m0["M0 foundations<br/>done"] --> m1["M1 base: project + graph<br/>in progress"]
-    m1 --> m2["M2 full grammar"]
-    m1 --> m3["M3 build + cache"]
-    m2 --> m4["M4 check"]
+    m0["M0 foundations<br/>done"] --> m1["M1 base: project + graph<br/>done"]
+    m1 --> m2["M2 full grammar<br/>done"]
+    m1 --> m3["M3 build + cache<br/>memory cache only"]
+    m2 --> m4["M4 check<br/>partly"]
     m3 --> m4
-    m4 --> m5["M5 MIR + flow checks"]
-    m5 --> m6["M6 LLVM + run"]
-    m4 --> m7["M7 LSP"]
-    m6 --> m8["M8 tooling + release"]
+    m4 --> m5["M5 MIR + flow checks<br/>partly"]
+    m5 --> m6["M6 LLVM + run<br/>partly"]
+    m4 --> m7["M7 LSP<br/>partly"]
+    m6 --> m8["M8 tooling + release<br/>partly"]
     m7 --> m8
 ```
 
@@ -30,7 +30,7 @@ flowchart LR
 - AST representation chosen by prototypes (four options measured): flat node
   array, Zig style, without hand-written guards.
 
-## M1 Base: many files, imports, module graph (built, awaiting review)
+## M1 Base: many files, imports, module graph (done)
 
 Goal: the part every later step stands on. A project of many files loads in
 parallel, imports resolve, the graph is checked, output is the same every run.
@@ -131,7 +131,8 @@ Exit: one edited file re-checks only what its interface change affects.
   --workspace`, whose fixtures build and run the `x_test` programs (with the
   32-bit C library, for `target = "i686-linux"`), and `scripts/build.sh`, on
   Linux, macOS ARM64 and Windows x86-64. The Go release workflows are gone;
-  a release that ships the compiler with its pack is still to come.
+  a release is built on a version tag (`release.yml`; `v0.1.0` is out), and
+  `install-check.yml` installs it with the README's commands on each machine.
 - Toolchain packs built by CI for the Rust compiler (`crates/tools/toolchain`,
   run by `build-toolchains.yml`), for Linux, macOS ARM64 and Windows x86-64
   (from llvm-mingw) so far; LLVM publishes no macOS x86-64 release, and

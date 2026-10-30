@@ -600,9 +600,11 @@ one walk per function (`peeper -dump ll` shows it):
   prints through a private function per array type that loops over its
   elements, so the code does not grow with the length.
 
-`peeper build [-o program] [path]` and `peeper run [path] [arguments...]`
-work as the Go compiler's did. The entry file needs `fn main()` or `fn main()
--> i32` (M0006, checked only by these two commands); the entry module gets a C
+`peeper build [-o program] [path]` and `peeper run [path] [-- arguments...]`
+work as the Go compiler's did, except that `run` takes the program's
+arguments only after `--`. The entry file needs `fn main()` or `fn main()
+-> i32` (M0006, which `compile::run` checks only when the CLI passes it the
+entry module, for these two commands); the entry module gets a C
 `main` that calls it and returns its result, or 0. `llvm::link::link_executable`
 writes each module's text to a temporary folder, compiles each with `clang -c`
 and links the objects with the runtime library (`<installation>/runtime/
