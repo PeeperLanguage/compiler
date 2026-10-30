@@ -25,7 +25,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     steps:
-      - run: curl --proto '=https' --tlsv1.2 -fsSL https://github.com/PeeperLanguage/compiler/releases/latest/download/install.sh | sh
+      - run: curl -fsSL https://github.com/PeeperLanguage/compiler/releases/latest/download/install.sh | sh
       # Interactive, so the shell reads the startup file install.sh wrote.
       - run: |
           mkdir "$RUNNER_TEMP/demo"

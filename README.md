@@ -89,13 +89,10 @@ their previously cached names.
 
 ## Binary installation
 
-> The first release of the rewritten compiler is not published yet; until
-> then use [Build from source](#build-from-source).
-
 Linux and macOS:
 
 ```
-curl --proto '=https' --tlsv1.2 -fsSL https://github.com/PeeperLanguage/compiler/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/PeeperLanguage/compiler/releases/latest/download/install.sh | sh
 ```
 
 Windows PowerShell:
