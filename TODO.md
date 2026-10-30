@@ -96,16 +96,15 @@ The next steps of the other work in progress:
 - **Slices:** step 1 (`[&]T`, `[&mut]T`, slicing, loops, spreads) is done.
   Step 2, variadic `...T` parameters, waits on the owner's decision about
   `...mut T`.
-- **Features:** owned pointers `*T` with moves, drops and `free`. Then the
-  allocator, enums and `match` (with `Option` as `?T`), strings,
+- **Features:** the allocator, enums and `match` (with `Option` as `?T`), strings,
   methods, interfaces and generics.
-- **Ownership:** drop insertion. Also one function in `check` that answers
+- **Ownership:** drop insertion, for containers, the only owners of heap
+  memory: there is no owning pointer type, and `*T` stays raw. Also one function in `check` that answers
   "where can this type appear".
 - **Types:** destructuring. Stage 2: each module's MIR lists the types it uses,
   and `Types::extend_from` goes away. Stage 3: stable type keys for incremental
   builds.
 - **Architecture:**
-  - Split the CLI driver's run closure by job.
   - Check and lower bodies in parallel.
   - Per-kind declaration ids.
 - **Dependencies:** `[dependencies]` in `peeper.toml` and `peeper.lock`, waiting
