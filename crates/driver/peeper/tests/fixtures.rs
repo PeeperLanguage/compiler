@@ -136,11 +136,14 @@ fn fixtures() {
             command.args(target.iter().flatten());
             match mode {
                 "mir" | "ll" => command.args(["-dump", mode]).args(release).arg(folder),
-                "run" => command
-                    .arg("run")
-                    .args(release)
-                    .arg(folder)
-                    .args(texts("program_args")),
+                "run" => {
+                    let program_args = texts("program_args");
+                    command.arg("run").args(release).arg(folder);
+                    if !program_args.is_empty() {
+                        command.arg("--").args(program_args);
+                    }
+                    &mut command
+                }
                 _ => command.arg("check").arg(folder),
             };
             let output = command.output().expect("the compiler runs");

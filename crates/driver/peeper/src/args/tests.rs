@@ -15,6 +15,7 @@ fn parsed(args: &[&str]) -> Option<(String, Vec<String>)> {
     let (path, goal) = match parse(&args).ok()? {
         Args::Program { path, goal, .. } => (path, goal),
         Args::Lsp => return Some(("lsp".to_string(), Vec::new())),
+        Args::Help => return Some(("help".to_string(), Vec::new())),
         Args::Init { name } => return Some(("init".to_string(), name.into_iter().collect())),
     };
     match goal {
@@ -89,11 +90,13 @@ fn commands() {
         some("app", &["build", "release", "out"])
     );
     assert_eq!(parsed(&["run"]), some(".", &["run"]));
+    assert_eq!(parsed(&["run", "--", "x"]), some(".", &["run", "x"]));
     assert_eq!(parsed(&["run", "-release"]), some(".", &["run", "release"]));
     assert_eq!(
-        parsed(&["run", "app", "x", "y"]),
-        some("app", &["run", "x", "y"])
+        parsed(&["run", "app", "--", "x", "-help"]),
+        some("app", &["run", "x", "-help"])
     );
+    assert_eq!(parsed(&["-help"]), some("help", &[]));
     assert_eq!(parsed(&["lsp"]), some("lsp", &[]));
     assert_eq!(parsed(&["init"]), some("init", &[]));
     assert_eq!(parsed(&["init", "app"]), some("init", &["app"]));
@@ -107,13 +110,16 @@ fn commands() {
         some("app", &["build", "out"])
     );
     assert_eq!(
-        parsed(&["run", "-target", "i686-linux", "-release", "app", "x"]),
+        parsed(&["run", "-target", "i686-linux", "-release", "app", "--", "x"]),
         some("app", &["run", "release", "x"])
     );
     for wrong in [
         &[][..],
         &["build", "-o"],
         &["build", "a", "b"],
+        &["run", "app", "x"],
+        &["run", "app", "-help"],
+        &["-help", "app"],
         &["-dump", "asm", "app"],
         &["check", "a", "b"],
         &["fix", "a", "b"],
@@ -145,7 +151,10 @@ fn targets() {
         target(&["build", "-target", "i686-linux", "-o", "out"]),
         i686
     );
-    assert_eq!(target(&["run", "app", "-target", "i686-linux", "x"]), i686);
+    assert_eq!(
+        target(&["run", "app", "-target", "i686-linux", "--", "x"]),
+        i686
+    );
     assert_eq!(Ok(target(&["run", "app"])), Machine::host());
 }
 
@@ -173,7 +182,7 @@ fn flags_in_any_order() {
     );
     assert_eq!(parsed(&["run", "-release"]), some(".", &["run", "release"]));
     assert_eq!(
-        parsed(&["run", "app", "-release", "a", "b"]),
+        parsed(&["run", "app", "-release", "--", "a", "b"]),
         some("app", &["run", "release", "a", "b"])
     );
     assert_eq!(
@@ -232,13 +241,19 @@ fn errors() {
             "`init` does not take -target",
         ),
         (&["run", "-release", "-release"], "-release is given twice"),
+        (&["-help", "-help"], "-help is given twice"),
         (&["check", "-o", "out"], "`check` does not take -o"),
         (&["check", "-release"], "`check` does not take -release"),
         (&["run", "-dump"], "`run` does not take -dump"),
+        (&["run", "app", "-help"], "`run` does not take -help"),
+        (&["-help", "-release"], "`-help` does not take -release"),
+        (&["build", "app", "--", "x"], "`build` does not take --"),
         (&["build", "a", "b"], "unexpected `b`"),
+        (&["run", "a", "b"], "unexpected `b`"),
         // `ll` does not follow `-dump`, so it is the path.
         (&["-dump", "-release", "ll", "app"], "unexpected `app`"),
         (&["lsp", "app"], "unexpected `app`"),
+        (&["-help", "app"], "unexpected `app`"),
     ] {
         assert_eq!(error(args).as_deref(), Some(wanted), "{args:?}");
     }
