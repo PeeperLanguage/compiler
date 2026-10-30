@@ -44,7 +44,7 @@ toolchain and release work.
 | `panic` | `panic "message"`, exit code 101; run-time check failures panic too. | Messages other than a string literal. |
 | Compile-time calls | Functions with numbers, `bool`, variables, loops, branches, calls and panics. | Structs, arrays, references and printing at compile time. |
 | C functions | `#[extern("name")]` with numbers, `bool`, `cstr` and pointers. | Structs, arrays, ranges and slices in extern signatures (the C ABI rules); one calling convention. |
-| Paths | `module::Name` for another module's constants and functions (`geometry::Area(...)`). `.` is only for fields, `.len`, `.*` and, later, methods. | Types from other modules (`geometry::Point`); paths of more than two names (`a::b::c`); paths into types (`Color::Red`). |
+| Paths | `module::Name` for another module's constants, functions and types (`geometry::Area(...)`, `geometry::Point`). `.` is only for fields, `.len`, `.*` and, later, methods. | Paths of more than two names (`a::b::c`); paths into types (`Color::Red`). |
 
 ## Not done
 

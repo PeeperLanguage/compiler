@@ -70,13 +70,9 @@ impl ThirBuilder<'_, '_> {
         {
             return Ok(converted);
         }
-        let checker = &self.checker;
-        let message = format!(
-            "mismatched types: expected `{}`, found `{}`",
-            checker.type_text(to),
-            checker.type_text(found)
-        );
-        let types = &checker.types;
+        let (expected, actual) = self.checker.type_texts(to, found);
+        let message = format!("mismatched types: expected `{expected}`, found `{actual}`");
+        let types = &self.checker.types;
         Err(self.type_error(
             diagnostics::TYPE_MISMATCH,
             message,
@@ -179,7 +175,7 @@ impl ThirBuilder<'_, '_> {
                 }
                 ast::Expr::Invalid => break 'checked Expr::INVALID, // the parser reported it
                 ast::Expr::Path(path) => {
-                    let symbol = self.resolve_path(path);
+                    let symbol = self.checker.resolve_path(path);
                     break 'checked self.check_symbol_value(symbol, span);
                 }
                 ast::Expr::Call { callee, arguments } => {

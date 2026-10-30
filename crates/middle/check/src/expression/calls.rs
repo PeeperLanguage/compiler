@@ -5,7 +5,6 @@ use std::num::NonZeroU32;
 
 use arena::Id;
 use arena::List;
-use diagnostics::Diagnostic;
 use model::ast;
 use model::constant::Constant;
 use model::constant::Value;
@@ -14,15 +13,12 @@ use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use model::thir::Expr;
 use model::thir::ExprKind;
-use model::thir::FactKind;
 use model::thir::Local;
 use model::thir::Symbol;
 use source::Span;
 
 use crate::builder::ThirBuilder;
-use crate::builtin::UNSUPPORTED_FUNCTIONS;
 use crate::expression::TypeExpectation;
-use crate::scope;
 
 impl ThirBuilder<'_, '_> {
     /// `print(values)`, or `println(values)` when `newline`: each value of a
@@ -110,101 +106,6 @@ impl ThirBuilder<'_, '_> {
         Expr::INVALID
     }
 
-    /// Reports `name`, written at `span`, which nothing in scope declares:
-    /// a built-in function, not supported yet, or an unknown name, with the
-    /// nearest name that is declared.
-    pub(crate) fn report_undeclared(&mut self, name: &str, span: Span) {
-        if UNSUPPORTED_FUNCTIONS.contains(&name) {
-            self.checker.not_supported(span, "built-in functions");
-            return;
-        }
-        let locals = self.names.iter().map(|&(declared, _)| declared);
-        let globals = self.checker.visible_symbols().map(|(declared, _)| declared);
-        let meant = scope::nearest(name, locals, globals);
-        let message = format!("unknown name `{name}`");
-        self.checker
-            .report_unknown(diagnostics::UNDEFINED_NAME, span, message, meant);
-    }
-
-    /// What the path `module::name` written as the type expression `path`
-    /// stands for, reporting a path that names nothing or is not supported.
-    /// Another module's name is reachable only if it starts with an upper case
-    /// letter, except in the prelude.
-    pub(super) fn resolve_path(&mut self, path: Id<ast::Type>) -> Option<Symbol> {
-        let tree = &self.checker.module().ast;
-        let span = tree.types.span(path);
-        // A `Type::Generic` alone, as `Box<T>`, is one segment.
-        let segments: Vec<Id<ast::Type>> = match tree.types[path] {
-            ast::Type::Path(segments) => tree.children.lists.items(segments).collect(),
-            _ => vec![path],
-        };
-        if !segments
-            .iter()
-            .all(|&segment| matches!(tree.types[segment], ast::Type::Name))
-        {
-            self.checker
-                .not_supported(span, "paths with type arguments");
-            return None;
-        }
-        let [module, member] = segments[..] else {
-            self.checker
-                .not_supported(span, "paths of more than two names");
-            return None;
-        };
-        let (module_span, member_span) = (tree.types.span(module), tree.types.span(member));
-        let (module_name, member_name) =
-            (tree.file.slice(module_span), tree.file.slice(member_span));
-        let imported = match self.checker.global(module_name) {
-            Some(symbol @ Symbol::Module(imported)) => {
-                self.checker.record(module_span, FactKind::Name(symbol));
-                imported
-            }
-            Some(Symbol::Type(_)) => {
-                self.checker.not_supported(span, "paths into types");
-                return None;
-            }
-            Some(_) => {
-                let message = format!("`{module_name}` is not a module");
-                self.checker
-                    .error(diagnostics::INVALID_OPERATION, message, module_span);
-                return None;
-            }
-            None => {
-                self.report_undeclared(module_name, module_span);
-                return None;
-            }
-        };
-        let members = &self.checker.module_checks[imported.index()].scope;
-        let Some(symbol) = members.get(member_name) else {
-            let exported = members.symbols().map(|(declared, _)| declared);
-            let meant = scope::nearest(
-                member_name,
-                std::iter::empty(),
-                exported.filter(|declared| scope::is_exported(declared)),
-            );
-            let message = format!("unknown name `{member_name}` in module `{module_name}`");
-            self.checker
-                .report_unknown(diagnostics::UNDEFINED_NAME, member_span, message, meant);
-            return None;
-        };
-        self.checker.record(member_span, FactKind::Name(symbol));
-        if !scope::is_exported(member_name) {
-            let file = &tree.file;
-            self.checker.report(
-                Diagnostic::new(
-                    diagnostics::NOT_EXPORTED,
-                    format!("`{member_name}` is not exported from `{module_name}`"),
-                )
-                .label(file, member_span, "")
-                .note(
-                    "names that start with an upper case letter are exported; others are private",
-                ),
-            );
-            return None;
-        }
-        Some(symbol)
-    }
-
     /// `callee(arguments)`, written at `span`. Only a module's function, by
     /// its name or its path, can be called.
     pub(super) fn check_call(
@@ -231,7 +132,7 @@ impl ThirBuilder<'_, '_> {
                 }
                 symbol => symbol,
             },
-            ast::Expr::Path(path) => self.resolve_path(path),
+            ast::Expr::Path(path) => self.checker.resolve_path(path),
             ast::Expr::Selector { .. } => {
                 self.checker.not_supported(callee_span, "method calls");
                 None

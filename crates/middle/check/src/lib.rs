@@ -12,8 +12,11 @@ mod statement;
 #[cfg(test)]
 mod testing;
 
+use std::cell::RefCell;
 use std::sync::Arc;
 
+use arena::Id;
+use builtin::UNSUPPORTED_FUNCTIONS;
 use diagnostics::Code;
 use diagnostics::Diagnostic;
 use diagnostics::fix::Fix;
@@ -247,6 +250,41 @@ impl<'p> Checker<'p> {
         })
     }
 
+    /// Both types as a message names them, with each one's module when two
+    /// different declarations in them read the same: `a::Point`, `[1]b::Point`.
+    pub(crate) fn type_texts(&self, first: TypeId, second: TypeId) -> (String, String) {
+        let name = |definition: DefId| {
+            let (name, file) = project::declared_name(self.modules, definition);
+            name.text(file)
+        };
+        // `Types::text` needs a closure it can copy, so this one cannot own the list.
+        let written = RefCell::new(Vec::new());
+        let plain = |definition: DefId| {
+            written.borrow_mut().push(definition);
+            name(definition)
+        };
+        let texts = (
+            self.types.text(first, plain),
+            self.types.text(second, plain),
+        );
+        let written = written.into_inner();
+        let clash = |&one: &DefId| {
+            let same_name = |&other: &DefId| one != other && name(one) == name(other);
+            written.iter().any(same_name)
+        };
+        if !written.iter().any(clash) {
+            return texts;
+        }
+        let with_module = |definition: DefId| {
+            let module = &self.modules[definition.module.index()];
+            format!("{}::{}", module.path, name(definition))
+        };
+        (
+            self.types.text(first, with_module),
+            self.types.text(second, with_module),
+        )
+    }
+
     /// Reports the cycle that the declaration checked last closes by asking,
     /// at `closing`, for `checking[start]`: one place for each step, where a
     /// declaration names the next.
@@ -373,6 +411,100 @@ impl<'p> Checker<'p> {
                 .filter(|_| scope::is_exported(name))
         };
         self.scope().get(name).or_else(in_prelude)
+    }
+
+    /// What the path `module::name` written as the type expression `path`
+    /// stands for, reporting a path that names nothing or is not supported.
+    /// Another module's name is reachable only if it starts with an upper case
+    /// letter.
+    pub(crate) fn resolve_path(&mut self, path: Id<ast::Type>) -> Option<Symbol> {
+        let tree = &self.module().ast;
+        let span = tree.types.span(path);
+        // A `Type::Generic` alone, as `Box<T>`, is one segment.
+        let segments: Vec<Id<ast::Type>> = match tree.types[path] {
+            ast::Type::Path(segments) => tree.children.lists.items(segments).collect(),
+            _ => vec![path],
+        };
+        if !segments
+            .iter()
+            .all(|&segment| matches!(tree.types[segment], ast::Type::Name))
+        {
+            self.not_supported(span, "paths with type arguments");
+            return None;
+        }
+        let [module, member] = segments[..] else {
+            self.not_supported(span, "paths of more than two names");
+            return None;
+        };
+        let (module_span, member_span) = (tree.types.span(module), tree.types.span(member));
+        let (module_name, member_name) =
+            (tree.file.slice(module_span), tree.file.slice(member_span));
+        let imported = match self.global(module_name) {
+            Some(symbol @ Symbol::Module(imported)) => {
+                self.record(module_span, FactKind::Name(symbol));
+                imported
+            }
+            Some(Symbol::Type(_)) => {
+                self.not_supported(span, "paths into types");
+                return None;
+            }
+            Some(_) => {
+                let message = format!("`{module_name}` is not a module");
+                self.error(diagnostics::INVALID_OPERATION, message, module_span);
+                return None;
+            }
+            None => {
+                self.report_undeclared(module_name, module_span, std::iter::empty());
+                return None;
+            }
+        };
+        let members = &self.module_checks[imported.index()].scope;
+        let Some(symbol) = members.get(member_name) else {
+            let exported = members.symbols().map(|(declared, _)| declared);
+            let meant = scope::nearest(
+                member_name,
+                std::iter::empty(),
+                exported.filter(|declared| scope::is_exported(declared)),
+            );
+            let message = format!("unknown name `{member_name}` in module `{module_name}`");
+            self.report_unknown(diagnostics::UNDEFINED_NAME, member_span, message, meant);
+            return None;
+        };
+        self.record(member_span, FactKind::Name(symbol));
+        if !scope::is_exported(member_name) {
+            let file = &tree.file;
+            self.report(
+                Diagnostic::new(
+                    diagnostics::NOT_EXPORTED,
+                    format!("`{member_name}` is not exported from `{module_name}`"),
+                )
+                .label(file, member_span, "")
+                .note(
+                    "names that start with an upper case letter are exported; others are private",
+                ),
+            );
+            return None;
+        }
+        Some(symbol)
+    }
+
+    /// Reports `name`, written at `span`, which nothing in scope declares:
+    /// a built-in function, not supported yet, or an unknown name, with the
+    /// nearest of `locals` and the top-level names.
+    pub(crate) fn report_undeclared<'a>(
+        &mut self,
+        name: &str,
+        span: Span,
+        locals: impl Iterator<Item = &'a str>,
+    ) {
+        if UNSUPPORTED_FUNCTIONS.contains(&name) {
+            self.not_supported(span, "built-in functions");
+            return;
+        }
+        let globals = self.visible_symbols().map(|(declared, _)| declared);
+        let meant = scope::nearest(name, locals, globals);
+        let message = format!("unknown name `{name}`");
+        self.report_unknown(diagnostics::UNDEFINED_NAME, span, message, meant);
     }
 
     /// The names the module uses unqualified, with what each stands for: its

@@ -417,6 +417,21 @@ impl Checker<'_> {
         }
     }
 
+    /// The type `symbol`, written at `span`, stands for, however it was
+    /// reached: every kind of type declaration is `Symbol::Type`, in this
+    /// module or another. An error when it is not a type.
+    fn type_named_by(&mut self, symbol: Symbol, span: Span) -> TypeId {
+        let what = match symbol {
+            Symbol::Builtin(builtin) => return builtin,
+            Symbol::Type(definition) => return self.named_type(definition, span),
+            Symbol::Function(_) | Symbol::Constant(_) | Symbol::Local(_) => "a value",
+            Symbol::Module(_) => "a module",
+        };
+        let name = self.module().ast.file.slice(span);
+        let message = format!("`{name}` is {what}, not a type");
+        self.error(diagnostics::NOT_A_TYPE, message, span)
+    }
+
     /// The type a type expression of the module's tree stands for, its names
     /// recorded (`record`). A named type stays a name (`Type::Named`); a
     /// value's type is `resolve_value_type`. A local never names a type
@@ -432,16 +447,7 @@ impl Checker<'_> {
                     self.record(span, FactKind::Name(symbol));
                 }
                 match symbol {
-                    Some(Symbol::Builtin(builtin)) => return builtin,
-                    Some(Symbol::Type(definition)) => return self.named_type(definition, span),
-                    Some(Symbol::Function(_) | Symbol::Constant(_) | Symbol::Local(_)) => {
-                        let message = format!("`{name}` is a value, not a type");
-                        return self.error(diagnostics::NOT_A_TYPE, message, span);
-                    }
-                    Some(Symbol::Module(_)) => {
-                        let message = format!("`{name}` is a module, not a type");
-                        return self.error(diagnostics::NOT_A_TYPE, message, span);
-                    }
+                    Some(symbol) => return self.type_named_by(symbol, span),
                     None if name == semantic_types::RANGE => {
                         let message = format!("`{name}` needs the type of its values: `{name}[T]`");
                         return self.error(diagnostics::INVALID_TYPE, message, span);
@@ -461,7 +467,12 @@ impl Checker<'_> {
                 }
             }
             ast::Type::Invalid => return TypeId::INVALID, // the parser reported it
-            ast::Type::Path(_) => "types of other modules",
+            ast::Type::Path(_) => {
+                return match self.resolve_path(ty) {
+                    Some(symbol) => self.type_named_by(symbol, span),
+                    None => TypeId::INVALID, // reported
+                };
+            }
             ast::Type::Generic { .. } => "generic types",
             ast::Type::Bracketed { name, inner } => {
                 let written = tree.file.slice(name.span);

@@ -1,0 +1,42 @@
+// A type of another module, written everywhere a type of this one can be.
+import "run_module_types:geometry";
+
+struct Line {
+    start: geometry::Point,
+    length: geometry::Meters,
+}
+
+type Spot = geometry::Point;
+
+fn moved(point: geometry::Point) -> geometry::Point {
+    return point;
+}
+
+fn second(point: &geometry::Point) -> i32 {
+    return point.y;
+}
+
+fn count(points: [&]geometry::Point) -> usize {
+    return points.len;
+}
+
+fn main() {
+    let literal = geometry::Point.{ x = 7, y = 8 };
+    println("literal:", literal.x);
+    let line = Line.{ start = .{ x = 1, y = 2 }, length = 2.5 };
+    println("field:", line);
+    let length: geometry::Meters = 2.5;
+    println("alias:", length);
+    println("result:", moved(geometry::Origin()));
+    println("parameter:", geometry::Sum(geometry::Origin()));
+    println("reference:", second(&line.start));
+    let points = [3]geometry::Point{ .{ x = 1, y = 2 }, .{ x = 3, y = 4 }, .{ x = 5, y = 6 } };
+    println("slice:", count(&points));
+    let mut held = geometry::Point.{ x = 4, y = 0 };
+    let pointer: *geometry::Point = @held;
+    println("pointer:", pointer.*.x);
+    println("element:", points[2].y);
+    println("as:", 3.5 as geometry::Count);
+    let spot: Spot = geometry::Origin();
+    println("local alias:", spot.y);
+}

@@ -514,7 +514,7 @@ fn names_across_modules() {
         "name = \"app\"\nbuild = \"bin\"\n",
     )
     .unwrap();
-    let utils = "fn Add(a: i32, b: i32) -> i32 { return a + b; }\n#[extern(\"cap\")] fn Cap() -> u8;\n/// The cap.\nconst Limit: u8 = 200;\nfn Twice(n: i32) -> i32 { return n * 2; }\nconst Ratio: f32 = 0.1;\nconst Broken: i32 = true;\n";
+    let utils = "fn Add(a: i32, b: i32) -> i32 { return a + b; }\n#[extern(\"cap\")] fn Cap() -> u8;\n/// The cap.\nconst Limit: u8 = 200;\nfn Twice(n: i32) -> i32 { return n * 2; }\nconst Ratio: f32 = 0.1;\nconst Broken: i32 = true;\nstruct Spot { x: i32 }\n";
     let main = "import \"app:utils\";
 fn main(count: i64) {
     let mut total = count;
@@ -527,6 +527,7 @@ fn main(count: i64) {
     let broken = utils::Broken;
 }
 const BIG = utils::Twice(21);
+struct Holder { place: utils::Spot }
 ";
     let (main_file, utils_file) = (folder.join("src/main.peep"), folder.join("src/utils.peep"));
     std::fs::write(&main_file, main).unwrap();
@@ -617,6 +618,19 @@ const BIG = utils::Twice(21);
     let limit =
         "```peeper\nconst Limit: u8 = 200\n```\n\n---\n\n*in* `app:utils` *· line 4*\n\nThe cap.\n";
     assert_eq!(hover(&server, "Limit", 0), json!(limit));
+    // A path in a type answers on both of its names, as one in a value.
+    assert_eq!(
+        hover(&server, "Spot", 0),
+        json!("```peeper\nstruct Spot { x: i32 }\n```\n\n---\n\n*in* `app:utils` *· line 8*\n")
+    );
+    assert_eq!(
+        declared(&server, "Spot", 0),
+        ("utils.peep".to_string(), json!(7))
+    );
+    assert_eq!(
+        hover(&server, "utils", 6),
+        json!("```peeper\nimport \"app:utils\"\n```\n")
+    );
     // `main` has an error, and its names are still there.
     assert_eq!(
         hover(&server, "total", 2),

@@ -41,13 +41,9 @@ impl ThirBuilder<'_, '_> {
         if let Some(converted) = self.convert(checked, value_span, to, conversion) {
             return converted;
         }
-        let checker = &self.checker;
-        let message = format!(
-            "`{}` cannot be converted to `{}`",
-            checker.type_text(found),
-            checker.type_text(to)
-        );
-        let types = &checker.types;
+        let (found_text, to_text) = self.checker.type_texts(found, to);
+        let message = format!("`{found_text}` cannot be converted to `{to_text}`");
+        let types = &self.checker.types;
         let diagnostic = self.type_error(
             diagnostics::INVALID_CAST,
             message,

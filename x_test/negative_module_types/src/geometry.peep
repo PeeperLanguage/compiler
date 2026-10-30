@@ -1,0 +1,6 @@
+struct Point { x: i32 }
+struct hidden { x: i32 }
+
+fn Origin() -> Point {
+    return .{ x = 0 };
+}

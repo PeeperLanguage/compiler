@@ -342,10 +342,10 @@ impl ThirBuilder<'_, '_> {
             Type::Range { element: from, .. }
                 if element == TypeId::INVALID || types.same(from, element) => {}
             _ => {
+                let (expected, found) = self.checker.type_texts(element, ty);
                 let message = format!(
-                    "`...` here spreads a range, an array or a slice of `{}`, found `{}`",
-                    self.checker.type_text(element),
-                    self.checker.type_text(ty)
+                    "`...` here spreads a range, an array or a slice of `{expected}`, \
+                     found `{found}`"
                 );
                 self.checker
                     .error(diagnostics::TYPE_MISMATCH, message, span);

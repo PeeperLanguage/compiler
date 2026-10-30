@@ -557,7 +557,7 @@ impl Types {
     /// The type `id` as a program writes it, a declared type or an alias by its name,
     /// which `name_of` gives for its declaration: an alias is followed by the
     /// type itself (`Meters (aka i64)`).
-    pub fn text<'n>(&self, id: TypeId, name_of: impl Fn(DefId) -> &'n str + Copy) -> String {
+    pub fn text<N: fmt::Display>(&self, id: TypeId, name_of: impl Fn(DefId) -> N + Copy) -> String {
         match self.types[id.0 as usize] {
             Type::Alias { definition, real } => {
                 format!(
@@ -572,7 +572,11 @@ impl Types {
 
     /// The type `id` itself, aliases looked through: `u8`, `fn(i32) -> bool`,
     /// a named type by its name.
-    fn real_text<'n>(&self, id: TypeId, name_of: impl Fn(DefId) -> &'n str + Copy) -> String {
+    fn real_text<N: fmt::Display>(
+        &self,
+        id: TypeId,
+        name_of: impl Fn(DefId) -> N + Copy,
+    ) -> String {
         let id = self.real(id);
         match &self[id] {
             Type::Invalid => "{invalid}".to_string(),

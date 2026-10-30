@@ -1,0 +1,22 @@
+name = "negative_module_types"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "`hidden` is not exported from `geometry`",
+    "`geometry::Origin` is a value, not a type",
+    "`geometry` is a module, not a type",
+    "unknown name `Pont` in module `geometry`",
+    "did you mean `Point`?",
+    "unknown name `geometri`",
+    "did you mean `geometry`?",
+    "mismatched types: expected `negative_module_types:geometry::Point`, found `negative_module_types:other::Point`",
+    "mismatched types: expected `[1]negative_module_types:geometry::Point`, found `[1]negative_module_types:other::Point`",
+    "`negative_module_types:geometry::Point` cannot be converted to `negative_module_types:other::Point`",
+    "`...` here spreads a range, an array or a slice of `negative_module_types:geometry::Point`, found `[1]negative_module_types:other::Point`",
+    "mismatched types: expected `negative_module_types:geometry::Point`, found `&negative_module_types:other::Point`",
+    "mismatched types: expected `Point`, found `&Point`",
+    "Compilation failed with 11 error(s)",
+]

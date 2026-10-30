@@ -1,0 +1,22 @@
+// A path in a type finds what a path in a value finds, with the same errors.
+import "negative_module_types:geometry";
+import "negative_module_types:other";
+
+fn main() {
+    let a: geometry::hidden = geometry::Origin();
+    let b: geometry::Origin = geometry::Origin();
+    let c: geometry = geometry::Origin();
+    let d: geometry::Pont = geometry::Origin();
+    let e: geometri::Point = geometry::Origin();
+    // Each module's `Point` is its own type.
+    let f: geometry::Point = other::Point.{ x = 1 };
+    let g: [1]geometry::Point = [1]other::Point{ .{ x = 1 } };
+    let h = geometry::Origin() as other::Point;
+    let items = [1]other::Point{ .{ x = 1 } };
+    let i = [1]geometry::Point{ items... };
+    let held = other::Point.{ x = 1 };
+    let j: geometry::Point = &held;
+    // One `Point` needs no module to tell it from itself.
+    let own = geometry::Origin();
+    let k: geometry::Point = &own;
+}
