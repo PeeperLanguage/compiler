@@ -169,16 +169,11 @@ impl Parser {
         inner
     }
 
-    /// Reads `[N]T`, `[]T`, `[&]T` or `[&mut]T`.
+    /// Reads `[N]T`, `[&]T` or `[&mut]T`.
     pub(crate) fn array_type(&mut self) -> Id<Type> {
         let open = self.next();
         let t = self.tok();
         match t.kind {
-            TokenKind::RightBracket => {
-                self.next();
-                let element = self.type_expr();
-                self.add(open.span.start, Type::DynamicArray(element))
-            }
             TokenKind::Ampersand => {
                 self.next();
                 let mutable = self.at(TokenKind::Mut);
@@ -198,13 +193,16 @@ impl Parser {
                 self.add(open.span.start, Type::FixedArray { length, element })
             }
             _ => {
-                self.fail(
-                    Diagnostic::new(diagnostics::INVALID_TYPE, "expected array length").label(
-                        &self.tree.file,
-                        t.span,
-                        "use `[N]T` for fixed arrays, `[]T` for dynamic arrays, or `[&]T` for slices",
-                    ),
-                );
+                let message = if t.kind == TokenKind::RightBracket {
+                    "incomplete type `[]`: add a size or a reference"
+                } else {
+                    "expected array length"
+                };
+                self.fail(Diagnostic::new(diagnostics::INVALID_TYPE, message).label(
+                    &self.tree.file,
+                    t.span,
+                    "use `[N]T` for fixed arrays or `[&]T` for slices",
+                ));
                 self.add(open.span.start, Type::Invalid)
             }
         }

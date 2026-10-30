@@ -1,0 +1,20 @@
+name = "run_module_types"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 0
+stdout_contains = [
+    "literal: 7\n",
+    "field: Line { start: Point { x: 1, y: 2 }, length: 2.5 }\n",
+    "alias: 2.5\n",
+    "result: Point { x: 4, y: 5 }\n",
+    "parameter: 9\n",
+    "reference: 2\n",
+    "slice: 3\n",
+    "pointer: 4\n",
+    "element: 6\n",
+    "as: 3\n",
+    "local alias: 5\n",
+]

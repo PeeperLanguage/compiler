@@ -151,19 +151,15 @@ impl ThirBuilder<'_, '_> {
         };
         // After an error, the body is still checked, with an invalid `value`.
         // A slice's length is read when the loop starts.
-        let (element, length) = match types[array] {
-            Type::Array { element, length } => (element, Some(length)),
-            Type::Slice { element, .. } => (element, None),
-            _ => {
-                if items_type != TypeId::INVALID {
-                    self.checker.not_supported(
-                        span,
-                        "`for` over values other than ranges, arrays and slices",
-                    );
-                }
-                (TypeId::INVALID, Some(0))
+        let (element, length) = types[array].elements().unwrap_or_else(|| {
+            if items_type != TypeId::INVALID {
+                self.checker.not_supported(
+                    span,
+                    "`for` over values other than ranges, arrays and slices",
+                );
             }
-        };
+            (TypeId::INVALID, Some(0))
+        });
         if borrow.is_none() && !self.checker.types.is_copy(element) {
             let file = &self.checker.module().ast.file;
             let array_text = self.checker.type_text(array);

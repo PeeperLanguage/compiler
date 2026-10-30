@@ -116,9 +116,9 @@ pub(crate) fn anonymous_struct_literal(p: &mut Parser) -> Id<Expr> {
     p.struct_literal(None, start)
 }
 
-/// Reads `[N]T{ entries }`, `[_]T{ entries }` (the length is the number of
-/// values they give) or `[]T{ entries }`; an entry is a value, or
-/// `values...`, which spreads an array or a range: `(0..3)...` or `0..3...`.
+/// Reads `[N]T{ entries }` or `[_]T{ entries }` (the length is the number of
+/// values they give); an entry is a value, or `values...`, which spreads an
+/// array or a range: `(0..3)...` or `0..3...`.
 pub(crate) fn array_literal(p: &mut Parser) -> Id<Expr> {
     let start = p.tok().span.start;
     let after = p.ahead(1);

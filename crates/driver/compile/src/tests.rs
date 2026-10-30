@@ -558,6 +558,35 @@ fn a_struct_field_edit_checks_its_importers() {
     assert_eq!(checked, ["app:utils", "app:main"], "a field's name");
 }
 
+/// `main` names `utils` nowhere, but holds its struct through `other`'s, so
+/// a field's edit reaches it; an edit of a body does not.
+#[test]
+fn a_struct_field_edit_reaches_importers_through_a_struct() {
+    let utils =
+        |field: &str, body: &str| format!("struct Item {{ {field} }}\nfn Used() {{ {body} }}");
+    let (start, retyped, rebuilt) = (
+        utils("x: i32", ""),
+        utils("x: i64", ""),
+        utils("x: i64", "let a = 1;"),
+    );
+    let other = (
+        "app:other",
+        "import \"app:utils\";
+        struct Holder { item: utils::Item }
+        fn Other() {}",
+    );
+    let main = (
+        "app:main",
+        "import \"app:other\";
+        fn main(held: other::Holder) {}",
+    );
+    let (first, _) = recompile(&[("app:utils", &start), other, main], Results::default());
+    let (second, checked) = recompile(&[("app:utils", &retyped), other, main], first);
+    assert_eq!(checked, ["app:utils", "app:other", "app:main"]);
+    let (_, checked) = recompile(&[("app:utils", &rebuilt), other, main], second);
+    assert_eq!(checked, ["app:utils"]);
+}
+
 #[test]
 fn errors_come_and_go_with_edits() {
     let (first, _) = recompile(&[UTILS, OTHER, MAIN], Results::default());

@@ -240,7 +240,8 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             Symbol::Local(local)
         } else {
             let Some(symbol) = self.checker.global(name) else {
-                self.report_undeclared(name, span);
+                let locals = self.names.iter().map(|&(declared, _)| declared);
+                self.checker.report_undeclared(name, span, locals);
                 return None;
             };
             symbol

@@ -6,7 +6,7 @@ use crate::tests::one_error;
 fn parses_signatures() {
     let text = "fn (self: &mut Counter) Add<T, U>(mut delta: i32, scale: f64 = 1, &Self) -> &T in (self, delta) {}
 fn exit(code: i32);
-fn Use(callback: fn(value: &Box, i32) -> &Box in value, items: []?*T, view: [&]u8, edit: [&mut]u8, grid: [4]rawptr, cell: **u8, untyped: *rawptr) -> ?a::Box<Box<T>>;
+fn Use(callback: fn(value: &Box, i32) -> &Box in value, view: [&]u8, edit: [&mut]u8, grid: [4]rawptr, cell: **u8, untyped: *rawptr) -> ?a::Box<Box<T>>;
 ";
     let want = "module
   function declaration
@@ -51,12 +51,6 @@ fn Use(callback: fn(value: &Box, i32) -> &Box in value, items: []?*T, view: [&]u
         reference type
           type name Box
         name reference value
-    parameter
-      declared name items
-      dynamic array type
-        optional type
-          pointer type
-            type name T
     parameter
       declared name view
       slice type
@@ -111,6 +105,11 @@ fn signature_errors() {
             None,
         ),
         ("fn f(a: [n]i32) {}", "expected array length", None),
+        (
+            "fn f(a: []i32) {}",
+            "incomplete type `[]`: add a size or a reference",
+            None,
+        ),
         ("fn f(a: ) {}", "expected type, found `)`", None),
         ("fn f() -> i32", "missing function body", None),
         ("fn f<T U>() {}", "expected `,`", Some("fn f<T, U>() {}")),

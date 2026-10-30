@@ -26,6 +26,11 @@ fn untyped_none() { let p = none; }
 // No loan follows a reference behind a raw pointer.
 fn reference_target(r: &i32) { let mut s = r; let p = @s; }
 
+// Nor a slice, taken or written.
+fn slice_target(s: [&]i32) { let mut t = s; let p = @t; }
+
+fn slice_pointer(p: *[&]i32) {}
+
 // `@x` can write `x`, so no reference to it may be in use then.
 fn while_lent(r: &mut [3]i32) {
     for v in r {

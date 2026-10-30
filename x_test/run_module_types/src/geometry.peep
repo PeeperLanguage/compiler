@@ -1,0 +1,11 @@
+struct Point { x: i32, y: i32 }
+type Meters = f64;
+type Count = i64;
+
+fn Origin() -> Point {
+    return .{ x = 4, y = 5 };
+}
+
+fn Sum(point: Point) -> i32 {
+    return point.x + point.y;
+}

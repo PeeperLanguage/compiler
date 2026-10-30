@@ -21,6 +21,5 @@ fn main() {
     let i: [2u8]i32 = [2]i32{1, 2};
     let j = make()[0];
     c[0] = 5;
-    let k = []i32{};
     takes(c);
 }

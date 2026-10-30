@@ -37,14 +37,14 @@ toolchain and release work.
 | Structs | Declarations, literals `Name.{ }` and `.{ }`, field reads and writes, moves, by-value parameters and results. | References or slices in fields; methods; struct types written inline; generic structs. |
 | References | `&x`, `&mut x`, `.*`, field access through a reference, returning a reference. | References to references or to slices; references in structs and arrays; parameters that share one origin. |
 | Slices | `[&]T`, `[&mut]T`, `&a[i..j]`, `&s[i..j]`, `for v in s`, `[N]T{s...}`, bounds checks. | Slices of slices or of references; variadic `...T` parameters, which wait on the `...mut T` decision. |
-| Pointers | Raw pointers `*T`, `rawptr`, `@x`, `.*`, `none`. | Owned pointers with moves, drops and `free`; the allocator. `*T` is a raw pointer today. |
-| Ownership | Moves and loans (see Done). | Drop insertion. |
+| Pointers | Raw pointers `*T`, `rawptr`, `@x`, `.*`, `none`. | The allocator. `*T` stays a raw pointer: there is no owning pointer type. |
+| Ownership | Moves and loans (see Done). | Drop insertion, for containers, which own their heap buffers. |
 | Strings | `c"..."` as `cstr`; plain string literals inside `print` and `panic`. | The `str`/`string` and `byte`/`char` types, character literals, run-time strings. |
 | Printing | `print` and `println` for numbers, `bool`, `cstr`, string literals, raw pointers, arrays, structs and references to them. | Temporary: arrays and structs will print through a trait or interface later. |
 | `panic` | `panic "message"`, exit code 101; run-time check failures panic too. | Messages other than a string literal. |
 | Compile-time calls | Functions with numbers, `bool`, variables, loops, branches, calls and panics. | Structs, arrays, references and printing at compile time. |
 | C functions | `#[extern("name")]` with numbers, `bool`, `cstr` and pointers. | Structs, arrays, ranges and slices in extern signatures (the C ABI rules); one calling convention. |
-| Paths | `module::Name` for another module's constants and functions (`geometry::Area(...)`). `.` is only for fields, `.len`, `.*` and, later, methods. | Types from other modules (`geometry::Point`); paths of more than two names (`a::b::c`); paths into types (`Color::Red`). |
+| Paths | `module::Name` for another module's constants, functions and types (`geometry::Area(...)`, `geometry::Point`). `.` is only for fields, `.len`, `.*` and, later, methods. | Paths of more than two names (`a::b::c`); paths into types (`Color::Red`). |
 
 ## Not done
 
@@ -54,7 +54,6 @@ The parser already reads all of these.
 | --- | --- |
 | Enums | Enum declarations, variant literals, `match`, `is`. |
 | Optionals | `?T`, `orelse`. The plan makes `Option` a compiler-known generic enum. |
-| Dynamic arrays | `[]T`, and the built-ins `alloc`, `append`, `reserve`, `resize`, `shrink`, `len`, `as_bytes`, `as_chars`, `from_bytes`. |
 | Allocator | The `Allocator` type. |
 | Methods | Functions with a receiver, and method calls. |
 | Interfaces | Interface declarations and types. |
@@ -71,9 +70,9 @@ The parser already reads all of these.
 From the local plans:
 
 1. Slices step 2: variadic `...T` parameters.
-2. Owned pointers and drops, then the allocator.
+2. The allocator.
 3. Lifetime design for references stored in structs.
 4. Enums and `match`, with `Option` as `?T`.
-5. Strings, dynamic arrays, methods, interfaces, generics.
+5. Strings, methods, interfaces, generics.
 6. Port the Go compiler's fixtures from the `legacy` branch. On 2026-10-24 the
    Rust compiler accepted 19 of its 146 positive fixtures.
