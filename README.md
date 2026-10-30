@@ -177,11 +177,12 @@ or an existing `peeper.toml` stops it; an existing `src/main.peep` is kept.
 | --- | --- |
 | `peeper check [path]` | Report the program's errors. |
 | `peeper fix [path]` | Apply the fixes the errors suggest, then report what is left. |
-| `peeper build [-o program] [path]` | Check the program and link it into an executable, named after the project or file unless `-o` names it. |
-| `peeper run [path] [args]` | Build the program to a temporary file and run it with the arguments. |
+| `peeper build [-release] [-o program] [path]` | Check the program and link it into an executable, named after the project or file unless `-o` names it; `-release` builds it optimized, without debug info. |
+| `peeper run [-release] [path] [-- args]` | Build the program to a temporary file and run it with the arguments after `--`. |
 | `peeper -dump [thir \| mir \| ll] [path]` | Check, then write each module's THIR, MIR and LLVM IR, or only the one named, to `build/debug/dumps`. |
 | `peeper init [name]` | Make the current folder a project: write `peeper.toml` and `src/main.peep`, asking for the name unless given. |
 | `peeper lsp` | Serve editors as a language server over standard input and output. |
+| `peeper -help` | Print the usage text. |
 
 `path` is a project folder or a single `.peep` file, and defaults to the
 current folder. `check`, `fix`, `build` and `run` take `-target <name>` to
