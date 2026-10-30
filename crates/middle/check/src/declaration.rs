@@ -514,7 +514,6 @@ impl Checker<'_> {
                 length: ast::Length::Inferred(_),
                 ..
             } => unreachable!("the parser reads `[_]` only in an array literal, checked there"),
-            ast::Type::DynamicArray(_) => "dynamic array types",
             ast::Type::Slice { mutable, element } => {
                 let element = self.resolve_value_type(element);
                 return match self.held_type(element, "slices of", span) {

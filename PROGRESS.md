@@ -54,7 +54,6 @@ The parser already reads all of these.
 | --- | --- |
 | Enums | Enum declarations, variant literals, `match`, `is`. |
 | Optionals | `?T`, `orelse`. The plan makes `Option` a compiler-known generic enum. |
-| Dynamic arrays | `[]T`, and the built-ins `alloc`, `append`, `reserve`, `resize`, `shrink`, `len`, `as_bytes`, `as_chars`, `from_bytes`. |
 | Allocator | The `Allocator` type. |
 | Methods | Functions with a receiver, and method calls. |
 | Interfaces | Interface declarations and types. |
@@ -74,6 +73,6 @@ From the local plans:
 2. Owned pointers and drops, then the allocator.
 3. Lifetime design for references stored in structs.
 4. Enums and `match`, with `Option` as `?T`.
-5. Strings, dynamic arrays, methods, interfaces, generics.
+5. Strings, methods, interfaces, generics.
 6. Port the Go compiler's fixtures from the `legacy` branch. On 2026-10-24 the
    Rust compiler accepted 19 of its 146 positive fixtures.

@@ -190,7 +190,6 @@ fn parses_expressions() {
     .{ a = &mut v, b = @raw };
     Shape::Line with .{ end = Box<i32>::new(1) };
     [_]u8{ 1, 2, 4..=8:2..., (0..3)..., a... };
-    []str{};
     free(p);
     println(items[1..=n]);
 }
@@ -264,10 +263,6 @@ fn parses_expressions() {
           spread
             name reference a
       expression statement
-        array literal
-          dynamic array type
-            type name str
-      expression statement
         free expression
           name reference p
       expression statement
@@ -294,6 +289,10 @@ fn expression_errors() {
             "expected `=` after struct literal field name",
         ),
         ("[x]i32{};", "expected array length"),
+        (
+            "[]i32{};",
+            "incomplete type `[]`: add a size or a reference",
+        ),
         ("a.;", "expected `identifier`, found `;`"),
         ("f(a...);", "expected `)`, found `...`"),
     ] {

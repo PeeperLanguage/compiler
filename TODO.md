@@ -97,8 +97,8 @@ The next steps of the other work in progress:
   Step 2, variadic `...T` parameters, waits on the owner's decision about
   `...mut T`.
 - **Features:** owned pointers `*T` with moves, drops and `free`. Then the
-  allocator, enums and `match` (with `Option` as `?T`), strings, dynamic
-  arrays, methods, interfaces and generics.
+  allocator, enums and `match` (with `Option` as `?T`), strings,
+  methods, interfaces and generics.
 - **Ownership:** drop insertion. Also one function in `check` that answers
   "where can this type appear".
 - **Types:** destructuring. Stage 2: each module's MIR lists the types it uses,

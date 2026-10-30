@@ -342,7 +342,6 @@ impl Dumper<'_> {
                 };
                 ("fixed array type", None, vec![length, Item::Type(element)])
             }
-            Type::DynamicArray(element) => ("dynamic array type", None, one(element)),
             Type::Slice {
                 mutable: m,
                 element,

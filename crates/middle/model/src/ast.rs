@@ -280,8 +280,6 @@ pub enum Type {
     RawPointer,
     /// `[4]T`, or `[_]T` in an array literal
     FixedArray { length: Length, element: Id<Type> },
-    /// `[]T`
-    DynamicArray(Id<Type>),
     /// `[&]T`, or `[&mut]T` when `mutable`
     Slice { mutable: bool, element: Id<Type> },
     /// `fn(T) -> R in a`
@@ -460,7 +458,7 @@ pub enum Expr {
     },
     /// `Enum::Variant with payload`; the case is a `Type::Path`
     VariantLiteral { case: Id<Type>, payload: Id<Expr> },
-    /// `[N]T{ entries }`; the type is a fixed array, dynamic array or slice type
+    /// `[N]T{ entries }`; the type is a fixed array or slice type
     ArrayLiteral { ty: Id<Type>, entries: List<Entry> },
     /// `x as T`
     Cast { value: Id<Expr>, ty: Id<Type> },
