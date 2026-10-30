@@ -16,6 +16,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
 
+use model::ModuleId;
 use model::machine::Machine;
 
 const MODULES: usize = 10;
@@ -73,13 +74,19 @@ fn main() {
         let program = project::load(&project, &files);
         load.push(start.elapsed());
         assert!(program.checkable, "{:?}", program.diagnostics);
-        let mut main = None;
+        let entry = program
+            .modules
+            .iter()
+            .position(|module| Path::new(&module.ast.file.path) == project.entry)
+            .map(ModuleId::from_index)
+            .expect("the program has an entry module");
         let start = Instant::now();
         let (mut ll, results) = llvm::write::write_modules(&program, target, mode, |queue| {
             compile::run(
                 &program,
                 target,
                 compile::Results::default(),
+                Some(entry),
                 false,
                 |output| {
                     let compile::Output::Function(compile::CheckedFunction {
@@ -92,11 +99,6 @@ fn main() {
                         return;
                     };
                     let mir = mir.expect("the program has no errors");
-                    if Path::new(&program.modules[definition.module.index()].ast.file.path)
-                        == project.entry
-                    {
-                        main = Some(definition); // the only function of main.peep
-                    }
                     queue.add(definition, mir, types);
                 },
             )
@@ -106,8 +108,8 @@ fn main() {
             0,
             "the program has no errors"
         );
-        let main = main.expect("main.peep declares main");
-        ll[main.module.index()].add_entry_point(main, false);
+        let (main, exit_code) = results.entry_point().expect("main.peep declares main");
+        ll[entry.index()].add_entry_point(main, exit_code);
         let text: usize = ll.iter().map(|module| module.text().len()).sum();
         compile.push(start.elapsed());
         std::hint::black_box(text);

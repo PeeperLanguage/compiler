@@ -29,17 +29,28 @@ use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use model::thir;
 use source::SourceFile;
+use source::Span;
 
 /// What a compile found, kept for the next compile of the same program.
 #[derive(Default)]
 pub struct Results {
     modules: Vec<ModuleResults>, // in the program's order
+    /// The program's `main` and whether it gives the exit code, found by
+    /// `run` for an entry module with no error in the program.
+    entry_point: Option<(DefId, bool)>,
 }
 
 impl Results {
     /// Every diagnostic, module by module in the program's order.
     pub fn diagnostics(&self) -> impl Iterator<Item = &Diagnostic> {
         self.modules.iter().flat_map(|module| &module.diagnostics)
+    }
+
+    /// The entry module's `main` and whether it returns the program's exit
+    /// code (`fn main() -> i32`), when the compile was given an entry module
+    /// and found no error.
+    pub fn entry_point(&self) -> Option<(DefId, bool)> {
+        self.entry_point
     }
 
     /// The files of the modules this compile reused instead of checking them
@@ -129,11 +140,13 @@ pub struct CheckedFunction<'c> {
 /// function's bodies at once. Each module constant goes once checked, with
 /// its type and value, and last the module's remaining facts, none unless
 /// `record_facts`. Integers as wide as a pointer (`isize`, `usize`) have
-/// `target`'s `pointer_bits` bits.
+/// `target`'s `pointer_bits` bits. With an `entry` module, a program with no
+/// other error must declare there a `main` it can start at (`entry_point`).
 pub fn run(
     program: &project::Program,
     target: &'static Machine,
     previous: Results,
+    entry: Option<ModuleId>,
     record_facts: bool,
     mut use_output: impl FnMut(Output),
 ) -> Results {
@@ -206,7 +219,70 @@ pub fn run(
             .map(|ran| modules[ran.index()].ast.file.path.clone())
             .collect();
     }
-    Results { modules: results }
+    let mut entry_point = None;
+    if let Some(entry) = entry
+        && !results
+            .iter()
+            .flat_map(|found| &found.diagnostics)
+            .any(Diagnostic::is_error)
+    {
+        match find_entry_point(&mut checker, entry) {
+            Ok(found) => entry_point = Some(found),
+            Err(error) => results[entry.index()].diagnostics.push(error),
+        }
+    }
+    Results {
+        modules: results,
+        entry_point,
+    }
+}
+
+/// The `main` of the module `entry` and whether it returns the exit code, or
+/// the error that it has none a program can start at.
+fn find_entry_point(checker: &mut Checker, entry: ModuleId) -> Result<(DefId, bool), Diagnostic> {
+    let module = &checker.modules[entry.index()];
+    let tree = &module.ast;
+    let main = tree
+        .declarations()
+        .enumerate()
+        .find_map(|(index, declaration)| match tree.decls[declaration] {
+            ast::Decl::Function(function)
+                if function.body.is_some() && function.name.text(&tree.file) == "main" =>
+            {
+                Some((
+                    DefId {
+                        module: entry,
+                        index: index as u32,
+                    },
+                    function.name.span,
+                ))
+            }
+            _ => None,
+        });
+    let no_entry_point = |span: Span| {
+        Diagnostic::new(
+            diagnostics::INVALID_ENTRY_POINT,
+            "program entrypoint must be a local body-backed `fn main()` or `fn main() -> i32`",
+        )
+        .label(&tree.file, span, "")
+    };
+    let Some((main, name)) = main else {
+        return Err(no_entry_point(Span::at(0)));
+    };
+    let signature = checker.function_type(main, name);
+    let exit_code = match &checker.types[signature] {
+        Type::Function {
+            parameters, result, ..
+        } if parameters.is_empty() => match checker.types.real(*result) {
+            TypeId::VOID => Some(false),
+            TypeId::I32 => Some(true),
+            _ => None,
+        },
+        _ => None,
+    };
+    exit_code
+        .map(|exit_code| (main, exit_code))
+        .ok_or_else(|| no_entry_point(name))
 }
 
 /// Checks every declaration of `module`, each where it is declared, used or

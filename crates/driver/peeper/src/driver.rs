@@ -12,13 +12,9 @@ use diagnostics::Diagnostic;
 use diagnostics::fix;
 use diagnostics::printer;
 use llvm::BuildMode;
-use model::DefId;
+use model::ModuleId;
 use model::machine::Machine;
-use model::semantic_types::Type;
-use model::semantic_types::TypeId;
-use model::semantic_types::Types;
 use source::SourceFile;
-use source::Span;
 
 use crate::dump::Dump;
 use crate::dump::Dumps;
@@ -243,7 +239,6 @@ fn compile<'p>(
         .modules
         .iter()
         .position(|module| Path::new(&module.ast.file.path) == project.entry);
-    let mut main = None; // the entry module's `main`, and whether it returns an exit code
     // Check and lower each function; its MIR goes to the dumps and, when
     // LLVM text is written, to the `queue` as soon as it is built.
     let mut check_and_lower = |mut queue: Option<&mut llvm::write::FunctionQueue>| {
@@ -251,11 +246,11 @@ fn compile<'p>(
             program,
             target,
             compile::Results::default(),
+            entry.filter(|_| links).map(ModuleId::from_index),
             false, // names are for editors
             |output| {
                 let compile::Output::Function(compile::CheckedFunction {
                     definition,
-                    signature,
                     thir,
                     mir,
                     types,
@@ -264,10 +259,6 @@ fn compile<'p>(
                 else {
                     return; // constants and names are for editors
                 };
-                if links && Some(definition.module.index()) == entry && is_main(program, definition)
-                {
-                    main = Some((definition, gives_exit_code(types, signature)));
-                }
                 let Some(mir) = mir else {
                     return; // it has errors
                 };
@@ -284,53 +275,10 @@ fn compile<'p>(
         (Vec::new(), check_and_lower(None))
     };
     all.extend(results.diagnostics().cloned());
-    // A program that links needs a `main` that can start it.
-    if links
-        && !all.iter().any(Diagnostic::is_error)
-        && let Some(entry) = entry
-    {
-        let file = &program.modules[entry].ast.file;
-        match main {
-            Some((main, Some(exit_code))) => ll[entry].add_entry_point(main, exit_code),
-            Some((main, None)) => {
-                let (name, _) = project::declared_name(&program.modules, main);
-                all.push(no_entry_point(file, name.span));
-            }
-            None => all.push(no_entry_point(file, Span::at(0))),
-        }
+    if let (Some(entry), Some((main, exit_code))) = (entry, results.entry_point()) {
+        ll[entry].add_entry_point(main, exit_code);
     }
     (all, ll, dumped)
-}
-
-/// Whether the function `definition` is named `main`.
-fn is_main(program: &project::Program, definition: DefId) -> bool {
-    let (name, file) = project::declared_name(&program.modules, definition);
-    name.text(file) == "main"
-}
-
-/// Whether a `main` of type `ty` gives the program's exit code (`fn main() ->
-/// i32`), gives none (`fn main()`), or cannot start a program (`None`).
-fn gives_exit_code(types: &Types, ty: TypeId) -> Option<bool> {
-    match &types[ty] {
-        Type::Function {
-            parameters, result, ..
-        } if parameters.is_empty() => match types.real(*result) {
-            TypeId::VOID => Some(false),
-            TypeId::I32 => Some(true),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-/// The error that `file`, the entry module, has no `main` a program can
-/// start at; `span` is the `main` there is, or the file's start.
-fn no_entry_point(file: &Arc<SourceFile>, span: Span) -> Diagnostic {
-    Diagnostic::new(
-        diagnostics::INVALID_ENTRY_POINT,
-        "program entrypoint must be a local body-backed `fn main()` or `fn main() -> i32`",
-    )
-    .label(file, span, "")
 }
 
 /// The exit code a program ended with; one a signal stopped is 128 plus the
