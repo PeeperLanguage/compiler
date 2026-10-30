@@ -29,11 +29,8 @@ impl ThirBuilder<'_, '_> {
         let viewed = pointee.unwrap_or(ty);
         // `Some(length)` for an array, `Some(None)` for a slice, whose
         // length is known only when the program runs.
-        let length = match self.checker.types[viewed] {
-            Type::Array { length, .. } => Some(Some(length)),
-            Type::Slice { .. } => Some(None),
-            _ => None,
-        };
+        let length = self.checker.types[viewed].elements();
+        let length = length.map(|(_, length)| length);
         // shortcut: `len` as a field until the language can write it as a
         // free function over any array; then move it there.
         if let Some(length) = length {
@@ -115,11 +112,8 @@ impl ThirBuilder<'_, '_> {
         let index_type = self.body.exprs[index].ty;
         let tree = &self.checker.module().ast;
         let index_span = self.body.exprs.span(index);
-        let (element, length) = match self.checker.types[ty] {
-            Type::Array { element, length } => (element, Some(length)),
-            Type::Slice { element, .. } => (element, None),
-            _ => (TypeId::INVALID, None),
-        };
+        let elements = self.checker.types[ty].elements();
+        let (element, length) = elements.unwrap_or((TypeId::INVALID, None));
         if element == TypeId::INVALID {
             if ty != TypeId::INVALID {
                 let message = format!("`{}` cannot be indexed", self.checker.type_text(ty));
@@ -245,16 +239,13 @@ impl ThirBuilder<'_, '_> {
             }
             _ => {}
         }
-        let (element, length) = match self.checker.types[ty] {
-            Type::Array { element, length } => (element, Some(length)),
-            Type::Slice { element, .. } => (element, None),
-            Type::Invalid => return Expr::INVALID,
-            _ => {
+        let Some((element, length)) = self.checker.types[ty].elements() else {
+            if ty != TypeId::INVALID {
                 let message = format!("`{}` cannot be sliced", self.checker.type_text(ty));
                 self.checker
                     .error(diagnostics::INVALID_OPERATION, message, array_span);
-                return Expr::INVALID;
             }
+            return Expr::INVALID;
         };
         let ends = self.check_slice_ends([start, end], inclusive, ty, length, range);
         let Some([start, end]) = ends else {

@@ -191,6 +191,16 @@ impl Type {
         }
     }
 
+    /// The element type of an array or a slice, with an array's length; a
+    /// slice's is known only when the program runs.
+    pub fn elements(&self) -> Option<(TypeId, Option<u64>)> {
+        match *self {
+            Type::Array { element, length } => Some((element, Some(length))),
+            Type::Slice { element, .. } => Some((element, None)),
+            _ => None,
+        }
+    }
+
     /// Whether the type is a number: an integer or a float.
     pub fn is_number(&self) -> bool {
         matches!(self, Type::Integer(_) | Type::Float(_))

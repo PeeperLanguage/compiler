@@ -15,10 +15,11 @@ stderr_contains = [
     "mismatched types: expected `i32`, found `none`",
     "`none` needs its type from where it is used",
     "raw pointers to references are not supported yet",
+    "raw pointers to slices are not supported yet",
     "address of `r` is being taken while a `&mut` reference to it is still in use",
     "address of `x` is being taken while a reference to it is still in use",
     "cannot return pointer to local storage",
     "`local` is gone once the function returns",
     "`kept` is gone once the function returns",
-    "Compilation failed with 14 error(s)",
+    "Compilation failed with 16 error(s)",
 ]

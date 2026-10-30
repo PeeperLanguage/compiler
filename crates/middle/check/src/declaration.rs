@@ -322,36 +322,41 @@ impl Checker<'_> {
         resolved
     }
 
+    /// The real type of `held`, for a type written at `span` that holds it,
+    /// so `&Meters` is `&f64` under an alias; `None` when it is invalid, or
+    /// after reporting that it borrows. `holder` starts the message:
+    /// "arrays of".
+    fn held_type(&mut self, held: TypeId, holder: &str, span: Span) -> Option<TypeId> {
+        let what = match self.types[held] {
+            Type::Invalid => return None,
+            // shortcut: the loan check follows no reference held in an array,
+            // a slice or a struct field, or behind a raw pointer; allow each
+            // when lifetimes are checked (ownership step 4).
+            Type::Reference { .. } => "references",
+            Type::Slice { .. } => "slices",
+            _ => return Some(self.types.real(held)),
+        };
+        self.not_supported(span, &format!("{holder} {what}"));
+        None
+    }
+
     /// `&target`, or `&mut target` when `mutable`, written or borrowed at
-    /// `span`: invalid when `target` is, reported when it is a reference.
-    /// Its target is the real type, so `&Meters` is `&f64` under an alias.
+    /// `span` (`held_type`).
     pub(crate) fn reference_type(&mut self, mutable: bool, target: TypeId, span: Span) -> TypeId {
-        match self.types[target] {
-            Type::Invalid => target,
-            Type::Reference { .. } => self.not_supported(span, "references to references"),
-            Type::Slice { .. } => self.not_supported(span, "references to slices"),
-            _ => {
-                let target = self.types.real(target);
-                self.types.intern(Type::Reference { mutable, target })
-            }
+        match self.held_type(target, "references to", span) {
+            Some(target) => self.types.intern(Type::Reference { mutable, target }),
+            None => TypeId::INVALID,
         }
     }
 
-    /// `[length]element`, written at `span`: invalid when `element` is,
-    /// reported when it is a reference. Its element is the real type, as a
-    /// reference's target.
+    /// `[length]element`, written at `span` (`held_type`).
     pub(crate) fn array_type(&mut self, element: TypeId, length: u64, span: Span) -> TypeId {
-        match self.types[element] {
-            Type::Invalid => element,
-            // shortcut: the loan check follows no reference held in an
-            // array, as in a struct field; allow both when it does.
-            Type::Reference { .. } => self.not_supported(span, "arrays of references"),
-            Type::Slice { .. } => self.not_supported(span, "arrays of slices"),
-            _ => {
-                let element = self.types.real(element);
+        match self.held_type(element, "arrays of", span) {
+            Some(element) => {
                 let ty = self.types.intern(Type::Array { element, length });
                 self.fits_target(ty, span)
             }
+            None => TypeId::INVALID,
         }
     }
 
@@ -401,19 +406,13 @@ impl Checker<'_> {
         fits
     }
 
-    /// `*target`, written or taken at `span`: invalid when `target`
-    /// is, reported when it is a reference. Its target is the real type, as
-    /// a reference's.
+    /// `*target`, written or taken at `span` (`held_type`).
     pub(crate) fn raw_pointer_type(&mut self, target: TypeId, span: Span) -> TypeId {
-        match self.types[target] {
-            Type::Invalid => target,
-            // shortcut: no loan follows a reference stored behind a raw
-            // pointer; allow it when lifetimes are checked (ownership step 4).
-            Type::Reference { .. } => self.not_supported(span, "raw pointers to references"),
-            Type::Slice { .. } => self.not_supported(span, "raw pointers to slices"),
-            _ => self.types.intern(Type::RawPointer {
-                target: Some(self.types.real(target)),
+        match self.held_type(target, "raw pointers to", span) {
+            Some(target) => self.types.intern(Type::RawPointer {
+                target: Some(target),
             }),
+            None => TypeId::INVALID,
         }
     }
 
@@ -516,20 +515,11 @@ impl Checker<'_> {
                 ..
             } => unreachable!("the parser reads `[_]` only in an array literal, checked there"),
             ast::Type::DynamicArray(_) => "dynamic array types",
-            // Invalid when `element` is, reported when it borrows. Its
-            // element is the real type, as an array's.
             ast::Type::Slice { mutable, element } => {
                 let element = self.resolve_value_type(element);
-                return match self.types[element] {
-                    Type::Invalid => element,
-                    // shortcut: as for arrays, the loan check follows no
-                    // reference held in a slice's elements.
-                    Type::Reference { .. } => self.not_supported(span, "slices of references"),
-                    Type::Slice { .. } => self.not_supported(span, "slices of slices"),
-                    _ => {
-                        let element = self.types.real(element);
-                        self.types.intern(Type::Slice { mutable, element })
-                    }
+                return match self.held_type(element, "slices of", span) {
+                    Some(element) => self.types.intern(Type::Slice { mutable, element }),
+                    None => TypeId::INVALID,
                 };
             }
             ast::Type::Function(_) => "function types",
