@@ -51,6 +51,7 @@ fn program_ll(text: &str, target: &str) -> HashMap<String, String> {
                 &program,
                 target,
                 compile::Results::default(),
+                None,
                 false,
                 |output| {
                     if let compile::Output::Function(compile::CheckedFunction {

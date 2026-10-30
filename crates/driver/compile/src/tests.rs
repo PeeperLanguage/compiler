@@ -5,6 +5,7 @@ use super::CheckedFunction;
 use super::Output;
 use super::Results;
 use super::run;
+use model::ModuleId;
 use model::machine::Machine;
 
 /// The machine the tests check for, but where they test another.
@@ -53,7 +54,14 @@ fn load(modules: &[(&str, &str)]) -> project::Program {
 /// Checks the program of `modules` (see `load`) and gives each
 /// diagnostic as its code, message and the text of its first label.
 fn diagnostics(modules: &[(&str, &str)]) -> Vec<(&'static str, String, String)> {
-    let found = run(&load(modules), x86_64(), Results::default(), false, |_| {});
+    let found = run(
+        &load(modules),
+        x86_64(),
+        Results::default(),
+        None,
+        false,
+        |_| {},
+    );
     found
         .diagnostics()
         .map(|diagnostic| {
@@ -243,6 +251,7 @@ fn slice_ends_fit_the_target_usize() {
         &program,
         Machine::named("i686-linux").unwrap(),
         Results::default(),
+        None,
         false,
         |_| {},
     );
@@ -253,6 +262,39 @@ fn slice_ends_fit_the_target_usize() {
         messages,
         ["slice `4294967296u64..` is outside every `[&]i32`"]
     );
+}
+
+/// With an entry module, a program with no other error needs there a
+/// `fn main()` or `fn main() -> i32` with a body, and says whether it gives
+/// the exit code; an error elsewhere is reported alone.
+#[test]
+fn the_entry_module_needs_a_main_to_start() {
+    let entry_point = |text: &str| {
+        let program = load(&[("app:main", text)]);
+        let entry = program
+            .modules
+            .iter()
+            .position(|module| module.ast.file.path.ends_with("main.peep"))
+            .map(ModuleId::from_index);
+        let found = run(&program, x86_64(), Results::default(), entry, false, |_| {});
+        let codes: Vec<&str> = found.diagnostics().map(|d| d.code.id).collect();
+        (found.entry_point().map(|(_, exit_code)| exit_code), codes)
+    };
+    assert_eq!(entry_point("fn main() {}"), (Some(false), vec![]));
+    assert_eq!(
+        entry_point("fn main() -> i32 { return 0; }"),
+        (Some(true), vec![])
+    );
+    for text in [
+        "fn helper() {}",
+        "fn main(x: i32) {}",
+        "fn main() -> i64 { return 0; }",
+        "#[extern(\"main\")]\nfn main();",
+    ] {
+        assert_eq!(entry_point(text), (None, vec!["M0006"]), "{text}");
+    }
+    let (found, codes) = entry_point("fn helper() { let x: i32 = true; }");
+    assert!(found.is_none() && !codes.is_empty() && !codes.contains(&"M0006"));
 }
 
 /// A cycle gets one error with a place for each step, however often it
@@ -267,7 +309,7 @@ fn a_cycle_is_reported_once_with_its_path() {
             const D = B;
             fn main() { let x = A + B; }",
     )]);
-    let found = run(&program, x86_64(), Results::default(), false, |_| {});
+    let found = run(&program, x86_64(), Results::default(), None, false, |_| {});
     let errors: Vec<(String, Vec<(String, String)>)> = found
         .diagnostics()
         .map(|diagnostic| {
@@ -406,11 +448,18 @@ fn an_invalid_declaration_lowers_nothing_using_it() {
             fn main() {}",
     )]);
     let mut lowered = 0;
-    let found = run(&program, x86_64(), Results::default(), false, |output| {
-        if let Output::Function(CheckedFunction { mir: Some(_), .. }) = output {
-            lowered += 1;
-        }
-    });
+    let found = run(
+        &program,
+        x86_64(),
+        Results::default(),
+        None,
+        false,
+        |output| {
+            if let Output::Function(CheckedFunction { mir: Some(_), .. }) = output {
+                lowered += 1;
+            }
+        },
+    );
     let extern_shape = "write `#[extern(\"name\")]` once, with the C function's name";
     assert_eq!(messages(&found), ["unknown type `Missing`", extern_shape]);
     assert_eq!(lowered, 1, "only `main` is lowered");
@@ -422,7 +471,7 @@ fn an_invalid_declaration_lowers_nothing_using_it() {
 fn recompile(modules: &[(&str, &str)], previous: Results) -> (Results, Vec<String>) {
     let loaded = load(modules);
     let mut checked: Vec<String> = Vec::new();
-    let results = run(&loaded, x86_64(), previous, false, |output| {
+    let results = run(&loaded, x86_64(), previous, None, false, |output| {
         let Output::Function(CheckedFunction { definition, .. }) = output else {
             return;
         };
@@ -605,19 +654,26 @@ fn a_function_run_at_compile_time_records_its_facts_once() {
     )]);
     let tree = &program.modules[0].ast;
     let mut found: Vec<(&str, &str)> = Vec::new();
-    run(&program, x86_64(), Results::default(), true, |output| {
-        let (owner, facts) = match output {
-            Output::Function(CheckedFunction {
-                definition, facts, ..
-            }) => {
-                let declaration = &tree.decls[tree.declaration(definition.index)];
-                (declaration.name().text(&tree.file), facts)
-            }
-            Output::Facts { facts, .. } => ("module", facts),
-            Output::Constant { .. } => return,
-        };
-        found.extend(facts.iter().map(|fact| (tree.file.slice(fact.span), owner)));
-    });
+    run(
+        &program,
+        x86_64(),
+        Results::default(),
+        None,
+        true,
+        |output| {
+            let (owner, facts) = match output {
+                Output::Function(CheckedFunction {
+                    definition, facts, ..
+                }) => {
+                    let declaration = &tree.decls[tree.declaration(definition.index)];
+                    (declaration.name().text(&tree.file), facts)
+                }
+                Output::Facts { facts, .. } => ("module", facts),
+                Output::Constant { .. } => return,
+            };
+            found.extend(facts.iter().map(|fact| (tree.file.slice(fact.span), owner)));
+        },
+    );
     // `twice` gets the facts found until it is handed on: `BIG`'s value,
     // both signatures, its body; `inner` its body.
     let expected = [
@@ -652,7 +708,14 @@ fn array_lengths_fit_the_target_usize() {
     )]);
     let at = |name| {
         let target = Machine::named(name).unwrap();
-        messages(&run(&program, target, Results::default(), false, |_| {}))
+        messages(&run(
+            &program,
+            target,
+            Results::default(),
+            None,
+            false,
+            |_| {},
+        ))
     };
     assert_eq!(
         at("i686-linux"),
@@ -672,7 +735,14 @@ fn values_fit_the_target() {
     )]);
     let at = |name| {
         let target = Machine::named(name).unwrap();
-        messages(&run(&program, target, Results::default(), false, |_| {}))
+        messages(&run(
+            &program,
+            target,
+            Results::default(),
+            None,
+            false,
+            |_| {},
+        ))
     };
     let too_big = |text| {
         format!("`{text}` is too big for i686-linux, where a value takes at most 2147483647 bytes")
@@ -694,7 +764,14 @@ fn extern_integers_are_ones_c_has() {
     )]);
     let at = |name| {
         let target = Machine::named(name).unwrap();
-        messages(&run(&program, target, Results::default(), false, |_| {}))
+        messages(&run(
+            &program,
+            target,
+            Results::default(),
+            None,
+            false,
+            |_| {},
+        ))
     };
     let none =
         |text| format!("C has no `{text}` on aarch64-linux, whose integers have at most 128 bits");
