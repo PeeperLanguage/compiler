@@ -13,17 +13,19 @@ pub const USAGE: &str = "\
 usage: peeper check [-target name] [project folder | file.peep]
        peeper fix [-target name] [project folder | file.peep]
        peeper build [-release] [-target name] [-o program] [project folder | file.peep]
-       peeper run [-release] [-target name] [project folder | file.peep] [arguments...]
+       peeper run [-release] [-target name] [project folder | file.peep] [-- arguments...]
        peeper [check | fix] -dump [thir | mir | ll] [-release] [-target name]
               [project folder | file.peep]
        peeper init [name]
        peeper lsp
+       peeper -help
   check  report the program's errors
   fix    apply the fixes the errors suggest, then report what is left
   build  check the program and link it into an executable, named after the
          project or file unless -o names it; -release builds it optimized,
          without debug info
   run    build the program to a temporary file and run it with the arguments
+         after --
   -target  check and build the program for another machine than this one,
          such as i686-linux, 32-bit x86 Linux, which a 64-bit x86 Linux runs
          with its 32-bit C library; an unknown name lists them all
@@ -33,7 +35,17 @@ usage: peeper check [-target name] [project folder | file.peep]
   init   make this folder a project: write peeper.toml and src/main.peep,
          asking for the name unless given
   lsp    serve editors as a language server over stdin and stdout
-Flags may come in any order, each with its value right after it.";
+  -help  print this usage text
+Flags may come in any order before --, each with its value right after it.";
+
+const CHECK: u8 = 1 << 0;
+const FIX: u8 = 1 << 1;
+const BUILD: u8 = 1 << 2;
+const RUN: u8 = 1 << 3;
+const DUMP: u8 = 1 << 4;
+const INIT: u8 = 1 << 5;
+const LSP: u8 = 1 << 6;
+const HELP: u8 = 1 << 7;
 
 /// What the arguments ask for.
 pub enum Args {
@@ -49,22 +61,28 @@ pub enum Args {
         name: Option<String>, // asked for when not given
     },
     Lsp,
+    Help,
 }
 
 /// The arguments after the program's name, or what is wrong with them.
-/// Flags come anywhere, each with its value right after it: `-o` and
-/// `-target` must have one, `-dump` takes the next word when it names a
+/// Flags come anywhere before `--`, each with its value right after it: `-o`
+/// and `-target` must have one, `-dump` takes the next word when it names a
 /// dump. The words left, in order, are the command and its value; `run`
-/// gives the words after its path to the program. With no command, `-dump`
+/// gives the words after `--` to the program. With no command, `-dump`
 /// means `check`.
 pub fn parse(args: &[String]) -> Result<Args, String> {
+    let (compiler_args, program_args) = match args.iter().position(|arg| arg == "--") {
+        Some(at) => (&args[..at], Some(&args[at + 1..])),
+        None => (args, None),
+    };
     let kind = |name: &str| Dump::ALL.iter().position(|kind| kind.extension() == name);
     let mut output = None;
     let mut target = None;
     let mut release = false;
+    let mut help = false;
     let mut dumps: Option<[bool; Dump::ALL.len()]> = None; // which were asked for, by -dump
     let mut words = Vec::new();
-    let mut args = args.iter().map(String::as_str).peekable();
+    let mut args = compiler_args.iter().map(String::as_str).peekable();
     while let Some(arg) = args.next() {
         match arg {
             "-o" if output.is_some() => return Err("-o is given twice".to_string()),
@@ -79,6 +97,8 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
             },
             "-release" if release => return Err("-release is given twice".to_string()),
             "-release" => release = true,
+            "-help" if help => return Err("-help is given twice".to_string()),
+            "-help" => help = true,
             "-dump" => {
                 let asked = dumps.get_or_insert([false; Dump::ALL.len()]);
                 match args.peek().and_then(|name| kind(name)) {
@@ -99,10 +119,16 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
         BuildMode::Debug
     };
     let given = [
-        ("-o", output.is_some()),
-        ("-target", target.is_some()),
-        ("-release", release),
-        ("-dump", dumps.is_some()),
+        ("-o", output.is_some(), BUILD),
+        (
+            "-target",
+            target.is_some(),
+            CHECK | FIX | BUILD | RUN | DUMP,
+        ),
+        ("-release", release, BUILD | RUN | DUMP),
+        ("-dump", dumps.is_some(), CHECK | FIX | DUMP),
+        ("-help", help, HELP),
+        ("--", program_args.is_some(), RUN),
     ];
     let target = match target {
         Some(target) => target,
@@ -123,57 +149,44 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
         };
         Ok(Args::Program { path, goal, target })
     };
-    // `-release` picks the build an LLVM IR dump is of.
-    let check_takes = if dumps.is_some() {
-        ["-dump", "-release", "-target"].as_slice()
-    } else {
-        &["-dump", "-target"]
-    };
-    // The command, its arguments and the flags it takes.
-    let (command, args, takes) = match words.split_first() {
+    // `-dump` lets `check` and `fix` take `-release` for the LLVM IR dump.
+    let dump_bit = if dumps.is_some() { DUMP } else { 0 };
+    // The command, its arguments and the bitmask of flags it takes.
+    let (command, args, mask) = match words.split_first() {
         Some((&command @ ("check" | "fix"), values)) => {
-            (command, check(values, command == "fix")?, check_takes)
+            let bit = if command == "fix" { FIX } else { CHECK };
+            (command, check(values, command == "fix")?, bit | dump_bit)
         }
         Some((&command @ "build", values)) => {
             let path = path(value(values)?);
             let goal = Goal::Build { output, mode };
-            (
-                command,
-                Args::Program { path, goal, target },
-                ["-o", "-release", "-target"].as_slice(),
-            )
+            (command, Args::Program { path, goal, target }, BUILD)
         }
         Some((&command @ "run", values)) => {
-            let (path, arguments) = values.split_first().unwrap_or((&".", &[]));
+            let path = path(value(values)?);
             let goal = Goal::Run {
-                arguments: arguments
-                    .iter()
-                    .map(|argument| argument.to_string())
-                    .collect(),
+                arguments: program_args.unwrap_or_default().to_vec(),
                 mode,
             };
-            let path = PathBuf::from(path);
-            (
-                command,
-                Args::Program { path, goal, target },
-                ["-release", "-target"].as_slice(),
-            )
+            (command, Args::Program { path, goal, target }, RUN)
         }
         Some((&command @ "init", values)) => {
             let name = value(values)?.map(str::to_string);
-            (command, Args::Init { name }, [].as_slice())
+            (command, Args::Init { name }, INIT)
         }
         Some((&command @ "lsp", values)) => match values.first() {
             Some(extra) => return Err(format!("unexpected `{extra}`")),
-            None => (command, Args::Lsp, [].as_slice()),
+            None => (command, Args::Lsp, LSP),
         },
         // `-dump` alone means `check`: every word is its own.
-        _ if dumps.is_some() => ("check", check(&words, false)?, check_takes),
+        _ if dumps.is_some() => ("check", check(&words, false)?, DUMP),
+        None if help => ("-help", Args::Help, HELP),
+        Some((word, _)) if help => return Err(format!("unexpected `{word}`")),
         Some((word, _)) => return Err(format!("unknown command `{word}`")),
         None => return Err("no command given".to_string()),
     };
-    for (flag, given) in given {
-        if given && !takes.contains(&flag) {
+    for (flag, given, allowed) in given {
+        if given && mask & allowed == 0 {
             return Err(format!("`{command}` does not take {flag}"));
         }
     }

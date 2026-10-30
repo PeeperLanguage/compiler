@@ -69,6 +69,10 @@ pub fn parse_command() -> Result<(Command<StderrLock<'static>>, Goal), ExitCode>
                 }
             });
         }
+        Args::Help => {
+            println!("{}", args::USAGE);
+            return Err(ExitCode::SUCCESS);
+        }
     };
     let command = Command {
         path,
