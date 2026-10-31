@@ -161,6 +161,26 @@ impl Diagnostic {
         }
     }
 
+    /// The message, then the primary place's text and each note on a line of
+    /// its own, for a reader with no source drawn beside them.
+    pub fn full_message(&self) -> String {
+        let mut message = self.message.clone();
+        if let Some(label) = self.labels.first()
+            && !label.message.is_empty()
+        {
+            message.push('\n');
+            message.push_str(&label.message);
+        }
+        for note in &self.notes {
+            message.push_str(match note.kind {
+                NoteKind::Note => "\nnote: ",
+                NoteKind::Help(_) | NoteKind::Guess(_) => "\nhelp: ",
+            });
+            message.push_str(&note.text);
+        }
+        message
+    }
+
     /// Whether it is an error, which fails the compile.
     pub fn is_error(&self) -> bool {
         self.code.severity == Severity::Error

@@ -79,6 +79,14 @@ bash scripts/build.sh
 PEEPER="$PWD/build/bin/peeper" cargo test -p peeper --test fixtures
 ```
 
+CI also builds the browser checker on Linux and runs it in Node. To match it,
+run `rustup target add wasm32-wasip1` once, then:
+
+```bash
+cargo build -p browser --profile wasm --target wasm32-wasip1
+node crates/driver/browser/smoke.mjs target/wasm32-wasip1/wasm/browser.wasm
+```
+
 Language features and behavior changes require Peeper source coverage under
 `x_test/`:
 

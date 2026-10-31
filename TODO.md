@@ -1,7 +1,7 @@
 # TODO
 
 What is done and what is left, so a new session can pick the work up.
-Last updated 2026-10-30. The entry-point rule moved into `compile::run`, and
+Last updated 2026-10-31. The entry-point rule moved into `compile::run`, and
 `lsp/src/server.rs` was split by job, after 2026-10-28's `main` = `70f9e8b6`.
 
 ## Toolchain packs and distribution
@@ -110,11 +110,46 @@ The next steps of the other work in progress:
 - **Dependencies:** `[dependencies]` in `peeper.toml` and `peeper.lock`, waiting
   on the owner's design answers.
 
+## Browser (wasm) build
+
+A web page should highlight code, underline its errors and run it.
+
+What was seen on 2026-10-31:
+- The website already highlights Peeper with Shiki and
+  `lib/peeper.tmLanguage.json`, so highlighting needs no compiler work.
+- A reference for the page: the playground in `Ferret-Language/website`
+  (`src/components/Playground.svelte`, `src/lib/compiler.ts`, Monaco). Its
+  compiler returns `diagnostics` with line and column, but the page never gives
+  them to Monaco, so it shows no underlines, only an output panel. It compiles
+  on the Run button, on the main thread.
+
+1. [x] **A wasm program that checks text.** `crates/driver/browser` reads the
+   page's files from stdin as JSON and writes one entry per diagnostic to
+   stdout: severity, code, full message with help, its place (file, start and
+   end line and UTF-16 column), and its related places. It targets `wasm32-wasip1` and assumes
+   `x86_64-linux`. About 1 MB, 340 KB gzipped; a small program checks in 25-50 ms.
+   - Build: `cargo build -p browser --profile wasm --target wasm32-wasip1`, then
+     `node crates/driver/browser/smoke.mjs target/wasm32-wasip1/wasm/browser.wasm`.
+     CI runs both on Linux.
+   - Wasm's stack is small: 1,000 nested parentheses pass, 2,000 crash the
+     instance. A 64 MiB wasm stack made Node segfault, cause unknown. Calls at
+     compile time stop at 500 deep on wasm (`eval`'s `CALL_LIMIT`), so a
+     constant that recurses forever is T0044, as on native.
+   - Native `peeper check` overflows its stack on 60,000 nested parentheses.
+2. [ ] **The page** (in the Website repo). An editor that highlights with the
+   grammar the site already has, runs the check in a Web Worker a short time
+   after typing stops, so typing never waits for it, and draws each diagnostic
+   as an underline with its message on hover. It needs a small WASI shim, and a
+   new instance per check so a crash loses nothing.
+3. [ ] **Run code in the browser.** The backend needs clang and LLVM, which do
+   not run in a page, so this needs a new backend from MIR to wasm, or a MIR
+   interpreter. The runtime must then work in wasm too, printing to the page.
+
 ## Website
 
 The site lives in its own repo at `~/Dev/Peeper/Website` (fumadocs, Next.js).
 Its `main` has commits, but nothing is pushed and there is no GitHub repo yet;
 the docs' edit links assume `PeeperLanguage/website`.
 
-The docs show program outputs as saved text. The plan is to run code in the
-browser through a wasm build of `peeper`, so the docs show real results.
+The docs show program outputs as saved text. The plan is to highlight, check and
+run code in the browser (see Browser (wasm) build).
