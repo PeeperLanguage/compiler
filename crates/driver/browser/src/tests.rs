@@ -195,8 +195,9 @@ fn check_fixtures_fail_here_with_the_same_number_of_errors() {
     assert!(checked > 0, "no check fixtures found");
 }
 
-/// Every fixture that runs a program runs here too, with no backend, and
-/// prints and exits as it does compiled.
+/// Every fixture that runs a program runs here too, from text as a page gives
+/// it, with no backend, and does what its peeper.toml says. The fixtures test
+/// compares it with the compiled program byte for byte.
 #[test]
 fn run_fixtures_run_here_with_the_same_results() {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../x_test");
@@ -361,6 +362,24 @@ fn memory_a_program_gets_wrong_stops_it() {
         7,
         "no memory gives null, as C does"
     );
+
+    let forged_range = "fn main() {\n    let mut words = [3]u64{21474836480, 0, 0};\n    let forged = @words as *range[i32];\n    let values = [2]i32{forged.*...};\n    println(values[0]);\n}\n";
+    let stderr = written(&interpreted(forged_range), Stream::Stderr);
+    assert!(
+        stderr.starts_with(b"panic: division by zero\n"),
+        "bytes a raw pointer gives are not checked as a range made by code"
+    );
+
+    let ended = "fn same(p: *i32) -> *i32 {\n    return p;\n}\nfn gives() -> *i32 {\n    let mut n = 5;\n    return same(@n);\n}\nfn main() {\n    println(gives().*);\n}\n";
+    assert_eq!(
+        written(&interpreted(ended), Stream::Stdout),
+        b"5\n",
+        "only a constant's run ends memory: a program's reads what is there, as native code does"
+    );
+
+    let forged_address = "struct Two { first: i64, second: i64 }\nfn main() {\n    let mut word: u64 = 18446744073709551615;\n    let forged = @word as **Two;\n    println(forged.*.*.second);\n}\n";
+    let stderr = written(&interpreted(forged_address), Stream::Stderr);
+    assert!(stderr.starts_with(b"panic: this reads or writes memory the program does not own\n"));
 }
 
 #[test]
@@ -396,6 +415,21 @@ fn printing_a_huge_value_stops_before_its_text_is_built() {
     assert_eq!(run.exit_code, 101);
     assert!(written(&run, Stream::Stdout).is_empty());
     assert!(written(&run, Stream::Stderr).starts_with(b"panic: this printed more than"));
+}
+
+#[test]
+fn a_size_past_any_block_gives_null_and_a_negative_length_fails() {
+    let run = interpreted(
+        "#[extern(\"malloc\")]\nfn allocate(size: i64) -> *u8;\n\
+         #[extern(\"calloc\")]\nfn cleared(count: i64, size: i64) -> *u8;\n\
+         fn main() {\n    let negative: i64 = -1;\n    let huge: i64 = 1;\n    \
+         println(allocate(negative) == none, cleared(negative, 1) == none);\n    \
+         println(allocate(huge << 62) == none);\n    \
+         let length: i32 = -1;\n    \
+         println(Write(Stdout, c\"x\", length), Read(Stdin, c\"abc\", length));\n}\n",
+    );
+    assert_eq!(run.exit_code, 0);
+    assert_eq!(written(&run, Stream::Stdout), b"true true\ntrue\n-1 -1\n");
 }
 
 #[test]
