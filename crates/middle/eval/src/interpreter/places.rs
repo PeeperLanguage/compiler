@@ -39,7 +39,7 @@ impl<'b> Interpreter<'b, '_> {
 
     /// The index `index` means as an element's position: `None` for a value
     /// below zero or past every length.
-    fn position(&mut self, index: &Operand) -> Option<u64> {
+    pub(super) fn position(&mut self, index: &Operand) -> Option<u64> {
         let ty = self.frame().body.operand_type(*index);
         let Type::Integer(integer) = self.types[ty] else {
             unreachable!("check takes only an integer index")

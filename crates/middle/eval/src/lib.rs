@@ -9,6 +9,8 @@
 pub mod conversions;
 pub mod interpreter;
 pub mod messages;
+#[path = "../../../../runtime/number_text.rs"]
+mod number_text;
 pub mod operators;
 
 #[cfg(test)]

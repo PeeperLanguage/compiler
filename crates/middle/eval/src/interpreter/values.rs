@@ -97,7 +97,12 @@ impl<'b> Interpreter<'b, '_> {
     }
 
     /// The `length` bytes at `address`, or the run stops at `span`.
-    fn read_bytes(&self, address: u64, length: u64, span: Span) -> Result<&[u8], Failure> {
+    pub(super) fn read_bytes(
+        &self,
+        address: u64,
+        length: u64,
+        span: Span,
+    ) -> Result<&[u8], Failure> {
         (self.memory.bytes(address, length)).ok_or_else(|| self.fail(INVALID_ACCESS, span))
     }
 

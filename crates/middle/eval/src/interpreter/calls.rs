@@ -202,6 +202,9 @@ impl<'b> Interpreter<'b, '_> {
         let frame = self.frame();
         let span = frame.body.instructions.span(id);
         let Some(body) = (self.mir_of)(function) else {
+            if self.host.is_some() {
+                return self.call_outside(id, function, arguments);
+            }
             return Err(Failure::NoMir {
                 callee: function,
                 function: frame.function,

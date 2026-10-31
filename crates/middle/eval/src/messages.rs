@@ -5,6 +5,9 @@ use model::semantic_types::Type;
 
 use crate::operators::ValueError;
 
+/// The exit code of a program that panics, as in Rust.
+pub const PANIC_EXIT_CODE: i32 = 101;
+
 /// What a program that hits `trap` on a left operand of `left_type` is told,
 /// at compile time and at run time.
 pub fn trap_message(trap: ValueError, left_type: &Type) -> String {

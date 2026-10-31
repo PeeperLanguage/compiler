@@ -105,8 +105,16 @@ impl<'b> Interpreter<'b, '_> {
                 ref value,
                 ref fields,
             } => Some(self.field(id, value, fields)?),
-            InstructionKind::Print { .. } => {
-                return Err(self.fail("`print` calls cannot run at compile time yet", span));
+            InstructionKind::Print {
+                newline,
+                ref values,
+            } => {
+                if self.host.is_none() {
+                    let message = "`print` calls cannot run at compile time yet";
+                    return Err(self.fail(message, span));
+                }
+                self.print(newline, values, span)?;
+                None
             }
         };
         Ok(value)

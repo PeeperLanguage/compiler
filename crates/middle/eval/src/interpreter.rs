@@ -14,6 +14,7 @@ mod calls;
 mod instructions;
 mod memory;
 mod places;
+pub mod program;
 mod values;
 
 use std::collections::HashMap;
@@ -30,6 +31,7 @@ use model::semantic_types::Types;
 use source::Span;
 
 use memory::Memory;
+use program::Host;
 
 /// How many instructions and terminators one evaluation may run, so an
 /// endless loop stops with an error instead of hanging the compiler or an
@@ -69,6 +71,8 @@ pub enum Failure {
         function: DefId,
         span: Span,
     },
+    /// A program ended itself with this exit code (`program::run`).
+    Exited(i32),
 }
 
 /// What `function`, whose MIR is `body`, returns for `arguments`, laid out
@@ -82,24 +86,12 @@ pub fn run<'b>(
     target: &'b Machine,
     mir_of: &dyn Fn(DefId) -> Option<&'b mir::Body>,
 ) -> Result<Option<Value>, Failure> {
-    let mut machine = Interpreter {
-        types,
-        target,
-        mir_of,
-        steps: 0,
-        memory: Memory::default(),
-        slots: HashMap::new(),
-        fields: HashMap::new(),
-        frames: Vec::new(),
-        registers: Vec::new(),
-    };
+    let mut machine = Interpreter::new(types, target, mir_of, STEP_LIMIT, None);
     for argument in arguments {
         let register = machine.register_of(argument);
         machine.registers.push(Some(register));
     }
-    let span = body.blocks.span(Id::from_index(0));
-    machine.push_frame(function, body, None, memory::STACK_START, 0, span)?;
-    machine.run_frames()
+    machine.run_from(function, body)
 }
 
 /// A value being used. A pointer, a reference and a `cstr` are addresses; a
@@ -136,6 +128,8 @@ struct Interpreter<'b, 'f> {
     target: &'b Machine,
     mir_of: &'f dyn Fn(DefId) -> Option<&'b mir::Body>,
     steps: u32, // run so far, by every call
+    step_limit: u32,
+    host: Option<Host<'f>>, // a whole program's; a constant's call has none
     memory: Memory,
     slots: HashMap<*const mir::Body, Rc<Slots>>,
     fields: HashMap<TypeId, Box<[(u64, TypeId)]>>, // of a struct or range: offset and type
@@ -151,7 +145,36 @@ struct Located {
     length: Option<u64>,
 }
 
-impl<'b> Interpreter<'b, '_> {
+impl<'b, 'f> Interpreter<'b, 'f> {
+    fn new(
+        types: &'b Types,
+        target: &'b Machine,
+        mir_of: &'f dyn Fn(DefId) -> Option<&'b mir::Body>,
+        step_limit: u32,
+        host: Option<Host<'f>>,
+    ) -> Self {
+        Interpreter {
+            types,
+            target,
+            mir_of,
+            steps: 0,
+            step_limit,
+            host,
+            memory: Memory::default(),
+            slots: HashMap::new(),
+            fields: HashMap::new(),
+            frames: Vec::new(),
+            registers: Vec::new(),
+        }
+    }
+
+    /// Runs `function`, whose arguments are the registers so far.
+    fn run_from(&mut self, function: DefId, body: &'b mir::Body) -> Result<Option<Value>, Failure> {
+        let span = body.blocks.span(Id::from_index(0));
+        self.push_frame(function, body, None, memory::STACK_START, 0, span)?;
+        self.run_frames()
+    }
+
     fn frame(&self) -> &Frame<'b> {
         self.frames.last().expect("a run has a frame")
     }
@@ -174,7 +197,7 @@ impl<'b> Interpreter<'b, '_> {
     }
 
     /// Counts one more step of the running frame, at `span`: an error past
-    /// `STEP_LIMIT`.
+    /// the run's limit.
     fn step(&mut self, span: Span) -> Result<(), Failure> {
         self.spend(1, span)
     }
@@ -188,8 +211,8 @@ impl<'b> Interpreter<'b, '_> {
     /// Counts `steps` more steps.
     fn spend(&mut self, steps: u32, span: Span) -> Result<(), Failure> {
         self.steps = self.steps.saturating_add(steps);
-        if self.steps > STEP_LIMIT {
-            let message = format!("this ran more than {STEP_LIMIT} steps");
+        if self.steps > self.step_limit {
+            let message = format!("this ran more than {} steps", self.step_limit);
             return Err(self.fail(message, span));
         }
         Ok(())

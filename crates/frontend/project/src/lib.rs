@@ -59,6 +59,19 @@ pub fn declared_name(modules: &[Module], definition: DefId) -> (Ident, &Arc<Sour
     )
 }
 
+/// What a program prints when it stops with `message` at `span` of `file`,
+/// the file's path read from the project's `root`.
+pub fn panic_text(root: &Path, file: &SourceFile, message: &[u8], span: Span) -> Vec<u8> {
+    let (line, column) = file.position(span.start as usize);
+    let mut text = b"panic: ".to_vec();
+    text.extend_from_slice(message);
+    let path = Path::new(&file.path);
+    let path = path.strip_prefix(root).unwrap_or(path);
+    let place = format!("\n  --> {}:{line}:{column}\n", path.display());
+    text.extend_from_slice(place.as_bytes());
+    text
+}
+
 /// The name in `#[extern("name")]` on the function `definition` of
 /// `modules`, if it has one: it is a C function, linked by that name. The
 /// error is where an `extern` attribute of another shape, or a second one,

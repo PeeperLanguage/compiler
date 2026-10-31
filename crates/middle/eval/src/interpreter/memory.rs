@@ -12,12 +12,19 @@ pub(super) const STACK_START: u64 = 16;
 const STACK_LIMIT: u64 = 8 << 20;
 /// Where the data starts, an address every target's pointers hold.
 const DATA_START: u64 = 1 << 30;
+/// How many bytes of data a run may use. Past this an allocation fails, as
+/// when a machine has no more memory.
+const DATA_LIMIT: u64 = 256 << 20;
+/// The alignment of each block, as of what C's `malloc` gives.
+const BLOCK_ALIGN: u64 = 16;
 
 #[derive(Default)]
 pub(super) struct Memory {
     stack: Vec<u8>,
     data: Vec<u8>,
     strings: HashMap<Box<[u8]>, u64>, // each one in `data`, by its text
+    blocks: HashMap<u64, u64>,        // the size of each block in use, by its address
+    freed: HashMap<u64, Vec<u64>>,    // the addresses of blocks free to reuse, by size
 }
 
 impl Memory {
@@ -86,16 +93,51 @@ impl Memory {
         address
     }
 
+    /// The address of a block of at least `size` bytes, `None` past
+    /// `DATA_LIMIT`. Freed blocks of its size come back, so a loop that
+    /// allocates and frees stays in place.
+    pub(super) fn allocate(&mut self, size: u64) -> Option<u64> {
+        let size = size.max(1).checked_next_multiple_of(BLOCK_ALIGN)?;
+        let reused = self.freed.get_mut(&size).and_then(Vec::pop);
+        let address = if let Some(address) = reused {
+            address
+        } else {
+            let offset = (self.data.len() as u64).next_multiple_of(BLOCK_ALIGN);
+            let end = offset.checked_add(size).filter(|&end| end <= DATA_LIMIT)?;
+            self.data.resize(end as usize, 0);
+            DATA_START + offset
+        };
+        self.blocks.insert(address, size);
+        Some(address)
+    }
+
+    /// Frees the block at `address`: `None` when no block starts there, so
+    /// freeing twice stops the run.
+    pub(super) fn free(&mut self, address: u64) -> Option<()> {
+        let size = self.blocks.remove(&address)?;
+        self.freed.entry(size).or_default().push(address);
+        Some(())
+    }
+
+    /// The bytes from `address` up to the first zero byte, as C reads them.
+    pub(super) fn c_text(&self, address: u64) -> Option<&[u8]> {
+        let (region, start) = if address >= DATA_START {
+            (&self.data, address - DATA_START)
+        } else {
+            (&self.stack, address.checked_sub(STACK_START)?)
+        };
+        let rest = region.get(usize::try_from(start).ok()?..)?;
+        let end = rest.iter().position(|&byte| byte == 0)?;
+        Some(&rest[..end])
+    }
+
     /// The string at `address`: all of one `string` made, zero bytes in it
     /// included, else the bytes up to the first zero byte, as C reads it.
     pub(super) fn string_at(&self, address: u64) -> Option<Box<[u8]>> {
         if let Some((text, _)) = self.strings.iter().find(|&(_, &start)| start == address) {
             return Some(text.clone());
         }
-        let start = usize::try_from(address.checked_sub(DATA_START)?).ok()?;
-        let rest = self.data.get(start..)?;
-        let end = rest.iter().position(|&byte| byte == 0)?;
-        Some(rest[..end].into())
+        self.c_text(address).map(Into::into)
     }
 }
 
@@ -131,6 +173,21 @@ mod tests {
         );
         assert_eq!(memory.copy(STACK_START, STACK_START + 3, 2), None);
         assert_eq!(memory.grow_stack(STACK_START + STACK_LIMIT + 1), None);
+    }
+
+    #[test]
+    fn a_freed_block_comes_back_and_cannot_be_freed_twice() {
+        let mut memory = Memory::default();
+        let first = memory.allocate(20).unwrap();
+        let second = memory.allocate(30).unwrap();
+        assert_eq!(first % BLOCK_ALIGN, 0);
+        assert_eq!(second - first, 32, "20 bytes round up to 32");
+        memory.free(first).unwrap();
+        assert_eq!(memory.free(first), None, "freed twice");
+        assert_eq!(memory.free(first + 1), None, "not the start of a block");
+        assert_eq!(memory.allocate(25), Some(first), "the same size, reused");
+        assert_eq!(memory.allocate(DATA_LIMIT), None, "past the limit");
+        assert_eq!(memory.allocate(u64::MAX), None, "an overflowing size");
     }
 
     #[test]

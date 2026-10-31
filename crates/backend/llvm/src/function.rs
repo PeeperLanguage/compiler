@@ -52,8 +52,6 @@ const PRINT_POINTER: (&str, &str) = ("peeper_rt_v1_print_pointer", "ptr");
 const FLUSH: (&str, &str) = ("peeper_rt_v1_flush", "");
 /// The intrinsic that copies a value kept in memory (`in_memory`).
 const MEMCPY: &str = "llvm.memcpy.p0.p0.i64";
-/// The exit code of a program that panics, as in Rust.
-const PANIC_EXIT_CODE: i32 = 101;
 
 impl Module<'_> {
     /// Adds the function `definition` of this module, whose MIR is `body`.

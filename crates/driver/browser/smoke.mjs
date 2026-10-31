@@ -1,6 +1,7 @@
 // Runs the built checker as a page would, with Node's WASI. It proves what the
 // native tests cannot: that wasm loads two files with no threads, finds the core
-// library inside the wasm file, and survives a runaway recursion in a constant.
+// library inside the wasm file, survives a runaway recursion in a constant, and
+// runs a program.
 // node crates/driver/browser/smoke.mjs <browser.wasm>
 import assert from "node:assert/strict";
 import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -10,12 +11,12 @@ import { WASI } from "node:wasi";
 
 const module = await WebAssembly.compile(readFileSync(process.argv[2]));
 
-// What a check of `files` finds, in a new instance, as a page runs it.
-async function check(files) {
+// What `request` gives, in a new instance, as a page runs it.
+async function send(request) {
     const folder = mkdtempSync(join(tmpdir(), "peeper-browser-"));
     const input = join(folder, "input.json");
     const output = join(folder, "output.json");
-    writeFileSync(input, JSON.stringify(files));
+    writeFileSync(input, JSON.stringify(request));
     const stdin = openSync(input, "r");
     const stdout = openSync(output, "w");
     const wasi = new WASI({ version: "preview1", stdin, stdout, returnOnExit: true });
@@ -27,6 +28,8 @@ async function check(files) {
     assert.equal(code, 0);
     return found;
 }
+
+const check = (files) => send({ files });
 
 const [mismatch] = await check({
     "main.peep": 'import "playground:other";\nfn main() {\n    other::Value();\n}\n',
@@ -51,4 +54,22 @@ const [wrapped] = await check({
 });
 assert.equal(wrapped.code, "T0044");
 assert.equal(wrapped.related[0].message, "this reads or writes memory the program does not own");
-console.log("the wasm checker found every error");
+
+// A program runs with what it printed, with no backend or linker.
+const { entries, run } = await send({
+    run: true,
+    files: {
+        "main.peep":
+            'struct Point { x: i32, y: f64 }\nfn main() -> i32 {\n    println(Point.{ x = 1, y = 2.5 }, [2]i32{3, 4}, 340282366920938463463374607431768211455u128);\n    return 7;\n}\n',
+    },
+});
+assert.deepEqual(entries, []);
+assert.deepEqual(run, {
+    stdout: "Point { x: 1, y: 2.5 } [3, 4] 340282366920938463463374607431768211455\n",
+    stderr: "",
+    exit_code: 7,
+});
+const stopped = await send({ run: true, files: { "main.peep": 'fn main() {\n    panic "stop";\n}\n' } });
+assert.equal(stopped.run.exit_code, 101);
+assert.equal(stopped.run.stderr, "panic: stop\n  --> src/main.peep:2:5\n");
+console.log("the wasm checker found every error and ran the programs");

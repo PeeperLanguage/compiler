@@ -18,6 +18,9 @@ use std::sync::Arc;
 use check::Checker;
 use check::State;
 use diagnostics::Diagnostic;
+use eval::interpreter::Failure;
+use eval::interpreter::program::ProgramFacts;
+use eval::messages::PANIC_EXIT_CODE;
 use model::DefId;
 use model::ModuleId;
 use model::ast;
@@ -127,6 +130,91 @@ pub struct CheckedFunction<'c> {
     pub facts: &'c [thir::Fact],
     pub mir: Option<mir::Body>, // `None` when checking it found an error
     pub types: &'c Types,       // the program's types so far, which `signature` and the bodies name
+}
+
+/// What a program did when `interpret` ran it.
+pub struct Interpreted {
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>, // with the panic text, if it stopped with one
+    pub exit_code: u8,   // as a program's parent on Linux sees it: the low 8 bits
+}
+
+/// Compiles `program` as `run` does, then runs it from `entry`'s `main` with
+/// no backend or system (`eval::interpreter::program`). Gives what the compile
+/// found and, when that left a program to start, what it did.
+pub fn interpret(
+    program: &project::Program,
+    target: &'static Machine,
+    entry: ModuleId,
+) -> (Results, Option<Interpreted>) {
+    let mut bodies = HashMap::new();
+    let mut last_types = None;
+    let results = run(
+        program,
+        target,
+        Results::default(),
+        Some(entry),
+        false,
+        |output| match output {
+            Output::Function(CheckedFunction {
+                definition,
+                mir: Some(mir),
+                ..
+            }) => {
+                bodies.insert(definition, mir);
+            }
+            // After each module's last function, so the last has every type.
+            Output::Facts { types, .. } => last_types = Some(types.clone()),
+            _ => {}
+        },
+    );
+    let (Some((main, _)), Some(types)) = (results.entry_point(), last_types) else {
+        return (results, None);
+    };
+    let modules = program.modules.as_slice();
+    let extern_symbol = |function| project::extern_symbol(modules, function).ok().flatten();
+    let struct_name = |definition| {
+        let (name, file) = project::declared_name(modules, definition);
+        name.text(file).to_string()
+    };
+    let field_names = |definition| {
+        let names = project::field_names(modules, definition);
+        names.map(str::to_string).collect()
+    };
+    let facts = ProgramFacts {
+        extern_symbol: &extern_symbol,
+        struct_name: &struct_name,
+        field_names: &field_names,
+    };
+    let outcome = eval::interpreter::program::run(
+        main,
+        &bodies[&main],
+        &types,
+        target,
+        &|function| bodies.get(&function),
+        &facts,
+    );
+    let mut stderr = outcome.stderr;
+    let exit_code = match outcome.ending {
+        Ok(code) => code as u8,
+        Err(Failure::Stopped {
+            message,
+            function,
+            span,
+        }) => {
+            let file = &modules[function.module.index()].ast.file;
+            let text = project::panic_text(&program.root, file, message.as_bytes(), span);
+            stderr.extend(text);
+            PANIC_EXIT_CODE as u8
+        }
+        Err(_) => unreachable!("a checked program's functions run, and it exits by `Ok`"),
+    };
+    let interpreted = Interpreted {
+        stdout: outcome.stdout,
+        stderr,
+        exit_code,
+    };
+    (results, Some(interpreted))
 }
 
 /// Checks every declaration of `program`, lowers each function to MIR and
