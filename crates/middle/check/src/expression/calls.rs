@@ -50,7 +50,7 @@ impl ThirBuilder<'_, '_> {
             let mut printed = self.body.add(expr, span);
             // Printing reads a value, never takes it: one that moves, in a
             // place, is lent instead, a `&mut` reference as `&`.
-            if !types.is_copy(ty) && self.place_root(printed).is_some() {
+            if !types.is_copy(ty) && self.start_variable(self.place_root(printed).0).is_some() {
                 let lent = match types[ty] {
                     Type::Reference { target, .. } => {
                         let reference = self.body.exprs[printed].clone();

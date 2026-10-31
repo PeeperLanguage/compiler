@@ -417,6 +417,29 @@ the place must be set, but it makes no loan, so nothing checks how the raw
 pointer is used. A `.*` of a typed raw pointer is the same `Dereference` step
 as a reference's.
 
+A value in no variable that is lent, indexed or gone through (`&make()`,
+`make()[0]`, `id(&mut x).*`) is THIR's `Temporary`: a hidden variable the
+value is stored into where it is computed, so it runs in the order written,
+and the place starts there. As in Rust, a temporary ends with its statement;
+one in an `if` or loop condition ends before the branch, in each pass, and
+one in a side of `&&` or `||` with that side. A `let` whose whole value is a
+borrow or slice of one (`let r = &make();`, `let s = &make()[0..2];`) keeps
+that one to the block's end: the checker marks it `kept`, and any other in the
+value still ends with the `let` (`let e = &view(&make())[0];` keeps the slice,
+not the array, so `e` cannot be used after it). Through a call nothing is kept
+(`let r = id(&num());` is an error when `r` is used), as in Rust. A `for`
+loop keeps every temporary of its iterable to the loop's end: the hidden `let`
+of its array ends none, so they end with the block around the loop. Its own
+storage is never written (T0007, "cannot assign to a temporary value") and its
+address never taken (T0004, "cannot take address of a temporary value", Rust's
+E0745), since it is gone before anything could read it; through a reference
+it holds, both are normal: `id(&mut x).* = 7`. `&mut` of a constant's name is
+an error (T0018, "cannot mutably borrow constant `LIMIT`"), since a constant
+has no storage and the write would not change it; Rust only warns
+(`const_item_mutation`). `&LIMIT`, `&mut 5` and `&mut (LIMIT + 1)` are
+temporaries; Rust's promotion of `&LIMIT` to a value that lasts forever is not
+done, so such a reference cannot outlive its statement unless a `let` keeps it.
+
 A slice (`[&]T`, `[&mut]T`) is its own type, not a reference to some
 unsized `[T]`: the address of some elements and their count, known only when
 the program runs. The loan rules hold for it as for a reference: both answer
@@ -487,7 +510,7 @@ changing, moving, ending and `&mut` borrowing its place; a `&mut` loan
 forbids every access; places overlap when one's steps start with the
 other's, so other fields stay free. Lowering writes a `scope end` at a
 block's `}`, and at a `break`, `continue` or `return` that leaves the block,
-for each variable of that block; it writes no code (`InstructionKind::runs`) and is how a reference
+for each variable of that block, and one where each temporary ends; it writes no code (`InstructionKind::runs`) and is how a reference
 that outlives its variable is caught. The variable state check forgets a
 variable at its `scope end`, so a loop's next pass may set it again. Changing a variable, or its
 scope ending, does not touch a loan reached through the reference stored
@@ -497,7 +520,9 @@ in it: `r = &mut b` while `s = &mut r.*` is in use is valid (owner,
 `s.* = 3` is valid, as rustc's kill of loans through an overwritten reference
 (owner, 2026-10-29). The message names the variable: "`x` is changed while a
 `&mut` reference to it is still in use" (events: read, changed, moved,
-borrowed, borrowed as `&mut`, gone), with "reference made here" and
+borrowed, borrowed as `&mut`, gone), a temporary as "a temporary value",
+since its code may take several lines, with the help to keep it in a
+variable so it lasts as long as the reference; with "reference made here" and
 "reference used later here" (owner, 2026-10-24). A function with no
 `borrow` is not walked. A `&mut` borrow whose only use is a call argument is
 reserved until that call (two-phase, as the spec on `legacy` asks): until

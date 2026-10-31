@@ -201,9 +201,24 @@ impl ThirBuilder<'_, '_> {
                     if let ast::Expr::Index { index, .. } = tree.exprs[value]
                         && let ast::Expr::Range { .. } = tree.exprs[index]
                     {
-                        break 'checked self.check_slice(mutable, value, span);
+                        break 'checked self.check_slice(mutable, value);
                     }
-                    let place = self.add_expr(value, TypeExpectation::Hint(None));
+                    // `&5` where a `&i64` is wanted lends an `i64`.
+                    let target = expected.and_then(|ty| self.checker.types[ty].pointee());
+                    let place = self.add_expr(value, TypeExpectation::Hint(target));
+                    // A constant has no storage: each use is a new value, so a
+                    // write through the reference would not change it.
+                    let named = tree.unparenthesized(value);
+                    if mutable
+                        && let ast::Expr::Name | ast::Expr::Path(_) = tree.exprs[named]
+                        && let ExprKind::Constant(_) = self.body.exprs[place].kind
+                    {
+                        let name = tree.file.slice(tree.exprs.span(named));
+                        let message = format!("cannot mutably borrow constant `{name}`");
+                        self.checker
+                            .error(diagnostics::CONSTANT_REASSIGNMENT, message, span);
+                        break 'checked Expr::INVALID;
+                    }
                     break 'checked self.check_borrow(mutable, place, span);
                 }
                 ast::Expr::Cast { value, ty } => break 'checked self.check_cast(value, ty, span),

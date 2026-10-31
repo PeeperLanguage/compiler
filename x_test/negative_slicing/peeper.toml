@@ -25,11 +25,10 @@ stderr_contains = [
     "`.*` needs a reference or a typed raw pointer, found `[&]i32`",
     "help: a slice is lent again as it is (`f(s)`), or as `&s[..]` / `&mut s[..]`",
     "slices taken through raw pointers are not supported yet",
-    "borrows of values that are not in a variable are not supported yet",
     "`a` is borrowed as `[&mut]` while a `[&mut]` slice of it is still in use",
     "`s` is changed while a slice of it is still in use",
     "`s` is read while a `[&mut]` slice of it is still in use",
     "returns a slice of `a`, which is gone once the function returns",
     "returns a slice of `values`, which is gone once the function returns",
-    "Compilation failed with 25 error(s)",
+    "Compilation failed with 24 error(s)",
 ]

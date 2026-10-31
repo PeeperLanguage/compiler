@@ -1,0 +1,26 @@
+name = "run_temporaries"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 0
+stdout_contains = [
+    "1. lend a call's result for the call:\n  make\n60\n",
+    "2. a let keeps it:\n  make\n30\n",
+    "3. run order:\n  first\n  make\n21\n  make\n  index\n20\n",
+    "4. through a returned reference:\n5\n7\n",
+    "5. index a returned slice:\n5\n",
+    "6. &mut of a literal:\n101\n",
+    "7. a length and a sum:\n2\n12\n",
+    "8. for over a temporary:\n  make\n10\n20\n30\n  make\n11\n21\n31\n",
+    "9. conditions:\n  make\n  look\n  then\n  make\n  look\n1\n  make\n  look\n2\n  make\n  look\n10.",
+    "10. print an element of a temporary:\nPoint { row: 3, col: 4 }\n",
+    "11. field of a kept temporary:\n1\n",
+    "12. slice of a kept temporary:\n  make\n30\n",
+    "13. a call's `&mut` result lent as shared:\n7\n6\n",
+    "14. a loop's code keeps all its temporaries:\n  make\n10\n20\n  make\n0\n1\n2\n",
+    "15. an argument in a `let` ends with it:\n  make\n",
+    "16. kept in each pass:\n  make\n10\n  make\n  make\n30\n",
+    "17. a literal takes the type wanted:\n5000000000\n6000000000\n201\n",
+]

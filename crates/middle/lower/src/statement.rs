@@ -26,9 +26,7 @@ impl Lowering<'_> {
         }
         // A variable is borrowed only inside its block, so its borrows are
         // all lowered by now.
-        let end = self.thir.blocks.span(block).end as usize;
-        self.end_scopes(start, Span::new(end - 1, end)); // at the `}`
-        self.declared.truncate(start);
+        self.close_scopes(start, self.thir.blocks.span(block)); // at the `}`
         self.debug_scope = outer;
         Some(())
     }
@@ -40,6 +38,15 @@ impl Lowering<'_> {
             let variable = self.declared[index];
             self.emit(mir::InstructionKind::ScopeEnd(variable), TypeId::VOID, span);
         }
+    }
+
+    /// Ends the variables from `start` on in `declared` at the last
+    /// character of `ending`, the code they end with (a block's `}`, a
+    /// statement's `;`), and forgets them: the code after does not have them.
+    pub(super) fn close_scopes(&mut self, start: usize, ending: Span) {
+        let end = ending.end as usize;
+        self.end_scopes(start, Span::new(end - 1, end));
+        self.declared.truncate(start);
     }
 
     /// Lowers the statements of `body`, one pass of the loop `targets`,
@@ -55,6 +62,9 @@ impl Lowering<'_> {
 
     pub(super) fn lower_statement(&mut self, statement: Id<thir::Stmt>) -> Option<()> {
         let span = self.thir.stmts.span(statement);
+        // The temporaries the statement makes come after this in `declared`;
+        // they end with it, as in Rust.
+        let temporaries = self.declared.len();
         match self.thir.stmts[statement] {
             thir::Stmt::Let { variable, value } => {
                 let variable = Id::from_index(variable.index());
@@ -64,12 +74,20 @@ impl Lowering<'_> {
                     let store = mir::InstructionKind::Store { place, value };
                     self.emit(store, TypeId::VOID, span);
                 }
+                // A hidden `let` holds a `for` loop's array: every temporary
+                // of that code lasts through the loop, as in Rust, and ends
+                // with the block around it.
+                if !self.mir.variables[variable].hidden {
+                    self.close_scopes(temporaries, span);
+                }
+                self.declared.extend(self.kept.take());
                 self.declared.push(variable);
+                return Some(());
             }
             thir::Stmt::Assign { target, value } => {
                 let value = self.lower_expr(value)?;
                 let Ok(place) = self.place(target)? else {
-                    unreachable!("the checker assigns only a place in a variable")
+                    unreachable!("the checker assigns only a place")
                 };
                 let store = mir::InstructionKind::Store { place, value };
                 self.emit(store, TypeId::VOID, span);
@@ -86,6 +104,7 @@ impl Lowering<'_> {
                 self.finish(mir::Terminator::Return { value, span });
                 // What follows a `return` is unreachable; it still gets a block.
                 self.block = self.new_block(span);
+                self.declared.truncate(temporaries); // ended above
             }
             thir::Stmt::Panic(message) => {
                 let mir::Operand::Constant(message) = self.lower_expr(message)? else {
@@ -102,6 +121,9 @@ impl Lowering<'_> {
             } => {
                 let condition_span = self.thir.exprs.span(condition);
                 let condition = self.lower_expr(condition)?;
+                // A `bool` holds no reference, so the condition's temporaries
+                // end before either branch, as in Rust.
+                self.close_scopes(temporaries, condition_span);
                 let then_block = self.new_block(self.thir.blocks.span(then));
                 let else_block =
                     otherwise.map(|otherwise| self.new_block(self.thir.stmts.span(otherwise)));
@@ -133,6 +155,8 @@ impl Lowering<'_> {
                 if let Some(condition) = condition {
                     let condition_span = self.thir.exprs.span(condition);
                     let condition = self.lower_expr(condition)?;
+                    // As an `if` condition's, in each pass.
+                    self.close_scopes(temporaries, condition_span);
                     let then = self.new_block(self.thir.blocks.span(body));
                     self.finish(mir::Terminator::Branch {
                         condition,
@@ -170,6 +194,7 @@ impl Lowering<'_> {
                 self.block = self.new_block(span);
             }
         }
+        self.close_scopes(temporaries, span);
         Some(())
     }
 }

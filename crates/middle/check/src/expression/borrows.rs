@@ -13,40 +13,34 @@ use source::Span;
 use crate::builder::ThirBuilder;
 
 impl ThirBuilder<'_, '_> {
-    /// A `&place` or `&mut place` reference to the checked place `place`, in a
-    /// variable, reported at `span`. `&mut` needs a place that can be written.
+    /// A `&place` or `&mut place` reference to the checked place `place`,
+    /// reported at `span`. `&mut` needs a place that can be written.
     pub(super) fn check_borrow(&mut self, mutable: bool, place: Id<Expr>, span: Span) -> Expr {
         let target = self.body.exprs[place].ty;
         let ty = self.checker.reference_type(mutable, target, span);
         if ty == TypeId::INVALID {
             return Expr::INVALID;
         }
-        self.borrow_as(ty, place, span)
+        self.borrow_as(ty, place)
     }
 
-    /// A borrow of the checked place `place` as `ty`, a reference or slice,
-    /// reported at `span` (`check_lending`).
-    pub(super) fn borrow_as(&mut self, ty: TypeId, place: Id<Expr>, span: Span) -> Expr {
-        if !self.check_lending(ty, place, span) {
-            return Expr::INVALID;
-        }
+    /// A borrow of the checked place `place` as `ty`, a reference or slice
+    /// (`check_lending`).
+    pub(super) fn borrow_as(&mut self, ty: TypeId, place: Id<Expr>) -> Expr {
+        self.check_lending(ty, place);
         Expr {
             ty,
             kind: ExprKind::Borrow(place),
         }
     }
 
-    /// Whether the checked place `place` can be lent as `ty`, a reference or
-    /// slice, written at `span`: only a place in a variable can. A `&mut` or
-    /// `[&mut]` needs a place that can be written, else that is reported but
-    /// the place is still lent, so checking goes on; a slice place is lent
-    /// again, so its own type decides, never the variable holding it.
-    pub(super) fn check_lending(&mut self, ty: TypeId, place: Id<Expr>, span: Span) -> bool {
-        let Some((variable, decider)) = self.place_root(place) else {
-            self.checker
-                .not_supported(span, "borrows of values that are not in a variable");
-            return false;
-        };
+    /// Makes the checked place `place` one that can be lent as `ty`, a
+    /// reference or slice (`make_place`). A `&mut` or `[&mut]` needs a place
+    /// that can be written, else that is reported but the place is still
+    /// lent, so checking goes on; a slice place is lent again, so its own
+    /// type decides, never the variable holding it.
+    pub(super) fn check_lending(&mut self, ty: TypeId, place: Id<Expr>) {
+        let (variable, decider) = self.make_place(place);
         let types = &self.checker.types;
         let decider = match types[self.body.exprs[place].ty] {
             Type::Slice { .. } => Some(place),
@@ -55,21 +49,30 @@ impl ThirBuilder<'_, '_> {
         if types[ty].borrows() == Some(true) {
             self.report_unwritable(place, variable, decider, "mutably borrow");
         }
-        true
     }
 
     /// `@place`, written at `span`: the address of the checked place
-    /// `place`, in a variable, which must be a place that can be written.
+    /// `place`, which must be a place that can be written and not in a
+    /// temporary's own storage.
     pub(super) fn check_address(&mut self, place: Id<Expr>, span: Span) -> Expr {
         let target = self.body.exprs[place].ty;
         let ty = self.checker.raw_pointer_type(target, span);
         if ty == TypeId::INVALID {
             return Expr::INVALID;
         }
-        let Some((variable, decider)) = self.place_root(place) else {
-            self.checker
-                .not_supported(span, "addresses of values that are not in a variable");
-            return Expr::INVALID;
+        let (start, decider) = self.place_root(place);
+        let variable = match self.body.exprs[start].kind {
+            ExprKind::Variable(variable) => variable,
+            // Behind a reference or pointer that a temporary holds.
+            ExprKind::Temporary { variable, .. } if decider.is_some() => variable,
+            // A temporary is gone when its statement ends, and no loan follows
+            // a raw pointer to report a later use (Rust's E0745).
+            _ => {
+                let message = "cannot take address of a temporary value";
+                self.checker
+                    .error(diagnostics::INVALID_OPERATION, message, span);
+                return Expr::INVALID;
+            }
         };
         self.report_unwritable(place, variable, decider, "take the address of");
         Expr {
@@ -78,13 +81,48 @@ impl ThirBuilder<'_, '_> {
         }
     }
 
-    /// The variable that the place `place` starts from, and the pointer on
-    /// its path that decides whether it can be written: up to the nearest
-    /// raw pointer, a shared reference or slice if any, else the nearest
-    /// reference, slice or that raw pointer. `None` for a value not in a
-    /// variable. A slice's element is behind the slice, as a reference's
-    /// target is behind it.
-    pub(crate) fn place_root(&self, place: Id<Expr>) -> Option<(Id<Variable>, Option<Id<Expr>>)> {
+    /// The variable the checked place `place` starts from and the pointer
+    /// that decides whether it can be written (`place_root`), first storing
+    /// a value it starts from that is not in a variable (a call's result, a
+    /// literal) in a temporary: only a place can be lent, indexed or gone
+    /// through.
+    pub(super) fn make_place(&mut self, place: Id<Expr>) -> (Id<Variable>, Option<Id<Expr>>) {
+        let (start, decider) = self.place_root(place);
+        if let Some(variable) = self.start_variable(start) {
+            return (variable, decider);
+        }
+        // The value moves to a new id and its own becomes the temporary, so
+        // each expression holding it now holds the temporary.
+        let value = self.body.exprs[start].clone();
+        let (ty, span) = (value.ty, self.body.exprs.span(start));
+        let value = self.body.add(value, span);
+        let variable = self.add_hidden_variable(ty, true, span);
+        self.body.exprs[start] = Expr {
+            ty,
+            kind: ExprKind::Temporary {
+                variable,
+                value,
+                kept: false,
+            },
+        };
+        (variable, decider)
+    }
+
+    /// The variable that `start`, where a place starts (`place_root`), is
+    /// in: its own or a temporary's; `None` for a value in neither.
+    pub(crate) fn start_variable(&self, start: Id<Expr>) -> Option<Id<Variable>> {
+        match self.body.exprs[start].kind {
+            ExprKind::Variable(variable) | ExprKind::Temporary { variable, .. } => Some(variable),
+            _ => None,
+        }
+    }
+
+    /// Where the place `place` starts: a variable, a temporary or a value in
+    /// neither; and the pointer on its path that decides whether it can be
+    /// written: up to the nearest raw pointer, a shared reference or slice if
+    /// any, else the nearest reference, slice or that raw pointer. A slice's
+    /// element is behind the slice, as a reference's target is behind it.
+    pub(crate) fn place_root(&self, place: Id<Expr>) -> (Id<Expr>, Option<Id<Expr>>) {
         let pointer = |reference: Id<Expr>| &self.checker.types[self.body.exprs[reference].ty];
         let shared = |reference| pointer(reference).borrows() == Some(false);
         let mut root = place;
@@ -113,8 +151,7 @@ impl ThirBuilder<'_, '_> {
                     behind_raw |= matches!(pointer(reference), Type::RawPointer { .. });
                     root = reference;
                 }
-                ExprKind::Variable(variable) => return Some((variable, deciding)),
-                _ => return None,
+                _ => return (root, deciding),
             }
         }
     }
@@ -134,18 +171,13 @@ impl ThirBuilder<'_, '_> {
         let file = &self.checker.module().ast.file;
         let place_span = self.body.exprs.span(place);
         let place_text = file.slice(place_span);
-        let (written, declared, label, help) = if let Some(decider) = decider {
+        let (written, declared, help) = if let Some(decider) = decider {
             let ty = self.body.exprs[decider].ty;
             let types = &self.checker.types;
             if types[ty].borrows() == Some(true) || matches!(types[ty], Type::RawPointer { .. }) {
                 return;
             }
-            let span = self.body.exprs.span(decider);
-            let declared = match self.body.exprs[decider].kind {
-                ExprKind::Variable(variable) => self.body.variables.span(variable),
-                _ => span,
-            };
-            let holder = file.slice(span);
+            let holder = file.slice(self.body.exprs.span(decider));
             let (kind, writable) = match types[ty] {
                 Type::Slice { .. } => ("slice", "`[&mut]` slice"),
                 _ => ("reference", "`&mut` reference"),
@@ -157,8 +189,16 @@ impl ThirBuilder<'_, '_> {
                 format!("`{place_text}` through shared {kind} `{holder}`")
             };
             let help = format!("make `{holder}` a {writable}");
-            let label = format!("declared as a shared {kind} here");
-            (written, declared, label, help)
+            // Only a variable is declared; another holder (a temporary, a
+            // pointer's target) is named in the message, inside the place.
+            let declared = match self.body.exprs[decider].kind {
+                ExprKind::Variable(variable) => Some((
+                    self.body.variables.span(variable),
+                    format!("declared as a shared {kind} here"),
+                )),
+                _ => None,
+            };
+            (written, declared, help)
         } else {
             if self.body.variables[variable].mutable {
                 return;
@@ -171,15 +211,15 @@ impl ThirBuilder<'_, '_> {
             };
             let help = format!("write `let mut {holder}`");
             let label = "declared without `mut` here".to_string();
-            (written, declared, label, help)
+            (written, Some((declared, label)), help)
         };
         let message = format!("cannot {action} {written}");
-        self.checker.report(
-            Diagnostic::new(diagnostics::INVALID_ASSIGNMENT, message)
-                .label(file, place_span, "")
-                .label(file, declared, label)
-                .help(help, Vec::new()),
-        );
+        let mut error =
+            Diagnostic::new(diagnostics::INVALID_ASSIGNMENT, message).label(file, place_span, "");
+        if let Some((declared, label)) = declared {
+            error = error.label(file, declared, label);
+        }
+        self.checker.report(error.help(help, Vec::new()));
     }
 
     /// Makes `expr`, when it is a `&mut` or `[&mut]` in a variable, lend it
@@ -215,13 +255,10 @@ impl ThirBuilder<'_, '_> {
             (_, &Type::Reference { target, .. }) => {
                 let reference = self.body.add(reference, span);
                 let referred = self.dereference(reference, target);
-                if referred.ty == TypeId::INVALID {
-                    return Expr::INVALID;
-                }
                 self.body.add(referred, span)
             }
             _ => unreachable!("only a reference or slice is lent again"),
         };
-        self.borrow_as(to, place, span)
+        self.borrow_as(to, place)
     }
 }

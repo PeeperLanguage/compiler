@@ -426,3 +426,94 @@ fn unknown_names_get_suggestions() {
         )]
     );
 }
+
+#[test]
+fn temporaries() {
+    let (bodies, reported) = bodies(
+        "fn make() -> [2]i32 { return [2]i32{1, 2}; }
+            fn id(r: &mut i32) -> &mut i32 in r { return r; }
+            fn sum(values: [&]i32) -> i32 { return values[0]; }
+            fn f() {
+                let total = sum(&make());
+                let kept = &make();
+                let first = make()[0];
+                let mut x = 1;
+                id(&mut x).* = 2;
+                for v in &make() { }
+            }",
+    );
+    assert!(reported.is_empty(), "{reported:?}");
+    // A temporary is stored where it is computed, and the one a `let` lends
+    // is marked to last.
+    assert_eq!(
+        bodies[3],
+        "    let total.1 = call f2(&(_.0 = call f0():[2]i32)):i32
+    let kept.3 = &(kept _.2 = call f0():[2]i32)
+    let first.5 = (_.4 = call f0():[2]i32)[at 0:u64]
+    let mut x.6 = 1:i32
+    (_.7 = call f1(&mut x.6):&mut i32).* = 2:i32
+    {
+        let _.9 = &(_.8 = call f0():[2]i32)
+        for _.10 in 0:u64..2:u64 by 1:u64 {
+            let v.11 = &_.9.*[at _.10]
+        }
+    }
+"
+    );
+}
+
+#[test]
+fn temporaries_cannot_be_written_or_addressed() {
+    let (_, found) = bodies(
+        "fn make() -> [2]i32 { return [2]i32{1, 2}; }
+            fn f() {
+                make()[0] = 5;
+                let p = @make()[0];
+                let q = @5;
+            }",
+    );
+    let expected = reported(&[
+        ("T0007", "cannot assign to a temporary value", "make()[0]"),
+        (
+            "T0004",
+            "cannot take address of a temporary value",
+            "@make()[0]",
+        ),
+        ("T0004", "cannot take address of a temporary value", "@5"),
+    ]);
+    assert_eq!(found, expected);
+}
+
+#[test]
+fn a_constant_cannot_be_lent_as_writable() {
+    let (_, found) = bodies(
+        "const LIMIT: i32 = 5;
+            fn f() {
+                const LOCAL: i32 = 9;
+                let a = &mut LIMIT;
+                let b = &mut LOCAL;
+                let c = &mut (LIMIT);
+                let shared = &LIMIT;
+                let literal = &mut 5;
+                let sum = &mut (LIMIT + 1);
+            }",
+    );
+    let expected = reported(&[
+        (
+            "T0018",
+            "cannot mutably borrow constant `LIMIT`",
+            "&mut LIMIT",
+        ),
+        (
+            "T0018",
+            "cannot mutably borrow constant `LOCAL`",
+            "&mut LOCAL",
+        ),
+        (
+            "T0018",
+            "cannot mutably borrow constant `LIMIT`",
+            "&mut (LIMIT)",
+        ),
+    ]);
+    assert_eq!(found, expected);
+}

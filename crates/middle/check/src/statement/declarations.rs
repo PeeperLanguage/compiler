@@ -7,6 +7,7 @@ use model::ast;
 use model::ast::Ident;
 use model::constant::Constant;
 use model::semantic_types::TypeId;
+use model::thir::Expr;
 use model::thir::ExprKind;
 use model::thir::Local;
 use model::thir::Stmt;
@@ -93,9 +94,27 @@ impl ThirBuilder<'_, '_> {
                 ),
             );
         }
+        if let Some(value) = value {
+            self.keep_temporary(value);
+        }
         let variable = self.body.add(variable, name.span);
         self.declare(name, Local::Variable(variable));
         Stmt::Let { variable, value }
+    }
+
+    /// Keeps the temporary that `value`, a `let`'s value, lends itself to the
+    /// end of the block, as Rust does for `let r = &make();`. Any other in
+    /// `value`, such as a call's argument, still ends with the `let`.
+    fn keep_temporary(&mut self, value: Id<Expr>) {
+        let (ExprKind::Borrow(place) | ExprKind::Slice { array: place, .. }) =
+            self.body.exprs[value].kind
+        else {
+            return;
+        };
+        let (start, _) = self.place_root(place);
+        if let ExprKind::Temporary { ref mut kept, .. } = self.body.exprs[start].kind {
+            *kept = true;
+        }
     }
 
     /// `const name: ty = value;`: a name for a value known at compile time.

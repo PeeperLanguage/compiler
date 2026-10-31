@@ -147,14 +147,8 @@ impl ThirBuilder<'_, '_> {
                 .error(diagnostics::INVALID_OPERATION, message, index_span);
             return Expr::INVALID;
         }
-        if self.place_root(array).is_none() {
-            // shortcut: an element is read through the array's address, so
-            // from a place; an array value gets one when a temporary can.
-            let span = self.body.exprs.span(array);
-            self.checker
-                .not_supported(span, "indexes of arrays that are not in a variable");
-            return Expr::INVALID;
-        }
+        // An element is read through the array's address, so from a place.
+        self.make_place(array);
         Expr {
             ty: element,
             kind: ExprKind::Index { array, index },
@@ -181,19 +175,14 @@ impl ThirBuilder<'_, '_> {
         }
     }
 
-    /// `&array[start..end]`, `&mut` when `mutable`, at `span`, where
-    /// `indexed` is `array[start..end]`, its index a written range: a slice
-    /// of the elements of an array in a place, of one a reference points
-    /// to, or of a slice's, from `start` up to `end`, each left out or an
-    /// integer as an index is (`ExprKind::Slice`). Ends known at compile
-    /// time must be inside the array and in order; others, and every end of
-    /// a slice's, are checked when the program runs. A step is an error.
-    pub(super) fn check_slice(
-        &mut self,
-        mutable: bool,
-        indexed: Id<ast::Expr>,
-        span: Span,
-    ) -> Expr {
+    /// `&array[start..end]`, `&mut` when `mutable`, where `indexed` is
+    /// `array[start..end]`, its index a written range: a slice of the
+    /// elements of an array in a place, of one a reference points to, or of
+    /// a slice's, from `start` up to `end`, each left out or an integer as an
+    /// index is (`ExprKind::Slice`). Ends known at compile time must be
+    /// inside the array and in order; others, and every end of a slice's,
+    /// are checked when the program runs. A step is an error.
+    pub(super) fn check_slice(&mut self, mutable: bool, indexed: Id<ast::Expr>) -> Expr {
         let tree = &self.checker.module().ast;
         let ast::Expr::Index {
             value: array,
@@ -252,9 +241,7 @@ impl ThirBuilder<'_, '_> {
             return Expr::INVALID;
         };
         let slice = self.checker.types.intern(Type::Slice { mutable, element });
-        if !self.check_lending(slice, array, span) {
-            return Expr::INVALID;
-        }
+        self.check_lending(slice, array);
         Expr {
             ty: slice,
             kind: ExprKind::Slice {
@@ -374,14 +361,8 @@ impl ThirBuilder<'_, '_> {
 
     /// What `reference`, whose type refers to `target`, refers to: a place.
     pub(super) fn dereference(&mut self, reference: Id<Expr>, target: TypeId) -> Expr {
-        if self.place_root(reference).is_none() {
-            // shortcut: lowering takes a place only from a variable; a call's
-            // returned reference needs one when references are returned.
-            let span = self.body.exprs.span(reference);
-            self.checker
-                .not_supported(span, "references that are not in a variable");
-            return Expr::INVALID;
-        }
+        // Lowering takes a place only from a variable or a temporary.
+        self.make_place(reference);
         Expr {
             ty: target,
             kind: ExprKind::Dereference(reference),

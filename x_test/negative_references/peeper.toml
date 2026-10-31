@@ -7,7 +7,6 @@ outcome = "failure"
 stderr_contains = [
     "references and slices in struct fields are not supported yet",
     "references to references are not supported yet",
-    "borrows of values that are not in a variable are not supported yet",
     "cannot assign to `r.x` through shared reference `r`",
     "cannot mutably borrow `r.y` through shared reference `r`",
     "make `r` a `&mut` reference",
@@ -28,5 +27,5 @@ stderr_contains = [
     "return count.*;",
     "a shift count must be an integer, found `&i32`",
     "let shifted = 1 << count.*;",
-    "Compilation failed with 17 error(s)",
+    "Compilation failed with 16 error(s)",
 ]

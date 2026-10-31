@@ -58,6 +58,7 @@ pub fn lower(
         debug_scope: Id::from_index(0),
         loops: Vec::new(),
         declared: Vec::new(),
+        kept: None,
     };
     // One debug scope per block and one MIR variable per THIR variable, in
     // order: block `i` is debug scope `i`, and the ids of variables match.
@@ -117,6 +118,9 @@ struct Lowering<'t> {
     /// The variables in scope, in the order declared: those of a block,
     /// from where it starts (`lower_block`), are the last.
     declared: Vec<Id<mir::Variable>>,
+    /// The `kept` temporary of the `let` being lowered, which joins
+    /// `declared` when the `let` ends: the others end there, before it.
+    kept: Option<Id<mir::Variable>>,
 }
 
 /// Where a loop's `continue` and `break` go, and where the variables they

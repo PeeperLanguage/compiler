@@ -187,6 +187,16 @@ impl Loans<'_, '_> {
         }
     }
 
+    /// How a message names `variable`: by its name, or, for a hidden one,
+    /// which a message names only as a temporary, "a temporary value": its
+    /// code may be long or take several lines, and the labels show it.
+    fn variable_name(&self, variable: Id<mir::Variable>, file: &SourceFile) -> String {
+        if self.body.variables[variable].hidden {
+            return "a temporary value".to_string();
+        }
+        format!("`{}`", file.slice(self.body.variables.span(variable)))
+    }
+
     /// The borrows, then one parameter loan per parameter.
     fn loan_count(&self) -> usize {
         self.borrows.len() + self.body.parameters
@@ -571,9 +581,9 @@ impl Loans<'_, '_> {
                 if place.is_behind_reference() {
                     continue;
                 }
-                let name = file.slice(self.body.variables.span(place.variable));
+                let name = self.variable_name(place.variable, file);
                 let message = format!(
-                    "returns a {returned} {into} `{name}`, which is gone once the function returns"
+                    "returns a {returned} {into} {name}, which is gone once the function returns"
                 );
                 let error = Diagnostic::new(diagnostics::LOCAL_ADDRESS_RETURNED, message)
                     .label(file, span, "");
@@ -707,7 +717,7 @@ impl Loans<'_, '_> {
                     continue;
                 }
                 reported.set(loan);
-                let name = file.slice(self.body.variables.span(access.variable));
+                let name = self.variable_name(access.variable, file);
                 let words = self.words(self.body.instructions[borrow].ty);
                 let (noun, to) = (words.noun, words.to);
                 let kind = if mutable {
@@ -717,14 +727,19 @@ impl Loans<'_, '_> {
                 };
                 let (subject, event) = (access.subject, access.event);
                 let message =
-                    format!("{subject}`{name}` is {event} while {kind} {to} it is still in use");
-                let error = Diagnostic::new(diagnostics::BORROW_CONFLICT, message)
+                    format!("{subject}{name} is {event} while {kind} {to} it is still in use");
+                let mut error = Diagnostic::new(diagnostics::BORROW_CONFLICT, message)
                     .label(file, access.span, format!("{} here", access.label))
                     .label(
                         file,
                         self.body.instructions.span(borrow),
                         format!("{noun} made here"),
                     );
+                // A temporary ends with its statement; a variable, its block.
+                if self.body.variables[access.variable].hidden {
+                    let help = "keep the value in a variable with `let`, so it lasts as long as the reference";
+                    error = error.help(help, Vec::new());
+                }
                 return Some((holder, error));
             }
         }

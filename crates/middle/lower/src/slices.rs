@@ -60,7 +60,7 @@ impl Lowering<'_> {
             unreachable!("a slice's type is a slice")
         };
         let Ok(mut place) = self.place(array)? else {
-            unreachable!("the checker slices only an array or a slice in a variable")
+            unreachable!("the checker slices only a place")
         };
         let viewed = self.thir.exprs[array].ty;
         let length = match self.types[viewed] {

@@ -1,0 +1,27 @@
+name = "negative_temporaries"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "a temporary value is gone while a reference to it is still in use",
+    "let r = id(&num());",
+    "r = &num();",
+    "keep the value in a variable with `let`, so it lasts as long as the reference",
+    "returns a reference into a temporary value, which is gone once the function returns",
+    "cannot move an element out of its array",
+    "cannot assign to a temporary value",
+    "cannot take address of a temporary value",
+    "cannot assign to `id(&x).*` through shared reference `id(&x)`",
+    "cannot mutably borrow `id(&x).*` through shared reference `id(&x)`",
+    "cannot take the address of `id(&x).*` through shared reference `id(&x)`",
+    "make `id(&x)` a `&mut` reference",
+    "cannot assign to `view(&a)[0]` through shared slice `view(&a)`",
+    "cannot mutably borrow the elements of shared slice `view(&a)`",
+    "let e = &view(&make())[0];",
+    "cannot mutably borrow constant `LIMIT`",
+    "for v in view(&make()) {",
+    "literal `300` does not fit `u8`",
+    "Compilation failed with 16 error(s)",
+]

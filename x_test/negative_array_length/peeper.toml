@@ -9,6 +9,5 @@ stderr_contains = [
     "`[3]i32` has no field `lem`",
     "did you mean `len`?",
     "`i32` has no fields",
-    "borrows of values that are not in a variable are not supported yet",
-    "Compilation failed with 5 error(s)",
+    "Compilation failed with 4 error(s)",
 ]

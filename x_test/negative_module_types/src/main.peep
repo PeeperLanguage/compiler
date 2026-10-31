@@ -19,4 +19,5 @@ fn main() {
     // One `Point` needs no module to tell it from itself.
     let own = geometry::Origin();
     let k: geometry::Point = &own;
+    let l = &mut geometry::Sides;
 }

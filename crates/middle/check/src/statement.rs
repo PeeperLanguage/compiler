@@ -165,10 +165,15 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
 
     /// A variable of the current block with no name, made for the code at
     /// `span`.
-    fn add_hidden_variable(&mut self, ty: TypeId, span: Span) -> Id<Variable> {
+    pub(crate) fn add_hidden_variable(
+        &mut self,
+        ty: TypeId,
+        mutable: bool,
+        span: Span,
+    ) -> Id<Variable> {
         let variable = Variable {
             ty,
-            mutable: false,
+            mutable,
             initialized: true,
             scope: self.block,
             hidden: true,
