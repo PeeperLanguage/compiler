@@ -56,20 +56,28 @@ assert.equal(wrapped.code, "T0044");
 assert.equal(wrapped.related[0].message, "this reads or writes memory the program does not own");
 
 // A program runs with what it printed, with no backend or linker.
-const { entries, run } = await send({
+const { diagnostics, run } = await send({
     run: true,
     files: {
         "main.peep":
             'struct Point { x: i32, y: f64 }\nfn main() -> i32 {\n    println(Point.{ x = 1, y = 2.5 }, [2]i32{3, 4}, 340282366920938463463374607431768211455u128);\n    return 7;\n}\n',
     },
 });
-assert.deepEqual(entries, []);
+assert.equal(diagnostics, "");
 assert.deepEqual(run, {
-    stdout: "Point { x: 1, y: 2.5 } [3, 4] 340282366920938463463374607431768211455\n",
-    stderr: "",
+    output: [
+        {
+            stream: "stdout",
+            text: "Point { x: 1, y: 2.5 } [3, 4] 340282366920938463463374607431768211455\n",
+        },
+    ],
     exit_code: 7,
 });
 const stopped = await send({ run: true, files: { "main.peep": 'fn main() {\n    panic "stop";\n}\n' } });
 assert.equal(stopped.run.exit_code, 101);
-assert.equal(stopped.run.stderr, "panic: stop\n  --> src/main.peep:2:5\n");
+assert.deepEqual(stopped.run.output, [{ stream: "stderr", text: "panic: stop\n  --> main.peep:2:5\n" }]);
+const failed = await send({ run: true, files: { "main.peep": "fn main() {\n    let x: i32 = true;\n}\n" } });
+assert.match(failed.diagnostics, /\[T0001\]/);
+assert.match(failed.diagnostics, /main\.peep:2:18/);
+assert.equal(failed.run, null);
 console.log("the wasm checker found every error and ran the programs");

@@ -20,6 +20,8 @@ use check::State;
 use diagnostics::Diagnostic;
 use eval::interpreter::Failure;
 use eval::interpreter::program::ProgramFacts;
+use eval::interpreter::program::Stream;
+use eval::interpreter::program::Written;
 use eval::messages::PANIC_EXIT_CODE;
 use model::DefId;
 use model::ModuleId;
@@ -134,9 +136,8 @@ pub struct CheckedFunction<'c> {
 
 /// What a program did when `interpret` ran it.
 pub struct Interpreted {
-    pub stdout: Vec<u8>,
-    pub stderr: Vec<u8>, // with the panic text, if it stopped with one
-    pub exit_code: u8,   // as a program's parent on Linux sees it: the low 8 bits
+    pub output: Vec<Written>, // with the panic text last, if it stopped with one
+    pub exit_code: u8,        // as a program's parent on Linux sees it: the low 8 bits
 }
 
 /// Compiles `program` as `run` does, then runs it from `entry`'s `main` with
@@ -171,6 +172,10 @@ pub fn interpret(
     let (Some((main, _)), Some(types)) = (results.entry_point(), last_types) else {
         return (results, None);
     };
+    // A syntax error the parser read past is the loader's, and leaves a whole tree.
+    if program.diagnostics.iter().any(Diagnostic::is_error) {
+        return (results, None);
+    }
     let modules = program.modules.as_slice();
     let extern_symbol = |function| project::extern_symbol(modules, function).ok().flatten();
     let struct_name = |definition| {
@@ -194,7 +199,7 @@ pub fn interpret(
         &|function| bodies.get(&function),
         &facts,
     );
-    let mut stderr = outcome.stderr;
+    let mut output = outcome.output;
     let exit_code = match outcome.ending {
         Ok(code) => code as u8,
         Err(Failure::Stopped {
@@ -204,16 +209,15 @@ pub fn interpret(
         }) => {
             let file = &modules[function.module.index()].ast.file;
             let text = project::panic_text(&program.root, file, message.as_bytes(), span);
-            stderr.extend(text);
+            output.push(Written {
+                stream: Stream::Stderr,
+                text,
+            });
             PANIC_EXIT_CODE as u8
         }
         Err(_) => unreachable!("a checked program's functions run, and it exits by `Ok`"),
     };
-    let interpreted = Interpreted {
-        stdout: outcome.stdout,
-        stderr,
-        exit_code,
-    };
+    let interpreted = Interpreted { output, exit_code };
     (results, Some(interpreted))
 }
 

@@ -32,6 +32,10 @@ const STEP_LIMIT: u32 = 2_000_000_000;
 /// before its output fills the host's memory.
 const OUTPUT_LIMIT: u64 = 1 << 20;
 
+/// How many pieces a program's output may have, so one that keeps changing
+/// streams cannot give a page a million of them to show.
+const PIECE_LIMIT: usize = 10_000;
+
 /// What the standard error's and output's descriptors are, as in `core`.
 const STDOUT: i32 = 1;
 const STDERR: i32 = 2;
@@ -46,19 +50,31 @@ pub struct ProgramFacts<'f> {
     pub field_names: &'f dyn Fn(DefId) -> Vec<String>,
 }
 
-/// What a program did: what it printed, and the code it exited with, or why
-/// it stopped.
+/// Which of its outputs a program wrote to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stream {
+    Stdout,
+    Stderr,
+}
+
+/// What a program wrote to one `stream` before it wrote to the other.
+pub struct Written {
+    pub stream: Stream,
+    pub text: Vec<u8>,
+}
+
+/// What a program did: what it printed, in the order it did, and the code it
+/// exited with, or why it stopped.
 pub struct Outcome {
-    pub stdout: Vec<u8>,
-    pub stderr: Vec<u8>,
+    pub output: Vec<Written>,
     pub ending: Result<i32, Failure>,
 }
 
 /// What a whole program has that a constant's call does not.
 pub(super) struct Host<'f> {
     facts: &'f ProgramFacts<'f>,
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
+    output: Vec<Written>,
+    printed: u64, // bytes in `output`, kept as output can have a piece per print
 }
 
 /// Runs the program that starts at `main`, whose MIR is `body`, laid out for
@@ -74,8 +90,8 @@ pub fn run<'b>(
 ) -> Outcome {
     let host = Host {
         facts,
-        stdout: Vec::new(),
-        stderr: Vec::new(),
+        output: Vec::new(),
+        printed: 0,
     };
     let mut machine = Interpreter::new(types, target, mir_of, STEP_LIMIT, Some(host));
     let ending = match machine.run_from(main, body) {
@@ -86,8 +102,7 @@ pub fn run<'b>(
     };
     let host = machine.host.expect("a program's run has a host");
     Outcome {
-        stdout: host.stdout,
-        stderr: host.stderr,
+        output: host.output,
         ending,
     }
 }
@@ -101,9 +116,7 @@ impl<'f> Interpreter<'_, 'f> {
     /// Stops the run if `pending` more bytes of output pass `OUTPUT_LIMIT`.
     /// It comes before the text is made, so a huge value costs nothing.
     fn check_output(&mut self, pending: u64, span: Span) -> Result<(), Failure> {
-        let host = self.host();
-        let printed = (host.stdout.len() + host.stderr.len()) as u64;
-        if printed.saturating_add(pending) > OUTPUT_LIMIT {
+        if self.host().printed.saturating_add(pending) > OUTPUT_LIMIT {
             return Err(self.fail(format!("this printed more than {OUTPUT_LIMIT} bytes"), span));
         }
         Ok(())
@@ -114,13 +127,24 @@ impl<'f> Interpreter<'_, 'f> {
     fn output(&mut self, fd: i32, text: &[u8], span: Span) -> Result<bool, Failure> {
         self.charge(text.len() as u64, span)?;
         self.check_output(text.len() as u64, span)?;
-        let host = self.host();
-        let out = match fd {
-            STDOUT => &mut host.stdout,
-            STDERR => &mut host.stderr,
+        let stream = match fd {
+            STDOUT => Stream::Stdout,
+            STDERR => Stream::Stderr,
             _ => return Ok(false),
         };
-        out.extend_from_slice(text);
+        let host = self.host();
+        host.printed += text.len() as u64;
+        let full = host.output.len() >= PIECE_LIMIT;
+        match host.output.last_mut() {
+            // Once full, a stream's text can sit in the other's piece, but all stays in order.
+            Some(last) if last.stream == stream || full => {
+                last.text.extend_from_slice(text);
+            }
+            _ => host.output.push(Written {
+                stream,
+                text: text.to_vec(),
+            }),
+        }
         Ok(true)
     }
 

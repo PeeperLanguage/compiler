@@ -49,9 +49,12 @@ version = "0.2.0"
 dependencies = [
  "compile",
  "diagnostics",
+ "eval",
+ "lexer",
  "model",
  "project",
  "serde_json",
+ "source",
  "toml_edit",
 ]
 

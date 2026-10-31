@@ -2,29 +2,33 @@
 //! stdin as a JSON object, with `files`, an object from file name to text, and
 //! `run`, true to run the program as well. It writes the program's diagnostics
 //! to stdout as a JSON list, or for a run an object (`run`). The program starts
-//! at main.peep, and a file imports another as "playground:name". Nothing is read
-//! from a disk. The compiler can overflow wasm's stack on very deep code, so a
-//! page runs a new instance for each check, and one crash loses nothing.
+//! at main.peep, and a file imports another as "playground:name", paths from the
+//! package's own folder, so a message names a file as the page does. Nothing is
+//! read from a disk. The compiler can overflow wasm's stack on very deep code, so
+//! a page runs a new instance for each check, and one crash loses nothing.
 
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 
+use diagnostics::Diagnostic;
 use diagnostics::Label;
 use diagnostics::Severity;
+use diagnostics::printer;
+use eval::interpreter::program::Stream;
+use eval::interpreter::program::Written;
 use model::ModuleId;
 use model::machine::Machine;
 use project::Project;
 use serde_json::Value;
 use serde_json::json;
+use source::SourceFile;
 
 /// The package the page's files make up.
 const PACKAGE: &str = "playground";
-
-/// The folder its files pretend to be in, which no message should show.
-const SOURCE: &str = "/playground/src/";
 
 /// The bundled library, every file of it, since there is no disk to find it on.
 const CORE_FILES: [(&str, &str); 2] = [
@@ -66,20 +70,19 @@ fn main() -> ExitCode {
 /// The program `files` make up: `files` maps each file's path in the package
 /// to its text.
 fn load(files: HashMap<String, String>) -> (Project, project::Program) {
-    let source = Path::new(SOURCE);
     let core = Path::new("/core/src");
     let page_files = files
         .into_iter()
-        .map(|(name, text)| (source.join(name), text));
+        .map(|(name, text)| (PathBuf::from(name), text));
     let core_files = CORE_FILES.map(|(name, text)| (core.join(name), text.to_string()));
     let open_files: HashMap<PathBuf, String> = page_files.chain(core_files).collect();
     let project = Project {
         packages: HashMap::from([
-            (PACKAGE.to_string(), source.to_path_buf()),
+            (PACKAGE.to_string(), PathBuf::new()),
             ("core".to_string(), core.to_path_buf()),
         ]),
-        entry: source.join("main.peep"),
-        root: PathBuf::from(format!("/{PACKAGE}")),
+        entry: PathBuf::from("main.peep"),
+        root: PathBuf::new(),
         name: PACKAGE.to_string(),
     };
     let program = project::load(&project, &open_files);
@@ -108,21 +111,38 @@ fn check(files: HashMap<String, String>) -> Value {
 }
 
 /// Compiles the program `files` make up and runs it with no backend. Gives its
-/// diagnostics as `entries`, and `run`, null unless they let it start, with
-/// what it printed to `stdout` and `stderr` (a panic's text too) and its
+/// `diagnostics` as a terminal shows them, in its colors, and `run`, null
+/// unless they let it start, with its `output` in the order it wrote it (a
+/// panic's text last), each piece a `text` and its `stream`, and its
 /// `exit_code`.
 fn run(files: HashMap<String, String>) -> Value {
     let (project, program) = load(files);
     let target = Machine::named(TARGET).expect("the target is a machine");
     let (results, ran) = interpret(&project, &program, target);
     let ran = ran.map(|ran| {
-        json!({
-            "stdout": String::from_utf8_lossy(&ran.stdout),
-            "stderr": String::from_utf8_lossy(&ran.stderr),
-            "exit_code": ran.exit_code,
-        })
+        let piece = |written: &Written| {
+            let stream = match written.stream {
+                Stream::Stdout => "stdout",
+                Stream::Stderr => "stderr",
+            };
+            json!({ "stream": stream, "text": String::from_utf8_lossy(&written.text) })
+        };
+        let output: Vec<Value> = ran.output.iter().map(piece).collect();
+        json!({ "output": output, "exit_code": ran.exit_code })
     });
-    json!({ "entries": entries(&program, &results), "run": ran })
+    let found: Vec<Diagnostic> = all_diagnostics(&program, &results).cloned().collect();
+    let mut printed = Vec::new();
+    let scan = |file: &Arc<SourceFile>| lexer::scan(file).0;
+    printer::print(&mut printed, &found, Some(&scan)).expect("writing to memory cannot fail");
+    json!({ "diagnostics": String::from_utf8_lossy(&printed), "run": ran })
+}
+
+/// Every diagnostic of `program` and `results`, the loader's first.
+fn all_diagnostics<'a>(
+    program: &'a project::Program,
+    results: &'a compile::Results,
+) -> impl Iterator<Item = &'a Diagnostic> {
+    program.diagnostics.iter().chain(results.diagnostics())
 }
 
 /// Compiles and runs `program` for `target`. A program that cannot be checked
@@ -146,19 +166,15 @@ fn interpret(
 /// places; a place has its `file`, its `start` and `end`, and its own
 /// `message`.
 fn entries(program: &project::Program, results: &compile::Results) -> Value {
-    let source = Path::new(SOURCE);
     let place = |label: &Label| {
-        let path = Path::new(&label.file.path);
-        let name = path.strip_prefix(source).unwrap_or(path);
         json!({
-            "file": name.to_string_lossy(),
+            "file": label.file.path,
             "start": position(label, label.span.start),
             "end": position(label, label.span.end),
             "message": label.message,
         })
     };
-    let found = program.diagnostics.iter().chain(results.diagnostics());
-    let entries = found.map(|diagnostic| {
+    let entries = all_diagnostics(program, results).map(|diagnostic| {
         let severity = match diagnostic.code.severity {
             Severity::Error => "error",
             Severity::Warning => "warning",
@@ -169,7 +185,7 @@ fn entries(program: &project::Program, results: &compile::Results) -> Value {
         json!({
             "severity": severity,
             "code": diagnostic.code.id,
-            "message": diagnostic.full_message().replace(SOURCE, ""),
+            "message": diagnostic.full_message(),
             "place": places.next(),
             "related": places.collect::<Vec<_>>(),
         })

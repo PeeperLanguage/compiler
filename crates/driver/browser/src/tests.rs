@@ -64,6 +64,54 @@ fn a_clean_program_has_no_entries() {
 }
 
 #[test]
+fn a_failed_build_prints_as_the_terminal_does_and_does_not_start() {
+    // The text, with the codes that color it taken out.
+    fn plain(colored: &str) -> String {
+        let mut parts = colored.split('\u{1b}');
+        let first = parts.next().unwrap_or_default().to_string();
+        parts.fold(first, |text, part| {
+            text + part.split_once('m').map_or(part, |(_, rest)| rest)
+        })
+    }
+
+    let text = "fn main() {\n    let total: i32 = true;\n    println(total);\n}\n";
+    let found = run(files(&[("main.peep", text)]));
+    let expected = "[T0001]: mismatched types: expected `i32`, found `bool`\n  \
+        --> main.peep:2:22\n  | \n1 | fn main() {\n2 |     let total: i32 = true;\n  \
+        |                      ^^^^\n  | \n  \
+        = help: add `as i32` to convert, which can change the value\n  | \n\
+        2 |     let total: i32 = true as i32;\n\nCompilation failed with 1 error(s)\n";
+    let printed = found["diagnostics"].as_str().expect("diagnostics are text");
+    assert_eq!(plain(printed), expected);
+    assert!(printed.contains("\u{1b}[1;31m[T0001]"), "{printed}");
+    assert_eq!(found["run"], Value::Null);
+}
+
+#[test]
+fn a_syntax_error_the_parser_read_past_does_not_start() {
+    let text = "fn main() {\n    println(1)\n}\n";
+    let found = run(files(&[("main.peep", text)]));
+    let printed = found["diagnostics"].as_str().expect("diagnostics are text");
+    assert!(printed.contains("[P0002]"), "{printed}");
+    assert_eq!(found["run"], Value::Null);
+}
+
+#[test]
+fn a_warning_stays_apart_from_what_the_program_prints() {
+    let text = "fn main() {\n    println(1);\n    return;\n    println(2);\n}\n";
+    let found = run(files(&[("main.peep", text)]));
+    let diagnostics = found["diagnostics"].as_str().expect("diagnostics are text");
+    assert!(
+        diagnostics.contains("Compilation succeeded with 1 warning(s)"),
+        "{diagnostics}"
+    );
+    assert_eq!(
+        found["run"]["output"],
+        json!([{ "stream": "stdout", "text": "1\n" }])
+    );
+}
+
+#[test]
 fn every_core_file_is_built_in() {
     let core = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../_builtin_library/core/src");
     let mut on_disk: Vec<String> = std::fs::read_dir(core)
@@ -191,8 +239,8 @@ fn run_fixtures_run_here_with_the_same_results() {
         ran += 1;
         let (code, stdout, stderr) = (
             i64::from(interpreted.exit_code),
-            String::from_utf8_lossy(&interpreted.stdout),
-            String::from_utf8_lossy(&interpreted.stderr),
+            String::from_utf8_lossy(&written(&interpreted, Stream::Stdout)).into_owned(),
+            String::from_utf8_lossy(&written(&interpreted, Stream::Stderr)).into_owned(),
         );
         let expected = match test("outcome").and_then(toml_edit::Item::as_str) {
             Some("success") => code == 0,
@@ -212,7 +260,8 @@ fn run_fixtures_run_here_with_the_same_results() {
                 .flatten()
                 .filter_map(|text| text.as_str())
             {
-                if !printed.contains(text) {
+                // Compiled, the path starts at the project; here, at `src`.
+                if !printed.contains(&text.replace("src/", "")) {
                     failures.push(format!("{name}: {key} lacks {text:?}\n{printed}"));
                 }
             }
@@ -220,6 +269,12 @@ fn run_fixtures_run_here_with_the_same_results() {
     }
     assert!(ran > 0, "no run fixtures found");
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+/// All that `run` wrote to `stream`.
+fn written(run: &compile::Interpreted, stream: Stream) -> Vec<u8> {
+    let pieces = run.output.iter().filter(|piece| piece.stream == stream);
+    pieces.flat_map(|piece| piece.text.clone()).collect()
 }
 
 /// What the program of the one file `text` does when interpreted.
@@ -234,13 +289,40 @@ fn interpreted(text: &str) -> compile::Interpreted {
 }
 
 #[test]
+fn output_keeps_the_order_it_was_written_in() {
+    let text = "import \"core:global\";\nfn main() {\n    global::Write(global::Stderr, c\"a\", 1);\n    println(1);\n    println(2);\n    global::Write(global::Stderr, c\"b\", 1);\n}\n";
+    let found = run(files(&[("main.peep", text)]));
+    let expected = json!([
+        { "stream": "stderr", "text": "a" },
+        { "stream": "stdout", "text": "1\n2\n" },
+        { "stream": "stderr", "text": "b" },
+    ]);
+    assert_eq!(found["run"]["output"], expected);
+}
+
+#[test]
+fn a_program_that_keeps_changing_streams_makes_few_pieces_and_keeps_its_text() {
+    let run = interpreted(
+        "import \"core:global\";\nfn main() {\n    for {\n        global::Write(global::Stderr, c\"a\", 1);\n        global::Write(global::Stdout, c\"b\", 1);\n    }\n}\n",
+    );
+    assert!(run.output.len() <= 10_001, "{} pieces", run.output.len());
+    let bytes: usize = run.output.iter().map(|piece| piece.text.len()).sum();
+    assert!(bytes >= 1 << 20, "{bytes} bytes");
+    let last = run.output.last().expect("it printed");
+    assert!(last.text.starts_with(b"panic: this printed more than"));
+}
+
+#[test]
 fn a_program_that_prints_forever_stops_with_what_it_printed() {
     let run = interpreted("fn main() {\n    for {\n        println(1);\n    }\n}\n");
     assert_eq!(run.exit_code, 101);
-    assert!(run.stdout.len() <= 1 << 20 && run.stdout.starts_with(b"1\n1\n"));
-    let stderr = String::from_utf8_lossy(&run.stderr);
     assert!(
-        stderr.starts_with("panic: this printed more than 1048576 bytes\n  --> src/main.peep:3:9"),
+        written(&run, Stream::Stdout).len() <= 1 << 20
+            && written(&run, Stream::Stdout).starts_with(b"1\n1\n")
+    );
+    let stderr = String::from_utf8_lossy(&written(&run, Stream::Stderr)).into_owned();
+    assert!(
+        stderr.starts_with("panic: this printed more than 1048576 bytes\n  --> main.peep:3:9"),
         "{stderr}"
     );
 }
@@ -250,8 +332,11 @@ fn a_function_outside_peeper_stops_the_run_by_its_name() {
     let run = interpreted(
         "#[extern(\"puts\")]\nfn puts(text: cstr) -> i32;\nfn main() {\n    println(1);\n    puts(c\"a\");\n}\n",
     );
-    assert_eq!((run.exit_code, &run.stdout[..]), (101, &b"1\n"[..]));
-    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert_eq!(
+        (run.exit_code, &written(&run, Stream::Stdout)[..]),
+        (101, &b"1\n"[..])
+    );
+    let stderr = String::from_utf8_lossy(&written(&run, Stream::Stderr)).into_owned();
     assert!(
         stderr.starts_with("panic: `puts` is outside Peeper, so it cannot run here\n"),
         "{stderr}"
@@ -265,7 +350,7 @@ fn memory_a_program_gets_wrong_stops_it() {
     let twice = format!(
         "{header}fn main() {{\n    let block = malloc(4);\n    release(block);\n    release(block);\n}}\n"
     );
-    let stderr = interpreted(&twice).stderr;
+    let stderr = written(&interpreted(&twice), Stream::Stderr);
     assert!(stderr.starts_with(b"panic: this frees memory that is not allocated\n"));
 
     let huge = format!(
@@ -284,10 +369,7 @@ fn recursion_past_the_stack_stops_as_a_panic() {
         "fn f(n: i32) -> i32 {\n    return f(n + 1) + 1;\n}\nfn main() {\n    f(0);\n}\n",
     );
     assert_eq!(run.exit_code, 101);
-    assert!(
-        run.stderr
-            .starts_with(b"panic: this went 100000 calls deep\n")
-    );
+    assert!(written(&run, Stream::Stderr).starts_with(b"panic: this went 100000 calls deep\n"));
 }
 
 #[test]
@@ -296,8 +378,8 @@ fn exit_ends_a_program_with_its_code_and_keeps_its_output() {
         "import \"core:global\";\nfn main() {\n    global::Write(global::Stderr, c\"bad\\n\", 4);\n    println(1.5, -7i128);\n    global::Exit(3);\n    println(2);\n}\n",
     );
     assert_eq!(run.exit_code, 3);
-    assert_eq!(run.stdout, b"1.5 -7\n");
-    assert_eq!(run.stderr, b"bad\n");
+    assert_eq!(written(&run, Stream::Stdout), b"1.5 -7\n");
+    assert_eq!(written(&run, Stream::Stderr), b"bad\n");
 
     let negative = interpreted("fn main() -> i32 {\n    return -1;\n}\n");
     assert_eq!(
@@ -312,8 +394,8 @@ fn printing_a_huge_value_stops_before_its_text_is_built() {
         "#[extern(\"malloc\")]\nfn malloc(size: usize) -> *[64000000]u8;\nfn main() {\n    let block = malloc(64000000);\n    println(&block.*);\n}\n",
     );
     assert_eq!(run.exit_code, 101);
-    assert!(run.stdout.is_empty());
-    assert!(run.stderr.starts_with(b"panic: this printed more than"));
+    assert!(written(&run, Stream::Stdout).is_empty());
+    assert!(written(&run, Stream::Stderr).starts_with(b"panic: this printed more than"));
 }
 
 #[test]
@@ -322,36 +404,42 @@ fn a_run_gives_what_a_program_printed_or_why_it_did_not_start() {
         "main.peep",
         "fn main() -> i32 {\n    println(40 + 2);\n    return 3;\n}\n",
     )]));
-    assert_eq!(ran["entries"], json!([]));
+    assert_eq!(ran["diagnostics"], "");
     assert_eq!(
         ran["run"],
-        json!({ "stdout": "42\n", "stderr": "", "exit_code": 3 })
+        json!({ "output": [{ "stream": "stdout", "text": "42\n" }], "exit_code": 3 })
     );
 
     let broken = run(files(&[("main.peep", "fn main() {\n    missing();\n}\n")]));
     assert_eq!(broken["run"], Value::Null);
-    assert_eq!(broken["entries"][0]["severity"], "error");
+    let printed = broken["diagnostics"]
+        .as_str()
+        .expect("diagnostics are text");
+    assert!(printed.contains("missing"), "{printed}");
 
-    // No `main`, and then no entry file at all: the same errors as a check.
+    // No `main`, and then no entry file at all.
     let no_main = run(files(&[("main.peep", "fn other() {}\n")]));
     assert_eq!(no_main["run"], Value::Null);
-    assert_eq!(no_main["entries"][0]["severity"], "error");
+    let printed = no_main["diagnostics"]
+        .as_str()
+        .expect("diagnostics are text");
+    assert!(printed.contains("[M0006]"), "{printed}");
     let no_file = run(files(&[("other.peep", "fn other() {}\n")]));
     assert_eq!(no_file["run"], Value::Null);
-    assert_eq!(
-        no_file["entries"],
-        check(files(&[("other.peep", "fn other() {}\n")]))
-    );
+    let printed = no_file["diagnostics"]
+        .as_str()
+        .expect("diagnostics are text");
+    assert!(printed.contains("Compilation failed"), "{printed}");
 
     // A panic is a run that ended, not a diagnostic.
     let panicked = run(files(&[(
         "main.peep",
         "fn main() {\n    panic \"stop\";\n}\n",
     )]));
-    assert_eq!(panicked["entries"], json!([]));
+    assert_eq!(panicked["diagnostics"], "");
     assert_eq!(panicked["run"]["exit_code"], 101);
     assert_eq!(
-        panicked["run"]["stderr"],
-        "panic: stop\n  --> src/main.peep:2:5\n"
+        panicked["run"]["output"],
+        json!([{ "stream": "stderr", "text": "panic: stop\n  --> main.peep:2:5\n" }])
     );
 }
