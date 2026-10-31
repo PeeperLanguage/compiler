@@ -71,11 +71,13 @@ fn link(
     linker
         .args(sdk_flags(target)?)
         .args(clang_flag(target))
-        .args(objects)
-        .arg(runtime);
+        .args(objects);
     if target.os != "windows" {
-        linker.arg("-lm"); // LLVM turns a float `%` into a call of `fmod`
+        // LLVM turns a float `%` into a call of `fmod`. Before the runtime,
+        // whose archive holds a slower one.
+        linker.arg("-lm");
     }
+    linker.arg(runtime);
     if mode == BuildMode::Release {
         linker.arg(if target.os == "macos" {
             "-Wl,-dead_strip,-S,-x" // ld64.lld has no `-s`

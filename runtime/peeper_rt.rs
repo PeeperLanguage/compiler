@@ -31,6 +31,11 @@ const STDOUT: i32 = 1;
 const STDERR: i32 = 2;
 const PANIC_EXIT: i32 = 101;
 
+// `compiler_builtins`, in this archive, names it for the helpers a program can
+// call (`fmod`, `__modti3`). With `panic=abort` nothing unwinds to call it.
+#[unsafe(no_mangle)]
+extern "C" fn rust_eh_personality() {}
+
 #[panic_handler]
 fn on_panic(_: &core::panic::PanicInfo) -> ! {
     unsafe { abort() }
@@ -56,18 +61,20 @@ unsafe fn system_write(fd: i32, buffer: *const c_void, length: i32) -> i32 {
     }
 }
 
+const OUTPUT_SIZE: usize = 8192;
+
 /// What `print` has written and stdout has not yet. A program has one thread.
-struct Output(UnsafeCell<([u8; 8192], usize)>);
+struct Output(UnsafeCell<([u8; OUTPUT_SIZE], usize)>);
 
 unsafe impl Sync for Output {}
 
-static OUTPUT: Output = Output(UnsafeCell::new(([0; 8192], 0)));
+static OUTPUT: Output = Output(UnsafeCell::new(([0; OUTPUT_SIZE], 0)));
 
 fn push(bytes: &[u8]) {
-    // Only this file's functions reach it, one at a time.
-    let (buffer, used) = unsafe { &mut *OUTPUT.0.get() };
-    for chunk in bytes.chunks(buffer.len()) {
-        if *used + chunk.len() > buffer.len() {
+    for chunk in bytes.chunks(OUTPUT_SIZE) {
+        // Only this file's functions reach it, and no reference to it may
+        // live across `flush`, which makes its own.
+        if unsafe { (*OUTPUT.0.get()).1 } + chunk.len() > OUTPUT_SIZE {
             flush();
         }
         let (buffer, used) = unsafe { &mut *OUTPUT.0.get() };
@@ -103,17 +110,17 @@ fn push_decimal(mut value: u64, width: usize) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn peeper_rt_v1_alloc(size: usize) -> *mut c_void {
+extern "C" fn peeper_rt_v1_alloc(size: usize) -> *mut c_void {
     unsafe { malloc(size) }
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn peeper_rt_v1_free(pointer: *mut c_void) {
+unsafe extern "C" fn peeper_rt_v1_free(pointer: *mut c_void) {
     unsafe { free(pointer) }
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn peeper_rt_v1_write(fd: i32, buffer: *const c_void, length: i32) -> i32 {
+unsafe extern "C" fn peeper_rt_v1_write(fd: i32, buffer: *const c_void, length: i32) -> i32 {
     if length < 0 {
         return -1;
     }
@@ -121,7 +128,7 @@ pub unsafe extern "C" fn peeper_rt_v1_write(fd: i32, buffer: *const c_void, leng
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn peeper_rt_v1_read(fd: i32, buffer: *mut c_void, length: i32) -> i32 {
+unsafe extern "C" fn peeper_rt_v1_read(fd: i32, buffer: *mut c_void, length: i32) -> i32 {
     if length < 0 {
         return -1;
     }
@@ -136,12 +143,12 @@ pub unsafe extern "C" fn peeper_rt_v1_read(fd: i32, buffer: *mut c_void, length:
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn peeper_rt_v1_exit(code: i32) -> ! {
+extern "C" fn peeper_rt_v1_exit(code: i32) -> ! {
     unsafe { exit(code) }
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn peeper_rt_v1_print_text(text: *const u8) {
+unsafe extern "C" fn peeper_rt_v1_print_text(text: *const u8) {
     if text.is_null() {
         push(b"null");
         return;
@@ -151,9 +158,10 @@ pub unsafe extern "C" fn peeper_rt_v1_print_text(text: *const u8) {
 }
 
 /// Writes the integer of `count` 64-bit limbs at `limbs`, least significant
-/// first, in two's complement when `is_signed`.
+/// first, in two's complement when `is_signed`. In v1 the limbs were
+/// arguments; the new name makes an old library a link error, not wrong text.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn peeper_rt_v1_print_int(is_signed: i32, count: i32, limbs: *const u64) {
+unsafe extern "C" fn peeper_rt_v2_print_int(is_signed: i32, count: i32, limbs: *const u64) {
     let count = count as usize;
     if count == 1 {
         let value = unsafe { limbs.read_unaligned() };
@@ -204,7 +212,7 @@ pub unsafe extern "C" fn peeper_rt_v1_print_int(is_signed: i32, count: i32, limb
             remainder = high % CHUNK;
             let low = remainder << 32 | (*limb & 0xFFFF_FFFF);
             remainder = low % CHUNK;
-            *limb = (high / CHUNK) << 32 | low / CHUNK;
+            *limb = ((high / CHUNK) << 32) | (low / CHUNK);
         }
         chunks[chunk_count] = remainder as u32;
         chunk_count += 1;
@@ -245,7 +253,7 @@ impl Write for Text {
 // rounds up (`224025.625f32` prints `224025.63`), and Python takes the even
 // digit (`224025.62`).
 #[unsafe(no_mangle)]
-pub extern "C" fn peeper_rt_v1_print_float(value: f64, bits: i32) {
+extern "C" fn peeper_rt_v1_print_float(value: f64, bits: i32) {
     if value.is_nan() {
         push(b"nan");
         return;
@@ -258,14 +266,11 @@ pub extern "C" fn peeper_rt_v1_print_float(value: f64, bits: i32) {
         bytes: [0; 48],
         used: 0,
     };
-    let formatted = if bits == 32 {
+    _ = if bits == 32 {
         write!(text, "{:e}", value as f32)
     } else {
         write!(text, "{value:e}")
     };
-    if formatted.is_err() {
-        unsafe { abort() }
-    }
     // `text` is `[-]d[.ddd]e[-]x`: its digits and exponent.
     let text = &text.bytes[..text.used];
     let (sign, text) = match text.split_first() {
@@ -325,7 +330,7 @@ pub extern "C" fn peeper_rt_v1_print_float(value: f64, bits: i32) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn peeper_rt_v1_print_pointer(pointer: *const c_void) {
+extern "C" fn peeper_rt_v1_print_pointer(pointer: *const c_void) {
     push(b"0x");
     let address = pointer as usize as u64;
     let shown = (64 - (address | 1).leading_zeros()).div_ceil(4);
@@ -335,6 +340,6 @@ pub extern "C" fn peeper_rt_v1_print_pointer(pointer: *const c_void) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn peeper_rt_v1_flush() {
+extern "C" fn peeper_rt_v1_flush() {
     flush();
 }
