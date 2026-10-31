@@ -18,5 +18,6 @@ stderr_contains = [
     "`...` here spreads a range, an array or a slice of `negative_module_types:geometry::Point`, found `[1]negative_module_types:other::Point`",
     "mismatched types: expected `negative_module_types:geometry::Point`, found `&negative_module_types:other::Point`",
     "mismatched types: expected `Point`, found `&Point`",
-    "Compilation failed with 11 error(s)",
+    "cannot mutably borrow constant `geometry::Sides`",
+    "Compilation failed with 12 error(s)",
 ]

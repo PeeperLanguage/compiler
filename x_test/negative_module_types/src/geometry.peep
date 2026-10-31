@@ -1,6 +1,8 @@
 struct Point { x: i32 }
 struct hidden { x: i32 }
 
+const Sides: i32 = 4;
+
 fn Origin() -> Point {
     return .{ x = 0 };
 }

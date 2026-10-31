@@ -1,0 +1,6 @@
+name = "mir_temporaries"
+build = "program"
+
+[test]
+mode = "mir"
+outcome = "success"

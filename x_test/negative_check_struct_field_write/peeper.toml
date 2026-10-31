@@ -10,6 +10,6 @@ stderr_contains = [
     "write `let mut p`",
     "`Point` has no field `z`",
     "mismatched types: expected `i32`, found `bool`",
-    "only a variable's fields can be set",
+    "cannot assign to a temporary value",
     "Compilation failed with 4 error(s)",
 ]

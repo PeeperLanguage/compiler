@@ -43,7 +43,8 @@ impl ThirBuilder<'_, '_> {
                 // missed. Track where addresses flow in MIR, as loans do,
                 // when that is decided.
                 if let ExprKind::Address(place) = self.body.exprs[value].kind
-                    && let Some((variable, None)) = self.place_root(place)
+                    && let (start, None) = self.place_root(place)
+                    && let ExprKind::Variable(variable) = self.body.exprs[start].kind
                 {
                     let file = &self.checker.module().ast.file;
                     let declared = self.body.variables.span(variable);
@@ -113,25 +114,33 @@ impl ThirBuilder<'_, '_> {
         if let ExprKind::Invalid = self.body.exprs[place].kind {
             return None; // its error was reported
         }
-        let Some((variable, decider)) = self.place_root(place) else {
-            let message = match self.body.exprs[place].kind {
-                // A field read that is no place: an array's or a slice's
-                // `len` (`check_field`).
-                ExprKind::Length(value)
-                    if matches!(
-                        self.checker.types[self.body.exprs[value].ty],
-                        Type::Slice { .. }
-                    ) =>
-                {
-                    "a slice's `len` cannot be set"
-                }
-                ExprKind::Constant(_) | ExprKind::Length(_) => "an array's `len` cannot be set",
-                _ => "only a variable's fields can be set",
-            };
-            let span = self.body.exprs.span(place);
-            self.checker
-                .error(diagnostics::INVALID_ASSIGNMENT, message, span);
-            return None;
+        let (start, decider) = self.place_root(place);
+        let variable = match self.body.exprs[start].kind {
+            ExprKind::Variable(variable) => variable,
+            // Behind a reference or pointer that a temporary holds.
+            ExprKind::Temporary { variable, .. } if decider.is_some() => variable,
+            ref start => {
+                let message = match *start {
+                    // A field read that is no place: an array's or a slice's
+                    // `len` (`check_field`).
+                    ExprKind::Length(value)
+                        if matches!(
+                            self.checker.types[self.body.exprs[value].ty],
+                            Type::Slice { .. }
+                        ) =>
+                    {
+                        "a slice's `len` cannot be set"
+                    }
+                    ExprKind::Constant(_) | ExprKind::Length(_) => "an array's `len` cannot be set",
+                    // The value is gone when the statement ends, so nothing
+                    // could read what is written.
+                    _ => "cannot assign to a temporary value",
+                };
+                let span = self.body.exprs.span(place);
+                self.checker
+                    .error(diagnostics::INVALID_ASSIGNMENT, message, span);
+                return None;
+            }
         };
         self.report_unwritable(place, variable, decider, "assign to");
         Some(place)

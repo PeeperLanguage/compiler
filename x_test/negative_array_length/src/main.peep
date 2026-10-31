@@ -10,5 +10,4 @@ fn main() {
     let size = values.lem;
     let number = 5;
     let count = number.len;
-    let reference = &values.len;
 }

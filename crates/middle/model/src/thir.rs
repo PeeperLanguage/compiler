@@ -119,7 +119,8 @@ pub struct Variable {
     /// function's block for a parameter.
     pub scope: Id<Block>,
     /// Made by the checker, with no name: its span is the code it was made
-    /// for (a `for` loop's array or counter), not a name.
+    /// for (a `for` loop's array or counter, a temporary's value), not a
+    /// name.
     pub hidden: bool,
 }
 
@@ -194,13 +195,23 @@ pub enum ExprKind {
     Dereference(Id<Expr>),
     /// `&place` or `&mut place`, as its reference or slice type says, and a
     /// `&mut` or `[&mut]` variable passed to a call (lent again, not moved);
-    /// the place is a `Variable`, a `Dereference`, or a `Field` or `Index` of
-    /// a place. As a slice, the place is an array, whose elements it views,
+    /// the place is a `Variable`, a `Temporary`, a `Dereference`, or a `Field`
+    /// or `Index` of a place. As a slice, the place is an array, whose elements it views,
     /// or a slice, whose elements it lends again.
     Borrow(Id<Expr>),
     /// `@place`: the place's address as a raw pointer, which no loan
     /// follows; the place is as a `Borrow`'s.
     Address(Id<Expr>),
+    /// `value`, stored into the hidden `variable` where it is computed, so
+    /// a place starts there: a value not in a variable (a call's result, a
+    /// literal) that is lent, indexed or gone through. The variable ends
+    /// with the statement, as in Rust, or, when `kept`, with the block: a
+    /// `let`'s value lends it.
+    Temporary {
+        variable: Id<Variable>,
+        value: Id<Expr>,
+        kept: bool,
+    },
     /// `&array[start..end]`, `&mut` as the slice type `ty` says, or `..=`
     /// when `inclusive`: a slice of the elements of the array, a place as a
     /// `Borrow`'s, from `start`, or 0 when not written, up to `end`, or its
@@ -343,7 +354,8 @@ impl Body {
             | ExprKind::Length(value)
             | ExprKind::Dereference(value)
             | ExprKind::Borrow(value)
-            | ExprKind::Address(value) => self.calls(value),
+            | ExprKind::Address(value)
+            | ExprKind::Temporary { value, .. } => self.calls(value),
             ExprKind::Range {
                 start, end, step, ..
             } => self.calls(start) || self.calls(end) || self.calls(step),
@@ -610,6 +622,17 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
             ExprKind::Address(place) => {
                 self.out.push('@');
                 self.write_expr(place);
+            }
+            ExprKind::Temporary {
+                variable,
+                value,
+                kept,
+            } => {
+                self.out.push_str(if kept { "(kept " } else { "(" });
+                self.write_variable(variable);
+                self.out.push_str(" = ");
+                self.write_expr(value);
+                self.out.push(')');
             }
             ExprKind::Slice {
                 array,

@@ -1,0 +1,23 @@
+// Where each temporary ends: with its statement; before the branch for an
+// `if` or a loop condition, in each pass; with its side of `&&`; and at the
+// block's end when a `let` lends it.
+
+fn make() -> i32 {
+    return 1;
+}
+
+fn look(value: &i32) -> bool {
+    return value.* == 1;
+}
+
+fn main() {
+    look(&make());
+    let kept = &make();
+    if look(&make()) {
+        println(kept.*);
+    }
+    for look(&make()) {
+        break;
+    }
+    let both = look(&make()) && look(&make());
+}

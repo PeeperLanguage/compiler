@@ -15,7 +15,6 @@ stderr_contains = [
     "`i32` cannot be indexed",
     "arrays of references are not supported yet",
     "an array length is a whole number without a suffix",
-    "indexes of arrays that are not in a variable are not supported yet",
     "cannot assign to `c[0]` of immutable `c`",
-    "Compilation failed with 12 error(s)",
+    "Compilation failed with 11 error(s)",
 ]

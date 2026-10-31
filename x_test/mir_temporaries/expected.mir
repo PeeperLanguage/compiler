@@ -1,0 +1,70 @@
+fn make:
+  bb0:
+    return 1
+  bb1:
+    fall off at `}`
+fn look:
+  bb0:
+    store value.0, arg0
+    %1 = load value.0.*: i32
+    %2 = EqualTo %1, 1: bool
+    scope end value.0
+    return %2
+  bb1:
+    scope end value.0
+    fall off at `}`
+fn main:
+  bb0:
+    %0 = call make(): i32
+    store _.0, %0
+    %2 = borrow _.0: &i32
+    %3 = call look(%2): bool
+    scope end _.0
+    %5 = call make(): i32
+    store _.1, %5
+    %7 = borrow _.1: &i32
+    store kept.2, %7
+    %9 = call make(): i32
+    store _.3, %9
+    %11 = borrow _.3: &i32
+    %12 = call look(%11): bool
+    scope end _.3
+    branch %12 (look(&make())) bb1 bb2
+  bb1:
+    %14 = load kept.2.*: i32
+    println(%14)
+    goto bb2
+  bb2:
+    goto bb3
+  bb3:
+    %16 = call make(): i32
+    store _.4, %16
+    %18 = borrow _.4: &i32
+    %19 = call look(%18): bool
+    scope end _.4
+    branch %19 (look(&make())) bb5 bb4
+  bb4:
+    %21 = call make(): i32
+    store _.5, %21
+    %23 = borrow _.5: &i32
+    %24 = call look(%23): bool
+    scope end _.5
+    branch %24 (look(&make())) bb7 bb8
+  bb5:
+    goto bb4
+  bb6:
+    goto bb3
+  bb7:
+    %26 = call make(): i32
+    store _.6, %26
+    %28 = borrow _.6: &i32
+    %29 = call look(%28): bool
+    scope end _.6
+    goto bb8
+  bb8:
+    %31 = phi bb4: false, bb7: %29: bool
+    store both.7, %31
+    scope end both.7
+    scope end kept.2
+    scope end _.1
+    fall off at `}`

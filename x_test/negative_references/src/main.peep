@@ -1,6 +1,6 @@
 // What references cannot do yet, or ever: be held in a struct, refer to a
-// reference, borrow a value not in a variable, write or lend `&mut` through
-// `&`, or lend `&mut` of an immutable variable.
+// reference, write or lend `&mut` through `&`, or lend `&mut` of an
+// immutable variable.
 struct Holder { point: &Point }
 struct Point { x: i32, y: i32 }
 
@@ -25,15 +25,10 @@ fn reads(count: &i32) -> i32 {
     return count;
 }
 
-fn make() -> Point {
-    return Point.{ x = 1, y = 2 };
-}
-
 fn main() {
     let p = Point.{ x = 1, y = 2 };
     let r = &p;
     let rr = &r;
-    let t = &make();
     r.x = 3;
     let m = &mut r.y;
     let q = &mut p;

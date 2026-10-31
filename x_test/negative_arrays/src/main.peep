@@ -2,10 +2,6 @@
 #[extern("takes")]
 fn takes(values: [2]i32);
 
-fn make() -> [2]i32 {
-    return [2]i32{1, 2};
-}
-
 fn main() {
     let a = [3]i32{1, 2};
     let b = [2]i32{1, true};
@@ -19,7 +15,6 @@ fn main() {
     let x = 1;
     let h = [1]&i32{&x};
     let i: [2u8]i32 = [2]i32{1, 2};
-    let j = make()[0];
     c[0] = 5;
     takes(c);
 }

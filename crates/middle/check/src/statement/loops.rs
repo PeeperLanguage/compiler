@@ -193,7 +193,7 @@ impl ThirBuilder<'_, '_> {
         };
         let holder = self.body.add(holder, whole);
         let outer = std::mem::replace(&mut self.block, holder);
-        let items = self.add_hidden_variable(items_type, span);
+        let items = self.add_hidden_variable(items_type, false, span);
         let let_items = Stmt::Let {
             variable: items,
             value: Some(iterable),
@@ -241,7 +241,7 @@ impl ThirBuilder<'_, '_> {
         let enclosing = self.open_block(body);
         let counter = match index {
             Some(index) => self.declare_loop_variable(usize, index),
-            None => self.add_hidden_variable(usize, span),
+            None => self.add_hidden_variable(usize, false, span),
         };
         let (element_value, value_type) = self.array_element(items, counter, element, borrow, span);
         let variable = self.declare_loop_variable(value_type, value);

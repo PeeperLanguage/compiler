@@ -7,7 +7,7 @@ outcome = "failure"
 stderr_contains = [
     "`.*` needs a reference or a typed raw pointer, found `rawptr`",
     "operator `<` cannot be applied to `*i32`",
-    "addresses of values that are not in a variable are not supported yet",
+    "cannot take address of a temporary value",
     "cannot take the address of immutable `x`",
     "cannot take the address of `r.*` through shared reference `r`",
     "mismatched types: expected `*i32`, found `rawptr`",

@@ -1,0 +1,106 @@
+// What a temporary cannot do, as in Rust: outlive its statement, except kept
+// by a `let` that lends it, or give up an element that moves. Writing into one
+// is lost and its address would outlive it, so both are errors. Through a
+// shared reference or slice that one holds, nothing is written, as through
+// one in a variable. A constant is not lent as writable: nothing would change
+// it.
+
+const LIMIT: i32 = 5;
+
+struct Point { row: i32, col: i32 }
+
+fn make() -> [3]i32 {
+    return [3]i32{10, 20, 30};
+}
+
+fn num() -> i32 {
+    return 7;
+}
+
+fn points() -> [2]Point {
+    return [2]Point{.{ row = 1, col = 2 }, .{ row = 3, col = 4 }};
+}
+
+fn id(r: &i32) -> &i32 in r {
+    return r;
+}
+
+fn view(a: &[3]i32) -> [&]i32 in a {
+    return a;
+}
+
+// Kept only by a `let` whose whole value lends it, not through a call.
+fn through_call() {
+    let r = id(&num());
+    println(r.*);
+}
+
+// A later assignment does not keep it.
+fn assigned_later() {
+    let r: &i32;
+    r = &num();
+    println(r.*);
+}
+
+fn returned(a: &i32) -> &[3]i32 in a {
+    return &make();
+}
+
+fn moved() {
+    let p = points()[0];
+}
+
+// The `let` keeps only what it lends itself: the slice, not the array.
+fn inner_not_kept() {
+    let e = &view(&make())[0];
+    println(e.*);
+}
+
+fn bump(n: &mut i32) {
+    n.* = n.* + 1;
+}
+
+fn constant() {
+    bump(&mut LIMIT);
+}
+
+// Kept by a `let` in an inner block, it ends with that block.
+fn kept_in_block() {
+    let r: &i32;
+    {
+        let kept = &num();
+        r = kept;
+    }
+    println(r.*);
+}
+
+// It ends with the loop that keeps it.
+fn outlives_loop() {
+    let x = 1;
+    let mut r = &x;
+    for v in view(&make()) {
+        r = v;
+    }
+    println(r.*);
+}
+
+fn too_big() {
+    let r: &u8 = &300;
+}
+
+fn written() {
+    make()[0] = 5;
+    let p = @make()[0];
+}
+
+fn through_shared() {
+    let x = 1;
+    id(&x).* = 7;
+    let m = &mut id(&x).*;
+    let p = @id(&x).*;
+    let a = [3]i32{1, 2, 3};
+    view(&a)[0] = 1;
+    let s = &mut view(&a)[0..1];
+}
+
+fn main() {}

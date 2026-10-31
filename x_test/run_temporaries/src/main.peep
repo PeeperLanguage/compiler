@@ -1,0 +1,165 @@
+// A value not in a variable can be lent, indexed or gone through: it is a
+// temporary, kept until its statement ends, or to the block's end by a `let`
+// that lends it. It is computed where written, so the order stays.
+
+struct Point { row: i32, col: i32 }
+
+fn make() -> [3]i32 {
+    println("  make");
+    return [3]i32{10, 20, 30};
+}
+
+fn point() -> Point {
+    return .{ row = 1, col = 2 };
+}
+
+fn points() -> [2]Point {
+    return [2]Point{.{ row = 1, col = 2 }, .{ row = 3, col = 4 }};
+}
+
+fn id(r: &i32) -> &i32 in r {
+    return r;
+}
+
+fn id_mut(r: &mut i32) -> &mut i32 in r {
+    return r;
+}
+
+fn read(r: &i32) -> i32 {
+    return r.*;
+}
+
+fn view_mut(a: &mut [3]i32) -> [&mut]i32 in a {
+    return a;
+}
+
+fn count(a: &[3]i32) -> usize {
+    return a.len;
+}
+
+fn wide(r: &i64) -> i64 {
+    return r.*;
+}
+
+fn small(r: &mut u8) -> u8 {
+    r.* = r.* + 1;
+    return r.*;
+}
+
+fn view(a: &[3]i32) -> [&]i32 in a {
+    return &a[0..3];
+}
+
+fn index_of(i: usize) -> usize {
+    println("  index");
+    return i;
+}
+
+fn first() -> i32 {
+    println("  first");
+    return 1;
+}
+
+fn sum(values: [&]i32) -> i32 {
+    let mut total = 0;
+    for v in values {
+        total = total + v.*;
+    }
+    return total;
+}
+
+fn bump(values: [&mut]i32) -> i32 {
+    values[0] = values[0] + 100;
+    return values[0];
+}
+
+fn look(a: &[3]i32) -> bool {
+    println("  look");
+    return a[0] == 10;
+}
+
+fn pair(a: i32, b: &[3]i32) -> i32 {
+    return a + b[1];
+}
+
+fn main() {
+    println("1. lend a call's result for the call:");
+    println(sum(&make()));
+    println("2. a let keeps it:");
+    let kept = &make();
+    println(kept[2]);
+    println("3. run order:");
+    println(pair(first(), &make()));
+    println(make()[index_of(1)]);
+    println("4. through a returned reference:");
+    let x = 5;
+    println(id(&x).*);
+    let mut y = 1;
+    id_mut(&mut y).* = 7;
+    println(y);
+    println("5. index a returned slice:");
+    let a = [3]i32{4, 5, 6};
+    println(view(&a)[1]);
+    println("6. &mut of a literal:");
+    println(bump(&mut [_]i32{1, 2}));
+    println("7. a length and a sum:");
+    let values = [2]i32{8, 9};
+    let n = &values.len;
+    let s = &(x + y);
+    println(n.*);
+    println(s.*);
+    println("8. for over a temporary:");
+    for v in &make() {
+        println(v.*);
+    }
+    for v in &mut make() {
+        v.* = v.* + 1;
+        println(v.*);
+    }
+    println("9. conditions:");
+    if look(&make()) {
+        println("  then");
+    }
+    let mut passes = 0;
+    for look(&make()) && passes < 2 {
+        passes = passes + 1;
+        println(passes);
+    }
+    println("10. print an element of a temporary:");
+    println(points()[1]);
+    println("11. field of a kept temporary:");
+    let r = &point().row;
+    println(r.*);
+    println("12. slice of a kept temporary:");
+    let part = &make()[0..2];
+    println(sum(part));
+    println("13. a call's `&mut` result lent as shared:");
+    println(read(id_mut(&mut y)));
+    let mut b = [3]i32{1, 2, 3};
+    println(sum(view_mut(&mut b)));
+    println("14. a loop's code keeps all its temporaries:");
+    for v in view(&make()) {
+        if v.* == 30 {
+            break;
+        }
+        println(v.*);
+    }
+    for i in 0..count(&make()) {
+        println(i);
+    }
+    println("15. an argument in a `let` ends with it:");
+    let unused = &view(&make())[0];
+    println("16. kept in each pass:");
+    for i in 0..3 {
+        let each = &make();
+        if i == 1 {
+            continue;
+        }
+        println(each[i]);
+    }
+    println("17. a literal takes the type wanted:");
+    let literal: &i64 = &5000000000;
+    println(literal.*);
+    println(wide(&6000000000));
+    println(small(&mut 200));
+}

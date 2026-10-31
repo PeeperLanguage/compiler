@@ -143,6 +143,7 @@ impl Lowering<'_> {
                 mir::InstructionKind::Aggregate(Box::new([start, left, step, delta, inclusive]))
             }
             thir::ExprKind::Variable(_)
+            | thir::ExprKind::Temporary { .. }
             | thir::ExprKind::Field { .. }
             | thir::ExprKind::Dereference(_)
             | thir::ExprKind::Index { .. } => {
@@ -165,7 +166,7 @@ impl Lowering<'_> {
                     unreachable!("a borrow's type is a reference or slice")
                 };
                 let Ok(mut place) = self.place(borrowed)? else {
-                    unreachable!("the checker borrows only a place in a variable")
+                    unreachable!("the checker borrows only a place")
                 };
                 // Borrowing a slice lends its elements again.
                 if let Type::Slice { .. } = self.types[self.thir.exprs[borrowed].ty] {
@@ -176,7 +177,7 @@ impl Lowering<'_> {
             thir::ExprKind::Slice { .. } => return self.lower_slice(expression),
             thir::ExprKind::Address(place) => {
                 let Ok(place) = self.place(place)? else {
-                    unreachable!("the checker takes only the address of a place in a variable")
+                    unreachable!("the checker takes only the address of a place")
                 };
                 mir::InstructionKind::Address(place)
             }
@@ -184,11 +185,12 @@ impl Lowering<'_> {
         Some(self.emit(kind, ty, span))
     }
 
-    /// The place `expression` names: a variable, then each field,
-    /// dereference and element from it (`s.start.x` is one place, so one
-    /// load or store), each element's index computed here, in the order
-    /// written. For fields of a value not in a variable, the `Field`
-    /// instruction reading them from that value, computed here.
+    /// The place `expression` names: a variable or a temporary, whose value
+    /// is stored here, then each field, dereference and element from it
+    /// (`s.start.x` is one place, so one load or store), each element's index
+    /// computed here, in the order written. For fields of a value not in a
+    /// variable, the `Field` instruction reading them from that value,
+    /// computed here.
     pub(super) fn place(
         &mut self,
         expression: Id<thir::Expr>,
@@ -215,6 +217,27 @@ impl Lowering<'_> {
                     outer = array;
                 }
                 thir::ExprKind::Variable(variable) => break variable,
+                thir::ExprKind::Temporary {
+                    variable,
+                    value,
+                    kept,
+                } => {
+                    let span = self.thir.exprs.span(outer);
+                    let value = self.lower_expr(value)?;
+                    let temporary = Id::from_index(variable.index());
+                    let place = mir::Place::whole(temporary);
+                    self.emit(
+                        mir::InstructionKind::Store { place, value },
+                        TypeId::VOID,
+                        span,
+                    );
+                    if kept {
+                        self.kept = Some(temporary);
+                    } else {
+                        self.declared.push(temporary); // until its statement ends
+                    }
+                    break variable;
+                }
                 _ => {
                     let fields = steps.iter().rev().map(|&step| match step {
                         Ok(mir::Projection::Field(index)) => index,
@@ -245,10 +268,14 @@ impl Lowering<'_> {
         right: Id<thir::Expr>,
         span: Span,
     ) -> Option<mir::Operand> {
-        let left_span = self.thir.exprs.span(left);
+        let (left_span, right_span) = (self.thir.exprs.span(left), self.thir.exprs.span(right));
+        // Each side's temporaries end with it, as in Rust: a `bool` holds no
+        // reference, and `right` may not run.
+        let temporaries = self.declared.len();
         let left = self.lower_expr(left)?;
+        self.close_scopes(temporaries, left_span);
         let left_end = self.block;
-        let right_block = self.new_block(self.thir.exprs.span(right));
+        let right_block = self.new_block(right_span);
         let join = self.new_block(span);
         let (then, otherwise) = match op {
             BinaryOp::LogicalAnd => (right_block, join),
@@ -262,6 +289,7 @@ impl Lowering<'_> {
         });
         self.block = right_block;
         let right = self.lower_expr(right)?;
+        self.close_scopes(temporaries, right_span);
         let right_end = self.block;
         self.finish(mir::Terminator::Goto(join));
         self.block = join;
