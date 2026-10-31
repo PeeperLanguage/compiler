@@ -43,7 +43,7 @@ jobs:
       run:
         shell: bash # Git Bash on Windows
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: Swatinem/rust-cache@v2
@@ -84,7 +84,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: Swatinem/rust-cache@v2
