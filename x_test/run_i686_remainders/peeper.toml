@@ -1,0 +1,10 @@
+name = "run_i686_remainders"
+build = "program"
+
+[test]
+mode = "run"
+target = "i686-linux"
+outcome = "success"
+stdout_contains = [
+    "2.5\n-2.5\n2.0\n2.5\n0.19999963\n-1\n1\n",
+]

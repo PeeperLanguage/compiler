@@ -32,6 +32,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - run: rustup component add rustfmt clippy
+      # The runtime is built with rustc for each target the tests use.
+      - if: runner.os == 'Linux'
+        run: rustup target add i686-unknown-linux-gnu
+      - if: runner.os == 'Windows'
+        run: rustup target add x86_64-pc-windows-gnullvm
       - uses: Swatinem/rust-cache@v2
       # The i686-linux fixtures link against the 32-bit C library.
       - if: runner.os == 'Linux'
@@ -47,6 +52,9 @@ jobs:
         run: pwsh scripts/setup.ps1
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      # The runtime is no workspace crate, so the two above do not see it.
+      - run: rustfmt --edition 2024 --check runtime/peeper_rt.rs
+      - run: clippy-driver --edition=2024 -Cpanic=abort --crate-type=staticlib --emit=metadata --out-dir target/runtime-clippy -D warnings runtime/peeper_rt.rs
       - run: cargo test --workspace --no-fail-fast # every failing crate in one run
       - run: bash scripts/build.sh
       - run: PEEPER="$PWD/build/bin/peeper" cargo test -p peeper --test fixtures

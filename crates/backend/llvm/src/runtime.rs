@@ -1,6 +1,6 @@
 //! The runtime library every program links with, as runtime/runtime.toml
-//! describes it: its file name, which the driver looks for, and how clang and
-//! an archiver build it from the C files beside that file.
+//! describes it: its file name, which the driver looks for, and how `rustc`
+//! builds it from the Rust file beside that file.
 
 use std::path::Path;
 use std::path::PathBuf;
@@ -8,51 +8,36 @@ use std::process::Command;
 
 use model::machine::Machine;
 
-use crate::clang_flag;
 use crate::link::call_tool;
-use crate::link::sdk_flags;
-use crate::link::tool;
 
-// LIBRARY (the archive's file name, which the driver looks for), SOURCES (C
-// files in the runtime folder) and FLAGS (clang's flags for each source),
-// written by build.rs from runtime/runtime.toml.
+// LIBRARY (the archive's file name, which the driver looks for), SOURCE (the
+// Rust file in the runtime folder) and FLAGS (rustc's flags), written by
+// build.rs from runtime/runtime.toml.
 include!(concat!(env!("OUT_DIR"), "/runtime.rs"));
 
-/// Builds the library for `target` from this checkout's runtime folder,
-/// with the clang and llvm-ar of `installation`, into its runtime folder,
-/// where `library` finds it, and gives its path. It is built in a folder of
-/// this process's and then renamed into place, so a failed build keeps the
-/// library that was there, and builds at once share no objects; that folder
-/// is removed.
+/// Builds the library for `target` from this checkout's runtime folder with
+/// `rustc`, into the runtime folder of `installation`, where `library` finds
+/// it, and gives its path. It is built in a folder of this process's and then
+/// renamed into place, so a failed build keeps the library that was there, and
+/// builds at once share no files; that folder is removed.
 pub fn build(installation: &Path, target: &Machine) -> Result<PathBuf, String> {
     let library = library(target, installation);
     let folder = library.parent().expect("a library is in a folder");
     let sources = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../runtime");
     let staging = folder.join(format!(".build-{}", std::process::id()));
-    _ = std::fs::remove_dir_all(&staging); // an archiver adds to an archive that is there
     std::fs::create_dir_all(&staging)
         .map_err(|error| format!("cannot make {}: {error}", staging.display()))?;
     let staged = staging.join(LIBRARY);
     let built = (|| {
-        let sdk = sdk_flags(target)?;
-        let mut objects = Vec::with_capacity(SOURCES.len());
-        for source in SOURCES {
-            let object = staging.join(Path::new(source).with_extension("o"));
-            let mut clang = Command::new(tool(installation, "clang"));
-            clang
-                .args(&sdk)
-                .args(clang_flag(target))
-                .args(FLAGS)
-                .arg("-c")
-                .arg(sources.join(source))
-                .arg("-o")
-                .arg(&object);
-            call_tool(clang, "compile the runtime")?;
-            objects.push(object);
-        }
-        let mut archive = Command::new(tool(installation, "llvm-ar"));
-        archive.arg("rcs").arg(&staged).args(&objects);
-        call_tool(archive, "archive the runtime")?;
+        let mut rustc = Command::new("rustc");
+        rustc
+            .args(["--crate-name", "peeper_rt", "--crate-type", "staticlib"])
+            .args(["--target", target.rust_triple])
+            .args(FLAGS)
+            .arg(sources.join(SOURCE))
+            .arg("-o")
+            .arg(&staged);
+        call_tool(rustc, "compile the runtime")?;
         std::fs::rename(&staged, &library)
             .map_err(|error| format!("cannot write {}: {error}", library.display()))
     })();

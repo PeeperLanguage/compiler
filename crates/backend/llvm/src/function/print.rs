@@ -74,9 +74,15 @@ impl Function<'_, '_, '_> {
         let types = self.types;
         match types[ty] {
             Type::Integer(integer) => {
-                let limbs = write_limbs(out, value, integer, path, location);
+                // In memory as 64-bit limbs, least significant first: every
+                // target is little-endian.
                 let (signed, count) = (i32::from(integer.signed), integer.bits.div_ceil(64));
-                let arguments = format!("i32 {signed}, i32 {count}, {limbs}");
+                let width = count * 64;
+                let wide = write_extended(out, value, integer, width, path, location);
+                let limbs = format!("{path}.m");
+                _ = writeln!(self.memory, "  {limbs} = alloca i{width}");
+                _ = writeln!(out, "  store i{width} {wide}, ptr {limbs}{location}");
+                let arguments = format!("i32 {signed}, i32 {count}, ptr {limbs}");
                 self.write_print_text(out, text, location);
                 self.write_runtime_call(out, PRINT_INT, &arguments, location);
             }
@@ -197,6 +203,8 @@ impl Function<'_, '_, '_> {
         let (first, between) = (self.module.add_string(b""), self.module.add_string(b", "));
         let none = DebugLocation(None);
         let mut body = String::new();
+        // This function's own `alloca`s, put in its entry block at the end.
+        let caller_memory = std::mem::take(&mut self.memory);
         // The pass ends in `step`, so the `phi` is right whatever blocks
         // printing an element adds.
         _ = writeln!(
@@ -228,6 +236,8 @@ impl Function<'_, '_, '_> {
              %more = icmp ult i64 %next, {length}\n  \
              br i1 %more, label %loop, label %done\ndone:\n  ret void\n}}\n"
         );
+        let memory = std::mem::replace(&mut self.memory, caller_memory);
+        let body = body.replacen("entry:\n", &format!("entry:\n{memory}"), 1);
         self.module.private_functions.push_str(&body);
         name
     }

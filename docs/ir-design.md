@@ -638,10 +638,10 @@ entry module, for these two commands); the entry module gets a C
 `main` that calls it and returns its result, or 0. `llvm::link::link_executable`
 writes each module's text to a temporary folder, compiles each with `clang -c`
 and links the objects with the runtime library (`<installation>/runtime/
-<target>/libpeeper_rt_v1.a`, built as `runtime/runtime.toml` says (read by `llvm`'s build.rs) by `llvm::runtime`,
-which `scripts/build.sh` runs)
+<target>/libpeeper_rt_v1.a`, built with `rustc` as `runtime/runtime.toml` says (read by `llvm`'s build.rs) by `llvm::runtime`,
+which `scripts/build.sh` runs, so only building the compiler needs `rustc`)
 and `-lm`; the program is linked beside its output and renamed into place.
-Clang and llvm-ar are the installation's own, in
+Clang is the installation's own, in
 `<installation>/toolchains/native/bin` (`llvm::link::tool`), never ones on the
 PATH; `scripts/setup.sh` puts the CI-built pack, or an installed LLVM 23, in
 `build/toolchains/native`. `build` names the program after the project or file

@@ -1,0 +1,27 @@
+// `%` on floats and on 128-bit integers calls a helper outside the program,
+// which only a real link finds. Parameters keep the values from compile time.
+fn float64(a: f64, b: f64) -> f64 {
+    return a % b;
+}
+
+fn float32(a: f32, b: f32) -> f32 {
+    return a % b;
+}
+
+fn signed(a: i128, b: i128) -> i128 {
+    return a % b;
+}
+
+fn unsigned(a: u128, b: u128) -> u128 {
+    return a % b;
+}
+
+fn main() {
+    println(float64(5.5, 3.0));
+    println(float64(-5.5, 3.0));
+    println(float64(1.0e308, 3.0));
+    println(float32(5.5, 3.0));
+    println(float32(7.1, 0.3));
+    println(signed(-1000000000000000000000000, 7));
+    println(unsigned(1000000000000000000000000, 7));
+}

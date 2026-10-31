@@ -77,6 +77,40 @@ fn runs_i686() -> bool {
     Machine::host() == Machine::named("x86_64-linux")
 }
 
+/// A release program keeps only what it uses of the runtime, with no symbols
+/// or debug info; a debug one keeps its debug info. Either takes `fmod` from
+/// the system, so its import table names it. The names are Linux's.
+fn assert_release_link(compiler: &str) {
+    let folder = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let source = folder.join("stripped.peep");
+    let build = |text: &str, release: Option<&str>| {
+        std::fs::write(&source, text).expect("the program is written");
+        let program = folder.join("stripped");
+        let built = Command::new(compiler)
+            .arg("build")
+            .args(release)
+            .arg("-o")
+            .arg(&program)
+            .arg(&source)
+            .output()
+            .expect("the compiler runs");
+        let errors = String::from_utf8_lossy(&built.stderr);
+        assert!(built.status.success(), "{errors}");
+        std::fs::read(&program).expect("the program reads")
+    };
+    let holds =
+        |program: &[u8], name: &[u8]| program.windows(name.len()).any(|bytes| bytes == name);
+    let hello = "fn main() {\n    println(\"hello\");\n}\n";
+    assert!(holds(&build(hello, None), b".debug_info"));
+    let release = build(hello, Some("-release"));
+    assert!(!holds(&release, b".debug_info"));
+    assert!(!holds(&release, b".symtab"));
+    assert!(release.len() < 16_000, "{} bytes", release.len());
+    let remainder = "fn left(a: f64, b: f64) -> f64 {\n    return a % b;\n}\n\
+        fn main() {\n    println(left(5.5, 3.0));\n}\n";
+    assert!(holds(&build(remainder, Some("-release")), b"fmod"));
+}
+
 #[test]
 fn fixtures() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../x_test");
@@ -199,4 +233,7 @@ fn fixtures() {
     }
     assert!(checked > 0, "no check fixtures in {}", root.display());
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+    if cfg!(target_os = "linux") {
+        assert_release_link(&compiler);
+    }
 }

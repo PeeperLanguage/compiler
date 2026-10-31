@@ -29,18 +29,19 @@ fn main() {
             })
             .collect()
     };
-    let sources = texts("sources");
-    for source in &sources {
-        assert!(
-            runtime.join(source).is_file(),
-            "{}: source {source} is not in {}",
-            file.display(),
-            runtime.display()
-        );
-    }
+    let source = document
+        .get("source")
+        .and_then(toml_edit::Item::as_str)
+        .unwrap_or_else(|| panic!("{}: `source` must be a string", file.display()));
+    assert!(
+        runtime.join(source).is_file(),
+        "{}: source {source} is not in {}",
+        file.display(),
+        runtime.display()
+    );
     let mut constants = String::new();
     _ = writeln!(constants, "pub const LIBRARY: &str = {library:?};");
-    _ = writeln!(constants, "const SOURCES: &[&str] = &{sources:?};");
+    _ = writeln!(constants, "const SOURCE: &str = {source:?};");
     _ = writeln!(constants, "const FLAGS: &[&str] = &{:?};", texts("flags"));
     let out = Path::new(&std::env::var("OUT_DIR").expect("cargo sets OUT_DIR")).join("runtime.rs");
     std::fs::write(&out, constants)

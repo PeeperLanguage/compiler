@@ -3,7 +3,7 @@
 # build\toolchains\native. The first way that works:
 #   1. the pack CI built for this machine, pinned in
 #      toolchains\toolchains.lock.json, downloaded and checked;
-#   2. an installed LLVM 23 or newer, with clang, ld.lld and llvm-ar side by
+#   2. an installed LLVM 23 or newer, with clang and ld.lld side by
 #      side, linked in as a directory junction (a symlink needs admin rights).
 #      With none, it offers to install the llvm-mingw release pinned in
 #      toolchains\toolchain-sources.lock.json into %LOCALAPPDATA%\peeper-dev.
@@ -75,9 +75,8 @@ function Use-Pack {
     if ($LASTEXITCODE -ne 0) { throw "cannot unpack $($entry.id)" }
     # The old toolchain goes only once the new one is all there.
     $tools = "$work\toolchains\native\bin"
-    if (-not ((Test-Path "$tools\clang.exe") -and (Test-Path "$tools\ld.lld.exe") -and
-            (Test-Path "$tools\llvm-ar.exe"))) {
-        throw "$($entry.id) holds no toolchains\native with clang, ld.lld and llvm-ar"
+    if (-not ((Test-Path "$tools\clang.exe") -and (Test-Path "$tools\ld.lld.exe"))) {
+        throw "$($entry.id) holds no toolchains\native with clang and ld.lld"
     }
     Remove-Toolchain
     New-Item -ItemType Directory -Force "build\toolchains" | Out-Null
@@ -89,7 +88,7 @@ function Use-Pack {
 }
 
 # Way 2: the folder of an installed LLVM $minimum or newer, the one whose bin
-# holds clang, ld.lld and llvm-ar; $null when there is none.
+# holds clang and ld.lld; $null when there is none.
 function Find-InstalledLlvm {
     $clangs = @(Get-Command clang.exe -All -CommandType Application -ErrorAction SilentlyContinue |
         ForEach-Object { $_.Source })
@@ -97,7 +96,7 @@ function Find-InstalledLlvm {
         ForEach-Object { $_.FullName })
     foreach ($clang in $clangs) {
         $bin = Split-Path $clang
-        if (-not ((Test-Path "$bin\ld.lld.exe") -and (Test-Path "$bin\llvm-ar.exe"))) { continue }
+        if (-not (Test-Path "$bin\ld.lld.exe")) { continue }
         $version = & $clang -dumpversion
         if ([int]($version.Split(".")[0]) -lt $minimum) { continue }
         return (Split-Path $bin)
@@ -147,5 +146,5 @@ if ($llvm) {
     Write-Host "build\toolchains\native links $llvm"
     exit 0
 }
-Write-Error "no toolchain: install LLVM $minimum or newer with clang, ld.lld and llvm-ar, then run this again"
+Write-Error "no toolchain: install LLVM $minimum or newer with clang and ld.lld, then run this again"
 exit 1

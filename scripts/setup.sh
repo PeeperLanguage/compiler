@@ -4,8 +4,8 @@
 # find it. The first way that works:
 #   1. the pack CI built for this machine, pinned in
 #      toolchains/toolchains.lock.json, downloaded and checked;
-#   2. an installed LLVM 23 or newer, with clang, its linker (ld.lld; ld64.lld
-#      on macOS) and llvm-ar side by side, linked in. With none, it offers to install the LLVM release
+#   2. an installed LLVM 23 or newer, with clang and its linker (ld.lld;
+#      ld64.lld on macOS) side by side, linked in. With none, it offers to install the LLVM release
 #      pinned in toolchains/toolchain-sources.lock.json into ~/.peeper-dev.
 # On Windows, run scripts/setup.ps1.
 set -euo pipefail
@@ -69,8 +69,8 @@ use_pack() {
     tar -xzf "$work/pack.tar.gz" -C "$work" || { echo "cannot unpack $id" >&2; return 1; }
     # The old toolchain goes only once the new one is all there.
     local tools=$work/toolchains/native/bin
-    if [ ! -x "$tools/clang" ] || [ ! -x "$tools/$linker" ] || [ ! -x "$tools/llvm-ar" ]; then
-        echo "$id holds no toolchains/native with clang, $linker and llvm-ar" >&2
+    if [ ! -x "$tools/clang" ] || [ ! -x "$tools/$linker" ]; then
+        echo "$id holds no toolchains/native with clang and $linker" >&2
         rm -rf "$work"
         return 1
     fi
@@ -83,7 +83,7 @@ use_pack() {
 }
 
 # Way 2: prints the folder of an installed LLVM $minimum or newer, the one
-# whose bin holds clang, $linker and llvm-ar. ccache's clang is skipped.
+# whose bin holds clang and $linker. ccache's clang is skipped.
 installed_llvm() {
     local clang bin version
     for clang in $(type -ap clang) "$HOME"/.peeper-dev/llvm-*/bin/clang; do
@@ -91,7 +91,7 @@ installed_llvm() {
         clang=$(realpath "$clang")
         bin=$(dirname "$clang")
         [ "$(basename "$clang")" != ccache ] || continue
-        [ -x "$bin/$linker" ] && [ -x "$bin/llvm-ar" ] || continue
+        [ -x "$bin/$linker" ] || continue
         version=$("$clang" -dumpversion) || continue
         [ "${version%%.*}" -ge "$minimum" ] || continue
         dirname "$bin"
@@ -140,5 +140,5 @@ if llvm=$(installed_llvm) || { install_llvm && llvm=$(installed_llvm); }; then
     echo "build/toolchains/native links $llvm"
     exit 0
 fi
-echo "no toolchain: install LLVM $minimum or newer with clang, $linker and llvm-ar, then run this again" >&2
+echo "no toolchain: install LLVM $minimum or newer with clang and $linker, then run this again" >&2
 exit 1
