@@ -190,6 +190,7 @@ fn parses_expressions() {
     .{ a = &mut v, b = @raw };
     Shape::Line with .{ end = Box<i32>::new(1) };
     [_]u8{ 1, 2, 4..=8:2..., (0..3)..., a... };
+    sum(1, a..., &mut b...);
     free(p);
     println(items[1..=n]);
 }
@@ -263,6 +264,15 @@ fn parses_expressions() {
           spread
             name reference a
       expression statement
+        call expression
+          name reference sum
+          number literal 1
+          spread
+            name reference a
+          spread
+            reference expression mut
+              name reference b
+      expression statement
         free expression
           name reference p
       expression statement
@@ -294,7 +304,6 @@ fn expression_errors() {
             "incomplete type `[]`: add a size or a reference",
         ),
         ("a.;", "expected `identifier`, found `;`"),
-        ("f(a...);", "expected `)`, found `...`"),
     ] {
         one_error(&format!("fn f() {{ {text} }}"), message, None);
     }

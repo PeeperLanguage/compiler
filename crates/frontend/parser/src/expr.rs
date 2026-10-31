@@ -330,9 +330,21 @@ fn call(p: &mut Parser, callee: Id<Expr>) -> Id<Expr> {
         TokenKind::RightParen,
         false,
         starts_expression,
-        |p| p.expr(Precedence::Lowest),
+        spreadable,
     );
     p.add(p.start_of(callee), Expr::Call { callee, arguments })
+}
+
+/// Reads an entry of an array literal or an argument of a call: `value` or
+/// `value...`.
+pub(crate) fn spreadable(p: &mut Parser) -> Id<Expr> {
+    let start = p.tok().span.start;
+    let value = p.expr(Precedence::Lowest);
+    if !p.at(TokenKind::Ellipsis) {
+        return value;
+    }
+    p.next();
+    p.add(start, Expr::Spread(value))
 }
 
 /// Reads `+x` as `x`, reporting the `+`: there is no unary `+`, as it would

@@ -1,0 +1,98 @@
+// What `...` rejects: a `...` parameter not last or in an `extern` function,
+// a spread where no array or `...` parameter takes it, a slice spread beside
+// other arguments, an array or slice passed without `...`, a shared slice for
+// a `...mut T`, and what any argument rejects: a value moved twice, a result
+// that borrows from a temporary array after that array is gone, writing to
+// what a result borrows, and `&mut` of what cannot be written. A call does not
+// run in a constant, as building a slice does not run at compile time.
+struct Point { row: i32 }
+
+fn sum(values: ...i32) -> i32 {
+    return 0;
+}
+
+fn bump(values: ...mut i32) {}
+
+fn rows(points: ...Point) {}
+
+fn most(first: i32, rest: ...i32) -> i32 {
+    return first;
+}
+
+fn two(a: i32, b: i32) {}
+
+fn largest(values: ...i32) -> &i32 in values {
+    return &values[0];
+}
+
+fn not_last(values: ...i32, last: i32) {}
+
+fn twice(first: ...i32, second: ...i32) {}
+
+#[extern("printf")]
+fn printf(format: cstr, values: ...i32);
+
+fn spreads(a: [2]i32, s: [&]i32, r: range[i32]) {
+    two(a...);
+    let unknown = missing(a...);
+    let first = sum(s..., 2);
+    let mixed = sum(1, s...);
+    let runtime = sum(r...);
+    let other = sum(1, [2]i64{1, 2}...);
+    let wrong = sum(true...);
+}
+
+fn without_spread(a: [2]i32, s: [&]i32) {
+    let by_array = sum(a);
+    let by_slice = sum(s);
+    let few = most();
+    bump(s...);
+}
+
+fn moved() {
+    let p = Point.{ row = 1 };
+    rows(p, p);
+}
+
+fn array_moved() -> i32 {
+    let points = [2]Point{ .{ row = 1 }, .{ row = 2 } };
+    rows(points...);
+    return points[0].row;
+}
+
+fn slice_of_moved(points: [&]Point) {
+    rows(1, points...);
+}
+
+fn gone() -> i32 {
+    let r = largest(7, 8);
+    return r.*;
+}
+
+fn copy_gone(a: [2]i32) -> i32 {
+    let r = largest(a...);
+    return r.*;
+}
+
+fn returned(kept: &i32) -> &i32 {
+    return largest(1, 2);
+}
+
+fn returned_copy(a: [2]i32, kept: &i32) -> &i32 {
+    return largest(a...);
+}
+
+fn changed_while_held() -> i32 {
+    let mut a = [2]i32{1, 2};
+    let r = largest(&a...);
+    a[0] = 5;
+    return r.*;
+}
+
+fn immutable(a: [2]i32) {
+    bump(&mut a...);
+}
+
+const TOTAL: i32 = sum(1, 2);
+
+fn main() {}

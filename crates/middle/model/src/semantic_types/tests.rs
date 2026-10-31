@@ -207,11 +207,13 @@ fn type_text() {
         parameters: [TypeId::I32, u24].into(),
         result: TypeId::BOOL,
         origins: [].into(),
+        variadic: false,
     });
     let procedure = types.intern(Type::Function {
         parameters: [].into(),
         result: TypeId::VOID,
         origins: [].into(),
+        variadic: false,
     });
     let declaration = |index| DefId {
         module: ModuleId::from_index(0),
@@ -255,6 +257,7 @@ fn equal_types_have_equal_ids() {
         parameters: parameters.into(),
         result: TypeId::VOID,
         origins: [].into(),
+        variadic: false,
     };
     let f = types.intern(function(&[u24, TypeId::BOOL]));
     assert_eq!(types.intern(function(&[u24, TypeId::BOOL])), f);

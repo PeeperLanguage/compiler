@@ -107,7 +107,8 @@ impl ThirBuilder<'_, '_> {
     }
 
     /// `callee(arguments)`, written at `span`. Only a module's function, by
-    /// its name or its path, can be called.
+    /// its name or its path, can be called. A `...` parameter takes all the
+    /// arguments past the others (`check_variadic`).
     pub(super) fn check_call(
         &mut self,
         callee: Id<ast::Expr>,
@@ -160,35 +161,55 @@ impl ThirBuilder<'_, '_> {
         let Some((
             function,
             Type::Function {
-                parameters, result, ..
+                parameters,
+                result,
+                variadic,
+                ..
             },
         )) = signature
         else {
             for argument in tree.children.lists.items(arguments) {
+                let argument = match tree.exprs[argument] {
+                    ast::Expr::Spread(values) => values,
+                    _ => argument,
+                };
                 self.add_expr(argument, TypeExpectation::Hint(None)); // for its own errors
             }
             return Expr::INVALID;
         };
-        let arity_matches = parameters.len() == arguments.len();
+        let fixed = parameters.len() - usize::from(variadic);
+        let arity_matches = if variadic {
+            arguments.len() >= fixed
+        } else {
+            arguments.len() == fixed
+        };
         if !arity_matches {
             let message = format!(
-                "`{text}` takes {} argument{}, but {} {} given",
-                parameters.len(),
-                if parameters.len() == 1 { "" } else { "s" },
+                "`{text}` takes {}{fixed} argument{}, but {} {} given",
+                if variadic { "at least " } else { "" },
+                if fixed == 1 { "" } else { "s" },
                 arguments.len(),
                 if arguments.len() == 1 { "was" } else { "were" },
             );
             self.checker
                 .error(diagnostics::WRONG_ARGUMENT_COUNT, message, span);
         }
-        let mut checked: Vec<NonZeroU32> = Vec::with_capacity(arguments.len());
-        for (index, argument) in tree.children.lists.items(arguments).enumerate() {
-            let argument = match parameters.get(index) {
-                Some(&parameter) => self.add_expr(argument, TypeExpectation::Required(parameter)),
-                None => self.add_expr(argument, TypeExpectation::Hint(None)),
-            };
+        let mut checked: Vec<NonZeroU32> = Vec::with_capacity(parameters.len());
+        let mut given = tree.children.lists.items(arguments);
+        for (&parameter, argument) in parameters[..fixed].iter().zip(given.by_ref()) {
+            let argument = self.add_expr(argument, TypeExpectation::Required(parameter));
             self.lend_variable_again(argument);
             checked.push(argument.into());
+        }
+        if variadic {
+            let rest: Vec<Id<ast::Expr>> = given.collect();
+            let slice = self.check_variadic(&rest, parameters[fixed], span);
+            self.lend_variable_again(slice);
+            checked.push(slice.into());
+        } else {
+            for extra in given {
+                self.add_expr(extra, TypeExpectation::Hint(None)); // for its own errors
+            }
         }
         if !arity_matches {
             return Expr::INVALID;

@@ -36,7 +36,7 @@ toolchain and release work.
 | Arrays | `[N]T`, literals, `[_]T`, index with a run-time bounds check, `.len`, spreads `a...`, printing. | Arrays of references or slices; a range as an index. `.len` will later be a free function. |
 | Structs | Declarations, literals `Name.{ }` and `.{ }`, field reads and writes, moves, by-value parameters and results. | References or slices in fields; methods; struct types written inline; generic structs. |
 | References | `&x`, `&mut x`, `.*`, field access through a reference, returning a reference; `&make()` and `make()[i]`, whose value ends with its statement unless a `let` keeps it, as in Rust. | References to references or to slices; references in structs and arrays; parameters that share one origin. |
-| Slices | `[&]T`, `[&mut]T`, `&a[i..j]`, `&s[i..j]`, `for v in s`, `[N]T{s...}`, bounds checks. | Slices of slices or of references; variadic `...T` parameters, which wait on the `...mut T` decision. |
+| Slices | `[&]T`, `[&mut]T`, `&a[i..j]`, `&s[i..j]`, `for v in s`, `[N]T{s...}`, variadic `...T` and `...mut T` parameters, bounds checks. | Slices of slices or of references. |
 | Pointers | Raw pointers `*T`, `rawptr`, `@x`, `.*`, `none`. | The allocator. `*T` stays a raw pointer: there is no owning pointer type. |
 | Ownership | Moves and loans (see Done). | Drop insertion, for containers, which own their heap buffers. |
 | Strings | `c"..."` as `cstr`; plain string literals inside `print` and `panic`. | The `str`/`string` and `byte`/`char` types, character literals, run-time strings. |
@@ -69,10 +69,9 @@ The parser already reads all of these.
 
 From the local plans:
 
-1. Slices step 2: variadic `...T` parameters.
-2. The allocator.
-3. Lifetime design for references stored in structs.
-4. Enums and `match`, with `Option` as `?T`.
-5. Strings, methods, interfaces, generics.
-6. Port the Go compiler's fixtures from the `legacy` branch. On 2026-10-24 the
+1. The allocator.
+2. Lifetime design for references stored in structs.
+3. Enums and `match`, with `Option` as `?T`.
+4. Strings, methods, interfaces, generics.
+5. Port the Go compiler's fixtures from the `legacy` branch. On 2026-10-24 the
    Rust compiler accepted 19 of its 146 positive fixtures.

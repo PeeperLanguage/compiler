@@ -3,7 +3,6 @@
 
 use arena::Id;
 use diagnostics::Diagnostic;
-use model::ast::Entry;
 use model::ast::Expr;
 use model::ast::FieldValue;
 use model::ast::Length;
@@ -13,6 +12,7 @@ use token::Token;
 use token::TokenKind;
 
 use crate::Parser;
+use crate::expr::spreadable;
 use crate::expr::starts_expression;
 use crate::is_name;
 
@@ -136,15 +136,7 @@ pub(crate) fn array_literal(p: &mut Parser) -> Id<Expr> {
         TokenKind::RightBrace,
         false,
         starts_expression,
-        |p| {
-            let start = p.tok().span.start;
-            let value = p.expr(Precedence::Lowest);
-            if !p.at(TokenKind::Ellipsis) {
-                return p.add(start, Entry::Value(value));
-            }
-            p.next();
-            p.add(start, Entry::Spread(value))
-        },
+        spreadable,
     );
     p.add(start, Expr::ArrayLiteral { ty, entries })
 }

@@ -1,0 +1,24 @@
+name = "negative_variadic_fixes"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "   = fix: add `&mut` and `...` to write to it\n   | \n20 |     bump(&mut held...);\n",
+    "   = fix: add `...` to spread its values\n   | \n21 |     bump(w...);\n",
+    "   = fix: add `...` to spread its values\n   | \n22 |     bump(numbers()...);\n",
+    "   = fix: add `...` to spread its values\n   | \n23 |     let by_array = sum(a...);\n",
+    "   = fix: add `...` to spread its values\n   | \n24 |     let by_slice = sum(s...);\n",
+    "   = fix: add `...` to spread its values\n   | \n25 |     let part = sum(&held[0..1]...);\n",
+    "   = fix: add `...` to spread its values\n   | \n26 |     bump(&mut held...);\n",
+    "   = fix: add `...` to spread its values\n   | \n27 |     let by_reference = sum(&a...);\n",
+    "   = help: add `...` to spread its values\n   | \n31 |     bump(a...);\n",
+    "   = help: add `...` to spread its values\n   | \n32 |     rows(points...);\n",
+    "   = help: add `...` to spread its values\n   | \n33 |     let beside = sum(1, s...);\n",
+    "   = help: add `...` to spread its values\n   | \n34 |     let in_literal = [_]i32{a...};\n",
+    "38 |     bump(s);\n   |          ^\n\n",
+    "39 |     bump(&a);\n   |          ^^\n\n",
+    "40 |     let beside = sum(1, &a);\n   |                         ^^\n\n",
+    "Compilation failed with 15 error(s)",
+]

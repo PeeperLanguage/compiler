@@ -1,0 +1,31 @@
+name = "run_variadics"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 0
+stdout_contains = [
+    "1. no arguments:\n0\n",
+    "2. listed:\n6\n",
+    "3. mixed with arrays and ranges:\n36\n12\n10\n10\n",
+    "4. a lone array is copied, like `c = a`:\n1\n",
+    "5. a `&mut` of the array writes to it:\n2\n",
+    "6. a slice writes through:\n5\n",
+    "7. listed variables are copied:\n5\n",
+    "8. a shared slice:\n5\n6\n",
+    "9. fixed and variadic parameters:\n1\n5\n9\n",
+    "10. structs move in, as into a plain argument:\n7\n",
+    "11. a slice of structs, which do not copy, passes as it is:\n3\n1\n",
+    "12. forwarded:\n9\n",
+    "13. a result borrowing from the arguments, in one statement:\n8\n",
+    "14. a result kept from a slice that outlives it:\n9\n",
+    "15. a slice lent again in a call of itself:\n10\n",
+    "16. a parameter that takes another slice:\n100\n",
+    "17. arrays of arrays:\n4\n3\n",
+    "18. arguments run in order:\n1\n2\n3\n19\n",
+    "19. a `&mut` to an array in a variable:\n3\n7\n",
+    "20. in a condition:\ngreater\n",
+    "21. a `for` keeps the array of its call to the loop's end:\n30\n40\n3\n4\n",
+    "22. a `[&mut]` read by `...T` is usable after:\n7\n9\n",
+]

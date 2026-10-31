@@ -271,7 +271,8 @@ impl Parser {
     }
 
     /// Reads a function's parameter: `mut name: Type = default`, where `mut`,
-    /// the name and the default may be left out.
+    /// the name and the default may be left out, and the type may be `...T`
+    /// or `...mut T`.
     fn parameter(&mut self) -> Id<Param> {
         let start = self.tok().span.start;
         let mut keyword = None;
@@ -293,7 +294,18 @@ impl Parser {
             }
         }
         let name = self.parameter_name();
-        let ty = self.type_expr();
+        let variadic = self.at(TokenKind::Ellipsis);
+        let ty = if variadic {
+            let start = self.next().span.start;
+            let mutable = self.at(TokenKind::Mut);
+            if mutable {
+                self.next();
+            }
+            let element = self.type_expr();
+            self.add(start, Type::Slice { mutable, element })
+        } else {
+            self.type_expr()
+        };
         if let Some(keyword) = keyword
             && name.is_none()
         {
@@ -320,6 +332,7 @@ impl Parser {
                 mutable: keyword.is_some(),
                 name,
                 ty,
+                variadic,
                 default,
             },
         )

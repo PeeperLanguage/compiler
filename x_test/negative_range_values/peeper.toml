@@ -11,7 +11,7 @@ stderr_contains = [
     "unknown type `Nope`",
     "`i32` takes no type in brackets",
     "ranges without both ends are not supported yet",
-    "a range in `[_]` needs constant ends and step; write the length",
+    "a range needs constant ends and step; write the length",
     "`range[i32]` cannot be printed",
     "mismatched types: expected `range[i64]`, found `range[u8]`",
     "the value of a constant must be known at compile time",

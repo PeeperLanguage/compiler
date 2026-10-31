@@ -33,7 +33,6 @@ nodes! {
     Field => children.fields,
     Variant => children.variants,
     FieldValue => children.field_values,
-    Entry => children.entries,
     MatchArm => children.match_arms,
 }
 
@@ -69,7 +68,6 @@ pub struct Children {
     pub fields: Arena<Field>,
     pub variants: Arena<Variant>,
     pub field_values: Arena<FieldValue>,
-    pub entries: Arena<Entry>,
     pub match_arms: Arena<MatchArm>,
     pub lists: Lists,
 }
@@ -241,6 +239,9 @@ pub struct Param {
     pub mutable: bool,
     pub name: Option<Ident>,
     pub ty: Id<Type>,
+    /// `name: ...T` or `name: ...mut T`: `ty` is the slice `[&]T` or `[&mut]T`
+    /// that holds the call's last arguments.
+    pub variadic: bool,
     pub default: Option<Id<Expr>>,
 }
 
@@ -459,7 +460,10 @@ pub enum Expr {
     /// `Enum::Variant with payload`; the case is a `Type::Path`
     VariantLiteral { case: Id<Type>, payload: Id<Expr> },
     /// `[N]T{ entries }`; the type is a fixed array or slice type
-    ArrayLiteral { ty: Id<Type>, entries: List<Entry> },
+    ArrayLiteral { ty: Id<Type>, entries: List<Expr> },
+    /// `values...`, an entry of an array literal or an argument of a call:
+    /// each value of the array, slice or range `values` in order
+    Spread(Id<Expr>),
     /// `x as T`
     Cast { value: Id<Expr>, ty: Id<Type> },
     /// `x is Enum::Variant`
@@ -508,19 +512,12 @@ impl Expr {
             | Expr::Index { .. }
             | Expr::StructLiteral { .. }
             | Expr::ArrayLiteral { .. }
+            | Expr::Spread(_)
             | Expr::Block(_)
             | Expr::Parentheses(_)
             | Expr::Invalid => Precedence::Call,
         }
     }
-}
-
-/// One entry of an array literal: a value, or `values...`, each value of
-/// the array or range `values` in order.
-#[derive(Clone, Copy, Debug)]
-pub enum Entry {
-    Value(Id<Expr>),
-    Spread(Id<Expr>),
 }
 
 /// `name = value` in a struct literal.

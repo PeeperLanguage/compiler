@@ -4,7 +4,6 @@
 use arena::Id;
 use diagnostics::Diagnostic;
 use model::ast;
-use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::thir::Expr;
 use model::thir::ExprKind;
@@ -119,23 +118,12 @@ impl ThirBuilder<'_, '_> {
             ExprKind::Variable(variable) => variable,
             // Behind a reference or pointer that a temporary holds.
             ExprKind::Temporary { variable, .. } if decider.is_some() => variable,
-            ref start => {
-                let message = match *start {
-                    // A field read that is no place: an array's or a slice's
-                    // `len` (`check_field`).
-                    ExprKind::Length(value)
-                        if matches!(
-                            self.checker.types[self.body.exprs[value].ty],
-                            Type::Slice { .. }
-                        ) =>
-                    {
-                        "a slice's `len` cannot be set"
-                    }
-                    ExprKind::Constant(_) | ExprKind::Length(_) => "an array's `len` cannot be set",
-                    // The value is gone when the statement ends, so nothing
-                    // could read what is written.
-                    _ => "cannot assign to a temporary value",
-                };
+            _ => {
+                // The value is gone when the statement ends, so nothing could
+                // read what is written.
+                let message = self
+                    .fixed_length(start)
+                    .unwrap_or("cannot assign to a temporary value");
                 let span = self.body.exprs.span(place);
                 self.checker
                     .error(diagnostics::INVALID_ASSIGNMENT, message, span);

@@ -6,6 +6,7 @@ fn make() -> [3]i32 {
 fn main() {
     let mut values = [3]i32{1, 2, 3};
     values.len = 4;
+    let by_reference = &mut values.len;
     make().len = 3;
     let size = values.lem;
     let number = 5;

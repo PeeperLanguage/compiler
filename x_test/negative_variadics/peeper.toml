@@ -1,0 +1,30 @@
+name = "negative_variadics"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "a `...` parameter must be the last one",
+    "an `extern` function cannot have a `...` parameter",
+    "`two` takes 2 arguments, but 1 was given",
+    "`...` spreads into an array literal or a `...` parameter",
+    "unknown name `missing`",
+    "a slice has a length known only when the program runs, so a call cannot build an array around it; pass a slice as the only argument for `...`",
+    "a range needs constant ends and step\n",
+    "`...` here spreads a range, an array or a slice of `i32`, found `[2]i64`",
+    "`...` here spreads a range, an array or a slice of `i32`, found `bool`",
+    "mismatched types: expected `i32`, found `[2]i32`",
+    "mismatched types: expected `i32`, found `[&]i32`",
+    "`most` takes at least 1 argument, but 0 were given",
+    "mismatched types: expected `[&mut]i32`, found `[&]i32`",
+    "`p` is used after it was moved",
+    "`points` is used after it was moved",
+    "cannot move an element out of a slice",
+    "a temporary value is gone while a slice of it is still in use",
+    "returns a reference into a temporary value, which is gone once the function returns",
+    "`a` is changed while a slice of it is still in use",
+    "cannot mutably borrow immutable `a`",
+    "the value of a constant must be known at compile time",
+    "Compilation failed with 26 error(s)",
+]

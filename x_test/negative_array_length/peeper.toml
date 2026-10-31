@@ -9,5 +9,5 @@ stderr_contains = [
     "`[3]i32` has no field `lem`",
     "did you mean `len`?",
     "`i32` has no fields",
-    "Compilation failed with 4 error(s)",
+    "Compilation failed with 5 error(s)",
 ]

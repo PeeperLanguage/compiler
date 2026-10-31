@@ -134,11 +134,22 @@ impl Checker<'_> {
         // the C rules.
         let external = symbol != Ok(None);
         let mut parameters = Vec::with_capacity(signature.parameters.len());
-        for parameter in tree.children.lists.items(signature.parameters) {
+        let mut variadic = false;
+        for (position, parameter) in tree.children.lists.items(signature.parameters).enumerate() {
             let parameter = tree.children.params[parameter];
             if let Some(default) = parameter.default {
                 return self.not_supported(tree.exprs.span(default), "default parameters");
             }
+            let span = tree.types.span(parameter.ty);
+            if parameter.variadic && external {
+                let message = "an `extern` function cannot have a `...` parameter";
+                return self.error(diagnostics::INVALID_DECLARATION, message, span);
+            }
+            if parameter.variadic && position + 1 != signature.parameters.len() {
+                let message = "a `...` parameter must be the last one";
+                return self.error(diagnostics::INVALID_DECLARATION, message, span);
+            }
+            variadic |= parameter.variadic;
             parameters.push(self.resolve_signature_type(parameter.ty, external));
         }
         let result = signature.result.map_or(TypeId::VOID, |result| {
@@ -164,6 +175,7 @@ impl Checker<'_> {
             parameters,
             result,
             origins,
+            variadic,
         })
     }
 

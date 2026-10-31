@@ -222,13 +222,26 @@ tokens! {
         Slash = "/",
         PercentAssign = "%=",
         Percent = "%",
-        /// Spreads the values on its left into an array literal.
+        /// Spreads the values on its left into an array literal or a call, and makes a parameter take any number of arguments.
         ///
-        /// `a...` gives each element of the array `a`, which must hold the literal's element type, and `(0..3)...` each value of the range, as a `for` loop counts it; the parentheses may be left out. Under `[_]`, a spread range's ends and step must be known at compile time; under `[N]T`, a range known only at run time is counted then, and the program stops unless the entries give exactly `N` values. Spreading anywhere else is not supported yet.
+        /// `a...` gives each element of the array `a`, which must hold the literal's element type, and `(0..3)...` each value of the range, as a `for` loop counts it; the parentheses may be left out. Under `[_]`, a spread range's ends and step must be known at compile time; under `[N]T`, a range known only at run time is counted then, and the program stops unless the entries give exactly `N` values.
+        ///
+        /// A last parameter `values: ...T` is a `[&]T`, and `values: ...mut T` a `[&mut]T`. A call `f(1, 2, a...)` passes a slice of a new array of those values, as `f(&[_]T{1, 2, a...})` would, so each value moves or copies into it, and a write through `...mut T` reaches that array only. `f(s...)` with a slice passes the slice itself, so writes through it reach what it views, and `f(&mut a...)` lends the array, so writes reach `a`; a slice or a reference spread must then be the only argument for the parameter. `f()` passes an empty slice.
         ///
         /// ```peeper
         /// let a = [_]i32{1, 2};
         /// let b = [_]i32{a..., (5..=7)..., 0}; // [1, 2, 5, 6, 7, 0]
+        ///
+        /// fn sum(values: ...i32) -> i32 {
+        ///     let mut total = 0;
+        ///     for value in values {
+        ///         total = total + value.*;
+        ///     }
+        ///     return total;
+        /// }
+        ///
+        /// sum(1, 2, a...); // 6
+        /// sum(&b...);      // 21
         /// ```
         Ellipsis = "...",
         /// A range from the left value up to the right one, with it.

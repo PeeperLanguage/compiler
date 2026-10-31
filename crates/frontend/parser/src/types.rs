@@ -225,6 +225,7 @@ impl Parser {
                         mutable: false,
                         name,
                         ty,
+                        variadic: false,
                         default: None,
                     },
                 )

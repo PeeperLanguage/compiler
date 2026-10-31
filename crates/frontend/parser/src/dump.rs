@@ -11,7 +11,6 @@ use model::ast;
 use model::ast::Attribute;
 use model::ast::Block;
 use model::ast::Decl;
-use model::ast::Entry;
 use model::ast::Expr;
 use model::ast::Field;
 use model::ast::FieldValue;
@@ -60,7 +59,6 @@ enum Item {
     Pattern(Id<Pattern>),
     Expr(Id<Expr>),
     FieldValue(Id<FieldValue>),
-    Entry(Id<Entry>),
     Leaf(&'static str, Span),
 }
 
@@ -212,7 +210,11 @@ impl Dumper<'_> {
                 nested.push(Item::Type(p.ty));
                 nested.extend(p.default.map(Item::Expr));
                 (
-                    "parameter",
+                    if p.variadic {
+                        "variadic parameter"
+                    } else {
+                        "parameter"
+                    },
                     mutable(p.mutable),
                     t.children.params.span(id),
                     nested,
@@ -273,15 +275,6 @@ impl Dumper<'_> {
                     vec![Item::Leaf("field name", f.name.span), Item::Expr(f.value)],
                 )
             }
-            Item::Entry(id) => match t.children.entries[id] {
-                Entry::Value(value) => return self.item(Item::Expr(value), depth),
-                Entry::Spread(values) => (
-                    "spread",
-                    None,
-                    t.children.entries.span(id),
-                    vec![Item::Expr(values)],
-                ),
-            },
         };
         self.write(kind, op, span, &nested, depth);
     }
@@ -557,9 +550,10 @@ impl Dumper<'_> {
             ),
             Expr::ArrayLiteral { ty, entries } => {
                 let mut nested = vec![Item::Type(ty)];
-                nested.extend(t.children.lists.items(entries).map(Item::Entry));
+                nested.extend(t.children.lists.items(entries).map(Item::Expr));
                 ("array literal", None, nested)
             }
+            Expr::Spread(values) => ("spread", None, one(values)),
             Expr::Cast { value, ty } => ("cast expression", None, two(value, Item::Type(ty))),
             Expr::Is { value, case } => ("is expression", None, two(value, Item::Type(case))),
             Expr::OrElse { value, fallback } => {

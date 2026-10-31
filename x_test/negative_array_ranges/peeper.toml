@@ -5,7 +5,7 @@ build = "program"
 mode = "check"
 outcome = "failure"
 stderr_contains = [
-    "a range in `[_]` needs constant ends and step; write the length",
+    "a range needs constant ends and step; write the length",
     "`[3]i32` needs 3 values, found at least 5",
     "`...` here spreads a range, an array or a slice of `f64`, found `range[i32]`",
     "`[3]i32` needs 3 values, found 5",

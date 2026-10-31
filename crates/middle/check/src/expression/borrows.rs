@@ -156,6 +156,31 @@ impl ThirBuilder<'_, '_> {
         }
     }
 
+    /// Why `expr`, when it reads a field that is no place, an array's or a
+    /// slice's `len` (`check_field`), cannot be written.
+    pub(crate) fn fixed_length(&self, expr: Id<Expr>) -> Option<&'static str> {
+        match self.body.exprs[expr].kind {
+            ExprKind::Length(value)
+                if matches!(
+                    self.checker.types[self.body.exprs[value].ty],
+                    Type::Slice { .. }
+                ) =>
+            {
+                Some("a slice's `len` cannot be set")
+            }
+            ExprKind::Constant(_) | ExprKind::Length(_) => Some("an array's `len` cannot be set"),
+            _ => None,
+        }
+    }
+
+    /// Whether the `decider` of a place (`place_root`) lets it be written: a
+    /// `&mut`, a `[&mut]` or a raw pointer.
+    pub(super) fn writes_through(&self, decider: Id<Expr>) -> bool {
+        let types = &self.checker.types;
+        let ty = self.body.exprs[decider].ty;
+        types[ty].borrows() == Some(true) || matches!(types[ty], Type::RawPointer { .. })
+    }
+
     /// Reports `action` (`"assign to"`, `"mutably borrow"`) on the place
     /// `place`, which starts from `variable`, where it cannot write the
     /// place: through `decider` (`place_root`) only when that is a `&mut`,
@@ -172,11 +197,11 @@ impl ThirBuilder<'_, '_> {
         let place_span = self.body.exprs.span(place);
         let place_text = file.slice(place_span);
         let (written, declared, help) = if let Some(decider) = decider {
-            let ty = self.body.exprs[decider].ty;
-            let types = &self.checker.types;
-            if types[ty].borrows() == Some(true) || matches!(types[ty], Type::RawPointer { .. }) {
+            if self.writes_through(decider) {
                 return;
             }
+            let ty = self.body.exprs[decider].ty;
+            let types = &self.checker.types;
             let holder = file.slice(self.body.exprs.span(decider));
             let (kind, writable) = match types[ty] {
                 Type::Slice { .. } => ("slice", "`[&mut]` slice"),
