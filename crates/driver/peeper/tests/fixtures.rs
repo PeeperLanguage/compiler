@@ -10,15 +10,21 @@
 //! debug build and once with `-release`. `outcome` is "success" (exit code
 //! 0), "failure" (1, or any other code for `run`) or, for `run`,
 //! "exit_code" with `exit_code`; the
-//! output must hold each of `stdout_contains` and `stderr_contains`. With
+//! output must hold each of `stdout_contains` and `stderr_contains`, and the
+//! interpreter must print and exit byte for byte as the debug build does. With
 //! `target = "i686-linux"`, each command builds for that target (`-target
 //! i686-linux`). The compiler is `$PEEPER` if set (the bundled build/bin/peeper, which finds
 //! its libraries, runtime and toolchain), else the one cargo built, bundled
 //! with the libraries and runtime of this checkout and build/toolchains/native.
 
+use std::collections::HashMap;
 use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
+use std::process::Output;
 
+use eval::interpreter::program::Stream;
+use model::ModuleId;
 use model::machine::Machine;
 use project::canonical_path;
 use project::path_text;
@@ -109,6 +115,55 @@ fn assert_release_link(compiler: &str) {
     let remainder = "fn left(a: f64, b: f64) -> f64 {\n    return a % b;\n}\n\
         fn main() {\n    println(left(5.5, 3.0));\n}\n";
     assert!(holds(&build(remainder, Some("-release")), b"fmod"));
+}
+
+/// Why the interpreter did not do what the compiled program in `output` did,
+/// when it ran the fixture in `folder` for `target`: a run has no arguments
+/// or input, so a fixture with `program_args` is not asked, and nor is one
+/// that should not compile.
+fn interpreter_difference(
+    compiler: &str,
+    folder: &Path,
+    target: Option<&str>,
+    output: &Output,
+) -> Option<String> {
+    let installation = Path::new(compiler).parent().and_then(Path::parent);
+    let installation = installation.expect("`$PEEPER` is a path to bin/peeper");
+    let project = project::find(folder, &installation.join("libs")).expect("the fixture loads");
+    let program = project::load(&project, &HashMap::<PathBuf, String>::new());
+    let entry = (program.modules.iter())
+        .position(|module| Path::new(&module.ast.file.path) == project.entry)
+        .expect("a run fixture has an entry file");
+    let target = match target {
+        Some(name) => Machine::named(name).expect("the target is a machine"),
+        None => Machine::host().expect("this machine is a target"),
+    };
+    let (_, ran) = compile::interpret(&program, target, ModuleId::from_index(entry));
+    let Some(ran) = ran else {
+        return Some("it did not start".to_string());
+    };
+    let written = |stream| -> Vec<u8> {
+        let pieces = ran.output.iter().filter(|piece| piece.stream == stream);
+        pieces.flat_map(|piece| piece.text.clone()).collect()
+    };
+    let compiled = (output.status.code(), &output.stdout, &output.stderr);
+    let interpreted = (
+        Some(i32::from(ran.exit_code)),
+        &written(Stream::Stdout),
+        &written(Stream::Stderr),
+    );
+    (compiled != interpreted).then(|| {
+        let text = |bytes: &Vec<u8>| String::from_utf8_lossy(bytes).into_owned();
+        format!(
+            "compiled: {:?} {:?} {:?}\ninterpreted: {:?} {:?} {:?}",
+            compiled.0,
+            text(compiled.1),
+            text(compiled.2),
+            interpreted.0,
+            text(interpreted.1),
+            text(interpreted.2),
+        )
+    })
 }
 
 #[test]
@@ -202,6 +257,15 @@ fn fixtures() {
                     "{name}: expected {:?} {wanted_code:?}, got exit code {code}\n{stderr}",
                     text("outcome")
                 ));
+            }
+            if mode == "run"
+                && release.is_none()
+                && texts("program_args").is_empty()
+                && text("outcome") != Some("failure")
+                && let Some(difference) =
+                    interpreter_difference(&compiler, folder, text("target"), &output)
+            {
+                failures.push(format!("{name}: the interpreter differs\n{difference}"));
             }
             for (key, printed) in [("stdout_contains", &stdout), ("stderr_contains", &stderr)] {
                 for wanted in texts(key) {

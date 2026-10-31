@@ -40,10 +40,6 @@ use crate::text::symbol;
 use crate::text::type_text;
 use model::layout::in_memory;
 
-/// The runtime functions a panic calls, declared in the prelude
-/// (`core:global`) as `write` and `exit`.
-const WRITE: &str = "peeper_rt_v1_write";
-const EXIT: &str = "peeper_rt_v1_exit";
 /// The runtime functions `print` calls, with their LLVM parameters.
 const PRINT_TEXT: (&str, &str) = ("peeper_rt_v1_print_text", "ptr");
 const PRINT_INT: (&str, &str) = ("peeper_rt_v2_print_int", "i32, i32, ptr");

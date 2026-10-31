@@ -1,8 +1,9 @@
 # TODO
 
 What is done and what is left, so a new session can pick the work up.
-Last updated 2026-10-31. The entry-point rule moved into `compile::run`, and
-`lsp/src/server.rs` was split by job, after 2026-10-28's `main` = `70f9e8b6`.
+Last updated 2026-10-31. The entry-point rule moved into `compile::run`,
+`lsp/src/server.rs` was split by job, after 2026-10-28's `main` = `70f9e8b6`, and
+the playground runs programs through the MIR interpreter (`main` = `1fd7ede7`).
 
 ## Toolchain packs and distribution
 
@@ -98,6 +99,11 @@ The next steps of the other work in progress:
   `...mut T`.
 - **Features:** the allocator, enums and `match` (with `Option` as `?T`), strings,
   methods, interfaces and generics.
+- **Constants:** Rust's can hold structs, arrays and references to known data
+  (`const P = &5;`); Peeper's refuse them with "yet". Saved data must be read
+  only, and this reverses "`Value` stays free of addresses", so it waits on a
+  real program and the owner's go. A constant may use an address but not read
+  it (`docs/ir-design.md`).
 - **Ownership:** drop insertion, for containers, the only owners of heap
   memory: there is no owning pointer type, and `*T` stays raw. Also one function in `check` that answers
   "where can this type appear".
@@ -136,20 +142,35 @@ What was seen on 2026-10-31:
      compile time use no host stack, so a constant that recurses forever is
      T0044, as on native.
    - Native `peeper check` overflows its stack on 60,000 nested parentheses.
-2. [ ] **The page** (in the Website repo). An editor that highlights with the
-   grammar the site already has, runs the check in a Web Worker a short time
-   after typing stops, so typing never waits for it, and draws each diagnostic
-   as an underline with its message on hover. It needs a small WASI shim, and a
-   new instance per check so a crash loses nothing.
-3. [ ] **Run code in the browser.** The backend needs clang and LLVM, which do
-   not run in a page, so this needs a new backend from MIR to wasm, or a MIR
-   interpreter. The runtime must then work in wasm too, printing to the page.
+2. [x] **The page** (in the Website repo). Monaco, as in Ferret's playground,
+   with the site's grammar through Shiki. The check runs in a Web Worker a short
+   time after typing stops, so typing never waits for it, and each diagnostic
+   is an underline with its message on hover. A small WASI shim, and a new
+   instance per check so a crash loses nothing.
+3. [x] **Run code in the browser.** Done with the MIR interpreter
+   (`eval::interpreter::program::run`, through `compile::interpret`), so a page
+   needs no clang or LLVM. A request with `"run": true` replies with
+   `diagnostics`, the text a terminal prints, and `run`: null when the program
+   did not start, or its `output` (ordered pieces, each a `stream` and `text`)
+   and `exit_code`. A run has its own worker, which the page stops after 10
+   seconds, and it reports limits as panics.
+4. [ ] **Input for a running program.** Peeper has no input system yet, so `read`
+   is always empty. Design, for when strings land: a run that needs a line stops
+   and says so, the page asks, then runs the whole program again with every line
+   so far. The wasm stays one-shot.
+5. [ ] **A native wasm backend, maybe.** Peeper to wasm from MIR, for programs too
+   slow for the interpreter. Not started, and nothing depends on the interpreter
+   being the only way to run wasm.
+   Before it starts, have lowering write an array literal's counts and check
+   (`Check`, as for slices), so a third backend does not copy them: today
+   `write_part_counts` and the interpreter's `range_count` each hold the rule.
 
 ## Website
 
 The site lives in its own repo at `~/Dev/Peeper/Website` (fumadocs, Next.js).
-Its `main` has commits, but nothing is pushed and there is no GitHub repo yet;
-the docs' edit links assume `PeeperLanguage/website`.
+It is on GitHub as `PeeperLanguage/Website`.
 
-The docs show program outputs as saved text. The plan is to highlight, check and
-run code in the browser (see Browser (wasm) build).
+The docs show program outputs as saved text; the `/playground` page highlights,
+checks and runs code (see Browser (wasm) build). `public/peeper-check.wasm` is
+built with `npm run checker`, and the commit that updates it names the compiler
+commit it came from.

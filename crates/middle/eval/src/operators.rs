@@ -26,6 +26,8 @@ use model::operators::UnaryOp;
 use model::semantic_types::Float;
 use model::semantic_types::Integer;
 use model::semantic_types::Type;
+use runtime_abi::messages::DIVISION_BY_ZERO;
+use runtime_abi::messages::shift_count_message;
 
 /// Why an operation gives no value at compile time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -33,6 +35,14 @@ pub enum ValueError {
     DivisionByZero,
     /// A shift by a negative count or by the shifted type's width or more.
     ShiftOutOfRange,
+}
+
+/// What a program that hits `trap` on a left operand of `left_type` is told.
+pub fn trap_message(trap: ValueError, left_type: &Type) -> String {
+    match (trap, left_type) {
+        (ValueError::ShiftOutOfRange, Type::Integer(shifted)) => shift_count_message(shifted.bits),
+        _ => DIVISION_BY_ZERO.to_string(),
+    }
 }
 
 /// `left op right`. Both operands have one type, except that a shift count

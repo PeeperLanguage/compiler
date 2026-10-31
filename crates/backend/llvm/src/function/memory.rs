@@ -225,7 +225,7 @@ impl Function<'_, '_, '_> {
                         let (bound, message) = if let Type::Array { length, .. } = self.types[ty] {
                             (
                                 length.to_string(),
-                                eval::messages::array_index_message(length),
+                                runtime_abi::messages::array_index_message(length),
                             )
                         } else {
                             let mut bound = format!("{address}.{}.len", run - 1);
@@ -237,7 +237,10 @@ impl Function<'_, '_, '_> {
                                 );
                                 bound = format!("{name}.len");
                             }
-                            (bound, eval::messages::SLICE_INDEX_MESSAGE.to_string())
+                            (
+                                bound,
+                                runtime_abi::messages::SLICE_INDEX_MESSAGE.to_string(),
+                            )
                         };
                         _ = writeln!(out, "  {name}.out = icmp uge {compared}, {bound}{location}");
                         self.check(out, &format!("{name}.out"), &message, id);

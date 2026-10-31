@@ -69,23 +69,15 @@ For a change that touches compiler flow or semantic model, inspect current imple
 
 ## Tests and fixtures
 
-Run focused package tests while developing. Before requesting merge, match CI:
+Run focused package tests while developing. Before requesting merge, run what
+CI runs:
 
 ```bash
-cargo fmt --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-bash scripts/build.sh
-PEEPER="$PWD/build/bin/peeper" cargo test -p peeper --test fixtures
+bash scripts/check.sh
 ```
 
-CI also builds the browser checker on Linux and runs it in Node. To match it,
-run `rustup target add wasm32-wasip1` once, then:
-
-```bash
-cargo build -p browser --profile wasm --target wasm32-wasip1
-node crates/driver/browser/smoke.mjs target/wasm32-wasip1/wasm/browser.wasm
-```
+On Linux it also builds the browser checker and runs it in Node, which needs
+`rustup target add wasm32-wasip1` once.
 
 Language features and behavior changes require Peeper source coverage under
 `x_test/`:

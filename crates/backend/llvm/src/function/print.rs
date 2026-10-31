@@ -4,7 +4,6 @@
 use std::fmt::Write;
 
 use arena::Id;
-use model::constant::Value;
 use model::mir;
 use model::mir::Operand;
 use model::semantic_types::Float;
@@ -42,10 +41,8 @@ impl Function<'_, '_, '_> {
             if index > 0 {
                 text.push(b' ');
             }
-            if let Operand::Constant(constant) = value
-                && let Value::Bytes(bytes) = &self.body.constants[constant.index()].value
-            {
-                text.extend(bytes.split(|&byte| byte == 0).next().unwrap_or_default());
+            if let Some(constant) = self.body.constant_text(value) {
+                text.extend_from_slice(constant);
                 continue;
             }
             let path = format!("{}.{index}", value_name(id));

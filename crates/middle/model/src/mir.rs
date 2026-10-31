@@ -262,8 +262,9 @@ pub enum Terminator {
 }
 
 impl InstructionKind {
-    /// Whether it is code that runs: all but a `ScopeEnd`, which only marks
-    /// a point for the checks.
+    /// Whether it is code that runs in a compiled program: all but a
+    /// `ScopeEnd`, which marks a point for the checks, and where a constant's
+    /// run ends the variable's memory.
     pub fn runs(&self) -> bool {
         !matches!(self, InstructionKind::ScopeEnd(_))
     }
@@ -286,6 +287,18 @@ impl Terminator {
 }
 
 impl Body {
+    /// The text `print` writes for `operand`, when that is a constant string:
+    /// up to its first zero byte, as C reads it.
+    pub fn constant_text(&self, operand: Operand) -> Option<&[u8]> {
+        let Operand::Constant(constant) = operand else {
+            return None;
+        };
+        let Value::Bytes(bytes) = &self.constants[constant.index()].value else {
+            return None;
+        };
+        bytes.split(|&byte| byte == 0).next()
+    }
+
     /// The type of the value `operand` stands for.
     pub fn operand_type(&self, operand: Operand) -> TypeId {
         match operand {

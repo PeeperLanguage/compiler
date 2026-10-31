@@ -48,12 +48,15 @@ assert.equal(recursion.code, "T0044");
 assert.equal(recursion.related[0].message, "this went 100000 calls deep");
 
 // An address past 32 bits must not wrap round to memory the run owns.
-const [wrapped] = await check({
-    "main.peep":
-        'fn text() -> cstr {\n    return c"abcd";\n}\nfn f() -> i32 {\n    let held = text();\n    let mut far: u64 = 5368709120;\n    let p = @far as **i32;\n    return p.*.*;\n}\nconst X: i32 = f();\nfn main() {}\n',
+const wrapped = await send({
+    run: true,
+    files: {
+        "main.peep":
+            'fn text() -> cstr {\n    return c"abcd";\n}\nfn main() {\n    let held = text();\n    let mut far: u64 = 5368709120;\n    let p = @far as **i32;\n    println(p.*.*);\n}\n',
+    },
 });
-assert.equal(wrapped.code, "T0044");
-assert.equal(wrapped.related[0].message, "this reads or writes memory the program does not own");
+assert.equal(wrapped.run.exit_code, 101);
+assert.match(wrapped.run.output[0].text, /^panic: this reads or writes memory the program does not own\n/);
 
 // A program runs with what it printed, with no backend or linker.
 const { diagnostics, run } = await send({

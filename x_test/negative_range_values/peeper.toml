@@ -14,6 +14,6 @@ stderr_contains = [
     "a range needs constant ends and step; write the length",
     "`range[i32]` cannot be printed",
     "mismatched types: expected `range[i64]`, found `range[u8]`",
-    "the value of a constant must be known at compile time",
+    "this value cannot be worked out at compile time yet",
     "Compilation failed with 10 error(s)",
 ]

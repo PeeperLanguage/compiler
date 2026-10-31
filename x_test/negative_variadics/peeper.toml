@@ -25,6 +25,6 @@ stderr_contains = [
     "returns a reference into a temporary value, which is gone once the function returns",
     "`a` is changed while a slice of it is still in use",
     "cannot mutably borrow immutable `a`",
-    "the value of a constant must be known at compile time",
+    "this value cannot be worked out at compile time yet",
     "Compilation failed with 26 error(s)",
 ]

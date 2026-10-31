@@ -1,0 +1,7 @@
+name = "run_outside_sizes"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "success"
+stdout_contains = ["-1 -1\n-1\ntrue\nwent on\n"]

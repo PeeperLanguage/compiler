@@ -18,6 +18,7 @@ llvm.workspace = true
 lsp.workspace = true
 
 [dev-dependencies]
+eval.workspace = true
 toml_edit.workspace = true
 
 [[bench]]

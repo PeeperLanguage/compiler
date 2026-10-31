@@ -104,14 +104,12 @@ fn too_deep(n: i32) -> i32 {
     return too_deep(n + 1) + 1;
 }
 const TOO_DEEP = too_deep(0);
-fn same_pointer(p: *i32) -> *i32 {
-    return p;
+// `none` is no address, but nothing can be read through it.
+fn reads_none() -> i32 {
+    let nothing: *i32 = none;
+    return nothing.*;
 }
-fn gives_pointer() -> *i32 {
-    let mut n = 1;
-    return same_pointer(@n);
-}
-const POINTER = gives_pointer();
+const READS_NONE = reads_none();
 // Few steps a call, but a call holds room for every value of its body, so
 // this runs out of stack, not of steps, and long before the host's memory.
 fn wide_calls(n: i32) -> i32 {
@@ -121,21 +119,6 @@ fn wide_calls(n: i32) -> i32 {
     return wide_calls(n + 1) + 1;
 }
 const WIDE_CALLS = wide_calls(0);
-// Bytes a raw pointer gives as a value are not checked as one made by code.
-fn zero_step() -> i32 {
-    let mut words = [3]u64{21474836480, 0, 0};
-    let forged = @words as *range[i32];
-    let values = [2]i32{forged.*...};
-    return values[0];
-}
-const ZERO_STEP = zero_step();
-struct Two { first: i64, second: i64 }
-fn past_addresses() -> i64 {
-    let mut word: u64 = 18446744073709551615;
-    let forged = @word as **Two;
-    return forged.*.*.second;
-}
-const PAST_ADDRESSES = past_addresses();
 // One instruction can do a lot of work, and it counts: these stop soon, not
 // after a million copies of a large array.
 fn copies() -> i32 {
@@ -156,3 +139,134 @@ fn fills() -> i32 {
     return total;
 }
 const FILLS = fills();
+// What only a run knows cannot be a constant, wherever the name is used.
+fn double(x: i32) -> i32 {
+    return x * 2;
+}
+fn unknown(given: i32) -> i32 {
+    const K = double(given);
+    let later = 1;
+    const L = later + 1;
+    return K + L;
+}
+// A known value a constant has no form for yet is told apart from those.
+struct Pair {
+    a: i32,
+    b: i32,
+}
+fn pair() -> Pair {
+    return Pair.{ a = 1, b = 2 };
+}
+fn numbers() -> [2]i32 {
+    return [2]i32{1, 2};
+}
+fn span() -> range[i32] {
+    return 0..2;
+}
+const PAIR = pair();
+const NUMBERS = numbers();
+const SPAN = span();
+const LITERAL: Pair = Pair.{ a = 1, b = 2 };
+// What holds up a constant is named, not a value it has no need to read: an
+// array's `len` is known from its type.
+fn named(after_len: i32) -> i32 {
+    let held = [3]i32{1, 2, 3};
+    const M = double(held.len as i32) + double(after_len);
+    return M;
+}
+// All its values are known, so it is not told that one is not.
+const PICKED = [1]i32{double(2)}[0];
+// Rust refuses this too: all its uses would share one value.
+const LENT_MUTABLY = &mut 5;
+// An address can be used, but only the running program knows one, so what
+// would read it stops the run.
+fn same_pointer(p: *i32) -> *i32 {
+    return p;
+}
+fn gives_pointer() -> *i32 {
+    let mut n = 1;
+    return same_pointer(@n);
+}
+const POINTER = gives_pointer();
+fn compares_addresses() -> bool {
+    let mut a = 1;
+    let mut b = 2;
+    return @a == @b;
+}
+const COMPARES_ADDRESSES = compares_addresses();
+// A cast is the way to a pointer's bytes, and to what is next to a value.
+fn casts_pointer() -> u8 {
+    let mut n = 1;
+    let bytes = @n as *u8;
+    return bytes.*;
+}
+const CASTS_POINTER = casts_pointer();
+// What a variable held is gone when it ends, even where a newer one could be.
+fn reads_ended() -> i32 {
+    return gives_pointer().*;
+}
+const READS_ENDED = reads_ended();
+fn writes_ended() -> i32 {
+    let ended = gives_pointer();
+    ended.* = 5;
+    return 1;
+}
+const WRITES_ENDED = writes_ended();
+fn reads_through(ended: *i32) -> i32 {
+    let mut mine = 7;
+    let held = @mine;
+    return ended.* + held.*;
+}
+fn ended_under_a_call() -> i32 {
+    return reads_through(gives_pointer());
+}
+const ENDED_UNDER_A_CALL = ended_under_a_call();
+fn ended_with_its_block() -> i32 {
+    let mut outlived: *i32 = none;
+    for pass in 0..2 {
+        let mut n = pass;
+        outlived = @n;
+    }
+    return outlived.*;
+}
+const ENDED_WITH_ITS_BLOCK = ended_with_its_block();
+fn from_an_earlier_pass() -> i32 {
+    let mut earlier: *i32 = none;
+    for pass in 0..2 {
+        let mut n = pass;
+        if pass == 1 {
+            return earlier.*;
+        }
+        earlier = @n;
+    }
+    return 0;
+}
+const FROM_AN_EARLIER_PASS = from_an_earlier_pass();
+fn past_a_continue() -> i32 {
+    let mut earlier: *i32 = none;
+    for pass in 0..2 {
+        let mut n = pass;
+        if pass == 0 {
+            earlier = @n;
+            continue;
+        }
+        return earlier.*;
+    }
+    return 0;
+}
+const PAST_A_CONTINUE = past_a_continue();
+fn casts_back() -> i32 {
+    let mut n = 3;
+    let raw: rawptr = @n;
+    let back = raw as *i32;
+    return back.*;
+}
+const CASTS_BACK = casts_back();
+// A parameter has no scope end: it ends with its call.
+fn own_parameter(mut value: i32) -> *i32 {
+    return same_pointer(@value);
+}
+fn reads_parameter() -> i32 {
+    return own_parameter(1).*;
+}
+const READS_PARAMETER = reads_parameter();

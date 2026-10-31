@@ -3,9 +3,11 @@
 
 use arena::Id;
 use diagnostics::Diagnostic;
+use eval::interpreter::constant_refusal;
 use model::ast;
 use model::ast::Ident;
 use model::constant::Constant;
+use model::layout::in_memory;
 use model::semantic_types::TypeId;
 use model::thir::Expr;
 use model::thir::ExprKind;
@@ -149,9 +151,26 @@ impl ThirBuilder<'_, '_> {
             }),
             ExprKind::Invalid => None,
             _ => {
-                let message = "the value of a constant must be known at compile time";
-                self.checker
-                    .error(diagnostics::INVALID_OPERATION, message, span);
+                let file = self.checker.module().ast.file.clone();
+                let unknown = self.body.first_named_variable(&checked.kind);
+                let types = &self.checker.types;
+                let message = if unknown.is_some() {
+                    "the value of a constant must be known at compile time"
+                } else if in_memory(types, checked.ty) || types[checked.ty].borrows() == Some(true)
+                {
+                    constant_refusal(&types[checked.ty])
+                } else {
+                    "this value cannot be worked out at compile time yet"
+                };
+                let mut diagnostic =
+                    Diagnostic::new(diagnostics::INVALID_OPERATION, message).label(&file, span, "");
+                if let Some(variable) = unknown {
+                    let declared = self.body.variables.span(variable);
+                    let name = file.slice(declared);
+                    let label = format!("`{name}` gets its value only when the program runs");
+                    diagnostic = diagnostic.label(&file, declared, label);
+                }
+                self.checker.report(diagnostic);
                 None
             }
         }

@@ -1,22 +1,11 @@
 //! What a program that fails is told, the same at compile time and at run
 //! time.
 
-use model::semantic_types::Type;
+pub const DIVISION_BY_ZERO: &str = "division by zero";
 
-use crate::operators::ValueError;
-
-/// The exit code of a program that panics, as in Rust.
-pub const PANIC_EXIT_CODE: i32 = 101;
-
-/// What a program that hits `trap` on a left operand of `left_type` is told,
-/// at compile time and at run time.
-pub fn trap_message(trap: ValueError, left_type: &Type) -> String {
-    match (trap, left_type) {
-        (ValueError::ShiftOutOfRange, Type::Integer(shifted)) => {
-            format!("a shift count must be from 0 to {}", shifted.bits - 1)
-        }
-        _ => "division by zero".to_string(),
-    }
+/// What a shift of a value of `bits` bits by too far stops a program with.
+pub fn shift_count_message(bits: u32) -> String {
+    format!("a shift count must be from 0 to {}", bits - 1)
 }
 
 /// What an index outside an array of `length` elements stops a program with.

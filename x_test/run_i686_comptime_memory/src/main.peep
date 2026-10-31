@@ -132,6 +132,75 @@ fn text() -> cstr {
     return c"hello";
 }
 
+fn is_nothing(pointer: *i32) -> bool {
+    return pointer == none;
+}
+
+struct Holder { at: *i32, count: i32 }
+
+fn store(at: *i32, value: i32) {
+    at.* = value;
+}
+
+// An address can be used as long as nothing reads it: passed to calls, and
+// kept in a struct that moves.
+fn kept_addresses() -> i32 {
+    let mut held = 1;
+    let holder = Holder.{ at = @held, count = 41 };
+    let moved = holder;
+    let both = [2]Holder{moved, Holder.{ at = @held, count = 1 }};
+    store(both[0].at, both[0].count);
+    store(both[1].at, both[0].at.* + both[1].count);
+    if both[0].at == none {
+        return 0;
+    }
+    return held;
+}
+
+fn element_address() -> i32 {
+    let mut values = [3]i32{1, 2, 3};
+    store(@values[1], 20);
+    return values[0] + values[1];
+}
+
+fn address_of_address() -> i32 {
+    let mut n = 1;
+    let mut p = @n;
+    let pointers = @p;
+    pointers.*.* = 9;
+    return n;
+}
+
+fn cast_nothing() -> bool {
+    let nothing: rawptr = none;
+    return nothing as *i32 == none;
+}
+
+// New memory for each start must not stop what only takes many steps.
+fn pick(values: [1000]i32, at: i32) -> i32 {
+    return values[at % 1000];
+}
+
+fn many_wide_calls() -> i32 {
+    let values = [1000]i32{(0..1000)...};
+    let mut total = 0;
+    for pass in 0..10000 {
+        total = total + pick(values, pass) % 2;
+    }
+    return total;
+}
+
+// Each pass has its own `n`.
+fn address_in_a_loop() -> i32 {
+    let mut total = 0;
+    for pass in 0..4 {
+        let mut n = 0;
+        store(@n, pass);
+        total = total + n;
+    }
+    return total;
+}
+
 const POINTS = points();
 const MIXED = mixed();
 const SLICES = slices();
@@ -139,10 +208,15 @@ const GRID = grid();
 const SPREADS = spreads(2);
 const RANGES = ranges(7);
 const REFERENCES = references();
-const POINTERS = pointers();
 const WIDE = wide();
-const SPACING = spacing();
 const TEXT = text();
+const NOTHING = is_nothing(none);
+const KEPT_ADDRESSES = kept_addresses();
+const ELEMENT_ADDRESS = element_address();
+const ADDRESS_OF_ADDRESS = address_of_address();
+const ADDRESS_IN_A_LOOP = address_in_a_loop();
+const CAST_NOTHING = cast_nothing();
+const MANY_WIDE_CALLS = many_wide_calls();
 
 fn main() {
     println(POINTS, points());
@@ -152,8 +226,15 @@ fn main() {
     println(SPREADS, spreads(2));
     println(RANGES, ranges(7));
     println(REFERENCES, references());
-    println(POINTERS, pointers());
+    println(pointers()); // a pointer cast cannot run at compile time
     println(WIDE, wide());
-    println(SPACING, spacing());
+    println(spacing());
     println(TEXT, text());
+    println(NOTHING, is_nothing(none));
+    println(KEPT_ADDRESSES, kept_addresses());
+    println(ELEMENT_ADDRESS, element_address());
+    println(ADDRESS_OF_ADDRESS, address_of_address());
+    println(ADDRESS_IN_A_LOOP, address_in_a_loop());
+    println(CAST_NOTHING, cast_nothing());
+    println(MANY_WIDE_CALLS, many_wide_calls());
 }

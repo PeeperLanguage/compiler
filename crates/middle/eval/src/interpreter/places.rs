@@ -15,8 +15,9 @@ use source::Span;
 use super::Failure;
 use super::Interpreter;
 use super::Located;
+use super::OUT_OF_STACK;
 use super::Register;
-use crate::messages;
+use runtime_abi::messages;
 
 impl<'b> Interpreter<'b, '_> {
     /// Where field `index` of the struct or range type `ty` is, from the
@@ -47,10 +48,27 @@ impl<'b> Interpreter<'b, '_> {
         let Register::Scalar(Value::Integer(limbs)) = self.operand(index) else {
             unreachable!("an integer's register is a scalar")
         };
-        let limbs = limbs.as_slice();
-        let top = (integer.bits - 1) as usize;
-        let negative = integer.signed && limbs[top / 64] >> (top % 64) & 1 == 1;
-        (!negative && limbs[1..].iter().all(|&limb| limb == 0)).then_some(limbs[0])
+        bigint::to_u64(integer.bits, integer.signed, &limbs)
+    }
+
+    /// Where `variable` of the running call is. In a constant's run it gets
+    /// a new block each time it starts, so an address of the last one, from
+    /// an earlier pass of a loop, cannot reach this one.
+    fn place_variable(&mut self, variable: Id<mir::Variable>, span: Span) -> Result<u64, Failure> {
+        let frame = self.frame();
+        let index = variable.index();
+        if self.host.is_some() {
+            return Ok(frame.start + frame.slots.variables[index]);
+        }
+        if frame.variables[index] != 0 {
+            return Ok(frame.variables[index]);
+        }
+        let size = self.size_of(frame.body.variables[variable].ty);
+        let Some(address) = self.memory.open_block(size) else {
+            return Err(self.fail(OUT_OF_STACK, span));
+        };
+        self.frames.last_mut().expect("a run has a frame").variables[index] = address;
+        Ok(address)
     }
 
     /// Walks `place`, as the backend's `write_place_address` does, with the
@@ -59,7 +77,7 @@ impl<'b> Interpreter<'b, '_> {
     pub(super) fn locate(&mut self, place: &mir::Place, span: Span) -> Result<Located, Failure> {
         let frame = self.frame();
         let mut ty = frame.body.variables[place.variable].ty;
-        let mut address = frame.start + frame.slots.variables[place.variable.index()];
+        let mut address = self.place_variable(place.variable, span)?;
         let mut length = None;
         for &step in &place.projections {
             match (step, &self.types[ty]) {
@@ -70,14 +88,14 @@ impl<'b> Interpreter<'b, '_> {
                 }
                 (Projection::Dereference, Type::Slice { .. }) => {
                     let second = address.wrapping_add(self.pointer_bytes());
-                    length = Some(self.read_address(second, span)?);
-                    address = self.read_address(address, span)?;
+                    length = Some(self.read_word(second, span)?);
+                    address = self.read_word(address, span)?;
                 }
                 (Projection::Dereference, pointer) => {
                     let target = pointer
                         .pointee()
                         .expect("a dereference has a typed pointer");
-                    address = self.read_address(address, span)?;
+                    address = self.read_word(address, span)?;
                     ty = target;
                 }
                 (

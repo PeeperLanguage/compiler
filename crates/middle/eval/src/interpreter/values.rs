@@ -16,6 +16,7 @@ use super::Failure;
 use super::INVALID_ACCESS;
 use super::Interpreter;
 use super::Register;
+use super::constant_refusal;
 
 impl<'b> Interpreter<'b, '_> {
     /// What the instruction `id` gave. A value `in_memory` gets its own copy,
@@ -92,7 +93,7 @@ impl<'b> Interpreter<'b, '_> {
                 Some(text) => Ok(Value::Bytes(text)),
                 None => Err(self.fail(INVALID_ACCESS, span)),
             },
-            _ => Err(self.fail("a constant cannot hold this value yet", span)),
+            _ => Err(self.fail(constant_refusal(&self.types[ty]), span)),
         }
     }
 
@@ -106,8 +107,8 @@ impl<'b> Interpreter<'b, '_> {
         (self.memory.bytes(address, length)).ok_or_else(|| self.fail(INVALID_ACCESS, span))
     }
 
-    /// The address kept at `address`.
-    pub(super) fn read_address(&self, address: u64, span: Span) -> Result<u64, Failure> {
+    /// The word kept at `address`, the size of an address.
+    pub(super) fn read_word(&self, address: u64, span: Span) -> Result<u64, Failure> {
         let mut bytes = [0; 8];
         let size = self.pointer_bytes();
         bytes[..size as usize].copy_from_slice(self.read_bytes(address, size, span)?);
@@ -139,12 +140,12 @@ impl<'b> Interpreter<'b, '_> {
                 ))
             }
             Type::CString | Type::Reference { .. } | Type::RawPointer { .. } => {
-                return Ok(Register::Address(self.read_address(address, span)?));
+                return Ok(Register::Address(self.read_word(address, span)?));
             }
             Type::Slice { .. } => {
                 return Ok(Register::Slice {
-                    address: self.read_address(address, span)?,
-                    length: self.read_address(address + self.pointer_bytes(), span)?,
+                    address: self.read_word(address, span)?,
+                    length: self.read_word(address + self.pointer_bytes(), span)?,
                 });
             }
             Type::Struct { .. } | Type::Array { .. } | Type::Range { .. } => {

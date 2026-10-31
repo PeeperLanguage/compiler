@@ -4,19 +4,21 @@
 use std::fmt::Write;
 
 use arena::Id;
-use eval::messages::trap_message;
-use eval::operators::ValueError;
 use model::constant::Value;
 use model::mir;
 use model::mir::Operand;
 use model::operators::BinaryOp;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
+use runtime_abi::abi::PANIC_EXIT_CODE;
+use runtime_abi::abi::STDERR;
+use runtime_abi::messages::DIVISION_BY_ZERO;
+use runtime_abi::messages::shift_count_message;
+use runtime_abi::symbols::EXIT;
+use runtime_abi::symbols::WRITE;
 use source::Span;
 
-use crate::function::EXIT;
 use crate::function::Function;
-use crate::function::WRITE;
 use crate::function::global;
 use crate::function::traps;
 use crate::function::value_name;
@@ -61,8 +63,7 @@ impl Function<'_, '_, '_> {
                         if checks {
                             let zero = format!("{name}.z");
                             _ = writeln!(out, "  {zero} = icmp eq {ty} {}, 0", self.operand(right));
-                            let message = trap_message(ValueError::DivisionByZero, integer);
-                            self.check(out, &zero, &message, id);
+                            self.check(out, &zero, DIVISION_BY_ZERO, id);
                         }
                         let (l, r) = (self.operand(left), self.operand(right));
                         if signed && (checks || self.is_minus_one(right)) {
@@ -187,8 +188,7 @@ impl Function<'_, '_, '_> {
                     self.operand(count)
                 );
             }
-            let message = trap_message(ValueError::ShiftOutOfRange, &self.types[shifted]);
-            self.check(out, &too_far, &message, id);
+            self.check(out, &too_far, &shift_count_message(width), id);
         }
         if count_bits == width {
             return None;
@@ -250,12 +250,12 @@ impl Function<'_, '_, '_> {
             .declare(EXIT, || format!("declare void {}(i32)\n\n", global(EXIT)));
         _ = write!(
             out,
-            "  call i32 {}(i32 2, ptr {string}, i32 {}){location}\n  \
+            "  call i32 {}(i32 {STDERR}, ptr {string}, i32 {}){location}\n  \
              call void {}(i32 {}){location}\n  unreachable",
             global(WRITE),
             text.len(),
             global(EXIT),
-            eval::messages::PANIC_EXIT_CODE,
+            PANIC_EXIT_CODE,
         );
     }
 }

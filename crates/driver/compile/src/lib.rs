@@ -22,7 +22,6 @@ use eval::interpreter::Failure;
 use eval::interpreter::program::ProgramFacts;
 use eval::interpreter::program::Stream;
 use eval::interpreter::program::Written;
-use eval::messages::PANIC_EXIT_CODE;
 use model::DefId;
 use model::ModuleId;
 use model::ast;
@@ -33,6 +32,7 @@ use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use model::thir;
+use runtime_abi::abi::PANIC_EXIT_CODE;
 use source::SourceFile;
 use source::Span;
 

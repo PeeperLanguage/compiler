@@ -22,7 +22,17 @@ use super::Failure;
 use super::INVALID_ACCESS;
 use super::Interpreter;
 use super::Register;
-use crate::number_text;
+use runtime_abi::abi::STDERR;
+use runtime_abi::abi::STDOUT;
+use runtime_abi::number_text;
+use runtime_abi::symbols::ALLOC;
+use runtime_abi::symbols::EXIT;
+use runtime_abi::symbols::FREE;
+use runtime_abi::symbols::READ;
+use runtime_abi::symbols::WRITE;
+
+/// The descriptor of a program's input, as in `core`.
+const STDIN: i32 = 0;
 
 /// How many steps a program may run: more than any page should wait for, so a
 /// page's own time limit usually ends a program first.
@@ -35,10 +45,6 @@ const OUTPUT_LIMIT: u64 = 1 << 20;
 /// How many pieces a program's output may have, so one that keeps changing
 /// streams cannot give a page a million of them to show.
 const PIECE_LIMIT: usize = 10_000;
-
-/// What the standard error's and output's descriptors are, as in `core`.
-const STDOUT: i32 = 1;
-const STDERR: i32 = 2;
 
 /// What a run asks of the program around its MIR, which `eval` cannot see.
 pub struct ProgramFacts<'f> {
@@ -162,10 +168,8 @@ impl<'f> Interpreter<'_, 'f> {
             if index > 0 {
                 text.push(b' ');
             }
-            if let Operand::Constant(constant) = *value
-                && let Value::Bytes(ref bytes) = body.constants[constant.index()].value
-            {
-                text.extend(bytes.split(|&byte| byte == 0).next().unwrap_or_default());
+            if let Some(constant) = body.constant_text(*value) {
+                text.extend_from_slice(constant);
                 continue;
             }
             let register = self.operand(value);
@@ -194,7 +198,7 @@ impl<'f> Interpreter<'_, 'f> {
                 let count = integer.bits.div_ceil(64);
                 let extended = bigint::extend(integer.bits, integer.signed, limbs, count * 64);
                 let mut wide = extended.as_slice()[..count as usize].to_vec();
-                let mut chunks = vec![0; wide.len() * 3 + 1];
+                let mut chunks = vec![0; number_text::chunk_room(wide.len())];
                 let mut push = |piece: &[u8]| text.extend_from_slice(piece);
                 number_text::write_integer(integer.signed, &mut wide, &mut chunks, &mut push);
             }
@@ -263,9 +267,10 @@ impl<'f> Interpreter<'_, 'f> {
         Ok(())
     }
 
-    /// The whole number the argument `operand` holds: 0 for a negative one.
+    /// The size the argument `operand` holds, as C reads it: a negative
+    /// one's bits are a size too big for any block.
     fn size_argument(&mut self, operand: &Operand) -> u64 {
-        self.position(operand).unwrap_or(0)
+        self.position(operand).unwrap_or(u64::MAX)
     }
 
     /// The address the pointer `operand` holds.
@@ -285,10 +290,14 @@ impl<'f> Interpreter<'_, 'f> {
     }
 
     /// A block of `size` bytes as a pointer: null when there is no room, as
-    /// `malloc` says so. Making it costs as copying `size` bytes does.
+    /// `malloc` says so, which goes on. A block made costs as copying `size`
+    /// bytes does.
     fn allocated(&mut self, size: u64, span: Span) -> Result<Register, Failure> {
+        let Some(address) = self.memory.allocate(size) else {
+            return Ok(Register::Address(0));
+        };
         self.charge(size, span)?;
-        Ok(Register::Address(self.memory.allocate(size).unwrap_or(0)))
+        Ok(Register::Address(address))
     }
 
     /// Runs the function `function` that is outside the program, for the call
@@ -310,7 +319,7 @@ impl<'f> Interpreter<'_, 'f> {
             });
         };
         let result = match (symbol.as_str(), arguments) {
-            ("peeper_rt_v1_alloc" | "malloc", [size]) => {
+            (ALLOC | "malloc", [size]) => {
                 let size = self.size_argument(size);
                 Some(self.allocated(size, span)?)
             }
@@ -330,14 +339,18 @@ impl<'f> Interpreter<'_, 'f> {
                 };
                 Some(block)
             }
-            ("peeper_rt_v1_free" | "free", [block]) => {
+            (FREE | "free", [block]) => {
                 let address = self.address_argument(block);
                 if address != 0 && self.memory.free(address).is_none() {
                     return Err(self.fail("this frees memory that is not allocated", span));
                 }
                 None
             }
-            ("peeper_rt_v1_write", [fd, buffer, length]) => {
+            // A negative length gives -1, as the runtime refuses it.
+            (WRITE | READ, [_, _, length]) if self.position(length).is_none() => {
+                Some(self.integer_result(id, u64::MAX))
+            }
+            (WRITE, [fd, buffer, length]) => {
                 let (fd, address) = (self.i32_argument(fd), self.address_argument(buffer));
                 let length = self.size_argument(length);
                 self.check_output(length, span)?;
@@ -345,9 +358,12 @@ impl<'f> Interpreter<'_, 'f> {
                 let written = self.output(fd, &bytes, span)?;
                 Some(self.integer_result(id, if written { length } else { u64::MAX }))
             }
-            // No program here has an input.
-            ("peeper_rt_v1_read", [_, _, _]) => Some(self.integer_result(id, 0)),
-            ("peeper_rt_v1_exit", [code]) => return Err(Failure::Exited(self.i32_argument(code))),
+            // No program here has an input, so its stream is always at its end.
+            (READ, [fd, _, _]) => {
+                let at_end = self.i32_argument(fd) == STDIN;
+                Some(self.integer_result(id, if at_end { 0 } else { u64::MAX }))
+            }
+            (EXIT, [code]) => return Err(Failure::Exited(self.i32_argument(code))),
             (symbol, _) => {
                 let message = format!("`{symbol}` is outside Peeper, so it cannot run here");
                 return Err(self.fail(message, span));
