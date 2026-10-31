@@ -1,0 +1,10 @@
+[package]
+name = "runtime_abi"
+description = "What a running program does as seen from outside, the same compiled and interpreted"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

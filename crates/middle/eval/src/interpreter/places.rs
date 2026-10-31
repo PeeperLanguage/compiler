@@ -16,7 +16,7 @@ use super::Failure;
 use super::Interpreter;
 use super::Located;
 use super::Register;
-use crate::messages;
+use runtime_abi::messages;
 
 impl<'b> Interpreter<'b, '_> {
     /// Where field `index` of the struct or range type `ty` is, from the
@@ -70,14 +70,14 @@ impl<'b> Interpreter<'b, '_> {
                 }
                 (Projection::Dereference, Type::Slice { .. }) => {
                     let second = address.wrapping_add(self.pointer_bytes());
-                    length = Some(self.read_address(second, span)?);
-                    address = self.read_address(address, span)?;
+                    length = Some(self.read_word(second, span)?);
+                    address = self.read_word(address, span)?;
                 }
                 (Projection::Dereference, pointer) => {
                     let target = pointer
                         .pointee()
                         .expect("a dereference has a typed pointer");
-                    address = self.read_address(address, span)?;
+                    address = self.read_word(address, span)?;
                     ty = target;
                 }
                 (

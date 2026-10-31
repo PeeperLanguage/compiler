@@ -22,6 +22,7 @@ token = { path = "crates/frontend/token" }
 lexer = { path = "crates/frontend/lexer" }
 arena = { path = "crates/base/arena" }
 bigint = { path = "crates/base/bigint" }
+runtime_abi = { path = "crates/base/runtime_abi" }
 parser = { path = "crates/frontend/parser" }
 literal = { path = "crates/base/literal" }
 model = { path = "crates/middle/model" }

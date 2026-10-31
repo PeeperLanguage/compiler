@@ -16,8 +16,8 @@ use super::Failure;
 use super::INVALID_ACCESS;
 use super::Interpreter;
 use super::Register;
-use crate::messages;
 use crate::operators;
+use runtime_abi::messages;
 
 impl<'b> Interpreter<'b, '_> {
     /// Builds the struct, array or range `id` from `parts`.
@@ -103,7 +103,7 @@ impl<'b> Interpreter<'b, '_> {
         let divide = |op| match operators::binary(op, step_type, &left, step_type, &by) {
             Ok(Value::Integer(limbs)) => Ok(limbs),
             Ok(_) => unreachable!("a step is an integer"),
-            Err(trap) => Err(self.fail(messages::trap_message(trap, step_type), span)),
+            Err(trap) => Err(self.fail(operators::trap_message(trap, step_type), span)),
         };
         let whole = divide(BinaryOp::Divide)?;
         let rest = divide(BinaryOp::Remainder)?;

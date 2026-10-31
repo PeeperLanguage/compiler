@@ -298,7 +298,7 @@ impl ThirBuilder<'_, '_> {
         if let ExprKind::Constant(ref value) = right.kind
             && let Some(trap) = eval::operators::known_trap(op, &left_type, &right_type, value)
         {
-            let message = eval::messages::trap_message(trap, &left_type);
+            let message = eval::operators::trap_message(trap, &left_type);
             self.checker
                 .error(diagnostics::INVALID_OPERATION, message, right_span);
             return Expr::INVALID;

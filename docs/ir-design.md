@@ -76,9 +76,9 @@ that is built once and kept.
 peeper ─► build ─► project ─► parser ─► model ─► arena
             │
             ├─► check ─► model, project, eval, lower, flow   AST -> THIR, signatures, folding; builds bodies
-            ├─► eval ──► model            operators on constant values; the MIR interpreter
+            ├─► eval ──► model, runtime_abi   operators on constant values; the MIR interpreter
             ├─► lower ─► model            THIR -> MIR; path checks
-            └─► llvm ──► model, eval      MIR -> LLVM text (trap messages from eval); clang
+            └─► llvm ──► model, runtime_abi   MIR -> LLVM text; clang
 ```
 
 Every phase reads and writes its data in `model`; only `lower` reads THIR, and
@@ -89,7 +89,8 @@ enum variants, function types) are `model` data, written by check.
 |---|---|
 | `model` | data only: `ast` (the syntax tree), `thir` (THIR nodes), `mir` (MIR graphs); `semantic_types` (`TypeId`, the type interner, the built-in types table); `constant` (constant values); `ModuleId`, `DefId`; `operators` (`BinaryOp`, `UnaryOp`); signatures |
 | `check` | the checker: scopes, name lookup, building THIR, writing signatures; the declaration tables (`Checker`) |
-| `eval` | what operators mean on constant values (`binary`, `unary`, `convert`, `known_trap`, the trap messages `trap_message`); the MIR interpreter (`interpreter::run`) |
+| `eval` | what operators mean on constant values (`binary`, `unary`, `convert`, `known_trap`, the trap messages `trap_message`); the MIR interpreter (`interpreter::run` for a constant's call, `interpreter::program::run` for a whole program) |
+| `runtime_abi` | what a running program does as seen from outside, shared by `llvm` and `eval`: streams and the exit code, runtime function names, panic messages, number text. The two `runtime/` files the runtime library needs too are read from there by `#[path]`, as that library is built with no crates |
 | `lower` | lowering from THIR; path checks |
 | `llvm` | LLVM text for a module; running clang and the linker |
 | `compile` | a compile: walks the modules in order, reuses unchanged ones, lowers each body (the `build` of `overall-design.md`, renamed) |

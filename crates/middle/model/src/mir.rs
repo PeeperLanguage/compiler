@@ -286,6 +286,18 @@ impl Terminator {
 }
 
 impl Body {
+    /// The text `print` writes for `operand`, when that is a constant string:
+    /// up to its first zero byte, as C reads it.
+    pub fn constant_text(&self, operand: Operand) -> Option<&[u8]> {
+        let Operand::Constant(constant) = operand else {
+            return None;
+        };
+        let Value::Bytes(bytes) = &self.constants[constant.index()].value else {
+            return None;
+        };
+        bytes.split(|&byte| byte == 0).next()
+    }
+
     /// The type of the value `operand` stands for.
     pub fn operand_type(&self, operand: Operand) -> TypeId {
         match operand {

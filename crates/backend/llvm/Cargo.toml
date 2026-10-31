@@ -8,9 +8,9 @@ publish.workspace = true
 
 [dependencies]
 arena.workspace = true
-eval.workspace = true
 model.workspace = true
 project.workspace = true
+runtime_abi.workspace = true
 rustc-hash.workspace = true
 source.workspace = true
 

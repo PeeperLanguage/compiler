@@ -1,8 +1,8 @@
 //! How a program's numbers read. The runtime library prints with this file,
-//! and `eval`, which runs programs with no library, reads the same file
-//! (`#[path]`), so the two cannot print a number differently. It uses only
-//! `core`, as the runtime has nothing else, and gives each piece of text to
-//! `push`.
+//! and `runtime_abi` reads the same file (`#[path]`) for `eval`, which runs
+//! programs with no library, so the two cannot print a number differently.
+//! It uses only `core`, as the runtime has nothing else, and gives each piece
+//! of text to `push`.
 
 use core::fmt::Write;
 
@@ -18,9 +18,14 @@ pub fn write_decimal(mut value: u64, width: usize, push: &mut impl FnMut(&[u8]))
     push(&digits[at.min(digits.len() - width)..]);
 }
 
+/// How many nine-digit chunks of decimal text `limbs` 64-bit limbs can need.
+pub fn chunk_room(limbs: usize) -> usize {
+    limbs * 3 + 1
+}
+
 /// Writes in decimal the integer of the limbs `wide`, least significant first,
 /// in two's complement when `is_signed`. `wide` is used up, and `chunks`, of
-/// `wide.len() * 3 + 1` elements, holds the digits on the way.
+/// `chunk_room(wide.len())` elements, holds the digits on the way.
 pub fn write_integer(
     is_signed: bool,
     wide: &mut [u64],

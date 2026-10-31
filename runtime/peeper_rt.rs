@@ -5,7 +5,12 @@
 
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
+mod abi;
 mod number_text;
+
+use abi::PANIC_EXIT_CODE;
+use abi::STDERR;
+use abi::STDOUT;
 
 unsafe extern "C" {
     fn malloc(size: usize) -> *mut c_void;
@@ -26,10 +31,6 @@ unsafe extern "C" {
     fn _read(fd: i32, buffer: *mut c_void, length: u32) -> i32;
     fn _setmode(fd: i32, mode: i32) -> i32;
 }
-
-const STDOUT: i32 = 1;
-const STDERR: i32 = 2;
-const PANIC_EXIT: i32 = 101;
 
 // `compiler_builtins`, in this archive, names it for the helpers a program can
 // call (`fmod`, `__modti3`). With `panic=abort` nothing unwinds to call it.
@@ -163,14 +164,14 @@ unsafe extern "C" fn peeper_rt_v2_print_int(is_signed: i32, count: i32, limbs: *
     }
     // The limbs, then the nine-digit chunks of the decimal text, in one
     // block; a program that cannot get it stops as a panic does.
-    let chunk_room = count * 3 + 1;
+    let chunk_room = number_text::chunk_room(count);
     let bytes = count * size_of::<u64>() + chunk_room * size_of::<u32>();
     let block = unsafe { malloc(bytes) };
     if block.is_null() {
         let message = b"panic: out of memory\n";
         unsafe {
             system_write(STDERR, message.as_ptr().cast(), message.len() as i32);
-            exit(PANIC_EXIT)
+            exit(PANIC_EXIT_CODE)
         }
     }
     let wide = unsafe { core::slice::from_raw_parts_mut(block.cast::<u64>(), count) };

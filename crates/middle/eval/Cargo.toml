@@ -10,6 +10,7 @@ publish.workspace = true
 arena.workspace = true
 bigint.workspace = true
 model.workspace = true
+runtime_abi.workspace = true
 source.workspace = true
 
 [lints]

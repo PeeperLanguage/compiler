@@ -11,7 +11,6 @@ use super::Failure;
 use super::Interpreter;
 use super::Register;
 use crate::conversions;
-use crate::messages;
 use crate::operators;
 
 impl<'b> Interpreter<'b, '_> {
@@ -51,7 +50,7 @@ impl<'b> Interpreter<'b, '_> {
                     (Register::Scalar(left), Register::Scalar(right)) => {
                         let value = operators::binary(op, left_type, &left, right_type, &right)
                             .map_err(|trap| {
-                                self.fail(messages::trap_message(trap, left_type), span)
+                                self.fail(operators::trap_message(trap, left_type), span)
                             })?;
                         Some(Register::Scalar(value))
                     }
