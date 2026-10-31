@@ -60,6 +60,18 @@ pub fn layout(types: &Types, ty: TypeId, target: &Machine) -> (u64, u64) {
         Type::Alias { .. } => unreachable!("indexing looks through aliases"),
     }
 }
+
+/// Whether a value of type `ty` is kept in memory, not held whole as one
+/// number: a struct, an array or a range. LLVM splits a value of such a type
+/// into one operation per part, so a big array as one value made clang slow,
+/// then crash; the interpreter copies such a value as its bytes.
+pub fn in_memory(types: &Types, ty: TypeId) -> bool {
+    matches!(
+        types[ty],
+        Type::Struct { .. } | Type::Array { .. } | Type::Range { .. }
+    )
+}
+
 /// The offset of each of `fields` in a struct holding them in order, and the
 /// struct's size and alignment, in bytes (`layout`): each field at the next
 /// multiple of its alignment, the size rounded up to the largest.

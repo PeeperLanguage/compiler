@@ -34,11 +34,11 @@ use rustc_hash::FxHashMap;
 
 use crate::Module;
 use crate::function::debug_info::DebugLocation;
-use crate::layout::in_memory;
 use crate::text::constant_text;
 use crate::text::quoted;
 use crate::text::symbol;
 use crate::text::type_text;
+use model::layout::in_memory;
 
 /// The runtime functions a panic calls, declared in the prelude
 /// (`core:global`) as `write` and `exit`.

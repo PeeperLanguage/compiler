@@ -21,8 +21,8 @@ use crate::function::PRINT_TEXT;
 use crate::function::debug_info::DebugLocation;
 use crate::function::global;
 use crate::function::value_name;
-use crate::layout::in_memory;
 use crate::text::type_text;
+use model::layout::in_memory;
 
 impl Function<'_, '_, '_> {
     /// Writes the runtime calls that print `values` for the `print` `id`,

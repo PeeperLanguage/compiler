@@ -1,0 +1,8 @@
+// Comment lines so that a label from `caller` would fall elsewhere here.
+//
+//
+//
+fn Inner() -> i32 {
+    let values = [10000000]i32{(0..10000000)...};
+    return values[0];
+}

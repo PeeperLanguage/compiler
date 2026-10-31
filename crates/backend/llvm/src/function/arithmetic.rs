@@ -5,8 +5,8 @@ use std::fmt::Write;
 use std::path::Path;
 
 use arena::Id;
-use eval::ValueError;
-use eval::trap_message;
+use eval::messages::trap_message;
+use eval::operators::ValueError;
 use model::constant::Value;
 use model::mir;
 use model::mir::Operand;

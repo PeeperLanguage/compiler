@@ -1,6 +1,6 @@
 // What slices cannot do yet, or ever: be held in a struct, an array, a
 // reference or another slice, cross to C, be written through `[&]`, become
-// writable from `[&]`, change element type, run at compile time.
+// writable from `[&]`, change element type.
 struct Holder { view: [&]i32 }
 
 #[extern("takes")]
@@ -24,15 +24,6 @@ fn first(view: [&]i32) -> i32 {
 
 fn edit(values: [&mut]i32) {}
 fn wide(values: [&]i64) {}
-
-// Arrays cannot run at compile time yet, so no slice can be made there.
-fn count() -> usize {
-    let values = [3]i32{1, 2, 3};
-    let view: [&]i32 = &values;
-    return view.len;
-}
-
-const COUNT: usize = count();
 
 fn main() {
     let fixed = [3]i32{1, 2, 3};

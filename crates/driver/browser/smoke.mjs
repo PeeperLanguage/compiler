@@ -37,10 +37,18 @@ assert.equal(mismatch.place.file, "other.peep");
 assert.deepEqual(mismatch.place.start, { line: 2, column: 12 });
 assert.deepEqual(mismatch.place.end, { line: 2, column: 16 });
 
-// Past wasm's stack this would end the instance; `eval` must stop it first.
+// A run's calls use no host stack, so this is the same error as natively.
 const [recursion] = await check({
     "main.peep": "fn f(n: i32) -> i32 {\n    return f(n + 1);\n}\nconst X: i32 = f(0);\nfn main() {}\n",
 });
 assert.equal(recursion.code, "T0044");
-assert.equal(recursion.related[0].message, "this went 500 calls deep");
-console.log("the wasm checker found both errors");
+assert.equal(recursion.related[0].message, "this went 100000 calls deep");
+
+// An address past 32 bits must not wrap round to memory the run owns.
+const [wrapped] = await check({
+    "main.peep":
+        'fn text() -> cstr {\n    return c"abcd";\n}\nfn f() -> i32 {\n    let held = text();\n    let mut far: u64 = 5368709120;\n    let p = @far as **i32;\n    return p.*.*;\n}\nconst X: i32 = f();\nfn main() {}\n',
+});
+assert.equal(wrapped.code, "T0044");
+assert.equal(wrapped.related[0].message, "this reads or writes memory the program does not own");
+console.log("the wasm checker found every error");

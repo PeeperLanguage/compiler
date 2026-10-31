@@ -1,0 +1,11 @@
+name = "negative_comptime_modules"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "src/caller.peep:4:12",
+    "return callee::Inner();\n  |            --------------- this ran out of stack",
+    "Compilation failed with 1 error(s)",
+]

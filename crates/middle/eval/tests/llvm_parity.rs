@@ -15,9 +15,9 @@ use std::path::Path;
 use std::process::Command;
 
 use bigint::Limbs;
-use eval::binary;
-use eval::convert;
-use eval::unary;
+use eval::conversions::convert;
+use eval::operators::binary;
+use eval::operators::unary;
 use model::constant::Value;
 use model::operators::BinaryOp;
 use model::operators::UnaryOp;

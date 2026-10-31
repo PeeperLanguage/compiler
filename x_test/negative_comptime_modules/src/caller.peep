@@ -1,0 +1,5 @@
+import "negative_comptime_modules:callee";
+
+fn Outer() -> i32 {
+    return callee::Inner();
+}

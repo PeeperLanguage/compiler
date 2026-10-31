@@ -11,7 +11,12 @@ fn cube:
   bb1:
     scope end n.0
     fall off at `}`
+fn text:
+  bb0:
+    return c"ab\x00cd"
+  bb1:
+    fall off at `}`
 fn main:
   bb0:
-    println(1000000001)
+    println(1000000001, c"ab\x00cd")
     fall off at `}`

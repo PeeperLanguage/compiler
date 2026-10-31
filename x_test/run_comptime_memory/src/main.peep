@@ -1,0 +1,158 @@
+// A function that uses memory gives the same result while compiling as when
+// the program runs: each line prints a constant, then the same call at run
+// time, so the two sides can be compared by eye and by the test.
+struct Point { x: i32, y: i32 }
+
+struct Mixed { small: u8, wide: i64, huge: u128, on: bool, point: Point }
+
+fn moved(p: Point, by: i32) -> Point {
+    return Point.{ x = p.x + by, y = p.y - by };
+}
+
+fn points() -> i32 {
+    let mut p = Point.{ x = 1, y = 2 };
+    p.x = 10;
+    let q = moved(p, 5);
+    let y = q.y;
+    p = moved(q, 1);
+    return p.x * 100 + p.y + y;
+}
+
+fn mixed() -> u128 {
+    let mut m = Mixed.{ small = 255, wide = -2, huge = 1, on = true, point = Point.{ x = 3, y = 4 } };
+    m.huge = (m.huge << 100) + 7;
+    m.small = m.small - 1;
+    m.point.y = m.point.y * 2;
+    let copy = m;
+    m = Mixed.{ small = 0, wide = 0, huge = 0, on = false, point = Point.{ x = 0, y = 0 } };
+    if copy.on && !m.on {
+        return copy.huge + copy.small as u128 + (copy.wide + 9) as u128 + copy.point.y as u128;
+    }
+    return 0;
+}
+
+fn sum(view: [&]i32) -> i32 {
+    let mut total = 0;
+    for at in 0..view.len {
+        total = total + view[at];
+    }
+    return total;
+}
+
+fn double(edit: [&mut]i32) {
+    for at in 0..edit.len {
+        edit[at] = edit[at] * 2;
+    }
+}
+
+fn slices() -> i32 {
+    let mut values = [5]i32{1, 2, 3, 4, 5};
+    double(&mut values[1..3]);
+    let part: [&]i32 = &values[1..4];
+    return sum(&values) * 100 + sum(part) + part.len as i32;
+}
+
+fn grid() -> i64 {
+    let mut cells = [2][3]i64{[3]i64{1, 2, 3}, [3]i64{4, 5, 6}};
+    cells[1][2] = cells[0][1] * 40;
+    let row = cells[1];
+    cells[1][0] = 0;
+    return row[0] * 1000 + row[2] + cells[1][0];
+}
+
+fn spreads(n: i32) -> i32 {
+    let middle = [2]i32{7, 8};
+    let view: [&]i32 = &middle;
+    let all = [10]i32{(n..n + 3)..., middle..., view..., 10..7...};
+    let mut total = 0;
+    for at, value in all {
+        total = total + value * (at as i32 + 1);
+    }
+    return total;
+}
+
+fn ranges(n: i32) -> i32 {
+    let r = 0..=n:2;
+    let mut total = 0;
+    for v in r {
+        total = total + v;
+    }
+    return total * 10;
+}
+
+fn set(target: &mut i32, value: i32) {
+    target.* = value;
+}
+
+fn get(array: &[3]Point) -> &Point in array {
+    return &array[2];
+}
+
+fn references() -> i32 {
+    let mut n = 1;
+    set(&mut n, 41);
+    let array = [3]Point{Point.{ x = 1, y = 2 }, Point.{ x = 3, y = 4 }, Point.{ x = 5, y = 6 }};
+    let last = get(&array);
+    return n + last.x * last.y;
+}
+
+fn pointers() -> i64 {
+    let mut value: i64 = 5;
+    let p: *i64 = @value;
+    p.* = p.* * 3;
+    let bytes = @value as *u8;
+    bytes.* = 16;
+    let nothing: rawptr = none;
+    if p as rawptr == nothing {
+        return 0;
+    }
+    return value;
+}
+
+// Past two limbs, and a width that does not fill its bytes.
+fn wide() -> u256 {
+    let mut values = [2]u256{1, 2};
+    values[1] = values[0] << 200;
+    let mut small = [2]i7{-1, 5};
+    small[1] = small[0] - 1;
+    return values[1] + small[1] as u256;
+}
+
+struct Spaced { small: u8, wide: i64 }
+
+// An `i64`'s place differs by target: at byte 8 here, at byte 4 on i686.
+fn spacing() -> u8 {
+    let mut spaced = Spaced.{ small = 1, wide = 2 };
+    let bytes = @spaced as *[12]u8;
+    return bytes.*[8];
+}
+
+fn text() -> cstr {
+    return c"hello";
+}
+
+const POINTS = points();
+const MIXED = mixed();
+const SLICES = slices();
+const GRID = grid();
+const SPREADS = spreads(2);
+const RANGES = ranges(7);
+const REFERENCES = references();
+const POINTERS = pointers();
+const WIDE = wide();
+const SPACING = spacing();
+const TEXT = text();
+
+fn main() {
+    println(POINTS, points());
+    println(MIXED, mixed());
+    println(SLICES, slices());
+    println(GRID, grid());
+    println(SPREADS, spreads(2));
+    println(RANGES, ranges(7));
+    println(REFERENCES, references());
+    println(POINTERS, pointers());
+    println(WIDE, wide());
+    println(SPACING, spacing());
+    println(TEXT, text());
+}

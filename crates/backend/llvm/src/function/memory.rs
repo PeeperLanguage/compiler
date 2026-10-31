@@ -21,8 +21,8 @@ use crate::function::debug_info::DebugLocation;
 use crate::function::spreads_slice;
 use crate::function::traps;
 use crate::function::value_name;
-use crate::layout::in_memory;
 use crate::text::type_text;
+use model::layout::in_memory;
 
 impl Function<'_, '_, '_> {
     /// The address of `place` for the instruction `id`, after writing the
@@ -223,8 +223,10 @@ impl Function<'_, '_, '_> {
                         };
                         // A slice's length was loaded at its dereference.
                         let (bound, message) = if let Type::Array { length, .. } = self.types[ty] {
-                            let message = format!("index out of bounds: the length is {length}");
-                            (length.to_string(), message)
+                            (
+                                length.to_string(),
+                                eval::messages::array_index_message(length),
+                            )
                         } else {
                             let mut bound = format!("{address}.{}.len", run - 1);
                             let pointer_bits = self.module.target.pointer_bits;
@@ -235,7 +237,7 @@ impl Function<'_, '_, '_> {
                                 );
                                 bound = format!("{name}.len");
                             }
-                            (bound, "index out of bounds of the slice".to_string())
+                            (bound, eval::messages::SLICE_INDEX_MESSAGE.to_string())
                         };
                         _ = writeln!(out, "  {name}.out = icmp uge {compared}, {bound}{location}");
                         self.check(out, &format!("{name}.out"), &message, id);
