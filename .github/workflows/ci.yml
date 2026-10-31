@@ -32,6 +32,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - run: rustup component add rustfmt clippy
+      # The runtime is built with rustc for each target the tests use.
+      - if: runner.os == 'Linux'
+        run: rustup target add i686-unknown-linux-gnu
+      - if: runner.os == 'Windows'
+        run: rustup target add x86_64-pc-windows-gnullvm
       - uses: Swatinem/rust-cache@v2
       # The i686-linux fixtures link against the 32-bit C library.
       - if: runner.os == 'Linux'

@@ -46,16 +46,18 @@ pub fn link_executable(
         .map_err(|error| format!("cannot make {}: {error}", folder.display()))?;
     let clang = tool(installation, "clang");
     let linked = compile_modules(modules, mode, target, &clang, &folder)
-        .and_then(|objects| link(&objects, target, &clang, &runtime, output));
+        .and_then(|objects| link(&objects, mode, target, &clang, &runtime, output));
     _ = std::fs::remove_dir_all(&folder);
     linked
 }
 
 /// Links `objects` with the runtime library `runtime` into the program
-/// `output` for `target`, with `clang`. The program is linked beside `output` and then
+/// `output` for `target`, with `clang`, dropping unused code, symbols and debug
+/// info in a release `mode`. The program is linked beside `output` and then
 /// renamed to it, so a failed link leaves no half-written program.
 fn link(
     objects: &[PathBuf],
+    mode: BuildMode,
     target: &Machine,
     clang: &Path,
     runtime: &Path,
@@ -73,6 +75,13 @@ fn link(
         .arg(runtime);
     if target.os != "windows" {
         linker.arg("-lm"); // LLVM turns a float `%` into a call of `fmod`
+    }
+    if mode == BuildMode::Release {
+        linker.arg(if target.os == "macos" {
+            "-Wl,-dead_strip,-S,-x" // ld64.lld has no `-s`
+        } else {
+            "-Wl,--gc-sections,-s"
+        });
     }
     linker.arg("-o").arg(&staged);
     let linked = call_tool(linker, "link the program").and_then(|()| {

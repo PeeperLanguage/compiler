@@ -22,11 +22,12 @@ cargo build --release
 # The runtimes first: a failed build keeps the one there (`runtime::build`),
 # and stops this script before the compiler and libraries are replaced.
 cargo run --release --quiet -p llvm --bin build-runtime -- build
-# `-target i686-linux` needs the 32-bit C library (Fedora: glibc-devel.i686);
-# without it only that target is missing, and building for it says so.
+# `-target i686-linux` needs Rust's target (`rustup target add
+# i686-unknown-linux-gnu`) and the 32-bit C library (Fedora: glibc-devel.i686);
+# without them only that target is missing, and building for it says so.
 if ! cargo run --release --quiet -p llvm --bin build-runtime -- build i686-linux; then
     rm -rf build/runtime/i686-linux # one from older sources would not match
-    echo "skipped the i686-linux runtime: install the 32-bit C library to build for -target i686-linux"
+    echo "skipped the i686-linux runtime: add Rust's i686-unknown-linux-gnu target and the 32-bit C library to build for -target i686-linux"
 fi
 
 mkdir -p build/bin

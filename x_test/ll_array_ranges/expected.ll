@@ -95,6 +95,7 @@ done:
 
 define private void @print.array.0(ptr %array) {
 entry:
+  %element.m = alloca i64
   br label %loop
 loop:
   %index = phi i64 [ 0, %entry ], [ %next, %step ]
@@ -104,7 +105,8 @@ loop:
   %address = getelementptr inbounds [6 x i32], ptr %array, i64 0, i64 %index
   %element = load i32, ptr %address
   %element.x = sext i32 %element to i64
-  call void (i32, i32, ...) @"peeper_rt_v1_print_int"(i32 1, i32 1, i64 %element.x)
+  store i64 %element.x, ptr %element.m
+  call void (i32, i32, ptr) @"peeper_rt_v1_print_int"(i32 1, i32 1, ptr %element.m)
   br label %step
 step:
   %next = add i64 %index, 1
@@ -118,7 +120,7 @@ declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)
 
 declare void @"peeper_rt_v1_flush"()
 
-declare void @"peeper_rt_v1_print_int"(i32, i32, ...)
+declare void @"peeper_rt_v1_print_int"(i32, i32, ptr)
 
 declare void @"peeper_rt_v1_print_text"(ptr)
 

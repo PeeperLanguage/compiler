@@ -77,6 +77,36 @@ fn runs_i686() -> bool {
     Machine::host() == Machine::named("x86_64-linux")
 }
 
+/// A release program keeps only what it uses of the runtime, with no symbols
+/// or debug info; a debug one keeps its debug info. The names are Linux's.
+fn assert_release_stripped(compiler: &str) {
+    let folder = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let source = folder.join("stripped.peep");
+    std::fs::write(&source, "fn main() {\n    println(\"hello\");\n}\n")
+        .expect("the program is written");
+    let build = |release: Option<&str>| {
+        let program = folder.join("stripped");
+        let built = Command::new(compiler)
+            .arg("build")
+            .args(release)
+            .arg("-o")
+            .arg(&program)
+            .arg(&source)
+            .output()
+            .expect("the compiler runs");
+        let errors = String::from_utf8_lossy(&built.stderr);
+        assert!(built.status.success(), "{errors}");
+        std::fs::read(&program).expect("the program reads")
+    };
+    let holds =
+        |program: &[u8], name: &[u8]| program.windows(name.len()).any(|bytes| bytes == name);
+    assert!(holds(&build(None), b".debug_info"));
+    let release = build(Some("-release"));
+    assert!(!holds(&release, b".debug_info"));
+    assert!(!holds(&release, b".symtab"));
+    assert!(release.len() < 16_000, "{} bytes", release.len());
+}
+
 #[test]
 fn fixtures() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../x_test");
@@ -199,4 +229,7 @@ fn fixtures() {
     }
     assert!(checked > 0, "no check fixtures in {}", root.display());
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+    if cfg!(target_os = "linux") {
+        assert_release_stripped(&compiler);
+    }
 }
