@@ -131,7 +131,7 @@ Exit: one edited file re-checks only what its interface change affects.
   --workspace`, whose fixtures build and run the `x_test` programs (with the
   32-bit C library, for `target = "i686-linux"`), and `scripts/build.sh`, on
   Linux, macOS ARM64 and Windows x86-64. The Go release workflows are gone;
-  a release is built on a version tag (`release.yml`; `v0.1.0` is out), and
+  a release is built on a version tag (`release.yml`; `v0.2.0` is out), and
   `install-check.yml` installs it with the README's commands on each machine.
 - Toolchain packs built by CI for the Rust compiler (`crates/tools/toolchain`,
   run by `build-toolchains.yml`), for Linux, macOS ARM64 and Windows x86-64

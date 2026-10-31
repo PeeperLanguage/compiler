@@ -67,7 +67,7 @@ Last updated 2026-10-31. The entry-point rule moved into `compile::run`, and
    - Owner decision needed: build LLVM from source for it, rely on an installed
      LLVM there (setup's way 2), or drop Intel Mac support.
 3. [x] **A release of the Rust compiler.** `release.yml` builds one on a `v*`
-   tag, and `v0.1.0` (2026-10-29) is out with `install.sh`, `install.ps1`, one
+   tag, and `v0.2.0` (2026-10-31) is out with `install.sh`, `install.ps1`, one
    archive per machine and `SHA256SUMS`. `install-check.yml` installs it with
    the README's commands after each release.
 4. [ ] **Cleanup, owner approval needed, as it cannot be undone:**

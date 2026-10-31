@@ -19,14 +19,14 @@ dependencies = [
 
 [[package]]
 name = "arena"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "source",
 ]
 
 [[package]]
 name = "bigint"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "bitflags"
@@ -45,7 +45,7 @@ dependencies = [
 
 [[package]]
 name = "browser"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "compile",
  "diagnostics",
@@ -73,7 +73,7 @@ checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
 name = "check"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arena",
  "bigint",
@@ -92,7 +92,7 @@ dependencies = [
 
 [[package]]
 name = "compile"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arena",
  "check",
@@ -152,7 +152,7 @@ dependencies = [
 
 [[package]]
 name = "diagnostics"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "source",
  "token",
@@ -189,7 +189,7 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
 name = "eval"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arena",
  "bigint",
@@ -227,7 +227,7 @@ dependencies = [
 
 [[package]]
 name = "flow"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arena",
  "diagnostics",
@@ -381,7 +381,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "lexer"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "diagnostics",
  "literal",
@@ -404,14 +404,14 @@ checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
 
 [[package]]
 name = "literal"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "diagnostics",
 ]
 
 [[package]]
 name = "llvm"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arena",
  "bigint",
@@ -432,7 +432,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "lower"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arena",
  "bigint",
@@ -442,7 +442,7 @@ dependencies = [
 
 [[package]]
 name = "lsp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arena",
  "compile",
@@ -500,7 +500,7 @@ dependencies = [
 
 [[package]]
 name = "model"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arena",
  "bigint",
@@ -519,7 +519,7 @@ dependencies = [
 
 [[package]]
 name = "parser"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arena",
  "diagnostics",
@@ -533,7 +533,7 @@ dependencies = [
 
 [[package]]
 name = "peeper"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arena",
  "compile",
@@ -573,7 +573,7 @@ dependencies = [
 
 [[package]]
 name = "project"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "diagnostics",
  "literal",
@@ -694,7 +694,7 @@ checksum = "5b3dc8af474f516a851ff4bd12db780f948b9250ad37211e4eec0bccea54e01b"
 
 [[package]]
 name = "source"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "stable_deref_trait"
@@ -759,7 +759,7 @@ dependencies = [
 
 [[package]]
 name = "token"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "source",
 ]
@@ -803,7 +803,7 @@ checksum = "06bdbd8cfc056b8d2e2e85f29b56a3bdbecb527cef81eb39e3e7b98af4652770"
 
 [[package]]
 name = "toolchain"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "flate2",
  "llvm",
