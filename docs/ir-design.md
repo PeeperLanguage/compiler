@@ -417,6 +417,11 @@ the place must be set, but it makes no loan, so nothing checks how the raw
 pointer is used. A `.*` of a typed raw pointer is the same `Dereference` step
 as a reference's.
 
+A call of a function with a `...` parameter has no IR of its own. The checker
+writes what `f(1, a...)` stands for, the `Borrow` of a `Temporary` holding an
+`ArrayLiteral` of the last arguments, or passes a slice spread alone as it is,
+so moves, drops and loans need no rule for it.
+
 A value in no variable that is lent, indexed or gone through (`&make()`,
 `make()[0]`, `id(&mut x).*`) is THIR's `Temporary`: a hidden variable the
 value is stored into where it is computed, so it runs in the order written,

@@ -363,6 +363,7 @@ fn hash_type(checker: &Checker, ty: TypeId, hasher: &mut DefaultHasher) {
             parameters,
             result,
             origins,
+            variadic,
         } => {
             parameters.len().hash(hasher);
             for &parameter in parameters {
@@ -370,6 +371,7 @@ fn hash_type(checker: &Checker, ty: TypeId, hasher: &mut DefaultHasher) {
             }
             hash_type(checker, *result, hasher);
             origins.hash(hasher);
+            variadic.hash(hasher);
         }
         Type::Named(definition) | Type::Struct { definition, .. } => {
             checker.modules[definition.module.index()].path.hash(hasher);

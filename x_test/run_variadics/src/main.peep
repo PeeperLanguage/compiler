@@ -1,0 +1,176 @@
+// A `...` parameter is a slice; a call passes a slice of a new array of its
+// last arguments, or a slice spread alone as it is.
+struct Point { row: i32 }
+
+fn sum(values: ...i32) -> i32 {
+    let mut total = 0;
+    for value in values {
+        total = total + value.*;
+    }
+    return total;
+}
+
+// At least one value: the first is an ordinary parameter.
+fn most(first: i32, rest: ...i32) -> i32 {
+    let mut found = first;
+    for value in rest {
+        if value.* > found {
+            found = value.*;
+        }
+    }
+    return found;
+}
+
+fn bump(values: ...mut i32) {
+    for i in 0..values.len {
+        values[i] = values[i] + 1;
+    }
+}
+
+fn rows(points: ...Point) -> i32 {
+    let mut total = 0;
+    for i in 0..points.len {
+        total = total + points[i].row;
+    }
+    return total;
+}
+
+// `values` is a plain `[&]i32` inside, so it passes on as one.
+fn forward(values: ...i32) -> i32 {
+    return sum(values...) + plain(values);
+}
+
+fn plain(values: [&]i32) -> i32 {
+    return values.len as i32;
+}
+
+fn largest(values: ...i32) -> &i32 in values {
+    let mut found: usize = 0;
+    for i in 0..values.len {
+        if values[i] > values[found] {
+            found = i;
+        }
+    }
+    return &values[found];
+}
+
+// Each call lends the rest of the slice, without copying it.
+fn sum_each(values: ...i32) -> i32 {
+    if values.len == 0 {
+        return 0;
+    }
+    return values[0] + sum_each(&values[1..]...);
+}
+
+// `mut` lets the name take another slice; `...mut` lets it write.
+fn second_slice(mut values: ...i32) -> i32 {
+    let other = [1]i32{100};
+    values = &other;
+    return values[0];
+}
+
+fn ignored(_: ...i32) {}
+
+fn pairs(values: ...[2]i32) -> i32 {
+    return values[0][1] + values.len as i32;
+}
+
+fn same(values: ...i32) -> [&]i32 in values {
+    return values;
+}
+
+fn made() -> [2]i32 {
+    return [2]i32{6, 7};
+}
+
+fn noisy(value: i32) -> i32 {
+    println(value);
+    return value;
+}
+
+fn main() {
+    println("1. no arguments:");
+    println(sum());
+    println("2. listed:");
+    println(sum(1, 2, 3));
+    println("3. mixed with arrays and ranges:");
+    let a = [3]i32{1, 2, 3};
+    println(sum(10, a..., 20));
+    println(sum(a..., a...));
+    println(sum((1..=4)...));
+    println(sum(1..=4...));
+    println("4. a lone array is copied, like `c = a`:");
+    let mut b = [3]i32{1, 2, 3};
+    bump(b...);
+    println(b[0]);
+    println("5. a `&mut` of the array writes to it:");
+    bump(&mut b...);
+    println(b[0]);
+    println("6. a slice writes through:");
+    let view = &mut b[1..];
+    bump(view...);
+    bump(view...); // a `[&mut]` in a variable is lent, not moved
+    println(view[0]);
+    println("7. listed variables are copied:");
+    let x = 5;
+    bump(x, x);
+    println(x);
+    println("8. a shared slice:");
+    let shared = &a[1..];
+    println(sum(shared...));
+    println(sum(&a...));
+    println("9. fixed and variadic parameters:");
+    println(most(1));
+    println(most(1, 5, 2));
+    println(most(9, a...));
+    println("10. structs move in, as into a plain argument:");
+    let p = Point.{ row = 3 };
+    let q = Point.{ row = 4 };
+    println(rows(p, q));
+    println("11. a slice of structs, which do not copy, passes as it is:");
+    let points = [2]Point{ .{ row = 1 }, .{ row = 2 } };
+    println(rows(&points...));
+    println(points[0].row);
+    println("12. forwarded:");
+    println(forward(1, 2, 3));
+    println("13. a result borrowing from the arguments, in one statement:");
+    println(largest(7, 8).*);
+    println("14. a result kept from a slice that outlives it:");
+    let held = [3]i32{4, 9, 2};
+    let top = largest(&held...);
+    println(top.*);
+    println("15. a slice lent again in a call of itself:");
+    println(sum_each(1, 2, 3, 4));
+    println("16. a parameter that takes another slice:");
+    println(second_slice(1));
+    ignored();
+    println("17. arrays of arrays:");
+    let grid = [2][2]i32{ [2]i32{1, 2}, [2]i32{3, 4} };
+    println(pairs(grid...));
+    println(pairs([2]i32{0, 1}, [2]i32{7, 8}));
+    println("18. arguments run in order:");
+    println(noisy(1) + sum(noisy(2), made()..., noisy(3)));
+    println("19. a `&mut` to an array in a variable:");
+    let mut c = [2]i32{1, 2};
+    let lent = &mut c;
+    bump(lent...);
+    bump(lent...);
+    println(lent[0]);
+    println(sum(&mut c...));
+    println("20. in a condition:");
+    if sum(1, 2) > 2 {
+        println("greater");
+    }
+    println("21. a `for` keeps the array of its call to the loop's end:");
+    for value in same(30, 40) {
+        println(value.*);
+    }
+    for value in same(c...) {
+        println(value.*);
+    }
+    println("22. a `[&mut]` read by `...T` is usable after:");
+    let writable = &mut c[0..];
+    println(sum(writable...));
+    writable[0] = 9;
+    println(writable[0]);
+}

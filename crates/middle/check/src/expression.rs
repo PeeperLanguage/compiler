@@ -190,6 +190,13 @@ impl ThirBuilder<'_, '_> {
                 ast::Expr::ArrayLiteral { ty, entries } => {
                     break 'checked self.check_array_literal(ty, entries, span);
                 }
+                ast::Expr::Spread(values) => {
+                    self.add_expr(values, TypeExpectation::Hint(None)); // for its own errors
+                    let message = "`...` spreads into an array literal or a `...` parameter";
+                    self.checker
+                        .error(diagnostics::INVALID_OPERATION, message, span);
+                    break 'checked Expr::INVALID;
+                }
                 ast::Expr::Range { .. } => break 'checked self.check_range(expression, expected),
                 ast::Expr::Index { value, index } => {
                     break 'checked self.check_index(value, index, span);
@@ -217,6 +224,15 @@ impl ThirBuilder<'_, '_> {
                         let message = format!("cannot mutably borrow constant `{name}`");
                         self.checker
                             .error(diagnostics::CONSTANT_REASSIGNMENT, message, span);
+                        break 'checked Expr::INVALID;
+                    }
+                    // `len` has no storage either.
+                    if mutable
+                        && let ast::Expr::Selector { .. } = tree.exprs[named]
+                        && let Some(message) = self.fixed_length(place)
+                    {
+                        self.checker
+                            .error(diagnostics::INVALID_ASSIGNMENT, message, span);
                         break 'checked Expr::INVALID;
                     }
                     break 'checked self.check_borrow(mutable, place, span);

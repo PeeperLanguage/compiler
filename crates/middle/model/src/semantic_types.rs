@@ -110,10 +110,13 @@ pub enum Type {
     CString,
     /// `origins`: the positions of the parameters a returned reference may
     /// point into, in order; empty when the result is not a reference.
+    /// `variadic`: the last parameter, a slice, takes all the arguments past
+    /// the others.
     Function {
         parameters: Box<[TypeId]>,
         result: TypeId,
         origins: Box<[u32]>,
+        variadic: bool,
     },
     /// A type alias: the declaration that names it, and the type it names,
     /// never another alias (an alias of an alias names that alias's type).

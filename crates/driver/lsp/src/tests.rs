@@ -362,7 +362,7 @@ fn answers_definition_and_hover() {
     let uri = Url::from_file_path(&file).unwrap();
     let (connection, _client) = Connection::memory();
     let mut server = Server::new(&connection, Path::new(""), true);
-    let text = "type Meters = i64;\nfn main() {\n    let total: Meters = 1;\n    let more = total;\n}\n// let me\nstruct Run {\n    length: Meters,\n}\nfn ops(a: i32, x: f64) -> f64 {\n    let q = a/2;\n    const C = -(7 / 2);\n    return x - -1.0;\n}\nfn refs(m: i32) -> i32 {\n    let r = &m;\n    let both = m & 3;\n    let mut x = 1;\n    let p = @x;\n    let s = [2]i32{1, 2};\n    return r.* + s[0];\n}\nconst SMALL: u8 = 200;\nfn literals(n: u8) -> u8 {\n    let wide: f32 = 2;\n    let low: i8 = -128;\n    println(\"hi\", c\"x\");\n    let big: u8 = 300;\n    return n * 3;\n}\nfn walks(r: range[i32]) {}\n#[extern(\"cap\")]\nfn cap() -> u8;\n";
+    let text = "type Meters = i64;\nfn main() {\n    let total: Meters = 1;\n    let more = total;\n}\n// let me\nstruct Run {\n    length: Meters,\n}\nfn ops(a: i32, x: f64) -> f64 {\n    let q = a/2;\n    const C = -(7 / 2);\n    return x - -1.0;\n}\nfn refs(m: i32) -> i32 {\n    let r = &m;\n    let both = m & 3;\n    let mut x = 1;\n    let p = @x;\n    let s = [2]i32{1, 2};\n    return r.* + s[0];\n}\nconst SMALL: u8 = 200;\nfn literals(n: u8) -> u8 {\n    let wide: f32 = 2;\n    let low: i8 = -128;\n    println(\"hi\", c\"x\");\n    let big: u8 = 300;\n    return n * 3;\n}\nfn walks(r: range[i32]) {}\n#[extern(\"cap\")]\nfn cap() -> u8;\nfn many(values: ...i32) -> [&]i32 in values {\n    return values;\n}\n";
     let document = json!({ "uri": uri, "languageId": "peeper", "version": 1, "text": text });
     let open = Notification::new(
         "textDocument/didOpen".to_string(),
@@ -397,6 +397,17 @@ fn answers_definition_and_hover() {
         json!("```peeper\ntotal: Meters (aka i64)\n```\n\n---\n\n*in* `main` *· line 3*\n")
     );
     assert_eq!(ask("textDocument/hover", 2, 1), serde_json::Value::Null);
+    // A `...` parameter is a plain slice inside; its function, as written.
+    assert_eq!(
+        ask("textDocument/hover", 34, 11)["contents"]["value"],
+        json!("```peeper\nvalues: [&]i32\n```\n\n---\n\n*in* `main` *· line 34*\n")
+    );
+    assert_eq!(
+        ask("textDocument/hover", 33, 3)["contents"]["value"],
+        json!(
+            "```peeper\nfn many(values: ...i32) -> [&]i32 in values\n```\n\n---\n\n*in* `main` *· line 34*\n"
+        )
+    );
     // A type's name: a declared one answers as its declaration does; a
     // built-in one, what it holds, and is declared nowhere.
     assert_eq!(

@@ -1,0 +1,43 @@
+// How an array or slice passed without `...` is repaired: a fix (`= fix:`,
+// which `peeper fix` applies) only when nothing is lost, else a guess
+// (`= help:`), or nothing when `...` would not fit.
+struct Point { row: i32 }
+
+fn sum(values: ...i32) -> i32 {
+    return 0;
+}
+
+fn bump(values: ...mut i32) {}
+
+fn rows(points: ...Point) {}
+
+fn numbers() -> [2]i32 {
+    return [2]i32{1, 2};
+}
+
+fn sure(a: [2]i32, s: [&]i32, w: [&mut]i32) {
+    let mut held = [2]i32{1, 2};
+    bump(held);
+    bump(w);
+    bump(numbers());
+    let by_array = sum(a);
+    let by_slice = sum(s);
+    let part = sum(&held[0..1]);
+    bump(&mut held);
+    let by_reference = sum(&a);
+}
+
+fn guessed(a: [2]i32, s: [&]i32, points: [1]Point) {
+    bump(a);
+    rows(points);
+    let beside = sum(1, s);
+    let in_literal = [_]i32{a};
+}
+
+fn no_fix(a: [2]i32, s: [&]i32) {
+    bump(s);
+    bump(&a);
+    let beside = sum(1, &a);
+}
+
+fn main() {}

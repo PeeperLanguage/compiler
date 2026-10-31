@@ -15,6 +15,7 @@ fn first(view: [&]i32) -> i32 {
     view[0] = 1;
     view = view;
     view.len = 2;
+    let of_slice = &mut (view.len);
     let negative = view[-1];
     let wide = view[-1i128];
     let past = view[18446744073709551616u128];

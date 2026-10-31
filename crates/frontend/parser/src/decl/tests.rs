@@ -3,6 +3,29 @@ use crate::tests::messages;
 use crate::tests::one_error;
 
 #[test]
+fn parses_variadic_parameters() {
+    let text = "fn f(first: i32, rest: ...mut i32);\nfn g(_: ...i32);\n";
+    let want = "module
+  function declaration
+    declared name f
+    parameter
+      declared name first
+      type name i32
+    variadic parameter
+      declared name rest
+      slice type mut
+        type name i32
+  function declaration
+    declared name g
+    variadic parameter
+      slice type
+        type name i32
+";
+    assert!(messages(text).is_empty());
+    assert_eq!(dump_of(text), want);
+}
+
+#[test]
 fn parses_signatures() {
     let text = "fn (self: &mut Counter) Add<T, U>(mut delta: i32, scale: f64 = 1, &Self) -> &T in (self, delta) {}
 fn exit(code: i32);
