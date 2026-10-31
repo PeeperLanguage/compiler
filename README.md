@@ -193,10 +193,7 @@ installed (Fedora: `glibc-devel.i686`).
 ## Development
 
 ```bash
-cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test
-bash scripts/build.sh
+bash scripts/check.sh
 ```
 
 Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before proposing a change. Mandatory engineering requirements live in [`RULES.md`](RULES.md); Rust and compiler design guidance live in [`rust-style.md`](rust-style.md) and [`COMPILER_GUIDELINES.md`](COMPILER_GUIDELINES.md).

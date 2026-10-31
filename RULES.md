@@ -210,13 +210,8 @@ Additional requirements:
 
 Minimum validation before commit:
 
-- `cargo fmt` and `cargo clippy --workspace --all-targets -- -D warnings`;
-- focused `cargo test -p <crate>` for touched crates;
-- `cargo test --workspace` when change scope or repository policy requires full validation;
-- targeted source fixture or smoke validation for language/runtime changes;
-- affected backend and target validation;
-- bundle validation when packaging or built-ins change;
-- `git diff --check`.
+- `bash scripts/check.sh`, which is what CI runs: format, clippy, all tests, the bundle, the browser build, and `git diff --check`;
+- a source fixture for language/runtime changes, under each affected target (`target = "i686-linux"`).
 
 Do not claim validation passed unless command ran and passed. Do not make tests pass by deleting meaningful checks.
 

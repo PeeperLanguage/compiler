@@ -50,15 +50,4 @@ jobs:
         run: bash scripts/setup.sh
       - if: runner.os == 'Windows'
         run: pwsh scripts/setup.ps1
-      - run: cargo fmt --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      # The runtime is no workspace crate, so the two above do not see it.
-      - run: rustfmt --edition 2024 --check runtime/peeper_rt.rs
-      - run: clippy-driver --edition=2024 -Cpanic=abort --crate-type=staticlib --emit=metadata --out-dir target/runtime-clippy -D warnings runtime/peeper_rt.rs
-      - run: cargo test --workspace --no-fail-fast # every failing crate in one run
-      - run: bash scripts/build.sh
-      - run: PEEPER="$PWD/build/bin/peeper" cargo test -p peeper --test fixtures
-      - if: runner.os == 'Linux'
-        run: |
-          cargo build -p browser --profile wasm --target wasm32-wasip1
-          node crates/driver/browser/smoke.mjs target/wasm32-wasip1/wasm/browser.wasm
+      - run: bash scripts/check.sh

@@ -287,19 +287,19 @@ gh project item-edit --project-id PVT_kwDOET_G284BbrYm --id <item-id> --field-id
 Immediately after edits and before any stop, pause, or final response:
 
 1. Review every touched function, method, and new field in edited files.
-2. Remove any pass-through wrapper introduced during current step.
-3. Remove any stale local alias introduced during current step.
-4. Remove any ignored parameter introduced during current step, unless a real interface/API boundary requires it.
-5. Remove or centralize duplicated logic in touched areas when possible within current step scope.
-6. Re-check any new helper against the exact allowance rule in `RULES.md`.
-7. Search every new production symbol and identify its current non-test production callers. Tests and benchmarks do not count; delete symbols with none unless explicitly approved as public API.
-8. If three or more sibling fields/functions share one shape, first decide whether the concept should be deleted; do not hide unjustified repetition behind a new abstraction.
-9. If an experiment rejected its hypothesis, remove its production scaffolding before reporting completion.
-10. Confirm diagnostics, validation, mutation, caching, logging, and invariant checks were preserved, moved, or intentionally removed.
-11. Run focused validation for touched packages.
-12. Report rule-audit result explicitly.
+2. Remove any pass-through wrapper, stale local alias, or ignored parameter introduced during current step, unless a real interface/API boundary requires the parameter.
+3. Reread the whole diff once for repeated lines and messages; remove or centralize them when possible within current step scope.
+4. Re-check any new helper against the exact allowance rule in `RULES.md`.
+5. Search every new production symbol and identify its current non-test production callers. Tests and benchmarks do not count; delete symbols with none unless explicitly approved as public API.
+6. If three or more sibling fields/functions share one shape, first decide whether the concept should be deleted; do not hide unjustified repetition behind a new abstraction.
+7. If an experiment rejected its hypothesis, remove its production scaffolding before reporting completion.
+8. Confirm diagnostics, validation, mutation, caching, logging, and invariant checks were preserved, moved, or intentionally removed.
+9. Try to break the change: for each new branch, check, or message, run an input that mixes a good case with a bad one, not only the simple case.
+10. Prove each new test can fail: put the bug back, watch the test fail, restore the fix. Read a test as production code: no `?`, early return, or skip condition may let it pass without checking.
+11. Run `bash scripts/check.sh` and read every failure it prints. Do not filter its output or a test run's.
+12. Report rule-audit result explicitly, and say which of steps 9 and 10 were not done.
 
-Do not stop at "step done" until this audit passes for touched files.
+Do not stop at "step done" until this audit passes for touched files. Review fixes are new code: run this gate again after them.
 
 ---
 
