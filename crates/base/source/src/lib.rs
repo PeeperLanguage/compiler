@@ -77,6 +77,16 @@ impl SourceFile {
         (line, columns + 1)
     }
 
+    /// The 1-based line and column of `offset`; columns count UTF-16 units, as
+    /// editors and JavaScript strings do. An offset inside a character (a lexer
+    /// span may end there) is counted up to that character's start.
+    pub fn utf16_position(&self, offset: usize) -> (usize, usize) {
+        let line = self.line(offset);
+        let start = self.lines[line - 1] as usize;
+        let end = self.text.floor_char_boundary(offset);
+        (line, self.text[start..end].encode_utf16().count() + 1)
+    }
+
     /// The span of the 1-based line `n` without its line end, or an empty span
     /// at the end of the text when the file has no such line.
     pub fn line_span(&self, n: usize) -> Span {

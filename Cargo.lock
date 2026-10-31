@@ -44,6 +44,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "browser"
+version = "0.1.0"
+dependencies = [
+ "compile",
+ "diagnostics",
+ "model",
+ "project",
+ "serde_json",
+ "toml_edit",
+]
+
+[[package]]
 name = "cc"
 version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

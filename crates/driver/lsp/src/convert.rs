@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
 
-use diagnostics::NoteKind;
 use diagnostics::Severity;
 use diagnostics::fix::Fix;
 use lsp_types::CodeAction;
@@ -116,20 +115,7 @@ pub(crate) fn lsp_diagnostics(
     open_files: &HashMap<PathBuf, OpenFile>,
     versioned: bool,
 ) -> Vec<lsp_types::Diagnostic> {
-    let mut message = diagnostic.message.clone();
-    if let Some(label) = diagnostic.labels.first()
-        && !label.message.is_empty()
-    {
-        message.push('\n');
-        message.push_str(&label.message);
-    }
-    for note in &diagnostic.notes {
-        message.push_str(match note.kind {
-            NoteKind::Note => "\nnote: ",
-            NoteKind::Help(_) | NoteKind::Guess(_) => "\nhelp: ",
-        });
-        message.push_str(&note.text);
-    }
+    let message = diagnostic.full_message();
     let primary = diagnostic
         .labels
         .first()
@@ -214,14 +200,8 @@ pub(crate) fn range(file: &SourceFile, span: Span) -> Range {
 /// The LSP position of `offset` in `file`: a 0-based line, and a column in
 /// UTF-16 code units, as LSP counts them by default.
 pub(crate) fn position(file: &SourceFile, offset: usize) -> Position {
-    let line = file.line(offset);
-    let start = file.line_span(line).start as usize;
-    let mut end = offset;
-    while !file.text.is_char_boundary(end) {
-        end -= 1; // a lexer span may end inside a character
-    }
-    let character = file.text[start..end].encode_utf16().count();
-    Position::new(line as u32 - 1, character as u32)
+    let (line, column) = file.utf16_position(offset);
+    Position::new(line as u32 - 1, column as u32 - 1)
 }
 /// The byte offset of LSP `position` in `file`, the inverse of `position`. A
 /// column past its line's end is at the end.

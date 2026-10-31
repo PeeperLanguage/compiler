@@ -34,7 +34,7 @@ jobs:
       - run: rustup component add rustfmt clippy
       # The runtime is built with rustc for each target the tests use.
       - if: runner.os == 'Linux'
-        run: rustup target add i686-unknown-linux-gnu
+        run: rustup target add i686-unknown-linux-gnu wasm32-wasip1
       - if: runner.os == 'Windows'
         run: rustup target add x86_64-pc-windows-gnullvm
       - uses: Swatinem/rust-cache@v2
@@ -58,3 +58,7 @@ jobs:
       - run: cargo test --workspace --no-fail-fast # every failing crate in one run
       - run: bash scripts/build.sh
       - run: PEEPER="$PWD/build/bin/peeper" cargo test -p peeper --test fixtures
+      - if: runner.os == 'Linux'
+        run: |
+          cargo build -p browser --profile wasm --target wasm32-wasip1
+          node crates/driver/browser/smoke.mjs target/wasm32-wasip1/wasm/browser.wasm

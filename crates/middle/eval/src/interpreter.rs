@@ -18,6 +18,16 @@ use source::Span;
 /// editor.
 const STEP_LIMIT: u32 = 1_000_000;
 
+/// How deep calls may go. Wasm's stack cannot grow, and past about 2,000 here
+/// the engine ends the whole instance, so this leaves room for an engine with
+/// a smaller stack. Elsewhere the stack grows, and `STEP_LIMIT` ends a runaway
+/// recursion.
+const CALL_LIMIT: u32 = if cfg!(target_family = "wasm") {
+    500
+} else {
+    u32::MAX
+};
+
 /// Why a function could not run at compile time, at `span` in the body of
 /// `function`.
 #[derive(Debug)]
@@ -51,6 +61,7 @@ pub fn run<'b>(
         types,
         mir_of,
         steps: 0,
+        depth: 0,
     };
     machine.call(function, body, arguments)
 }
@@ -59,6 +70,7 @@ struct Machine<'b, 'f> {
     types: &'b Types,
     mir_of: &'f dyn Fn(DefId) -> Option<&'b mir::Body>,
     steps: u32, // run so far, by every call
+    depth: u32, // calls running now, inside the first
 }
 
 /// One running call: its function, MIR and arguments, the value of each of
@@ -227,7 +239,13 @@ impl<'b> Machine<'b, '_> {
                     .iter()
                     .map(|argument| frame.operand(argument))
                     .collect();
-                self.call(callee, callee_body, &arguments)?
+                if self.depth == CALL_LIMIT {
+                    return Err(frame.fail(format!("this went {CALL_LIMIT} calls deep"), span));
+                }
+                self.depth += 1;
+                let value = self.call(callee, callee_body, &arguments)?;
+                self.depth -= 1;
+                value
             }
             InstructionKind::Phi(ref incoming) => {
                 let (_, value) = incoming

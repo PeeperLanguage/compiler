@@ -350,9 +350,9 @@ struct Job {
 }
 
 /// Reads `project`'s entry and every module it imports, directly or not. Files
-/// are read and parsed by a pool of worker threads; only this thread touches
-/// the module map, and each module is touched only by its worker until it is
-/// handed over.
+/// are read and parsed by a pool of worker threads, or by this thread on wasm,
+/// which cannot start one; only this thread touches the module map, and each
+/// module is touched only by its worker until it is handed over.
 /// An entry in no package's folder is checked on its own and cannot import.
 ///
 /// `open_files` holds the text of files open in an editor (anything that
@@ -363,7 +363,11 @@ struct Job {
 pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + Sync>) -> Program {
     let with_prelude = file_of(&project.packages, PRELUDE_PATH)
         .is_some_and(|file| file.is_file() || open_files.contains_key(&file));
-    let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let workers = if cfg!(target_family = "wasm") {
+        0
+    } else {
+        std::thread::available_parallelism().map_or(1, |n| n.get())
+    };
 
     let mut modules = HashMap::new();
     let (send_job, jobs) = mpsc::channel::<Job>();
@@ -412,7 +416,14 @@ pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + S
             }
         }
         while pending > 0 {
-            let Ok(loaded) = done.recv() else { break };
+            let loaded = if workers == 0 {
+                let job = jobs.lock().expect("no worker holds the lock").try_recv();
+                let job = job.expect("each pending module has a job");
+                load_file(&project.packages, open_files, job, with_prelude)
+            } else {
+                let Ok(loaded) = done.recv() else { break };
+                loaded
+            };
             pending -= 1;
             for (_, path) in &loaded.imports {
                 if seen.insert(path.clone()) {

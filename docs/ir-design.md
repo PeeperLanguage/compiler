@@ -287,8 +287,8 @@ check costs about 160 ms; after a body edit the next compile takes about 9 ms,
 and after a constant's value changes about 10 ms (two modules). Collecting
 every module's names again is most of what remains (about 7 ms).
 
-`peeper lsp` (crate `lsp`, the only user of `lsp-server`, `lsp-types` and
-`serde_json`) keeps the text of open files, which `project::load` reads before
+`peeper lsp` (crate `lsp`, the only user of `lsp-server` and `lsp-types`)
+keeps the text of open files, which `project::load` reads before
 the disk, and one `compile::Results` per program. A change is checked 200 ms after the
 last keystroke; opening, saving and closing a file are checked at once.
 

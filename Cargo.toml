@@ -65,3 +65,9 @@ uninlined_format_args = "warn"
 
 [profile.release]
 debug = "line-tables-only"
+
+# What a web page downloads: no debug info and no symbols.
+[profile.wasm]
+inherits = "release"
+debug = false
+strip = true
