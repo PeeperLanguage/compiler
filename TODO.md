@@ -133,8 +133,8 @@ What was seen on 2026-10-31:
      CI runs both on Linux.
    - Wasm's stack is small: 1,000 nested parentheses pass, 2,000 crash the
      instance. A 64 MiB wasm stack made Node segfault, cause unknown. Calls at
-     compile time stop at 500 deep on wasm (`eval`'s `CALL_LIMIT`), so a
-     constant that recurses forever is T0044, as on native.
+     compile time use no host stack, so a constant that recurses forever is
+     T0044, as on native.
    - Native `peeper check` overflows its stack on 60,000 nested parentheses.
 2. [ ] **The page** (in the Website repo). An editor that highlights with the
    grammar the site already has, runs the check in a Web Worker a short time

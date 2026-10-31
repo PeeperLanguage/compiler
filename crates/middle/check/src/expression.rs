@@ -127,7 +127,11 @@ impl ThirBuilder<'_, '_> {
             Conversion::Implicit | Conversion::NeedsCast => match expr.kind {
                 ExprKind::Constant(constant) => {
                     let types = &self.checker.types;
-                    ExprKind::Constant(eval::convert(&types[expr.ty], &types[to], &constant))
+                    ExprKind::Constant(eval::conversions::convert(
+                        &types[expr.ty],
+                        &types[to],
+                        &constant,
+                    ))
                 }
                 _ => ExprKind::Convert(self.body.add(expr, span)),
             },

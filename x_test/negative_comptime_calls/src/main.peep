@@ -71,3 +71,88 @@ fn main() {
     let n = 2;
     const F = half(n);
 }
+// A run stops with the program's own failure, and cannot hurt the compiler.
+fn outside(at: usize) -> i32 {
+    let values = [3]i32{1, 2, 3};
+    return values[at];
+}
+const OUTSIDE = outside(5);
+fn outside_slice(at: usize) -> i32 {
+    let values = [3]i32{1, 2, 3};
+    let view: [&]i32 = &values;
+    return view[at];
+}
+const OUTSIDE_SLICE = outside_slice(5);
+fn spread_length(n: i32) -> [2]i32 {
+    return [2]i32{0..n...};
+}
+fn spread_sum() -> i32 {
+    return spread_length(3)[0];
+}
+const SPREAD = spread_sum();
+fn read_none() -> i32 {
+    let p: *i32 = none;
+    return p.*;
+}
+const NONE = read_none();
+fn too_big() -> i32 {
+    let values = [10000000]i32{(0..10000000)...};
+    return values[0];
+}
+const TOO_BIG = too_big();
+fn too_deep(n: i32) -> i32 {
+    return too_deep(n + 1) + 1;
+}
+const TOO_DEEP = too_deep(0);
+fn same_pointer(p: *i32) -> *i32 {
+    return p;
+}
+fn gives_pointer() -> *i32 {
+    let mut n = 1;
+    return same_pointer(@n);
+}
+const POINTER = gives_pointer();
+// Few steps a call, but a call holds room for every value of its body, so
+// this runs out of stack, not of steps, and long before the host's memory.
+fn wide_calls(n: i32) -> i32 {
+    if n < 0 {
+        return (n + 1) * (n + 2) * (n + 3) * (n + 4) * (n + 5) * (n + 6) * (n + 7);
+    }
+    return wide_calls(n + 1) + 1;
+}
+const WIDE_CALLS = wide_calls(0);
+// Bytes a raw pointer gives as a value are not checked as one made by code.
+fn zero_step() -> i32 {
+    let mut words = [3]u64{21474836480, 0, 0};
+    let forged = @words as *range[i32];
+    let values = [2]i32{forged.*...};
+    return values[0];
+}
+const ZERO_STEP = zero_step();
+struct Two { first: i64, second: i64 }
+fn past_addresses() -> i64 {
+    let mut word: u64 = 18446744073709551615;
+    let forged = @word as **Two;
+    return forged.*.*.second;
+}
+const PAST_ADDRESSES = past_addresses();
+// One instruction can do a lot of work, and it counts: these stop soon, not
+// after a million copies of a large array.
+fn copies() -> i32 {
+    let mut values = [400000]i32{(0..400000)...};
+    for 0..190000 {
+        let held = values;
+        values = held;
+    }
+    return 0;
+}
+const COPIES = copies();
+fn fills() -> i32 {
+    let mut total = 0;
+    for 0..190000 {
+        let values = [400000]i32{(0..400000)...};
+        total = total + values[3];
+    }
+    return total;
+}
+const FILLS = fills();

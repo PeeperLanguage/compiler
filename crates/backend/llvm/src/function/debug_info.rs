@@ -9,8 +9,8 @@ use source::Span;
 
 use crate::Module;
 use crate::function::Function;
-use crate::layout::in_memory;
 use crate::text::quoted;
+use model::layout::in_memory;
 
 impl Function<'_, '_, '_> {
     /// The DILocation of where `span` starts, in the MIR debug scope

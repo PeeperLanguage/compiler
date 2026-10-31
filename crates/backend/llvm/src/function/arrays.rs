@@ -187,7 +187,7 @@ impl Function<'_, '_, '_> {
                 "  {name}.short = icmp ne i{wide} {remaining}, 0{location}\n  \
                  {name}.failed = or i1 {failed}, {name}.short{location}"
             );
-            let message = format!("array literal needs exactly {length} values");
+            let message = eval::messages::array_parts_message(length);
             self.check(out, &format!("{name}.failed"), &message, id);
         }
         counts

@@ -24,6 +24,28 @@ impl Limbs {
         })
     }
 
+    /// The value of `bits` bits kept in little-endian `bytes`.
+    pub fn from_le_bytes(bits: u32, bytes: &[u8]) -> Limbs {
+        with_result(bits, |out| {
+            for (limb, chunk) in out.iter_mut().zip(bytes.chunks(8)) {
+                let mut limb_bytes = [0; 8];
+                limb_bytes[..chunk.len()].copy_from_slice(chunk);
+                *limb = u64::from_le_bytes(limb_bytes);
+            }
+        })
+    }
+
+    /// Writes the value to `bytes`, little-endian: bytes past its limbs are
+    /// zero, and limbs past `bytes` are dropped.
+    pub fn write_le_bytes(&self, bytes: &mut [u8]) {
+        let mut chunks = bytes.chunks_mut(8);
+        // Limbs first: `zip` would lose a chunk it took before they ran out.
+        for (limb, chunk) in self.as_slice().iter().zip(chunks.by_ref()) {
+            chunk.copy_from_slice(&limb.to_le_bytes()[..chunk.len()]);
+        }
+        chunks.for_each(|chunk| chunk.fill(0));
+    }
+
     /// The limbs; an inline value always shows two.
     pub fn as_slice(&self) -> &[u64] {
         match self {
@@ -379,6 +401,42 @@ mod tests {
         limbs[0] = value as u64;
         limbs[1] = (value >> 64) as u64;
         Limbs::new(bits, &limbs)
+    }
+
+    #[test]
+    fn little_endian_bytes_round_trip_at_any_width() {
+        let mut bytes = [0xFF; 4];
+        Limbs::new(7, &[0x7F]).write_le_bytes(&mut bytes);
+        assert_eq!(bytes, [0x7F, 0, 0, 0], "bytes past the limbs are zero");
+        assert_eq!(
+            Limbs::from_le_bytes(7, &bytes).as_slice(),
+            Limbs::new(7, &[0x7F]).as_slice()
+        );
+
+        // Bits above the width are not part of the value.
+        assert_eq!(Limbs::from_le_bytes(7, &[0xFF]).as_slice(), &[0x7F, 0]);
+
+        let wide = Limbs::new(256, &[1, 2, 3, 1 << 63]);
+        let mut bytes = [0; 32];
+        wide.write_le_bytes(&mut bytes);
+        assert_eq!(bytes[31], 0x80);
+        assert_eq!(
+            Limbs::from_le_bytes(256, &bytes).as_slice(),
+            wide.as_slice()
+        );
+
+        // A 130-bit value has three limbs and takes 32 bytes.
+        let mut bytes = [0xFF; 32];
+        Limbs::new(130, &[1, 2, 3]).write_le_bytes(&mut bytes);
+        assert_eq!(bytes[24..], [0; 8], "the chunk past the last limb is zero");
+
+        let mut short = [0; 4];
+        Limbs::new(64, &[0x1122_3344_5566_7788]).write_le_bytes(&mut short);
+        assert_eq!(
+            short,
+            [0x88, 0x77, 0x66, 0x55],
+            "limbs past the bytes are dropped"
+        );
     }
 
     #[test]

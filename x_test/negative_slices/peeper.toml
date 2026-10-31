@@ -22,7 +22,5 @@ stderr_contains = [
     "literal `-1` does not fit `u64`",
     "index `-1i128` is outside every `[&]i32`",
     "index `18446744073709551616u128` is outside every `[&]i32`",
-    "this call cannot be evaluated at compile time",
-    "struct and array values cannot run at compile time yet",
-    "Compilation failed with 18 error(s)",
+    "Compilation failed with 17 error(s)",
 ]

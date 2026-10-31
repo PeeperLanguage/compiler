@@ -34,11 +34,11 @@ use rustc_hash::FxHashMap;
 
 use crate::Module;
 use crate::function::debug_info::DebugLocation;
-use crate::layout::in_memory;
 use crate::text::constant_text;
 use crate::text::quoted;
 use crate::text::symbol;
 use crate::text::type_text;
+use model::layout::in_memory;
 
 /// The runtime functions a panic calls, declared in the prelude
 /// (`core:global`) as `write` and `exit`.
@@ -52,8 +52,6 @@ const PRINT_POINTER: (&str, &str) = ("peeper_rt_v1_print_pointer", "ptr");
 const FLUSH: (&str, &str) = ("peeper_rt_v1_flush", "");
 /// The intrinsic that copies a value kept in memory (`in_memory`).
 const MEMCPY: &str = "llvm.memcpy.p0.p0.i64";
-/// The exit code of a program that panics, as in Rust.
-const PANIC_EXIT_CODE: i32 = 101;
 
 impl Module<'_> {
     /// Adds the function `definition` of this module, whose MIR is `body`.

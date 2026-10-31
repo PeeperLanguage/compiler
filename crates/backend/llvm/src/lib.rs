@@ -5,7 +5,6 @@
 
 mod debug_info;
 mod function;
-mod layout;
 pub mod link;
 pub mod runtime;
 mod text;

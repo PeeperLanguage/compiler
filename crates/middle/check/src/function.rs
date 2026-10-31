@@ -175,7 +175,14 @@ impl Checker<'_> {
         let (place, message) = 'failed: {
             let (callee, place) = match mir_of(function) {
                 Some(body) => {
-                    match eval::interpreter::run(function, body, arguments, &self.types, &mir_of) {
+                    match eval::interpreter::run(
+                        function,
+                        body,
+                        arguments,
+                        &self.types,
+                        self.target,
+                        &mir_of,
+                    ) {
                         Ok(value) => return value,
                         Err(Failure::Stopped {
                             message,
@@ -187,6 +194,7 @@ impl Checker<'_> {
                             function,
                             span,
                         }) => (callee, Some((function, span))),
+                        Err(Failure::Exited(_)) => unreachable!("a constant's call cannot exit"),
                     }
                 }
                 None => (function, None),

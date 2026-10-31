@@ -24,9 +24,9 @@ use crate::function::global;
 use crate::function::print::write_extended;
 use crate::function::print::write_limbs;
 use crate::function::value_name;
-use crate::layout::in_memory;
 use crate::text::symbol;
 use crate::text::type_text;
+use model::layout::in_memory;
 
 impl Function<'_, '_, '_> {
     /// Writes the line calling `function` with `arguments` for the

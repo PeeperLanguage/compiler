@@ -7,11 +7,11 @@ use model::semantic_types::Float;
 use model::semantic_types::Integer;
 use model::semantic_types::Type;
 
-use super::ValueError;
-use super::binary;
-use super::convert;
-use super::known_trap;
-use super::unary;
+use crate::conversions::convert;
+use crate::operators::ValueError;
+use crate::operators::binary;
+use crate::operators::known_trap;
+use crate::operators::unary;
 
 fn int(signed: bool, bits: u32) -> Type {
     Type::Integer(Integer { signed, bits })
@@ -31,6 +31,23 @@ fn value(ty: &Type, value: i128) -> Value {
 
 fn fold(op: BinaryOp, ty: &Type, left: i128, right: i128) -> Result<Value, ValueError> {
     binary(op, ty, &value(ty, left), ty, &value(ty, right))
+}
+
+#[test]
+fn bit_operators_on_bools_as_a_range_loop_uses_them() {
+    let bits = |op, left, right| {
+        binary(
+            op,
+            &Type::Bool,
+            &Value::Bool(left),
+            &Type::Bool,
+            &Value::Bool(right),
+        )
+    };
+    assert_eq!(bits(BinaryOp::BitOr, false, true), Ok(Value::Bool(true)));
+    assert_eq!(bits(BinaryOp::BitOr, false, false), Ok(Value::Bool(false)));
+    assert_eq!(bits(BinaryOp::BitAnd, true, true), Ok(Value::Bool(true)));
+    assert_eq!(bits(BinaryOp::BitAnd, true, false), Ok(Value::Bool(false)));
 }
 
 #[test]

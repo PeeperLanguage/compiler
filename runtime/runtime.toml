@@ -7,7 +7,8 @@
 # The archive's file name.
 library = "libpeeper_rt_v1.a"
 
-# The Rust file in this folder that is the library.
+# The Rust file in this folder that is the library's root; its modules are in
+# this folder too.
 source = "peeper_rt.rs"
 
 # rustc's flags. `lto` keeps only what the library uses of Rust's `core`.

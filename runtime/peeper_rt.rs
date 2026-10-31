@@ -5,7 +5,7 @@
 
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
-use core::fmt::Write;
+mod number_text;
 
 unsafe extern "C" {
     fn malloc(size: usize) -> *mut c_void;
@@ -97,18 +97,6 @@ fn flush() {
     *used = 0;
 }
 
-/// Writes `value` in decimal, at least `width` digits, zeros first.
-fn push_decimal(mut value: u64, width: usize) {
-    let mut digits = [b'0'; 20];
-    let mut at = digits.len();
-    while value != 0 {
-        at -= 1;
-        digits[at] = b'0' + (value % 10) as u8;
-        value /= 10;
-    }
-    push(&digits[at.min(digits.len() - width)..]);
-}
-
 #[unsafe(no_mangle)]
 extern "C" fn peeper_rt_v1_alloc(size: usize) -> *mut c_void {
     unsafe { malloc(size) }
@@ -167,9 +155,9 @@ unsafe extern "C" fn peeper_rt_v2_print_int(is_signed: i32, count: i32, limbs: *
         let value = unsafe { limbs.read_unaligned() };
         if is_signed != 0 && (value as i64) < 0 {
             push(b"-");
-            push_decimal(value.wrapping_neg(), 1);
+            number_text::write_decimal(value.wrapping_neg(), 1, &mut push);
         } else {
-            push_decimal(value, 1);
+            number_text::write_decimal(value, 1, &mut push);
         }
         return;
     }
@@ -191,142 +179,14 @@ unsafe extern "C" fn peeper_rt_v2_print_int(is_signed: i32, count: i32, limbs: *
     for (index, limb) in wide.iter_mut().enumerate() {
         *limb = unsafe { limbs.add(index).read_unaligned() };
     }
-    let negative = is_signed != 0 && wide[count - 1] >> 63 != 0;
-    if negative {
-        let mut carry = 1;
-        for limb in wide.iter_mut() {
-            let (value, overflowed) = (!*limb).overflowing_add(carry);
-            *limb = value;
-            carry = u64::from(overflowed);
-        }
-    }
-    // Nine decimal digits at a time, least significant first: each limb, in
-    // halves of 32 bits, divided by 10^9 with the remainder carried down.
-    const CHUNK: u64 = 1_000_000_000;
-    let mut chunk_count = 0;
-    let mut top = count;
-    loop {
-        let mut remainder = 0;
-        for limb in wide[..top].iter_mut().rev() {
-            let high = remainder << 32 | *limb >> 32;
-            remainder = high % CHUNK;
-            let low = remainder << 32 | (*limb & 0xFFFF_FFFF);
-            remainder = low % CHUNK;
-            *limb = ((high / CHUNK) << 32) | (low / CHUNK);
-        }
-        chunks[chunk_count] = remainder as u32;
-        chunk_count += 1;
-        while top > 0 && wide[top - 1] == 0 {
-            top -= 1;
-        }
-        if top == 0 {
-            break;
-        }
-    }
-    if negative {
-        push(b"-");
-    }
-    push_decimal(u64::from(chunks[chunk_count - 1]), 1);
-    for &chunk in chunks[..chunk_count - 1].iter().rev() {
-        push_decimal(u64::from(chunk), 9);
-    }
+    number_text::write_integer(is_signed != 0, wide, chunks, &mut push);
     unsafe { free(block) }
 }
 
-/// The text of a number, which never fills it.
-struct Text {
-    bytes: [u8; 48],
-    used: usize,
-}
-
-impl Write for Text {
-    fn write_str(&mut self, text: &str) -> core::fmt::Result {
-        self.bytes[self.used..self.used + text.len()].copy_from_slice(text.as_bytes());
-        self.used += text.len();
-        Ok(())
-    }
-}
-
-// As Python's `repr`: the fewest digits that read back as the same `f32` or
-// `f64` (by `bits`), fixed for an exponent from -4 to 15, else scientific,
-// and `.0` on a whole number. Where the last digit is an exact tie, `core`
-// rounds up (`224025.625f32` prints `224025.63`), and Python takes the even
-// digit (`224025.62`).
+// `number_text` says how it reads.
 #[unsafe(no_mangle)]
 extern "C" fn peeper_rt_v1_print_float(value: f64, bits: i32) {
-    if value.is_nan() {
-        push(b"nan");
-        return;
-    }
-    if value.is_infinite() {
-        push(if value < 0.0 { b"-inf" } else { b"inf" });
-        return;
-    }
-    let mut text = Text {
-        bytes: [0; 48],
-        used: 0,
-    };
-    _ = if bits == 32 {
-        write!(text, "{:e}", value as f32)
-    } else {
-        write!(text, "{value:e}")
-    };
-    // `text` is `[-]d[.ddd]e[-]x`: its digits and exponent.
-    let text = &text.bytes[..text.used];
-    let (sign, text) = match text.split_first() {
-        Some((b'-', rest)) => (true, rest),
-        _ => (false, text),
-    };
-    let split = text
-        .iter()
-        .position(|&byte| byte == b'e')
-        .unwrap_or(text.len());
-    let (mantissa, exponent_text) = (&text[..split], &text[split + 1..]);
-    let mut digits = [0u8; 20];
-    let mut count = 0;
-    for &byte in mantissa.iter().filter(|&&byte| byte != b'.') {
-        digits[count] = byte;
-        count += 1;
-    }
-    let digits = &digits[..count];
-    let exponent_digits = exponent_text.strip_prefix(b"-").unwrap_or(exponent_text);
-    let magnitude = exponent_digits
-        .iter()
-        .fold(0i32, |sum, &byte| sum * 10 + i32::from(byte - b'0'));
-    let exponent = if exponent_text.len() != exponent_digits.len() {
-        -magnitude
-    } else {
-        magnitude
-    };
-    if sign {
-        push(b"-");
-    }
-    if !(-4..16).contains(&exponent) {
-        push(&digits[..1]);
-        if count > 1 {
-            push(b".");
-            push(&digits[1..]);
-        }
-        push(if exponent < 0 { b"e-" } else { b"e+" });
-        push_decimal(u64::from(exponent.unsigned_abs()), 2);
-    } else if exponent < 0 {
-        push(b"0.");
-        for _ in 1..-exponent {
-            push(b"0");
-        }
-        push(digits);
-    } else if count <= exponent as usize + 1 {
-        push(digits);
-        for _ in count..=exponent as usize {
-            push(b"0");
-        }
-        push(b".0");
-    } else {
-        let (whole, fraction) = digits.split_at(exponent as usize + 1);
-        push(whole);
-        push(b".");
-        push(fraction);
-    }
+    number_text::write_float(value, bits, &mut push);
 }
 
 #[unsafe(no_mangle)]

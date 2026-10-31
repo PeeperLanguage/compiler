@@ -49,9 +49,12 @@ version = "0.2.0"
 dependencies = [
  "compile",
  "diagnostics",
+ "eval",
+ "lexer",
  "model",
  "project",
  "serde_json",
+ "source",
  "toml_edit",
 ]
 
@@ -97,6 +100,7 @@ dependencies = [
  "arena",
  "check",
  "diagnostics",
+ "eval",
  "model",
  "project",
  "source",
@@ -195,7 +199,6 @@ dependencies = [
  "bigint",
  "model",
  "source",
- "stacker",
 ]
 
 [[package]]

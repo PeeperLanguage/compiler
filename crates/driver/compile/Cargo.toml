@@ -12,6 +12,7 @@ arena.workspace = true
 project.workspace = true
 model.workspace = true
 check.workspace = true
+eval.workspace = true
 source.workspace = true
 
 [lints]

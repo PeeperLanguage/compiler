@@ -9,9 +9,12 @@ publish.workspace = true
 [dependencies]
 compile.workspace = true
 diagnostics.workspace = true
+eval.workspace = true
+lexer.workspace = true
 model.workspace = true
 project.workspace = true
 serde_json.workspace = true
+source.workspace = true
 
 [dev-dependencies]
 toml_edit.workspace = true

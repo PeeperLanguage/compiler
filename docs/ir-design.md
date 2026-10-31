@@ -154,13 +154,16 @@ what the other cannot do:
 - **The interpreter** (`eval::interpreter::run`) runs what folding cannot: calls and control
   flow, over MIR. In a constant's value (a module `const` or one in a body), a
   call whose arguments are all constants is run at once
-  (`Checker::evaluate_call`), so its result folds on (`f(3) + 2`). It runs
-  integers, bools and floats in whole variables, branches, loops, phis and
-  calls; struct and array values, references, `print` and `extern` functions
-  are errors at compile time (T0044), as are a `panic`, a failed check and
-  more than 1,000,000 steps (owner, 2026-10-26: a fixed limit, no setting
-  until a program needs one). The error is at the call, with a label where
-  the run stopped.
+  (`Checker::evaluate_call`), so its result folds on (`f(3) + 2`). It keeps
+  variables and values in memory (structs, arrays, ranges) in bytes laid out
+  for the target, so references, slices and raw pointers are real addresses,
+  checked at each access; a constant's own value is still a number, a bool or
+  a `cstr`. `print` and `extern` functions are errors at compile time (T0044),
+  as are a `panic`, a failed check, a bad address, running out of stack,
+  100,000 calls at once and more than 1,000,000 steps (owner, 2026-10-26: a
+  fixed limit, no setting until a program needs one), where each 256 bytes
+  copied and each value of a filled range count as a step too. The error is
+  at the call, with a label where the run stopped.
 
 Neither driver implements an operation itself, so the two cannot disagree.
 

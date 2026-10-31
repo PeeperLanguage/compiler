@@ -2,11 +2,10 @@
 //! traps of division and shifts, and the panic a failed check jumps to.
 
 use std::fmt::Write;
-use std::path::Path;
 
 use arena::Id;
-use eval::ValueError;
-use eval::trap_message;
+use eval::messages::trap_message;
+use eval::operators::ValueError;
 use model::constant::Value;
 use model::mir;
 use model::mir::Operand;
@@ -17,7 +16,6 @@ use source::Span;
 
 use crate::function::EXIT;
 use crate::function::Function;
-use crate::function::PANIC_EXIT_CODE;
 use crate::function::WRITE;
 use crate::function::global;
 use crate::function::traps;
@@ -243,13 +241,7 @@ impl Function<'_, '_, '_> {
     ) {
         let location = self.location(span, debug_scope);
         let file = self.module.file();
-        let (line, column) = file.position(span.start as usize);
-        let mut text = b"panic: ".to_vec();
-        text.extend_from_slice(message);
-        let path = Path::new(&file.path);
-        let path = path.strip_prefix(&self.module.program.root).unwrap_or(path);
-        let place = format!("\n  --> {}:{line}:{column}\n", path.display());
-        text.extend_from_slice(place.as_bytes());
+        let text = project::panic_text(&self.module.program.root, file, message, span);
         let string = self.module.add_string(&text);
         self.module.declare(WRITE, || {
             format!("declare i32 {}(i32, ptr, i32)\n\n", global(WRITE))
@@ -259,10 +251,11 @@ impl Function<'_, '_, '_> {
         _ = write!(
             out,
             "  call i32 {}(i32 2, ptr {string}, i32 {}){location}\n  \
-             call void {}(i32 {PANIC_EXIT_CODE}){location}\n  unreachable",
+             call void {}(i32 {}){location}\n  unreachable",
             global(WRITE),
             text.len(),
             global(EXIT),
+            eval::messages::PANIC_EXIT_CODE,
         );
     }
 }

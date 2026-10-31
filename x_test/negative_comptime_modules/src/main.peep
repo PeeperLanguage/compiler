@@ -1,0 +1,7 @@
+// A run that stops in another module is labelled in that module's file. Too
+// big a frame stops the call, which is written in `caller`, not in `callee`.
+import "negative_comptime_modules:caller";
+
+const TOO_BIG = caller::Outer();
+
+fn main() {}
