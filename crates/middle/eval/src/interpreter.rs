@@ -26,6 +26,7 @@ use model::constant::Value;
 use model::layout::layout;
 use model::machine::Machine;
 use model::mir;
+use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use source::Span;
@@ -53,6 +54,24 @@ const CALL_LIMIT: usize = 100_000;
 const REGISTER_LIMIT: usize = 1 << 20;
 
 const INVALID_ACCESS: &str = "this reads or writes memory the program does not own";
+
+/// Why a constant's run stops where it would read an address, not only use one.
+const ADDRESS_NOT_KNOWN: &str = "an address is known only when the program runs";
+
+const OUT_OF_STACK: &str = "this ran out of stack";
+
+/// Why a constant cannot hold a value of the type `ty`.
+pub fn constant_refusal(ty: &Type) -> &'static str {
+    match ty {
+        Type::Struct { .. } => "a constant cannot hold a struct yet",
+        Type::Array { .. } => "a constant cannot hold an array yet",
+        Type::Range { .. } => "a constant cannot hold a range yet",
+        Type::Reference { mutable: true, .. } | Type::Slice { mutable: true, .. } => {
+            "a constant cannot hold a mutable reference, as all its uses would share one value"
+        }
+        _ => ADDRESS_NOT_KNOWN,
+    }
+}
 
 /// Why a function could not run at compile time, at `span` in the body of
 /// `function`.
@@ -115,8 +134,9 @@ struct Frame<'b> {
     function: DefId,
     body: &'b mir::Body,
     slots: Rc<Slots>,
-    start: u64,       // where its memory starts
-    registers: usize, // where its arguments start, its values after them
+    start: u64,          // where its memory starts
+    variables: Vec<u64>, // in a constant's run, where each is now; 0 for not started
+    registers: usize,    // where its arguments start, its values after them
     block: Id<mir::Block>,
     next: usize,                          // how many of the block's instructions have run
     previous: Option<Id<mir::Block>>,     // the block control came from
@@ -159,8 +179,12 @@ impl<'b, 'f> Interpreter<'b, 'f> {
             mir_of,
             steps: 0,
             step_limit,
+            memory: if host.is_some() {
+                Memory::default()
+            } else {
+                Memory::for_constant()
+            },
             host,
-            memory: Memory::default(),
             slots: HashMap::new(),
             fields: HashMap::new(),
             frames: Vec::new(),

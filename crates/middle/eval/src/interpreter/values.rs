@@ -16,6 +16,7 @@ use super::Failure;
 use super::INVALID_ACCESS;
 use super::Interpreter;
 use super::Register;
+use super::constant_refusal;
 
 impl<'b> Interpreter<'b, '_> {
     /// What the instruction `id` gave. A value `in_memory` gets its own copy,
@@ -92,7 +93,7 @@ impl<'b> Interpreter<'b, '_> {
                 Some(text) => Ok(Value::Bytes(text)),
                 None => Err(self.fail(INVALID_ACCESS, span)),
             },
-            _ => Err(self.fail("a constant cannot hold this value yet", span)),
+            _ => Err(self.fail(constant_refusal(&self.types[ty]), span)),
         }
     }
 

@@ -262,8 +262,9 @@ pub enum Terminator {
 }
 
 impl InstructionKind {
-    /// Whether it is code that runs: all but a `ScopeEnd`, which only marks
-    /// a point for the checks.
+    /// Whether it is code that runs in a compiled program: all but a
+    /// `ScopeEnd`, which marks a point for the checks, and where a constant's
+    /// run ends the variable's memory.
     pub fn runs(&self) -> bool {
         !matches!(self, InstructionKind::ScopeEnd(_))
     }

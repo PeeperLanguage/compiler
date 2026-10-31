@@ -19,6 +19,7 @@ use super::CALL_LIMIT;
 use super::Failure;
 use super::Frame;
 use super::Interpreter;
+use super::OUT_OF_STACK;
 use super::REGISTER_LIMIT;
 use super::Register;
 use super::Slots;
@@ -54,8 +55,8 @@ impl<'b> Interpreter<'b, '_> {
     }
 
     /// Starts a call of `function`, whose value goes to `result` of the frame
-    /// below, with its memory from `end` on and its arguments the registers
-    /// from `registers` on.
+    /// below, with `end` where the calling frame stops and its arguments the
+    /// registers from `registers` on.
     pub(super) fn push_frame(
         &mut self,
         function: DefId,
@@ -69,22 +70,28 @@ impl<'b> Interpreter<'b, '_> {
             return Err(self.fail(format!("this went {CALL_LIMIT} calls deep"), span));
         }
         let slots = self.slots_of(body);
-        let start = end.next_multiple_of(16); // as far as any type aligns
-        let reached = start.saturating_add(slots.size);
         let used = self.registers.len() + body.instructions.len();
-        if used > REGISTER_LIMIT || self.memory.grow_stack(reached).is_none() {
+        let start = (used <= REGISTER_LIMIT)
+            .then(|| self.memory.enter_call(end, slots.size))
+            .flatten();
+        let Some(start) = start else {
             return Err(Failure::Stopped {
-                message: "this ran out of stack".to_owned(),
+                message: OUT_OF_STACK.to_owned(),
                 function: self.frames.last().map_or(function, |frame| frame.function),
                 span,
             });
-        }
+        };
         self.registers.resize(used, None);
+        let variables = match self.host {
+            Some(_) => Vec::new(),
+            None => vec![0; body.variables.len()],
+        };
         self.frames.push(Frame {
             function,
             body,
             slots,
             start,
+            variables,
             registers,
             block: Id::from_index(0),
             next: 0,
@@ -235,11 +242,15 @@ impl<'b> Interpreter<'b, '_> {
                 None => None,
             }));
         };
-        // A value in memory is still there: it is copied before a frame
-        // takes the memory again.
+        // A value in memory is still there: it is copied before the call's
+        // memory ends.
         let frame = self.frames.pop().expect("a run has a frame");
         self.registers.truncate(frame.registers);
         self.set_value(result, value)?;
+        for &variable in frame.variables.iter().filter(|&&address| address != 0) {
+            self.memory.close_block(variable);
+        }
+        self.memory.close_block(frame.start);
         Ok(None)
     }
 }

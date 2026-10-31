@@ -33,9 +33,9 @@ scheduled per declaration, on demand (Zig, Rust), not module by module.
   function), LLVM IR.
 - **decided** Check builds THIR in one walk: names, types and constants
   together. There are no side tables over the AST.
-- **decided** Simple constants are folded during that walk. Comptime, when it
-  comes, runs in a MIR interpreter (Rust style). Both use the same value
-  arithmetic in `model`; see "Constant evaluation" for where each one stops.
+- **decided** Simple constants are folded during that walk. Comptime runs
+  in a MIR interpreter (Rust style). Both use the same value
+  arithmetic in `eval`; see "Constant evaluation" for where each one stops.
 - **decided** Scheduling is per declaration, on demand.
 - **decided** LLVM IR is written as text and compiled by clang.
 - **decided** One `model` crate owns the program's data: the syntax tree, the
@@ -164,7 +164,33 @@ what the other cannot do:
   100,000 calls at once and more than 1,000,000 steps (owner, 2026-10-26: a
   fixed limit, no setting until a program needs one), where each 256 bytes
   copied and each value of a filled range count as a step too. The error is
-  at the call, with a label where the run stopped.
+  at the call, with a label where the run stopped. A constant's value goes into
+  the program, and only the running program knows an address, so a constant may
+  use an address but not read it (owner, 2026-11-01). `@`, storing a pointer,
+  passing it, using it to read or write, and comparing it with `none` all run.
+  Comparing two addresses, a cast between raw pointer types and a pointer as
+  the final value stop the run. A cast is the only way to a pointer's bytes or
+  to what is next to a value, as there is no pointer arithmetic. Rust allows
+  such casts and reads the bytes behind them; Peeper's addresses are plain
+  numbers, so it stops at the cast.
+  Memory is stricter here too, as in Rust, where each thing is its own
+  allocation. Each call's frame and each variable, each time it starts, is a
+  block of memory never used before (256 MiB in all), and `scope end` ends a
+  variable's block. So a pointer to what ended stops the run at its next use,
+  and one from an earlier pass of a loop cannot reach this pass's variable. A
+  cleanup of MIR must keep `scope end` for this.
+- **A whole program** runs on the same interpreter (`interpreter::program::run`,
+  through `compile::interpret`), which is how a web page runs code with no
+  clang or LLVM. There `print`, panics and the runtime's `alloc`, `free`,
+  `calloc`, `write`, `read` (always empty) and `exit` work, and any other
+  `extern` stops the run by its name. Output is kept as ordered pieces, each
+  with its stream. Limits, each a panic with exit code 101: 2,000,000,000 steps,
+  1 MiB of output, 256 MiB of data, 8 MiB of stack, 100,000 calls at once. Past
+  10,000 pieces, output joins the last piece, so it stays in order but can be
+  marked as the wrong stream. A program with any error, the loader's included,
+  does not start. Numbers print through `runtime/number_text.rs`, the runtime's
+  own file, which `runtime_abi` includes by `#[path]`, so a run and a compiled program
+  print the same text.
 
 Neither driver implements an operation itself, so the two cannot disagree.
 
@@ -380,7 +406,7 @@ bb2:  ret const 0
 Path checks are dataflow passes over the blocks that share one fixed-point
 helper; a function whose checking already reported an error is not
 path-checked, since its errors would only follow from the first. LLVM emission
-and the future interpreter both read MIR; nothing below MIR reads THIR.
+and the interpreter both read MIR; nothing below MIR reads THIR.
 
 The missing-return check (T0017, `flow`) reports a function whose
 `fall off` block is reachable. It walks back from that block through blocks
@@ -461,7 +487,7 @@ reference for every check, as `r.*[i]` is. `&a` where a slice is expected is
 a `Borrow` of `a` with the slice type (`Conversion::Reborrow`); a borrow of a
 slice place (a `[&mut]` lent again, or used as a `[&]`) is a `Borrow` of its
 elements, `s.*`. `s.len` loads the slice, never moving a `[&mut]`, and takes
-its field 1. Slices do not run at compile time: making one needs a `Borrow`.
+its field 1.
 
 `&a[i..j]` (or `&mut`, or `..=`) is THIR's `Slice` of the array place `a`,
 each end left out or an integer of any type, as an index is; ends known at

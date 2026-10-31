@@ -168,7 +168,7 @@ this rule (#165 came from breaking it).
 | `diagnostics` | one diagnostic value and how it is printed | rewritten small; the old Go emitter and `suggest.go` reviewed |
 | `project` | import resolution from a package map, workers, graph, cycles; `project::manifest` reads `peeper.toml` in one folder (the project name) | new; ideas from old loader/resolver |
 | `peeper` | the command line: `check`, `fix`, `build`, `run`, `init`, `lsp` | new |
-| `browser` | the checker a web page runs: files in and diagnostics out as JSON, built for `wasm32-wasip1` | new |
+| `browser` | what a web page runs, built for `wasm32-wasip1`: files in as JSON, diagnostics out, and for a run what the program printed and its exit code, with no backend | new |
 
 Every item brought back from the old code passes three questions first: is it
 needed now, is it the simplest form, does something else already do it.

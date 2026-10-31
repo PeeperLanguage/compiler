@@ -6,7 +6,9 @@ use model::constant::Value;
 use model::mir;
 use model::mir::InstructionKind;
 use model::operators::BinaryOp;
+use model::semantic_types::Type;
 
+use super::ADDRESS_NOT_KNOWN;
 use super::Failure;
 use super::Interpreter;
 use super::Register;
@@ -55,6 +57,9 @@ impl<'b> Interpreter<'b, '_> {
                         Some(Register::Scalar(value))
                     }
                     (Register::Address(left), Register::Address(right)) => {
+                        if self.host.is_none() && left != 0 && right != 0 {
+                            return Err(self.fail(ADDRESS_NOT_KNOWN, span));
+                        }
                         let equal = left == right;
                         let value = equal == (op == BinaryOp::EqualTo);
                         Some(Register::Scalar(Value::Bool(value)))
@@ -79,7 +84,15 @@ impl<'b> Interpreter<'b, '_> {
                     Register::Scalar(value) => {
                         Register::Scalar(conversions::convert(from, to, &value))
                     }
-                    pointer => pointer, // a pointer cast keeps the address
+                    Register::Address(0) => Register::Address(0), // `none` stays `none`
+                    // A cast keeps the address, but it is the way to a
+                    // pointer's bytes, and to what is next to a value.
+                    _ if self.host.is_none() && matches!(to, Type::RawPointer { .. }) => {
+                        let message = "a pointer cast cannot run at compile time, \
+                            as it could read an address";
+                        return Err(self.fail(message, span));
+                    }
+                    pointer => pointer,
                 })
             }
             InstructionKind::Call { .. } | InstructionKind::Phi(_) => {
@@ -94,7 +107,14 @@ impl<'b> Interpreter<'b, '_> {
                 }
                 None
             }
-            InstructionKind::ScopeEnd(_) => None,
+            InstructionKind::ScopeEnd(variable) => {
+                let frame = self.frames.last_mut().expect("a run has a frame");
+                let started = frame.variables.get_mut(variable.index());
+                if let Some(address) = started.filter(|address| **address != 0) {
+                    self.memory.close_block(std::mem::take(address));
+                }
+                None
+            }
             InstructionKind::Borrow { ref place, .. } | InstructionKind::Address(ref place) => {
                 Some(self.borrow(id, place)?)
             }

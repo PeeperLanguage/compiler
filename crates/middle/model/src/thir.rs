@@ -340,14 +340,38 @@ impl Body {
     /// Whether computing `expression` calls a function, `print` too: then
     /// it runs even where only its type is needed (`ExprKind::Length`).
     pub fn calls(&self, expression: Id<Expr>) -> bool {
-        match self.exprs[expression].kind {
-            ExprKind::Call { .. } | ExprKind::Print { .. } => true,
+        let kind = &self.exprs[expression].kind;
+        matches!(kind, ExprKind::Call { .. } | ExprKind::Print { .. })
+            || self.any_part(kind, |part| self.calls(part))
+    }
+
+    /// The first variable with a name that `kind` reads, going through its
+    /// parts and not `exprs`, which also holds what folding left behind: the
+    /// `array` of an array's `.len`, the right side of `false && right`.
+    pub fn first_named_variable(&self, kind: &ExprKind) -> Option<Id<Variable>> {
+        if let ExprKind::Variable(variable) = *kind
+            && !self.variables[variable].hidden
+        {
+            return Some(variable);
+        }
+        let mut found = None;
+        self.any_part(kind, |part| {
+            found = self.first_named_variable(&self.exprs[part].kind);
+            found.is_some()
+        });
+        found
+    }
+
+    /// Whether `test` holds for an expression directly inside `kind`, tried
+    /// in the order they are computed.
+    fn any_part(&self, kind: &ExprKind, mut test: impl FnMut(Id<Expr>) -> bool) -> bool {
+        match *kind {
             ExprKind::Constant(_) | ExprKind::Variable(_) | ExprKind::Invalid => false,
             ExprKind::Binary { left, right, .. }
             | ExprKind::Index {
                 array: left,
                 index: right,
-            } => self.calls(left) || self.calls(right),
+            } => test(left) || test(right),
             ExprKind::Unary { value, .. }
             | ExprKind::Convert(value)
             | ExprKind::Field { value, .. }
@@ -355,24 +379,20 @@ impl Body {
             | ExprKind::Dereference(value)
             | ExprKind::Borrow(value)
             | ExprKind::Address(value)
-            | ExprKind::Temporary { value, .. } => self.calls(value),
+            | ExprKind::Temporary { value, .. } => test(value),
             ExprKind::Range {
                 start, end, step, ..
-            } => self.calls(start) || self.calls(end) || self.calls(step),
+            } => test(start) || test(end) || test(step),
             ExprKind::Slice {
                 array, start, end, ..
-            } => {
-                self.calls(array)
-                    || [start, end]
-                        .into_iter()
-                        .flatten()
-                        .any(|end| self.calls(end))
-            }
+            } => test(array) || [start, end].into_iter().flatten().any(test),
             ExprKind::StructLiteral(fields) => (self.children.lists.items(fields))
-                .any(|field| self.calls(self.children.field_values[field].value)),
-            ExprKind::ArrayLiteral(parts) => {
-                (self.children.lists.items(parts)).any(|part| self.calls(part))
+                .any(|field| test(self.children.field_values[field].value)),
+            ExprKind::Call {
+                arguments: parts, ..
             }
+            | ExprKind::ArrayLiteral(parts)
+            | ExprKind::Print { values: parts, .. } => (self.children.lists.items(parts)).any(test),
         }
     }
 

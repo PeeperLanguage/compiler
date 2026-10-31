@@ -2,7 +2,13 @@
 //! outlives them. Any address a run makes may be wrong (a raw pointer is
 //! whatever the program says), so each access is checked and a wrong one
 //! gives `None`, for the run to stop with a message.
+//!
+//! A constant's value goes into the program, so memory there is stricter: as
+//! in Rust, what ended is gone. Each call's frame and each variable, each time
+//! it starts, is a block of new memory, so an address from before cannot reach
+//! anything newer.
 
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::ops::Range;
 
@@ -12,10 +18,15 @@ pub(super) const STACK_START: u64 = 16;
 const STACK_LIMIT: u64 = 8 << 20;
 /// Where the data starts, an address every target's pointers hold.
 const DATA_START: u64 = 1 << 30;
+/// A constant's run never reuses this memory, so it has room for all its
+/// steps can copy (`STEP_LIMIT` of `BYTES_PER_STEP`): a long loop that uses
+/// no address stops at its steps, if at all.
+const CONSTANT_STACK_LIMIT: u64 = 256 << 20;
 /// How many bytes of data a run may use. Past this an allocation fails, as
 /// when a machine has no more memory.
 const DATA_LIMIT: u64 = 256 << 20;
-/// The alignment of each block, as of what C's `malloc` gives.
+/// The alignment of each block and frame, as far as any type aligns, as of
+/// what C's `malloc` gives.
 const BLOCK_ALIGN: u64 = 16;
 
 #[derive(Default)]
@@ -25,24 +36,78 @@ pub(super) struct Memory {
     strings: HashMap<Box<[u8]>, u64>, // each one in `data`, by its text
     blocks: HashMap<u64, u64>,        // the size of each block in use, by its address
     freed: HashMap<u64, Vec<u64>>,    // the addresses of blocks free to reuse, by size
+    constant_blocks: Option<BTreeMap<u64, u64>>, // the end of each open block, by its start
 }
 
 impl Memory {
-    /// Makes the stack reach `end`: `None` past its limit. What is new may
-    /// hold anything, as stack memory does; flow reads no unset variable.
-    pub(super) fn grow_stack(&mut self, end: u64) -> Option<()> {
-        let size = end.checked_sub(STACK_START)?;
-        if size > STACK_LIMIT {
+    /// The memory of a run for a constant.
+    pub(super) fn for_constant() -> Memory {
+        Memory {
+            constant_blocks: Some(BTreeMap::new()),
+            ..Memory::default()
+        }
+    }
+
+    /// Makes room for a call's `size` bytes after `end`, where the calling
+    /// frame stops, and gives where they start: `None` past the limit. What
+    /// is new may hold anything, as stack memory does; flow reads no unset
+    /// variable.
+    pub(super) fn enter_call(&mut self, end: u64, size: u64) -> Option<u64> {
+        if self.constant_blocks.is_some() {
+            return self.open_block(size);
+        }
+        let start = end.next_multiple_of(BLOCK_ALIGN);
+        let used = start.saturating_add(size) - STACK_START;
+        if used > STACK_LIMIT {
             return None;
         }
-        if size as usize > self.stack.len() {
-            self.stack.resize(size as usize, 0);
+        if used as usize > self.stack.len() {
+            self.stack.resize(used as usize, 0);
         }
-        Some(())
+        Some(start)
+    }
+
+    /// A new block of `size` bytes of a constant's memory: `None` past the
+    /// limit.
+    pub(super) fn open_block(&mut self, size: u64) -> Option<u64> {
+        let top = STACK_START + self.stack.len() as u64;
+        let start = top.next_multiple_of(BLOCK_ALIGN);
+        let end = start.checked_add(size.max(1))?; // blocks never share a start
+        if end - STACK_START > CONSTANT_STACK_LIMIT {
+            return None;
+        }
+        self.stack.resize((end - STACK_START) as usize, 0);
+        let blocks = self.constant_blocks.as_mut().expect("a constant's run");
+        blocks.insert(start, end);
+        Some(start)
+    }
+
+    /// In a constant's run, the block at `start` ended, and nothing can use
+    /// it again.
+    pub(super) fn close_block(&mut self, start: u64) {
+        if let Some(blocks) = &mut self.constant_blocks {
+            blocks.remove(&start).expect("the block is open");
+        }
+    }
+
+    /// Whether the `length` bytes at `address` may be used: in a constant's
+    /// run, only inside one block that is open.
+    fn usable(&self, address: u64, length: u64) -> bool {
+        let Some(blocks) = &self.constant_blocks else {
+            return true;
+        };
+        if address >= DATA_START {
+            return true;
+        }
+        let block = blocks.range(..=address).next_back();
+        block.is_some_and(|(_, &end)| address.saturating_add(length) <= end)
     }
 
     /// The `length` bytes at `address`.
     pub(super) fn bytes(&self, address: u64, length: u64) -> Option<&[u8]> {
+        if !self.usable(address, length) {
+            return None;
+        }
         let (region, start) = if address >= DATA_START {
             (&self.data, address - DATA_START)
         } else {
@@ -53,6 +118,9 @@ impl Memory {
 
     /// The `length` bytes at `address`, to write.
     pub(super) fn bytes_mut(&mut self, address: u64, length: u64) -> Option<&mut [u8]> {
+        if !self.usable(address, length) {
+            return None;
+        }
         let (region, start) = if address >= DATA_START {
             (&mut self.data, address - DATA_START)
         } else {
@@ -121,6 +189,9 @@ impl Memory {
 
     /// The bytes from `address` up to the first zero byte, as C reads them.
     pub(super) fn c_text(&self, address: u64) -> Option<&[u8]> {
+        if !self.usable(address, 1) {
+            return None;
+        }
         let (region, start) = if address >= DATA_START {
             (&self.data, address - DATA_START)
         } else {
@@ -156,7 +227,7 @@ mod tests {
     #[test]
     fn copies_overlapping_bytes_and_refuses_wrong_addresses() {
         let mut memory = Memory::default();
-        memory.grow_stack(STACK_START + 4).unwrap();
+        assert_eq!(memory.enter_call(STACK_START, 4), Some(STACK_START));
         memory
             .bytes_mut(STACK_START, 4)
             .unwrap()
@@ -172,7 +243,58 @@ mod tests {
             "an overflowing length"
         );
         assert_eq!(memory.copy(STACK_START, STACK_START + 3, 2), None);
-        assert_eq!(memory.grow_stack(STACK_START + STACK_LIMIT + 1), None);
+        assert_eq!(memory.enter_call(STACK_START, STACK_LIMIT + 1), None);
+    }
+
+    #[test]
+    fn a_constants_memory_is_never_used_twice() {
+        let mut memory = Memory::for_constant();
+        let frame = memory.enter_call(STACK_START, 32).unwrap();
+        let ended = memory.open_block(4).unwrap();
+        let beside = memory.open_block(4).unwrap();
+        assert!(memory.bytes(ended, 4).is_some(), "while it is open");
+        assert_eq!(memory.bytes(ended, 5), None, "past its end");
+        assert_eq!(memory.bytes(ended, 32), None, "as far as its neighbour");
+
+        memory.close_block(ended);
+        assert_eq!(memory.bytes(ended, 4), None, "once it ended");
+        assert_eq!(memory.bytes_mut(ended, 4), None);
+        assert_eq!(memory.c_text(ended), None);
+        assert!(memory.bytes(beside, 4).is_some(), "its neighbour stays");
+        assert!(memory.bytes(frame, 32).is_some(), "and so does the frame");
+
+        let newer = memory.open_block(4).unwrap();
+        assert!(newer > beside, "new memory");
+        assert_eq!(memory.bytes(ended, 4), None);
+    }
+
+    #[test]
+    fn a_constant_has_a_limit_even_when_all_its_blocks_ended() {
+        let mut memory = Memory::for_constant();
+        let block = memory.open_block(CONSTANT_STACK_LIMIT).unwrap();
+        memory.close_block(block);
+        assert_eq!(memory.open_block(1), None);
+        assert_eq!(memory.enter_call(STACK_START, 1), None);
+    }
+
+    #[test]
+    fn a_block_of_nothing_is_still_its_own_block() {
+        let mut memory = Memory::for_constant();
+        let first = memory.open_block(0).unwrap();
+        let second = memory.open_block(0).unwrap();
+        assert_ne!(first, second);
+        memory.close_block(first);
+        memory.close_block(second);
+    }
+
+    #[test]
+    fn a_programs_calls_reuse_memory_and_keep_it_readable() {
+        let mut memory = Memory::default();
+        let first = memory.enter_call(STACK_START, 32).unwrap();
+        let second = memory.enter_call(first + 32, 32).unwrap();
+        memory.close_block(second);
+        assert!(memory.bytes(second, 32).is_some());
+        assert_eq!(memory.enter_call(first + 32, 32), Some(second));
     }
 
     #[test]

@@ -5,6 +5,6 @@ build = "program"
 mode = "check"
 outcome = "failure"
 stderr_contains = [
-    "the value of a constant must be known at compile time",
+    "a constant cannot hold a struct yet",
     "Compilation failed with 2 error(s)",
 ]
