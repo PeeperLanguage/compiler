@@ -463,107 +463,111 @@ impl Checker<'_> {
     /// local never names a type
     /// (`ThirBuilder::declare`), so only top-level names are looked up.
     fn resolve_type(&mut self, ty: Id<ast::Type>) -> TypeId {
-        let tree = &self.module().ast;
-        let span = tree.types.span(ty);
-        let what = match tree.types[ty] {
-            ast::Type::Name => {
-                let name = tree.file.slice(span);
-                let symbol = self.global(name);
-                if let Some(symbol) = symbol {
-                    self.record(span, FactKind::Name(symbol));
+        // Types written in types, `& & ... i32`, are a deep recursion.
+        crate::grow(|| {
+            let tree = &self.module().ast;
+            let span = tree.types.span(ty);
+            let what = match tree.types[ty] {
+                ast::Type::Name => {
+                    let name = tree.file.slice(span);
+                    let symbol = self.global(name);
+                    if let Some(symbol) = symbol {
+                        self.record(span, FactKind::Name(symbol));
+                    }
+                    match symbol {
+                        Some(symbol) => return self.type_named_by(symbol, span),
+                        None if name == semantic_types::RANGE => {
+                            let message =
+                                format!("`{name}` needs the type of its values: `{name}[T]`");
+                            return self.error(diagnostics::INVALID_TYPE, message, span);
+                        }
+                        None if let Some(what) = unsupported_type(name) => what,
+                        None => {
+                            let symbols = self.visible_symbols();
+                            let types =
+                                symbols.filter(|&(_, symbol)| matches!(symbol, Symbol::Type(_)));
+                            let builtin = semantic_types::builtin_names();
+                            let meant =
+                                scope::nearest(name, builtin, types.map(|(declared, _)| declared));
+                            let message = format!("unknown type `{name}`");
+                            self.report_unknown(diagnostics::UNDEFINED_NAME, span, message, meant);
+                            return TypeId::INVALID;
+                        }
+                    }
                 }
-                match symbol {
-                    Some(symbol) => return self.type_named_by(symbol, span),
-                    None if name == semantic_types::RANGE => {
-                        let message = format!("`{name}` needs the type of its values: `{name}[T]`");
+                ast::Type::Invalid => return TypeId::INVALID, // the parser reported it
+                ast::Type::Path(_) => {
+                    return match self.resolve_path(ty) {
+                        Some(symbol) => self.type_named_by(symbol, span),
+                        None => TypeId::INVALID, // reported
+                    };
+                }
+                ast::Type::Generic { .. } => "generic types",
+                ast::Type::Bracketed { name, inner } => {
+                    let written = tree.file.slice(name.span);
+                    if written != semantic_types::RANGE {
+                        let message = format!("`{written}` takes no type in brackets");
                         return self.error(diagnostics::INVALID_TYPE, message, span);
                     }
-                    None if let Some(what) = unsupported_type(name) => what,
-                    None => {
-                        let symbols = self.visible_symbols();
-                        let types =
-                            symbols.filter(|&(_, symbol)| matches!(symbol, Symbol::Type(_)));
-                        let builtin = semantic_types::builtin_names();
-                        let meant =
-                            scope::nearest(name, builtin, types.map(|(declared, _)| declared));
-                        let message = format!("unknown type `{name}`");
-                        self.report_unknown(diagnostics::UNDEFINED_NAME, span, message, meant);
+                    let element = self.resolve_value_type(inner);
+                    let range = self.range_type(element, span);
+                    self.record(name.span, FactKind::Name(Symbol::Builtin(range)));
+                    return range;
+                }
+                ast::Type::Reference { mutable, target } => {
+                    let target = self.resolve_value_type(target);
+                    return self.reference_type(mutable, target, span);
+                }
+                ast::Type::Optional(_) => "optional types",
+                ast::Type::RawPointer => return TypeId::RAWPTR,
+                // A pointer only names its target, so a struct can point to itself.
+                // shortcut: `*[2]Node` or `*Alias` of `Node` in `Node` is a cycle, as
+                // an array's element and an alias's target are complete, and so is
+                // any cycle through such a pointer; let them stay names too if a
+                // program needs it.
+                ast::Type::Pointer(target) => {
+                    let pointee = self.resolve_type(target);
+                    return match self.held_type(pointee, "raw pointers to", span) {
+                        Some(target) => self.types.intern(Type::RawPointer {
+                            target: Some(target),
+                        }),
+                        None => TypeId::INVALID,
+                    };
+                }
+                ast::Type::FixedArray {
+                    length: ast::Length::Number(number),
+                    element,
+                } => {
+                    let literal = literal::numeric::split(tree.file.slice(number));
+                    let value = literal.integer_value();
+                    if !literal.suffix.is_empty() || literal.is_float() {
+                        let message = "an array length is a whole number without a suffix";
+                        return self.error(diagnostics::INVALID_TYPE, message, number);
+                    }
+                    if !self.length_fits(&value, number) {
                         return TypeId::INVALID;
                     }
+                    let element = self.resolve_value_type(element);
+                    return self.array_type(element, value[0], span);
                 }
-            }
-            ast::Type::Invalid => return TypeId::INVALID, // the parser reported it
-            ast::Type::Path(_) => {
-                return match self.resolve_path(ty) {
-                    Some(symbol) => self.type_named_by(symbol, span),
-                    None => TypeId::INVALID, // reported
-                };
-            }
-            ast::Type::Generic { .. } => "generic types",
-            ast::Type::Bracketed { name, inner } => {
-                let written = tree.file.slice(name.span);
-                if written != semantic_types::RANGE {
-                    let message = format!("`{written}` takes no type in brackets");
-                    return self.error(diagnostics::INVALID_TYPE, message, span);
+                ast::Type::FixedArray {
+                    length: ast::Length::Inferred(_),
+                    ..
+                } => unreachable!("the parser reads `[_]` only in an array literal, checked there"),
+                ast::Type::Slice { mutable, element } => {
+                    let element = self.resolve_value_type(element);
+                    return match self.loan_free_held_type(element, "slices of", span) {
+                        Some(element) => self.types.intern(Type::Slice { mutable, element }),
+                        None => TypeId::INVALID,
+                    };
                 }
-                let element = self.resolve_value_type(inner);
-                let range = self.range_type(element, span);
-                self.record(name.span, FactKind::Name(Symbol::Builtin(range)));
-                return range;
-            }
-            ast::Type::Reference { mutable, target } => {
-                let target = self.resolve_value_type(target);
-                return self.reference_type(mutable, target, span);
-            }
-            ast::Type::Optional(_) => "optional types",
-            ast::Type::RawPointer => return TypeId::RAWPTR,
-            // A pointer only names its target, so a struct can point to itself.
-            // shortcut: `*[2]Node` or `*Alias` of `Node` in `Node` is a cycle, as
-            // an array's element and an alias's target are complete, and so is
-            // any cycle through such a pointer; let them stay names too if a
-            // program needs it.
-            ast::Type::Pointer(target) => {
-                let pointee = self.resolve_type(target);
-                return match self.held_type(pointee, "raw pointers to", span) {
-                    Some(target) => self.types.intern(Type::RawPointer {
-                        target: Some(target),
-                    }),
-                    None => TypeId::INVALID,
-                };
-            }
-            ast::Type::FixedArray {
-                length: ast::Length::Number(number),
-                element,
-            } => {
-                let literal = literal::numeric::split(tree.file.slice(number));
-                let value = literal.integer_value();
-                if !literal.suffix.is_empty() || literal.is_float() {
-                    let message = "an array length is a whole number without a suffix";
-                    return self.error(diagnostics::INVALID_TYPE, message, number);
-                }
-                if !self.length_fits(&value, number) {
-                    return TypeId::INVALID;
-                }
-                let element = self.resolve_value_type(element);
-                return self.array_type(element, value[0], span);
-            }
-            ast::Type::FixedArray {
-                length: ast::Length::Inferred(_),
-                ..
-            } => unreachable!("the parser reads `[_]` only in an array literal, checked there"),
-            ast::Type::Slice { mutable, element } => {
-                let element = self.resolve_value_type(element);
-                return match self.loan_free_held_type(element, "slices of", span) {
-                    Some(element) => self.types.intern(Type::Slice { mutable, element }),
-                    None => TypeId::INVALID,
-                };
-            }
-            ast::Type::Function(_) => "function types",
-            ast::Type::Struct(_) => "struct types",
-            ast::Type::Enum(_) => "enum types",
-            ast::Type::Interface(_) => "interface types",
-        };
-        self.not_supported(span, what)
+                ast::Type::Function(_) => "function types",
+                ast::Type::Struct(_) => "struct types",
+                ast::Type::Enum(_) => "enum types",
+                ast::Type::Interface(_) => "interface types",
+            };
+            self.not_supported(span, what)
+        })
     }
 }
 

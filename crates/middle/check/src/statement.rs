@@ -266,133 +266,138 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
     /// The THIR of `statement`; `None` for a `const`, which only declares a
     /// name, and for a statement with an error.
     fn check_statement(&mut self, statement: Id<ast::Stmt>) -> Option<Id<Stmt>> {
-        let tree = &self.checker.module().ast;
-        let span = tree.stmts.span(statement);
-        let checked = match tree.stmts[statement] {
-            ast::Stmt::Block(block) => Stmt::Block(self.check_block(block)),
-            ast::Stmt::Let {
-                mutable,
-                name,
-                ty,
-                value,
-            } => self.check_let_statement(mutable, name, ty, value),
-            ast::Stmt::Const(declaration) => {
-                let value = self.check_const_statement(declaration);
-                let ast::Decl::Const { name, .. } = tree.decls[declaration] else {
-                    unreachable!("a const statement holds a const declaration")
-                };
-                let constant = self.body.constants.push(value, name.span);
-                self.declare(name, Local::Constant(constant));
-                return None;
-            }
-            ast::Stmt::Return(value) => Stmt::Return(self.check_return_value(span, value)),
-            ast::Stmt::Panic(message) => {
-                let message = tree.unparenthesized(message);
-                let span = tree.exprs.span(message);
-                // shortcut: a plain string literal only, as there are no
-                // run-time strings; take a string value once there are.
-                if !matches!(tree.exprs[message], ast::Expr::String { c_string: false }) {
-                    let checked = self.add_expr(message, None);
-                    if self.body.exprs[checked].ty != TypeId::INVALID {
-                        let what = "`panic` messages other than string literals";
-                        self.checker.not_supported(span, what);
-                    }
+        // Blocks in blocks and long `else if` chains are a deep recursion.
+        crate::grow(|| {
+            let tree = &self.checker.module().ast;
+            let span = tree.stmts.span(statement);
+            let checked = match tree.stmts[statement] {
+                ast::Stmt::Block(block) => Stmt::Block(self.check_block(block)),
+                ast::Stmt::Let {
+                    mutable,
+                    name,
+                    ty,
+                    value,
+                } => self.check_let_statement(mutable, name, ty, value),
+                ast::Stmt::Const(declaration) => {
+                    let value = self.check_const_statement(declaration);
+                    let ast::Decl::Const { name, .. } = tree.decls[declaration] else {
+                        unreachable!("a const statement holds a const declaration")
+                    };
+                    let constant = self.body.constants.push(value, name.span);
+                    self.declare(name, Local::Constant(constant));
                     return None;
                 }
-                let message = self.c_string(span);
-                Stmt::Panic(self.body.add(message, span))
-            }
-            ast::Stmt::Expression(value) => Stmt::Expression(self.add_expr(value, None)),
-            ast::Stmt::Assign { target, value } => self.assign(target, value)?,
-            ast::Stmt::If {
-                condition,
-                then,
-                otherwise,
-            } => {
-                let condition = self.add_required(condition, TypeId::BOOL);
-                let then = self.check_block(then?); // missing after a syntax error
-                let otherwise = otherwise.and_then(|otherwise| self.check_statement(otherwise));
-                Stmt::If {
+                ast::Stmt::Return(value) => Stmt::Return(self.check_return_value(span, value)),
+                ast::Stmt::Panic(message) => {
+                    let message = tree.unparenthesized(message);
+                    let span = tree.exprs.span(message);
+                    // shortcut: a plain string literal only, as there are no
+                    // run-time strings; take a string value once there are.
+                    if !matches!(tree.exprs[message], ast::Expr::String { c_string: false }) {
+                        let checked = self.add_expr(message, None);
+                        if self.body.exprs[checked].ty != TypeId::INVALID {
+                            let what = "`panic` messages other than string literals";
+                            self.checker.not_supported(span, what);
+                        }
+                        return None;
+                    }
+                    let message = self.c_string(span);
+                    Stmt::Panic(self.body.add(message, span))
+                }
+                ast::Stmt::Expression(value) => Stmt::Expression(self.add_expr(value, None)),
+                ast::Stmt::Assign { target, value } => self.assign(target, value)?,
+                ast::Stmt::If {
                     condition,
                     then,
                     otherwise,
-                }
-            }
-            ast::Stmt::Destructure { pattern, .. } => {
-                self.checker.not_supported(span, "destructuring `let`s");
-                // Its names are still declared, so their uses report nothing
-                // more.
-                let ast::Pattern::Struct(fields) = tree.patterns[pattern] else {
-                    return None; // the parser reported it
-                };
-                for field in tree.children.lists.items(fields) {
-                    if let ast::Pattern::Field { field, binding } = tree.patterns[field] {
-                        let name = binding.unwrap_or(field);
-                        let unknown = Variable {
-                            ty: TypeId::INVALID,
-                            mutable: true,
-                            initialized: true,
-                            scope: self.block,
-                            hidden: false,
-                        };
-                        let variable = self.body.add(unknown, name.span);
-                        self.declare(name, Local::Variable(variable));
+                } => {
+                    let condition = self.add_required(condition, TypeId::BOOL);
+                    let then = self.check_block(then?); // missing after a syntax error
+                    let otherwise = otherwise.and_then(|otherwise| self.check_statement(otherwise));
+                    Stmt::If {
+                        condition,
+                        then,
+                        otherwise,
                     }
                 }
-                return None;
-            }
-            ast::Stmt::Loop { control, body } => 'checked: {
-                let mut condition = None;
-                if let Some(control) = control {
-                    let checked = self.check_expr(control, None);
-                    let control_span = tree.exprs.span(control);
-                    if let Type::Range { .. } = self.checker.types[checked.ty] {
-                        let range = self.body.add(checked, control_span);
-                        break 'checked self.check_for_range(None, None, range, body?);
+                ast::Stmt::Destructure { pattern, .. } => {
+                    self.checker.not_supported(span, "destructuring `let`s");
+                    // Its names are still declared, so their uses report nothing
+                    // more.
+                    let ast::Pattern::Struct(fields) = tree.patterns[pattern] else {
+                        return None; // the parser reported it
+                    };
+                    for field in tree.children.lists.items(fields) {
+                        if let ast::Pattern::Field { field, binding } = tree.patterns[field] {
+                            let name = binding.unwrap_or(field);
+                            let unknown = Variable {
+                                ty: TypeId::INVALID,
+                                mutable: true,
+                                initialized: true,
+                                scope: self.block,
+                                hidden: false,
+                            };
+                            let variable = self.body.add(unknown, name.span);
+                            self.declare(name, Local::Variable(variable));
+                        }
                     }
-                    let checked = self.require(checked, control, TypeId::BOOL);
-                    condition = Some(self.body.add(checked, control_span));
+                    return None;
                 }
-                let body = body.map(|body| {
-                    let enclosing = self.open_block(body);
-                    self.check_loop_body(body, enclosing, None)
-                });
-                Stmt::Loop {
-                    condition,
-                    body: body?, // missing after a syntax error
+                ast::Stmt::Loop { control, body } => 'checked: {
+                    let mut condition = None;
+                    if let Some(control) = control {
+                        let checked = self.check_expr(control, None);
+                        let control_span = tree.exprs.span(control);
+                        if let Type::Range { .. } = self.checker.types[checked.ty] {
+                            let range = self.body.add(checked, control_span);
+                            break 'checked self.check_for_range(None, None, range, body?);
+                        }
+                        let checked = self.require(checked, control, TypeId::BOOL);
+                        condition = Some(self.body.add(checked, control_span));
+                    }
+                    let body = body.map(|body| {
+                        let enclosing = self.open_block(body);
+                        self.check_loop_body(body, enclosing, None)
+                    });
+                    Stmt::Loop {
+                        condition,
+                        body: body?, // missing after a syntax error
+                    }
                 }
-            }
-            ast::Stmt::ForIn {
-                index,
-                value,
-                iterable,
-                body,
-            } => {
-                let iterable = self.add_expr(iterable, None);
-                let ty = self.body.exprs[iterable].ty;
-                match self.checker.types[ty] {
-                    Type::Range { .. } => self.check_for_range(index, Some(value), iterable, body?),
-                    _ => self.check_for_array(index, value, iterable, body?)?,
+                ast::Stmt::ForIn {
+                    index,
+                    value,
+                    iterable,
+                    body,
+                } => {
+                    let iterable = self.add_expr(iterable, None);
+                    let ty = self.body.exprs[iterable].ty;
+                    match self.checker.types[ty] {
+                        Type::Range { .. } => {
+                            self.check_for_range(index, Some(value), iterable, body?)
+                        }
+                        _ => self.check_for_array(index, value, iterable, body?)?,
+                    }
                 }
-            }
-            ast::Stmt::Break | ast::Stmt::Continue if self.loops == 0 => {
-                let jump = match tree.stmts[statement] {
-                    ast::Stmt::Break => "break",
-                    _ => "continue",
-                };
-                let message = format!("`{jump}` outside a loop");
-                self.checker
-                    .error(diagnostics::INVALID_STATEMENT, message, span);
-                return None;
-            }
-            ast::Stmt::Break => Stmt::Break,
-            ast::Stmt::Continue => Stmt::Continue,
-            ast::Stmt::Match { .. } => {
-                self.checker.not_supported(span, "`match` statements");
-                return None;
-            }
-        };
-        Some(self.body.add(checked, span))
+                ast::Stmt::Break | ast::Stmt::Continue if self.loops == 0 => {
+                    let jump = match tree.stmts[statement] {
+                        ast::Stmt::Break => "break",
+                        _ => "continue",
+                    };
+                    let message = format!("`{jump}` outside a loop");
+                    self.checker
+                        .error(diagnostics::INVALID_STATEMENT, message, span);
+                    return None;
+                }
+                ast::Stmt::Break => Stmt::Break,
+                ast::Stmt::Continue => Stmt::Continue,
+                ast::Stmt::Match { .. } => {
+                    self.checker.not_supported(span, "`match` statements");
+                    return None;
+                }
+            };
+            Some(self.body.add(checked, span))
+        })
     }
 }
 

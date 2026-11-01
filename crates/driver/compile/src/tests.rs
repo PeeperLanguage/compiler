@@ -257,6 +257,35 @@ fn main() {{
     assert_eq!(diagnostics(&[("app:main", &text)]), []);
 }
 
+/// Statements and types nested far deeper than a thread's stack would hold,
+/// as the parser takes them, are checked and lowered: blocks in blocks, a
+/// long `else if` chain, a long `||` chain in a condition, and references
+/// written in references.
+#[test]
+fn checks_deeply_nested_statements() {
+    const DEPTH: usize = 50_000;
+    let blocks = format!("{}x = x + 1;{}", "{ ".repeat(DEPTH), " }".repeat(DEPTH));
+    let branches = format!(
+        "if x == 0 {{ }}{}",
+        " else if x == 1 { x = 2; }".repeat(DEPTH)
+    );
+    let conditions = format!("if x == 0{} {{ x = 3; }}", " || x == 1".repeat(DEPTH));
+    let text = format!(
+        "fn main() {{
+    let mut x = 1;
+    {blocks}
+    {branches}
+    {conditions}
+}}"
+    );
+    assert_eq!(diagnostics(&[("app:main", &text)]), []);
+    // References to references are not supported yet, so the one error.
+    let types = format!("fn f(a: {}i32) {{}}\nfn main() {{}}", "& ".repeat(DEPTH));
+    let found = diagnostics(&[("app:main", &types)]);
+    let codes: Vec<&str> = found.iter().map(|&(code, ..)| code).collect();
+    assert_eq!(codes, ["T0043"], "{found:?}");
+}
+
 /// No slice is longer than the largest `usize`, `u32::MAX` on a 32-bit
 /// target: a constant end past it is outside every slice, though it
 /// fits a `u64`, which lowering would cut to the target's width.
