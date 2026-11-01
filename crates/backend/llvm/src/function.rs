@@ -643,6 +643,7 @@ impl Function<'_, '_, '_> {
             InstructionKind::Call {
                 function,
                 ref arguments,
+                ..
             } => {
                 self.write_call(out, id, function, arguments, rest, &location);
                 Ok(())

@@ -51,7 +51,6 @@ use std::sync::Arc;
 
 use arena::Id;
 use diagnostics::Diagnostic;
-use model::DefId;
 use model::mir;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
@@ -72,15 +71,13 @@ enum Holder {}
 enum Loan {}
 
 /// Reports each access that a reference still in use forbids, once per
-/// loan, in the body of `function`; `origins_of(definition)` gives the
-/// parameters a reference `definition` returns may point into. A body with
-/// no `Borrow` and no reference result has no loan to break and is not
-/// walked.
-pub fn report_loan_errors<'t>(
+/// loan, in `body`, whose returned reference may point into the parameters
+/// `origins`. A body with no `Borrow` and no reference result has no loan to
+/// break and is not walked.
+pub fn report_loan_errors(
     body: &mir::Body,
     types: &Types,
-    function: DefId,
-    origins_of: &dyn Fn(DefId) -> &'t [u32],
+    origins: &[u32],
     file: &Arc<SourceFile>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
@@ -117,8 +114,7 @@ pub fn report_loan_errors<'t>(
     let mut loans = Loans {
         body,
         types,
-        origins_of,
-        origins: origins_of(function),
+        origins,
         reserved: Bits::new(0), // found below: it needs `Loans::uses`
         borrows,
         holder_starts,
@@ -145,11 +141,10 @@ fn holder_ids(range: Range<usize>) -> impl Iterator<Item = Id<Holder>> {
 }
 
 /// One function's loans and holders.
-struct Loans<'b, 't> {
+struct Loans<'b> {
     body: &'b mir::Body,
-    types: &'b Types, // to name a reference or a slice in a message
-    origins_of: &'b dyn Fn(DefId) -> &'t [u32], // of a function it calls
-    origins: &'t [u32], // the parameters its returned reference may point into
+    types: &'b Types,   // to name a reference or a slice in a message
+    origins: &'b [u32], // the parameters its returned reference may point into
     borrows: Vec<Id<mir::Instruction>>, // each `Borrow` loan's instruction
     /// Where the holders of each variable, then of each instruction's value,
     /// start; last, how many there are.
@@ -199,7 +194,7 @@ struct Access<'p> {
     span: Span,
 }
 
-impl Loans<'_, '_> {
+impl Loans<'_> {
     /// The words for a borrow of the type `ty`, a reference or slice.
     fn words(&self, ty: TypeId) -> &'static BorrowWords {
         match self.types[ty] {
@@ -388,12 +383,13 @@ impl Loans<'_, '_> {
         for id in self.body.instructions.ids() {
             let call = match self.body.instructions[id].kind {
                 mir::InstructionKind::Call {
-                    function,
+                    signature,
                     ref arguments,
+                    ..
                 } => {
                     // Used again through the returned reference, so its loan
                     // outlives the call.
-                    for &position in (self.origins_of)(function) {
+                    for &position in self.types.origins(signature) {
                         for holder in self.operand_holders(&arguments[position as usize]) {
                             use_counts[holder] += 1;
                         }
@@ -446,10 +442,11 @@ impl Loans<'_, '_> {
         };
         match *kind {
             mir::InstructionKind::Call {
-                function,
+                signature,
                 ref arguments,
+                ..
             } => {
-                let origins = (self.origins_of)(function).iter();
+                let origins = self.types.origins(signature).iter();
                 let sources = origins
                     .flat_map(|&position| self.operand_holders(&arguments[position as usize]));
                 let loans = self.loans_of(held, sources);

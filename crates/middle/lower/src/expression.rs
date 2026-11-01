@@ -98,6 +98,7 @@ impl Lowering<'_> {
             }
             thir::ExprKind::Call {
                 function,
+                signature,
                 arguments,
             } => {
                 let arguments = self
@@ -109,6 +110,7 @@ impl Lowering<'_> {
                     .collect::<Option<_>>()?;
                 mir::InstructionKind::Call {
                     function,
+                    signature,
                     arguments,
                 }
             }

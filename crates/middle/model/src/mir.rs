@@ -189,6 +189,7 @@ pub enum InstructionKind {
     Convert(Operand),
     Call {
         function: DefId,
+        signature: TypeId, // the type of `function`
         arguments: Box<[Operand]>,
     },
     /// A struct value from its fields' values, in declaration order, or an
@@ -427,6 +428,7 @@ impl Printer<'_> {
             InstructionKind::Call {
                 function,
                 arguments,
+                ..
             } => {
                 _ = write!(self.out, "call {}(", name_of(*function));
                 self.write_operands(arguments);

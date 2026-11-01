@@ -156,10 +156,11 @@ impl ThirBuilder<'_, '_> {
         };
         let signature = function.map(|function| {
             let ty = self.checker.function_type(function, callee_span);
-            (function, self.checker.types[ty].clone())
+            (function, ty, self.checker.types[ty].clone())
         });
         let Some((
             function,
+            signature,
             Type::Function {
                 parameters,
                 result,
@@ -241,6 +242,7 @@ impl ThirBuilder<'_, '_> {
             ty: result,
             kind: ExprKind::Call {
                 function,
+                signature,
                 arguments,
             },
         }

@@ -448,6 +448,16 @@ impl Types {
         }
     }
 
+    /// The parameters a reference returned by a function of type `signature`
+    /// may point into.
+    pub fn origins(&self, signature: TypeId) -> &[u32] {
+        match self[signature] {
+            Type::Function { ref origins, .. } => origins,
+            // No origins would let a returned reference dangle unseen.
+            _ => unreachable!("a call to a function with a signature error is not lowered"),
+        }
+    }
+
     /// The id of `ty`, made the first time `ty` is seen. An alias of an alias
     /// is kept as an alias of that alias's type, so `real` takes one step.
     pub fn intern(&mut self, mut ty: Type) -> TypeId {

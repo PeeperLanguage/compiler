@@ -156,6 +156,7 @@ pub enum ExprKind {
     /// A call of a module's function; calls are never folded.
     Call {
         function: DefId,
+        signature: TypeId, // the type of `function`
         arguments: List<Expr>,
     },
     /// The number or `bool` converted to the type `ty`, without `as` or with
@@ -584,6 +585,7 @@ impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
             ExprKind::Call {
                 function,
                 arguments,
+                ..
             } => {
                 _ = write!(self.out, "call {}(", (self.name_of)(function));
                 self.write_exprs(arguments);
