@@ -318,7 +318,7 @@ fn errors_are_located() {
             "0xff",
         ),
         ("T0004", "operator `-` cannot be applied to `bool`", "-true"),
-        ("T0043", "built-in functions are not supported yet", "alloc"),
+        ("T0002", "unknown name `alloc`", "alloc"),
         (
             "T0043",
             "destructuring `let`s are not supported yet",

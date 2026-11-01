@@ -16,7 +16,6 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use arena::Id;
-use builtin::UNSUPPORTED_FUNCTIONS;
 use diagnostics::Code;
 use diagnostics::Diagnostic;
 use diagnostics::fix::Fix;
@@ -478,19 +477,14 @@ impl<'p> Checker<'p> {
         Some(symbol)
     }
 
-    /// Reports `name`, written at `span`, which nothing in scope declares:
-    /// a built-in function, not supported yet, or an unknown name, with the
-    /// nearest of `locals` and the top-level names.
+    /// Reports `name`, written at `span`, which nothing in scope declares,
+    /// with the nearest of `locals` and the top-level names.
     pub(crate) fn report_undeclared<'a>(
         &mut self,
         name: &str,
         span: Span,
         locals: impl Iterator<Item = &'a str>,
     ) {
-        if UNSUPPORTED_FUNCTIONS.contains(&name) {
-            self.not_supported(span, "built-in functions");
-            return;
-        }
         let globals = self.visible_symbols().map(|(declared, _)| declared);
         let meant = scope::nearest(name, locals, globals);
         let message = format!("unknown name `{name}`");
