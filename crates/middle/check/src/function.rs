@@ -10,6 +10,7 @@ use model::mir;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::thir;
+use rustc_hash::FxHashSet;
 use source::Span;
 
 use crate::Checker;
@@ -109,12 +110,11 @@ impl Checker<'_> {
         // reads the table. Their modules are what the value depends on. One
         // still being checked is left out: only a run that calls it is a
         // cycle, not one that only may.
-        let (mut reached, mut pending) = (Vec::new(), vec![function]);
+        let (mut reached, mut pending) = (FxHashSet::default(), vec![function]);
         while let Some(next) = pending.pop() {
-            if reached.contains(&next) {
+            if !reached.insert(next) {
                 continue;
             }
-            reached.push(next);
             let (module, index) = (next.module.index(), next.index as usize);
             if !matches!(self.module_checks[module].bodies[index], Built::Kept(_)) {
                 if self
