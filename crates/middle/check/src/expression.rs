@@ -25,8 +25,12 @@ use crate::builder::ThirBuilder;
 
 impl ThirBuilder<'_, '_> {
     /// `expression` (`check_expr`), added to the body.
-    pub(crate) fn add_expr(&mut self, expression: Id<ast::Expr>, hint: Option<TypeId>) -> Id<Expr> {
-        let checked = self.check_expr(expression, hint);
+    pub(crate) fn add_expr(
+        &mut self,
+        expression: Id<ast::Expr>,
+        expected: Option<TypeId>,
+    ) -> Id<Expr> {
+        let checked = self.check_expr(expression, expected);
         self.body
             .add(checked, self.checker.module().ast.exprs.span(expression))
     }
