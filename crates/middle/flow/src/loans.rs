@@ -144,6 +144,15 @@ fn holder_ids(range: Range<usize>) -> impl Iterator<Item = Id<Holder>> {
     range.map(Id::from_index)
 }
 
+/// What is in `a` or `b`, both in order, in order and once each.
+fn sorted_union<T: Copy + Ord>(a: &[T], b: &[T]) -> Vec<T> {
+    let mut union = a.to_vec();
+    union.extend_from_slice(b);
+    union.sort_unstable();
+    union.dedup();
+    union
+}
+
 /// The loans each holder may hold at one point of a function, as pairs in
 /// order, none for a holder without one. A table of every holder and every
 /// loan, kept for every block, grows with the cube of a function's size.
@@ -263,6 +272,13 @@ impl Loans<'_> {
     /// How many holders there are.
     fn holder_count(&self) -> usize {
         self.holder_starts[self.holder_starts.len() - 1]
+    }
+
+    /// The set of `holders`, to walk a block with.
+    fn live_set(&self, holders: &[Id<Holder>]) -> Bits<Holder> {
+        let mut live = Bits::new(self.holder_count());
+        holders.iter().for_each(|&holder| live.set(holder));
+        live
     }
 
     /// The holders of the `index`th of `holder_starts`.
@@ -600,29 +616,29 @@ impl Loans<'_> {
         let body = self.body;
         let instructions =
             |block: Id<mir::Block>| body.lists.items(body.blocks[block].instructions);
-        let holder_count = self.holder_count();
-        let no_holders = Bits::new(holder_count);
         let predecessors = predecessors(body);
         // From every block, not only those that leave the function: a block
         // of an endless `for {}` reaches no exit. A `return` block, which
-        // nothing follows, ends with its returned reference in use.
+        // nothing follows, ends with its returned reference in use. Each
+        // block's set is kept as the live holders in order: few are live
+        // where a block ends, and a set of every holder kept for every block
+        // would grow with the blocks times the holders.
         let ends = dataflow(
             body.blocks.len(),
             body.blocks.ids().map(|block| {
-                let mut live = no_holders.clone();
-                if let Some((returned, _)) = self.returned(block) {
-                    holder_ids(returned).for_each(|holder| live.set(holder));
-                }
-                (block, live)
+                let returned = self.returned(block).map_or(0..0, |(returned, _)| returned);
+                (block, holder_ids(returned).collect())
             }),
             |block| predecessors[block.index()].iter().copied(),
-            |block, live| {
+            |block, live: &mut Vec<Id<Holder>>| {
+                let mut walked = self.live_set(live);
                 let ids: Vec<_> = instructions(block).collect();
                 for &id in ids.iter().rev() {
-                    self.step_live(live, id, |_| {});
+                    self.step_live(&mut walked, id, |_| {});
                 }
+                *live = walked.ids().collect();
             },
-            |a: &Bits<Holder>, b: &Bits<Holder>| a.combine(b, |a, b| a | b),
+            |a, b| sorted_union(a, b),
         );
         let starts = dataflow(
             body.blocks.len(),
@@ -637,14 +653,11 @@ impl Loans<'_> {
                 let Some(live) = &ends[block.index()] else {
                     unreachable!("each block starts the backward pass")
                 };
-                held.pairs.retain(|pair| live.has(pair.0));
+                held.pairs
+                    .retain(|pair| live.binary_search(&pair.0).is_ok());
             },
-            |a: &Held, b: &Held| {
-                let mut pairs = a.pairs.clone();
-                pairs.extend_from_slice(&b.pairs);
-                pairs.sort_unstable();
-                pairs.dedup();
-                Held { pairs }
+            |a: &Held, b: &Held| Held {
+                pairs: sorted_union(&a.pairs, &b.pairs),
             },
         );
         let mut reported = Bits::new(self.loan_count());
@@ -668,7 +681,7 @@ impl Loans<'_> {
             // keeping only the holders each instruction flips, so the walk
             // forward toggles them back in order. A set kept per instruction
             // would grow with the block's length times its holders.
-            let mut live = end.unwrap_or_else(|| no_holders.clone());
+            let mut live = self.live_set(end.as_deref().unwrap_or_default());
             let mut flips = Vec::new(); // (position, holder), the last first
             for (position, &id) in ids.iter().enumerate().rev() {
                 self.step_live(&mut live, id, |holder| flips.push((position, holder)));

@@ -1,9 +1,10 @@
 //! The path checks' memory on three large functions, each a whole program
 //! compiled on its own. Each shape once grew with the square or cube of its
-//! size: `branching` (many branches and borrows) passed 2 GB at twice the
-//! size measured here; `straight` (one block of borrows) took 905 MB at
-//! 20,000 groups; `late` (many branches, one variable set after its `let`)
-//! took 347 MB at 20,000 groups.
+//! size: `branching` (many branches and borrows) grew 407 MB here at 400
+//! groups, and once that was fixed `peeper check` took 217 MB at 10,000;
+//! `straight` (one block of borrows) took 905 MB at 20,000 groups in
+//! `peeper check`, and `late` (many branches, one variable set after its
+//! `let`) 347 MB at 20,000 groups.
 
 #![cfg(target_os = "linux")] // the kernel's count of a process's memory
 
@@ -117,9 +118,10 @@ fn late_set_function(groups: usize) -> String {
 #[test]
 fn large_functions_stay_small() {
     let measured = [
-        // 4 MB as it is; 407 MB with a table of every holder and loan at
-        // every block.
-        ("branching", branching_function(400), 8),
+        // 21 MB as it is; 47 MB with a set of every holder at every block's
+        // end. At 400 groups, a table of every holder and loan at every
+        // block took 407 MB.
+        ("branching", branching_function(4000), 30),
         // 5 MB as it is; 25 MB keeping the live holders after each instruction.
         ("straight", straight_function(3000), 8),
         // 25 MB as it is; 70 MB with a set of every variable at every block.

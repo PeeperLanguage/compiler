@@ -298,6 +298,18 @@ impl<T> Bits<T> {
         self.words[id.index() / 64] ^= 1 << (id.index() % 64);
     }
 
+    /// The ids in the set, in order.
+    fn ids(&self) -> impl Iterator<Item = Id<T>> {
+        self.words.iter().enumerate().flat_map(|(index, &word)| {
+            let mut rest = word;
+            std::iter::from_fn(move || {
+                let bit = (rest != 0).then(|| rest.trailing_zeros() as usize)?;
+                rest &= rest - 1; // clears that lowest bit
+                Some(Id::from_index(index * 64 + bit))
+            })
+        })
+    }
+
     fn has(&self, id: Id<T>) -> bool {
         self.words[id.index() / 64] >> (id.index() % 64) & 1 != 0
     }
