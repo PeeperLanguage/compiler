@@ -42,7 +42,7 @@ impl ThirBuilder<'_, '_> {
                     .report_unknown(diagnostics::UNKNOWN_FIELD, field.span, message, meant);
                 return Expr::INVALID;
             }
-            let usize = self.checker.usize_type();
+            let usize = self.checker.types.usize;
             let Some(length) = length.filter(|_| !self.body.calls(value)) else {
                 return Expr {
                     ty: usize,
@@ -106,7 +106,7 @@ impl ThirBuilder<'_, '_> {
             ty = referred.ty;
             array = self.body.add(referred, self.body.exprs.span(array));
         }
-        let usize = self.checker.usize_type();
+        let usize = self.checker.types.usize;
         let index = self.add_expr(index, Some(usize));
         let index_type = self.body.exprs[index].ty;
         let tree = &self.checker.module().ast;
@@ -266,10 +266,9 @@ impl ThirBuilder<'_, '_> {
         length: Option<u64>,
         range: Id<ast::Expr>,
     ) -> Option<[Option<Id<Expr>>; 2]> {
-        let usize_type = self.checker.usize_type();
         // No slice is longer than the largest `usize`.
         let limit = length.unwrap_or(u64::MAX >> (64 - self.checker.target.pointer_bits));
-        let usize = Some(usize_type);
+        let usize = Some(self.checker.types.usize);
         let ends = match ends {
             [Some(start), Some(end)] => {
                 let (start, end) = self.check_range_ends(start, end, usize);

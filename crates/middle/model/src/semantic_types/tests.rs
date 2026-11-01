@@ -39,7 +39,7 @@ fn builtin_docs() {
 
 #[test]
 fn fixed_ids_are_the_interned_ids() {
-    let mut types = Types::default();
+    let mut types = Types::new(64);
     for (index, ty) in FIXED.iter().enumerate() {
         assert_eq!(types.intern(ty.clone()), TypeId(index as u32));
     }
@@ -83,7 +83,7 @@ fn literals_that_fit() {
 
 #[test]
 fn conversions() {
-    let mut types = Types::default();
+    let mut types = Types::new(64);
     let shared = types.intern(Type::Reference {
         mutable: false,
         target: TypeId::I32,
@@ -169,7 +169,7 @@ fn conversions() {
 
 #[test]
 fn builtin_names() {
-    let mut types = Types::default();
+    let mut types = Types::new(64);
     let mut lookup = |name| types.builtin(name, 64);
     assert_eq!(lookup("bool"), Some(TypeId::BOOL));
     assert_eq!(lookup("i32"), Some(TypeId::I32));
@@ -191,17 +191,19 @@ fn builtin_names() {
         assert_eq!(lookup(name), None, "{name}");
     }
     assert_eq!(types[u24], integer(false, 24));
-    let mut types = Types::default();
+    let mut types = Types::new(64);
     assert_eq!(
         types.builtin("usize", 32),
         Some(TypeId::U32),
         "a pointer is 32 bits there"
     );
+    assert_eq!(Types::new(32).usize, TypeId::U32);
+    assert_eq!(Types::new(64).usize, TypeId::U64);
 }
 
 #[test]
 fn type_text() {
-    let mut types = Types::default();
+    let mut types = Types::new(64);
     let u24 = types.intern(integer(false, 24));
     let function = types.intern(Type::Function {
         parameters: [TypeId::I32, u24].into(),
@@ -249,7 +251,7 @@ fn type_text() {
 
 #[test]
 fn equal_types_have_equal_ids() {
-    let mut types = Types::default();
+    let mut types = Types::new(64);
     let u24 = types.intern(integer(false, 24));
     assert_eq!(types.intern(integer(false, 24)), u24);
     assert_ne!(types.intern(integer(true, 24)), u24);

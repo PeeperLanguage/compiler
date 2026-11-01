@@ -70,7 +70,7 @@ impl ThirBuilder<'_, '_> {
         };
         let enclosing = self.open_block(body);
         let index = index.map(|index| {
-            let usize = self.checker.usize_type();
+            let usize = self.checker.types.usize;
             self.declare_loop_variable(usize, index)
         });
         let value = value.map(|value| self.declare_loop_variable(element, value));
@@ -204,7 +204,7 @@ impl ThirBuilder<'_, '_> {
             span,
         );
         // `for index in 0..N`, each pass first setting `value`.
-        let usize = self.checker.usize_type();
+        let usize = self.checker.types.usize;
         let pointer_bits = self.checker.target.pointer_bits;
         let mut constant = |number: u64| {
             let value = Value::Integer(Limbs::new(pointer_bits, &[number]));

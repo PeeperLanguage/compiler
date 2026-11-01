@@ -135,7 +135,7 @@ impl<'p> Checker<'p> {
         Checker {
             modules,
             module_checks,
-            types: Types::default(),
+            types: Types::new(target.pointer_bits),
             target,
             record_facts,
             checking: Vec::new(),
@@ -234,12 +234,6 @@ impl<'p> Checker<'p> {
         self.checking.pop();
         table(&mut self.module_checks[module])[index] = State::Done(result.clone());
         result
-    }
-
-    /// `usize`, as wide as a pointer of the target.
-    pub(crate) fn usize_type(&mut self) -> TypeId {
-        let usize = self.types.builtin("usize", self.target.pointer_bits);
-        usize.expect("`usize` is built in")
     }
 
     /// The type `ty` as a message names it (`Types::text`).

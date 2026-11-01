@@ -28,7 +28,7 @@ impl Lowering<'_> {
             value: slice,
             fields,
         };
-        self.emit(length, self.usize, span)
+        self.emit(length, self.types.usize, span)
     }
 
     /// The slice `&array[start..end]` (`thir::ExprKind::Slice`) at
@@ -102,7 +102,7 @@ impl Lowering<'_> {
                 self.lower_slice_end(start, BinaryOp::GreaterThan, length)?
             }
             _ => self.integer_constant(
-                self.usize,
+                self.types.usize,
                 known_start.expect("an unchecked start is known"),
             ),
         };
@@ -116,13 +116,13 @@ impl Lowering<'_> {
                 };
                 let end = self.lower_slice_end(end, op, length)?;
                 if inclusive {
-                    let one = self.integer_constant(self.usize, 1);
-                    self.binary(BinaryOp::Add, end, one, self.usize, span)
+                    let one = self.integer_constant(self.types.usize, 1);
+                    self.binary(BinaryOp::Add, end, one, self.types.usize, span)
                 } else {
                     end
                 }
             }
-            (_, Some(known)) => self.integer_constant(self.usize, known),
+            (_, Some(known)) => self.integer_constant(self.types.usize, known),
             // A slice's missing end is its length.
             (_, None) => match length {
                 Length::Read(length) => length,
@@ -146,13 +146,13 @@ impl Lowering<'_> {
             self.check(failed, message, span);
         }
         let count = match (known_start, known_end) {
-            (Some(start), Some(end)) => self.integer_constant(self.usize, end - start),
+            (Some(start), Some(end)) => self.integer_constant(self.types.usize, end - start),
             (Some(0), None) => end_operand,
             _ => self.binary(
                 BinaryOp::Subtract,
                 end_operand,
                 start_operand,
-                self.usize,
+                self.types.usize,
                 span,
             ),
         };
@@ -183,7 +183,7 @@ impl Lowering<'_> {
         let ty = self.types.real(self.thir.exprs[end].ty);
         let value = self.lower_expr(end)?;
         let (&Type::Integer(integer), &Type::Integer(size)) =
-            (&self.types[ty], &self.types[self.usize])
+            (&self.types[ty], &self.types[self.types.usize])
         else {
             unreachable!("a slice's end and `usize` are integers")
         };
@@ -194,12 +194,12 @@ impl Lowering<'_> {
             let failed = self.binary(BinaryOp::LessThan, value, zero, TypeId::BOOL, span);
             self.check(failed, message, span);
         }
-        let compared = if wide || ty == self.usize {
+        let compared = if wide || ty == self.types.usize {
             value
         } else {
-            self.emit(mir::InstructionKind::Convert(value), self.usize, span)
+            self.emit(mir::InstructionKind::Convert(value), self.types.usize, span)
         };
-        let compared_type = if wide { ty } else { self.usize };
+        let compared_type = if wide { ty } else { self.types.usize };
         let limit = match length {
             Length::Known(length) => self.integer_constant(compared_type, length),
             Length::Read(length) if wide => {
@@ -210,7 +210,7 @@ impl Lowering<'_> {
         let failed = self.binary(op, compared, limit, TypeId::BOOL, span);
         self.check(failed, message, span);
         Some(if wide {
-            self.emit(mir::InstructionKind::Convert(value), self.usize, span)
+            self.emit(mir::InstructionKind::Convert(value), self.types.usize, span)
         } else {
             compared
         })

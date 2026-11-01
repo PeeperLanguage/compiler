@@ -428,11 +428,30 @@ pub fn builtin_doc(name: &str, pointer_bits: u32) -> Option<String> {
 // ones; delete it with `extend_from`.
 #[derive(Clone)]
 pub struct Types {
+    pub usize: TypeId, // as wide as a pointer of the target
     types: Vec<Type>,
     ids: FxHashMap<Type, TypeId>,
 }
 
 impl Types {
+    /// The fixed types alone, each at its `TypeId` constant, and `usize` of
+    /// `pointer_bits` bits.
+    pub fn new(pointer_bits: u32) -> Types {
+        let mut types = Types {
+            usize: TypeId::INVALID,
+            types: Vec::new(),
+            ids: FxHashMap::default(),
+        };
+        for ty in FIXED {
+            types.intern(ty.clone());
+        }
+        types.usize = types.intern(Type::Integer(Integer {
+            signed: false,
+            bits: pointer_bits,
+        }));
+        types
+    }
+
     /// Adds the types `other` has after these: keeps a copy of a table that
     /// only grows, as `other` is when this was made from it, up to date.
     ///
@@ -692,20 +711,6 @@ impl Types {
             } => format!("*{}", self.real_text(*target, name_of)),
             Type::Alias { .. } => unreachable!("`real` looks through aliases"),
         }
-    }
-}
-
-/// The fixed types alone, each at its `TypeId` constant.
-impl Default for Types {
-    fn default() -> Types {
-        let mut types = Types {
-            types: Vec::new(),
-            ids: FxHashMap::default(),
-        };
-        for ty in FIXED {
-            types.intern(ty.clone());
-        }
-        types
     }
 }
 
