@@ -26,6 +26,7 @@ use source::Span;
 
 use crate::Checker;
 use crate::Checking;
+use crate::builder::Declared;
 use crate::builder::ThirBuilder;
 use crate::function::function_declaration;
 use crate::scope::report_redeclared;
@@ -158,7 +159,12 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         let statements =
             self.check_statements(first, self.checker.module().ast.blocks[block].statements);
         let closed = self.block;
-        self.names.truncate(self.block_start);
+        for declared in self.names.drain(self.block_start..).rev() {
+            match declared.hides {
+                Some(outer) => self.innermost.insert(declared.name, outer),
+                None => self.innermost.remove(declared.name),
+            };
+        }
         (self.block, self.block_start) = enclosing;
         self.body.blocks[closed].statements = statements;
         closed
@@ -193,9 +199,10 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         if text.is_empty() {
             return; // missing after a syntax error
         }
-        let block = &self.names[self.block_start..];
-        if let Some(&(_, first)) = block.iter().find(|&&(declared, _)| declared == text) {
-            let first = self.body.declared(first);
+        if let Some(&position) = self.innermost.get(text)
+            && position >= self.block_start
+        {
+            let first = self.body.declared(self.names[position].local);
             let diagnostic = report_redeclared(
                 &self.checker.module().ast.file,
                 text,
@@ -213,7 +220,12 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             _ => {
                 self.checker
                     .record(name.span, FactKind::Name(Symbol::Local(local)));
-                self.names.push((text, local));
+                let hides = self.innermost.insert(text, self.names.len());
+                self.names.push(Declared {
+                    name: text,
+                    local,
+                    hides,
+                });
                 return;
             }
         };
@@ -237,16 +249,11 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
     /// declares it.
     pub(crate) fn resolve(&mut self, span: Span) -> Option<Symbol> {
         let name = self.checker.module().ast.file.slice(span);
-        let found = self
-            .names
-            .iter()
-            .rev()
-            .find(|&&(declared, _)| declared == name);
-        let symbol = if let Some(&(_, local)) = found {
-            Symbol::Local(local)
+        let symbol = if let Some(&position) = self.innermost.get(name) {
+            Symbol::Local(self.names[position].local)
         } else {
             let Some(symbol) = self.checker.global(name) else {
-                let locals = self.names.iter().map(|&(declared, _)| declared);
+                let locals = self.names.iter().map(|declared| declared.name);
                 self.checker.report_undeclared(name, span, locals);
                 return None;
             };

@@ -138,6 +138,37 @@ fn names_shadow_until_their_block_ends() {
     );
 }
 
+/// Each block's end brings back the name its block hid, however deep, and a
+/// name declared only inside a block is unknown after it.
+#[test]
+fn hidden_names_come_back_level_by_level() {
+    let (built, reported) = bodies(
+        "fn f(x: i32) {
+                { let x = true; { let x = 2u8; let a = x; } let b = x; }
+                let c = x;
+            }",
+    );
+    assert!(reported.is_empty(), "{reported:?}");
+    assert_eq!(
+        built,
+        ["    {
+        let x.1 = true
+        {
+            let x.2 = 2:u8
+            let a.3 = x.2
+        }
+        let b.4 = x.1
+    }
+    let c.5 = x.0
+"]
+    );
+    let (_, reported) = bodies("fn g() { { let y = 1; } let d = y; }");
+    assert_eq!(
+        reported,
+        crate::testing::reported(&[("T0002", "unknown name `y`", "y")])
+    );
+}
+
 /// Types and values share names, and a value can't take a type's name,
 /// declared or built-in: the name stays the type's.
 #[test]

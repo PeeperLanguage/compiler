@@ -60,13 +60,9 @@ impl ThirBuilder<'_, '_> {
             hidden: false,
         };
         let text = name.text(&self.checker.module().ast.file);
-        let shadowed = self
-            .names
-            .iter()
-            .rposition(|&(declared, ..)| declared == text);
-        if let Some(position) = shadowed
+        if let Some(&position) = self.innermost.get(text)
             && position < self.block_start
-            && let Local::Variable(outer) = self.names[position].1
+            && let Local::Variable(outer) = self.names[position].local
             && self.body.variables[outer].mutable
         {
             // Likely meant as `x = ...`: the outer local stays unchanged.

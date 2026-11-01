@@ -6,8 +6,18 @@ use model::semantic_types::TypeId;
 use model::thir::Block;
 use model::thir::Body;
 use model::thir::Local;
+use rustc_hash::FxHashMap;
 
 use crate::Checker;
+
+/// A name declared in a block, and what it stands for.
+pub(crate) struct Declared<'p> {
+    pub(crate) name: &'p str,
+    pub(crate) local: Local,
+    /// Where in `names` the declaration it hides is, which `innermost` names
+    /// again when this one's block ends.
+    pub(crate) hides: Option<usize>,
+}
 
 /// Building the THIR of one piece of code: a function's body, or a
 /// constant's value. It checks the code as it builds it.
@@ -16,9 +26,11 @@ pub(crate) struct ThirBuilder<'a, 'p> {
     /// diagnostics.
     pub(crate) checker: &'a mut Checker<'p>,
     pub(crate) body: &'a mut Body,
-    /// The names declared in the enclosing blocks so far, innermost last. Few
-    /// names are in scope at once, so a search from the end beats hashing.
-    pub(crate) names: Vec<(&'p str, Local)>,
+    /// The names declared in the enclosing blocks so far, innermost last.
+    pub(crate) names: Vec<Declared<'p>>,
+    /// Where in `names` each name's innermost declaration is, so a lookup
+    /// costs the same however many names a long body declares.
+    pub(crate) innermost: FxHashMap<&'p str, usize>,
     /// Where in `names` the current block's names start.
     pub(crate) block_start: usize,
     /// The current block, for the variables it declares.
@@ -41,6 +53,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             checker,
             body,
             names: Vec::new(),
+            innermost: FxHashMap::default(),
             block_start: 0,
             block: Id::from_index(0), // the function's, added first (`Checker::check_body`)
             result,
