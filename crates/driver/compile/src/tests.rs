@@ -234,6 +234,29 @@ fn checks_a_long_chain_of_constants() {
     assert_eq!(diagnostics(&[("app:main", &text)]), []);
 }
 
+/// An expression nested far deeper than a thread's stack would hold is
+/// checked and lowered: each walk moves to new stack segments as it needs
+/// them, as the parser does.
+#[test]
+fn checks_deeply_nested_expressions() {
+    const DEPTH: usize = 50_000;
+    let operators = format!("x{}", " + x".repeat(DEPTH));
+    let calls = format!("{}x{}", "id(".repeat(DEPTH), ")".repeat(DEPTH));
+    let parentheses = format!("{}x{}", "(".repeat(DEPTH), " + 1)".repeat(DEPTH));
+    let negations = format!("{}true", "! ".repeat(DEPTH));
+    let text = format!(
+        "fn id(n: i32) -> i32 {{ return n; }}
+fn main() {{
+    let x = 1;
+    let a = {operators};
+    let b = {calls};
+    let c = {parentheses};
+    let d = {negations};
+}}"
+    );
+    assert_eq!(diagnostics(&[("app:main", &text)]), []);
+}
+
 /// No slice is longer than the largest `usize`, `u32::MAX` on a 32-bit
 /// target: a constant end past it is outside every slice, though it
 /// fits a `u64`, which lowering would cut to the target's width.

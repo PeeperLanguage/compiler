@@ -153,64 +153,71 @@ impl ThirBuilder<'_, '_> {
         expression: Id<ast::Expr>,
         expected: Option<TypeId>,
     ) -> Expr {
-        let tree = &self.checker.module().ast;
-        let span = tree.exprs.span(expression);
-        match tree.exprs[expression] {
-            ast::Expr::Name => {
-                let symbol = self.resolve(span);
-                self.check_symbol_value(symbol, span)
+        // A long chain of operators, calls or parentheses is a deep recursion.
+        crate::grow(|| {
+            let tree = &self.checker.module().ast;
+            let span = tree.exprs.span(expression);
+            match tree.exprs[expression] {
+                ast::Expr::Name => {
+                    let symbol = self.resolve(span);
+                    self.check_symbol_value(symbol, span)
+                }
+                ast::Expr::Number => self.check_number(span, None, expected),
+                ast::Expr::Bool(value) => Expr {
+                    ty: TypeId::BOOL,
+                    kind: ExprKind::Constant(Value::Bool(value)),
+                },
+                ast::Expr::String { c_string: true } => self.c_string(span),
+                ast::Expr::Parentheses(inner) => self.check_expr(inner, expected),
+                ast::Expr::Unary { op, value } => self.check_unary(op, value, span, expected),
+                ast::Expr::Binary { op, left, right } => {
+                    self.check_binary(op, left, right, span, expected)
+                }
+                ast::Expr::Invalid => Expr::INVALID, // the parser reported it
+                ast::Expr::Path(path) => {
+                    let symbol = self.checker.resolve_path(path);
+                    self.check_symbol_value(symbol, span)
+                }
+                ast::Expr::Call { callee, arguments } => self.check_call(callee, arguments, span),
+                ast::Expr::StructLiteral { ty, fields } => {
+                    self.check_struct_literal(ty, fields, span, expected)
+                }
+                ast::Expr::Selector { value, field } => self.check_field(value, field),
+                ast::Expr::ArrayLiteral { ty, entries } => {
+                    self.check_array_literal(ty, entries, span)
+                }
+                ast::Expr::Spread(values) => {
+                    self.add_expr(values, None); // for its own errors
+                    let message = "`...` spreads into an array literal or a `...` parameter";
+                    self.checker
+                        .error(diagnostics::INVALID_OPERATION, message, span);
+                    Expr::INVALID
+                }
+                ast::Expr::Range { .. } => self.check_range(expression, expected),
+                ast::Expr::Index { value, index } => self.check_index(value, index, span),
+                ast::Expr::Dereference(value) => self.check_dereference(value, span),
+                ast::Expr::Reference { mutable, value } => {
+                    self.check_reference(mutable, value, span, expected)
+                }
+                ast::Expr::Cast { value, ty } => self.check_cast(value, ty, span),
+                ast::Expr::None => self.check_none(span, expected),
+                ast::Expr::RawAddress(value) => {
+                    let place = self.add_expr(value, None);
+                    self.check_address(place, span)
+                }
+                ast::Expr::Print { newline, values } => self.check_print(newline, values),
+                ast::Expr::String { c_string: false } => {
+                    self.unsupported_expr(span, "string literals")
+                }
+                ast::Expr::Char { .. } => self.unsupported_expr(span, "character literals"),
+                ast::Expr::Free(_) => self.unsupported_expr(span, "`free` calls"),
+                ast::Expr::VariantLiteral { .. } => self.unsupported_expr(span, "variant literals"),
+                ast::Expr::Is { .. } => self.unsupported_expr(span, "`is` tests"),
+                ast::Expr::OrElse { .. } => self.unsupported_expr(span, "`orelse` fallbacks"),
+                ast::Expr::Block(_) => self.unsupported_expr(span, "block expressions"),
+                ast::Expr::Pipe { .. } => self.unsupported_expr(span, "pipes"),
             }
-            ast::Expr::Number => self.check_number(span, None, expected),
-            ast::Expr::Bool(value) => Expr {
-                ty: TypeId::BOOL,
-                kind: ExprKind::Constant(Value::Bool(value)),
-            },
-            ast::Expr::String { c_string: true } => self.c_string(span),
-            ast::Expr::Parentheses(inner) => self.check_expr(inner, expected),
-            ast::Expr::Unary { op, value } => self.check_unary(op, value, span, expected),
-            ast::Expr::Binary { op, left, right } => {
-                self.check_binary(op, left, right, span, expected)
-            }
-            ast::Expr::Invalid => Expr::INVALID, // the parser reported it
-            ast::Expr::Path(path) => {
-                let symbol = self.checker.resolve_path(path);
-                self.check_symbol_value(symbol, span)
-            }
-            ast::Expr::Call { callee, arguments } => self.check_call(callee, arguments, span),
-            ast::Expr::StructLiteral { ty, fields } => {
-                self.check_struct_literal(ty, fields, span, expected)
-            }
-            ast::Expr::Selector { value, field } => self.check_field(value, field),
-            ast::Expr::ArrayLiteral { ty, entries } => self.check_array_literal(ty, entries, span),
-            ast::Expr::Spread(values) => {
-                self.add_expr(values, None); // for its own errors
-                let message = "`...` spreads into an array literal or a `...` parameter";
-                self.checker
-                    .error(diagnostics::INVALID_OPERATION, message, span);
-                Expr::INVALID
-            }
-            ast::Expr::Range { .. } => self.check_range(expression, expected),
-            ast::Expr::Index { value, index } => self.check_index(value, index, span),
-            ast::Expr::Dereference(value) => self.check_dereference(value, span),
-            ast::Expr::Reference { mutable, value } => {
-                self.check_reference(mutable, value, span, expected)
-            }
-            ast::Expr::Cast { value, ty } => self.check_cast(value, ty, span),
-            ast::Expr::None => self.check_none(span, expected),
-            ast::Expr::RawAddress(value) => {
-                let place = self.add_expr(value, None);
-                self.check_address(place, span)
-            }
-            ast::Expr::Print { newline, values } => self.check_print(newline, values),
-            ast::Expr::String { c_string: false } => self.unsupported_expr(span, "string literals"),
-            ast::Expr::Char { .. } => self.unsupported_expr(span, "character literals"),
-            ast::Expr::Free(_) => self.unsupported_expr(span, "`free` calls"),
-            ast::Expr::VariantLiteral { .. } => self.unsupported_expr(span, "variant literals"),
-            ast::Expr::Is { .. } => self.unsupported_expr(span, "`is` tests"),
-            ast::Expr::OrElse { .. } => self.unsupported_expr(span, "`orelse` fallbacks"),
-            ast::Expr::Block(_) => self.unsupported_expr(span, "block expressions"),
-            ast::Expr::Pipe { .. } => self.unsupported_expr(span, "pipes"),
-        }
+        })
     }
 
     /// The expression `&value`, or `&mut value` when `mutable`, at `span`.

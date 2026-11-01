@@ -128,6 +128,14 @@ struct Loop {
     declared: usize,
 }
 
+/// Runs `lower` on a new stack segment when less than the red zone is left,
+/// for the walks that recurse as deep as an expression nests.
+fn grow<R>(lower: impl FnOnce() -> R) -> R {
+    const RED_ZONE: usize = 128 * 1024;
+    const SEGMENT: usize = 1024 * 1024;
+    stacker::maybe_grow(RED_ZONE, SEGMENT, lower)
+}
+
 /// The MIR variable of `variable`: their ids match (`lower`).
 fn lowered_variable(variable: Id<thir::Variable>) -> Id<mir::Variable> {
     Id::from_index(variable.index())

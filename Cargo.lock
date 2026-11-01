@@ -445,6 +445,7 @@ dependencies = [
  "bigint",
  "model",
  "source",
+ "stacker",
 ]
 
 [[package]]
