@@ -167,9 +167,10 @@ pub fn interpret(
         |output| match output {
             Output::Function(CheckedFunction {
                 definition,
-                mir: Some(mir),
+                mir: Some(mut mir),
                 ..
             }) => {
+                flow::cleanup::remove_unused_code(&mut mir);
                 bodies.insert(definition, mir);
             }
             // After each module's last function, so the last has every type.

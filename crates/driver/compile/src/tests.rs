@@ -297,6 +297,73 @@ fn the_entry_module_needs_a_main_to_start() {
     assert!(found.is_none() && !codes.is_empty() && !codes.contains(&"M0006"));
 }
 
+/// The MIR `run` gives is what the path checks read, with the `scope end`s a
+/// compiled body has lost (`flow::cleanup`): each way out of a block ends the
+/// variables it leaves, newest first.
+#[test]
+fn each_way_out_of_a_block_ends_its_variables_newest_first() {
+    let program = load(&[(
+        "app:main",
+        "fn walk(limit: i32) -> i32 {
+            let first: i32 = limit;
+            for first > 0 {
+                let second: i32 = first;
+                let third: i32 = second;
+                if third == 1 {
+                    break;
+                }
+                if third == 2 {
+                    continue;
+                }
+                if third == 3 {
+                    return third;
+                }
+            }
+            return first;
+        }
+        fn main() {}",
+    )]);
+    let mut text = String::new();
+    let results = run(
+        &program,
+        x86_64(),
+        Results::default(),
+        None,
+        false,
+        |output| {
+            if let Output::Function(CheckedFunction {
+                definition,
+                mir: Some(mir),
+                types,
+                ..
+            }) = output
+            {
+                let file = &program.modules[definition.module.index()].ast.file;
+                text.push_str(&mir.text(types, file, |_| ""));
+            }
+        },
+    );
+    assert_eq!(messages(&results), Vec::<String>::new());
+    let ends: Vec<&str> = (text.lines())
+        .map(str::trim)
+        .filter(|line| line.starts_with("scope end"))
+        .collect();
+    let (outer, inner) = (
+        ["scope end first.1", "scope end limit.0"],
+        ["scope end third.3", "scope end second.2"],
+    );
+    let expected = [
+        &outer[..], // after the loop, which `break` jumps to
+        &inner,     // at the `break`
+        &inner,     // at the `continue`
+        &inner,     // at the `return`, with the rest
+        &outer,
+        &inner, // at the loop's `}`
+        &outer, // at the function's `}`
+    ];
+    assert_eq!(ends, expected.concat());
+}
+
 /// A cycle gets one error with a place for each step, however often it
 /// is closed (`A + A` closes it twice); a figure 8 is two cycles.
 #[test]

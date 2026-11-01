@@ -98,7 +98,8 @@ fn main() {
                     else {
                         return;
                     };
-                    let mir = mir.expect("the program has no errors");
+                    let mut mir = mir.expect("the program has no errors");
+                    flow::cleanup::remove_unused_code(&mut mir);
                     queue.add(definition, mir, types);
                 },
             )

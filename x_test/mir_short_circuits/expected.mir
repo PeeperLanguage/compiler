@@ -16,13 +16,7 @@ fn both:
     goto bb4
   bb4:
     %7 = phi bb2: true, bb3: %6: bool
-    scope end b.1
-    scope end a.0
     return %7
-  bb5:
-    scope end b.1
-    scope end a.0
-    fall off at `}`
 fn main:
   bb0:
     fall off at `}`

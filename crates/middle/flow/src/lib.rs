@@ -24,6 +24,9 @@
 //! and loan checks are dataflow (`dataflow`): they carry bits along the edges
 //! until nothing changes, which also works once loops add edges back.
 //!
+//! After them `cleanup::remove_unused_code` drops what only the checks needed.
+//! It is the one part of this crate that changes the MIR.
+//!
 //! What they do not do:
 //!
 //! - No type, name or operator rules, and no constant folding: the checker did
@@ -56,6 +59,7 @@ use model::semantic_types::Types;
 use source::SourceFile;
 use source::Span;
 
+pub mod cleanup;
 pub mod loans;
 pub mod variable_state;
 

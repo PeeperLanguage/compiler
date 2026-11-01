@@ -1,0 +1,14 @@
+name = "run_removed_blocks"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "success"
+stdout_contains = [
+    "after return 3\n",
+    "both ways 1 2 3\n",
+    "down 2 1 0\n",
+    "nested 7\n",
+    "break 9\n",
+    "scope 12\n",
+]

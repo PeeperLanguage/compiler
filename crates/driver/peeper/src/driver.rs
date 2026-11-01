@@ -286,9 +286,13 @@ fn compile<'p>(
                 else {
                     return; // constants and names are for editors
                 };
-                let Some(mir) = mir else {
+                let Some(mut mir) = mir else {
                     return; // it has errors
                 };
+                // `peeper check` reads no MIR, so it does not pay for this.
+                if queue.is_some() || dumps.iter().any(|dump| matches!(dump, Dump::Mir)) {
+                    flow::cleanup::remove_unused_code(&mut mir);
+                }
                 dumped.add(definition, thir, &mir, types);
                 if let Some(queue) = queue.as_deref_mut() {
                     queue.add(definition, mir, types);

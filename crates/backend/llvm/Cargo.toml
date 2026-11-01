@@ -20,6 +20,7 @@ toml_edit.workspace = true
 [dev-dependencies]
 bigint.workspace = true
 compile.workspace = true
+flow.workspace = true
 
 [lints]
 workspace = true

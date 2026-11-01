@@ -264,7 +264,8 @@ pub enum Terminator {
 impl InstructionKind {
     /// Whether it is code that runs in a compiled program: all but a
     /// `ScopeEnd`, which marks a point for the checks, and where a constant's
-    /// run ends the variable's memory.
+    /// run ends the variable's memory. No compiled body has one
+    /// (`flow::cleanup`).
     pub fn runs(&self) -> bool {
         !matches!(self, InstructionKind::ScopeEnd(_))
     }
@@ -283,6 +284,20 @@ impl Terminator {
             }
         };
         targets.into_iter().flatten()
+    }
+
+    /// Makes each block control can go to next the one `target` gives.
+    pub fn retarget(&mut self, mut target: impl FnMut(Id<Block>) -> Id<Block>) {
+        match self {
+            Terminator::Goto(next) => *next = target(*next),
+            Terminator::Branch {
+                then, otherwise, ..
+            } => {
+                *then = target(*then);
+                *otherwise = target(*otherwise);
+            }
+            Terminator::Return { .. } | Terminator::Panic { .. } | Terminator::FallOff(_) => {}
+        }
     }
 }
 

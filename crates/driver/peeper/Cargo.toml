@@ -15,6 +15,7 @@ lexer.workspace = true
 project.workspace = true
 compile.workspace = true
 eval.workspace = true
+flow.workspace = true
 llvm.workspace = true
 lsp.workspace = true
 

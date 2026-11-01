@@ -44,10 +44,6 @@ bb2:
   %i24 = load i32, ptr %v2, !dbg !32
   %i25 = add i32 %i23, %i24, !dbg !31
   ret i32 %i25, !dbg !33
-bb3:
-  br label %bb2
-bb4:
-  unreachable
 }
 
 define i32 @"ll_debug_scopes:main.main"() !dbg !35 {
@@ -74,8 +70,6 @@ bb1:
   br label %bb2
 bb2:
   ret i32 0, !dbg !52
-bb3:
-  unreachable
 }
 
 declare i32 @"peeper_rt_v1_write"(i32, ptr, i32)

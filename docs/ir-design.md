@@ -59,7 +59,8 @@ check ────────┤ per declaration:     function type: walk its h
               ▼
 lower ────────┤ per function:        1 walk, THIR -> MIR
               │                      path checks: dataflow over the graph
-              ▼                      (init, move, borrow, return) in one pass where they agree
+              │                      (init, move, borrow, return) in one pass where they agree
+              ▼                      cleanup: 3 walks, drops what only the checks needed
 llvm ─────────┘ per module:          1 walk over each function's MIR -> .ll text -> clang
 ```
 
@@ -177,14 +178,14 @@ what the other cannot do:
   allocation. Each call's frame and each variable, each time it starts, is a
   block of memory never used before (256 MiB in all), and `scope end` ends a
   variable's block. So a pointer to what ended stops the run at its next use,
-  and one from an earlier pass of a loop cannot reach this pass's variable. A
-  cleanup of MIR must keep `scope end` for this.
+  and one from an earlier pass of a loop cannot reach this pass's variable. So
+  a body built for this run keeps its `scope end`s, unlike a compiled one
+  (`flow::cleanup`).
 - **A whole program** runs on the same interpreter (`interpreter::program::run`,
   through `compile::interpret`), which is how a web page runs code with no
   clang or LLVM, and what the experimental `peeper run -interpret` does in a
   terminal. Each run fixture that should build and takes no arguments is checked
-  through that command, so it must print and exit as the compiled program does.
-  There `print`, panics and the runtime's `alloc`, `free`,
+  through that command, so it must print and exit as the compiled program does. There `print`, panics and the runtime's `alloc`, `free`,
   `calloc`, `write`, `read` (always empty) and `exit` work, and any other
   `extern` stops the run by its name. Output is kept as ordered pieces, each
   with its stream. Limits, each a panic with exit code 101: 2,000,000,000 steps,
@@ -411,6 +412,16 @@ helper; a function whose checking already reported an error is not
 path-checked, since its errors would only follow from the first. LLVM emission
 and the interpreter both read MIR; nothing below MIR reads THIR.
 
+After the path checks, `flow::cleanup` removes what they needed and nothing
+later does: `scope end`s, blocks that only jump, and blocks no path reaches,
+which are about a fifth of the lines of a typical body. A jump to a block
+that starts with a `Phi` stays, as the `Phi` names its predecessors, and a
+`Phi` drops the arms of removed blocks. The instructions of removed blocks stay
+in `Body::instructions`, unused: renumbering them costs more than they do.
+Only what reads a compiled body runs this: the driver, for the backend and
+dumps, and `compile::interpret`. `peeper check` and the language server read
+no MIR after the checks, and a constant's run needs its `scope end`s.
+
 The missing-return check (T0017, `flow`) reports a function whose
 `fall off` block is reachable. It walks back from that block through blocks
 with no instructions; on each path, the first branch met names its condition
@@ -548,7 +559,8 @@ changing, moving, ending and `&mut` borrowing its place; a `&mut` loan
 forbids every access; places overlap when one's steps start with the
 other's, so other fields stay free. Lowering writes a `scope end` at a
 block's `}`, and at a `break`, `continue` or `return` that leaves the block,
-for each variable of that block, and one where each temporary ends; it writes no code (`InstructionKind::runs`) and is how a reference
+for each variable of that block, and one where each temporary ends; it writes no code (`InstructionKind::runs`), is gone from a
+compiled body (`flow::cleanup`) and is how a reference
 that outlives its variable is caught. The variable state check forgets a
 variable at its `scope end`, so a loop's next pass may set it again. Changing a variable, or its
 scope ending, does not touch a loan reached through the reference stored
@@ -613,7 +625,7 @@ such ancestor.
 of a program without errors, or only the kind named, one file per module under
 build/debug/dumps in the project folder or beside the file
 (`myapp:deep/x` to `myapp/deep/x.mir`), like the old `-keep-gen` and rustc's
-`-Zdump-mir`. The printers are `thir::Body::text` and `mir::Body::text`, beside
+`-Zdump-mir`. The MIR shown is what the backend reads, after `flow::cleanup`. The printers are `thir::Body::text` and `mir::Body::text`, beside
 the data, and `llvm::Module::text` for `ll`. MIR tests are `x_test`
 folders with `mode = "mir"` and an `expected.mir` file, as in rustc's
 `tests/mir-opt`; `PEEPER_BLESS=1` rewrites the expected files.
