@@ -27,7 +27,6 @@ use source::Span;
 use crate::Checker;
 use crate::Checking;
 use crate::builder::ThirBuilder;
-use crate::expression::TypeExpectation;
 use crate::function::function_declaration;
 use crate::scope::report_redeclared;
 
@@ -286,7 +285,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 // shortcut: a plain string literal only, as there are no
                 // run-time strings; take a string value once there are.
                 if !matches!(tree.exprs[message], ast::Expr::String { c_string: false }) {
-                    let checked = self.add_expr(message, TypeExpectation::Hint(None));
+                    let checked = self.add_expr(message, None);
                     if self.body.exprs[checked].ty != TypeId::INVALID {
                         let what = "`panic` messages other than string literals";
                         self.checker.not_supported(span, what);
@@ -296,16 +295,14 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 let message = self.c_string(span);
                 Stmt::Panic(self.body.add(message, span))
             }
-            ast::Stmt::Expression(value) => {
-                Stmt::Expression(self.add_expr(value, TypeExpectation::Hint(None)))
-            }
+            ast::Stmt::Expression(value) => Stmt::Expression(self.add_expr(value, None)),
             ast::Stmt::Assign { target, value } => self.assign(target, value)?,
             ast::Stmt::If {
                 condition,
                 then,
                 otherwise,
             } => {
-                let condition = self.add_expr(condition, TypeExpectation::Required(TypeId::BOOL));
+                let condition = self.add_required(condition, TypeId::BOOL);
                 let then = self.check_block(then?); // missing after a syntax error
                 let otherwise = otherwise.and_then(|otherwise| self.check_statement(otherwise));
                 Stmt::If {
@@ -340,7 +337,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             ast::Stmt::Loop { control, body } => 'checked: {
                 let mut condition = None;
                 if let Some(control) = control {
-                    let checked = self.check_expr(control, TypeExpectation::Hint(None));
+                    let checked = self.check_expr(control, None);
                     let control_span = tree.exprs.span(control);
                     if let Type::Range { .. } = self.checker.types[checked.ty] {
                         let range = self.body.add(checked, control_span);
@@ -364,7 +361,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                 iterable,
                 body,
             } => {
-                let iterable = self.add_expr(iterable, TypeExpectation::Hint(None));
+                let iterable = self.add_expr(iterable, None);
                 let ty = self.body.exprs[iterable].ty;
                 match self.checker.types[ty] {
                     Type::Range { .. } => self.check_for_range(index, Some(value), iterable, body?),

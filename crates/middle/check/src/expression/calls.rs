@@ -18,7 +18,6 @@ use model::thir::Symbol;
 use source::Span;
 
 use crate::builder::ThirBuilder;
-use crate::expression::TypeExpectation;
 
 impl ThirBuilder<'_, '_> {
     /// `print(values)`, or `println(values)` when `newline`: each value of a
@@ -34,7 +33,7 @@ impl ThirBuilder<'_, '_> {
             let span = tree.exprs.span(value);
             let expr = match tree.exprs[value] {
                 ast::Expr::String { c_string: false } => self.c_string(span),
-                _ => self.check_expr(value, TypeExpectation::Hint(None)),
+                _ => self.check_expr(value, None),
             };
             let ty = expr.ty;
             let types = &self.checker.types;
@@ -174,7 +173,7 @@ impl ThirBuilder<'_, '_> {
                     ast::Expr::Spread(values) => values,
                     _ => argument,
                 };
-                self.add_expr(argument, TypeExpectation::Hint(None)); // for its own errors
+                self.add_expr(argument, None); // for its own errors
             }
             return Expr::INVALID;
         };
@@ -198,7 +197,7 @@ impl ThirBuilder<'_, '_> {
         let mut checked: Vec<NonZeroU32> = Vec::with_capacity(parameters.len());
         let mut given = tree.children.lists.items(arguments);
         for (&parameter, argument) in parameters[..fixed].iter().zip(given.by_ref()) {
-            let argument = self.add_expr(argument, TypeExpectation::Required(parameter));
+            let argument = self.add_required(argument, parameter);
             self.lend_place_again(argument);
             checked.push(argument.into());
         }
@@ -209,7 +208,7 @@ impl ThirBuilder<'_, '_> {
             checked.push(slice.into());
         } else {
             for extra in given {
-                self.add_expr(extra, TypeExpectation::Hint(None)); // for its own errors
+                self.add_expr(extra, None); // for its own errors
             }
         }
         if !arity_matches {

@@ -17,7 +17,6 @@ use model::thir::FactKind;
 use source::Span;
 
 use crate::builder::ThirBuilder;
-use crate::expression::TypeExpectation;
 use crate::expression::unsuffixed_literal;
 
 impl ThirBuilder<'_, '_> {
@@ -31,7 +30,7 @@ impl ThirBuilder<'_, '_> {
         span: Span,
     ) -> Expr {
         let to = self.checker.resolve_value_type(ty);
-        let checked = self.check_expr(value, TypeExpectation::Hint(Some(to)));
+        let checked = self.check_expr(value, Some(to));
         if checked.ty == TypeId::INVALID || to == TypeId::INVALID {
             return Expr::INVALID;
         }
@@ -140,10 +139,8 @@ impl ThirBuilder<'_, '_> {
             return self.check_number(operand_span, Some(span), expected);
         }
         let checked = match op {
-            UnaryOp::LogicalNot => {
-                self.check_expr(operand, TypeExpectation::Hint(Some(TypeId::BOOL)))
-            }
-            _ => self.check_expr(operand, TypeExpectation::Hint(expected)),
+            UnaryOp::LogicalNot => self.check_expr(operand, Some(TypeId::BOOL)),
+            _ => self.check_expr(operand, expected),
         };
         if checked.ty == TypeId::INVALID {
             return Expr::INVALID;
@@ -208,10 +205,7 @@ impl ThirBuilder<'_, '_> {
         }
         let shift = matches!(op, BinaryOp::ShiftLeft | BinaryOp::ShiftRight);
         let left_literal = unsuffixed_literal(tree, left_operand);
-        let left = self.check_expr(
-            left_operand,
-            TypeExpectation::Hint(if comparison { None } else { expected }),
-        );
+        let left = self.check_expr(left_operand, if comparison { None } else { expected });
         let left_type = self.checker.types[left.ty].clone();
         let fits = |ty: &Type| match op {
             BinaryOp::Add
@@ -247,9 +241,9 @@ impl ThirBuilder<'_, '_> {
         // Matching the right operand to a left one the operator rejects would
         // blame the right one.
         let right = if shift || !left_fits {
-            self.check_expr(right_operand, TypeExpectation::Hint(None))
+            self.check_expr(right_operand, None)
         } else {
-            let checked = self.check_expr(right_operand, TypeExpectation::Hint(Some(left.ty)));
+            let checked = self.check_expr(right_operand, Some(left.ty));
             let found = checked.ty;
             match self.coerce(checked, right_operand, left.ty) {
                 Ok(right) => right,

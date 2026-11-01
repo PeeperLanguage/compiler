@@ -16,7 +16,6 @@ use model::thir::Stmt;
 use model::thir::Variable;
 
 use crate::builder::ThirBuilder;
-use crate::expression::TypeExpectation;
 
 impl ThirBuilder<'_, '_> {
     /// `let mut name: ty = value;`. The variable is declared after its value is
@@ -31,12 +30,9 @@ impl ThirBuilder<'_, '_> {
         let declared = ty.map(|ty| self.checker.resolve_value_type(ty));
         let initialized = value.is_some();
         let (ty, value) = match (declared, value) {
-            (Some(ty), value) => (
-                ty,
-                value.map(|value| self.add_expr(value, TypeExpectation::Required(ty))),
-            ),
+            (Some(ty), value) => (ty, value.map(|value| self.add_required(value, ty))),
             (None, Some(value)) => {
-                let value = self.add_expr(value, TypeExpectation::Hint(None));
+                let value = self.add_expr(value, None);
                 let ty = self.body.exprs[value].ty;
                 if ty == TypeId::VOID {
                     let span = self.body.exprs.span(value);
@@ -140,8 +136,8 @@ impl ThirBuilder<'_, '_> {
         let span = self.checker.module().ast.exprs.span(value);
         let outer = std::mem::replace(&mut self.in_constant, true);
         let checked = match declared {
-            Some(ty) => self.check_expr(value, TypeExpectation::Required(ty)),
-            None => self.check_expr(value, TypeExpectation::Hint(None)),
+            Some(ty) => self.check_required(value, ty),
+            None => self.check_expr(value, None),
         };
         self.in_constant = outer;
         match checked.kind {

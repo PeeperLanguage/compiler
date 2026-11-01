@@ -14,7 +14,6 @@ use model::thir::Variable;
 use source::Span;
 
 use crate::builder::ThirBuilder;
-use crate::expression::TypeExpectation;
 
 impl ThirBuilder<'_, '_> {
     /// The value of `return value;`, checked against the function's result.
@@ -31,11 +30,11 @@ impl ThirBuilder<'_, '_> {
                     message,
                     self.checker.module().ast.exprs.span(value),
                 );
-                self.add_expr(value, TypeExpectation::Hint(None)); // for its own errors
+                self.add_expr(value, None); // for its own errors
                 None
             }
             Some(value) => {
-                let value = self.add_expr(value, TypeExpectation::Required(self.result));
+                let value = self.add_required(value, self.result);
                 // `@place` of the function's own storage, gone once it returns.
                 // shortcut: only a written `return @x`; an address kept in a
                 // variable or a field first (`let p = @x; return p;`) is
@@ -79,10 +78,10 @@ impl ThirBuilder<'_, '_> {
     /// one, or what a `&mut` reference refers to.
     pub(super) fn assign(&mut self, target: Id<ast::Expr>, value: Id<ast::Expr>) -> Option<Stmt> {
         let Some(target) = self.assigned_place(target) else {
-            self.add_expr(value, TypeExpectation::Hint(None)); // for its own errors
+            self.add_expr(value, None); // for its own errors
             return None;
         };
-        let value = self.add_expr(value, TypeExpectation::Required(self.body.exprs[target].ty));
+        let value = self.add_required(value, self.body.exprs[target].ty);
         Some(Stmt::Assign { target, value })
     }
 
@@ -93,7 +92,7 @@ impl ThirBuilder<'_, '_> {
         let tree = &self.checker.module().ast;
         let place = match tree.exprs[target] {
             ast::Expr::Selector { .. } | ast::Expr::Dereference(_) | ast::Expr::Index { .. } => {
-                self.add_expr(target, TypeExpectation::Hint(None))
+                self.add_expr(target, None)
             }
             _ => {
                 let variable = self.assigned_variable(target)?;

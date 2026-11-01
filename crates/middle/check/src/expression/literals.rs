@@ -20,7 +20,6 @@ use model::thir::FieldValue;
 use source::Span;
 
 use crate::builder::ThirBuilder;
-use crate::expression::TypeExpectation;
 use crate::expression::unsuffixed_literal;
 
 impl ThirBuilder<'_, '_> {
@@ -99,10 +98,7 @@ impl ThirBuilder<'_, '_> {
                     .error(diagnostics::TYPE_MISMATCH, message, span);
             }
             for field in tree.children.lists.items(fields) {
-                self.add_expr(
-                    tree.children.field_values[field].value,
-                    TypeExpectation::Hint(None),
-                ); // for its own errors
+                self.add_expr(tree.children.field_values[field].value, None); // for its own errors
             }
             return Expr::INVALID;
         };
@@ -113,7 +109,7 @@ impl ThirBuilder<'_, '_> {
         for field in tree.children.lists.items(fields) {
             let ast::FieldValue { name, value } = tree.children.field_values[field];
             let Some(index) = self.field_index(ty, name) else {
-                self.add_expr(value, TypeExpectation::Hint(None)); // for its own errors
+                self.add_expr(value, None); // for its own errors
                 continue;
             };
             if let Some(first) = set[index] {
@@ -126,11 +122,11 @@ impl ThirBuilder<'_, '_> {
                     .label(&tree.file, name.span, "")
                     .label(&tree.file, first, "first set here"),
                 );
-                self.add_expr(value, TypeExpectation::Hint(None));
+                self.add_expr(value, None);
                 continue;
             }
             set[index] = Some(name.span);
-            let value = self.add_expr(value, TypeExpectation::Required(field_types[index]));
+            let value = self.add_required(value, field_types[index]);
             let index = index as u32;
             checked.push(self.body.add(FieldValue { index, value }, name.span).into());
         }
@@ -227,7 +223,7 @@ impl ThirBuilder<'_, '_> {
                 };
                 checked
             } else {
-                let value = self.add_expr(entry, TypeExpectation::Hint(hint));
+                let value = self.add_expr(entry, hint);
                 let found = self.body.exprs[value].ty;
                 if found != element {
                     let checked = self.body.exprs[value].clone();
@@ -438,7 +434,7 @@ impl ThirBuilder<'_, '_> {
     fn add_spread(&mut self, values: Id<ast::Expr>, element: TypeId) -> Id<Expr> {
         // Only an integer element has ranges, whose ends then take its type.
         let hint = self.checker.types.range(element);
-        self.add_expr(values, TypeExpectation::Hint(hint))
+        self.add_expr(values, hint)
     }
 
     /// `spread`, the values of a `values...` going into an array of
@@ -600,13 +596,13 @@ impl ThirBuilder<'_, '_> {
     ) -> (Id<Expr>, Id<Expr>) {
         let tree = &self.checker.module().ast;
         if unsuffixed_literal(tree, start).is_some() {
-            let end = self.add_expr(end, TypeExpectation::Hint(hint));
+            let end = self.add_expr(end, hint);
             let ty = self.body.exprs[end].ty;
-            (self.add_expr(start, TypeExpectation::Required(ty)), end)
+            (self.add_required(start, ty), end)
         } else {
-            let start = self.add_expr(start, TypeExpectation::Hint(hint));
+            let start = self.add_expr(start, hint);
             let ty = self.body.exprs[start].ty;
-            (start, self.add_expr(end, TypeExpectation::Required(ty)))
+            (start, self.add_required(end, ty))
         }
     }
 }

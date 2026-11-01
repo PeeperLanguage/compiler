@@ -15,7 +15,6 @@ use model::thir::ExprKind;
 use source::Span;
 
 use crate::builder::ThirBuilder;
-use crate::expression::TypeExpectation;
 
 impl ThirBuilder<'_, '_> {
     /// `value.field`: the field of a struct value, or of the struct a
@@ -23,7 +22,7 @@ impl ThirBuilder<'_, '_> {
     /// slice's only field. An array's type gives it, so the array is not
     /// read.
     pub(super) fn check_field(&mut self, value: Id<ast::Expr>, field: Ident) -> Expr {
-        let mut value = self.add_expr(value, TypeExpectation::Hint(None));
+        let mut value = self.add_expr(value, None);
         let mut ty = self.body.exprs[value].ty;
         let pointee = self.checker.types[ty].pointee();
         let viewed = pointee.unwrap_or(ty);
@@ -100,7 +99,7 @@ impl ThirBuilder<'_, '_> {
                 .error(diagnostics::INVALID_OPERATION, message, span);
             return Expr::INVALID;
         }
-        let mut array = self.add_expr(array, TypeExpectation::Hint(None));
+        let mut array = self.add_expr(array, None);
         let mut ty = self.body.exprs[array].ty;
         if let Some(target) = self.checker.types[ty].pointee() {
             let referred = self.dereference(array, target);
@@ -108,7 +107,7 @@ impl ThirBuilder<'_, '_> {
             array = self.body.add(referred, self.body.exprs.span(array));
         }
         let usize = self.checker.usize_type();
-        let index = self.add_expr(index, TypeExpectation::Hint(Some(usize)));
+        let index = self.add_expr(index, Some(usize));
         let index_type = self.body.exprs[index].ty;
         let tree = &self.checker.module().ast;
         let index_span = self.body.exprs.span(index);
@@ -209,7 +208,7 @@ impl ThirBuilder<'_, '_> {
             );
             return Expr::INVALID;
         }
-        let mut array = self.add_expr(array, TypeExpectation::Hint(None));
+        let mut array = self.add_expr(array, None);
         let mut ty = self.body.exprs[array].ty;
         let array_span = self.body.exprs.span(array);
         match self.checker.types[ty] {
@@ -276,7 +275,7 @@ impl ThirBuilder<'_, '_> {
                 let (start, end) = self.check_range_ends(start, end, usize);
                 [Some(start), Some(end)]
             }
-            ends => ends.map(|end| end.map(|end| self.add_expr(end, TypeExpectation::Hint(usize)))),
+            ends => ends.map(|end| end.map(|end| self.add_expr(end, usize))),
         };
         // How many elements come before each end when known at compile
         // time: a missing start is 0, a missing end the length; a written
@@ -325,7 +324,7 @@ impl ThirBuilder<'_, '_> {
     /// `reference.*`, written at `span`: the value a reference or a typed
     /// raw pointer points to.
     pub(super) fn check_dereference(&mut self, reference: Id<ast::Expr>, span: Span) -> Expr {
-        let reference = self.add_expr(reference, TypeExpectation::Hint(None));
+        let reference = self.add_expr(reference, None);
         let ty = self.body.exprs[reference].ty;
         match self.checker.types[ty] {
             ref pointer if let Some(target) = pointer.pointee() => {

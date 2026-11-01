@@ -21,7 +21,6 @@ use model::thir::Variable;
 use source::Span;
 
 use crate::builder::ThirBuilder;
-use crate::expression::TypeExpectation;
 
 impl ThirBuilder<'_, '_> {
     /// `close_block` for a loop's `body`, in which `break` and `continue`
@@ -104,11 +103,10 @@ impl ThirBuilder<'_, '_> {
             };
             return self.body.add(one, range_span);
         };
-        let expectation = match step_type {
-            TypeId::INVALID => TypeExpectation::Hint(None),
-            ty => TypeExpectation::Required(ty),
+        let step = match step_type {
+            TypeId::INVALID => self.add_expr(step, None),
+            ty => self.add_required(step, ty),
         };
-        let step = self.add_expr(step, expectation);
         if let ExprKind::Constant(Value::Integer(ref limbs)) = self.body.exprs[step].kind
             && limbs.as_slice().iter().all(|&limb| limb == 0)
         {
