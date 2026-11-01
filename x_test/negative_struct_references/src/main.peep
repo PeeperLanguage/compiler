@@ -57,7 +57,9 @@ fn elements(pairs: [&]Pair) {}
 
 fn array(pairs: [2]Pair) {}
 
-fn pointer(p: *Pair) {}
+fn pointer(p: *Pair) {
+    let read = p.*.first;
+}
 
 #[extern("takes")]
 fn takes(p: &Pair);

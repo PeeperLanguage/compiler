@@ -361,10 +361,23 @@ impl ThirBuilder<'_, '_> {
 
     /// What `reference`, whose type refers to `target`, refers to: a place.
     pub(super) fn dereference(&mut self, reference: Id<Expr>, target: TypeId) -> Expr {
+        let pointer = self.body.exprs[reference].ty;
+        let ty = match (&self.checker.types[pointer], &self.checker.types[target]) {
+            // Only a struct with an error stays a name; lowering stops at this.
+            (_, Type::Named(_)) => TypeId::INVALID,
+            (Type::RawPointer { .. }, _) => {
+                let span = self.body.exprs.span(reference);
+                let held = self
+                    .checker
+                    .loan_free_held_type(target, "raw pointers to", span);
+                held.unwrap_or(TypeId::INVALID)
+            }
+            _ => target,
+        };
         // Lowering takes a place only from a variable or a temporary.
         self.make_place(reference);
         Expr {
-            ty: target,
+            ty,
             kind: ExprKind::Dereference(reference),
         }
     }

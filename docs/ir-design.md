@@ -261,7 +261,14 @@ mir(d)            MIR of function d (needs body(d)); also asked for by a call ru
   (`Type::Named`); a value's type is complete: a struct value has its
   declaration's type, `Type::Struct { definition, fields }`, and a struct
   that holds another by value asks for that one's type, so a struct that
-  holds itself is a cycle. Lowering and LLVM read all of it from `Types`.
+  holds itself is a cycle. A raw pointer has one size whatever its target,
+  so `*T` only names `T`: a struct can point to itself. `T`'s `Type::Struct`
+  takes over the id of its `Type::Named`, so `*T` is one type before and after.
+  `compile::run` checks every module's type declarations before anything else
+  in it, so a `Type::Named` left after that is a declaration with an error, and
+  going through a pointer to one is invalid. A walk over types must not
+  follow pointers without remembering what it met: a struct can reach itself.
+  Lowering and LLVM read all of it from `Types`.
 - Each declaration's result is written once and never changed. The checker holds
   a table of them per module, indexed by the declaration's place among its
   top-level declarations (`DefId`), so a body edit does not move it.
@@ -302,9 +309,13 @@ gives new ones; the command line passes `Results::default()`, so a cold
 compile pays nothing extra. A module is not checked again when its text is
 unchanged and the interface of each module it imports (the prelude included)
 is unchanged: it keeps its diagnostics. A module's interface is a hash of what
-other modules see: its imports, and each declaration's kind, name, and type or
-constant value, types hashed by structure. Bodies are not part of it, so a
-module whose constants ran functions at compile time also remembers those
+other modules see: its imports with their interfaces, and each declaration's
+kind, name, and type or constant value. A type is hashed by structure down to
+named types, which it hashes by module and name; a struct's fields are in the
+interface of its own module, and the import hashes carry a change in them to
+every module that could see it, through however many others. Editing a
+signature therefore checks every module downstream, used or not. Bodies are
+not part of it, so a module whose constants ran functions at compile time also remembers those
 functions' modules, and is reused only if each of them was
 (`Checker::ran_modules`): such a constant's value, and an error pointing into
 the function's file, depend on the function's body.
@@ -568,9 +579,10 @@ in Rust. No loan is stored behind a reference (T0043, "assignments of
 references through a reference"): it would outlive what it borrows unseen. So
 `p.input = &p.input[1..]` through `p: &mut Parser` is refused, though Rust
 accepts it, until a signature can say that two parameters share an origin; a
-parser keeps its position next to an input that does not change. Arrays,
-slices and raw pointers hold no struct that holds a reference (T0043), since a
-holder is one reference and no index or pointer says which, and an `extern`
+parser keeps its position next to an input that does not change. Arrays and
+slices hold no struct that holds a reference, and nothing goes through a raw
+pointer to one nor takes its address (T0043), since a holder is one reference
+and no index or pointer says which; a `*T` itself only names `T`. An `extern`
 function takes no reference to one, since C could keep what it holds. A `&mut`
 field is lent again where a `&mut` variable is, as a call argument or loop
 iterable, and never moved out (T0035): `&mut h.value.*`, or `h.value` there.

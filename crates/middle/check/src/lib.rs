@@ -156,8 +156,8 @@ impl<'p> Checker<'p> {
 
     /// The type the name of the type declaration or alias `definition` stands
     /// for, named at `used_at`. A type declaration makes its type
-    /// (`Type::Named`), so naming it checks nothing; an alias names its
-    /// declared type (`Type::Alias`).
+    /// (`Type::Named`, a struct's once checked), so naming it checks nothing;
+    /// an alias names its declared type (`Type::Alias`).
     pub fn named_type(&mut self, definition: DefId, used_at: Span) -> TypeId {
         let tree = &self.modules[definition.module.index()].ast;
         if let ast::Decl::Type(_) = tree.decls[tree.declaration(definition.index)] {

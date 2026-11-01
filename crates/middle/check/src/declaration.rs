@@ -7,6 +7,7 @@ use model::DefId;
 use model::ast;
 use model::constant::Constant;
 use model::layout::layout;
+use model::layout::struct_layout;
 use model::semantic_types;
 use model::semantic_types::Integer;
 use model::semantic_types::Type;
@@ -56,6 +57,7 @@ impl Checker<'_> {
                     // A struct held by value is checked here: one that holds
                     // itself, however deep, is a cycle, as is one a reference
                     // field reaches: a reference's target is a complete type.
+                    // A raw pointer's need not be (`resolve_type`).
                     field_types.push(self.resolve_value_type(ty));
                 }
                 // Invalid when a field is, as an array is when its element
@@ -63,9 +65,13 @@ impl Checker<'_> {
                 if field_types.contains(&TypeId::INVALID) {
                     return TypeId::INVALID;
                 }
-                let fields = field_types.into();
-                let ty = self.types.intern(Type::Struct { definition, fields });
-                return self.fits_target(ty, written.name.span);
+                let (_, size, _) = struct_layout(&self.types, &field_types, self.target);
+                let named = self.types.intern(Type::Named(definition));
+                let ty = self.fits_target(named, size, written.name.span);
+                if ty != TypeId::INVALID {
+                    self.types.define_struct(named, field_types.into());
+                }
+                return ty;
             }
             ast::Type::Enum(_) => "enum declarations",
             ast::Type::Interface(_) => "interface declarations",
@@ -361,10 +367,15 @@ impl Checker<'_> {
         None
     }
 
-    /// `held_type` for an array, a slice or a raw pointer, which hold no
-    /// struct that holds a reference either: a holder is one reference, and
-    /// no index or pointer says which.
-    fn loan_free_held_type(&mut self, held: TypeId, holder: &str, span: Span) -> Option<TypeId> {
+    /// `held_type` for an array or a slice, which hold no struct that holds
+    /// a reference either, and for what is reached through a raw pointer: a
+    /// holder is one reference, and no index or pointer says which.
+    pub(crate) fn loan_free_held_type(
+        &mut self,
+        held: TypeId,
+        holder: &str,
+        span: Span,
+    ) -> Option<TypeId> {
         let held = self.held_type(held, holder, span)?;
         if self.types.holds_loans(held).is_some() {
             self.not_supported(span, &format!("{holder} structs holding references"));
@@ -387,17 +398,17 @@ impl Checker<'_> {
         match self.loan_free_held_type(element, "arrays of", span) {
             Some(element) => {
                 let ty = self.types.intern(Type::Array { element, length });
-                self.fits_target(ty, span)
+                let (size, _) = layout(&self.types, ty, self.target);
+                self.fits_target(ty, size, span)
             }
             None => TypeId::INVALID,
         }
     }
 
-    /// `ty`, made at `span`, or invalid after an error there when a value of
-    /// it takes more bytes than the target allows, which no copy of it could
-    /// count.
-    fn fits_target(&mut self, ty: TypeId, span: Span) -> TypeId {
-        let (size, _) = layout(&self.types, ty, self.target);
+    /// `ty`, made at `span`, or invalid after an error there when its `size`
+    /// is more bytes than the target allows for a value, which no copy of it
+    /// could count.
+    fn fits_target(&mut self, ty: TypeId, size: u64, span: Span) -> TypeId {
         let largest = self.target.largest_object();
         if size <= largest {
             return ty;
@@ -441,7 +452,7 @@ impl Checker<'_> {
 
     /// `*target`, written or taken at `span` (`held_type`).
     pub(crate) fn raw_pointer_type(&mut self, target: TypeId, span: Span) -> TypeId {
-        match self.loan_free_held_type(target, "raw pointers to", span) {
+        match self.held_type(target, "raw pointers to", span) {
             Some(target) => self.types.intern(Type::RawPointer {
                 target: Some(target),
             }),
@@ -465,8 +476,9 @@ impl Checker<'_> {
     }
 
     /// The type a type expression of the module's tree stands for, its names
-    /// recorded (`record`). A named type stays a name (`Type::Named`); a
-    /// value's type is `resolve_value_type`. A local never names a type
+    /// recorded (`record`). A named type stays a name (`Type::Named`) until
+    /// its declaration is checked; a value's type is `resolve_value_type`. A
+    /// local never names a type
     /// (`ThirBuilder::declare`), so only top-level names are looked up.
     fn resolve_type(&mut self, ty: Id<ast::Type>) -> TypeId {
         let tree = &self.module().ast;
@@ -523,9 +535,14 @@ impl Checker<'_> {
             }
             ast::Type::Optional(_) => "optional types",
             ast::Type::RawPointer => return TypeId::RAWPTR,
+            // A pointer only names its target, so a struct can point to itself.
+            // shortcut: `*[2]Node` or `*Alias` of `Node` in `Node` is a cycle, as
+            // an array's element and an alias's target are complete, and so is
+            // any cycle through such a pointer; let them stay names too if a
+            // program needs it.
             ast::Type::Pointer(target) => {
-                let target = self.resolve_value_type(target);
-                return self.raw_pointer_type(target, span);
+                let pointee = self.resolve_type(target);
+                return self.raw_pointer_type(pointee, span);
             }
             ast::Type::FixedArray {
                 length: ast::Length::Number(number),

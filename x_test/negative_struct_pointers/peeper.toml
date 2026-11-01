@@ -1,0 +1,31 @@
+name = "negative_struct_pointers"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "failure"
+stderr_contains = [
+    "`Outer` holds itself",
+    "main.peep:4:8\n",
+    "`First` holds itself",
+    "main.peep:13:8\n",
+    "`Group` holds itself",
+    "main.peep:23:8\n",
+    "`Same` holds itself",
+    "main.peep:27:6\n",
+    "unknown type `Missing`",
+    "main.peep:41:14\n",
+    "`Big` is too big for x86_64-linux, where a value takes at most 9223372036854775807 bytes",
+    "main.peep:53:8\n",
+    "raw pointers to structs holding references are not supported yet",
+    "main.peep:78:17\n",
+    "raw pointers to structs holding references are not supported yet",
+    "main.peep:90:17\n",
+    "raw pointers to structs holding references are not supported yet",
+    "main.peep:94:17\n",
+    "raw pointers to structs holding references are not supported yet",
+    "main.peep:103:16\n",
+    "raw pointers to structs holding references are not supported yet",
+    "main.peep:108:19\n",
+    "Compilation failed with 11 error(s)",
+]

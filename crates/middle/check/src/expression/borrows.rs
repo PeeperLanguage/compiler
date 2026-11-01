@@ -59,10 +59,13 @@ impl ThirBuilder<'_, '_> {
     /// temporary's own storage.
     pub(super) fn check_address(&mut self, place: Id<Expr>, span: Span) -> Expr {
         let target = self.body.exprs[place].ty;
-        let ty = self.checker.raw_pointer_type(target, span);
-        if ty == TypeId::INVALID {
+        let loan_free = self
+            .checker
+            .loan_free_held_type(target, "raw pointers to", span);
+        if loan_free.is_none() {
             return Expr::INVALID;
         }
+        let ty = self.checker.raw_pointer_type(target, span);
         let (start, decider) = self.place_root(place);
         let variable = match self.body.exprs[start].kind {
             ExprKind::Variable(variable) => variable,

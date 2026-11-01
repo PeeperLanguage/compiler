@@ -654,6 +654,31 @@ fn a_struct_field_edit_reaches_importers_through_a_struct() {
     assert_eq!(checked, ["app:utils"]);
 }
 
+/// `main` reads a field of a struct it never names, which points to itself,
+/// through the pointer `other`'s function gives, so a field's edit reaches
+/// it: a new type, and a new name, which is an error in `main`.
+#[test]
+fn a_struct_field_edit_reaches_importers_through_a_pointer() {
+    let utils = |field: &str| format!("struct Item {{ next: *Item, {field} }}\nfn Used() {{}}");
+    let (start, retyped, renamed) = (utils("x: i32"), utils("x: i64"), utils("y: i64"));
+    let other = (
+        "app:other",
+        "import \"app:utils\";
+        fn First() -> *utils::Item { return none; }",
+    );
+    let main = (
+        "app:main",
+        "import \"app:other\";
+        fn main() { println(other::First().*.x); }",
+    );
+    let (first, _) = recompile(&[("app:utils", &start), other, main], Results::default());
+    let (second, checked) = recompile(&[("app:utils", &retyped), other, main], first);
+    assert_eq!(checked, ["app:utils", "app:other", "app:main"]);
+    let (third, checked) = recompile(&[("app:utils", &renamed), other, main], second);
+    assert_eq!(checked, ["app:utils", "app:other", "app:main"]);
+    assert_eq!(messages(&third), ["`Item` has no field `x`"]);
+}
+
 #[test]
 fn errors_come_and_go_with_edits() {
     let (first, _) = recompile(&[UTILS, OTHER, MAIN], Results::default());
