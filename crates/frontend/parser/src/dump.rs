@@ -76,7 +76,14 @@ fn mutable(on: bool) -> Option<&'static str> {
     on.then_some(TokenKind::Mut.text())
 }
 
-impl Dumper<'_> {
+impl<'t> Dumper<'t> {
+    /// A leaf of the kind `kind` for each name of `list`.
+    fn names(&self, kind: &'static str, list: List<ast::Name>) -> impl Iterator<Item = Item> + 't {
+        let tree = self.tree;
+        (tree.children.lists.items(list))
+            .map(move |name| Item::Leaf(kind, tree.children.names.span(name)))
+    }
+
     fn write(
         &mut self,
         kind: &str,
@@ -113,12 +120,6 @@ impl Dumper<'_> {
 
     fn item(&mut self, item: Item, depth: usize) {
         let t = self.tree;
-        let names = |kind: &'static str, list: List<ast::Name>| {
-            t.children
-                .lists
-                .items(list)
-                .map(move |name| Item::Leaf(kind, t.children.names.span(name)))
-        };
         let (kind, op, span, nested): (&str, Option<&'static str>, Span, Vec<Item>) = match item {
             Item::Leaf(kind, span) => (kind, None, span, vec![]),
             Item::Import(i) => (
@@ -198,7 +199,7 @@ impl Dumper<'_> {
                         };
                         let mut nested: Vec<Item> = self.metadata(d.metadata).into_iter().collect();
                         nested.push(declared(d.name));
-                        nested.extend(names("declared name", d.type_parameters));
+                        nested.extend(self.names("declared name", d.type_parameters));
                         nested.push(Item::Type(d.ty));
                         (kind, None, span, nested)
                     }
@@ -282,24 +283,13 @@ impl Dumper<'_> {
     /// A signature's parts, with the function's `name`, if any, in source
     /// order after the receiver.
     fn signature(&self, name: Option<Ident>, signature: Signature) -> Vec<Item> {
-        let t = self.tree;
-        let names = |kind: &'static str, list: List<ast::Name>| {
-            t.children
-                .lists
-                .items(list)
-                .map(move |name| Item::Leaf(kind, t.children.names.span(name)))
-        };
         let mut nested: Vec<Item> = signature.receiver.map(Item::Param).into_iter().collect();
         nested.extend(name.map(declared));
-        nested.extend(names("declared name", signature.type_parameters));
-        nested.extend(
-            t.children
-                .lists
-                .items(signature.parameters)
-                .map(Item::Param),
-        );
+        nested.extend(self.names("declared name", signature.type_parameters));
+        let parameters = self.tree.children.lists.items(signature.parameters);
+        nested.extend(parameters.map(Item::Param));
         nested.extend(signature.result.map(Item::Type));
-        nested.extend(names("name reference", signature.origins));
+        nested.extend(self.names("name reference", signature.origins));
         nested
     }
 
