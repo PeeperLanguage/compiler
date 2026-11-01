@@ -264,11 +264,6 @@ impl Loans<'_> {
         format!("`{}`", file.slice(self.body.variables.span(variable)))
     }
 
-    /// The borrows, then one parameter loan per parameter.
-    fn loan_count(&self) -> usize {
-        self.borrows.len() + self.body.parameters
-    }
-
     /// How many holders there are.
     fn holder_count(&self) -> usize {
         self.holder_starts[self.holder_starts.len() - 1]
@@ -612,18 +607,16 @@ impl Loans<'_> {
         });
     }
 
-    fn report(&self, file: &Arc<SourceFile>, diagnostics: &mut Vec<Diagnostic>) {
+    /// The live holders where each block ends, in order: those used later on
+    /// some path. Found from every block, not only those that leave the
+    /// function: a block of an endless `for {}` reaches no exit. A `return`
+    /// block, which nothing follows, ends with its returned reference in use.
+    /// Few holders are live where a block ends, and a set of every holder
+    /// kept for every block would grow with the blocks times the holders.
+    fn live_at_ends(&self) -> Vec<Option<Vec<Id<Holder>>>> {
         let body = self.body;
-        let instructions =
-            |block: Id<mir::Block>| body.lists.items(body.blocks[block].instructions);
         let predecessors = predecessors(body);
-        // From every block, not only those that leave the function: a block
-        // of an endless `for {}` reaches no exit. A `return` block, which
-        // nothing follows, ends with its returned reference in use. Each
-        // block's set is kept as the live holders in order: few are live
-        // where a block ends, and a set of every holder kept for every block
-        // would grow with the blocks times the holders.
-        let ends = dataflow(
+        dataflow(
             body.blocks.len(),
             body.blocks.ids().map(|block| {
                 let returned = self.returned(block).map_or(0..0, |(returned, _)| returned);
@@ -632,24 +625,30 @@ impl Loans<'_> {
             |block| predecessors[block.index()].iter().copied(),
             |block, live: &mut Vec<Id<Holder>>| {
                 let mut walked = self.live_set(live);
-                let ids: Vec<_> = instructions(block).collect();
+                let ids: Vec<_> = body.lists.items(body.blocks[block].instructions).collect();
                 for &id in ids.iter().rev() {
                     self.step_live(&mut walked, id, |_| {});
                 }
                 *live = walked.ids().collect();
             },
             |a, b| sorted_union(a, b),
-        );
-        let starts = dataflow(
+        )
+    }
+
+    /// The loans each holder may hold where each block starts, `None` for a
+    /// block not reached, keeping only holders live at its predecessors'
+    /// `ends`: a step reads only holders it uses, and an error only live
+    /// ones, so a holder not live there is never read again.
+    fn held_at_starts(&self, ends: &[Option<Vec<Id<Holder>>>]) -> Vec<Option<Held>> {
+        let body = self.body;
+        dataflow(
             body.blocks.len(),
             [(Id::from_index(0), Held::default())],
             |block| body.blocks[block].terminator.targets(),
             |block, held| {
-                for id in instructions(block) {
+                for id in body.lists.items(body.blocks[block].instructions) {
                     self.step_held(held, id);
                 }
-                // A step reads only holders it uses, and an error only live
-                // ones, so a holder not live here is never read again.
                 let Some(live) = &ends[block.index()] else {
                     unreachable!("each block starts the backward pass")
                 };
@@ -659,14 +658,21 @@ impl Loans<'_> {
             |a: &Held, b: &Held| Held {
                 pairs: sorted_union(&a.pairs, &b.pairs),
             },
-        );
-        let mut reported = Bits::new(self.loan_count());
+        )
+    }
+
+    fn report(&self, file: &Arc<SourceFile>, diagnostics: &mut Vec<Diagnostic>) {
+        let body = self.body;
+        let ends = self.live_at_ends();
+        let starts = self.held_at_starts(&ends);
+        // The borrows, then one parameter loan per parameter.
+        let mut reported = Bits::new(self.borrows.len() + self.body.parameters);
         let mut errors = Vec::new();
         for ((block, start), end) in body.blocks.ids().zip(starts).zip(ends) {
             let Some(mut held) = start else {
                 continue; // not reached
             };
-            let ids: Vec<_> = instructions(block).collect();
+            let ids: Vec<_> = body.lists.items(body.blocks[block].instructions).collect();
             // First, so a local whose reference is returned is reported as
             // that, not as gone while its reference is in use.
             if let Some((returned, span)) = self.returned(block) {
@@ -702,26 +708,8 @@ impl Loans<'_> {
                     let skip = self.defines(id);
                     self.broken_loan(&access, &held, &live, skip, &mut reported, file)
                 });
-                // A reference used only by the call has no later use to show.
                 if let Some((holder, error)) = error {
-                    let later = self.next_use(holder, block, position);
-                    let error = match later {
-                        Some(later) => {
-                            // The holder's variable or value, found only for
-                            // an error.
-                            let index = (self.holder_starts)
-                                .partition_point(|&start| start <= holder.index())
-                                - 1;
-                            let variables = body.variables.len();
-                            let ty = match index.checked_sub(variables) {
-                                None => body.variables[Id::from_index(index)].ty,
-                                Some(value) => body.instructions[Id::from_index(value)].ty,
-                            };
-                            let noun = self.words(ty).noun;
-                            error.label(file, later, format!("{noun} used later here"))
-                        }
-                        None => error,
-                    };
+                    let error = self.label_later_use(error, holder, block, position, file);
                     errors.push((body.instructions.span(id).start, error));
                 }
                 self.step_held(&mut held, id);
@@ -732,6 +720,30 @@ impl Loans<'_> {
         }
         errors.sort_by_key(|&(start, _)| start);
         diagnostics.extend(errors.into_iter().map(|(_, error)| error));
+    }
+
+    /// `error` with a label where `holder`, whose loan it breaks, is next used
+    /// after the instruction at `position` of `block`. A reference used only
+    /// by the call has no later use to show.
+    fn label_later_use(
+        &self,
+        error: Diagnostic,
+        holder: Id<Holder>,
+        block: Id<mir::Block>,
+        position: usize,
+        file: &Arc<SourceFile>,
+    ) -> Diagnostic {
+        let Some(later) = self.next_use(holder, block, position) else {
+            return error;
+        };
+        // The holder's variable or value, found only for an error.
+        let index = (self.holder_starts).partition_point(|&start| start <= holder.index()) - 1;
+        let ty = match index.checked_sub(self.body.variables.len()) {
+            None => self.body.variables[Id::from_index(index)].ty,
+            Some(value) => self.body.instructions[Id::from_index(value)].ty,
+        };
+        let noun = self.words(ty).noun;
+        error.label(file, later, format!("{noun} used later here"))
     }
 
     /// Adds to `errors` those of the `return` at `span`, whose value holds
