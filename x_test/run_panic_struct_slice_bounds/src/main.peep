@@ -1,0 +1,10 @@
+// A constant index into a slice held in a field is checked when the program
+// runs, as no length is known at compile time.
+struct Text { bytes: [&]u8 }
+
+fn main() {
+    let bytes = [2]u8{1, 2};
+    let text = Text.{ bytes = &bytes };
+    println("inside: ", text.bytes[1]);
+    println(text.bytes[5]);
+}

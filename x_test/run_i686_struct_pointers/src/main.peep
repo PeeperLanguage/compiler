@@ -1,0 +1,165 @@
+// run_struct_pointers on a 32-bit target: a pointer takes 4 bytes there, and
+// a struct's layout follows.
+import "core:allocator";
+
+fn Length(list: *Node) -> i32 {
+    let mut count: i32 = 0;
+    let mut node = list;
+    for node != none {
+        count = count + 1;
+        node = node.*.next;
+    }
+    return count;
+}
+
+fn Push(list: *Node, value: i32) -> *Node {
+    let node = allocator::Malloc(16) as *Node;
+    node.*.value = value;
+    node.*.next = list;
+    return node;
+}
+
+// Only this body names `Late`, before anything has checked it.
+fn EmptyLate() -> bool {
+    let late: *Late = none;
+    return late == none;
+}
+
+struct Late {
+    value: i32,
+}
+
+fn Reverse(list: *Node) -> *Node {
+    let mut done: *Node = none;
+    let mut node = list;
+    for node != none {
+        let next = node.*.next;
+        node.*.next = done;
+        done = node;
+        node = next;
+    }
+    return done;
+}
+
+struct Node {
+    value: i32,
+    next: *Node,
+}
+
+struct Tree {
+    left: *Tree,
+    right: *Tree,
+    value: i32,
+}
+
+fn Sum(tree: *Tree) -> i32 {
+    if tree == none {
+        return 0;
+    }
+    return Sum(tree.*.left) + tree.*.value + Sum(tree.*.right);
+}
+
+// Each points to the other.
+struct Ping {
+    pong: *Pong,
+    value: i32,
+}
+
+struct Pong {
+    ping: *Ping,
+    value: i32,
+}
+
+// `Outer` points to `Inner`, which holds an `Outer` by value.
+struct Outer {
+    inner: *Inner,
+    value: i32,
+}
+
+struct Inner {
+    outer: Outer,
+    value: i32,
+}
+
+// A pointer however written: under an alias, to a pointer, in an array.
+type Link = *Chain;
+
+struct Chain {
+    next: Link,
+    back: **Chain,
+    both: [2]*Chain,
+    value: i32,
+}
+
+// Written before and after `Holding`: a pointer only names it, and nothing
+// here goes through one.
+struct NamesEarly {
+    holding: *Holding,
+    value: i32,
+}
+
+struct Holding {
+    value: &i32,
+}
+
+struct NamesLate {
+    holding: *Holding,
+    value: i32,
+}
+
+fn main() {
+    let mut list: *Node = none;
+    list = Push(list, 1);
+    list = Push(list, 2);
+    list = Push(list, 3);
+    println(Length(list));
+    list = Reverse(list);
+    let mut node = list;
+    for node != none {
+        print(node.*.value, "");
+        node = node.*.next;
+    }
+    println();
+
+    let empty: *Tree = none;
+    let mut left = Tree.{ left = empty, right = empty, value = 2 };
+    let mut right = Tree.{ left = empty, right = empty, value = 3 };
+    let mut root = Tree.{ left = @left, right = @right, value = 4 };
+    println(Sum(@root));
+
+    let mut ping = Ping.{ pong = none, value = 5 };
+    let mut pong = Pong.{ ping = @ping, value = 6 };
+    ping.pong = @pong;
+    println(ping.pong.*.ping.*.pong.*.value);
+
+    let mut inner = Inner.{ outer = Outer.{ inner = none, value = 7 }, value = 8 };
+    let outer = Outer.{ inner = @inner, value = 9 };
+    println(outer.inner.*.outer.value, outer.inner.*.value, outer.value);
+
+    let none_chain: *Chain = none;
+    let none_back: **Chain = none;
+    let mut first = Chain.{
+        next = none_chain,
+        back = none_back,
+        both = [_]*Chain{none_chain, none_chain},
+        value = 10,
+    };
+    let mut pointer: *Chain = @first;
+    let second = Chain.{
+        next = pointer,
+        back = @pointer,
+        both = [_]*Chain{pointer, none_chain},
+        value = 11,
+    };
+    println(second.next.*.value, second.back.*.*.value, second.both[0].*.value);
+    println(second.both[1] == none);
+
+    println(EmptyLate());
+    let mut late = Late.{ value = 12 };
+    let pointer_to_late: *Late = @late;
+    println(pointer_to_late.*.value);
+
+    let early = NamesEarly.{ holding = none, value = 13 };
+    let names = NamesLate.{ holding = early.holding, value = 14 };
+    println(early.value, names.value, names.holding == none);
+}

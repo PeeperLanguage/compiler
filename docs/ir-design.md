@@ -261,7 +261,14 @@ mir(d)            MIR of function d (needs body(d)); also asked for by a call ru
   (`Type::Named`); a value's type is complete: a struct value has its
   declaration's type, `Type::Struct { definition, fields }`, and a struct
   that holds another by value asks for that one's type, so a struct that
-  holds itself is a cycle. Lowering and LLVM read all of it from `Types`.
+  holds itself is a cycle. A raw pointer has one size whatever its target,
+  so `*T` only names `T`: a struct can point to itself. `T`'s `Type::Struct`
+  takes over the id of its `Type::Named`, so `*T` is one type before and after.
+  `compile::run` checks every module's type declarations before anything else
+  in it, so a `Type::Named` left after that is a declaration with an error, and
+  going through a pointer to one is invalid. A walk over types must not
+  follow pointers without remembering what it met: a struct can reach itself.
+  Lowering and LLVM read all of it from `Types`.
 - Each declaration's result is written once and never changed. The checker holds
   a table of them per module, indexed by the declaration's place among its
   top-level declarations (`DefId`), so a body edit does not move it.
@@ -302,9 +309,13 @@ gives new ones; the command line passes `Results::default()`, so a cold
 compile pays nothing extra. A module is not checked again when its text is
 unchanged and the interface of each module it imports (the prelude included)
 is unchanged: it keeps its diagnostics. A module's interface is a hash of what
-other modules see: its imports, and each declaration's kind, name, and type or
-constant value, types hashed by structure. Bodies are not part of it, so a
-module whose constants ran functions at compile time also remembers those
+other modules see: its imports with their interfaces, and each declaration's
+kind, name, and type or constant value. A type is hashed by structure down to
+named types, which it hashes by module and name; a struct's fields are in the
+interface of its own module, and the import hashes carry a change in them to
+every module that could see it, through however many others. Editing a
+signature therefore checks every module downstream, used or not. Bodies are
+not part of it, so a module whose constants ran functions at compile time also remembers those
 functions' modules, and is reused only if each of them was
 (`Checker::ran_modules`): such a constant's value, and an error pointing into
 the function's file, depend on the function's body.
@@ -448,8 +459,8 @@ dereference (`mir::Projection`), as in Rust's MIR: `r.*.x` goes through the
 reference in `r`, then to a field. The checker makes the implicit step of
 `r.x` an explicit `Dereference` in THIR, and lowering turns each into a step,
 so neither the check nor the LLVM writer works it out from types. A
-reference is never in a field yet, but a raw pointer may be, and `pp.*.*`
-takes two steps, so a dereference may be any step. Each element's index is
+reference or raw pointer may be in a field, and `pp.*.*` takes two steps, so
+a dereference may be any step. Each element's index is
 computed before the place is used, in the order written, and each dereference
 reads its pointer only then, as rustc does: in `p.*[f(@p)]` a call that
 repoints `p` changes which array is read (owner, 2026-10-29). `&place` and
@@ -492,9 +503,9 @@ done, so such a reference cannot outlive its statement unless a `let` keeps it.
 A slice (`[&]T`, `[&mut]T`) is its own type, not a reference to some
 unsized `[T]`: the address of some elements and their count, known only when
 the program runs. The loan rules hold for it as for a reference: both answer
-`Type::borrows`, which the holder, origin and write checks ask, so no rule is
-copied. A slice is never in a field, an array element or behind a reference
-or raw pointer, so a slice place is always all of a variable. THIR writes
+`Type::borrows`, which the write checks ask, so no rule is
+copied. A slice is never an array element or directly behind a reference or
+raw pointer, but it may be in a struct field. THIR writes
 `s[i]` as an `Index` of `s` with no dereference; lowering adds the
 `Dereference` step before the index, so a write through a slice is behind a
 reference for every check, as `r.*[i]` is. `&a` where a slice is expected is
@@ -552,9 +563,30 @@ extended to moves 2026-10-23).
 The loan check (T0037, `flow::loans::report_loan_errors`) rejects an access that a
 reference still in use forbids. A loan is one `borrow`; it lasts until the
 last use of a reference holding it (owner, 2026-10-23), found by liveness of
-the variables and values of reference type. A `borrow` through a reference
-(`&mut r.*`, the call reborrow) also holds `r`'s loans, so what `r` refers to
-stays borrowed while the new reference is in use. A shared loan forbids
+its holders: each reference or slice in a variable or value, a struct's fields one by one,
+however deep (owner, 2026-11-01). So each field keeps its own loans, as if it
+had a lifetime of its own in Rust, with no syntax: `p.second` read out of `p`
+holds only the loans of `second`. Liveness stays per variable, as Rust's does:
+using any part of a struct uses all of it, even with two lifetimes in Rust
+(`a = 3; print(p.second.*);` is refused when `first` borrows `a`), and each
+holder a call returns holds every loan of the arguments its origins name, as
+callers read only the signature. A `borrow` of a place holds the loans of the
+holders in or on the way to it: `&mut r.*` holds `r`'s, so what `r` refers to
+stays borrowed while the new reference is in use, and `&p` holds `p`'s, so what
+is read through the reference still counts them. A `store` to a whole variable
+replaces its loans; one to a field adds to them, as a field keeps its lifetime
+in Rust. No loan is stored behind a reference (T0043, "assignments of
+references through a reference"): it would outlive what it borrows unseen. So
+`p.input = &p.input[1..]` through `p: &mut Parser` is refused, though Rust
+accepts it, until a signature can say that two parameters share an origin; a
+parser keeps its position next to an input that does not change. Arrays and
+slices hold no struct that holds a reference, and nothing goes through a raw
+pointer to one nor takes its address (T0043), since a holder is one reference
+and no index or pointer says which; a `*T` itself only names `T`. An `extern`
+function takes no reference to one, since C could keep what it holds. A `&mut`
+field is lent again where a `&mut` variable is, as a call argument or loop
+iterable, and never moved out (T0035): `&mut h.value.*`, or `h.value` there.
+A shared loan forbids
 changing, moving, ending and `&mut` borrowing its place; a `&mut` loan
 forbids every access; places overlap when one's steps start with the
 other's, so other fields stay free. Lowering writes a `scope end` at a
@@ -584,9 +616,9 @@ arguments included, so `both(&mut x, &x)` is an error, with the note "a
 
 A function may return a reference (owner, 2026-10-25). Its type's
 `origins` are the parameters the result may point into: those `-> &T in a`
-or `in (a, b)` names, else every reference parameter, or every `&mut` one
-for a `&mut` result; the signature errors are T0016 (and T0002 for a name
-that is no parameter). The loan check gives each reference parameter a
+or `in (a, b)` names, else every parameter holding a reference, or every one
+holding a `&mut` for a `&mut` result; the signature errors are T0016 (and T0002 for a name
+that is no parameter). The loan check gives each parameter holding one a
 parameter loan, numbered after the borrows, at the entry `store` of its
 argument; it conflicts with nothing in the body. A `return` uses its value,
 and a returned reference may hold no loan of the function's own storage

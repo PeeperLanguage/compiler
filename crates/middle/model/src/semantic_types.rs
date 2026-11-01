@@ -109,7 +109,7 @@ pub enum Type {
     /// `cstr`: a pointer to a C string, as C functions take it.
     CString,
     /// `origins`: the positions of the parameters a returned reference may
-    /// point into, in order; empty when the result is not a reference.
+    /// point into, in order; empty when the result holds no reference.
     /// `variadic`: the last parameter, a slice, takes all the arguments past
     /// the others.
     Function {
@@ -128,12 +128,16 @@ pub enum Type {
     },
     /// The name of a type declaration, such as a struct, before what it
     /// declares is checked: naming a type checks nothing. No value has it: a
-    /// value's type is the declaration's own (`Type::Struct`).
+    /// value's type is the declaration's own (`Type::Struct`), which takes
+    /// over this id (`define_struct`); only a raw pointer's target can stay
+    /// this, when its declaration has an error.
     Named(DefId),
     /// The type a struct declaration makes, with its fields' types in order.
     /// The declaration is its identity, so two structs with the same fields
     /// differ; the field names stay in the declaration. A field held by value
-    /// has its own struct's type, so the type is complete.
+    /// has its own struct's type, so the type is complete. A raw pointer in a
+    /// field can reach the struct again, so a walk over types stops at
+    /// pointers or remembers the structs it met.
     Struct {
         definition: DefId,
         fields: Box<[TypeId]>,
@@ -429,6 +433,9 @@ impl Types {
     /// workers a copy of the types. Delete it, and the copy, when each
     /// module's MIR lists the types it uses (self-contained MIR).
     pub fn extend_from(&mut self, other: &Types) {
+        // Every type is checked before any function is given out
+        // (`compile::run`), so no slot copied here changes later
+        // (`define_struct`).
         for ty in &other.types[self.types.len()..] {
             self.intern(ty.clone());
         }
@@ -447,6 +454,16 @@ impl Types {
         self.types.push(ty.clone());
         self.ids.insert(ty, id);
         id
+    }
+
+    /// Makes the declared name `named` the struct of `fields`, under its
+    /// id, so a `*T` written before `T` was complete is the `*T` of after.
+    pub fn define_struct(&mut self, named: TypeId, fields: Box<[TypeId]>) {
+        let slot = &mut self.types[named.0 as usize];
+        let Type::Named(definition) = *slot else {
+            unreachable!("only a declared name becomes a struct");
+        };
+        *slot = Type::Struct { definition, fields };
     }
 
     /// The built-in type `name` stands for: one in `NAMED`, `isize` and `usize`
@@ -533,6 +550,17 @@ impl Types {
             }
             (Type::RawPointer { .. }, Type::RawPointer { .. }) => Conversion::NeedsCast,
             _ => Conversion::Never,
+        }
+    }
+
+    /// `Some(whether one is mutable)` for a type whose values hold loans: a
+    /// reference, a slice, or a struct with one in a field, however deep.
+    pub fn holds_loans(&self, id: TypeId) -> Option<bool> {
+        match self[id] {
+            Type::Struct { ref fields, .. } => (fields.iter())
+                .filter_map(|&field| self.holds_loans(field))
+                .reduce(|a, b| a || b),
+            ref other => other.borrows(),
         }
     }
 

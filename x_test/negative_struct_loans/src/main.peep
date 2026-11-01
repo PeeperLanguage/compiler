@@ -1,0 +1,273 @@
+// What a struct holding references may not do: one error per function, each
+// refused by Rust too unless it says otherwise.
+struct Pair { first: &i32, second: &i32 }
+struct Outer { pair: Pair, count: i32 }
+struct Mark { label: &i32, count: i32 }
+struct Counter { value: &mut i32 }
+struct Grid { cells: [&mut]i32 }
+struct Wrap { inner: &Pair }
+
+fn pair_of(a: &i32, b: &i32) -> Pair {
+    return Pair.{ first = a, second = b };
+}
+
+fn second_of(p: Pair) -> &i32 {
+    return p.second;
+}
+
+fn second_through(p: &Pair) -> &i32 {
+    return p.second;
+}
+
+fn look(p: &Pair) {}
+
+// A struct literal holds what its fields hold.
+fn Literal() {
+    let mut a = 1;
+    let b = 2;
+    let p = Pair.{ first = &a, second = &b };
+    a = 3;
+    println(p.first.*);
+}
+
+// So does one inside another.
+fn Nested() {
+    let mut a = 1;
+    let b = 2;
+    let o = Outer.{ pair = Pair.{ first = &a, second = &b }, count = 1 };
+    a = 3;
+    println(o.pair.first.*);
+}
+
+// Rust's E0597: the struct outlives what it borrows.
+fn Dangling() {
+    let a = 1;
+    let mut p = Pair.{ first = &a, second = &a };
+    {
+        let gone = 2;
+        p = Pair.{ first = &gone, second = &a };
+    }
+    println(p.first.*);
+}
+
+// Using any part of a struct uses all of it, even with two lifetimes in Rust.
+fn OtherField() {
+    let mut a = 1;
+    let b = 2;
+    let p = Pair.{ first = &a, second = &b };
+    a = 3;
+    println(p.second.*);
+}
+
+fn PlainField() {
+    let mut a = 1;
+    let m = Mark.{ label = &a, count = 2 };
+    a = 3;
+    println(m.count);
+}
+
+fn WholeUse() {
+    let mut a = 1;
+    let b = 2;
+    let p = Pair.{ first = &a, second = &b };
+    a = 3;
+    look(&p);
+}
+
+// A move takes every loan along.
+fn Moved() {
+    let mut a = 1;
+    let b = 2;
+    let p = Pair.{ first = &a, second = &b };
+    let q = p;
+    a = 3;
+    println(q.second.*);
+}
+
+// Writing a field adds to its loans, as `first` of a struct stays one lifetime.
+fn FieldWrite() {
+    let mut a = 1;
+    let b = 2;
+    let mut p = Pair.{ first = &a, second = &b };
+    p.first = &b;
+    a = 3;
+    println(p.first.*);
+}
+
+fn FieldWriteOnOnePath(flag: bool) {
+    let mut a = 1;
+    let b = 2;
+    let mut p = Pair.{ first = &a, second = &b };
+    if flag {
+        p.first = &b;
+    }
+    a = 3;
+    println(p.first.*);
+}
+
+// A reference to a struct carries what the struct holds.
+fn ThroughReference() {
+    let a = 1;
+    let mut b = 2;
+    let p = Pair.{ first = &a, second = &b };
+    let r = &p;
+    let s = r.second;
+    b = 5;
+    println(s.*);
+}
+
+fn ThroughReferenceUse() {
+    let mut a = 1;
+    let b = 2;
+    let p = Pair.{ first = &a, second = &b };
+    let r = &p;
+    a = 3;
+    println(r.second.*);
+}
+
+// A field of a call's result holds what the call's result holds.
+fn FieldOfCall() {
+    let mut a = 1;
+    let b = 2;
+    let first = pair_of(&a, &b).first;
+    a = 3;
+    println(first.*);
+}
+
+fn CallResult() {
+    let mut a = 1;
+    let b = 2;
+    let p = pair_of(&a, &b);
+    a = 3;
+    println(p.second.*);
+}
+
+// A signature says only where a result comes from: Rust accepts these two with
+// lifetime names, which Peeper has no way to write yet.
+fn ThroughSignature() {
+    let mut a = 1;
+    let b = 2;
+    let r = second_of(pair_of(&a, &b));
+    a = 3;
+    println(r.*);
+}
+
+fn ThroughSignatureReference() {
+    let mut a = 1;
+    let b = 2;
+    let p = Pair.{ first = &a, second = &b };
+    let r = second_through(&p);
+    a = 3;
+    println(r.*);
+}
+
+// Rust's E0506 for a `&mut` field: the loan lasts while the struct is used.
+fn MutableField() {
+    let mut n = 1;
+    let c = Counter.{ value = &mut n };
+    n = 2;
+    println(c.value.*);
+}
+
+fn MutableFieldLentTwice() {
+    let mut n = 1;
+    let mut c = Counter.{ value = &mut n };
+    let r = &mut c.value.*;
+    let s = &mut c.value.*;
+    r.* = 2;
+    s.* = 3;
+}
+
+// A reference through a field lives on, and keeps what the field held.
+fn ThroughFieldGone() {
+    let mut n = 1;
+    let r: &mut i32;
+    {
+        let c = Counter.{ value = &mut n };
+        r = &mut c.value.*;
+    }
+    n = 2;
+    r.* = 3;
+}
+
+fn MovedWhileLent() {
+    let mut n = 1;
+    let c = Counter.{ value = &mut n };
+    let r = &mut c.value.*;
+    let d = c;
+    r.* = 2;
+    d.value.* = 3;
+}
+
+fn NestedField() {
+    let mut a = 1;
+    let b = 2;
+    let mut o = Outer.{ pair = Pair.{ first = &b, second = &b }, count = 1 };
+    o.pair = Pair.{ first = &a, second = &b };
+    a = 3;
+    println(o.count);
+}
+
+// A temporary in a field ends with its statement.
+fn TemporaryInField() {
+    let p = Pair.{ first = &5, second = &6 };
+    println(p.first.*);
+}
+
+// A reference to a struct in a field carries what the struct holds.
+fn ThroughWrapped() {
+    let mut a = 1;
+    let b = 2;
+    let p = Pair.{ first = &a, second = &b };
+    let w = Wrap.{ inner = &p };
+    a = 3;
+    println(w.inner.first.*);
+}
+
+// Returned: T0036, as for a reference.
+fn ReturnsLocal(x: &i32) -> Pair {
+    let a = 1;
+    return Pair.{ first = x, second = &a };
+}
+
+fn ReturnsIntoParameter(m: Mark) -> &i32 {
+    return &m.count;
+}
+
+// T0016: `in` names where a result comes from.
+fn NotNamed(p: Pair, other: &i32) -> &i32 in other {
+    return p.first;
+}
+
+// T0034: a moved struct.
+fn UsedAfterMove() {
+    let a = 1;
+    let p = Pair.{ first = &a, second = &a };
+    let q = p;
+    println(p.first.*, q.first.*);
+}
+
+// T0035: a `&mut` field is lent again, never moved out.
+fn MovedOutThroughReference() {
+    let mut n = 1;
+    let c = Counter.{ value = &mut n };
+    let r = &c;
+    let v = r.value;
+    println(v.*);
+}
+
+fn MovedOut() {
+    let mut n = 1;
+    let c = Counter.{ value = &mut n };
+    let r = c.value;
+    r.* = 2;
+}
+
+fn SliceMovedOut() {
+    let mut cells = [1]i32{1};
+    let g = Grid.{ cells = &mut cells };
+    let c = g.cells;
+    c[0] = 2;
+}
+
+fn main() {}

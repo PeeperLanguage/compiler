@@ -38,12 +38,15 @@ impl ThirBuilder<'_, '_> {
     /// reference or slice (`make_place`). A `&mut` or `[&mut]` needs a place
     /// that can be written, else that is reported but the place is still
     /// lent, so checking goes on; a slice place is lent again, so its own
-    /// type decides, never the variable holding it.
+    /// type decides, never the variable holding it, unless it is behind a
+    /// shared reference, through which nothing is written.
     pub(super) fn check_lending(&mut self, ty: TypeId, place: Id<Expr>) {
         let (variable, decider) = self.make_place(place);
         let types = &self.checker.types;
         let decider = match types[self.body.exprs[place].ty] {
-            Type::Slice { .. } => Some(place),
+            Type::Slice { .. } => decider
+                .filter(|&decider| !self.writes_through(decider))
+                .or(Some(place)),
             _ => decider,
         };
         if types[ty].borrows() == Some(true) {
@@ -56,10 +59,13 @@ impl ThirBuilder<'_, '_> {
     /// temporary's own storage.
     pub(super) fn check_address(&mut self, place: Id<Expr>, span: Span) -> Expr {
         let target = self.body.exprs[place].ty;
-        let ty = self.checker.raw_pointer_type(target, span);
-        if ty == TypeId::INVALID {
+        let loan_free = self
+            .checker
+            .loan_free_held_type(target, "raw pointers to", span);
+        if loan_free.is_none() {
             return Expr::INVALID;
         }
+        let ty = self.checker.raw_pointer_type(target, span);
         let (start, decider) = self.place_root(place);
         let variable = match self.body.exprs[start].kind {
             ExprKind::Variable(variable) => variable,
@@ -175,7 +181,7 @@ impl ThirBuilder<'_, '_> {
 
     /// Whether the `decider` of a place (`place_root`) lets it be written: a
     /// `&mut`, a `[&mut]` or a raw pointer.
-    pub(super) fn writes_through(&self, decider: Id<Expr>) -> bool {
+    pub(crate) fn writes_through(&self, decider: Id<Expr>) -> bool {
         let types = &self.checker.types;
         let ty = self.body.exprs[decider].ty;
         types[ty].borrows() == Some(true) || matches!(types[ty], Type::RawPointer { .. })
@@ -247,13 +253,13 @@ impl ThirBuilder<'_, '_> {
         self.checker.report(error.help(help, Vec::new()));
     }
 
-    /// Makes `expr`, when it is a `&mut` or `[&mut]` in a variable, lend it
-    /// again, so it is not moved: the variable stays usable after the call
-    /// or loop that takes `expr`.
-    pub(crate) fn lend_variable_again(&mut self, expr: Id<Expr>) {
+    /// Makes `expr`, when it is a `&mut` or `[&mut]` in a variable or a
+    /// field, lend it again, so it is not moved: it stays usable after the
+    /// call or loop that takes `expr`.
+    pub(crate) fn lend_place_again(&mut self, expr: Id<Expr>) {
         if let Expr {
             ty,
-            kind: ExprKind::Variable(_),
+            kind: ExprKind::Variable(_) | ExprKind::Field { .. },
         } = self.body.exprs[expr]
             && self.checker.types[ty].borrows() == Some(true)
         {

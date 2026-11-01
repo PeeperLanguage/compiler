@@ -83,9 +83,10 @@ pub struct Place {
 pub enum Projection {
     /// The field at this index, in declaration order, of the struct here.
     Field(u32),
-    /// What the reference here refers to, or the elements the slice here
-    /// views.
+    /// What the reference or raw pointer here points to.
     Dereference,
+    /// The elements the slice here views.
+    SliceElements,
     /// The element at this index, an integer computed before the place is
     /// used, of the array here, or of the slice elements; outside them, the
     /// program fails.
@@ -103,12 +104,19 @@ impl Projection {
         match (self, other) {
             (Projection::Field(left), Projection::Field(right)) => left == right,
             (Projection::Dereference, Projection::Dereference)
+            | (Projection::SliceElements, Projection::SliceElements)
             | (
                 Projection::Index(_) | Projection::Subslice(_),
                 Projection::Index(_) | Projection::Subslice(_),
             ) => true,
             _ => unreachable!("one storage has one type, so one kind of step"),
         }
+    }
+
+    /// Whether the step leaves the storage it starts in, through an address
+    /// held there.
+    pub fn leaves_storage(self) -> bool {
+        matches!(self, Projection::Dereference | Projection::SliceElements)
     }
 }
 
@@ -129,9 +137,7 @@ impl Place {
     /// Whether the place goes through a reference, so it is not in its
     /// variable's own storage.
     pub fn is_behind_reference(&self) -> bool {
-        self.projections
-            .iter()
-            .any(|step| matches!(step, Projection::Dereference))
+        self.projections.iter().any(|step| step.leaves_storage())
     }
 }
 
@@ -543,7 +549,7 @@ impl Printer<'_> {
                     self.write_operand(&count);
                     self.out.push(']');
                 }
-                Projection::Dereference => self.out.push_str(".*"),
+                Projection::Dereference | Projection::SliceElements => self.out.push_str(".*"),
                 Projection::Field(_) => unreachable!("gathered into `fields` above"),
             }
         }

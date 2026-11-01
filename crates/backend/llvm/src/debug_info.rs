@@ -115,6 +115,8 @@ impl Metadata {
             }
             Type::Reference { .. } | Type::RawPointer { .. } => {
                 let base = match types[ty].pointee() {
+                    // A struct with an error: this output is never linked.
+                    Some(pointee) if matches!(types[pointee], Type::Named(_)) => "null".to_string(),
                     Some(pointee) => {
                         let base = self.debug_type(program, types, types.real(pointee), target);
                         format!("!{}", base.expect("a pointer points to a value's type"))
@@ -210,8 +212,10 @@ impl Metadata {
         (ty, name, fields): (TypeId, &str, &[(&str, TypeId)]),
         target: &Machine,
     ) -> usize {
-        // Its members name it, so its number comes first.
+        // Its members name it, and a `*T` field reaches it again, so its
+        // number comes first.
         let composite = self.reserve();
+        self.types.insert(ty, composite);
         let field_types = fields.iter().map(|&(_, field)| field).collect::<Vec<_>>();
         let (offsets, size, _) = struct_layout(types, &field_types, target);
         let mut members = Vec::with_capacity(fields.len());
@@ -236,7 +240,6 @@ impl Metadata {
                 size * 8
             ),
         );
-        self.types.insert(ty, composite);
         composite
     }
 }

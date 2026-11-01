@@ -1,0 +1,8 @@
+name = "run_struct_references"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "exit_code"
+exit_code = 0
+stdout_contains = ["7\n2\n3 2\n3\n2 4\n2 4\n2\n4\n2\n4 9 2\n2\n2\n4\n4 3 10\ntrue\n2 2 5\n2 3 3\n19 2\n20\n21\n20 3\n1  20  3  \n32\n5 [9, 5, 3] [1, 2, 3, 4]\n3\n9 5 3\n9 2 \n11\nPair { first: 4, second: 2 } Counter { value: 7, steps: 1 }\n22\n23\n2\n0\n1\n2 2\n5 6\n"]

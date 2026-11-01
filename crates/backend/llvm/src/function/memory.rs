@@ -148,8 +148,8 @@ impl Function<'_, '_, '_> {
     /// elements, after a check of each index there not known at compile
     /// time, or into a slice's elements, and before each dereference a load
     /// of the pointer there, `<address>.<n>` for the `n`th; for a slice's
-    /// elements, its length too, `<address>.<n>.len`. Gives the place's
-    /// type, a slice's for its elements.
+    /// elements, its length too, `<address>.<n>.len`. Gives how many elements
+    /// are at the place, when it is an array or a slice's elements.
     pub(super) fn write_place_address(
         &mut self,
         out: &mut String,
@@ -157,7 +157,7 @@ impl Function<'_, '_, '_> {
         place: &mir::Place,
         location: &DebugLocation,
         id: Id<mir::Instruction>,
-    ) -> TypeId {
+    ) -> Option<String> {
         let variable = place.variable.index();
         let mut ty = self.body.variables[place.variable].ty;
         let (types, body) = (self.types, self.body);
@@ -173,10 +173,11 @@ impl Function<'_, '_, '_> {
         };
         let mut runs = place
             .projections
-            .split(|step| matches!(step, mir::Projection::Dereference))
+            .split(|step| step.leaves_storage())
             .enumerate()
             .peekable();
-        while let Some((run, steps)) = runs.next() {
+        loop {
+            let (run, steps) = runs.next().expect("a place has a last run");
             let run_type = ty;
             // Each index not known at compile time, checked against its
             // array's length, and `renamed` when it is not an `i64`.
@@ -293,12 +294,20 @@ impl Function<'_, '_, '_> {
                         let bits = self.module.target.pointer_bits;
                         write!(out, ", i{bits} {}", self.operand(start))
                     }
-                    mir::Projection::Dereference => unreachable!("split at each dereference"),
+                    mir::Projection::Dereference | mir::Projection::SliceElements => {
+                        unreachable!("split at each step out of its storage")
+                    }
                 };
             }
             _ = writeln!(out, "{location}");
             if last {
-                continue;
+                break match (place.projections.last(), &self.types[ty]) {
+                    (Some(mir::Projection::SliceElements), _) => {
+                        Some(format!("{address}.{}.len", run - 1))
+                    }
+                    (_, Type::Array { length, .. }) => Some(length.to_string()),
+                    _ => None,
+                };
             }
             // A slice's elements keep the slice's type: the next run indexes
             // them with the length loaded here.
@@ -321,6 +330,5 @@ impl Function<'_, '_, '_> {
             );
             ty = target;
         }
-        ty
     }
 }

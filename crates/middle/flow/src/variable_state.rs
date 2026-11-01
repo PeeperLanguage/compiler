@@ -8,6 +8,8 @@ use std::sync::Arc;
 use arena::Id;
 use diagnostics::Diagnostic;
 use model::mir;
+use model::semantic_types::Type;
+use model::semantic_types::Types;
 use source::SourceFile;
 use source::Span;
 
@@ -26,6 +28,7 @@ use crate::predecessors;
 /// reports at each use and `store`.
 pub fn report_variable_state_errors(
     body: &mir::Body,
+    types: &Types,
     file: &Arc<SourceFile>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
@@ -60,7 +63,8 @@ pub fn report_variable_state_errors(
             let kind = &body.instructions[instruction].kind;
             let error = match *kind {
                 mir::InstructionKind::Move(ref place) if place.whole_variable().is_none() => {
-                    let error = partial_move(file, span, place);
+                    let error =
+                        partial_move(file, span, place, &types[body.instructions[instruction].ty]);
                     errors.push((span.start, error));
                     None
                 }
@@ -278,10 +282,16 @@ fn moved_use(
             Vec::new(),
         )
 }
-/// The error for a value whose type moves, read by value at `span` from
-/// `place`, a part of its variable: a value cannot be moved out of its
-/// struct or array, nor out of what a reference or raw pointer points to.
-fn partial_move(file: &Arc<SourceFile>, span: Span, place: &mir::Place) -> Diagnostic {
+/// The error for a value of the type `moved`, which moves, read by value at
+/// `span` from `place`, a part of its variable: a value cannot be moved out
+/// of its struct or array, nor out of what a reference or raw pointer points
+/// to. A `&mut` or `[&mut]` there can be lent again instead.
+fn partial_move(
+    file: &Arc<SourceFile>,
+    span: Span,
+    place: &mir::Place,
+    moved: &Type,
+) -> Diagnostic {
     let (message, help) = if place.is_behind_reference() {
         (
             "cannot move out of a reference or pointer".to_string(),
@@ -293,6 +303,16 @@ fn partial_move(file: &Arc<SourceFile>, span: Span, place: &mir::Place) -> Diagn
             format!("cannot move {part} out of its {whole}"),
             format!("move the whole {whole}, or read only parts that copy"),
         )
+    };
+    let text = file.slice(span);
+    let help = match *moved {
+        Type::Reference { mutable: true, .. } => {
+            format!("lend it again with `&mut {text}.*`, or `&{text}.*` to only read")
+        }
+        Type::Slice { mutable: true, .. } => {
+            format!("lend it again with `&mut {text}[0..]`, or `&{text}[0..]` to only read")
+        }
+        _ => help,
     };
     Diagnostic::new(diagnostics::PARTIAL_MOVE, message)
         .label(file, span, "this value's type moves")

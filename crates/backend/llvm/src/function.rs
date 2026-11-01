@@ -166,20 +166,23 @@ fn traps(body: &mir::Body, types: &Types, id: Id<mir::Instruction>) -> usize {
         | InstructionKind::Store { ref place, .. }
         | InstructionKind::Borrow { ref place, .. }
         | InstructionKind::Address(ref place) => {
-            let unknown = (place.projections.iter())
+            let steps = &place.projections;
+            let unknown = (steps.iter())
                 .filter(|step| {
                     matches!(step, mir::Projection::Index(index) if !matches!(index, Operand::Constant(_)))
                 })
                 .count();
-            // A slice is only ever all of a variable, so its elements are the
-            // first step; an element there is checked even at a constant
-            // index, as no length is known at compile time.
-            let in_slice =
+            // A slice's length is not known at compile time.
+            let in_slice = (steps.windows(2)).filter(|pair| {
                 matches!(
-                    place.projections.get(1),
-                    Some(mir::Projection::Index(Operand::Constant(_)))
-                ) && matches!(types[body.variables[place.variable].ty], Type::Slice { .. });
-            unknown + usize::from(in_slice)
+                    pair,
+                    [
+                        mir::Projection::SliceElements,
+                        mir::Projection::Index(Operand::Constant(_))
+                    ]
+                )
+            });
+            unknown + in_slice.count()
         }
         InstructionKind::Check { .. } => 1,
         // Any part but an element or an array is counted when the program
@@ -552,15 +555,13 @@ impl Function<'_, '_, '_> {
                 }
                 // A slice: the elements' address, then their count.
                 let address = format!("{name}.p");
-                let viewed = self.write_place_address(out, &address, place, &location, id);
-                let length = match (place.projections.last(), &types[viewed]) {
-                    (Some(&mir::Projection::Subslice(subslice)), _) => {
+                let elements = self.write_place_address(out, &address, place, &location, id);
+                let length = match place.projections.last() {
+                    Some(&mir::Projection::Subslice(subslice)) => {
                         let count = self.body.subslices[subslice.index()].count;
                         self.operand(count).to_string()
                     }
-                    (_, Type::Array { length, .. }) => length.to_string(),
-                    (_, Type::Slice { .. }) => format!("{address}.0.len"),
-                    _ => unreachable!("a slice is taken of an array or a slice's elements"),
+                    _ => elements.expect("a slice is taken of an array or a slice's elements"),
                 };
                 let bits = self.module.target.pointer_bits;
                 _ = writeln!(

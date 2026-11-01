@@ -7,6 +7,7 @@ use model::DefId;
 use model::ast;
 use model::constant::Constant;
 use model::layout::layout;
+use model::layout::struct_layout;
 use model::semantic_types;
 use model::semantic_types::Integer;
 use model::semantic_types::Type;
@@ -54,31 +55,23 @@ impl Checker<'_> {
                         self.report(diagnostic);
                     }
                     // A struct held by value is checked here: one that holds
-                    // itself, however deep, is a cycle. A reference or slice
-                    // is rejected before its type is, which may be this struct.
-                    let borrows = matches!(
-                        tree.types[ty],
-                        ast::Type::Reference { .. } | ast::Type::Slice { .. }
-                    );
-                    let mut field_type = TypeId::INVALID;
-                    if !borrows {
-                        field_type = self.resolve_value_type(ty);
-                    }
-                    if borrows || self.types[field_type].borrows().is_some() {
-                        let span = tree.types.span(ty);
-                        let what = "references and slices in struct fields";
-                        field_type = self.not_supported(span, what);
-                    }
-                    field_types.push(field_type);
+                    // itself, however deep, is a cycle, as is one a reference
+                    // field reaches: a reference's target is a complete type.
+                    // A raw pointer's need not be (`resolve_type`).
+                    field_types.push(self.resolve_value_type(ty));
                 }
                 // Invalid when a field is, as an array is when its element
                 // is, so no later phase lays out a field it cannot.
                 if field_types.contains(&TypeId::INVALID) {
                     return TypeId::INVALID;
                 }
-                let fields = field_types.into();
-                let ty = self.types.intern(Type::Struct { definition, fields });
-                return self.fits_target(ty, written.name.span);
+                let (_, size, _) = struct_layout(&self.types, &field_types, self.target);
+                let named = self.types.intern(Type::Named(definition));
+                let ty = self.fits_target(named, size, written.name.span);
+                if ty != TypeId::INVALID {
+                    self.types.define_struct(named, field_types.into());
+                }
+                return ty;
             }
             ast::Type::Enum(_) => "enum declarations",
             ast::Type::Interface(_) => "interface declarations",
@@ -179,10 +172,10 @@ impl Checker<'_> {
         })
     }
 
-    /// The positions of the parameters a reference `result` of `signature`
-    /// may point into, in order: those `in` names, else every reference
-    /// parameter (every `&mut` one for a `&mut` result). `None` when an
-    /// error was reported.
+    /// The positions of the parameters a `result` of `signature` holding
+    /// references may point into, in order: those `in` names, else every
+    /// parameter that holds one (every `&mut` one for a `&mut` result).
+    /// `None` when an error was reported.
     fn result_origins(
         &mut self,
         signature: &ast::Signature,
@@ -192,7 +185,7 @@ impl Checker<'_> {
         let tree = &self.module().ast;
         let file = &tree.file;
         let mut names = tree.children.lists.items(signature.origins);
-        let Some(mutable) = self.types[result].borrows() else {
+        if self.types.holds_loans(result).is_none() {
             if let Some(origin) = names.next() {
                 let span = tree.children.names.span(origin);
                 self.error(
@@ -203,10 +196,10 @@ impl Checker<'_> {
                 return None;
             }
             return Some(Box::default());
-        };
-        // `Some(mutable)` for a reference or slice parameter.
-        let reference =
-            |types: &semantic_types::Types, position: usize| types[parameters[position]].borrows();
+        }
+        // A struct may hold shared references too, so any parameter may be
+        // where they come from; the body's returns are checked by the loans.
+        let mutable = self.types[result].borrows() == Some(true);
         let mut origins: Vec<u32> = Vec::new();
         for origin in names {
             let span = tree.children.names.span(origin);
@@ -225,7 +218,8 @@ impl Checker<'_> {
                     diagnostics::UNDEFINED_NAME,
                     format!("`{name}` is not a parameter"),
                 )),
-                Some(position) => match reference(&self.types, position) {
+                // `Some(whether it can lend mutably)` for a parameter that lends.
+                Some(position) => match self.types.holds_loans(parameters[position]) {
                     None => Some((
                         diagnostics::INVALID_RETURN,
                         format!(
@@ -234,7 +228,13 @@ impl Checker<'_> {
                     )),
                     Some(false) if mutable => Some((
                         diagnostics::INVALID_RETURN,
-                        format!("a `&mut` result cannot borrow from shared reference `{name}`"),
+                        if self.types[parameters[position]].borrows().is_some() {
+                            format!("a `&mut` result cannot borrow from shared reference `{name}`")
+                        } else {
+                            format!(
+                                "a `&mut` result cannot borrow from `{name}`, which holds only shared references"
+                            )
+                        },
                     )),
                     Some(_) if origins.contains(&(position as u32)) => Some((
                         diagnostics::INVALID_RETURN,
@@ -254,7 +254,9 @@ impl Checker<'_> {
         if signature.origins.is_empty() {
             origins = (0..parameters.len())
                 .filter(|&position| {
-                    reference(&self.types, position).is_some_and(|source| source || !mutable)
+                    self.types
+                        .holds_loans(parameters[position])
+                        .is_some_and(|source| source || !mutable)
                 })
                 .map(|position| position as u32)
                 .collect();
@@ -264,7 +266,11 @@ impl Checker<'_> {
                 } else {
                     "reference or slice"
                 };
-                let message = format!("a {kind} result needs a {kind} parameter to borrow from");
+                let message = if self.types[result].borrows().is_some() {
+                    format!("a {kind} result needs a {kind} parameter to borrow from")
+                } else {
+                    "a struct holding references needs a parameter that holds one".to_owned()
+                };
                 let result = signature.result.expect("a reference result is written");
                 self.error(
                     diagnostics::INVALID_RETURN,
@@ -320,6 +326,15 @@ impl Checker<'_> {
                 "struct, array, range and slice parameters and results of `extern` functions";
             return self.not_supported(span, what);
         }
+        // C could keep what the struct holds, which no loan would follow.
+        if external
+            && let Type::Reference { target, .. } = self.types[resolved]
+            && self.types.holds_loans(target).is_some()
+        {
+            let span = self.module().ast.types.span(ty);
+            let what = "references to structs holding references in `extern` functions";
+            return self.not_supported(span, what);
+        }
         if external
             && let Type::Integer(integer) = self.types[resolved]
             && integer.bits > self.target.widest_c_integer()
@@ -337,19 +352,36 @@ impl Checker<'_> {
     /// The real type of `held`, for a type written at `span` that holds it,
     /// so `&Meters` is `&f64` under an alias; `None` when it is invalid, or
     /// after reporting that it borrows. `holder` starts the message:
-    /// "arrays of".
+    /// "references to".
     fn held_type(&mut self, held: TypeId, holder: &str, span: Span) -> Option<TypeId> {
         let what = match self.types[held] {
             Type::Invalid => return None,
-            // shortcut: the loan check follows no reference held in an array,
-            // a slice or a struct field, or behind a raw pointer; allow each
-            // when lifetimes are checked (ownership step 4).
+            // shortcut: the loan check follows no reference held in an array
+            // or a slice, behind a raw pointer or another reference; allow
+            // each when lifetimes are checked (ownership step 4).
             Type::Reference { .. } => "references",
             Type::Slice { .. } => "slices",
             _ => return Some(self.types.real(held)),
         };
         self.not_supported(span, &format!("{holder} {what}"));
         None
+    }
+
+    /// `held_type` for an array or a slice, which hold no struct that holds
+    /// a reference either, and for what is reached through a raw pointer: a
+    /// holder is one reference, and no index or pointer says which.
+    pub(crate) fn loan_free_held_type(
+        &mut self,
+        held: TypeId,
+        holder: &str,
+        span: Span,
+    ) -> Option<TypeId> {
+        let held = self.held_type(held, holder, span)?;
+        if self.types.holds_loans(held).is_some() {
+            self.not_supported(span, &format!("{holder} structs holding references"));
+            return None;
+        }
+        Some(held)
     }
 
     /// `&target`, or `&mut target` when `mutable`, written or borrowed at
@@ -363,20 +395,20 @@ impl Checker<'_> {
 
     /// `[length]element`, written at `span` (`held_type`).
     pub(crate) fn array_type(&mut self, element: TypeId, length: u64, span: Span) -> TypeId {
-        match self.held_type(element, "arrays of", span) {
+        match self.loan_free_held_type(element, "arrays of", span) {
             Some(element) => {
                 let ty = self.types.intern(Type::Array { element, length });
-                self.fits_target(ty, span)
+                let (size, _) = layout(&self.types, ty, self.target);
+                self.fits_target(ty, size, span)
             }
             None => TypeId::INVALID,
         }
     }
 
-    /// `ty`, made at `span`, or invalid after an error there when a value of
-    /// it takes more bytes than the target allows, which no copy of it could
-    /// count.
-    fn fits_target(&mut self, ty: TypeId, span: Span) -> TypeId {
-        let (size, _) = layout(&self.types, ty, self.target);
+    /// `ty`, made at `span`, or invalid after an error there when its `size`
+    /// is more bytes than the target allows for a value, which no copy of it
+    /// could count.
+    fn fits_target(&mut self, ty: TypeId, size: u64, span: Span) -> TypeId {
         let largest = self.target.largest_object();
         if size <= largest {
             return ty;
@@ -444,8 +476,9 @@ impl Checker<'_> {
     }
 
     /// The type a type expression of the module's tree stands for, its names
-    /// recorded (`record`). A named type stays a name (`Type::Named`); a
-    /// value's type is `resolve_value_type`. A local never names a type
+    /// recorded (`record`). A named type stays a name (`Type::Named`) until
+    /// its declaration is checked; a value's type is `resolve_value_type`. A
+    /// local never names a type
     /// (`ThirBuilder::declare`), so only top-level names are looked up.
     fn resolve_type(&mut self, ty: Id<ast::Type>) -> TypeId {
         let tree = &self.module().ast;
@@ -502,9 +535,14 @@ impl Checker<'_> {
             }
             ast::Type::Optional(_) => "optional types",
             ast::Type::RawPointer => return TypeId::RAWPTR,
+            // A pointer only names its target, so a struct can point to itself.
+            // shortcut: `*[2]Node` or `*Alias` of `Node` in `Node` is a cycle, as
+            // an array's element and an alias's target are complete, and so is
+            // any cycle through such a pointer; let them stay names too if a
+            // program needs it.
             ast::Type::Pointer(target) => {
-                let target = self.resolve_value_type(target);
-                return self.raw_pointer_type(target, span);
+                let pointee = self.resolve_type(target);
+                return self.raw_pointer_type(pointee, span);
             }
             ast::Type::FixedArray {
                 length: ast::Length::Number(number),
@@ -528,7 +566,7 @@ impl Checker<'_> {
             } => unreachable!("the parser reads `[_]` only in an array literal, checked there"),
             ast::Type::Slice { mutable, element } => {
                 let element = self.resolve_value_type(element);
-                return match self.held_type(element, "slices of", span) {
+                return match self.loan_free_held_type(element, "slices of", span) {
                     Some(element) => self.types.intern(Type::Slice { mutable, element }),
                     None => TypeId::INVALID,
                 };

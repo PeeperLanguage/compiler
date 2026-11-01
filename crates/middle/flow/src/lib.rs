@@ -288,6 +288,13 @@ impl<T> Bits<T> {
         self.words[id.index() / 64] >> (id.index() % 64) & 1 != 0
     }
 
+    /// Adds the ids of `other`.
+    fn add_all(&mut self, other: &Bits<T>) {
+        for (word, added) in self.words.iter_mut().zip(&other.words) {
+            *word |= added;
+        }
+    }
+
     /// The set whose words are `op` of the two sets' words: `|` for the
     /// union, `&` for the ids in both.
     fn combine(&self, other: &Bits<T>, op: fn(u64, u64) -> u64) -> Bits<T> {

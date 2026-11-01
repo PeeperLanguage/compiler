@@ -1,0 +1,45 @@
+name = "negative_struct_references"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "`Link` holds itself",
+    "main.peep:9:8\n",
+    "assignments of references through a reference are not supported yet",
+    "main.peep:12:5\n",
+    "assignments of references through a reference are not supported yet",
+    "main.peep:16:5\n",
+    "cannot assign to `w.inner.first` through shared reference `w.inner`",
+    "main.peep:20:5\n",
+    "assignments of references through a reference are not supported yet",
+    "main.peep:25:5\n",
+    "cannot assign to `c.value.*` through shared reference `c`",
+    "main.peep:29:5\n",
+    "cannot mutably borrow `c.value.*` through shared reference `c`",
+    "main.peep:33:18\n",
+    "cannot mutably borrow `g.cells` through shared reference `g`",
+    "main.peep:41:10\n",
+    "cannot mutably borrow `g.cells` through shared reference `g`",
+    "main.peep:45:17\n",
+    "cannot mutably borrow `g.cells` through shared reference `g`",
+    "main.peep:51:21\n",
+    "slices of structs holding references are not supported yet",
+    "main.peep:56:20\n",
+    "arrays of structs holding references are not supported yet",
+    "main.peep:58:17\n",
+    "raw pointers to structs holding references are not supported yet",
+    "main.peep:61:16\n",
+    "references to structs holding references in `extern` functions are not supported yet",
+    "main.peep:65:13\n",
+    "struct, array, range and slice parameters and results of `extern` functions are not supported yet",
+    "main.peep:68:13\n",
+    "a `&mut` result cannot borrow from `p`, which holds only shared references",
+    "main.peep:71:40\n",
+    "a struct holding references needs a parameter that holds one",
+    "main.peep:76:14\n",
+    "a constant cannot hold a struct yet",
+    "main.peep:78:14\n",
+    "Compilation failed with 18 error(s)",
+]

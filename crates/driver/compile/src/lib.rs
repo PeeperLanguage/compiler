@@ -268,6 +268,18 @@ pub fn run(
     let mut thir = thir::Body::default();
     for (index, module) in modules.iter().enumerate() {
         let id = ModuleId::from_index(index);
+        // A `*T` only names `T`, so each module's structs are complete before
+        // any body or constant, reused or not, goes through a pointer to one.
+        let tree = &module.ast;
+        for (position, declaration) in tree.declarations().enumerate() {
+            if let ast::Decl::Type(written) | ast::Decl::Alias(written) = tree.decls[declaration] {
+                let definition = DefId {
+                    module: id,
+                    index: position as u32,
+                };
+                checker.declared_type(definition, written.name.span);
+            }
+        }
         // An import comes before its importer, so it is decided already.
         let imports_unchanged = module
             .imports
@@ -309,7 +321,7 @@ pub fn run(
             continue;
         }
         compile_module(&mut checker, id, &mut thir, &mut use_output);
-        let interface = interface(&checker, id);
+        let interface = interface(&checker, id, &results);
         changed.push(previous_interface != Some(interface));
         let found = &mut results[index];
         found.interface = interface;
@@ -413,9 +425,7 @@ fn compile_module(
                     types: &checker.types,
                 });
             }
-            ast::Decl::Type(written) | ast::Decl::Alias(written) => {
-                checker.declared_type(definition, written.name.span);
-            }
+            ast::Decl::Type(_) | ast::Decl::Alias(_) => {} // checked by `run`
         }
     }
     let facts = std::mem::take(&mut checker.module_checks[module.index()].facts);
@@ -452,8 +462,8 @@ fn compile_function(
 }
 
 /// Feeds `ty` to `hasher` by what it is, not by its id, which differs between
-/// compiles: a named type by its module's path and its name, a struct also
-/// by its fields' types.
+/// compiles: a named type by its module's path and its name. What it holds
+/// is in the interface of the module declaring it (`interface`).
 fn hash_type(checker: &Checker, ty: TypeId, hasher: &mut DefaultHasher) {
     let ty = &checker.types[ty];
     std::mem::discriminant(ty).hash(hasher);
@@ -478,12 +488,6 @@ fn hash_type(checker: &Checker, ty: TypeId, hasher: &mut DefaultHasher) {
             checker.modules[definition.module.index()].path.hash(hasher);
             let (name, file) = project::declared_name(checker.modules, *definition);
             name.text(file).hash(hasher);
-            if let Type::Struct { fields, .. } = ty {
-                fields.len().hash(hasher);
-                for &field in fields {
-                    hash_type(checker, field, hasher);
-                }
-            }
         }
         Type::Array { element, length } => {
             length.hash(hasher);
@@ -510,9 +514,11 @@ fn hash_type(checker: &Checker, ty: TypeId, hasher: &mut DefaultHasher) {
 }
 
 /// A hash of what other modules see of `module`, once its declarations are
-/// checked: its imports, and each declaration's kind, name, and type, value
-/// or struct fields. Its bodies are not part of it.
-fn interface(checker: &Checker, module: ModuleId) -> u64 {
+/// checked: its imports, with their interfaces (`done`, by module) so a
+/// change reaches every module that can see it through a type, and each
+/// declaration's kind, name, and type, value or struct fields. Its bodies are
+/// not part of it.
+fn interface(checker: &Checker, module: ModuleId, done: &[ModuleResults]) -> u64 {
     let modules = checker.modules;
     let checked = &checker.module_checks[module.index()];
     let (declared_types, constants) = (&checked.declared_types, &checked.constants);
@@ -521,6 +527,7 @@ fn interface(checker: &Checker, module: ModuleId) -> u64 {
     let mut hasher = DefaultHasher::new();
     for import in &module.imports {
         modules[import.module.index()].path.hash(&mut hasher);
+        done[import.module.index()].interface.hash(&mut hasher);
         import
             .name(module, modules)
             .map(|(name, _)| name)
@@ -534,16 +541,14 @@ fn interface(checker: &Checker, module: ModuleId) -> u64 {
         // `NotStarted`.
         if let State::Done(ty) = declared_types[index] {
             hash_type(checker, ty, &mut hasher);
-        }
-        // `Type::Struct` holds only the fields' types; their names are in the tree.
-        if let ast::Decl::Type(declaration) = decl
-            && let ast::Type::Struct(fields) = tree.types[declaration.ty]
-        {
-            for field in tree.children.lists.items(fields) {
-                tree.children.fields[field]
-                    .name
-                    .text(&tree.file)
-                    .hash(&mut hasher);
+            // `hash_type` stops at the name, so a struct's fields are hashed here.
+            if let (ast::Decl::Type(_), Type::Struct { definition, fields }) =
+                (decl, &checker.types[ty])
+            {
+                for (name, &field) in project::field_names(modules, *definition).zip(fields) {
+                    name.hash(&mut hasher);
+                    hash_type(checker, field, &mut hasher);
+                }
             }
         }
         if let State::Done(Some(Constant { ty, value })) = &constants[index] {
