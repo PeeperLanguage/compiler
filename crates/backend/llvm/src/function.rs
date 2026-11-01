@@ -22,7 +22,6 @@ use model::mir;
 use model::mir::InstructionKind;
 use model::mir::Operand;
 use model::mir::Terminator;
-use model::operators::BinaryOp;
 use model::operators::UnaryOp;
 use model::semantic_types::Float;
 use model::semantic_types::Integer;
@@ -76,15 +75,6 @@ impl Module<'_> {
                 locations: FxHashMap::default(),
             },
             panics: String::new(),
-            checks: body
-                .blocks
-                .ids()
-                .map(|block| {
-                    let block = &body.blocks[block];
-                    let instructions = body.lists.items(block.instructions);
-                    instructions.map(|id| traps(body, types, id)).sum()
-                })
-                .collect(),
             current: CurrentBlock::default(),
             memory: String::new(),
         };
@@ -150,17 +140,11 @@ impl Module<'_> {
 #[inline(always)]
 fn traps(body: &mir::Body, types: &Types, id: Id<mir::Instruction>) -> usize {
     match body.instructions[id].kind {
-        InstructionKind::Binary { op, left, right } => {
-            let divides_or_shifts = matches!(
-                op,
-                BinaryOp::Divide | BinaryOp::Remainder | BinaryOp::ShiftLeft | BinaryOp::ShiftRight
-            );
-            usize::from(
-                divides_or_shifts
-                    && !matches!(right, Operand::Constant(_))
-                    && matches!(types[body.operand_type(left)], Type::Integer(_)),
-            )
-        }
+        InstructionKind::Binary { op, left, right } => usize::from(
+            op.can_trap()
+                && !matches!(right, Operand::Constant(_))
+                && matches!(types[body.operand_type(left)], Type::Integer(_)),
+        ),
         InstructionKind::Load(ref place)
         | InstructionKind::Move(ref place)
         | InstructionKind::Store { ref place, .. }
@@ -275,8 +259,7 @@ struct Function<'m, 'p, 'b> {
     body: &'b mir::Body,
     types: &'b Types,
     debug: DebugNodes,
-    panics: String,     // the blocks that call the panic function, after the others
-    checks: Vec<usize>, // how many checks each block writes (`traps`)
+    panics: String, // the blocks that call the panic function, after the others
     current: CurrentBlock,
     /// The `alloca` of each instruction's value kept in memory (`in_memory`),
     /// named as the value, for the entry block, so a loop reuses it.
@@ -353,7 +336,10 @@ impl Function<'_, '_, '_> {
     /// The label of the LLVM block where the MIR block `block` ends: after
     /// its last check.
     fn end_label(&self, block: Id<mir::Block>) -> impl Display {
-        let checks = self.checks[block.index()];
+        let instructions = self.body.lists.items(self.body.blocks[block].instructions);
+        let checks: usize = instructions
+            .map(|id| traps(self.body, self.types, id))
+            .sum();
         fmt::from_fn(move |out| match checks {
             0 => write!(out, "bb{}", block.index()),
             checks => write!(out, "bb{}.{checks}", block.index()),
@@ -555,13 +541,19 @@ impl Function<'_, '_, '_> {
                 }
                 // A slice: the elements' address, then their count.
                 let address = format!("{name}.p");
-                let elements = self.write_place_address(out, &address, place, &location, id);
-                let length = match place.projections.last() {
-                    Some(&mir::Projection::Subslice(subslice)) => {
+                let viewed = self.write_place_address(out, &address, place, &location, id);
+                let length = match (place.projections.last(), &types[viewed]) {
+                    (Some(&mir::Projection::Subslice(subslice)), _) => {
                         let count = self.body.subslices[subslice.index()].count;
                         self.operand(count).to_string()
                     }
-                    _ => elements.expect("a slice is taken of an array or a slice's elements"),
+                    (Some(mir::Projection::SliceElements), _) => {
+                        let steps = place.projections.iter();
+                        let loaded = steps.filter(|step| step.leaves_storage()).count();
+                        format!("{address}.{}.len", loaded - 1)
+                    }
+                    (_, Type::Array { length, .. }) => length.to_string(),
+                    _ => unreachable!("a slice is taken of an array or a slice's elements"),
                 };
                 let bits = self.module.target.pointer_bits;
                 _ = writeln!(
@@ -651,6 +643,7 @@ impl Function<'_, '_, '_> {
             InstructionKind::Call {
                 function,
                 ref arguments,
+                ..
             } => {
                 self.write_call(out, id, function, arguments, rest, &location);
                 Ok(())

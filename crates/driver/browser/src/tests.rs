@@ -227,8 +227,8 @@ fn run_fixtures_run_here_with_the_same_results() {
         }
         let target = test("target").and_then(toml_edit::Item::as_str);
         let target = Machine::named(target.unwrap_or(TARGET)).expect("the target is a machine");
-        let (project, program) = load(source_files);
-        let (results, interpreted) = compile::interpret(&project, &program, target);
+        let program = load(source_files);
+        let (results, interpreted) = compile::interpret(&program, target);
         let Some(interpreted) = interpreted else {
             // A fixture of a program that must not build.
             if test("outcome").and_then(toml_edit::Item::as_str) != Some("failure") {
@@ -280,9 +280,9 @@ fn written(run: &compile::Interpreted, stream: Stream) -> Vec<u8> {
 
 /// What the program of the one file `text` does when interpreted.
 fn interpreted(text: &str) -> compile::Interpreted {
-    let (project, program) = load(files(&[("main.peep", text)]));
+    let program = load(files(&[("main.peep", text)]));
     let target = Machine::named(TARGET).expect("the target is a machine");
-    let (results, interpreted) = compile::interpret(&project, &program, target);
+    let (results, interpreted) = compile::interpret(&program, target);
     interpreted.unwrap_or_else(|| {
         let errors: Vec<_> = results.diagnostics().map(|found| &found.message).collect();
         panic!("the program has errors: {errors:?}")
@@ -292,9 +292,9 @@ fn interpreted(text: &str) -> compile::Interpreted {
 #[test]
 fn a_program_that_cannot_be_checked_does_not_start() {
     let text = "fn main( {\n    let x: i32 = true;\n}\n";
-    let (project, program) = load(files(&[("main.peep", text)]));
+    let program = load(files(&[("main.peep", text)]));
     let target = Machine::named(TARGET).expect("the target is a machine");
-    let (results, interpreted) = compile::interpret(&project, &program, target);
+    let (results, interpreted) = compile::interpret(&program, target);
     assert!(!program.checkable, "loading found the syntax error");
     assert!(interpreted.is_none());
     assert_eq!(results.diagnostics().count(), 0, "only loading's errors");

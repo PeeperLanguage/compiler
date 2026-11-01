@@ -13,7 +13,8 @@
 //!
 //! Two dataflow passes, then one walk:
 //!
-//! 1. Forward: the loans each holder may hold. A `Borrow` holds its own
+//! 1. Backward: the holders used again later (liveness).
+//! 2. Forward: the loans each holder may hold. A `Borrow` holds its own
 //!    loan and, when it goes through a reference (`&mut r.*`), the loans of
 //!    `r`, so what `r` refers to stays borrowed while the new reference is in
 //!    use; borrowing a struct holds the loans of the holders in the place
@@ -22,7 +23,10 @@
 //!    ends each loan of a place through it, which now names what the new
 //!    reference points to, and one to a field adds to them, as in Rust. No
 //!    `store` behind a reference holds a loan: the checker refuses it.
-//! 2. Backward: the holders used again later (liveness).
+//!    Each block passes on only the loans of holders live at its end: a loan
+//!    is read only through a holder that is used, so no error can need a
+//!    dead holder's, and what is carried follows the references in use, not
+//!    every reference the function ever made.
 //! 3. Each access, checked against the loans of the holders in use after it.
 //!
 //! A shared loan forbids changing, moving, ending and `&mut` borrowing its
@@ -51,7 +55,6 @@ use std::sync::Arc;
 
 use arena::Id;
 use diagnostics::Diagnostic;
-use model::DefId;
 use model::mir;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
@@ -72,15 +75,13 @@ enum Holder {}
 enum Loan {}
 
 /// Reports each access that a reference still in use forbids, once per
-/// loan, in the body of `function`; `origins_of(definition)` gives the
-/// parameters a reference `definition` returns may point into. A body with
-/// no `Borrow` and no reference result has no loan to break and is not
-/// walked.
-pub fn report_loan_errors<'t>(
+/// loan, in `body`, whose returned reference may point into the parameters
+/// `origins`. A body with no `Borrow` and no reference result has no loan to
+/// break and is not walked.
+pub fn report_loan_errors(
     body: &mir::Body,
     types: &Types,
-    function: DefId,
-    origins_of: &dyn Fn(DefId) -> &'t [u32],
+    origins: &[u32],
     file: &Arc<SourceFile>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
@@ -100,11 +101,11 @@ pub fn report_loan_errors<'t>(
     let variables = body.variables.ids().map(|id| body.variables[id].ty);
     let values = body.instructions.ids().map(|id| body.instructions[id].ty);
     let mut holder_count = 0;
-    let mut holders = Vec::with_capacity(variables.len() + values.len());
+    let mut holder_starts = Vec::with_capacity(variables.len() + values.len() + 1);
+    holder_starts.push(holder_count);
     for ty in variables.chain(values) {
-        let first = holder_count;
         holder_count += holders_in(types, ty);
-        holders.push(first..holder_count);
+        holder_starts.push(holder_count);
     }
     let mut loans_through = vec![Vec::new(); body.variables.len()];
     for (index, &borrow) in borrows.iter().enumerate() {
@@ -117,11 +118,10 @@ pub fn report_loan_errors<'t>(
     let mut loans = Loans {
         body,
         types,
-        origins_of,
-        origins: origins_of(function),
+        origins,
         reserved: Bits::new(0), // found below: it needs `Loans::uses`
         borrows,
-        holders,
+        holder_starts,
         loans_through,
     };
     loans.reserved = loans.reserved_loans();
@@ -144,15 +144,53 @@ fn holder_ids(range: Range<usize>) -> impl Iterator<Item = Id<Holder>> {
     range.map(Id::from_index)
 }
 
+/// The loans each holder may hold at one point of a function, as pairs in
+/// order, none for a holder without one. A table of every holder and every
+/// loan, kept for every block, grows with the cube of a function's size.
+#[derive(Clone, Default, PartialEq)]
+struct Held {
+    pairs: Vec<(Id<Holder>, Id<Loan>)>,
+}
+
+impl Held {
+    /// Where the pairs of `holder` are.
+    fn row(&self, holder: Id<Holder>) -> Range<usize> {
+        let start = self.pairs.partition_point(|pair| pair.0 < holder);
+        let end = self.pairs.partition_point(|pair| pair.0 <= holder);
+        start..end
+    }
+
+    /// The loans of `holder`, in order.
+    fn loans(&self, holder: Id<Holder>) -> impl Iterator<Item = Id<Loan>> {
+        self.pairs[self.row(holder)].iter().map(|pair| pair.1)
+    }
+
+    /// Makes `loans`, in order, all that `holder` holds.
+    fn set(&mut self, holder: Id<Holder>, loans: &[Id<Loan>]) {
+        let row = self.row(holder);
+        drop(
+            self.pairs
+                .splice(row, loans.iter().map(|&loan| (holder, loan))),
+        );
+    }
+
+    /// Adds `loan` to what `holder` holds.
+    fn add(&mut self, holder: Id<Holder>, loan: Id<Loan>) {
+        if let Err(position) = self.pairs.binary_search(&(holder, loan)) {
+            self.pairs.insert(position, (holder, loan));
+        }
+    }
+}
+
 /// One function's loans and holders.
-struct Loans<'b, 't> {
+struct Loans<'b> {
     body: &'b mir::Body,
-    types: &'b Types, // to name a reference or a slice in a message
-    origins_of: &'b dyn Fn(DefId) -> &'t [u32], // of a function it calls
-    origins: &'t [u32], // the parameters its returned reference may point into
+    types: &'b Types,   // to name a reference or a slice in a message
+    origins: &'b [u32], // the parameters its returned reference may point into
     borrows: Vec<Id<mir::Instruction>>, // each `Borrow` loan's instruction
-    /// The holders of each variable, then of each instruction's value.
-    holders: Vec<Range<usize>>,
+    /// Where the holders of each variable, then of each instruction's value,
+    /// start; last, how many there are.
+    holder_starts: Vec<usize>,
     /// The `&mut` loans reserved until their call (two-phase).
     reserved: Bits<Loan>,
     /// By variable, the loans of places through the reference in it
@@ -198,7 +236,7 @@ struct Access<'p> {
     span: Span,
 }
 
-impl Loans<'_, '_> {
+impl Loans<'_> {
     /// The words for a borrow of the type `ty`, a reference or slice.
     fn words(&self, ty: TypeId) -> &'static BorrowWords {
         match self.types[ty] {
@@ -224,15 +262,20 @@ impl Loans<'_, '_> {
 
     /// How many holders there are.
     fn holder_count(&self) -> usize {
-        self.holders.last().map_or(0, |last| last.end)
+        self.holder_starts[self.holder_starts.len() - 1]
+    }
+
+    /// The holders of the `index`th of `holder_starts`.
+    fn holders_at(&self, index: usize) -> Range<usize> {
+        self.holder_starts[index]..self.holder_starts[index + 1]
     }
 
     fn variable_holders(&self, variable: Id<mir::Variable>) -> Range<usize> {
-        self.holders[variable.index()].clone()
+        self.holders_at(variable.index())
     }
 
     fn value_holders(&self, value: Id<mir::Instruction>) -> Range<usize> {
-        self.holders[self.body.variables.len() + value.index()].clone()
+        self.holders_at(self.body.variables.len() + value.index())
     }
 
     /// The holders a `return` ending `block` hands back, used there, and
@@ -275,9 +318,8 @@ impl Loans<'_, '_> {
     }
 
     /// The holders that `place` is in: those under its fields up to its
-    /// first other step. With `true`, it goes past them, to what they refer
-    /// to, so anything read there may have come from any of them.
-    fn place_holders(&self, place: &mir::Place) -> (Range<usize>, bool) {
+    /// first other step.
+    fn place_holders(&self, place: &mir::Place) -> Range<usize> {
         let mut holders = self.variable_holders(place.variable);
         let mut ty = self.body.variables[place.variable].ty;
         for step in &place.projections {
@@ -285,18 +327,19 @@ impl Loans<'_, '_> {
                 mir::Projection::Field(field) if !holders.is_empty() => {
                     (holders, ty) = self.field_holders(holders, ty, field);
                 }
-                _ => return (holders, true),
+                _ => break,
             }
         }
-        (holders, false)
+        holders
     }
 
-    /// All the loans of `holders`.
-    fn loans_of(&self, held: &[Bits<Loan>], holders: impl Iterator<Item = usize>) -> Bits<Loan> {
-        let mut loans = Bits::new(self.loan_count());
-        for holder in holders {
-            loans.add_all(&held[holder]);
-        }
+    /// All the loans of `holders`, in order.
+    fn loans_of(&self, held: &Held, holders: impl Iterator<Item = usize>) -> Vec<Id<Loan>> {
+        let mut loans: Vec<Id<Loan>> = holders
+            .flat_map(|holder| held.loans(Id::from_index(holder)))
+            .collect();
+        loans.sort_unstable();
+        loans.dedup();
         loans
     }
 
@@ -383,12 +426,13 @@ impl Loans<'_, '_> {
         for id in self.body.instructions.ids() {
             let call = match self.body.instructions[id].kind {
                 mir::InstructionKind::Call {
-                    function,
+                    signature,
                     ref arguments,
+                    ..
                 } => {
                     // Used again through the returned reference, so its loan
                     // outlives the call.
-                    for &position in (self.origins_of)(function) {
+                    for &position in self.types.origins(signature) {
                         for holder in self.operand_holders(&arguments[position as usize]) {
                             use_counts[holder] += 1;
                         }
@@ -420,37 +464,45 @@ impl Loans<'_, '_> {
 
     /// `held`, the loans of each holder, after the instruction `id`. What
     /// is not listed gives no value that holds a loan.
-    fn step_held(&self, held: &mut [Bits<Loan>], id: Id<mir::Instruction>) {
+    fn step_held(&self, held: &mut Held, id: Id<mir::Instruction>) {
+        let kind = &self.body.instructions[id].kind;
+        if let mir::InstructionKind::Store {
+            ref place,
+            ref value,
+        } = *kind
+        {
+            self.step_store(held, place, value);
+            return;
+        }
         let target = self.value_holders(id);
-        let copy = |held: &mut [Bits<Loan>], target: Range<usize>, source: Range<usize>| {
-            for (to, from) in target.zip(source) {
-                held[to] = held[from].clone();
+        if target.is_empty() {
+            return;
+        }
+        let copy = |held: &mut Held, target: Range<usize>, source: Range<usize>| {
+            for (to, from) in holder_ids(target).zip(holder_ids(source)) {
+                let loans: Vec<Id<Loan>> = held.loans(from).collect();
+                held.set(to, &loans);
             }
         };
-        match self.body.instructions[id].kind {
-            mir::InstructionKind::Store {
-                ref place,
-                ref value,
-            } => self.step_store(held, place, value),
+        match *kind {
             mir::InstructionKind::Call {
-                function,
+                signature,
                 ref arguments,
-            } if !target.is_empty() => {
-                let origins = (self.origins_of)(function).iter();
+                ..
+            } => {
+                let origins = self.types.origins(signature).iter();
                 let sources = origins
                     .flat_map(|&position| self.operand_holders(&arguments[position as usize]));
                 let loans = self.loans_of(held, sources);
-                held[target].fill(loans);
+                holder_ids(target).for_each(|holder| held.set(holder, &loans));
             }
             // A value read out of a holder holds its loans; from behind it,
             // those of any it may have come from.
-            mir::InstructionKind::Load(ref place) | mir::InstructionKind::Move(ref place)
-                if !target.is_empty() =>
-            {
-                let (source, behind) = self.place_holders(place);
-                if behind {
+            mir::InstructionKind::Load(ref place) | mir::InstructionKind::Move(ref place) => {
+                let source = self.place_holders(place);
+                if place.is_behind_reference() {
                     let loans = self.loans_of(held, source);
-                    held[target].fill(loans);
+                    holder_ids(target).for_each(|holder| held.set(holder, &loans));
                 } else {
                     copy(held, target, source);
                 }
@@ -458,11 +510,12 @@ impl Loans<'_, '_> {
             // What the place holds, or goes through, stays borrowed while
             // the new reference is in use.
             mir::InstructionKind::Borrow { ref place, .. } => {
-                let mut loans = self.loans_of(held, self.place_holders(place).0);
-                loans.set(self.loan(id));
-                held[target.start] = loans;
+                let loans = self.loans_of(held, self.place_holders(place));
+                let holder = Id::from_index(target.start);
+                held.set(holder, &loans);
+                held.add(holder, self.loan(id));
             }
-            mir::InstructionKind::Aggregate(ref parts) if !target.is_empty() => {
+            mir::InstructionKind::Aggregate(ref parts) => {
                 let mut next = target.start;
                 for part in parts {
                     let count = holders_in(self.types, self.body.operand_type(*part));
@@ -473,7 +526,7 @@ impl Loans<'_, '_> {
             mir::InstructionKind::Field {
                 ref value,
                 ref fields,
-            } if !target.is_empty() => {
+            } => {
                 let mut source = self.operand_holders(value);
                 let mut ty = self.body.operand_type(*value);
                 for &field in fields {
@@ -481,7 +534,7 @@ impl Loans<'_, '_> {
                 }
                 copy(held, target, source);
             }
-            _ => assert!(target.is_empty(), "a value holding a loan has its step"),
+            _ => unreachable!("a value holding a loan has its step"),
         }
     }
 
@@ -491,31 +544,30 @@ impl Loans<'_, '_> {
     /// of it borrowed, and what it points into stays borrowed by the loans
     /// its reference took from `r`. To a field, it adds to what the field
     /// held, as Rust's lifetime of a field stays what it was.
-    fn step_store(&self, held: &mut [Bits<Loan>], place: &mir::Place, value: &mir::Operand) {
-        let (target, behind) = self.place_holders(place);
-        if behind {
+    fn step_store(&self, held: &mut Held, place: &mir::Place, value: &mir::Operand) {
+        if place.is_behind_reference() {
             return; // the checker lets no store here hold a loan
         }
         let whole = place.whole_variable();
-        let mut sources = self.operand_holders(value);
-        for holder in target {
-            let mut loans = match sources.next() {
-                Some(source) => held[source].clone(),
-                None => Bits::new(self.loan_count()),
+        let mut sources = holder_ids(self.operand_holders(value));
+        for holder in holder_ids(self.place_holders(place)) {
+            let loans: Vec<Id<Loan>> = match sources.next() {
+                Some(source) => held.loans(source).collect(),
+                None => Vec::new(),
             };
+            if whole.is_some() {
+                held.set(holder, &[]);
+            }
+            loans.iter().for_each(|&loan| held.add(holder, loan));
             // Its parameter loan, after the borrows.
             if let mir::Operand::Argument(position) = *value {
-                loans.set(Id::from_index(self.borrows.len() + position as usize));
-            }
-            match whole {
-                Some(_) => held[holder] = loans,
-                None => held[holder].add_all(&loans),
+                let loan = Id::from_index(self.borrows.len() + position as usize);
+                held.add(holder, loan);
             }
         }
         if let Some(variable) = whole {
-            for &loan in &self.loans_through[variable.index()] {
-                held.iter_mut().for_each(|holding| holding.clear(loan));
-            }
+            let ended = &self.loans_through[variable.index()];
+            held.pairs.retain(|pair| !ended.contains(&pair.1));
         }
     }
 
@@ -531,21 +583,6 @@ impl Loans<'_, '_> {
             |block: Id<mir::Block>| body.lists.items(body.blocks[block].instructions);
         let holder_count = self.holder_count();
         let no_holders = Bits::new(holder_count);
-        let no_loans = vec![Bits::new(self.loan_count()); holder_count];
-        let starts = dataflow(
-            body.blocks.len(),
-            [(Id::from_index(0), no_loans)],
-            |block| body.blocks[block].terminator.targets(),
-            |block, held| {
-                for id in instructions(block) {
-                    self.step_held(held, id);
-                }
-            },
-            |a: &Vec<Bits<Loan>>, b: &Vec<Bits<Loan>>| {
-                let pairs = a.iter().zip(b);
-                pairs.map(|(a, b)| a.combine(b, |a, b| a | b)).collect()
-            },
-        );
         let predecessors = predecessors(body);
         // From every block, not only those that leave the function: a block
         // of an endless `for {}` reaches no exit. A `return` block, which
@@ -567,6 +604,29 @@ impl Loans<'_, '_> {
                 }
             },
             |a: &Bits<Holder>, b: &Bits<Holder>| a.combine(b, |a, b| a | b),
+        );
+        let starts = dataflow(
+            body.blocks.len(),
+            [(Id::from_index(0), Held::default())],
+            |block| body.blocks[block].terminator.targets(),
+            |block, held| {
+                for id in instructions(block) {
+                    self.step_held(held, id);
+                }
+                // A step reads only holders it uses, and an error only live
+                // ones, so a holder not live here is never read again.
+                let Some(live) = &ends[block.index()] else {
+                    unreachable!("each block starts the backward pass")
+                };
+                held.pairs.retain(|pair| live.has(pair.0));
+            },
+            |a: &Held, b: &Held| {
+                let mut pairs = a.pairs.clone();
+                pairs.extend_from_slice(&b.pairs);
+                pairs.sort_unstable();
+                pairs.dedup();
+                Held { pairs }
+            },
         );
         let mut reported = Bits::new(self.loan_count());
         let mut errors = Vec::new();
@@ -608,9 +668,9 @@ impl Loans<'_, '_> {
                         Some(later) => {
                             // The holder's variable or value, found only for
                             // an error.
-                            let index = (self.holders.iter())
-                                .position(|found| found.contains(&holder.index()))
-                                .expect("each holder is a variable's or a value's");
+                            let index = (self.holder_starts)
+                                .partition_point(|&start| start <= holder.index())
+                                - 1;
                             let variables = body.variables.len();
                             let ty = match index.checked_sub(variables) {
                                 None => body.variables[Id::from_index(index)].ty,
@@ -637,7 +697,7 @@ impl Loans<'_, '_> {
     fn return_errors(
         &self,
         span: Span,
-        loans: &Bits<Loan>,
+        loans: &[Id<Loan>],
         reported: &mut Bits<Loan>,
         file: &Arc<SourceFile>,
         errors: &mut Vec<(u32, Diagnostic)>,
@@ -646,8 +706,8 @@ impl Loans<'_, '_> {
         // elements is still a reference.
         let words = self.words(self.body.result);
         let (returned, into) = (words.noun, words.into);
-        for loan in (0..self.loan_count()).map(Id::<Loan>::from_index) {
-            if !loans.has(loan) || reported.has(loan) {
+        for &loan in loans {
+            if reported.has(loan) {
                 continue;
             }
             let error = if let Some(&borrow) = self.borrows.get(loan.index()) {
@@ -761,66 +821,64 @@ impl Loans<'_, '_> {
     fn broken_loan(
         &self,
         access: &Access,
-        held: &[Bits<Loan>],
+        held: &Held,
         live: &Bits<Holder>,
         skip: Range<usize>,
         reported: &mut Bits<Loan>,
         file: &Arc<SourceFile>,
     ) -> Option<(Id<Holder>, Diagnostic)> {
-        let holders = held
-            .iter()
-            .enumerate()
-            .map(|(index, holding)| (Id::from_index(index), holding));
-        let holders =
-            holders.filter(|&(holder, _)| live.has(holder) && !skip.contains(&holder.index()));
-        for (holder, holding) in holders {
-            let loans = (0..self.borrows.len()).map(Id::from_index);
-            for loan in loans.filter(|&loan| holding.has(loan) && !reported.has(loan)) {
-                let borrow = self.borrows[loan.index()];
-                let mir::InstructionKind::Borrow {
-                    place: ref loaned,
-                    mutable,
-                } = self.body.instructions[borrow].kind
-                else {
-                    unreachable!("each loan is a `Borrow`")
-                };
-                let mut steps = access.projections.iter().zip(&*loaned.projections);
-                let overlaps = access.variable == loaned.variable
-                    && steps.all(|(&left, &right)| left.may_overlap(right));
-                let common = access.projections.len().min(loaned.projections.len());
-                let past_storage = access.replaces
-                    && (loaned.projections[common..].iter()).any(|step| step.leaves_storage());
-                // A reserved loan acts as a shared one until its call.
-                let exclusive = mutable && !self.reserved.has(loan);
-                if !overlaps || past_storage || (access.reads && !exclusive) {
-                    continue;
-                }
-                reported.set(loan);
-                let name = self.variable_name(access.variable, file);
-                let words = self.words(self.body.instructions[borrow].ty);
-                let (noun, to) = (words.noun, words.to);
-                let kind = if mutable {
-                    format!("a {} {noun}", words.writable)
-                } else {
-                    format!("a {noun}")
-                };
-                let (subject, event) = (access.subject, access.event);
-                let message =
-                    format!("{subject}{name} is {event} while {kind} {to} it is still in use");
-                let mut error = Diagnostic::new(diagnostics::BORROW_CONFLICT, message)
-                    .label(file, access.span, format!("{} here", access.label))
-                    .label(
-                        file,
-                        self.body.instructions.span(borrow),
-                        format!("{noun} made here"),
-                    );
-                // A temporary ends with its statement; a variable, its block.
-                if self.body.variables[access.variable].hidden {
-                    let help = "keep the value in a variable with `let`, so it lasts as long as the reference";
-                    error = error.help(help, Vec::new());
-                }
-                return Some((holder, error));
+        let pairs = held.pairs.iter().filter(|&&(holder, loan)| {
+            live.has(holder)
+                && !skip.contains(&holder.index())
+                && loan.index() < self.borrows.len()
+                && !reported.has(loan)
+        });
+        for &(holder, loan) in pairs {
+            let borrow = self.borrows[loan.index()];
+            let mir::InstructionKind::Borrow {
+                place: ref loaned,
+                mutable,
+            } = self.body.instructions[borrow].kind
+            else {
+                unreachable!("each loan is a `Borrow`")
+            };
+            let mut steps = access.projections.iter().zip(&*loaned.projections);
+            let overlaps = access.variable == loaned.variable
+                && steps.all(|(&left, &right)| left.may_overlap(right));
+            let common = access.projections.len().min(loaned.projections.len());
+            let past_storage = access.replaces
+                && (loaned.projections[common..].iter()).any(|step| step.leaves_storage());
+            // A reserved loan acts as a shared one until its call.
+            let exclusive = mutable && !self.reserved.has(loan);
+            if !overlaps || past_storage || (access.reads && !exclusive) {
+                continue;
             }
+            reported.set(loan);
+            let name = self.variable_name(access.variable, file);
+            let words = self.words(self.body.instructions[borrow].ty);
+            let (noun, to) = (words.noun, words.to);
+            let kind = if mutable {
+                format!("a {} {noun}", words.writable)
+            } else {
+                format!("a {noun}")
+            };
+            let (subject, event) = (access.subject, access.event);
+            let message =
+                format!("{subject}{name} is {event} while {kind} {to} it is still in use");
+            let mut error = Diagnostic::new(diagnostics::BORROW_CONFLICT, message)
+                .label(file, access.span, format!("{} here", access.label))
+                .label(
+                    file,
+                    self.body.instructions.span(borrow),
+                    format!("{noun} made here"),
+                );
+            // A temporary ends with its statement; a variable, its block.
+            if self.body.variables[access.variable].hidden {
+                let help =
+                    "keep the value in a variable with `let`, so it lasts as long as the reference";
+                error = error.help(help, Vec::new());
+            }
+            return Some((holder, error));
         }
         None
     }
@@ -832,7 +890,7 @@ impl Loans<'_, '_> {
     fn activation_error(
         &self,
         id: Id<mir::Instruction>,
-        held: &[Bits<Loan>],
+        held: &Held,
         live: &Bits<Holder>,
         reported: &mut Bits<Loan>,
         file: &Arc<SourceFile>,

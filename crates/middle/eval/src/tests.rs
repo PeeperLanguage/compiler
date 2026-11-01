@@ -6,9 +6,10 @@ use model::operators::UnaryOp;
 use model::semantic_types::Float;
 use model::semantic_types::Integer;
 use model::semantic_types::Type;
+use runtime_abi::messages::DIVISION_BY_ZERO;
+use runtime_abi::messages::shift_count_message;
 
 use crate::conversions::convert;
-use crate::operators::ValueError;
 use crate::operators::binary;
 use crate::operators::known_trap;
 use crate::operators::unary;
@@ -29,7 +30,7 @@ fn value(ty: &Type, value: i128) -> Value {
     Value::Integer(Limbs::new(integer.bits, &limbs))
 }
 
-fn fold(op: BinaryOp, ty: &Type, left: i128, right: i128) -> Result<Value, ValueError> {
+fn fold(op: BinaryOp, ty: &Type, left: i128, right: i128) -> Result<Value, String> {
     binary(op, ty, &value(ty, left), ty, &value(ty, right))
 }
 
@@ -58,7 +59,7 @@ fn arithmetic_wraps_like_the_fixtures() {
     assert_eq!(fold(BinaryOp::Multiply, &i8, 64, 2), Ok(value(&i8, -128)));
     assert_eq!(
         unary(UnaryOp::Negate, &i8, &value(&i8, -128)),
-        Ok(value(&i8, -128))
+        value(&i8, -128)
     );
     assert_eq!(fold(BinaryOp::Divide, &i8, -128, -1), Ok(value(&i8, -128)));
     assert_eq!(fold(BinaryOp::Remainder, &i8, -128, -1), Ok(value(&i8, 0)));
@@ -67,10 +68,7 @@ fn arithmetic_wraps_like_the_fixtures() {
     assert_eq!(fold(BinaryOp::Remainder, &i32, -7, 3), Ok(value(&i32, -1)));
     let u8 = int(false, 8);
     assert_eq!(fold(BinaryOp::Add, &u8, 255, 1), Ok(value(&u8, 0)));
-    assert_eq!(
-        unary(UnaryOp::BitNot, &u8, &value(&u8, 0)),
-        Ok(value(&u8, 255))
-    );
+    assert_eq!(unary(UnaryOp::BitNot, &u8, &value(&u8, 0)), value(&u8, 255));
     // The same bits read through their own type: 255 as u8, -1 as i8.
     assert_eq!(value(&u8, 255), value(&i8, -1));
 }
@@ -81,19 +79,19 @@ fn values_that_cannot_be_folded() {
     let i8 = int(true, 8);
     assert_eq!(
         fold(BinaryOp::Divide, &u8, 1, 0),
-        Err(ValueError::DivisionByZero)
+        Err(DIVISION_BY_ZERO.to_string())
     );
     assert_eq!(
         fold(BinaryOp::Remainder, &i8, 1, 0),
-        Err(ValueError::DivisionByZero)
+        Err(DIVISION_BY_ZERO.to_string())
     );
     assert_eq!(
         fold(BinaryOp::ShiftLeft, &u8, 1, 8),
-        Err(ValueError::ShiftOutOfRange)
+        Err(shift_count_message(8))
     );
     assert_eq!(
         fold(BinaryOp::ShiftLeft, &i8, 1, -1),
-        Err(ValueError::ShiftOutOfRange)
+        Err(shift_count_message(8))
     );
     assert_eq!(fold(BinaryOp::ShiftLeft, &u8, 1, 7), Ok(value(&u8, 128)));
     // 1 << (255u8 + 1u8) from the fixtures: the count wraps to 0 first.
@@ -130,11 +128,11 @@ fn shift_counts_have_their_own_type() {
     );
     assert_eq!(
         shift(BinaryOp::ShiftLeft, &u8, 1, &u16, 8),
-        Err(ValueError::ShiftOutOfRange)
+        Err(shift_count_message(8))
     );
     assert_eq!(
         shift(BinaryOp::ShiftLeft, &u8, 1, &u16, 256),
-        Err(ValueError::ShiftOutOfRange)
+        Err(shift_count_message(8))
     );
 }
 
@@ -202,7 +200,7 @@ fn floats_compute_in_their_own_precision() {
     );
     assert_eq!(
         unary(UnaryOp::Negate, &f32, &float(&f32, 0.0)),
-        Ok(float(&f32, -0.0))
+        float(&f32, -0.0)
     );
     assert_ne!(
         float(&f64, 0.0),
@@ -223,7 +221,7 @@ fn bools() {
     assert_eq!(and, Ok(Value::Bool(false)));
     assert_eq!(
         unary(UnaryOp::LogicalNot, &Type::Bool, &Value::Bool(false)),
-        Ok(Value::Bool(true))
+        Value::Bool(true)
     );
 }
 
@@ -235,16 +233,16 @@ fn known_traps() {
         |op, left: &Type, right: &Type, count| known_trap(op, left, right, &value(right, count));
     assert_eq!(
         trap(BinaryOp::Divide, &i32, &i32, 0),
-        Some(ValueError::DivisionByZero)
+        Some(DIVISION_BY_ZERO.to_string())
     );
     assert_eq!(
         trap(BinaryOp::Remainder, &i32, &i32, 0),
-        Some(ValueError::DivisionByZero)
+        Some(DIVISION_BY_ZERO.to_string())
     );
     assert_eq!(trap(BinaryOp::Divide, &i32, &i32, -1), None);
     assert_eq!(
         trap(BinaryOp::ShiftLeft, &i32, &u8, 32),
-        Some(ValueError::ShiftOutOfRange)
+        Some(shift_count_message(32))
     );
     assert_eq!(trap(BinaryOp::ShiftRight, &i32, &u8, 31), None);
     assert_eq!(trap(BinaryOp::Add, &i32, &i32, 0), None);

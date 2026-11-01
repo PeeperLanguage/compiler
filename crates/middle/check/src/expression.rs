@@ -23,25 +23,21 @@ use source::Span;
 
 use crate::builder::ThirBuilder;
 
-/// What the context of an expression needs of its type.
-#[derive(Clone, Copy)]
-pub(crate) enum TypeExpectation {
-    /// The type a number literal without a suffix takes, if any; the value
-    /// may have another type.
-    Hint(Option<TypeId>),
-    /// The value must be of this type, or convert to it without `as`
-    /// (`coerce`); a mismatch is reported.
-    Required(TypeId),
-}
-
 impl ThirBuilder<'_, '_> {
     /// `expression` (`check_expr`), added to the body.
     pub(crate) fn add_expr(
         &mut self,
         expression: Id<ast::Expr>,
-        expectation: TypeExpectation,
+        expected: Option<TypeId>,
     ) -> Id<Expr> {
-        let checked = self.check_expr(expression, expectation);
+        let checked = self.check_expr(expression, expected);
+        self.body
+            .add(checked, self.checker.module().ast.exprs.span(expression))
+    }
+
+    /// `expression` (`check_required`), added to the body.
+    pub(crate) fn add_required(&mut self, expression: Id<ast::Expr>, ty: TypeId) -> Id<Expr> {
+        let checked = self.check_required(expression, ty);
         self.body
             .add(checked, self.checker.module().ast.exprs.span(expression))
     }
@@ -141,131 +137,129 @@ impl ThirBuilder<'_, '_> {
         Some(Expr { ty: to, kind })
     }
 
-    /// The THIR of `expression`, as `expectation` needs it, not yet added to
-    /// the body, so that a folded operation leaves no nodes for its operands.
+    /// The THIR of `expression`, as a value of the type `ty`, or that
+    /// converts to it without `as` (`coerce`); a mismatch is reported.
+    pub(crate) fn check_required(&mut self, expression: Id<ast::Expr>, ty: TypeId) -> Expr {
+        let checked = self.check_expr(expression, Some(ty));
+        self.require(checked, expression, ty)
+    }
+
+    /// The THIR of `expression`, not yet added to the body, so that a folded
+    /// operation leaves no nodes for its operands. `expected` is the type a
+    /// number literal without a suffix takes, if any; the value may have
+    /// another type.
     pub(crate) fn check_expr(
         &mut self,
         expression: Id<ast::Expr>,
-        expectation: TypeExpectation,
+        expected: Option<TypeId>,
     ) -> Expr {
-        let expected = match expectation {
-            TypeExpectation::Hint(hint) => hint,
-            TypeExpectation::Required(ty) => Some(ty),
-        };
         let tree = &self.checker.module().ast;
         let span = tree.exprs.span(expression);
-        let checked = 'checked: {
-            let what = match tree.exprs[expression] {
-                ast::Expr::Name => {
-                    let symbol = self.resolve(span);
-                    break 'checked self.check_symbol_value(symbol, span);
-                }
-                ast::Expr::Number => break 'checked self.check_number(span, None, expected),
-                ast::Expr::Bool(value) => {
-                    break 'checked Expr {
-                        ty: TypeId::BOOL,
-                        kind: ExprKind::Constant(Value::Bool(value)),
-                    };
-                }
-                ast::Expr::String { c_string: true } => break 'checked self.c_string(span),
-                ast::Expr::Parentheses(inner) => {
-                    break 'checked self.check_expr(inner, TypeExpectation::Hint(expected));
-                }
-                ast::Expr::Unary { op, value } => {
-                    break 'checked self.check_unary(op, value, span, expected);
-                }
-                ast::Expr::Binary { op, left, right } => {
-                    break 'checked self.check_binary(op, left, right, span, expected);
-                }
-                ast::Expr::Invalid => break 'checked Expr::INVALID, // the parser reported it
-                ast::Expr::Path(path) => {
-                    let symbol = self.checker.resolve_path(path);
-                    break 'checked self.check_symbol_value(symbol, span);
-                }
-                ast::Expr::Call { callee, arguments } => {
-                    break 'checked self.check_call(callee, arguments, span);
-                }
-                ast::Expr::StructLiteral { ty, fields } => {
-                    break 'checked self.check_struct_literal(ty, fields, span, expected);
-                }
-                ast::Expr::Selector { value, field } => {
-                    break 'checked self.check_field(value, field);
-                }
-                ast::Expr::ArrayLiteral { ty, entries } => {
-                    break 'checked self.check_array_literal(ty, entries, span);
-                }
-                ast::Expr::Spread(values) => {
-                    self.add_expr(values, TypeExpectation::Hint(None)); // for its own errors
-                    let message = "`...` spreads into an array literal or a `...` parameter";
-                    self.checker
-                        .error(diagnostics::INVALID_OPERATION, message, span);
-                    break 'checked Expr::INVALID;
-                }
-                ast::Expr::Range { .. } => break 'checked self.check_range(expression, expected),
-                ast::Expr::Index { value, index } => {
-                    break 'checked self.check_index(value, index, span);
-                }
-                ast::Expr::Dereference(value) => {
-                    break 'checked self.check_dereference(value, span);
-                }
-                ast::Expr::Reference { mutable, value } => {
-                    if let ast::Expr::Index { index, .. } = tree.exprs[value]
-                        && let ast::Expr::Range { .. } = tree.exprs[index]
-                    {
-                        break 'checked self.check_slice(mutable, value);
-                    }
-                    // `&5` where a `&i64` is wanted lends an `i64`.
-                    let target = expected.and_then(|ty| self.checker.types[ty].pointee());
-                    let place = self.add_expr(value, TypeExpectation::Hint(target));
-                    // A constant has no storage: each use is a new value, so a
-                    // write through the reference would not change it.
-                    let named = tree.unparenthesized(value);
-                    if mutable
-                        && let ast::Expr::Name | ast::Expr::Path(_) = tree.exprs[named]
-                        && let ExprKind::Constant(_) = self.body.exprs[place].kind
-                    {
-                        let name = tree.file.slice(tree.exprs.span(named));
-                        let message = format!("cannot mutably borrow constant `{name}`");
-                        self.checker
-                            .error(diagnostics::CONSTANT_REASSIGNMENT, message, span);
-                        break 'checked Expr::INVALID;
-                    }
-                    // `len` has no storage either.
-                    if mutable
-                        && let ast::Expr::Selector { .. } = tree.exprs[named]
-                        && let Some(message) = self.fixed_length(place)
-                    {
-                        self.checker
-                            .error(diagnostics::INVALID_ASSIGNMENT, message, span);
-                        break 'checked Expr::INVALID;
-                    }
-                    break 'checked self.check_borrow(mutable, place, span);
-                }
-                ast::Expr::Cast { value, ty } => break 'checked self.check_cast(value, ty, span),
-                ast::Expr::None => break 'checked self.check_none(span, expected),
-                ast::Expr::RawAddress(value) => {
-                    let place = self.add_expr(value, TypeExpectation::Hint(None));
-                    break 'checked self.check_address(place, span);
-                }
-                ast::Expr::Print { newline, values } => {
-                    break 'checked self.check_print(newline, values);
-                }
-                ast::Expr::String { c_string: false } => "string literals",
-                ast::Expr::Char { .. } => "character literals",
-                ast::Expr::Free(_) => "`free` calls",
-                ast::Expr::VariantLiteral { .. } => "variant literals",
-                ast::Expr::Is { .. } => "`is` tests",
-                ast::Expr::OrElse { .. } => "`orelse` fallbacks",
-                ast::Expr::Block(_) => "block expressions",
-                ast::Expr::Pipe { .. } => "pipes",
-            };
-            self.checker.not_supported(span, what);
-            Expr::INVALID
-        };
-        match expectation {
-            TypeExpectation::Required(ty) => self.require(checked, expression, ty),
-            TypeExpectation::Hint(_) => checked,
+        match tree.exprs[expression] {
+            ast::Expr::Name => {
+                let symbol = self.resolve(span);
+                self.check_symbol_value(symbol, span)
+            }
+            ast::Expr::Number => self.check_number(span, None, expected),
+            ast::Expr::Bool(value) => Expr {
+                ty: TypeId::BOOL,
+                kind: ExprKind::Constant(Value::Bool(value)),
+            },
+            ast::Expr::String { c_string: true } => self.c_string(span),
+            ast::Expr::Parentheses(inner) => self.check_expr(inner, expected),
+            ast::Expr::Unary { op, value } => self.check_unary(op, value, span, expected),
+            ast::Expr::Binary { op, left, right } => {
+                self.check_binary(op, left, right, span, expected)
+            }
+            ast::Expr::Invalid => Expr::INVALID, // the parser reported it
+            ast::Expr::Path(path) => {
+                let symbol = self.checker.resolve_path(path);
+                self.check_symbol_value(symbol, span)
+            }
+            ast::Expr::Call { callee, arguments } => self.check_call(callee, arguments, span),
+            ast::Expr::StructLiteral { ty, fields } => {
+                self.check_struct_literal(ty, fields, span, expected)
+            }
+            ast::Expr::Selector { value, field } => self.check_field(value, field),
+            ast::Expr::ArrayLiteral { ty, entries } => self.check_array_literal(ty, entries, span),
+            ast::Expr::Spread(values) => {
+                self.add_expr(values, None); // for its own errors
+                let message = "`...` spreads into an array literal or a `...` parameter";
+                self.checker
+                    .error(diagnostics::INVALID_OPERATION, message, span);
+                Expr::INVALID
+            }
+            ast::Expr::Range { .. } => self.check_range(expression, expected),
+            ast::Expr::Index { value, index } => self.check_index(value, index, span),
+            ast::Expr::Dereference(value) => self.check_dereference(value, span),
+            ast::Expr::Reference { mutable, value } => {
+                self.check_reference(mutable, value, span, expected)
+            }
+            ast::Expr::Cast { value, ty } => self.check_cast(value, ty, span),
+            ast::Expr::None => self.check_none(span, expected),
+            ast::Expr::RawAddress(value) => {
+                let place = self.add_expr(value, None);
+                self.check_address(place, span)
+            }
+            ast::Expr::Print { newline, values } => self.check_print(newline, values),
+            ast::Expr::String { c_string: false } => self.unsupported_expr(span, "string literals"),
+            ast::Expr::Char { .. } => self.unsupported_expr(span, "character literals"),
+            ast::Expr::Free(_) => self.unsupported_expr(span, "`free` calls"),
+            ast::Expr::VariantLiteral { .. } => self.unsupported_expr(span, "variant literals"),
+            ast::Expr::Is { .. } => self.unsupported_expr(span, "`is` tests"),
+            ast::Expr::OrElse { .. } => self.unsupported_expr(span, "`orelse` fallbacks"),
+            ast::Expr::Block(_) => self.unsupported_expr(span, "block expressions"),
+            ast::Expr::Pipe { .. } => self.unsupported_expr(span, "pipes"),
         }
+    }
+
+    /// The expression `&value`, or `&mut value` when `mutable`, at `span`.
+    fn check_reference(
+        &mut self,
+        mutable: bool,
+        value: Id<ast::Expr>,
+        span: Span,
+        expected: Option<TypeId>,
+    ) -> Expr {
+        let tree = &self.checker.module().ast;
+        if let ast::Expr::Index { index, .. } = tree.exprs[value]
+            && let ast::Expr::Range { .. } = tree.exprs[index]
+        {
+            return self.check_slice(mutable, value);
+        }
+        // `&5` where a `&i64` is wanted lends an `i64`.
+        let target = expected.and_then(|ty| self.checker.types[ty].pointee());
+        let place = self.add_expr(value, target);
+        // A constant has no storage: each use is a new value, so a
+        // write through the reference would not change it.
+        let named = tree.unparenthesized(value);
+        if mutable
+            && let ast::Expr::Name | ast::Expr::Path(_) = tree.exprs[named]
+            && let ExprKind::Constant(_) = self.body.exprs[place].kind
+        {
+            let name = tree.file.slice(tree.exprs.span(named));
+            let message = format!("cannot mutably borrow constant `{name}`");
+            self.checker
+                .error(diagnostics::CONSTANT_REASSIGNMENT, message, span);
+            return Expr::INVALID;
+        }
+        // `len` has no storage either.
+        if mutable
+            && let ast::Expr::Selector { .. } = tree.exprs[named]
+            && let Some(message) = self.fixed_length(place)
+        {
+            self.checker
+                .error(diagnostics::INVALID_ASSIGNMENT, message, span);
+            return Expr::INVALID;
+        }
+        self.check_borrow(mutable, place, span)
+    }
+
+    /// An expression of a kind that `what` names, at `span`, which no check
+    /// exists for yet.
+    fn unsupported_expr(&mut self, span: Span, what: &str) -> Expr {
+        self.checker.not_supported(span, what);
+        Expr::INVALID
     }
 
     /// `checked`, from `expression`, as a value of the type `ty` (`coerce`);

@@ -43,6 +43,17 @@ macro_rules! operators {
     };
 }
 
+impl BinaryOp {
+    /// Whether the operator can stop a program, for some operands: a division
+    /// by zero or a shift count out of range.
+    pub const fn can_trap(self) -> bool {
+        matches!(
+            self,
+            BinaryOp::Divide | BinaryOp::Remainder | BinaryOp::ShiftLeft | BinaryOp::ShiftRight
+        )
+    }
+}
+
 operators! {
     /// A binary operator, named after what it does.
     pub enum BinaryOp {

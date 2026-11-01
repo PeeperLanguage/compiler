@@ -134,8 +134,8 @@ impl Function<'_, '_, '_> {
                 ref fields,
             } => {
                 let program = self.module.program;
-                let (name, file) = project::declared_name(&program.modules, definition);
-                text.extend_from_slice(name.text(file).as_bytes());
+                let name = project::declared_text(&program.modules, definition);
+                text.extend_from_slice(name.as_bytes());
                 let names = project::field_names(&program.modules, definition);
                 let struct_text = type_text(types, ty);
                 for (index, (field_name, &field)) in names.zip(fields).enumerate() {

@@ -16,7 +16,6 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use arena::Id;
-use builtin::UNSUPPORTED_FUNCTIONS;
 use diagnostics::Code;
 use diagnostics::Diagnostic;
 use diagnostics::fix::Fix;
@@ -135,7 +134,7 @@ impl<'p> Checker<'p> {
         Checker {
             modules,
             module_checks,
-            types: Types::default(),
+            types: Types::new(target.pointer_bits),
             target,
             record_facts,
             checking: Vec::new(),
@@ -236,27 +235,17 @@ impl<'p> Checker<'p> {
         result
     }
 
-    /// `usize`, as wide as a pointer of the target.
-    pub(crate) fn usize_type(&mut self) -> TypeId {
-        let usize = self.types.builtin("usize", self.target.pointer_bits);
-        usize.expect("`usize` is built in")
-    }
-
     /// The type `ty` as a message names it (`Types::text`).
     pub(crate) fn type_text(&self, ty: TypeId) -> String {
         self.types.text(ty, |definition| {
-            let (name, file) = project::declared_name(self.modules, definition);
-            name.text(file)
+            project::declared_text(self.modules, definition)
         })
     }
 
     /// Both types as a message names them, with each one's module when two
     /// different declarations in them read the same: `a::Point`, `[1]b::Point`.
     pub(crate) fn type_texts(&self, first: TypeId, second: TypeId) -> (String, String) {
-        let name = |definition: DefId| {
-            let (name, file) = project::declared_name(self.modules, definition);
-            name.text(file)
-        };
+        let name = |definition: DefId| project::declared_text(self.modules, definition);
         // `Types::text` needs a closure it can copy, so this one cannot own the list.
         let written = RefCell::new(Vec::new());
         let plain = |definition: DefId| {
@@ -488,19 +477,14 @@ impl<'p> Checker<'p> {
         Some(symbol)
     }
 
-    /// Reports `name`, written at `span`, which nothing in scope declares:
-    /// a built-in function, not supported yet, or an unknown name, with the
-    /// nearest of `locals` and the top-level names.
+    /// Reports `name`, written at `span`, which nothing in scope declares,
+    /// with the nearest of `locals` and the top-level names.
     pub(crate) fn report_undeclared<'a>(
         &mut self,
         name: &str,
         span: Span,
         locals: impl Iterator<Item = &'a str>,
     ) {
-        if UNSUPPORTED_FUNCTIONS.contains(&name) {
-            self.not_supported(span, "built-in functions");
-            return;
-        }
         let globals = self.visible_symbols().map(|(declared, _)| declared);
         let meant = scope::nearest(name, locals, globals);
         let message = format!("unknown name `{name}`");

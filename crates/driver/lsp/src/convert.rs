@@ -123,8 +123,7 @@ pub(crate) fn lsp_diagnostics(
     // Labels on one span are one entry with their texts in order, as the
     // terminal draws them, so the editor's hover and inline text agree.
     let mut related: Vec<DiagnosticRelatedInformation> = Vec::new();
-    let hint_labels = (diagnostic.labels.iter()).filter(|label| label.severity == Severity::Hint);
-    for label in hint_labels {
+    for label in diagnostic.labels.iter().skip(1) {
         let Ok(uri) = Url::from_file_path(&label.file.path) else {
             continue;
         };

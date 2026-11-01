@@ -29,32 +29,16 @@ use model::semantic_types::Type;
 use runtime_abi::messages::DIVISION_BY_ZERO;
 use runtime_abi::messages::shift_count_message;
 
-/// Why an operation gives no value at compile time.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ValueError {
-    DivisionByZero,
-    /// A shift by a negative count or by the shifted type's width or more.
-    ShiftOutOfRange,
-}
-
-/// What a program that hits `trap` on a left operand of `left_type` is told.
-pub fn trap_message(trap: ValueError, left_type: &Type) -> String {
-    match (trap, left_type) {
-        (ValueError::ShiftOutOfRange, Type::Integer(shifted)) => shift_count_message(shifted.bits),
-        _ => DIVISION_BY_ZERO.to_string(),
-    }
-}
-
 /// `left op right`. Both operands have one type, except that a shift count
 /// has its own integer type (`value << count`). Check only gives an operator
-/// operands it accepts.
+/// operands it accepts. `Err` is what a program that traps here is told.
 pub fn binary(
     op: BinaryOp,
     left_type: &Type,
     left: &Value,
     right_type: &Type,
     right: &Value,
-) -> Result<Value, ValueError> {
+) -> Result<Value, String> {
     debug_assert!(
         matches!(op, BinaryOp::ShiftLeft | BinaryOp::ShiftRight) || left_type == right_type,
         "check gives `{op:?}` operands of one type"
@@ -96,16 +80,16 @@ pub fn binary(
 }
 
 /// `op value`, where the operand has the type `operand_type`.
-pub fn unary(op: UnaryOp, operand_type: &Type, value: &Value) -> Result<Value, ValueError> {
+pub fn unary(op: UnaryOp, operand_type: &Type, value: &Value) -> Value {
     match (op, operand_type, value) {
-        (UnaryOp::LogicalNot, Type::Bool, Value::Bool(value)) => Ok(Value::Bool(!value)),
+        (UnaryOp::LogicalNot, Type::Bool, Value::Bool(value)) => Value::Bool(!value),
         (UnaryOp::Negate, Type::Integer(integer), Value::Integer(value)) => {
-            Ok(Value::Integer(bigint::negate(integer.bits, value)))
+            Value::Integer(bigint::negate(integer.bits, value))
         }
         // Flipping the sign bit negates either precision, NaN and zero included.
-        (UnaryOp::Negate, Type::Float(_), Value::Float(bits)) => Ok(Value::Float(bits ^ 1 << 63)),
+        (UnaryOp::Negate, Type::Float(_), Value::Float(bits)) => Value::Float(bits ^ 1 << 63),
         (UnaryOp::BitNot, Type::Integer(integer), Value::Integer(value)) => {
-            Ok(Value::Integer(bigint::not(integer.bits, value)))
+            Value::Integer(bigint::not(integer.bits, value))
         }
         _ => unreachable!("check gives `{op:?}` an operand of type {operand_type:?}"),
     }
@@ -113,14 +97,14 @@ pub fn unary(op: UnaryOp, operand_type: &Type, value: &Value) -> Result<Value, V
 
 /// The count of a shift of a `shifted` value by `count`, of the type
 /// `count_type`: below the shifted type's width, or out of range.
-fn shift_count(shifted: Integer, count_type: Integer, count: &Limbs) -> Result<u32, ValueError> {
+fn shift_count(shifted: Integer, count_type: Integer, count: &Limbs) -> Result<u32, String> {
     bigint::to_u64(count_type.bits, count_type.signed, count)
         .filter(|&count| count < u64::from(shifted.bits))
         .map(|count| count as u32)
-        .ok_or(ValueError::ShiftOutOfRange)
+        .ok_or_else(|| shift_count_message(shifted.bits))
 }
 
-/// Why `op` traps whatever its left operand, of the type `left_type`, is,
+/// What a program is told when `op` traps whatever its left operand, of the type `left_type`, is,
 /// with the right operand `right`, of the type `right_type`: a division by
 /// zero or a shift count out of range. Both depend on the right operand
 /// only, so `op` is tried on a zero left one.
@@ -129,15 +113,12 @@ pub fn known_trap(
     left_type: &Type,
     right_type: &Type,
     right: &Value,
-) -> Option<ValueError> {
+) -> Option<String> {
     let Type::Integer(integer) = left_type else {
         return None; // float division gives an infinity or NaN
     };
-    // The only operators that trap; skipping the others keeps folding cheap.
-    if !matches!(
-        op,
-        BinaryOp::Divide | BinaryOp::Remainder | BinaryOp::ShiftLeft | BinaryOp::ShiftRight
-    ) {
+    // Skipping the others keeps folding cheap.
+    if !op.can_trap() {
         return None;
     }
     let zero = Value::Integer(Limbs::new(integer.bits, &[]));
@@ -150,8 +131,9 @@ fn integer_binary(
     left: &Limbs,
     count_type: Integer,
     right: &Limbs,
-) -> Result<Value, ValueError> {
+) -> Result<Value, String> {
     let Integer { signed, bits } = integer;
+    let division_by_zero = || DIVISION_BY_ZERO.to_string();
     let compare = |accept: fn(Ordering) -> bool| {
         Ok(Value::Bool(accept(bigint::compare(
             bits, signed, left, right,
@@ -162,10 +144,10 @@ fn integer_binary(
         BinaryOp::Subtract => bigint::subtract(bits, left, right),
         BinaryOp::Multiply => bigint::multiply(bits, left, right),
         BinaryOp::Divide => {
-            bigint::divide(bits, signed, left, right).ok_or(ValueError::DivisionByZero)?
+            bigint::divide(bits, signed, left, right).ok_or_else(division_by_zero)?
         }
         BinaryOp::Remainder => {
-            bigint::remainder(bits, signed, left, right).ok_or(ValueError::DivisionByZero)?
+            bigint::remainder(bits, signed, left, right).ok_or_else(division_by_zero)?
         }
         BinaryOp::ShiftLeft | BinaryOp::ShiftRight => {
             let count = shift_count(integer, count_type, right)?;

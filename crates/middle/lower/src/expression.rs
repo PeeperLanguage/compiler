@@ -13,6 +13,7 @@ use model::thir;
 use source::Span;
 
 use crate::Lowering;
+use crate::lowered_variable;
 use crate::ranges::RangeWalk;
 use crate::slices::slice_elements;
 
@@ -59,7 +60,7 @@ impl Lowering<'_> {
             thir::ExprKind::Length(value) => {
                 let value_type = self.thir.exprs[value].ty;
                 if !matches!(self.types[value_type], Type::Slice { .. }) {
-                    _ = self.place(value)?;
+                    _ = self.place_or_field(value)?;
                     let array = self.types[value_type].pointee().unwrap_or(value_type);
                     let Type::Array { length, .. } = self.types[array] else {
                         unreachable!("`.len` is the length of an array or slice")
@@ -68,7 +69,7 @@ impl Lowering<'_> {
                 }
                 let slice = match self.thir.exprs[value].kind {
                     thir::ExprKind::Variable(_) | thir::ExprKind::Field { .. } => {
-                        let read = match self.place(value)? {
+                        let read = match self.place_or_field(value)? {
                             Ok(place) => mir::InstructionKind::Load(place),
                             Err(field) => field,
                         };
@@ -97,6 +98,7 @@ impl Lowering<'_> {
             }
             thir::ExprKind::Call {
                 function,
+                signature,
                 arguments,
             } => {
                 let arguments = self
@@ -108,6 +110,7 @@ impl Lowering<'_> {
                     .collect::<Option<_>>()?;
                 mir::InstructionKind::Call {
                     function,
+                    signature,
                     arguments,
                 }
             }
@@ -154,9 +157,9 @@ impl Lowering<'_> {
                 // cost a compile 10 M instructions (rust-style.md).
                 let place = match *kind {
                     thir::ExprKind::Variable(variable) => {
-                        Ok(mir::Place::whole(Id::from_index(variable.index())))
+                        Ok(mir::Place::whole(lowered_variable(variable)))
                     }
-                    _ => self.place(expression)?,
+                    _ => self.place_or_field(expression)?,
                 };
                 match place {
                     Ok(place) if self.types.is_copy(ty) => mir::InstructionKind::Load(place),
@@ -168,9 +171,7 @@ impl Lowering<'_> {
                 let Some(mutable) = self.types[ty].borrows() else {
                     unreachable!("a borrow's type is a reference or slice")
                 };
-                let Ok(mut place) = self.place(borrowed)? else {
-                    unreachable!("the checker borrows only a place")
-                };
+                let mut place = self.place(borrowed)?;
                 // Borrowing a slice lends its elements again.
                 if let Type::Slice { .. } = self.types[self.thir.exprs[borrowed].ty] {
                     place = slice_elements(place);
@@ -178,14 +179,17 @@ impl Lowering<'_> {
                 mir::InstructionKind::Borrow { place, mutable }
             }
             thir::ExprKind::Slice { .. } => return self.lower_slice(expression),
-            thir::ExprKind::Address(place) => {
-                let Ok(place) = self.place(place)? else {
-                    unreachable!("the checker takes only the address of a place")
-                };
-                mir::InstructionKind::Address(place)
-            }
+            thir::ExprKind::Address(place) => mir::InstructionKind::Address(self.place(place)?),
         };
         Some(self.emit(kind, ty, span))
+    }
+
+    /// The place `expression` names, which the checker made sure is one.
+    pub(super) fn place(&mut self, expression: Id<thir::Expr>) -> Option<mir::Place> {
+        match self.place_or_field(expression)? {
+            Ok(place) => Some(place),
+            Err(_) => unreachable!("the checker allows only a place here"),
+        }
     }
 
     /// The place `expression` names: a variable or a temporary, whose value
@@ -194,7 +198,7 @@ impl Lowering<'_> {
     /// computed here, in the order written. For fields of a value not in a
     /// variable, the `Field` instruction reading them from that value,
     /// computed here.
-    pub(super) fn place(
+    fn place_or_field(
         &mut self,
         expression: Id<thir::Expr>,
     ) -> Option<Result<mir::Place, mir::InstructionKind>> {
@@ -227,7 +231,7 @@ impl Lowering<'_> {
                 } => {
                     let span = self.thir.exprs.span(outer);
                     let value = self.lower_expr(value)?;
-                    let temporary = Id::from_index(variable.index());
+                    let temporary = lowered_variable(variable);
                     let place = mir::Place::whole(temporary);
                     self.emit(
                         mir::InstructionKind::Store { place, value },
@@ -257,7 +261,7 @@ impl Lowering<'_> {
             Err(index) => Some(mir::Projection::Index(self.lower_expr(index)?)),
         });
         Some(Ok(mir::Place {
-            variable: Id::from_index(variable.index()),
+            variable: lowered_variable(variable),
             projections: projections.collect::<Option<_>>()?,
         }))
     }

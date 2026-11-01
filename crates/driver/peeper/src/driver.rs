@@ -13,7 +13,6 @@ use diagnostics::fix;
 use diagnostics::printer;
 use eval::interpreter::program::Stream;
 use llvm::BuildMode;
-use model::ModuleId;
 use model::machine::Machine;
 use source::SourceFile;
 
@@ -84,8 +83,8 @@ impl<W: Write> Command<W> {
             Goal::Build { output, mode } => {
                 self.execute_build(&project, &program, output.as_deref(), *mode)
             }
-            Goal::Run { arguments, mode } => self.execute_run(&project, &program, arguments, *mode),
-            Goal::Interpret => self.execute_interpret(&project, &program),
+            Goal::Run { arguments, mode } => self.execute_run(&program, arguments, *mode),
+            Goal::Interpret => self.execute_interpret(&program),
         }
     }
 
@@ -100,7 +99,7 @@ impl<W: Write> Command<W> {
         apply_fixes: bool,
         mode: BuildMode,
     ) -> u8 {
-        let (diagnostics, ll, dumped) = compile(project, program, dumps, mode, self.target, false);
+        let (diagnostics, ll, dumped) = compile(program, dumps, mode, self.target, false);
         // Dumps are written only for a program without errors.
         if !diagnostics.iter().any(Diagnostic::is_error)
             && let Err(error) =
@@ -136,7 +135,7 @@ impl<W: Write> Command<W> {
         output: Option<&Path>,
         mode: BuildMode,
     ) -> u8 {
-        let (diagnostics, ll, _) = compile(project, program, &[], mode, self.target, true);
+        let (diagnostics, ll, _) = compile(program, &[], mode, self.target, true);
         if !self.print(&diagnostics) {
             return 1;
         }
@@ -161,12 +160,11 @@ impl<W: Write> Command<W> {
     /// it with `arguments` and removes it; gives the program's exit code.
     fn execute_run(
         &mut self,
-        project: &project::Project,
         program: &project::Program,
         arguments: &[String],
         mode: BuildMode,
     ) -> u8 {
-        let (diagnostics, ll, _) = compile(project, program, &[], mode, self.target, true);
+        let (diagnostics, ll, _) = compile(program, &[], mode, self.target, true);
         if !self.print(&diagnostics) {
             return 1;
         }
@@ -192,8 +190,8 @@ impl<W: Write> Command<W> {
 
     /// `run -interpret`: runs the program on the interpreter, then prints what
     /// it wrote; gives the program's exit code.
-    fn execute_interpret(&mut self, project: &project::Project, program: &project::Program) -> u8 {
-        let (results, ran) = compile::interpret(project, program, self.target);
+    fn execute_interpret(&mut self, program: &project::Program) -> u8 {
+        let (results, ran) = compile::interpret(program, self.target);
         let found = program.diagnostics.iter().chain(results.diagnostics());
         let diagnostics: Vec<Diagnostic> = found.cloned().collect();
         if !self.print(&diagnostics) {
@@ -240,13 +238,12 @@ impl<W: Write> Command<W> {
     }
 }
 
-/// Checks and lowers `program`, of `project`, for `target` unless loading
+/// Checks and lowers `program` for `target` unless loading
 /// it found an error, gathering the `dumps` of its functions. With `links`,
 /// it also needs the entry file's `main`. Gives every diagnostic, loading's
 /// first; each module's LLVM text for a build in `mode`, when linking or a
 /// dump needs it; and the dumps, to write when there is no error.
 fn compile<'p>(
-    project: &project::Project,
     program: &'p project::Program,
     dumps: &'p [Dump],
     mode: BuildMode,
@@ -261,11 +258,6 @@ fn compile<'p>(
         return (all, Vec::new(), dumped);
     }
     let writes_ll = links || dumped.wants_ll();
-    // The module of the entry file, which must declare `main`.
-    let entry = program
-        .modules
-        .iter()
-        .position(|module| Path::new(&module.ast.file.path) == project.entry);
     // Check and lower each function; its MIR goes to the dumps and, when
     // LLVM text is written, to the `queue` as soon as it is built.
     let mut check_and_lower = |mut queue: Option<&mut llvm::write::FunctionQueue>| {
@@ -273,7 +265,7 @@ fn compile<'p>(
             program,
             target,
             compile::Results::default(),
-            entry.filter(|_| links).map(ModuleId::from_index),
+            program.entry.filter(|_| links),
             false, // names are for editors
             |output| {
                 let compile::Output::Function(compile::CheckedFunction {
@@ -306,8 +298,8 @@ fn compile<'p>(
         (Vec::new(), check_and_lower(None))
     };
     all.extend(results.diagnostics().cloned());
-    if let (Some(entry), Some((main, exit_code))) = (entry, results.entry_point()) {
-        ll[entry].add_entry_point(main, exit_code);
+    if let (Some(entry), Some((main, exit_code))) = (program.entry, results.entry_point()) {
+        ll[entry.index()].add_entry_point(main, exit_code);
     }
     (all, ll, dumped)
 }

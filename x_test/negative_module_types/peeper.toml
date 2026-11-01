@@ -19,5 +19,7 @@ stderr_contains = [
     "mismatched types: expected `negative_module_types:geometry::Point`, found `&negative_module_types:other::Point`",
     "mismatched types: expected `Point`, found `&Point`",
     "cannot mutably borrow constant `geometry::Sides`",
-    "Compilation failed with 12 error(s)",
+    "cannot assign to constant `geometry::Sides`",
+    "cannot assign to `geometry::Origin`, which is not a variable",
+    "Compilation failed with 14 error(s)",
 ]

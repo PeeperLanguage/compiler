@@ -32,7 +32,6 @@ pub fn lower(
     body: &thir::Body,
     parameters: usize,
     result: TypeId,
-    usize: TypeId,
     types: &Types,
 ) -> Option<mir::Body> {
     if body.has_errors {
@@ -41,7 +40,6 @@ pub fn lower(
     let mut lowering = Lowering {
         thir: body,
         types,
-        usize,
         mir: mir::Body {
             blocks: Arena::default(),
             instructions: Arena::default(),
@@ -109,7 +107,6 @@ pub fn lower(
 struct Lowering<'t> {
     thir: &'t thir::Body,
     types: &'t Types, // to look through aliases
-    usize: TypeId,    // what slice bounds become once checked
     mir: mir::Body,
     block: Id<mir::Block>,            // the block being filled
     instructions: Vec<NonZeroU32>,    // that block's instructions so far
@@ -129,6 +126,11 @@ struct Loop {
     next: Id<mir::Block>, // the start of the next pass
     exit: Id<mir::Block>,
     declared: usize,
+}
+
+/// The MIR variable of `variable`: their ids match (`lower`).
+fn lowered_variable(variable: Id<thir::Variable>) -> Id<mir::Variable> {
+    Id::from_index(variable.index())
 }
 
 impl Lowering<'_> {

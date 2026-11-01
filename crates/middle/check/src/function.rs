@@ -13,7 +13,6 @@ use model::thir;
 use source::Span;
 
 use crate::Checker;
-use crate::State;
 
 /// How far the body of a function is built (`Checker::build_function`).
 pub(crate) enum Built {
@@ -68,37 +67,21 @@ impl Checker<'_> {
     ) -> Option<mir::Body> {
         let modules = self.modules;
         let module = definition.module.index();
-        let usize = self.usize_type();
         let Type::Function {
             ref parameters,
             result,
+            ref origins,
             ..
         } = self.types[ty]
         else {
             unreachable!("a checked body has a function type")
         };
-        let mir = lower::lower(thir, parameters.len(), result, usize, &self.types)?;
+        let mir = lower::lower(thir, parameters.len(), result, &self.types)?;
         let file = &modules[module].ast.file;
-        // Reported here, then added: a call's origins are read from any
-        // module's checks, this one's too.
-        let mut found = Vec::new();
-        let diagnostics = &mut found;
-        flow::variable_state::report_variable_state_errors(&mir, &self.types, file, diagnostics);
-        let module_checks = &self.module_checks;
+        let diagnostics = &mut self.module_checks[module].diagnostics;
         let types = &self.types;
-        let origins_of = |definition: DefId| {
-            let State::Done(ty) =
-                module_checks[definition.module.index()].declared_types[definition.index as usize]
-            else {
-                unreachable!("a call is checked, and so its function")
-            };
-            match types[ty] {
-                Type::Function { ref origins, .. } => &**origins,
-                // No origins would let a returned reference dangle unseen.
-                _ => unreachable!("a call to a function with a signature error is not lowered"),
-            }
-        };
-        flow::loans::report_loan_errors(&mir, types, definition, &origins_of, file, diagnostics);
+        flow::variable_state::report_variable_state_errors(&mir, types, file, diagnostics);
+        flow::loans::report_loan_errors(&mir, types, origins, file, diagnostics);
         flow::warn_unreachable_code(&mir, file, diagnostics);
         // Last: it points at the closing brace.
         flow::report_missing_return(
@@ -106,13 +89,9 @@ impl Checker<'_> {
             file,
             types,
             result,
-            |definition| {
-                let (name, file) = project::declared_name(modules, definition);
-                name.text(file)
-            },
+            |definition| project::declared_text(modules, definition),
             diagnostics,
         );
-        self.module_checks[module].diagnostics.append(&mut found);
         Some(mir)
     }
 

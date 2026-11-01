@@ -9,6 +9,7 @@ use source::Span;
 
 use crate::Loop;
 use crate::Lowering;
+use crate::lowered_variable;
 
 impl Lowering<'_> {
     /// Lowers the statements of the source block `block`, whose MIR debug
@@ -67,28 +68,26 @@ impl Lowering<'_> {
         let temporaries = self.declared.len();
         match self.thir.stmts[statement] {
             thir::Stmt::Let { variable, value } => {
-                let variable = Id::from_index(variable.index());
+                let declared = lowered_variable(variable);
                 if let Some(value) = value {
                     let value = self.lower_expr(value)?;
-                    let place = mir::Place::whole(variable);
+                    let place = mir::Place::whole(declared);
                     let store = mir::InstructionKind::Store { place, value };
                     self.emit(store, TypeId::VOID, span);
                 }
                 // A hidden `let` holds a `for` loop's array: every temporary
                 // of that code lasts through the loop, as in Rust, and ends
                 // with the block around it.
-                if !self.mir.variables[variable].hidden {
+                if !self.mir.variables[declared].hidden {
                     self.close_scopes(temporaries, span);
                 }
                 self.declared.extend(self.kept.take());
-                self.declared.push(variable);
+                self.declared.push(declared);
                 return Some(());
             }
             thir::Stmt::Assign { target, value } => {
                 let value = self.lower_expr(value)?;
-                let Ok(place) = self.place(target)? else {
-                    unreachable!("the checker assigns only a place")
-                };
+                let place = self.place(target)?;
                 let store = mir::InstructionKind::Store { place, value };
                 self.emit(store, TypeId::VOID, span);
             }

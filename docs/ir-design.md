@@ -90,7 +90,7 @@ enum variants, function types) are `model` data, written by check.
 |---|---|
 | `model` | data only: `ast` (the syntax tree), `thir` (THIR nodes), `mir` (MIR graphs); `semantic_types` (`TypeId`, the type interner, the built-in types table); `constant` (constant values); `ModuleId`, `DefId`; `operators` (`BinaryOp`, `UnaryOp`); signatures |
 | `check` | the checker: scopes, name lookup, building THIR, writing signatures; the declaration tables (`Checker`) |
-| `eval` | what operators mean on constant values (`binary`, `unary`, `convert`, `known_trap`, the trap messages `trap_message`); the MIR interpreter (`interpreter::run` for a constant's call, `interpreter::program::run` for a whole program) |
+| `eval` | what operators mean on constant values (`binary`, `unary`, `convert`, `known_trap`); the MIR interpreter (`interpreter::run` for a constant's call, `interpreter::program::run` for a whole program) |
 | `runtime_abi` | what a running program does as seen from outside, shared by `llvm` and `eval`: streams and the exit code, runtime function names, panic messages, number text. The two `runtime/` files the runtime library needs too are read from there by `#[path]`, as that library is built with no crates |
 | `lower` | lowering from THIR; path checks |
 | `llvm` | LLVM text for a module; running clang and the linker |
@@ -347,10 +347,10 @@ arenas hold its span and type, so body `const`s get an arena of their own,
 `constants`), else a module-level declaration or module. A body with an error
 keeps its THIR, marked `has_errors` (as rustc marks typeck results
 `tainted_by_errors`), so names work while a function is broken; `lower::lower`
-gives no MIR for it, and `use_function` gets its THIR alone. `compile` runs the
+gives no MIR for it, and `use_output` gets its THIR alone. `compile` runs the
 phases one by one: `Checker::check_body` gives the THIR, `compile`'s `lower`
 the MIR. `compile` has no second way in for editors: the language
-server reads the names through `use_function` during its normal check and
+server reads the names through `use_output` during its normal check and
 keeps them per module, beside the program it compiled, as gopls keeps what
 `go/types` records. A module the compile reused gives no names; while its
 text is unchanged its names are kept from before, so they hold no ids of one
@@ -507,7 +507,7 @@ the program runs. The loan rules hold for it as for a reference: both answer
 copied. A slice is never an array element or directly behind a reference or
 raw pointer, but it may be in a struct field. THIR writes
 `s[i]` as an `Index` of `s` with no dereference; lowering adds the
-`Dereference` step before the index, so a write through a slice is behind a
+`SliceElements` step before the index, so a write through a slice is behind a
 reference for every check, as `r.*[i]` is. `&a` where a slice is expected is
 a `Borrow` of `a` with the slice type (`Conversion::Reborrow`); a borrow of a
 slice place (a `[&mut]` lent again, or used as a `[&]`) is a `Borrow` of its

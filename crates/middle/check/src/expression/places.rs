@@ -15,7 +15,6 @@ use model::thir::ExprKind;
 use source::Span;
 
 use crate::builder::ThirBuilder;
-use crate::expression::TypeExpectation;
 
 impl ThirBuilder<'_, '_> {
     /// `value.field`: the field of a struct value, or of the struct a
@@ -23,7 +22,7 @@ impl ThirBuilder<'_, '_> {
     /// slice's only field. An array's type gives it, so the array is not
     /// read.
     pub(super) fn check_field(&mut self, value: Id<ast::Expr>, field: Ident) -> Expr {
-        let mut value = self.add_expr(value, TypeExpectation::Hint(None));
+        let mut value = self.add_expr(value, None);
         let mut ty = self.body.exprs[value].ty;
         let pointee = self.checker.types[ty].pointee();
         let viewed = pointee.unwrap_or(ty);
@@ -43,7 +42,7 @@ impl ThirBuilder<'_, '_> {
                     .report_unknown(diagnostics::UNKNOWN_FIELD, field.span, message, meant);
                 return Expr::INVALID;
             }
-            let usize = self.checker.usize_type();
+            let usize = self.checker.types.usize;
             let Some(length) = length.filter(|_| !self.body.calls(value)) else {
                 return Expr {
                     ty: usize,
@@ -100,15 +99,15 @@ impl ThirBuilder<'_, '_> {
                 .error(diagnostics::INVALID_OPERATION, message, span);
             return Expr::INVALID;
         }
-        let mut array = self.add_expr(array, TypeExpectation::Hint(None));
+        let mut array = self.add_expr(array, None);
         let mut ty = self.body.exprs[array].ty;
         if let Some(target) = self.checker.types[ty].pointee() {
             let referred = self.dereference(array, target);
             ty = referred.ty;
             array = self.body.add(referred, self.body.exprs.span(array));
         }
-        let usize = self.checker.usize_type();
-        let index = self.add_expr(index, TypeExpectation::Hint(Some(usize)));
+        let usize = self.checker.types.usize;
+        let index = self.add_expr(index, Some(usize));
         let index_type = self.body.exprs[index].ty;
         let tree = &self.checker.module().ast;
         let index_span = self.body.exprs.span(index);
@@ -209,7 +208,7 @@ impl ThirBuilder<'_, '_> {
             );
             return Expr::INVALID;
         }
-        let mut array = self.add_expr(array, TypeExpectation::Hint(None));
+        let mut array = self.add_expr(array, None);
         let mut ty = self.body.exprs[array].ty;
         let array_span = self.body.exprs.span(array);
         match self.checker.types[ty] {
@@ -267,19 +266,15 @@ impl ThirBuilder<'_, '_> {
         length: Option<u64>,
         range: Id<ast::Expr>,
     ) -> Option<[Option<Id<Expr>>; 2]> {
-        let usize_type = self.checker.usize_type();
-        let Type::Integer(size) = self.checker.types[usize_type] else {
-            unreachable!("`usize` is an integer")
-        };
         // No slice is longer than the largest `usize`.
-        let limit = length.unwrap_or(u64::MAX >> (64 - size.bits));
-        let usize = Some(usize_type);
+        let limit = length.unwrap_or(u64::MAX >> (64 - self.checker.target.pointer_bits));
+        let usize = Some(self.checker.types.usize);
         let ends = match ends {
             [Some(start), Some(end)] => {
                 let (start, end) = self.check_range_ends(start, end, usize);
                 [Some(start), Some(end)]
             }
-            ends => ends.map(|end| end.map(|end| self.add_expr(end, TypeExpectation::Hint(usize)))),
+            ends => ends.map(|end| end.map(|end| self.add_expr(end, usize))),
         };
         // How many elements come before each end when known at compile
         // time: a missing start is 0, a missing end the length; a written
@@ -328,7 +323,7 @@ impl ThirBuilder<'_, '_> {
     /// `reference.*`, written at `span`: the value a reference or a typed
     /// raw pointer points to.
     pub(super) fn check_dereference(&mut self, reference: Id<ast::Expr>, span: Span) -> Expr {
-        let reference = self.add_expr(reference, TypeExpectation::Hint(None));
+        let reference = self.add_expr(reference, None);
         let ty = self.body.exprs[reference].ty;
         match self.checker.types[ty] {
             ref pointer if let Some(target) = pointer.pointee() => {

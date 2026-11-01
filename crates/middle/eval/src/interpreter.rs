@@ -232,6 +232,13 @@ impl<'b, 'f> Interpreter<'b, 'f> {
         self.spend(u32::try_from(steps).unwrap_or(u32::MAX), span)
     }
 
+    /// Copies `size` bytes from `from` to `to`, counted as work.
+    fn copy_memory(&mut self, from: u64, to: u64, size: u64, span: Span) -> Result<(), Failure> {
+        self.charge(size, span)?;
+        let copied = self.memory.copy(from, to, size);
+        copied.ok_or_else(|| self.fail(INVALID_ACCESS, span))
+    }
+
     /// Counts `steps` more steps.
     fn spend(&mut self, steps: u32, span: Span) -> Result<(), Failure> {
         self.steps = self.steps.saturating_add(steps);

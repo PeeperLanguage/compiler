@@ -1,0 +1,9 @@
+fn shift(value: i32, count: i32) -> i32 {
+    return value >> count;
+}
+
+fn main() {
+    Write(Stdout, c"before\n", 7);
+    shift(1, 32);
+    Write(Stdout, c"after\n", 6);
+}

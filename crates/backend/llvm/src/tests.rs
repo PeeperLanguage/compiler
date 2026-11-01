@@ -314,7 +314,7 @@ fn scope(line: &str) -> &str {
 
 #[test]
 fn constants_from_bits() {
-    let mut types = Types::default();
+    let mut types = Types::new(64);
     let u200 = types.builtin("u200", 64).unwrap();
     let i3 = types.builtin("i3", 64).unwrap();
     let constant = |ty: TypeId, value: Value| {

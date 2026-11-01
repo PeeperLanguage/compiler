@@ -118,6 +118,7 @@ impl<'b> Interpreter<'b, '_> {
                 if let InstructionKind::Call {
                     function,
                     ref arguments,
+                    ..
                 } = instruction.kind
                 {
                     self.frames.last_mut().expect("a run has a frame").next = index + 1;

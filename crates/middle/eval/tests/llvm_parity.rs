@@ -210,7 +210,7 @@ fn folding_matches_llvm() {
                     });
                 }
                 for (instruction, op) in [("neg", UnaryOp::Negate), ("not", UnaryOp::BitNot)] {
-                    let value = unary(op, &ty, &left).unwrap();
+                    let value = unary(op, &ty, &left);
                     cases.push(Case {
                         instruction,
                         right: None,
@@ -282,7 +282,7 @@ fn folding_matches_llvm() {
             cases.push((
                 "fneg",
                 None,
-                unary(UnaryOp::Negate, &ty, &Value::Float(left)).unwrap(),
+                unary(UnaryOp::Negate, &ty, &Value::Float(left)),
             ));
             for (instruction, right, value) in cases {
                 let k = expected.len();

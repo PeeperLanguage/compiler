@@ -76,8 +76,14 @@ impl Integer {
         inclusive: bool,
     ) -> Option<Limbs> {
         let (_, distance) = self.range_distance(start, end);
-        let whole = bigint::divide(self.bits, false, &distance, step)?;
-        let rest = bigint::remainder(self.bits, false, &distance, step)?;
+        self.count_over(&distance, step, inclusive)
+    }
+
+    /// How many values a range of this type or its step type has over
+    /// `distance` by `step`, as `range_count` gives them.
+    pub fn count_over(self, distance: &Limbs, step: &Limbs, inclusive: bool) -> Option<Limbs> {
+        let whole = bigint::divide(self.bits, false, distance, step)?;
+        let rest = bigint::remainder(self.bits, false, distance, step)?;
         let extra = inclusive || rest.as_slice().iter().any(|&limb| limb != 0);
         let wide = self.bits + 1;
         let whole = bigint::extend(self.bits, false, &whole, wide);
@@ -417,15 +423,35 @@ pub fn builtin_doc(name: &str, pointer_bits: u32) -> Option<String> {
 }
 
 /// The types of a program, for one compile (`check::Checker` holds them).
-// TEMPORARY, to be deleted: `Clone` is only for `llvm::write`, whose workers
-// each get a copy of the types; delete it with `extend_from`.
+// TEMPORARY, to be deleted: `Clone` is for `llvm::write`, whose workers each
+// get a copy of the types, and `compile::interpret`, which keeps the finished
+// ones; delete it with `extend_from`.
 #[derive(Clone)]
 pub struct Types {
+    pub usize: TypeId, // as wide as a pointer of the target
     types: Vec<Type>,
     ids: FxHashMap<Type, TypeId>,
 }
 
 impl Types {
+    /// The fixed types alone, each at its `TypeId` constant, and `usize` of
+    /// `pointer_bits` bits.
+    pub fn new(pointer_bits: u32) -> Types {
+        let mut types = Types {
+            usize: TypeId::INVALID,
+            types: Vec::new(),
+            ids: FxHashMap::default(),
+        };
+        for ty in FIXED {
+            types.intern(ty.clone());
+        }
+        types.usize = types.intern(Type::Integer(Integer {
+            signed: false,
+            bits: pointer_bits,
+        }));
+        types
+    }
+
     /// Adds the types `other` has after these: keeps a copy of a table that
     /// only grows, as `other` is when this was made from it, up to date.
     ///
@@ -438,6 +464,16 @@ impl Types {
         // (`define_struct`).
         for ty in &other.types[self.types.len()..] {
             self.intern(ty.clone());
+        }
+    }
+
+    /// The parameters a reference returned by a function of type `signature`
+    /// may point into.
+    pub fn origins(&self, signature: TypeId) -> &[u32] {
+        match self[signature] {
+            Type::Function { ref origins, .. } => origins,
+            // No origins would let a returned reference dangle unseen.
+            _ => unreachable!("a call to a function with a signature error is not lowered"),
         }
     }
 
@@ -564,7 +600,6 @@ impl Types {
         }
     }
 
-    /// The type `id` stands for: itself, or the type an alias names.
     /// Whether a value of the type `id` copies when used by value: numbers,
     /// `bool`, `cstr`, shared references and slices, raw pointers, ranges, and arrays of values
     /// that copy. Any other value moves, and the variable it moved from is
@@ -588,6 +623,7 @@ impl Types {
         }
     }
 
+    /// The type `id` stands for: itself, or the type an alias names.
     pub fn real(&self, id: TypeId) -> TypeId {
         match self.types[id.0 as usize] {
             Type::Alias { real, .. } => real,
@@ -675,20 +711,6 @@ impl Types {
             } => format!("*{}", self.real_text(*target, name_of)),
             Type::Alias { .. } => unreachable!("`real` looks through aliases"),
         }
-    }
-}
-
-/// The fixed types alone, each at its `TypeId` constant.
-impl Default for Types {
-    fn default() -> Types {
-        let mut types = Types {
-            types: Vec::new(),
-            ids: FxHashMap::default(),
-        };
-        for ty in FIXED {
-            types.intern(ty.clone());
-        }
-        types
     }
 }
 

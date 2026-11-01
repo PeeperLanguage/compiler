@@ -131,8 +131,7 @@ impl Metadata {
                 let base = self.debug_type(program, types, types.real(element), target);
                 let base = base.expect("an element has a value's type");
                 let name = types.text(ty, |definition| {
-                    let (name, file) = project::declared_name(&program.modules, definition);
-                    name.text(file)
+                    project::declared_text(&program.modules, definition)
                 });
                 // Its members name it, so its number comes first.
                 let composite = self.reserve();

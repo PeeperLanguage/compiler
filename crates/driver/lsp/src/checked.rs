@@ -201,7 +201,6 @@ impl ConstantText {
 /// The text of `ty`, of `types`, with the names `program` declares.
 pub(crate) fn type_text(program: &project::Program, types: &Types, ty: TypeId) -> String {
     types.text(ty, |definition| {
-        let (name, source) = project::declared_name(&program.modules, definition);
-        name.text(source)
+        project::declared_text(&program.modules, definition)
     })
 }

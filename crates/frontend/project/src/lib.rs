@@ -49,6 +49,12 @@ pub struct Module {
     pub imports: Vec<Import>, // in source order; the implicit prelude import last, in every module but the prelude
 }
 
+/// The text of the name the declaration `definition` of `modules` declares.
+pub fn declared_text(modules: &[Module], definition: DefId) -> &str {
+    let (name, file) = declared_name(modules, definition);
+    name.text(file)
+}
+
 /// The name the declaration `definition` of `modules` declares, and the file
 /// it is in.
 pub fn declared_name(modules: &[Module], definition: DefId) -> (Ident, &Arc<SourceFile>) {
@@ -181,6 +187,8 @@ pub struct Program {
     /// which panic messages name its files from, so a program is the same
     /// wherever its project is.
     pub root: PathBuf,
+    /// The module of the project's entry file, which must declare `main`.
+    pub entry: Option<ModuleId>,
 }
 
 impl Program {
@@ -382,6 +390,7 @@ pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + S
         std::thread::available_parallelism().map_or(1, |n| n.get())
     };
 
+    let (entry_path, in_package) = path_of(&project.packages, &project.entry);
     let mut modules = HashMap::new();
     let (send_job, jobs) = mpsc::channel::<Job>();
     let jobs = Mutex::new(jobs);
@@ -404,14 +413,12 @@ pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + S
             });
         }
 
-        let (path, in_package) = path_of(&project.packages, &project.entry);
-        let mut seen = HashSet::from([path.clone()]);
+        let mut seen = HashSet::from([entry_path.clone()]);
         _ = send_job.send(Job {
-            path,
+            path: entry_path.clone(),
             file: project.entry.clone(),
             standalone: !in_package,
         });
-        let mut pending = 1;
         // A module of the project that an editor has open is checked even
         // when no import reaches it from the entry.
         for file in open_files
@@ -425,10 +432,10 @@ pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + S
                     file: file.clone(),
                     standalone: false,
                 });
-                pending += 1;
             }
         }
-        while pending > 0 {
+        // Each path enters `seen` once, and `modules` when it is loaded.
+        while modules.len() < seen.len() {
             let loaded = if workers == 0 {
                 let job = jobs.lock().expect("no worker holds the lock").try_recv();
                 let job = job.expect("each pending module has a job");
@@ -437,7 +444,6 @@ pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + S
                 let Ok(loaded) = done.recv() else { break };
                 loaded
             };
-            pending -= 1;
             for (_, path) in &loaded.imports {
                 if seen.insert(path.clone()) {
                     let file =
@@ -447,7 +453,6 @@ pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + S
                         file,
                         standalone: false,
                     });
-                    pending += 1;
                 }
             }
             modules.insert(loaded.path.clone(), loaded);
@@ -479,6 +484,7 @@ pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + S
         diagnostics,
         checkable,
         root: project.root.clone(),
+        entry: ids.get(&entry_path).copied(),
     }
 }
 

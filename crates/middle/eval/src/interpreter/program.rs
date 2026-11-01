@@ -218,7 +218,8 @@ impl<'f> Interpreter<'_, 'f> {
                 text.extend(self.memory.c_text(address).unwrap_or_default());
             }
             (Type::RawPointer { .. }, &Register::Address(address)) => {
-                text.extend_from_slice(format!("0x{address:x}").as_bytes());
+                let mut push = |piece: &[u8]| text.extend_from_slice(piece);
+                number_text::write_pointer(address, &mut push);
             }
             // A value kept in memory is its address, which the reference is.
             (&Type::Reference { target, .. }, value) if in_memory(types, target) => {

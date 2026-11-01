@@ -33,9 +33,7 @@ impl<'b> Interpreter<'b, '_> {
                 let to = self.value_slot(id);
                 if from != to {
                     let (span, size) = (body.instructions.span(id), self.size_of(ty));
-                    self.charge(size, span)?;
-                    let copied = self.memory.copy(from, to, size);
-                    copied.ok_or_else(|| self.fail(INVALID_ACCESS, span))?;
+                    self.copy_memory(from, to, size, span)?;
                 }
                 Some(Register::Address(to))
             }
@@ -200,9 +198,7 @@ impl<'b> Interpreter<'b, '_> {
             Register::Scalar(_) => unreachable!("strings and `none` are addresses here"),
             Register::Address(from) if in_memory(self.types, ty) => {
                 let size = self.size_of(ty);
-                self.charge(size, span)?;
-                let copied = self.memory.copy(from, address, size);
-                copied.ok_or_else(|| self.fail(INVALID_ACCESS, span))
+                self.copy_memory(from, address, size, span)
             }
             Register::Address(value) => {
                 self.write_bytes(address, &value.to_le_bytes()[..pointer], span)

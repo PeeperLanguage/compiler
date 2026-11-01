@@ -111,7 +111,6 @@ pub struct Label {
     pub file: Arc<SourceFile>,
     pub span: Span,
     pub message: String,
-    pub severity: Severity, // the code's for the primary place, else `Hint`
 }
 
 /// A note or help line. A help line may carry fixes; all of them are applied
@@ -194,16 +193,10 @@ impl Diagnostic {
         span: Span,
         message: impl Into<String>,
     ) -> Diagnostic {
-        let severity = if self.labels.is_empty() {
-            self.code.severity
-        } else {
-            Severity::Hint
-        };
         self.labels.push(Label {
             file: file.clone(),
             span,
             message: message.into(),
-            severity,
         });
         self
     }
