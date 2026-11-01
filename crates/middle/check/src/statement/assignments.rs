@@ -149,13 +149,17 @@ impl ThirBuilder<'_, '_> {
     pub(super) fn assigned_variable(&mut self, target: Id<ast::Expr>) -> Option<Id<Variable>> {
         let tree = &self.checker.module().ast;
         let span = tree.exprs.span(target);
-        if !matches!(tree.exprs[target], ast::Expr::Name) {
-            self.checker
-                .not_supported(span, "assignments to targets other than names");
-            return None;
-        }
+        let symbol = match tree.exprs[target] {
+            ast::Expr::Name => self.resolve(span)?,
+            ast::Expr::Path(path) => self.checker.resolve_path(path)?,
+            _ => {
+                self.checker
+                    .not_supported(span, "assignments to targets other than names");
+                return None;
+            }
+        };
         let name = tree.file.slice(span);
-        match self.resolve(span)? {
+        match symbol {
             Symbol::Local(Local::Variable(variable)) => Some(variable),
             Symbol::Local(Local::Constant(constant)) => {
                 let declared = self.body.constants.span(constant);

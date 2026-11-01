@@ -20,4 +20,7 @@ fn main() {
     let own = geometry::Origin();
     let k: geometry::Point = &own;
     let l = &mut geometry::Sides;
+    // A path names what a plain name names, with the same errors.
+    geometry::Sides = 5;
+    geometry::Origin = 5;
 }
