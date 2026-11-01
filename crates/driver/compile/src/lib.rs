@@ -398,9 +398,9 @@ fn find_entry_point(checker: &mut Checker, entry: ModuleId) -> Result<(DefId, bo
         .ok_or_else(|| no_entry_point(name))
 }
 
-/// Checks every declaration of `module`, each where it is declared, used or
-/// not, compiles each function (`compile_function`) and gives each constant,
-/// then the module's remaining facts, to `use_output`.
+/// Checks each function and constant of `module` where it is declared, used
+/// or not, compiles each function (`compile_function`) and gives each
+/// constant, then the module's remaining facts, to `use_output`.
 fn compile_module(
     checker: &mut Checker,
     module: ModuleId,

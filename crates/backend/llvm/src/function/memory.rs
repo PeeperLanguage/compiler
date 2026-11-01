@@ -148,8 +148,8 @@ impl Function<'_, '_, '_> {
     /// elements, after a check of each index there not known at compile
     /// time, or into a slice's elements, and before each dereference a load
     /// of the pointer there, `<address>.<n>` for the `n`th; for a slice's
-    /// elements, its length too, `<address>.<n>.len`. Gives how many elements
-    /// are at the place, when it is an array or a slice's elements.
+    /// elements, its length too, `<address>.<n>.len`. Gives the place's
+    /// type, a slice's for its elements.
     pub(super) fn write_place_address(
         &mut self,
         out: &mut String,
@@ -157,7 +157,7 @@ impl Function<'_, '_, '_> {
         place: &mir::Place,
         location: &DebugLocation,
         id: Id<mir::Instruction>,
-    ) -> Option<String> {
+    ) -> TypeId {
         let variable = place.variable.index();
         let mut ty = self.body.variables[place.variable].ty;
         let (types, body) = (self.types, self.body);
@@ -176,8 +176,7 @@ impl Function<'_, '_, '_> {
             .split(|step| step.leaves_storage())
             .enumerate()
             .peekable();
-        loop {
-            let (run, steps) = runs.next().expect("a place has a last run");
+        while let Some((run, steps)) = runs.next() {
             let run_type = ty;
             // Each index not known at compile time, checked against its
             // array's length, and `renamed` when it is not an `i64`.
@@ -301,13 +300,7 @@ impl Function<'_, '_, '_> {
             }
             _ = writeln!(out, "{location}");
             if last {
-                break match (place.projections.last(), &self.types[ty]) {
-                    (Some(mir::Projection::SliceElements), _) => {
-                        Some(format!("{address}.{}.len", run - 1))
-                    }
-                    (_, Type::Array { length, .. }) => Some(length.to_string()),
-                    _ => None,
-                };
+                continue;
             }
             // A slice's elements keep the slice's type: the next run indexes
             // them with the length loaded here.
@@ -330,5 +323,6 @@ impl Function<'_, '_, '_> {
             );
             ty = target;
         }
+        ty
     }
 }

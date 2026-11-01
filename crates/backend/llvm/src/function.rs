@@ -555,13 +555,19 @@ impl Function<'_, '_, '_> {
                 }
                 // A slice: the elements' address, then their count.
                 let address = format!("{name}.p");
-                let elements = self.write_place_address(out, &address, place, &location, id);
-                let length = match place.projections.last() {
-                    Some(&mir::Projection::Subslice(subslice)) => {
+                let viewed = self.write_place_address(out, &address, place, &location, id);
+                let length = match (place.projections.last(), &types[viewed]) {
+                    (Some(&mir::Projection::Subslice(subslice)), _) => {
                         let count = self.body.subslices[subslice.index()].count;
                         self.operand(count).to_string()
                     }
-                    _ => elements.expect("a slice is taken of an array or a slice's elements"),
+                    (Some(mir::Projection::SliceElements), _) => {
+                        let steps = place.projections.iter();
+                        let loaded = steps.filter(|step| step.leaves_storage()).count();
+                        format!("{address}.{}.len", loaded - 1)
+                    }
+                    (_, Type::Array { length, .. }) => length.to_string(),
+                    _ => unreachable!("a slice is taken of an array or a slice's elements"),
                 };
                 let bits = self.module.target.pointer_bits;
                 _ = writeln!(

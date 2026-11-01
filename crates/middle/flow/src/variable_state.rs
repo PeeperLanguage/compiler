@@ -304,16 +304,15 @@ fn partial_move(
             format!("move the whole {whole}, or read only parts that copy"),
         )
     };
-    let text = file.slice(span);
-    let help = match *moved {
-        Type::Reference { mutable: true, .. } => {
-            format!("lend it again with `&mut {text}.*`, or `&{text}.*` to only read")
-        }
-        Type::Slice { mutable: true, .. } => {
-            format!("lend it again with `&mut {text}[0..]`, or `&{text}[0..]` to only read")
-        }
-        _ => help,
+    let lent_through = match *moved {
+        Type::Reference { mutable: true, .. } => Some(".*"),
+        Type::Slice { mutable: true, .. } => Some("[..]"),
+        _ => None,
     };
+    let text = file.slice(span);
+    let help = lent_through.map_or(help, |step| {
+        format!("lend it again with `&mut {text}{step}`, or `&{text}{step}` to only read")
+    });
     Diagnostic::new(diagnostics::PARTIAL_MOVE, message)
         .label(file, span, "this value's type moves")
         .help(help, Vec::new())

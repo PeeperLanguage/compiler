@@ -450,16 +450,6 @@ impl Checker<'_> {
         fits
     }
 
-    /// `*target`, written or taken at `span` (`held_type`).
-    pub(crate) fn raw_pointer_type(&mut self, target: TypeId, span: Span) -> TypeId {
-        match self.held_type(target, "raw pointers to", span) {
-            Some(target) => self.types.intern(Type::RawPointer {
-                target: Some(target),
-            }),
-            None => TypeId::INVALID,
-        }
-    }
-
     /// The type `symbol`, written at `span`, stands for, however it was
     /// reached: every kind of type declaration is `Symbol::Type`, in this
     /// module or another. An error when it is not a type.
@@ -542,7 +532,12 @@ impl Checker<'_> {
             // program needs it.
             ast::Type::Pointer(target) => {
                 let pointee = self.resolve_type(target);
-                return self.raw_pointer_type(pointee, span);
+                return match self.held_type(pointee, "raw pointers to", span) {
+                    Some(target) => self.types.intern(Type::RawPointer {
+                        target: Some(target),
+                    }),
+                    None => TypeId::INVALID,
+                };
             }
             ast::Type::FixedArray {
                 length: ast::Length::Number(number),

@@ -507,7 +507,7 @@ the program runs. The loan rules hold for it as for a reference: both answer
 copied. A slice is never an array element or directly behind a reference or
 raw pointer, but it may be in a struct field. THIR writes
 `s[i]` as an `Index` of `s` with no dereference; lowering adds the
-`Dereference` step before the index, so a write through a slice is behind a
+`SliceElements` step before the index, so a write through a slice is behind a
 reference for every check, as `r.*[i]` is. `&a` where a slice is expected is
 a `Borrow` of `a` with the slice type (`Conversion::Reborrow`); a borrow of a
 slice place (a `[&mut]` lent again, or used as a `[&]`) is a `Borrow` of its
