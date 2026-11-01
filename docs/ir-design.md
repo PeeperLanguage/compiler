@@ -181,7 +181,10 @@ what the other cannot do:
   cleanup of MIR must keep `scope end` for this.
 - **A whole program** runs on the same interpreter (`interpreter::program::run`,
   through `compile::interpret`), which is how a web page runs code with no
-  clang or LLVM. There `print`, panics and the runtime's `alloc`, `free`,
+  clang or LLVM, and what the experimental `peeper run -interpret` does in a
+  terminal. Each run fixture that should build and takes no arguments is checked
+  through that command, so it must print and exit as the compiled program does.
+  There `print`, panics and the runtime's `alloc`, `free`,
   `calloc`, `write`, `read` (always empty) and `exit` work, and any other
   `extern` stops the run by its name. Output is kept as ordered pieces, each
   with its stream. Limits, each a panic with exit code 101: 2,000,000,000 steps,

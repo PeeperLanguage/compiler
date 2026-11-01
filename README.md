@@ -179,6 +179,7 @@ or an existing `peeper.toml` stops it; an existing `src/main.peep` is kept.
 | `peeper fix [path]` | Apply the fixes the errors suggest, then report what is left. |
 | `peeper build [-release] [-o program] [path]` | Check the program and link it into an executable, named after the project or file unless `-o` names it; `-release` builds it optimized, without debug info. |
 | `peeper run [-release] [path] [-- args]` | Build the program to a temporary file and run it with the arguments after `--`. |
+| `peeper run -interpret [path]` | Experimental: run the program on the MIR interpreter, with no LLVM, linker or toolchain. Its output comes when it ends, its input is empty, and it stops at the interpreter's limits. |
 | `peeper -dump [thir \| mir \| ll] [path]` | Check, then write each module's THIR, MIR and LLVM IR, or only the one named, to `build/debug/dumps`. |
 | `peeper init [name]` | Make the current folder a project: write `peeper.toml` and `src/main.peep`, asking for the name unless given. |
 | `peeper lsp` | Serve editors as a language server over standard input and output. |

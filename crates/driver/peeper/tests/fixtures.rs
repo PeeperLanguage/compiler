@@ -11,20 +11,16 @@
 //! 0), "failure" (1, or any other code for `run`) or, for `run`,
 //! "exit_code" with `exit_code`; the
 //! output must hold each of `stdout_contains` and `stderr_contains`, and the
-//! interpreter must print and exit byte for byte as the debug build does. With
+//! `run -interpret` must print and exit byte for byte as the debug build does. With
 //! `target = "i686-linux"`, each command builds for that target (`-target
 //! i686-linux`). The compiler is `$PEEPER` if set (the bundled build/bin/peeper, which finds
 //! its libraries, runtime and toolchain), else the one cargo built, bundled
 //! with the libraries and runtime of this checkout and build/toolchains/native.
 
-use std::collections::HashMap;
 use std::path::Path;
-use std::path::PathBuf;
 use std::process::Command;
 use std::process::Output;
 
-use eval::interpreter::program::Stream;
-use model::ModuleId;
 use model::machine::Machine;
 use project::canonical_path;
 use project::path_text;
@@ -117,53 +113,28 @@ fn assert_release_link(compiler: &str) {
     assert!(holds(&build(remainder, Some("-release")), b"fmod"));
 }
 
-/// Why the interpreter did not do what the compiled program in `output` did,
-/// when it ran the fixture in `folder` for `target`: a run has no arguments
-/// or input, so a fixture with `program_args` is not asked, and nor is one
-/// that should not compile.
+/// Why `peeper run -interpret` did not do what the compiled program in
+/// `output` did, for the fixture in `folder`, with the flags `target`: it takes
+/// no arguments or input, so a fixture with `program_args` is not asked, and
+/// nor is one that should not compile.
 fn interpreter_difference(
     compiler: &str,
     folder: &Path,
-    target: Option<&str>,
-    output: &Output,
+    target: Option<[&str; 2]>,
+    compiled: &Output,
 ) -> Option<String> {
-    let installation = Path::new(compiler).parent().and_then(Path::parent);
-    let installation = installation.expect("`$PEEPER` is a path to bin/peeper");
-    let project = project::find(folder, &installation.join("libs")).expect("the fixture loads");
-    let program = project::load(&project, &HashMap::<PathBuf, String>::new());
-    let entry = (program.modules.iter())
-        .position(|module| Path::new(&module.ast.file.path) == project.entry)
-        .expect("a run fixture has an entry file");
-    let target = match target {
-        Some(name) => Machine::named(name).expect("the target is a machine"),
-        None => Machine::host().expect("this machine is a target"),
+    let mut command = Command::new(compiler);
+    command.args(target.iter().flatten());
+    command.args(["run", "-interpret"]).arg(folder);
+    let interpreted = command.output().expect("the compiler runs");
+    let parts = |output: &Output| {
+        let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
+        let (stdout, stderr) = (text(&output.stdout), text(&output.stderr));
+        (output.status.code(), stdout, stderr)
     };
-    let (_, ran) = compile::interpret(&program, target, ModuleId::from_index(entry));
-    let Some(ran) = ran else {
-        return Some("it did not start".to_string());
-    };
-    let written = |stream| -> Vec<u8> {
-        let pieces = ran.output.iter().filter(|piece| piece.stream == stream);
-        pieces.flat_map(|piece| piece.text.clone()).collect()
-    };
-    let compiled = (output.status.code(), &output.stdout, &output.stderr);
-    let interpreted = (
-        Some(i32::from(ran.exit_code)),
-        &written(Stream::Stdout),
-        &written(Stream::Stderr),
-    );
-    (compiled != interpreted).then(|| {
-        let text = |bytes: &Vec<u8>| String::from_utf8_lossy(bytes).into_owned();
-        format!(
-            "compiled: {:?} {:?} {:?}\ninterpreted: {:?} {:?} {:?}",
-            compiled.0,
-            text(compiled.1),
-            text(compiled.2),
-            interpreted.0,
-            text(interpreted.1),
-            text(interpreted.2),
-        )
-    })
+    let (compiled, interpreted) = (parts(compiled), parts(&interpreted));
+    (compiled != interpreted)
+        .then(|| format!("compiled: {compiled:?}\ninterpreted: {interpreted:?}"))
 }
 
 #[test]
@@ -262,8 +233,7 @@ fn fixtures() {
                 && release.is_none()
                 && texts("program_args").is_empty()
                 && text("outcome") != Some("failure")
-                && let Some(difference) =
-                    interpreter_difference(&compiler, folder, text("target"), &output)
+                && let Some(difference) = interpreter_difference(&compiler, folder, target, &output)
             {
                 failures.push(format!("{name}: the interpreter differs\n{difference}"));
             }
