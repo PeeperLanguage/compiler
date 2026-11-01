@@ -29,8 +29,7 @@ them. Read the named section before acting on a line.
   positive and negative `x_test` fixtures, validated with `build/bin/peeper`,
   on each affected target; run `bash scripts/check.sh`.
 - §10 Commit only with approval; imperative subject under 72 chars; one
-  logical change per commit; `feature/` or `fix/` branches (this session's
-  designated branch overrides). §10.1: the README self-review marker is
+  logical change per commit; `feature/` or `fix/` branches. §10.1: the README self-review marker is
   added for a PR and never removed by an agent.
 - §12 Make code actually simpler.
 

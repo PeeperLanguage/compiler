@@ -6,8 +6,8 @@ number.
 ## Rust
 
 - No `rust-toolchain` file: CI uses the runner's stable Rust plus
-  `rustfmt` and `clippy` (`.github/workflows/ci.yml`). This container had
-  `rustc 1.97.0`, `cargo 1.97.0`.
+  `rustfmt` and `clippy` (`.github/workflows/ci.yml`). The work logged in
+  `07-worklog.md` was built with `rustc 1.97.0`.
 - Workspace (`Cargo.toml`): `edition = "2024"`, `resolver = "3"`, version
   `0.2.0`, `unsafe_code = "forbid"`, clippy `all` plus the `rust-style.md`
   lints, all denied by `-D warnings`. Profiles: `release` with
@@ -56,11 +56,3 @@ workflows: toolchain builds and updates, install check, release, and the
 | `bash scripts/setup.sh` | the toolchain is present (needed by bundle and fixtures) |
 | `bash scripts/build.sh` | `build/bin/peeper` with libraries and runtimes |
 | `scripts/bench-instructions.py` | instructions of one compile of the benchmark; needs `perf_event_open`. Without it, run the same benchmark under `valgrind --tool=callgrind` (runs=2 minus runs=1) |
-
-## This cloud container (2026-11-01)
-
-No `perf` counters; no 32-bit C library, so the five `run_i686_*` fixtures
-cannot link; `wasm32-wasip1` and i686 Rust targets had to be added with
-`rustup`; `scripts/setup.sh` downloads the toolchain. Pushing to
-`PeeperLanguage/compiler` was refused (403): Claude has no GitHub access to
-it.

@@ -24,7 +24,7 @@ Newest last. Each entry: commit, what changed, evidence, what was not done.
   `crates/driver/compile/tests/loan_memory.rs` (now `path_check_memory.rs`) adds the straight shape: 13 MB
   now, 32 MB on the old code (fails its 20 MB bound).
 - **Not done:** `check.sh` passed except the five `run_i686_*` fixtures (no
-  32-bit C library here). Push refused (403).
+  32-bit C library where it ran).
 
 ## 2026-11-01 Checker name lookup (`a3f72e9`)
 
@@ -92,6 +92,15 @@ Newest last. Each entry: commit, what changed, evidence, what was not done.
   does. Test `checks_deeply_nested_expressions` (50,000 deep: operators,
   calls, parentheses, `!`) aborted before. Cost +0.45% on the benchmark.
 
+## 2026-11-01 Deep statements and types (`395afc6`)
+
+- After `eec0324`, nested blocks, long `else if` chains (`check_statement`,
+  `lower_statement`) and `& & ... i32` (`resolve_type`) still overflowed: the
+  parser's own deep inputs. Same `grow`. Test `checks_deeply_nested_statements`
+  (50,000 each; the types case asserts its one T0043). Cost +0.39%; all stack
+  checks together +0.84% (F12).
+- The parser's `orelse` error-recovery input showed F11 (printer).
+
 ## Measured and rejected
 
 - Reserving `llvm` `Function::locations` to its bound: +0.6% instructions
@@ -117,11 +126,11 @@ Newest last. Each entry: commit, what changed, evidence, what was not done.
   built as a placeholder and filled after construction (documented); the
   return check steps the block twice on purpose (error precedence).
 
-## Validation of the branch (2026-11-01, after `eec0324`)
+## Validation of the branch (2026-11-01, after `eec0324`; `395afc6` reran the affected tests)
 
 `bash scripts/check.sh`: format, clippy, runtime format and clippy, bundle,
 browser build and smoke, whitespace pass; 42 test binaries pass. `tests` and
 `fixtures on the bundle` fail only in the `fixtures` test, on the five
-`run_i686_*` programs, which cannot link here (no 32-bit C library:
-`Scrt1.o`, `-lc`). Their `check -target i686-linux` output was compared old
+`run_i686_*` programs, which cannot link without a 32-bit C library
+(`Scrt1.o`, `-lc`). Their `check -target i686-linux` output was compared old
 against new and is unchanged.
