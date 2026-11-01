@@ -268,11 +268,8 @@ impl ThirBuilder<'_, '_> {
         range: Id<ast::Expr>,
     ) -> Option<[Option<Id<Expr>>; 2]> {
         let usize_type = self.checker.usize_type();
-        let Type::Integer(size) = self.checker.types[usize_type] else {
-            unreachable!("`usize` is an integer")
-        };
         // No slice is longer than the largest `usize`.
-        let limit = length.unwrap_or(u64::MAX >> (64 - size.bits));
+        let limit = length.unwrap_or(u64::MAX >> (64 - self.checker.target.pointer_bits));
         let usize = Some(usize_type);
         let ends = match ends {
             [Some(start), Some(end)] => {

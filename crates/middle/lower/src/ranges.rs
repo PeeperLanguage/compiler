@@ -11,10 +11,10 @@ use model::semantic_types::TypeId;
 use model::semantic_types::range_field;
 use model::semantic_types::range_fields;
 use model::thir;
-use source::Span;
 
 use crate::Loop;
 use crate::Lowering;
+use crate::lowered_variable;
 
 /// A range's walk, the fields of a range value (`range_fields`): its values
 /// are `start`, then each `delta` more than the one before, wrapping, while
@@ -29,21 +29,10 @@ pub(crate) struct RangeWalk {
 }
 
 impl Lowering<'_> {
-    /// Stops the program when a range's `step`, of the unsigned type `size`
-    /// and written at `span`, is zero; a constant one the checker rejected.
-    pub(super) fn check_step(&mut self, step: mir::Operand, size: TypeId, span: Span) {
-        if matches!(step, mir::Operand::Constant(_)) {
-            return;
-        }
-        let zero = self.integer_constant(size, 0);
-        let failed = self.binary(BinaryOp::EqualTo, step, zero, TypeId::BOOL, span);
-        self.check(failed, "range step is zero", span);
-    }
-
     /// The parts of the range `range` written as `start..end:step`
     /// (`thir::ExprKind::Range`), as written: `start`, `end`, `step` and
-    /// `inclusive`, after stopping the program when its step is zero
-    /// (`check_step`).
+    /// `inclusive`, after stopping the program when its step is zero; a
+    /// constant zero step the checker rejected.
     pub(super) fn lower_range_parts(&mut self, range: Id<thir::Expr>) -> Option<[mir::Operand; 4]> {
         let thir::ExprKind::Range {
             start,
@@ -58,7 +47,11 @@ impl Lowering<'_> {
         let start = self.lower_expr(start)?;
         let end = self.lower_expr(end)?;
         let step = self.lower_expr(step)?;
-        self.check_step(step, size, step_span);
+        if !matches!(step, mir::Operand::Constant(_)) {
+            let zero = self.integer_constant(size, 0);
+            let failed = self.binary(BinaryOp::EqualTo, step, zero, TypeId::BOOL, step_span);
+            self.check(failed, "range step is zero", step_span);
+        }
         let inclusive = self.add_constant(Constant {
             ty: TypeId::BOOL,
             value: Value::Bool(inclusive),
@@ -103,12 +96,12 @@ impl Lowering<'_> {
             });
         }
         let [start, end, step, inclusive] = self.lower_range_parts(range)?;
-        let known = |lowering: &Self, operand| match operand {
-            mir::Operand::Constant(id) => match lowering.mir.constants[id.index()].value {
+        let known = |lowering: &Self, operand| {
+            let constant = lowering.mir.constant(operand)?;
+            match constant.value {
                 Value::Integer(ref value) => Some(value.clone()),
                 _ => unreachable!("the checker allows only an integer range"),
-            },
-            _ => None,
+            }
         };
         // Between the step's type and the counter's, the same bits read
         // with the other sign.
@@ -216,13 +209,13 @@ impl Lowering<'_> {
         } = self.walk_range(range)?;
         // Whether the range includes its end, when that is known now: a
         // range written here; `None` for a range value.
-        let included = match inclusive {
-            mir::Operand::Constant(constant) => match self.mir.constants[constant.index()].value {
-                Value::Bool(included) => Some(included),
+        let included = self
+            .mir
+            .constant(inclusive)
+            .map(|constant| match constant.value {
+                Value::Bool(included) => included,
                 _ => unreachable!("`inclusive` is a `bool`"),
-            },
-            _ => None,
-        };
+            });
         let first = if included == Some(true) {
             inclusive
         } else {
@@ -241,9 +234,9 @@ impl Lowering<'_> {
         let empty = || mir::InstructionKind::Phi(Box::new([]));
         let counter = self.emit(empty(), ty, range_span);
         let left = self.emit(empty(), size, range_span);
-        let index = index.map(|index| Id::from_index(index.index()));
-        let passes =
-            index.map(|index| self.emit(empty(), self.mir.variables[index].ty, range_span));
+        let index_variable = index.map(lowered_variable);
+        let passes = index_variable
+            .map(|variable| self.emit(empty(), self.mir.variables[variable].ty, range_span));
         let going = self.emit(empty(), TypeId::BOOL, range_span);
         let pass = self.new_block(self.thir.blocks.span(body));
         let exit = self.new_block(span);
@@ -254,11 +247,14 @@ impl Lowering<'_> {
             otherwise: exit,
         });
         self.block = pass;
-        let value = value.map(|value| Id::from_index(value.index()));
+        let value_variable = value.map(lowered_variable);
         let declared = self.declared.len(); // the pass's variables, then its body's
-        for (variable, value) in [index.zip(passes), value.map(|value| (value, counter))]
-            .into_iter()
-            .flatten()
+        for (variable, value) in [
+            index_variable.zip(passes),
+            value_variable.map(|variable| (variable, counter)),
+        ]
+        .into_iter()
+        .flatten()
         {
             let place = mir::Place::whole(variable);
             let store = mir::InstructionKind::Store { place, value };
@@ -278,8 +274,8 @@ impl Lowering<'_> {
         };
         let next = self.binary(BinaryOp::Add, counter, delta, ty, range_span);
         let left_next = self.binary(BinaryOp::Subtract, left, step, size, range_span);
-        let passes = index.zip(passes).map(|(index, passes)| {
-            let passes_type = self.mir.variables[index].ty;
+        let passes = index_variable.zip(passes).map(|(variable, passes)| {
+            let passes_type = self.mir.variables[variable].ty;
             let one = self.integer_constant(passes_type, 1);
             let next = self.binary(BinaryOp::Add, passes, one, passes_type, range_span);
             (passes, self.integer_constant(passes_type, 0), next)

@@ -13,7 +13,6 @@ use std::collections::HashMap;
 use std::hash::DefaultHasher;
 use std::hash::Hash;
 use std::hash::Hasher;
-use std::path::Path;
 use std::sync::Arc;
 
 use check::Checker;
@@ -76,7 +75,8 @@ struct ModuleResults {
     /// and check only the others. Loading's errors are one list for the
     /// whole program (`project::Program`), since every load is done anew.
     diagnostics: Vec<Diagnostic>,
-    reused: bool, // kept from the previous compile, not checked
+    reused: bool,  // kept from the previous compile, not checked
+    changed: bool, // its interface differs from the previous compile's; set when it is done
     /// The files of the modules whose functions its constants ran at compile
     /// time (`Checker::ran_modules`): it is reused only if they are.
     ran_modules: Vec<String>,
@@ -90,6 +90,7 @@ impl ModuleResults {
             interface: 0,
             diagnostics: Vec::new(),
             reused: false,
+            changed: true,
             ran_modules: Vec::new(),
         }
     }
@@ -147,13 +148,10 @@ pub struct Interpreted {
 /// it did. A program that cannot be checked has only loading's errors, and
 /// does not start.
 pub fn interpret(
-    project: &project::Project,
     program: &project::Program,
     target: &'static Machine,
 ) -> (Results, Option<Interpreted>) {
-    let is_entry = |module: &project::Module| Path::new(&module.ast.file.path) == project.entry;
-    let entry = program.modules.iter().position(is_entry);
-    let Some(entry) = entry.filter(|_| program.checkable) else {
+    let Some(entry) = program.entry.filter(|_| program.checkable) else {
         return (Results::default(), None);
     };
     let mut bodies = HashMap::new();
@@ -162,7 +160,7 @@ pub fn interpret(
         program,
         target,
         Results::default(),
-        Some(ModuleId::from_index(entry)),
+        Some(entry),
         false,
         |output| match output {
             Output::Function(CheckedFunction {
@@ -187,10 +185,7 @@ pub fn interpret(
     }
     let modules = program.modules.as_slice();
     let extern_symbol = |function| project::extern_symbol(modules, function).ok().flatten();
-    let struct_name = |definition| {
-        let (name, file) = project::declared_name(modules, definition);
-        name.text(file).to_string()
-    };
+    let struct_name = |definition| project::declared_text(modules, definition).to_string();
     let field_names = |definition| {
         let names = project::field_names(modules, definition);
         names.map(str::to_string).collect()
@@ -262,8 +257,6 @@ pub fn run(
         .into_iter()
         .map(|cached| (cached.file.path.clone(), cached))
         .collect();
-    // Whether each module's interface differs from the previous compile's.
-    let mut changed: Vec<bool> = Vec::with_capacity(modules.len());
     // One THIR body for every function, so its memory is reused.
     let mut thir = thir::Body::default();
     for (index, module) in modules.iter().enumerate() {
@@ -284,7 +277,7 @@ pub fn run(
         let imports_unchanged = module
             .imports
             .iter()
-            .all(|import| changed.get(import.module.index()) == Some(&false));
+            .all(|import| !results[import.module.index()].changed);
         let cached = previous.remove(&module.ast.file.path);
         let previous_interface = cached.as_ref().map(|cached| cached.interface);
         // A constant's value depends on the bodies it ran, and a diagnostic
@@ -310,21 +303,21 @@ pub fn run(
             && cached.file.text == module.ast.file.text
             && others_unchanged(&cached)
         {
-            let found = &mut results[index];
-            found.reused = true;
-            found.ran_modules = cached.ran_modules;
             // Its scope's errors come from the same text, so are the same;
             // what asking for its declarations found again is dropped.
-            found.diagnostics = cached.diagnostics;
-            found.interface = cached.interface;
-            changed.push(false);
+            results[index] = ModuleResults {
+                file: module.ast.file.clone(),
+                reused: true,
+                changed: false,
+                ..cached
+            };
             continue;
         }
         compile_module(&mut checker, id, &mut thir, &mut use_output);
         let interface = interface(&checker, id, &results);
-        changed.push(previous_interface != Some(interface));
         let found = &mut results[index];
         found.interface = interface;
+        found.changed = previous_interface != Some(interface);
         let checked = &mut checker.module_checks[index];
         found.diagnostics = std::mem::take(&mut checked.diagnostics);
         let ran = checked.ran_modules.iter();
@@ -399,8 +392,8 @@ fn find_entry_point(checker: &mut Checker, entry: ModuleId) -> Result<(DefId, bo
 }
 
 /// Checks each function and constant of `module` where it is declared, used
-/// or not, compiles each function (`compile_function`) and gives each
-/// constant, then the module's remaining facts, to `use_output`.
+/// or not, and gives each, with its MIR and the facts found so far for a
+/// function, then the module's remaining facts, to `use_output`.
 fn compile_module(
     checker: &mut Checker,
     module: ModuleId,
@@ -415,7 +408,20 @@ fn compile_module(
         };
         match tree.decls[declaration] {
             ast::Decl::Function(function) => {
-                compile_function(checker, definition, &function, thir, use_output);
+                let span = function.name.span;
+                // No body, or an error in the signature.
+                let Some(mir) = checker.build_function(definition, span, thir, false) else {
+                    continue;
+                };
+                let facts = std::mem::take(&mut checker.module_checks[module.index()].facts);
+                use_output(Output::Function(CheckedFunction {
+                    definition,
+                    signature: checker.function_type(definition, span),
+                    thir,
+                    facts: &facts,
+                    mir,
+                    types: &checker.types,
+                }));
             }
             ast::Decl::Const { name, .. } => {
                 let constant = checker.constant(definition, name.span);
@@ -434,31 +440,6 @@ fn compile_module(
         facts: &facts,
         types: &checker.types,
     });
-}
-
-/// Builds the function `definition`, written `function`, into `thir`
-/// (`Checker::build_function`) and gives it to `use_output` with its MIR,
-/// and with the facts found so far when the checker records facts. A
-/// function without a body, or whose signature had an error, is not given.
-fn compile_function(
-    checker: &mut Checker,
-    definition: DefId,
-    function: &ast::Function,
-    thir: &mut thir::Body,
-    use_output: &mut impl FnMut(Output),
-) {
-    let Some(mir) = checker.build_function(definition, function.name.span, thir, false) else {
-        return;
-    };
-    let facts = std::mem::take(&mut checker.module_checks[definition.module.index()].facts);
-    use_output(Output::Function(CheckedFunction {
-        definition,
-        signature: checker.function_type(definition, function.name.span),
-        thir,
-        facts: &facts,
-        mir,
-        types: &checker.types,
-    }));
 }
 
 /// Feeds `ty` to `hasher` by what it is, not by its id, which differs between

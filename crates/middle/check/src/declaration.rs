@@ -311,42 +311,34 @@ impl Checker<'_> {
     /// `external`.
     fn resolve_signature_type(&mut self, ty: Id<ast::Type>, external: bool) -> TypeId {
         let resolved = self.resolve_value_type(ty);
-        if external
-            && matches!(
-                self.types[resolved],
-                Type::Struct { .. } | Type::Array { .. } | Type::Range { .. } | Type::Slice { .. }
-            )
-        {
+        if !external {
+            return resolved;
+        }
+        let span = self.module().ast.types.span(ty);
+        match self.types[resolved] {
             // shortcut: structs, arrays, ranges and slices pass as LLVM
             // values, which the C ABI does not match; allow structs and arrays
             // when its aggregate rules are written (a range or slice has no C
             // type).
-            let span = self.module().ast.types.span(ty);
-            let what =
-                "struct, array, range and slice parameters and results of `extern` functions";
-            return self.not_supported(span, what);
+            Type::Struct { .. } | Type::Array { .. } | Type::Range { .. } | Type::Slice { .. } => {
+                let what =
+                    "struct, array, range and slice parameters and results of `extern` functions";
+                self.not_supported(span, what)
+            }
+            // C could keep what the struct holds, which no loan would follow.
+            Type::Reference { target, .. } if self.types.holds_loans(target).is_some() => {
+                let what = "references to structs holding references in `extern` functions";
+                self.not_supported(span, what)
+            }
+            Type::Integer(integer) if integer.bits > self.target.widest_c_integer() => {
+                let (target, widest) = (self.target.name, self.target.widest_c_integer());
+                let message = format!(
+                    "C has no `{integer}` on {target}, whose integers have at most {widest} bits"
+                );
+                self.error(diagnostics::INVALID_TYPE, message, span)
+            }
+            _ => resolved,
         }
-        // C could keep what the struct holds, which no loan would follow.
-        if external
-            && let Type::Reference { target, .. } = self.types[resolved]
-            && self.types.holds_loans(target).is_some()
-        {
-            let span = self.module().ast.types.span(ty);
-            let what = "references to structs holding references in `extern` functions";
-            return self.not_supported(span, what);
-        }
-        if external
-            && let Type::Integer(integer) = self.types[resolved]
-            && integer.bits > self.target.widest_c_integer()
-        {
-            let (span, target) = (self.module().ast.types.span(ty), self.target.name);
-            let widest = self.target.widest_c_integer();
-            let message = format!(
-                "C has no `{integer}` on {target}, whose integers have at most {widest} bits"
-            );
-            return self.error(diagnostics::INVALID_TYPE, message, span);
-        }
-        resolved
     }
 
     /// The real type of `held`, for a type written at `span` that holds it,

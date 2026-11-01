@@ -159,9 +159,9 @@ impl ThirBuilder<'_, '_> {
         }
         let result = checked.ty;
         let kind = match checked.kind {
-            ExprKind::Constant(constant) => ExprKind::Constant(
-                eval::operators::unary(op, &ty, &constant).expect("unary operators do not trap"),
-            ),
+            ExprKind::Constant(constant) => {
+                ExprKind::Constant(eval::operators::unary(op, &ty, &constant))
+            }
             kind => ExprKind::Unary {
                 op,
                 value: self.body.add(Expr { ty: result, kind }, operand_span),
@@ -296,9 +296,8 @@ impl ThirBuilder<'_, '_> {
             return Expr::INVALID;
         }
         if let ExprKind::Constant(ref value) = right.kind
-            && let Some(trap) = eval::operators::known_trap(op, &left_type, &right_type, value)
+            && let Some(message) = eval::operators::known_trap(op, &left_type, &right_type, value)
         {
-            let message = eval::operators::trap_message(trap, &left_type);
             self.checker
                 .error(diagnostics::INVALID_OPERATION, message, right_span);
             return Expr::INVALID;
@@ -318,11 +317,13 @@ impl ThirBuilder<'_, '_> {
                 kind: ExprKind::Constant(folded),
             };
         }
-        let left = self.body.add(left, left_span);
-        let right = self.body.add(right, right_span);
         Expr {
             ty,
-            kind: ExprKind::Binary { op, left, right },
+            kind: ExprKind::Binary {
+                op,
+                left: self.body.add(left, left_span),
+                right: self.body.add(right, right_span),
+            },
         }
     }
 

@@ -136,10 +136,9 @@ impl Function<'_, '_, '_> {
 
     /// Whether `operand` is the constant -1: every bit of its type set.
     pub(super) fn is_minus_one(&self, operand: Operand) -> bool {
-        let Operand::Constant(constant) = operand else {
+        let Some(constant) = self.body.constant(operand) else {
             return false;
         };
-        let constant = &self.body.constants[constant.index()];
         let (Value::Integer(limbs), Type::Integer(integer)) =
             (&constant.value, &self.types[constant.ty])
         else {

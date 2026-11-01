@@ -106,10 +106,7 @@ impl Checker<'_> {
             file,
             types,
             result,
-            |definition| {
-                let (name, file) = project::declared_name(modules, definition);
-                name.text(file)
-            },
+            |definition| project::declared_text(modules, definition),
             diagnostics,
         );
         self.module_checks[module].diagnostics.append(&mut found);

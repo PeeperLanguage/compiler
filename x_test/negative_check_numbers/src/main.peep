@@ -4,4 +4,5 @@ fn main() {
     let mixed = 1i32 + wide;
     let ratio = 10 / 0;
     let shifted = 1u8 << 8;
+    let lowered = 1u16 >> 16;
 }

@@ -50,7 +50,12 @@ pub(crate) fn snippets(d: &Diagnostic) -> Vec<Snippet<'_>> {
                     1
                 },
                 end: 0,
-                severity: label.severity,
+                // The first label is the primary place.
+                severity: if index == 0 {
+                    d.code.severity
+                } else {
+                    Severity::Hint
+                },
                 messages: Vec::new(),
             };
             if number == end_line {

@@ -13,7 +13,6 @@ use model::semantic_types::range_field;
 use source::Span;
 
 use super::Failure;
-use super::INVALID_ACCESS;
 use super::Interpreter;
 use super::Register;
 use crate::operators;
@@ -96,24 +95,18 @@ impl<'b> Interpreter<'b, '_> {
         let Type::Range { step, .. } = self.types[ty] else {
             unreachable!("only a range has a count")
         };
-        let step_type = &self.types[step];
+        let Type::Integer(integer) = self.types[step] else {
+            unreachable!("a step is an integer")
+        };
         let left = self.range_part(range, ty, range_field::LEFT, span)?;
         let by = self.range_part(range, ty, range_field::STEP, span)?;
         let inclusive = self.range_part(range, ty, range_field::INCLUSIVE, span)?;
-        let divide = |op| match operators::binary(op, step_type, &left, step_type, &by) {
-            Ok(Value::Integer(limbs)) => Ok(limbs),
-            Ok(_) => unreachable!("a step is an integer"),
-            Err(trap) => Err(self.fail(operators::trap_message(trap, step_type), span)),
+        let (Value::Integer(left), Value::Integer(by)) = (left, by) else {
+            unreachable!("a range's left and step are integers")
         };
-        let whole = divide(BinaryOp::Divide)?;
-        let rest = divide(BinaryOp::Remainder)?;
-        let more = rest.as_slice().iter().any(|&limb| limb != 0);
-        let extra = u64::from(more || inclusive == Value::Bool(true));
-        let [low, high @ ..] = whole.as_slice() else {
-            unreachable!("an integer has limbs")
-        };
-        let count = low.checked_add(extra);
-        Ok(count.filter(|_| high.iter().all(|&limb| limb == 0)))
+        let count = integer.count_over(&left, &by, inclusive == Value::Bool(true));
+        let count = count.ok_or_else(|| self.fail(messages::DIVISION_BY_ZERO, span))?;
+        Ok(bigint::to_u64(integer.bits + 1, false, &count))
     }
 
     /// Builds the array `id` from `parts` (`InstructionKind::ArrayParts`),
@@ -165,9 +158,7 @@ impl<'b> Interpreter<'b, '_> {
                     self.fill_range(at, range, part_type, element, count, span)?;
                 }
                 Register::Address(from) | Register::Slice { address: from, .. } => {
-                    self.charge(count * size, span)?;
-                    let copied = self.memory.copy(from, at, count * size);
-                    copied.ok_or_else(|| self.fail(INVALID_ACCESS, span))?;
+                    self.copy_memory(from, at, count * size, span)?;
                 }
                 Register::Scalar(_) => unreachable!("a spread part is in memory"),
             }

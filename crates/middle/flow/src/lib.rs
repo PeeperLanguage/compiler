@@ -8,11 +8,12 @@
 //! - `report_missing_return` (T0017): a function with a result whose closing `}` can
 //!   be reached, and so ends without returning a value. The error names how
 //!   each path gets there: a branch side, or a nested block that ends.
-//! - `variable_state::report_variable_state_errors` (T0039 and T0007): a
-//!   variable used where some path left it unset, and a variable without
-//!   `mut` assigned where some path already set it. This is what lets
-//!   `let x: i32;` be set once later.
-//! - `loans::report_loan_errors` (T0037): a place used in a way that a
+//! - `variable_state::report_variable_state_errors` (T0039, T0034, T0035 and
+//!   T0007): a variable used where some path left it unset or moved it, a
+//!   value moved out of what holds it, and a variable without `mut` assigned
+//!   where some path already set it. This is what lets `let x: i32;` be set
+//!   once later.
+//! - `loans::report_loan_errors` (T0037, T0036 and T0016): a place used in a way that a
 //!   reference still in use forbids, or a variable whose scope ends while a
 //!   reference to it is still in use.
 //! - `warn_unreachable_code` (W0001, a warning): code no path reaches, such as code
@@ -100,73 +101,7 @@ pub fn report_missing_return<'n>(
     if !reachable[end.index()] {
         return;
     }
-    // (where, label) of each path that arrives at the end.
-    let mut causes = Vec::new();
-    let mut end_code = body.lists.items(body.blocks[end].instructions);
-    if !end_code.any(|id| body.instructions[id].kind.runs()) {
-        let predecessors = predecessors(body);
-        // Back from the end through blocks that do nothing: the first thing
-        // met on each path is how that path gets there. A branch is met once
-        // through each side that leads here.
-        let mut visited = vec![false; body.blocks.len()];
-        let mut pending = vec![end];
-        while let Some(block) = pending.pop() {
-            for &predecessor in &predecessors[block.index()] {
-                if !reachable[predecessor.index()] {
-                    continue;
-                }
-                let mir::Block {
-                    instructions,
-                    ref terminator,
-                    ..
-                } = body.blocks[predecessor];
-                if let mir::Terminator::Branch {
-                    condition,
-                    span,
-                    then,
-                    ..
-                } = *terminator
-                {
-                    // A constant condition still has two sides here, as in Go
-                    // and Rust, so whether code compiles never depends on a
-                    // constant's value; the label only says which side it takes.
-                    let always = match condition {
-                        mir::Operand::Constant(constant) => {
-                            match body.constants[constant.index()].value {
-                                Value::Bool(value) => Some(value),
-                                _ => None,
-                            }
-                        }
-                        _ => None,
-                    };
-                    let side = then == block;
-                    let label = match (always, side) {
-                        (Some(true), true) => "this is always true, so nothing is returned",
-                        (Some(false), false) => "this is always false, so nothing is returned",
-                        (_, true) => "if this is true, nothing is returned",
-                        (_, false) => "if this is false, nothing is returned",
-                    };
-                    match causes.iter_mut().find(|(cause, _)| *cause == span) {
-                        None => causes.push((span, label)),
-                        Some(other_side) if always.is_none() => {
-                            other_side.1 = "either way, nothing is returned";
-                        }
-                        Some(other_side) if always == Some(side) => other_side.1 = label,
-                        Some(_) => {}
-                    }
-                } else if !std::mem::replace(&mut visited[predecessor.index()], true) {
-                    let code = body.lists.items(instructions);
-                    match code.filter(|&id| body.instructions[id].kind.runs()).last() {
-                        Some(last) => causes.push((
-                            body.instructions.span(last),
-                            "this path ends without returning",
-                        )),
-                        None => pending.push(predecessor),
-                    }
-                }
-            }
-        }
-    }
+    let mut causes = missing_return_causes(body, end, &reachable);
     causes.sort_by_key(|&(span, _): &(Span, &str)| span.start);
     let hidden = causes.len().saturating_sub(SHOWN_CAUSES);
     let end_label = format!(
@@ -192,6 +127,80 @@ pub fn report_missing_return<'n>(
         "add a `return` at the end of the function, or make each path shown return a value"
     };
     diagnostics.push(error.help(help, Vec::new()));
+}
+
+/// Where each path arrives at `end`, a reachable block, and the label for it:
+/// nothing when `end` itself runs code, as one `return` there fixes every path.
+fn missing_return_causes(
+    body: &mir::Body,
+    end: Id<mir::Block>,
+    reachable: &[bool],
+) -> Vec<(Span, &'static str)> {
+    let mut causes = Vec::new();
+    let mut end_code = body.lists.items(body.blocks[end].instructions);
+    if end_code.any(|id| body.instructions[id].kind.runs()) {
+        return causes;
+    }
+    let predecessors = predecessors(body);
+    // Back from the end through blocks that do nothing: the first thing
+    // met on each path is how that path gets there. A branch is met once
+    // through each side that leads here.
+    let mut visited = vec![false; body.blocks.len()];
+    let mut pending = vec![end];
+    while let Some(block) = pending.pop() {
+        for &predecessor in &predecessors[block.index()] {
+            if !reachable[predecessor.index()] {
+                continue;
+            }
+            let mir::Block {
+                instructions,
+                ref terminator,
+                ..
+            } = body.blocks[predecessor];
+            if let mir::Terminator::Branch {
+                condition,
+                span,
+                then,
+                ..
+            } = *terminator
+            {
+                // A constant condition still has two sides here, as in Go
+                // and Rust, so whether code compiles never depends on a
+                // constant's value; the label only says which side it takes.
+                let always = body
+                    .constant(condition)
+                    .and_then(|constant| match constant.value {
+                        Value::Bool(value) => Some(value),
+                        _ => None,
+                    });
+                let side = then == block;
+                let label = match (always, side) {
+                    (Some(true), true) => "this is always true, so nothing is returned",
+                    (Some(false), false) => "this is always false, so nothing is returned",
+                    (_, true) => "if this is true, nothing is returned",
+                    (_, false) => "if this is false, nothing is returned",
+                };
+                match causes.iter_mut().find(|(cause, _)| *cause == span) {
+                    None => causes.push((span, label)),
+                    Some(other_side) if always.is_none() => {
+                        other_side.1 = "either way, nothing is returned";
+                    }
+                    Some(other_side) if always == Some(side) => other_side.1 = label,
+                    Some(_) => {}
+                }
+            } else if !std::mem::replace(&mut visited[predecessor.index()], true) {
+                let code = body.lists.items(instructions);
+                match code.filter(|&id| body.instructions[id].kind.runs()).last() {
+                    Some(last) => causes.push((
+                        body.instructions.span(last),
+                        "this path ends without returning",
+                    )),
+                    None => pending.push(predecessor),
+                }
+            }
+        }
+    }
+    causes
 }
 
 /// Facts carried along a function's edges until nothing changes, which also

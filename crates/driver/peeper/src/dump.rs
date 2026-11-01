@@ -58,10 +58,7 @@ impl<'p> Dumps<'p> {
     /// Adds the function `definition`'s THIR and MIR to its module's dumps.
     pub fn add(&mut self, definition: DefId, thir: &thir::Body, mir: &mir::Body, types: &Types) {
         let program = self.program;
-        let name = |definition: DefId| {
-            let (name, file) = project::declared_name(&program.modules, definition);
-            name.text(file)
-        };
+        let name = |definition: DefId| project::declared_text(&program.modules, definition);
         let file = &program.modules[definition.module.index()].ast.file;
         let texts = &mut self.texts[definition.module.index()];
         for (text, kind) in texts.iter_mut().zip(self.kinds) {

@@ -76,8 +76,14 @@ impl Integer {
         inclusive: bool,
     ) -> Option<Limbs> {
         let (_, distance) = self.range_distance(start, end);
-        let whole = bigint::divide(self.bits, false, &distance, step)?;
-        let rest = bigint::remainder(self.bits, false, &distance, step)?;
+        self.count_over(&distance, step, inclusive)
+    }
+
+    /// How many values a range of this type or its step type has over
+    /// `distance` by `step`, as `range_count` gives them.
+    pub fn count_over(self, distance: &Limbs, step: &Limbs, inclusive: bool) -> Option<Limbs> {
+        let whole = bigint::divide(self.bits, false, distance, step)?;
+        let rest = bigint::remainder(self.bits, false, distance, step)?;
         let extra = inclusive || rest.as_slice().iter().any(|&limb| limb != 0);
         let wide = self.bits + 1;
         let whole = bigint::extend(self.bits, false, &whole, wide);
@@ -564,7 +570,6 @@ impl Types {
         }
     }
 
-    /// The type `id` stands for: itself, or the type an alias names.
     /// Whether a value of the type `id` copies when used by value: numbers,
     /// `bool`, `cstr`, shared references and slices, raw pointers, ranges, and arrays of values
     /// that copy. Any other value moves, and the variable it moved from is
@@ -588,6 +593,7 @@ impl Types {
         }
     }
 
+    /// The type `id` stands for: itself, or the type an alias names.
     pub fn real(&self, id: TypeId) -> TypeId {
         match self.types[id.0 as usize] {
             Type::Alias { real, .. } => real,

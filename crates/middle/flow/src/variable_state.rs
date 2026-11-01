@@ -37,16 +37,13 @@ pub fn report_variable_state_errors(
     if body.variables.ids().all(starts_set) && !body.instructions.ids().any(moves) {
         return;
     }
-    let instructions = |index: usize| {
-        let block = &body.blocks[Id::<mir::Block>::from_index(index)];
-        body.lists.items(block.instructions)
-    };
+    let instructions = |block: Id<mir::Block>| body.lists.items(body.blocks[block].instructions);
     let starts = dataflow(
         body.blocks.len(),
         [(Id::from_index(0), Facts::new(body.variables.len()))],
         |block| body.blocks[block].terminator.targets(),
         |block, facts| {
-            for instruction in instructions(block.index()) {
+            for instruction in instructions(block) {
                 facts.step(&body.instructions[instruction].kind);
             }
         },
@@ -54,11 +51,11 @@ pub fn report_variable_state_errors(
     );
     let mut reported = vec![false; body.variables.len()];
     let mut errors = Vec::new();
-    for (index, start) in starts.into_iter().enumerate() {
+    for (block, start) in body.blocks.ids().zip(starts) {
         let Some(mut facts) = start else {
             continue;
         };
-        for (position, instruction) in instructions(index).enumerate() {
+        for (position, instruction) in instructions(block).enumerate() {
             let span = body.instructions.span(instruction);
             let kind = &body.instructions[instruction].kind;
             let error = match *kind {
@@ -73,9 +70,12 @@ pub fn report_variable_state_errors(
                 {
                     let assigned = facts.maybe.has(variable) && !body.variables[variable].mutable;
                     assigned.then(|| {
-                        let on_every_path = facts.always.has(variable);
-                        let error = second_assignment(body, file, variable, span, on_every_path);
-                        (variable, error)
+                        let set = if facts.always.has(variable) {
+                            "is already set here"
+                        } else {
+                            "may already be set here"
+                        };
+                        (variable, second_assignment(body, file, variable, span, set))
                     })
                 }
                 mir::InstructionKind::Load(ref place)
@@ -91,12 +91,15 @@ pub fn report_variable_state_errors(
                         && !place.is_behind_reference();
                     let written = writes_part.then(|| part(place)[0]);
                     let error = if facts.moved.has(variable) {
-                        let block = Id::from_index(index);
                         let moves = move_sites(body, variable, block, position);
                         moved_use(body, file, variable, span, &moves, written)
                     } else {
-                        let on_some_path = facts.maybe.has(variable);
-                        unset_use(body, file, variable, span, on_some_path, written)
+                        let state = if facts.maybe.has(variable) {
+                            "is not set on every path to here"
+                        } else {
+                            "is not set yet here"
+                        };
+                        unset_use(body, file, variable, span, state, written)
                     };
                     Some((variable, error))
                 }
@@ -216,29 +219,24 @@ fn move_sites(
     sites
 }
 /// The error for `variable`, used at `span` where it is not set on every path
-/// to there; `on_some_path` when some path did set it. A use that sets a
-/// `written` part, such as "a field", needs the whole value set.
+/// to there, as `state` says. A use that sets a `written` part, such as "a
+/// field", needs the whole value set.
 fn unset_use(
     body: &mir::Body,
     file: &Arc<SourceFile>,
     variable: Id<mir::Variable>,
     span: Span,
-    on_some_path: bool,
+    state: &str,
     written: Option<&str>,
 ) -> Diagnostic {
     let declared = body.variables.span(variable);
     let name = file.slice(declared);
-    let here = if on_some_path {
-        format!("`{name}` is not set on every path to here")
-    } else {
-        format!("`{name}` is not set yet here")
-    };
     let message = match written {
         Some(part) => format!("cannot set {part} of `{name}` before `{name}` is set"),
         None => format!("`{name}` is used before it is set"),
     };
     Diagnostic::new(diagnostics::USED_BEFORE_SET, message)
-        .label(file, span, here)
+        .label(file, span, format!("`{name}` {state}"))
     .label(file, declared, "declared here without a value")
     .help(
         format!(
@@ -326,26 +324,21 @@ fn part(place: &mir::Place) -> [&'static str; 2] {
     }
 }
 /// The error for `variable`, without `mut`, assigned at `span` where some path
-/// already set it; `on_every_path` when every path did.
+/// already set it, as `set` says.
 fn second_assignment(
     body: &mir::Body,
     file: &Arc<SourceFile>,
     variable: Id<mir::Variable>,
     span: Span,
-    on_every_path: bool,
+    set: &str,
 ) -> Diagnostic {
     let declared = body.variables.span(variable);
     let name = file.slice(declared);
-    let here = if on_every_path {
-        format!("`{name}` is already set here")
-    } else {
-        format!("`{name}` may already be set here")
-    };
     Diagnostic::new(
         diagnostics::INVALID_ASSIGNMENT,
         format!("cannot assign twice to immutable `{name}`"),
     )
-    .label(file, span, here)
+    .label(file, span, format!("`{name}` {set}"))
     .label(file, declared, "declared without `mut` here")
     .help(
         format!("write `let mut {name}` to assign it more than once"),

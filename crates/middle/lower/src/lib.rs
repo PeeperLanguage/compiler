@@ -131,6 +131,11 @@ struct Loop {
     declared: usize,
 }
 
+/// The MIR variable of `variable`: their ids match (`lower`).
+fn lowered_variable(variable: Id<thir::Variable>) -> Id<mir::Variable> {
+    Id::from_index(variable.index())
+}
+
 impl Lowering<'_> {
     /// A new block starting at `span`; `finish` gives it its instructions and
     /// terminator.

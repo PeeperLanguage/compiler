@@ -103,16 +103,21 @@ impl Memory {
         block.is_some_and(|(_, &end)| address.saturating_add(length) <= end)
     }
 
+    /// The memory `address` is in, and where in it.
+    fn region_at(&self, address: u64) -> Option<(&[u8], u64)> {
+        if address >= DATA_START {
+            Some((self.data.as_slice(), address - DATA_START))
+        } else {
+            Some((self.stack.as_slice(), address.checked_sub(STACK_START)?))
+        }
+    }
+
     /// The `length` bytes at `address`.
     pub(super) fn bytes(&self, address: u64, length: u64) -> Option<&[u8]> {
         if !self.usable(address, length) {
             return None;
         }
-        let (region, start) = if address >= DATA_START {
-            (&self.data, address - DATA_START)
-        } else {
-            (&self.stack, address.checked_sub(STACK_START)?)
-        };
+        let (region, start) = self.region_at(address)?;
         region.get(host_range(start, length)?)
     }
 
@@ -192,11 +197,7 @@ impl Memory {
         if !self.usable(address, 1) {
             return None;
         }
-        let (region, start) = if address >= DATA_START {
-            (&self.data, address - DATA_START)
-        } else {
-            (&self.stack, address.checked_sub(STACK_START)?)
-        };
+        let (region, start) = self.region_at(address)?;
         let rest = region.get(usize::try_from(start).ok()?..)?;
         let end = rest.iter().position(|&byte| byte == 0)?;
         Some(&rest[..end])

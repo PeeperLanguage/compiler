@@ -308,13 +308,18 @@ impl Terminator {
 }
 
 impl Body {
+    /// The constant `operand` names, if it names one.
+    pub fn constant(&self, operand: Operand) -> Option<&Constant> {
+        match operand {
+            Operand::Constant(constant) => Some(&self.constants[constant.index()]),
+            _ => None,
+        }
+    }
+
     /// The text `print` writes for `operand`, when that is a constant string:
     /// up to its first zero byte, as C reads it.
     pub fn constant_text(&self, operand: Operand) -> Option<&[u8]> {
-        let Operand::Constant(constant) = operand else {
-            return None;
-        };
-        let Value::Bytes(bytes) = &self.constants[constant.index()].value else {
+        let Value::Bytes(bytes) = &self.constant(operand)?.value else {
             return None;
         };
         bytes.split(|&byte| byte == 0).next()

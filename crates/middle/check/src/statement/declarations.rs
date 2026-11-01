@@ -56,7 +56,7 @@ impl ThirBuilder<'_, '_> {
                 (TypeId::INVALID, None)
             }
         };
-        let variable = Variable {
+        let declared_variable = Variable {
             ty,
             mutable,
             initialized,
@@ -99,7 +99,7 @@ impl ThirBuilder<'_, '_> {
         if let Some(value) = value {
             self.keep_temporary(value);
         }
-        let variable = self.body.add(variable, name.span);
+        let variable = self.body.add(declared_variable, name.span);
         self.declare(name, Local::Variable(variable));
         Stmt::Let { variable, value }
     }

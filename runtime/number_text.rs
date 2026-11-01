@@ -18,6 +18,15 @@ pub fn write_decimal(mut value: u64, width: usize, push: &mut impl FnMut(&[u8]))
     push(&digits[at.min(digits.len() - width)..]);
 }
 
+/// Writes the address `address` in hexadecimal after `0x`.
+pub fn write_pointer(address: u64, push: &mut impl FnMut(&[u8])) {
+    push(b"0x");
+    let shown = (64 - (address | 1).leading_zeros()).div_ceil(4);
+    for nibble in (0..shown).rev() {
+        push(&[b"0123456789abcdef"[(address >> (nibble * 4) & 0xF) as usize]]);
+    }
+}
+
 /// How many nine-digit chunks of decimal text `limbs` 64-bit limbs can need.
 pub fn chunk_room(limbs: usize) -> usize {
     limbs * 3 + 1

@@ -67,11 +67,13 @@ impl Checker<'_> {
         });
         body.clear();
         let mut builder = ThirBuilder::new(self, body, result);
-        let outermost = Block {
-            parent: None,
-            statements: List::EMPTY,
-        };
-        let outermost = builder.body.add(outermost, tree.blocks.span(block));
+        let outermost = builder.body.add(
+            Block {
+                parent: None,
+                statements: List::EMPTY,
+            },
+            tree.blocks.span(block),
+        );
         for (parameter, &ty) in tree
             .children
             .lists

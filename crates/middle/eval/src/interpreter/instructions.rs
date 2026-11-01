@@ -51,9 +51,7 @@ impl<'b> Interpreter<'b, '_> {
                 match (self.operand(left), self.operand(right)) {
                     (Register::Scalar(left), Register::Scalar(right)) => {
                         let value = operators::binary(op, left_type, &left, right_type, &right)
-                            .map_err(|trap| {
-                                self.fail(operators::trap_message(trap, left_type), span)
-                            })?;
+                            .map_err(|message| self.fail(message, span))?;
                         Some(Register::Scalar(value))
                     }
                     (Register::Address(left), Register::Address(right)) => {
@@ -72,10 +70,7 @@ impl<'b> Interpreter<'b, '_> {
                 let Register::Scalar(value) = self.operand(value) else {
                     unreachable!("a unary operator takes a number or a `bool`")
                 };
-                let value = operators::unary(op, ty, &value);
-                Some(Register::Scalar(
-                    value.expect("unary operators do not trap"),
-                ))
+                Some(Register::Scalar(operators::unary(op, ty, &value)))
             }
             InstructionKind::Convert(ref value) => {
                 let from = &types[body.operand_type(*value)];

@@ -68,7 +68,7 @@ fn main() -> ExitCode {
 
 /// The program `files` make up: `files` maps each file's path in the package
 /// to its text.
-fn load(files: HashMap<String, String>) -> (Project, project::Program) {
+fn load(files: HashMap<String, String>) -> project::Program {
     let core = Path::new("/core/src");
     let page_files = files
         .into_iter()
@@ -84,14 +84,13 @@ fn load(files: HashMap<String, String>) -> (Project, project::Program) {
         root: PathBuf::new(),
         name: PACKAGE.to_string(),
     };
-    let program = project::load(&project, &open_files);
-    (project, program)
+    project::load(&project, &open_files)
 }
 
 /// The diagnostics of the program `files` make up, as `peeper check` finds
 /// them (`entries`). `files` maps each file's path in the package to its text.
 fn check(files: HashMap<String, String>) -> Value {
-    let (_, program) = load(files);
+    let program = load(files);
     // As in `peeper check`, errors in loading would only be repeated.
     let results = if program.checkable {
         let target = Machine::named(TARGET).expect("the target is a machine");
@@ -115,9 +114,9 @@ fn check(files: HashMap<String, String>) -> Value {
 /// panic's text last), each piece a `text` and its `stream`, and its
 /// `exit_code`.
 fn run(files: HashMap<String, String>) -> Value {
-    let (project, program) = load(files);
+    let program = load(files);
     let target = Machine::named(TARGET).expect("the target is a machine");
-    let (results, ran) = compile::interpret(&project, &program, target);
+    let (results, ran) = compile::interpret(&program, target);
     let ran = ran.map(|ran| {
         let piece = |written: &Written| {
             let stream = match written.stream {

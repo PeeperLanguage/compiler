@@ -48,26 +48,21 @@ pub fn convert(from: &Type, to: &Type, value: &Value) -> Value {
     }
 }
 
-/// The floats that an integer of the type `integer` holds when cut toward
-/// zero lie strictly between these two: one at or below the first becomes
-/// the type's lowest value, one at or above the second its highest. Each is
-/// a power of two (or 0), infinite when too large for an `f64`.
-fn float_range(integer: Integer) -> (f64, f64) {
-    let Integer { signed, bits } = integer;
-    if signed {
-        (-power_of_two(bits - 1), power_of_two(bits - 1))
-    } else {
-        (0.0, power_of_two(bits))
-    }
-}
-
 /// `value` as an integer of the type `integer`: cut toward zero, the
-/// nearest end of the type's range when outside it (`float_range`), and 0
+/// nearest end of the type's range when outside it, and 0
 /// for NaN.
 fn saturated_integer(value: f64, integer: Integer) -> Limbs {
     let Integer { signed, bits } = integer;
     let zero = Limbs::new(bits, &[]);
-    let (low, high) = float_range(integer);
+    // The floats the type holds when cut toward zero lie strictly between
+    // these: one at or below `low` becomes its lowest value, one at or above
+    // `high` its highest. Each is a power of two (or 0), infinite when too
+    // large for an `f64`.
+    let (low, high) = if signed {
+        (-power_of_two(bits - 1), power_of_two(bits - 1))
+    } else {
+        (0.0, power_of_two(bits))
+    };
     // The signed minimum is the sign bit alone; each maximum is the
     // complement of the minimum.
     let lowest = if signed {

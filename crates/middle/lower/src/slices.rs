@@ -21,16 +21,6 @@ pub(crate) enum Length {
 }
 
 impl Lowering<'_> {
-    /// The slice `&array[start..end]` (`thir::ExprKind::Slice`) at
-    /// `expression`, of an array or a slice: the borrow of the elements from
-    /// the start, after stopping the program when an end is outside them or
-    /// the ends are out of order. The checker rejected such ends known at
-    /// compile time for an array, so they get no check; a slice's length
-    /// is known only when the program runs, so each of its ends but a start
-    /// of 0 is checked.
-    // Takes only the id and gives the operand: an arm of `lower_expr` that
-    // passed the parts and took the instruction back cost a compile 9 M
-    // instructions, with no slice in it.
     /// The length of `slice`, its second field.
     pub(super) fn slice_length(&mut self, slice: mir::Operand, span: Span) -> mir::Operand {
         let fields = Box::new([1]);
@@ -41,6 +31,16 @@ impl Lowering<'_> {
         self.emit(length, self.usize, span)
     }
 
+    /// The slice `&array[start..end]` (`thir::ExprKind::Slice`) at
+    /// `expression`, of an array or a slice: the borrow of the elements from
+    /// the start, after stopping the program when an end is outside them or
+    /// the ends are out of order. The checker rejected such ends known at
+    /// compile time for an array, so they get no check; a slice's length
+    /// is known only when the program runs, so each of its ends but a start
+    /// of 0 is checked.
+    // Takes only the id and gives the operand: an arm of `lower_expr` that
+    // passed the parts and took the instruction back cost a compile 9 M
+    // instructions, with no slice in it.
     pub(super) fn lower_slice(&mut self, expression: Id<thir::Expr>) -> Option<mir::Operand> {
         let span = self.thir.exprs.span(expression);
         let thir::Expr {
@@ -59,9 +59,7 @@ impl Lowering<'_> {
         let Some(mutable) = self.types[ty].borrows() else {
             unreachable!("a slice's type is a slice")
         };
-        let Ok(mut place) = self.place(array)? else {
-            unreachable!("the checker slices only a place")
-        };
+        let mut place = self.place(array)?;
         let viewed = self.thir.exprs[array].ty;
         let length = match self.types[viewed] {
             Type::Array { length, .. } => Length::Known(length),

@@ -16,7 +16,6 @@ use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
 
-use model::ModuleId;
 use model::machine::Machine;
 
 const MODULES: usize = 10;
@@ -74,12 +73,7 @@ fn main() {
         let program = project::load(&project, &files);
         load.push(start.elapsed());
         assert!(program.checkable, "{:?}", program.diagnostics);
-        let entry = program
-            .modules
-            .iter()
-            .position(|module| Path::new(&module.ast.file.path) == project.entry)
-            .map(ModuleId::from_index)
-            .expect("the program has an entry module");
+        let entry = program.entry.expect("the program has an entry module");
         let start = Instant::now();
         let (mut ll, results) = llvm::write::write_modules(&program, target, mode, |queue| {
             compile::run(

@@ -245,18 +245,14 @@ impl<'p> Checker<'p> {
     /// The type `ty` as a message names it (`Types::text`).
     pub(crate) fn type_text(&self, ty: TypeId) -> String {
         self.types.text(ty, |definition| {
-            let (name, file) = project::declared_name(self.modules, definition);
-            name.text(file)
+            project::declared_text(self.modules, definition)
         })
     }
 
     /// Both types as a message names them, with each one's module when two
     /// different declarations in them read the same: `a::Point`, `[1]b::Point`.
     pub(crate) fn type_texts(&self, first: TypeId, second: TypeId) -> (String, String) {
-        let name = |definition: DefId| {
-            let (name, file) = project::declared_name(self.modules, definition);
-            name.text(file)
-        };
+        let name = |definition: DefId| project::declared_text(self.modules, definition);
         // `Types::text` needs a closure it can copy, so this one cannot own the list.
         let written = RefCell::new(Vec::new());
         let plain = |definition: DefId| {

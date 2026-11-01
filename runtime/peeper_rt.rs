@@ -192,12 +192,7 @@ extern "C" fn peeper_rt_v1_print_float(value: f64, bits: i32) {
 
 #[unsafe(no_mangle)]
 extern "C" fn peeper_rt_v1_print_pointer(pointer: *const c_void) {
-    push(b"0x");
-    let address = pointer as usize as u64;
-    let shown = (64 - (address | 1).leading_zeros()).div_ceil(4);
-    for nibble in (0..shown).rev() {
-        push(&[b"0123456789abcdef"[(address >> (nibble * 4) & 0xF) as usize]]);
-    }
+    number_text::write_pointer(pointer as usize as u64, &mut push);
 }
 
 #[unsafe(no_mangle)]

@@ -99,9 +99,9 @@ impl ThirBuilder<'_, '_> {
         }
         // The value moves to a new id and its own becomes the temporary, so
         // each expression holding it now holds the temporary.
-        let value = self.body.exprs[start].clone();
-        let (ty, span) = (value.ty, self.body.exprs.span(start));
-        let value = self.body.add(value, span);
+        let moved = self.body.exprs[start].clone();
+        let (ty, span) = (moved.ty, self.body.exprs.span(start));
+        let value = self.body.add(moved, span);
         let variable = self.add_hidden_variable(ty, true, span);
         self.body.exprs[start] = Expr {
             ty,
@@ -137,28 +137,24 @@ impl ThirBuilder<'_, '_> {
         // pointer decides nothing.
         let mut behind_raw = false;
         loop {
-            match self.body.exprs[root].kind {
+            let holder = match self.body.exprs[root].kind {
                 ExprKind::Index { array: slice, .. }
                     if matches!(pointer(slice), Type::Slice { .. }) =>
                 {
-                    if !behind_raw && deciding.is_none_or(|kept| !shared(kept) && shared(slice)) {
-                        deciding = Some(slice);
-                    }
-                    root = slice;
+                    slice
                 }
+                ExprKind::Dereference(reference) => reference,
                 ExprKind::Field { value, .. } | ExprKind::Index { array: value, .. } => {
                     root = value;
-                }
-                ExprKind::Dereference(reference) => {
-                    if !behind_raw && deciding.is_none_or(|kept| !shared(kept) && shared(reference))
-                    {
-                        deciding = Some(reference);
-                    }
-                    behind_raw |= matches!(pointer(reference), Type::RawPointer { .. });
-                    root = reference;
+                    continue;
                 }
                 _ => return (root, deciding),
+            };
+            if !behind_raw && deciding.is_none_or(|kept| !shared(kept) && shared(holder)) {
+                deciding = Some(holder);
             }
+            behind_raw |= matches!(pointer(holder), Type::RawPointer { .. });
+            root = holder;
         }
     }
 
@@ -284,8 +280,8 @@ impl ThirBuilder<'_, '_> {
             }
             (_, Type::Slice { .. }) => self.body.add(reference, span),
             (_, &Type::Reference { target, .. }) => {
-                let reference = self.body.add(reference, span);
-                let referred = self.dereference(reference, target);
+                let held = self.body.add(reference, span);
+                let referred = self.dereference(held, target);
                 self.body.add(referred, span)
             }
             _ => unreachable!("only a reference or slice is lent again"),

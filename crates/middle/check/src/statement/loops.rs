@@ -41,14 +41,16 @@ impl ThirBuilder<'_, '_> {
     /// A loop's variable `name`, set each pass, declared in the current
     /// block.
     pub(super) fn declare_loop_variable(&mut self, ty: TypeId, name: Ident) -> Id<Variable> {
-        let variable = Variable {
-            ty,
-            mutable: false,
-            initialized: true,
-            scope: self.block,
-            hidden: false,
-        };
-        let variable = self.body.add(variable, name.span);
+        let variable = self.body.add(
+            Variable {
+                ty,
+                mutable: false,
+                initialized: true,
+                scope: self.block,
+                hidden: false,
+            },
+            name.span,
+        );
         self.declare(name, Local::Variable(variable));
         variable
     }
@@ -187,25 +189,27 @@ impl ThirBuilder<'_, '_> {
         // The unnamed `items`, in a block of its own that ends after the loop.
         let body_span = self.checker.module().ast.blocks.span(body);
         let whole = Span::new(span.start as usize, body_span.end as usize);
-        let holder = Block {
-            parent: Some(self.block),
-            statements: List::EMPTY,
-        };
-        let holder = self.body.add(holder, whole);
+        let holder = self.body.add(
+            Block {
+                parent: Some(self.block),
+                statements: List::EMPTY,
+            },
+            whole,
+        );
         let outer = std::mem::replace(&mut self.block, holder);
         let items = self.add_hidden_variable(items_type, false, span);
-        let let_items = Stmt::Let {
-            variable: items,
-            value: Some(iterable),
-        };
-        let let_items = self.body.add(let_items, span);
+        let let_items = self.body.add(
+            Stmt::Let {
+                variable: items,
+                value: Some(iterable),
+            },
+            span,
+        );
         // `for index in 0..N`, each pass first setting `value`.
         let usize = self.checker.usize_type();
-        let Type::Integer(integer) = self.checker.types[usize] else {
-            unreachable!("`usize` is an integer")
-        };
+        let pointer_bits = self.checker.target.pointer_bits;
         let mut constant = |number: u64| {
-            let value = Value::Integer(Limbs::new(integer.bits, &[number]));
+            let value = Value::Integer(Limbs::new(pointer_bits, &[number]));
             let constant = Expr {
                 ty: usize,
                 kind: ExprKind::Constant(value),
@@ -217,27 +221,31 @@ impl ThirBuilder<'_, '_> {
         let end = if let Some(length) = length {
             constant(length)
         } else {
-            let read = Expr {
-                ty: items_type,
-                kind: ExprKind::Variable(items),
-            };
-            let read = self.body.add(read, span);
+            let read = self.body.add(
+                Expr {
+                    ty: items_type,
+                    kind: ExprKind::Variable(items),
+                },
+                span,
+            );
             let length = Expr {
                 ty: usize,
                 kind: ExprKind::Length(read),
             };
             self.body.add(length, span)
         };
-        let range = Expr {
-            ty: (self.checker.types.range(usize)).expect("`usize` is an integer"),
-            kind: ExprKind::Range {
-                start,
-                end,
-                step,
-                inclusive: false,
+        let range = self.body.add(
+            Expr {
+                ty: (self.checker.types.range(usize)).expect("`usize` is an integer"),
+                kind: ExprKind::Range {
+                    start,
+                    end,
+                    step,
+                    inclusive: false,
+                },
             },
-        };
-        let range = self.body.add(range, span);
+            span,
+        );
         let enclosing = self.open_block(body);
         let counter = match index {
             Some(index) => self.declare_loop_variable(usize, index),
@@ -245,19 +253,23 @@ impl ThirBuilder<'_, '_> {
         };
         let (element_value, value_type) = self.array_element(items, counter, element, borrow, span);
         let variable = self.declare_loop_variable(value_type, value);
-        let let_value = Stmt::Let {
-            variable,
-            value: Some(element_value),
-        };
-        let let_value = self.body.add(let_value, value.span);
+        let let_value = self.body.add(
+            Stmt::Let {
+                variable,
+                value: Some(element_value),
+            },
+            value.span,
+        );
         let body = self.check_loop_body(body, enclosing, Some(let_value));
-        let range = Stmt::ForRange {
-            index: None,
-            value: Some(counter),
-            range,
-            body,
-        };
-        let range = self.body.add(range, whole);
+        let range = self.body.add(
+            Stmt::ForRange {
+                index: None,
+                value: Some(counter),
+                range,
+                body,
+            },
+            whole,
+        );
         self.block = outer;
         let statements: [NonZeroU32; 2] = [let_items.into(), range.into()];
         self.body.blocks[holder].statements = self.body.children.lists.add(&statements);
@@ -289,19 +301,23 @@ impl ThirBuilder<'_, '_> {
             };
             place = self.body.add(referred, span);
         }
-        let at = Expr {
-            ty: self.body.variables[counter].ty,
-            kind: ExprKind::Variable(counter),
-        };
-        let at = self.body.add(at, span);
-        let read = Expr {
-            ty: element,
-            kind: ExprKind::Index {
-                array: place,
-                index: at,
+        let at = self.body.add(
+            Expr {
+                ty: self.body.variables[counter].ty,
+                kind: ExprKind::Variable(counter),
             },
-        };
-        let read = self.body.add(read, span);
+            span,
+        );
+        let read = self.body.add(
+            Expr {
+                ty: element,
+                kind: ExprKind::Index {
+                    array: place,
+                    index: at,
+                },
+            },
+            span,
+        );
         let Some(mutable) = borrow else {
             return (read, element);
         };
