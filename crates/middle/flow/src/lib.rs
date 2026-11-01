@@ -22,7 +22,7 @@
 //! How they work: they only read the graph. A block's terminator gives the
 //! edges out of it (`Terminator::targets`), and `predecessors` the edges in.
 //! Whether a block can be reached is found from the entry. The variable state
-//! and loan checks are dataflow (`dataflow`): they carry bits along the edges
+//! and loan checks are dataflow (`dataflow`): they carry facts along the edges
 //! until nothing changes, which also works once loops add edges back.
 //!
 //! After them `cleanup::remove_unused_code` drops what only the checks needed.
