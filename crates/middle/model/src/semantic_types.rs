@@ -423,8 +423,9 @@ pub fn builtin_doc(name: &str, pointer_bits: u32) -> Option<String> {
 }
 
 /// The types of a program, for one compile (`check::Checker` holds them).
-// TEMPORARY, to be deleted: `Clone` is only for `llvm::write`, whose workers
-// each get a copy of the types; delete it with `extend_from`.
+// TEMPORARY, to be deleted: `Clone` is for `llvm::write`, whose workers each
+// get a copy of the types, and `compile::interpret`, which keeps the finished
+// ones; delete it with `extend_from`.
 #[derive(Clone)]
 pub struct Types {
     types: Vec<Type>,

@@ -154,6 +154,7 @@ pub fn interpret(
     let Some(entry) = program.entry.filter(|_| program.checkable) else {
         return (Results::default(), None);
     };
+    let modules = program.modules.as_slice();
     let mut bodies = HashMap::new();
     let mut last_types = None;
     let results = run(
@@ -171,8 +172,11 @@ pub fn interpret(
                 flow::cleanup::remove_unused_code(&mut mir);
                 bodies.insert(definition, mir);
             }
-            // After each module's last function, so the last has every type.
-            Output::Facts { types, .. } => last_types = Some(types.clone()),
+            // Nothing here is reused, so the last module's facts come last,
+            // with every type.
+            Output::Facts { module, types, .. } if module.index() + 1 == modules.len() => {
+                last_types = Some(types.clone());
+            }
             _ => {}
         },
     );
@@ -183,7 +187,6 @@ pub fn interpret(
     if program.diagnostics.iter().any(Diagnostic::is_error) {
         return (results, None);
     }
-    let modules = program.modules.as_slice();
     let extern_symbol = |function| project::extern_symbol(modules, function).ok().flatten();
     let struct_name = |definition| project::declared_text(modules, definition).to_string();
     let field_names = |definition| {
