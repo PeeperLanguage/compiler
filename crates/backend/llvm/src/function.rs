@@ -234,7 +234,7 @@ fn value_name(id: Id<mir::Instruction>) -> impl std::fmt::Display {
 }
 
 /// `items` with a comma between each two, written where it is printed.
-fn comma_separated<T: Display>(items: impl Iterator<Item = T> + Clone) -> impl Display {
+pub(crate) fn comma_separated<T: Display>(items: impl Iterator<Item = T> + Clone) -> impl Display {
     fmt::from_fn(move |out| {
         for (index, item) in items.clone().enumerate() {
             if index > 0 {

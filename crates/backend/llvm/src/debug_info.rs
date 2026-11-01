@@ -16,6 +16,7 @@ use model::semantic_types::Types;
 use model::semantic_types::range_fields;
 use rustc_hash::FxHashMap;
 
+use crate::function::comma_separated;
 use crate::text::quoted;
 
 /// The module's debug info: numbered metadata nodes.
@@ -139,24 +140,12 @@ impl Metadata {
                     "!DIDerivedType(tag: DW_TAG_pointer_type, baseType: !{base}, size: {pointer_bits})"
                 ));
                 let usize = self.add(basic("usize", pointer_bits, "DW_ATE_unsigned"));
-                let member = |field: &str, base: usize, offset: u32| {
-                    format!(
-                        "!DIDerivedType(tag: DW_TAG_member, name: \"{field}\", \
-                         scope: !{composite}, baseType: !{base}, offset: {offset})"
-                    )
-                };
-                let address = self.add(member("ptr", pointer, 0));
-                let length = self.add(member("len", usize, pointer_bits));
-                let elements = self.add(format_args!("!{{!{address}, !{length}}}"));
-                self.define(
-                    composite,
-                    format_args!(
-                        "distinct !DICompositeType(tag: DW_TAG_structure_type, name: {}, \
-                         size: {}, elements: !{elements})",
-                        quoted(name.as_bytes()),
-                        2 * pointer_bits
-                    ),
-                );
+                let pointer_bits = u64::from(pointer_bits);
+                let members = [
+                    self.add_member(composite, "ptr", pointer, 0),
+                    self.add_member(composite, "len", usize, pointer_bits),
+                ];
+                self.define_struct(composite, &name, 2 * pointer_bits, &members);
                 self.types.insert(ty, composite);
                 return Some(composite);
             }
@@ -221,24 +210,36 @@ impl Metadata {
         for (&(field_name, field), offset) in fields.iter().zip(offsets) {
             let base = self.debug_type(program, types, types.real(field), target);
             let base = base.expect("a field has a value's type");
-            let member = self.add(format_args!(
-                "!DIDerivedType(tag: DW_TAG_member, name: {}, scope: !{composite}, \
-                 baseType: !{base}, offset: {})",
-                quoted(field_name.as_bytes()),
-                offset * 8
-            ));
-            members.push(format!("!{member}"));
+            members.push(self.add_member(composite, field_name, base, offset * 8));
         }
-        let elements = self.add(format_args!("!{{{}}}", members.join(", ")));
+        self.define_struct(composite, name, size * 8, &members);
+        composite
+    }
+
+    /// Adds a member of the struct `composite`: the field `field`, of the
+    /// debug type `base`, `offset` bits from the struct's start.
+    fn add_member(&mut self, composite: usize, field: &str, base: usize, offset: u64) -> usize {
+        self.add(format_args!(
+            "!DIDerivedType(tag: DW_TAG_member, name: {}, scope: !{composite}, \
+             baseType: !{base}, offset: {offset})",
+            quoted(field.as_bytes())
+        ))
+    }
+
+    /// Defines `composite`, reserved before its members, as the struct `name`
+    /// of `size` bits with `members`, in order.
+    fn define_struct(&mut self, composite: usize, name: &str, size: u64, members: &[usize]) {
+        let members = members
+            .iter()
+            .map(|member| fmt::from_fn(move |out| write!(out, "!{member}")));
+        let elements = self.add(format_args!("!{{{}}}", comma_separated(members)));
         self.define(
             composite,
             format_args!(
                 "distinct !DICompositeType(tag: DW_TAG_structure_type, name: {}, \
-                 size: {}, elements: !{elements})",
-                quoted(name.as_bytes()),
-                size * 8
+                 size: {size}, elements: !{elements})",
+                quoted(name.as_bytes())
             ),
         );
-        composite
     }
 }
