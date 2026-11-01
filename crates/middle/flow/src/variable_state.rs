@@ -17,11 +17,17 @@ use crate::Bits;
 use crate::dataflow;
 use crate::predecessors;
 
+/// A variable the check follows, numbered from 0 in variable order. Only
+/// named by `Id<Tracked>`.
+enum Tracked {}
+
 /// Reports each variable used where it may not be set yet or was moved, and
 /// each variable without `mut` assigned where it may already be set, once per
 /// variable; and each move out of a field. Only a `let` without a value is
 /// unset at first, and only a move unsets a variable or takes a part of a
-/// place, so a function with neither is not walked.
+/// place. So only a variable with one of the two is tracked: any other is set
+/// wherever it is in scope, and the checker refuses a second assignment to
+/// one without `mut`. A function with neither is not walked.
 ///
 /// Forward dataflow over the reachable blocks: `dataflow` finds the `Facts`
 /// at each block's start; the loop walks each block again from them and
@@ -37,14 +43,35 @@ pub fn report_variable_state_errors(
     if body.variables.ids().all(starts_set) && !body.instructions.ids().any(moves) {
         return;
     }
+    let mut moved = vec![false; body.variables.len()];
+    for id in body.instructions.ids() {
+        if let mir::InstructionKind::Move(ref place) = body.instructions[id].kind
+            && let Some(variable) = place.whole_variable()
+        {
+            moved[variable.index()] = true;
+        }
+    }
+    let mut tracked_count = 0;
+    let tracked: Vec<Option<Id<Tracked>>> = body
+        .variables
+        .ids()
+        .map(|variable| {
+            let follows = !body.variables[variable].initialized || moved[variable.index()];
+            follows.then(|| {
+                tracked_count += 1;
+                Id::from_index(tracked_count - 1)
+            })
+        })
+        .collect();
+    let tracked = |variable: Id<mir::Variable>| tracked[variable.index()];
     let instructions = |block: Id<mir::Block>| body.lists.items(body.blocks[block].instructions);
     let starts = dataflow(
         body.blocks.len(),
-        [(Id::from_index(0), Facts::new(body.variables.len()))],
+        [(Id::from_index(0), Facts::new(tracked_count))],
         |block| body.blocks[block].terminator.targets(),
         |block, facts| {
             for instruction in instructions(block) {
-                facts.step(&body.instructions[instruction].kind);
+                facts.step(&body.instructions[instruction].kind, tracked);
             }
         },
         Facts::join,
@@ -66,11 +93,12 @@ pub fn report_variable_state_errors(
                     None
                 }
                 mir::InstructionKind::Store { ref place, .. }
-                    if let Some(variable) = place.whole_variable() =>
+                    if let Some(variable) = place.whole_variable()
+                        && let Some(followed) = tracked(variable) =>
                 {
-                    let assigned = facts.maybe.has(variable) && !body.variables[variable].mutable;
+                    let assigned = facts.maybe.has(followed) && !body.variables[variable].mutable;
                     assigned.then(|| {
-                        let set = if facts.always.has(variable) {
+                        let set = if facts.always.has(followed) {
                             "is already set here"
                         } else {
                             "may already be set here"
@@ -83,18 +111,19 @@ pub fn report_variable_state_errors(
                 | mir::InstructionKind::Store { ref place, .. }
                 | mir::InstructionKind::Borrow { ref place, .. }
                 | mir::InstructionKind::Address(ref place)
-                    if !facts.always.has(place.variable) =>
+                    if let Some(followed) = tracked(place.variable)
+                        && !facts.always.has(followed) =>
                 {
                     let variable = place.variable;
                     // Writing through a reference only reads the variable.
                     let writes_part = matches!(kind, mir::InstructionKind::Store { .. })
                         && !place.is_behind_reference();
                     let written = writes_part.then(|| part(place)[0]);
-                    let error = if facts.moved.has(variable) {
+                    let error = if facts.moved.has(followed) {
                         let moves = move_sites(body, variable, block, position);
                         moved_use(body, file, variable, span, &moves, written)
                     } else {
-                        let state = if facts.maybe.has(variable) {
+                        let state = if facts.maybe.has(followed) {
                             "is not set on every path to here"
                         } else {
                             "is not set yet here"
@@ -105,7 +134,7 @@ pub fn report_variable_state_errors(
                 }
                 _ => None,
             };
-            facts.step(kind);
+            facts.step(kind, tracked);
             if let Some((variable, error)) = error
                 && !std::mem::replace(&mut reported[variable.index()], true)
             {
@@ -116,18 +145,18 @@ pub fn report_variable_state_errors(
     errors.sort_by_key(|&(start, _)| start);
     diagnostics.extend(errors.into_iter().map(|(_, error)| error));
 }
-/// What is known about each variable at one point of a function, one bit per
-/// variable in each set.
+/// What is known about each tracked variable at one point of a function, one
+/// bit per tracked variable in each set.
 #[derive(Clone, PartialEq)]
 struct Facts {
-    always: Bits<mir::Variable>, // set on every path to here (joined with "and")
-    maybe: Bits<mir::Variable>,  // set on some path to here, even if moved since ("or")
-    moved: Bits<mir::Variable>,  // moved on some path to here and not set since ("or")
+    always: Bits<Tracked>, // set on every path to here (joined with "and")
+    maybe: Bits<Tracked>,  // set on some path to here, even if moved since ("or")
+    moved: Bits<Tracked>,  // moved on some path to here and not set since ("or")
 }
 impl Facts {
-    /// Nothing set or moved, for `variables` variables.
-    fn new(variables: usize) -> Facts {
-        let none = Bits::new(variables);
+    /// Nothing set or moved, for `count` tracked variables.
+    fn new(count: usize) -> Facts {
+        let none = Bits::new(count);
         Facts {
             always: none.clone(),
             maybe: none.clone(),
@@ -135,28 +164,33 @@ impl Facts {
         }
     }
 
-    /// The facts after `kind` runs: a `store` to a whole variable sets it, a
-    /// `move` of one unsets it, and the end of its scope forgets it, so a
-    /// loop's next pass declares it anew.
-    fn step(&mut self, kind: &mir::InstructionKind) {
+    /// The facts after `kind` runs, `tracked` giving each variable's number
+    /// if it is tracked: a `store` to a whole variable sets it, a `move` of
+    /// one unsets it, and the end of its scope forgets it, so a loop's next
+    /// pass declares it anew.
+    fn step(
+        &mut self,
+        kind: &mir::InstructionKind,
+        tracked: impl Fn(Id<mir::Variable>) -> Option<Id<Tracked>>,
+    ) {
         match *kind {
             mir::InstructionKind::Store { ref place, .. }
-                if let Some(variable) = place.whole_variable() =>
+                if let Some(followed) = place.whole_variable().and_then(&tracked) =>
             {
-                self.always.set(variable);
-                self.maybe.set(variable);
-                self.moved.clear(variable);
+                self.always.set(followed);
+                self.maybe.set(followed);
+                self.moved.clear(followed);
             }
             mir::InstructionKind::Move(ref place)
-                if let Some(variable) = place.whole_variable() =>
+                if let Some(followed) = place.whole_variable().and_then(&tracked) =>
             {
-                self.always.clear(variable);
-                self.moved.set(variable);
+                self.always.clear(followed);
+                self.moved.set(followed);
             }
-            mir::InstructionKind::ScopeEnd(variable) => {
-                self.always.clear(variable);
-                self.maybe.clear(variable);
-                self.moved.clear(variable);
+            mir::InstructionKind::ScopeEnd(variable) if let Some(followed) = tracked(variable) => {
+                self.always.clear(followed);
+                self.maybe.clear(followed);
+                self.moved.clear(followed);
             }
             _ => {}
         }
