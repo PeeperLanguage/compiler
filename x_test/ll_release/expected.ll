@@ -16,8 +16,6 @@ bb0:
   store i32 %i2, ptr %v1
   %i4 = load i32, ptr %v1
   ret i32 %i4
-bb1:
-  unreachable
 }
 
 define i32 @"ll_release:main.main"() {
@@ -35,10 +33,6 @@ bb1:
   ret i32 0
 bb2:
   ret i32 1
-bb3:
-  br label %bb2
-bb4:
-  unreachable
 }
 
 declare i32 @"peeper_rt_v1_write"(i32, ptr, i32)

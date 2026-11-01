@@ -59,8 +59,6 @@ bb0:
   call void @fill.range.0(ptr %i2.2, i32 5, i32 -1, i64 %i2.r2.count), !dbg !13
   call void @llvm.memcpy.p0.p0.i64(ptr %result, ptr %v0, i64 24, i1 false), !dbg !15
   ret void, !dbg !16
-bb1:
-  unreachable
 }
 
 define void @"ll_array_ranges:main.main"() !dbg !18 {

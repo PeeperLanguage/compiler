@@ -16,8 +16,6 @@ bb0:
   %i3.1 = getelementptr inbounds { i32, i32 }, ptr %result, i32 0, i32 1, !dbg !15
   store i32 %i2, ptr %i3.1, !dbg !15
   ret void, !dbg !16
-bb1:
-  unreachable
 }
 
 define void @"ll_struct_parameters:main.main"() !dbg !18 {

@@ -20,7 +20,6 @@ use diagnostics::Severity;
 use diagnostics::printer;
 use eval::interpreter::program::Stream;
 use eval::interpreter::program::Written;
-use model::ModuleId;
 use model::machine::Machine;
 use project::Project;
 use serde_json::Value;
@@ -118,7 +117,7 @@ fn check(files: HashMap<String, String>) -> Value {
 fn run(files: HashMap<String, String>) -> Value {
     let (project, program) = load(files);
     let target = Machine::named(TARGET).expect("the target is a machine");
-    let (results, ran) = interpret(&project, &program, target);
+    let (results, ran) = compile::interpret(&project, &program, target);
     let ran = ran.map(|ran| {
         let piece = |written: &Written| {
             let stream = match written.stream {
@@ -143,22 +142,6 @@ fn all_diagnostics<'a>(
     results: &'a compile::Results,
 ) -> impl Iterator<Item = &'a Diagnostic> {
     program.diagnostics.iter().chain(results.diagnostics())
-}
-
-/// Compiles and runs `program` for `target`. A program that cannot be checked
-/// has only loading's errors, and does not start.
-fn interpret(
-    project: &Project,
-    program: &project::Program,
-    target: &'static Machine,
-) -> (compile::Results, Option<compile::Interpreted>) {
-    let is_entry = |module: &project::Module| Path::new(&module.ast.file.path) == project.entry;
-    match program.modules.iter().position(is_entry) {
-        Some(entry) if program.checkable => {
-            compile::interpret(program, target, ModuleId::from_index(entry))
-        }
-        _ => (compile::Results::default(), None),
-    }
 }
 
 /// Each diagnostic of `program` and `results`: its `severity`, `code` and full

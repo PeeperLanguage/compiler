@@ -29,8 +29,6 @@ bb0.1:
   %i4 = trunc i64 %i3 to i32, !dbg !14
   %i5 = add i32 %i1, %i4, !dbg !13
   ret i32 %i5, !dbg !15
-bb1:
-  unreachable
 bb0.1.panic:
   call i32 @"peeper_rt_v1_write"(i32 2, ptr @.str.0, i32 65), !dbg !13
   call void @"peeper_rt_v1_exit"(i32 101), !dbg !13
@@ -61,8 +59,6 @@ bb0.1:
   call void @llvm.memcpy.p0.p0.i64(ptr %i2.0, ptr %i2.s0, i64 %i2.s0.bytes, i1 false), !dbg !31
   call void @llvm.memcpy.p0.p0.i64(ptr %result, ptr %i2, i64 32, i1 false), !dbg !32
   ret void, !dbg !32
-bb1:
-  unreachable
 bb0.1.panic:
   call i32 @"peeper_rt_v1_write"(i32 2, ptr @.str.1, i32 70), !dbg !31
   call void @"peeper_rt_v1_exit"(i32 101), !dbg !31

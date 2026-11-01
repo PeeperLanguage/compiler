@@ -42,24 +42,12 @@ fn walk:
     %29 = Add %22, 1: u64
     %30 = load i.4: u64
     store last.3, %30
-    scope end v.5
-    scope end i.4
     goto bb7
   bb6:
     %34 = load last.3: u64
-    scope end last.3
-    scope end step.2
-    scope end to.1
-    scope end from.0
     return %34
   bb7:
     goto bb4
-  bb8:
-    scope end last.3
-    scope end step.2
-    scope end to.1
-    scope end from.0
-    fall off at `}`
 fn main:
   bb0:
     fall off at `}`

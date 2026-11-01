@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::hash::DefaultHasher;
 use std::hash::Hash;
 use std::hash::Hasher;
+use std::path::Path;
 use std::sync::Arc;
 
 use check::Checker;
@@ -140,28 +141,36 @@ pub struct Interpreted {
     pub exit_code: u8,        // as a program's parent on Linux sees it: the low 8 bits
 }
 
-/// Compiles `program` as `run` does, then runs it from `entry`'s `main` with
-/// no backend or system (`eval::interpreter::program`). Gives what the compile
-/// found and, when that left a program to start, what it did.
+/// Compiles `program`, of `project`, as `run` does, then runs it from its entry
+/// file's `main` with no backend or system (`eval::interpreter::program`).
+/// Gives what the compile found and, when that left a program to start, what
+/// it did. A program that cannot be checked has only loading's errors, and
+/// does not start.
 pub fn interpret(
+    project: &project::Project,
     program: &project::Program,
     target: &'static Machine,
-    entry: ModuleId,
 ) -> (Results, Option<Interpreted>) {
+    let is_entry = |module: &project::Module| Path::new(&module.ast.file.path) == project.entry;
+    let entry = program.modules.iter().position(is_entry);
+    let Some(entry) = entry.filter(|_| program.checkable) else {
+        return (Results::default(), None);
+    };
     let mut bodies = HashMap::new();
     let mut last_types = None;
     let results = run(
         program,
         target,
         Results::default(),
-        Some(entry),
+        Some(ModuleId::from_index(entry)),
         false,
         |output| match output {
             Output::Function(CheckedFunction {
                 definition,
-                mir: Some(mir),
+                mir: Some(mut mir),
                 ..
             }) => {
+                flow::cleanup::remove_unused_code(&mut mir);
                 bodies.insert(definition, mir);
             }
             // After each module's last function, so the last has every type.

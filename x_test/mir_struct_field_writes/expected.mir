@@ -9,6 +9,4 @@ fn main:
     store other.1, %5
     %7 = move other.1: Point
     store line.0[1], %7
-    scope end other.1
-    scope end line.0
     fall off at `}`

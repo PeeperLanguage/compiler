@@ -11,6 +11,7 @@ use std::sync::Arc;
 use diagnostics::Diagnostic;
 use diagnostics::fix;
 use diagnostics::printer;
+use eval::interpreter::program::Stream;
 use llvm::BuildMode;
 use model::ModuleId;
 use model::machine::Machine;
@@ -41,6 +42,8 @@ pub enum Goal {
         arguments: Vec<String>,
         mode: BuildMode,
     },
+    /// Run it on the interpreter, with no backend or linker.
+    Interpret,
 }
 
 /// Where a `peeper` command runs: the program it is given, the machine it
@@ -82,6 +85,7 @@ impl<W: Write> Command<W> {
                 self.execute_build(&project, &program, output.as_deref(), *mode)
             }
             Goal::Run { arguments, mode } => self.execute_run(&project, &program, arguments, *mode),
+            Goal::Interpret => self.execute_interpret(&project, &program),
         }
     }
 
@@ -186,6 +190,29 @@ impl<W: Write> Command<W> {
         }
     }
 
+    /// `run -interpret`: runs the program on the interpreter, then prints what
+    /// it wrote; gives the program's exit code.
+    fn execute_interpret(&mut self, project: &project::Project, program: &project::Program) -> u8 {
+        let (results, ran) = compile::interpret(project, program, self.target);
+        let found = program.diagnostics.iter().chain(results.diagnostics());
+        let diagnostics: Vec<Diagnostic> = found.cloned().collect();
+        if !self.print(&diagnostics) {
+            return 1;
+        }
+        let ran = ran.expect("a program with no errors starts");
+        // shortcut: output comes only when the run ends, as `Outcome` holds it;
+        // the interpreter should write as it goes if this mode stays.
+        let mut stdout = std::io::stdout();
+        for written in &ran.output {
+            match written.stream {
+                // At once, as both streams may be one terminal.
+                Stream::Stdout => _ = stdout.write_all(&written.text).and(stdout.flush()),
+                Stream::Stderr => _ = self.out.write_all(&written.text),
+            }
+        }
+        ran.exit_code
+    }
+
     /// Prints `diagnostics`; on a terminal, the source they show is colored
     /// by its tokens. Gives whether the command can go on: they were printed
     /// and none is an error.
@@ -259,9 +286,13 @@ fn compile<'p>(
                 else {
                     return; // constants and names are for editors
                 };
-                let Some(mir) = mir else {
+                let Some(mut mir) = mir else {
                     return; // it has errors
                 };
+                // `peeper check` reads no MIR, so it does not pay for this.
+                if queue.is_some() || dumps.iter().any(|dump| matches!(dump, Dump::Mir)) {
+                    flow::cleanup::remove_unused_code(&mut mir);
+                }
                 dumped.add(definition, thir, &mir, types);
                 if let Some(queue) = queue.as_deref_mut() {
                     queue.add(definition, mir, types);

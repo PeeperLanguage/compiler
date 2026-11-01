@@ -2,13 +2,9 @@ fn make:
   bb0:
     %0 = aggregate(1, 2, 3): [3]i32
     return %0
-  bb1:
-    fall off at `}`
 fn pick:
   bb0:
     return 1
-  bb1:
-    fall off at `}`
 fn sum:
   bb0:
     store values.0, arg0
@@ -30,19 +26,12 @@ fn sum:
     %12 = load values.0.*[at %11]: i32
     %13 = Add %10, %12: i32
     store total.1, %13
-    scope end i.2
     goto bb4
   bb3:
     %16 = load total.1: i32
-    scope end total.1
-    scope end values.0
     return %16
   bb4:
     goto bb1
-  bb5:
-    scope end total.1
-    scope end values.0
-    fall off at `}`
 fn lengths:
   bb0:
     %0 = aggregate(1, 2, 3): [3]i32
@@ -52,8 +41,4 @@ fn lengths:
     %4 = call pick(): i32
     %5 = call make(): [3]i32
     %6 = Add 3, 3: u64
-    scope end grid.0
     return %6
-  bb1:
-    scope end grid.0
-    fall off at `}`

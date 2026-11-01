@@ -14,11 +14,12 @@ diagnostics.workspace = true
 lexer.workspace = true
 project.workspace = true
 compile.workspace = true
+eval.workspace = true
+flow.workspace = true
 llvm.workspace = true
 lsp.workspace = true
 
 [dev-dependencies]
-eval.workspace = true
 toml_edit.workspace = true
 
 [[bench]]

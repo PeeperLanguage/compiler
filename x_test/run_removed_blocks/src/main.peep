@@ -1,0 +1,92 @@
+// Code no path reaches, and blocks that only jump, are removed before the
+// backend, so each of these must still build and run as written.
+
+// The `continue` no path reaches is still named by the step of the loop.
+fn after_return(limit: i32) -> i32 {
+    let mut total = 0;
+    for i in 0..limit {
+        total = total + i;
+        if i == limit {
+            return total;
+            continue;
+        }
+    }
+    return total;
+}
+
+// The direction is known only when it runs, so the range joins two ways.
+fn both_ways(from: i32, to: i32) {
+    print("both ways");
+    for i in from..to {
+        print(" ");
+        print(i);
+    }
+    println();
+}
+
+fn down() {
+    print("down");
+    for i in 2..-1 {
+        print(" ");
+        print(i);
+    }
+    println();
+}
+
+// Blocks in blocks end in a chain of jumps.
+fn nested(flag: bool) -> i32 {
+    if flag {
+        if flag {
+            if flag {
+                {
+                    {
+                    }
+                }
+            }
+        }
+    }
+    return 7;
+}
+
+fn stops(limit: i32) -> i32 {
+    let mut count = 0;
+    for {
+        if count == limit {
+            break;
+            count = 100;
+        }
+        count = count + 1;
+    }
+    return count;
+}
+
+// Never runs: only building it must end, on a block that jumps to itself.
+fn spins() {
+    for {
+    }
+}
+
+// A constant's run still needs each scope's end.
+fn in_a_scope() -> i32 {
+    let mut total = 0;
+    for pass in 0..3 {
+        let mut n = pass + 3;
+        let held = @n;
+        total = total + held.*;
+    }
+    return total;
+}
+
+const SCOPE = in_a_scope();
+
+fn main() {
+    if false {
+        spins();
+    }
+    println("after return", after_return(3));
+    both_ways(1, 4);
+    down();
+    println("nested", nested(true));
+    println("break", stops(9));
+    println("scope", SCOPE);
+}

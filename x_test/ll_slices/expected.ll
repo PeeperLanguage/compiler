@@ -30,8 +30,6 @@ bb0.1:
   %i6 = trunc i64 %i5 to i32, !dbg !18
   %i7 = add i32 %i3, %i6, !dbg !17
   ret i32 %i7, !dbg !19
-bb1:
-  unreachable
 bb0.1.panic:
   call i32 @"peeper_rt_v1_write"(i32 2, ptr @.str.0, i32 65), !dbg !17
   call void @"peeper_rt_v1_exit"(i32 101), !dbg !17

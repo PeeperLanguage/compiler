@@ -49,6 +49,7 @@ fn parsed(args: &[&str]) -> Option<(String, Vec<String>)> {
                 .collect();
             Some((path.display().to_string(), asked))
         }
+        Goal::Interpret => Some((path.display().to_string(), vec!["interpret".to_string()])),
     }
 }
 
@@ -241,6 +242,26 @@ fn errors() {
             "`init` does not take -target",
         ),
         (&["run", "-release", "-release"], "-release is given twice"),
+        (
+            &["run", "-interpret", "-interpret"],
+            "-interpret is given twice",
+        ),
+        (
+            &["run", "-interpret", "-release"],
+            "`run -interpret` does not take -release",
+        ),
+        (
+            &["run", "-interpret", "--", "x"],
+            "`run -interpret` does not take --",
+        ),
+        (
+            &["run", "-interpret", "-o", "out"],
+            "`run -interpret` does not take -o",
+        ),
+        (&["run", "-interpret", "a", "b"], "unexpected `b`"),
+        (&["build", "-interpret"], "`build` does not take -interpret"),
+        (&["check", "-interpret"], "`check` does not take -interpret"),
+        (&["-dump", "-interpret"], "`check` does not take -interpret"),
         (&["-help", "-help"], "-help is given twice"),
         (&["check", "-o", "out"], "`check` does not take -o"),
         (&["check", "-release"], "`check` does not take -release"),
@@ -257,4 +278,15 @@ fn errors() {
     ] {
         assert_eq!(error(args).as_deref(), Some(wanted), "{args:?}");
     }
+}
+
+#[test]
+fn run_on_the_interpreter() {
+    let interpreted = |path: &str| Some((path.to_string(), vec!["interpret".to_string()]));
+    assert_eq!(parsed(&["run", "-interpret"]), interpreted("."));
+    assert_eq!(parsed(&["-interpret", "run", "app"]), interpreted("app"));
+    assert_eq!(
+        parsed(&["run", "-interpret", "-target", "i686-linux", "app"]),
+        interpreted("app")
+    );
 }

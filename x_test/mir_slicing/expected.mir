@@ -12,15 +12,7 @@ fn middle:
     %9 = borrow values.0[from %3, count %8]: [&]i32
     store view.2, %9
     %11 = load view.2.*[at 0]: i32
-    scope end view.2
-    scope end start.1
-    scope end values.0
     return %11
-  bb1:
-    scope end view.2
-    scope end start.1
-    scope end values.0
-    fall off at `}`
 fn main:
   bb0:
     fall off at `}`
@@ -35,10 +27,4 @@ fn tail:
     %6 = borrow view.0.*[from 1, count %5]: [&]i32
     store rest.1, %6
     %8 = load rest.1.*[at 0]: i32
-    scope end rest.1
-    scope end view.0
     return %8
-  bb1:
-    scope end rest.1
-    scope end view.0
-    fall off at `}`

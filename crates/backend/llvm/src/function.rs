@@ -402,10 +402,7 @@ impl Function<'_, '_, '_> {
                         | InstructionKind::Call { .. }
                 )
                 && !spreads_slice(body, types, value)
-                && (body.lists.items(mir.instructions))
-                    .filter(|&id| body.instructions[id].kind.runs())
-                    .last()
-                    == Some(value) =>
+                && body.lists.items(mir.instructions).last() == Some(value) =>
             {
                 Some(value)
             }
@@ -495,9 +492,6 @@ impl Function<'_, '_, '_> {
             ref kind,
             debug_scope,
         } = self.body.instructions[id];
-        if !kind.runs() {
-            return; // no code, so no location either
-        }
         let span = self.body.instructions.span(id);
         let location = self.location(span, debug_scope);
         let name = value_name(id);
@@ -742,7 +736,7 @@ impl Function<'_, '_, '_> {
                 self.check(out, &failed, message, id);
                 return; // `check` ends the line with the next block's label
             }
-            InstructionKind::ScopeEnd(_) => unreachable!("returned above"),
+            InstructionKind::ScopeEnd(_) => unreachable!("`flow::cleanup` removed these"),
         };
         _ = writeln!(out, "{location}");
     }

@@ -61,7 +61,9 @@ fn program_ll(text: &str, target: &str) -> HashMap<String, String> {
                         ..
                     }) = output
                     {
-                        queue.add(definition, mir.unwrap(), types);
+                        let mut mir = mir.unwrap();
+                        flow::cleanup::remove_unused_code(&mut mir);
+                        queue.add(definition, mir, types);
                     }
                 },
             )

@@ -1,5 +1,5 @@
-// Each way out of a block ends the scopes of the variables it leaves,
-// newest first: its end, `break`, `continue` and `return`.
+// The blocks each way out of a block leaves: its end, `break`, `continue` and
+// `return`. A compiled body has no `scope end`s; `compile`'s tests read them.
 fn walk(limit: i32) -> i32 {
     let mut total: i32 = 0;
     for i, value in 0..limit {

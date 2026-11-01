@@ -14,6 +14,7 @@ usage: peeper check [-target name] [project folder | file.peep]
        peeper fix [-target name] [project folder | file.peep]
        peeper build [-release] [-target name] [-o program] [project folder | file.peep]
        peeper run [-release] [-target name] [project folder | file.peep] [-- arguments...]
+       peeper run -interpret [-target name] [project folder | file.peep]
        peeper [check | fix] -dump [thir | mir | ll] [-release] [-target name]
               [project folder | file.peep]
        peeper init [name]
@@ -26,6 +27,9 @@ usage: peeper check [-target name] [project folder | file.peep]
          without debug info
   run    build the program to a temporary file and run it with the arguments
          after --
+  -interpret  experimental: run the program on the MIR interpreter, with no
+         LLVM, linker or toolchain. Its output comes when it ends, its input is
+         empty, and it stops at the interpreter's limits; no -release or --
   -target  check and build the program for another machine than this one,
          such as i686-linux, 32-bit x86 Linux, which a 64-bit x86 Linux runs
          with its 32-bit C library; an unknown name lists them all
@@ -38,14 +42,15 @@ usage: peeper check [-target name] [project folder | file.peep]
   -help  print this usage text
 Flags may come in any order before --, each with its value right after it.";
 
-const CHECK: u8 = 1 << 0;
-const FIX: u8 = 1 << 1;
-const BUILD: u8 = 1 << 2;
-const RUN: u8 = 1 << 3;
-const DUMP: u8 = 1 << 4;
-const INIT: u8 = 1 << 5;
-const LSP: u8 = 1 << 6;
-const HELP: u8 = 1 << 7;
+const CHECK: u16 = 1 << 0;
+const FIX: u16 = 1 << 1;
+const BUILD: u16 = 1 << 2;
+const RUN: u16 = 1 << 3;
+const DUMP: u16 = 1 << 4;
+const INIT: u16 = 1 << 5;
+const LSP: u16 = 1 << 6;
+const HELP: u16 = 1 << 7;
+const INTERPRET: u16 = 1 << 8;
 
 /// What the arguments ask for.
 pub enum Args {
@@ -79,6 +84,7 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
     let mut output = None;
     let mut target = None;
     let mut release = false;
+    let mut interpret = false;
     let mut help = false;
     let mut dumps: Option<[bool; Dump::ALL.len()]> = None; // which were asked for, by -dump
     let mut words = Vec::new();
@@ -97,6 +103,8 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
             },
             "-release" if release => return Err("-release is given twice".to_string()),
             "-release" => release = true,
+            "-interpret" if interpret => return Err("-interpret is given twice".to_string()),
+            "-interpret" => interpret = true,
             "-help" if help => return Err("-help is given twice".to_string()),
             "-help" => help = true,
             "-dump" => {
@@ -123,9 +131,10 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
         (
             "-target",
             target.is_some(),
-            CHECK | FIX | BUILD | RUN | DUMP,
+            CHECK | FIX | BUILD | RUN | DUMP | INTERPRET,
         ),
         ("-release", release, BUILD | RUN | DUMP),
+        ("-interpret", interpret, INTERPRET),
         ("-dump", dumps.is_some(), CHECK | FIX | DUMP),
         ("-help", help, HELP),
         ("--", program_args.is_some(), RUN),
@@ -161,6 +170,12 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
             let path = path(value(values)?);
             let goal = Goal::Build { output, mode };
             (command, Args::Program { path, goal, target }, BUILD)
+        }
+        Some((&"run", values)) if interpret => {
+            let path = path(value(values)?);
+            let goal = Goal::Interpret;
+            let args = Args::Program { path, goal, target };
+            ("run -interpret", args, INTERPRET)
         }
         Some((&command @ "run", values)) => {
             let path = path(value(values)?);

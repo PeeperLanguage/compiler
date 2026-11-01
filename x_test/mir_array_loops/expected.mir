@@ -23,21 +23,12 @@ fn sum:
     %16 = load value.4.*: i32
     %17 = Add %15, %16: i32
     store total.1, %17
-    scope end value.4
-    scope end _.3
     goto bb4
   bb3:
-    scope end _.2
     %22 = load total.1: i32
-    scope end total.1
-    scope end values.0
     return %22
   bb4:
     goto bb1
-  bb5:
-    scope end total.1
-    scope end values.0
-    fall off at `}`
 fn indexed:
   bb0:
     store values.0, arg0
@@ -63,21 +54,12 @@ fn indexed:
     %16 = load i.3: u64
     %17 = Add %15, %16: u64
     store total.1, %17
-    scope end value.4
-    scope end i.3
     goto bb4
   bb3:
-    scope end _.2
     %22 = load total.1: u64
-    scope end total.1
-    scope end values.0
     return %22
   bb4:
     goto bb1
-  bb5:
-    scope end total.1
-    scope end values.0
-    fall off at `}`
 fn sum_slice:
   bb0:
     store values.0, arg0
@@ -116,21 +98,12 @@ fn sum_slice:
     %23 = load value.4.*: i32
     %24 = Add %22, %23: i32
     store total.1, %24
-    scope end value.4
-    scope end _.3
     goto bb7
   bb6:
-    scope end _.2
     %29 = load total.1: i32
-    scope end total.1
-    scope end values.0
     return %29
   bb7:
     goto bb4
-  bb8:
-    scope end total.1
-    scope end values.0
-    fall off at `}`
 fn main:
   bb0:
     fall off at `}`

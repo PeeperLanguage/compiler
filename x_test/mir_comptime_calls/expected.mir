@@ -6,16 +6,10 @@ fn cube:
     %3 = Multiply %1, %2: i64
     %4 = load n.0: i64
     %5 = Multiply %3, %4: i64
-    scope end n.0
     return %5
-  bb1:
-    scope end n.0
-    fall off at `}`
 fn text:
   bb0:
     return c"ab\x00cd"
-  bb1:
-    fall off at `}`
 fn main:
   bb0:
     println(1000000001, c"ab\x00cd")
