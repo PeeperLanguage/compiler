@@ -565,16 +565,35 @@ impl Loans<'_> {
                 held.add(holder, loan);
             }
         }
-        if let Some(variable) = whole {
-            let ended = &self.loans_through[variable.index()];
+        if let Some(variable) = whole
+            && let ended = &self.loans_through[variable.index()]
+            && !ended.is_empty()
+        {
             held.pairs.retain(|pair| !ended.contains(&pair.1));
         }
     }
 
     /// `live`, the holders used later, before the instruction `id` runs.
-    fn step_live(&self, live: &mut Bits<Holder>, id: Id<mir::Instruction>) {
-        holder_ids(self.defines(id)).for_each(|holder| live.clear(holder));
-        self.uses(id, |holder| live.set(holder));
+    /// `flipped` is given each holder whose bit changes, once per change, so
+    /// toggling them all gives back `live` after `id`.
+    fn step_live(
+        &self,
+        live: &mut Bits<Holder>,
+        id: Id<mir::Instruction>,
+        mut flipped: impl FnMut(Id<Holder>),
+    ) {
+        for holder in holder_ids(self.defines(id)) {
+            if live.has(holder) {
+                live.clear(holder);
+                flipped(holder);
+            }
+        }
+        self.uses(id, |holder| {
+            if !live.has(holder) {
+                live.set(holder);
+                flipped(holder);
+            }
+        });
     }
 
     fn report(&self, file: &Arc<SourceFile>, diagnostics: &mut Vec<Diagnostic>) {
@@ -600,7 +619,7 @@ impl Loans<'_> {
             |block, live| {
                 let ids: Vec<_> = instructions(block).collect();
                 for &id in ids.iter().rev() {
-                    self.step_live(live, id);
+                    self.step_live(live, id, |_| {});
                 }
             },
             |a: &Bits<Holder>, b: &Bits<Holder>| a.combine(b, |a, b| a | b),
@@ -645,22 +664,31 @@ impl Loans<'_> {
                 let loans = self.loans_of(&at_return, returned);
                 self.return_errors(span, &loans, &mut reported, file, &mut errors);
             }
-            // The holders used later, after each instruction.
+            // The holders used later: walked back to the block's start once,
+            // keeping only the holders each instruction flips, so the walk
+            // forward toggles them back in order. A set kept per instruction
+            // would grow with the block's length times its holders.
             let mut live = end.unwrap_or_else(|| no_holders.clone());
-            let mut live_after = vec![no_holders.clone(); ids.len()];
+            let mut flips = Vec::new(); // (position, holder), the last first
             for (position, &id) in ids.iter().enumerate().rev() {
-                live_after[position] = live.clone();
-                self.step_live(&mut live, id);
+                self.step_live(&mut live, id, |holder| flips.push((position, holder)));
             }
             for (position, &id) in ids.iter().enumerate() {
-                let live = &live_after[position];
-                let access = self.access(id);
-                let skip = self.defines(id);
-                let error = access.and_then(|access| {
-                    self.broken_loan(&access, &held, live, skip, &mut reported, file)
+                // `live` is before `id` here, when a call's reserved arguments
+                // take hold. No call accesses a place, so an instruction has
+                // at most one of the two errors.
+                let error = self.activation_error(id, &held, &live, &mut reported, file);
+                while let Some(&(at, holder)) = flips.last()
+                    && at == position
+                {
+                    live.toggle(holder);
+                    flips.pop();
+                }
+                let error = error.or_else(|| {
+                    let access = self.access(id)?;
+                    let skip = self.defines(id);
+                    self.broken_loan(&access, &held, &live, skip, &mut reported, file)
                 });
-                let error =
-                    error.or_else(|| self.activation_error(id, &held, live, &mut reported, file));
                 // A reference used only by the call has no later use to show.
                 if let Some((holder, error)) = error {
                     let later = self.next_use(holder, block, position);
@@ -684,6 +712,9 @@ impl Loans<'_> {
                     errors.push((body.instructions.span(id).start, error));
                 }
                 self.step_held(&mut held, id);
+                // As at a block's end: a holder not live is never read again,
+                // so each check scans only the loans of holders in use.
+                held.pairs.retain(|pair| live.has(pair.0));
             }
         }
         errors.sort_by_key(|&(start, _)| start);
@@ -884,8 +915,8 @@ impl Loans<'_> {
     }
 
     /// At a call, the first loan broken when a reserved `&mut` argument takes
-    /// hold: a `&mut` borrow of its place, checked against every holder in
-    /// use just before the call (`live` after it, or an argument of it)
+    /// hold: a `&mut` borrow of its place, checked against every holder
+    /// `live` just before the call (used after it, or an argument of it)
     /// other than the argument itself.
     fn activation_error(
         &self,
@@ -899,7 +930,6 @@ impl Loans<'_> {
         else {
             return None;
         };
-        let mut live_before = None; // found only for a call with a reserved argument
         for &argument in arguments {
             let mir::Operand::Value(borrow) = argument else {
                 continue;
@@ -916,13 +946,8 @@ impl Loans<'_> {
             };
             access.reads = false; // it takes hold now
             let skip = self.value_holders(borrow);
-            let live_before = live_before.get_or_insert_with(|| {
-                let mut live_before = live.clone();
-                self.step_live(&mut live_before, id);
-                live_before
-            });
             if let Some((holder, error)) =
-                self.broken_loan(&access, held, live_before, skip, reported, file)
+                self.broken_loan(&access, held, live, skip, reported, file)
             {
                 let writable = self.words(self.body.instructions[borrow].ty).writable;
                 let note = format!("a {writable} argument takes hold when the call starts");

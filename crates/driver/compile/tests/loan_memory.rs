@@ -1,6 +1,8 @@
-//! The loan check's memory on one large function of many branches and
-//! borrows. A table of every holder and every loan for every block took
-//! 411 MB for this function and passed 2 GB or 40 seconds at twice its size.
+//! The loan check's memory on two large functions. One has many branches
+//! and borrows: a table of every holder and every loan for every block took
+//! 411 MB for it and passed 2 GB or 40 seconds at twice its size. The other
+//! is one block of borrows: a set of every holder kept after each of its
+//! instructions took 905 MB for 20,000 of its groups.
 
 #![cfg(target_os = "linux")] // the kernel's count of a process's memory
 
@@ -16,9 +18,10 @@ fn peak_kb() -> u64 {
     kb.parse().unwrap()
 }
 
-/// `groups` of a `struct` of references to two new variables, used once by
-/// a call, then a branch, then a write that its loans no longer forbid.
-fn function_of(groups: usize) -> String {
+/// `main`, of `groups` of a `struct` of references to two new variables,
+/// used once by a call, then a branch, then a write that its loans no longer
+/// forbid.
+fn branching_function(groups: usize) -> String {
     let mut text = String::from(
         "struct Holder { value: &i32, other: &i32 }
 fn use_it(h: &Holder) -> i32 { return h.value.* + h.other.*; }
@@ -42,8 +45,26 @@ fn main() {
     text
 }
 
+/// `straight`, of `groups` of a new variable, a reference to it, and a
+/// read through that reference, with no branch.
+fn straight_function(groups: usize) -> String {
+    let mut text = String::from("fn straight() -> i32 {\n    let mut total = 0;\n");
+    for group in 0..groups {
+        _ = write!(
+            text,
+            "    let a{group} = {group};
+    let r{group} = &a{group};
+    total = total + r{group}.*;
+"
+        );
+    }
+    text.push_str("    return total;\n}\n");
+    text
+}
+
+/// One test, so no other test's memory counts in its peak.
 #[test]
-fn a_large_function_stays_small() {
+fn large_functions_stay_small() {
     let folder = PathBuf::from("/peeper-build-test/src");
     let main = folder.join("main.peep");
     let project = project::Project {
@@ -52,7 +73,8 @@ fn a_large_function_stays_small() {
         root: PathBuf::from("/peeper-build-test"),
         name: "app".to_string(),
     };
-    let program = project::load(&project, &HashMap::from([(main, function_of(400))]));
+    let text = branching_function(400) + &straight_function(3000);
+    let program = project::load(&project, &HashMap::from([(main, text)]));
     assert!(program.checkable);
     let target = model::machine::Machine::named("x86_64-linux").unwrap();
     let results = compile::run(
@@ -65,6 +87,8 @@ fn a_large_function_stays_small() {
     );
     assert_eq!(results.diagnostics().count(), 0);
     let peak = peak_kb();
-    // 8 MB as it is; 25 MB carrying the loans of holders no longer live.
-    assert!(peak < 16 * 1024, "{peak} KB at the highest point");
+    // 13 MB as it is; 32 MB keeping the live holders after each instruction
+    // of `straight`. `main` alone took 8 MB, and 25 MB carrying the loans of
+    // holders no longer live.
+    assert!(peak < 20 * 1024, "{peak} KB at the highest point");
 }

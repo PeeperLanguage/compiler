@@ -293,6 +293,11 @@ impl<T> Bits<T> {
         self.words[id.index() / 64] &= !(1 << (id.index() % 64));
     }
 
+    /// Sets `id` if it is not in the set, else clears it.
+    fn toggle(&mut self, id: Id<T>) {
+        self.words[id.index() / 64] ^= 1 << (id.index() % 64);
+    }
+
     fn has(&self, id: Id<T>) -> bool {
         self.words[id.index() / 64] >> (id.index() % 64) & 1 != 0
     }
