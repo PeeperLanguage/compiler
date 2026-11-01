@@ -43,26 +43,7 @@ pub fn report_variable_state_errors(
     if body.variables.ids().all(starts_set) && !body.instructions.ids().any(moves) {
         return;
     }
-    let mut moved = vec![false; body.variables.len()];
-    for id in body.instructions.ids() {
-        if let mir::InstructionKind::Move(ref place) = body.instructions[id].kind
-            && let Some(variable) = place.whole_variable()
-        {
-            moved[variable.index()] = true;
-        }
-    }
-    let mut tracked_count = 0;
-    let tracked: Vec<Option<Id<Tracked>>> = body
-        .variables
-        .ids()
-        .map(|variable| {
-            let follows = !body.variables[variable].initialized || moved[variable.index()];
-            follows.then(|| {
-                tracked_count += 1;
-                Id::from_index(tracked_count - 1)
-            })
-        })
-        .collect();
+    let (tracked, tracked_count) = tracked_variables(body);
     let tracked = |variable: Id<mir::Variable>| tracked[variable.index()];
     let instructions = |block: Id<mir::Block>| body.lists.items(body.blocks[block].instructions);
     let starts = dataflow(
@@ -145,6 +126,30 @@ pub fn report_variable_state_errors(
     errors.sort_by_key(|&(start, _)| start);
     diagnostics.extend(errors.into_iter().map(|(_, error)| error));
 }
+/// Each variable's number if the check follows it: its `let` has no value,
+/// or a `move` takes it whole somewhere. Also how many are followed.
+fn tracked_variables(body: &mir::Body) -> (Vec<Option<Id<Tracked>>>, usize) {
+    let mut moved = vec![false; body.variables.len()];
+    for id in body.instructions.ids() {
+        if let mir::InstructionKind::Move(ref place) = body.instructions[id].kind
+            && let Some(variable) = place.whole_variable()
+        {
+            moved[variable.index()] = true;
+        }
+    }
+    let mut count = 0;
+    let tracked = (body.variables.ids())
+        .map(|variable| {
+            let follows = !body.variables[variable].initialized || moved[variable.index()];
+            follows.then(|| {
+                count += 1;
+                Id::from_index(count - 1)
+            })
+        })
+        .collect();
+    (tracked, count)
+}
+
 /// What is known about each tracked variable at one point of a function, one
 /// bit per tracked variable in each set.
 #[derive(Clone, PartialEq)]
