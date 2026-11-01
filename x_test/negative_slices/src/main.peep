@@ -1,7 +1,6 @@
-// What slices cannot do yet, or ever: be held in a struct, an array, a
-// reference or another slice, cross to C, be written through `[&]`, become
-// writable from `[&]`, change element type.
-struct Holder { view: [&]i32 }
+// What slices cannot do yet, or ever: be held in an array, a reference or
+// another slice, cross to C, be written through `[&]`, become writable from
+// `[&]`, change element type.
 
 #[extern("takes")]
 fn takes(values: [&]i32);

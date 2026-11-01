@@ -109,7 +109,7 @@ pub enum Type {
     /// `cstr`: a pointer to a C string, as C functions take it.
     CString,
     /// `origins`: the positions of the parameters a returned reference may
-    /// point into, in order; empty when the result is not a reference.
+    /// point into, in order; empty when the result holds no reference.
     /// `variadic`: the last parameter, a slice, takes all the arguments past
     /// the others.
     Function {
@@ -533,6 +533,17 @@ impl Types {
             }
             (Type::RawPointer { .. }, Type::RawPointer { .. }) => Conversion::NeedsCast,
             _ => Conversion::Never,
+        }
+    }
+
+    /// `Some(whether one is mutable)` for a type whose values hold loans: a
+    /// reference, a slice, or a struct with one in a field, however deep.
+    pub fn holds_loans(&self, id: TypeId) -> Option<bool> {
+        match self[id] {
+            Type::Struct { ref fields, .. } => (fields.iter())
+                .filter_map(|&field| self.holds_loans(field))
+                .reduce(|a, b| a || b),
+            ref other => other.borrows(),
         }
     }
 

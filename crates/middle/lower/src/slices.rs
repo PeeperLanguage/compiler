@@ -222,7 +222,7 @@ impl Lowering<'_> {
 /// The elements of the slice at `place`, which are behind it.
 pub(crate) fn slice_elements(mut place: mir::Place) -> mir::Place {
     let mut projections = place.projections.into_vec();
-    projections.push(mir::Projection::Dereference);
+    projections.push(mir::Projection::SliceElements);
     place.projections = projections.into();
     place
 }

@@ -1,0 +1,78 @@
+// What a struct holding references cannot do yet, or ever. A reference stored
+// behind a reference would outlive what it borrows unseen, so it is refused
+// for now, however it is written.
+struct Pair { first: &i32, second: &i32 }
+struct Text { input: [&]u8 }
+struct Counter { value: &mut i32 }
+struct Grid { cells: [&mut]i32 }
+struct Wrap { inner: &Pair }
+struct Link { next: &Link }
+
+fn set(p: &mut Pair, x: &i32) {
+    p.first = x;
+}
+
+fn replace(p: &mut Pair, q: Pair) {
+    p.* = q;
+}
+
+fn set_through_field(w: &mut Wrap, x: &i32) {
+    w.inner.first = x;
+}
+
+// So a parser keeps its position next to an input that never changes.
+fn advance(text: &mut Text) {
+    text.input = &text.input[1..];
+}
+
+fn through_shared(c: &Counter) {
+    c.value.* = 1;
+}
+
+fn lend_through_shared(c: &Counter) {
+    let r = &mut c.value.*;
+    r.* = 1;
+}
+
+// A `[&mut]` field gives nothing writable through a shared reference.
+fn fill(cells: [&mut]i32) {}
+
+fn lend_slice_through_shared(g: &Grid) {
+    fill(g.cells);
+}
+
+fn walk_through_shared(g: &Grid) {
+    for cell in g.cells {
+        println(cell.*);
+    }
+}
+
+fn slice_through_shared(g: &Grid) {
+    let part = &mut g.cells[0..1];
+    part[0] = 1;
+}
+
+// `[&]Pair`, `[2]Pair` and `*Pair` do not say which reference is which.
+fn elements(pairs: [&]Pair) {}
+
+fn array(pairs: [2]Pair) {}
+
+fn pointer(p: *Pair) {}
+
+#[extern("takes")]
+fn takes(p: &Pair);
+
+#[extern("gives")]
+fn gives(p: Pair);
+
+// A struct of shared references lends no `&mut`.
+fn shared_only(p: Pair) -> &mut i32 in p {
+    return p.first;
+}
+
+// Nothing to borrow from.
+fn made() -> Pair {}
+
+const Held = Pair.{ first = &1, second = &2 };
+
+fn main() {}

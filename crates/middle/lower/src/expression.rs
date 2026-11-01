@@ -67,9 +67,12 @@ impl Lowering<'_> {
                     return Some(self.integer_constant(ty, length));
                 }
                 let slice = match self.thir.exprs[value].kind {
-                    thir::ExprKind::Variable(variable) => {
-                        let place = mir::Place::whole(Id::from_index(variable.index()));
-                        self.emit(mir::InstructionKind::Load(place), value_type, span)
+                    thir::ExprKind::Variable(_) | thir::ExprKind::Field { .. } => {
+                        let read = match self.place(value)? {
+                            Ok(place) => mir::InstructionKind::Load(place),
+                            Err(field) => field,
+                        };
+                        self.emit(read, value_type, span)
                     }
                     _ => self.lower_expr(value)?,
                 };
@@ -212,7 +215,7 @@ impl Lowering<'_> {
                     steps.push(Err(index));
                     // A slice's elements are behind it.
                     if let Type::Slice { .. } = self.types[self.thir.exprs[array].ty] {
-                        steps.push(Ok(mir::Projection::Dereference));
+                        steps.push(Ok(mir::Projection::SliceElements));
                     }
                     outer = array;
                 }

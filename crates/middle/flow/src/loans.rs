@@ -2,8 +2,12 @@
 //! forbids while that reference is still in use, and a variable whose scope
 //! ends while a reference to it is still in use.
 //!
-//! A loan is one `Borrow`. A holder is a variable or an instruction value of
-//! reference type: it holds the loans it may refer through. A loan is in use
+//! A loan is one `Borrow`. A holder is a reference or slice in a variable or
+//! an instruction value, on its own or in a field, however deep: it holds the
+//! loans it may refer through. So each field of a struct keeps its own loans,
+//! as if each had a lifetime of its own in Rust, and `p.second` read out of
+//! `p` holds only those of `second`. Liveness is by variable or value, as in
+//! Rust: using any part of a struct uses all its holders. A loan is in use
 //! after a point when some holder that holds it is used again later, so a
 //! borrow lasts until the last use of the reference, not to its block's end.
 //!
@@ -12,9 +16,12 @@
 //! 1. Forward: the loans each holder may hold. A `Borrow` holds its own
 //!    loan and, when it goes through a reference (`&mut r.*`), the loans of
 //!    `r`, so what `r` refers to stays borrowed while the new reference is in
-//!    use. Copying a reference copies its loans; a `store` to a variable
-//!    replaces them and ends each loan of a place through it, which now
-//!    names what the new reference points to.
+//!    use; borrowing a struct holds the loans of the holders in the place
+//!    too, so what a reference to it reads out still counts them. Copying a
+//!    reference copies its loans; a `store` to a variable replaces them and
+//!    ends each loan of a place through it, which now names what the new
+//!    reference points to, and one to a field adds to them, as in Rust. No
+//!    `store` behind a reference holds a loan: the checker refuses it.
 //! 2. Backward: the holders used again later (liveness).
 //! 3. Each access, checked against the loans of the holders in use after it.
 //!
@@ -30,15 +37,16 @@
 //! takes hold, and a reference to the place still in use then, the call's
 //! other arguments included, is an error (`both(&mut x, &x)`).
 //!
-//! A reference a call returns holds the loans of the arguments its
+//! Each holder a call returns holds all the loans of the arguments its
 //! function's origins name (`in`), so they stay borrowed while it is in use;
 //! a `&mut` argument there is never reserved, as its loan outlives the call.
-//! Each reference parameter holds a parameter loan, numbered after the
+//! Each holder of a parameter holds a parameter loan, numbered after the
 //! borrows, for what the caller lent; it conflicts with nothing here. A
-//! returned reference may hold only the parameter loans the origins name,
-//! and no loan of the function's own storage (T0036).
+//! returned value may hold only the parameter loans the origins name, and no
+//! loan of the function's own storage (T0036).
 
 use std::collections::VecDeque;
+use std::ops::Range;
 use std::sync::Arc;
 
 use arena::Id;
@@ -55,8 +63,8 @@ use crate::Bits;
 use crate::dataflow;
 use crate::predecessors;
 
-/// A variable or instruction value of reference type, numbered from 0 in
-/// that order. Only named by `Id<Holder>`.
+/// A reference or slice in a variable or instruction value, numbered from 0
+/// in that order, a struct's in field order. Only named by `Id<Holder>`.
 enum Holder {}
 
 /// One `Borrow`, numbered from 0 in instruction order, then one parameter
@@ -86,7 +94,7 @@ pub fn report_loan_errors<'t>(
             )
         })
         .collect();
-    if borrows.is_empty() && types[body.result].borrows().is_none() {
+    if borrows.is_empty() && types.holds_loans(body.result).is_none() {
         return;
     }
     let variables = body.variables.ids().map(|id| body.variables[id].ty);
@@ -94,12 +102,9 @@ pub fn report_loan_errors<'t>(
     let mut holder_count = 0;
     let mut holders = Vec::with_capacity(variables.len() + values.len());
     for ty in variables.chain(values) {
-        if types[ty].borrows().is_some() {
-            holders.push(Some(Id::from_index(holder_count)));
-            holder_count += 1;
-        } else {
-            holders.push(None);
-        }
+        let first = holder_count;
+        holder_count += holders_in(types, ty);
+        holders.push(first..holder_count);
     }
     let mut loans_through = vec![Vec::new(); body.variables.len()];
     for (index, &borrow) in borrows.iter().enumerate() {
@@ -123,6 +128,22 @@ pub fn report_loan_errors<'t>(
     loans.report(file, diagnostics);
 }
 
+/// How many holders a value of type `ty` is: one for a reference or slice,
+/// its fields' for a struct, as no other type holds one.
+fn holders_in(types: &Types, ty: TypeId) -> usize {
+    match types[ty] {
+        Type::Struct { ref fields, .. } => {
+            (fields.iter()).map(|&field| holders_in(types, field)).sum()
+        }
+        ref other => usize::from(other.borrows().is_some()),
+    }
+}
+
+/// The holders of `range` as ids.
+fn holder_ids(range: Range<usize>) -> impl Iterator<Item = Id<Holder>> {
+    range.map(Id::from_index)
+}
+
 /// One function's loans and holders.
 struct Loans<'b, 't> {
     body: &'b mir::Body,
@@ -130,9 +151,8 @@ struct Loans<'b, 't> {
     origins_of: &'b dyn Fn(DefId) -> &'t [u32], // of a function it calls
     origins: &'t [u32], // the parameters its returned reference may point into
     borrows: Vec<Id<mir::Instruction>>, // each `Borrow` loan's instruction
-    /// The holder of each variable, then of each instruction's value;
-    /// `None` for one that is not a reference.
-    holders: Vec<Option<Id<Holder>>>,
+    /// The holders of each variable, then of each instruction's value.
+    holders: Vec<Range<usize>>,
     /// The `&mut` loans reserved until their call (two-phase).
     reserved: Bits<Loan>,
     /// By variable, the loans of places through the reference in it
@@ -202,41 +222,86 @@ impl Loans<'_, '_> {
         self.borrows.len() + self.body.parameters
     }
 
-    /// How many holders there are: the variables and values that are
-    /// references.
+    /// How many holders there are.
     fn holder_count(&self) -> usize {
-        self.holders.iter().flatten().count()
+        self.holders.last().map_or(0, |last| last.end)
     }
 
-    fn variable_holder(&self, variable: Id<mir::Variable>) -> Option<Id<Holder>> {
-        self.holders[variable.index()]
+    fn variable_holders(&self, variable: Id<mir::Variable>) -> Range<usize> {
+        self.holders[variable.index()].clone()
     }
 
-    fn value_holder(&self, value: Id<mir::Instruction>) -> Option<Id<Holder>> {
-        self.holders[self.body.variables.len() + value.index()]
+    fn value_holders(&self, value: Id<mir::Instruction>) -> Range<usize> {
+        self.holders[self.body.variables.len() + value.index()].clone()
     }
 
-    /// The holder a `return` ending `block` hands back, used there, and
+    /// The holders a `return` ending `block` hands back, used there, and
     /// the `return`'s span.
-    fn returned(&self, block: Id<mir::Block>) -> Option<(Id<Holder>, Span)> {
+    fn returned(&self, block: Id<mir::Block>) -> Option<(Range<usize>, Span)> {
         match self.body.blocks[block].terminator {
             mir::Terminator::Return {
                 value: Some(ref value),
                 span,
-            } => self.operand_holder(value).map(|holder| (holder, span)),
+            } => {
+                let holders = self.operand_holders(value);
+                (!holders.is_empty()).then_some((holders, span))
+            }
             _ => None,
         }
     }
 
-    fn operand_holder(&self, operand: &mir::Operand) -> Option<Id<Holder>> {
+    fn operand_holders(&self, operand: &mir::Operand) -> Range<usize> {
         match *operand {
-            mir::Operand::Value(value) => self.value_holder(value),
-            mir::Operand::Constant(_) | mir::Operand::Argument(_) => None,
+            mir::Operand::Value(value) => self.value_holders(value),
+            mir::Operand::Constant(_) | mir::Operand::Argument(_) => 0..0,
         }
     }
 
-    /// The holders the instruction `id` uses: the variable of a place it
-    /// reads or goes through, and each operand.
+    /// The part of `holders`, those of a value of type `ty`, in its field
+    /// `field`, and that field's type.
+    fn field_holders(
+        &self,
+        holders: Range<usize>,
+        ty: TypeId,
+        field: u32,
+    ) -> (Range<usize>, TypeId) {
+        let Type::Struct { ref fields, .. } = self.types[ty] else {
+            unreachable!("only a struct's field holds a reference")
+        };
+        let (before, rest) = fields.split_at(field as usize);
+        let holders_before: usize = before.iter().map(|&ty| holders_in(self.types, ty)).sum();
+        let first = holders.start + holders_before;
+        (first..first + holders_in(self.types, rest[0]), rest[0])
+    }
+
+    /// The holders that `place` is in: those under its fields up to its
+    /// first other step. With `true`, it goes past them, to what they refer
+    /// to, so anything read there may have come from any of them.
+    fn place_holders(&self, place: &mir::Place) -> (Range<usize>, bool) {
+        let mut holders = self.variable_holders(place.variable);
+        let mut ty = self.body.variables[place.variable].ty;
+        for step in &place.projections {
+            match *step {
+                mir::Projection::Field(field) if !holders.is_empty() => {
+                    (holders, ty) = self.field_holders(holders, ty, field);
+                }
+                _ => return (holders, true),
+            }
+        }
+        (holders, false)
+    }
+
+    /// All the loans of `holders`.
+    fn loans_of(&self, held: &[Bits<Loan>], holders: impl Iterator<Item = usize>) -> Bits<Loan> {
+        let mut loans = Bits::new(self.loan_count());
+        for holder in holders {
+            loans.add_all(&held[holder]);
+        }
+        loans
+    }
+
+    /// The holders the instruction `id` uses: all those of the variable of a
+    /// place it reads or goes through, and of each operand.
     fn uses(&self, id: Id<mir::Instruction>, mut used: impl FnMut(Id<Holder>)) {
         let kind = &self.body.instructions[id].kind;
         let (place, operands): (Option<&mir::Place>, &[mir::Operand]) = match *kind {
@@ -258,9 +323,7 @@ impl Loans<'_, '_> {
                 ..
             } => {
                 for operand in [left, right] {
-                    if let Some(holder) = self.operand_holder(operand) {
-                        used(holder);
-                    }
+                    holder_ids(self.operand_holders(operand)).for_each(&mut used);
                 }
                 (None, &[])
             }
@@ -279,31 +342,29 @@ impl Loans<'_, '_> {
             } => (None, arguments),
             mir::InstructionKind::Phi(ref incoming) => {
                 for (_, operand) in incoming {
-                    if let Some(holder) = self.operand_holder(operand) {
-                        used(holder);
-                    }
+                    holder_ids(self.operand_holders(operand)).for_each(&mut used);
                 }
                 (None, &[])
             }
             mir::InstructionKind::ScopeEnd(_) => (None, &[]),
         };
-        let place = place.and_then(|place| self.variable_holder(place.variable));
-        let operands = operands
-            .iter()
-            .filter_map(|operand| self.operand_holder(operand));
-        place.into_iter().chain(operands).for_each(used);
+        if let Some(place) = place {
+            holder_ids(self.variable_holders(place.variable)).for_each(&mut used);
+        }
+        for operand in operands {
+            holder_ids(self.operand_holders(operand)).for_each(&mut used);
+        }
     }
 
     /// The holders the instruction `id` gives a new value: its own value,
-    /// and a whole variable it stores to.
-    fn defines(&self, id: Id<mir::Instruction>) -> [Option<Id<Holder>>; 2] {
-        let stored = match self.body.instructions[id].kind {
+    /// or the whole variable it stores to.
+    fn defines(&self, id: Id<mir::Instruction>) -> Range<usize> {
+        match self.body.instructions[id].kind {
             mir::InstructionKind::Store { ref place, .. } => place
                 .whole_variable()
-                .and_then(|variable| self.variable_holder(variable)),
-            _ => None,
-        };
-        [self.value_holder(id), stored]
+                .map_or(0..0, |variable| self.variable_holders(variable)),
+            _ => self.value_holders(id),
+        }
     }
 
     /// The loan the `Borrow` instruction `borrow` makes.
@@ -328,8 +389,8 @@ impl Loans<'_, '_> {
                     // Used again through the returned reference, so its loan
                     // outlives the call.
                     for &position in (self.origins_of)(function) {
-                        if let Some(holder) = self.operand_holder(&arguments[position as usize]) {
-                            use_counts[holder.index()] += 1;
+                        for holder in self.operand_holders(&arguments[position as usize]) {
+                            use_counts[holder] += 1;
                         }
                     }
                     true
@@ -349,88 +410,109 @@ impl Loans<'_, '_> {
                 self.body.instructions[borrow].kind,
                 mir::InstructionKind::Borrow { mutable: true, .. }
             );
-            if let Some(holder) = self.value_holder(borrow)
-                && mutable
-                && use_counts[holder.index()] == 1
-                && call_arguments.has(holder)
-            {
+            let holder = self.value_holders(borrow).start;
+            if mutable && use_counts[holder] == 1 && call_arguments.has(Id::from_index(holder)) {
                 reserved.set(self.loan(borrow));
             }
         }
         reserved
     }
 
-    /// `held`, the loans of each holder, after the instruction `id`.
+    /// `held`, the loans of each holder, after the instruction `id`. What
+    /// is not listed gives no value that holds a loan.
     fn step_held(&self, held: &mut [Bits<Loan>], id: Id<mir::Instruction>) {
-        // The holder given new loans, the holder whose loans it takes, and
-        // a loan of its own. A reference read from a variable, or borrowed
-        // through one, holds that variable's loans; a parameter, its
-        // parameter loan.
-        let (target, source, own) = match self.body.instructions[id].kind {
+        let target = self.value_holders(id);
+        let copy = |held: &mut [Bits<Loan>], target: Range<usize>, source: Range<usize>| {
+            for (to, from) in target.zip(source) {
+                held[to] = held[from].clone();
+            }
+        };
+        match self.body.instructions[id].kind {
             mir::InstructionKind::Store {
                 ref place,
                 ref value,
-            } => (
-                place
-                    .whole_variable()
-                    .and_then(|variable| self.variable_holder(variable)),
-                self.operand_holder(value),
-                match *value {
-                    // Its parameter loan, after the borrows.
-                    mir::Operand::Argument(position) => {
-                        Some(Id::from_index(self.borrows.len() + position as usize))
-                    }
-                    _ => None,
-                },
-            ),
+            } => self.step_store(held, place, value),
             mir::InstructionKind::Call {
                 function,
                 ref arguments,
-            } => {
-                let Some(target) = self.value_holder(id) else {
-                    return;
-                };
-                let mut loans = Bits::new(self.loan_count());
-                for &position in (self.origins_of)(function) {
-                    if let Some(source) = self.operand_holder(&arguments[position as usize]) {
-                        loans = loans.combine(&held[source.index()], |a, b| a | b);
-                    }
+            } if !target.is_empty() => {
+                let origins = (self.origins_of)(function).iter();
+                let sources = origins
+                    .flat_map(|&position| self.operand_holders(&arguments[position as usize]));
+                let loans = self.loans_of(held, sources);
+                held[target].fill(loans);
+            }
+            // A value read out of a holder holds its loans; from behind it,
+            // those of any it may have come from.
+            mir::InstructionKind::Load(ref place) | mir::InstructionKind::Move(ref place)
+                if !target.is_empty() =>
+            {
+                let (source, behind) = self.place_holders(place);
+                if behind {
+                    let loans = self.loans_of(held, source);
+                    held[target].fill(loans);
+                } else {
+                    copy(held, target, source);
                 }
-                held[target.index()] = loans;
-                return;
             }
-            mir::InstructionKind::Load(ref place) | mir::InstructionKind::Move(ref place) => (
-                self.value_holder(id),
-                self.variable_holder(place.variable),
-                None,
-            ),
+            // What the place holds, or goes through, stays borrowed while
+            // the new reference is in use.
             mir::InstructionKind::Borrow { ref place, .. } => {
-                let through = place.is_behind_reference();
-                (
-                    self.value_holder(id),
-                    through
-                        .then(|| self.variable_holder(place.variable))
-                        .flatten(),
-                    Some(self.loan(id)),
-                )
+                let mut loans = self.loans_of(held, self.place_holders(place).0);
+                loans.set(self.loan(id));
+                held[target.start] = loans;
             }
-            _ => (self.value_holder(id), None, None),
-        };
-        if let Some(target) = target {
-            held[target.index()] = match source {
-                Some(source) => held[source.index()].clone(),
+            mir::InstructionKind::Aggregate(ref parts) if !target.is_empty() => {
+                let mut next = target.start;
+                for part in parts {
+                    let count = holders_in(self.types, self.body.operand_type(*part));
+                    copy(held, next..next + count, self.operand_holders(part));
+                    next += count;
+                }
+            }
+            mir::InstructionKind::Field {
+                ref value,
+                ref fields,
+            } if !target.is_empty() => {
+                let mut source = self.operand_holders(value);
+                let mut ty = self.body.operand_type(*value);
+                for &field in fields {
+                    (source, ty) = self.field_holders(source, ty, field);
+                }
+                copy(held, target, source);
+            }
+            _ => assert!(target.is_empty(), "a value holding a loan has its step"),
+        }
+    }
+
+    /// `held` after `value` is stored to `place`. To a whole variable, it
+    /// replaces what the variable held and ends each loan of a place through
+    /// it: a store to `r` repoints it, so `r.*` no longer names what a loan
+    /// of it borrowed, and what it points into stays borrowed by the loans
+    /// its reference took from `r`. To a field, it adds to what the field
+    /// held, as Rust's lifetime of a field stays what it was.
+    fn step_store(&self, held: &mut [Bits<Loan>], place: &mir::Place, value: &mir::Operand) {
+        let (target, behind) = self.place_holders(place);
+        if behind {
+            return; // the checker lets no store here hold a loan
+        }
+        let whole = place.whole_variable();
+        let mut sources = self.operand_holders(value);
+        for holder in target {
+            let mut loans = match sources.next() {
+                Some(source) => held[source].clone(),
                 None => Bits::new(self.loan_count()),
             };
-            if let Some(loan) = own {
-                held[target.index()].set(loan);
+            // Its parameter loan, after the borrows.
+            if let mir::Operand::Argument(position) = *value {
+                loans.set(Id::from_index(self.borrows.len() + position as usize));
+            }
+            match whole {
+                Some(_) => held[holder] = loans,
+                None => held[holder].add_all(&loans),
             }
         }
-        // A store to `r` repoints it, so `r.*` no longer names what a loan
-        // of it borrowed: that loan ends. What it points into stays borrowed
-        // by the loans its reference took from `r`.
-        if let mir::InstructionKind::Store { ref place, .. } = self.body.instructions[id].kind
-            && let Some(variable) = place.whole_variable()
-        {
+        if let Some(variable) = whole {
             for &loan in &self.loans_through[variable.index()] {
                 held.iter_mut().for_each(|holding| holding.clear(loan));
             }
@@ -439,9 +521,7 @@ impl Loans<'_, '_> {
 
     /// `live`, the holders used later, before the instruction `id` runs.
     fn step_live(&self, live: &mut Bits<Holder>, id: Id<mir::Instruction>) {
-        for holder in self.defines(id).into_iter().flatten() {
-            live.clear(holder);
-        }
+        holder_ids(self.defines(id)).for_each(|holder| live.clear(holder));
         self.uses(id, |holder| live.set(holder));
     }
 
@@ -475,7 +555,7 @@ impl Loans<'_, '_> {
             body.blocks.ids().map(|block| {
                 let mut live = no_holders.clone();
                 if let Some((returned, _)) = self.returned(block) {
-                    live.set(returned);
+                    holder_ids(returned).for_each(|holder| live.set(holder));
                 }
                 (block, live)
             }),
@@ -502,8 +582,8 @@ impl Loans<'_, '_> {
                 for &id in &ids {
                     self.step_held(&mut at_return, id);
                 }
-                let loans = &at_return[returned.index()];
-                self.return_errors(span, loans, &mut reported, file, &mut errors);
+                let loans = self.loans_of(&at_return, returned);
+                self.return_errors(span, &loans, &mut reported, file, &mut errors);
             }
             // The holders used later, after each instruction.
             let mut live = end.unwrap_or_else(|| no_holders.clone());
@@ -529,7 +609,7 @@ impl Loans<'_, '_> {
                             // The holder's variable or value, found only for
                             // an error.
                             let index = (self.holders.iter())
-                                .position(|&found| found == Some(holder))
+                                .position(|found| found.contains(&holder.index()))
                                 .expect("each holder is a variable's or a value's");
                             let variables = body.variables.len();
                             let ty = match index.checked_sub(variables) {
@@ -550,8 +630,8 @@ impl Loans<'_, '_> {
         diagnostics.extend(errors.into_iter().map(|(_, error)| error));
     }
 
-    /// Adds to `errors` those of the `return` at `span`, whose reference
-    /// holds `loans`: one for each loan not yet `reported` of the function's
+    /// Adds to `errors` those of the `return` at `span`, whose value holds
+    /// `loans`: one for each loan not yet `reported` of the function's
     /// own storage (a borrow not through a reference), or of a parameter its
     /// origins do not name.
     fn return_errors(
@@ -683,7 +763,7 @@ impl Loans<'_, '_> {
         access: &Access,
         held: &[Bits<Loan>],
         live: &Bits<Holder>,
-        skip: [Option<Id<Holder>>; 2],
+        skip: Range<usize>,
         reported: &mut Bits<Loan>,
         file: &Arc<SourceFile>,
     ) -> Option<(Id<Holder>, Diagnostic)> {
@@ -692,7 +772,7 @@ impl Loans<'_, '_> {
             .enumerate()
             .map(|(index, holding)| (Id::from_index(index), holding));
         let holders =
-            holders.filter(|&(holder, _)| live.has(holder) && !skip.contains(&Some(holder)));
+            holders.filter(|&(holder, _)| live.has(holder) && !skip.contains(&holder.index()));
         for (holder, holding) in holders {
             let loans = (0..self.borrows.len()).map(Id::from_index);
             for loan in loans.filter(|&loan| holding.has(loan) && !reported.has(loan)) {
@@ -709,8 +789,7 @@ impl Loans<'_, '_> {
                     && steps.all(|(&left, &right)| left.may_overlap(right));
                 let common = access.projections.len().min(loaned.projections.len());
                 let past_storage = access.replaces
-                    && (loaned.projections[common..].iter())
-                        .any(|step| matches!(step, mir::Projection::Dereference));
+                    && (loaned.projections[common..].iter()).any(|step| step.leaves_storage());
                 // A reserved loan acts as a shared one until its call.
                 let exclusive = mutable && !self.reserved.has(loan);
                 if !overlaps || past_storage || (access.reads && !exclusive) {
@@ -778,7 +857,7 @@ impl Loans<'_, '_> {
                 unreachable!("a borrow accesses its place")
             };
             access.reads = false; // it takes hold now
-            let skip = [self.value_holder(borrow), None];
+            let skip = self.value_holders(borrow);
             let live_before = live_before.get_or_insert_with(|| {
                 let mut live_before = live.clone();
                 self.step_live(&mut live_before, id);
@@ -809,12 +888,12 @@ impl Loans<'_, '_> {
                 if used {
                     return Some(body.instructions.span(id));
                 }
-                if self.defines(id).contains(&Some(holder)) {
+                if self.defines(id).contains(&holder.index()) {
                     continue 'paths; // set again: this path does not use it
                 }
             }
             if let Some((returned, span)) = self.returned(block)
-                && returned == holder
+                && returned.contains(&holder.index())
             {
                 return Some(span);
             }

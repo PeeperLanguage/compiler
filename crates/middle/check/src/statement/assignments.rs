@@ -131,6 +131,17 @@ impl ThirBuilder<'_, '_> {
             }
         };
         self.report_unwritable(place, variable, decider, "assign to");
+        // shortcut: the loan check follows no loan stored behind a reference,
+        // which would outlive what it borrows unseen; allow it when a
+        // signature can say that two parameters share an origin.
+        let ty = self.body.exprs[place].ty;
+        let writes = decider.is_some_and(|decider| self.writes_through(decider));
+        if writes && self.checker.types.holds_loans(ty).is_some() {
+            let span = self.body.exprs.span(place);
+            let what = "assignments of references through a reference";
+            self.checker.not_supported(span, what);
+            return None;
+        }
         Some(place)
     }
 

@@ -86,7 +86,7 @@ impl<'b> Interpreter<'b, '_> {
                     address = address.wrapping_add(offset);
                     ty = field;
                 }
-                (Projection::Dereference, Type::Slice { .. }) => {
+                (Projection::SliceElements, _) => {
                     let second = address.wrapping_add(self.pointer_bytes());
                     length = Some(self.read_word(second, span)?);
                     address = self.read_word(address, span)?;
