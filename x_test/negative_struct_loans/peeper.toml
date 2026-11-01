@@ -50,5 +50,6 @@ stderr_contains = [
     "lend it again with `&mut r.value.*`, or `&r.value.*` to only read",
     "lend it again with `&mut c.value.*`, or `&c.value.*` to only read",
     "lend it again with `&mut g.cells[..]`, or `&g.cells[..]` to only read",
-    "Compilation failed with 30 error",
+    "`second_source` is changed while a reference to it is still in use",
+    "Compilation failed with 32 error",
 ]

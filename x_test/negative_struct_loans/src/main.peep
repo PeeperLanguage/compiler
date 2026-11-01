@@ -270,4 +270,17 @@ fn SliceMovedOut() {
     c[0] = 2;
 }
 
+// Two errors: the move, and what the second field points at is still lent,
+// as a read from behind a reference holds the loans of every field.
+fn ReadWholeFromBehindAReference() {
+    let first_source = 1;
+    let mut second_source = 2;
+    let pair = Pair.{ first = &first_source, second = &second_source };
+    let view = &pair;
+    let read = view.*;
+    let second = read.second; // from here only this field's loans are in use
+    second_source = 3;
+    println(second.*);
+}
+
 fn main() {}
