@@ -684,7 +684,8 @@ impl Types {
                 name_of(*definition).to_string()
             }
             Type::Array { element, length } => {
-                format!("[{length}]{}", self.real_text(*element, name_of))
+                let element = source::grow(|| self.real_text(*element, name_of));
+                format!("[{length}]{element}")
             }
             Type::Range { element, .. } => {
                 format!("{RANGE}[{}]", self.real_text(*element, name_of))

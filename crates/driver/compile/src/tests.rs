@@ -260,7 +260,7 @@ fn main() {{
 /// Statements and types nested far deeper than a thread's stack would hold,
 /// as the parser takes them, are checked and lowered: blocks in blocks, a
 /// long `else if` chain, a long `||` chain in a condition, and references
-/// written in references.
+/// and arrays written in themselves.
 #[test]
 fn checks_deeply_nested_statements() {
     const DEPTH: usize = 50_000;
@@ -284,6 +284,10 @@ fn checks_deeply_nested_statements() {
     let found = diagnostics(&[("app:main", &types)]);
     let codes: Vec<&str> = found.iter().map(|&(code, ..)| code).collect();
     assert_eq!(codes, ["T0043"], "{found:?}");
+    // Each array's size is found through all those inside it, so a depth
+    // that still overflows a recursive walk, and no more.
+    let arrays = format!("fn f(a: {}i32) {{}}\nfn main() {{}}", "[1]".repeat(10_000));
+    assert_eq!(diagnostics(&[("app:main", &arrays)]), []);
 }
 
 /// No slice is longer than the largest `usize`, `u32::MAX` on a 32-bit
