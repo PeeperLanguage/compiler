@@ -267,6 +267,9 @@ Fix     File *source.File, Span source.Span, NewText string
 - **Printing is separate from data.** Colors and layout live only in the
   printer. The printer never panics: a span outside its file's text is clamped
   and still printed.
+- **A limit on what is written.** At most 200 diagnostics are written, then how
+  many more there are; the summary counts them all. Each writes its whole source
+  line, so without a limit the text grows with errors times line length.
 - **Visible format unchanged.** `[CODE]: message`, `--> file:line:col`, the
   numbered source lines with `^` under the primary place and `-` under secondary
   ones, `= note:` / `= help:` lines with fixed lines, and the summary line. Users

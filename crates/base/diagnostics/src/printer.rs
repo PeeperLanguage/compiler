@@ -43,14 +43,20 @@ use crate::printer::layout::snippets;
 
 const TAB_WIDTH: usize = 4;
 
+/// The most diagnostics written. Each writes its whole source line, so without
+/// a limit the text grows with the errors times the length of a line: 50,000
+/// errors on one line of 500 KB would take 25 GB.
+const MOST_WRITTEN: usize = 200;
+
 /// Returns the tokens of a file, to highlight its lines.
 pub type TokensOf<'a> = &'a dyn Fn(&Arc<SourceFile>) -> Vec<Token>;
 
 /// Writes `diagnostics`, ordered by the file and position of their primary
-/// place (those without a place first), then a summary line. With `colored`,
-/// output has terminal colors and source lines are highlighted from the tokens
-/// it returns for a file (the lexer's, read once per file). A span outside its
-/// file's text is clamped, so printing never fails on a bad span.
+/// place (those without a place first), at most `MOST_WRITTEN` of them, then a
+/// summary line that counts them all. With `colored`, output has terminal
+/// colors and source lines are highlighted from the tokens it returns for a
+/// file (the lexer's, read once per file). A span outside its file's text is
+/// clamped, so printing never fails on a bad span.
 pub fn print(
     out: &mut impl Write,
     diagnostics: &[Diagnostic],
@@ -68,13 +74,18 @@ pub fn print(
         tokens: HashMap::new(),
     };
     let (mut errors, mut warnings) = (0, 0);
-    for d in ordered {
-        p.write_diagnostic(d);
+    for (index, d) in ordered.iter().enumerate() {
+        if index < MOST_WRITTEN {
+            p.write_diagnostic(d);
+        }
         match d.code.severity {
             Severity::Error => errors += 1,
             Severity::Warning => warnings += 1,
             Severity::Info | Severity::Hint => {}
         }
+    }
+    if let Some(hidden @ 1..) = ordered.len().checked_sub(MOST_WRITTEN) {
+        _ = writeln!(p.out, "{hidden} more not shown");
     }
     match (errors, warnings) {
         (0, 0) => return out.write_all(p.out.as_bytes()),

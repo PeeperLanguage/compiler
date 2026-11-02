@@ -172,6 +172,42 @@ fn order_and_summary() {
     }
 }
 
+/// Past the limit, nothing more is written but all are still counted, by
+/// their severity, however far apart they are.
+#[test]
+fn only_the_first_diagnostics_are_written() {
+    let text = "x".repeat(MOST_WRITTEN + 2);
+    let file = Arc::new(SourceFile::new("a.peep", &text));
+    let mut found: Vec<Diagnostic> = (0..MOST_WRITTEN + 1)
+        .map(|at| {
+            Diagnostic::new(code("L0001", Severity::Error), "bad").label(
+                &file,
+                Span::new(at, at + 1),
+                "",
+            )
+        })
+        .collect();
+    found.push(
+        Diagnostic::new(code("W0001", Severity::Warning), "late").label(
+            &file,
+            Span::new(MOST_WRITTEN + 1, MOST_WRITTEN + 2),
+            "",
+        ),
+    );
+    let got = render(&found);
+    assert_eq!(got.matches("[L0001]").count(), MOST_WRITTEN, "{got}");
+    assert_eq!(got.matches("[W0001]").count(), 0, "{got}");
+    let end = format!(
+        "2 more not shown\nCompilation failed with {} error(s) and 1 warning(s)\n",
+        MOST_WRITTEN + 1
+    );
+    assert!(got.ends_with(&end), "{got}");
+    assert_eq!(
+        render(&found[..MOST_WRITTEN]).matches("not shown").count(),
+        0
+    );
+}
+
 #[test]
 fn span_over_lines_tabs_and_wide_characters() {
     let file = Arc::new(SourceFile::new("a.peep", "\tlet 名 = (\r\n  1)\r\n"));
