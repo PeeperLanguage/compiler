@@ -246,7 +246,7 @@ impl<'f> Interpreter<'_, 'f> {
                     text.extend_from_slice(b": ");
                     let (offset, field) = self.field_place(ty, index);
                     let value = self.read_value(address + offset, field, span)?;
-                    self.write_printed(text, &value, field, span)?;
+                    source::grow(|| self.write_printed(text, &value, field, span))?;
                 }
                 text.extend_from_slice(if fields.is_empty() { b" {}" } else { b" }" });
             }

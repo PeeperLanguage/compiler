@@ -258,3 +258,19 @@ ran `check.sh` fully green.
   text split at each printer, 13% is `optnone`.
 - **Open:** a struct literal nested 300,000 deep overflows the stack in `check`,
   before and after this work; 20,000 is fine.
+
+## 2026-11-02 Fixtures on Windows and macOS (branch `fix/windows-fixtures`)
+
+- **Problem:** CI failed on both after the push of the struct work. The
+  interpreter's `write_printed` had no stack guard on a struct's fields, and
+  overflowed a debug build's 1 MB main thread at 400 levels (Windows only).
+  `negative_struct_pointers` expected the text `x86_64-linux`, the host's name,
+  and had failed on both before this work.
+- **Fix:** `source::grow` on the field, as on an array's element. The fixture
+  expects the text around the name, so it still runs on every host: a `target`
+  would skip it off x86-64 Linux.
+- **Open:** `flow::loans::holders_in` has no stack guard, and walks every field
+  of every struct. A 20,000-level chain overflows a 1 MB stack there, and in a
+  function with a reference, structs that each hold the last twice take 2^n
+  steps: 28 levels check in 10 s, 40 hang. The fix for such a chain in `layout`
+  and `printable` did not reach this walk.
