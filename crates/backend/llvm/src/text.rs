@@ -1,16 +1,19 @@
 //! The LLVM text of names, types and constants.
 
 use std::fmt;
+use std::fmt::Display;
 use std::fmt::Write;
 
 use model::DefId;
 use model::constant::Constant;
 use model::constant::Value;
+use model::layout::in_memory;
+use model::layout::layout;
+use model::machine::Machine;
 use model::semantic_types::Float;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
-use model::semantic_types::range_fields;
 
 /// The name the linker knows the function `definition` by: its `#[extern]`
 /// name, else its module's path and its name (`myapp:util.Parse`).
@@ -28,7 +31,7 @@ pub(crate) fn symbol(program: &project::Program, definition: DefId) -> String {
         })
 }
 /// The LLVM type of a value of type `ty`, written where it is printed.
-pub(crate) fn type_text(types: &Types, ty: TypeId) -> impl fmt::Display {
+pub(crate) fn type_text(types: &Types, ty: TypeId) -> impl Display {
     fmt::from_fn(move |out| match types[ty] {
         Type::Void => out.write_str("void"),
         Type::Bool => out.write_str("i1"),
@@ -37,43 +40,44 @@ pub(crate) fn type_text(types: &Types, ty: TypeId) -> impl fmt::Display {
         Type::Float(Float::F64) => out.write_str("double"),
         Type::CString | Type::Reference { .. } | Type::RawPointer { .. } => out.write_str("ptr"),
         Type::Slice { .. } => out.write_str("%slice"),
-        Type::Struct { ref fields, .. } => struct_type_text(types, fields, out),
-        Type::Range { element, step } => {
-            let fields = range_fields(element, step).map(|(_, ty)| ty);
-            struct_type_text(types, &fields, out)
-        }
-        // Flat, however many arrays are in arrays: clang's parser recurses on a
-        // nested type, and overflows at 50,000 levels.
-        Type::Array { base, count, .. } => {
-            write!(out, "[{count} x {}]", type_text(types, base))
+        Type::Struct { .. } | Type::Range { .. } | Type::Array { .. } => {
+            unreachable!("a value kept in memory is bytes to LLVM (`memory_text`)")
         }
         Type::Invalid | Type::Function { .. } => unreachable!("MIR holds no value of this type"),
         Type::Alias { .. } => unreachable!("indexing looks through aliases"),
         Type::Named(_) => unreachable!("no value has a named type"),
     })
 }
-/// A struct's LLVM type, `{ i32, i64 }`, of its `fields`' types. Out of
-/// line, so `type_text`, which writes every operand's type, stays small
-/// (measured: 11 M fewer instructions per compile of the benchmark); its
-/// array arm recursing in line measured flat.
-#[cold]
-#[inline(never)]
-pub(crate) fn struct_type_text(
-    types: &Types,
-    fields: &[TypeId],
-    out: &mut fmt::Formatter,
-) -> fmt::Result {
-    out.write_str("{")?;
-    for (index, &field) in fields.iter().enumerate() {
-        let separator = if index > 0 { ", " } else { " " };
-        write!(out, "{separator}{}", type_text(types, field))?;
-    }
-    out.write_str(if fields.is_empty() { "}" } else { " }" })
+/// The LLVM type of a value of type `ty` in memory: a value kept there is
+/// bytes, laid out here (`layout`), so LLVM needs nothing of its shape, and a
+/// walk of a type never reaches LLVM. As a `getelementptr`'s type, it steps by
+/// the value's size.
+pub(crate) fn memory_text(types: &Types, ty: TypeId, target: &Machine) -> impl Display {
+    fmt::from_fn(move |out| {
+        if in_memory(types, ty) {
+            write!(out, "[{} x i8]", layout(types, ty, target).0)
+        } else {
+            Display::fmt(&type_text(types, ty), out)
+        }
+    })
 }
+
+/// What an `alloca` of a value of type `ty` takes, with the alignment bytes
+/// have none of.
+pub(crate) fn alloca_text(types: &Types, ty: TypeId, target: &Machine) -> impl Display {
+    fmt::from_fn(move |out| {
+        Display::fmt(&memory_text(types, ty, target), out)?;
+        if in_memory(types, ty) {
+            write!(out, ", align {}", layout(types, ty, target).1)?;
+        }
+        Ok(())
+    })
+}
+
 /// `constant` as an LLVM constant of its type, written from its bits
 /// (docs/ir-design.md, "Integer values must match LLVM"): an integer up to
 /// 64 bits in decimal, a wider one in hexadecimal, a float as its `f64` bits.
-pub(crate) fn constant_text(types: &Types, constant: &Constant) -> impl fmt::Display {
+pub(crate) fn constant_text(types: &Types, constant: &Constant) -> impl Display {
     fmt::from_fn(move |out| match (&constant.value, &types[constant.ty]) {
         (Value::Bool(value), _) => write!(out, "{value}"),
         (Value::Integer(limbs), Type::Integer(integer)) if integer.bits <= 64 => {

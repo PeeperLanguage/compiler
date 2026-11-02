@@ -7,27 +7,27 @@ entry:
   call void @llvm.dbg.declare(metadata ptr %v0, metadata !11, metadata !DIExpression()), !dbg !12
   br label %bb0
 bb0:
-  %i1.f = getelementptr inbounds { i32, i32 }, ptr %v0, i32 0, i32 1, !dbg !13
+  %i1.f = getelementptr inbounds i8, ptr %v0, i64 4, !dbg !13
   %i1 = load i32, ptr %i1.f, !dbg !13
-  %i2.f = getelementptr inbounds { i32, i32 }, ptr %v0, i32 0, i32 0, !dbg !14
+  %i2.f = getelementptr inbounds i8, ptr %v0, i64 0, !dbg !14
   %i2 = load i32, ptr %i2.f, !dbg !14
-  %i3.0 = getelementptr inbounds { i32, i32 }, ptr %result, i32 0, i32 0, !dbg !15
+  %i3.0 = getelementptr inbounds i8, ptr %result, i64 0, !dbg !15
   store i32 %i1, ptr %i3.0, !dbg !15
-  %i3.1 = getelementptr inbounds { i32, i32 }, ptr %result, i32 0, i32 1, !dbg !15
+  %i3.1 = getelementptr inbounds i8, ptr %result, i64 4, !dbg !15
   store i32 %i2, ptr %i3.1, !dbg !15
   ret void, !dbg !16
 }
 
 define void @"ll_struct_parameters:main.main"() !dbg !18 {
 entry:
-  %v0 = alloca { i32, i32 }
+  %v0 = alloca [8 x i8], align 4
   call void @llvm.dbg.declare(metadata ptr %v0, metadata !20, metadata !DIExpression()), !dbg !21
-  %i0 = alloca { i32, i32 }
+  %i0 = alloca [8 x i8], align 4
   br label %bb0
 bb0:
-  %i0.0 = getelementptr inbounds { i32, i32 }, ptr %i0, i32 0, i32 0, !dbg !22
+  %i0.0 = getelementptr inbounds i8, ptr %i0, i64 0, !dbg !22
   store i32 1, ptr %i0.0, !dbg !22
-  %i0.1 = getelementptr inbounds { i32, i32 }, ptr %i0, i32 0, i32 1, !dbg !22
+  %i0.1 = getelementptr inbounds i8, ptr %i0, i64 4, !dbg !22
   store i32 2, ptr %i0.1, !dbg !22
   call void @"ll_struct_parameters:main.swap"(ptr %v0, ptr %i0), !dbg !23
   ret void, !dbg !25

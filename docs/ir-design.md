@@ -385,9 +385,10 @@ and debuggers; the logic lives in a `lower` crate, the data in `model::mir`.
 - **Instructions.** A block is a list of instructions, each one operation whose
   id is the value it gives (`%3 = add %1, %2`): `load`, `store`, a binary or
   unary operation, `convert`, `call`, `phi`, and for structs `load` of a
-  field path (`load s.1[1, 0]`: one `getelementptr` and load, as clang, with
-  one more per index into an array of arrays, as LLVM sees those as one flat
-  array, `[2][3]i32` as `[6 x i32]`),
+  field path (`load s.1[1, 0]`: a `getelementptr` per index, stepping by the
+  element's size, and one for the fields' offsets; to LLVM a value kept in
+  memory is bytes, `[24 x i8], align 4` for `[2][3]i32`, as `model::layout`
+  places everything and LLVM needs only the types of what it loads),
   `aggregate` (a struct value from its fields, LLVM's `insertvalue`) and
   `field` of a struct value not in a variable (`extractvalue`). Operands are a constant, an argument
   or an earlier instruction's value, never a variable. A constant operand is an

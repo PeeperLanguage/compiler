@@ -156,7 +156,7 @@ fn slice_bounds_are_target_sized() {
         "%i6 = icmp sgt i64 %i3, 4",
         "%i8 = trunc i64 %i3 to i32",
         "%i9 = sub i32 4, %i8",
-        "%i10.p = getelementptr inbounds [4 x i32], ptr %v0, i32 0, i32 %i8",
+        "%i10.p = getelementptr inbounds i32, ptr %v0, i32 %i8",
         "%i10 = insertvalue %slice %i10.a, i32 %i9, 1",
         "%i13 = sext i8 %i12 to i32",
         "%i14 = icmp ugt i32 %i13, 4",
@@ -302,24 +302,31 @@ fn variables_have_the_scope_of_their_block() {
     assert_eq!(scope(blocks[0]), scope(variables[0]), "{text}");
 }
 
-/// An array in an array is one flat LLVM array, and an index into it steps by
-/// its element, the rest of the place going on from there.
+/// A value kept in memory is bytes to LLVM, however it nests: an index steps
+/// by its element's size, and fields add up to one offset after it.
 #[test]
-fn arrays_in_arrays_are_flat() {
+fn values_in_memory_are_bytes() {
     let text = ll(
-        "fn f(i: i64, j: i64) -> i32 {
-            let g = [2][3]i32{[3]i32{1, 2, 3}, [3]i32{4, 5, 6}};
-            return g[i][j];
-        }",
+        "struct Cell { tag: i64, grid: [2][3]i32 }
+        fn f(cells: &mut [2]Cell, i: i64, j: i64) -> i32 { return cells.*[i].grid[1][j]; }",
         "x86_64-linux",
     );
-    assert!(text.contains("alloca [6 x i32]"), "{text}");
-    assert!(!text.contains("[2 x [3 x i32]]"), "{text}");
-    let step = |line: &&str| {
-        line.contains("getelementptr inbounds [3 x i32], ptr %v")
-            && line.matches(", i64 ").count() == 2
-    };
-    assert!(text.lines().any(|line| step(&line)), "{text}");
+    assert!(
+        text.contains("getelementptr inbounds [32 x i8], ptr %"),
+        "{text}"
+    );
+    assert!(
+        text.contains("getelementptr inbounds [12 x i8], ptr %"),
+        "{text}"
+    );
+    assert!(text.contains("getelementptr inbounds i32, ptr %"), "{text}");
+    assert!(text.contains("getelementptr inbounds i8, ptr %"), "{text}");
+    let nested = ll(
+        "fn f() -> i32 { let g = [2][3]i32{[3]i32{1, 2, 3}, [3]i32{4, 5, 6}}; return g[1][2]; }",
+        "i686-linux",
+    );
+    assert!(nested.contains("alloca [24 x i8], align 4"), "{nested}");
+    assert!(!nested.contains("x i32]"), "{nested}");
 }
 
 /// A pointer breaks a flat array, so its debug type recurses through each one,

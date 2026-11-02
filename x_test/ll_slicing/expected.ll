@@ -15,7 +15,7 @@ entry:
   br label %bb0
 bb0:
   store %slice %arg0, ptr %v0, !dbg !12
-  %i1.f.0.f = getelementptr inbounds %slice, ptr %v0, i32 0, !dbg !13
+  %i1.f.0.f = getelementptr inbounds i8, ptr %v0, i64 0, !dbg !13
   %i1.f.0.s = load %slice, ptr %i1.f.0.f, !dbg !13
   %i1.f.0 = extractvalue %slice %i1.f.0.s, 0, !dbg !13
   %i1.f.0.len = extractvalue %slice %i1.f.0.s, 1, !dbg !13
@@ -39,7 +39,7 @@ define void @"ll_slicing:main.spread"(ptr %result, %slice %arg0) !dbg !27 {
 entry:
   %v0 = alloca %slice
   call void @llvm.dbg.declare(metadata ptr %v0, metadata !28, metadata !DIExpression()), !dbg !29
-  %i2 = alloca [4 x i64]
+  %i2 = alloca [32 x i8], align 8
   br label %bb0
 bb0:
   store %slice %arg0, ptr %v0, !dbg !29
@@ -67,7 +67,7 @@ bb0.1.panic:
 
 define void @"ll_slicing:main.main"() !dbg !34 {
 entry:
-  %v0 = alloca [4 x i32]
+  %v0 = alloca [16 x i8], align 4
   call void @llvm.dbg.declare(metadata ptr %v0, metadata !38, metadata !DIExpression()), !dbg !39
   %v1 = alloca i32
   call void @llvm.dbg.declare(metadata ptr %v1, metadata !40, metadata !DIExpression()), !dbg !41
@@ -79,13 +79,13 @@ entry:
   call void @llvm.dbg.declare(metadata ptr %v4, metadata !47, metadata !DIExpression()), !dbg !48
   br label %bb0
 bb0:
-  %i0.0 = getelementptr inbounds i32, ptr %v0, i64 0, !dbg !49
+  %i0.0 = getelementptr inbounds i8, ptr %v0, i64 0, !dbg !49
   store i32 1, ptr %i0.0, !dbg !49
-  %i0.1 = getelementptr inbounds i32, ptr %v0, i64 1, !dbg !49
+  %i0.1 = getelementptr inbounds i8, ptr %v0, i64 4, !dbg !49
   store i32 2, ptr %i0.1, !dbg !49
-  %i0.2 = getelementptr inbounds i32, ptr %v0, i64 2, !dbg !49
+  %i0.2 = getelementptr inbounds i8, ptr %v0, i64 8, !dbg !49
   store i32 3, ptr %i0.2, !dbg !49
-  %i0.3 = getelementptr inbounds i32, ptr %v0, i64 3, !dbg !49
+  %i0.3 = getelementptr inbounds i8, ptr %v0, i64 12, !dbg !49
   store i32 4, ptr %i0.3, !dbg !49
   store i32 1, ptr %v1, !dbg !51
   store i64 2, ptr %v2, !dbg !52
@@ -98,7 +98,7 @@ bb0.1:
   br i1 %i8, label %bb0.2.panic, label %bb0.2
 bb0.2:
   %i10 = sub i64 3, %i5, !dbg !54
-  %i11.p = getelementptr inbounds [4 x i32], ptr %v0, i32 0, i64 %i5, !dbg !54
+  %i11.p = getelementptr inbounds i32, ptr %v0, i64 %i5, !dbg !54
   %i11.a = insertvalue %slice poison, ptr %i11.p, 0, !dbg !54
   %i11 = insertvalue %slice %i11.a, i64 %i10, 1, !dbg !54
   %i12 = call i32 @"ll_slicing:main.total"(%slice %i11), !dbg !55
@@ -108,7 +108,7 @@ bb0.2:
   br i1 %i15, label %bb0.3.panic, label %bb0.3
 bb0.3:
   %i17 = add i64 %i14, 1, !dbg !58
-  %i18.p = getelementptr inbounds [4 x i32], ptr %v0, i32 0, i64 0, !dbg !58
+  %i18.p = getelementptr inbounds i32, ptr %v0, i64 0, !dbg !58
   %i18.a = insertvalue %slice poison, ptr %i18.p, 0, !dbg !58
   %i18 = insertvalue %slice %i18.a, i64 %i17, 1, !dbg !58
   %i19 = call i32 @"ll_slicing:main.total"(%slice %i18), !dbg !59

@@ -3,13 +3,12 @@
 
 use arena::Id;
 use model::constant::Value;
-use model::layout::struct_layout;
+use model::layout::fields_placed;
 use model::mir;
 use model::mir::Operand;
 use model::mir::Projection;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
-use model::semantic_types::range_fields;
 use source::Span;
 
 use super::Failure;
@@ -24,17 +23,7 @@ impl<'b> Interpreter<'b, '_> {
     /// value's start, and its type, worked out once for each type.
     pub(super) fn field_place(&mut self, ty: TypeId, index: usize) -> (u64, TypeId) {
         let (types, target) = (self.types, self.target);
-        let fields = self.fields.entry(ty).or_insert_with(|| {
-            let fields = match types[ty] {
-                Type::Struct { ref fields, .. } => fields.to_vec(),
-                Type::Range { element, step } => {
-                    range_fields(element, step).map(|(_, ty)| ty).to_vec()
-                }
-                _ => unreachable!("only a struct and a range have fields"),
-            };
-            let (offsets, ..) = struct_layout(types, &fields, target);
-            offsets.into_iter().zip(fields).collect()
-        });
+        let fields = (self.fields.entry(ty)).or_insert_with(|| fields_placed(types, ty, target));
         fields[index]
     }
 

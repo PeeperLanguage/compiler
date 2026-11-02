@@ -1,6 +1,6 @@
-//! How values are laid out in memory, as LLVM lays them out for the target:
-//! each type's size and alignment. The checker rejects a type too big for
-//! the target with it; the backend places and copies values with it.
+//! How values are laid out in memory for the target: each type's size and
+//! alignment. The checker rejects a type too big for the target with it; the
+//! backend places and copies values with it, and LLVM sees only the bytes.
 
 use crate::machine::Machine;
 use crate::semantic_types::Float;
@@ -9,14 +9,14 @@ use crate::semantic_types::TypeId;
 use crate::semantic_types::Types;
 use crate::semantic_types::range_fields;
 
-/// The size and alignment in bytes of a value of type `ty` in memory, as LLVM
-/// lays it out for `target`: an integer is aligned as the next of 8, 16, 32,
-/// 64 and 128 bits that holds it, a 64-bit one as `target` says, and wider
-/// ones as 128; its size is rounded up to that. Debug info places each field
-/// with it, and a copy of a value kept in memory copies its size, so it must
-/// match LLVM's. A size past `u64` is `u64::MAX`, more than any machine's
-/// `largest_object`: the checker rejects such a type, so no later phase lays
-/// it out.
+/// The size and alignment in bytes of a value of type `ty` in memory for
+/// `target`: an integer is aligned as the next of 8, 16, 32, 64 and 128 bits
+/// that holds it, a 64-bit one as `target` says, and wider ones as 128; its
+/// size is rounded up to that. LLVM loads and stores a scalar itself, so a
+/// scalar's must match LLVM's; a value kept in memory is bytes to LLVM, so
+/// this alone says where its parts are. A size past `u64` is `u64::MAX`, more
+/// than any machine's `largest_object`: the checker rejects such a type, so
+/// no later phase lays it out.
 pub fn layout(types: &Types, ty: TypeId, target: &Machine) -> (u64, u64) {
     match types[ty] {
         Type::Bool => (1, 1),
@@ -41,10 +41,7 @@ pub fn layout(types: &Types, ty: TypeId, target: &Machine) -> (u64, u64) {
             let bytes = u64::from(target.pointer_bits / 8);
             (2 * bytes, bytes)
         }
-        Type::Struct { ref fields, .. } => {
-            let (_, size, align) = struct_layout(types, fields, target);
-            (size, align)
-        }
+        Type::Struct { size, align, .. } => (size, align),
         Type::Range { element, step } => {
             let fields = range_fields(element, step).map(|(_, ty)| ty);
             let (_, size, align) = struct_layout(types, &fields, target);
@@ -70,6 +67,18 @@ pub fn in_memory(types: &Types, ty: TypeId) -> bool {
         types[ty],
         Type::Struct { .. } | Type::Array { .. } | Type::Range { .. }
     )
+}
+
+/// Each field of the struct or range type `ty`: where it is from the value's
+/// start, in bytes, and its type.
+pub fn fields_placed(types: &Types, ty: TypeId, target: &Machine) -> Vec<(u64, TypeId)> {
+    let fields = match types[ty] {
+        Type::Struct { ref fields, .. } => fields.to_vec(),
+        Type::Range { element, step } => range_fields(element, step).map(|(_, ty)| ty).to_vec(),
+        _ => unreachable!("only a struct and a range have fields"),
+    };
+    let (offsets, ..) = struct_layout(types, &fields, target);
+    offsets.into_iter().zip(fields).collect()
 }
 
 /// The offset of each of `fields` in a struct holding them in order, and the

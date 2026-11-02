@@ -16,7 +16,7 @@ bb0:
   store %slice %arg0, ptr %v0, !dbg !13
   store i64 %arg1, ptr %v1, !dbg !15
   %i2 = load i64, ptr %v1, !dbg !16
-  %i3.f.0.f = getelementptr inbounds %slice, ptr %v0, i32 0, !dbg !17
+  %i3.f.0.f = getelementptr inbounds i8, ptr %v0, i64 0, !dbg !17
   %i3.f.0.s = load %slice, ptr %i3.f.0.f, !dbg !17
   %i3.f.0 = extractvalue %slice %i3.f.0.s, 0, !dbg !17
   %i3.f.0.len = extractvalue %slice %i3.f.0.s, 1, !dbg !17
@@ -43,7 +43,7 @@ entry:
   br label %bb0
 bb0:
   store %slice %arg0, ptr %v0, !dbg !29
-  %i1.f.0.f = getelementptr inbounds %slice, ptr %v0, i32 0, !dbg !30
+  %i1.f.0.f = getelementptr inbounds i8, ptr %v0, i64 0, !dbg !30
   %i1.f.0.s = load %slice, ptr %i1.f.0.f, !dbg !30
   %i1.f.0 = extractvalue %slice %i1.f.0.s, 0, !dbg !30
   %i1.f.0.len = extractvalue %slice %i1.f.0.s, 1, !dbg !30
@@ -61,21 +61,21 @@ bb0.1.panic:
 
 define void @"ll_slices:main.main"() !dbg !33 {
 entry:
-  %v0 = alloca [2 x i32]
+  %v0 = alloca [8 x i8], align 4
   call void @llvm.dbg.declare(metadata ptr %v0, metadata !37, metadata !DIExpression()), !dbg !38
   %v1 = alloca i32
   call void @llvm.dbg.declare(metadata ptr %v1, metadata !39, metadata !DIExpression()), !dbg !40
   br label %bb0
 bb0:
-  %i0.0 = getelementptr inbounds i32, ptr %v0, i64 0, !dbg !41
+  %i0.0 = getelementptr inbounds i8, ptr %v0, i64 0, !dbg !41
   store i32 3, ptr %i0.0, !dbg !41
-  %i0.1 = getelementptr inbounds i32, ptr %v0, i64 1, !dbg !41
+  %i0.1 = getelementptr inbounds i8, ptr %v0, i64 4, !dbg !41
   store i32 4, ptr %i0.1, !dbg !41
-  %i2.p = getelementptr inbounds [2 x i32], ptr %v0, i32 0, !dbg !43
+  %i2.p = getelementptr inbounds i8, ptr %v0, i64 0, !dbg !43
   %i2.a = insertvalue %slice poison, ptr %i2.p, 0, !dbg !43
   %i2 = insertvalue %slice %i2.a, i64 2, 1, !dbg !43
   call void @"ll_slices:main.set"(%slice %i2), !dbg !44
-  %i4.p = getelementptr inbounds [2 x i32], ptr %v0, i32 0, !dbg !45
+  %i4.p = getelementptr inbounds i8, ptr %v0, i64 0, !dbg !45
   %i4.a = insertvalue %slice poison, ptr %i4.p, 0, !dbg !45
   %i4 = insertvalue %slice %i4.a, i64 2, 1, !dbg !45
   %i5 = call i32 @"ll_slices:main.get"(%slice %i4, i64 1), !dbg !46

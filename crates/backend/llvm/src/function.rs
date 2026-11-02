@@ -33,11 +33,14 @@ use rustc_hash::FxHashMap;
 
 use crate::Module;
 use crate::function::debug_info::DebugLocation;
+use crate::text::alloca_text;
 use crate::text::constant_text;
 use crate::text::quoted;
 use crate::text::symbol;
 use crate::text::type_text;
+use model::layout::fields_placed;
 use model::layout::in_memory;
+use model::layout::layout;
 
 /// The runtime functions `print` calls, with their LLVM parameters.
 const PRINT_TEXT: (&str, &str) = ("peeper_rt_v1_print_text", "ptr");
@@ -77,6 +80,7 @@ impl Module<'_> {
             panics: String::new(),
             current: CurrentBlock::default(),
             memory: String::new(),
+            printed_fields: 0,
         };
         // Written straight onto the module's functions, taken out while
         // `function` borrows the module.
@@ -267,6 +271,7 @@ struct Function<'m, 'p, 'b> {
     // many times needs that many copies of stack; share slots or move
     // without a copy when a real program hits the stack limit.
     memory: String,
+    printed_fields: usize, // the struct fields printed so far, which number their names
 }
 
 /// The function's debug info nodes, by what they describe; empty in a
@@ -299,7 +304,8 @@ impl Function<'_, '_, '_> {
                 ..
             } = self.body.variables[variable];
             if index >= self.body.parameters || !in_memory(self.types, ty) {
-                _ = writeln!(out, "  %v{index} = alloca {}", type_text(self.types, ty));
+                let text = alloca_text(self.types, ty, self.module.target);
+                _ = writeln!(out, "  %v{index} = alloca {text}");
             }
             let Some(metadata) = &mut self.module.metadata else {
                 continue;
@@ -662,16 +668,22 @@ impl Function<'_, '_, '_> {
             // Each part written where it goes in the value's memory.
             InstructionKind::Aggregate(ref parts) => {
                 let memory = self.value_address(out, id, ty, rest);
-                let (text, start) = match types[ty] {
-                    Type::Array { element, .. } => (type_text(types, element), "i64"),
-                    _ => (type_text(types, ty), "i32 0, i32"),
+                let target = self.module.target;
+                let offsets: Vec<u64> = match types[ty] {
+                    Type::Array { element, .. } => {
+                        let (size, _) = layout(types, element, target);
+                        (0..parts.len() as u64).map(|index| index * size).collect()
+                    }
+                    _ => (fields_placed(types, ty, target).iter())
+                        .map(|&(offset, _)| offset)
+                        .collect(),
                 };
-                for (index, &part) in parts.iter().enumerate() {
+                for (index, (&part, offset)) in parts.iter().zip(offsets).enumerate() {
                     let address = format!("{name}.{index}");
                     _ = writeln!(
                         out,
-                        "  {address} = getelementptr inbounds {text}, ptr {memory}, \
-                         {start} {index}{location}"
+                        "  {address} = getelementptr inbounds i8, ptr {memory}, \
+                         i64 {offset}{location}"
                     );
                     self.write_store(out, &address, part, &location);
                 }
@@ -693,15 +705,17 @@ impl Function<'_, '_, '_> {
                             write!(out, "{name}.f")
                         }
                     });
+                    let (mut holder, mut offset) = (value_type, 0);
+                    for &index in fields {
+                        let placed = fields_placed(types, holder, self.module.target);
+                        let (field_offset, field) = placed[index as usize];
+                        (holder, offset) = (field, offset + field_offset);
+                    }
                     _ = write!(
                         out,
-                        "  {field_address} = getelementptr inbounds {}, ptr {}, i32 0",
-                        type_text(types, value_type),
+                        "  {field_address} = getelementptr inbounds i8, ptr {}, i64 {offset}",
                         self.operand(value)
                     );
-                    for index in fields {
-                        _ = write!(out, ", i32 {index}");
-                    }
                     if in_memory(types, ty) {
                         Ok(())
                     } else {

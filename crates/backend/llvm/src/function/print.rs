@@ -20,7 +20,9 @@ use crate::function::PRINT_TEXT;
 use crate::function::debug_info::DebugLocation;
 use crate::function::global;
 use crate::function::value_name;
+use crate::text::memory_text;
 use crate::text::type_text;
+use model::layout::fields_placed;
 use model::layout::in_memory;
 
 impl Function<'_, '_, '_> {
@@ -132,24 +134,29 @@ impl Function<'_, '_, '_> {
             Type::Struct {
                 definition,
                 ref fields,
+                ..
             } => {
                 let program = self.module.program;
                 let name = project::declared_text(&program.modules, definition);
                 text.extend_from_slice(name.as_bytes());
                 let names = project::field_names(&program.modules, definition);
-                let struct_text = type_text(types, ty);
-                for (index, (field_name, &field)) in names.zip(fields).enumerate() {
+                let placed = fields_placed(types, ty, self.module.target);
+                for (index, (field_name, &(offset, field))) in names.zip(&placed).enumerate() {
                     text.extend_from_slice(if index == 0 { b" { " } else { b", " });
                     text.extend_from_slice(field_name.as_bytes());
                     text.extend_from_slice(b": ");
-                    // Its address, then its value unless that is kept in memory.
-                    let address = format!("{path}.p{index}");
+                    // Its address, then its value unless that is kept in
+                    // memory. Numbered: a name made from the struct's would
+                    // grow with each struct in a struct, past LLVM's 1,024
+                    // bytes, where two names read as one.
+                    self.printed_fields += 1;
+                    let address = format!("%print.{}", self.printed_fields);
                     _ = writeln!(
                         out,
-                        "  {address} = getelementptr inbounds {struct_text}, ptr {value}, i32 0, \
-                         i32 {index}{location}"
+                        "  {address} = getelementptr inbounds i8, ptr {value}, \
+                         i64 {offset}{location}"
                     );
-                    let field_value = format!("{path}.f{index}");
+                    let field_value = format!("{address}.f");
                     let field_value = if in_memory(types, field) {
                         address
                     } else {
@@ -160,7 +167,9 @@ impl Function<'_, '_, '_> {
                         );
                         field_value
                     };
-                    self.write_printed(out, text, &field_value, field, &field_value, location);
+                    source::grow(|| {
+                        self.write_printed(out, text, &field_value, field, &field_value, location);
+                    });
                 }
                 text.extend_from_slice(if fields.is_empty() { b" {}" } else { b" }" });
             }
@@ -219,7 +228,7 @@ impl Function<'_, '_, '_> {
         _ = writeln!(
             body,
             "  %address = getelementptr inbounds {}, ptr %array, i64 %index",
-            type_text(types, element)
+            memory_text(types, element, self.module.target)
         );
         let value = if in_memory(types, element) {
             "%address"

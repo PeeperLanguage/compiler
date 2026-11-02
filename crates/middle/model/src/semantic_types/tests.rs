@@ -226,6 +226,8 @@ fn type_text() {
     let complete = types.intern(Type::Struct {
         definition: declaration(0),
         fields: [TypeId::I32, TypeId::I32].into(),
+        size: 8,
+        align: 4,
     });
     let raw = TypeId::RAWPTR;
     let typed = types.intern(Type::RawPointer { target: Some(raw) });

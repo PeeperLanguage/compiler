@@ -9,31 +9,31 @@ source_filename = "<fixture>/src/main.peep"
 
 define void @"ll_array_ranges:main.known"(ptr %result) !dbg !7 {
 entry:
-  %v0 = alloca [6 x i32]
+  %v0 = alloca [24 x i8], align 4
   call void @llvm.dbg.declare(metadata ptr %v0, metadata !9, metadata !DIExpression()), !dbg !10
-  %i0 = alloca { i32, i32, i32, i32, i1 }
-  %i1 = alloca { i32, i32, i32, i32, i1 }
+  %i0 = alloca [20 x i8], align 4
+  %i1 = alloca [20 x i8], align 4
   br label %bb0
 bb0:
-  %i0.0 = getelementptr inbounds { i32, i32, i32, i32, i1 }, ptr %i0, i32 0, i32 0, !dbg !11
+  %i0.0 = getelementptr inbounds i8, ptr %i0, i64 0, !dbg !11
   store i32 0, ptr %i0.0, !dbg !11
-  %i0.1 = getelementptr inbounds { i32, i32, i32, i32, i1 }, ptr %i0, i32 0, i32 1, !dbg !11
+  %i0.1 = getelementptr inbounds i8, ptr %i0, i64 4, !dbg !11
   store i32 3, ptr %i0.1, !dbg !11
-  %i0.2 = getelementptr inbounds { i32, i32, i32, i32, i1 }, ptr %i0, i32 0, i32 2, !dbg !11
+  %i0.2 = getelementptr inbounds i8, ptr %i0, i64 8, !dbg !11
   store i32 1, ptr %i0.2, !dbg !11
-  %i0.3 = getelementptr inbounds { i32, i32, i32, i32, i1 }, ptr %i0, i32 0, i32 3, !dbg !11
+  %i0.3 = getelementptr inbounds i8, ptr %i0, i64 12, !dbg !11
   store i32 1, ptr %i0.3, !dbg !11
-  %i0.4 = getelementptr inbounds { i32, i32, i32, i32, i1 }, ptr %i0, i32 0, i32 4, !dbg !11
+  %i0.4 = getelementptr inbounds i8, ptr %i0, i64 16, !dbg !11
   store i1 false, ptr %i0.4, !dbg !11
-  %i1.0 = getelementptr inbounds { i32, i32, i32, i32, i1 }, ptr %i1, i32 0, i32 0, !dbg !12
+  %i1.0 = getelementptr inbounds i8, ptr %i1, i64 0, !dbg !12
   store i32 5, ptr %i1.0, !dbg !12
-  %i1.1 = getelementptr inbounds { i32, i32, i32, i32, i1 }, ptr %i1, i32 0, i32 1, !dbg !12
+  %i1.1 = getelementptr inbounds i8, ptr %i1, i64 4, !dbg !12
   store i32 1, ptr %i1.1, !dbg !12
-  %i1.2 = getelementptr inbounds { i32, i32, i32, i32, i1 }, ptr %i1, i32 0, i32 2, !dbg !12
+  %i1.2 = getelementptr inbounds i8, ptr %i1, i64 8, !dbg !12
   store i32 1, ptr %i1.2, !dbg !12
-  %i1.3 = getelementptr inbounds { i32, i32, i32, i32, i1 }, ptr %i1, i32 0, i32 3, !dbg !12
+  %i1.3 = getelementptr inbounds i8, ptr %i1, i64 12, !dbg !12
   store i32 -1, ptr %i1.3, !dbg !12
-  %i1.4 = getelementptr inbounds { i32, i32, i32, i32, i1 }, ptr %i1, i32 0, i32 4, !dbg !12
+  %i1.4 = getelementptr inbounds i8, ptr %i1, i64 16, !dbg !12
   store i1 true, ptr %i1.4, !dbg !12
   %i2.r0.whole = udiv i32 3, 1, !dbg !13
   %i2.r0.wide = zext i32 %i2.r0.whole to i64, !dbg !13
@@ -63,7 +63,7 @@ bb0:
 
 define void @"ll_array_ranges:main.main"() !dbg !18 {
 entry:
-  %i0 = alloca [6 x i32]
+  %i0 = alloca [24 x i8], align 4
   br label %bb0
 bb0:
   call void @"ll_array_ranges:main.known"(ptr %i0), !dbg !19

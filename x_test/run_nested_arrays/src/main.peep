@@ -1,4 +1,4 @@
-// Arrays in arrays are one flat LLVM array: every way of reaching into one,
+// Arrays in arrays are one run of bytes: every way of reaching into one,
 // through fields, references, slices and whole rows, on its own and mixed.
 struct Cell { tag: i32, grid: [2][3]i32, wide: i64 }
 struct Holder { cells: [2]Cell, cube: [2][2][2]u8 }

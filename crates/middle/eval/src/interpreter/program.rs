@@ -233,6 +233,7 @@ impl<'f> Interpreter<'_, 'f> {
                 &Type::Struct {
                     definition,
                     ref fields,
+                    ..
                 },
                 &Register::Address(address),
             ) => {

@@ -152,7 +152,7 @@ struct Interpreter<'b, 'f> {
     host: Option<Host<'f>>, // a whole program's; a constant's call has none
     memory: Memory,
     slots: HashMap<*const mir::Body, Rc<Slots>>,
-    fields: HashMap<TypeId, Box<[(u64, TypeId)]>>, // of a struct or range: offset and type
+    fields: HashMap<TypeId, Vec<(u64, TypeId)>>, // of a struct or range: offset and type
     frames: Vec<Frame<'b>>,
     registers: Vec<Option<Register>>, // of every frame, the running one last
 }

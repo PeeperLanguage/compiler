@@ -5,6 +5,7 @@ use std::fmt::Write;
 use std::iter::Peekable;
 
 use arena::Id;
+use model::layout::fields_placed;
 use model::layout::layout;
 use model::mir;
 use model::mir::Operand;
@@ -18,6 +19,7 @@ use crate::function::debug_info::DebugLocation;
 use crate::function::traps;
 use crate::function::value_name;
 use crate::function::written_range_field;
+use crate::text::memory_text;
 use crate::text::type_text;
 
 impl Function<'_, '_, '_> {
@@ -44,7 +46,8 @@ impl Function<'_, '_, '_> {
         let Type::Array { element, .. } = types[ty] else {
             unreachable!("array parts make an array")
         };
-        let (pointer, number) = (self.module.target.pointer_bits, type_text(types, element));
+        let pointer = self.module.target.pointer_bits;
+        let number = memory_text(types, element, self.module.target);
         let memory = self.value_address(out, id, ty, rest);
         let mut offset = "0".to_string();
         for (index, (&part, count)) in parts.iter().zip(&counts).enumerate() {
@@ -246,12 +249,12 @@ impl Function<'_, '_, '_> {
             unreachable!("only a range has range fields")
         };
         let (field_name, field_type) = range_fields(element, step)[field];
+        let (offset, _) = fields_placed(types, ty, self.module.target)[field];
         let read = format!("{name}.{field_name}");
         _ = writeln!(
             out,
-            "  {read}.at = getelementptr inbounds {}, ptr {}, i32 0, i32 {field}{location}\n  \
+            "  {read}.at = getelementptr inbounds i8, ptr {}, i64 {offset}{location}\n  \
              {read} = load {}, ptr {read}.at{location}",
-            type_text(types, ty),
             self.operand(range),
             type_text(types, field_type)
         );

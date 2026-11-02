@@ -86,6 +86,7 @@ impl ThirBuilder<'_, '_> {
         let Type::Struct {
             definition,
             fields: ref field_types,
+            ..
         } = self.checker.types[ty]
         else {
             if ty != TypeId::INVALID {

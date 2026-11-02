@@ -143,9 +143,7 @@ Newest last. Each entry: commit, what changed, evidence, what was not done.
   3,768 M instructions against 3,769.4 M, within noise. Extern signatures
   reject arrays, so no C call depends on the type's shape, and a flat array has
   the same bytes.
-- **Not done:** a debug build of 30,000 structs, each holding the last,
-  overflows the stack, old and new, after 99 s: `layout` walks the rest of the
-  chain for every struct, unguarded. Deep print still grows with depth, as each level has its own
+- **Not done:** Deep print still grows with depth, as each level has its own
   printer: at 200,000 levels a release build passes the 60 s limit and a debug
   build uses 1.7 GB. `hash_type` hashes each declaration's whole chain, so 50,000
   aliases each one level deeper than the last take about 26 s to check (39 s before).
@@ -214,3 +212,37 @@ ran `check.sh` fully green.
 - **After the fixes:** `check.sh` green; output identical to `1fa2750` on 336
   fixture runs and 6,000 random programs. Benchmark 3,768.7 M and 3,783.1 M in
   two runs, against 3,769.4 M before them: no cost above the noise.
+
+## 2026-11-02 Struct chains (branch `fix/struct-chain`)
+
+- **Problem:** structs in structs had the fault arrays had. `layout` walked
+  every struct inside a struct, so check was quadratic in a chain and
+  exponential when a struct held the last one twice: 40 such structs, a short
+  program, hung the compiler. A debug build overflowed the stack at 6,000.
+  LLVM got the whole shape at each use, `{ { { i32 } } }`.
+- **Fix:** `Type::Struct` keeps its `size` and `align`, a derived fact stored on
+  purpose (RULES 5.1: needs the owner's yes, which so far covers only arrays'
+  `base` and `count`), written by `define_struct` from what the declaration
+  already computed. LLVM no longer sees structs or arrays: a value kept in
+  memory is `[N x i8], align A` (`memory_text`, `alloca_text`), a field a byte
+  offset (`layout::fields_placed`, which the interpreter shares), an index a
+  `getelementptr` on the element's size. Layout had been worked out twice, by
+  us and by LLVM, and had to match. `printable` is a list with each struct
+  looked at once. A printed field's name is numbered: a name built from the
+  path passed LLVM's 1,024 bytes at about 340 levels, and clang refused two as
+  one. `debug_type`'s depth stop covers structs too, past which a struct has
+  its size and no fields.
+- **Tried first:** naming each struct once (`%struct.N.M`), which worked but
+  needed definitions in every module, ordered outermost first as
+  `StructType::checkBody` walks the structs already read. Bytes need neither.
+- **Not done:** the step after `flow` that turns places into addresses and
+  `Check`s, which would also end the interpreter's copy of the walk
+  (`places.rs`). Printing a value whose struct holds the last one twice writes
+  2^n prints, as struct printing is inline. `browser smoke` crashes node now
+  and then: 1 in 40 at `728f799e`, before flat arrays, and also seen on this
+  branch; older than this work, cause not found.
+- **Review:** comments, the plan and two fixture headers still said LLVM saw
+  struct or array types; they now say bytes. `run_struct_through_imports` went:
+  it guarded struct types reaching a module's LLVM text, and there are none.
+  Open: `fields_placed` rebuilds a struct's list per access, which costs a
+  10,000-field struct about 100 million field layouts.

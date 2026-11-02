@@ -532,8 +532,12 @@ fn interface(checker: &Checker, module: ModuleId, done: &[ModuleResults]) -> u64
         if let State::Done(ty) = declared_types[index] {
             hash_type(checker, ty, &mut hasher);
             // `hash_type` stops at the name, so a struct's fields are hashed here.
-            if let (ast::Decl::Type(_), Type::Struct { definition, fields }) =
-                (decl, &checker.types[ty])
+            if let (
+                ast::Decl::Type(_),
+                Type::Struct {
+                    definition, fields, ..
+                },
+            ) = (decl, &checker.types[ty])
             {
                 for (name, &field) in project::field_names(modules, *definition).zip(fields) {
                     name.hash(&mut hasher);

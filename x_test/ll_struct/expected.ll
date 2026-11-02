@@ -4,40 +4,40 @@ source_filename = "<fixture>/src/main.peep"
 
 define void @"ll_struct:main.main"() !dbg !3 {
 entry:
-  %v0 = alloca { i32, i32 }
+  %v0 = alloca [8 x i8], align 4
   call void @llvm.dbg.declare(metadata ptr %v0, metadata !10, metadata !DIExpression()), !dbg !11
-  %v1 = alloca { { i32, i32 }, { i32, i32 } }
+  %v1 = alloca [16 x i8], align 4
   call void @llvm.dbg.declare(metadata ptr %v1, metadata !16, metadata !DIExpression()), !dbg !17
   %v2 = alloca i32
   call void @llvm.dbg.declare(metadata ptr %v2, metadata !18, metadata !DIExpression()), !dbg !19
   %v3 = alloca i32
   call void @llvm.dbg.declare(metadata ptr %v3, metadata !20, metadata !DIExpression()), !dbg !21
-  %i2 = alloca { i32, i32 }
-  %i3 = alloca { i32, i32 }
-  %i8 = alloca { i32, i32 }
+  %i2 = alloca [8 x i8], align 4
+  %i3 = alloca [8 x i8], align 4
+  %i8 = alloca [8 x i8], align 4
   br label %bb0
 bb0:
-  %i0.0 = getelementptr inbounds { i32, i32 }, ptr %v0, i32 0, i32 0, !dbg !22
+  %i0.0 = getelementptr inbounds i8, ptr %v0, i64 0, !dbg !22
   store i32 1, ptr %i0.0, !dbg !22
-  %i0.1 = getelementptr inbounds { i32, i32 }, ptr %v0, i32 0, i32 1, !dbg !22
+  %i0.1 = getelementptr inbounds i8, ptr %v0, i64 4, !dbg !22
   store i32 2, ptr %i0.1, !dbg !22
   call void @llvm.memcpy.p0.p0.i64(ptr %i2, ptr %v0, i64 8, i1 false), !dbg !24
-  %i3.0 = getelementptr inbounds { i32, i32 }, ptr %i3, i32 0, i32 0, !dbg !25
+  %i3.0 = getelementptr inbounds i8, ptr %i3, i64 0, !dbg !25
   store i32 3, ptr %i3.0, !dbg !25
-  %i3.1 = getelementptr inbounds { i32, i32 }, ptr %i3, i32 0, i32 1, !dbg !25
+  %i3.1 = getelementptr inbounds i8, ptr %i3, i64 4, !dbg !25
   store i32 4, ptr %i3.1, !dbg !25
-  %i4.0 = getelementptr inbounds { { i32, i32 }, { i32, i32 } }, ptr %v1, i32 0, i32 0, !dbg !26
+  %i4.0 = getelementptr inbounds i8, ptr %v1, i64 0, !dbg !26
   call void @llvm.memcpy.p0.p0.i64(ptr %i4.0, ptr %i2, i64 8, i1 false), !dbg !26
-  %i4.1 = getelementptr inbounds { { i32, i32 }, { i32, i32 } }, ptr %v1, i32 0, i32 1, !dbg !26
+  %i4.1 = getelementptr inbounds i8, ptr %v1, i64 8, !dbg !26
   call void @llvm.memcpy.p0.p0.i64(ptr %i4.1, ptr %i3, i64 8, i1 false), !dbg !26
-  %i6.f = getelementptr inbounds { { i32, i32 }, { i32, i32 } }, ptr %v1, i32 0, i32 1, i32 0, !dbg !28
+  %i6.f = getelementptr inbounds i8, ptr %v1, i64 8, !dbg !28
   %i6 = load i32, ptr %i6.f, !dbg !28
   store i32 %i6, ptr %v2, !dbg !29
-  %i8.0 = getelementptr inbounds { i32, i32 }, ptr %i8, i32 0, i32 0, !dbg !30
+  %i8.0 = getelementptr inbounds i8, ptr %i8, i64 0, !dbg !30
   store i32 5, ptr %i8.0, !dbg !30
-  %i8.1 = getelementptr inbounds { i32, i32 }, ptr %i8, i32 0, i32 1, !dbg !30
+  %i8.1 = getelementptr inbounds i8, ptr %i8, i64 4, !dbg !30
   store i32 6, ptr %i8.1, !dbg !30
-  %i9.f = getelementptr inbounds { i32, i32 }, ptr %i8, i32 0, i32 1, !dbg !30
+  %i9.f = getelementptr inbounds i8, ptr %i8, i64 4, !dbg !30
   %i9 = load i32, ptr %i9.f, !dbg !30
   store i32 %i9, ptr %v3, !dbg !31
   ret void, !dbg !32

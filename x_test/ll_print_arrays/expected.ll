@@ -10,28 +10,28 @@ source_filename = "<fixture>/src/main.peep"
 
 define void @"ll_print_arrays:main.main"() !dbg !3 {
 entry:
-  %v0 = alloca [6 x i32]
+  %v0 = alloca [24 x i8], align 4
   call void @llvm.dbg.declare(metadata ptr %v0, metadata !9, metadata !DIExpression()), !dbg !10
-  %i0 = alloca [3 x i32]
-  %i1 = alloca [3 x i32]
-  %i4 = alloca [6 x i32]
+  %i0 = alloca [12 x i8], align 4
+  %i1 = alloca [12 x i8], align 4
+  %i4 = alloca [24 x i8], align 4
   br label %bb0
 bb0:
-  %i0.0 = getelementptr inbounds i32, ptr %i0, i64 0, !dbg !11
+  %i0.0 = getelementptr inbounds i8, ptr %i0, i64 0, !dbg !11
   store i32 1, ptr %i0.0, !dbg !11
-  %i0.1 = getelementptr inbounds i32, ptr %i0, i64 1, !dbg !11
+  %i0.1 = getelementptr inbounds i8, ptr %i0, i64 4, !dbg !11
   store i32 2, ptr %i0.1, !dbg !11
-  %i0.2 = getelementptr inbounds i32, ptr %i0, i64 2, !dbg !11
+  %i0.2 = getelementptr inbounds i8, ptr %i0, i64 8, !dbg !11
   store i32 3, ptr %i0.2, !dbg !11
-  %i1.0 = getelementptr inbounds i32, ptr %i1, i64 0, !dbg !12
+  %i1.0 = getelementptr inbounds i8, ptr %i1, i64 0, !dbg !12
   store i32 4, ptr %i1.0, !dbg !12
-  %i1.1 = getelementptr inbounds i32, ptr %i1, i64 1, !dbg !12
+  %i1.1 = getelementptr inbounds i8, ptr %i1, i64 4, !dbg !12
   store i32 5, ptr %i1.1, !dbg !12
-  %i1.2 = getelementptr inbounds i32, ptr %i1, i64 2, !dbg !12
+  %i1.2 = getelementptr inbounds i8, ptr %i1, i64 8, !dbg !12
   store i32 6, ptr %i1.2, !dbg !12
-  %i2.0 = getelementptr inbounds [3 x i32], ptr %v0, i64 0, !dbg !13
+  %i2.0 = getelementptr inbounds i8, ptr %v0, i64 0, !dbg !13
   call void @llvm.memcpy.p0.p0.i64(ptr %i2.0, ptr %i0, i64 12, i1 false), !dbg !13
-  %i2.1 = getelementptr inbounds [3 x i32], ptr %v0, i64 1, !dbg !13
+  %i2.1 = getelementptr inbounds i8, ptr %v0, i64 12, !dbg !13
   call void @llvm.memcpy.p0.p0.i64(ptr %i2.1, ptr %i1, i64 12, i1 false), !dbg !13
   call void @llvm.memcpy.p0.p0.i64(ptr %i4, ptr %v0, i64 24, i1 false), !dbg !15
   call void (ptr) @"peeper_rt_v1_print_text"(ptr @.str.2), !dbg !16
@@ -72,7 +72,7 @@ loop:
   %first = icmp eq i64 %index, 0
   %separator = select i1 %first, ptr @.str.0, ptr @.str.1
   call void (ptr) @"peeper_rt_v1_print_text"(ptr %separator)
-  %address = getelementptr inbounds [3 x i32], ptr %array, i64 %index
+  %address = getelementptr inbounds [12 x i8], ptr %array, i64 %index
   call void (ptr) @"peeper_rt_v1_print_text"(ptr @.str.2)
   call void @print.array.1(ptr %address)
   call void (ptr) @"peeper_rt_v1_print_text"(ptr @.str.3)

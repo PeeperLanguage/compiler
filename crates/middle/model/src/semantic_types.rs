@@ -148,6 +148,11 @@ pub enum Type {
     Struct {
         definition: DefId,
         fields: Box<[TypeId]>,
+        /// Its `layout` for the target: its declaration found them from its
+        /// fields', so that `layout` need not walk the structs in it, which
+        /// nest as deep as the declarations do and can repeat.
+        size: u64,
+        align: u64,
     },
     /// `[length]element`: `length` values of the `element` type, one after
     /// another.
@@ -155,9 +160,9 @@ pub enum Type {
         element: TypeId,
         length: u64,
         /// What the arrays in arrays end in, never an array; and how many of
-        /// it there are in all. `Types::array` finds them, so that a size, a
-        /// copy check and an LLVM type need not walk the levels, which nest
-        /// as deep as the source does.
+        /// it there are in all. `Types::array` finds them, so that a size and
+        /// a copy check need not walk the levels, which nest as deep as the
+        /// source does.
         base: TypeId,
         count: u64,
     },
@@ -529,14 +534,20 @@ impl Types {
         })
     }
 
-    /// Makes the declared name `named` the struct of `fields`, under its
-    /// id, so a `*T` written before `T` was complete is the `*T` of after.
-    pub fn define_struct(&mut self, named: TypeId, fields: Box<[TypeId]>) {
+    /// Makes the declared name `named` the struct of `fields`, of `size` and
+    /// `align` bytes, under its id, so a `*T` written before `T` was complete
+    /// is the `*T` of after.
+    pub fn define_struct(&mut self, named: TypeId, fields: Box<[TypeId]>, size: u64, align: u64) {
         let slot = &mut self.types[named.0 as usize];
         let Type::Named(definition) = *slot else {
             unreachable!("only a declared name becomes a struct");
         };
-        *slot = Type::Struct { definition, fields };
+        *slot = Type::Struct {
+            definition,
+            fields,
+            size,
+            align,
+        };
     }
 
     /// The built-in type `name` stands for: one in `NAMED`, `isize` and `usize`

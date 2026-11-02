@@ -65,11 +65,12 @@ impl Checker<'_> {
                 if field_types.contains(&TypeId::INVALID) {
                     return TypeId::INVALID;
                 }
-                let (_, size, _) = struct_layout(&self.types, &field_types, self.target);
+                let (_, size, align) = struct_layout(&self.types, &field_types, self.target);
                 let named = self.types.intern(Type::Named(definition));
                 let ty = self.fits_target(named, size, written.name.span);
                 if ty != TypeId::INVALID {
-                    self.types.define_struct(named, field_types.into());
+                    self.types
+                        .define_struct(named, field_types.into(), size, align);
                 }
                 return ty;
             }

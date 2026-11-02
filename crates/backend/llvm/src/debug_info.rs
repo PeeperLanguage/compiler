@@ -19,8 +19,9 @@ use rustc_hash::FxHashMap;
 use crate::function::comma_separated;
 use crate::text::quoted;
 
-/// How many pointers a debug type follows (`Metadata::debug_type`).
-const DEEPEST_DEBUG_POINTER: usize = 5_000;
+/// How many pointers and structs a debug type goes through
+/// (`Metadata::debug_type`).
+const DEEPEST_DEBUG_TYPE: usize = 5_000;
 
 /// The module's debug info: numbered metadata nodes.
 pub(crate) struct Metadata {
@@ -29,7 +30,7 @@ pub(crate) struct Metadata {
     pub(crate) file: usize,          // the DIFile of the module's source file
     pub(crate) unit: usize,          // the DICompileUnit, the scope of every function
     types: FxHashMap<TypeId, usize>, // each type's debug type
-    pointer_depth: usize,            // the pointers `debug_type` is inside now
+    depth: usize,                    // what `debug_type` is inside now
 }
 impl Metadata {
     /// The debug info of a module in the file `path`, with no function yet.
@@ -42,7 +43,7 @@ impl Metadata {
             file: 0,
             unit: 0,
             types: FxHashMap::default(),
-            pointer_depth: 0,
+            depth: 0,
         };
         metadata.file = metadata.add(format_args!(
             "!DIFile(filename: {}, directory: {})",
@@ -126,17 +127,19 @@ impl Metadata {
                     // shortcut: clang runs out of stack on debug types tens
                     // of thousands of nodes deep, and peeper cannot raise its
                     // limit (no `unsafe`); past this depth a debugger sees an
-                    // untyped pointer. A type entered from its deep end first
-                    // can still chain past it.
-                    Some(_) if self.pointer_depth == DEEPEST_DEBUG_POINTER => "null".to_string(),
+                    // untyped pointer, or a struct with no fields. A type
+                    // keeps what it was first written as, so one first reached
+                    // past this depth stays cut at a shallow use, and one
+                    // entered from its deep end can chain past the depth.
+                    Some(_) if self.depth == DEEPEST_DEBUG_TYPE => "null".to_string(),
                     Some(pointee) => {
                         let pointee = types.real(pointee);
-                        self.pointer_depth += 1;
+                        self.depth += 1;
                         // Pointers break a flat array, so they nest as deep
                         // as the source does.
                         let base =
                             source::grow(|| self.debug_type(program, types, pointee, target));
-                        self.pointer_depth -= 1;
+                        self.depth -= 1;
                         format!("!{}", base.expect("a pointer points to a value's type"))
                     }
                     None => "null".to_string(), // `rawptr`
@@ -190,6 +193,7 @@ impl Metadata {
             Type::Struct {
                 definition,
                 ref fields,
+                ..
             } => {
                 let (name, file) = project::declared_name(&program.modules, definition);
                 let names = project::field_names(&program.modules, definition);
@@ -231,10 +235,16 @@ impl Metadata {
         let field_types = fields.iter().map(|&(_, field)| field).collect::<Vec<_>>();
         let (offsets, size, _) = struct_layout(types, &field_types, target);
         let mut members = Vec::with_capacity(fields.len());
-        for (&(field_name, field), offset) in fields.iter().zip(offsets) {
-            let base = self.debug_type(program, types, types.real(field), target);
-            let base = base.expect("a field has a value's type");
-            members.push(self.add_member(composite, field_name, base, offset * 8));
+        if self.depth < DEEPEST_DEBUG_TYPE {
+            self.depth += 1;
+            for (&(field_name, field), offset) in fields.iter().zip(offsets) {
+                let field = types.real(field);
+                // Structs hold structs as deep as the declarations nest.
+                let base = source::grow(|| self.debug_type(program, types, field, target));
+                let base = base.expect("a field has a value's type");
+                members.push(self.add_member(composite, field_name, base, offset * 8));
+            }
+            self.depth -= 1;
         }
         self.define_struct(composite, name, size * 8, &members);
         composite

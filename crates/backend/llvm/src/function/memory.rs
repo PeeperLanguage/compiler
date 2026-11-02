@@ -21,7 +21,9 @@ use crate::function::debug_info::DebugLocation;
 use crate::function::spreads_slice;
 use crate::function::traps;
 use crate::function::value_name;
-use crate::text::type_text;
+use crate::text::alloca_text;
+use crate::text::memory_text;
+use model::layout::fields_placed;
 use model::layout::in_memory;
 
 impl Function<'_, '_, '_> {
@@ -138,18 +140,20 @@ impl Function<'_, '_, '_> {
             let location = self.location(span, body.instructions[store].debug_scope);
             return self.write_address(out, place, &location, store).to_string();
         }
-        let (name, text) = (value_name(id), type_text(self.types, ty));
+        let name = value_name(id);
+        let text = alloca_text(self.types, ty, self.module.target);
         _ = writeln!(self.memory, "  {name} = alloca {text}");
         name.to_string()
     }
 
     /// Writes the lines computing `address`, the address of `place`, for the
-    /// instruction `id`: one `getelementptr` for each run of fields and
-    /// elements, after a check of each index there not known at compile
-    /// time, or into a slice's elements, and before each dereference a load
-    /// of the pointer there, `<address>.<n>` for the `n`th; for a slice's
-    /// elements, its length too, `<address>.<n>.len`. Gives the place's
-    /// type, a slice's for its elements.
+    /// instruction `id`: in each run of fields and elements, one
+    /// `getelementptr` for each index, after its check when it is not known
+    /// at compile time or is into a slice's elements, and one for the bytes
+    /// of the fields after them; and before each dereference a load of the
+    /// pointer there, `<address>.<n>` for the `n`th; for a slice's elements,
+    /// its length too, `<address>.<n>.len`. Gives the place's type, a slice's
+    /// for its elements.
     pub(super) fn write_place_address(
         &mut self,
         out: &mut String,
@@ -177,34 +181,29 @@ impl Function<'_, '_, '_> {
             .enumerate()
             .peekable();
         while let Some((run, steps)) = runs.next() {
-            let run_type = ty;
-            // Each `getelementptr` of this run: its first step, the type it
-            // steps through and what starts it. A slice's elements, after its
-            // dereference, start at the loaded address, so the first index
-            // steps from there. An array in an array is one flat LLVM array,
-            // so an index into it cannot be a further step: it starts one of
-            // its own, on the element.
-            let mut pieces = vec![match self.types[run_type] {
-                Type::Slice { element, .. } if run > 0 => (0, element, ""),
-                _ => (0, run_type, ", i32 0"),
-            }];
+            // The address so far: the variable's, or the pointer loaded last.
+            let base = match run {
+                0 => format!("%v{variable}"),
+                _ => format!("{address}.{}", run - 1),
+            };
+            let last = runs.peek().is_none();
+            let run_address = if last {
+                address.to_string()
+            } else {
+                format!("{address}.{run}.f")
+            };
+            // Each index steps from `at` by its element's size; the fields
+            // add up to `offset`, written once, after them.
+            let (mut at, mut offset) = (base, 0);
             // Each index not known at compile time, checked against its
             // array's length, and `renamed` when it is not an `i64`.
             for (position, &step) in steps.iter().enumerate() {
-                if let (
-                    mir::Projection::Index(_) | mir::Projection::Subslice(_),
-                    &Type::Array { element, .. },
-                ) = (step, &self.types[ty])
-                    && let Type::Array { .. } = self.types[element]
-                {
-                    if position == 0 {
-                        pieces.clear();
-                    }
-                    pieces.push((position, element, ""));
-                }
                 ty = match (step, &self.types[ty]) {
-                    (mir::Projection::Field(index), Type::Struct { fields, .. }) => {
-                        fields[index as usize]
+                    (mir::Projection::Field(index), Type::Struct { .. }) => {
+                        let placed = fields_placed(self.types, ty, self.module.target);
+                        let (field_offset, field) = placed[index as usize];
+                        offset += field_offset;
+                        field
                     }
                     (
                         mir::Projection::Index(Operand::Constant(_)),
@@ -274,56 +273,38 @@ impl Function<'_, '_, '_> {
                         "a field is taken of a struct, an element of an array or slice"
                     ),
                 };
-            }
-            // The address so far: the variable's, or the pointer loaded last.
-            let base = fmt::from_fn(|out| match run {
-                0 => write!(out, "%v{variable}"),
-                _ => write!(out, "{address}.{}", run - 1),
-            });
-            let last = runs.peek().is_none();
-            let run_address = fmt::from_fn(|out| {
-                if last {
-                    write!(out, "{address}")
+                let index = match step {
+                    mir::Projection::Field(_) => continue,
+                    mir::Projection::Index(index) if renamed(index) => {
+                        format!("i64 {address}.{run}.{position}")
+                    }
+                    mir::Projection::Index(index) => format!("i64 {}", self.operand(index)),
+                    mir::Projection::Subslice(subslice) => {
+                        let start = self.body.subslices[subslice.index()].start;
+                        let bits = self.module.target.pointer_bits;
+                        format!("i{bits} {}", self.operand(start))
+                    }
+                    mir::Projection::Dereference | mir::Projection::SliceElements => {
+                        unreachable!("split at each step out of its storage")
+                    }
+                };
+                let next = if position + 1 == steps.len() && offset == 0 {
+                    run_address.clone()
                 } else {
-                    write!(out, "{address}.{run}.f")
-                }
-            });
-            for (piece, &(start, stepped, opening)) in pieces.iter().enumerate() {
-                let from = fmt::from_fn(|out| match piece {
-                    0 => base.fmt(out),
-                    _ => write!(out, "{address}.{run}.h{piece}"),
-                });
-                let next = pieces.get(piece + 1);
-                let to = fmt::from_fn(|out| match next {
-                    None => run_address.fmt(out),
-                    Some(_) => write!(out, "{address}.{run}.h{}", piece + 1),
-                });
-                _ = write!(
+                    format!("{address}.{run}.e{position}")
+                };
+                _ = writeln!(
                     out,
-                    "  {to} = getelementptr inbounds {}, ptr {from}{opening}",
-                    type_text(self.types, stepped)
+                    "  {next} = getelementptr inbounds {}, ptr {at}, {index}{location}",
+                    memory_text(self.types, ty, self.module.target)
                 );
-                let end = next.map_or(steps.len(), |next| next.0);
-                for (position, &step) in (start..).zip(&steps[start..end]) {
-                    _ = match step {
-                        mir::Projection::Field(index) => write!(out, ", i32 {index}"),
-                        mir::Projection::Index(index) if renamed(index) => {
-                            write!(out, ", i64 {address}.{run}.{position}")
-                        }
-                        mir::Projection::Index(index) => {
-                            write!(out, ", i64 {}", self.operand(index))
-                        }
-                        mir::Projection::Subslice(subslice) => {
-                            let start = self.body.subslices[subslice.index()].start;
-                            let bits = self.module.target.pointer_bits;
-                            write!(out, ", i{bits} {}", self.operand(start))
-                        }
-                        mir::Projection::Dereference | mir::Projection::SliceElements => {
-                            unreachable!("split at each step out of its storage")
-                        }
-                    };
-                }
-                _ = writeln!(out, "{location}");
+                at = next;
+            }
+            if at != run_address {
+                _ = writeln!(
+                    out,
+                    "  {run_address} = getelementptr inbounds i8, ptr {at}, i64 {offset}{location}"
+                );
             }
             if last {
                 continue;

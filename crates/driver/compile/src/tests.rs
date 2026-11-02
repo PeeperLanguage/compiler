@@ -304,6 +304,23 @@ fn checks_deeply_nested_statements() {
     let found = diagnostics(&[("app:main", &plain)]);
     let codes: Vec<&str> = found.iter().map(|&(code, ..)| code).collect();
     assert_eq!(codes, ["T0001"], "{found:?}");
+    // Structs in structs: `layout` once walked all of them for each one.
+    let chain: String = (1..DEPTH)
+        .map(|i| format!("struct S{i} {{ s: S{} }}\n", i - 1))
+        .collect();
+    let structs = format!("struct S0 {{ n: i32 }}\n{chain}fn main() {{}}");
+    assert_eq!(diagnostics(&[("app:main", &structs)]), []);
+}
+
+/// Each struct holds the last twice, so a walk of the fields, not of the
+/// structs, takes 2^40 steps. This is a short program.
+#[test]
+fn checks_structs_holding_structs_twice() {
+    let chain: String = (1..40)
+        .map(|i| format!("struct S{i} {{ a: S{0}, b: S{0} }}\n", i - 1))
+        .collect();
+    let text = format!("struct S0 {{ n: i32 }}\n{chain}fn main() {{}}");
+    assert_eq!(diagnostics(&[("app:main", &text)]), []);
 }
 
 /// No slice is longer than the largest `usize`, `u32::MAX` on a 32-bit
