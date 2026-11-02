@@ -1,4 +1,12 @@
-//! Source files and byte spans of their text.
+//! Source files, byte spans of their text, and the stack guard of the walks
+//! that recurse as deep as that text nests.
+
+/// Runs `walk` on a new stack segment when less than the red zone is left.
+pub fn grow<R>(walk: impl FnOnce() -> R) -> R {
+    const RED_ZONE: usize = 128 * 1024;
+    const SEGMENT: usize = 1024 * 1024;
+    stacker::maybe_grow(RED_ZONE, SEGMENT, walk)
+}
 
 /// The byte range `start..end` of one file's text.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]

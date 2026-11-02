@@ -15,7 +15,6 @@ use model::operators::UnaryOp;
 use token::TokenKind;
 
 use crate::Parser;
-use crate::grow;
 use crate::literals::anonymous_struct_literal;
 use crate::literals::array_literal;
 use crate::literals::bool_literal;
@@ -137,7 +136,7 @@ pub(crate) fn starts_expression(kind: TokenKind) -> bool {
 impl Parser {
     /// Reads an expression whose operators bind tighter than `min`.
     pub(crate) fn expr(&mut self, min: Precedence) -> Id<Expr> {
-        grow(|| {
+        source::grow(|| {
             let t = self.tok();
             let Some(read) = RULES.prefix[t.kind as usize] else {
                 self.fail(

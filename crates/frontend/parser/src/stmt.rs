@@ -17,7 +17,6 @@ use crate::Parser;
 use crate::decl::const_decl;
 use crate::decl::starts_declaration;
 use crate::expr::starts_expression;
-use crate::grow;
 use crate::starts_statement;
 
 /// Reads the statement the current keyword begins.
@@ -101,7 +100,7 @@ impl Parser {
     /// Reads a statement: one a keyword begins, or an expression statement, or
     /// an assignment `target = value;`.
     fn stmt(&mut self) -> Id<Stmt> {
-        grow(|| {
+        source::grow(|| {
             if let Some(read) = STATEMENTS[self.tok().kind as usize] {
                 return read(self);
             }
@@ -199,7 +198,7 @@ fn let_statement(p: &mut Parser) -> Id<Stmt> {
 /// Reads `if condition { } else if ... else { }`. A `=` written for `==` in
 /// the condition is read as `==`.
 fn if_statement(p: &mut Parser) -> Id<Stmt> {
-    grow(|| {
+    source::grow(|| {
         let start = p.next().span.start;
         let mut condition = p.expr(Precedence::Lowest);
         let t = p.tok();

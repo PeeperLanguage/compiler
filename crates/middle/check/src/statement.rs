@@ -267,7 +267,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
     /// name, and for a statement with an error.
     fn check_statement(&mut self, statement: Id<ast::Stmt>) -> Option<Id<Stmt>> {
         // Blocks in blocks and long `else if` chains are a deep recursion.
-        crate::grow(|| {
+        source::grow(|| {
             let tree = &self.checker.module().ast;
             let span = tree.stmts.span(statement);
             let checked = match tree.stmts[statement] {

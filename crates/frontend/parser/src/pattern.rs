@@ -7,14 +7,13 @@ use model::ast::Pattern;
 use token::TokenKind;
 
 use crate::Parser;
-use crate::grow;
 use crate::is_name;
 
 impl Parser {
     /// Reads `Enum::Case`, perhaps followed by `with` and the pattern of its
     /// payload. The case is a full path.
     pub(crate) fn case_pattern(&mut self) -> Id<Pattern> {
-        grow(|| {
+        source::grow(|| {
             let start = self.tok().span.start;
             let case = self.type_expr();
             self.require_path(case);

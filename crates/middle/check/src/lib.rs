@@ -55,14 +55,6 @@ pub struct Checker<'p> {
     checking: Vec<Checking>,
 }
 
-/// Runs `check` on a new stack segment when less than the red zone is left,
-/// for the checks that recurse as deep as the code nests.
-fn grow<R>(check: impl FnOnce() -> R) -> R {
-    const RED_ZONE: usize = 128 * 1024;
-    const SEGMENT: usize = 1024 * 1024;
-    stacker::maybe_grow(RED_ZONE, SEGMENT, check)
-}
-
 /// A declaration being checked (`Checker::checking`).
 struct Checking {
     definition: DefId,
@@ -232,7 +224,7 @@ impl<'p> Checker<'p> {
         });
         // A long chain of declarations, each asking for the next, is a deep
         // recursion here.
-        let result = grow(|| {
+        let result = source::grow(|| {
             self.check_attributes(definition);
             check(self, definition)
         });

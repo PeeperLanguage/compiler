@@ -58,13 +58,6 @@ pub fn parse(file: &Arc<SourceFile>) -> (Tree, Vec<Diagnostic>) {
     (p.tree, p.errors)
 }
 
-/// Runs `rule` on a new stack segment when less than the red zone is left.
-fn grow<R>(rule: impl FnOnce() -> R) -> R {
-    const RED_ZONE: usize = 128 * 1024;
-    const SEGMENT: usize = 1024 * 1024;
-    stacker::maybe_grow(RED_ZONE, SEGMENT, rule)
-}
-
 struct Parser {
     tree: Tree, // the tree being built
     tokens: Vec<Token>,

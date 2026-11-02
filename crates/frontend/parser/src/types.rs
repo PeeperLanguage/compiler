@@ -17,7 +17,6 @@ use token::Token;
 use token::TokenKind;
 
 use crate::Parser;
-use crate::grow;
 use crate::is_name;
 
 /// Whether a type can begin with `kind`.
@@ -41,7 +40,7 @@ pub(crate) fn starts_type(kind: TokenKind) -> bool {
 impl Parser {
     /// Reads a type.
     pub(crate) fn type_expr(&mut self) -> Id<Type> {
-        grow(|| {
+        source::grow(|| {
             let t = self.tok();
             match t.kind {
                 TokenKind::Ident if self.ahead(1).kind == TokenKind::LeftBracket => {

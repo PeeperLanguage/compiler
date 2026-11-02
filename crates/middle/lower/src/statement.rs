@@ -63,7 +63,7 @@ impl Lowering<'_> {
 
     pub(super) fn lower_statement(&mut self, statement: Id<thir::Stmt>) -> Option<()> {
         // Blocks in blocks and long `else if` chains are a deep recursion.
-        crate::grow(|| {
+        source::grow(|| {
             let span = self.thir.stmts.span(statement);
             // The temporaries the statement makes come after this in `declared`;
             // they end with it, as in Rust.

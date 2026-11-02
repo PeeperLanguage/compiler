@@ -464,7 +464,7 @@ impl Checker<'_> {
     /// (`ThirBuilder::declare`), so only top-level names are looked up.
     fn resolve_type(&mut self, ty: Id<ast::Type>) -> TypeId {
         // Types written in types, `& & ... i32`, are a deep recursion.
-        crate::grow(|| {
+        source::grow(|| {
             let tree = &self.module().ast;
             let span = tree.types.span(ty);
             let what = match tree.types[ty] {

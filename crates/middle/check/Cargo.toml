@@ -18,7 +18,6 @@ flow.workspace = true
 bigint.workspace = true
 literal.workspace = true
 rustc-hash.workspace = true
-stacker.workspace = true
 
 [dev-dependencies]
 parser.workspace = true

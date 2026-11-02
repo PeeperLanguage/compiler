@@ -55,11 +55,9 @@ impl<'a> Sorter<'a> {
         // place to point at.
         imports.dedup_by(|(_, a), (_, b)| a == b);
         // A long chain of imports is a deep recursion here.
-        const RED_ZONE: usize = 128 * 1024;
-        const SEGMENT: usize = 1024 * 1024;
         for &(kind, ref imported) in imports {
             match self.visits.get(imported.as_str()) {
-                None => stacker::maybe_grow(RED_ZONE, SEGMENT, || self.visit(imported, Some(kind))),
+                None => source::grow(|| self.visit(imported, Some(kind))),
                 Some(Visit::Started) => {
                     let start = (self.stack.iter())
                         .position(|&(visiting, _)| visiting == imported)

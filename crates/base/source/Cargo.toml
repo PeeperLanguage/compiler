@@ -1,12 +1,13 @@
 [package]
 name = "source"
-description = "Source files and spans"
+description = "Source files, spans, and the stack guard for deep source"
 version.workspace = true
 edition.workspace = true
 license-file.workspace = true
 publish.workspace = true
 
 [dependencies]
+stacker.workspace = true
 
 [lints]
 workspace = true
