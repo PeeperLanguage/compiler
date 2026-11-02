@@ -5,12 +5,21 @@ use arena::Id;
 use model::DefId;
 use model::mir;
 use model::semantic_types::Types;
+use source::SourceFile;
 use source::Span;
 
 use crate::Module;
 use crate::function::Function;
 use crate::text::quoted;
 use model::layout::in_memory;
+
+/// The line and column of `offset`, as debug info writes them. LLVM keeps a
+/// column in 16 bits and refuses a larger one, so a column past them is the
+/// last it can hold: the location stays on the right line.
+fn debug_position(file: &SourceFile, offset: usize) -> (usize, usize) {
+    let (line, column) = file.position(offset);
+    (line, column.min(usize::from(u16::MAX)))
+}
 
 impl Function<'_, '_, '_> {
     /// The DILocation of where `span` starts, in the MIR debug scope
@@ -32,7 +41,7 @@ impl Function<'_, '_, '_> {
             .locations
             .entry((scope, span.start))
             .or_insert_with(|| {
-                let (line, column) = file.position(span.start as usize);
+                let (line, column) = debug_position(file, span.start as usize);
                 metadata.add(format_args!(
                     "!DILocation(line: {line}, column: {column}, scope: !{scope})"
                 ))
@@ -113,9 +122,8 @@ impl Module<'_> {
                 scope_metadata.push(parent);
                 continue;
             }
-            let (line, column) = tree
-                .file
-                .position(body.debug_scopes.span(scope).start as usize);
+            let start = body.debug_scopes.span(scope).start as usize;
+            let (line, column) = debug_position(&tree.file, start);
             scope_metadata.push(metadata.add(format_args!(
                 "!DILexicalBlock(scope: !{parent}, file: !{file}, line: {line}, column: {column})"
             )));

@@ -101,6 +101,17 @@ Newest last. Each entry: commit, what changed, evidence, what was not done.
   checks together +0.84% (F12).
 - The parser's `orelse` error-recovery input showed F11 (printer).
 
+## 2026-11-02 Debug builds of long lines ("Keep debug columns within LLVM's limit")
+
+- **Problem:** clang refused a debug build with `value for 'column' too large,
+  limit is 65535`: LLVM keeps a column in 16 bits, in `DILocation` and
+  `DILexicalBlock`. `-release` has no locations and passed. Already so at
+  `1fa2750`.
+- **Fix:** `debug_position` gives both their line and column, a column past 16
+  bits as 65,535. Panics report the true column; they do not go through it.
+- **Evidence:** test `columns_past_16_bits_stop_at_the_last_one` fails without
+  the limit. An 88 KB line builds and runs in debug on both targets.
+
 ## Measured and rejected
 
 - Reserving `llvm` `Function::locations` to its bound: +0.6% instructions

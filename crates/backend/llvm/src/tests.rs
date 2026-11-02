@@ -302,6 +302,27 @@ fn variables_have_the_scope_of_their_block() {
     assert_eq!(scope(blocks[0]), scope(variables[0]), "{text}");
 }
 
+/// LLVM refuses a column past 16 bits, so a location or a block further along
+/// a line keeps the last column it can hold. Clang fails on the module without
+/// this, in a debug build only: a release build has no locations.
+#[test]
+fn columns_past_16_bits_stop_at_the_last_one() {
+    let padding = " ".repeat(usize::from(u16::MAX));
+    let text = ll(
+        &format!("fn f() {{ {padding}{{ let x = 1; }} }}"),
+        "x86_64-linux",
+    );
+    let largest = |node: &str| {
+        (text.lines().filter(|line| line.contains(node)))
+            .map(|line| line.split("column: ").nth(1).unwrap())
+            .map(|rest| rest.split([',', ')']).next().unwrap())
+            .map(|column| column.parse::<u32>().unwrap())
+            .max()
+    };
+    assert_eq!(largest("!DILocation("), Some(65_535), "{text}");
+    assert_eq!(largest("!DILexicalBlock("), Some(65_535), "{text}");
+}
+
 /// The metadata id after `scope: !` in the metadata `line`.
 fn scope(line: &str) -> &str {
     line.split("scope: !")
