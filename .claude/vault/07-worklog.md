@@ -2,7 +2,7 @@
 
 Newest last. Each entry: commit, what changed, evidence, what was not done.
 
-## 2026-11-01 Loan check memory (`a8a2cd8`)
+## 2026-11-01 Loan check memory (`0c03928`)
 
 - **Problem:** `flow::loans::report` kept a copy of the live holder set after
   every instruction of a block: instructions × holders bits. Measured with
@@ -23,10 +23,10 @@ Newest last. Each entry: commit, what changed, evidence, what was not done.
   example and 400 random loan programs (3,605 T0037), both targets. Test
   `crates/driver/compile/tests/loan_memory.rs` (now `path_check_memory.rs`) adds the straight shape: 13 MB
   now, 32 MB on the old code (fails its 20 MB bound).
-- **Not done:** `check.sh` passed except the five `run_i686_*` fixtures (no
-  32-bit C library where it ran).
+- **Not done there:** `check.sh` passed except the five `run_i686_*` fixtures
+  (no 32-bit C library where it ran); all pass in the review below.
 
-## 2026-11-01 Checker name lookup (`a3f72e9`)
+## 2026-11-01 Checker name lookup (`ebbbb81`)
 
 - **Problem:** after the loan fix, 97% of the long-function time was
   `ThirBuilder::declare` and `resolve`: a linear search of every local name
@@ -42,7 +42,7 @@ Newest last. Each entry: commit, what changed, evidence, what was not done.
   `names_shadow_until_their_block_ends`) when the restore is broken; `check`
   output identical on 1,174 runs.
 
-## 2026-11-01 Variable state check (`dd36835`, `b905231`)
+## 2026-11-01 Variable state check (`333e327`, `2253c35`)
 
 - **Problem:** three sets of every variable at every block's start. One
   `let late: i32;` in 20,000 groups of a branch and a new variable: 347 MB,
@@ -58,7 +58,7 @@ Newest last. Each entry: commit, what changed, evidence, what was not done.
   peak (`/proc/self/clear_refs`) before each function: `late` 25 MB, 70 MB
   before.
 
-## 2026-11-01 Loan check block-end sets (`5f4ef6f`)
+## 2026-11-01 Loan check block-end sets (`a318b22`)
 
 - **Problem:** `ends` kept a set of every holder at every block, and seeded
   every block with one: 10,000 branchy groups 217 MB, about 3× per doubling.
@@ -69,7 +69,7 @@ Newest last. Each entry: commit, what changed, evidence, what was not done.
 - **Test:** `branching` at 4,000 groups: 21 MB, 47 MB with dense sets; the
   cubic version before `757544c` grew 407 MB at 400 groups.
 
-## 2026-11-01 Cleanups (`b0a610a`, `9b1190b`, `20a39e1`)
+## 2026-11-01 Cleanups (`d51cf18`, `0a901b5`, `7928223`)
 
 - `Loans::report` (125 lines) split into `live_at_ends`, `held_at_starts`,
   `label_later_use`; `loan_count` (one caller) inlined. `report` is 60 lines.
@@ -78,13 +78,13 @@ Newest last. Each entry: commit, what changed, evidence, what was not done.
   order. LLVM text byte-identical on 187 programs, both targets.
 - Parser test dump: the `names` closure written twice is `Dumper::names`.
 
-## 2026-11-01 Compile-time calls (`c297801`)
+## 2026-11-01 Compile-time calls (`184e64a`)
 
 - `evaluate_call` checked reached functions with `Vec::contains`: R² per
   call. 200 constants × chain of 4,000 functions: 0.61 s → 0.17 s with an
   `FxHashSet`. The rest is F3 in the plan.
 
-## 2026-11-01 Deep expressions crash (`eec0324`)
+## 2026-11-01 Deep expressions crash (`029622f`)
 
 - `peeper check` aborted with a stack overflow at 4,000 terms of
   `x + x + ...`: `check_expr` and `lower_expr` recursed on the thread's
@@ -92,9 +92,9 @@ Newest last. Each entry: commit, what changed, evidence, what was not done.
   does. Test `checks_deeply_nested_expressions` (50,000 deep: operators,
   calls, parentheses, `!`) aborted before. Cost +0.45% on the benchmark.
 
-## 2026-11-01 Deep statements and types (`395afc6`)
+## 2026-11-01 Deep statements and types (`59dc4cc`)
 
-- After `eec0324`, nested blocks, long `else if` chains (`check_statement`,
+- After `029622f`, nested blocks, long `else if` chains (`check_statement`,
   `lower_statement`) and `& & ... i32` (`resolve_type`) still overflowed: the
   parser's own deep inputs. Same `grow`. Test `checks_deeply_nested_statements`
   (50,000 each; the types case asserts its one T0043). Cost +0.39%; all stack
@@ -126,11 +126,40 @@ Newest last. Each entry: commit, what changed, evidence, what was not done.
   built as a placeholder and filled after construction (documented); the
   return check steps the block twice on purpose (error precedence).
 
-## Validation of the branch (2026-11-01, after `eec0324`; `395afc6` reran the affected tests)
+## Validation of the branch (2026-11-01, after `029622f`; `59dc4cc` reran the affected tests)
 
 `bash scripts/check.sh`: format, clippy, runtime format and clippy, bundle,
 browser build and smoke, whitespace pass; 42 test binaries pass. `tests` and
 `fixtures on the bundle` fail only in the `fixtures` test, on the five
 `run_i686_*` programs, which cannot link without a 32-bit C library
 (`Scrt1.o`, `-lc`). Their `check -target i686-linux` output was compared old
-against new and is unchanged.
+against new and is unchanged. On a machine with the library, the review below
+ran `check.sh` fully green.
+
+## 2026-11-02 Review and fixes (`0b94289`, `e567d09`, `715cc88`, `505b592`)
+
+- **History:** the fourteen commits moved from local `main` to
+  `fix/loans-memory-growth`; author set to the owner, `Co-Authored-By` and
+  `Claude-Session` lines removed, both dates kept, re-signed; trees unchanged.
+  The hashes in this vault are the new ones.
+- **Evidence for the branch:** `check.sh` green at `d381733`. `check` output
+  byte-identical to `1fa2750` on 336 fixture runs (both targets) and 12,000
+  random programs (15,845 T0037; 577 T0039, 1,363 T0034, 477 T0035). Putting
+  back a set per instruction fails `path_check_memory`.
+- **Stack guard (`0b94289`):** the four copies are one `source::grow`.
+- **Deep arrays (`e567d09`):** `layout` crashed at 20,000 levels of `[1]`. It now loops over
+  array levels: same sizes (zero lengths and overflow compared with the base,
+  both targets). `real_text` crashed printing such a type and `compile`'s
+  `hash_type` on a test thread; both have `grow` on their array step. `check`
+  takes 50,000 levels; `build` still overflows in the backend (F14). Test:
+  `checks_deeply_nested_statements`, 10,000 levels; it aborts with the
+  recursion back.
+- **Printer (`715cc88`):** `S.{ a = ` nested 50,000 times on one line asked for 8 GB once
+  the stack no longer overflowed. `print` writes at most 200 diagnostics, says
+  how many more, and the summary counts all: 2.1 s, 240 MB.
+- **Comments (`505b592`):** `live_at_ends` states its cost (F13); `path_check_memory` no
+  longer says a reading is independent of the order, and its numbers are
+  corrected.
+- **After the fixes:** `check.sh` green; output identical to `1fa2750` on 336
+  fixture runs and 6,000 random programs. Benchmark 3,768.7 M and 3,783.1 M in
+  two runs, against 3,769.4 M before them: no cost above the noise.

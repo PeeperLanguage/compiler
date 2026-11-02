@@ -1,6 +1,6 @@
 # Plan
 
-Branch `claude/loans-memory-growth-9rsgeg`, from `main` at `1fa2750`. The
+Branch `fix/loans-memory-growth`, from `main` at `1fa2750`. The
 task (owner, 2026-11-01): fix the loan check's memory growth, fix the
 checker's name lookup, and review the codebase for design mistakes,
 unnecessary work, duplicate logic, overengineering and pass-through
@@ -9,28 +9,31 @@ forgotten or invented.
 
 ## Steps
 
-1. [x] Loan check: one live set per block, not per instruction (`a8a2cd8`).
-2. [x] Checker: names through a map (`a3f72e9`).
+1. [x] Loan check: one live set per block, not per instruction (`0c03928`).
+2. [x] Checker: names through a map (`ebbbb81`).
 3. [x] Context vault (this folder).
 4. [x] Variable state check: follow only variables that can be unset
-   (`dd36835`).
-5. [x] Loan check: live sets at block ends as lists (`5f4ef6f`).
-6. [x] Split `Loans::report` by job; inline `loan_count` (`b0a610a`).
-7. [x] LLVM debug info: one writer of a struct's debug type (`9b1190b`).
-8. [x] Parser test dump: one `names` method (`20a39e1`).
-9. [x] Variable state: `tracked_variables` split out (`b905231`).
-10. [x] Compile-time calls: reached functions in a set (`c297801`).
-11. [x] Deep expressions: `grow` in check and lower (`eec0324`).
+   (`333e327`).
+5. [x] Loan check: live sets at block ends as lists (`a318b22`).
+6. [x] Split `Loans::report` by job; inline `loan_count` (`d51cf18`).
+7. [x] LLVM debug info: one writer of a struct's debug type (`0a901b5`).
+8. [x] Parser test dump: one `names` method (`7928223`).
+9. [x] Variable state: `tracked_variables` split out (`2253c35`).
+10. [x] Compile-time calls: reached functions in a set (`184e64a`).
+11. [x] Deep expressions: `grow` in check and lower (`029622f`).
 12. [x] Deep statements and types: `grow` in `check_statement`,
-    `lower_statement`, `resolve_type` (`395afc6`).
-14. [ ] Owner: decide the open findings below and the benchmark trade-off (+1.96% instructions in all).
+    `lower_statement`, `resolve_type` (`59dc4cc`).
+14. [x] Review fixes: one stack guard (`0b94289`), deep array types
+    (`e567d09`), a limit on printed diagnostics (`715cc88`), comments
+    (`505b592`).
+15. [ ] Owner: decide the open findings below. Benchmark for the fourteen commits: +1.69% instructions,
+    accepted in review.
 
 ## Open findings (not changed; each needs an owner decision or is small)
 
 | # | Where | Finding | Cost now | Proposed fix and its cost |
 | --- | --- | --- | --- | --- |
 | F1 | `check/src/lib.rs` `ModuleChecks` | Three tables indexed alike per declaration (`declared_types`, `constants`, `bodies`); each slot is used in one table only. RULES §5.1 discourages parallel lists. | 3 slots per declaration, 2 unused | One `Vec` of a per-declaration enum. `docs/ir-design.md` decided "one table per language category", so this is the owner's call. |
-| F2 | `parser`, `project/order.rs`, `check`, `lower` | The stack guard (`RED_ZONE`, `SEGMENT`, `stacker::maybe_grow`) is written in four crates. | Values could drift | One function in a crate all four use; none fits today (`source` is files and spans). Owner's call. |
 | F3 | `check/src/function.rs` `evaluate_call` | Each compile-time call walks every function it may reach, even when all are built. | C × R visits (200 calls × 4,000 functions: 0.17 s) | Remember per function that its reach is built; adds state to `Built`. |
 | F4 | `check` struct declaration and `field_index` | Field names searched linearly (comment: "a struct has few fields"). | Quadratic in fields: 25k fields 2.75 s; 2k fields ~20 ms | A name index per struct; only worth it if generated code has thousands of fields. |
 | F5 | `llvm/src/function/memory.rs` `write_place_address` | 175 lines, three jobs: steps with index checks, the `getelementptr`, loading the next run's pointer. | Readability | Extract the index check; needs about eight inputs, so a context struct or a wide signature. |
@@ -38,14 +41,17 @@ forgotten or invented.
 | F7 | `compile/src/lib.rs:289` `others_unchanged` | For each file a cached diagnostic points into, scans every module's results. | O(labels × modules), small today | A set of reused paths built once per compile. |
 | F8 | `llvm` `Function::location` | A new `locations` map per function rehashes as it grows (~1.4% of a compile). | 1.4% | Reserving the bound measured +0.6% worse (rejected, see the log); reusing one map across functions is the remaining option. |
 | F9 | `flow/src/cleanup.rs:43` `skip_empty_blocks` | Follows each jump chain up to the block count from every block. | Quadratic only on long chains of empty blocks | Not measured as a problem; leave. |
-| F11 | `diagnostics` printer | Every diagnostic prints its whole source line. One missing token in a 26 KB one-line program gave 2,000 errors and 100 MB of output; memory and time grow with errors × line length. | Quadratic on long lines | Trim a long line around the span, as rustc does; changes the visible format, which `docs/architecture.md` fixed. |
-| F12 | `check`, `lower` `grow` | A stack check per expression, statement and type costs 0.84% of a compile. | 0.84% | Check only every N levels of depth (a counter in the builder), if the owner wants the time back. |
+| F11 | `diagnostics` printer | Every diagnostic prints its whole source line, and at most `MOST_WRITTEN` (200) are printed. | At most 200 × the line's length | Trim a long line around the span, as rustc does; changes the visible format, which `docs/architecture.md` fixed. |
+| F12 | `source::grow` in `check`, `lower` | A stack check per expression, statement and type costs 0.84% of a compile. | 0.84% | Check only every N levels of depth (a counter in the builder), if the owner wants the time back. |
+| F13 | `flow/src/loans.rs` `live_at_ends` | Lists at block ends cost more than sets where many holders stay live across many blocks. | 3,000 references across 3,000 branches: 154 MB, 1.9 s; 124 MB, 1.0 s with sets (1.3 s at the base) | Accepted for the gain when few are live (217 MB to 53 MB). |
+| F14 | `model/src/semantic_types.rs`, `lower`, `llvm` type walks | `[1][1]...i32` is the one type nested without limit that every later phase can see, and each walk of it recurses or repeats. `layout` loops, and `real_text` and `hash_type` have `grow`, but others do not: `peeper build` still overflows at 50,000 levels. `array_type` is quadratic in the depth (50,000: 6 s). | Generated code only | A limit on how deep array types nest, reported as an error, would close them all at once; it adds a rule to the language, so it is the owner's call. |
+| F15 | `llvm` debug locations | A line past column 65,535 fails a debug build in clang (`value for 'column' too large`); `-release` passes. Already so at `1fa2750`. | One-line generated code | Clamp the column written to 65,535. |
 | F10 | `flow::variable_state` | A function that moves many variables still keeps a set of them at every block. | blocks × moved variables | Liveness of moved variables, as the loan check does; only if a real program needs it. |
 
 ## Rules check for this branch
 
-- Wrappers: none added. `grow` (check, lower) is called from two places in
-  `check` and is the stack guard the parser already has.
+- Wrappers: none added. `source::grow` is the one stack guard, used by the
+  parser, `project`, `check`, `lower` and `model`.
 - Aliases and ignored parameters: none. `step_live`'s `flipped` callback is
   used by the report walk; the dataflow pass passes `|_| {}`.
 - New helpers: `sorted_union` (2 uses), `live_set` (2), `Bits::ids`,
@@ -56,6 +62,6 @@ forgotten or invented.
   every fixture, example and 800 random programs, both targets; LLVM text
   byte-identical on 187 programs). The one new behavior: deep expressions,
   statements and types no longer crash.
-- Benchmark (callgrind, one compile of the compile benchmark): 3.832 G at
-  `1fa2750` to 3.907 G: +1.1% names map, +0.84% stack checks, the rest
-  within 0.1%.
+- Benchmark (`scripts/bench-instructions.py`, one compile): 3,706.6 M at
+  `1fa2750` to 3,769.4 M at `59dc4cc`, +1.69%. The cloud run counted +1.96%
+  under callgrind: +1.1% names map, +0.84% stack checks, the rest within 0.1%.
