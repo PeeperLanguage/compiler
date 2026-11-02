@@ -1,11 +1,12 @@
 //! The checker a web page runs, built for `wasm32-wasip1`: reads a request from
-//! stdin as a JSON object, with `files`, an object from file name to text, and
+//! stdin as a JSON object, with `files`, an object from file path to text, and
 //! `run`, true to run the program as well. It writes the program's diagnostics
-//! to stdout as a JSON list, or for a run an object (`run`). The program starts
-//! at main.peep, and a file imports another as "playground:name", paths from the
-//! package's own folder, so a message names a file as the page does. Nothing is
-//! read from a disk. The compiler can overflow wasm's stack on very deep code, so
-//! a page runs a new instance for each check, and one crash loses nothing.
+//! to stdout as a JSON list, or for a run an object (`run`). The files are a
+//! project, as on a disk: peeper.toml and src/main.peep at the least, and a file
+//! imports another by the name in peeper.toml, as "name:path", so a message names
+//! a file as the page does. Nothing is read from a disk. The compiler can
+//! overflow wasm's stack on very deep code, so a page runs a new instance for each
+//! check, and one crash loses nothing.
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -21,13 +22,10 @@ use diagnostics::printer;
 use eval::interpreter::program::Stream;
 use eval::interpreter::program::Written;
 use model::machine::Machine;
-use project::Project;
+use project::manifest;
 use serde_json::Value;
 use serde_json::json;
 use source::SourceFile;
-
-/// The package the page's files make up.
-const PACKAGE: &str = "playground";
 
 /// The bundled library, every file of it, since there is no disk to find it on.
 const CORE_FILES: [(&str, &str); 2] = [
@@ -66,31 +64,32 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// The program `files` make up: `files` maps each file's path in the package
-/// to its text.
-fn load(files: HashMap<String, String>) -> project::Program {
+/// The program `files` make up: `files` maps each file's path in the project
+/// to its text. The error is why peeper.toml gives no project, as a full
+/// message.
+fn load(files: HashMap<String, String>) -> Result<project::Program, String> {
     let core = Path::new("/core/src");
+    let Some(text) = files.get(manifest::FILE_NAME) else {
+        return Err(format!("no {} in this project", manifest::FILE_NAME));
+    };
+    let manifest = manifest::parse(text, Path::new(manifest::FILE_NAME))?;
+    let libraries = HashMap::from([("core".to_string(), core.to_path_buf())]);
+    let project = project::project_in(PathBuf::new(), manifest, libraries)?;
     let page_files = files
         .into_iter()
         .map(|(name, text)| (PathBuf::from(name), text));
     let core_files = CORE_FILES.map(|(name, text)| (core.join(name), text.to_string()));
     let open_files: HashMap<PathBuf, String> = page_files.chain(core_files).collect();
-    let project = Project {
-        packages: HashMap::from([
-            (PACKAGE.to_string(), PathBuf::new()),
-            ("core".to_string(), core.to_path_buf()),
-        ]),
-        entry: PathBuf::from("main.peep"),
-        root: PathBuf::new(),
-        name: PACKAGE.to_string(),
-    };
-    project::load(&project, &open_files)
+    Ok(project::load(&project, &open_files))
 }
 
 /// The diagnostics of the program `files` make up, as `peeper check` finds
-/// them (`entries`). `files` maps each file's path in the package to its text.
+/// them (`entries`). `files` maps each file's path in the project to its text.
 fn check(files: HashMap<String, String>) -> Value {
-    let program = load(files);
+    let program = match load(files) {
+        Ok(program) => program,
+        Err(message) => return json!([manifest_entry(&message)]),
+    };
     // As in `peeper check`, errors in loading would only be repeated.
     let results = if program.checkable {
         let target = Machine::named(TARGET).expect("the target is a machine");
@@ -114,7 +113,10 @@ fn check(files: HashMap<String, String>) -> Value {
 /// panic's text last), each piece a `text` and its `stream`, and its
 /// `exit_code`.
 fn run(files: HashMap<String, String>) -> Value {
-    let program = load(files);
+    let program = match load(files) {
+        Ok(program) => program,
+        Err(message) => return json!({ "diagnostics": message, "run": null }),
+    };
     let target = Machine::named(TARGET).expect("the target is a machine");
     let (results, ran) = compile::interpret(&program, target);
     let ran = ran.map(|ran| {
@@ -173,6 +175,20 @@ fn entries(program: &project::Program, results: &compile::Results) -> Value {
         })
     });
     Value::Array(entries.collect())
+}
+
+/// `message`, why peeper.toml gives no project, as an entry of `entries`. It
+/// has no code, as the command line's has none, and its place is the file's
+/// start: `manifest` reports no position.
+fn manifest_entry(message: &str) -> Value {
+    let start = json!({ "line": 1, "column": 1 });
+    json!({
+        "severity": "error",
+        "code": "",
+        "message": message,
+        "place": { "file": manifest::FILE_NAME, "start": start, "end": start, "message": "" },
+        "related": [],
+    })
 }
 
 /// The 1-based line and UTF-16 column of `offset` in `label`'s file.

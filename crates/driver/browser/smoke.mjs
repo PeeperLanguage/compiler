@@ -29,14 +29,20 @@ async function send(request) {
     return found;
 }
 
-const check = (files) => send({ files });
+// The project of `files`, each a path in `src` and its text.
+const project = (files) => ({
+    "peeper.toml": 'name = "playground"\n',
+    ...Object.fromEntries(Object.entries(files).map(([name, text]) => [`src/${name}`, text])),
+});
+const check = (files) => send({ files: project(files) });
+const execute = (files) => send({ run: true, files: project(files) });
 
 const [mismatch] = await check({
     "main.peep": 'import "playground:other";\nfn main() {\n    other::Value();\n}\n',
     "other.peep": "fn Value() -> i32 {\n    return true;\n}\n",
 });
 assert.equal(mismatch.code, "T0001");
-assert.equal(mismatch.place.file, "other.peep");
+assert.equal(mismatch.place.file, "src/other.peep");
 assert.deepEqual(mismatch.place.start, { line: 2, column: 12 });
 assert.deepEqual(mismatch.place.end, { line: 2, column: 16 });
 
@@ -48,23 +54,17 @@ assert.equal(recursion.code, "T0044");
 assert.equal(recursion.related[0].message, "this went 100000 calls deep");
 
 // An address past 32 bits must not wrap round to memory the run owns.
-const wrapped = await send({
-    run: true,
-    files: {
-        "main.peep":
-            'fn text() -> cstr {\n    return c"abcd";\n}\nfn main() {\n    let held = text();\n    let mut far: u64 = 5368709120;\n    let p = @far as **i32;\n    println(p.*.*);\n}\n',
-    },
+const wrapped = await execute({
+    "main.peep":
+        'fn text() -> cstr {\n    return c"abcd";\n}\nfn main() {\n    let held = text();\n    let mut far: u64 = 5368709120;\n    let p = @far as **i32;\n    println(p.*.*);\n}\n',
 });
 assert.equal(wrapped.run.exit_code, 101);
 assert.match(wrapped.run.output[0].text, /^panic: this reads or writes memory the program does not own\n/);
 
 // A program runs with what it printed, with no backend or linker.
-const { diagnostics, run } = await send({
-    run: true,
-    files: {
-        "main.peep":
-            'struct Point { x: i32, y: f64 }\nfn main() -> i32 {\n    println(Point.{ x = 1, y = 2.5 }, [2]i32{3, 4}, 340282366920938463463374607431768211455u128);\n    return 7;\n}\n',
-    },
+const { diagnostics, run } = await execute({
+    "main.peep":
+        'struct Point { x: i32, y: f64 }\nfn main() -> i32 {\n    println(Point.{ x = 1, y = 2.5 }, [2]i32{3, 4}, 340282366920938463463374607431768211455u128);\n    return 7;\n}\n',
 });
 assert.equal(diagnostics, "");
 assert.deepEqual(run, {
@@ -76,11 +76,13 @@ assert.deepEqual(run, {
     ],
     exit_code: 7,
 });
-const stopped = await send({ run: true, files: { "main.peep": 'fn main() {\n    panic "stop";\n}\n' } });
+const stopped = await execute({ "main.peep": 'fn main() {\n    panic "stop";\n}\n' });
 assert.equal(stopped.run.exit_code, 101);
-assert.deepEqual(stopped.run.output, [{ stream: "stderr", text: "panic: stop\n  --> main.peep:2:5\n" }]);
-const failed = await send({ run: true, files: { "main.peep": "fn main() {\n    let x: i32 = true;\n}\n" } });
+assert.deepEqual(stopped.run.output, [{ stream: "stderr", text: "panic: stop\n  --> src/main.peep:2:5\n" }]);
+const failed = await execute({ "main.peep": "fn main() {\n    let x: i32 = true;\n}\n" });
 assert.match(failed.diagnostics, /\[T0001\]/);
-assert.match(failed.diagnostics, /main\.peep:2:18/);
+assert.match(failed.diagnostics, /src\/main\.peep:2:18/);
 assert.equal(failed.run, null);
+const [badName] = await send({ files: { "peeper.toml": 'name = "my-app"\n' } });
+assert.equal(badName.place.file, "peeper.toml");
 console.log("the wasm checker found every error and ran the programs");

@@ -1,10 +1,20 @@
 use super::*;
 
+/// The project named playground of the files `entries`, each a path in `src`
+/// and its text.
 fn files(entries: &[(&str, &str)]) -> HashMap<String, String> {
-    let owned = entries
+    let sources = entries
         .iter()
-        .map(|&(name, text)| (name.to_string(), text.to_string()));
-    owned.collect()
+        .map(|&(name, text)| (format!("src/{name}"), text.to_string()));
+    let manifest = (MANIFEST.to_string(), "name = \"playground\"\n".to_string());
+    sources.chain([manifest]).collect()
+}
+
+const MANIFEST: &str = manifest::FILE_NAME;
+
+/// What `files` load to, when their peeper.toml gives a project.
+fn loaded(files: HashMap<String, String>) -> project::Program {
+    load(files).expect("the files are a project")
 }
 
 #[test]
@@ -23,7 +33,7 @@ fn an_entry_names_the_file_and_counts_utf16_columns() {
         "severity": "error",
         "code": "T0002",
         "message": message,
-        "place": { "file": "main.peep", "start": start, "end": end, "message": "" },
+        "place": { "file": "src/main.peep", "start": start, "end": end, "message": "" },
         "related": [],
     }]);
     assert_eq!(found, expected);
@@ -52,7 +62,7 @@ fn a_message_names_a_file_as_the_page_does() {
     let found = check(files(&[("main.peep", text)]));
     let message = found[0]["message"].as_str().expect("a message is text");
     assert!(
-        message.starts_with("module not found: othr.peep"),
+        message.starts_with("module not found: src/othr.peep"),
         "{message}"
     );
 }
@@ -77,7 +87,7 @@ fn a_failed_build_prints_as_the_terminal_does_and_does_not_start() {
     let text = "fn main() {\n    let total: i32 = true;\n    println(total);\n}\n";
     let found = run(files(&[("main.peep", text)]));
     let expected = "[T0001]: mismatched types: expected `i32`, found `bool`\n  \
-        --> main.peep:2:22\n  | \n1 | fn main() {\n2 |     let total: i32 = true;\n  \
+        --> src/main.peep:2:22\n  | \n1 | fn main() {\n2 |     let total: i32 = true;\n  \
         |                      ^^^^\n  | \n  \
         = help: add `as i32` to convert, which can change the value\n  | \n\
         2 |     let total: i32 = true as i32;\n\nCompilation failed with 1 error(s)\n";
@@ -162,14 +172,8 @@ fn check_fixtures_fail_here_with_the_same_number_of_errors() {
             continue;
         }
         let name = manifest["name"].as_str().expect("a fixture has a name");
-        let source = folder.join("src");
-        let mut source_files = HashMap::new();
-        read_source(&source, &source, &mut source_files);
-        // The page's files are always one package; only imports name it here.
-        let own_package = format!("\"{name}:");
-        for text in source_files.values_mut() {
-            *text = text.replace(&own_package, &format!("\"{PACKAGE}:"));
-        }
+        let mut source_files = HashMap::from([(MANIFEST.to_string(), text)]);
+        read_source(&folder, &folder.join("src"), &mut source_files);
         let found = check(source_files);
         let found = found.as_array().expect("a check gives a list");
         let errors = found
@@ -218,16 +222,11 @@ fn run_fixtures_run_here_with_the_same_results() {
             continue;
         }
         let name = manifest["name"].as_str().expect("a fixture has a name");
-        let source = folder.join("src");
-        let mut source_files = HashMap::new();
-        read_source(&source, &source, &mut source_files);
-        let own_package = format!("\"{name}:");
-        for text in source_files.values_mut() {
-            *text = text.replace(&own_package, &format!("\"{PACKAGE}:"));
-        }
+        let mut source_files = HashMap::from([(MANIFEST.to_string(), text.clone())]);
+        read_source(&folder, &folder.join("src"), &mut source_files);
         let target = test("target").and_then(toml_edit::Item::as_str);
         let target = Machine::named(target.unwrap_or(TARGET)).expect("the target is a machine");
-        let program = load(source_files);
+        let program = loaded(source_files);
         let (results, interpreted) = compile::interpret(&program, target);
         let Some(interpreted) = interpreted else {
             // A fixture of a program that must not build.
@@ -261,8 +260,7 @@ fn run_fixtures_run_here_with_the_same_results() {
                 .flatten()
                 .filter_map(|text| text.as_str())
             {
-                // Compiled, the path starts at the project; here, at `src`.
-                if !printed.contains(&text.replace("src/", "")) {
+                if !printed.contains(text) {
                     failures.push(format!("{name}: {key} lacks {text:?}\n{printed}"));
                 }
             }
@@ -280,7 +278,7 @@ fn written(run: &compile::Interpreted, stream: Stream) -> Vec<u8> {
 
 /// What the program of the one file `text` does when interpreted.
 fn interpreted(text: &str) -> compile::Interpreted {
-    let program = load(files(&[("main.peep", text)]));
+    let program = loaded(files(&[("main.peep", text)]));
     let target = Machine::named(TARGET).expect("the target is a machine");
     let (results, interpreted) = compile::interpret(&program, target);
     interpreted.unwrap_or_else(|| {
@@ -292,7 +290,7 @@ fn interpreted(text: &str) -> compile::Interpreted {
 #[test]
 fn a_program_that_cannot_be_checked_does_not_start() {
     let text = "fn main( {\n    let x: i32 = true;\n}\n";
-    let program = load(files(&[("main.peep", text)]));
+    let program = loaded(files(&[("main.peep", text)]));
     let target = Machine::named(TARGET).expect("the target is a machine");
     let (results, interpreted) = compile::interpret(&program, target);
     assert!(!program.checkable, "loading found the syntax error");
@@ -334,7 +332,7 @@ fn a_program_that_prints_forever_stops_with_what_it_printed() {
     );
     let stderr = String::from_utf8_lossy(&written(&run, Stream::Stderr)).into_owned();
     assert!(
-        stderr.starts_with("panic: this printed more than 1048576 bytes\n  --> main.peep:3:9"),
+        stderr.starts_with("panic: this printed more than 1048576 bytes\n  --> src/main.peep:3:9"),
         "{stderr}"
     );
 }
@@ -485,6 +483,78 @@ fn a_run_gives_what_a_program_printed_or_why_it_did_not_start() {
     assert_eq!(panicked["run"]["exit_code"], 101);
     assert_eq!(
         panicked["run"]["output"],
-        json!([{ "stream": "stderr", "text": "panic: stop\n  --> main.peep:2:5\n" }])
+        json!([{ "stream": "stderr", "text": "panic: stop\n  --> src/main.peep:2:5\n" }])
+    );
+}
+
+#[test]
+fn the_project_is_named_by_its_manifest() {
+    let main = "import \"myapp:math/double\";\nfn main() {\n    println(double::Of(4));\n}\n";
+    let mut project = HashMap::from([
+        (MANIFEST.to_string(), "name = \"myapp\"\n".to_string()),
+        ("src/main.peep".to_string(), main.to_string()),
+        (
+            "src/math/double.peep".to_string(),
+            "fn Of(x: i32) -> i32 {\n    return x * 2;\n}\n".to_string(),
+        ),
+    ]);
+    assert_eq!(check(project.clone()), json!([]));
+    assert_eq!(run(project.clone())["run"]["output"][0]["text"], "8\n");
+
+    project.insert(MANIFEST.to_string(), "name = \"other\"\n".to_string());
+    assert_eq!(
+        check(project)[0]["code"],
+        "M0003",
+        "the old name is unknown now"
+    );
+}
+
+#[test]
+fn a_file_outside_src_cannot_be_imported() {
+    let mut project = files(&[("main.peep", "import \"playground:notes\";\nfn main() {}\n")]);
+    project.insert("notes.peep".to_string(), "fn Of() {}\n".to_string());
+    assert_eq!(check(project)[0]["code"], "M0001");
+}
+
+#[test]
+fn a_manifest_that_gives_no_project_is_reported_on_itself() {
+    let cases = [
+        (
+            "name = \"my-app\"",
+            "peeper.toml: name must start with a letter",
+        ),
+        ("name =", "peeper.toml: "),
+        ("", "peeper.toml: name must start with a letter"),
+        (
+            "name = \"core\"",
+            "peeper.toml: project name `core` is taken",
+        ),
+    ];
+    for (text, wanted) in cases {
+        let mut project = files(&[("main.peep", "fn main() {}\n")]);
+        project.insert(MANIFEST.to_string(), text.to_string());
+
+        let found = check(project.clone());
+        let [entry] = found.as_array().expect("a check gives a list").as_slice() else {
+            panic!("{text}: {found}");
+        };
+        let message = entry["message"].as_str().expect("an entry has a message");
+        assert!(message.starts_with(wanted), "{text}: {message}");
+        assert_eq!(entry["severity"], "error");
+        assert_eq!(entry["place"]["file"], "peeper.toml");
+
+        let ran = run(project);
+        assert_eq!(ran["diagnostics"], message, "a run says the same");
+        assert_eq!(ran["run"], Value::Null);
+    }
+}
+
+#[test]
+fn a_project_needs_its_manifest() {
+    let mut project = files(&[("main.peep", "fn main() {}\n")]);
+    project.remove(MANIFEST);
+    assert_eq!(
+        check(project)[0]["message"],
+        "no peeper.toml in this project"
     );
 }
