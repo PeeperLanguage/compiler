@@ -340,6 +340,24 @@ fn debug_types_stop_at_deep_pointers() {
     assert!(text.contains("DW_TAG_pointer_type, baseType: null"));
 }
 
+/// Printing and debug info go through every struct in a chain. A field's name
+/// stays short, past LLVM's limit two would read as one, and the debug types
+/// stop where clang would run out of stack on them.
+#[test]
+fn deep_structs_print_and_have_debug_types() {
+    const DEPTH: usize = 20_000;
+    let chain: String = (1..DEPTH)
+        .map(|i| format!("struct S{i} {{ s: S{} }}\n", i - 1))
+        .collect();
+    let last = DEPTH - 1;
+    let source = format!("struct S0 {{ n: i32 }}\n{chain}fn f(a: &S{last}) {{ println(a); }}");
+    let text = ll(&source, "x86_64-linux");
+    let mut steps = text.lines().filter(|line| line.contains("= getelementptr"));
+    assert!(steps.all(|line| line.len() < 200), "{text}");
+    let members = text.matches("DW_TAG_member").count();
+    assert!((4_900..5_100).contains(&members), "{members}");
+}
+
 /// LLVM refuses a column past 16 bits, so a location or a block further along
 /// a line keeps the last column it can hold. Clang fails on the module without
 /// this, in a debug build only: a release build has no locations.

@@ -1,0 +1,10 @@
+name = "run_print_deep_struct"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "success"
+stdout_contains = [
+    "S399 { s: S398 { s: S397",
+    "S1 { s: S0 { n: 7 }",
+]

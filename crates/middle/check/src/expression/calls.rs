@@ -15,6 +15,7 @@ use model::thir::Expr;
 use model::thir::ExprKind;
 use model::thir::Local;
 use model::thir::Symbol;
+use rustc_hash::FxHashSet;
 use source::Span;
 
 use crate::builder::ThirBuilder;
@@ -266,12 +267,22 @@ fn constant_expr(constant: Option<Constant>) -> Expr {
 // lets each type say how it prints; then this rule and the backend's struct
 // and array printing (`llvm` `write_printed`, `array_printer`) go.
 fn printable(types: &Types, ty: TypeId) -> bool {
-    match types[ty] {
-        Type::Integer(_) | Type::Float(_) | Type::Bool | Type::CString => true,
-        Type::RawPointer { .. } => true,
-        Type::Reference { target, .. } => printable(types, target),
-        Type::Struct { ref fields, .. } => fields.iter().all(|&field| printable(types, field)),
-        Type::Array { base, .. } => printable(types, base),
-        _ => false,
+    // A list, not recursion, with each struct looked at once: structs hold
+    // structs as deep as the declarations nest, and can hold one many times.
+    let (mut reached, mut pending) = (FxHashSet::default(), vec![ty]);
+    while let Some(ty) = pending.pop() {
+        match types[ty] {
+            Type::Integer(_) | Type::Float(_) | Type::Bool | Type::CString => {}
+            Type::RawPointer { .. } => {}
+            Type::Reference { target, .. } => pending.push(target),
+            Type::Struct { ref fields, .. } => {
+                if reached.insert(ty) {
+                    pending.extend(fields);
+                }
+            }
+            Type::Array { base, .. } => pending.push(base),
+            _ => return false,
+        }
     }
+    true
 }

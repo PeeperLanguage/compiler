@@ -319,7 +319,7 @@ fn checks_structs_holding_structs_twice() {
     let chain: String = (1..40)
         .map(|i| format!("struct S{i} {{ a: S{0}, b: S{0} }}\n", i - 1))
         .collect();
-    let text = format!("struct S0 {{ n: i32 }}\n{chain}fn main() {{}}");
+    let text = format!("struct S0 {{ n: i32 }}\n{chain}fn show(s: &S39) {{ println(s.*); }}");
     assert_eq!(diagnostics(&[("app:main", &text)]), []);
 }
 
