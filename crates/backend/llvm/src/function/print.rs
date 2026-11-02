@@ -1,9 +1,10 @@
 //! Writing `print` and `println`: each value's text through the runtime,
-//! and the printer function of each array type.
+//! and the printer function of each struct and array type.
 
 use std::fmt::Write;
 
 use arena::Id;
+use model::DefId;
 use model::mir;
 use model::mir::Operand;
 use model::semantic_types::Float;
@@ -28,8 +29,8 @@ use model::layout::in_memory;
 impl Function<'_, '_, '_> {
     /// Writes the runtime calls that print `values` for the `print` `id`,
     /// a space between each, then a newline when `newline`, then a flush.
-    /// Text known at compile time (spaces, a struct's names, a constant
-    /// string up to its NUL) is gathered into one string between values.
+    /// Text known at compile time (spaces, a constant string up to its NUL)
+    /// is gathered into one string between values.
     pub(super) fn write_print(
         &mut self,
         out: &mut String,
@@ -129,58 +130,15 @@ impl Function<'_, '_, '_> {
                 let referred = format!("{path}.d");
                 self.write_printed(out, text, &referred, target, &referred, location);
             }
+            Type::Array { length: 0, .. } => text.extend_from_slice(b"[]"),
             // shortcut: structs and arrays print built in until a trait or
             // interface does (`check` `printable`).
-            Type::Struct {
-                definition,
-                ref fields,
-                ..
-            } => {
-                let program = self.module.program;
-                let name = project::declared_text(&program.modules, definition);
-                text.extend_from_slice(name.as_bytes());
-                let names = project::field_names(&program.modules, definition);
-                let placed = fields_placed(types, ty, self.module.target);
-                for (index, (field_name, &(offset, field))) in names.zip(&placed).enumerate() {
-                    text.extend_from_slice(if index == 0 { b" { " } else { b", " });
-                    text.extend_from_slice(field_name.as_bytes());
-                    text.extend_from_slice(b": ");
-                    // Its address, then its value unless that is kept in
-                    // memory. Numbered: a name made from the struct's would
-                    // grow with each struct in a struct, past LLVM's 1,024
-                    // bytes, where two names read as one.
-                    self.printed_fields += 1;
-                    let address = format!("%print.{}", self.printed_fields);
-                    _ = writeln!(
-                        out,
-                        "  {address} = getelementptr inbounds i8, ptr {value}, \
-                         i64 {offset}{location}"
-                    );
-                    let field_value = format!("{address}.f");
-                    let field_value = if in_memory(types, field) {
-                        address
-                    } else {
-                        let field_text = type_text(types, field);
-                        _ = writeln!(
-                            out,
-                            "  {field_value} = load {field_text}, ptr {address}{location}"
-                        );
-                        field_value
-                    };
-                    source::grow(|| {
-                        self.write_printed(out, text, &field_value, field, &field_value, location);
-                    });
-                }
-                text.extend_from_slice(if fields.is_empty() { b" {}" } else { b" }" });
-            }
-            Type::Array { length: 0, .. } => text.extend_from_slice(b"[]"),
-            Type::Array { .. } => {
-                // Each array in an array has its own printer, written from here.
-                let printer = source::grow(|| self.array_printer(ty));
-                text.push(b'[');
+            Type::Struct { .. } | Type::Array { .. } => {
+                // Each struct and array in one has its own printer, written
+                // from here.
+                let printer = source::grow(|| self.printer(ty));
                 self.write_print_text(out, text, location);
                 _ = writeln!(out, "  call void {printer}(ptr {value}){location}");
-                text.push(b']');
             }
             _ => unreachable!(
                 "check prints only numbers, `bool`, `cstr`, pointers, structs and arrays"
@@ -188,68 +146,119 @@ impl Function<'_, '_, '_> {
         }
     }
 
-    /// The private function that prints the elements of an array of the
-    /// type `ty`, given its address, with `, ` between each, as
-    /// `write_printed` prints any value: a loop, so the code does not grow
-    /// with the length. Written into the module the first time its type is
-    /// printed, then reused.
-    // shortcut: built in until a trait or interface prints arrays (`check`
+    /// Writes what prints the value of type `ty` at `address`, loaded first
+    /// unless it is kept in memory, inside a printer, after `text`.
+    fn write_printed_at(
+        &mut self,
+        out: &mut String,
+        text: &mut Vec<u8>,
+        address: &str,
+        ty: TypeId,
+    ) {
+        let none = DebugLocation(None);
+        if in_memory(self.types, ty) {
+            self.write_printed(out, text, address, ty, address, &none);
+            return;
+        }
+        let value = format!("{address}.v");
+        let value_text = type_text(self.types, ty);
+        _ = writeln!(out, "  {value} = load {value_text}, ptr {address}");
+        self.write_printed(out, text, &value, ty, &value, &none);
+    }
+
+    /// The private function that prints a value of the struct or array type
+    /// `ty`, given its address, as `write_printed` prints any value. One for
+    /// each type, not the fields written at each `print`, so the code does
+    /// not grow with how often a struct holds another. Written into the
+    /// module the first time its type is printed, then reused.
+    // shortcut: built in until a trait or interface prints them (`check`
     // `printable`).
-    pub(super) fn array_printer(&mut self, ty: TypeId) -> String {
-        let printers = &mut self.module.written.array_printers;
+    fn printer(&mut self, ty: TypeId) -> String {
+        let printers = &mut self.module.written.printers;
         let count = printers.len();
         let number = *printers.entry(ty).or_insert(count);
-        let name = format!("@print.array.{number}");
+        let name = format!("@print.{number}");
         if number < count {
             return name;
         }
-        let types = self.types;
-        let Type::Array {
-            element, length, ..
-        } = types[ty]
-        else {
-            unreachable!("only an array type has an array printer")
-        };
-        let (first, between) = (self.module.add_string(b""), self.module.add_string(b", "));
-        let none = DebugLocation(None);
-        let mut body = String::new();
         // This function's own `alloca`s, put in its entry block at the end.
         let caller_memory = std::mem::take(&mut self.memory);
+        let body = match self.types[ty] {
+            Type::Struct { definition, .. } => self.struct_printer_body(ty, definition),
+            Type::Array {
+                element, length, ..
+            } => self.array_printer_body(element, length),
+            _ => unreachable!("only a struct or array type has a printer"),
+        };
+        let memory = std::mem::replace(&mut self.memory, caller_memory);
+        // Unoptimized: it only calls the runtime, and clang's `-O2` of a chain
+        // of 20,000 took 21 s, against 4.5 s.
+        _ = writeln!(
+            self.module.private_functions,
+            "define private void {name}(ptr %value) noinline optnone {{\n\
+             entry:\n{memory}{body}  ret void\n}}\n"
+        );
+        name
+    }
+
+    /// The lines of a printer that print a struct's name and each field.
+    fn struct_printer_body(&mut self, ty: TypeId, definition: DefId) -> String {
+        let (types, program) = (self.types, self.module.program);
+        let mut text = project::declared_text(&program.modules, definition)
+            .as_bytes()
+            .to_vec();
+        let names = project::field_names(&program.modules, definition);
+        let placed = fields_placed(types, ty, self.module.target);
+        let mut body = String::new();
+        for (index, (field_name, &(offset, field))) in names.zip(&placed).enumerate() {
+            text.extend_from_slice(if index == 0 { b" { " } else { b", " });
+            text.extend_from_slice(field_name.as_bytes());
+            text.extend_from_slice(b": ");
+            let address = format!("%field.{index}");
+            _ = writeln!(
+                body,
+                "  {address} = getelementptr inbounds i8, ptr %value, i64 {offset}"
+            );
+            self.write_printed_at(&mut body, &mut text, &address, field);
+        }
+        text.extend_from_slice(if placed.is_empty() { b" {}" } else { b" }" });
+        self.write_print_text(&mut body, &mut text, &DebugLocation(None));
+        body
+    }
+
+    /// The lines of a printer that print an array's elements, with `, `
+    /// between each: a loop, so the code does not grow with the length.
+    fn array_printer_body(&mut self, element: TypeId, length: u64) -> String {
+        let (open, between) = (self.module.add_string(b"["), self.module.add_string(b", "));
+        let close = self.module.add_string(b"]");
+        let none = DebugLocation(None);
+        let mut body = String::new();
         // The pass ends in `step`, so the `phi` is right whatever blocks
         // printing an element adds.
         _ = writeln!(
             body,
-            "define private void {name}(ptr %array) {{\nentry:\n  br label %loop\nloop:\n  \
+            "  br label %loop\nloop:\n  \
              %index = phi i64 [ 0, %entry ], [ %next, %step ]\n  \
              %first = icmp eq i64 %index, 0\n  \
-             %separator = select i1 %first, ptr {first}, ptr {between}"
+             %separator = select i1 %first, ptr {open}, ptr {between}"
         );
         self.write_runtime_call(&mut body, PRINT_TEXT, "ptr %separator", &none);
         _ = writeln!(
             body,
-            "  %address = getelementptr inbounds {}, ptr %array, i64 %index",
-            memory_text(types, element, self.module.target)
+            "  %element = getelementptr inbounds {}, ptr %value, i64 %index",
+            memory_text(self.types, element, self.module.target)
         );
-        let value = if in_memory(types, element) {
-            "%address"
-        } else {
-            let element_text = type_text(types, element);
-            _ = writeln!(body, "  %element = load {element_text}, ptr %address");
-            "%element"
-        };
         let mut text = Vec::new();
-        self.write_printed(&mut body, &mut text, value, element, "%element", &none);
+        self.write_printed_at(&mut body, &mut text, "%element", element);
         self.write_print_text(&mut body, &mut text, &none);
         _ = writeln!(
             body,
             "  br label %step\nstep:\n  %next = add i64 %index, 1\n  \
              %more = icmp ult i64 %next, {length}\n  \
-             br i1 %more, label %loop, label %done\ndone:\n  ret void\n}}\n"
+             br i1 %more, label %loop, label %done\ndone:"
         );
-        let memory = std::mem::replace(&mut self.memory, caller_memory);
-        let body = body.replacen("entry:\n", &format!("entry:\n{memory}"), 1);
-        self.module.private_functions.push_str(&body);
-        name
+        self.write_runtime_call(&mut body, PRINT_TEXT, &format!("ptr {close}"), &none);
+        body
     }
 
     /// Writes the call that prints `text`, if any, and empties it.

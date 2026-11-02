@@ -340,9 +340,9 @@ fn debug_types_stop_at_deep_pointers() {
     assert!(text.contains("DW_TAG_pointer_type, baseType: null"));
 }
 
-/// Printing and debug info go through every struct in a chain. A field's name
-/// stays short, past LLVM's limit two would read as one, and the debug types
-/// stop where clang would run out of stack on them.
+/// Printing and debug info go through every struct in a chain: each struct
+/// prints in its own function, and the debug types stop where clang would run
+/// out of stack on them.
 #[test]
 fn deep_structs_print_and_have_debug_types() {
     const DEPTH: usize = 20_000;
@@ -352,10 +352,22 @@ fn deep_structs_print_and_have_debug_types() {
     let last = DEPTH - 1;
     let source = format!("struct S0 {{ n: i32 }}\n{chain}fn f(a: &S{last}) {{ println(a); }}");
     let text = ll(&source, "x86_64-linux");
-    let mut steps = text.lines().filter(|line| line.contains("= getelementptr"));
-    assert!(steps.all(|line| line.len() < 200), "{text}");
+    assert_eq!(text.matches("define private void @print.").count(), DEPTH);
     let members = text.matches("DW_TAG_member").count();
     assert!((4_900..5_100).contains(&members), "{members}");
+}
+
+/// Each struct holds the last twice, so code for each field at each `print`
+/// would be 2^40 fields' worth. One printer per struct is 40 functions.
+#[test]
+fn structs_holding_structs_twice_print_in_one_function_each() {
+    let chain: String = (1..40)
+        .map(|i| format!("struct S{i} {{ a: S{0}, b: S{0} }}\n", i - 1))
+        .collect();
+    let source = format!("struct S0 {{ n: i32 }}\n{chain}fn f(a: &S39) {{ println(a); }}");
+    let text = ll(&source, "x86_64-linux");
+    assert_eq!(text.matches("define private void @print.").count(), 40);
+    assert_eq!(text.matches("call void @print.").count(), 2 * 39 + 1);
 }
 
 /// LLVM refuses a column past 16 bits, so a location or a block further along

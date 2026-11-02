@@ -46,7 +46,7 @@ pub struct Module<'p> {
     module: ModuleId,
     functions: String, // each `define`
     strings: String,   // each string constant's global
-    /// The `define` of each array printer (`Function::array_printer`) and
+    /// The `define` of each printer (`Function::printer`) and
     /// range filler (`Function::range_filler`).
     private_functions: String,
     /// The `declare` of each function called, by symbol; sorted, so the text
@@ -60,10 +60,10 @@ pub struct Module<'p> {
 /// What the module has written so far, so each is written once.
 #[derive(Default)]
 struct Written {
-    strings: FxHashMap<Vec<u8>, usize>,       // each string's number
-    array_printers: FxHashMap<TypeId, usize>, // each array type's printer number
-    range_fillers: FxHashMap<TypeId, usize>,  // each element type's filler number
-    functions: HashSet<String>,               // each `define`'s symbol
+    strings: FxHashMap<Vec<u8>, usize>,      // each string's number
+    printers: FxHashMap<TypeId, usize>,      // each struct and array type's printer number
+    range_fillers: FxHashMap<TypeId, usize>, // each element type's filler number
+    functions: HashSet<String>,              // each `define`'s symbol
 }
 
 impl<'p> Module<'p> {

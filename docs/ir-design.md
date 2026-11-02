@@ -706,9 +706,11 @@ one walk per function (`peeper -dump ll` shows it):
   or `%result`, which the slice may view.
 - `print` and `println` call the runtime's print functions, one per number,
   `bool`, `cstr` or pointer, with the text known at compile time (spaces,
-  struct names, brackets) gathered into one string between them. An array
-  prints through a private function per array type that loops over its
-  elements, so the code does not grow with the length.
+  struct names, brackets) gathered into one string between them. A struct or
+  array prints through a private function per type, which calls those of the
+  structs and arrays in it, and an array's loops over its elements, so the
+  code grows with neither the length nor how often a struct holds another.
+  Each is `noinline optnone`: it only calls the runtime.
 
 `peeper build [-o program] [path]` and `peeper run [path] [-- arguments...]`
 work as the Go compiler's did, except that `run` takes the program's

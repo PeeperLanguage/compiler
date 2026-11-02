@@ -2,10 +2,10 @@ source_filename = "<fixture>/src/main.peep"
 
 %slice = type { ptr, i64 }
 
-@.str.0 = private unnamed_addr constant [1 x i8] c"\00"
+@.str.0 = private unnamed_addr constant [2 x i8] c"[\00"
 @.str.1 = private unnamed_addr constant [3 x i8] c", \00"
-@.str.2 = private unnamed_addr constant [2 x i8] c"[\00"
-@.str.3 = private unnamed_addr constant [3 x i8] c"]\0A\00"
+@.str.2 = private unnamed_addr constant [2 x i8] c"]\00"
+@.str.3 = private unnamed_addr constant [2 x i8] c"\0A\00"
 
 define void @"ll_array_ranges:main.known"(ptr %result) !dbg !7 {
 entry:
@@ -67,8 +67,7 @@ entry:
   br label %bb0
 bb0:
   call void @"ll_array_ranges:main.known"(ptr %i0), !dbg !19
-  call void (ptr) @"peeper_rt_v1_print_text"(ptr @.str.2), !dbg !20
-  call void @print.array.0(ptr %i0), !dbg !20
+  call void @print.0(ptr %i0), !dbg !20
   call void (ptr) @"peeper_rt_v1_print_text"(ptr @.str.3), !dbg !20
   call void () @"peeper_rt_v1_flush"(), !dbg !20
   ret void, !dbg !21
@@ -91,26 +90,27 @@ done:
   ret void
 }
 
-define private void @print.array.0(ptr %array) {
+define private void @print.0(ptr %value) noinline optnone {
 entry:
-  %element.m = alloca i64
+  %element.v.m = alloca i64
   br label %loop
 loop:
   %index = phi i64 [ 0, %entry ], [ %next, %step ]
   %first = icmp eq i64 %index, 0
   %separator = select i1 %first, ptr @.str.0, ptr @.str.1
   call void (ptr) @"peeper_rt_v1_print_text"(ptr %separator)
-  %address = getelementptr inbounds i32, ptr %array, i64 %index
-  %element = load i32, ptr %address
-  %element.x = sext i32 %element to i64
-  store i64 %element.x, ptr %element.m
-  call void (i32, i32, ptr) @"peeper_rt_v2_print_int"(i32 1, i32 1, ptr %element.m)
+  %element = getelementptr inbounds i32, ptr %value, i64 %index
+  %element.v = load i32, ptr %element
+  %element.v.x = sext i32 %element.v to i64
+  store i64 %element.v.x, ptr %element.v.m
+  call void (i32, i32, ptr) @"peeper_rt_v2_print_int"(i32 1, i32 1, ptr %element.v.m)
   br label %step
 step:
   %next = add i64 %index, 1
   %more = icmp ult i64 %next, 6
   br i1 %more, label %loop, label %done
 done:
+  call void (ptr) @"peeper_rt_v1_print_text"(ptr @.str.2)
   ret void
 }
 

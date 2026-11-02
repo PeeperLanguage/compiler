@@ -237,8 +237,7 @@ ran `check.sh` fully green.
   `StructType::checkBody` walks the structs already read. Bytes need neither.
 - **Not done:** the step after `flow` that turns places into addresses and
   `Check`s, which would also end the interpreter's copy of the walk
-  (`places.rs`). Printing a value whose struct holds the last one twice writes
-  2^n prints, as struct printing is inline. `browser smoke` crashes node now
+  (`places.rs`). `browser smoke` crashes node now
   and then: 1 in 40 at `728f799e`, before flat arrays, and also seen on this
   branch; older than this work, cause not found.
 - **Review:** comments, the plan and two fixture headers still said LLVM saw
@@ -246,3 +245,16 @@ ran `check.sh` fully green.
   it guarded struct types reaching a module's LLVM text, and there are none.
   Open: `fields_placed` rebuilds a struct's list per access, which costs a
   10,000-field struct about 100 million field layouts.
+- **Printers:** a struct printed its fields inline at each `print`, so a struct
+  holding the last one twice wrote 2^n prints: 24 levels passed 2 GB at build.
+  Each struct or array type now has one `@print.N`, which calls the ones of what
+  it holds; 24 levels builds in 0.05 s. `printed_fields` and the name-length
+  guard went: names no longer grow with the path. Printers are `noinline
+  optnone`: clang's `-O2` on 20,000 of them in a chain took 21 s, 4.5 s with
+  this, against 0.4 s inline. Only such a chain pays; output is unchanged on
+  x86_64 and i686, debug and release, and on the interpreter. A run now recurses
+  one call per level. Printing 2 million structs in a loop went from 3,004 M to
+  3,934 M instructions, 0.79 s to 0.94 s: about 60% is `strlen` and `memmove` of
+  text split at each printer, 13% is `optnone`.
+- **Open:** a struct literal nested 300,000 deep overflows the stack in `check`,
+  before and after this work; 20,000 is fine.

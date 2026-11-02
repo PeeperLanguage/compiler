@@ -80,7 +80,6 @@ impl Module<'_> {
             panics: String::new(),
             current: CurrentBlock::default(),
             memory: String::new(),
-            printed_fields: 0,
         };
         // Written straight onto the module's functions, taken out while
         // `function` borrows the module.
@@ -271,7 +270,6 @@ struct Function<'m, 'p, 'b> {
     // many times needs that many copies of stack; share slots or move
     // without a copy when a real program hits the stack limit.
     memory: String,
-    printed_fields: usize, // the struct fields printed so far, which number their names
 }
 
 /// The function's debug info nodes, by what they describe; empty in a

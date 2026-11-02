@@ -1,5 +1,5 @@
-// Printing a struct goes through each struct in it, past where a name built
-// from the path would be longer than LLVM keeps, about 340 levels down.
+// Printing a struct goes through each struct in it: each prints in its own
+// function, which calls the next, here 400 levels down.
 struct S0 { n: i32 }
 struct S1 { s: S0 }
 struct S2 { s: S1 }

@@ -265,7 +265,7 @@ fn constant_expr(constant: Option<Constant>) -> Expr {
 /// to one.
 // shortcut: structs and arrays print built in until a trait or interface
 // lets each type say how it prints; then this rule and the backend's struct
-// and array printing (`llvm` `write_printed`, `array_printer`) go.
+// and array printing (`llvm` `write_printed`, `printer`) go.
 fn printable(types: &Types, ty: TypeId) -> bool {
     // A list, not recursion, with each struct looked at once: structs hold
     // structs as deep as the declarations nest, and can hold one many times.
