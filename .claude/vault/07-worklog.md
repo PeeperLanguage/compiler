@@ -288,3 +288,13 @@ ran `check.sh` fully green.
   stack. Each of four bugs put back fails a test: the walk in `holds_loans`
   hangs, no limit runs out of memory, a false `mutable_holder` fails
   `run_struct_references`, a wrong count fails the limit's test.
+
+## 2026-11-02 Internals of a type (branch `fix/holder-count`)
+
+- **Problem:** `Type::Struct` and `Type::Array` mixed what the source says
+  (`definition`, `fields`, `element`, `length`) with what the compiler works out
+  (`size`, `align`, `holders`, `mutable_holder`, `base`, `count`).
+- **Fix:** the worked-out values move into `StructInternals` and
+  `ArrayInternals`, inside the type: every phase reads them, so a side table
+  would be a parallel list and an extra lookup. Output does not change. The name
+  is the owner's call: they are only for the compiler's own low-level work.

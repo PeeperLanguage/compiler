@@ -2,6 +2,7 @@ use super::Conversion;
 use super::FIXED;
 use super::Float;
 use super::Integer;
+use super::StructInternals;
 use super::Type;
 use super::TypeId;
 use super::Types;
@@ -226,10 +227,12 @@ fn type_text() {
     let complete = types.intern(Type::Struct {
         definition: declaration(0),
         fields: [TypeId::I32, TypeId::I32].into(),
-        size: 8,
-        align: 4,
-        holders: 0,
-        mutable_holder: false,
+        internals: StructInternals {
+            size: 8,
+            align: 4,
+            holders: 0,
+            mutable_holder: false,
+        },
     });
     let raw = TypeId::RAWPTR;
     let typed = types.intern(Type::RawPointer { target: Some(raw) });
@@ -274,10 +277,10 @@ fn arrays_in_arrays_keep_their_base_and_count() {
     let mut types = Types::new(64);
     let row = types.array(TypeId::I32, 3);
     let grid = types.array(row, 2);
-    let Type::Array { base, count, .. } = types[grid] else {
+    let Type::Array { internals, .. } = types[grid] else {
         panic!("an array");
     };
-    assert_eq!((base, count), (TypeId::I32, 6));
+    assert_eq!((internals.base, internals.count), (TypeId::I32, 6));
     assert_eq!(types.array_lengths(grid).collect::<Vec<_>>(), [2, 3]);
     assert_eq!(types.array_lengths(TypeId::I32).count(), 0);
     let row_alias = types.intern(Type::Alias {
@@ -288,12 +291,12 @@ fn arrays_in_arrays_keep_their_base_and_count() {
         real: row,
     });
     let through_alias = types.array(row_alias, 2);
-    let Type::Array { base, count, .. } = types[through_alias] else {
+    let Type::Array { internals, .. } = types[through_alias] else {
         panic!("an array");
     };
-    assert_eq!((base, count), (TypeId::I32, 6));
+    assert_eq!((internals.base, internals.count), (TypeId::I32, 6));
     let count_of = |types: &Types, ty| match types[ty] {
-        Type::Array { count, .. } => count,
+        Type::Array { internals, .. } => internals.count,
         _ => panic!("an array"),
     };
     let huge = types.array(TypeId::I32, u64::MAX);

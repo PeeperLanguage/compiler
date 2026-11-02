@@ -96,6 +96,30 @@ impl Integer {
     }
 }
 
+/// What the compiler works out from a struct's fields, once, so that nothing
+/// walks them again: they nest as deep as the declarations do and can repeat.
+/// None of it is written in the source. `define_struct` makes it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct StructInternals {
+    /// Its `layout` for the target.
+    pub size: u64,
+    pub align: u64,
+    /// What `holders_in` gives for it, and whether one of those is mutable.
+    pub holders: usize,
+    pub mutable_holder: bool,
+}
+
+/// What the compiler works out from an array's element, once, so that a size
+/// and a copy check need not walk the levels of arrays in arrays, which nest
+/// as deep as the source does. `Types::array` makes it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ArrayInternals {
+    /// What the arrays in arrays end in, never an array.
+    pub base: TypeId,
+    /// How many of `base` there are in all.
+    pub count: u64,
+}
+
 /// A float type: IEEE 754 single or double precision.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Float {
@@ -148,27 +172,14 @@ pub enum Type {
     Struct {
         definition: DefId,
         fields: Box<[TypeId]>,
-        /// Its `layout` for the target: its declaration found them from its
-        /// fields', so that `layout` need not walk the structs in it, which
-        /// nest as deep as the declarations do and can repeat.
-        size: u64,
-        align: u64,
-        /// What `holders_in` and `holds_loans` give for it, kept for the same
-        /// reason.
-        holders: usize,
-        mutable_holder: bool,
+        internals: StructInternals,
     },
     /// `[length]element`: `length` values of the `element` type, one after
     /// another.
     Array {
         element: TypeId,
         length: u64,
-        /// What the arrays in arrays end in, never an array; and how many of
-        /// it there are in all. `Types::array` finds them, so that a size and
-        /// a copy check need not walk the levels, which nest as deep as the
-        /// source does.
-        base: TypeId,
-        count: u64,
+        internals: ArrayInternals,
     },
     /// `range[element]`: the integers from a start toward an end, a step
     /// apart, up or down; its fields are `range_fields`. `step` is the
@@ -513,14 +524,14 @@ impl Types {
     /// The type `[length]element`.
     pub fn array(&mut self, element: TypeId, length: u64) -> TypeId {
         let (base, inner) = match self[element] {
-            Type::Array { base, count, .. } => (base, count),
+            Type::Array { internals, .. } => (internals.base, internals.count),
             _ => (self.real(element), 1),
         };
+        let count = inner.saturating_mul(length);
         self.intern(Type::Array {
             element,
             length,
-            base,
-            count: inner.saturating_mul(length),
+            internals: ArrayInternals { base, count },
         })
     }
 
@@ -542,8 +553,12 @@ impl Types {
     /// `align` bytes, under its id, so a `*T` written before `T` was complete
     /// is the `*T` of after.
     pub fn define_struct(&mut self, named: TypeId, fields: Box<[TypeId]>, size: u64, align: u64) {
-        let holders = self.holders_of(&fields);
-        let mutable_holder = (fields.iter()).any(|&field| self.holds_loans(field) == Some(true));
+        let internals = StructInternals {
+            size,
+            align,
+            holders: self.holders_of(&fields),
+            mutable_holder: (fields.iter()).any(|&field| self.holds_loans(field) == Some(true)),
+        };
         let slot = &mut self.types[named.0 as usize];
         let Type::Named(definition) = *slot else {
             unreachable!("only a declared name becomes a struct");
@@ -551,10 +566,7 @@ impl Types {
         *slot = Type::Struct {
             definition,
             fields,
-            size,
-            align,
-            holders,
-            mutable_holder,
+            internals,
         };
     }
 
@@ -649,11 +661,9 @@ impl Types {
     /// reference, a slice, or a struct with one in a field, however deep.
     pub fn holds_loans(&self, id: TypeId) -> Option<bool> {
         match self[id] {
-            Type::Struct {
-                holders,
-                mutable_holder,
-                ..
-            } => (holders > 0).then_some(mutable_holder),
+            Type::Struct { internals, .. } => {
+                (internals.holders > 0).then_some(internals.mutable_holder)
+            }
             ref other => other.borrows(),
         }
     }
@@ -662,7 +672,7 @@ impl Types {
     /// either, its fields' for a struct, as no other type holds one.
     pub fn holders_in(&self, id: TypeId) -> usize {
         match self[id] {
-            Type::Struct { holders, .. } => holders,
+            Type::Struct { internals, .. } => internals.holders,
             ref other => usize::from(other.borrows().is_some()),
         }
     }
@@ -687,7 +697,7 @@ impl Types {
             | Type::RawPointer { .. }
             | Type::Range { .. } => true,
             Type::Reference { mutable, .. } | Type::Slice { mutable, .. } => !mutable,
-            Type::Array { base, .. } => self.is_copy(base),
+            Type::Array { internals, .. } => self.is_copy(internals.base),
             Type::Struct { .. } => false,
             // No value of these is moved: an error, nothing, or not yet a value.
             Type::Invalid | Type::Void | Type::Function { .. } => true,
@@ -757,12 +767,12 @@ impl Types {
             Type::Named(definition) | Type::Struct { definition, .. } => {
                 name_of(*definition).to_string()
             }
-            Type::Array { base, .. } => {
+            Type::Array { internals, .. } => {
                 let mut text = String::new();
                 for length in self.array_lengths(id) {
                     _ = write!(text, "[{length}]");
                 }
-                text + &self.real_text(*base, name_of)
+                text + &self.real_text(internals.base, name_of)
             }
             Type::Range { element, .. } => {
                 format!("{RANGE}[{}]", self.real_text(*element, name_of))

@@ -41,15 +41,15 @@ pub fn layout(types: &Types, ty: TypeId, target: &Machine) -> (u64, u64) {
             let bytes = u64::from(target.pointer_bits / 8);
             (2 * bytes, bytes)
         }
-        Type::Struct { size, align, .. } => (size, align),
+        Type::Struct { internals, .. } => (internals.size, internals.align),
         Type::Range { element, step } => {
             let fields = range_fields(element, step).map(|(_, ty)| ty);
             let (_, size, align) = struct_layout(types, &fields, target);
             (size, align)
         }
-        Type::Array { base, count, .. } => {
-            let (size, align) = layout(types, base, target);
-            (size.saturating_mul(count), align)
+        Type::Array { internals, .. } => {
+            let (size, align) = layout(types, internals.base, target);
+            (size.saturating_mul(internals.count), align)
         }
         Type::Invalid | Type::Void | Type::Function { .. } | Type::Named(_) => {
             unreachable!("no value is laid out with this type")

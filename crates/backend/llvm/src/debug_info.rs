@@ -170,8 +170,8 @@ impl Metadata {
                 return Some(composite);
             }
             // One node with a range per level, as C's debug info has.
-            Type::Array { base, .. } => {
-                let base = self.debug_type(program, types, base, target);
+            Type::Array { internals, .. } => {
+                let base = self.debug_type(program, types, internals.base, target);
                 let base = base.expect("an element has a value's type");
                 let ranges: Vec<usize> = (types.array_lengths(ty))
                     .map(|length| self.add(format_args!("!DISubrange(count: {length})")))

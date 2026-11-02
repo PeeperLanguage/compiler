@@ -473,14 +473,14 @@ fn hash_type(checker: &Checker, id: TypeId, hasher: &mut DefaultHasher) {
             let (name, file) = project::declared_name(checker.modules, *definition);
             name.text(file).hash(hasher);
         }
-        Type::Array { base, .. } => {
+        Type::Array { internals, .. } => {
             // Lengths are any number: the count keeps one from reading as
             // the type after it.
             checker.types.array_lengths(id).count().hash(hasher);
             for length in checker.types.array_lengths(id) {
                 length.hash(hasher);
             }
-            hash_type(checker, *base, hasher);
+            hash_type(checker, internals.base, hasher);
         }
         Type::Range { element, .. } => hash_type(checker, *element, hasher), // `step` follows
         Type::Reference { mutable, target }

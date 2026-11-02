@@ -280,7 +280,7 @@ fn printable(types: &Types, ty: TypeId) -> bool {
                     pending.extend(fields);
                 }
             }
-            Type::Array { base, .. } => pending.push(base),
+            Type::Array { internals, .. } => pending.push(internals.base),
             _ => return false,
         }
     }

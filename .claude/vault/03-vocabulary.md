@@ -30,6 +30,8 @@ The codebase's fixed terms: use these words, with these meanings.
 - `DefId { module, index }`: a top-level declaration by its index in the
   tree; memo tables are vectors indexed by it.
 - `TypeId(u32)`: an interned type; equal types have equal ids.
+- `StructInternals`, `ArrayInternals`: what the compiler works out from a struct's
+  fields or an array's element, kept inside the type so nothing walks them again.
 - `Id<T>`: an index into an `Arena<T>`. In `flow::loans`, `Id<Holder>` and
   `Id<Loan>` name holders and loans, which have no stored node.
 - Module identity is its import path string `package:path`
