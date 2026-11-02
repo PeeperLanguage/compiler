@@ -32,7 +32,10 @@ forgotten or invented.
     (branch `fix/flat-arrays`).
 17. [x] Structs keep their size and alignment, and LLVM sees every value kept
     in memory as bytes (branch `fix/struct-chain`).
-18. [ ] Owner: decide the open findings below. Benchmark for the fourteen commits: +1.69% instructions,
+18. [x] Playground projects: the browser takes a real project with
+    `peeper.toml`, through `project::project_in` (branch
+    `feature/playground-project`).
+19. [ ] Owner: decide the open findings below. Benchmark for the fourteen commits: +1.69% instructions,
     accepted in review.
 
 ## Open findings (not changed; each needs an owner decision or is small)

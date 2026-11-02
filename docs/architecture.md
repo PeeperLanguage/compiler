@@ -166,9 +166,9 @@ this rule (#165 came from breaking it).
 | `literal` | rules of literal text shared by the phases: values of string, character and byte literals, and number literals (base, digits, suffix) in `literal::numeric` | string rules split out of the lexer; number rules rewritten, old ones were regex based |
 | `parser` (tree in `model::ast`) | syntax tree, parsing | old frontend, reviewed (parser only parses) |
 | `diagnostics` | one diagnostic value and how it is printed | rewritten small; the old Go emitter and `suggest.go` reviewed |
-| `project` | import resolution from a package map, workers, graph, cycles; `project::manifest` reads `peeper.toml` in one folder (the project name) | new; ideas from old loader/resolver |
+| `project` | import resolution from a package map, workers, graph, cycles; `project::manifest` reads `peeper.toml` in one folder (the project name), and `project_in` makes the project from it for the command line and the browser alike | new; ideas from old loader/resolver |
 | `peeper` | the command line: `check`, `fix`, `build`, `run`, `init`, `lsp` | new |
-| `browser` | what a web page runs, built for `wasm32-wasip1`: files in as JSON, diagnostics out, and for a run what the program printed and its exit code, with no backend | new |
+| `browser` | what a web page runs, built for `wasm32-wasip1`: a project's files in as JSON (its `peeper.toml` and `src`), diagnostics out, and for a run what the program printed and its exit code, with no backend | new |
 
 Every item brought back from the old code passes three questions first: is it
 needed now, is it the simplest form, does something else already do it.

@@ -260,7 +260,7 @@ pub fn find(path: &Path, libraries: &Path) -> Result<Project, String> {
     let is_dir = std::fs::metadata(&path)
         .map_err(|error| format!("{}: {error}", path.display()))?
         .is_dir();
-    let mut packages = bundled_libraries(libraries);
+    let packages = bundled_libraries(libraries);
     if !is_dir {
         let root = path.parent().unwrap_or(Path::new("")).to_path_buf();
         let name = path
@@ -276,21 +276,32 @@ pub fn find(path: &Path, libraries: &Path) -> Result<Project, String> {
         });
     }
     let manifest = manifest::read(&path)?;
+    project_in(path, manifest, packages)
+}
+
+/// The project in the folder `root`, which `manifest` describes, beside the
+/// bundled libraries `packages`. The error is a full message naming the file
+/// it is about.
+pub fn project_in(
+    root: PathBuf,
+    manifest: manifest::Manifest,
+    mut packages: HashMap<String, PathBuf>,
+) -> Result<Project, String> {
     if packages.contains_key(&manifest.name) {
-        let file = path.join(manifest::FILE_NAME);
+        let file = root.join(manifest::FILE_NAME);
         return Err(format!(
             "{}: project name `{}` is taken by a bundled library",
             file.display(),
             manifest.name
         ));
     }
-    let source = path.join(SOURCE_FOLDER);
+    let source = root.join(SOURCE_FOLDER);
     let entry = entry(&source);
     packages.insert(manifest.name.clone(), source);
     Ok(Project {
         packages,
         entry,
-        root: path,
+        root,
         name: manifest.name,
     })
 }

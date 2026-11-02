@@ -298,3 +298,18 @@ ran `check.sh` fully green.
   `ArrayInternals`, inside the type: every phase reads them, so a side table
   would be a parallel list and an extra lookup. Output does not change. The name
   is the owner's call: they are only for the compiler's own low-level work.
+
+## 2026-11-02 Playground projects (branch `feature/playground-project`)
+
+- **Problem:** the browser build invented the package name `playground`, so a
+  page could not be a real project: no `peeper.toml`, and a name that differed
+  from what the command line would use.
+- **Fix:** `manifest::parse` reads manifest text, `project::project_in` makes a
+  `Project` from a parsed manifest, and both `project::find` and the browser's
+  `load` use it, so the two cannot disagree. The browser takes `peeper.toml` and
+  `src/...` in its JSON. A missing or bad manifest is one entry on `peeper.toml`
+  at 1:1 with an empty code. The website side lives in the Website repository on
+  the same branch name.
+- **Evidence:** `scripts/check.sh` passes all ten steps; a Chrome run of the
+  playground covers `playground:helper`, a rename to `myapp`, and a bad
+  manifest. Four mutations put back in the compiler each fail a test.

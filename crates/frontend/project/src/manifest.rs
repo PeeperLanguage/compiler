@@ -32,6 +32,12 @@ pub fn read(dir: &Path) -> Result<Manifest, String> {
         }
         Err(error) => return Err(format!("{}: {error}", file.display())),
     };
+    parse(&text, &file)
+}
+
+/// What the project file text says. An error names `file`, the path it came
+/// from.
+pub fn parse(text: &str, file: &Path) -> Result<Manifest, String> {
     let document: toml_edit::DocumentMut = text
         .parse()
         .map_err(|error| format!("{}: {error}", file.display()))?;
