@@ -166,7 +166,8 @@ impl Function<'_, '_, '_> {
             }
             Type::Array { length: 0, .. } => text.extend_from_slice(b"[]"),
             Type::Array { .. } => {
-                let printer = self.array_printer(ty);
+                // Each array in an array has its own printer, written from here.
+                let printer = source::grow(|| self.array_printer(ty));
                 text.push(b'[');
                 self.write_print_text(out, text, location);
                 _ = writeln!(out, "  call void {printer}(ptr {value}){location}");
@@ -194,7 +195,10 @@ impl Function<'_, '_, '_> {
             return name;
         }
         let types = self.types;
-        let Type::Array { element, length } = types[ty] else {
+        let Type::Array {
+            element, length, ..
+        } = types[ty]
+        else {
             unreachable!("only an array type has an array printer")
         };
         let (first, between) = (self.module.add_string(b""), self.module.add_string(b", "));
@@ -214,8 +218,8 @@ impl Function<'_, '_, '_> {
         self.write_runtime_call(&mut body, PRINT_TEXT, "ptr %separator", &none);
         _ = writeln!(
             body,
-            "  %address = getelementptr inbounds {}, ptr %array, i64 0, i64 %index",
-            type_text(types, ty)
+            "  %address = getelementptr inbounds {}, ptr %array, i64 %index",
+            type_text(types, element)
         );
         let value = if in_memory(types, element) {
             "%address"

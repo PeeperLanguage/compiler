@@ -271,7 +271,7 @@ fn printable(types: &Types, ty: TypeId) -> bool {
         Type::RawPointer { .. } => true,
         Type::Reference { target, .. } => printable(types, target),
         Type::Struct { ref fields, .. } => fields.iter().all(|&field| printable(types, field)),
-        Type::Array { element, .. } => printable(types, element),
+        Type::Array { base, .. } => printable(types, base),
         _ => false,
     }
 }

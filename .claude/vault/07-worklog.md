@@ -112,6 +112,46 @@ Newest last. Each entry: commit, what changed, evidence, what was not done.
 - **Evidence:** test `columns_past_16_bits_stop_at_the_last_one` fails without
   the limit. An 88 KB line builds and runs in debug on both targets.
 
+## 2026-11-02 Flat arrays (branch `fix/flat-arrays`)
+
+- **Problem:** a nested array was a chain of types, and each part of the compiler
+  walked it again: `layout`, `is_copy`, `printable`, `real_text`, `hash_type`,
+  `debug_type`, `type_text`, and the printers. LLVM got the same nesting, and
+  clang crashes parsing a nested array type at 50,000 levels (nested debug
+  info is fine; tested by hand).
+- **Fix:** `Types::array` is the one writer of `Type::Array`, which also keeps
+  `base` and `count`, a derived fact stored on purpose (RULES 5.1, owner's
+  approval): recomputing it was the fault. LLVM gets `[count x base]`. An index
+  into an array of arrays starts its own `getelementptr` on the element; debug
+  info has one node with a range per level, as C's. `array_lengths` is the one
+  walk of the levels. A pointer breaks a flat array (`[1]*[1]*...i32`), so
+  `real_text`, `hash_type` and `debug_type` keep a `grow` on the pointer, which
+  covers plain `***...i32` too. Printing keeps one, as each level has its own
+  printer. Clang runs out of its 8 MB stack on deep debug types (16 MB passes)
+  and `unsafe` is forbidden, so peeper cannot raise it: `debug_type` follows
+  5,000 pointers, then writes an untyped pointer (`shortcut:` in the code).
+  Only debug info stops there; the language has no limit.
+- `hash_type` hashes the number of levels first: without it a length read as
+  the next type's kind, and `[2][11]i32` and `[2]range[i32]` hashed the same (found in
+  review, tested by `an_array_length_does_not_read_as_a_type`).
+- **Evidence:** 50,000 levels: check 6 s to 0.06 s, debug build 0.39 s (it
+  was a clang crash), with print 7.8 s and 45 s in release (one printer per
+  level). 200,000 levels: check 0.19 s, debug build with print 27 s. A
+  2,000-level print runs natively and on the interpreter. Output is the same
+  as the old compiler's on the mixed program, on the alias program (x86_64,
+  i686, interpreter) and on 6,000 fuzz programs (no crashes). Everyday compile:
+  3,768 M instructions against 3,769.4 M, within noise. Extern signatures
+  reject arrays, so no C call depends on the type's shape, and a flat array has
+  the same bytes.
+- **Not done:** a debug build of 30,000 structs, each holding the last,
+  overflows the stack, old and new, after 99 s: `layout` walks the rest of the
+  chain for every struct, unguarded. Deep print still grows with depth, as each level has its own
+  printer: at 200,000 levels a release build passes the 60 s limit and a debug
+  build uses 1.7 GB. `hash_type` hashes each declaration's whole chain, so 50,000
+  aliases each one level deeper than the last take about 26 s to check (39 s before).
+  `[18446744073709551615]Empty` fails in a debug build, old and new: clang's
+  debug info limits a count to `i64`.
+
 ## Measured and rejected
 
 - Reserving `llvm` `Function::locations` to its bound: +0.6% instructions

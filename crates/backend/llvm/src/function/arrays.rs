@@ -46,13 +46,12 @@ impl Function<'_, '_, '_> {
         };
         let (pointer, number) = (self.module.target.pointer_bits, type_text(types, element));
         let memory = self.value_address(out, id, ty, rest);
-        let array = type_text(types, ty);
         let mut offset = "0".to_string();
         for (index, (&part, count)) in parts.iter().zip(&counts).enumerate() {
             let address = format!("{name}.{index}");
             _ = writeln!(
                 out,
-                "  {address} = getelementptr inbounds {array}, ptr {memory}, i32 0, \
+                "  {address} = getelementptr inbounds {number}, ptr {memory}, \
                  i{pointer} {offset}{location}"
             );
             if let Type::Range { .. } = types[self.body.operand_type(part)] {
@@ -112,7 +111,10 @@ impl Function<'_, '_, '_> {
         location: &DebugLocation,
     ) -> Vec<String> {
         let (types, name) = (self.types, value_name(id));
-        let Type::Array { element, length } = types[self.body.instructions[id].ty] else {
+        let Type::Array {
+            element, length, ..
+        } = types[self.body.instructions[id].ty]
+        else {
             unreachable!("array parts make an array")
         };
         let pointer = self.module.target.pointer_bits;

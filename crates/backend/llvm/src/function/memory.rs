@@ -178,9 +178,30 @@ impl Function<'_, '_, '_> {
             .peekable();
         while let Some((run, steps)) = runs.next() {
             let run_type = ty;
+            // Each `getelementptr` of this run: its first step, the type it
+            // steps through and what starts it. A slice's elements, after its
+            // dereference, start at the loaded address, so the first index
+            // steps from there. An array in an array is one flat LLVM array,
+            // so an index into it cannot be a further step: it starts one of
+            // its own, on the element.
+            let mut pieces = vec![match self.types[run_type] {
+                Type::Slice { element, .. } if run > 0 => (0, element, ""),
+                _ => (0, run_type, ", i32 0"),
+            }];
             // Each index not known at compile time, checked against its
             // array's length, and `renamed` when it is not an `i64`.
             for (position, &step) in steps.iter().enumerate() {
+                if let (
+                    mir::Projection::Index(_) | mir::Projection::Subslice(_),
+                    &Type::Array { element, .. },
+                ) = (step, &self.types[ty])
+                    && let Type::Array { .. } = self.types[element]
+                {
+                    if position == 0 {
+                        pieces.clear();
+                    }
+                    pieces.push((position, element, ""));
+                }
                 ty = match (step, &self.types[ty]) {
                     (mir::Projection::Field(index), Type::Struct { fields, .. }) => {
                         fields[index as usize]
@@ -267,38 +288,43 @@ impl Function<'_, '_, '_> {
                     write!(out, "{address}.{run}.f")
                 }
             });
-            // A slice's elements, after its dereference, start at the loaded
-            // address, so the first index steps from there.
-            _ = match self.types[run_type] {
-                Type::Slice { element, .. } if run > 0 => write!(
+            for (piece, &(start, stepped, opening)) in pieces.iter().enumerate() {
+                let from = fmt::from_fn(|out| match piece {
+                    0 => base.fmt(out),
+                    _ => write!(out, "{address}.{run}.h{piece}"),
+                });
+                let next = pieces.get(piece + 1);
+                let to = fmt::from_fn(|out| match next {
+                    None => run_address.fmt(out),
+                    Some(_) => write!(out, "{address}.{run}.h{}", piece + 1),
+                });
+                _ = write!(
                     out,
-                    "  {run_address} = getelementptr inbounds {}, ptr {base}",
-                    type_text(self.types, element)
-                ),
-                _ => write!(
-                    out,
-                    "  {run_address} = getelementptr inbounds {}, ptr {base}, i32 0",
-                    type_text(self.types, run_type)
-                ),
-            };
-            for (position, &step) in steps.iter().enumerate() {
-                _ = match step {
-                    mir::Projection::Field(index) => write!(out, ", i32 {index}"),
-                    mir::Projection::Index(index) if renamed(index) => {
-                        write!(out, ", i64 {address}.{run}.{position}")
-                    }
-                    mir::Projection::Index(index) => write!(out, ", i64 {}", self.operand(index)),
-                    mir::Projection::Subslice(subslice) => {
-                        let start = self.body.subslices[subslice.index()].start;
-                        let bits = self.module.target.pointer_bits;
-                        write!(out, ", i{bits} {}", self.operand(start))
-                    }
-                    mir::Projection::Dereference | mir::Projection::SliceElements => {
-                        unreachable!("split at each step out of its storage")
-                    }
-                };
+                    "  {to} = getelementptr inbounds {}, ptr {from}{opening}",
+                    type_text(self.types, stepped)
+                );
+                let end = next.map_or(steps.len(), |next| next.0);
+                for (position, &step) in (start..).zip(&steps[start..end]) {
+                    _ = match step {
+                        mir::Projection::Field(index) => write!(out, ", i32 {index}"),
+                        mir::Projection::Index(index) if renamed(index) => {
+                            write!(out, ", i64 {address}.{run}.{position}")
+                        }
+                        mir::Projection::Index(index) => {
+                            write!(out, ", i64 {}", self.operand(index))
+                        }
+                        mir::Projection::Subslice(subslice) => {
+                            let start = self.body.subslices[subslice.index()].start;
+                            let bits = self.module.target.pointer_bits;
+                            write!(out, ", i{bits} {}", self.operand(start))
+                        }
+                        mir::Projection::Dereference | mir::Projection::SliceElements => {
+                            unreachable!("split at each step out of its storage")
+                        }
+                    };
+                }
+                _ = writeln!(out, "{location}");
             }
-            _ = writeln!(out, "{location}");
             if last {
                 continue;
             }

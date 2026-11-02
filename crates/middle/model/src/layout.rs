@@ -50,19 +50,8 @@ pub fn layout(types: &Types, ty: TypeId, target: &Machine) -> (u64, u64) {
             let (_, size, align) = struct_layout(types, &fields, target);
             (size, align)
         }
-        Type::Array { element, length } => {
-            // A loop: arrays written in arrays, `[1][1]...i32`, nest as deep
-            // as the source does.
-            let (mut element, mut count) = (element, length);
-            while let Type::Array {
-                element: inner,
-                length,
-            } = types[element]
-            {
-                element = inner;
-                count = count.saturating_mul(length);
-            }
-            let (size, align) = layout(types, element, target);
+        Type::Array { base, count, .. } => {
+            let (size, align) = layout(types, base, target);
             (size.saturating_mul(count), align)
         }
         Type::Invalid | Type::Void | Type::Function { .. } | Type::Named(_) => {

@@ -19,6 +19,9 @@ use rustc_hash::FxHashMap;
 use crate::function::comma_separated;
 use crate::text::quoted;
 
+/// How many pointers a debug type follows (`Metadata::debug_type`).
+const DEEPEST_DEBUG_POINTER: usize = 5_000;
+
 /// The module's debug info: numbered metadata nodes.
 pub(crate) struct Metadata {
     pub(crate) text: String,         // each node's line, `!N = ...`, in order
@@ -26,6 +29,7 @@ pub(crate) struct Metadata {
     pub(crate) file: usize,          // the DIFile of the module's source file
     pub(crate) unit: usize,          // the DICompileUnit, the scope of every function
     types: FxHashMap<TypeId, usize>, // each type's debug type
+    pointer_depth: usize,            // the pointers `debug_type` is inside now
 }
 impl Metadata {
     /// The debug info of a module in the file `path`, with no function yet.
@@ -38,6 +42,7 @@ impl Metadata {
             file: 0,
             unit: 0,
             types: FxHashMap::default(),
+            pointer_depth: 0,
         };
         metadata.file = metadata.add(format_args!(
             "!DIFile(filename: {}, directory: {})",
@@ -118,8 +123,20 @@ impl Metadata {
                 let base = match types[ty].pointee() {
                     // A struct with an error: this output is never linked.
                     Some(pointee) if matches!(types[pointee], Type::Named(_)) => "null".to_string(),
+                    // shortcut: clang runs out of stack on debug types tens
+                    // of thousands of nodes deep, and peeper cannot raise its
+                    // limit (no `unsafe`); past this depth a debugger sees an
+                    // untyped pointer. A type entered from its deep end first
+                    // can still chain past it.
+                    Some(_) if self.pointer_depth == DEEPEST_DEBUG_POINTER => "null".to_string(),
                     Some(pointee) => {
-                        let base = self.debug_type(program, types, types.real(pointee), target);
+                        let pointee = types.real(pointee);
+                        self.pointer_depth += 1;
+                        // Pointers break a flat array, so they nest as deep
+                        // as the source does.
+                        let base =
+                            source::grow(|| self.debug_type(program, types, pointee, target));
+                        self.pointer_depth -= 1;
                         format!("!{}", base.expect("a pointer points to a value's type"))
                     }
                     None => "null".to_string(), // `rawptr`
@@ -149,15 +166,22 @@ impl Metadata {
                 self.types.insert(ty, composite);
                 return Some(composite);
             }
-            Type::Array { element, length } => {
-                let base = self.debug_type(program, types, types.real(element), target);
+            // One node with a range per level, as C's debug info has.
+            Type::Array { base, .. } => {
+                let base = self.debug_type(program, types, base, target);
                 let base = base.expect("an element has a value's type");
-                let range = self.add(format_args!("!DISubrange(count: {length})"));
+                let ranges: Vec<usize> = (types.array_lengths(ty))
+                    .map(|length| self.add(format_args!("!DISubrange(count: {length})")))
+                    .collect();
+                let ranges = ranges
+                    .iter()
+                    .map(|range| fmt::from_fn(move |out| write!(out, "!{range}")));
                 let (size, _) = layout(types, ty, target);
                 format!(
                     "!DICompositeType(tag: DW_TAG_array_type, baseType: !{base}, size: {}, \
-                     elements: !{{!{range}}})",
-                    size * 8
+                     elements: !{{{}}})",
+                    size * 8,
+                    comma_separated(ranges)
                 )
             }
             Type::Invalid | Type::Void | Type::Function { .. } => {

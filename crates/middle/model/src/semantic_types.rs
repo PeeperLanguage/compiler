@@ -2,6 +2,7 @@
 //! two numbers.
 
 use std::fmt;
+use std::fmt::Write as _;
 use std::ops::Index;
 
 use bigint::Limbs;
@@ -153,6 +154,12 @@ pub enum Type {
     Array {
         element: TypeId,
         length: u64,
+        /// What the arrays in arrays end in, never an array; and how many of
+        /// it there are in all. `Types::array` finds them, so that a size, a
+        /// copy check and an LLVM type need not walk the levels, which nest
+        /// as deep as the source does.
+        base: TypeId,
+        count: u64,
     },
     /// `range[element]`: the integers from a start toward an end, a step
     /// apart, up or down; its fields are `range_fields`. `step` is the
@@ -208,7 +215,9 @@ impl Type {
     /// slice's is known only when the program runs.
     pub fn elements(&self) -> Option<(TypeId, Option<u64>)> {
         match *self {
-            Type::Array { element, length } => Some((element, Some(length))),
+            Type::Array {
+                element, length, ..
+            } => Some((element, Some(length))),
             Type::Slice { element, .. } => Some((element, None)),
             _ => None,
         }
@@ -492,6 +501,34 @@ impl Types {
         id
     }
 
+    /// The type `[length]element`.
+    pub fn array(&mut self, element: TypeId, length: u64) -> TypeId {
+        let (base, inner) = match self[element] {
+            Type::Array { base, count, .. } => (base, count),
+            _ => (self.real(element), 1),
+        };
+        self.intern(Type::Array {
+            element,
+            length,
+            base,
+            count: inner.saturating_mul(length),
+        })
+    }
+
+    /// The lengths of the arrays in arrays that `id` is, outermost first;
+    /// none for any other type.
+    pub fn array_lengths(&self, mut id: TypeId) -> impl Iterator<Item = u64> {
+        std::iter::from_fn(move || match self[id] {
+            Type::Array {
+                element, length, ..
+            } => {
+                id = element;
+                Some(length)
+            }
+            _ => None,
+        })
+    }
+
     /// Makes the declared name `named` the struct of `fields`, under its
     /// id, so a `*T` written before `T` was complete is the `*T` of after.
     pub fn define_struct(&mut self, named: TypeId, fields: Box<[TypeId]>) {
@@ -613,7 +650,7 @@ impl Types {
             | Type::RawPointer { .. }
             | Type::Range { .. } => true,
             Type::Reference { mutable, .. } | Type::Slice { mutable, .. } => !mutable,
-            Type::Array { element, .. } => self.is_copy(element),
+            Type::Array { base, .. } => self.is_copy(base),
             Type::Struct { .. } => false,
             // No value of these is moved: an error, nothing, or not yet a value.
             Type::Invalid | Type::Void | Type::Function { .. } => true,
@@ -683,9 +720,12 @@ impl Types {
             Type::Named(definition) | Type::Struct { definition, .. } => {
                 name_of(*definition).to_string()
             }
-            Type::Array { element, length } => {
-                let element = source::grow(|| self.real_text(*element, name_of));
-                format!("[{length}]{element}")
+            Type::Array { base, .. } => {
+                let mut text = String::new();
+                for length in self.array_lengths(id) {
+                    _ = write!(text, "[{length}]");
+                }
+                text + &self.real_text(*base, name_of)
             }
             Type::Range { element, .. } => {
                 format!("{RANGE}[{}]", self.real_text(*element, name_of))
@@ -709,7 +749,11 @@ impl Types {
             Type::RawPointer { target: None } => "rawptr".to_string(),
             Type::RawPointer {
                 target: Some(target),
-            } => format!("*{}", self.real_text(*target, name_of)),
+            } => {
+                // Pointers nest as deep as the source does.
+                let target = source::grow(|| self.real_text(*target, name_of));
+                format!("*{target}")
+            }
             Type::Alias { .. } => unreachable!("`real` looks through aliases"),
         }
     }

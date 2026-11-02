@@ -67,9 +67,9 @@ entry:
   call void @llvm.dbg.declare(metadata ptr %v1, metadata !39, metadata !DIExpression()), !dbg !40
   br label %bb0
 bb0:
-  %i0.0 = getelementptr inbounds [2 x i32], ptr %v0, i32 0, i64 0, !dbg !41
+  %i0.0 = getelementptr inbounds i32, ptr %v0, i64 0, !dbg !41
   store i32 3, ptr %i0.0, !dbg !41
-  %i0.1 = getelementptr inbounds [2 x i32], ptr %v0, i32 0, i64 1, !dbg !41
+  %i0.1 = getelementptr inbounds i32, ptr %v0, i64 1, !dbg !41
   store i32 4, ptr %i0.1, !dbg !41
   %i2.p = getelementptr inbounds [2 x i32], ptr %v0, i32 0, !dbg !43
   %i2.a = insertvalue %slice poison, ptr %i2.p, 0, !dbg !43

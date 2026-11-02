@@ -49,13 +49,13 @@ bb0:
   %i2.r2.last = or i1 true, %i2.r2.more, !dbg !13
   %i2.r2.extra = zext i1 %i2.r2.last to i64, !dbg !13
   %i2.r2.count = add i64 %i2.r2.wide, %i2.r2.extra, !dbg !13
-  %i2.0 = getelementptr inbounds [6 x i32], ptr %v0, i32 0, i64 0, !dbg !13
+  %i2.0 = getelementptr inbounds i32, ptr %v0, i64 0, !dbg !13
   call void @fill.range.0(ptr %i2.0, i32 0, i32 1, i64 %i2.r0.count), !dbg !13
   %i2.o0 = add i64 0, %i2.r0.count, !dbg !13
-  %i2.1 = getelementptr inbounds [6 x i32], ptr %v0, i32 0, i64 %i2.o0, !dbg !13
+  %i2.1 = getelementptr inbounds i32, ptr %v0, i64 %i2.o0, !dbg !13
   store i32 9, ptr %i2.1, !dbg !13
   %i2.o1 = add i64 %i2.o0, 1, !dbg !13
-  %i2.2 = getelementptr inbounds [6 x i32], ptr %v0, i32 0, i64 %i2.o1, !dbg !13
+  %i2.2 = getelementptr inbounds i32, ptr %v0, i64 %i2.o1, !dbg !13
   call void @fill.range.0(ptr %i2.2, i32 5, i32 -1, i64 %i2.r2.count), !dbg !13
   call void @llvm.memcpy.p0.p0.i64(ptr %result, ptr %v0, i64 24, i1 false), !dbg !15
   ret void, !dbg !16
@@ -100,7 +100,7 @@ loop:
   %first = icmp eq i64 %index, 0
   %separator = select i1 %first, ptr @.str.0, ptr @.str.1
   call void (ptr) @"peeper_rt_v1_print_text"(ptr %separator)
-  %address = getelementptr inbounds [6 x i32], ptr %array, i64 0, i64 %index
+  %address = getelementptr inbounds i32, ptr %array, i64 %index
   %element = load i32, ptr %address
   %element.x = sext i32 %element to i64
   store i64 %element.x, ptr %element.m

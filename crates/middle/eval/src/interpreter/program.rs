@@ -249,7 +249,12 @@ impl<'f> Interpreter<'_, 'f> {
                 }
                 text.extend_from_slice(if fields.is_empty() { b" {}" } else { b" }" });
             }
-            (&Type::Array { element, length }, &Register::Address(address)) => {
+            (
+                &Type::Array {
+                    element, length, ..
+                },
+                &Register::Address(address),
+            ) => {
                 text.push(b'[');
                 let size = self.size_of(element);
                 for index in 0..length {
@@ -257,7 +262,7 @@ impl<'f> Interpreter<'_, 'f> {
                         text.extend_from_slice(b", ");
                     }
                     let value = self.read_value(address + index * size, element, span)?;
-                    self.write_printed(text, &value, element, span)?;
+                    source::grow(|| self.write_printed(text, &value, element, span))?;
                 }
                 text.push(b']');
             }

@@ -662,17 +662,16 @@ impl Function<'_, '_, '_> {
             // Each part written where it goes in the value's memory.
             InstructionKind::Aggregate(ref parts) => {
                 let memory = self.value_address(out, id, ty, rest);
-                let text = type_text(types, ty);
-                let index_type = match types[ty] {
-                    Type::Array { .. } => "i64",
-                    _ => "i32",
+                let (text, start) = match types[ty] {
+                    Type::Array { element, .. } => (type_text(types, element), "i64"),
+                    _ => (type_text(types, ty), "i32 0, i32"),
                 };
                 for (index, &part) in parts.iter().enumerate() {
                     let address = format!("{name}.{index}");
                     _ = writeln!(
                         out,
-                        "  {address} = getelementptr inbounds {text}, ptr {memory}, i32 0, \
-                         {index_type} {index}{location}"
+                        "  {address} = getelementptr inbounds {text}, ptr {memory}, \
+                         {start} {index}{location}"
                     );
                     self.write_store(out, &address, part, &location);
                 }

@@ -284,10 +284,26 @@ fn checks_deeply_nested_statements() {
     let found = diagnostics(&[("app:main", &types)]);
     let codes: Vec<&str> = found.iter().map(|&(code, ..)| code).collect();
     assert_eq!(codes, ["T0043"], "{found:?}");
-    // Each array's size is found through all those inside it, so a depth
-    // that still overflows a recursive walk, and no more.
-    let arrays = format!("fn f(a: {}i32) {{}}\nfn main() {{}}", "[1]".repeat(10_000));
+    let arrays = format!(
+        "fn f(a: {}i32) {{ println(a); }}\nfn main() {{}}",
+        "[1]".repeat(DEPTH)
+    );
     assert_eq!(diagnostics(&[("app:main", &arrays)]), []);
+    // A pointer breaks a flat array, so an error's type text recurses.
+    let pointers = format!(
+        "fn f(a: {}i32) {{ let b: bool = a; }}\nfn main() {{}}",
+        "[1]*".repeat(DEPTH)
+    );
+    let found = diagnostics(&[("app:main", &pointers)]);
+    let codes: Vec<&str> = found.iter().map(|&(code, ..)| code).collect();
+    assert_eq!(codes, ["T0001"], "{found:?}");
+    let plain = format!(
+        "fn f(a: {}i32) {{ let b: bool = a; }}\nfn main() {{}}",
+        "*".repeat(DEPTH)
+    );
+    let found = diagnostics(&[("app:main", &plain)]);
+    let codes: Vec<&str> = found.iter().map(|&(code, ..)| code).collect();
+    assert_eq!(codes, ["T0001"], "{found:?}");
 }
 
 /// No slice is longer than the largest `usize`, `u32::MAX` on a 32-bit
@@ -792,6 +808,22 @@ fn a_body_edit_checks_constants_that_reach_it_through_others() {
     let (second, checked) = recompile(&[two, utils, main], first);
     assert_eq!(checked, ["app:other", "app:main"]);
     assert!(messages(&second).is_empty(), "{:?}", messages(&second));
+}
+
+/// A length is any number, so it must not read as the kind of the type after
+/// it: one of these lengths is `Type::Range`'s place in the enum, which
+/// `[2][length]i32` and `[2]range[i32]` would then share.
+#[test]
+fn an_array_length_does_not_read_as_a_type() {
+    let main = ("app:main", "import \"app:utils\";\nfn main() { }");
+    let range = ("app:utils", "fn Take(a: [2]range[i32]) { }");
+    for length in 0..32 {
+        let lengths = format!("fn Take(a: [2][{length}]i32) {{ }}");
+        let (first, _) = recompile(&[("app:utils", &lengths), main], Results::default());
+        let (second, checked) = recompile(&[range, main], first);
+        assert_eq!(checked, ["app:utils", "app:main"], "{length}");
+        assert!(messages(&second).is_empty(), "{:?}", messages(&second));
+    }
 }
 
 #[test]

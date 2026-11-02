@@ -103,6 +103,7 @@ impl<'b> Interpreter<'b, '_> {
                     &Type::Array {
                         element,
                         length: bound,
+                        ..
                     },
                 ) => {
                     let inside = self.position(index).filter(|&at| at < bound);

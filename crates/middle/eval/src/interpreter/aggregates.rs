@@ -120,7 +120,10 @@ impl<'b> Interpreter<'b, '_> {
     ) -> Result<Register, Failure> {
         let body = self.frame().body;
         let ty = body.instructions[id].ty;
-        let Type::Array { element, length } = self.types[ty] else {
+        let Type::Array {
+            element, length, ..
+        } = self.types[ty]
+        else {
             unreachable!("array parts make an array")
         };
         let mut values = Vec::with_capacity(parts.len());

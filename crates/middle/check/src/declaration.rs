@@ -389,7 +389,7 @@ impl Checker<'_> {
     pub(crate) fn array_type(&mut self, element: TypeId, length: u64, span: Span) -> TypeId {
         match self.loan_free_held_type(element, "arrays of", span) {
             Some(element) => {
-                let ty = self.types.intern(Type::Array { element, length });
+                let ty = self.types.array(element, length);
                 let (size, _) = layout(&self.types, ty, self.target);
                 self.fits_target(ty, size, span)
             }

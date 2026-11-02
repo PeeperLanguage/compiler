@@ -42,8 +42,10 @@ pub(crate) fn type_text(types: &Types, ty: TypeId) -> impl fmt::Display {
             let fields = range_fields(element, step).map(|(_, ty)| ty);
             struct_type_text(types, &fields, out)
         }
-        Type::Array { element, length } => {
-            write!(out, "[{length} x {}]", type_text(types, element))
+        // Flat, however many arrays are in arrays: clang's parser recurses on a
+        // nested type, and overflows at 50,000 levels.
+        Type::Array { base, count, .. } => {
+            write!(out, "[{count} x {}]", type_text(types, base))
         }
         Type::Invalid | Type::Function { .. } => unreachable!("MIR holds no value of this type"),
         Type::Alias { .. } => unreachable!("indexing looks through aliases"),

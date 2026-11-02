@@ -302,6 +302,37 @@ fn variables_have_the_scope_of_their_block() {
     assert_eq!(scope(blocks[0]), scope(variables[0]), "{text}");
 }
 
+/// An array in an array is one flat LLVM array, and an index into it steps by
+/// its element, the rest of the place going on from there.
+#[test]
+fn arrays_in_arrays_are_flat() {
+    let text = ll(
+        "fn f(i: i64, j: i64) -> i32 {
+            let g = [2][3]i32{[3]i32{1, 2, 3}, [3]i32{4, 5, 6}};
+            return g[i][j];
+        }",
+        "x86_64-linux",
+    );
+    assert!(text.contains("alloca [6 x i32]"), "{text}");
+    assert!(!text.contains("[2 x [3 x i32]]"), "{text}");
+    let step = |line: &&str| {
+        line.contains("getelementptr inbounds [3 x i32], ptr %v")
+            && line.matches(", i64 ").count() == 2
+    };
+    assert!(text.lines().any(|line| step(&line)), "{text}");
+}
+
+/// A pointer breaks a flat array, so its debug type recurses through each one,
+/// and stops where clang would run out of stack on it.
+#[test]
+fn debug_types_stop_at_deep_pointers() {
+    let source = format!("fn f(a: {}i32) {{ }}", "[1]*".repeat(50_000));
+    let text = ll(&source, "x86_64-linux");
+    let pointers = text.matches("DW_TAG_pointer_type").count();
+    assert!((5_000..5_100).contains(&pointers), "{pointers}");
+    assert!(text.contains("DW_TAG_pointer_type, baseType: null"));
+}
+
 /// LLVM refuses a column past 16 bits, so a location or a block further along
 /// a line keeps the last column it can hold. Clang fails on the module without
 /// this, in a debug build only: a release build has no locations.

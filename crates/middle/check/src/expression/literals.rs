@@ -176,7 +176,9 @@ impl ThirBuilder<'_, '_> {
             _ => match self.checker.resolve_value_type(written) {
                 ty if ty == TypeId::INVALID => (TypeId::INVALID, None),
                 ty => match self.checker.types[ty] {
-                    Type::Array { element, length } => (element, Some((ty, length))),
+                    Type::Array {
+                        element, length, ..
+                    } => (element, Some((ty, length))),
                     _ => unreachable!("an array literal's written type is an array type"),
                 },
             },
@@ -456,6 +458,7 @@ impl ThirBuilder<'_, '_> {
             Type::Array {
                 element: from,
                 length,
+                ..
             } if element == TypeId::INVALID
                 || types.conversion(from, element) == Conversion::Same =>
             {

@@ -448,8 +448,8 @@ fn compile_module(
 /// Feeds `ty` to `hasher` by what it is, not by its id, which differs between
 /// compiles: a named type by its module's path and its name. What it holds
 /// is in the interface of the module declaring it (`interface`).
-fn hash_type(checker: &Checker, ty: TypeId, hasher: &mut DefaultHasher) {
-    let ty = &checker.types[ty];
+fn hash_type(checker: &Checker, id: TypeId, hasher: &mut DefaultHasher) {
+    let ty = &checker.types[id];
     std::mem::discriminant(ty).hash(hasher);
     match ty {
         Type::Integer(integer) => integer.hash(hasher),
@@ -473,9 +473,14 @@ fn hash_type(checker: &Checker, ty: TypeId, hasher: &mut DefaultHasher) {
             let (name, file) = project::declared_name(checker.modules, *definition);
             name.text(file).hash(hasher);
         }
-        Type::Array { element, length } => {
-            length.hash(hasher);
-            source::grow(|| hash_type(checker, *element, hasher));
+        Type::Array { base, .. } => {
+            // Lengths are any number: the count keeps one from reading as
+            // the type after it.
+            checker.types.array_lengths(id).count().hash(hasher);
+            for length in checker.types.array_lengths(id) {
+                length.hash(hasher);
+            }
+            hash_type(checker, *base, hasher);
         }
         Type::Range { element, .. } => hash_type(checker, *element, hasher), // `step` follows
         Type::Reference { mutable, target }
@@ -489,7 +494,8 @@ fn hash_type(checker: &Checker, ty: TypeId, hasher: &mut DefaultHasher) {
         Type::RawPointer { target } => {
             target.is_some().hash(hasher);
             if let Some(target) = target {
-                hash_type(checker, *target, hasher);
+                // Pointers nest as deep as the source does.
+                source::grow(|| hash_type(checker, *target, hasher));
             }
         }
         Type::Invalid | Type::Void | Type::Bool | Type::CString => {}

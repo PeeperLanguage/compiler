@@ -28,7 +28,9 @@ forgotten or invented.
     (`505b592`).
 15. [x] Debug builds of lines past column 65,535 ("Keep debug columns within
     LLVM's limit").
-16. [ ] Owner: decide the open findings below. Benchmark for the fourteen commits: +1.69% instructions,
+16. [x] Arrays in arrays are flat: each array type keeps its base and count,
+    and LLVM sees one flat array (branch `fix/flat-arrays`).
+17. [ ] Owner: decide the open findings below. Benchmark for the fourteen commits: +1.69% instructions,
     accepted in review.
 
 ## Open findings (not changed; each needs an owner decision or is small)
@@ -46,7 +48,6 @@ forgotten or invented.
 | F11 | `diagnostics` printer | Every diagnostic prints its whole source line, and at most `MOST_WRITTEN` (200) are printed. | At most 200 × the line's length | Trim a long line around the span, as rustc does; changes the visible format, which `docs/architecture.md` fixed. |
 | F12 | `source::grow` in `check`, `lower` | A stack check per expression, statement and type costs 0.84% of a compile. | 0.84% | Check only every N levels of depth (a counter in the builder), if the owner wants the time back. |
 | F13 | `flow/src/loans.rs` `live_at_ends` | Lists at block ends cost more than sets where many holders stay live across many blocks. | 3,000 references across 3,000 branches: 154 MB, 1.9 s; 124 MB, 1.0 s with sets (1.3 s at the base) | Accepted for the gain when few are live (217 MB to 53 MB). |
-| F14 | `model/src/semantic_types.rs`, `lower`, `llvm` type walks | `[1][1]...i32` is the one type nested without limit that every later phase can see, and each walk of it recurses or repeats. `layout` loops, and `real_text` and `hash_type` have `grow`, but others do not: `peeper build` still overflows at 50,000 levels. `array_type` is quadratic in the depth (50,000: 6 s). | Generated code only | A limit on how deep array types nest, reported as an error, would close them all at once; it adds a rule to the language, so it is the owner's call. |
 | F10 | `flow::variable_state` | A function that moves many variables still keeps a set of them at every block. | blocks × moved variables | Liveness of moved variables, as the loan check does; only if a real program needs it. |
 
 ## Rules check for this branch

@@ -96,10 +96,7 @@ fn conversions() {
         mutable: false,
         target: TypeId::I64,
     });
-    let array = types.intern(Type::Array {
-        element: TypeId::I32,
-        length: 3,
-    });
+    let array = types.array(TypeId::I32, 3);
     let to_array = types.intern(Type::Reference {
         mutable: false,
         target: array,
@@ -264,4 +261,40 @@ fn equal_types_have_equal_ids() {
     let f = types.intern(function(&[u24, TypeId::BOOL]));
     assert_eq!(types.intern(function(&[u24, TypeId::BOOL])), f);
     assert_ne!(types.intern(function(&[TypeId::BOOL, u24])), f);
+}
+
+/// An array in an array keeps what they end in and how many of it there are
+/// in all: any zero length empties it, and a count past `u64` stays the largest.
+#[test]
+fn arrays_in_arrays_keep_their_base_and_count() {
+    let mut types = Types::new(64);
+    let row = types.array(TypeId::I32, 3);
+    let grid = types.array(row, 2);
+    let Type::Array { base, count, .. } = types[grid] else {
+        panic!("an array");
+    };
+    assert_eq!((base, count), (TypeId::I32, 6));
+    assert_eq!(types.array_lengths(grid).collect::<Vec<_>>(), [2, 3]);
+    assert_eq!(types.array_lengths(TypeId::I32).count(), 0);
+    let row_alias = types.intern(Type::Alias {
+        definition: DefId {
+            module: ModuleId::from_index(0),
+            index: 0,
+        },
+        real: row,
+    });
+    let through_alias = types.array(row_alias, 2);
+    let Type::Array { base, count, .. } = types[through_alias] else {
+        panic!("an array");
+    };
+    assert_eq!((base, count), (TypeId::I32, 6));
+    let count_of = |types: &Types, ty| match types[ty] {
+        Type::Array { count, .. } => count,
+        _ => panic!("an array"),
+    };
+    let huge = types.array(TypeId::I32, u64::MAX);
+    let past = types.array(huge, 2);
+    assert_eq!(count_of(&types, past), u64::MAX);
+    let empty = types.array(past, 0);
+    assert_eq!(count_of(&types, empty), 0);
 }

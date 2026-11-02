@@ -1,0 +1,59 @@
+// Arrays in arrays are one flat LLVM array: every way of reaching into one,
+// through fields, references, slices and whole rows, on its own and mixed.
+struct Cell { tag: i32, grid: [2][3]i32, wide: i64 }
+struct Holder { cells: [2]Cell, cube: [2][2][2]u8 }
+struct Empty {}
+fn sum(g: [2][3]i32) -> i32 {
+    let mut t = 0;
+    for i in 0..2 { for j in 0..3 { t = t + g[i][j]; } }
+    return t;
+}
+fn bump(g: &mut [2][3]i32, i: i32, j: i32) { g.*[i][j] = g.*[i][j] + 100; }
+fn row(g: &[2][3]i32, i: i32) -> [3]i32 { return g.*[i]; }
+fn total(s: [&]i32) -> i32 {
+    let mut t = 0;
+    for i in 0..s.len { t = t + s[i]; }
+    return t;
+}
+fn rows(s: [&][3]i32) -> i32 {
+    let mut t = 0;
+    for i in 0..s.len { for j in 0..3 { t = t + s[i][j] * (i as i32 + 1); } }
+    return t;
+}
+fn make() -> Holder {
+    let g = [2][3]i32{[3]i32{1, 2, 3}, [3]i32{4, 5, 6}};
+    let c = Cell.{ tag = 7, grid = g, wide = 9 };
+    let d = Cell.{ tag = 8, grid = [2][3]i32{[3]i32{7, 8, 9}, [3]i32{10, 11, 12}}, wide = 10 };
+    let e = [2]u8{1, 2};
+    let f = [2][2]u8{e, [2]u8{3, 4}};
+    return Holder.{ cells = [2]Cell{c, d}, cube = [2][2][2]u8{f, [2][2]u8{[2]u8{5, 6}, [2]u8{7, 8}}} };
+}
+fn main() {
+    let mut g = [2][3]i32{[3]i32{1, 2, 3}, [3]i32{4, 5, 6}};
+    println(g); println(sum(g)); bump(&mut g, 1, 2); bump(&mut g, 0, 0); println(g);
+    println(row(&g, 1)); println(row(&g, 0)[2]);
+    let mut i = 1; let j = 2;
+    g[i][j] = 50; g[0][j] = g[i][j] + 1; println(g[i]); println(g[0][j]);
+    let copy = g[i]; g[i][0] = 99; println(copy); println(g);
+    let mut r = g[0]; r[1] = 77; println(r); println(g[0]);
+    g[0] = g[1]; println(g);
+    let mut h = make();
+    println(h);
+    h.cells[1].grid[i][j] = 1000; h.cells[i].grid[0][1] = 2000; h.cube[1][i][0] = 200;
+    println(h.cells[1]); println(h.cube); println(h.cube[i]); println(h.cube[1][0]); println(h.cube[1][0][1]);
+    let p = &mut h; p.cells[0].grid[1][2] = 3000; println(p.cells[0].grid[1]); println(p.cube[0][1][1]);
+    println(sum(h.cells[1].grid));
+    let s = &g[0][1..3]; println(total(s));
+    let whole = &g[0..2]; println(rows(whole)); println(whole.len); println(whole[1][2]);
+    let inner = &whole[1][0..2]; println(total(inner));
+    let cube = [2][2][3]i64{[2][3]i64{[3]i64{1, 2, 3}, [3]i64{4, 5, 6}}, [2][3]i64{[3]i64{7, 8, 9}, [3]i64{10, 11, 12}}};
+    let mut k: i64 = 0;
+    for a in 0..2 { for b in 0..2 { for c in 0..3 { k = k * 3 + cube[a][b][c]; } } }
+    println(k); println(cube[1]); println(cube[1][1]); println(cube.len); println(cube[0].len); println(cube[0][1].len);
+    for line in g { println(line[0]); }
+    let z = [0][3]i32{}; println(z.len); let y = [2][0]i32{[0]i32{}, [0]i32{}}; println(y.len); println(y[1].len);
+    let w = [2][2]i128{[2]i128{1, 2}, [2]i128{3, 4}}; println(w[1][0] + w[0][1]);
+    let b = [2][2]bool{[2]bool{true, false}, [2]bool{false, true}}; println(b[1][1]); println(b);
+    let e = [2][2]Empty{[2]Empty{Empty.{}, Empty.{}}, [2]Empty{Empty.{}, Empty.{}}}; println(e.len);
+    println(g[i][3 - 1]);
+}

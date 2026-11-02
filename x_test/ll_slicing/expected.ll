@@ -53,7 +53,7 @@ bb0:
   %i2.failed = or i1 %i2.r0.failed, %i2.short, !dbg !31
   br i1 %i2.failed, label %bb0.1.panic, label %bb0.1
 bb0.1:
-  %i2.0 = getelementptr inbounds [4 x i64], ptr %i2, i32 0, i64 0, !dbg !31
+  %i2.0 = getelementptr inbounds i64, ptr %i2, i64 0, !dbg !31
   %i2.s0 = extractvalue %slice %i1, 0, !dbg !31
   %i2.s0.bytes = mul i64 %i2.r0.len, 8, !dbg !31
   call void @llvm.memcpy.p0.p0.i64(ptr %i2.0, ptr %i2.s0, i64 %i2.s0.bytes, i1 false), !dbg !31
@@ -79,13 +79,13 @@ entry:
   call void @llvm.dbg.declare(metadata ptr %v4, metadata !47, metadata !DIExpression()), !dbg !48
   br label %bb0
 bb0:
-  %i0.0 = getelementptr inbounds [4 x i32], ptr %v0, i32 0, i64 0, !dbg !49
+  %i0.0 = getelementptr inbounds i32, ptr %v0, i64 0, !dbg !49
   store i32 1, ptr %i0.0, !dbg !49
-  %i0.1 = getelementptr inbounds [4 x i32], ptr %v0, i32 0, i64 1, !dbg !49
+  %i0.1 = getelementptr inbounds i32, ptr %v0, i64 1, !dbg !49
   store i32 2, ptr %i0.1, !dbg !49
-  %i0.2 = getelementptr inbounds [4 x i32], ptr %v0, i32 0, i64 2, !dbg !49
+  %i0.2 = getelementptr inbounds i32, ptr %v0, i64 2, !dbg !49
   store i32 3, ptr %i0.2, !dbg !49
-  %i0.3 = getelementptr inbounds [4 x i32], ptr %v0, i32 0, i64 3, !dbg !49
+  %i0.3 = getelementptr inbounds i32, ptr %v0, i64 3, !dbg !49
   store i32 4, ptr %i0.3, !dbg !49
   store i32 1, ptr %v1, !dbg !51
   store i64 2, ptr %v2, !dbg !52
