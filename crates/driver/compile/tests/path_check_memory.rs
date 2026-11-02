@@ -23,7 +23,8 @@ fn status_kb(name: &str) -> u64 {
 
 /// How much more memory than it held before, in KB, this process held at
 /// most while compiling `text` as a whole program without an error. The
-/// kernel's peak is reset first, so each function is measured on its own.
+/// kernel's peak is reset first, so an earlier function's peak does not count,
+/// but the memory it freed can be reused: a reading depends on what ran before.
 fn compile_growth_kb(text: String) -> u64 {
     let folder = PathBuf::from("/peeper-build-test/src");
     let main = folder.join("main.peep");
@@ -118,13 +119,15 @@ fn late_set_function(groups: usize) -> String {
 #[test]
 fn large_functions_stay_small() {
     let measured = [
-        // 21 MB as it is; 47 MB with a set of every holder at every block's
-        // end. At 400 groups, a table of every holder and loan at every
-        // block took 407 MB.
+        // 21 MB as it runs first here; 47 MB with a set of every holder at
+        // every block's end. At 400 groups, a table of every holder and loan
+        // at every block took 407 MB.
         ("branching", branching_function(4000), 30),
-        // 5 MB as it is; 25 MB keeping the live holders after each instruction.
+        // 2 MB after `branching`; 28 MB alone, keeping the live holders after
+        // each instruction.
         ("straight", straight_function(3000), 8),
-        // 25 MB as it is; 70 MB with a set of every variable at every block.
+        // 16 MB after the others, 25 MB alone; 70 MB with a set of every
+        // variable at every block.
         ("late", late_set_function(8000), 35),
     ];
     for (name, text, bound_mb) in measured {
