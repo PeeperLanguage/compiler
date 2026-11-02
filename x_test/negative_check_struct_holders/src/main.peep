@@ -1,0 +1,20 @@
+// The loan check keeps each reference in a struct apart, so a struct holds a
+// limited number of them. Each struct here holds the last one twice: `S12`
+// holds 4,096, and `S13`, one level more, is refused once, not `S14` again.
+struct S0 { to: &i32 }
+struct S1 { a: S0, b: S0 }
+struct S2 { a: S1, b: S1 }
+struct S3 { a: S2, b: S2 }
+struct S4 { a: S3, b: S3 }
+struct S5 { a: S4, b: S4 }
+struct S6 { a: S5, b: S5 }
+struct S7 { a: S6, b: S6 }
+struct S8 { a: S7, b: S7 }
+struct S9 { a: S8, b: S8 }
+struct S10 { a: S9, b: S9 }
+struct S11 { a: S10, b: S10 }
+struct S12 { a: S11, b: S11 }
+struct S13 { a: S12, b: S12 }
+struct S14 { a: S13, b: S13 }
+
+fn main() {}

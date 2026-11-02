@@ -319,8 +319,36 @@ fn checks_structs_holding_structs_twice() {
     let chain: String = (1..40)
         .map(|i| format!("struct S{i} {{ a: S{0}, b: S{0} }}\n", i - 1))
         .collect();
-    let text = format!("struct S0 {{ n: i32 }}\n{chain}fn show(s: &S39) {{ println(s.*); }}");
+    let text = format!(
+        "struct S0 {{ n: i32 }}\n{chain}fn show(s: &S39) {{ println(s.*); }}
+        fn same(s: S39) -> S39 {{ return s; }}
+        fn replace(to: &mut S39, s: S39) {{ to.* = s; }}
+        fn borrowing(s: S39) -> S39 {{ let n = 1; let r = &n; println(r); return s; }}"
+    );
     assert_eq!(diagnostics(&[("app:main", &text)]), []);
+}
+
+/// Each struct holds the last twice, and the first a reference, so the loan
+/// check would keep 2^n of them apart. `MOST_HOLDERS` is 2^12: one more level
+/// is refused, once, and those that hold it are not reported again.
+#[test]
+fn structs_hold_a_limited_number_of_references() {
+    let chain = |levels: usize| -> String {
+        (1..levels)
+            .map(|i| format!("struct S{i} {{ a: S{0}, b: S{0} }}\n", i - 1))
+            .collect()
+    };
+    let last = |levels: usize| {
+        let chain = chain(levels);
+        format!(
+            "struct S0 {{ to: &i32 }}\n{chain}fn f(s: S{0}) -> S{0} {{ return s; }}",
+            levels - 1
+        )
+    };
+    assert_eq!(diagnostics(&[("app:main", &last(13))]), []);
+    let found = diagnostics(&[("app:main", &last(40))]);
+    let codes: Vec<&str> = found.iter().map(|&(code, ..)| code).collect();
+    assert_eq!(codes, ["P0011"], "{found:?}");
 }
 
 /// No slice is longer than the largest `usize`, `u32::MAX` on a 32-bit

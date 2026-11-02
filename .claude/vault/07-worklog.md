@@ -221,9 +221,8 @@ ran `check.sh` fully green.
   program, hung the compiler. A debug build overflowed the stack at 6,000.
   LLVM got the whole shape at each use, `{ { { i32 } } }`.
 - **Fix:** `Type::Struct` keeps its `size` and `align`, a derived fact stored on
-  purpose (RULES 5.1: needs the owner's yes, which so far covers only arrays'
-  `base` and `count`), written by `define_struct` from what the declaration
-  already computed. LLVM no longer sees structs or arrays: a value kept in
+  purpose (RULES 5.1, with the owner's yes), written by `define_struct` from
+  what the declaration already computed. LLVM no longer sees structs or arrays: a value kept in
   memory is `[N x i8], align A` (`memory_text`, `alloca_text`), a field a byte
   offset (`layout::fields_placed`, which the interpreter shares), an index a
   `getelementptr` on the element's size. Layout had been worked out twice, by
@@ -256,8 +255,6 @@ ran `check.sh` fully green.
   one call per level. Printing 2 million structs in a loop went from 3,004 M to
   3,934 M instructions, 0.79 s to 0.94 s: about 60% is `strlen` and `memmove` of
   text split at each printer, 13% is `optnone`.
-- **Open:** a struct literal nested 300,000 deep overflows the stack in `check`,
-  before and after this work; 20,000 is fine.
 
 ## 2026-11-02 Fixtures on Windows and macOS (branch `fix/windows-fixtures`)
 
@@ -269,8 +266,25 @@ ran `check.sh` fully green.
 - **Fix:** `source::grow` on the field, as on an array's element. The fixture
   expects the text around the name, so it still runs on every host: a `target`
   would skip it off x86-64 Linux.
-- **Open:** `flow::loans::holders_in` has no stack guard, and walks every field
-  of every struct. A 20,000-level chain overflows a 1 MB stack there, and in a
-  function with a reference, structs that each hold the last twice take 2^n
-  steps: 28 levels check in 10 s, 40 hang. The fix for such a chain in `layout`
-  and `printable` did not reach this walk.
+
+## 2026-11-02 Holder counts (branch `fix/holder-count`)
+
+- **Problem:** two walks over a struct's fields were left: `holders_in` in the
+  loan check, and `Types::holds_loans`, which `check` calls on results and
+  stores. Structs that each hold the last twice took 2^n steps: 40 levels hung
+  on `fn f(s: S39) -> S39`, with no reference anywhere. Without a stack guard, a
+  300,000-level chain overflowed the stack, 20,000 with a 1 MB stack. The fix for
+  such chains in `layout` and `printable` had not reached them.
+- **Fix:** `Type::Struct` keeps `holders` and `mutable_holder`, written by
+  `define_struct` from its fields, like `size` and `align`. `holders_in` moves to
+  `Types`, beside `holds_loans`. These and `size` and `align` are derived facts
+  stored on purpose, with the owner's yes (RULES 5.1).
+- **Limit:** when the innermost struct holds a real reference, the count itself
+  is 2^n, and each holder is kept apart, so storing it only moved the cost. A
+  struct now holds at most `MOST_HOLDERS`, 4,096, or P0011. Measured for one
+  function: 4,096 holders 0.06 s, 8,192 0.21 s, 16,384 0.50 s, 65,536 11.9 s.
+  A language rule, agreed by the owner.
+- **Evidence:** the ten stress programs finish; 300,000 levels check with a 1 MB
+  stack. Each of four bugs put back fails a test: the walk in `holds_loans`
+  hangs, no limit runs out of memory, a false `mutable_holder` fails
+  `run_struct_references`, a wrong count fails the limit's test.

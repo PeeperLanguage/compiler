@@ -1,0 +1,12 @@
+name = "negative_check_struct_holders"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "P0011",
+    "`S13` holds more than 4096 references and slices",
+    "main.peep:17:8\n",
+    "Compilation failed with 1 error(s)",
+]

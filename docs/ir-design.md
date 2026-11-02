@@ -567,8 +567,10 @@ The loan check (T0037, `flow::loans::report_loan_errors`) rejects an access that
 reference still in use forbids. A loan is one `borrow`; it lasts until the
 last use of a reference holding it (owner, 2026-10-23), found by liveness of
 its holders: each reference or slice in a variable or value, a struct's fields one by one,
-however deep (owner, 2026-11-01). So each field keeps its own loans, as if it
-had a lifetime of its own in Rust, with no syntax: `p.second` read out of `p`
+however deep (owner, 2026-11-01). A struct holds at most 4,096 of them (P0011):
+each is kept apart, and a struct holding the last one twice doubles them. So
+each field keeps its own loans, as if it had a lifetime of its own in Rust, with
+no syntax: `p.second` read out of `p`
 holds only the loans of `second`. Liveness stays per variable, as Rust's does:
 using any part of a struct uses all of it, even with two lifetimes in Rust
 (`a = 3; print(p.second.*);` is refused when `first` borrows `a`), and each

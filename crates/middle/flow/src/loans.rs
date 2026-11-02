@@ -104,7 +104,7 @@ pub fn report_loan_errors(
     let mut holder_starts = Vec::with_capacity(variables.len() + values.len() + 1);
     holder_starts.push(holder_count);
     for ty in variables.chain(values) {
-        holder_count += holders_in(types, ty);
+        holder_count += types.holders_in(ty);
         holder_starts.push(holder_count);
     }
     let mut loans_through = vec![Vec::new(); body.variables.len()];
@@ -126,17 +126,6 @@ pub fn report_loan_errors(
     };
     loans.reserved = loans.reserved_loans();
     loans.report(file, diagnostics);
-}
-
-/// How many holders a value of type `ty` is: one for a reference or slice,
-/// its fields' for a struct, as no other type holds one.
-fn holders_in(types: &Types, ty: TypeId) -> usize {
-    match types[ty] {
-        Type::Struct { ref fields, .. } => {
-            (fields.iter()).map(|&field| holders_in(types, field)).sum()
-        }
-        ref other => usize::from(other.borrows().is_some()),
-    }
 }
 
 /// The holders of `range` as ids.
@@ -323,9 +312,8 @@ impl Loans<'_> {
             unreachable!("only a struct's field holds a reference")
         };
         let (before, rest) = fields.split_at(field as usize);
-        let holders_before: usize = before.iter().map(|&ty| holders_in(self.types, ty)).sum();
-        let first = holders.start + holders_before;
-        (first..first + holders_in(self.types, rest[0]), rest[0])
+        let first = holders.start + self.types.holders_of(before);
+        (first..first + self.types.holders_in(rest[0]), rest[0])
     }
 
     /// The holders that `place` is in: those under its fields up to its
@@ -529,7 +517,7 @@ impl Loans<'_> {
             mir::InstructionKind::Aggregate(ref parts) => {
                 let mut next = target.start;
                 for part in parts {
-                    let count = holders_in(self.types, self.body.operand_type(*part));
+                    let count = self.types.holders_in(self.body.operand_type(*part));
                     copy(held, next..next + count, self.operand_holders(part));
                     next += count;
                 }

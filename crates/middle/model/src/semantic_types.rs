@@ -153,6 +153,10 @@ pub enum Type {
         /// nest as deep as the declarations do and can repeat.
         size: u64,
         align: u64,
+        /// What `holders_in` and `holds_loans` give for it, kept for the same
+        /// reason.
+        holders: usize,
+        mutable_holder: bool,
     },
     /// `[length]element`: `length` values of the `element` type, one after
     /// another.
@@ -538,6 +542,8 @@ impl Types {
     /// `align` bytes, under its id, so a `*T` written before `T` was complete
     /// is the `*T` of after.
     pub fn define_struct(&mut self, named: TypeId, fields: Box<[TypeId]>, size: u64, align: u64) {
+        let holders = self.holders_of(&fields);
+        let mutable_holder = (fields.iter()).any(|&field| self.holds_loans(field) == Some(true));
         let slot = &mut self.types[named.0 as usize];
         let Type::Named(definition) = *slot else {
             unreachable!("only a declared name becomes a struct");
@@ -547,6 +553,8 @@ impl Types {
             fields,
             size,
             align,
+            holders,
+            mutable_holder,
         };
     }
 
@@ -641,11 +649,29 @@ impl Types {
     /// reference, a slice, or a struct with one in a field, however deep.
     pub fn holds_loans(&self, id: TypeId) -> Option<bool> {
         match self[id] {
-            Type::Struct { ref fields, .. } => (fields.iter())
-                .filter_map(|&field| self.holds_loans(field))
-                .reduce(|a, b| a || b),
+            Type::Struct {
+                holders,
+                mutable_holder,
+                ..
+            } => (holders > 0).then_some(mutable_holder),
             ref other => other.borrows(),
         }
+    }
+
+    /// How many references and slices a value of the type `id` is: one for
+    /// either, its fields' for a struct, as no other type holds one.
+    pub fn holders_in(&self, id: TypeId) -> usize {
+        match self[id] {
+            Type::Struct { holders, .. } => holders,
+            ref other => usize::from(other.borrows().is_some()),
+        }
+    }
+
+    /// `holders_in` for a struct of `fields`, not past `usize`.
+    pub fn holders_of(&self, fields: &[TypeId]) -> usize {
+        (fields.iter())
+            .map(|&field| self.holders_in(field))
+            .fold(0, usize::saturating_add)
     }
 
     /// Whether a value of the type `id` copies when used by value: numbers,

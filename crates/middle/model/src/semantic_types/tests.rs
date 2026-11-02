@@ -228,6 +228,8 @@ fn type_text() {
         fields: [TypeId::I32, TypeId::I32].into(),
         size: 8,
         align: 4,
+        holders: 0,
+        mutable_holder: false,
     });
     let raw = TypeId::RAWPTR;
     let typed = types.intern(Type::RawPointer { target: Some(raw) });

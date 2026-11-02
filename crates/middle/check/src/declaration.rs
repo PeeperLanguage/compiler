@@ -23,6 +23,13 @@ use crate::builtin::unsupported_type;
 use crate::scope;
 use crate::scope::report_redeclared;
 
+/// The most references and slices a struct holds, however deep.
+// shortcut: the loan check keeps each one apart, so a struct that holds the
+// last one twice costs twice as much at each level, and 40 of them need 2^39
+// holders. Real structs hold a few; lift this if the check ever tracks them
+// by lifetime, as Rust does.
+const MOST_HOLDERS: usize = 4_096;
+
 impl Checker<'_> {
     /// The type the module's type declaration or alias `definition` declares:
     /// a struct's type (`Type::Struct`), or the type an alias names. Enums,
@@ -67,7 +74,13 @@ impl Checker<'_> {
                 }
                 let (_, size, align) = struct_layout(&self.types, &field_types, self.target);
                 let named = self.types.intern(Type::Named(definition));
-                let ty = self.fits_target(named, size, written.name.span);
+                let mut ty = self.fits_target(named, size, written.name.span);
+                if self.types.holders_of(&field_types) > MOST_HOLDERS {
+                    let text = self.type_text(named);
+                    let message =
+                        format!("`{text}` holds more than {MOST_HOLDERS} references and slices");
+                    ty = self.error(diagnostics::INVALID_TYPE, message, written.name.span);
+                }
                 if ty != TypeId::INVALID {
                     self.types
                         .define_struct(named, field_types.into(), size, align);
