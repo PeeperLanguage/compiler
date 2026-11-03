@@ -31,8 +31,9 @@ try {
     $actual = (Get-FileHash -Algorithm SHA256 "$work/$archive").Hash.ToLower()
     if ($actual -ne $expected) { throw "peeper install: $archive is not the file SHA256SUMS names" }
 
-    # tar.exe, which Windows has had since Windows 10 1803.
-    tar -xzf "$work/$archive" -C "$work/peeper"
+    # Windows' own tar, there since Windows 10 1803: a GNU tar on the PATH would
+    # take `C:` for another machine.
+    & "$env:SystemRoot\System32\tar.exe" -xzf "$work/$archive" -C "$work/peeper"
     if ($LASTEXITCODE -ne 0) { throw "peeper install: cannot unpack $archive" }
     if (-not (Test-Path "$work/peeper/bin/peeper.exe")) { throw "peeper install: $archive holds no bin/peeper.exe" }
 

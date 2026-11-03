@@ -494,5 +494,5 @@ ran `check.sh` fully green.
 - **Not done:** `install.ps1` has not been run, as PowerShell is not installed here.
   `release.yml` and `install-check.yml` run only on a `v*` tag and on publishing, so the
   first real run is the next release. `+crt-static` on ARM Windows is first built there.
-- **Found:** `install.ps1` runs `tar` from the PATH, where `setup.ps1` runs
-  `System32\tar.exe` because a GNU tar takes `C:` for another machine. Not changed.
+- **Fixed:** `install.ps1` ran `tar` from the PATH, where `setup.ps1` runs
+  `System32\tar.exe` because a GNU tar takes `C:` for another machine. It now does too.
