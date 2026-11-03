@@ -446,6 +446,27 @@ ran `check.sh` fully green.
   No compiler source needed a change.
 - **Found:** after the owner's approval on PR #179, `auto-merge-toolchain.yml` stopped
   at "GitHub does not report this PR as clean: unstable", seemingly because its own
-  job was still running. Its manual trigger with `pr_number=179` merged it. Not fixed.
+  job was still running. Its manual trigger with `pr_number=179` merged it. Fixed below.
 - **Not done:** no release archive or installer for this machine yet. The lock's
   `format` field has no reader now (`pack.rs` writes it, `main.rs` parses it).
+
+## 2026-11-03 LLVM for Intel Macs, and the toolchain auto-merge
+
+- **Done:** `build-llvm-intel-mac.yml` builds LLVM on `macos-15-intel` and publishes
+  it as our own release; the bot pinned it as `llvm-darwin-amd64` (PR #180,
+  `9d040210`).
+- **Evidence:** run 41617288179 passed: compile 4 h 31 min of the job's 6 hours, file
+  `LLVM-23.1.4-macOS-X64.tar.xz` 58.4 MB, `clang-23`, `lld`, `llvm-ar` and `lli` each
+  `minos 13.0` and needing only what a Mac comes with, and a C program linked and ran.
+  Listing the file showed every path `pack.rs` reads, with `libclang_rt.osx.a`.
+- **Fixed:** `auto-merge-toolchain.yml` had never merged a pull request on an approval
+  in the runs read (`f4a2af8c`). It asked GitHub for `mergeable_state`, "unstable"
+  while its own job runs, so that check is gone. `check_suite` does not fire for
+  suites GitHub Actions made, so a too-early approval was never retried: it is now
+  `workflow_run` on CI, finding the pull request by commit because the run's own list
+  was empty on the merged bot pull requests read. Closed ones are refused by state.
+- **Evidence:** the check script, run locally against real pull requests, stopped or
+  went on as it should; not yet run live: the next bot pull request is its test.
+- **Not done:** `toolchain pack` not yet run on this LLVM, no Intel Mac pack or CI row.
+- **Found:** `main` has no branch protection and no rulesets, though `RULES.md` 10.1
+  says it does. Owner's call.
