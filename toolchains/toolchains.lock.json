@@ -58,15 +58,15 @@
       "format": "tar.gz"
     },
     {
-      "id": "toolchain-windows-arm64-llvm-mingw-20261006-r5a1b9f49047b",
+      "id": "toolchain-windows-arm64-llvm-mingw-20261020-rb20404288da9",
       "kind": "toolchain",
-      "version": "llvm-mingw-20261006-r5a1b9f49047b",
+      "version": "llvm-mingw-20261020-rb20404288da9",
       "os": "windows",
       "arch": "arm64",
-      "url": "https://github.com/PeeperLanguage/compiler/releases/download/toolchain-windows-arm64-5a1b9f49047b62d97b1ab5837ab5b7f8c0a5db82d8d15480f7703456b531bf1a/toolchain-windows-arm64-llvm-mingw-20261006-r5a1b9f49047b.zip",
-      "size": 193858373,
-      "sha256": "059012b4d5732054cf57db2502ce81f5857e3b1e6f5561099bd4a9325dbf858d",
-      "format": "zip"
+      "url": "https://github.com/PeeperLanguage/compiler/releases/download/toolchain-windows-arm64-llvm-mingw-20261020-rb20404288da9/toolchain-windows-arm64-llvm-mingw-20261020-rb20404288da9.tar.gz",
+      "size": 180374426,
+      "sha256": "b20404288da92201c2081fca47e21055440a92b6a1b941f59de9f6591d6d36c8",
+      "format": "tar.gz"
     }
   ]
 }
