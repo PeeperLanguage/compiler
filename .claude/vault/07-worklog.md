@@ -388,3 +388,19 @@ ran `check.sh` fully green.
   through a reference, pointer or array), and that rule must come with the
   first. Division, shift and array-part checks are still written by each
   backend from the operation.
+
+## 2026-11-03 Machine division up to 64 bits (`bigint`)
+
+- **Problem:** `bigint::divide` and `remainder` walked a value bit by bit, with
+  allocations, even for one limb. A loop of `%` spent 22% of its interpreted
+  time in `divide_magnitudes`.
+- **Fix:** a value of one limb uses the machine's division; wider ones still
+  walk. The magnitudes, signs and wrapping stay where they were.
+- **After:** that loop under `run -interpret`, 3,000 passes of 64 steps: 7,245 to
+  4,882 M instructions (-33%); `main` was 6,332 M. A loop with no division: no
+  change. A special path with no `Vec`s measured 4,717 M: not worth a second
+  copy of the sign handling.
+- **Evidence:** a new test compares `divide` and `remainder` with `i128`
+  arithmetic: every pair of values at 1 to 8 bits, signed and unsigned, and edge
+  values at 31 to 126 bits, wrapping at the signed minimum. It passed on the old
+  code first. A wrong quotient or remainder in the new path fails it.
