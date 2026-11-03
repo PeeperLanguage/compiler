@@ -491,8 +491,13 @@ ran `check.sh` fully green.
 - **Evidence:** `install.sh` run with stand-in `uname`, `sysctl` and `curl` names the right
   archive for Linux and macOS on both processors and under Rosetta, and refuses FreeBSD and
   riscv64. The two workflow files parse.
-- **Not done:** `install.ps1` has not been run, as PowerShell is not installed here.
-  `release.yml` and `install-check.yml` run only on a `v*` tag and on publishing, so the
-  first real run is the next release. `+crt-static` on ARM Windows is first built there.
+- **Evidence, test release:** tag `v0.3.0-rc1` at `ba3dfe77`, run 41670753822, passed on all
+  six machines, fixtures on each unpacked archive. Sizes 85.8 MB (`darwin-amd64`),
+  221.7 MB (`linux-arm64`), 183.0 MB (`windows-arm64`). Each new archive's `peeper` is for
+  its processor, its checksum matches, and the ARM Windows `peeper.exe` names no Visual C++
+  runtime. The draft and the tag were then deleted.
+- **Not done:** `install.ps1`, `install.sh` against a real release and `install-check.yml`
+  have not run: PowerShell is not installed here, and the install check needs a published
+  release, so the next release is their first run.
 - **Fixed:** `install.ps1` ran `tar` from the PATH, where `setup.ps1` runs
   `System32\tar.exe` because a GNU tar takes `C:` for another machine. It now does too.
