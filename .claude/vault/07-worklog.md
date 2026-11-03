@@ -474,7 +474,25 @@ ran `check.sh` fully green.
   `toolchain-darwin-amd64-llvm-23.1.4-refeaa4f1aed4`, 82.8 MB against the old 670 MB;
   the Intel job took 2 min 13 s. The ARM Mac pack is 137 MB; ours is likely smaller for
   its two LLVM targets (not compared file by file).
+- **CI:** run 41663551454 (`aafaf013`) passed on all six machines; the Intel Mac job took
+  8 min 51 s from a cold cache, on the new pack. No compiler source needed a change.
 - **Not done:** no Intel Mac release archive or installer. The old pack's release stays
   until the owner's cleanup.
 - **Found:** `main` has no branch protection and no rulesets, though `RULES.md` 10.1
   says it does. Owner's call.
+
+## 2026-11-03 Release archives and installers for the new machines
+
+- **Done:** `release.yml` builds archives for `linux-arm64`, `darwin-amd64` and
+  `windows-arm64`, with its Rust targets chosen as in `ci.yml`. `install.sh` no longer
+  has a list of allowed machines: all four it maps have archives, and the Rosetta check
+  stays. `install.ps1` maps AMD64 and ARM64 as `setup.ps1` does. `install-check.yml` has
+  rows for the three machines.
+- **Evidence:** `install.sh` run with stand-in `uname`, `sysctl` and `curl` names the right
+  archive for Linux and macOS on both processors and under Rosetta, and refuses FreeBSD and
+  riscv64. The two workflow files parse.
+- **Not done:** `install.ps1` has not been run, as PowerShell is not installed here.
+  `release.yml` and `install-check.yml` run only on a `v*` tag and on publishing, so the
+  first real run is the next release. `+crt-static` on ARM Windows is first built there.
+- **Found:** `install.ps1` runs `tar` from the PATH, where `setup.ps1` runs
+  `System32\tar.exe` because a GNU tar takes `C:` for another machine. Not changed.

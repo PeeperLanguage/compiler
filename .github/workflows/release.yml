@@ -21,10 +21,17 @@ jobs:
         include:
           - runner: ubuntu-24.04
             machine: linux-amd64
+          - runner: ubuntu-24.04-arm
+            machine: linux-arm64
           - runner: macos-15
             machine: darwin-arm64
+          # shortcut: macos-15-intel ends in August 2027; move to macos-26-intel then.
+          - runner: macos-15-intel
+            machine: darwin-amd64
           - runner: windows-2025
             machine: windows-amd64
+          - runner: windows-11-arm
+            machine: windows-arm64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     defaults:
@@ -33,12 +40,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       # The runtime is built with rustc for each target the archive holds.
-      - if: runner.os == 'Linux'
+      - if: runner.os == 'Linux' && runner.arch == 'X64'
         run: rustup target add i686-unknown-linux-gnu
       - if: runner.os == 'Windows'
-        run: rustup target add x86_64-pc-windows-gnullvm
-      # The i686-linux fixtures link against the 32-bit C library.
-      - if: runner.os == 'Linux'
+        run: rustup target add ${{ runner.arch == 'ARM64' && 'aarch64' || 'x86_64' }}-pc-windows-gnullvm
+      # The i686-linux fixtures link against the 32-bit C library; only
+      # x86-64 Linux runs them.
+      - if: runner.os == 'Linux' && runner.arch == 'X64'
         run: sudo apt-get update && sudo apt-get install -y gcc-multilib
       - if: runner.os != 'Windows'
         run: bash scripts/setup.sh

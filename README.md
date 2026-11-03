@@ -101,8 +101,8 @@ Windows PowerShell:
 irm https://github.com/PeeperLanguage/compiler/releases/latest/download/install.ps1 | iex
 ```
 
-A release holds one archive per machine, Linux x86-64, macOS ARM64 and
-Windows x86-64, with the compiler, its libraries, runtime and LLVM toolchain
+A release holds one archive per machine, Linux, macOS and Windows, each on
+x86-64 and ARM64, with the compiler, its libraries, runtime and LLVM toolchain
 (`.github/workflows/release.yml`, run by pushing a `v*` tag). The install
 script downloads this machine's archive, checks it against the release's
 `SHA256SUMS`, and replaces the installation, `~/.peeper` (on Windows

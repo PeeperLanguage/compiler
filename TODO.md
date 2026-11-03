@@ -54,15 +54,17 @@ the playground runs programs through the MIR interpreter (`main` = `1fd7ede7`).
 - [x] CI, the pack build and CodeQL all pass on `main`.
 - [x] Windows ARM64: `windows-11-arm` rows in CI and the pack build, and the pack
   `toolchain-windows-arm64-llvm-mingw-20261020-rb20404288da9` pinned by PR #179.
+- [x] macOS Intel: LLVM publishes no macOS x86-64 release, so
+  `build-llvm-intel-mac.yml` builds LLVM on `macos-15-intel` (owner's choice,
+  2026-11-03; 4 h 31 min of the job's 6 hours) and publishes it here as
+  `LLVM-<version>-macOS-X64.tar.xz`, which `toolchain pack` reads as an LLVM
+  release. `macos-15-intel` rows in CI and the pack build, pack pinned by PR #181.
 
 ### Left
 
-1. [ ] **macOS Intel (darwin-amd64).** LLVM publishes no macOS x86-64 release,
-   so `build-llvm-intel-mac.yml` builds LLVM on `macos-15-intel` (owner's choice,
-   2026-11-03) and publishes it here as `LLVM-<version>-macOS-X64.tar.xz`, which
-   `toolchain pack` reads as an LLVM release. Its first build took 4 h 31 min of
-   the job's 6 hours, and its pack is pinned. Left: the first CI run, the release
-   archive and the installer.
+1. [ ] **First release for ARM Linux, ARM Windows and Intel Macs.** `release.yml`,
+   the install scripts and `install-check.yml` cover them, but only a `v*` tag and
+   publishing it run those.
    - `macos-15-intel` ends in August 2027, and GitHub calls it its last x86-64
      image; `macos-26-intel` has no announced end. After the last one, Intel Macs
      have no CI: decide then whether to keep them.

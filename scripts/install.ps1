@@ -9,10 +9,12 @@ $ProgressPreference = "SilentlyContinue" # Invoke-WebRequest is slow with it
 
 $baseUrl = "https://github.com/PeeperLanguage/compiler/releases/latest/download"
 $installRoot = Join-Path $env:LOCALAPPDATA "Peeper"
-if ($env:PROCESSOR_ARCHITECTURE -ne "AMD64") {
-    throw "peeper install: no release for windows-$($env:PROCESSOR_ARCHITECTURE.ToLower()) yet: build from source (README.md)"
+$arch = switch ($env:PROCESSOR_ARCHITECTURE) {
+    "AMD64" { "amd64" }
+    "ARM64" { "arm64" }
+    default { throw "peeper install: no release for windows-$($env:PROCESSOR_ARCHITECTURE.ToLower()): build from source (README.md)" }
 }
-$archive = "peeper-windows-amd64.tar.gz"
+$archive = "peeper-windows-$arch.tar.gz"
 
 # Beside the installation, so the swap below is a rename on one drive.
 $work = "$installRoot.install"
