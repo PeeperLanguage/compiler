@@ -57,7 +57,6 @@ impl<'b> Interpreter<'b, '_> {
         let frame = self.frame();
         let mut ty = frame.body.variables[place.variable].ty;
         let mut address = self.place_variable(place.variable, span)?;
-        let mut length = None;
         for &step in &place.projections {
             match (step, &self.types[ty]) {
                 (Projection::Field(index), Type::Struct { .. }) => {
@@ -66,8 +65,6 @@ impl<'b> Interpreter<'b, '_> {
                     ty = field;
                 }
                 (Projection::SliceElements, _) => {
-                    let second = address.wrapping_add(self.pointer_bytes());
-                    length = Some(self.read_word(second, span)?);
                     address = self.read_word(address, span)?;
                 }
                 (Projection::Dereference, pointer) => {
@@ -98,11 +95,7 @@ impl<'b> Interpreter<'b, '_> {
                 _ => unreachable!("a field is taken of a struct, an element of an array or slice"),
             }
         }
-        Ok(Located {
-            address,
-            ty,
-            length,
-        })
+        Ok(Located { address, ty })
     }
 
     /// The value of the reference, slice or pointer to `place` that the
@@ -114,18 +107,23 @@ impl<'b> Interpreter<'b, '_> {
     ) -> Result<Register, Failure> {
         let body = self.frame().body;
         let span = body.instructions.span(id);
-        let located = self.locate(place, span)?;
-        if !matches!(self.types[body.instructions[id].ty], Type::Slice { .. }) {
-            return Ok(Register::Address(located.address));
+        let ty = body.instructions[id].ty;
+        if !matches!(self.types[ty], Type::Slice { .. }) {
+            return Ok(Register::Address(self.locate(place, span)?.address));
         }
+        // All of a slice's elements are the slice's own two parts.
+        if let Some(slice) = place.slice_of_elements() {
+            let located = self.locate(&slice, span)?;
+            return self.read_value(located.address, ty, span);
+        }
+        let located = self.locate(place, span)?;
         let length = match (place.projections.last(), &self.types[located.ty]) {
             (Some(&Projection::Subslice(subslice)), _) => {
                 let count = body.subslices[subslice.index()].count;
                 self.position(&count).expect("lowering checked the count")
             }
             (_, &Type::Array { length, .. }) => length,
-            (_, Type::Slice { .. }) => located.length.expect("a slice's elements have a length"),
-            _ => unreachable!("a slice is taken of an array or a slice's elements"),
+            _ => unreachable!("a slice is taken of an array or some of a slice's elements"),
         };
         Ok(Register::Slice {
             address: located.address,

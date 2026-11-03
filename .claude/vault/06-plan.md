@@ -40,6 +40,7 @@ forgotten or invented.
 20. [x] Index checks have one owner, lowering; the backends only find
     addresses (branch `feature/place-addresses`).
 21. [x] Division up to 64 bits uses the machine's (same branch, its own change).
+23. [x] A borrow of a whole slice reads the slice; the walks never read a length.
 22. [ ] Owner: decide how a compile-time run counts steps; checks now use up
     its limit sooner (worklog, Index checks in lowering).
 

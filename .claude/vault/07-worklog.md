@@ -404,3 +404,20 @@ ran `check.sh` fully green.
   arithmetic: every pair of values at 1 to 8 bits, signed and unsigned, and edge
   values at 31 to 126 bits, wrapping at the signed minimum. It passed on the old
   code first. A wrong quotient or remainder in the new path fails it.
+
+## 2026-11-03 A borrow of a whole slice reads the slice
+
+- **Problem:** after index checks moved to lowering, only a borrow of all a
+  slice's elements (`s.*`, as in passing `s` to a call) needed a slice's length
+  from the address walk. The LLVM writer worked out which run held it in two
+  places, took the slice apart and built it again; the interpreter read the
+  length on every step through a slice for this one case.
+- **Fix:** `Place::slice_of_elements` gives the slice such a borrow is all of,
+  and both backends read it whole. Neither walk touches the length now, and
+  `Located` lost its `length`.
+- **After:** 3,000 functions passing two `[&mut]` slices four times: LLVM text
+  12.85 to 8.94 MB, `check -dump ll` 727 to 608 M instructions, `build` 6,812 to
+  5,916 M. A loop of `s[i]` under `run -interpret`: 3,186 to 3,148 M. Output the
+  same on mixed programs in debug, release, interpreter and `i686-linux`.
+- **Evidence:** a wrong slice from `slice_of_elements`, the LLVM writer or the
+  interpreter fails run fixtures; `ll_slices` pins the text, with `lend`.

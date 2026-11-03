@@ -709,10 +709,10 @@ one walk per function (`peeper -dump ll` shows it):
 - A slice is `%slice = type { ptr, iN }`, N the pointer's width, written at
   the top of every module, and passed as that one value, not kept in memory
   like an array, so a slice argument is never copied. At a place's step
-  through a slice the walker loads the elements' address, and the count too
-  when the place ends there, a borrow of them all; an index is a
+  through a slice the walker loads the elements' address; an index is a
   `getelementptr` index, an `iN` lowering checked, even a constant one into a
-  slice; a borrow of a slice builds both parts with `insertvalue`; a subslice step is
+  slice; a borrow of all a slice's elements loads the slice, and any other
+  borrow as a slice builds both parts with `insertvalue`; a subslice step is
   a `getelementptr` index at its start, an `iN` checked before, and the slice
   takes its count. A debugger shows it as a
   struct with `ptr` and `len`. A slice spread in an array literal is

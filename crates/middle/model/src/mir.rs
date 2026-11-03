@@ -134,6 +134,17 @@ impl Place {
         self.projections.is_empty().then_some(self.variable)
     }
 
+    /// The slice this place is all the elements of, when it ends at them.
+    pub fn slice_of_elements(&self) -> Option<Place> {
+        let [before @ .., Projection::SliceElements] = &*self.projections else {
+            return None;
+        };
+        Some(Place {
+            variable: self.variable,
+            projections: before.into(),
+        })
+    }
+
     /// Whether the place goes through a reference, so it is not in its
     /// variable's own storage.
     pub fn is_behind_reference(&self) -> bool {

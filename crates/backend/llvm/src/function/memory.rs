@@ -146,10 +146,8 @@ impl Function<'_, '_, '_> {
     /// run of fields and elements, one `getelementptr` for each index, a
     /// `usize` lowering checked, and one for the bytes of the fields after
     /// them; and before each dereference a load of the pointer there,
-    /// `<address>.<n>` for the `n`th. For a place that ends at a slice's
-    /// elements, a borrow of them all, the slice's length too,
-    /// `<address>.<n>.len`. Gives the place's type, a slice's for its
-    /// elements.
+    /// `<address>.<n>` for the `n`th. Gives the place's type, a slice's for
+    /// its elements.
     pub(super) fn write_place_address(
         &mut self,
         out: &mut String,
@@ -160,14 +158,6 @@ impl Function<'_, '_, '_> {
         let variable = place.variable.index();
         let mut ty = self.body.variables[place.variable].ty;
         let pointer_bits = self.module.target.pointer_bits;
-        let projections = &place.projections;
-        let length_run =
-            matches!(projections.last(), Some(mir::Projection::SliceElements)).then(|| {
-                (projections.iter())
-                    .filter(|step| step.leaves_storage())
-                    .count()
-                    - 1
-            });
         let mut runs = place
             .projections
             .split(|step| step.leaves_storage())
@@ -250,18 +240,8 @@ impl Function<'_, '_, '_> {
             if last {
                 continue;
             }
-            // A slice's elements keep the slice's type.
-            if Some(run) == length_run {
-                let slice = format!("{address}.{run}.s");
-                _ = writeln!(
-                    out,
-                    "  {slice} = load %slice, ptr {run_address}{location}\n  \
-                     {address}.{run} = extractvalue %slice {slice}, 0{location}\n  \
-                     {address}.{run}.len = extractvalue %slice {slice}, 1{location}"
-                );
-                continue;
-            }
-            // A slice's elements' address is its first part.
+            // A slice's elements' address is its first part, and they keep
+            // the slice's type.
             _ = writeln!(
                 out,
                 "  {address}.{run} = load ptr, ptr {run_address}{location}"
