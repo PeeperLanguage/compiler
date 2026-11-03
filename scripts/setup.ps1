@@ -69,8 +69,7 @@ function Use-Pack {
         Remove-Item -Recurse -Force $work
         return $false
     }
-    # Windows' own tar reads a tar.gz pack and the zip packs before them; a
-    # GNU tar on the PATH would take `C:` for another machine.
+    # Windows' own tar: a GNU tar on the PATH would take `C:` for another machine.
     & "$env:SystemRoot\System32\tar.exe" -xf "$work\pack" -C $work
     if ($LASTEXITCODE -ne 0) { throw "cannot unpack $($entry.id)" }
     # The old toolchain goes only once the new one is all there.

@@ -421,3 +421,31 @@ ran `check.sh` fully green.
   same on mixed programs in debug, release, interpreter and `i686-linux`.
 - **Evidence:** a wrong slice from `slice_of_elements`, the LLVM writer or the
   interpreter fails run fixtures; `ll_slices` pins the text, with `lend`.
+
+## 2026-11-03 CI on ARM Linux
+
+- **Change (`6f0d0a93`, branch `feature/more-machines`):** `ci.yml` has an
+  `ubuntu-24.04-arm` row. The i686 Rust target and `gcc-multilib` install only on
+  x86-64 Linux; `wasm32-wasip1` on all Linux.
+- **Evidence:** CI run 41613278877 passed on all four machines. The ARM job ran on
+  image `ubuntu-24.04-arm` with Rust `aarch64-unknown-linux-gnu` and
+  `toolchain-linux-arm64-llvm-23.1.4-rddfb5ccb28fa`, in 2 min 17 s. No compiler
+  source needed a change.
+- **Not done:** no ARM Linux release archive or installer yet. `target = "i686-linux"`
+  fixtures are skipped there by design (`runs_i686`).
+
+## 2026-11-03 Pack and CI on ARM Windows
+
+- **Change (`4a46a92b`, merge `f7d8979f`):** `windows-11-arm` rows in `ci.yml` and
+  `build-toolchains.yml`; the runtime's Rust target follows `runner.arch`. Pack
+  `toolchain-windows-arm64-llvm-mingw-20261020-rb20404288da9` replaces the old zip,
+  193.9 to 180.4 MB. `setup.ps1` drops its remark on zip packs.
+- **Evidence:** pack run 41614574297 published only this pack; the other four came
+  out identical and were "already published". CI run 41615233104 passed on all five
+  machines; the ARM Windows job took 4 min 52 s, with Rust `aarch64-pc-windows-msvc`.
+  No compiler source needed a change.
+- **Found:** after the owner's approval on PR #179, `auto-merge-toolchain.yml` stopped
+  at "GitHub does not report this PR as clean: unstable", seemingly because its own
+  job was still running. Its manual trigger with `pr_number=179` merged it. Not fixed.
+- **Not done:** no release archive or installer for this machine yet. The lock's
+  `format` field has no reader now (`pack.rs` writes it, `main.rs` parses it).
