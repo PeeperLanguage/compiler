@@ -15,7 +15,10 @@ use source::Span;
 use crate::Lowering;
 use crate::lowered_variable;
 use crate::ranges::RangeWalk;
+use crate::slices::Length;
 use crate::slices::slice_elements;
+use runtime_abi::messages::SLICE_INDEX_MESSAGE;
+use runtime_abi::messages::array_index_message;
 
 impl Lowering<'_> {
     /// The instruction that makes the array literal of `parts`, of the
@@ -79,7 +82,11 @@ impl Lowering<'_> {
                         }
                         _ => self.lower_expr(value)?,
                     };
-                    return Some(self.slice_length(slice, span));
+                    let length = mir::InstructionKind::Field {
+                        value: slice,
+                        fields: Box::new([1]), // after its elements' address
+                    };
+                    return Some(self.emit(length, self.types.usize, span));
                 }
                 thir::ExprKind::Binary {
                     op: op @ (BinaryOp::LogicalAnd | BinaryOp::LogicalOr),
@@ -219,8 +226,8 @@ impl Lowering<'_> {
                     steps.push(Ok(mir::Projection::Dereference));
                     outer = reference;
                 }
-                thir::ExprKind::Index { array, index } => {
-                    steps.push(Err(index));
+                thir::ExprKind::Index { array, .. } => {
+                    steps.push(Err(outer));
                     // A slice's elements are behind it.
                     if let Type::Slice { .. } = self.types[self.thir.exprs[array].ty] {
                         steps.push(Ok(mir::Projection::SliceElements));
@@ -260,14 +267,62 @@ impl Lowering<'_> {
                 }
             }
         };
-        let projections = steps.into_iter().rev().map(|step| match step {
-            Ok(step) => Some(step),
-            Err(index) => Some(mir::Projection::Index(self.lower_expr(index)?)),
-        });
+        let variable = lowered_variable(variable);
+        let mut projections = Vec::with_capacity(steps.len());
+        for step in steps.into_iter().rev() {
+            let step = match step {
+                Ok(step) => step,
+                Err(indexing) => self.lower_index(indexing, variable, &projections)?,
+            };
+            projections.push(step);
+        }
         Some(Ok(mir::Place {
-            variable: lowered_variable(variable),
-            projections: projections.collect::<Option<_>>()?,
+            variable,
+            projections: projections.into(),
         }))
+    }
+
+    /// The element `indexing` (`thir::ExprKind::Index`) takes of the array
+    /// or slice elements that `variable` and `steps` lead to: its index,
+    /// computed here, as a `usize`, after stopping the program when it is
+    /// outside them. A constant index into an array is inside, as the checker
+    /// made sure. A slice's length is read after its index is computed, as
+    /// the element itself is.
+    fn lower_index(
+        &mut self,
+        indexing: Id<thir::Expr>,
+        variable: Id<mir::Variable>,
+        steps: &[mir::Projection],
+    ) -> Option<mir::Projection> {
+        let span = self.thir.exprs.span(indexing);
+        let thir::ExprKind::Index { array, index } = self.thir.exprs[indexing].kind else {
+            unreachable!("the caller found an index")
+        };
+        let viewed = self.thir.exprs[array].ty;
+        let checked = match self.types[viewed] {
+            Type::Array { .. } if let Some(at) = self.known_position(index) => {
+                self.integer_constant(self.types.usize, at)
+            }
+            Type::Array { length, .. } => {
+                let value = self.lower_expr(index)?;
+                let message = array_index_message(length);
+                let op = BinaryOp::GreaterOrEqual;
+                self.checked_usize(value, op, Length::Known(length), &message, span)
+            }
+            Type::Slice { .. } => {
+                let value = self.lower_expr(index)?;
+                // The slice is the place before its elements' step.
+                let place = mir::Place {
+                    variable,
+                    projections: steps[..steps.len() - 1].into(),
+                };
+                let read = self.emit(mir::InstructionKind::Length(place), self.types.usize, span);
+                let op = BinaryOp::GreaterOrEqual;
+                self.checked_usize(value, op, Length::Read(read), SLICE_INDEX_MESSAGE, span)
+            }
+            _ => unreachable!("the checker indexes only an array or a slice"),
+        };
+        Some(mir::Projection::Index(checked))
     }
 
     /// `left && right` or `left || right`: `right` runs only when `left` does

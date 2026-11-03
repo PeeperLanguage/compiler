@@ -31,6 +31,13 @@ impl<'b> Interpreter<'b, '_> {
                 let ty = body.instructions[id].ty;
                 Some(self.read_value(located.address, ty, span)?)
             }
+            // After the elements' address.
+            InstructionKind::Length(ref place) => {
+                let located = self.locate(place, span)?;
+                let length = located.address.wrapping_add(self.pointer_bytes());
+                let ty = body.instructions[id].ty;
+                Some(self.read_value(length, ty, span)?)
+            }
             InstructionKind::Store {
                 ref place,
                 ref value,
@@ -95,10 +102,10 @@ impl<'b> Interpreter<'b, '_> {
             }
             InstructionKind::Check {
                 ref failed,
-                message,
+                ref message,
             } => {
                 if let Register::Scalar(Value::Bool(true)) = self.operand(failed) {
-                    return Err(self.fail(message, span));
+                    return Err(self.fail(&**message, span));
                 }
                 None
             }

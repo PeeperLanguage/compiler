@@ -156,12 +156,10 @@ struct Interpreter<'b, 'f> {
     registers: Vec<Option<Register>>, // of every frame, the running one last
 }
 
-/// Where a `Place` is: its address and type, and for a slice's elements, how
-/// many there are.
+/// Where a `Place` is: its address and type.
 struct Located {
     address: u64,
     ty: TypeId,
-    length: Option<u64>,
 }
 
 impl<'b, 'f> Interpreter<'b, 'f> {

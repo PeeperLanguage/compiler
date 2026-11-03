@@ -54,8 +54,8 @@ return (origins), T0043 not supported yet, T0044 evaluation failed.
 
 ## MIR terms (`docs/ir-design.md` MIR)
 
-Variable slot, instruction (`load`, `store`, `move`, `borrow`, `address`,
-binary, unary, `convert`, `call`, `phi`, `aggregate`, `field`,
+Variable slot, instruction (`load`, `length`, `store`, `move`, `borrow`,
+`address`, binary, unary, `convert`, `call`, `phi`, `aggregate`, `field`,
 `array parts`, `check`, `print`, `scope end`), terminator (`goto`, `branch`,
 `return`, `panic`, `fall off`), `Place` = variable + `Projection` steps
 (field, dereference, index, slice elements, subslice), operand = constant,
@@ -66,7 +66,7 @@ call.
 
 ## Fixtures (`x_test/*/peeper.toml`)
 
-Modes: `check` (79), `run` (62), `mir` (17, with `expected.mir`), `ll` (9,
+Modes: `check` (80), `run` (68), `mir` (17, with `expected.mir`), `ll` (9,
 with `expected.ll`). `negative_*` fixtures expect errors; `warn_*` warnings;
 `run_i686_*` build for `i686-linux`. `PEEPER_BLESS=1` rewrites expected files.
 

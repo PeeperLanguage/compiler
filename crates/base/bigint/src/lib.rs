@@ -313,11 +313,13 @@ fn divide_magnitudes(
         }
         out
     };
-    Some(divide_unsigned(
-        &magnitude(left),
-        &magnitude(right),
-        bits as usize,
-    ))
+    let (left, right) = (magnitude(left), magnitude(right));
+    // One limb is the machine's own division; the walk over the bits is for
+    // numbers wider than it, and took a third of an interpreted loop's work.
+    if let ([left], [right]) = (&left[..], &right[..]) {
+        return Some((vec![left / right], vec![left % right]));
+    }
+    Some(divide_unsigned(&left, &right, bits as usize))
 }
 
 /// `magnitude`, negated when `negative`.
@@ -459,6 +461,65 @@ mod tests {
         assert_eq!(super::negate(8, &limbs(8, -128)), limbs(8, -128));
         assert_eq!(super::not(8, &limbs(8, 0)), limbs(8, 255));
         assert_eq!(limbs(8, 255), limbs(8, -1), "one set of bits, two readings");
+    }
+
+    /// The value of `bits` bits, read as `signed` says, and the same bits
+    /// from `value`, however it wrapped.
+    fn divide_and_compare(bits: u32, signed: bool, left: i128, right: i128) {
+        let read = |value: i128| {
+            let low = value & ((1i128 << bits) - 1);
+            if signed && low >> (bits - 1) == 1 {
+                low - (1i128 << bits)
+            } else {
+                low
+            }
+        };
+        let (left, right) = (read(left), read(right));
+        let case = format!("{left} and {right}, {bits} bits, signed: {signed}");
+        let (wide_left, wide_right) = (limbs(bits, left), limbs(bits, right));
+        let quotient = super::divide(bits, signed, &wide_left, &wide_right);
+        let remainder = super::remainder(bits, signed, &wide_left, &wide_right);
+        if right == 0 {
+            assert_eq!((quotient, remainder), (None, None), "{case}");
+            return;
+        }
+        assert_eq!(quotient, Some(limbs(bits, left / right)), "{case}");
+        assert_eq!(remainder, Some(limbs(bits, left % right)), "{case}");
+    }
+
+    #[test]
+    fn division_rounds_toward_zero_at_every_width() {
+        for bits in 1..=8 {
+            for left in 0..1i128 << bits {
+                for right in 0..1i128 << bits {
+                    divide_and_compare(bits, false, left, right);
+                    divide_and_compare(bits, true, left, right);
+                }
+            }
+        }
+        let edges = |bits: u32| {
+            let top = 1i128 << (bits - 1);
+            [
+                0,
+                1,
+                2,
+                3,
+                7,
+                top - 1,
+                top,
+                top + 1,
+                (top << 1) - 1,
+                (top << 1) - 2,
+            ]
+        };
+        for bits in [31, 32, 33, 63, 64, 65, 100, 126] {
+            for left in edges(bits) {
+                for right in edges(bits) {
+                    divide_and_compare(bits, false, left, right);
+                    divide_and_compare(bits, true, left, right);
+                }
+            }
+        }
     }
 
     #[test]

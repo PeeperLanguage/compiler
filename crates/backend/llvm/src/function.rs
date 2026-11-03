@@ -133,45 +133,21 @@ impl Module<'_> {
     }
 }
 
-/// How many times the instruction `id` can trap at run time, so it checks
-/// first: a division or shift of integers by a value not known at compile
-/// time, each element of its place at an index not known then, and a
+/// Whether the instruction `id` can trap at run time, so it checks first:
+/// a division or shift of integers by a value not known at compile time, a
 /// `Check`, and array parts whose counts are not all known then. Check
 /// rejects a constant that would trap.
 // Called for every instruction; the array parts arm made the inliner drop it,
 // costing a compile about 10 M instructions.
 #[inline(always)]
-fn traps(body: &mir::Body, types: &Types, id: Id<mir::Instruction>) -> usize {
+fn traps(body: &mir::Body, types: &Types, id: Id<mir::Instruction>) -> bool {
     match body.instructions[id].kind {
-        InstructionKind::Binary { op, left, right } => usize::from(
+        InstructionKind::Binary { op, left, right } => {
             op.can_trap()
                 && !matches!(right, Operand::Constant(_))
-                && matches!(types[body.operand_type(left)], Type::Integer(_)),
-        ),
-        InstructionKind::Load(ref place)
-        | InstructionKind::Move(ref place)
-        | InstructionKind::Store { ref place, .. }
-        | InstructionKind::Borrow { ref place, .. }
-        | InstructionKind::Address(ref place) => {
-            let steps = &place.projections;
-            let unknown = (steps.iter())
-                .filter(|step| {
-                    matches!(step, mir::Projection::Index(index) if !matches!(index, Operand::Constant(_)))
-                })
-                .count();
-            // A slice's length is not known at compile time.
-            let in_slice = (steps.windows(2)).filter(|pair| {
-                matches!(
-                    pair,
-                    [
-                        mir::Projection::SliceElements,
-                        mir::Projection::Index(Operand::Constant(_))
-                    ]
-                )
-            });
-            unknown + in_slice.count()
+                && matches!(types[body.operand_type(left)], Type::Integer(_))
         }
-        InstructionKind::Check { .. } => 1,
+        InstructionKind::Check { .. } => true,
         // Any part but an element or an array is counted when the program
         // runs, as is a range unless it is written here with constant
         // `left`, `step` and `inclusive`; a new kind of part is checked
@@ -180,7 +156,7 @@ fn traps(body: &mir::Body, types: &Types, id: Id<mir::Instruction>) -> usize {
             let Type::Array { element, .. } = types[body.instructions[id].ty] else {
                 unreachable!("array parts make an array")
             };
-            usize::from(parts.iter().any(|&part| {
+            parts.iter().any(|&part| {
                 let ty = body.operand_type(part);
                 match types[ty] {
                     _ if types.same(ty, element) => false,
@@ -197,9 +173,9 @@ fn traps(body: &mir::Body, types: &Types, id: Id<mir::Instruction>) -> usize {
                     }
                     _ => true,
                 }
-            }))
+            })
         }
-        _ => 0,
+        _ => false,
     }
 }
 
@@ -341,9 +317,9 @@ impl Function<'_, '_, '_> {
     /// its last check.
     fn end_label(&self, block: Id<mir::Block>) -> impl Display {
         let instructions = self.body.lists.items(self.body.blocks[block].instructions);
-        let checks: usize = instructions
-            .map(|id| traps(self.body, self.types, id))
-            .sum();
+        let checks = instructions
+            .filter(|&id| traps(self.body, self.types, id))
+            .count();
         fmt::from_fn(move |out| match checks {
             0 => write!(out, "bb{}", block.index()),
             checks => write!(out, "bb{}.{checks}", block.index()),
@@ -517,6 +493,11 @@ impl Function<'_, '_, '_> {
                     type_text(types, ty)
                 )
             }
+            InstructionKind::Length(ref place) => {
+                let address = self.write_address(out, place, &location, id);
+                _ = writeln!(out, "  {name}.s = load %slice, ptr {address}{location}");
+                write!(out, "  {name} = extractvalue %slice {name}.s, 1")
+            }
             InstructionKind::Store { ref place, value }
                 if !in_memory(types, self.body.operand_type(value))
                     && let Some(variable) = place.whole_variable() =>
@@ -540,24 +521,25 @@ impl Function<'_, '_, '_> {
             }
             InstructionKind::Borrow { ref place, .. } | InstructionKind::Address(ref place) => {
                 if !matches!(types[ty], Type::Slice { .. }) {
-                    self.write_place_address(out, &name, place, &location, id);
+                    self.write_place_address(out, &name, place, &location);
                     return; // the address is the value
+                }
+                // All of a slice's elements are the slice's own two parts.
+                if let Some(slice) = place.slice_of_elements() {
+                    let address = self.write_address(out, &slice, &location, id);
+                    _ = writeln!(out, "  {name} = load %slice, ptr {address}{location}");
+                    return;
                 }
                 // A slice: the elements' address, then their count.
                 let address = format!("{name}.p");
-                let viewed = self.write_place_address(out, &address, place, &location, id);
+                let viewed = self.write_place_address(out, &address, place, &location);
                 let length = match (place.projections.last(), &types[viewed]) {
                     (Some(&mir::Projection::Subslice(subslice)), _) => {
                         let count = self.body.subslices[subslice.index()].count;
                         self.operand(count).to_string()
                     }
-                    (Some(mir::Projection::SliceElements), _) => {
-                        let steps = place.projections.iter();
-                        let loaded = steps.filter(|step| step.leaves_storage()).count();
-                        format!("{address}.{}.len", loaded - 1)
-                    }
                     (_, Type::Array { length, .. }) => length.to_string(),
-                    _ => unreachable!("a slice is taken of an array or a slice's elements"),
+                    _ => unreachable!("a slice is taken of an array or some of a slice's elements"),
                 };
                 let bits = self.module.target.pointer_bits;
                 _ = writeln!(
@@ -736,7 +718,10 @@ impl Function<'_, '_, '_> {
                 _ = writeln!(out, "  {name} = phi {} {incoming}", type_text(types, ty));
                 return; // no location: it runs where control arrives
             }
-            InstructionKind::Check { failed, message } => {
+            InstructionKind::Check {
+                failed,
+                ref message,
+            } => {
                 let failed = self.operand(failed).to_string();
                 self.check(out, &failed, message, id);
                 return; // `check` ends the line with the next block's label

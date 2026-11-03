@@ -11,20 +11,25 @@ fn middle:
     %8 = Subtract 3, %3: u64
     %9 = borrow values.0[from %3, count %8]: [&]i32
     store view.2, %9
-    %11 = load view.2.*[at 0]: i32
-    return %11
+    %11 = length view.2: u64
+    %12 = GreaterOrEqual 0, %11: bool
+    check %12, "index out of bounds of the slice"
+    %14 = load view.2.*[at 0]: i32
+    return %14
 fn main:
   bb0:
     fall off at `}`
 fn tail:
   bb0:
     store view.0, arg0
-    %1 = load view.0: [&]i32
-    %2 = field %1[1]: u64
-    %3 = GreaterThan 1, %2: bool
-    check %3, "slice out of bounds"
-    %5 = Subtract %2, 1: u64
-    %6 = borrow view.0.*[from 1, count %5]: [&]i32
-    store rest.1, %6
-    %8 = load rest.1.*[at 0]: i32
-    return %8
+    %1 = length view.0: u64
+    %2 = GreaterThan 1, %1: bool
+    check %2, "slice out of bounds"
+    %4 = Subtract %1, 1: u64
+    %5 = borrow view.0.*[from 1, count %4]: [&]i32
+    store rest.1, %5
+    %7 = length rest.1: u64
+    %8 = GreaterOrEqual 0, %7: bool
+    check %8, "index out of bounds of the slice"
+    %10 = load rest.1.*[at 0]: i32
+    return %10

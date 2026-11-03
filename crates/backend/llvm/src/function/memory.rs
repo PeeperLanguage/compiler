@@ -11,7 +11,6 @@ use model::layout::layout;
 use model::mir;
 use model::mir::InstructionKind;
 use model::mir::Operand;
-use model::semantic_types::Integer;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 
@@ -19,7 +18,6 @@ use crate::function::Function;
 use crate::function::MEMCPY;
 use crate::function::debug_info::DebugLocation;
 use crate::function::spreads_slice;
-use crate::function::traps;
 use crate::function::value_name;
 use crate::text::alloca_text;
 use crate::text::memory_text;
@@ -42,7 +40,7 @@ impl Function<'_, '_, '_> {
             None => write!(out, "{}.f", value_name(id)),
         });
         if whole.is_none() {
-            self.write_place_address(out, &address, place, location, id);
+            self.write_place_address(out, &address, place, location);
         }
         address
     }
@@ -129,10 +127,8 @@ impl Function<'_, '_, '_> {
                 value: Operand::Value(value),
             } = body.instructions[store].kind
             && value == id
-            // Computed before the value, so it must not load a reference or
-            // check an index.
+            // Computed before the value, so it must not load a reference.
             && !place.is_behind_reference()
-            && traps(body, self.types, store) == 0
             && !spreads_slice(body, self.types, id)
         {
             rest.next();
@@ -146,35 +142,22 @@ impl Function<'_, '_, '_> {
         name.to_string()
     }
 
-    /// Writes the lines computing `address`, the address of `place`, for the
-    /// instruction `id`: in each run of fields and elements, one
-    /// `getelementptr` for each index, after its check when it is not known
-    /// at compile time or is into a slice's elements, and one for the bytes
-    /// of the fields after them; and before each dereference a load of the
-    /// pointer there, `<address>.<n>` for the `n`th; for a slice's elements,
-    /// its length too, `<address>.<n>.len`. Gives the place's type, a slice's
-    /// for its elements.
+    /// Writes the lines computing `address`, the address of `place`: in each
+    /// run of fields and elements, one `getelementptr` for each index, a
+    /// `usize` lowering checked, and one for the bytes of the fields after
+    /// them; and before each dereference a load of the pointer there,
+    /// `<address>.<n>` for the `n`th. Gives the place's type, a slice's for
+    /// its elements.
     pub(super) fn write_place_address(
         &mut self,
         out: &mut String,
         address: &dyn Display,
         place: &mir::Place,
         location: &DebugLocation,
-        id: Id<mir::Instruction>,
     ) -> TypeId {
         let variable = place.variable.index();
         let mut ty = self.body.variables[place.variable].ty;
-        let (types, body) = (self.types, self.body);
-        // Whether an element's index gets its own `i64`, named
-        // `<address>.<run>.<step>`: one not known at compile time and not an
-        // `i64` already.
-        let renamed = |index: Operand| {
-            !matches!(index, Operand::Constant(_))
-                && !matches!(
-                    types[body.operand_type(index)],
-                    Type::Integer(Integer { bits: 64, .. })
-                )
-        };
+        let pointer_bits = self.module.target.pointer_bits;
         let mut runs = place
             .projections
             .split(|step| step.leaves_storage())
@@ -187,106 +170,53 @@ impl Function<'_, '_, '_> {
                 _ => format!("{address}.{}", run - 1),
             };
             let last = runs.peek().is_none();
+            // With no step before a load, it reads from where the run starts.
             let run_address = if last {
                 address.to_string()
+            } else if steps.is_empty() {
+                base.clone()
             } else {
                 format!("{address}.{run}.f")
             };
             // Each index steps from `at` by its element's size; the fields
             // add up to `offset`, written once, after them.
             let (mut at, mut offset) = (base, 0);
-            // Each index not known at compile time, checked against its
-            // array's length, and `renamed` when it is not an `i64`.
             for (position, &step) in steps.iter().enumerate() {
-                ty = match (step, &self.types[ty]) {
-                    (mir::Projection::Field(index), Type::Struct { .. }) => {
+                let index = match (step, &self.types[ty]) {
+                    (mir::Projection::Field(field_index), Type::Struct { .. }) => {
+                        let target = self.module.target;
                         let (field_offset, field) =
-                            field_placed(self.types, ty, index as usize, self.module.target);
+                            field_placed(self.types, ty, field_index as usize, target);
                         offset += field_offset;
-                        field
+                        ty = field;
+                        continue;
                     }
-                    (
-                        mir::Projection::Index(Operand::Constant(_)),
-                        &Type::Array { element, .. },
-                    ) => {
-                        element // check found it inside the array
-                    }
-                    // Lowering checked its start and count.
-                    (mir::Projection::Subslice(_), &Type::Array { element, .. }) => element,
                     // A slice's elements are past its dereference, so never
                     // in the first run, which would step into its header.
-                    (mir::Projection::Subslice(_), &Type::Slice { element, .. }) => {
-                        assert!(run > 0, "a slice is taken of a slice's elements");
-                        element
+                    (
+                        mir::Projection::Index(_) | mir::Projection::Subslice(_),
+                        Type::Slice { .. },
+                    ) if run == 0 => {
+                        unreachable!("an element is taken of a slice's elements")
                     }
-                    (mir::Projection::Index(index), &Type::Array { element, .. })
-                    | (mir::Projection::Index(index), &Type::Slice { element, .. }) => {
-                        let Type::Integer(integer) = self.types[self.body.operand_type(index)]
-                        else {
-                            unreachable!("check takes only an integer index")
-                        };
-                        let (bits, value) = (integer.bits, self.operand(index).to_string());
-                        let name = format!("{address}.{run}.{position}");
-                        // Compared as an `i64`, or in its own type when wider; a
-                        // negative index, extended, is above any length.
-                        let (compared, compared_bits) = match bits {
-                            _ if !renamed(index) => (format!("i64 {value}"), 64),
-                            65.. => (format!("i{bits} {value}"), bits),
-                            _ => {
-                                let extension = if integer.signed { "sext" } else { "zext" };
-                                _ = writeln!(
-                                    out,
-                                    "  {name} = {extension} i{bits} {value} to i64{location}"
-                                );
-                                (format!("i64 {name}"), 64)
-                            }
-                        };
-                        // A slice's length was loaded at its dereference.
-                        let (bound, message) = if let Type::Array { length, .. } = self.types[ty] {
-                            (
-                                length.to_string(),
-                                runtime_abi::messages::array_index_message(length),
-                            )
-                        } else {
-                            let mut bound = format!("{address}.{}.len", run - 1);
-                            let pointer_bits = self.module.target.pointer_bits;
-                            if compared_bits > pointer_bits {
-                                _ = writeln!(
-                                    out,
-                                    "  {name}.len = zext i{pointer_bits} {bound} to i{compared_bits}{location}"
-                                );
-                                bound = format!("{name}.len");
-                            }
-                            (
-                                bound,
-                                runtime_abi::messages::SLICE_INDEX_MESSAGE.to_string(),
-                            )
-                        };
-                        _ = writeln!(out, "  {name}.out = icmp uge {compared}, {bound}{location}");
-                        self.check(out, &format!("{name}.out"), &message, id);
-                        if bits > 64 && renamed(index) {
-                            _ = writeln!(out, "  {name} = trunc {compared} to i64{location}");
-                        }
-                        element
+                    (
+                        mir::Projection::Index(index),
+                        &(Type::Array { element, .. } | Type::Slice { element, .. }),
+                    ) => {
+                        ty = element;
+                        index
+                    }
+                    // Lowering checked its start and count.
+                    (
+                        mir::Projection::Subslice(subslice),
+                        &(Type::Array { element, .. } | Type::Slice { element, .. }),
+                    ) => {
+                        ty = element;
+                        self.body.subslices[subslice.index()].start
                     }
                     _ => unreachable!(
                         "a field is taken of a struct, an element of an array or slice"
                     ),
-                };
-                let index = match step {
-                    mir::Projection::Field(_) => continue,
-                    mir::Projection::Index(index) if renamed(index) => {
-                        format!("i64 {address}.{run}.{position}")
-                    }
-                    mir::Projection::Index(index) => format!("i64 {}", self.operand(index)),
-                    mir::Projection::Subslice(subslice) => {
-                        let start = self.body.subslices[subslice.index()].start;
-                        let bits = self.module.target.pointer_bits;
-                        format!("i{bits} {}", self.operand(start))
-                    }
-                    mir::Projection::Dereference | mir::Projection::SliceElements => {
-                        unreachable!("split at each step out of its storage")
-                    }
                 };
                 let next = if position + 1 == steps.len() && offset == 0 {
                     run_address.clone()
@@ -295,8 +225,9 @@ impl Function<'_, '_, '_> {
                 };
                 _ = writeln!(
                     out,
-                    "  {next} = getelementptr inbounds {}, ptr {at}, {index}{location}",
-                    memory_text(self.types, ty, self.module.target)
+                    "  {next} = getelementptr inbounds {}, ptr {at}, i{pointer_bits} {}{location}",
+                    memory_text(self.types, ty, self.module.target),
+                    self.operand(index)
                 );
                 at = next;
             }
@@ -309,25 +240,18 @@ impl Function<'_, '_, '_> {
             if last {
                 continue;
             }
-            // A slice's elements keep the slice's type: the next run indexes
-            // them with the length loaded here.
+            // A slice's elements' address is its first part, and they keep
+            // the slice's type.
+            _ = writeln!(
+                out,
+                "  {address}.{run} = load ptr, ptr {run_address}{location}"
+            );
             if let Type::Slice { .. } = self.types[ty] {
-                let slice = format!("{address}.{run}.s");
-                _ = writeln!(
-                    out,
-                    "  {slice} = load %slice, ptr {run_address}{location}\n  \
-                     {address}.{run} = extractvalue %slice {slice}, 0{location}\n  \
-                     {address}.{run}.len = extractvalue %slice {slice}, 1{location}"
-                );
                 continue;
             }
             let Some(target) = self.types[ty].pointee() else {
                 unreachable!("a dereference is taken of a typed pointer")
             };
-            _ = writeln!(
-                out,
-                "  {address}.{run} = load ptr, ptr {run_address}{location}"
-            );
             ty = target;
         }
         ty

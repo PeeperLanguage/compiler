@@ -88,6 +88,7 @@ pub fn report_variable_state_errors(
                     })
                 }
                 mir::InstructionKind::Load(ref place)
+                | mir::InstructionKind::Length(ref place)
                 | mir::InstructionKind::Move(ref place)
                 | mir::InstructionKind::Store { ref place, .. }
                 | mir::InstructionKind::Borrow { ref place, .. }

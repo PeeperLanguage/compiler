@@ -329,3 +329,95 @@ ran `check.sh` fully green.
   seen before (3,785 to 3,795 M). Output unchanged: every dump matched.
 - **Evidence:** with every stored offset 0, `ll_struct` and
   `ll_struct_parameters` differ and the interpreter fails `run_struct_references`.
+
+## 2026-11-03 Index checks in lowering (branch `feature/place-addresses`)
+
+- **Problem:** the bounds rule for `a[i]` and `s[i]` had two owners. The LLVM
+  writer (`write_place_address`, with `renamed`, the extension, the compare and
+  the `traps` place arm) and the interpreter (`locate`) each checked the index
+  while finding the address, though `&s[i..j]` was already checked once, in
+  lowering. All indexes ran before any check: in `a[g()][h()] = f()` with `g`
+  outside, Peeper ran `f`, `g`, `h`; Rust runs `f`, `g` and stops. And
+  `grid[pick()].len` never checked its index.
+- **Fix:** lowering checks each index right after computing it
+  (`lower_index`, through `checked_usize`, split from `lower_slice_end`), and
+  the step keeps a `usize`; a constant index into an array stays unchecked, by
+  the checker's own test (`known_position`, shared with slice ends). A new
+  `length` instruction reads a slice's length for these checks and for slice
+  ends (it replaced `load` + `field`); the loan check treats it as Rust's
+  shallow read (`Access::own_storage`, which was `replaces`), so a loan of the
+  elements does not stop it. `Check` keeps its message as `Box<str>`, built from
+  the array's length. The backends only turn a place into an address: the LLVM
+  walker lost its checks, `traps` is a `bool` with no place arm, and the store
+  shortcut lost its trap condition; the interpreter lost its bound filters.
+- **Behavior:** the order above is Rust's (`run_panic_index_order`);
+  `grid[pick()].len` checks its index (`run_panic_index_length`). Two borrow
+  messages read better: `&s[1..2]` while a `&mut` of an element is in use says
+  "borrowed", not "read"; "slice used later here" points at `left[0]`, not the
+  whole assignment (`negative_slicing`). Nothing else changed: old and new
+  compilers compared on every fixture and example in check, run, release,
+  interpreter and `i686-linux` (1,140 cases), and on probes of wide, negative,
+  32-bit, compile-time, field, reference and pointer indexes.
+- **Speed:** benchmark 3,786.5 M and 3,786.4 M (3,790 to 3,798 M before; it has
+  no index). Old against new, user-space instructions (`perf stat`), medians:
+  3,000 functions of six indexes, `check` 216.5 to 228.7 M (+5.7%: more MIR
+  through the path checks), `check -dump ll` 1,189 to 1,147 M, `build` 11,100 to
+  10,835 M, `build -release` 17,767 to 17,733 M, LLVM text 20.89 to 19.47 MB: the
+  walker now loads a slice's length only for a borrow of all its elements, as
+  nothing else reads it, and writes no zero step before a load. A program of 128 M index
+  steps: the debug binary 10,196 to 9,812 M (-3.8%), the release binary the
+  same 1,870 M; `run -interpret` 6,332 to 7,258 M (+14.6%), each check now
+  three or four MIR instructions run one by one (dispatch, `run_instruction`,
+  `run_from` and `operand`, is a third of its time).
+- **Evidence:** with `length` a deep read, `negative_array_loops` and
+  `negative_slicing` (a new case, `&s[1..2]` while `&mut s[0]` is in use) fail.
+  With the array check off by one, `run_panic_index_length` fails (no run
+  fixture had an array index equal to the length before); with the slice check
+  off by one, `run_panic_index_order` and `run_panic_slice_bounds` fail. An index
+  compared after it is cut to 32 bits, or a wide negative one not refused, fails
+  `run_i686_panic_index_wide`. `scripts/check.sh` passes all ten steps.
+- **Review:** the open finding on `write_place_address`, to extract its index
+  check, is gone from the plan: it has no index check now, and is 126 lines, not
+  175. `slice_length` had one caller left, so `.len` writes its `field` itself.
+- **Step limit:** a compile-time run counts each MIR instruction, so checks
+  use up its 1,000,000 steps: a constant of 48,000 passes over `a[i]` fits on
+  `main` and not here (about 16% fewer passes). Left as it is; the owner has
+  not decided.
+- **Not done:** the loan check does not refuse changing a slice inside its own
+  index (Rust's E0510); nothing can today (T0043 on every way to write a slice
+  through a reference, pointer or array), and that rule must come with the
+  first. Division, shift and array-part checks are still written by each
+  backend from the operation.
+
+## 2026-11-03 Machine division up to 64 bits (`bigint`)
+
+- **Problem:** `bigint::divide` and `remainder` walked a value bit by bit, with
+  allocations, even for one limb. A loop of `%` spent 22% of its interpreted
+  time in `divide_magnitudes`.
+- **Fix:** a value of one limb uses the machine's division; wider ones still
+  walk. The magnitudes, signs and wrapping stay where they were.
+- **After:** that loop under `run -interpret`, 3,000 passes of 64 steps: 7,245 to
+  4,882 M instructions (-33%); `main` was 6,332 M. A loop with no division: no
+  change. A special path with no `Vec`s measured 4,717 M: not worth a second
+  copy of the sign handling.
+- **Evidence:** a new test compares `divide` and `remainder` with `i128`
+  arithmetic: every pair of values at 1 to 8 bits, signed and unsigned, and edge
+  values at 31 to 126 bits, wrapping at the signed minimum. It passed on the old
+  code first. A wrong quotient or remainder in the new path fails it.
+
+## 2026-11-03 A borrow of a whole slice reads the slice
+
+- **Problem:** after index checks moved to lowering, only a borrow of all a
+  slice's elements (`s.*`, as in passing `s` to a call) needed a slice's length
+  from the address walk. The LLVM writer worked out which run held it in two
+  places, took the slice apart and built it again; the interpreter read the
+  length on every step through a slice for this one case.
+- **Fix:** `Place::slice_of_elements` gives the slice such a borrow is all of,
+  and both backends read it whole. Neither walk touches the length now, and
+  `Located` lost its `length`.
+- **After:** 3,000 functions passing two `[&mut]` slices four times: LLVM text
+  12.85 to 8.94 MB, `check -dump ll` 727 to 608 M instructions, `build` 6,812 to
+  5,916 M. A loop of `s[i]` under `run -interpret`: 3,186 to 3,148 M. Output the
+  same on mixed programs in debug, release, interpreter and `i686-linux`.
+- **Evidence:** a wrong slice from `slice_of_elements`, the LLVM writer or the
+  interpreter fails run fixtures; `ll_slices` pins the text, with `lend`.

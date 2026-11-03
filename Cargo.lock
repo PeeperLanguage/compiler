@@ -443,6 +443,7 @@ dependencies = [
  "arena",
  "bigint",
  "model",
+ "runtime_abi",
  "source",
 ]
 
