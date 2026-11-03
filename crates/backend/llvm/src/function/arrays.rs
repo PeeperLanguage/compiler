@@ -137,7 +137,7 @@ impl Function<'_, '_, '_> {
         let fixed_total: u64 = parts.iter().filter_map(|&part| fixed(part)).sum();
         let mut remaining = (length - fixed_total).to_string();
         let mut failed = "false".to_string();
-        let checked = traps(self.body, types, id) > 0;
+        let checked = traps(self.body, types, id);
         let mut counts = Vec::with_capacity(parts.len());
         for (index, &part) in parts.iter().enumerate() {
             if let Some(count) = fixed(part) {

@@ -16,20 +16,19 @@ bb0:
   store %slice %arg0, ptr %v0, !dbg !13
   store i64 %arg1, ptr %v1, !dbg !15
   %i2 = load i64, ptr %v1, !dbg !16
-  %i3.f.0.f = getelementptr inbounds i8, ptr %v0, i64 0, !dbg !17
-  %i3.f.0.s = load %slice, ptr %i3.f.0.f, !dbg !17
-  %i3.f.0 = extractvalue %slice %i3.f.0.s, 0, !dbg !17
-  %i3.f.0.len = extractvalue %slice %i3.f.0.s, 1, !dbg !17
-  %i3.f.1.0.out = icmp uge i64 %i2, %i3.f.0.len, !dbg !17
-  br i1 %i3.f.1.0.out, label %bb0.1.panic, label %bb0.1
+  %i3.s = load %slice, ptr %v0, !dbg !17
+  %i3 = extractvalue %slice %i3.s, 1, !dbg !17
+  %i4 = icmp uge i64 %i2, %i3, !dbg !17
+  br i1 %i4, label %bb0.1.panic, label %bb0.1
 bb0.1:
-  %i3.f = getelementptr inbounds i32, ptr %i3.f.0, i64 %i2, !dbg !17
-  %i3 = load i32, ptr %i3.f, !dbg !17
-  %i4 = load %slice, ptr %v0, !dbg !18
-  %i5 = extractvalue %slice %i4, 1, !dbg !18
-  %i6 = trunc i64 %i5 to i32, !dbg !18
-  %i7 = add i32 %i3, %i6, !dbg !17
-  ret i32 %i7, !dbg !19
+  %i6.f.0 = load ptr, ptr %v0, !dbg !17
+  %i6.f = getelementptr inbounds i32, ptr %i6.f.0, i64 %i2, !dbg !17
+  %i6 = load i32, ptr %i6.f, !dbg !17
+  %i7 = load %slice, ptr %v0, !dbg !18
+  %i8 = extractvalue %slice %i7, 1, !dbg !18
+  %i9 = trunc i64 %i8 to i32, !dbg !18
+  %i10 = add i32 %i6, %i9, !dbg !17
+  ret i32 %i10, !dbg !19
 bb0.1.panic:
   call i32 @"peeper_rt_v1_write"(i32 2, ptr @.str.0, i32 65), !dbg !17
   call void @"peeper_rt_v1_exit"(i32 101), !dbg !17
@@ -43,15 +42,14 @@ entry:
   br label %bb0
 bb0:
   store %slice %arg0, ptr %v0, !dbg !29
-  %i1.f.0.f = getelementptr inbounds i8, ptr %v0, i64 0, !dbg !30
-  %i1.f.0.s = load %slice, ptr %i1.f.0.f, !dbg !30
-  %i1.f.0 = extractvalue %slice %i1.f.0.s, 0, !dbg !30
-  %i1.f.0.len = extractvalue %slice %i1.f.0.s, 1, !dbg !30
-  %i1.f.1.0.out = icmp uge i64 0, %i1.f.0.len, !dbg !30
-  br i1 %i1.f.1.0.out, label %bb0.1.panic, label %bb0.1
+  %i1.s = load %slice, ptr %v0, !dbg !30
+  %i1 = extractvalue %slice %i1.s, 1, !dbg !30
+  %i2 = icmp uge i64 0, %i1, !dbg !30
+  br i1 %i2, label %bb0.1.panic, label %bb0.1
 bb0.1:
-  %i1.f = getelementptr inbounds i32, ptr %i1.f.0, i64 0, !dbg !30
-  store i32 1, ptr %i1.f, !dbg !30
+  %i4.f.0 = load ptr, ptr %v0, !dbg !30
+  %i4.f = getelementptr inbounds i32, ptr %i4.f.0, i64 0, !dbg !30
+  store i32 1, ptr %i4.f, !dbg !30
   ret void, !dbg !31
 bb0.1.panic:
   call i32 @"peeper_rt_v1_write"(i32 2, ptr @.str.1, i32 64), !dbg !30

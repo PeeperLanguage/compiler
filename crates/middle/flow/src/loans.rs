@@ -230,7 +230,7 @@ struct Access<'p> {
     event: &'static str,   // for the message: "changed", "read", ...
     label: &'static str,   // where it is done: "read", "address taken", ...
     reads: bool,           // only reads it, which a shared loan allows
-    replaces: bool,        // replaces or ends the place's own storage
+    own_storage: bool,     // only its own storage: replaced, ended, a length read
     span: Span,
 }
 
@@ -348,6 +348,7 @@ impl Loans<'_> {
         let kind = &self.body.instructions[id].kind;
         let (place, operands): (Option<&mir::Place>, &[mir::Operand]) = match *kind {
             mir::InstructionKind::Load(ref place)
+            | mir::InstructionKind::Length(ref place)
             | mir::InstructionKind::Move(ref place)
             | mir::InstructionKind::Borrow { ref place, .. }
             | mir::InstructionKind::Address(ref place) => (Some(place), &[]),
@@ -806,8 +807,9 @@ impl Loans<'_> {
     /// `&mut` borrow only reserves its place, so it is checked as a shared
     /// borrow.
     fn access(&self, id: Id<mir::Instruction>) -> Option<Access<'_>> {
-        let (place, event, reads, replaces) = match self.body.instructions[id].kind {
+        let (place, event, reads, own_storage) = match self.body.instructions[id].kind {
             mir::InstructionKind::Load(ref place) => (place, "read", true, false),
+            mir::InstructionKind::Length(ref place) => (place, "read", true, true),
             mir::InstructionKind::Move(ref place) => (place, "moved", false, false),
             mir::InstructionKind::Store { ref place, .. } => (place, "changed", false, true),
             mir::InstructionKind::Borrow {
@@ -832,7 +834,7 @@ impl Loans<'_> {
                     event: "being taken",
                     label: "address taken",
                     reads: false,
-                    replaces: false,
+                    own_storage: false,
                     span: self.body.instructions.span(id),
                 });
             }
@@ -844,7 +846,7 @@ impl Loans<'_> {
                     event: "gone",
                     label: "gone",
                     reads: false,
-                    replaces: true,
+                    own_storage: true,
                     span: self.body.instructions.span(id),
                 });
             }
@@ -857,7 +859,7 @@ impl Loans<'_> {
             event,
             label: event,
             reads,
-            replaces,
+            own_storage,
             span: self.body.instructions.span(id),
         })
     }
@@ -893,7 +895,7 @@ impl Loans<'_> {
             let overlaps = access.variable == loaned.variable
                 && steps.all(|(&left, &right)| left.may_overlap(right));
             let common = access.projections.len().min(loaned.projections.len());
-            let past_storage = access.replaces
+            let past_storage = access.own_storage
                 && (loaned.projections[common..].iter()).any(|step| step.leaves_storage());
             // A reserved loan acts as a shared one until its call.
             let exclusive = mutable && !self.reserved.has(loan);

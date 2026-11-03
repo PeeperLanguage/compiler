@@ -188,9 +188,12 @@ impl Lowering<'_> {
 
     /// Stops the program with "panic: `message`" when `failed`, a `bool`
     /// written at `span`, is true.
-    fn check(&mut self, failed: mir::Operand, message: &'static str, span: Span) {
+    fn check(&mut self, failed: mir::Operand, message: &str, span: Span) {
         self.emit(
-            mir::InstructionKind::Check { failed, message },
+            mir::InstructionKind::Check {
+                failed,
+                message: message.into(),
+            },
             TypeId::VOID,
             span,
         );

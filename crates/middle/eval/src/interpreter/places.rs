@@ -1,5 +1,5 @@
-//! Where a `Place` is: walking its steps to an address, with the checks the
-//! compiled program makes, and borrowing what is found there.
+//! Where a `Place` is: walking its steps to an address, and borrowing what
+//! is found there.
 
 use arena::Id;
 use model::constant::Value;
@@ -15,7 +15,6 @@ use super::Interpreter;
 use super::Located;
 use super::OUT_OF_STACK;
 use super::Register;
-use runtime_abi::messages;
 
 impl<'b> Interpreter<'b, '_> {
     /// The index `index` means as an element's position: `None` for a value
@@ -51,9 +50,9 @@ impl<'b> Interpreter<'b, '_> {
         Ok(address)
     }
 
-    /// Walks `place`, as the backend's `write_place_address` does, with the
-    /// same checks of each index. An address may be any number a raw pointer
-    /// held, so sums wrap: the access that follows is what refuses it.
+    /// Walks `place`, as the backend's `write_place_address` does. An address
+    /// may be any number a raw pointer held, so sums wrap: the access that
+    /// follows is what refuses it.
     pub(super) fn locate(&mut self, place: &mir::Place, span: Span) -> Result<Located, Failure> {
         let frame = self.frame();
         let mut ty = frame.body.variables[place.variable].ty;
@@ -78,27 +77,12 @@ impl<'b> Interpreter<'b, '_> {
                     address = self.read_word(address, span)?;
                     ty = target;
                 }
+                // Lowering checked the index, and a subslice's start.
                 (
-                    Projection::Index(ref index),
-                    &Type::Array {
-                        element,
-                        length: bound,
-                        ..
-                    },
+                    Projection::Index(index),
+                    &(Type::Array { element, .. } | Type::Slice { element, .. }),
                 ) => {
-                    let inside = self.position(index).filter(|&at| at < bound);
-                    let Some(at) = inside else {
-                        return Err(self.fail(messages::array_index_message(bound), span));
-                    };
-                    address = address.wrapping_add(at * self.size_of(element));
-                    ty = element;
-                }
-                (Projection::Index(ref index), &Type::Slice { element, .. }) => {
-                    let bound = length.expect("a slice's elements follow its dereference");
-                    let inside = self.position(index).filter(|&at| at < bound);
-                    let Some(at) = inside else {
-                        return Err(self.fail(messages::SLICE_INDEX_MESSAGE, span));
-                    };
+                    let at = self.position(&index).expect("lowering checked the index");
                     address = address.wrapping_add(at * self.size_of(element));
                     ty = element;
                 }

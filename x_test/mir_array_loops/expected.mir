@@ -17,16 +17,18 @@ fn sum:
     %10 = Add %5, 1: u64
     %11 = Subtract %6, 1: u64
     %12 = load _.3: u64
-    %13 = borrow _.2.*[at %12]: &i32
-    store value.4, %13
-    %15 = load total.1: i32
-    %16 = load value.4.*: i32
-    %17 = Add %15, %16: i32
-    store total.1, %17
+    %13 = GreaterOrEqual %12, 3: bool
+    check %13, "index out of bounds: the length is 3"
+    %15 = borrow _.2.*[at %12]: &i32
+    store value.4, %15
+    %17 = load total.1: i32
+    %18 = load value.4.*: i32
+    %19 = Add %17, %18: i32
+    store total.1, %19
     goto bb4
   bb3:
-    %22 = load total.1: i32
-    return %22
+    %24 = load total.1: i32
+    return %24
   bb4:
     goto bb1
 fn indexed:
@@ -48,16 +50,18 @@ fn indexed:
     %10 = Add %5, 1: u64
     %11 = Subtract %6, 1: u64
     %12 = load i.3: u64
-    %13 = load _.2[at %12]: i32
-    store value.4, %13
-    %15 = load total.1: u64
-    %16 = load i.3: u64
-    %17 = Add %15, %16: u64
-    store total.1, %17
+    %13 = GreaterOrEqual %12, 2: bool
+    check %13, "index out of bounds: the length is 2"
+    %15 = load _.2[at %12]: i32
+    store value.4, %15
+    %17 = load total.1: u64
+    %18 = load i.3: u64
+    %19 = Add %17, %18: u64
+    store total.1, %19
     goto bb4
   bb3:
-    %22 = load total.1: u64
-    return %22
+    %24 = load total.1: u64
+    return %24
   bb4:
     goto bb1
 fn sum_slice:
@@ -92,16 +96,19 @@ fn sum_slice:
     %17 = Add %12, %10: u64
     %18 = Subtract %13, 1: u64
     %19 = load _.3: u64
-    %20 = borrow _.2.*[at %19]: &i32
-    store value.4, %20
-    %22 = load total.1: i32
-    %23 = load value.4.*: i32
-    %24 = Add %22, %23: i32
-    store total.1, %24
+    %20 = length _.2: u64
+    %21 = GreaterOrEqual %19, %20: bool
+    check %21, "index out of bounds of the slice"
+    %23 = borrow _.2.*[at %19]: &i32
+    store value.4, %23
+    %25 = load total.1: i32
+    %26 = load value.4.*: i32
+    %27 = Add %25, %26: i32
+    store total.1, %27
     goto bb7
   bb6:
-    %29 = load total.1: i32
-    return %29
+    %32 = load total.1: i32
+    return %32
   bb7:
     goto bb4
 fn main:

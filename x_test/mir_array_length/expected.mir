@@ -23,13 +23,15 @@ fn sum:
     %9 = Subtract %4, 1: u64
     %10 = load total.1: i32
     %11 = load i.2: u64
-    %12 = load values.0.*[at %11]: i32
-    %13 = Add %10, %12: i32
-    store total.1, %13
+    %12 = GreaterOrEqual %11, 4: bool
+    check %12, "index out of bounds: the length is 4"
+    %14 = load values.0.*[at %11]: i32
+    %15 = Add %10, %14: i32
+    store total.1, %15
     goto bb4
   bb3:
-    %16 = load total.1: i32
-    return %16
+    %18 = load total.1: i32
+    return %18
   bb4:
     goto bb1
 fn lengths:
@@ -39,6 +41,9 @@ fn lengths:
     %2 = aggregate(%0, %1): [2][3]i32
     store grid.0, %2
     %4 = call pick(): i32
-    %5 = call make(): [3]i32
-    %6 = Add 3, 3: u64
-    return %6
+    %5 = convert %4: u64
+    %6 = GreaterOrEqual %5, 2: bool
+    check %6, "index out of bounds: the length is 2"
+    %8 = call make(): [3]i32
+    %9 = Add 3, 3: u64
+    return %9

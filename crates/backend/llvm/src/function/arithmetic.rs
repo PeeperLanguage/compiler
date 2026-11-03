@@ -38,7 +38,7 @@ impl Function<'_, '_, '_> {
         let name = value_name(id);
         let left_type = self.body.operand_type(left);
         let ty = type_text(self.types, left_type);
-        let checks = traps(self.body, self.types, id) > 0;
+        let checks = traps(self.body, self.types, id);
         // The value the right operand was converted to, if it was.
         let mut converted: Option<String> = None;
         let instruction = match self.types[left_type] {

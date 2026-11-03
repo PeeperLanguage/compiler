@@ -210,9 +210,10 @@ computed differed (issues #154, #155, PR #158). The rules that prevent them:
    conversion; a constant that cannot be emitted is an error, never a silently
    missing symbol (#155).
 3. **Widening follows the source's signedness.** Where LLVM needs a wider
-   operand (a GEP index, a shift count), LLVM emission extends it explicitly:
-   `zext` for unsigned, `sext` for signed. LLVM sign-extends a narrow GEP index
-   by itself, which read `u1` 1 as -1 (#158).
+   operand (a shift count), LLVM emission extends it explicitly: `zext` for
+   unsigned, `sext` for signed. An index reaches LLVM a `usize`, converted in
+   MIR by lowering, whose `convert` extends it the same way. LLVM sign-extends
+   a narrow GEP index by itself, which read `u1` 1 as -1 (#158).
 4. **A shift count has its own type** (`value << count`, fb88e30e). The runtime
    guard compares the count with the width at a type wide enough to hold the
    width; the Go guard wrote the width as a constant of the count's type, so a
@@ -383,8 +384,9 @@ and debuggers; the logic lives in a `lower` crate, the data in `model::mir`.
   debugger finds it by name. Values reach a variable only through `store` and
   leave it only through `load`.
 - **Instructions.** A block is a list of instructions, each one operation whose
-  id is the value it gives (`%3 = add %1, %2`): `load`, `store`, a binary or
-  unary operation, `convert`, `call`, `phi`, and for structs `load` of a
+  id is the value it gives (`%3 = add %1, %2`): `load`, `store`, `length` (a
+  slice place's count, read for a bounds check), `check`, a binary or unary
+  operation, `convert`, `call`, `phi`, and for structs `load` of a
   field path (`load s.1[1, 0]`: a `getelementptr` per index, stepping by the
   element's size, and one for the fields' offsets; to LLVM a value kept in
   memory is bytes, `[24 x i8], align 4` for `[2][3]i32`, as `model::layout`
@@ -466,7 +468,18 @@ reference or raw pointer may be in a field, and `pp.*.*` takes two steps, so
 a dereference may be any step. Each element's index is
 computed before the place is used, in the order written, and each dereference
 reads its pointer only then, as rustc does: in `p.*[f(@p)]` a call that
-repoints `p` changes which array is read (owner, 2026-10-29). `&place` and
+repoints `p` changes which array is read (owner, 2026-10-29). Lowering checks
+each index right after computing it, as rustc does, and the step keeps it as
+a `usize`: against an array's length, unless it is a constant the checker
+found inside, or a slice's, read then with a `length` of the slice place. So
+in `s[g()][h()]` a `g` outside stops the program before `h` runs (owner,
+2026-11-03), and the backends and the interpreter only turn a place into an
+address. A `length` reads only the slice's own storage, as rustc's shallow
+read: a loan of its elements does not stop it, and the use that follows is
+checked in full. Nothing may change the slice between its check and that use
+(rustc's E0510); today nothing can, as no reference, pointer or array holds a
+slice that could be written through it (T0043), and that rule must come
+with the first. `&place` and
 `&mut place` are a `borrow` of the place, its address. The checker also makes
 the spec's reborrow explicit: a `&mut` in a variable passed to a call becomes a
 `Borrow` of what it refers to, so the variable stays usable; a `let` moves it.
@@ -515,7 +528,7 @@ reference for every check, as `r.*[i]` is. `&a` where a slice is expected is
 a `Borrow` of `a` with the slice type (`Conversion::Reborrow`); a borrow of a
 slice place (a `[&mut]` lent again, or used as a `[&]`) is a `Borrow` of its
 elements, `s.*`. `s.len` loads the slice, never moving a `[&mut]`, and takes
-its field 1.
+its field 1: a read of the slice, as `s.len()` borrows it in Rust.
 
 `&a[i..j]` (or `&mut`, or `..=`) is THIR's `Slice` of the array place `a`,
 each end left out or an integer of any type, as an index is; ends known at
@@ -534,7 +547,7 @@ length makes them in order.
 
 `&s[i..j]` of a slice `s` is the same `Slice`, of the slice place, and the
 same `Borrow`, of `s.*[from i, count n]`: its elements, behind it. The
-length is the slice's, loaded once before (field 1), so every end but a
+length is the slice's, read once before (`length`), so every end but a
 start of 0 is checked when the program runs, even a constant one; the
 checker rejects only constant ends that no slice can hold (negative, past
 the target's `usize`) or that are out of order. `&mut` needs a `[&mut]`
@@ -549,7 +562,7 @@ lends the slice for all its passes, so its body cannot use `s`.
 copy, and a `[&mut]` variable is lent as a `[&]`, so it is usable after. Its
 count is known only when the program runs, so `[_]T{s...}` is rejected.
 
-A use (`load`, `move`, `borrow`, `address`, or a read or write of a place) not set on
+A use (`load`, `length`, `move`, `borrow`, `address`, or a read or write of a place) not set on
 every path is T0034 ("`x` is used after it was moved", with each place it was
 moved) when the moved bit is on, else T0039 ("`x` is used before it is set").
 A write through a reference only reads its variable. A `move` of a field, or
@@ -696,10 +709,11 @@ one walk per function (`peeper -dump ll` shows it):
 - A slice is `%slice = type { ptr, iN }`, N the pointer's width, written at
   the top of every module, and passed as that one value, not kept in memory
   like an array, so a slice argument is never copied. At a place's step
-  through a slice the walker loads both parts and checks the next index
-  against the count when the program runs, even a constant one; a borrow of
-  a slice builds both parts with `insertvalue`; a subslice step is a
-  `getelementptr` index at its start, an `iN` checked before, and the slice
+  through a slice the walker loads the elements' address, and the count too
+  when the place ends there, a borrow of them all; an index is a
+  `getelementptr` index, an `iN` lowering checked, even a constant one into a
+  slice; a borrow of a slice builds both parts with `insertvalue`; a subslice step is
+  a `getelementptr` index at its start, an `iN` checked before, and the slice
   takes its count. A debugger shows it as a
   struct with `ptr` and `len`. A slice spread in an array literal is
   counted from its length, one bit wider than the element, checked with the

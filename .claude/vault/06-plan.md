@@ -37,6 +37,10 @@ forgotten or invented.
     `feature/playground-project`).
 19. [ ] Owner: decide the open findings below. Benchmark for the fourteen commits: +1.69% instructions,
     accepted in review.
+20. [x] Index checks have one owner, lowering; the backends only find
+    addresses (branch `feature/place-addresses`).
+22. [ ] Owner: decide how a compile-time run counts steps; checks now use up
+    its limit sooner (worklog, Index checks in lowering).
 
 ## Open findings (not changed; each needs an owner decision or is small)
 
@@ -45,7 +49,6 @@ forgotten or invented.
 | F1 | `check/src/lib.rs` `ModuleChecks` | Three tables indexed alike per declaration (`declared_types`, `constants`, `bodies`); each slot is used in one table only. RULES §5.1 discourages parallel lists. | 3 slots per declaration, 2 unused | One `Vec` of a per-declaration enum. `docs/ir-design.md` decided "one table per language category", so this is the owner's call. |
 | F3 | `check/src/function.rs` `evaluate_call` | Each compile-time call walks every function it may reach, even when all are built. | C × R visits (200 calls × 4,000 functions: 0.17 s) | Remember per function that its reach is built; adds state to `Built`. |
 | F4 | `check` struct declaration and `field_index` | Field names searched linearly (comment: "a struct has few fields"). | Quadratic in fields: 25k fields 2.75 s; 2k fields ~20 ms | A name index per struct; only worth it if generated code has thousands of fields. |
-| F5 | `llvm/src/function/memory.rs` `write_place_address` | 175 lines, three jobs: steps with index checks, the `getelementptr`, loading the next run's pointer. | Readability | Extract the index check; needs about eight inputs, so a context struct or a wide signature. |
 | F6 | `model/src/thir.rs` `write_expr` | `-dump thir` recurses on the thread's stack like `check_expr` did. | Crash on a very deep expression, dump only | `grow` there too; `model` would need `stacker`. |
 | F7 | `compile/src/lib.rs:289` `others_unchanged` | For each file a cached diagnostic points into, scans every module's results. | O(labels × modules), small today | A set of reused paths built once per compile. |
 | F8 | `llvm` `Function::location` | A new `locations` map per function rehashes as it grows (~1.4% of a compile). | 1.4% | Reserving the bound measured +0.6% worse (rejected, see the log); reusing one map across functions is the remaining option. |

@@ -1,0 +1,13 @@
+// Each index is checked as soon as it is computed, as in Rust: `g` gives
+// the length of `s`, outside it, so the program stops before `h` runs,
+// which would stop it with its own message. The value is computed first,
+// as the right side of an assignment.
+fn f() -> i32 { println("f"); return 1; }
+fn g() -> usize { println("g"); return 3; }
+fn h() -> usize { panic "h ran"; }
+
+fn main() {
+    let mut rows = [3][2]i32{[2]i32{0, 0}, [2]i32{0, 0}, [2]i32{0, 0}};
+    let s = &mut rows[..];
+    s[g()][h()] = f();
+}

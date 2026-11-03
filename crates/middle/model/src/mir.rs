@@ -87,9 +87,9 @@ pub enum Projection {
     Dereference,
     /// The elements the slice here views.
     SliceElements,
-    /// The element at this index, an integer computed before the place is
-    /// used, of the array here, or of the slice elements; outside them, the
-    /// program fails.
+    /// The element at this index, a `usize` computed before the place is
+    /// used, of the array here, or of the slice elements: lowering checked
+    /// it is inside them.
     Index(Operand),
     /// Some of the elements of the array here, or of the slice elements:
     /// the last step of a slice `Borrow` written `&a[i..j]`.
@@ -153,8 +153,13 @@ pub struct Subslice {
 #[derive(Clone, Debug)]
 pub enum InstructionKind {
     /// The value at the place, whose type copies (`Types::is_copy`), or a
-    /// slice read only for its length, which leaves a `[&mut]` usable.
+    /// slice read only for its length by `.len`, which leaves a `[&mut]`
+    /// usable.
     Load(Place),
+    /// The length of the slice at the place, a `usize`, for a check of an
+    /// index or slice end: it reads only the slice's own storage, so a loan
+    /// of its elements does not stop it, as in Rust.
+    Length(Place),
     /// The value at the place, whose type moves: a whole variable is unset
     /// after; moving out of a struct's field, an array's element or a
     /// reference is an error.
@@ -218,10 +223,11 @@ pub enum InstructionKind {
     /// block. `&&` and `||` give their result this way.
     Phi(Box<[(Id<Block>, Operand)]>),
     /// Stops the program with "panic: `message`" when `failed`, a `bool`
-    /// not known at compile time, is true.
+    /// not known at compile time, is true. An index's message names its
+    /// array's length, so it is built.
     Check {
         failed: Operand,
-        message: &'static str,
+        message: Box<str>,
     },
     /// The variable's block ends here, or a `break`, `continue` or `return`
     /// leaves it, so its storage is gone: no reference may still use it
@@ -409,6 +415,10 @@ impl Printer<'_> {
             }
             InstructionKind::Move(place) => {
                 self.out.push_str("move ");
+                self.write_place(place);
+            }
+            InstructionKind::Length(place) => {
+                self.out.push_str("length ");
                 self.write_place(place);
             }
             InstructionKind::Binary { op, left, right } => {

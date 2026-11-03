@@ -28,7 +28,8 @@ stderr_contains = [
     "`a` is borrowed as `[&mut]` while a `[&mut]` slice of it is still in use",
     "`s` is changed while a slice of it is still in use",
     "`s` is read while a `[&mut]` slice of it is still in use",
+    "`s` is borrowed while a `&mut` reference to it is still in use",
     "returns a slice of `a`, which is gone once the function returns",
     "returns a slice of `values`, which is gone once the function returns",
-    "Compilation failed with 24 error(s)",
+    "Compilation failed with 25 error(s)",
 ]
