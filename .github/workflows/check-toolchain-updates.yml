@@ -74,7 +74,7 @@ jobs:
       - name: Mint peeper-bot token
         id: mint-token
         if: steps.changed.outputs.value == 'true'
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.PEEPER_BOT_APP_ID }}
           private-key: ${{ secrets.PEEPER_BOT_PRIVATE_KEY }}
