@@ -99,8 +99,11 @@ impl Integer {
 /// What the compiler works out from a struct's fields, once, so that nothing
 /// walks them again: they nest as deep as the declarations do and can repeat.
 /// None of it is written in the source. `define_struct` makes it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct StructInternals {
+    /// Where each field is from the value's start, in bytes, in field order
+    /// (`layout::field_placed`).
+    pub offsets: Box<[u64]>,
     /// Its `layout` for the target.
     pub size: u64,
     pub align: u64,
@@ -549,11 +552,17 @@ impl Types {
         })
     }
 
-    /// Makes the declared name `named` the struct of `fields`, of `size` and
-    /// `align` bytes, under its id, so a `*T` written before `T` was complete
-    /// is the `*T` of after.
-    pub fn define_struct(&mut self, named: TypeId, fields: Box<[TypeId]>, size: u64, align: u64) {
+    /// Makes the declared name `named` the struct of `fields`, laid out as
+    /// `struct_layout` gives (`offsets`, `size`, `align`), under its id, so a
+    /// `*T` written before `T` was complete is the `*T` of after.
+    pub fn define_struct(
+        &mut self,
+        named: TypeId,
+        fields: Box<[TypeId]>,
+        (offsets, size, align): (Vec<u64>, u64, u64),
+    ) {
         let internals = StructInternals {
+            offsets: offsets.into(),
             size,
             align,
             holders: self.holders_of(&fields),
@@ -661,7 +670,7 @@ impl Types {
     /// reference, a slice, or a struct with one in a field, however deep.
     pub fn holds_loans(&self, id: TypeId) -> Option<bool> {
         match self[id] {
-            Type::Struct { internals, .. } => {
+            Type::Struct { ref internals, .. } => {
                 (internals.holders > 0).then_some(internals.mutable_holder)
             }
             ref other => other.borrows(),
@@ -672,7 +681,7 @@ impl Types {
     /// either, its fields' for a struct, as no other type holds one.
     pub fn holders_in(&self, id: TypeId) -> usize {
         match self[id] {
-            Type::Struct { internals, .. } => internals.holders,
+            Type::Struct { ref internals, .. } => internals.holders,
             ref other => usize::from(other.borrows().is_some()),
         }
     }

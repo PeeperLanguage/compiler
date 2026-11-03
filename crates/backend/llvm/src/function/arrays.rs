@@ -5,7 +5,7 @@ use std::fmt::Write;
 use std::iter::Peekable;
 
 use arena::Id;
-use model::layout::fields_placed;
+use model::layout::field_placed;
 use model::layout::layout;
 use model::mir;
 use model::mir::Operand;
@@ -249,7 +249,7 @@ impl Function<'_, '_, '_> {
             unreachable!("only a range has range fields")
         };
         let (field_name, field_type) = range_fields(element, step)[field];
-        let (offset, _) = fields_placed(types, ty, self.module.target)[field];
+        let (offset, _) = field_placed(types, ty, field, self.module.target);
         let read = format!("{name}.{field_name}");
         _ = writeln!(
             out,

@@ -23,7 +23,6 @@ use crate::function::global;
 use crate::function::value_name;
 use crate::text::memory_text;
 use crate::text::type_text;
-use model::layout::fields_placed;
 use model::layout::in_memory;
 
 impl Function<'_, '_, '_> {
@@ -207,10 +206,18 @@ impl Function<'_, '_, '_> {
         let mut text = project::declared_text(&program.modules, definition)
             .as_bytes()
             .to_vec();
+        let Type::Struct {
+            ref fields,
+            ref internals,
+            ..
+        } = types[ty]
+        else {
+            unreachable!("only a struct type has a struct printer")
+        };
         let names = project::field_names(&program.modules, definition);
-        let placed = fields_placed(types, ty, self.module.target);
+        let placed = fields.iter().zip(&internals.offsets);
         let mut body = String::new();
-        for (index, (field_name, &(offset, field))) in names.zip(&placed).enumerate() {
+        for (index, (field_name, (&field, &offset))) in names.zip(placed).enumerate() {
             text.extend_from_slice(if index == 0 { b" { " } else { b", " });
             text.extend_from_slice(field_name.as_bytes());
             text.extend_from_slice(b": ");
@@ -221,7 +228,7 @@ impl Function<'_, '_, '_> {
             );
             self.write_printed_at(&mut body, &mut text, &address, field);
         }
-        text.extend_from_slice(if placed.is_empty() { b" {}" } else { b" }" });
+        text.extend_from_slice(if fields.is_empty() { b" {}" } else { b" }" });
         self.write_print_text(&mut body, &mut text, &DebugLocation(None));
         body
     }
