@@ -69,7 +69,7 @@ the playground runs programs through the MIR interpreter (`main` = `1fd7ede7`).
      image; `macos-26-intel` has no announced end. After the last one, Intel Macs
      have no CI: decide then whether to keep them.
 2. [x] **A release of the Rust compiler.** `release.yml` builds one on a `v*`
-   tag, and `v0.2.0` (2026-10-31) is out with `install.sh`, `install.ps1`, one
+   tag, and `v0.3.1` (2026-11-03) is out with `install.sh`, `install.ps1`, one
    archive per machine and `SHA256SUMS`. `install-check.yml` installs it with
    the README's commands after each release.
 3. [ ] **Cleanup, owner approval needed, as it cannot be undone:**

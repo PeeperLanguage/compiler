@@ -9,7 +9,7 @@ number.
   `rustfmt` and `clippy` (`.github/workflows/ci.yml`). The work logged in
   `07-worklog.md` was built with `rustc 1.97.0`.
 - Workspace (`Cargo.toml`): `edition = "2024"`, `resolver = "3"`, version
-  `0.2.0`, `unsafe_code = "forbid"`, clippy `all` plus the `rust-style.md`
+  `0.3.1`, `unsafe_code = "forbid"`, clippy `all` plus the `rust-style.md`
   lints, all denied by `-D warnings`. Profiles: `release` with
   line tables; `wasm` (stripped, for the browser build).
 - Extra Rust targets: `i686-unknown-linux-gnu` (the `i686-linux` runtime
