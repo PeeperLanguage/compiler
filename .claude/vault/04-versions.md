@@ -29,6 +29,8 @@ hash crates.
 - LLVM **23.1.4** pinned in `toolchains/toolchain-sources.lock.json`; packs
   per OS and arch in `toolchains/toolchains.lock.json` (one darwin-amd64 pack
   is still `llvm23.1.3`).
+- `llvm-darwin-amd64` is LLVM built by `build-llvm-intel-mac.yml`, as LLVM publishes
+  no macOS x86-64 release; `toolchain update-sources` leaves that entry alone.
 - LLVM 23 or newer is required: LLVM 22 crashes on float to wide integer
   casts (`scripts/setup.sh`, `docs/ir-design.md`).
 - `scripts/setup.sh` puts the pack in `build/toolchains/native`; the compiler
