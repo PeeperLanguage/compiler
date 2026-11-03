@@ -24,6 +24,8 @@ jobs:
           - ubuntu-24.04
           - ubuntu-24.04-arm
           - macos-15
+          # shortcut: macos-15-intel ends in August 2027; move to macos-26-intel then.
+          - macos-15-intel
           - windows-2025
           - windows-11-arm
     runs-on: ${{ matrix.runner }}

@@ -27,8 +27,7 @@ hash crates.
 ## LLVM toolchain
 
 - LLVM **23.1.4** pinned in `toolchains/toolchain-sources.lock.json`; packs
-  per OS and arch in `toolchains/toolchains.lock.json` (one darwin-amd64 pack
-  is still `llvm23.1.3`).
+  per OS and arch in `toolchains/toolchains.lock.json`.
 - `llvm-darwin-amd64` is LLVM built by `build-llvm-intel-mac.yml`, as LLVM publishes
   no macOS x86-64 release; `toolchain update-sources` leaves that entry alone.
 - LLVM 23 or newer is required: LLVM 22 crashes on float to wide integer
@@ -46,8 +45,8 @@ C library (Ubuntu `gcc-multilib`).
 
 ## CI (`.github/workflows/ci.yml`)
 
-Matrix `ubuntu-24.04`, `ubuntu-24.04-arm`, `macos-15`, `windows-2025`,
-`windows-11-arm`; each runs
+Matrix `ubuntu-24.04`, `ubuntu-24.04-arm`, `macos-15`, `macos-15-intel`,
+`windows-2025`, `windows-11-arm`; each runs
 `scripts/setup.sh` (or `setup.ps1`), then `bash scripts/check.sh`. Other
 workflows: toolchain builds and updates, install check, release, and the
 `self-review-marker` check.

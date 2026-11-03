@@ -61,9 +61,8 @@ the playground runs programs through the MIR interpreter (`main` = `1fd7ede7`).
    so `build-llvm-intel-mac.yml` builds LLVM on `macos-15-intel` (owner's choice,
    2026-11-03) and publishes it here as `LLVM-<version>-macOS-X64.tar.xz`, which
    `toolchain pack` reads as an LLVM release. Its first build took 4 h 31 min of
-   the job's 6 hours. Left: the CI row and the lock pinning the new pack. The lock's
-   Go-era pack `toolchain-darwin-amd64-llvm23.1.3-r0f00f3a79817` has no
-   `libclang_rt.osx.a`, so it goes then.
+   the job's 6 hours, and its pack is pinned. Left: the first CI run, the release
+   archive and the installer.
    - `macos-15-intel` ends in August 2027, and GitHub calls it its last x86-64
      image; `macos-26-intel` has no announced end. After the last one, Intel Macs
      have no CI: decide then whether to keep them.

@@ -467,6 +467,14 @@ ran `check.sh` fully green.
   was empty on the merged bot pull requests read. Closed ones are refused by state.
 - **Evidence:** the check script, run locally against real pull requests, stopped or
   went on as it should; not yet run live: the next bot pull request is its test.
-- **Not done:** `toolchain pack` not yet run on this LLVM, no Intel Mac pack or CI row.
+- **Evidence, live:** bot PR #181 merged by itself 5 s after approval (`94ab8066`): the
+  `workflow_run` run read the approval, and the review run then stopped on the closed
+  pull request. Approving well after CI has finished is not yet seen live.
+- **Pack:** `toolchain pack` needed no change. Run 41661204845 published
+  `toolchain-darwin-amd64-llvm-23.1.4-refeaa4f1aed4`, 82.8 MB against the old 670 MB;
+  the Intel job took 2 min 13 s. The ARM Mac pack is 137 MB; ours is likely smaller for
+  its two LLVM targets (not compared file by file).
+- **Not done:** no Intel Mac release archive or installer. The old pack's release stays
+  until the owner's cleanup.
 - **Found:** `main` has no branch protection and no rulesets, though `RULES.md` 10.1
   says it does. Owner's call.
