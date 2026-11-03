@@ -46,6 +46,15 @@
       "sha256": "8f24fedd0b75c674c6c83dec2d76a7ac31a690120212843a17e465ef49854f69",
       "license": "Apache-2.0 WITH LLVM-exception",
       "license_url": "https://github.com/mstorsjo/llvm-mingw/blob/20261020/LICENSE.txt"
+    },
+    {
+      "id": "llvm-darwin-amd64",
+      "version": "23.1.4",
+      "url": "https://github.com/PeeperLanguage/compiler/releases/download/llvm-23.1.4-macos-x64/LLVM-23.1.4-macOS-X64.tar.xz",
+      "size": 58374704,
+      "sha256": "5cb0a127669f969dc4d2f25fb850df91955977df52673425eb6b34d991ede587",
+      "license": "Apache-2.0 WITH LLVM-exception",
+      "license_url": "https://github.com/llvm/llvm-project/blob/llvmorg-23.1.4/LICENSE.TXT"
     }
   ]
 }
