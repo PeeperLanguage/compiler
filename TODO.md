@@ -25,8 +25,9 @@ the playground runs programs through the MIR interpreter (`main` = `1fd7ede7`).
   `toolchains/native` and the source's license file. The `SOURCES` table names
   that file per source; llvm-mingw's is `LICENSE.txt`.
 - `.github/workflows/build-toolchains.yml` packs on `ubuntu-24.04`,
-  `ubuntu-24.04-arm`, `macos-15` and `windows-2025`. It publishes each pack as a
-  pre-release, and `peeper-bot` opens a PR that updates the lock. After CI passes
+  `ubuntu-24.04-arm`, `macos-15`, `windows-2025` and `windows-11-arm`. It
+  publishes each pack as a pre-release, and `peeper-bot` opens a PR that updates
+  the lock. After CI passes
   and the owner approves, `auto-merge-toolchain.yml` merges it. Agents never
   approve bot PRs.
 - `check-toolchain-updates.yml` runs every Monday at 03:23 UTC. It opens a PR

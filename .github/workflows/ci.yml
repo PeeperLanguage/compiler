@@ -25,6 +25,7 @@ jobs:
           - ubuntu-24.04-arm
           - macos-15
           - windows-2025
+          - windows-11-arm
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     defaults:
@@ -39,7 +40,7 @@ jobs:
       - if: runner.os == 'Linux' && runner.arch == 'X64'
         run: rustup target add i686-unknown-linux-gnu
       - if: runner.os == 'Windows'
-        run: rustup target add x86_64-pc-windows-gnullvm
+        run: rustup target add ${{ runner.arch == 'ARM64' && 'aarch64' || 'x86_64' }}-pc-windows-gnullvm
       - uses: Swatinem/rust-cache@v2
       # The i686-linux fixtures link against the 32-bit C library; only
       # x86-64 Linux runs them.

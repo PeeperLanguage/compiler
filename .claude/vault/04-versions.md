@@ -38,13 +38,14 @@ hash crates.
 
 `x86_64-linux`, `aarch64-linux`, `i686-linux` (32-bit pointers),
 `x86_64-macos`, `aarch64-macos`, `x86_64-windows`, `aarch64-windows`. CI runs
-the tests on `x86_64-linux`, `aarch64-linux`, `aarch64-macos` and
-`x86_64-windows`; `i686-linux` runs only on x86-64 Linux and needs the 32-bit
+the tests on `x86_64-linux`, `aarch64-linux`, `aarch64-macos`,
+`x86_64-windows` and `aarch64-windows`; `i686-linux` runs only on x86-64 Linux and needs the 32-bit
 C library (Ubuntu `gcc-multilib`).
 
 ## CI (`.github/workflows/ci.yml`)
 
-Matrix `ubuntu-24.04`, `ubuntu-24.04-arm`, `macos-15`, `windows-2025`; each runs
+Matrix `ubuntu-24.04`, `ubuntu-24.04-arm`, `macos-15`, `windows-2025`,
+`windows-11-arm`; each runs
 `scripts/setup.sh` (or `setup.ps1`), then `bash scripts/check.sh`. Other
 workflows: toolchain builds and updates, install check, release, and the
 `self-review-marker` check.
