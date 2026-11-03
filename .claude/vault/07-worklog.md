@@ -242,8 +242,7 @@ ran `check.sh` fully green.
 - **Review:** comments, the plan and two fixture headers still said LLVM saw
   struct or array types; they now say bytes. `run_struct_through_imports` went:
   it guarded struct types reaching a module's LLVM text, and there are none.
-  Open: `fields_placed` rebuilds a struct's list per access, which costs a
-  10,000-field struct about 100 million field layouts.
+  `fields_placed` rebuilt a struct's list per access; fixed below (Field offsets).
 - **Printers:** a struct printed its fields inline at each `print`, so a struct
   holding the last one twice wrote 2^n prints: 24 levels passed 2 GB at build.
   Each struct or array type now has one `@print.N`, which calls the ones of what
@@ -313,3 +312,20 @@ ran `check.sh` fully green.
 - **Evidence:** `scripts/check.sh` passes all ten steps; a Chrome run of the
   playground covers `playground:helper`, a rename to `myapp`, and a bad
   manifest. Four mutations put back in the compiler each fail a test.
+
+## 2026-11-03 Field offsets (branch `fix/field-offsets`)
+
+- **Problem:** `layout::fields_placed` laid out a struct's fields again at each
+  access and built a list of all of them: a 10,000-field struct read field by
+  field cost about 100 million field layouts. The interpreter kept its own cache
+  of the lists, with a wrapper over it (`field_place`).
+- **Fix:** `StructInternals` keeps `offsets`, from the `struct_layout` the
+  declaration already ran; `define_struct` takes that layout whole.
+  `layout::field_placed` gives one field in O(1) for a struct and lays out a
+  range's two or three fields when asked. The cache, its wrapper and
+  `fields_placed` went; the struct printer reads the offsets directly.
+- **After:** that program, `check -dump ll`, 4.0 s before the recent struct work,
+  now 1.2 s (check alone 1.0 s). Benchmark 3,788 M and 3,790 M, inside the noise
+  seen before (3,785 to 3,795 M). Output unchanged: every dump matched.
+- **Evidence:** with every stored offset 0, `ll_struct` and
+  `ll_struct_parameters` differ and the interpreter fails `run_struct_references`.

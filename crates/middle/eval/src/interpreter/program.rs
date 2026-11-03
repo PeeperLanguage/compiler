@@ -8,6 +8,7 @@ use arena::Id;
 use bigint::Limbs;
 use model::DefId;
 use model::constant::Value;
+use model::layout::field_placed;
 use model::layout::in_memory;
 use model::machine::Machine;
 use model::mir;
@@ -244,7 +245,7 @@ impl<'f> Interpreter<'_, 'f> {
                     text.extend_from_slice(if index == 0 { b" { " } else { b", " });
                     text.extend_from_slice(name.as_bytes());
                     text.extend_from_slice(b": ");
-                    let (offset, field) = self.field_place(ty, index);
+                    let (offset, field) = field_placed(self.types, ty, index, self.target);
                     let value = self.read_value(address + offset, field, span)?;
                     source::grow(|| self.write_printed(text, &value, field, span))?;
                 }

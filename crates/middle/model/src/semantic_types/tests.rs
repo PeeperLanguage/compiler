@@ -228,6 +228,7 @@ fn type_text() {
         definition: declaration(0),
         fields: [TypeId::I32, TypeId::I32].into(),
         internals: StructInternals {
+            offsets: [0, 4].into(),
             size: 8,
             align: 4,
             holders: 0,

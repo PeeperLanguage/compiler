@@ -38,7 +38,7 @@ use crate::text::constant_text;
 use crate::text::quoted;
 use crate::text::symbol;
 use crate::text::type_text;
-use model::layout::fields_placed;
+use model::layout::field_placed;
 use model::layout::in_memory;
 use model::layout::layout;
 
@@ -672,8 +672,8 @@ impl Function<'_, '_, '_> {
                         let (size, _) = layout(types, element, target);
                         (0..parts.len() as u64).map(|index| index * size).collect()
                     }
-                    _ => (fields_placed(types, ty, target).iter())
-                        .map(|&(offset, _)| offset)
+                    _ => (0..parts.len())
+                        .map(|index| field_placed(types, ty, index, target).0)
                         .collect(),
                 };
                 for (index, (&part, offset)) in parts.iter().zip(offsets).enumerate() {
@@ -705,8 +705,8 @@ impl Function<'_, '_, '_> {
                     });
                     let (mut holder, mut offset) = (value_type, 0);
                     for &index in fields {
-                        let placed = fields_placed(types, holder, self.module.target);
-                        let (field_offset, field) = placed[index as usize];
+                        let (field_offset, field) =
+                            field_placed(types, holder, index as usize, self.module.target);
                         (holder, offset) = (field, offset + field_offset);
                     }
                     _ = write!(

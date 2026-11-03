@@ -3,12 +3,11 @@
 
 use arena::Id;
 use model::constant::Value;
-use model::layout::fields_placed;
+use model::layout::field_placed;
 use model::mir;
 use model::mir::Operand;
 use model::mir::Projection;
 use model::semantic_types::Type;
-use model::semantic_types::TypeId;
 use source::Span;
 
 use super::Failure;
@@ -19,14 +18,6 @@ use super::Register;
 use runtime_abi::messages;
 
 impl<'b> Interpreter<'b, '_> {
-    /// Where field `index` of the struct or range type `ty` is, from the
-    /// value's start, and its type, worked out once for each type.
-    pub(super) fn field_place(&mut self, ty: TypeId, index: usize) -> (u64, TypeId) {
-        let (types, target) = (self.types, self.target);
-        let fields = (self.fields.entry(ty)).or_insert_with(|| fields_placed(types, ty, target));
-        fields[index]
-    }
-
     /// The index `index` means as an element's position: `None` for a value
     /// below zero or past every length.
     pub(super) fn position(&mut self, index: &Operand) -> Option<u64> {
@@ -71,7 +62,7 @@ impl<'b> Interpreter<'b, '_> {
         for &step in &place.projections {
             match (step, &self.types[ty]) {
                 (Projection::Field(index), Type::Struct { .. }) => {
-                    let (offset, field) = self.field_place(ty, index as usize);
+                    let (offset, field) = field_placed(self.types, ty, index as usize, self.target);
                     address = address.wrapping_add(offset);
                     ty = field;
                 }

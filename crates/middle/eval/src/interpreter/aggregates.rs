@@ -4,6 +4,7 @@
 use arena::Id;
 use bigint::Limbs;
 use model::constant::Value;
+use model::layout::field_placed;
 use model::mir;
 use model::mir::Operand;
 use model::operators::BinaryOp;
@@ -32,7 +33,7 @@ impl<'b> Interpreter<'b, '_> {
         for (index, part) in parts.iter().enumerate() {
             let offset = match self.types[ty] {
                 Type::Array { element, .. } => index as u64 * self.size_of(element),
-                _ => self.field_place(ty, index).0,
+                _ => field_placed(self.types, ty, index, self.target).0,
             };
             let value = self.operand(part);
             self.write_value(slot + offset, body.operand_type(*part), &value, span)?;
@@ -63,7 +64,8 @@ impl<'b> Interpreter<'b, '_> {
             }
             Register::Address(mut address) => {
                 for &index in fields {
-                    let (offset, field) = self.field_place(owner, index as usize);
+                    let (offset, field) =
+                        field_placed(self.types, owner, index as usize, self.target);
                     address += offset;
                     owner = field;
                 }
@@ -81,7 +83,7 @@ impl<'b> Interpreter<'b, '_> {
         field: usize,
         span: Span,
     ) -> Result<Value, Failure> {
-        let (offset, field_type) = self.field_place(ty, field);
+        let (offset, field_type) = field_placed(self.types, ty, field, self.target);
         match self.read_value(range + offset, field_type, span)? {
             Register::Scalar(value) => Ok(value),
             _ => unreachable!("a range's fields are numbers and a `bool`"),

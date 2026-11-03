@@ -41,7 +41,7 @@ pub fn layout(types: &Types, ty: TypeId, target: &Machine) -> (u64, u64) {
             let bytes = u64::from(target.pointer_bits / 8);
             (2 * bytes, bytes)
         }
-        Type::Struct { internals, .. } => (internals.size, internals.align),
+        Type::Struct { ref internals, .. } => (internals.size, internals.align),
         Type::Range { element, step } => {
             let fields = range_fields(element, step).map(|(_, ty)| ty);
             let (_, size, align) = struct_layout(types, &fields, target);
@@ -69,16 +69,23 @@ pub fn in_memory(types: &Types, ty: TypeId) -> bool {
     )
 }
 
-/// Each field of the struct or range type `ty`: where it is from the value's
-/// start, in bytes, and its type.
-pub fn fields_placed(types: &Types, ty: TypeId, target: &Machine) -> Vec<(u64, TypeId)> {
-    let fields = match types[ty] {
-        Type::Struct { ref fields, .. } => fields.to_vec(),
-        Type::Range { element, step } => range_fields(element, step).map(|(_, ty)| ty).to_vec(),
+/// Field `index` of the struct or range type `ty`: where it is from the
+/// value's start, in bytes, and its type. A struct's offsets are kept
+/// (`StructInternals`); a range's two or three fields are laid out here.
+pub fn field_placed(types: &Types, ty: TypeId, index: usize, target: &Machine) -> (u64, TypeId) {
+    match types[ty] {
+        Type::Struct {
+            ref fields,
+            ref internals,
+            ..
+        } => (internals.offsets[index], fields[index]),
+        Type::Range { element, step } => {
+            let fields = range_fields(element, step).map(|(_, ty)| ty);
+            let (offsets, ..) = struct_layout(types, &fields, target);
+            (offsets[index], fields[index])
+        }
         _ => unreachable!("only a struct and a range have fields"),
-    };
-    let (offsets, ..) = struct_layout(types, &fields, target);
-    offsets.into_iter().zip(fields).collect()
+    }
 }
 
 /// The offset of each of `fields` in a struct holding them in order, and the

@@ -23,7 +23,7 @@ use crate::function::traps;
 use crate::function::value_name;
 use crate::text::alloca_text;
 use crate::text::memory_text;
-use model::layout::fields_placed;
+use model::layout::field_placed;
 use model::layout::in_memory;
 
 impl Function<'_, '_, '_> {
@@ -200,8 +200,8 @@ impl Function<'_, '_, '_> {
             for (position, &step) in steps.iter().enumerate() {
                 ty = match (step, &self.types[ty]) {
                     (mir::Projection::Field(index), Type::Struct { .. }) => {
-                        let placed = fields_placed(self.types, ty, self.module.target);
-                        let (field_offset, field) = placed[index as usize];
+                        let (field_offset, field) =
+                            field_placed(self.types, ty, index as usize, self.module.target);
                         offset += field_offset;
                         field
                     }
