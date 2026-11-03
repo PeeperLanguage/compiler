@@ -130,13 +130,13 @@ Exit: one edited file re-checks only what its interface change affects.
 - CI rebuilt for the new layout (`ci.yml`): fmt, clippy, `cargo test
   --workspace`, whose fixtures build and run the `x_test` programs (with the
   32-bit C library, for `target = "i686-linux"`), and `scripts/build.sh`, on
-  Linux, macOS ARM64 and Windows x86-64. The Go release workflows are gone;
-  a release is built on a version tag (`release.yml`; `v0.2.0` is out), and
+  Linux, macOS and Windows, each on x86-64 and ARM64. The Go release workflows are gone;
+  a release is built on a version tag (`release.yml`; `v0.3.1` is out), and
   `install-check.yml` installs it with the README's commands on each machine.
 - Toolchain packs built by CI for the Rust compiler (`crates/tools/toolchain`,
-  run by `build-toolchains.yml`), for Linux, macOS ARM64 and Windows x86-64
-  (from llvm-mingw) so far; LLVM publishes no macOS x86-64 release, and
-  Windows ARM64 is to come: `scripts/setup.sh` and
+  run by `build-toolchains.yml`), for the same six machines; Windows from
+  llvm-mingw, and Intel Macs from LLVM built by `build-llvm-intel-mac.yml`, as LLVM
+  publishes no macOS x86-64 release: `scripts/setup.sh` and
   `setup.ps1` download the pack pinned in `toolchains/toolchains.lock.json`,
   or link an installed LLVM 23. The Linux and macOS packs have `lli`, which
   the ignored `llvm_parity` test runs; llvm-mingw has none. `check-toolchain-updates.yml` keeps the upstream

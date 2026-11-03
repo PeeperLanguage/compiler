@@ -28,10 +28,6 @@ esac
 if [ "$os-$arch" = darwin-amd64 ] && [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = 1 ]; then
     arch=arm64
 fi
-case "$os-$arch" in
-    linux-amd64 | darwin-arm64) ;;
-    *) fail "no release for $os-$arch yet: build from source (README.md)" ;;
-esac
 archive="peeper-$os-$arch.tar.gz"
 
 # In $HOME, so the swap below is a rename on one file system.

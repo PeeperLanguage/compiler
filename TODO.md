@@ -25,8 +25,9 @@ the playground runs programs through the MIR interpreter (`main` = `1fd7ede7`).
   `toolchains/native` and the source's license file. The `SOURCES` table names
   that file per source; llvm-mingw's is `LICENSE.txt`.
 - `.github/workflows/build-toolchains.yml` packs on `ubuntu-24.04`,
-  `ubuntu-24.04-arm`, `macos-15` and `windows-2025`. It publishes each pack as a
-  pre-release, and `peeper-bot` opens a PR that updates the lock. After CI passes
+  `ubuntu-24.04-arm`, `macos-15`, `macos-15-intel`, `windows-2025` and `windows-11-arm`. It
+  publishes each pack as a pre-release, and `peeper-bot` opens a PR that updates
+  the lock. After CI passes
   and the owner approves, `auto-merge-toolchain.yml` merges it. Agents never
   approve bot PRs.
 - `check-toolchain-updates.yml` runs every Monday at 03:23 UTC. It opens a PR
@@ -51,27 +52,27 @@ the playground runs programs through the MIR interpreter (`main` = `1fd7ede7`).
   - [x] The pack step fails when the pack fails.
   - [x] The lock update was merged as PR #171.
 - [x] CI, the pack build and CodeQL all pass on `main`.
+- [x] Windows ARM64: `windows-11-arm` rows in CI and the pack build, and the pack
+  `toolchain-windows-arm64-llvm-mingw-20261020-rb20404288da9` pinned by PR #179.
+- [x] macOS Intel: LLVM publishes no macOS x86-64 release, so
+  `build-llvm-intel-mac.yml` builds LLVM on `macos-15-intel` (owner's choice,
+  2026-11-03; 4 h 31 min of the job's 6 hours) and publishes it here as
+  `LLVM-<version>-macOS-X64.tar.xz`, which `toolchain pack` reads as an LLVM
+  release. `macos-15-intel` rows in CI and the pack build, pack pinned by PR #181.
 
 ### Left
 
-1. [ ] **Windows ARM64 pack.** CI has no row for it (a `shortcut:` note in
-   `build-toolchains.yml` says so). The lock still pins the Go-era pack
-   `toolchain-windows-arm64-llvm-mingw-20261006-r5a1b9f49047b`, a `.zip` built
-   before Windows packs became the whole llvm-mingw release. Windows x86-64
-   needed that change to work, so this pack likely fails the same way.
-   - Fix: add a `windows-11-arm` row to `build-toolchains.yml`, run the
-     workflow, and merge the bot's lock PR. Add the matching CI row too.
-2. [ ] **macOS Intel (darwin-amd64).** LLVM publishes no macOS x86-64 release,
-   so CI cannot pack it. The lock keeps the Go-era pack
-   `toolchain-darwin-amd64-llvm23.1.3-r0f00f3a79817`. It still downloads and has
-   the `toolchains/native` layout, but it will never update.
-   - Owner decision needed: build LLVM from source for it, rely on an installed
-     LLVM there (setup's way 2), or drop Intel Mac support.
-3. [x] **A release of the Rust compiler.** `release.yml` builds one on a `v*`
-   tag, and `v0.2.0` (2026-10-31) is out with `install.sh`, `install.ps1`, one
+1. [ ] **First release for ARM Linux, ARM Windows and Intel Macs.** `release.yml`,
+   the install scripts and `install-check.yml` cover them, but only a `v*` tag and
+   publishing it run those.
+   - `macos-15-intel` ends in August 2027, and GitHub calls it its last x86-64
+     image; `macos-26-intel` has no announced end. After the last one, Intel Macs
+     have no CI: decide then whether to keep them.
+2. [x] **A release of the Rust compiler.** `release.yml` builds one on a `v*`
+   tag, and `v0.3.1` (2026-11-03) is out with `install.sh`, `install.ps1`, one
    archive per machine and `SHA256SUMS`. `install-check.yml` installs it with
    the README's commands after each release.
-4. [ ] **Cleanup, owner approval needed, as it cannot be undone:**
+3. [ ] **Cleanup, owner approval needed, as it cannot be undone:**
    - About 37 old toolchain pre-releases that the lock no longer pins, under the
      old id formats (`llvm23.1.x-r…`, `…-musl1.2.x-r…`, older llvm-mingw dates).
      Keep every release the lock pins.

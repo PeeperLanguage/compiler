@@ -21,7 +21,10 @@ jobs:
       matrix:
         runner:
           - ubuntu-24.04
+          - ubuntu-24.04-arm
           - macos-15
+          # shortcut: macos-15-intel ends in August 2027; move to macos-26-intel then.
+          - macos-15-intel
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     steps:
@@ -34,8 +37,14 @@ jobs:
           grep -Fx 'Hello from Peeper!' output
 
   windows:
-    name: Install on windows-2025
-    runs-on: windows-2025
+    name: Install on ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - windows-2025
+          - windows-11-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     defaults:
       run:

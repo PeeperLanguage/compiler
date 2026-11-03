@@ -27,14 +27,14 @@ jobs:
     name: Pack ${{ matrix.runner }}
     strategy:
       matrix:
-        # shortcut: no macOS x86-64 (LLVM publishes no release for it) and
-        # no Windows ARM64 yet; each comes with its own row once `toolchain
-        # pack` is checked on it.
         runner:
           - ubuntu-24.04
           - ubuntu-24.04-arm
           - macos-15
+          # shortcut: macos-15-intel ends in August 2027; move to macos-26-intel then.
+          - macos-15-intel
           - windows-2025
+          - windows-11-arm
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     permissions:

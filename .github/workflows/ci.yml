@@ -22,8 +22,12 @@ jobs:
       matrix:
         runner:
           - ubuntu-24.04
+          - ubuntu-24.04-arm
           - macos-15
+          # shortcut: macos-15-intel ends in August 2027; move to macos-26-intel then.
+          - macos-15-intel
           - windows-2025
+          - windows-11-arm
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     defaults:
@@ -34,12 +38,15 @@ jobs:
       - run: rustup component add rustfmt clippy
       # The runtime is built with rustc for each target the tests use.
       - if: runner.os == 'Linux'
-        run: rustup target add i686-unknown-linux-gnu wasm32-wasip1
+        run: rustup target add wasm32-wasip1
+      - if: runner.os == 'Linux' && runner.arch == 'X64'
+        run: rustup target add i686-unknown-linux-gnu
       - if: runner.os == 'Windows'
-        run: rustup target add x86_64-pc-windows-gnullvm
+        run: rustup target add ${{ runner.arch == 'ARM64' && 'aarch64' || 'x86_64' }}-pc-windows-gnullvm
       - uses: Swatinem/rust-cache@v2
-      # The i686-linux fixtures link against the 32-bit C library.
-      - if: runner.os == 'Linux'
+      # The i686-linux fixtures link against the 32-bit C library; only
+      # x86-64 Linux runs them.
+      - if: runner.os == 'Linux' && runner.arch == 'X64'
         run: sudo apt-get update && sudo apt-get install -y gcc-multilib
       # Holds the pack-id stamp too, so setup.sh keeps a cached pack.
       - uses: actions/cache@v4

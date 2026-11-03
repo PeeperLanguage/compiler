@@ -9,7 +9,7 @@ number.
   `rustfmt` and `clippy` (`.github/workflows/ci.yml`). The work logged in
   `07-worklog.md` was built with `rustc 1.97.0`.
 - Workspace (`Cargo.toml`): `edition = "2024"`, `resolver = "3"`, version
-  `0.2.0`, `unsafe_code = "forbid"`, clippy `all` plus the `rust-style.md`
+  `0.3.1`, `unsafe_code = "forbid"`, clippy `all` plus the `rust-style.md`
   lints, all denied by `-D warnings`. Profiles: `release` with
   line tables; `wasm` (stripped, for the browser build).
 - Extra Rust targets: `i686-unknown-linux-gnu` (the `i686-linux` runtime
@@ -27,8 +27,7 @@ hash crates.
 ## LLVM toolchain
 
 - LLVM **23.1.4** pinned in `toolchains/toolchain-sources.lock.json`; packs
-  per OS and arch in `toolchains/toolchains.lock.json` (one darwin-amd64 pack
-  is still `llvm23.1.3`).
+  per OS and arch in `toolchains/toolchains.lock.json`.
 - `llvm-darwin-amd64` is LLVM built by `build-llvm-intel-mac.yml`, as LLVM publishes
   no macOS x86-64 release; `toolchain update-sources` leaves that entry alone.
 - LLVM 23 or newer is required: LLVM 22 crashes on float to wide integer
@@ -39,13 +38,15 @@ hash crates.
 ## Targets (`crates/middle/model/src/machine.rs`, `MACHINES`)
 
 `x86_64-linux`, `aarch64-linux`, `i686-linux` (32-bit pointers),
-`x86_64-macos`, `aarch64-macos`, `x86_64-windows`, `aarch64-windows`. Only
-the Linux rows are run in this repository's tests; `i686-linux` needs the
-32-bit C library (Ubuntu `gcc-multilib`).
+`x86_64-macos`, `aarch64-macos`, `x86_64-windows`, `aarch64-windows`. CI runs
+the tests on `x86_64-linux`, `aarch64-linux`, `x86_64-macos`, `aarch64-macos`,
+`x86_64-windows` and `aarch64-windows`; `i686-linux` runs only on x86-64 Linux and needs the 32-bit
+C library (Ubuntu `gcc-multilib`).
 
 ## CI (`.github/workflows/ci.yml`)
 
-Matrix `ubuntu-24.04`, `macos-15`, `windows-2025`; each runs
+Matrix `ubuntu-24.04`, `ubuntu-24.04-arm`, `macos-15`, `macos-15-intel`,
+`windows-2025`, `windows-11-arm`; each runs
 `scripts/setup.sh` (or `setup.ps1`), then `bash scripts/check.sh`. Other
 workflows: toolchain builds and updates, install check, release, and the
 `self-review-marker` check.
