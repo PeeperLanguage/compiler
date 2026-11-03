@@ -1,0 +1,181 @@
+name: Build LLVM for Intel Macs
+
+# LLVM publishes no macOS x86-64 release, so this builds the version the
+# sources lock pins for the other machines and publishes it as a release of
+# this repository, shaped as LLVM's own: `toolchain pack` and scripts/setup.sh
+# read it as they read those. `toolchain update-sources` names no
+# `llvm-darwin-amd64`, so this workflow alone writes that lock entry. It takes
+# hours, which is why `toolchain pack` does not do it: a pack rerun takes minutes.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - toolchains/toolchain-sources.lock.json
+
+concurrency:
+  group: build-llvm-intel-mac
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and pin LLVM
+    # shortcut: macos-15-intel ends in August 2027; move to macos-26-intel then.
+    runs-on: macos-15-intel
+    timeout-minutes: 360 # GitHub's limit for a job
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - id: wanted
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          lock=toolchains/toolchain-sources.lock.json
+          version=$(jq -er '.assets[] | select(.id == "llvm-linux-amd64") | .version' "$lock")
+          pinned=$(jq -r '.assets[] | select(.id == "llvm-darwin-amd64") | .version' "$lock")
+          tag="llvm-$version-macos-x64"
+          # A rerun after a failed pull request keeps the build it published.
+          published=false
+          if gh release view "$tag" >/dev/null 2>&1; then
+            published=true
+          fi
+          {
+            echo "version=$version"
+            echo "major=${version%%.*}"
+            echo "tag=$tag"
+            echo "top=LLVM-$version-macOS-X64"
+            echo "needed=$([ "$pinned" = "$version" ] && echo false || echo true)"
+            echo "published=$published"
+          } >> "$GITHUB_OUTPUT"
+      - name: Build LLVM
+        if: steps.wanted.outputs.needed == 'true' && steps.wanted.outputs.published == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.wanted.outputs.version }}
+          TOP: ${{ steps.wanted.outputs.top }}
+        working-directory: ${{ runner.temp }}
+        run: |
+          source="llvm-project-$VERSION.src.tar.xz"
+          curl --fail --location --retry 3 --output "$source" \
+            "https://github.com/llvm/llvm-project/releases/download/llvmorg-$VERSION/$source"
+          expected=$(gh api "repos/llvm/llvm-project/releases/tags/llvmorg-$VERSION" \
+            --jq ".assets[] | select(.name == \"$source\") | .digest")
+          [ "sha256:$(shasum -a 256 "$source" | awk '{print $1}')" = "$expected" ]
+          tar -xJf "$source"
+          # Only what the pack keeps. Each library off here is one Homebrew
+          # holds on this runner and a user's Mac may not.
+          cmake -G Ninja -S "llvm-project-$VERSION.src/llvm" -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$PWD/$TOP" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
+            -DLLVM_ENABLE_PROJECTS="clang;lld" \
+            -DLLVM_ENABLE_RUNTIMES=compiler-rt \
+            -DCOMPILER_RT_ENABLE_IOS=OFF \
+            -DLLVM_TARGETS_TO_BUILD="X86;AArch64" \
+            -DLLVM_INCLUDE_TESTS=OFF \
+            -DLLVM_INCLUDE_EXAMPLES=OFF \
+            -DLLVM_INCLUDE_BENCHMARKS=OFF \
+            -DLLVM_ENABLE_ZLIB=OFF \
+            -DLLVM_ENABLE_ZSTD=OFF \
+            -DLLVM_ENABLE_LIBXML2=OFF \
+            -DLLVM_ENABLE_LIBEDIT=OFF
+          ninja -C build \
+            install-clang-stripped \
+            install-clang-resource-headers \
+            install-lld-stripped \
+            install-llvm-ar-stripped \
+            install-lli-stripped \
+            install-builtins-stripped
+          cp "llvm-project-$VERSION.src/llvm/LICENSE.TXT" "$TOP/"
+      - name: Check the build
+        if: steps.wanted.outputs.needed == 'true' && steps.wanted.outputs.published == 'false'
+        env:
+          MAJOR: ${{ steps.wanted.outputs.major }}
+          TOP: ${{ steps.wanted.outputs.top }}
+        working-directory: ${{ runner.temp }}
+        run: |
+          for tool in "clang-$MAJOR" lld llvm-ar lli; do
+            if otool -L "$TOP/bin/$tool" | tail -n +2 | grep -Ev '^[[:space:]]*(/usr/lib/|/System/)'; then
+              echo "$tool needs a library a Mac does not come with" >&2
+              exit 1
+            fi
+            vtool -show-build "$TOP/bin/$tool" | grep -E 'minos 13\.0$'
+          done
+          # Linking also needs the builtins library, which clang links in.
+          printf '#include <stdio.h>\nint main(void) { puts("peeper"); return 0; }\n' > hello.c
+          "$TOP/bin/clang" -isysroot "$(xcrun --show-sdk-path)" -fuse-ld=lld hello.c -o hello
+          [ "$(./hello)" = peeper ]
+      - name: Publish
+        if: steps.wanted.outputs.needed == 'true' && steps.wanted.outputs.published == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.wanted.outputs.version }}
+          TAG: ${{ steps.wanted.outputs.tag }}
+          TOP: ${{ steps.wanted.outputs.top }}
+        run: |
+          tar -cJf "$RUNNER_TEMP/$TOP.tar.xz" -C "$RUNNER_TEMP" "$TOP"
+          gh release create "$TAG" "$RUNNER_TEMP/$TOP.tar.xz" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --latest=false \
+            --title "LLVM $VERSION for Intel Macs" \
+            --notes "LLVM $VERSION built for macOS x86-64 by build-llvm-intel-mac.yml, as LLVM publishes none."
+      - name: Pin the release in the sources lock
+        if: steps.wanted.outputs.needed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.wanted.outputs.version }}
+          TAG: ${{ steps.wanted.outputs.tag }}
+          TOP: ${{ steps.wanted.outputs.top }}
+        run: |
+          lock=toolchains/toolchain-sources.lock.json
+          file=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" \
+            --jq ".assets[] | select(.name == \"$TOP.tar.xz\")")
+          jq --arg version "$VERSION" --argjson file "$file" '
+            .assets |= (map(select(.id != "llvm-darwin-amd64")) + [{
+              id: "llvm-darwin-amd64",
+              version: $version,
+              url: $file.browser_download_url,
+              size: $file.size,
+              sha256: ($file.digest // error("GitHub gives no sha256") | ltrimstr("sha256:")),
+              license: "Apache-2.0 WITH LLVM-exception",
+              license_url: "https://github.com/llvm/llvm-project/blob/llvmorg-\($version)/LICENSE.TXT"
+            }])' "$lock" > "$RUNNER_TEMP/pinned.json"
+          mv "$RUNNER_TEMP/pinned.json" "$lock"
+      - name: Mint peeper-bot token
+        id: mint-token
+        if: steps.wanted.outputs.needed == 'true'
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.PEEPER_BOT_APP_ID }}
+          private-key: ${{ secrets.PEEPER_BOT_PRIVATE_KEY }}
+          # Without owner and repositories, the token is for this repository only.
+      - name: Open source update pull request
+        if: steps.wanted.outputs.needed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.mint-token.outputs.token }}
+          BASE: ${{ github.ref_name }} # the branch whose lock the run updated
+          VERSION: ${{ steps.wanted.outputs.version }}
+        run: |
+          branch="automation/toolchain-sources-${GITHUB_RUN_ID}"
+          git config user.name "peeper-bot[bot]"
+          git config user.email "5118601+peeper-bot[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add toolchains/toolchain-sources.lock.json
+          git commit -m "Update toolchain sources"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push origin "$branch"
+          gh pr create \
+            --base "$BASE" \
+            --head "$branch" \
+            --title "Update toolchain sources" \
+            --label "Toolchain Update" \
+            --reviewer itsfuad \
+            --body "Pins LLVM $VERSION for Intel Macs. Run [$GITHUB_RUN_ID]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."
