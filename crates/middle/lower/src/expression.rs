@@ -48,7 +48,7 @@ impl Lowering<'_> {
     /// The value of `expression`, computed in the block being filled.
     pub(super) fn lower_expr(&mut self, expression: Id<thir::Expr>) -> Option<mir::Operand> {
         // A long chain of operators, calls or parentheses is a deep recursion.
-        source::grow(|| {
+        source::grow_stack(|| {
             let span = self.thir.exprs.span(expression);
             let thir::Expr { ty, ref kind } = self.thir.exprs[expression];
             let kind = match *kind {

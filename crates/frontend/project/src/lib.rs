@@ -30,11 +30,11 @@ use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use packages::SOURCE_EXTENSION;
 use packages::file_of;
-use packages::path_of;
+use packages::import_path_of;
 use source::SourceFile;
 use source::Span;
 
-use crate::loading::load_file;
+use crate::loading::load_module;
 use crate::order::sort_modules;
 
 /// Imported by every module except itself.
@@ -325,7 +325,8 @@ fn entry(source: &Path) -> PathBuf {
 }
 
 /// The entry file a new project starts with.
-const HELLO: &str = "fn main() {\n    Write(Stdout, c\"Hello from Peeper!\\n\", 19);\n}\n";
+const NEW_PROJECT_MAIN: &str =
+    "fn main() {\n    Write(Stdout, c\"Hello from Peeper!\\n\", 19);\n}\n";
 
 /// Makes the folder `dir` the project `name`: writes its peeper.toml, and its
 /// src/main.peep unless that file is there already. Returns whether it wrote
@@ -352,7 +353,7 @@ pub fn create(dir: &Path, name: &str, libraries: &Path) -> Result<bool, String> 
     let source = dir.join(SOURCE_FOLDER);
     std::fs::create_dir_all(&source).map_err(|error| format!("{}: {error}", source.display()))?;
     let main = entry(&source);
-    match write_new(&main, HELLO) {
+    match write_new(&main, NEW_PROJECT_MAIN) {
         Ok(()) => Ok(true),
         Err(error) if error.kind() == ErrorKind::AlreadyExists => Ok(false),
         Err(error) => Err(format!("{}: {error}", main.display())),
@@ -414,7 +415,7 @@ pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + S
         std::thread::available_parallelism().map_or(1, |n| n.get())
     };
 
-    let (entry_path, in_package) = path_of(&project.packages, &project.entry);
+    let (entry_path, in_package) = import_path_of(&project.packages, &project.entry);
     let mut modules = HashMap::new();
     let (send_job, jobs) = mpsc::channel::<Job>();
     let jobs = Mutex::new(jobs);
@@ -431,7 +432,7 @@ pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + S
                         .expect("a worker never panics holding the lock")
                         .recv();
                     let Ok(job) = job else { break }; // no more jobs
-                    let loaded = load_file(&project.packages, open_files, job, with_prelude);
+                    let loaded = load_module(&project.packages, open_files, job, with_prelude);
                     _ = send_module.send(loaded);
                 }
             });
@@ -449,7 +450,7 @@ pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + S
             .keys()
             .filter(|file| file.to_string_lossy().ends_with(SOURCE_EXTENSION))
         {
-            let (path, in_package) = path_of(&project.packages, file);
+            let (path, in_package) = import_path_of(&project.packages, file);
             if in_package && seen.insert(path.clone()) {
                 _ = send_job.send(Job {
                     path,
@@ -463,7 +464,7 @@ pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + S
             let loaded = if workers == 0 {
                 let job = jobs.lock().expect("no worker holds the lock").try_recv();
                 let job = job.expect("each pending module has a job");
-                load_file(&project.packages, open_files, job, with_prelude)
+                load_module(&project.packages, open_files, job, with_prelude)
             } else {
                 let Ok(loaded) = done.recv() else { break };
                 loaded

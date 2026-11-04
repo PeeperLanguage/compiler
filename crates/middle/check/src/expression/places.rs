@@ -43,7 +43,7 @@ impl ThirBuilder<'_, '_> {
                 return Expr::INVALID;
             }
             let usize = self.checker.types.usize;
-            let Some(length) = length.filter(|_| !self.body.calls(value)) else {
+            let Some(length) = length.filter(|_| !self.body.has_call(value)) else {
                 return Expr {
                     ty: usize,
                     kind: ExprKind::Length(value),

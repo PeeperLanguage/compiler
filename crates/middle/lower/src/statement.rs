@@ -34,7 +34,7 @@ impl Lowering<'_> {
 
     /// Writes the `ScopeEnd`s of the variables from `start` on in
     /// `declared`, newest first, at `span`.
-    pub(super) fn end_scopes(&mut self, start: usize, span: Span) {
+    pub(super) fn emit_scope_ends(&mut self, start: usize, span: Span) {
         for index in (start..self.declared.len()).rev() {
             let variable = self.declared[index];
             self.emit(mir::InstructionKind::ScopeEnd(variable), TypeId::VOID, span);
@@ -46,7 +46,7 @@ impl Lowering<'_> {
     /// statement's `;`), and forgets them: the code after does not have them.
     pub(super) fn close_scopes(&mut self, start: usize, ending: Span) {
         let end = ending.end as usize;
-        self.end_scopes(start, Span::new(end - 1, end));
+        self.emit_scope_ends(start, Span::new(end - 1, end));
         self.declared.truncate(start);
     }
 
@@ -63,7 +63,7 @@ impl Lowering<'_> {
 
     pub(super) fn lower_statement(&mut self, statement: Id<thir::Stmt>) -> Option<()> {
         // Blocks in blocks and long `else if` chains are a deep recursion.
-        source::grow(|| {
+        source::grow_stack(|| {
             let span = self.thir.stmts.span(statement);
             // The temporaries the statement makes come after this in `declared`;
             // they end with it, as in Rust.
@@ -101,7 +101,7 @@ impl Lowering<'_> {
                         Some(value) => Some(self.lower_expr(value)?),
                         None => None,
                     };
-                    self.end_scopes(0, span); // out of the function
+                    self.emit_scope_ends(0, span); // out of the function
                     self.finish(mir::Terminator::Return { value, span });
                     // What follows a `return` is unreachable; it still gets a block.
                     self.block = self.new_block(span);
@@ -189,7 +189,7 @@ impl Lowering<'_> {
                         thir::Stmt::Break => exit,
                         _ => next,
                     };
-                    self.end_scopes(declared, span);
+                    self.emit_scope_ends(declared, span);
                     self.finish(mir::Terminator::Goto(target));
                     // What follows a jump is unreachable; it still gets a block.
                     self.block = self.new_block(span);

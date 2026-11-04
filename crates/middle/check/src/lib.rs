@@ -223,7 +223,7 @@ impl<'p> Checker<'p> {
         });
         // A long chain of declarations, each asking for the next, is a deep
         // recursion here.
-        let result = source::grow(|| {
+        let result = source::grow_stack(|| {
             self.check_attributes(definition);
             check(self, definition)
         });
@@ -385,7 +385,7 @@ impl<'p> Checker<'p> {
     /// What `name` stands for at the top level: a built-in type, which no
     /// declaration hides; else a name in the module's scope; else an
     /// exported name of the prelude.
-    pub(crate) fn global(&mut self, name: &str) -> Option<Symbol> {
+    pub(crate) fn resolve_global(&mut self, name: &str) -> Option<Symbol> {
         if let Some(builtin) = self.types.builtin(name, self.target.pointer_bits) {
             return Some(Symbol::Builtin(builtin));
         }
@@ -423,7 +423,7 @@ impl<'p> Checker<'p> {
         let (module_span, member_span) = (tree.types.span(module), tree.types.span(member));
         let (module_name, member_name) =
             (tree.file.slice(module_span), tree.file.slice(member_span));
-        let imported = match self.global(module_name) {
+        let imported = match self.resolve_global(module_name) {
             Some(symbol @ Symbol::Module(imported)) => {
                 self.record(module_span, FactKind::Name(symbol));
                 imported
@@ -438,7 +438,7 @@ impl<'p> Checker<'p> {
                 return None;
             }
             None => {
-                self.report_undeclared(module_name, module_span, std::iter::empty());
+                self.report_unknown_name(module_name, module_span, std::iter::empty());
                 return None;
             }
         };
@@ -474,7 +474,7 @@ impl<'p> Checker<'p> {
 
     /// Reports `name`, written at `span`, which nothing in scope declares,
     /// with the nearest of `locals` and the top-level names.
-    pub(crate) fn report_undeclared<'a>(
+    pub(crate) fn report_unknown_name<'a>(
         &mut self,
         name: &str,
         span: Span,

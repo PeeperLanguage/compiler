@@ -543,3 +543,37 @@ ran `check.sh` fully green.
 - **Kept:** the three `check/declaration.rs` sites still index their own
   module's tree, which they keep using.
 - **Evidence:** `bash scripts/check.sh` passed.
+
+## 2026-11-04 One way to run a tool and to name a file error
+
+- **Done:** `llvm::link::run_tool` runs a tool and shows what it printed as
+  errors only when it fails; `call_tool` adds what the run was for. The
+  toolchain's own `run` is deleted. `llvm::link::file_error` writes "cannot
+  {action} {path}: {error}" for both crates; the toolchain's copy and nine
+  hand-written texts are gone. `llvm/build.rs` keeps its own panic text, as
+  a build script cannot use the crate.
+- **Checked, no change:** the other groups of `.claude/codedb/similar.md`
+  keep one rule in the interpreter and the backend, whose texts and layouts
+  are already shared, or only look alike.
+- **Evidence:** `bash scripts/check.sh` passed; the new test
+  `a_failing_tool_is_named_with_what_it_printed` fails when `call_tool`
+  drops its prefix.
+
+## 2026-11-04 Names that say what they do
+
+- **Done:** 34 items across every crate renamed after a review against
+  RULES.md section 5 (`.claude/codedb/renames/`). Examples: `cannot` →
+  `file_error`, `Scanner::fail` → `report`,
+  `source::grow` → `grow_stack`, `Body::calls` → `has_call`,
+  `eval::interpreter::run` → `run_function`, `Interpreter::charge`/`spend` →
+  `count_copy`/`count_steps`, `Checker::global` → `resolve_global`, the lsp
+  `handle_notification` → `apply_notification`. Comments and docs follow.
+- **Kept on purpose:** `call_tool`, `Parser::tok`/`stmt`/`end` (the owner
+  kept them), `compile::run` (always read with its crate),
+  `fix::chosen`/`fix::write`, `Interpreter::operand`/`allocated`, the
+  private `Types::types`/`ids`, llvm `shift_count` (the interpreter's twin
+  has the same name), `ThirBuilder::names`.
+- **Decided, no change:** the `types` field and parameter (the semantic
+  type table) keeps its name; the owner: "types already mean the semantic
+  type".
+- **Evidence:** `bash scripts/check.sh` passed.

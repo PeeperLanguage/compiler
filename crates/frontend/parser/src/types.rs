@@ -40,7 +40,7 @@ pub(crate) fn starts_type(kind: TokenKind) -> bool {
 impl Parser {
     /// Reads a type.
     pub(crate) fn type_expr(&mut self) -> Id<Type> {
-        source::grow(|| {
+        source::grow_stack(|| {
             let t = self.tok();
             match t.kind {
                 TokenKind::Ident if self.ahead(1).kind == TokenKind::LeftBracket => {
@@ -110,12 +110,12 @@ impl Parser {
         if !self.at(TokenKind::ColonColon) {
             return first;
         }
-        let mark = self.scratch.len();
-        self.scratch.push(first.into());
+        let mark = self.list_items.len();
+        self.list_items.push(first.into());
         while self.at(TokenKind::ColonColon) {
             self.next();
             let segment = self.type_segment();
-            self.scratch.push(segment.into());
+            self.list_items.push(segment.into());
         }
         let segments = self.finish_list(mark);
         self.add(start, Type::Path(segments))

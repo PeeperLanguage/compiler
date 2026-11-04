@@ -18,7 +18,7 @@ pub enum Limbs {
 impl Limbs {
     /// The low `bits` bits of `limbs` (lowest first); missing limbs are zero.
     pub fn new(bits: u32, limbs: &[u64]) -> Limbs {
-        with_result(bits, |out| {
+        wrapped_result(bits, |out| {
             let n = out.len().min(limbs.len());
             out[..n].copy_from_slice(&limbs[..n]);
         })
@@ -26,7 +26,7 @@ impl Limbs {
 
     /// The value of `bits` bits kept in little-endian `bytes`.
     pub fn from_le_bytes(bits: u32, bytes: &[u8]) -> Limbs {
-        with_result(bits, |out| {
+        wrapped_result(bits, |out| {
             for (limb, chunk) in out.iter_mut().zip(bytes.chunks(8)) {
                 let mut limb_bytes = [0; 8];
                 limb_bytes[..chunk.len()].copy_from_slice(chunk);
@@ -63,19 +63,19 @@ impl Limbs {
 }
 
 pub fn add(bits: u32, left: &Limbs, right: &Limbs) -> Limbs {
-    let (left, right) = (used(bits, left), used(bits, right));
-    with_result(bits, |out| add_into(left, right, out))
+    let (left, right) = (used_limbs(bits, left), used_limbs(bits, right));
+    wrapped_result(bits, |out| add_into(left, right, out))
 }
 
 pub fn subtract(bits: u32, left: &Limbs, right: &Limbs) -> Limbs {
-    let (left, right) = (used(bits, left), used(bits, right));
-    with_result(bits, |out| subtract_into(left, right, out))
+    let (left, right) = (used_limbs(bits, left), used_limbs(bits, right));
+    wrapped_result(bits, |out| subtract_into(left, right, out))
 }
 
 /// Schoolbook multiplication, keeping only the low limbs.
 pub fn multiply(bits: u32, left: &Limbs, right: &Limbs) -> Limbs {
-    let (left, right) = (used(bits, left), used(bits, right));
-    with_result(bits, |out| {
+    let (left, right) = (used_limbs(bits, left), used_limbs(bits, right));
+    wrapped_result(bits, |out| {
         let n = out.len();
         for (i, &a) in left.iter().enumerate().filter(|&(_, &a)| a != 0) {
             let mut carry = 0u128;
@@ -89,8 +89,8 @@ pub fn multiply(bits: u32, left: &Limbs, right: &Limbs) -> Limbs {
 }
 
 pub fn negate(bits: u32, value: &Limbs) -> Limbs {
-    let value = used(bits, value);
-    with_result(bits, |out| {
+    let value = used_limbs(bits, value);
+    wrapped_result(bits, |out| {
         out.copy_from_slice(value);
         negate_in_place(out);
     })
@@ -98,8 +98,8 @@ pub fn negate(bits: u32, value: &Limbs) -> Limbs {
 
 /// Every bit flipped.
 pub fn not(bits: u32, value: &Limbs) -> Limbs {
-    let value = used(bits, value);
-    with_result(bits, |out| {
+    let value = used_limbs(bits, value);
+    wrapped_result(bits, |out| {
         for (out, &limb) in out.iter_mut().zip(value) {
             *out = !limb;
         }
@@ -122,9 +122,9 @@ pub fn bit_xor(bits: u32, left: &Limbs, right: &Limbs) -> Limbs {
 /// top bits copy the sign when `signed`, else they are zero.
 pub fn extend(bits: u32, signed: bool, value: &Limbs, to_bits: u32) -> Limbs {
     assert!(to_bits >= bits, "extending keeps every bit");
-    let value = used(bits, value);
+    let value = used_limbs(bits, value);
     let negative = is_negative(bits, signed, value);
-    with_result(to_bits, |out| {
+    wrapped_result(to_bits, |out| {
         out.fill(if negative { u64::MAX } else { 0 });
         out[..value.len()].copy_from_slice(value);
         if negative && !bits.is_multiple_of(64) {
@@ -136,10 +136,10 @@ pub fn extend(bits: u32, signed: bool, value: &Limbs, to_bits: u32) -> Limbs {
 /// `value << count`; `count` is below `bits`.
 pub fn shift_left(bits: u32, value: &Limbs, count: u32) -> Limbs {
     assert!(count < bits, "a shift count is below the width");
-    let value = used(bits, value);
+    let value = used_limbs(bits, value);
     let (limbs, offset) = ((count / 64) as usize, count % 64);
     let at = |j: usize| if j < limbs { 0 } else { value[j - limbs] };
-    with_result(bits, |out| {
+    wrapped_result(bits, |out| {
         for (i, out) in out.iter_mut().enumerate() {
             let carried = if offset > 0 && i > 0 {
                 at(i - 1) >> (64 - offset)
@@ -155,7 +155,7 @@ pub fn shift_left(bits: u32, value: &Limbs, count: u32) -> Limbs {
 /// `bits`.
 pub fn shift_right(bits: u32, signed: bool, value: &Limbs, count: u32) -> Limbs {
     assert!(count < bits, "a shift count is below the width");
-    let mut value = used(bits, value).to_vec();
+    let mut value = used_limbs(bits, value).to_vec();
     let negative = is_negative(bits, signed, &value);
     if negative && !bits.is_multiple_of(64) {
         *value.last_mut().unwrap() |= u64::MAX << (bits % 64); // copy the sign into the unused top bits
@@ -163,7 +163,7 @@ pub fn shift_right(bits: u32, signed: bool, value: &Limbs, count: u32) -> Limbs 
     let fill = if negative { u64::MAX } else { 0 };
     let (limbs, offset) = ((count / 64) as usize, count % 64);
     let at = |j: usize| value.get(j).copied().unwrap_or(fill);
-    with_result(bits, |out| {
+    wrapped_result(bits, |out| {
         for (i, out) in out.iter_mut().enumerate() {
             let carried = if offset > 0 {
                 at(i + limbs + 1) << (64 - offset)
@@ -178,7 +178,7 @@ pub fn shift_right(bits: u32, signed: bool, value: &Limbs, count: u32) -> Limbs 
 /// `left / right`, rounded toward zero; `None` when `right` is zero. The signed
 /// minimum divided by -1 wraps to the minimum.
 pub fn divide(bits: u32, signed: bool, left: &Limbs, right: &Limbs) -> Option<Limbs> {
-    let (left, right) = (used(bits, left), used(bits, right));
+    let (left, right) = (used_limbs(bits, left), used_limbs(bits, right));
     let (quotient, _) = divide_magnitudes(bits, signed, left, right)?;
     let negative = is_negative(bits, signed, left) != is_negative(bits, signed, right);
     Some(signed_result(bits, &quotient, negative))
@@ -186,7 +186,7 @@ pub fn divide(bits: u32, signed: bool, left: &Limbs, right: &Limbs) -> Option<Li
 
 /// `left % right`, with the sign of `left`; `None` when `right` is zero.
 pub fn remainder(bits: u32, signed: bool, left: &Limbs, right: &Limbs) -> Option<Limbs> {
-    let (left, right) = (used(bits, left), used(bits, right));
+    let (left, right) = (used_limbs(bits, left), used_limbs(bits, right));
     let (_, remainder) = divide_magnitudes(bits, signed, left, right)?;
     Some(signed_result(
         bits,
@@ -196,7 +196,7 @@ pub fn remainder(bits: u32, signed: bool, left: &Limbs, right: &Limbs) -> Option
 }
 
 pub fn compare(bits: u32, signed: bool, left: &Limbs, right: &Limbs) -> Ordering {
-    let (left, right) = (used(bits, left), used(bits, right));
+    let (left, right) = (used_limbs(bits, left), used_limbs(bits, right));
     match (
         is_negative(bits, signed, left),
         is_negative(bits, signed, right),
@@ -209,7 +209,7 @@ pub fn compare(bits: u32, signed: bool, left: &Limbs, right: &Limbs) -> Ordering
 
 /// The value as a `u64`; `None` when it is negative or does not fit.
 pub fn to_u64(bits: u32, signed: bool, value: &Limbs) -> Option<u64> {
-    let value = used(bits, value);
+    let value = used_limbs(bits, value);
     let fits = !is_negative(bits, signed, value) && value[1..].iter().all(|&limb| limb == 0);
     fits.then_some(value[0])
 }
@@ -220,13 +220,13 @@ pub fn to_u64(bits: u32, signed: bool, value: &Limbs) -> Option<u64> {
 /// so rounding the 64 bits to a float rounds the whole magnitude as one
 /// rounding would.
 pub fn leading_bits(bits: u32, signed: bool, value: &Limbs) -> (bool, u64, u32) {
-    let negative = is_negative(bits, signed, used(bits, value));
+    let negative = is_negative(bits, signed, used_limbs(bits, value));
     let negated;
     let magnitude = if negative {
         negated = negate(bits, value);
-        used(bits, &negated)
+        used_limbs(bits, &negated)
     } else {
-        used(bits, value)
+        used_limbs(bits, value)
     };
     let length = magnitude
         .iter()
@@ -252,13 +252,13 @@ fn limb_count(bits: u32) -> usize {
 }
 
 /// The limbs that hold the `bits` bits of `value`.
-fn used(bits: u32, value: &Limbs) -> &[u64] {
+fn used_limbs(bits: u32, value: &Limbs) -> &[u64] {
     &value.as_slice()[..limb_count(bits)]
 }
 
 /// Runs `operation` on zeroed limbs for `bits` bits, then clears the bits
 /// above the width: what carried out of them is dropped, so results wrap.
-fn with_result(bits: u32, operation: impl FnOnce(&mut [u64])) -> Limbs {
+fn wrapped_result(bits: u32, operation: impl FnOnce(&mut [u64])) -> Limbs {
     let n = limb_count(bits);
     let mut out = match n {
         0..=2 => Limbs::Inline([0; 2]),
@@ -279,8 +279,8 @@ fn clear_unused(bits: u32, limbs: &mut [u64]) {
 }
 
 fn each_limb(bits: u32, left: &Limbs, right: &Limbs, operation: fn(u64, u64) -> u64) -> Limbs {
-    let (left, right) = (used(bits, left), used(bits, right));
-    with_result(bits, |out| {
+    let (left, right) = (used_limbs(bits, left), used_limbs(bits, right));
+    wrapped_result(bits, |out| {
         for ((out, &a), &b) in out.iter_mut().zip(left).zip(right) {
             *out = operation(a, b);
         }
@@ -324,7 +324,7 @@ fn divide_magnitudes(
 
 /// `magnitude`, negated when `negative`.
 fn signed_result(bits: u32, magnitude: &[u64], negative: bool) -> Limbs {
-    with_result(bits, |out| {
+    wrapped_result(bits, |out| {
         out.copy_from_slice(magnitude);
         if negative {
             negate_in_place(out);

@@ -135,7 +135,7 @@ impl Function<'_, '_, '_> {
             Type::Struct { .. } | Type::Array { .. } => {
                 // Each struct and array in one has its own printer, written
                 // from here.
-                let printer = source::grow(|| self.printer(ty));
+                let printer = source::grow_stack(|| self.printer(ty));
                 self.write_print_text(out, text, location);
                 _ = writeln!(out, "  call void {printer}(ptr {value}){location}");
             }

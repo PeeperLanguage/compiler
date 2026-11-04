@@ -565,7 +565,7 @@ impl Types {
             offsets: offsets.into(),
             size,
             align,
-            holders: self.holders_of(&fields),
+            holders: self.holders_in_fields(&fields),
             mutable_holder: (fields.iter()).any(|&field| self.holds_loans(field) == Some(true)),
         };
         let slot = &mut self.types[named.0 as usize];
@@ -687,7 +687,7 @@ impl Types {
     }
 
     /// `holders_in` for a struct of `fields`, not past `usize`.
-    pub fn holders_of(&self, fields: &[TypeId]) -> usize {
+    pub fn holders_in_fields(&self, fields: &[TypeId]) -> usize {
         (fields.iter())
             .map(|&field| self.holders_in(field))
             .fold(0, usize::saturating_add)
@@ -807,7 +807,7 @@ impl Types {
                 target: Some(target),
             } => {
                 // Pointers nest as deep as the source does.
-                let target = source::grow(|| self.real_text(*target, name_of));
+                let target = source::grow_stack(|| self.real_text(*target, name_of));
                 format!("*{target}")
             }
             Type::Alias { .. } => unreachable!("`real` looks through aliases"),

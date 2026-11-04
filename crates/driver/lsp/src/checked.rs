@@ -36,7 +36,7 @@ impl Checked {
     /// keeps the facts of each module's text and the names of its
     /// constants: a module the compile reused gave no facts, and the facts
     /// found before still fit it; a module checked again gets its new facts.
-    pub(crate) fn update(&mut self, program: &project::Program) {
+    pub(crate) fn recompile(&mut self, program: &project::Program) {
         let mut found: HashMap<ModuleId, Vec<CachedFact>> = HashMap::new();
         let previous = std::mem::take(&mut self.results);
         let cache_facts = |output: compile::Output| match output {
@@ -143,7 +143,7 @@ impl CachedFact {
             FactKind::Name(Symbol::Local(local)) => {
                 let body = body
                     .expect("a local's name comes with its function (`CheckedFunction::facts`)");
-                let declared = body.declared(local);
+                let declared = body.declared_at(local);
                 match local {
                     _ if fact.span != declared => CachedKind::Local { declared },
                     Local::Variable(variable) => {

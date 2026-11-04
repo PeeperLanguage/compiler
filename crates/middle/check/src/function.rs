@@ -98,7 +98,7 @@ impl Checker<'_> {
 
     /// What the call of `function` with `arguments`, written at `span` in a
     /// constant's value, gives: its MIR, and that of each function it may
-    /// call, is built and run (`eval::interpreter::run`). `None` when it cannot run,
+    /// call, is built and run (`eval::interpreter::run_function`). `None` when it cannot run,
     /// reported unless a function it runs had an error, which was.
     pub(crate) fn evaluate_call(
         &mut self,
@@ -154,7 +154,7 @@ impl Checker<'_> {
         let (place, message) = 'failed: {
             let (callee, place) = match mir_of(function) {
                 Some(body) => {
-                    match eval::interpreter::run(
+                    match eval::interpreter::run_function(
                         function,
                         body,
                         arguments,

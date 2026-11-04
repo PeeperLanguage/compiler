@@ -71,7 +71,7 @@ unsafe impl Sync for Output {}
 
 static OUTPUT: Output = Output(UnsafeCell::new(([0; OUTPUT_SIZE], 0)));
 
-fn push(bytes: &[u8]) {
+fn buffer_output(bytes: &[u8]) {
     for chunk in bytes.chunks(OUTPUT_SIZE) {
         // Only this file's functions reach it, and no reference to it may
         // live across `flush`, which makes its own.
@@ -139,11 +139,11 @@ extern "C" fn peeper_rt_v1_exit(code: i32) -> ! {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn peeper_rt_v1_print_text(text: *const u8) {
     if text.is_null() {
-        push(b"null");
+        buffer_output(b"null");
         return;
     }
     let text = unsafe { core::ffi::CStr::from_ptr(text.cast()) };
-    push(text.to_bytes());
+    buffer_output(text.to_bytes());
 }
 
 /// Writes the integer of `count` 64-bit limbs at `limbs`, least significant
@@ -155,17 +155,17 @@ unsafe extern "C" fn peeper_rt_v2_print_int(is_signed: i32, count: i32, limbs: *
     if count == 1 {
         let value = unsafe { limbs.read_unaligned() };
         if is_signed != 0 && (value as i64) < 0 {
-            push(b"-");
-            number_text::write_decimal(value.wrapping_neg(), 1, &mut push);
+            buffer_output(b"-");
+            number_text::write_decimal(value.wrapping_neg(), 1, &mut buffer_output);
         } else {
-            number_text::write_decimal(value, 1, &mut push);
+            number_text::write_decimal(value, 1, &mut buffer_output);
         }
         return;
     }
     // The limbs, then the nine-digit chunks of the decimal text, in one
     // block; a program that cannot get it stops as a panic does.
-    let chunk_room = number_text::chunk_room(count);
-    let bytes = count * size_of::<u64>() + chunk_room * size_of::<u32>();
+    let max_chunks = number_text::max_chunks(count);
+    let bytes = count * size_of::<u64>() + max_chunks * size_of::<u32>();
     let block = unsafe { malloc(bytes) };
     if block.is_null() {
         let message = b"panic: out of memory\n";
@@ -176,23 +176,23 @@ unsafe extern "C" fn peeper_rt_v2_print_int(is_signed: i32, count: i32, limbs: *
     }
     let wide = unsafe { core::slice::from_raw_parts_mut(block.cast::<u64>(), count) };
     let chunks =
-        unsafe { core::slice::from_raw_parts_mut(wide.as_mut_ptr_range().end.cast(), chunk_room) };
+        unsafe { core::slice::from_raw_parts_mut(wide.as_mut_ptr_range().end.cast(), max_chunks) };
     for (index, limb) in wide.iter_mut().enumerate() {
         *limb = unsafe { limbs.add(index).read_unaligned() };
     }
-    number_text::write_integer(is_signed != 0, wide, chunks, &mut push);
+    number_text::write_integer(is_signed != 0, wide, chunks, &mut buffer_output);
     unsafe { free(block) }
 }
 
 // `number_text` says how it reads.
 #[unsafe(no_mangle)]
 extern "C" fn peeper_rt_v1_print_float(value: f64, bits: i32) {
-    number_text::write_float(value, bits, &mut push);
+    number_text::write_float(value, bits, &mut buffer_output);
 }
 
 #[unsafe(no_mangle)]
 extern "C" fn peeper_rt_v1_print_pointer(pointer: *const c_void) {
-    number_text::write_pointer(pointer as usize as u64, &mut push);
+    number_text::write_pointer(pointer as usize as u64, &mut buffer_output);
 }
 
 #[unsafe(no_mangle)]

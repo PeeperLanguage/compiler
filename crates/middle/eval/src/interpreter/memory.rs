@@ -155,7 +155,7 @@ impl Memory {
 
     /// The address of the string `text`, kept with the zero byte that ends a
     /// C string.
-    pub(super) fn string(&mut self, text: &[u8]) -> u64 {
+    pub(super) fn string_address(&mut self, text: &[u8]) -> u64 {
         if let Some(&address) = self.strings.get(text) {
             return address;
         }
@@ -203,7 +203,7 @@ impl Memory {
         Some(&rest[..end])
     }
 
-    /// The string at `address`: all of one `string` made, zero bytes in it
+    /// The string at `address`: all of one `string_address` stored, zero bytes in it
     /// included, else the bytes up to the first zero byte, as C reads it.
     pub(super) fn string_at(&self, address: u64) -> Option<Box<[u8]>> {
         if let Some((text, _)) = self.strings.iter().find(|&(_, &start)| start == address) {
@@ -316,8 +316,8 @@ mod tests {
     #[test]
     fn a_string_keeps_its_zero_bytes_and_is_kept_once() {
         let mut memory = Memory::default();
-        let address = memory.string(b"ab\0cd");
-        assert_eq!(memory.string(b"ab\0cd"), address);
+        let address = memory.string_address(b"ab\0cd");
+        assert_eq!(memory.string_address(b"ab\0cd"), address);
         assert_eq!(memory.string_at(address).as_deref(), Some(&b"ab\0cd"[..]));
         assert_eq!(memory.bytes(address + 5, 1), Some(&[0][..]), "C's end");
     }

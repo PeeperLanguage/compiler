@@ -54,7 +54,7 @@ fn starts_parameter(kind: TokenKind) -> bool {
 impl Parser {
     pub(crate) fn module(&mut self) {
         let mut imports = Vec::new();
-        let mark = self.scratch.len();
+        let mark = self.list_items.len();
         loop {
             let metadata = self.metadata();
             let kind = self.tok().kind;
@@ -83,7 +83,7 @@ impl Parser {
                 TokenKind::Import => imports.extend(self.import_decl()),
                 kind if let Some(read) = DECLARATIONS[kind as usize] => {
                     let decl = read(self, metadata);
-                    self.scratch.push(decl.into());
+                    self.list_items.push(decl.into());
                 }
                 TokenKind::Semicolon => {
                     self.next();
@@ -123,10 +123,10 @@ impl Parser {
     /// Reads the doc comment and attributes in front of a declaration.
     fn metadata(&mut self) -> Metadata {
         let doc_comment = self.doc_comment();
-        let mark = self.scratch.len();
+        let mark = self.list_items.len();
         while self.at(TokenKind::Hash) {
             let attribute = self.attribute();
-            self.scratch.push(attribute.into());
+            self.list_items.push(attribute.into());
         }
         Metadata {
             doc_comment,

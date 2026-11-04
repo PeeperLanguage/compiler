@@ -56,14 +56,14 @@ impl<'b> Interpreter<'b, '_> {
 
     /// Starts a call of `function`, whose value goes to `result` of the frame
     /// below, with `end` where the calling frame stops and its arguments the
-    /// registers from `registers` on.
+    /// registers from `first_register` on.
     pub(super) fn push_frame(
         &mut self,
         function: DefId,
         body: &'b mir::Body,
         result: Option<Id<mir::Instruction>>,
         end: u64,
-        registers: usize,
+        first_register: usize,
         span: Span,
     ) -> Result<(), Failure> {
         if self.frames.len() == CALL_LIMIT {
@@ -92,7 +92,7 @@ impl<'b> Interpreter<'b, '_> {
             slots,
             start,
             variables,
-            registers,
+            first_register,
             block: Id::from_index(0),
             next: 0,
             previous: None,
@@ -220,12 +220,12 @@ impl<'b> Interpreter<'b, '_> {
             });
         };
         let end = frame.start + frame.slots.size;
-        let registers = self.registers.len();
+        let first_register = self.registers.len();
         for argument in arguments {
             let register = self.operand(argument);
             self.registers.push(Some(register));
         }
-        self.push_frame(function, body, Some(id), end, registers, span)
+        self.push_frame(function, body, Some(id), end, first_register, span)
     }
 
     /// Ends the running call with `value`, and gives the run's result if it
@@ -246,7 +246,7 @@ impl<'b> Interpreter<'b, '_> {
         // A value in memory is still there: it is copied before the call's
         // memory ends.
         let frame = self.frames.pop().expect("a run has a frame");
-        self.registers.truncate(frame.registers);
+        self.registers.truncate(frame.first_register);
         self.set_value(result, value)?;
         for &variable in frame.variables.iter().filter(|&&address| address != 0) {
             self.memory.close_block(variable);

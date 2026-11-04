@@ -164,7 +164,7 @@ impl Printer<'_> {
         self.paint(GREY, format_args!("{:>width$} | ", ""));
     }
 
-    fn write_margin(&mut self) {
+    fn write_blank_gutter_line(&mut self) {
         self.write_blank_gutter();
         self.out.push('\n');
     }
@@ -195,7 +195,7 @@ impl Printer<'_> {
                 ),
             );
             self.out.push('\n');
-            self.write_margin();
+            self.write_blank_gutter_line();
             let mut last_shown = 0;
             for line in &snippet.lines {
                 let context = has_context_line(snippet.file, line.number, last_shown);
@@ -215,13 +215,13 @@ impl Printer<'_> {
             }
         }
         if !snippets.is_empty() && !d.notes.is_empty() {
-            self.write_margin();
+            self.write_blank_gutter_line();
         }
 
         let mut after_fixed_lines = false;
         for note in &d.notes {
             if after_fixed_lines {
-                self.write_margin();
+                self.write_blank_gutter_line();
             }
             let (kind, color) = match note.kind {
                 NoteKind::Note => ("note", CYAN),
@@ -407,7 +407,7 @@ impl Printer<'_> {
         if lines.is_empty() {
             return false;
         }
-        self.write_margin();
+        self.write_blank_gutter_line();
         for (file, number, fixes) in lines {
             self.write_gutter(GREY, number);
             let span = file.line_span(number);

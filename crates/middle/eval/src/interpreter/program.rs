@@ -131,8 +131,8 @@ impl<'f> Interpreter<'_, 'f> {
 
     /// Adds `text` to the output of the descriptor `fd`: false for one that
     /// is neither of a program's outputs.
-    fn output(&mut self, fd: i32, text: &[u8], span: Span) -> Result<bool, Failure> {
-        self.charge(text.len() as u64, span)?;
+    fn write_output(&mut self, fd: i32, text: &[u8], span: Span) -> Result<bool, Failure> {
+        self.count_copy(text.len() as u64, span)?;
         self.check_output(text.len() as u64, span)?;
         let stream = match fd {
             STDOUT => Stream::Stdout,
@@ -179,7 +179,7 @@ impl<'f> Interpreter<'_, 'f> {
         if newline {
             text.push(b'\n');
         }
-        self.output(STDOUT, &text, span).map(|_| ())
+        self.write_output(STDOUT, &text, span).map(|_| ())
     }
 
     /// Adds the text of `value`, of the type `ty`, to `text`, as the backend's
@@ -199,7 +199,7 @@ impl<'f> Interpreter<'_, 'f> {
                 let count = integer.bits.div_ceil(64);
                 let extended = bigint::extend(integer.bits, integer.signed, limbs, count * 64);
                 let mut wide = extended.as_slice()[..count as usize].to_vec();
-                let mut chunks = vec![0; number_text::chunk_room(wide.len())];
+                let mut chunks = vec![0; number_text::max_chunks(wide.len())];
                 let mut push = |piece: &[u8]| text.extend_from_slice(piece);
                 number_text::write_integer(integer.signed, &mut wide, &mut chunks, &mut push);
             }
@@ -247,7 +247,7 @@ impl<'f> Interpreter<'_, 'f> {
                     text.extend_from_slice(b": ");
                     let (offset, field) = field_placed(self.types, ty, index, self.target);
                     let value = self.read_value(address + offset, field, span)?;
-                    source::grow(|| self.write_printed(text, &value, field, span))?;
+                    source::grow_stack(|| self.write_printed(text, &value, field, span))?;
                 }
                 text.extend_from_slice(if fields.is_empty() { b" {}" } else { b" }" });
             }
@@ -264,7 +264,7 @@ impl<'f> Interpreter<'_, 'f> {
                         text.extend_from_slice(b", ");
                     }
                     let value = self.read_value(address + index * size, element, span)?;
-                    source::grow(|| self.write_printed(text, &value, element, span))?;
+                    source::grow_stack(|| self.write_printed(text, &value, element, span))?;
                 }
                 text.push(b']');
             }
@@ -278,7 +278,7 @@ impl<'f> Interpreter<'_, 'f> {
     /// The size the argument `operand` holds, as C reads it: a negative
     /// one's bits are a size too big for any block.
     fn size_argument(&mut self, operand: &Operand) -> u64 {
-        self.position(operand).unwrap_or(u64::MAX)
+        self.element_position(operand).unwrap_or(u64::MAX)
     }
 
     /// The address the pointer `operand` holds.
@@ -304,7 +304,7 @@ impl<'f> Interpreter<'_, 'f> {
         let Some(address) = self.memory.allocate(size) else {
             return Ok(Register::Address(0));
         };
-        self.charge(size, span)?;
+        self.count_copy(size, span)?;
         Ok(Register::Address(address))
     }
 
@@ -355,7 +355,7 @@ impl<'f> Interpreter<'_, 'f> {
                 None
             }
             // A negative length gives -1, as the runtime refuses it.
-            (WRITE | READ, [_, _, length]) if self.position(length).is_none() => {
+            (WRITE | READ, [_, _, length]) if self.element_position(length).is_none() => {
                 Some(self.integer_result(id, u64::MAX))
             }
             (WRITE, [fd, buffer, length]) => {
@@ -363,7 +363,7 @@ impl<'f> Interpreter<'_, 'f> {
                 let length = self.size_argument(length);
                 self.check_output(length, span)?;
                 let bytes = self.read_bytes(address, length, span)?.to_vec();
-                let written = self.output(fd, &bytes, span)?;
+                let written = self.write_output(fd, &bytes, span)?;
                 Some(self.integer_result(id, if written { length } else { u64::MAX }))
             }
             // No program here has an input, so its stream is always at its end.

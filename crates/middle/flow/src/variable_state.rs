@@ -100,7 +100,7 @@ pub fn report_variable_state_errors(
                     // Writing through a reference only reads the variable.
                     let writes_part = matches!(kind, mir::InstructionKind::Store { .. })
                         && !place.is_behind_reference();
-                    let written = writes_part.then(|| part(place)[0]);
+                    let written = writes_part.then(|| part_and_holder(place)[0]);
                     let error = if facts.moved.has(followed) {
                         let moves = move_sites(body, variable, block, position);
                         moved_use(body, file, variable, span, &moves, written)
@@ -336,7 +336,7 @@ fn partial_move(
             "borrow it instead, or read only parts that copy".to_string(),
         )
     } else {
-        let [part, whole] = part(place);
+        let [part, whole] = part_and_holder(place);
         (
             format!("cannot move {part} out of its {whole}"),
             format!("move the whole {whole}, or read only parts that copy"),
@@ -357,7 +357,7 @@ fn partial_move(
 }
 /// The part of a value that `place`, not a whole variable, names last, and
 /// what holds it: "a field" of a "struct" or "an element" of an "array".
-fn part(place: &mir::Place) -> [&'static str; 2] {
+fn part_and_holder(place: &mir::Place) -> [&'static str; 2] {
     match place.projections.last() {
         Some(mir::Projection::Index(_)) => ["an element", "array"],
         _ => ["a field", "struct"],

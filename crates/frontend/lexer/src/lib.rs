@@ -61,7 +61,7 @@ impl Scanner<'_> {
                 if let Some(end) = self.file.text[start + 2..].find("*/") {
                     self.pos = start + 2 + end + 2;
                 } else {
-                    self.fail(
+                    self.report(
                         Span::new(start, start + 2),
                         diagnostics::UNTERMINATED_COMMENT,
                         "unterminated block comment",
@@ -112,7 +112,7 @@ impl Scanner<'_> {
         });
     }
 
-    fn fail(&mut self, span: Span, code: Code, message: impl Into<String>, label: &str) {
+    fn report(&mut self, span: Span, code: Code, message: impl Into<String>, label: &str) {
         self.diagnostics
             .push(Diagnostic::new(code, message).label(self.file, span, label));
     }
@@ -143,7 +143,7 @@ impl Scanner<'_> {
             return;
         }
         let message = format!("name `{text}` uses characters that are not allowed in names");
-        self.fail(
+        self.report(
             Span::new(start, self.pos),
             diagnostics::UNEXPECTED_CHARACTER,
             message,
@@ -175,7 +175,7 @@ impl Scanner<'_> {
                 };
                 let prefixed = &self.file.text[start..start + 2 + literal.digits.len()]; // without the suffix
                 let message = format!("invalid {base} literal {prefixed}");
-                self.fail(
+                self.report(
                     Span::new(start, self.pos),
                     diagnostics::INVALID_NUMBER,
                     message,
@@ -213,7 +213,7 @@ impl Scanner<'_> {
                 "invalid number literal {}",
                 &self.file.text[start..self.pos]
             );
-            self.fail(
+            self.report(
                 Span::new(start, self.pos),
                 diagnostics::INVALID_NUMBER,
                 message,
@@ -272,7 +272,7 @@ impl Scanner<'_> {
                 match byte {
                     Ok(byte) => (byte, width),
                     Err(message) => {
-                        self.fail(
+                        self.report(
                             Span::new(i, i + width),
                             diagnostics::UNEXPECTED_CHARACTER,
                             message,
@@ -300,14 +300,14 @@ impl Scanner<'_> {
         let span = Span::new(start, self.pos);
         let is_one_char = || std::str::from_utf8(value).is_ok_and(|v| v.chars().count() == 1);
         if kind == TokenKind::Char && (length > 4 || !is_one_char()) {
-            self.fail(
+            self.report(
                 span,
                 diagnostics::UNEXPECTED_CHARACTER,
                 "character literal must contain exactly one character",
                 "use exactly one valid UTF-8 character between single quotes",
             );
         } else if kind == TokenKind::ByteChar && length != 1 {
-            self.fail(
+            self.report(
                 span,
                 diagnostics::UNEXPECTED_CHARACTER,
                 "byte literal must contain exactly one byte",
@@ -325,7 +325,7 @@ impl Scanner<'_> {
         } else {
             ("character", "add a closing `'`")
         };
-        self.fail(
+        self.report(
             Span::new(start, self.pos),
             diagnostics::UNTERMINATED_STRING,
             format!("unterminated {what} literal"),
@@ -338,7 +338,7 @@ impl Scanner<'_> {
         let start = self.pos;
         self.pos += next_char_width(&self.bytes[start..]);
         let message = format!("illegal character {}", quote(&self.bytes[start..self.pos]));
-        self.fail(
+        self.report(
             Span::new(start, self.pos),
             diagnostics::UNEXPECTED_CHARACTER,
             message,

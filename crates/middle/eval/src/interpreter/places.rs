@@ -19,7 +19,7 @@ use super::Register;
 impl<'b> Interpreter<'b, '_> {
     /// The index `index` means as an element's position: `None` for a value
     /// below zero or past every length.
-    pub(super) fn position(&mut self, index: &Operand) -> Option<u64> {
+    pub(super) fn element_position(&mut self, index: &Operand) -> Option<u64> {
         let ty = self.frame().body.operand_type(*index);
         let Type::Integer(integer) = self.types[ty] else {
             unreachable!("check takes only an integer index")
@@ -79,7 +79,9 @@ impl<'b> Interpreter<'b, '_> {
                     Projection::Index(index),
                     &(Type::Array { element, .. } | Type::Slice { element, .. }),
                 ) => {
-                    let at = self.position(&index).expect("lowering checked the index");
+                    let at = self
+                        .element_position(&index)
+                        .expect("lowering checked the index");
                     address = address.wrapping_add(at * self.size_of(element));
                     ty = element;
                 }
@@ -88,7 +90,9 @@ impl<'b> Interpreter<'b, '_> {
                     &(Type::Array { element, .. } | Type::Slice { element, .. }),
                 ) => {
                     let start = self.frame().body.subslices[subslice.index()].start;
-                    let at = self.position(&start).expect("lowering checked the start");
+                    let at = self
+                        .element_position(&start)
+                        .expect("lowering checked the start");
                     address = address.wrapping_add(at * self.size_of(element));
                     ty = element;
                 }
@@ -120,7 +124,8 @@ impl<'b> Interpreter<'b, '_> {
         let length = match (place.projections.last(), &self.types[located.ty]) {
             (Some(&Projection::Subslice(subslice)), _) => {
                 let count = body.subslices[subslice.index()].count;
-                self.position(&count).expect("lowering checked the count")
+                self.element_position(&count)
+                    .expect("lowering checked the count")
             }
             (_, &Type::Array { length, .. }) => length,
             _ => unreachable!("a slice is taken of an array or some of a slice's elements"),

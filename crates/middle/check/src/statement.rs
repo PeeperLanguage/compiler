@@ -202,7 +202,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         if let Some(&position) = self.innermost.get(text)
             && position >= self.block_start
         {
-            let first = self.body.declared(self.names[position].local);
+            let first = self.body.declared_at(self.names[position].local);
             let diagnostic = report_redeclared(
                 &self.checker.module().ast.file,
                 text,
@@ -214,7 +214,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
             return;
         }
         // No local holds a type's name, so only top-level names can clash.
-        let ty = match self.checker.global(text) {
+        let ty = match self.checker.resolve_global(text) {
             Some(Symbol::Builtin(_)) => None,
             Some(Symbol::Type(definition)) => Some(definition),
             _ => {
@@ -244,7 +244,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
     }
 
     /// What the name written at `span` stands for: a name of the current
-    /// block or an outer one, else a top-level name (`Checker::global`),
+    /// block or an outer one, else a top-level name (`Checker::resolve_global`),
     /// recorded (`Checker::record`). `None` after reporting that nothing
     /// declares it.
     pub(crate) fn resolve(&mut self, span: Span) -> Option<Symbol> {
@@ -252,9 +252,9 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
         let symbol = if let Some(&position) = self.innermost.get(name) {
             Symbol::Local(self.names[position].local)
         } else {
-            let Some(symbol) = self.checker.global(name) else {
+            let Some(symbol) = self.checker.resolve_global(name) else {
                 let locals = self.names.iter().map(|declared| declared.name);
-                self.checker.report_undeclared(name, span, locals);
+                self.checker.report_unknown_name(name, span, locals);
                 return None;
             };
             symbol
@@ -267,7 +267,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
     /// name, and for a statement with an error.
     fn check_statement(&mut self, statement: Id<ast::Stmt>) -> Option<Id<Stmt>> {
         // Blocks in blocks and long `else if` chains are a deep recursion.
-        source::grow(|| {
+        source::grow_stack(|| {
             let tree = &self.checker.module().ast;
             let span = tree.stmts.span(statement);
             let checked = match tree.stmts[statement] {

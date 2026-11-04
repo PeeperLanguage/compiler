@@ -90,7 +90,7 @@ enum variants, function types) are `model` data, written by check.
 |---|---|
 | `model` | data only: `ast` (the syntax tree), `thir` (THIR nodes), `mir` (MIR graphs); `semantic_types` (`TypeId`, the type interner, the built-in types table); `constant` (constant values); `ModuleId`, `DefId`; `operators` (`BinaryOp`, `UnaryOp`); signatures |
 | `check` | the checker: scopes, name lookup, building THIR, writing signatures; the declaration tables (`Checker`) |
-| `eval` | what operators mean on constant values (`binary`, `unary`, `convert`, `known_trap`); the MIR interpreter (`interpreter::run` for a constant's call, `interpreter::program::run` for a whole program) |
+| `eval` | what operators mean on constant values (`binary`, `unary`, `convert`, `known_trap`); the MIR interpreter (`interpreter::run_function` for a constant's call, `interpreter::program::run` for a whole program) |
 | `runtime_abi` | what a running program does as seen from outside, shared by `llvm` and `eval`: streams and the exit code, runtime function names, panic messages, number text. The two `runtime/` files the runtime library needs too are read from there by `#[path]`, as that library is built with no crates |
 | `lower` | lowering from THIR; path checks |
 | `llvm` | LLVM text for a module; running clang and the linker |
@@ -153,7 +153,7 @@ what the other cannot do:
   constants, while it builds THIR (not yet struct and enum literals or field
   reads: a value has no struct or array form yet). A `const`
   declaration's value comes from this today.
-- **The interpreter** (`eval::interpreter::run`) runs what folding cannot: calls and control
+- **The interpreter** (`eval::interpreter::run_function`) runs what folding cannot: calls and control
   flow, over MIR. In a constant's value (a module `const` or one in a body), a
   call whose arguments are all constants is run at once
   (`Checker::evaluate_call`), so its result folds on (`f(3) + 2`). It keeps

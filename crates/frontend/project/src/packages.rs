@@ -12,7 +12,7 @@ pub(crate) const SOURCE_EXTENSION: &str = ".peep";
 /// The import path of the source file at `file`: its package and its path in
 /// that package's folder, without the extension. A file in no package's folder
 /// has only its file name for a path, and the second value is false.
-pub(crate) fn path_of(packages: &HashMap<String, PathBuf>, file: &Path) -> (String, bool) {
+pub(crate) fn import_path_of(packages: &HashMap<String, PathBuf>, file: &Path) -> (String, bool) {
     for (name, dir) in packages {
         if let Ok(relative) = file.strip_prefix(dir) {
             let parts: Vec<_> = relative

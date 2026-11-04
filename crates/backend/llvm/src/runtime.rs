@@ -9,6 +9,7 @@ use std::process::Command;
 use model::machine::Machine;
 
 use crate::link::call_tool;
+use crate::link::file_error;
 
 // LIBRARY (the archive's file name, which the driver looks for), SOURCE (the
 // Rust file in the runtime folder) and FLAGS (rustc's flags), written by
@@ -25,8 +26,7 @@ pub fn build(installation: &Path, target: &Machine) -> Result<PathBuf, String> {
     let folder = library.parent().expect("a library is in a folder");
     let sources = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../runtime");
     let staging = folder.join(format!(".build-{}", std::process::id()));
-    std::fs::create_dir_all(&staging)
-        .map_err(|error| format!("cannot make {}: {error}", staging.display()))?;
+    std::fs::create_dir_all(&staging).map_err(|error| file_error("make", &staging, &error))?;
     let staged = staging.join(LIBRARY);
     let built = (|| {
         let mut rustc = Command::new("rustc");
@@ -38,8 +38,7 @@ pub fn build(installation: &Path, target: &Machine) -> Result<PathBuf, String> {
             .arg("-o")
             .arg(&staged);
         call_tool(rustc, "compile the runtime")?;
-        std::fs::rename(&staged, &library)
-            .map_err(|error| format!("cannot write {}: {error}", library.display()))
+        std::fs::rename(&staged, &library).map_err(|error| file_error("write", &library, &error))
     })();
     _ = std::fs::remove_dir_all(&staging);
     built.map(|()| library)

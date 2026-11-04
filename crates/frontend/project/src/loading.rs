@@ -29,7 +29,7 @@ use crate::path_text;
 /// Reads, parses and resolves the imports of one module, taking its text from
 /// `open_files` when it is open there. A file that cannot be read, or is not
 /// UTF-8, gets an empty tree and one error.
-pub(crate) fn load_file(
+pub(crate) fn load_module(
     packages: &HashMap<String, PathBuf>,
     open_files: &HashMap<PathBuf, impl AsRef<str>>,
     job: Job,

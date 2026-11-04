@@ -149,7 +149,10 @@ fn create_makes_a_project_find_reads() {
         (found.name.as_str(), &found.entry),
         ("hello", &root.join("src/main.peep"))
     );
-    assert_eq!(std::fs::read_to_string(&found.entry).unwrap(), HELLO);
+    assert_eq!(
+        std::fs::read_to_string(&found.entry).unwrap(),
+        NEW_PROJECT_MAIN
+    );
     // A second create keeps the project as it is.
     let error = create("other").unwrap_err();
     assert!(error.ends_with("peeper.toml: already exists"), "{error}");
@@ -534,11 +537,11 @@ fn open_files_win_over_disk() {
 fn path_of_a_file() {
     let project = write("path", &[]);
     assert_eq!(
-        path_of(&project.packages, &project.root.join("src/deep/x.peep")),
+        import_path_of(&project.packages, &project.root.join("src/deep/x.peep")),
         ("myapp:deep/x".to_string(), true)
     );
     assert_eq!(
-        path_of(&project.packages, &project.root.join("tool.peep")),
+        import_path_of(&project.packages, &project.root.join("tool.peep")),
         ("tool".to_string(), false)
     );
     assert_eq!(
