@@ -26,13 +26,15 @@ use model::ModuleId;
 use model::ast;
 use model::ast::Ident;
 use model::ast::Tree;
+use model::semantic_types::TypeId;
+use model::semantic_types::Types;
 use packages::SOURCE_EXTENSION;
 use packages::file_of;
-use packages::path_of;
+use packages::import_path_of;
 use source::SourceFile;
 use source::Span;
 
-use crate::loading::load_file;
+use crate::loading::load_module;
 use crate::order::sort_modules;
 
 /// Imported by every module except itself.
@@ -49,19 +51,30 @@ pub struct Module {
     pub imports: Vec<Import>, // in source order; the implicit prelude import last, in every module but the prelude
 }
 
+/// The declaration `definition` of `modules` names.
+pub fn declaration(modules: &[Module], definition: DefId) -> &ast::Decl {
+    let tree = &modules[definition.module.index()].ast;
+    &tree.decls[tree.declaration(definition.index)]
+}
+
 /// The text of the name the declaration `definition` of `modules` declares.
 pub fn declared_text(modules: &[Module], definition: DefId) -> &str {
     let (name, file) = declared_name(modules, definition);
     name.text(file)
 }
 
+/// The type `ty` of `types` as a message names it, each declared type by the
+/// name its declaration in `modules` gives it (`Types::text`).
+pub fn type_text(modules: &[Module], types: &Types, ty: TypeId) -> String {
+    types.text(ty, |definition| declared_text(modules, definition))
+}
+
 /// The name the declaration `definition` of `modules` declares, and the file
 /// it is in.
 pub fn declared_name(modules: &[Module], definition: DefId) -> (Ident, &Arc<SourceFile>) {
-    let tree = &modules[definition.module.index()].ast;
     (
-        tree.decls[tree.declaration(definition.index)].name(),
-        &tree.file,
+        declaration(modules, definition).name(),
+        &modules[definition.module.index()].ast.file,
     )
 }
 
@@ -84,7 +97,7 @@ pub fn panic_text(root: &Path, file: &SourceFile, message: &[u8], span: Span) ->
 /// is written; the checker reports it, so later phases never see one.
 pub fn extern_symbol(modules: &[Module], definition: DefId) -> Result<Option<String>, Span> {
     let tree = &modules[definition.module.index()].ast;
-    let ast::Decl::Function(function) = &tree.decls[tree.declaration(definition.index)] else {
+    let ast::Decl::Function(function) = declaration(modules, definition) else {
         return Ok(None);
     };
     let mut symbol = None;
@@ -111,7 +124,7 @@ pub fn extern_symbol(modules: &[Module], definition: DefId) -> Result<Option<Str
 /// `modules`, in order.
 pub fn field_names(modules: &[Module], definition: DefId) -> impl Iterator<Item = &str> {
     let tree = &modules[definition.module.index()].ast;
-    let ast::Decl::Type(written) = tree.decls[tree.declaration(definition.index)] else {
+    let &ast::Decl::Type(written) = declaration(modules, definition) else {
         unreachable!("`{definition:?}` is a type declaration")
     };
     let ast::Type::Struct(fields) = tree.types[written.ty] else {
@@ -312,7 +325,8 @@ fn entry(source: &Path) -> PathBuf {
 }
 
 /// The entry file a new project starts with.
-const HELLO: &str = "fn main() {\n    Write(Stdout, c\"Hello from Peeper!\\n\", 19);\n}\n";
+const NEW_PROJECT_MAIN: &str =
+    "fn main() {\n    Write(Stdout, c\"Hello from Peeper!\\n\", 19);\n}\n";
 
 /// Makes the folder `dir` the project `name`: writes its peeper.toml, and its
 /// src/main.peep unless that file is there already. Returns whether it wrote
@@ -339,7 +353,7 @@ pub fn create(dir: &Path, name: &str, libraries: &Path) -> Result<bool, String> 
     let source = dir.join(SOURCE_FOLDER);
     std::fs::create_dir_all(&source).map_err(|error| format!("{}: {error}", source.display()))?;
     let main = entry(&source);
-    match write_new(&main, HELLO) {
+    match write_new(&main, NEW_PROJECT_MAIN) {
         Ok(()) => Ok(true),
         Err(error) if error.kind() == ErrorKind::AlreadyExists => Ok(false),
         Err(error) => Err(format!("{}: {error}", main.display())),
@@ -401,7 +415,7 @@ pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + S
         std::thread::available_parallelism().map_or(1, |n| n.get())
     };
 
-    let (entry_path, in_package) = path_of(&project.packages, &project.entry);
+    let (entry_path, in_package) = import_path_of(&project.packages, &project.entry);
     let mut modules = HashMap::new();
     let (send_job, jobs) = mpsc::channel::<Job>();
     let jobs = Mutex::new(jobs);
@@ -418,7 +432,7 @@ pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + S
                         .expect("a worker never panics holding the lock")
                         .recv();
                     let Ok(job) = job else { break }; // no more jobs
-                    let loaded = load_file(&project.packages, open_files, job, with_prelude);
+                    let loaded = load_module(&project.packages, open_files, job, with_prelude);
                     _ = send_module.send(loaded);
                 }
             });
@@ -436,7 +450,7 @@ pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + S
             .keys()
             .filter(|file| file.to_string_lossy().ends_with(SOURCE_EXTENSION))
         {
-            let (path, in_package) = path_of(&project.packages, file);
+            let (path, in_package) = import_path_of(&project.packages, file);
             if in_package && seen.insert(path.clone()) {
                 _ = send_job.send(Job {
                     path,
@@ -450,7 +464,7 @@ pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + S
             let loaded = if workers == 0 {
                 let job = jobs.lock().expect("no worker holds the lock").try_recv();
                 let job = job.expect("each pending module has a job");
-                load_file(&project.packages, open_files, job, with_prelude)
+                load_module(&project.packages, open_files, job, with_prelude)
             } else {
                 let Ok(loaded) = done.recv() else { break };
                 loaded

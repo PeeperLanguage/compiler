@@ -252,7 +252,7 @@ impl ThirBuilder<'_, '_> {
     /// Makes `expr`, when it is a `&mut` or `[&mut]` in a variable or a
     /// field, lend it again, so it is not moved: it stays usable after the
     /// call or loop that takes `expr`.
-    pub(crate) fn lend_place_again(&mut self, expr: Id<Expr>) {
+    pub(crate) fn reborrow_in_place(&mut self, expr: Id<Expr>) {
         if let Expr {
             ty,
             kind: ExprKind::Variable(_) | ExprKind::Field { .. },
@@ -279,10 +279,9 @@ impl ThirBuilder<'_, '_> {
                 };
             }
             (_, Type::Slice { .. }) => self.body.add(reference, span),
-            (_, &Type::Reference { target, .. }) => {
+            (_, Type::Reference { .. }) => {
                 let held = self.body.add(reference, span);
-                let referred = self.dereference(held, target);
-                self.body.add(referred, span)
+                self.through_pointer(held, span)
             }
             _ => unreachable!("only a reference or slice is lent again"),
         };

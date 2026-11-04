@@ -57,7 +57,7 @@ impl<'a> Sorter<'a> {
         // A long chain of imports is a deep recursion here.
         for &(kind, ref imported) in imports {
             match self.visits.get(imported.as_str()) {
-                None => source::grow(|| self.visit(imported, Some(kind))),
+                None => source::grow_stack(|| self.visit(imported, Some(kind))),
                 Some(Visit::Started) => {
                     let start = (self.stack.iter())
                         .position(|&(visiting, _)| visiting == imported)

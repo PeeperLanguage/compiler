@@ -103,7 +103,7 @@ fn serve_connection(connection: Connection, libraries: &Path) -> Result<(), BoxE
             }
             Message::Notification(notification) => {
                 // A bad message is the client's mistake; serving goes on.
-                if let Err(error) = server.handle_notification(notification) {
+                if let Err(error) = server.apply_notification(notification) {
                     eprintln!("peeper lsp: {error}");
                 }
             }

@@ -105,7 +105,7 @@ static RULES: Rules = {
     // equality and comparison
     rules.binary_operator(TokenKind::EqualEqual, BinaryOp::EqualTo);
     rules.binary_operator(TokenKind::BangEqual, BinaryOp::NotEqualTo);
-    rules.infix(TokenKind::Is, Precedence::Equality, is_expression);
+    rules.infix(TokenKind::Is, Precedence::Equality, case_test);
     rules.binary_operator(TokenKind::Less, BinaryOp::LessThan);
     rules.binary_operator(TokenKind::LessEqual, BinaryOp::LessOrEqual);
     rules.binary_operator(TokenKind::Greater, BinaryOp::GreaterThan);
@@ -136,7 +136,7 @@ pub(crate) fn starts_expression(kind: TokenKind) -> bool {
 impl Parser {
     /// Reads an expression whose operators bind tighter than `min`.
     pub(crate) fn expr(&mut self, min: Precedence) -> Id<Expr> {
-        source::grow(|| {
+        source::grow_stack(|| {
             let t = self.tok();
             let Some(read) = RULES.prefix[t.kind as usize] else {
                 self.fail(
@@ -444,7 +444,7 @@ fn cast(p: &mut Parser, value: Id<Expr>) -> Id<Expr> {
 }
 
 /// Reads `is Enum::Case` after `value`; the case is a full path.
-fn is_expression(p: &mut Parser, value: Id<Expr>) -> Id<Expr> {
+fn case_test(p: &mut Parser, value: Id<Expr>) -> Id<Expr> {
     p.next();
     let case = p.type_expr();
     p.require_path(case);

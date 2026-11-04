@@ -69,7 +69,7 @@ impl Parser {
                 },
             );
         };
-        let mark = self.scratch.len();
+        let mark = self.list_items.len();
         loop {
             let kind = self.tok().kind;
             if kind == TokenKind::RightBrace
@@ -87,7 +87,7 @@ impl Parser {
                 self.recovering = false;
             }
             let statement = self.stmt();
-            self.scratch.push(statement.into());
+            self.list_items.push(statement.into());
         }
         let statements = self.finish_list(mark);
         if self.at(TokenKind::RightBrace) {
@@ -100,7 +100,7 @@ impl Parser {
     /// Reads a statement: one a keyword begins, or an expression statement, or
     /// an assignment `target = value;`.
     fn stmt(&mut self) -> Id<Stmt> {
-        source::grow(|| {
+        source::grow_stack(|| {
             if let Some(read) = STATEMENTS[self.tok().kind as usize] {
                 return read(self);
             }
@@ -198,7 +198,7 @@ fn let_statement(p: &mut Parser) -> Id<Stmt> {
 /// Reads `if condition { } else if ... else { }`. A `=` written for `==` in
 /// the condition is read as `==`.
 fn if_statement(p: &mut Parser) -> Id<Stmt> {
-    source::grow(|| {
+    source::grow_stack(|| {
         let start = p.next().span.start;
         let mut condition = p.expr(Precedence::Lowest);
         let t = p.tok();
@@ -332,14 +332,14 @@ fn match_statement(p: &mut Parser) -> Id<Stmt> {
     let subject = p.expr(Precedence::Lowest);
     let mut arms = List::EMPTY;
     if let Some(open) = p.expect(TokenKind::LeftBrace) {
-        let mark = p.scratch.len();
+        let mark = p.list_items.len();
         // Every arm begins with `_` or a path and reads at least it, so the
         // loop always moves on.
         while p.at(TokenKind::Underscore) || p.at(TokenKind::Ident) {
             let arm_start = p.tok().span.start;
             let (pattern, body) = p.match_arm();
             let arm = p.add(arm_start, MatchArm { pattern, body });
-            p.scratch.push(arm.into());
+            p.list_items.push(arm.into());
             let t = p.tok();
             if t.kind == TokenKind::Comma {
                 p.next();

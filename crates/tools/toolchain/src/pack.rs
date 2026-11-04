@@ -15,6 +15,8 @@ use std::process::Command;
 
 use flate2::Compression;
 use flate2::write::GzEncoder;
+use llvm::link::file_error;
+use llvm::link::run_tool;
 use model::machine::Machine;
 
 use crate::SOURCES_LOCK;
@@ -23,7 +25,6 @@ use crate::SourcesLock;
 use crate::Toolchain;
 use crate::curl;
 use crate::read_json;
-use crate::run;
 use crate::sha256;
 use crate::write_json;
 
@@ -34,8 +35,8 @@ use crate::write_json;
 pub(crate) fn pack(repository: &str, folder: &Path) -> Result<(), String> {
     // The check runs the tools from inside `folder`, where a relative path
     // would not reach them.
-    let folder = &std::path::absolute(folder)
-        .map_err(|error| format!("cannot find {}: {error}", folder.display()))?;
+    let folder =
+        &std::path::absolute(folder).map_err(|error| file_error("find", folder, &error))?;
     // The locks name systems and architectures as Go does.
     let os = match std::env::consts::OS {
         "macos" => "darwin",
@@ -53,36 +54,32 @@ pub(crate) fn pack(repository: &str, folder: &Path) -> Result<(), String> {
     };
     let sources: SourcesLock = read_json(Path::new(SOURCES_LOCK))?;
     let source_id = format!("{family}-{os}-{arch}");
-    let source = sources
-        .assets
-        .iter()
-        .find(|source| source.id == source_id)
-        .ok_or_else(|| format!("the sources lock pins no {source_id}"))?;
+    let source = &sources.assets[sources.position(&source_id)?];
     let stage = stage(source, folder)?;
 
     let packed = folder.join("pack.tar.gz");
     // Names sorted and times and owners fixed, so the same files make the
     // same pack, and so the same id: a rerun publishes nothing new.
-    let file = File::create(&packed).map_err(|error| cannot("make", &packed, &error))?;
+    let file = File::create(&packed).map_err(|error| file_error("make", &packed, &error))?;
     let mut archive = tar::Builder::new(GzEncoder::new(file, Compression::best()));
     archive.mode(tar::HeaderMode::Deterministic);
     archive.follow_symlinks(false);
     append_sorted(&mut archive, &stage, &stage.join("toolchains"))
         .and_then(|()| archive.into_inner()?.finish())
-        .map_err(|error| cannot("write", &packed, &error))?;
-    fs::remove_dir_all(&stage).map_err(|error| cannot("remove", &stage, &error))?;
+        .map_err(|error| file_error("write", &packed, &error))?;
+    fs::remove_dir_all(&stage).map_err(|error| file_error("remove", &stage, &error))?;
     let sha256 = sha256(&packed)?;
     let version = format!("{family}-{}-r{}", source.version, &sha256[..12]);
     let id = format!("toolchain-{os}-{arch}-{version}");
     let file = format!("{id}.tar.gz");
     let pack = folder.join(&file);
-    fs::rename(&packed, &pack).map_err(|error| cannot("rename", &packed, &error))?;
+    fs::rename(&packed, &pack).map_err(|error| file_error("rename", &packed, &error))?;
     check(&pack, folder)?;
 
     let record = Toolchain {
         url: format!("https://github.com/{repository}/releases/download/{id}/{file}"),
         size: fs::metadata(&pack)
-            .map_err(|error| cannot("read", &pack, &error))?
+            .map_err(|error| file_error("read", &pack, &error))?
             .len(),
         id,
         kind: "toolchain".to_owned(),
@@ -136,11 +133,11 @@ fn stage(source: &Source, folder: &Path) -> Result<PathBuf, String> {
         .find_map(|kind| name.strip_suffix(kind))
         .ok_or_else(|| format!("{name} is neither a .tar.xz nor a .zip release"))?;
     let major = source.version.split('.').next().unwrap_or_default();
-    fs::create_dir_all(folder).map_err(|error| cannot("make", folder, &error))?;
+    fs::create_dir_all(folder).map_err(|error| file_error("make", folder, &error))?;
     let release = folder.join(name);
-    run(curl(&source.url).arg("--output").arg(&release))?;
+    run_tool(curl(&source.url).arg("--output").arg(&release))?;
     let size = fs::metadata(&release)
-        .map_err(|error| cannot("read", &release, &error))?
+        .map_err(|error| file_error("read", &release, &error))?
         .len();
     if size != source.size || sha256(&release)? != source.sha256 {
         return Err(format!(
@@ -152,7 +149,7 @@ fn stage(source: &Source, folder: &Path) -> Result<PathBuf, String> {
     let stage = folder.join("stage");
     let native = stage.join("toolchains/native");
     _ = fs::remove_dir_all(&stage);
-    fs::create_dir_all(&native).map_err(|error| cannot("make", &native, &error))?;
+    fs::create_dir_all(&native).map_err(|error| file_error("make", &native, &error))?;
     // `tar` finds the compression itself; on Windows it is the system's,
     // which reads a zip too.
     let mut unpack = Command::new("tar");
@@ -163,7 +160,7 @@ fn stage(source: &Source, folder: &Path) -> Result<PathBuf, String> {
         .arg(&native)
         .arg("--strip-components=1");
     if cfg!(windows) {
-        run(&mut unpack)?;
+        run_tool(&mut unpack)?;
     } else {
         // Only what the pack keeps: the whole release unpacks to several GB.
         // `bin/clang` and the linker's names are links to `clang-<major>` and
@@ -183,22 +180,24 @@ fn stage(source: &Source, folder: &Path) -> Result<PathBuf, String> {
         } else {
             "ld.lld"
         };
-        run(unpack.args(kept.iter().map(|path| format!("{top}/{path}"))))?;
+        run_tool(unpack.args(kept.iter().map(|path| format!("{top}/{path}"))))?;
         let bin = native.join("bin");
         for (file, tool) in [
             (format!("clang-{major}"), "clang"),
             ("lld".to_owned(), linker),
         ] {
             fs::rename(bin.join(&file), bin.join(tool))
-                .map_err(|error| cannot("rename", &bin.join(&file), &error))?;
+                .map_err(|error| file_error("rename", &bin.join(&file), &error))?;
         }
     }
-    fs::remove_file(&release).map_err(|error| cannot("remove", &release, &error))?;
+    fs::remove_file(&release).map_err(|error| file_error("remove", &release, &error))?;
     // The release has only a short notice; the license is the file at its tag.
     let license = source.license_url.replace("/blob/", "/raw/");
-    run(curl(&license)
-        .arg("--output")
-        .arg(native.join("LICENSE.TXT")))?;
+    run_tool(
+        curl(&license)
+            .arg("--output")
+            .arg(native.join("LICENSE.TXT")),
+    )?;
     Ok(stage)
 }
 
@@ -211,12 +210,14 @@ fn stage(source: &Source, folder: &Path) -> Result<PathBuf, String> {
 fn check(pack: &Path, folder: &Path) -> Result<(), String> {
     let unpacked = folder.join("check");
     _ = fs::remove_dir_all(&unpacked);
-    fs::create_dir_all(&unpacked).map_err(|error| cannot("make", &unpacked, &error))?;
-    run(Command::new("tar")
-        .arg("-xzf")
-        .arg(pack)
-        .arg("-C")
-        .arg(&unpacked))?;
+    fs::create_dir_all(&unpacked).map_err(|error| file_error("make", &unpacked, &error))?;
+    run_tool(
+        Command::new("tar")
+            .arg("-xzf")
+            .arg(pack)
+            .arg("-C")
+            .arg(&unpacked),
+    )?;
     let bin = unpacked.join("toolchains/native/bin");
     let tool = |name: &str| {
         let mut tool = Command::new(bin.join(name));
@@ -225,7 +226,7 @@ fn check(pack: &Path, folder: &Path) -> Result<(), String> {
     };
     let write = |name: &str, text: &str| {
         let file = unpacked.join(name);
-        fs::write(&file, text).map_err(|error| cannot("write", &file, &error))
+        fs::write(&file, text).map_err(|error| file_error("write", &file, &error))
     };
     // A Windows C runtime writes "\r\n" for "\n".
     let expect = |printed: Vec<u8>, what: &str| {
@@ -256,19 +257,21 @@ fn check(pack: &Path, folder: &Path) -> Result<(), String> {
         targets.push(Some(format!("--target={}", i686.triple)));
     }
     for target in &targets {
-        run(tool("clang")
-            .args(target)
-            .args(&sdk)
-            .args(["-c", "hello.c", "-o", "hello.o"]))?;
-        run(tool("llvm-ar").args(["rc", "libhello.a", "hello.o"]))?;
-        run(tool("clang").args(target).args(&sdk).args([
+        run_tool(
+            tool("clang")
+                .args(target)
+                .args(&sdk)
+                .args(["-c", "hello.c", "-o", "hello.o"]),
+        )?;
+        run_tool(tool("llvm-ar").args(["rc", "libhello.a", "hello.o"]))?;
+        run_tool(tool("clang").args(target).args(&sdk).args([
             "-fuse-ld=lld",
             "libhello.a",
             "-o",
             &hello,
         ]))?;
         let mut program = Command::new(unpacked.join(&hello));
-        expect(run(program.env_clear())?, "the linked program")?;
+        expect(run_tool(program.env_clear())?, "the linked program")?;
     }
     if host.os != "windows" {
         write(
@@ -277,12 +280,7 @@ fn check(pack: &Path, folder: &Path) -> Result<(), String> {
              declare i32 @puts(ptr)\n\
              define i32 @main() {\n  call i32 @puts(ptr @text)\n  ret i32 0\n}\n",
         )?;
-        expect(run(tool("lli").arg("hello.ll"))?, "lli")?;
+        expect(run_tool(tool("lli").arg("hello.ll"))?, "lli")?;
     }
-    fs::remove_dir_all(&unpacked).map_err(|error| cannot("remove", &unpacked, &error))
-}
-
-/// The error of a file system `action` on `path` that failed.
-fn cannot(action: &str, path: &Path, error: &io::Error) -> String {
-    format!("cannot {action} {}: {error}", path.display())
+    fs::remove_dir_all(&unpacked).map_err(|error| file_error("remove", &unpacked, &error))
 }

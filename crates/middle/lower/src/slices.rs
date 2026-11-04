@@ -122,7 +122,7 @@ impl Lowering<'_> {
                 span,
             );
             let message = "slice starts after it ends";
-            self.check(failed, message, span);
+            self.emit_check(failed, message, span);
         }
         let count = match (known_start, known_end) {
             (Some(start), Some(end)) => self.integer_constant(self.types.usize, end - start),
@@ -199,7 +199,7 @@ impl Lowering<'_> {
         if wide && integer.signed {
             let zero = self.integer_constant(ty, 0);
             let failed = self.binary(BinaryOp::LessThan, value, zero, TypeId::BOOL, span);
-            self.check(failed, message, span);
+            self.emit_check(failed, message, span);
         }
         let compared = if wide || ty == self.types.usize {
             value
@@ -215,7 +215,7 @@ impl Lowering<'_> {
             Length::Read(length) => length,
         };
         let failed = self.binary(op, compared, limit, TypeId::BOOL, span);
-        self.check(failed, message, span);
+        self.emit_check(failed, message, span);
         if wide {
             self.emit(mir::InstructionKind::Convert(value), self.types.usize, span)
         } else {

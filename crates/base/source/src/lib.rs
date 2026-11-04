@@ -2,7 +2,7 @@
 //! that recurse as deep as that text nests.
 
 /// Runs `walk` on a new stack segment when less than the red zone is left.
-pub fn grow<R>(walk: impl FnOnce() -> R) -> R {
+pub fn grow_stack<R>(walk: impl FnOnce() -> R) -> R {
     const RED_ZONE: usize = 128 * 1024;
     const SEGMENT: usize = 1024 * 1024;
     stacker::maybe_grow(RED_ZONE, SEGMENT, walk)

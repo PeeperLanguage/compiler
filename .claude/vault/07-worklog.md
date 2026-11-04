@@ -501,3 +501,79 @@ ran `check.sh` fully green.
   release, so the next release is their first run.
 - **Fixed:** `install.ps1` ran `tar` from the PATH, where `setup.ps1` runs
   `System32\tar.exe` because a GNU tar takes `C:` for another machine. It now does too.
+
+## 2026-11-04 Methods undone
+
+- **Decided (owner):** the first methods try is undone. It treated a method as
+  a feature of its own (its own scope table, lookups, call path and errors)
+  instead of a function that lives and is found as any function is.
+- **Done:** `feature/methods` reset to `dc7b2247`; the four commits are kept in
+  `backup/methods-first-try`, the uncommitted work in the stash "methods first
+  try: uncommitted".
+- **Next:** a one-page design reviewed by the owner before any code.
+- **Evidence:** `bash scripts/check.sh` passed on the reset branch; the bundle
+  rejects `fn P::new()` ("expected `(`, found `::`").
+
+## 2026-11-04 Duplicate cleanup and a code database
+
+- **Done:** a code database in `.claude/codedb/` (one file per crate, and
+  `similar.md` for duplicates across crates), written by low-effort agents and
+  refreshed after the cleanup; it is git-ignored. On `fix/duplicate-cleanup`:
+  - `through_pointer` replaces four copies of "go through a reference or
+    pointer" (field, index, slice, reborrow);
+  - assigning to a module constant now points at its declaration, as a local
+    constant's error did; one branch builds both;
+  - `project::declaration` replaces the declaration-by-id lookup, and
+    `llvm` `symbol`, `debug_info` and `lsp` `checked.rs` reuse
+    `declared_text` / `declared_name`;
+  - `SourcesLock::position` replaces two lock lookups in the toolchain.
+- **Not done:** one owner for a type's text in messages (waits on the owner);
+  sharing the print text of structs and arrays (a marked shortcut, already
+  compared by the run fixtures).
+- **Evidence:** `bash scripts/check.sh` passed; the new label test fails
+  without the change.
+
+## 2026-11-04 One owner for a type's text in messages
+
+- **Decided:** `project::type_text` names a type with each declaration's own
+  name; `Checker::type_text` stays as the checker's one-line call (27 uses
+  would otherwise repeat `self.modules, &self.types`).
+- **Done:** the LSP's own `type_text` is deleted, and the LLVM debug info's
+  inline copy uses the shared function. Behavior is unchanged.
+- **Kept:** the three `check/declaration.rs` sites still index their own
+  module's tree, which they keep using.
+- **Evidence:** `bash scripts/check.sh` passed.
+
+## 2026-11-04 One way to run a tool and to name a file error
+
+- **Done:** `llvm::link::run_tool` runs a tool and shows what it printed as
+  errors only when it fails; `call_tool` adds what the run was for. The
+  toolchain's own `run` is deleted. `llvm::link::file_error` writes "cannot
+  {action} {path}: {error}" for both crates; the toolchain's copy and nine
+  hand-written texts are gone. `llvm/build.rs` keeps its own panic text, as
+  a build script cannot use the crate.
+- **Checked, no change:** the other groups of `.claude/codedb/similar.md`
+  keep one rule in the interpreter and the backend, whose texts and layouts
+  are already shared, or only look alike.
+- **Evidence:** `bash scripts/check.sh` passed; the new test
+  `a_failing_tool_is_named_with_what_it_printed` fails when `call_tool`
+  drops its prefix.
+
+## 2026-11-04 Names that say what they do
+
+- **Done:** 34 items across every crate renamed after a review against
+  RULES.md section 5 (`.claude/codedb/renames/`). Examples: `cannot` →
+  `file_error`, `Scanner::fail` → `report`,
+  `source::grow` → `grow_stack`, `Body::calls` → `has_call`,
+  `eval::interpreter::run` → `run_function`, `Interpreter::charge`/`spend` →
+  `count_copy`/`count_steps`, `Checker::global` → `resolve_global`, the lsp
+  `handle_notification` → `apply_notification`. Comments and docs follow.
+- **Kept on purpose:** `call_tool`, `Parser::tok`/`stmt`/`end` (the owner
+  kept them), `compile::run` (always read with its crate),
+  `fix::chosen`/`fix::write`, `Interpreter::operand`/`allocated`, the
+  private `Types::types`/`ids`, llvm `shift_count` (the interpreter's twin
+  has the same name), `ThirBuilder::names`.
+- **Decided, no change:** the `types` field and parameter (the semantic
+  type table) keeps its name; the owner: "types already mean the semantic
+  type".
+- **Evidence:** `bash scripts/check.sh` passed.

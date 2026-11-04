@@ -14,6 +14,7 @@ use std::path::Path;
 use std::process::Command;
 use std::process::ExitCode;
 
+use llvm::link::file_error;
 use serde::Deserialize;
 use serde::Serialize;
 use sha2::Digest;
@@ -41,6 +42,15 @@ struct SourcesLock {
     schema_version: u32,
     kind: String,
     assets: Vec<Source>,
+}
+
+impl SourcesLock {
+    /// Where the release file `id` is pinned in `assets`.
+    fn position(&self, id: &str) -> Result<usize, String> {
+        (self.assets.iter())
+            .position(|source| source.id == id)
+            .ok_or_else(|| format!("the sources lock pins no {id}"))
+    }
 }
 
 /// A file of an upstream release, pinned.
@@ -125,8 +135,7 @@ fn lock(records: &[&str]) -> Result<(), String> {
 }
 
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, String> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let text = std::fs::read_to_string(path).map_err(|error| file_error("read", path, &error))?;
     serde_json::from_str(&text).map_err(|error| format!("{}: {error}", path.display()))
 }
 
@@ -135,24 +144,7 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, String> {
 fn write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
     let mut text = serde_json::to_string_pretty(value).expect("a lock is JSON");
     text.push('\n');
-    std::fs::write(path, text).map_err(|error| format!("cannot write {}: {error}", path.display()))
-}
-
-/// Runs `command` and gives what it printed; what it printed as errors is
-/// shown only when it fails.
-fn run(command: &mut Command) -> Result<Vec<u8>, String> {
-    let program = command.get_program().to_string_lossy().into_owned();
-    let output = command
-        .output()
-        .map_err(|error| format!("cannot run {program}: {error}"))?;
-    if output.status.success() {
-        return Ok(output.stdout);
-    }
-    Err(format!(
-        "{program} failed ({})\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stderr).trim_end()
-    ))
+    std::fs::write(path, text).map_err(|error| file_error("write", path, &error))
 }
 
 /// A curl call that fetches `url`, following redirects and retrying, and
@@ -173,12 +165,12 @@ fn curl(url: &str) -> Command {
 
 /// The sha256 of the file at `path`, in hex.
 fn sha256(path: &Path) -> Result<String, String> {
-    let cannot = |error| format!("cannot read {}: {error}", path.display());
-    let mut file = File::open(path).map_err(cannot)?;
+    let unreadable = |error| file_error("read", path, &error);
+    let mut file = File::open(path).map_err(unreadable)?;
     let mut hasher = Sha256::new();
     let mut buffer = vec![0; 1 << 20];
     loop {
-        let read = file.read(&mut buffer).map_err(cannot)?;
+        let read = file.read(&mut buffer).map_err(unreadable)?;
         if read == 0 {
             break;
         }

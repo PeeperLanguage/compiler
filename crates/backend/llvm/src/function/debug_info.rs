@@ -67,9 +67,8 @@ impl Module<'_> {
     ) -> Option<(usize, Vec<usize>)> {
         let target = self.target;
         let metadata = self.metadata.as_mut()?;
-        let tree = &self.program.modules[definition.module.index()].ast;
-        let name = tree.decls[tree.declaration(definition.index)].name();
-        let (line, _) = tree.file.position(name.span.start as usize);
+        let (name, source) = project::declared_name(&self.program.modules, definition);
+        let (line, _) = source.position(name.span.start as usize);
         let program = self.program;
         // As `add_function` passes them: a value kept in memory by its
         // address, a result kept in memory where a first parameter points,
@@ -102,7 +101,7 @@ impl Module<'_> {
             "distinct !DISubprogram(name: {}, linkageName: {}, scope: !{file}, file: !{file}, \
              line: {line}, type: !{subroutine}, scopeLine: {line}, spFlags: DISPFlagDefinition, \
              unit: !{unit})",
-            quoted(name.text(&tree.file).as_bytes()),
+            quoted(name.text(source).as_bytes()),
             quoted(symbol.as_bytes()),
         ));
         let mut declares = vec![false; body.debug_scopes.len()];
@@ -123,7 +122,7 @@ impl Module<'_> {
                 continue;
             }
             let start = body.debug_scopes.span(scope).start as usize;
-            let (line, column) = debug_position(&tree.file, start);
+            let (line, column) = debug_position(source, start);
             scope_metadata.push(metadata.add(format_args!(
                 "!DILexicalBlock(scope: !{parent}, file: !{file}, line: {line}, column: {column})"
             )));

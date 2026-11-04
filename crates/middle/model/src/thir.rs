@@ -181,7 +181,7 @@ pub enum ExprKind {
     /// where computing `array` calls a function: the array is computed, never
     /// read, and the value is its type's length. Without a call an array's
     /// `.len` is a `Constant` and the array is not computed, as Go's `len`
-    /// (`Body::calls`).
+    /// (`Body::has_call`).
     Length(Id<Expr>),
     /// The element of the array, a place, or of the slice at the index, an
     /// integer; outside the array or slice, the program fails. A slice's
@@ -340,10 +340,10 @@ impl Body {
 
     /// Whether computing `expression` calls a function, `print` too: then
     /// it runs even where only its type is needed (`ExprKind::Length`).
-    pub fn calls(&self, expression: Id<Expr>) -> bool {
+    pub fn has_call(&self, expression: Id<Expr>) -> bool {
         let kind = &self.exprs[expression].kind;
         matches!(kind, ExprKind::Call { .. } | ExprKind::Print { .. })
-            || self.any_part(kind, |part| self.calls(part))
+            || self.any_part(kind, |part| self.has_call(part))
     }
 
     /// The first variable with a name that `kind` reads, going through its
@@ -398,7 +398,7 @@ impl Body {
     }
 
     /// Where the body declares `local`: its name.
-    pub fn declared(&self, local: Local) -> Span {
+    pub fn declared_at(&self, local: Local) -> Span {
         match local {
             Local::Variable(variable) => self.variables.span(variable),
             Local::Constant(constant) => self.constants.span(constant),

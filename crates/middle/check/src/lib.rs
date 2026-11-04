@@ -158,8 +158,7 @@ impl<'p> Checker<'p> {
     /// (`Type::Named`, a struct's once checked), so naming it checks nothing;
     /// an alias names its declared type (`Type::Alias`).
     pub fn named_type(&mut self, definition: DefId, used_at: Span) -> TypeId {
-        let tree = &self.modules[definition.module.index()].ast;
-        if let ast::Decl::Type(_) = tree.decls[tree.declaration(definition.index)] {
+        if let ast::Decl::Type(_) = project::declaration(self.modules, definition) {
             return self.types.intern(Type::Named(definition));
         }
         let target = self.declared_type(definition, used_at);
@@ -224,7 +223,7 @@ impl<'p> Checker<'p> {
         });
         // A long chain of declarations, each asking for the next, is a deep
         // recursion here.
-        let result = source::grow(|| {
+        let result = source::grow_stack(|| {
             self.check_attributes(definition);
             check(self, definition)
         });
@@ -235,9 +234,7 @@ impl<'p> Checker<'p> {
 
     /// The type `ty` as a message names it (`Types::text`).
     pub(crate) fn type_text(&self, ty: TypeId) -> String {
-        self.types.text(ty, |definition| {
-            project::declared_text(self.modules, definition)
-        })
+        project::type_text(self.modules, &self.types, ty)
     }
 
     /// Both types as a message names them, with each one's module when two
@@ -277,16 +274,16 @@ impl<'p> Checker<'p> {
     /// declaration names the next.
     fn report_cycle(&mut self, start: usize, closing: Span) {
         let modules = self.modules;
-        let declaration = |definition: DefId| {
-            let tree = &modules[definition.module.index()].ast;
-            &tree.decls[tree.declaration(definition.index)]
-        };
         let cycle = &self.checking[start..];
         let first = cycle[0].definition;
         let (first_name, first_file) = project::declared_name(modules, first);
-        let only_aliases = (cycle.iter())
-            .all(|asker| matches!(declaration(asker.definition), ast::Decl::Alias(_)));
-        let what = match declaration(first) {
+        let only_aliases = (cycle.iter()).all(|asker| {
+            matches!(
+                project::declaration(modules, asker.definition),
+                ast::Decl::Alias(_)
+            )
+        });
+        let what = match project::declaration(modules, first) {
             ast::Decl::Alias(_) if only_aliases => "is an alias of itself",
             ast::Decl::Type(_) | ast::Decl::Alias(_) => "holds itself",
             ast::Decl::Const { .. } | ast::Decl::Function(_) => "depends on itself",
@@ -308,7 +305,7 @@ impl<'p> Checker<'p> {
             .chain([(first, closing)]);
         for (step, (asker, (asked, span))) in cycle.iter().zip(asked).enumerate() {
             let asker = asker.definition;
-            let verb = match declaration(asker) {
+            let verb = match project::declaration(modules, asker) {
                 ast::Decl::Type(_) => "holds",
                 ast::Decl::Alias(_) => "is an alias of",
                 ast::Decl::Const { .. } | ast::Decl::Function(_) => "uses",
@@ -388,7 +385,7 @@ impl<'p> Checker<'p> {
     /// What `name` stands for at the top level: a built-in type, which no
     /// declaration hides; else a name in the module's scope; else an
     /// exported name of the prelude.
-    pub(crate) fn global(&mut self, name: &str) -> Option<Symbol> {
+    pub(crate) fn resolve_global(&mut self, name: &str) -> Option<Symbol> {
         if let Some(builtin) = self.types.builtin(name, self.target.pointer_bits) {
             return Some(Symbol::Builtin(builtin));
         }
@@ -426,7 +423,7 @@ impl<'p> Checker<'p> {
         let (module_span, member_span) = (tree.types.span(module), tree.types.span(member));
         let (module_name, member_name) =
             (tree.file.slice(module_span), tree.file.slice(member_span));
-        let imported = match self.global(module_name) {
+        let imported = match self.resolve_global(module_name) {
             Some(symbol @ Symbol::Module(imported)) => {
                 self.record(module_span, FactKind::Name(symbol));
                 imported
@@ -441,7 +438,7 @@ impl<'p> Checker<'p> {
                 return None;
             }
             None => {
-                self.report_undeclared(module_name, module_span, std::iter::empty());
+                self.report_unknown_name(module_name, module_span, std::iter::empty());
                 return None;
             }
         };
@@ -477,7 +474,7 @@ impl<'p> Checker<'p> {
 
     /// Reports `name`, written at `span`, which nothing in scope declares,
     /// with the nearest of `locals` and the top-level names.
-    pub(crate) fn report_undeclared<'a>(
+    pub(crate) fn report_unknown_name<'a>(
         &mut self,
         name: &str,
         span: Span,

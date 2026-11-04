@@ -154,7 +154,7 @@ impl ThirBuilder<'_, '_> {
         expected: Option<TypeId>,
     ) -> Expr {
         // A long chain of operators, calls or parentheses is a deep recursion.
-        source::grow(|| {
+        source::grow_stack(|| {
             let tree = &self.checker.module().ast;
             let span = tree.exprs.span(expression);
             match tree.exprs[expression] {

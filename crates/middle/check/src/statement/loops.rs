@@ -141,7 +141,7 @@ impl ThirBuilder<'_, '_> {
         iterable: Id<Expr>,
         body: Id<ast::Block>,
     ) -> Option<Stmt> {
-        self.lend_place_again(iterable);
+        self.reborrow_in_place(iterable);
         let (items_type, span) = (self.body.exprs[iterable].ty, self.body.exprs.span(iterable));
         let types = &self.checker.types;
         let (array, borrow) = match types[items_type] {

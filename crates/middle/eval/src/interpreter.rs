@@ -97,7 +97,7 @@ pub enum Failure {
 /// What `function`, whose MIR is `body`, returns for `arguments`, laid out
 /// for `target`: `None` for a function without a result. A function it calls
 /// has the MIR `mir_of` gives, if any.
-pub fn run<'b>(
+pub fn run_function<'b>(
     function: DefId,
     body: &'b mir::Body,
     arguments: &[Value],
@@ -134,9 +134,9 @@ struct Frame<'b> {
     function: DefId,
     body: &'b mir::Body,
     slots: Rc<Slots>,
-    start: u64,          // where its memory starts
-    variables: Vec<u64>, // in a constant's run, where each is now; 0 for not started
-    registers: usize,    // where its arguments start, its values after them
+    start: u64,            // where its memory starts
+    variables: Vec<u64>,   // in a constant's run, where each is now; 0 for not started
+    first_register: usize, // where its arguments start, its values after them
     block: Id<mir::Block>,
     next: usize,                          // how many of the block's instructions have run
     previous: Option<Id<mir::Block>>,     // the block control came from
@@ -219,24 +219,24 @@ impl<'b, 'f> Interpreter<'b, 'f> {
     /// Counts one more step of the running frame, at `span`: an error past
     /// the run's limit.
     fn step(&mut self, span: Span) -> Result<(), Failure> {
-        self.spend(1, span)
+        self.count_steps(1, span)
     }
 
     /// Counts a copy of `bytes` bytes.
-    fn charge(&mut self, bytes: u64, span: Span) -> Result<(), Failure> {
+    fn count_copy(&mut self, bytes: u64, span: Span) -> Result<(), Failure> {
         let steps = bytes / BYTES_PER_STEP;
-        self.spend(u32::try_from(steps).unwrap_or(u32::MAX), span)
+        self.count_steps(u32::try_from(steps).unwrap_or(u32::MAX), span)
     }
 
     /// Copies `size` bytes from `from` to `to`, counted as work.
     fn copy_memory(&mut self, from: u64, to: u64, size: u64, span: Span) -> Result<(), Failure> {
-        self.charge(size, span)?;
+        self.count_copy(size, span)?;
         let copied = self.memory.copy(from, to, size);
         copied.ok_or_else(|| self.fail(INVALID_ACCESS, span))
     }
 
     /// Counts `steps` more steps.
-    fn spend(&mut self, steps: u32, span: Span) -> Result<(), Failure> {
+    fn count_steps(&mut self, steps: u32, span: Span) -> Result<(), Failure> {
         self.steps = self.steps.saturating_add(steps);
         if self.steps > self.step_limit {
             let message = format!("this ran more than {} steps", self.step_limit);

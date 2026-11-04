@@ -152,7 +152,7 @@ struct Held {
 
 impl Held {
     /// Where the pairs of `holder` are.
-    fn row(&self, holder: Id<Holder>) -> Range<usize> {
+    fn pair_range(&self, holder: Id<Holder>) -> Range<usize> {
         let start = self.pairs.partition_point(|pair| pair.0 < holder);
         let end = self.pairs.partition_point(|pair| pair.0 <= holder);
         start..end
@@ -160,12 +160,14 @@ impl Held {
 
     /// The loans of `holder`, in order.
     fn loans(&self, holder: Id<Holder>) -> impl Iterator<Item = Id<Loan>> {
-        self.pairs[self.row(holder)].iter().map(|pair| pair.1)
+        self.pairs[self.pair_range(holder)]
+            .iter()
+            .map(|pair| pair.1)
     }
 
     /// Makes `loans`, in order, all that `holder` holds.
     fn set(&mut self, holder: Id<Holder>, loans: &[Id<Loan>]) {
-        let row = self.row(holder);
+        let row = self.pair_range(holder);
         drop(
             self.pairs
                 .splice(row, loans.iter().map(|&loan| (holder, loan))),
@@ -312,7 +314,7 @@ impl Loans<'_> {
             unreachable!("only a struct's field holds a reference")
         };
         let (before, rest) = fields.split_at(field as usize);
-        let first = holders.start + self.types.holders_of(before);
+        let first = holders.start + self.types.holders_in_fields(before);
         (first..first + self.types.holders_in(rest[0]), rest[0])
     }
 

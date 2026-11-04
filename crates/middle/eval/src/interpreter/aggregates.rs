@@ -183,7 +183,7 @@ impl<'b> Interpreter<'b, '_> {
         count: u64,
         span: Span,
     ) -> Result<(), Failure> {
-        self.spend(u32::try_from(count).unwrap_or(u32::MAX), span)?;
+        self.count_steps(u32::try_from(count).unwrap_or(u32::MAX), span)?;
         let delta = self.range_part(range, ty, range_field::DELTA, span)?;
         let mut value = self.range_part(range, ty, range_field::START, span)?;
         let size = self.size_of(element);

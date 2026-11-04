@@ -84,7 +84,7 @@ fn load(files: HashMap<String, String>) -> Result<project::Program, String> {
 }
 
 /// The diagnostics of the program `files` make up, as `peeper check` finds
-/// them (`entries`). `files` maps each file's path in the project to its text.
+/// them (`diagnostics_json`). `files` maps each file's path in the project to its text.
 fn check(files: HashMap<String, String>) -> Value {
     let program = match load(files) {
         Ok(program) => program,
@@ -104,7 +104,7 @@ fn check(files: HashMap<String, String>) -> Value {
     } else {
         compile::Results::default()
     };
-    entries(&program, &results)
+    diagnostics_json(&program, &results)
 }
 
 /// Compiles the program `files` make up and runs it with no backend. Gives its
@@ -149,7 +149,7 @@ fn all_diagnostics<'a>(
 /// `message`, its primary `place` (null when it has none) and the `related`
 /// places; a place has its `file`, its `start` and `end`, and its own
 /// `message`.
-fn entries(program: &project::Program, results: &compile::Results) -> Value {
+fn diagnostics_json(program: &project::Program, results: &compile::Results) -> Value {
     let place = |label: &Label| {
         json!({
             "file": label.file.path,
@@ -177,7 +177,7 @@ fn entries(program: &project::Program, results: &compile::Results) -> Value {
     Value::Array(entries.collect())
 }
 
-/// `message`, why peeper.toml gives no project, as an entry of `entries`. It
+/// `message`, why peeper.toml gives no project, as an entry of `diagnostics_json`. It
 /// has no code, as the command line's has none, and its place is the file's
 /// start: `manifest` reports no position.
 fn manifest_entry(message: &str) -> Value {

@@ -25,12 +25,12 @@ const DEEPEST_DEBUG_TYPE: usize = 5_000;
 
 /// The module's debug info: numbered metadata nodes.
 pub(crate) struct Metadata {
-    pub(crate) text: String,         // each node's line, `!N = ...`, in order
-    pub(crate) count: usize,         // the nodes so far; the next one's number
-    pub(crate) file: usize,          // the DIFile of the module's source file
-    pub(crate) unit: usize,          // the DICompileUnit, the scope of every function
-    types: FxHashMap<TypeId, usize>, // each type's debug type
-    depth: usize,                    // what `debug_type` is inside now
+    pub(crate) text: String, // each node's line, `!N = ...`, in order
+    pub(crate) count: usize, // the nodes so far; the next one's number
+    pub(crate) file: usize,  // the DIFile of the module's source file
+    pub(crate) unit: usize,  // the DICompileUnit, the scope of every function
+    debug_types: FxHashMap<TypeId, usize>, // each type's debug type
+    depth: usize,            // what `debug_type` is inside now
 }
 impl Metadata {
     /// The debug info of a module in the file `path`, with no function yet.
@@ -42,7 +42,7 @@ impl Metadata {
             count: 0,
             file: 0,
             unit: 0,
-            types: FxHashMap::default(),
+            debug_types: FxHashMap::default(),
             depth: 0,
         };
         metadata.file = metadata.add(format_args!(
@@ -93,7 +93,7 @@ impl Metadata {
         if ty == TypeId::VOID {
             return None;
         }
-        if let Some(&id) = self.types.get(&ty) {
+        if let Some(&id) = self.debug_types.get(&ty) {
             return Some(id);
         }
         let basic = |name: &str, bits: u32, encoding: &str| {
@@ -138,7 +138,7 @@ impl Metadata {
                         // Pointers break a flat array, so they nest as deep
                         // as the source does.
                         let base =
-                            source::grow(|| self.debug_type(program, types, pointee, target));
+                            source::grow_stack(|| self.debug_type(program, types, pointee, target));
                         self.depth -= 1;
                         format!("!{}", base.expect("a pointer points to a value's type"))
                     }
@@ -151,9 +151,7 @@ impl Metadata {
             Type::Slice { element, .. } => {
                 let base = self.debug_type(program, types, types.real(element), target);
                 let base = base.expect("an element has a value's type");
-                let name = types.text(ty, |definition| {
-                    project::declared_text(&program.modules, definition)
-                });
+                let name = project::type_text(&program.modules, types, ty);
                 // Its members name it, so its number comes first.
                 let composite = self.reserve();
                 let pointer = self.add(format_args!(
@@ -166,7 +164,7 @@ impl Metadata {
                     self.add_member(composite, "len", usize, pointer_bits),
                 ];
                 self.define_struct(composite, &name, 2 * pointer_bits, &members);
-                self.types.insert(ty, composite);
+                self.debug_types.insert(ty, composite);
                 return Some(composite);
             }
             // One node with a range per level, as C's debug info has.
@@ -214,7 +212,7 @@ impl Metadata {
             Type::Named(_) => unreachable!("no value has a named type"),
         };
         let id = self.add(text);
-        self.types.insert(ty, id);
+        self.debug_types.insert(ty, id);
         Some(id)
     }
 
@@ -231,7 +229,7 @@ impl Metadata {
         // Its members name it, and a `*T` field reaches it again, so its
         // number comes first.
         let composite = self.reserve();
-        self.types.insert(ty, composite);
+        self.debug_types.insert(ty, composite);
         let field_types = fields.iter().map(|&(_, field)| field).collect::<Vec<_>>();
         let (offsets, size, _) = struct_layout(types, &field_types, target);
         let mut members = Vec::with_capacity(fields.len());
@@ -240,7 +238,7 @@ impl Metadata {
             for (&(field_name, field), offset) in fields.iter().zip(offsets) {
                 let field = types.real(field);
                 // Structs hold structs as deep as the declarations nest.
-                let base = source::grow(|| self.debug_type(program, types, field, target));
+                let base = source::grow_stack(|| self.debug_type(program, types, field, target));
                 let base = base.expect("a field has a value's type");
                 members.push(self.add_member(composite, field_name, base, offset * 8));
             }

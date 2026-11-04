@@ -281,7 +281,7 @@ fn fixes_all_sure_problems() {
     let document = json!({ "uri": uri, "languageId": "peeper", "version": 3, "text": text });
     let open = json!({ "textDocument": document });
     let open = Notification::new("textDocument/didOpen".to_string(), open);
-    server.handle_notification(open).unwrap();
+    server.apply_notification(open).unwrap();
     let Ok(Message::Notification(published)) = client.receiver.try_recv() else {
         panic!("the open did not publish");
     };
@@ -328,7 +328,7 @@ fn a_save_checks_at_once() {
         "contentChanges": [{ "text": "fn main() { a $ b; }\n" }],
     });
     let change = Notification::new("textDocument/didChange".to_string(), change);
-    server.handle_notification(change).unwrap();
+    server.apply_notification(change).unwrap();
     assert!(
         client.receiver.try_recv().is_err(),
         "a change was checked at once"
@@ -336,7 +336,7 @@ fn a_save_checks_at_once() {
     assert!(server.deadline.is_some());
     let save = json!({ "textDocument": { "uri": uri } });
     let save = Notification::new("textDocument/didSave".to_string(), save);
-    server.handle_notification(save).unwrap();
+    server.apply_notification(save).unwrap();
     let Ok(Message::Notification(published)) = client.receiver.try_recv() else {
         panic!("the save did not publish at once");
     };
@@ -368,7 +368,7 @@ fn answers_definition_and_hover() {
         "textDocument/didOpen".to_string(),
         json!({ "textDocument": document }),
     );
-    server.handle_notification(open).unwrap();
+    server.apply_notification(open).unwrap();
     let ask = |method: &str, line: u32, character: u32| {
         let place = json!({
             "textDocument": { "uri": uri },
@@ -547,7 +547,7 @@ struct Holder { place: utils::Spot }
     let mut server = Server::new(&connection, Path::new(""), true);
     let notify = |server: &mut Server, method: &str, params: serde_json::Value| {
         server
-            .handle_notification(Notification::new(method.to_string(), params))
+            .apply_notification(Notification::new(method.to_string(), params))
             .unwrap();
     };
     let open = |file: &Path, text: &str| {
@@ -753,7 +753,7 @@ fn checks_an_open_file_nothing_imports() {
         "textDocument/didOpen".to_string(),
         json!({ "textDocument": document }),
     );
-    server.handle_notification(open).unwrap();
+    server.apply_notification(open).unwrap();
     let Message::Notification(published) = client.receiver.recv().unwrap() else {
         panic!("no publish");
     };
@@ -804,7 +804,7 @@ fn answers_only_from_the_current_text() {
             _ => json!({ "textDocument": document, "contentChanges": [{ "text": text }] }),
         };
         let notification = Notification::new(method.to_string(), params);
-        server.handle_notification(notification).unwrap();
+        server.apply_notification(notification).unwrap();
     };
     // Hover on `Value` in `file`.
     let hover = |server: &Server, file: &Path| {

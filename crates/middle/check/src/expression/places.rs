@@ -22,8 +22,8 @@ impl ThirBuilder<'_, '_> {
     /// slice's only field. An array's type gives it, so the array is not
     /// read.
     pub(super) fn check_field(&mut self, value: Id<ast::Expr>, field: Ident) -> Expr {
-        let mut value = self.add_expr(value, None);
-        let mut ty = self.body.exprs[value].ty;
+        let value = self.add_expr(value, None);
+        let ty = self.body.exprs[value].ty;
         let pointee = self.checker.types[ty].pointee();
         let viewed = pointee.unwrap_or(ty);
         // `Some(length)` for an array, `Some(None)` for a slice, whose
@@ -43,7 +43,7 @@ impl ThirBuilder<'_, '_> {
                 return Expr::INVALID;
             }
             let usize = self.checker.types.usize;
-            let Some(length) = length.filter(|_| !self.body.calls(value)) else {
+            let Some(length) = length.filter(|_| !self.body.has_call(value)) else {
                 return Expr {
                     ty: usize,
                     kind: ExprKind::Length(value),
@@ -55,11 +55,8 @@ impl ThirBuilder<'_, '_> {
                 kind: ExprKind::Constant(Value::Integer(length)),
             };
         }
-        if let Some(target) = pointee {
-            let referred = self.dereference(value, target);
-            ty = referred.ty;
-            value = self.body.add(referred, self.body.exprs.span(value));
-        }
+        let value = self.through_pointer(value, self.body.exprs.span(value));
+        let ty = self.body.exprs[value].ty;
         let Type::Struct { ref fields, .. } = self.checker.types[ty] else {
             if ty != TypeId::INVALID {
                 let message = format!("`{}` has no fields", self.checker.type_text(ty));
@@ -99,13 +96,9 @@ impl ThirBuilder<'_, '_> {
                 .error(diagnostics::INVALID_OPERATION, message, span);
             return Expr::INVALID;
         }
-        let mut array = self.add_expr(array, None);
-        let mut ty = self.body.exprs[array].ty;
-        if let Some(target) = self.checker.types[ty].pointee() {
-            let referred = self.dereference(array, target);
-            ty = referred.ty;
-            array = self.body.add(referred, self.body.exprs.span(array));
-        }
+        let array = self.add_expr(array, None);
+        let array = self.through_pointer(array, self.body.exprs.span(array));
+        let ty = self.body.exprs[array].ty;
         let usize = self.checker.types.usize;
         let index = self.add_expr(index, Some(usize));
         let index_type = self.body.exprs[index].ty;
@@ -208,25 +201,18 @@ impl ThirBuilder<'_, '_> {
             );
             return Expr::INVALID;
         }
-        let mut array = self.add_expr(array, None);
-        let mut ty = self.body.exprs[array].ty;
+        let array = self.add_expr(array, None);
         let array_span = self.body.exprs.span(array);
-        match self.checker.types[ty] {
-            // shortcut: a slice through a raw pointer holds no loan; allow
-            // it, as `&p.*` is, when a program needs it.
-            Type::RawPointer { .. } => {
-                self.checker
-                    .not_supported(array_span, "slices taken through raw pointers");
-                return Expr::INVALID;
-            }
-            // Written `r[i..j]`, so a message names that, as `r[i]`.
-            Type::Reference { target, .. } => {
-                let referred = self.dereference(array, target);
-                ty = referred.ty;
-                array = self.body.add(referred, tree.exprs.span(indexed));
-            }
-            _ => {}
+        // shortcut: a slice through a raw pointer holds no loan; allow it,
+        // as `&p.*` is, when a program needs it.
+        if let Type::RawPointer { .. } = self.checker.types[self.body.exprs[array].ty] {
+            self.checker
+                .not_supported(array_span, "slices taken through raw pointers");
+            return Expr::INVALID;
         }
+        // Written `r[i..j]`, so a message names that, as `r[i]`.
+        let array = self.through_pointer(array, tree.exprs.span(indexed));
+        let ty = self.body.exprs[array].ty;
         let Some((element, length)) = self.checker.types[ty].elements() else {
             if ty != TypeId::INVALID {
                 let message = format!("`{}` cannot be sliced", self.checker.type_text(ty));
@@ -352,6 +338,17 @@ impl ThirBuilder<'_, '_> {
                 Expr::INVALID
             }
         }
+    }
+
+    /// `value`, or what it refers to when it is a reference or a typed raw
+    /// pointer, added at `span`: a field or an element is reached through
+    /// the pointer, and a reference lent again lends what it refers to.
+    pub(super) fn through_pointer(&mut self, value: Id<Expr>, span: Span) -> Id<Expr> {
+        let Some(target) = self.checker.types[self.body.exprs[value].ty].pointee() else {
+            return value;
+        };
+        let referred = self.dereference(value, target);
+        self.body.add(referred, span)
     }
 
     /// What `reference`, whose type refers to `target`, refers to: a place.

@@ -13,7 +13,7 @@ impl Parser {
     /// Reads `Enum::Case`, perhaps followed by `with` and the pattern of its
     /// payload. The case is a full path.
     pub(crate) fn case_pattern(&mut self) -> Id<Pattern> {
-        source::grow(|| {
+        source::grow_stack(|| {
             let start = self.tok().span.start;
             let case = self.type_expr();
             self.require_path(case);

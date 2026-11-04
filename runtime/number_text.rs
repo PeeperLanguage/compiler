@@ -28,13 +28,13 @@ pub fn write_pointer(address: u64, push: &mut impl FnMut(&[u8])) {
 }
 
 /// How many nine-digit chunks of decimal text `limbs` 64-bit limbs can need.
-pub fn chunk_room(limbs: usize) -> usize {
+pub fn max_chunks(limbs: usize) -> usize {
     limbs * 3 + 1
 }
 
 /// Writes in decimal the integer of the limbs `wide`, least significant first,
 /// in two's complement when `is_signed`. `wide` is used up, and `chunks`, of
-/// `chunk_room(wide.len())` elements, holds the digits on the way.
+/// `max_chunks(wide.len())` elements, holds the digits on the way.
 pub fn write_integer(
     is_signed: bool,
     wide: &mut [u64],

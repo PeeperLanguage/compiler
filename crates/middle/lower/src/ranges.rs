@@ -50,7 +50,7 @@ impl Lowering<'_> {
         if !matches!(step, mir::Operand::Constant(_)) {
             let zero = self.integer_constant(size, 0);
             let failed = self.binary(BinaryOp::EqualTo, step, zero, TypeId::BOOL, step_span);
-            self.check(failed, "range step is zero", step_span);
+            self.emit_check(failed, "range step is zero", step_span);
         }
         let inclusive = self.add_constant(Constant {
             ty: TypeId::BOOL,

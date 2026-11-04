@@ -5,13 +5,13 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::path::Path;
 
+use llvm::link::run_tool;
 use serde::Deserialize;
 
 use crate::SOURCES_LOCK;
 use crate::SourcesLock;
 use crate::curl;
 use crate::read_json;
-use crate::run;
 use crate::write_json;
 
 /// Each file the sources lock pins: its id, the GitHub repository whose
@@ -92,7 +92,7 @@ pub(crate) fn update() -> Result<(), String> {
                         .arg("--header")
                         .arg(format!("Authorization: Bearer {token}"));
                 }
-                let text = run(&mut request)?;
+                let text = run_tool(&mut request)?;
                 entry.insert(
                     serde_json::from_slice(&text).map_err(|error| format!("{url}: {error}"))?,
                 )
@@ -115,11 +115,8 @@ pub(crate) fn update() -> Result<(), String> {
             .as_deref()
             .and_then(|digest| digest.strip_prefix("sha256:"))
             .ok_or_else(|| format!("GitHub gives no sha256 of {name}"))?;
-        let source = lock
-            .assets
-            .iter_mut()
-            .find(|source| source.id == id)
-            .ok_or_else(|| format!("the sources lock pins no {id}"))?;
+        let at = lock.position(id)?;
+        let source = &mut lock.assets[at];
         let order = |version: &str| {
             version
                 .split('.')

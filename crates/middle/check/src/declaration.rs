@@ -75,7 +75,7 @@ impl Checker<'_> {
                 let (offsets, size, align) = struct_layout(&self.types, &field_types, self.target);
                 let named = self.types.intern(Type::Named(definition));
                 let mut ty = self.fits_target(named, size, written.name.span);
-                if self.types.holders_of(&field_types) > MOST_HOLDERS {
+                if self.types.holders_in_fields(&field_types) > MOST_HOLDERS {
                     let text = self.type_text(named);
                     let message =
                         format!("`{text}` holds more than {MOST_HOLDERS} references and slices");
@@ -478,13 +478,13 @@ impl Checker<'_> {
     /// (`ThirBuilder::declare`), so only top-level names are looked up.
     fn resolve_type(&mut self, ty: Id<ast::Type>) -> TypeId {
         // Types written in types, `& & ... i32`, are a deep recursion.
-        source::grow(|| {
+        source::grow_stack(|| {
             let tree = &self.module().ast;
             let span = tree.types.span(ty);
             let what = match tree.types[ty] {
                 ast::Type::Name => {
                     let name = tree.file.slice(span);
-                    let symbol = self.global(name);
+                    let symbol = self.resolve_global(name);
                     if let Some(symbol) = symbol {
                         self.record(span, FactKind::Name(symbol));
                     }

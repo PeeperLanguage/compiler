@@ -21,13 +21,9 @@ pub(crate) fn symbol(program: &project::Program, definition: DefId) -> String {
     project::extern_symbol(&program.modules, definition)
         .expect("the checker reported a malformed `extern`")
         .unwrap_or_else(|| {
-            let module = &program.modules[definition.module.index()];
-            let declaration = &module.ast.decls[module.ast.declaration(definition.index)];
-            format!(
-                "{}.{}",
-                module.path,
-                declaration.name().text(&module.ast.file)
-            )
+            let path = &program.modules[definition.module.index()].path;
+            let name = project::declared_text(&program.modules, definition);
+            format!("{path}.{name}")
         })
 }
 /// The LLVM type of a value of type `ty`, written where it is printed.

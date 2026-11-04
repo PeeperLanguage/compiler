@@ -11,7 +11,7 @@
 //! declaration (see `sync`).
 //!
 //! The parser is recursive. The rules that nest (`expr`, `type_expr`, `stmt`,
-//! `if_statement`, `case_pattern`) run inside `grow`, which moves to a new
+//! `if_statement`, `case_pattern`) run inside `source::grow_stack`, which moves to a new
 //! stack segment when little stack is left, so no nesting depth overflows the
 //! stack.
 
@@ -51,7 +51,7 @@ pub fn parse(file: &Arc<SourceFile>) -> (Tree, Vec<Diagnostic>) {
         lex_errors: errors.len(),
         errors,
         recovering: false,
-        scratch: Vec::new(),
+        list_items: Vec::new(),
     };
     p.tree.complete = p.lex_errors == 0;
     p.module();
@@ -64,9 +64,9 @@ struct Parser {
     pos: usize,
     last_end: u32, // end of the last token read
     errors: Vec<Diagnostic>,
-    lex_errors: usize,        // errors[..lex_errors] are the lexer's
-    recovering: bool,         // an error was reported and the parser is not yet in step again
-    scratch: Vec<NonZeroU32>, // the items of the lists being read, innermost last
+    lex_errors: usize,           // errors[..lex_errors] are the lexer's
+    recovering: bool,            // an error was reported and the parser is not yet in step again
+    list_items: Vec<NonZeroU32>, // the items of the lists being read, innermost last
 }
 
 impl Parser {
@@ -316,7 +316,7 @@ impl Parser {
         starts_item: fn(TokenKind) -> bool,
         mut item: impl FnMut(&mut Self) -> Id<T>,
     ) -> List<T> {
-        let mark = self.scratch.len();
+        let mark = self.list_items.len();
         let mut missing = Vec::new();
         let mut semicolons = Vec::new();
         loop {
@@ -327,7 +327,7 @@ impl Parser {
                 break; // neither the close nor the end of file starts an item
             }
             let id = item(self);
-            self.scratch.push(id.into());
+            self.list_items.push(id.into());
             let t = self.tok();
             if t.kind == TokenKind::Comma {
                 continue;
@@ -397,10 +397,10 @@ impl Parser {
         items
     }
 
-    /// Moves the ids that `scratch` holds from `mark` on into a list.
+    /// Moves the ids that `list_items` holds from `mark` on into a list.
     fn finish_list<T>(&mut self, mark: usize) -> List<T> {
-        let list = self.tree.children.lists.add(&self.scratch[mark..]);
-        self.scratch.truncate(mark);
+        let list = self.tree.children.lists.add(&self.list_items[mark..]);
+        self.list_items.truncate(mark);
         list
     }
 

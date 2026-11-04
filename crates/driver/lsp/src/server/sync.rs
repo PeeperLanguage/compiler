@@ -32,7 +32,7 @@ impl Server<'_> {
     /// (a closed file's text is the disk's again), after `DEBOUNCE` for a
     /// changed one. Other notifications, and documents that are not local
     /// files, are ignored.
-    pub(crate) fn handle_notification(
+    pub(crate) fn apply_notification(
         &mut self,
         notification: Notification,
     ) -> Result<(), BoxError> {
@@ -155,7 +155,7 @@ impl Server<'_> {
         let mut all: Vec<&diagnostics::Diagnostic> = program.diagnostics.iter().collect();
         // A program that cannot be checked keeps the last compile for the next.
         if program.checkable {
-            checked.update(&program);
+            checked.recompile(&program);
             all.extend(checked.results.diagnostics());
         }
         let (published, fix_all) = self.publish(all, &checked.published, file, &project.root)?;

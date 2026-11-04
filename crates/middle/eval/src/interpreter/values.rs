@@ -40,7 +40,7 @@ impl<'b> Interpreter<'b, '_> {
             value => value,
         };
         let frame = self.frame();
-        let slot = frame.registers + frame.body.parameters + id.index();
+        let slot = frame.first_register + frame.body.parameters + id.index();
         self.registers[slot] = value;
         Ok(())
     }
@@ -58,11 +58,11 @@ impl<'b> Interpreter<'b, '_> {
                 let body = frame.body;
                 self.register_of(&body.constants[constant.index()].value)
             }
-            Operand::Argument(index) => self.registers[frame.registers + index as usize]
+            Operand::Argument(index) => self.registers[frame.first_register + index as usize]
                 .clone()
                 .expect("a call has its arguments"),
             Operand::Value(value) => self.registers
-                [frame.registers + frame.body.parameters + value.index()]
+                [frame.first_register + frame.body.parameters + value.index()]
             .clone()
             .expect("an instruction gives its value before it is used"),
         }
@@ -71,7 +71,7 @@ impl<'b> Interpreter<'b, '_> {
     /// The register of a constant.
     pub(super) fn register_of(&mut self, value: &Value) -> Register {
         match value {
-            Value::Bytes(text) => Register::Address(self.memory.string(text)),
+            Value::Bytes(text) => Register::Address(self.memory.string_address(text)),
             Value::Null => Register::Address(0),
             value => Register::Scalar(value.clone()),
         }

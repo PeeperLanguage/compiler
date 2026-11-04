@@ -495,7 +495,7 @@ fn hash_type(checker: &Checker, id: TypeId, hasher: &mut DefaultHasher) {
             target.is_some().hash(hasher);
             if let Some(target) = target {
                 // Pointers nest as deep as the source does.
-                source::grow(|| hash_type(checker, *target, hasher));
+                source::grow_stack(|| hash_type(checker, *target, hasher));
             }
         }
         Type::Invalid | Type::Void | Type::Bool | Type::CString => {}

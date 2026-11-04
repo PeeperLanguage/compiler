@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::process::Command;
 
 use bigint::Limbs;
 use model::constant::Constant;
@@ -7,6 +8,9 @@ use model::constant::Value;
 use model::machine::Machine;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
+
+use crate::link::call_tool;
+use crate::link::run_tool;
 
 /// The LLVM text of the module `app:main` holding `text`, for the target
 /// named `target` (`program_ll`).
@@ -427,4 +431,25 @@ fn constants_from_bits() {
         constant(TypeId::F32, Value::Float(0.5f64.to_bits())),
         "0x3FE0000000000000"
     );
+}
+
+/// A tool that cannot start, or that fails, is named in the error with what
+/// it printed as errors; `call_tool` says first what it was for.
+#[test]
+fn a_failing_tool_is_named_with_what_it_printed() {
+    let missing = Command::new("peeper-no-such-tool");
+    let error = call_tool(missing, "link the program").unwrap_err();
+    assert!(
+        error.starts_with("cannot link the program: cannot run peeper-no-such-tool: "),
+        "{error}"
+    );
+    if cfg!(unix) {
+        let mut failing = Command::new("sh");
+        failing.args(["-c", "echo kept; echo broken >&2; exit 3"]);
+        let error = run_tool(&mut failing).unwrap_err();
+        assert_eq!(error, "sh failed (exit status: 3)\nbroken");
+        let mut working = Command::new("sh");
+        working.args(["-c", "echo kept"]);
+        assert_eq!(run_tool(&mut working), Ok(b"kept\n".to_vec()));
+    }
 }

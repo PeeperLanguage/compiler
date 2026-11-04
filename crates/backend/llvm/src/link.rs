@@ -3,6 +3,7 @@
 //! with the runtime library. Clang is the installation's own (`tool`), never
 //! one on the PATH.
 
+use std::io;
 use std::num::NonZero;
 use std::path::Path;
 use std::path::PathBuf;
@@ -42,8 +43,7 @@ pub fn link_executable(
         .duration_since(UNIX_EPOCH)
         .map_or(0, |time| time.subsec_nanos());
     let folder = std::env::temp_dir().join(format!("peeper-link-{}-{nanos}", std::process::id()));
-    std::fs::create_dir_all(&folder)
-        .map_err(|error| format!("cannot make {}: {error}", folder.display()))?;
+    std::fs::create_dir_all(&folder).map_err(|error| file_error("make", &folder, &error))?;
     let clang = tool(installation, "clang");
     let linked = compile_modules(modules, mode, target, &clang, &folder)
         .and_then(|objects| link(&objects, mode, target, &clang, &runtime, output));
@@ -87,8 +87,7 @@ fn link(
     }
     linker.arg("-o").arg(&staged);
     let linked = call_tool(linker, "link the program").and_then(|()| {
-        std::fs::rename(&staged, output)
-            .map_err(|error| format!("cannot write {}: {error}", output.display()))
+        std::fs::rename(&staged, output).map_err(|error| file_error("write", output, &error))
     });
     _ = std::fs::remove_file(&staged);
     linked
@@ -128,8 +127,7 @@ fn compile_modules(
                         };
                         let file = folder.join(format!("module_{index}.ll"));
                         if let Err(error) = std::fs::write(&file, module.text()) {
-                            let error = format!("cannot write {}: {error}", file.display());
-                            failures.push((index, error));
+                            failures.push((index, file_error("write", &file, &error)));
                             continue;
                         }
                         let mut compiler = Command::new(clang);
@@ -166,15 +164,15 @@ pub fn sdk_flags(target: &Machine) -> Result<Vec<String>, String> {
     if target.os != "macos" {
         return Ok(Vec::new());
     }
-    let cannot =
+    let no_sdk =
         "cannot find the macOS SDK: install Xcode's command line tools (`xcode-select --install`)";
     let output = Command::new("/usr/bin/xcrun")
         .arg("--show-sdk-path")
         .output()
-        .map_err(|error| format!("{cannot}: {error}"))?;
+        .map_err(|error| format!("{no_sdk}: {error}"))?;
     let sdk = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     if !output.status.success() || sdk.is_empty() {
-        return Err(cannot.to_owned());
+        return Err(no_sdk.to_owned());
     }
     Ok(vec!["-isysroot".to_owned(), sdk])
 }
@@ -185,20 +183,32 @@ pub(crate) fn tool(installation: &Path, name: &str) -> PathBuf {
     installation.join("toolchains/native/bin").join(name)
 }
 
-/// Runs `command`, a clang or archiver call; what it printed is shown only
-/// when it fails.
+/// Runs `command`, a clang or archiver call, for `action`; what it printed
+/// is shown only when it fails (`run_tool`).
 pub(crate) fn call_tool(mut command: Command, action: &str) -> Result<(), String> {
+    run_tool(&mut command)
+        .map(drop)
+        .map_err(|error| format!("cannot {action}: {error}"))
+}
+
+/// Runs `command` and gives what it printed; what it printed as errors is
+/// shown only when it fails.
+pub fn run_tool(command: &mut Command) -> Result<Vec<u8>, String> {
     let program = command.get_program().to_string_lossy().into_owned();
     let output = command
         .output()
-        .map_err(|error| format!("cannot {action}: cannot run {program}: {error}"))?;
+        .map_err(|error| format!("cannot run {program}: {error}"))?;
     if output.status.success() {
-        return Ok(());
+        return Ok(output.stdout);
     }
-    let printed = String::from_utf8_lossy(&output.stderr);
     Err(format!(
-        "cannot {action}: {program} failed ({})\n{}",
+        "{program} failed ({})\n{}",
         output.status,
-        printed.trim_end()
+        String::from_utf8_lossy(&output.stderr).trim_end()
     ))
+}
+
+/// The error of a file system `action` on `path` that failed.
+pub fn file_error(action: &str, path: &Path, error: &io::Error) -> String {
+    format!("cannot {action} {}: {error}", path.display())
 }

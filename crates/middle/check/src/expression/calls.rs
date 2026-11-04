@@ -199,13 +199,13 @@ impl ThirBuilder<'_, '_> {
         let mut given = tree.children.lists.items(arguments);
         for (&parameter, argument) in parameters[..fixed].iter().zip(given.by_ref()) {
             let argument = self.add_required(argument, parameter);
-            self.lend_place_again(argument);
+            self.reborrow_in_place(argument);
             checked.push(argument.into());
         }
         if variadic {
             let rest: Vec<Id<ast::Expr>> = given.collect();
             let slice = self.check_variadic(&rest, parameters[fixed], span);
-            self.lend_place_again(slice);
+            self.reborrow_in_place(slice);
             checked.push(slice.into());
         } else {
             for extra in given {

@@ -545,13 +545,35 @@ fn a_cycle_is_reported_once_with_its_path() {
 
 #[test]
 fn module_constants_cannot_be_assigned() {
-    let found = diagnostics(&[
+    let modules = [
         ("core:global", "const Stdout: i32 = 1;"),
         (
             "app:main",
             "const Limit: i32 = 1;\nfn main() { Limit = 2; Stdout = 3; main = 4; }",
         ),
-    ]);
+    ];
+    // Each constant is shown where it is declared, in its own module.
+    let found = run(
+        &load(&modules),
+        x86_64(),
+        Results::default(),
+        None,
+        false,
+        |_| {},
+    );
+    let declared: Vec<(&str, &str)> = found
+        .diagnostics()
+        .filter_map(|diagnostic| diagnostic.labels.get(1))
+        .map(|label| (label.file.slice(label.span), label.message.as_str()))
+        .collect();
+    assert_eq!(
+        declared,
+        [
+            ("Limit", "declared as a constant here"),
+            ("Stdout", "declared as a constant here"),
+        ]
+    );
+    let found = diagnostics(&modules);
     assert_eq!(
         found,
         expected(&[
