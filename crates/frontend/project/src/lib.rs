@@ -26,6 +26,8 @@ use model::ModuleId;
 use model::ast;
 use model::ast::Ident;
 use model::ast::Tree;
+use model::semantic_types::TypeId;
+use model::semantic_types::Types;
 use packages::SOURCE_EXTENSION;
 use packages::file_of;
 use packages::path_of;
@@ -59,6 +61,12 @@ pub fn declaration(modules: &[Module], definition: DefId) -> &ast::Decl {
 pub fn declared_text(modules: &[Module], definition: DefId) -> &str {
     let (name, file) = declared_name(modules, definition);
     name.text(file)
+}
+
+/// The type `ty` of `types` as a message names it, each declared type by the
+/// name its declaration in `modules` gives it (`Types::text`).
+pub fn type_text(modules: &[Module], types: &Types, ty: TypeId) -> String {
+    types.text(ty, |definition| declared_text(modules, definition))
 }
 
 /// The name the declaration `definition` of `modules` declares, and the file

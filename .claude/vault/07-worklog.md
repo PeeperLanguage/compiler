@@ -532,3 +532,14 @@ ran `check.sh` fully green.
   compared by the run fixtures).
 - **Evidence:** `bash scripts/check.sh` passed; the new label test fails
   without the change.
+
+## 2026-11-04 One owner for a type's text in messages
+
+- **Decided:** `project::type_text` names a type with each declaration's own
+  name; `Checker::type_text` stays as the checker's one-line call (27 uses
+  would otherwise repeat `self.modules, &self.types`).
+- **Done:** the LSP's own `type_text` is deleted, and the LLVM debug info's
+  inline copy uses the shared function. Behavior is unchanged.
+- **Kept:** the three `check/declaration.rs` sites still index their own
+  module's tree, which they keep using.
+- **Evidence:** `bash scripts/check.sh` passed.

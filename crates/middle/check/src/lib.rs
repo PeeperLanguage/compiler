@@ -234,9 +234,7 @@ impl<'p> Checker<'p> {
 
     /// The type `ty` as a message names it (`Types::text`).
     pub(crate) fn type_text(&self, ty: TypeId) -> String {
-        self.types.text(ty, |definition| {
-            project::declared_text(self.modules, definition)
-        })
+        project::type_text(self.modules, &self.types, ty)
     }
 
     /// Both types as a message names them, with each one's module when two

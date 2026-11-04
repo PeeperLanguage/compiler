@@ -151,9 +151,7 @@ impl Metadata {
             Type::Slice { element, .. } => {
                 let base = self.debug_type(program, types, types.real(element), target);
                 let base = base.expect("an element has a value's type");
-                let name = types.text(ty, |definition| {
-                    project::declared_text(&program.modules, definition)
-                });
+                let name = project::type_text(&program.modules, types, ty);
                 // Its members name it, so its number comes first.
                 let composite = self.reserve();
                 let pointer = self.add(format_args!(

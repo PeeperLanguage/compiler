@@ -10,7 +10,6 @@ use lsp_types::CodeAction;
 use model::ModuleId;
 use model::constant::Constant;
 use model::constant::value_text;
-use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use model::thir;
 use model::thir::FactKind;
@@ -139,7 +138,7 @@ impl CachedFact {
         let file = |module: ModuleId| PathBuf::from(&program.modules[module.index()].ast.file.path);
         let kind = match fact.kind {
             FactKind::Literal(ty) => CachedKind::Literal {
-                ty: type_text(program, types, ty),
+                ty: project::type_text(&program.modules, types, ty),
             },
             FactKind::Name(Symbol::Local(local)) => {
                 let body = body
@@ -151,7 +150,7 @@ impl CachedFact {
                         let variable = body.variables[variable];
                         CachedKind::Variable {
                             mutable: variable.mutable,
-                            ty: type_text(program, types, variable.ty),
+                            ty: project::type_text(&program.modules, types, variable.ty),
                         }
                     }
                     Local::Constant(constant) => CachedKind::Constant {
@@ -192,14 +191,8 @@ impl ConstantText {
         types: &Types,
     ) -> ConstantText {
         ConstantText {
-            ty: type_text(program, types, constant.ty),
+            ty: project::type_text(&program.modules, types, constant.ty),
             value: value_text(&constant.value, &types[constant.ty]).to_string(),
         }
     }
-}
-/// The text of `ty`, of `types`, with the names `program` declares.
-pub(crate) fn type_text(program: &project::Program, types: &Types, ty: TypeId) -> String {
-    types.text(ty, |definition| {
-        project::declared_text(&program.modules, definition)
-    })
 }
