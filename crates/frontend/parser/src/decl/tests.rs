@@ -159,6 +159,7 @@ iface Summer {
     fn (self: &Self) add<T>(value: T)
 }
 type Alias<T> = ?T;
+fn Pair::new() {}
 "#;
     let want = r#"module
   const declaration
@@ -227,6 +228,10 @@ type Alias<T> = ?T;
     declared name T
     optional type
       type name T
+  function declaration
+    owner type Pair
+    declared name new
+    block {}
 "#;
     assert!(messages(text).is_empty());
     assert_eq!(dump_of(text), want);

@@ -1,0 +1,24 @@
+// What a type's function may not be, and calls that name none.
+import "negative_type_functions:geometry" as g;
+
+type P = g::Point;
+const Limit: i32 = 1;
+struct Local { x: i32 }
+enum Status { Ready }
+
+// Only the module that declares a struct declares its functions.
+fn P::Extra() {}
+fn Limit::f() {}
+fn Missing::f() {}
+fn Local::f() {}
+fn Local::f() {}
+
+fn main() {
+    let a = g::Point::Nw(1, 2);
+    let b = g::Point::make(1, 2);
+    let c = i32::f();
+    let d = Limit::f();
+    let e = Local::g();
+    // Only a struct has functions; an enum's variants are not supported yet.
+    let f = Status::Ready;
+}

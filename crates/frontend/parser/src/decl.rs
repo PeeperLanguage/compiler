@@ -418,10 +418,16 @@ impl Parser {
     }
 }
 
-/// Reads `fn (receiver) name<T>(parameters) -> Result in origins` followed
-/// by a body, or by `;` for a function defined elsewhere.
+/// Reads `fn (receiver) name<T>(parameters) -> Result in origins`, with
+/// `Owner::` before the name for a function of the type `Owner`, followed by
+/// a body, or by `;` for a function defined elsewhere.
 fn function_decl(p: &mut Parser, metadata: Metadata) -> Id<Decl> {
     let start = p.next().span.start;
+    let owner = (p.at(TokenKind::Ident) && p.ahead(1).kind == TokenKind::ColonColon).then(|| {
+        let owner = p.name();
+        p.next();
+        owner
+    });
     let (name, signature) = p.named_signature();
     let body = match p.tok().kind {
         TokenKind::Semicolon => {
@@ -445,6 +451,7 @@ fn function_decl(p: &mut Parser, metadata: Metadata) -> Id<Decl> {
         start,
         Decl::Function(Function {
             metadata,
+            owner,
             name,
             signature,
             body,

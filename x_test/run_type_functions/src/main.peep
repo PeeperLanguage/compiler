@@ -1,0 +1,14 @@
+import "run_type_functions:geometry" as g;
+
+type P = g::Point;
+
+// A constant may call a type's function: the call runs while compiling.
+const Dimensions: i32 = g::Point::Dimensions();
+
+fn main() {
+    let p = g::Point::New(1, 2);
+    let q = P::New(3, 4);
+    println(g::Point::Sum(&p), P::Sum(&q), g::Sum(1, 2), Dimensions);
+    let line = g::Line::New(p, q);
+    println(g::Line::Sum(&line));
+}

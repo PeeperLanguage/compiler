@@ -1,0 +1,7 @@
+name = "run_type_functions"
+build = "program"
+
+[test]
+mode = "run"
+outcome = "success"
+stdout_contains = ["3 7 12 2\n10\n"]

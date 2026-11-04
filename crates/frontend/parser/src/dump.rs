@@ -171,6 +171,8 @@ impl<'t> Dumper<'t> {
                 match t.decls[id] {
                     Decl::Function(f) => {
                         let mut nested: Vec<Item> = self.metadata(f.metadata).into_iter().collect();
+                        let owner = f.owner.map(|owner| Item::Leaf("owner type", owner.span));
+                        nested.extend(owner);
                         nested.extend(self.signature(Some(f.name), f.signature));
                         nested.extend(f.body.map(Item::Block));
                         ("function declaration", None, span, nested)

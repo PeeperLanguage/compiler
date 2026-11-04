@@ -63,6 +63,21 @@ pub fn declared_text(modules: &[Module], definition: DefId) -> &str {
     name.text(file)
 }
 
+/// The name of the declaration `definition` of `modules` as a program calls
+/// it: its own name, or `Owner::name` for a function of the type `Owner`.
+pub fn declared_path(modules: &[Module], definition: DefId) -> String {
+    let name = declared_text(modules, definition);
+    match declaration(modules, definition) {
+        ast::Decl::Function(ast::Function {
+            owner: Some(owner), ..
+        }) => {
+            let file = &modules[definition.module.index()].ast.file;
+            format!("{}::{name}", owner.text(file))
+        }
+        _ => name.to_string(),
+    }
+}
+
 /// The type `ty` of `types` as a message names it, each declared type by the
 /// name its declaration in `modules` gives it (`Types::text`).
 pub fn type_text(modules: &[Module], types: &Types, ty: TypeId) -> String {

@@ -202,10 +202,12 @@ impl Decl {
 
 /// `fn (receiver) name<T>(parameters) -> Result in origins { body }`, or
 /// with `;` for a body defined elsewhere; an interface method has no body.
-/// Everything but the name and body is its signature.
+/// Everything but the owner, the name and the body is its signature.
 #[derive(Clone, Copy, Debug)]
 pub struct Function {
     pub metadata: Metadata,
+    /// `Point` in `fn Point::name`: the type the function belongs to.
+    pub owner: Option<Ident>,
     pub name: Ident,
     pub signature: Signature,
     pub body: Option<Id<Block>>,

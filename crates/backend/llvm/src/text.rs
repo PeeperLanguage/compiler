@@ -22,7 +22,7 @@ pub(crate) fn symbol(program: &project::Program, definition: DefId) -> String {
         .expect("the checker reported a malformed `extern`")
         .unwrap_or_else(|| {
             let path = &program.modules[definition.module.index()].path;
-            let name = project::declared_text(&program.modules, definition);
+            let name = project::declared_path(&program.modules, definition);
             format!("{path}.{name}")
         })
 }

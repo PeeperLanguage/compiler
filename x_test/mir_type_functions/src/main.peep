@@ -1,0 +1,21 @@
+// A type's function is named with its type, `Point::Sum`, so it reads apart
+// from the module's own `Sum` and from `Line::Sum`.
+struct Point { x: i32, y: i32 }
+struct Line { start: Point, end: Point }
+
+fn Point::Sum(p: &Point) -> i32 {
+    return p.x + p.y;
+}
+
+fn Line::Sum(line: &Line) -> i32 {
+    return Point::Sum(&line.start) + Point::Sum(&line.end);
+}
+
+fn Sum(a: i32, b: i32) -> i32 {
+    return a + b;
+}
+
+fn main() {
+    let line = Line.{ start = .{ x = 1, y = 2 }, end = .{ x = 3, y = 4 } };
+    let total = Sum(Line::Sum(&line), 1);
+}

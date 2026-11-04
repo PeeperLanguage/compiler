@@ -577,3 +577,52 @@ ran `check.sh` fully green.
   type table) keeps its name; the owner: "types already mean the semantic
   type".
 - **Evidence:** `bash scripts/check.sh` passed.
+
+## 2026-11-04 Methods: one name table keyed by (owner, name)
+
+- **Decided (owner):** a method is a top-level declaration with an owner
+  (`ast::Function.owner`), found in the module's one name table under
+  (owner's `DefId`, name), so interface methods later use the same lookup.
+  The single-level key `(Option<DefId>, &'p str)`, with names borrowed from
+  the program's text, was chosen over two levels
+  (`Option<DefId>` -> `Box<str>` -> symbol).
+- **Benchmark** (`scripts/bench-instructions.py`, instructions per compile,
+  a program with no type functions):
+
+  | Version | Runs | Mean | Range | vs `main` |
+  | --- | --- | --- | --- | --- |
+  | `main` (`22b9728b`) | 5 | 3,787.7 M | 3,780.4 - 3,797.1 | |
+  | single level (chosen) | 6 | 3,784.8 M | 3,775.6 - 3,792.7 | -0.08% (noise) |
+  | two levels | 5 | 3,815.2 M | 3,801.6 - 3,821.9 | +0.73% |
+
+  One run varies by up to 0.45%, so each version ran five or six times; the
+  two-level range does not overlap the others.
+
+## 2026-11-04 Methods step 1: a type's functions, called by path
+
+- `fn Point::name(...)` is a top-level declaration with an owner
+  (`ast::Function.owner`). `scope::collect` declares it under the struct's
+  `DefId`; the owner must be a struct of the same module
+  (`` `X` is not a struct declared in this module ``). `resolve_path` reads
+  `Type::name` and `module::Type::name` in one loop. Nothing below check
+  changed.
+- `project::declared_path` gives `Point::name` for the link name
+  (`module.Point::name`) and the debug info name.
+- Fixed on the way: `fn App::main` was taken as the entry point; moving a
+  function to another type did not check importers again; `i32::f()` said
+  "`i32` is not a module or a type".
+- Tests: parser dump, `scope` (duplicate "in this type"), two `compile` tests
+  (each fails without its fix), fixtures `run_type_functions`,
+  `run_i686_type_functions`, `negative_type_functions`.
+- `bash scripts/check.sh` passed.
+- After review: `-dump thir`/`-dump mir` and cycle errors name a type's
+  function `Point::Sum` too (`mir::Body::text`/`thir::Body::text` take any
+  printable name, as `Types::text` does). Tests: fixture
+  `mir_type_functions`, a `Point::E` cycle in `a_cycle_is_reported_once_with_its_path`.
+  `check.sh` passed again.
+- Second review: `Status::Ready` on an enum said "unknown name `Ready` in
+  type `Status`" (it said "not supported yet" before). `scope::has_functions`
+  now holds the one rule, only a struct has functions, for `collect` and
+  `resolve_path`; the enum gets "`Status` has no functions"
+  (`negative_type_functions`). `check.sh` passed.
+- Not done: LSP hover and rename for a type's function were not looked at.

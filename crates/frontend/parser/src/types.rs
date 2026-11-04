@@ -309,6 +309,7 @@ impl Parser {
                     start,
                     Decl::Function(Function {
                         metadata: Metadata::NONE,
+                        owner: None,
                         name,
                         signature,
                         body: None,

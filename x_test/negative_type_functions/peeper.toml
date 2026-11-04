@@ -1,0 +1,21 @@
+name = "negative_type_functions"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "[P0005]: `P` is not a struct declared in this module",
+    "[P0005]: `Limit` is not a struct declared in this module",
+    "[P0005]: `Missing` is not a struct declared in this module",
+    "a type's functions are declared in the module of the type",
+    "[T0003]: `f` is already declared in this type",
+    "[T0002]: unknown name `Nw` in type `Point`",
+    "did you mean `New`?",
+    "[M0004]: `make` is not exported from `Point`",
+    "[T0004]: `i32` has no functions",
+    "[T0004]: `Limit` is not a module or a type",
+    "[T0002]: unknown name `g` in type `Local`",
+    "[T0004]: `Status` has no functions",
+    "Compilation failed with 11 error(s)",
+]

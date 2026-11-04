@@ -4,6 +4,7 @@
 //! instruction, written once and used after it. Every part keeps the span it
 //! came from, for messages and debug lines.
 
+use std::fmt::Display;
 use std::fmt::Write;
 
 use crate::DefId;
@@ -356,11 +357,11 @@ impl Body {
     /// where the body is written; `name_of` gives a declaration's name. A
     /// variable shows as its name and index (`sum.2`), an integer constant as
     /// its bits read unsigned, and a field path in brackets (`load p.0[1, 0]`).
-    pub fn text<'n>(
+    pub fn text<N: Display>(
         &self,
         types: &Types,
         file: &SourceFile,
-        name_of: impl Fn(DefId) -> &'n str + Copy,
+        name_of: impl Fn(DefId) -> N + Copy,
     ) -> String {
         let mut printer = Printer {
             body: self,
@@ -399,10 +400,10 @@ struct Printer<'b> {
 
 impl Printer<'_> {
     /// What one instruction does, after its `%n = ` and before its type.
-    fn write_instruction<'n>(
+    fn write_instruction<N: Display>(
         &mut self,
         kind: &InstructionKind,
-        name_of: impl Fn(DefId) -> &'n str,
+        name_of: impl Fn(DefId) -> N,
     ) {
         match kind {
             InstructionKind::Store { place, value } => {

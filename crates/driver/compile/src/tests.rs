@@ -407,6 +407,7 @@ fn the_entry_module_needs_a_main_to_start() {
         "fn main(x: i32) {}",
         "fn main() -> i64 { return 0; }",
         "#[extern(\"main\")]\nfn main();",
+        "struct App { x: i32 }\nfn App::main() {}",
     ] {
         assert_eq!(entry_point(text), (None, vec!["M0006"]), "{text}");
     }
@@ -491,7 +492,10 @@ fn a_cycle_is_reported_once_with_its_path() {
             const B = C + D;
             const C = B;
             const D = B;
-            fn main() { let x = A + B; }",
+            struct Point { x: i32 }
+            const E = Point::E();
+            fn Point::E() -> i32 { return E; }
+            fn main() { let x = A + B + E; }",
     )]);
     let found = run(&program, x86_64(), Results::default(), None, false, |_| {});
     let errors: Vec<(String, Vec<(String, String)>)> = found
@@ -537,6 +541,15 @@ fn a_cycle_is_reported_once_with_its_path() {
                     ("B", "`B` is defined here"),
                     ("D", "`B` uses `D`"),
                     ("B", "`D` uses `B`, closing the cycle"),
+                ]
+            ),
+            // A type's function is named with its type.
+            error(
+                "`E` depends on itself",
+                &[
+                    ("E", "`E` is defined here"),
+                    ("Point::E()", "`E` uses `Point::E`"),
+                    ("E", "`Point::E` uses `E`, closing the cycle"),
                 ]
             ),
         ]
@@ -746,6 +759,18 @@ fn a_signature_edit_checks_its_importers() {
         "fn Add(a: i64, b: i64) -> i64 { return a + b; }",
     );
     let (_, checked) = recompile(&[utils, OTHER, MAIN], first);
+    assert_eq!(checked, ["app:utils", "app:main"]);
+}
+
+/// A type's function moved to another type is a new name for its importers.
+#[test]
+fn a_function_moved_to_another_type_checks_its_importers() {
+    let utils = |owner: &str| {
+        format!("struct Point {{ x: i32 }}\nstruct Line {{ x: i32 }}\nfn {owner}::Make() {{}}")
+    };
+    let (point, line) = (utils("Point"), utils("Line"));
+    let (first, _) = recompile(&[("app:utils", &point), OTHER, MAIN], Results::default());
+    let (_, checked) = recompile(&[("app:utils", &line), OTHER, MAIN], first);
     assert_eq!(checked, ["app:utils", "app:main"]);
 }
 
