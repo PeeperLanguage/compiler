@@ -49,6 +49,12 @@ pub struct Module {
     pub imports: Vec<Import>, // in source order; the implicit prelude import last, in every module but the prelude
 }
 
+/// The declaration `definition` of `modules` names.
+pub fn declaration(modules: &[Module], definition: DefId) -> &ast::Decl {
+    let tree = &modules[definition.module.index()].ast;
+    &tree.decls[tree.declaration(definition.index)]
+}
+
 /// The text of the name the declaration `definition` of `modules` declares.
 pub fn declared_text(modules: &[Module], definition: DefId) -> &str {
     let (name, file) = declared_name(modules, definition);
@@ -58,10 +64,9 @@ pub fn declared_text(modules: &[Module], definition: DefId) -> &str {
 /// The name the declaration `definition` of `modules` declares, and the file
 /// it is in.
 pub fn declared_name(modules: &[Module], definition: DefId) -> (Ident, &Arc<SourceFile>) {
-    let tree = &modules[definition.module.index()].ast;
     (
-        tree.decls[tree.declaration(definition.index)].name(),
-        &tree.file,
+        declaration(modules, definition).name(),
+        &modules[definition.module.index()].ast.file,
     )
 }
 
@@ -84,7 +89,7 @@ pub fn panic_text(root: &Path, file: &SourceFile, message: &[u8], span: Span) ->
 /// is written; the checker reports it, so later phases never see one.
 pub fn extern_symbol(modules: &[Module], definition: DefId) -> Result<Option<String>, Span> {
     let tree = &modules[definition.module.index()].ast;
-    let ast::Decl::Function(function) = &tree.decls[tree.declaration(definition.index)] else {
+    let ast::Decl::Function(function) = declaration(modules, definition) else {
         return Ok(None);
     };
     let mut symbol = None;
@@ -111,7 +116,7 @@ pub fn extern_symbol(modules: &[Module], definition: DefId) -> Result<Option<Str
 /// `modules`, in order.
 pub fn field_names(modules: &[Module], definition: DefId) -> impl Iterator<Item = &str> {
     let tree = &modules[definition.module.index()].ast;
-    let ast::Decl::Type(written) = tree.decls[tree.declaration(definition.index)] else {
+    let &ast::Decl::Type(written) = declaration(modules, definition) else {
         unreachable!("`{definition:?}` is a type declaration")
     };
     let ast::Type::Struct(fields) = tree.types[written.ty] else {

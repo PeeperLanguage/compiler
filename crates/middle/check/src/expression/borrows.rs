@@ -279,10 +279,9 @@ impl ThirBuilder<'_, '_> {
                 };
             }
             (_, Type::Slice { .. }) => self.body.add(reference, span),
-            (_, &Type::Reference { target, .. }) => {
+            (_, Type::Reference { .. }) => {
                 let held = self.body.add(reference, span);
-                let referred = self.dereference(held, target);
-                self.body.add(referred, span)
+                self.through_pointer(held, span)
             }
             _ => unreachable!("only a reference or slice is lent again"),
         };

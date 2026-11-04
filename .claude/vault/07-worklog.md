@@ -501,3 +501,34 @@ ran `check.sh` fully green.
   release, so the next release is their first run.
 - **Fixed:** `install.ps1` ran `tar` from the PATH, where `setup.ps1` runs
   `System32\tar.exe` because a GNU tar takes `C:` for another machine. It now does too.
+
+## 2026-11-04 Methods undone
+
+- **Decided (owner):** the first methods try is undone. It treated a method as
+  a feature of its own (its own scope table, lookups, call path and errors)
+  instead of a function that lives and is found as any function is.
+- **Done:** `feature/methods` reset to `dc7b2247`; the four commits are kept in
+  `backup/methods-first-try`, the uncommitted work in the stash "methods first
+  try: uncommitted".
+- **Next:** a one-page design reviewed by the owner before any code.
+- **Evidence:** `bash scripts/check.sh` passed on the reset branch; the bundle
+  rejects `fn P::new()` ("expected `(`, found `::`").
+
+## 2026-11-04 Duplicate cleanup and a code database
+
+- **Done:** a code database in `.claude/codedb/` (one file per crate, and
+  `similar.md` for duplicates across crates), written by low-effort agents and
+  refreshed after the cleanup; it is git-ignored. On `fix/duplicate-cleanup`:
+  - `through_pointer` replaces four copies of "go through a reference or
+    pointer" (field, index, slice, reborrow);
+  - assigning to a module constant now points at its declaration, as a local
+    constant's error did; one branch builds both;
+  - `project::declaration` replaces the declaration-by-id lookup, and
+    `llvm` `symbol`, `debug_info` and `lsp` `checked.rs` reuse
+    `declared_text` / `declared_name`;
+  - `SourcesLock::position` replaces two lock lookups in the toolchain.
+- **Not done:** one owner for a type's text in messages (waits on the owner);
+  sharing the print text of structs and arrays (a marked shortcut, already
+  compared by the run fixtures).
+- **Evidence:** `bash scripts/check.sh` passed; the new label test fails
+  without the change.

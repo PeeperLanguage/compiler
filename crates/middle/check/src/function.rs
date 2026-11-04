@@ -212,8 +212,7 @@ pub(crate) fn function_declaration(
     modules: &[project::Module],
     definition: DefId,
 ) -> &ast::Function {
-    let tree = &modules[definition.module.index()].ast;
-    match &tree.decls[tree.declaration(definition.index)] {
+    match project::declaration(modules, definition) {
         ast::Decl::Function(function) => function,
         _ => unreachable!("`{definition:?}` is a function"),
     }

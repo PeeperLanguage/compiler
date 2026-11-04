@@ -58,8 +58,7 @@ impl Checked {
                 constant,
                 types,
             } => {
-                let tree = &program.modules[definition.module.index()].ast;
-                let declared = tree.decls[tree.declaration(definition.index)].name().span;
+                let declared = project::declared_name(&program.modules, definition).0.span;
                 let text = constant.map(|constant| ConstantText::new(program, constant, types));
                 let kind = CachedKind::Constant { text };
                 let name = CachedFact {

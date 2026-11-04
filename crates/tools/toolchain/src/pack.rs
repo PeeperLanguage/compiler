@@ -53,11 +53,7 @@ pub(crate) fn pack(repository: &str, folder: &Path) -> Result<(), String> {
     };
     let sources: SourcesLock = read_json(Path::new(SOURCES_LOCK))?;
     let source_id = format!("{family}-{os}-{arch}");
-    let source = sources
-        .assets
-        .iter()
-        .find(|source| source.id == source_id)
-        .ok_or_else(|| format!("the sources lock pins no {source_id}"))?;
+    let source = &sources.assets[sources.position(&source_id)?];
     let stage = stage(source, folder)?;
 
     let packed = folder.join("pack.tar.gz");

@@ -43,6 +43,15 @@ struct SourcesLock {
     assets: Vec<Source>,
 }
 
+impl SourcesLock {
+    /// Where the release file `id` is pinned in `assets`.
+    fn position(&self, id: &str) -> Result<usize, String> {
+        (self.assets.iter())
+            .position(|source| source.id == id)
+            .ok_or_else(|| format!("the sources lock pins no {id}"))
+    }
+}
+
 /// A file of an upstream release, pinned.
 #[derive(Serialize, Deserialize)]
 struct Source {

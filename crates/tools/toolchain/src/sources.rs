@@ -115,11 +115,8 @@ pub(crate) fn update() -> Result<(), String> {
             .as_deref()
             .and_then(|digest| digest.strip_prefix("sha256:"))
             .ok_or_else(|| format!("GitHub gives no sha256 of {name}"))?;
-        let source = lock
-            .assets
-            .iter_mut()
-            .find(|source| source.id == id)
-            .ok_or_else(|| format!("the sources lock pins no {id}"))?;
+        let at = lock.position(id)?;
+        let source = &mut lock.assets[at];
         let order = |version: &str| {
             version
                 .split('.')

@@ -158,8 +158,7 @@ impl<'p> Checker<'p> {
     /// (`Type::Named`, a struct's once checked), so naming it checks nothing;
     /// an alias names its declared type (`Type::Alias`).
     pub fn named_type(&mut self, definition: DefId, used_at: Span) -> TypeId {
-        let tree = &self.modules[definition.module.index()].ast;
-        if let ast::Decl::Type(_) = tree.decls[tree.declaration(definition.index)] {
+        if let ast::Decl::Type(_) = project::declaration(self.modules, definition) {
             return self.types.intern(Type::Named(definition));
         }
         let target = self.declared_type(definition, used_at);
@@ -277,16 +276,16 @@ impl<'p> Checker<'p> {
     /// declaration names the next.
     fn report_cycle(&mut self, start: usize, closing: Span) {
         let modules = self.modules;
-        let declaration = |definition: DefId| {
-            let tree = &modules[definition.module.index()].ast;
-            &tree.decls[tree.declaration(definition.index)]
-        };
         let cycle = &self.checking[start..];
         let first = cycle[0].definition;
         let (first_name, first_file) = project::declared_name(modules, first);
-        let only_aliases = (cycle.iter())
-            .all(|asker| matches!(declaration(asker.definition), ast::Decl::Alias(_)));
-        let what = match declaration(first) {
+        let only_aliases = (cycle.iter()).all(|asker| {
+            matches!(
+                project::declaration(modules, asker.definition),
+                ast::Decl::Alias(_)
+            )
+        });
+        let what = match project::declaration(modules, first) {
             ast::Decl::Alias(_) if only_aliases => "is an alias of itself",
             ast::Decl::Type(_) | ast::Decl::Alias(_) => "holds itself",
             ast::Decl::Const { .. } | ast::Decl::Function(_) => "depends on itself",
@@ -308,7 +307,7 @@ impl<'p> Checker<'p> {
             .chain([(first, closing)]);
         for (step, (asker, (asked, span))) in cycle.iter().zip(asked).enumerate() {
             let asker = asker.definition;
-            let verb = match declaration(asker) {
+            let verb = match project::declaration(modules, asker) {
                 ast::Decl::Type(_) => "holds",
                 ast::Decl::Alias(_) => "is an alias of",
                 ast::Decl::Const { .. } | ast::Decl::Function(_) => "uses",

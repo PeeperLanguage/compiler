@@ -159,32 +159,30 @@ impl ThirBuilder<'_, '_> {
             }
         };
         let name = tree.file.slice(span);
-        match symbol {
-            Symbol::Local(Local::Variable(variable)) => Some(variable),
+        let (declared_in, declared) = match symbol {
+            Symbol::Local(Local::Variable(variable)) => return Some(variable),
             Symbol::Local(Local::Constant(constant)) => {
-                let declared = self.body.constants.span(constant);
-                self.checker.report(
-                    Diagnostic::new(
-                        diagnostics::CONSTANT_REASSIGNMENT,
-                        format!("cannot assign to constant `{name}`"),
-                    )
-                    .label(&tree.file, span, "")
-                    .label(&tree.file, declared, "declared as a constant here"),
-                );
-                None
+                (&tree.file, self.body.constants.span(constant))
             }
-            Symbol::Constant(_) => {
-                let message = format!("cannot assign to constant `{name}`");
-                self.checker
-                    .error(diagnostics::CONSTANT_REASSIGNMENT, message, span);
-                None
+            Symbol::Constant(definition) => {
+                let (declared, file) = project::declared_name(self.checker.modules, definition);
+                (file, declared.span)
             }
             _ => {
                 let message = format!("cannot assign to `{name}`, which is not a variable");
                 self.checker
                     .error(diagnostics::INVALID_ASSIGNMENT, message, span);
-                None
+                return None;
             }
-        }
+        };
+        self.checker.report(
+            Diagnostic::new(
+                diagnostics::CONSTANT_REASSIGNMENT,
+                format!("cannot assign to constant `{name}`"),
+            )
+            .label(&tree.file, span, "")
+            .label(declared_in, declared, "declared as a constant here"),
+        );
+        None
     }
 }
