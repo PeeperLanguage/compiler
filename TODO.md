@@ -172,6 +172,6 @@ The site lives in its own repo at `~/Dev/Peeper/Website` (fumadocs, Next.js).
 It is on GitHub as `PeeperLanguage/Website`.
 
 The docs show program outputs as saved text; the `/playground` page highlights,
-checks and runs code (see Browser (wasm) build). `public/peeper-check.wasm` is
+checks and runs code (see Browser (wasm) build). `public/peeper.wasm` is
 built with `npm run checker`, and the commit that updates it names the compiler
 commit it came from.

@@ -2,8 +2,10 @@ name: Release
 
 # On a version tag, builds peeper with its libraries, runtime and toolchain
 # on each machine CI tests, runs the fixtures with the archive unpacked
-# fresh, and drafts a GitHub release of the archives, their SHA256SUMS and
-# the install scripts that download them. A maintainer publishes the draft.
+# fresh, builds peeper.wasm (the checker and interpreter a web page runs,
+# crates/driver/browser), and drafts a GitHub release of the archives,
+# peeper.wasm, their SHA256SUMS and the install scripts that download them.
+# A maintainer publishes the draft.
 
 on:
   push:
@@ -74,9 +76,25 @@ jobs:
           if-no-files-found: error
           compression-level: 0 # already gzipped
 
+  wasm:
+    name: Build peeper.wasm
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - run: rustup target add wasm32-wasip1
+      - run: cargo build -p browser --profile wasm --target wasm32-wasip1
+      - run: node crates/driver/browser/smoke.mjs target/wasm32-wasip1/wasm/browser.wasm
+      - run: mkdir dist && cp target/wasm32-wasip1/wasm/browser.wasm dist/peeper.wasm
+      - uses: actions/upload-artifact@v7
+        with:
+          name: peeper-wasm
+          path: dist/peeper.wasm
+          if-no-files-found: error
+
   release:
     name: Draft the release
-    needs: build
+    needs: [build, wasm]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -99,4 +117,4 @@ jobs:
             --draft \
             --verify-tag \
             --title "Peeper $GITHUB_REF_NAME" \
-            --notes "Install with scripts/install.sh or scripts/install.ps1 (README.md)."
+            --notes "Install with scripts/install.sh or scripts/install.ps1 (README.md). peeper.wasm checks and runs Peeper in a web page (crates/driver/browser)."
