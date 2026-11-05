@@ -118,6 +118,7 @@ impl Checker<'_> {
         let tree = &self.module().ast;
         let declaration = tree.declaration(definition.index);
         let ast::Decl::Function(ast::Function {
+            owner,
             name,
             signature,
             body,
@@ -126,9 +127,6 @@ impl Checker<'_> {
         else {
             unreachable!("`{definition:?}` is a function declaration")
         };
-        if let Some(receiver) = signature.receiver {
-            return self.not_supported(tree.children.params.span(receiver), "methods");
-        }
         if let Some(parameter) = tree.children.lists.items(signature.type_parameters).next() {
             return self.not_supported(tree.children.names.span(parameter), "generic functions");
         }
@@ -155,6 +153,24 @@ impl Checker<'_> {
             if parameter.variadic && position + 1 != signature.parameters.len() {
                 let message = "a `...` parameter must be the last one";
                 return self.error(diagnostics::INVALID_DECLARATION, message, span);
+            }
+            // `self`, `&self` or `&mut self`: of the type the function
+            // belongs to.
+            let taken = match tree.types[parameter.ty] {
+                ast::Type::Reference { target, .. } => target,
+                _ => parameter.ty,
+            };
+            if matches!(tree.types[taken], ast::Type::Owner) {
+                let message = match (position, owner) {
+                    (0, Some(_)) => None,
+                    (0, None) => {
+                        Some("only a type's function takes `self`: `fn Point::name(&self)`")
+                    }
+                    _ => Some("`self` must be the first parameter"),
+                };
+                if let Some(message) = message {
+                    return self.error(diagnostics::INVALID_DECLARATION, message, span);
+                }
             }
             variadic |= parameter.variadic;
             parameters.push(self.resolve_signature_type(parameter.ty, external));
@@ -482,6 +498,23 @@ impl Checker<'_> {
             let tree = &self.module().ast;
             let span = tree.types.span(ty);
             let what = match tree.types[ty] {
+                // `self`'s type: the owner of the function being checked, which
+                // has one (`check_function`). An owner that is not a struct
+                // was reported by `scope::collect`.
+                ast::Type::Owner => {
+                    let checking = self.checking.last().expect("a function is being checked");
+                    let declaration = project::declaration(self.modules, checking.definition);
+                    let ast::Decl::Function(ast::Function {
+                        owner: Some(owner), ..
+                    }) = declaration
+                    else {
+                        unreachable!("only a type's function resolves `self`'s type")
+                    };
+                    let owner = self
+                        .scope()
+                        .struct_named(self.modules, owner.text(&tree.file));
+                    return owner.map_or(TypeId::INVALID, |owner| self.named_type(owner, span));
+                }
                 ast::Type::Name => {
                     let name = tree.file.slice(span);
                     let symbol = self.resolve_global(name);
@@ -645,7 +678,7 @@ mod tests {
     #[test]
     fn errors_are_located() {
         let (found, found_reported) = declared_types(
-            "fn a(x: Missing) {}\nfn b(m: utils) {}\nfn c(r: &i32) -> &i32 in q {}\nfn d<T>(x: T) {}\nfn e(x: i32 = 1) {}\nstruct P { x: i32 }\n#[extern(\"f\")]\nfn f(p: P);\nfn ok(p: P) -> P { return p; }\nfn g(x: a) {}\nfn (p: i32) method() {}\nfn h(s: str) {}\n",
+            "fn a(x: Missing) {}\nfn b(m: utils) {}\nfn c(r: &i32) -> &i32 in q {}\nfn d<T>(x: T) {}\nfn e(x: i32 = 1) {}\nstruct P { x: i32 }\n#[extern(\"f\")]\nfn f(p: P);\nfn ok(p: P) -> P { return p; }\nfn g(x: a) {}\nfn h(s: str) {}\nfn i(&self) {}\nfn P::j(a: i32, mut self) {}\n",
         );
         let expected = reported(&[
             ("T0002", "unknown type `Missing`", "Missing"),
@@ -659,8 +692,13 @@ mod tests {
                 "P",
             ),
             ("T0021", "`a` is a value, not a type", "a"),
-            ("T0043", "methods are not supported yet", "p: i32"),
             ("T0043", "string types are not supported yet", "str"),
+            (
+                "P0005",
+                "only a type's function takes `self`: `fn Point::name(&self)`",
+                "&self",
+            ),
+            ("P0005", "`self` must be the first parameter", "self"),
         ]);
         assert_eq!(found_reported, expected);
         let invalid = format!("{:?}", TypeId::INVALID);

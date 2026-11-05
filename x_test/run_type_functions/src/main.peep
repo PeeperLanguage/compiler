@@ -6,9 +6,11 @@ type P = g::Point;
 const Dimensions: i32 = g::Point::Dimensions();
 
 fn main() {
-    let p = g::Point::New(1, 2);
+    let mut p = g::Point::New(1, 2);
     let q = P::New(3, 4);
     println(g::Point::Sum(&p), P::Sum(&q), g::Sum(1, 2), Dimensions);
-    let line = g::Line::New(p, q);
+    g::Point::Shift(&mut p, 10);
+    println(g::Point::X(&p).*, g::Point::Into(g::Point::Swapped(q)));
+    let line = g::Line::New(p, P::New(5, 6));
     println(g::Line::Sum(&line));
 }

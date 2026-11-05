@@ -17,5 +17,8 @@ stderr_contains = [
     "[T0004]: `Limit` is not a module or a type",
     "[T0002]: unknown name `g` in type `Local`",
     "[T0004]: `Status` has no functions",
-    "Compilation failed with 11 error(s)",
+    "[P0005]: only a type's function takes `self`: `fn Point::name(&self)`",
+    "[P0005]: `self` must be the first parameter",
+    "[T0001]: mismatched types: expected `&Local`, found `Local`",
+    "Compilation failed with 15 error(s)",
 ]

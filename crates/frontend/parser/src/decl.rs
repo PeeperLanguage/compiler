@@ -48,7 +48,10 @@ pub(crate) fn starts_declaration(kind: TokenKind) -> bool {
 }
 
 fn starts_parameter(kind: TokenKind) -> bool {
-    kind == TokenKind::Mut || kind == TokenKind::Underscore || starts_type(kind)
+    matches!(
+        kind,
+        TokenKind::Mut | TokenKind::Underscore | TokenKind::SelfValue
+    ) || starts_type(kind)
 }
 
 impl Parser {
@@ -221,19 +224,12 @@ impl Parser {
         })
     }
 
-    /// Reads `(receiver) name<T>(parameters) -> Result in origins` after a
-    /// function's `fn`: its name and signature.
+    /// Reads `name<T>(parameters) -> Result in origins` after a function's
+    /// `fn` and owner: its name and signature.
     pub(crate) fn named_signature(&mut self) -> (Ident, Signature) {
-        let receiver = self.at(TokenKind::LeftParen).then(|| {
-            let open = self.next();
-            let receiver = self.parameter();
-            self.close(TokenKind::RightParen, open);
-            receiver
-        });
         let name = self.name();
         let type_parameters = self.type_parameters();
-        let signature =
-            self.signature(receiver, type_parameters, starts_parameter, Self::parameter);
+        let signature = self.signature(type_parameters, starts_parameter, Self::parameter);
         (name, signature)
     }
 
@@ -241,6 +237,16 @@ impl Parser {
     fn name_node(&mut self) -> Id<Name> {
         let name = self.name();
         self.tree.add(Name, name.span)
+    }
+
+    /// Reads what a returned reference may point into: a parameter's name, or
+    /// `self`.
+    fn origin(&mut self) -> Id<Name> {
+        if self.at(TokenKind::SelfValue) {
+            let span = self.next().span;
+            return self.tree.add(Name, span);
+        }
+        self.name_node()
     }
 
     /// Reads `<T, U>`; it may be left out.
@@ -272,9 +278,44 @@ impl Parser {
 
     /// Reads a function's parameter: `mut name: Type = default`, where `mut`,
     /// the name and the default may be left out, and the type may be `...T`
-    /// or `...mut T`.
+    /// or `...mut T`; or `self`, `mut self`, `&self` or `&mut self`, the
+    /// parameter `self` of the type the function belongs to.
     fn parameter(&mut self) -> Id<Param> {
         let start = self.tok().span.start;
+        let reference = self.at(TokenKind::Ampersand);
+        let mutable = self.ahead(usize::from(reference)).kind == TokenKind::Mut;
+        let before = usize::from(reference) + usize::from(mutable);
+        let word = self.ahead(before);
+        if word.kind == TokenKind::SelfValue {
+            for _ in 0..before {
+                self.next();
+            }
+            let name = Ident {
+                span: self.next().span,
+            };
+            let owner = self.add(word.span.start, Type::Owner);
+            let ty = if reference {
+                self.add(
+                    start,
+                    Type::Reference {
+                        mutable,
+                        target: owner,
+                    },
+                )
+            } else {
+                owner
+            };
+            return self.add(
+                start,
+                Param {
+                    mutable: mutable && !reference,
+                    name: Some(name),
+                    ty,
+                    variadic: false,
+                    default: None,
+                },
+            );
+        }
         let mut keyword = None;
         if self.at(TokenKind::Mut) {
             keyword = Some(self.next());
@@ -355,12 +396,11 @@ impl Parser {
     }
 
     /// Reads `(parameters) -> Type in origins`, each parameter with
-    /// `parameter`, into a signature with `receiver` and `type_parameters`
-    /// read before it. The result and the origins of a returned reference,
+    /// `parameter`, into a signature with the `type_parameters` read before
+    /// it. The result and the origins of a returned reference,
     /// `in name` or `in (a, b)`, may be left out.
     pub(crate) fn signature(
         &mut self,
-        receiver: Option<Id<Param>>,
         type_parameters: List<Name>,
         starts_parameter: fn(TokenKind) -> bool,
         parameter: impl FnMut(&mut Self) -> Id<Param>,
@@ -400,16 +440,15 @@ impl Parser {
                     TokenKind::LeftParen,
                     TokenKind::RightParen,
                     false,
-                    is_name,
-                    Self::name_node,
+                    |kind| is_name(kind) || kind == TokenKind::SelfValue,
+                    Self::origin,
                 );
             } else {
-                let origin = self.name_node();
+                let origin = self.origin();
                 origins = self.tree.children.lists.add(&[origin.into()]);
             }
         }
         Signature {
-            receiver,
             type_parameters,
             parameters,
             result,
@@ -418,9 +457,9 @@ impl Parser {
     }
 }
 
-/// Reads `fn (receiver) name<T>(parameters) -> Result in origins`, with
-/// `Owner::` before the name for a function of the type `Owner`, followed by
-/// a body, or by `;` for a function defined elsewhere.
+/// Reads `fn name<T>(parameters) -> Result in origins`, with `Owner::`
+/// before the name for a function of the type `Owner`, followed by a body,
+/// or by `;` for a function defined elsewhere.
 fn function_decl(p: &mut Parser, metadata: Metadata) -> Id<Decl> {
     let start = p.next().span.start;
     let owner = (p.at(TokenKind::Ident) && p.ahead(1).kind == TokenKind::ColonColon).then(|| {

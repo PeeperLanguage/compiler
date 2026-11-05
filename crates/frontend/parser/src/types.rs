@@ -211,7 +211,6 @@ impl Parser {
     fn function_type(&mut self) -> Id<Type> {
         let start = self.next().span.start;
         let signature = self.signature(
-            None,
             List::EMPTY,
             |kind| kind == TokenKind::Underscore || starts_type(kind),
             |p| {
@@ -273,9 +272,9 @@ impl Parser {
         self.add(start, Type::Enum(variants))
     }
 
-    /// Reads `{ fn (receiver) name(parameters) -> Result, ... }`, the methods of
-    /// an interface type that starts at `start`: function signatures without
-    /// bodies. A method needs a receiver and takes no default values.
+    /// Reads `{ fn name(parameters) -> Result, ... }`, the methods of an
+    /// interface type that starts at `start`: function signatures without
+    /// bodies. A method takes no default values.
     pub(crate) fn interface_type(&mut self, start: u32) -> Id<Type> {
         let methods = self.delimited(
             TokenKind::LeftBrace,
@@ -284,15 +283,9 @@ impl Parser {
             |kind| kind == TokenKind::Fn,
             |p| {
                 let start = p.next().span.start;
-                if !p.at(TokenKind::LeftParen) {
-                    p.expect(TokenKind::LeftParen);
-                }
                 let (name, signature) = p.named_signature();
-                let parameters: Vec<_> = signature
-                    .receiver
-                    .into_iter()
-                    .chain(p.tree.children.lists.items(signature.parameters))
-                    .collect();
+                let parameters: Vec<_> =
+                    p.tree.children.lists.items(signature.parameters).collect();
                 for parameter in parameters {
                     if let Some(value) = p.tree.children.params[parameter].default {
                         let span = p.tree.exprs.span(value);

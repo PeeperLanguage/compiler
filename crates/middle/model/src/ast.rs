@@ -200,8 +200,8 @@ impl Decl {
     }
 }
 
-/// `fn (receiver) name<T>(parameters) -> Result in origins { body }`, or
-/// with `;` for a body defined elsewhere; an interface method has no body.
+/// `fn Owner::name<T>(parameters) -> Result in origins { body }`, or with
+/// `;` for a body defined elsewhere; an interface method has no body.
 /// Everything but the owner, the name and the body is its signature.
 #[derive(Clone, Copy, Debug)]
 pub struct Function {
@@ -213,13 +213,12 @@ pub struct Function {
     pub body: Option<Id<Block>>,
 }
 
-/// A function's type: its receiver, type parameters, parameters, result and
-/// the origins of a returned reference. A function type `fn(T) -> R in a`
-/// has no receiver or type parameters, and its parameters only a name and a
-/// type.
+/// A function's type: its type parameters, parameters, result and the
+/// origins of a returned reference. A function type `fn(T) -> R in a` has no
+/// type parameters, and its parameters only a name and a type. A method's
+/// first parameter is `self`, of the type `Type::Owner`.
 #[derive(Clone, Copy, Debug)]
 pub struct Signature {
-    pub receiver: Option<Id<Param>>,
     pub type_parameters: List<Name>,
     pub parameters: List<Param>,
     pub result: Option<Id<Type>>,
@@ -293,6 +292,9 @@ pub enum Type {
     Enum(List<Variant>),
     /// `iface { methods }`
     Interface(List<Decl>), // `Decl::Function`s without bodies
+    /// The type the function belongs to, `Point` in `fn Point::sum(&self)`;
+    /// in an interface, the type that meets it. Only `self` has it.
+    Owner,
     /// a type that could not be parsed
     Invalid,
 }

@@ -46,6 +46,19 @@ impl<'p> Scope<'p> {
         self.names.get(&(owner, name)).map(|&(symbol, _)| symbol)
     }
 
+    /// The struct this module declares as `name`, the only type that can
+    /// have functions (`fn Point::name`); `None` for any other name. A type
+    /// here is always this module's: imports bring in modules, and the
+    /// prelude is not copied in.
+    pub(crate) fn struct_named(&self, modules: &[project::Module], name: &str) -> Option<DefId> {
+        match self.get(None, name) {
+            Some(Symbol::Type(definition)) if has_functions(modules, definition) => {
+                Some(definition)
+            }
+            _ => None,
+        }
+    }
+
     /// Every name of `owner` with what it stands for, in no order.
     pub fn symbols(&self, owner: Option<DefId>) -> impl Iterator<Item = (&'p str, Symbol)> {
         (self.names.iter())
@@ -164,9 +177,7 @@ pub fn collect<'p>(
     };
     for (index, declaration) in tree.declarations().enumerate() {
         let (name, symbol) = match tree.decls[declaration] {
-            ast::Decl::Function(function)
-                if function.owner.is_none() && function.signature.receiver.is_none() =>
-            {
+            ast::Decl::Function(function) if function.owner.is_none() => {
                 (function.name, Symbol::Function(definition(index)))
             }
             ast::Decl::Function(_) => continue, // a type's function, below
@@ -192,29 +203,26 @@ pub fn collect<'p>(
         else {
             continue;
         };
-        match scope.get(None, owner.text(file)) {
-            Some(Symbol::Type(owner)) if owner.module == id && has_functions(modules, owner) => {
-                let symbol = Symbol::Function(definition(index));
-                diagnostics.extend(declare(
-                    &mut scope,
-                    Some(owner),
-                    name.text(file),
-                    symbol,
-                    name.span,
-                ));
-            }
-            _ => {
-                let message = format!(
-                    "`{}` is not a struct declared in this module",
-                    owner.text(file)
-                );
-                diagnostics.push(
-                    Diagnostic::new(diagnostics::INVALID_DECLARATION, message)
-                        .label(file, owner.span, "")
-                        .note("a type's functions are declared in the module of the type"),
-                );
-            }
-        }
+        let Some(owner_struct) = scope.struct_named(modules, owner.text(file)) else {
+            let message = format!(
+                "`{}` is not a struct declared in this module",
+                owner.text(file)
+            );
+            diagnostics.push(
+                Diagnostic::new(diagnostics::INVALID_DECLARATION, message)
+                    .label(file, owner.span, "")
+                    .note("a type's functions are declared in the module of the type"),
+            );
+            continue;
+        };
+        let symbol = Symbol::Function(definition(index));
+        diagnostics.extend(declare(
+            &mut scope,
+            Some(owner_struct),
+            name.text(file),
+            symbol,
+            name.span,
+        ));
     }
     scope
 }
@@ -240,7 +248,7 @@ mod tests {
 
     #[test]
     fn declarations_and_imports() {
-        let text = "import \"app:utils\";\nfn main() { const K: i32 = 1; later(); }\nfn later() {}\nconst Limit: i32 = 4;\nstruct Point { x: i32 }\nfn (p: Point) length() -> i32 { return 0; }\nfn Point::origin() -> Point { return .{ x = 0 }; }\n";
+        let text = "import \"app:utils\";\nfn main() { const K: i32 = 1; later(); }\nfn later() {}\nconst Limit: i32 = 4;\nstruct Point { x: i32 }\nfn Point::length(&self) -> i32 { return 0; }\nfn Point::origin() -> Point { return .{ x = 0 }; }\n";
         let (utils, global) = (ModuleId::from_index(0), ModuleId::from_index(1));
         let imports = vec![
             Import {

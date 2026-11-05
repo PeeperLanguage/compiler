@@ -1,13 +1,15 @@
 use super::*;
 
 #[test]
-fn keywords() {
-    for &kind in KEYWORDS {
-        assert_eq!(keyword(kind.text()), Some(kind));
+fn keywords_and_names() {
+    for &kind in KEYWORDS.iter().chain(NAMES) {
+        assert_eq!(word_kind(kind.text()), Some(kind));
     }
-    for name in ["name", "f", "fns", "_x", "while"] {
-        assert_eq!(keyword(name), None, "{name}");
+    for name in ["name", "f", "fns", "_x", "while", "selfish", "Self"] {
+        assert_eq!(word_kind(name), None, "{name}");
     }
+    let (tokens, _) = scan_text("self true false");
+    assert_eq!(tokens, "self:self true:true false:false");
 }
 
 /// The tokens of `text` as "kind:text" (end of file left out) and the error

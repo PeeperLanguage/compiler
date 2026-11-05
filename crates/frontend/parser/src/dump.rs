@@ -283,10 +283,9 @@ impl<'t> Dumper<'t> {
     }
 
     /// A signature's parts, with the function's `name`, if any, in source
-    /// order after the receiver.
+    /// order.
     fn signature(&self, name: Option<Ident>, signature: Signature) -> Vec<Item> {
-        let mut nested: Vec<Item> = signature.receiver.map(Item::Param).into_iter().collect();
-        nested.extend(name.map(declared));
+        let mut nested: Vec<Item> = name.map(declared).into_iter().collect();
         nested.extend(self.names("declared name", signature.type_parameters));
         let parameters = self.tree.children.lists.items(signature.parameters);
         nested.extend(parameters.map(Item::Param));
@@ -320,6 +319,7 @@ impl<'t> Dumper<'t> {
             Type::Pointer(target) => ("pointer type", None, one(target)),
             Type::Optional(inner) => ("optional type", None, one(inner)),
             Type::RawPointer => ("raw pointer type", None, vec![]),
+            Type::Owner => ("self type", None, vec![]),
             Type::FixedArray { length, element } => {
                 let length = match length {
                     Length::Number(span) => Item::Leaf("number literal", span),

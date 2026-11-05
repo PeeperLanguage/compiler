@@ -13,6 +13,16 @@ fn Missing::f() {}
 fn Local::f() {}
 fn Local::f() {}
 
+// `self` is the first parameter of a type's function.
+fn plain(&self) {}
+fn Local::late(step: i32, &self) {}
+fn Missing::get(&self) -> i32 {
+    return self.x;
+}
+fn Local::get(&self) -> i32 {
+    return self.x;
+}
+
 fn main() {
     let a = g::Point::Nw(1, 2);
     let b = g::Point::make(1, 2);
@@ -21,4 +31,7 @@ fn main() {
     let e = Local::g();
     // Only a struct has functions; an enum's variants are not supported yet.
     let f = Status::Ready;
+    // `&self` takes a reference; the call does not borrow by itself.
+    let local = Local.{ x = 1 };
+    let g = Local::get(local);
 }

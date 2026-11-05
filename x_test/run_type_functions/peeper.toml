@@ -4,4 +4,4 @@ build = "program"
 [test]
 mode = "run"
 outcome = "success"
-stdout_contains = ["3 7 12 2\n10\n"]
+stdout_contains = ["3 7 12 2\n11 403\n24\n"]
