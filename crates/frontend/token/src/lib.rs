@@ -400,7 +400,7 @@ tokens! {
         Enum = "enum",
         /// Declares a function.
         ///
-        /// A function takes parameters, each with its type, and gives a result of the type after `->`; without `->` it gives nothing. A function whose name starts with an upper case letter is exported: other modules can call it.
+        /// A function takes parameters, each with its type, and gives a result of the type after `->`; without `->` it gives nothing. A function whose name starts with an upper case letter is exported: other modules can call it. `fn Point::name` declares a function of the struct `Point`, in `Point`'s module: it is called `Point::name(...)`, or `p.name(...)` when it takes `self`.
         ///
         /// ```peeper
         /// fn add(a: i32, b: i32) -> i32 {
@@ -593,7 +593,7 @@ tokens! {
         False = "false",
         /// The value a type's function is called on: its first parameter.
         ///
-        /// `self` takes the value, `mut self` takes it to change it, `&self` borrows it, and `&mut self` borrows it to change it. Its type is the type the function belongs to.
+        /// `self` takes the value, `mut self` takes it to change it, `&self` borrows it, and `&mut self` borrows it to change it. Its type is the type the function belongs to, so none is written after it.
         ///
         /// ```peeper
         /// fn Point::sum(&self) -> i32 {

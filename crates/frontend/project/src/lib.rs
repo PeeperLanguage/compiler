@@ -63,6 +63,11 @@ pub fn declared_text(modules: &[Module], definition: DefId) -> &str {
     name.text(file)
 }
 
+/// Whether other modules can use `name`: it starts with an upper case letter.
+pub fn is_exported(name: &str) -> bool {
+    name.starts_with(char::is_uppercase)
+}
+
 /// The name of the declaration `definition` of `modules` as a program calls
 /// it: its own name, or `Owner::name` for a function of the type `Owner`.
 pub fn declared_path(modules: &[Module], definition: DefId) -> String {

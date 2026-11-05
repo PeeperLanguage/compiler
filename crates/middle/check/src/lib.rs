@@ -391,7 +391,7 @@ impl<'p> Checker<'p> {
         let in_prelude = || {
             self.prelude()?
                 .get(None, name)
-                .filter(|_| scope::is_exported(name))
+                .filter(|_| project::is_exported(name))
         };
         self.scope().get(None, name).or_else(in_prelude)
     }
@@ -487,14 +487,14 @@ impl<'p> Checker<'p> {
             let meant = scope::nearest(
                 name,
                 std::iter::empty(),
-                declared.filter(|declared| !elsewhere || scope::is_exported(declared)),
+                declared.filter(|declared| !elsewhere || project::is_exported(declared)),
             );
             let message = format!("unknown name `{name}` in {place} `{head}`");
             self.report_unknown(diagnostics::UNDEFINED_NAME, span, message, meant);
             return None;
         };
         self.record(span, FactKind::Name(found));
-        if elsewhere && !scope::is_exported(name) {
+        if elsewhere && !project::is_exported(name) {
             self.report(
                 Diagnostic::new(
                     diagnostics::NOT_EXPORTED,
@@ -531,7 +531,7 @@ impl<'p> Checker<'p> {
             .prelude()
             .into_iter()
             .flat_map(|scope| scope.symbols(None));
-        let exported = prelude.filter(|&(name, _)| scope::is_exported(name));
+        let exported = prelude.filter(|&(name, _)| project::is_exported(name));
         self.scope().symbols(None).chain(exported)
     }
 

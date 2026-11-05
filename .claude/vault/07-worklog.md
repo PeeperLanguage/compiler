@@ -719,3 +719,29 @@ ran `check.sh` fully green.
   `mir_type_functions`. The `.` hover doc now names dot calls.
   `bash scripts/check.sh` passed.
 - Not done: LSP hover and rename on a dot call are not checked.
+
+## 2026-11-05 Methods step 4: docs, `self` hover, example
+
+- Hover on `self`, on the parameter and on each use, shows its binding with
+  the owner's type, `self: &P` or `mut self: P`, then the doc of `self`
+  (owner, 2026-11-05). `token_doc_at` finds the variable fact at the token,
+  or the declaration a use points at, as it finds a literal's type; the
+  binding's text (`binding`) is shared with `declaration_of`.
+- `self` takes no type (owner, 2026-11-05): `self: i32` stays a parse
+  error, the grammar's, not a meaning rule. Its doc says none is written.
+- The `fn` doc names a type's functions and both ways to call them; the
+  `.` doc names dot calls (step 3).
+- Editor: hover and go to definition on `p.Sum` and on `P::Sum` reach the
+  declaration. The LSP has no rename.
+- Hover on a struct lists its functions under it, each up to its body
+  (owner, 2026-11-05); from another module only the exported ones, as only
+  those can be called there. `write_functions` walks the struct's module
+  once: a type's functions are declared there, where its name names one
+  declaration. `is_exported` moved from check's `scope` to `project`, so
+  check and the editor share one export rule.
+- `examples/18_type_functions.peep`: by path, `&self`, `&mut self`, `self`,
+  through a reference, on a temporary; the same output on x86-64 and i686.
+- Tests: `answers_on_a_types_functions` (both `self` hovers, `mut self`,
+  hover and definition by dot and by path, a struct with a private
+  function); `names_across_modules` (another module's struct hides its
+  private function). Each fails without its change.

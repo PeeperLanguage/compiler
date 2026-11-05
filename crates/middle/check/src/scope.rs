@@ -94,11 +94,6 @@ pub(crate) fn has_functions(modules: &[project::Module], definition: DefId) -> b
     }
 }
 
-/// Whether other modules can use `name`: it starts with an upper case letter.
-pub(crate) fn is_exported(name: &str) -> bool {
-    name.starts_with(char::is_uppercase)
-}
-
 /// The name nearest to `name` (`nearest_name`): one of `first`, else one of
 /// `declared`. A name of `first` wins a tie. Declared names come in hash
 /// order, which cannot change the answer: two names that tie suggest nothing.
