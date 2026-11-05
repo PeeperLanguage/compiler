@@ -356,7 +356,9 @@ fn find_entry_point(checker: &mut Checker, entry: ModuleId) -> Result<(DefId, bo
         .enumerate()
         .find_map(|(index, declaration)| match tree.decls[declaration] {
             ast::Decl::Function(function)
-                if function.body.is_some() && function.name.text(&tree.file) == "main" =>
+                if function.owner.is_none()
+                    && function.body.is_some()
+                    && function.name.text(&tree.file) == "main" =>
             {
                 Some((
                     DefId {
@@ -527,6 +529,12 @@ fn interface(checker: &Checker, module: ModuleId, done: &[ModuleResults]) -> u64
         let decl = &tree.decls[declaration];
         std::mem::discriminant(decl).hash(&mut hasher);
         decl.name().text(&tree.file).hash(&mut hasher);
+        if let ast::Decl::Function(function) = decl {
+            function
+                .owner
+                .map(|owner| owner.text(&tree.file))
+                .hash(&mut hasher);
+        }
         // A declaration's result is in one table; the other slots are
         // `NotStarted`.
         if let State::Done(ty) = declared_types[index] {

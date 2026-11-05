@@ -41,7 +41,7 @@ use source::Span;
 pub struct Checker<'p> {
     pub modules: &'p [project::Module], // in the program's order
     /// What checking each module found so far, by `ModuleId`.
-    pub module_checks: Vec<ModuleChecks>,
+    pub module_checks: Vec<ModuleChecks<'p>>,
     pub types: Types, // the program's types, built-in and declared
     /// The machine the program is for: the width of `isize` and `usize` is
     /// its `pointer_bits`, and a value may take its `largest_object` bytes.
@@ -73,11 +73,11 @@ struct Checking {
 /// table of declarations holds a slot for each top-level declaration, by
 /// its place; a slot whose declaration's kind it does not hold stays
 /// `NotStarted`.
-pub struct ModuleChecks {
+pub struct ModuleChecks<'p> {
     /// The names the module declares and imports, collected before anything
     /// is asked for: a body can use a name declared below it or in another
     /// module.
-    scope: Scope,
+    scope: Scope<'p>,
     /// Each type declaration, alias and function: the type it declares
     /// (`check_type_declaration`), or the function's type (`check_function`).
     pub declared_types: Vec<State<TypeId>>,
@@ -203,7 +203,7 @@ impl<'p> Checker<'p> {
         &mut self,
         definition: DefId,
         used_at: Span,
-        table: fn(&mut ModuleChecks) -> &mut Vec<State<T>>,
+        table: for<'m> fn(&'m mut ModuleChecks<'p>) -> &'m mut Vec<State<T>>,
         on_cycle: T,
         check: fn(&mut Self, DefId) -> T,
     ) -> T {
@@ -288,7 +288,7 @@ impl<'p> Checker<'p> {
             ast::Decl::Type(_) | ast::Decl::Alias(_) => "holds itself",
             ast::Decl::Const { .. } | ast::Decl::Function(_) => "depends on itself",
         };
-        let first_text = first_name.text(first_file);
+        let first_text = project::declared_path(modules, first);
         let mut diagnostic = Diagnostic::new(
             diagnostics::CIRCULAR_DEPENDENCY,
             format!("`{first_text}` {what}"),
@@ -310,10 +310,9 @@ impl<'p> Checker<'p> {
                 ast::Decl::Alias(_) => "is an alias of",
                 ast::Decl::Const { .. } | ast::Decl::Function(_) => "uses",
             };
-            let (asker_name, file) = project::declared_name(modules, asker);
-            let (asked_name, asked_file) = project::declared_name(modules, asked);
-            let asker_text = asker_name.text(file);
-            let asked_text = asked_name.text(asked_file);
+            let file = &modules[asker.module.index()].ast.file;
+            let asker_text = project::declared_path(modules, asker);
+            let asked_text = project::declared_path(modules, asked);
             let closes = if step + 1 == cycle.len() {
                 ", closing the cycle"
             } else {
@@ -351,7 +350,7 @@ impl<'p> Checker<'p> {
     }
 
     /// The names the module being checked declares and imports.
-    pub(crate) fn scope(&self) -> &Scope {
+    pub(crate) fn scope(&self) -> &Scope<'p> {
         &self.module_checks[self.current_module().index()].scope
     }
 
@@ -391,16 +390,17 @@ impl<'p> Checker<'p> {
         }
         let in_prelude = || {
             self.prelude()?
-                .get(name)
-                .filter(|_| scope::is_exported(name))
+                .get(None, name)
+                .filter(|_| project::is_exported(name))
         };
-        self.scope().get(name).or_else(in_prelude)
+        self.scope().get(None, name).or_else(in_prelude)
     }
 
-    /// What the path `module::name` written as the type expression `path`
-    /// stands for, reporting a path that names nothing or is not supported.
-    /// Another module's name is reachable only if it starts with an upper case
-    /// letter.
+    /// What the path written as the type expression `path` stands for:
+    /// `module::name`, `Type::name` for a function of `Type`, or
+    /// `module::Type::name`. A path that names nothing or is not supported is
+    /// reported. Another module's name is reachable only if it starts with an
+    /// upper case letter.
     pub(crate) fn resolve_path(&mut self, path: Id<ast::Type>) -> Option<Symbol> {
         let tree = &self.module().ast;
         let span = tree.types.span(path);
@@ -416,60 +416,98 @@ impl<'p> Checker<'p> {
             self.not_supported(span, "paths with type arguments");
             return None;
         }
-        let [module, member] = segments[..] else {
-            self.not_supported(span, "paths of more than two names");
+        // Each name after the first is looked up in what the one before it
+        // names: a module's own names, or a type's functions, which the
+        // module that declares the type holds under the type's id.
+        let (&first, rest) = segments.split_first().expect("a path has a name");
+        let (mut head, mut head_span) = (
+            tree.file.slice(tree.types.span(first)),
+            tree.types.span(first),
+        );
+        let Some(mut symbol) = self.resolve_global(head) else {
+            self.report_unknown_name(head, head_span, std::iter::empty());
             return None;
         };
-        let (module_span, member_span) = (tree.types.span(module), tree.types.span(member));
-        let (module_name, member_name) =
-            (tree.file.slice(module_span), tree.file.slice(member_span));
-        let imported = match self.resolve_global(module_name) {
-            Some(symbol @ Symbol::Module(imported)) => {
-                self.record(module_span, FactKind::Name(symbol));
-                imported
-            }
-            Some(Symbol::Type(_)) => {
-                self.not_supported(span, "paths into types");
-                return None;
-            }
-            Some(_) => {
-                let message = format!("`{module_name}` is not a module");
-                self.error(diagnostics::INVALID_OPERATION, message, module_span);
-                return None;
-            }
-            None => {
-                self.report_unknown_name(module_name, module_span, std::iter::empty());
-                return None;
-            }
-        };
-        let members = &self.module_checks[imported.index()].scope;
-        let Some(symbol) = members.get(member_name) else {
-            let exported = members.symbols().map(|(declared, _)| declared);
+        self.record(head_span, FactKind::Name(symbol));
+        for &member in rest {
+            let owner = match symbol {
+                Symbol::Type(definition) => {
+                    let named = self.named_type(definition, head_span);
+                    match self.types[self.types.real(named)] {
+                        Type::Named(owner)
+                        | Type::Struct {
+                            definition: owner, ..
+                        } => Some(owner).filter(|&owner| scope::has_functions(self.modules, owner)),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            let (place, module) = match (symbol, owner) {
+                (Symbol::Module(imported), _) => ("module", imported),
+                (_, Some(owner)) => ("type", owner.module),
+                (Symbol::Type(_) | Symbol::Builtin(_), None) => {
+                    let message = format!("`{head}` has no functions");
+                    self.error(diagnostics::INVALID_OPERATION, message, head_span);
+                    return None;
+                }
+                _ => {
+                    let message = format!("`{head}` is not a module or a type");
+                    self.error(diagnostics::INVALID_OPERATION, message, head_span);
+                    return None;
+                }
+            };
+            let member_span = tree.types.span(member);
+            let found = self.member(module, owner, place, head, member_span)?;
+            (symbol, head, head_span) = (found, tree.file.slice(member_span), member_span);
+        }
+        Some(symbol)
+    }
+
+    /// What the name written at `span` stands for among the names of `owner`
+    /// in `module`: the module's own names when `owner` is `None`, else the
+    /// functions of the type `owner`. `place` and `head` name where, for
+    /// messages: "module `utils`", "type `Point`". An unknown name is
+    /// reported with the nearest one; another module's name is reachable
+    /// only if it starts with an upper case letter.
+    pub(crate) fn member(
+        &mut self,
+        module: ModuleId,
+        owner: Option<DefId>,
+        place: &str,
+        head: &str,
+        span: Span,
+    ) -> Option<Symbol> {
+        let file = &self.module().ast.file;
+        let name = file.slice(span);
+        let elsewhere = module != self.current_module();
+        let members = &self.module_checks[module.index()].scope;
+        let Some(found) = members.get(owner, name) else {
+            let declared = members.symbols(owner).map(|(declared, _)| declared);
             let meant = scope::nearest(
-                member_name,
+                name,
                 std::iter::empty(),
-                exported.filter(|declared| scope::is_exported(declared)),
+                declared.filter(|declared| !elsewhere || project::is_exported(declared)),
             );
-            let message = format!("unknown name `{member_name}` in module `{module_name}`");
-            self.report_unknown(diagnostics::UNDEFINED_NAME, member_span, message, meant);
+            let message = format!("unknown name `{name}` in {place} `{head}`");
+            self.report_unknown(diagnostics::UNDEFINED_NAME, span, message, meant);
             return None;
         };
-        self.record(member_span, FactKind::Name(symbol));
-        if !scope::is_exported(member_name) {
-            let file = &tree.file;
+        self.record(span, FactKind::Name(found));
+        if elsewhere && !project::is_exported(name) {
             self.report(
                 Diagnostic::new(
                     diagnostics::NOT_EXPORTED,
-                    format!("`{member_name}` is not exported from `{module_name}`"),
+                    format!("`{name}` is not exported from `{head}`"),
                 )
-                .label(file, member_span, "")
+                .label(file, span, "")
                 .note(
                     "names that start with an upper case letter are exported; others are private",
                 ),
             );
             return None;
         }
-        Some(symbol)
+        Some(found)
     }
 
     /// Reports `name`, written at `span`, which nothing in scope declares,
@@ -489,13 +527,16 @@ impl<'p> Checker<'p> {
     /// The names the module uses unqualified, with what each stands for: its
     /// scope's, then the prelude's exported ones.
     pub(crate) fn visible_symbols(&self) -> impl Iterator<Item = (&str, Symbol)> {
-        let prelude = self.prelude().into_iter().flat_map(Scope::symbols);
-        let exported = prelude.filter(|&(name, _)| scope::is_exported(name));
-        self.scope().symbols().chain(exported)
+        let prelude = self
+            .prelude()
+            .into_iter()
+            .flat_map(|scope| scope.symbols(None));
+        let exported = prelude.filter(|&(name, _)| project::is_exported(name));
+        self.scope().symbols(None).chain(exported)
     }
 
     /// The prelude's scope; `None` while checking the prelude itself.
-    fn prelude(&self) -> Option<&Scope> {
+    fn prelude(&self) -> Option<&Scope<'p>> {
         Some(&self.module_checks[self.scope().parent?.index()].scope)
     }
 

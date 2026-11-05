@@ -577,3 +577,171 @@ ran `check.sh` fully green.
   type table) keeps its name; the owner: "types already mean the semantic
   type".
 - **Evidence:** `bash scripts/check.sh` passed.
+
+## 2026-11-04 Methods: one name table keyed by (owner, name)
+
+- **Decided (owner):** a method is a top-level declaration with an owner
+  (`ast::Function.owner`), found in the module's one name table under
+  (owner's `DefId`, name), so interface methods later use the same lookup.
+  The single-level key `(Option<DefId>, &'p str)`, with names borrowed from
+  the program's text, was chosen over two levels
+  (`Option<DefId>` -> `Box<str>` -> symbol).
+- **Benchmark** (`scripts/bench-instructions.py`, instructions per compile,
+  a program with no type functions):
+
+  | Version | Runs | Mean | Range | vs `main` |
+  | --- | --- | --- | --- | --- |
+  | `main` (`22b9728b`) | 5 | 3,787.7 M | 3,780.4 - 3,797.1 | |
+  | single level (chosen) | 6 | 3,784.8 M | 3,775.6 - 3,792.7 | -0.08% (noise) |
+  | two levels | 5 | 3,815.2 M | 3,801.6 - 3,821.9 | +0.73% |
+
+  One run varies by up to 0.45%, so each version ran five or six times; the
+  two-level range does not overlap the others.
+
+## 2026-11-04 Methods step 1: a type's functions, called by path
+
+- `fn Point::name(...)` is a top-level declaration with an owner
+  (`ast::Function.owner`). `scope::collect` declares it under the struct's
+  `DefId`; the owner must be a struct of the same module
+  (`` `X` is not a struct declared in this module ``). `resolve_path` reads
+  `Type::name` and `module::Type::name` in one loop. Nothing below check
+  changed.
+- `project::declared_path` gives `Point::name` for the link name
+  (`module.Point::name`) and the debug info name.
+- Fixed on the way: `fn App::main` was taken as the entry point; moving a
+  function to another type did not check importers again; `i32::f()` said
+  "`i32` is not a module or a type".
+- Tests: parser dump, `scope` (duplicate "in this type"), two `compile` tests
+  (each fails without its fix), fixtures `run_type_functions`,
+  `run_i686_type_functions`, `negative_type_functions`.
+- `bash scripts/check.sh` passed.
+- After review: `-dump thir`/`-dump mir` and cycle errors name a type's
+  function `Point::Sum` too (`mir::Body::text`/`thir::Body::text` take any
+  printable name, as `Types::text` does). Tests: fixture
+  `mir_type_functions`, a `Point::E` cycle in `a_cycle_is_reported_once_with_its_path`.
+  `check.sh` passed again.
+- Second review: `Status::Ready` on an enum said "unknown name `Ready` in
+  type `Status`" (it said "not supported yet" before). `scope::has_functions`
+  now holds the one rule, only a struct has functions, for `collect` and
+  `resolve_path`; the enum gets "`Status` has no functions"
+  (`negative_type_functions`). `check.sh` passed.
+- Not done: LSP hover and rename for a type's function were not looked at.
+
+## 2026-11-05 Methods step 2: `self`
+
+- `self`, `mut self`, `&self`, `&mut self` are the first ordinary parameter,
+  of the new syntax node `ast::Type::Owner` (the owner's choice over pointing
+  at the owner's name). The Go receiver `fn (p: T) name()` and
+  `Signature.receiver` are gone. Binding `self`, `in self`, the function's
+  type, MIR, the interpreter and LLVM did not change.
+- Check resolves `Owner` from the declaration being checked
+  (`checking.last()`, as `current_module`), through `Scope::struct_named`,
+  which `collect` uses too. `check_function` holds the rules: `self` first,
+  and only in a type's function. First built in the parser; moved to check
+  after the owner's correction ("Parsers main job is to parse").
+- A panic found by a probe: `fn plain(&self)` reached `Owner` with no owner.
+  Now `check_function` refuses it before any type is resolved.
+- Benchmark (`scripts/bench-instructions.py`, one compile, no methods in the
+  program):
+
+  | Version | Runs | Mean | Range |
+  | --- | --- | --- | --- |
+  | `1bffb550` (step 1) | 5 | 3,795.3 M | 3,790.2 - 3,798.5 |
+  | step 2 | 5 | 3,808.5 M | 3,805.9 - 3,810.6 |
+  | step 2 without the parser's `self` lookahead | 3 | 3,799.9 M | 3,793.9 - 3,805.2 |
+
+  +0.35%; about two thirds of it goes with the parser's lookahead (a text
+  compare with `self` on each of the 40,000 parameters). A sampled
+  `perf record` per function was too noisy to use.
+- The two designs for `self`'s type, run back to back (5 runs each):
+  owner type node (kept) 3,802.4 M (3,799.7 - 3,805.7); pointing at the
+  owner's name 3,806.1 M (3,798.8 - 3,820.9, one high run). The same within
+  noise: the program has no `self`, and both share the parser's lookahead.
+  Pointing at the name needs the parser to refuse `self` without an owner,
+  cannot type an interface's `self`, reports `fn Missing::f(&self)` twice,
+  and check must find `self` by its text. Patches:
+  `target/self-owner-node.patch`, `target/self-owner-name.patch`.
+- `self` is a special name (owner, 2026-11-05): "like true, false. binding
+  but a special one", not a keyword and not colored as one. `token` has a
+  `#[names]` section (`false`, `self`, `true`) with its own `NAMES` list;
+  `KEYWORDS` no longer holds `true`/`false`, so error output stops coloring
+  them like `fn`. The parser compares token kinds only (`TokenKind::SelfValue`
+  in `parameter`, `starts_parameter`, an `origin` reader for `in self`, and
+  a prefix rule for `self` in expressions); `let self = 1` is now a parse
+  error.
+- Speed of the token (5 runs each, against `1bffb550`):
+
+  | Version | Mean | Range | vs `1bffb550` |
+  | --- | --- | --- | --- |
+  | text compare in the parser | 3,808.5 M | 3,805.9 - 3,810.6 | +0.35% |
+  | `self` token, second lexer table for names | 3,838.6 M | 3,828.7 - 3,849.2 | +1.0% |
+  | `self` token, one merged table (kept) | 3,777.5 M | 3,772.7 - 3,783.3 | +0.02% (noise) |
+
+  The second table cost a lookup on every word that is not a keyword; the
+  lexer now merges `KEYWORDS` and `NAMES` by first byte at compile time
+  (`WORDS`), so each word costs one lookup as before.
+- Not done: an interface method must take `self` first. The parser rule was
+  removed (parsers only parse); check refuses interfaces as not supported,
+  so the rule is added to check when interfaces are checked.
+- Tests: parser (four forms, the dump, the Go receiver is a parse error),
+  check (`errors_are_located`: both `self` rules), fixtures
+  `run_type_functions`, `run_i686_type_functions` (all four forms and
+  `in self`; LLVM and the interpreter agree), `negative_type_functions`.
+  `bash scripts/check.sh` passed.
+
+## 2026-11-05 Methods step 3: calls with a dot
+
+- `p.sum()` calls the function `sum` of `p`'s struct and gives `p` as its
+  `self`. Taken as recommended when the owner said "continue": `Point::sum(p)`
+  does not borrow `p` by itself (as in Rust); a function may share a field's
+  name (`c.value` and `c.value()`); the call stays
+  `Call { callee: Selector }`, with no new node.
+- How: `check_call`'s dot branch (`ThirBuilder::method`) checks `p`, goes
+  through a reference (`through_pointer`), and looks the name up with the
+  struct's `DefId` as owner through `Checker::member`, taken out of
+  `resolve_path` so a path and a dot share one lookup, suggestion and
+  export rule. `takes_self` refuses a function without `self` ("call it as
+  `Point::new(...)`"); `is_self` is shared with `check_function`. `&self`
+  and `&mut self` borrow the place with `check_borrow`; `self` takes the
+  place itself, so moves and loans come from the existing flow checks.
+  Nothing below check changed: the MIR of `line.Sum()` is the MIR of
+  `Line::Sum(&line)`.
+- Differs from the plan's table: `&mut self` on a temporary
+  (`P::New(1).Bump()`) is accepted, the same as writing `&mut P::New(1)`.
+- Speed (5 runs each, against `2aff6689`): 3,777.3 M (3,769.1 - 3,788.1)
+  against 3,778.4 M (3,775.9 - 3,781.9), noise. The benchmark program has
+  no dot calls. Log: `target/bench-dot-calls.log`.
+- Tests: fixtures `run_type_functions`, `run_i686_type_functions` (through
+  `&`, `&mut`, a temporary, a by-value chain; LLVM and the interpreter
+  agree), `negative_type_functions` (no `self`, unknown and unexported
+  names, wrong count, `&mut` of an immutable place),
+  `negative_method_moves` (moving out of a reference, use after a move),
+  `mir_type_functions`. The `.` hover doc now names dot calls.
+  `bash scripts/check.sh` passed.
+- Not done: LSP hover and rename on a dot call are not checked.
+
+## 2026-11-05 Methods step 4: docs, `self` hover, example
+
+- Hover on `self`, on the parameter and on each use, shows its binding with
+  the owner's type, `self: &P` or `mut self: P`, then the doc of `self`
+  (owner, 2026-11-05). `token_doc_at` finds the variable fact at the token,
+  or the declaration a use points at, as it finds a literal's type; the
+  binding's text (`binding`) is shared with `declaration_of`.
+- `self` takes no type (owner, 2026-11-05): `self: i32` stays a parse
+  error, the grammar's, not a meaning rule. Its doc says none is written.
+- The `fn` doc names a type's functions and both ways to call them; the
+  `.` doc names dot calls (step 3).
+- Editor: hover and go to definition on `p.Sum` and on `P::Sum` reach the
+  declaration. The LSP has no rename.
+- Hover on a struct lists its functions under it, each up to its body
+  (owner, 2026-11-05); from another module only the exported ones, as only
+  those can be called there. `write_functions` walks the struct's module
+  once: a type's functions are declared there, where its name names one
+  declaration. `is_exported` moved from check's `scope` to `project`, so
+  check and the editor share one export rule.
+- `examples/18_type_functions.peep`: by path, `&self`, `&mut self`, `self`,
+  through a reference, on a temporary; the same output on x86-64 and i686.
+- Tests: `answers_on_a_types_functions` (both `self` hovers, `mut self`,
+  hover and definition by dot and by path, a struct with a private
+  function); `names_across_modules` (another module's struct hides its
+  private function). Each fails without its change.

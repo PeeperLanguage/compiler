@@ -5,7 +5,9 @@ use std::num::NonZeroU32;
 
 use arena::Id;
 use arena::List;
+use model::DefId;
 use model::ast;
+use model::ast::Ident;
 use model::constant::Constant;
 use model::constant::Value;
 use model::semantic_types::Type;
@@ -19,6 +21,7 @@ use rustc_hash::FxHashSet;
 use source::Span;
 
 use crate::builder::ThirBuilder;
+use crate::declaration::is_self;
 
 impl ThirBuilder<'_, '_> {
     /// `print(values)`, or `println(values)` when `newline`: each value of a
@@ -107,8 +110,9 @@ impl ThirBuilder<'_, '_> {
     }
 
     /// `callee(arguments)`, written at `span`. Only a module's function, by
-    /// its name or its path, can be called. A `...` parameter takes all the
-    /// arguments past the others (`check_variadic`).
+    /// its name or its path, can be called, or a type's function with a dot,
+    /// `x.name(arguments)`, which gives `x` as its `self`. A `...` parameter
+    /// takes all the arguments past the others (`check_variadic`).
     pub(super) fn check_call(
         &mut self,
         callee: Id<ast::Expr>,
@@ -118,6 +122,7 @@ impl ThirBuilder<'_, '_> {
         let tree = &self.checker.module().ast;
         let callee_span = tree.exprs.span(callee);
         let text = tree.file.slice(callee_span);
+        let mut receiver = None;
         let symbol = match tree.exprs[callee] {
             ast::Expr::Name => match self.resolve(callee_span) {
                 // Their errors were reported.
@@ -134,9 +139,10 @@ impl ThirBuilder<'_, '_> {
                 symbol => symbol,
             },
             ast::Expr::Path(path) => self.checker.resolve_path(path),
-            ast::Expr::Selector { .. } => {
-                self.checker.not_supported(callee_span, "method calls");
-                None
+            ast::Expr::Selector { value, field } => {
+                let method = self.method(value, field);
+                receiver = method.map(|(place, _)| place);
+                method.map(|(_, symbol)| symbol)
             }
             _ => {
                 self.checker
@@ -158,6 +164,8 @@ impl ThirBuilder<'_, '_> {
             let ty = self.checker.function_type(function, callee_span);
             (function, ty, self.checker.types[ty].clone())
         });
+        let signature = signature
+            .filter(|&(function, ..)| receiver.is_none() || self.takes_self(function, callee_span));
         let Some((
             function,
             signature,
@@ -178,7 +186,9 @@ impl ThirBuilder<'_, '_> {
             }
             return Expr::INVALID;
         };
-        let fixed = parameters.len() - usize::from(variadic);
+        // The written arguments come after the receiver's.
+        let first = usize::from(receiver.is_some());
+        let fixed = parameters.len() - usize::from(variadic) - first;
         let arity_matches = if variadic {
             arguments.len() >= fixed
         } else {
@@ -196,15 +206,27 @@ impl ThirBuilder<'_, '_> {
                 .error(diagnostics::WRONG_ARGUMENT_COUNT, message, span);
         }
         let mut checked: Vec<NonZeroU32> = Vec::with_capacity(parameters.len());
+        if let Some(place) = receiver {
+            // `self` takes the value itself; `&self` and `&mut self` borrow it.
+            let argument = match self.checker.types[parameters[0]] {
+                Type::Reference { mutable, .. } => {
+                    let span = self.body.exprs.span(place);
+                    let borrowed = self.check_borrow(mutable, place, span);
+                    self.body.add(borrowed, span)
+                }
+                _ => place,
+            };
+            checked.push(argument.into());
+        }
         let mut given = tree.children.lists.items(arguments);
-        for (&parameter, argument) in parameters[..fixed].iter().zip(given.by_ref()) {
+        for (&parameter, argument) in parameters[first..first + fixed].iter().zip(given.by_ref()) {
             let argument = self.add_required(argument, parameter);
             self.reborrow_in_place(argument);
             checked.push(argument.into());
         }
         if variadic {
             let rest: Vec<Id<ast::Expr>> = given.collect();
-            let slice = self.check_variadic(&rest, parameters[fixed], span);
+            let slice = self.check_variadic(&rest, parameters[first + fixed], span);
             self.reborrow_in_place(slice);
             checked.push(slice.into());
         } else {
@@ -246,6 +268,55 @@ impl ThirBuilder<'_, '_> {
                 arguments,
             },
         }
+    }
+
+    /// The function `name` of the struct `value` is or points to, called with
+    /// a dot, and the place of that struct, which the call gives as `self`.
+    fn method(&mut self, value: Id<ast::Expr>, name: Ident) -> Option<(Id<Expr>, Symbol)> {
+        let value = self.add_expr(value, None);
+        let place = self.through_pointer(value, self.body.exprs.span(value));
+        let ty = self.body.exprs[place].ty;
+        let Type::Struct { definition, .. } = self.checker.types[ty] else {
+            if ty != TypeId::INVALID {
+                let message = format!("`{}` has no functions", self.checker.type_text(ty));
+                self.checker
+                    .error(diagnostics::INVALID_OPERATION, message, name.span);
+            }
+            return None;
+        };
+        let head = self.checker.type_text(ty);
+        let symbol = self.checker.member(
+            definition.module,
+            Some(definition),
+            "type",
+            &head,
+            name.span,
+        )?;
+        Some((place, symbol))
+    }
+
+    /// Whether the function `function`, called with a dot at `span`, takes
+    /// `self` first; reported when it does not.
+    fn takes_self(&mut self, function: DefId, span: Span) -> bool {
+        let modules = self.checker.modules;
+        let tree = &modules[function.module.index()].ast;
+        let ast::Decl::Function(declared) = project::declaration(modules, function) else {
+            unreachable!("`{function:?}` is a function declaration")
+        };
+        let first = tree
+            .children
+            .lists
+            .items(declared.signature.parameters)
+            .next();
+        if first.is_some_and(|first| is_self(tree, tree.children.params[first])) {
+            return true;
+        }
+        let path = project::declared_path(modules, function);
+        let name = declared.name.text(&tree.file);
+        let message = format!("`{name}` takes no `self`: call it as `{path}(...)`");
+        self.checker
+            .error(diagnostics::INVALID_OPERATION, message, span);
+        false
     }
 }
 

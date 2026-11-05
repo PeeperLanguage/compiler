@@ -62,6 +62,7 @@ static RULES: Rules = {
     };
     // values
     rules.prefix(TokenKind::Ident, name_or_path);
+    rules.prefix(TokenKind::SelfValue, self_name);
     rules.prefix(TokenKind::Number, number_literal);
     rules.prefix(TokenKind::String, string_literal);
     rules.prefix(TokenKind::CString, string_literal);
@@ -233,6 +234,11 @@ impl Parser {
 /// Reads a name; or, when a path or type arguments follow it, a path
 /// (`a::B`, `Box<T>::new`), a struct literal (`Point.{...}`) or a variant
 /// literal (`Enum::Case with payload`).
+/// Reads `self`, the name of a type's function's first parameter.
+fn self_name(p: &mut Parser) -> Id<Expr> {
+    p.leaf(Expr::Name)
+}
+
 fn name_or_path(p: &mut Parser) -> Id<Expr> {
     if !p.starts_path() {
         return p.leaf(Expr::Name);

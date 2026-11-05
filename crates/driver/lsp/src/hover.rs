@@ -16,12 +16,15 @@ use crate::checked::ConstantText;
 /// What hover shows for `declaration` of the module at `module`
 /// (`hover_text`), its attributes first: a constant as its name, type and
 /// value, from `constant`, worked out from its initializer; a function up to
-/// its body; another declaration, or a constant with an error, whole.
+/// its body; a struct whole, then its functions (`write_functions`), only
+/// the exported ones when hovered `from_elsewhere`, another module; another
+/// declaration, or a constant with an error, whole.
 pub(crate) fn declaration_hover(
     tree: &ast::Tree,
     declaration: Id<ast::Decl>,
     module: &str,
     constant: Option<&ConstantText>,
+    from_elsewhere: bool,
 ) -> String {
     let span = tree.decls.span(declaration);
     let decl = &tree.decls[declaration];
@@ -59,6 +62,13 @@ pub(crate) fn declaration_hover(
             }),
             _,
         ) => (written(tree.blocks.span(*body).start).to_string(), None),
+        (ast::Decl::Type(declared), _)
+            if matches!(tree.types[declared.ty], ast::Type::Struct(_)) =>
+        {
+            let mut facts = written(span.end).to_string();
+            write_functions(tree, declared.name, from_elsewhere, &mut facts);
+            (facts, None)
+        }
         _ => (written(span.end).to_string(), None),
     };
     let declared = decl.name().span;
@@ -70,6 +80,33 @@ pub(crate) fn declaration_hover(
         from,
         metadata.doc_comment,
     )
+}
+/// Writes to `facts` each function of the struct named `owner` in `tree`,
+/// up to its body, after a blank line; only the exported ones when
+/// `exported_only`. A type's functions are declared in the type's module,
+/// where its name names one declaration, so the written name finds them.
+fn write_functions(tree: &ast::Tree, owner: ast::Ident, exported_only: bool, facts: &mut String) {
+    let owner = owner.text(&tree.file);
+    let mut separator = "\n\n";
+    for declaration in tree.decls.ids() {
+        let ast::Decl::Function(function) = &tree.decls[declaration] else {
+            continue;
+        };
+        let name = function.name.text(&tree.file);
+        let owned = function
+            .owner
+            .is_some_and(|written| written.text(&tree.file) == owner);
+        if !owned || (exported_only && !project::is_exported(name)) {
+            continue;
+        }
+        let span = tree.decls.span(declaration);
+        let end = function
+            .body
+            .map_or(span.end, |body| tree.blocks.span(body).start);
+        facts.push_str(separator);
+        facts.push_str(tree.file.text[span.start as usize..end as usize].trim());
+        separator = "\n";
+    }
 }
 /// What hover shows, in Markdown: `facts`, what the compiler knows of a name,
 /// as a Peeper block, ending with the text they were worked out `from`, as an

@@ -11,10 +11,11 @@ pub struct Token {
 }
 
 /// Declares every token kind once, with its text: the `TokenKind` enum,
-/// `TokenKind::text`, and the lexer's `OPERATORS` and `KEYWORDS` lists, which
-/// hold the kinds after the `#[operators]` and `#[keywords]` headers, in the
-/// order written. Each keyword has a doc comment, and a named kind or an
-/// operator may have one, which `TokenKind::doc` gives.
+/// `TokenKind::text`, and the lexer's `OPERATORS`, `KEYWORDS` and `NAMES`
+/// lists, which hold the kinds after the `#[operators]`, `#[keywords]` and
+/// `#[names]` headers, in the order written. Each keyword and name has a doc
+/// comment, and a named kind or an operator may have one, which
+/// `TokenKind::doc` gives.
 macro_rules! tokens {
     (pub enum TokenKind {
         $(
@@ -31,6 +32,12 @@ macro_rules! tokens {
             #[doc = $keyword_doc:literal]
             $(#[doc = $keyword_doc_more:literal])*
             $keyword:ident = $keyword_text:literal,
+        )*
+        #[names]
+        $(
+            #[doc = $name_doc:literal]
+            $(#[doc = $name_doc_more:literal])*
+            $name:ident = $name_text:literal,
         )*
     }) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -49,6 +56,11 @@ macro_rules! tokens {
                 $(#[doc = $keyword_doc_more])*
                 $keyword,
             )*
+            $(
+                #[doc = $name_doc]
+                $(#[doc = $name_doc_more])*
+                $name,
+            )*
         }
 
         impl TokenKind {
@@ -59,6 +71,7 @@ macro_rules! tokens {
                     $(TokenKind::$named => $named_text,)*
                     $(TokenKind::$operator => $operator_text,)*
                     $(TokenKind::$keyword => $keyword_text,)*
+                    $(TokenKind::$name => $name_text,)*
                 }
             }
 
@@ -83,6 +96,11 @@ macro_rules! tokens {
                             Some(concat!($keyword_doc $(, "\n", $keyword_doc_more)*))
                         }
                     )*
+                    $(
+                        TokenKind::$name => {
+                            Some(concat!($name_doc $(, "\n", $name_doc_more)*))
+                        }
+                    )*
                     _ => None,
                 }
             }
@@ -90,6 +108,7 @@ macro_rules! tokens {
 
         pub const OPERATORS: &[TokenKind] = &[$(TokenKind::$operator,)*];
         pub const KEYWORDS: &[TokenKind] = &[$(TokenKind::$keyword,)*];
+        pub const NAMES: &[TokenKind] = &[$(TokenKind::$name,)*];
     };
 }
 
@@ -266,7 +285,7 @@ tokens! {
         DotDot = "..",
         /// Reaches into the value on its left.
         ///
-        /// `p.x` is the field `x` of the struct `p`, or of the struct a reference `p` refers to, and `a.len` is the length of the array `a`, a `usize`. `r.*` is the value the reference or pointer `r` refers to. Before `{`, as in `.{x = 1}`, it starts a struct literal whose type its place gives. Methods are not supported yet.
+        /// `p.x` is the field `x` of the struct `p`, or of the struct a reference `p` refers to, and `a.len` is the length of the array `a`, a `usize`. `r.*` is the value the reference or pointer `r` refers to. Before `{`, as in `.{x = 1}`, it starts a struct literal whose type its place gives. `p.sum()` calls the function `sum` of `p`'s type, with `p` as its `self`.
         ///
         /// ```peeper
         /// let p: Point = .{x = 3, y = 4};
@@ -379,15 +398,9 @@ tokens! {
         /// }
         /// ```
         Enum = "enum",
-        /// The `bool` value false.
-        ///
-        /// ```peeper
-        /// let done = false;
-        /// ```
-        False = "false",
         /// Declares a function.
         ///
-        /// A function takes parameters, each with its type, and gives a result of the type after `->`; without `->` it gives nothing. A function whose name starts with an upper case letter is exported: other modules can call it.
+        /// A function takes parameters, each with its type, and gives a result of the type after `->`; without `->` it gives nothing. A function whose name starts with an upper case letter is exported: other modules can call it. `fn Point::name` declares a function of the struct `Point`, in `Point`'s module: it is called `Point::name(...)`, or `p.name(...)` when it takes `self`.
         ///
         /// ```peeper
         /// fn add(a: i32, b: i32) -> i32 {
@@ -553,12 +566,6 @@ tokens! {
         /// let origin = Point.{ x = 0, y = 0 };
         /// ```
         Struct = "struct",
-        /// The `bool` value true.
-        ///
-        /// ```peeper
-        /// let done = true;
-        /// ```
-        True = "true",
         /// Gives another name to a type. The two names stand for the same type.
         ///
         /// ```peeper
@@ -573,6 +580,33 @@ tokens! {
         /// let shape = Shape::Circle with 2.0;
         /// ```
         With = "with",
+
+        // Words with a fixed meaning that are not keywords: values and
+        // bindings the language gives, written where a name goes. In the
+        // order of their text, as the keywords are.
+        #[names]
+        /// The `bool` value false.
+        ///
+        /// ```peeper
+        /// let done = false;
+        /// ```
+        False = "false",
+        /// The value a type's function is called on: its first parameter.
+        ///
+        /// `self` takes the value, `mut self` takes it to change it, `&self` borrows it, and `&mut self` borrows it to change it. Its type is the type the function belongs to, so none is written after it.
+        ///
+        /// ```peeper
+        /// fn Point::sum(&self) -> i32 {
+        ///     return self.x + self.y;
+        /// }
+        /// ```
+        SelfValue = "self",
+        /// The `bool` value true.
+        ///
+        /// ```peeper
+        /// let done = true;
+        /// ```
+        True = "true",
     }
 }
 

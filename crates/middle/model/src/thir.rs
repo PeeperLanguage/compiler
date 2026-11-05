@@ -3,6 +3,7 @@
 //! are explicit nodes, and constant expressions are folded to their values.
 //! Its nodes live in typed arenas, as the syntax tree's do.
 
+use std::fmt::Display;
 use std::fmt::Write;
 
 use crate::DefId;
@@ -410,11 +411,11 @@ impl Body {
     /// variable shows as its name and index (`x.2`), a constant other than a
     /// `bool` with its type (`1:i32`), an operation in parentheses, and a
     /// field by its index (`p.0[1]`, `Point.{ [1] = 2:i32 }`).
-    pub fn text<'n>(
+    pub fn text<N: Display>(
         &self,
         types: &Types,
         file: &SourceFile,
-        name_of: impl Fn(DefId) -> &'n str + Copy,
+        name_of: impl Fn(DefId) -> N + Copy,
     ) -> String {
         let mut printer = Printer {
             body: self,
@@ -437,7 +438,7 @@ struct Printer<'b, F> {
     out: String,
 }
 
-impl<'n, F: Fn(DefId) -> &'n str + Copy> Printer<'_, F> {
+impl<N: Display, F: Fn(DefId) -> N + Copy> Printer<'_, F> {
     /// Each of `statements` on its own line, `depth` levels in.
     fn write_statements(&mut self, statements: List<Stmt>, depth: usize) {
         for statement in self.body.children.lists.items(statements) {

@@ -1,0 +1,57 @@
+// A type's functions: `fn Point::New` belongs to `Point` and is called
+// `Point::New(...)`. Another type, or the module, may use the same name.
+struct Point { x: i32, y: i32 }
+
+// Lower case: called only in this module.
+fn Point::make(x: i32, y: i32) -> Point {
+    return .{ x = x, y = y };
+}
+
+fn Point::New(x: i32, y: i32) -> Point {
+    return Point::make(x, y);
+}
+
+// `self` takes the point as written: `&self` borrows it, `&mut self`
+// borrows it to change it, `self` and `mut self` take it.
+fn Point::Sum(&self) -> i32 {
+    return self.x + self.y;
+}
+
+fn Point::Shift(&mut self, by: i32) {
+    self.x = self.x + by;
+}
+
+fn Point::Into(self) -> i32 {
+    return self.x * 100 + self.y;
+}
+
+fn Point::Swapped(mut self) -> Point {
+    let x = self.x;
+    self.x = self.y;
+    self.y = x;
+    return self;
+}
+
+fn Point::X(&self) -> &i32 in self {
+    return &self.x;
+}
+
+fn Point::Dimensions() -> i32 {
+    return 2;
+}
+
+// A type's function can be declared above its type.
+fn Line::New(start: Point, end: Point) -> Line {
+    return .{ start = start, end = end };
+}
+
+struct Line { start: Point, end: Point }
+
+fn Line::Sum(&self) -> i32 {
+    return Point::Sum(&self.start) + Point::Sum(&self.end);
+}
+
+// The module's own `Sum`, another function than `Point::Sum`.
+fn Sum(a: i32, b: i32) -> i32 {
+    return a * 10 + b;
+}

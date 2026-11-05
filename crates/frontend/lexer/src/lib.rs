@@ -10,6 +10,7 @@ use literal::next_char_width;
 use source::SourceFile;
 use source::Span;
 use token::KEYWORDS;
+use token::NAMES;
 use token::OPERATORS;
 use token::Token;
 use token::TokenKind;
@@ -117,7 +118,8 @@ impl Scanner<'_> {
             .push(Diagnostic::new(code, message).label(self.file, span, label));
     }
 
-    /// Reads a name or keyword. A name holding letters, digits or marks outside
+    /// Reads a name, a keyword, or a name with a fixed meaning (`self`,
+    /// `true`). A name holding letters, digits or marks outside
     /// ASCII is reported once and still read as a name, so parsing goes on.
     fn word(&mut self) {
         let start = self.pos;
@@ -139,7 +141,7 @@ impl Scanner<'_> {
         }
         let text = &self.file.text[start..self.pos];
         if ascii {
-            self.emit(keyword(text).unwrap_or(TokenKind::Ident), start);
+            self.emit(word_kind(text).unwrap_or(TokenKind::Ident), start);
             return;
         }
         let message = format!("name `{text}` uses characters that are not allowed in names");
@@ -384,12 +386,34 @@ const fn by_first_byte(kinds: &[TokenKind]) -> [(u8, u8); 128] {
 }
 
 const OPERATORS_BY_FIRST: [(u8, u8); 128] = by_first_byte(OPERATORS);
-const KEYWORDS_BY_FIRST: [(u8, u8); 128] = by_first_byte(KEYWORDS);
 
-/// The keyword kind of the ASCII name `text`, or None for a name.
-fn keyword(text: &str) -> Option<TokenKind> {
-    let (first, count) = KEYWORDS_BY_FIRST[text.as_bytes()[0] as usize];
-    KEYWORDS[first as usize..(first + count) as usize]
+/// The keywords and the names with a fixed meaning (`self`, `true`), merged
+/// by their first byte, so one lookup finds either. Both lists are in the
+/// order of their text.
+const WORDS: [TokenKind; KEYWORDS.len() + NAMES.len()] = {
+    let mut words = [TokenKind::Ident; KEYWORDS.len() + NAMES.len()];
+    let (mut keyword, mut name) = (0, 0);
+    while keyword + name < words.len() {
+        let take_keyword = name == NAMES.len()
+            || keyword < KEYWORDS.len()
+                && KEYWORDS[keyword].text().as_bytes()[0] <= NAMES[name].text().as_bytes()[0];
+        if take_keyword {
+            words[keyword + name] = KEYWORDS[keyword];
+            keyword += 1;
+        } else {
+            words[keyword + name] = NAMES[name];
+            name += 1;
+        }
+    }
+    words
+};
+const WORDS_BY_FIRST: [(u8, u8); 128] = by_first_byte(&WORDS);
+
+/// The keyword or name kind of the ASCII name `text`, or None for any other
+/// name.
+fn word_kind(text: &str) -> Option<TokenKind> {
+    let (first, count) = WORDS_BY_FIRST[text.as_bytes()[0] as usize];
+    WORDS[first as usize..(first + count) as usize]
         .iter()
         .copied()
         .find(|kind| kind.text() == text)

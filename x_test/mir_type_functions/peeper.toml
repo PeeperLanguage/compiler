@@ -1,0 +1,6 @@
+name = "mir_type_functions"
+build = "program"
+
+[test]
+mode = "mir"
+outcome = "success"

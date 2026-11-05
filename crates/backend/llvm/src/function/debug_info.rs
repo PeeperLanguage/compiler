@@ -101,7 +101,7 @@ impl Module<'_> {
             "distinct !DISubprogram(name: {}, linkageName: {}, scope: !{file}, file: !{file}, \
              line: {line}, type: !{subroutine}, scopeLine: {line}, spFlags: DISPFlagDefinition, \
              unit: !{unit})",
-            quoted(name.text(source).as_bytes()),
+            quoted(project::declared_path(&self.program.modules, definition).as_bytes()),
             quoted(symbol.as_bytes()),
         ));
         let mut declares = vec![false; body.debug_scopes.len()];

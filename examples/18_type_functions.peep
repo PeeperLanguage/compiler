@@ -1,0 +1,35 @@
+// A type's functions: `fn Point::name` declares a function of the struct
+// `Point`, in the module that declares `Point`. Called by its path,
+// `Point::name(...)`, it is a plain function. One that takes `self` first
+// is also called with a dot, `p.name(...)`, which gives `p` as `self`:
+// `self` takes the value, `&self` borrows it and `&mut self` borrows it to
+// change it. The dot borrows by itself; the path does not.
+// Run: peeper run examples/18_type_functions.peep
+struct Point { x: i32, y: i32 }
+
+fn Point::New(x: i32, y: i32) -> Point {    // no `self`: called by path
+    return .{ x = x, y = y };
+}
+
+fn Point::Sum(&self) -> i32 {
+    return self.x + self.y;
+}
+
+fn Point::Shift(&mut self, by: i32) {
+    self.x = self.x + by;
+    self.y = self.y + by;
+}
+
+fn Point::Swapped(self) -> Point {          // takes the point
+    return .{ x = self.y, y = self.x };
+}
+
+fn main() {
+    let mut p = Point::New(1, 2);
+    println("sum:", p.Sum(), Point::Sum(&p));   // the same call
+    p.Shift(10);                                // lends `p` as `&mut`
+    let view = &p;
+    println("through a reference:", view.Sum());
+    let q = p.Swapped();                        // `p` moves; it is unset now
+    println("swapped:", q, Point::New(3, 4).Swapped().Sum());
+}

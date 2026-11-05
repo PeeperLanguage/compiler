@@ -1,0 +1,29 @@
+name = "negative_type_functions"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "[P0005]: `P` is not a struct declared in this module",
+    "[P0005]: `Limit` is not a struct declared in this module",
+    "[P0005]: `Missing` is not a struct declared in this module",
+    "a type's functions are declared in the module of the type",
+    "[T0003]: `f` is already declared in this type",
+    "[T0002]: unknown name `Nw` in type `Point`",
+    "did you mean `New`?",
+    "[M0004]: `make` is not exported from `Point`",
+    "[T0004]: `i32` has no functions",
+    "[T0004]: `Limit` is not a module or a type",
+    "[T0002]: unknown name `g` in type `Local`",
+    "[T0004]: `Status` has no functions",
+    "[P0005]: only a type's function takes `self`: `fn Point::name(&self)`",
+    "[P0005]: `self` must be the first parameter",
+    "[T0001]: mismatched types: expected `&Local`, found `Local`",
+    "[T0004]: `f` takes no `self`: call it as `Local::f(...)`",
+    "src/main.peep:42:33",
+    "src/main.peep:44:18",
+    "[T0006]: `local.get` takes 0 arguments, but 1 was given",
+    "[T0007]: cannot mutably borrow immutable `local`",
+    "Compilation failed with 20 error(s)",
+]

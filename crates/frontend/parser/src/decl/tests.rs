@@ -27,19 +27,23 @@ fn parses_variadic_parameters() {
 
 #[test]
 fn parses_signatures() {
-    let text = "fn (self: &mut Counter) Add<T, U>(mut delta: i32, scale: f64 = 1, &Self) -> &T in (self, delta) {}
+    let text = "fn Counter::Add<T, U>(&mut self, mut delta: i32, scale: f64 = 1, &Counter) -> &T in (self, delta) {}
+fn Counter::Get(&self) {}
+fn Counter::Into(self) {}
+fn Counter::Doubled(mut self) {}
 fn exit(code: i32);
 fn Use(callback: fn(value: &Box, i32) -> &Box in value, view: [&]u8, edit: [&mut]u8, grid: [4]rawptr, cell: **u8, untyped: *rawptr) -> ?a::Box<Box<T>>;
 ";
     let want = "module
   function declaration
-    parameter
-      declared name self
-      reference type mut
-        type name Counter
+    owner type Counter
     declared name Add
     declared name T
     declared name U
+    parameter
+      declared name self
+      reference type mut
+        self type self
     parameter mut
       declared name delta
       type name i32
@@ -49,11 +53,33 @@ fn Use(callback: fn(value: &Box, i32) -> &Box in value, view: [&]u8, edit: [&mut
       number literal 1
     parameter
       reference type
-        type name Self
+        type name Counter
     reference type
       type name T
     name reference self
     name reference delta
+    block {}
+  function declaration
+    owner type Counter
+    declared name Get
+    parameter
+      declared name self
+      reference type
+        self type self
+    block {}
+  function declaration
+    owner type Counter
+    declared name Into
+    parameter
+      declared name self
+      self type self
+    block {}
+  function declaration
+    owner type Counter
+    declared name Doubled
+    parameter mut
+      declared name self
+      self type self
     block {}
   function declaration
     declared name exit
@@ -155,10 +181,11 @@ struct Pair<T> {
 };
 enum Status { Ready, Waiting: Pair<i32>, }
 iface Summer {
-    fn (&Self) sum() -> i32,
-    fn (self: &Self) add<T>(value: T)
+    fn sum(&self) -> i32,
+    fn add<T>(&mut self, value: T)
 }
 type Alias<T> = ?T;
+fn Pair::new() {}
 "#;
     let want = r#"module
   const declaration
@@ -207,18 +234,19 @@ type Alias<T> = ?T;
     declared name Summer
     interface type
       function declaration
-        parameter
-          reference type
-            type name Self
         declared name sum
-        type name i32
-      function declaration
         parameter
           declared name self
           reference type
-            type name Self
+            self type self
+        type name i32
+      function declaration
         declared name add
         declared name T
+        parameter
+          declared name self
+          reference type mut
+            self type self
         parameter
           declared name value
           type name T
@@ -227,6 +255,10 @@ type Alias<T> = ?T;
     declared name T
     optional type
       type name T
+  function declaration
+    owner type Pair
+    declared name new
+    block {}
 "#;
     assert!(messages(text).is_empty());
     assert_eq!(dump_of(text), want);
@@ -253,10 +285,10 @@ fn declaration_errors() {
             "only one attribute is allowed per `#[...]` block",
         ),
         (
-            "iface I { fn (&Self) f(a: i32 = 1) }",
+            "iface I { fn f(&self, a: i32 = 1) }",
             "interface method defaults are not supported",
         ),
-        ("iface I { fn f() }", "expected `(`, found `identifier`"),
+        ("fn (p: Point) f() {}", "expected `identifier`, found `(`"),
         ("type A i32;", "expected `=`, found `identifier`"),
         ("struct S { a i32 }", "expected `:`, found `identifier`"),
         ("enum E { A B }", "expected `,`"),

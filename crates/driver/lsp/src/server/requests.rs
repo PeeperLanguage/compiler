@@ -113,13 +113,25 @@ impl Server<'_> {
             return Some(doc_hover(shown, doc));
         }
         let doc = token.kind.doc()?;
-        // A literal shows the type its check gave it.
-        let mut facts = checked.facts.get(&file).into_iter().flatten();
-        let literal = facts.find_map(|fact| match fact.kind {
-            CachedKind::Literal { ref ty } if fact.span == token.span => Some(ty.as_str()),
-            _ => None,
-        });
-        Some(doc_hover(literal.unwrap_or(token.kind.text()), doc))
+        // A literal shows the type its check gave it; `self`, which is a
+        // variable, its binding, from its declaration when this is a use.
+        let facts = checked.facts.get(&file).map_or(&[][..], Vec::as_slice);
+        let kind_at = |span: Span| {
+            let found = facts.iter().find(|fact| fact.span == span);
+            found.map(|fact| &fact.kind)
+        };
+        let declared = match kind_at(token.span) {
+            Some(&CachedKind::Local { declared }) => kind_at(declared),
+            kind => kind,
+        };
+        let shown = match declared {
+            Some(CachedKind::Literal { ty }) => ty.clone(),
+            Some(&CachedKind::Variable { mutable, ref ty }) => {
+                binding(mutable, token.kind.text(), ty)
+            }
+            _ => token.kind.text().to_string(),
+        };
+        Some(doc_hover(&shown, doc))
     }
 
     /// The module read from `file` in each program last checked that holds
@@ -246,12 +258,7 @@ fn declaration_of<'a>(
     match kind {
         CachedKind::Variable { mutable, ty } => {
             let (file, declared) = (&module.ast.file, span);
-            let name = file.slice(declared);
-            let binding = if mutable {
-                format!("mut {name}: {ty}")
-            } else {
-                format!("{name}: {ty}")
-            };
+            let binding = binding(mutable, file.slice(declared), &ty);
             let hover = hover_text(file, &module.path, declared, &binding, None, None);
             Some((file, declared, hover))
         }
@@ -260,7 +267,7 @@ fn declaration_of<'a>(
             let mut declarations = tree.decls.ids();
             let declaration = declarations
                 .find(|&declaration| tree.decls[declaration].name().span == declared)?;
-            let hover = declaration_hover(tree, declaration, &module.path, text.as_ref());
+            let hover = declaration_hover(tree, declaration, &module.path, text.as_ref(), false);
             Some((&tree.file, declared, hover))
         }
         CachedKind::Declaration { file, position } => {
@@ -276,7 +283,9 @@ fn declaration_of<'a>(
                 CachedKind::Constant { ref text } if fact.span == declared => text.as_ref(),
                 _ => None,
             });
-            let hover = declaration_hover(tree, declaration, &declared_in.path, constant);
+            let elsewhere = declared_in.path != module.path;
+            let hover =
+                declaration_hover(tree, declaration, &declared_in.path, constant, elsewhere);
             Some((&tree.file, declared, hover))
         }
         CachedKind::Local { .. } => unreachable!("`name_at` gives a local's declaration"),
@@ -288,6 +297,15 @@ fn declaration_of<'a>(
             Some((&imported.ast.file, Span::at(0), hover))
         }
         CachedKind::Builtin => unreachable!("`answer_request` answers a built-in name itself"),
+    }
+}
+
+/// A variable as hover shows it: `name: ty`, or `mut name: ty`.
+fn binding(mutable: bool, name: &str, ty: &str) -> String {
+    if mutable {
+        format!("mut {name}: {ty}")
+    } else {
+        format!("{name}: {ty}")
     }
 }
 

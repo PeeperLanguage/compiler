@@ -1,0 +1,47 @@
+// What a type's function may not be, and calls that name none.
+import "negative_type_functions:geometry" as g;
+
+type P = g::Point;
+const Limit: i32 = 1;
+struct Local { x: i32 }
+enum Status { Ready }
+
+// Only the module that declares a struct declares its functions.
+fn P::Extra() {}
+fn Limit::f() {}
+fn Missing::f() {}
+fn Local::f() {}
+fn Local::f() {}
+
+// `self` is the first parameter of a type's function.
+fn plain(&self) {}
+fn Local::late(step: i32, &self) {}
+fn Missing::get(&self) -> i32 {
+    return self.x;
+}
+fn Local::get(&self) -> i32 {
+    return self.x;
+}
+fn Local::set(&mut self, x: i32) {
+    self.x = x;
+}
+
+fn main() {
+    let a = g::Point::Nw(1, 2);
+    let b = g::Point::make(1, 2);
+    let c = i32::f();
+    let d = Limit::f();
+    let e = Local::g();
+    // Only a struct has functions; an enum's variants are not supported yet.
+    let f = Status::Ready;
+    // `&self` takes a reference; the call does not borrow by itself.
+    let local = Local.{ x = 1 };
+    let g = Local::get(local);
+    // A dot calls a function of the value's type that takes `self`.
+    let h = local.f();
+    let i = g::Point::New(1, 2).make(1, 2);
+    let five = 5;
+    let j = five.get();
+    let k = local.get(1);
+    local.set(2);
+}

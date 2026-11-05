@@ -508,6 +508,90 @@ fn answers_definition_and_hover() {
     );
 }
 
+/// A type's function, called by a dot or by its path, answers as its
+/// declaration does; `self`, on the parameter and on a use, shows its
+/// binding with the owner's type, then what `self` is; the struct, its
+/// functions.
+#[test]
+fn answers_on_a_types_functions() {
+    let folder = std::env::temp_dir().join(format!("peeper-lsp-self-{}", std::process::id()));
+    _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(&folder).unwrap();
+    let file = folder.join("main.peep");
+    let text = "struct P { x: i32 }
+fn P::Sum(&self) -> i32 {
+    return self.x;
+}
+fn P::Grow(mut self) -> P {
+    self.x = self.x + 1;
+    return self;
+}
+fn main() {
+    let p = P.{ x = 1 };
+    let a = p.Sum();
+    let b = P::Sum(&p);
+}
+fn P::half(&self) -> i32 {
+    return self.x / 2;
+}
+";
+    std::fs::write(&file, text).unwrap();
+    let uri = Url::from_file_path(&file).unwrap();
+    let (connection, _client) = Connection::memory();
+    let mut server = Server::new(&connection, Path::new(""), true);
+    let document = json!({ "uri": uri, "languageId": "peeper", "version": 1, "text": text });
+    let open = Notification::new(
+        "textDocument/didOpen".to_string(),
+        json!({ "textDocument": document }),
+    );
+    server.apply_notification(open).unwrap();
+    // Asks `method` on the `nth` `needle` of the text.
+    let ask = |method: &str, needle: &str, nth: usize| {
+        let at = text.match_indices(needle).nth(nth).unwrap().0;
+        let line = text[..at].matches('\n').count();
+        let character = at - text[..at].rfind('\n').map_or(0, |newline| newline + 1);
+        let place = json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": line, "character": character },
+        });
+        let request = Request::new(RequestId::from(1), method.to_string(), place);
+        let Response { result, error, .. } = server.answer_request(request);
+        assert!(error.is_none(), "{error:?}");
+        result.unwrap()
+    };
+    let hover = |needle: &str, nth: usize| {
+        let hover = ask("textDocument/hover", needle, nth);
+        hover["contents"]["value"].as_str().unwrap().to_string()
+    };
+    let is_self = |needle: &str, nth: usize, binding: &str| {
+        let found = hover(needle, nth);
+        let expected = format!("```peeper\n{binding}\n```\n\n---\n\n The value a type's function");
+        assert!(found.starts_with(&expected), "{needle} {nth}: {found}");
+    };
+    is_self("self", 0, "self: &P");
+    is_self("self", 1, "self: &P");
+    is_self("self", 2, "mut self: P");
+    is_self("self", 5, "mut self: P");
+    // A struct lists its functions, a private one too in its own module.
+    assert_eq!(
+        hover("P", 0),
+        "```peeper\nstruct P { x: i32 }\n\nfn P::Sum(&self) -> i32\nfn P::Grow(mut self) -> P\nfn P::half(&self) -> i32\n```\n\n---\n\n*in* `main` *· line 1*\n"
+    );
+    let declared = "```peeper\nfn P::Sum(&self) -> i32\n```";
+    for nth in [1, 2] {
+        assert!(
+            hover("Sum", nth).starts_with(declared),
+            "{}",
+            hover("Sum", nth)
+        );
+        let definition = ask("textDocument/definition", "Sum", nth);
+        assert_eq!(
+            definition["range"]["start"],
+            json!({ "line": 1, "character": 6 })
+        );
+    }
+}
+
 /// Names across modules: each kind of name answers where it is declared
 /// and what it is, in a body with an error too; a constant with its
 /// value. After an edit of `main` only, `utils` is reused and `Limit`
@@ -525,7 +609,7 @@ fn names_across_modules() {
         "name = \"app\"\nbuild = \"bin\"\n",
     )
     .unwrap();
-    let utils = "fn Add(a: i32, b: i32) -> i32 { return a + b; }\n#[extern(\"cap\")] fn Cap() -> u8;\n/// The cap.\nconst Limit: u8 = 200;\nfn Twice(n: i32) -> i32 { return n * 2; }\nconst Ratio: f32 = 0.1;\nconst Broken: i32 = true;\nstruct Spot { x: i32 }\n";
+    let utils = "fn Add(a: i32, b: i32) -> i32 { return a + b; }\n#[extern(\"cap\")] fn Cap() -> u8;\n/// The cap.\nconst Limit: u8 = 200;\nfn Twice(n: i32) -> i32 { return n * 2; }\nconst Ratio: f32 = 0.1;\nconst Broken: i32 = true;\nstruct Spot { x: i32 }\nfn Spot::Get(&self) -> i32 { return self.x; }\nfn Spot::raw(&self) -> i32 { return self.x; }\n";
     let main = "import \"app:utils\";
 fn main(count: i64) {
     let mut total = count;
@@ -632,7 +716,9 @@ struct Holder { place: utils::Spot }
     // A path in a type answers on both of its names, as one in a value.
     assert_eq!(
         hover(&server, "Spot", 0),
-        json!("```peeper\nstruct Spot { x: i32 }\n```\n\n---\n\n*in* `app:utils` *· line 8*\n")
+        json!(
+            "```peeper\nstruct Spot { x: i32 }\n\nfn Spot::Get(&self) -> i32\n```\n\n---\n\n*in* `app:utils` *· line 8*\n"
+        )
     );
     assert_eq!(
         declared(&server, "Spot", 0),
