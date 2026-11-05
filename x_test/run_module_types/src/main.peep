@@ -16,7 +16,7 @@ fn second(point: &geometry::Point) -> i32 {
     return point.y;
 }
 
-fn count(points: [&]geometry::Point) -> usize {
+fn count(points: &[]geometry::Point) -> usize {
     return points.len;
 }
 

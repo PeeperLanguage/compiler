@@ -2,15 +2,15 @@
 // value: `&a` fills it from the array, `s[i]` loads the address and checks
 // the index against the count, `.len` reads the count, and passing a slice on
 // loads it whole.
-fn get(view: [&]i32, at: usize) -> i32 {
+fn get(view: &[]i32, at: usize) -> i32 {
     return view[at] + view.len as i32;
 }
 
-fn set(edit: [&mut]i32) {
+fn set(edit: &mut []i32) {
     edit[0] = 1;
 }
 
-fn lend(edit: [&mut]i32) {
+fn lend(edit: &mut []i32) {
     set(edit);
 }
 

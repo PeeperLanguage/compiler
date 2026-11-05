@@ -36,7 +36,7 @@ toolchain and release work.
 | Arrays | `[N]T`, literals, `[_]T`, index with a run-time bounds check, `.len`, spreads `a...`, printing. | Arrays of references or slices; a range as an index. `.len` will later be a free function. |
 | Structs | Declarations, literals `Name.{ }` and `.{ }`, field reads and writes, moves, by-value parameters and results. | References or slices in fields; methods; struct types written inline; generic structs. |
 | References | `&x`, `&mut x`, `.*`, field access through a reference, returning a reference; `&make()` and `make()[i]`, whose value ends with its statement unless a `let` keeps it, as in Rust. | References to references or to slices; references in structs and arrays; parameters that share one origin. |
-| Slices | `[&]T`, `[&mut]T`, `&a[i..j]`, `&s[i..j]`, `for v in s`, `[N]T{s...}`, variadic `...T` and `...mut T` parameters, bounds checks. | Slices of slices or of references. |
+| Slices | `&[]T`, `&mut []T`, `&a[i..j]`, `&s[i..j]`, `for v in s`, `[N]T{s...}`, variadic `...T` and `...mut T` parameters, bounds checks. | Slices of slices or of references. |
 | Pointers | Raw pointers `*T`, `rawptr`, `@x`, `.*`, `none`. | The allocator. `*T` stays a raw pointer: there is no owning pointer type. |
 | Ownership | Moves and loans (see Done). | Drop insertion, for containers, which own their heap buffers. |
 | Strings | `c"..."` as `cstr`; plain string literals inside `print` and `panic`. | The `str`/`string` and `byte`/`char` types, character literals, run-time strings. |

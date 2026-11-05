@@ -286,7 +286,7 @@ impl Checker<'_> {
                 .collect();
             if origins.is_empty() {
                 let kind = if mutable {
-                    "`&mut` or `[&mut]`"
+                    "`&mut` reference or slice"
                 } else {
                     "reference or slice"
                 };

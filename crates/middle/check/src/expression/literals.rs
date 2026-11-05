@@ -491,7 +491,7 @@ impl ThirBuilder<'_, '_> {
                     return None;
                 }
                 // Read only, as Rust's `<[T; N]>::try_from(&*s)`, so a
-                // `[&mut]` in a variable is usable after.
+                // `&mut []` in a variable is usable after.
                 if mutable && let ExprKind::Variable(_) = self.body.exprs[spread].kind {
                     let shared = self.checker.types.intern(Type::Slice {
                         mutable: false,

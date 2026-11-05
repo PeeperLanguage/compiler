@@ -463,7 +463,7 @@ fn temporaries() {
     let (bodies, reported) = bodies(
         "fn make() -> [2]i32 { return [2]i32{1, 2}; }
             fn id(r: &mut i32) -> &mut i32 in r { return r; }
-            fn sum(values: [&]i32) -> i32 { return values[0]; }
+            fn sum(values: &[]i32) -> i32 { return values[0]; }
             fn f() {
                 let total = sum(&make());
                 let kept = &make();

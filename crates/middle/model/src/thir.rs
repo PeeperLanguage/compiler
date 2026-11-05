@@ -196,7 +196,7 @@ pub enum ExprKind {
     /// of `r.x` and `r[i]`.
     Dereference(Id<Expr>),
     /// `&place` or `&mut place`, as its reference or slice type says, and a
-    /// `&mut` or `[&mut]` variable passed to a call (lent again, not moved);
+    /// `&mut` or `&mut []` variable passed to a call (lent again, not moved);
     /// the place is a `Variable`, a `Temporary`, a `Dereference`, or a `Field`
     /// or `Index` of a place. As a slice, the place is an array, whose elements it views,
     /// or a slice, whose elements it lends again.

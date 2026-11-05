@@ -10,12 +10,12 @@ fn sum(g: [2][3]i32) -> i32 {
 }
 fn bump(g: &mut [2][3]i32, i: i32, j: i32) { g.*[i][j] = g.*[i][j] + 100; }
 fn row(g: &[2][3]i32, i: i32) -> [3]i32 { return g.*[i]; }
-fn total(s: [&]i32) -> i32 {
+fn total(s: &[]i32) -> i32 {
     let mut t = 0;
     for i in 0..s.len { t = t + s[i]; }
     return t;
 }
-fn rows(s: [&][3]i32) -> i32 {
+fn rows(s: &[][3]i32) -> i32 {
     let mut t = 0;
     for i in 0..s.len { for j in 0..3 { t = t + s[i][j] * (i as i32 + 1); } }
     return t;

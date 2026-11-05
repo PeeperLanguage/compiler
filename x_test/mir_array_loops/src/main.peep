@@ -18,7 +18,7 @@ fn indexed(values: [2]i32) -> usize {
     return total;
 }
 
-fn sum_slice(values: [&]i32) -> i32 {
+fn sum_slice(values: &[]i32) -> i32 {
     let mut total = 0;
     for value in values {
         total = total + value.*;

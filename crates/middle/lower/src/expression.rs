@@ -61,7 +61,7 @@ impl Lowering<'_> {
                 // An array's length is its type's: the array is computed for the
                 // call in it and never read, so no element moves out and no large
                 // array is copied. A slice's is in it: the slice is read, never
-                // moved, so a `[&mut]` stays usable.
+                // moved, so a `&mut []` stays usable.
                 thir::ExprKind::Length(value) => {
                     let value_type = self.thir.exprs[value].ty;
                     if !matches!(self.types[value_type], Type::Slice { .. }) {

@@ -1,7 +1,7 @@
 // What `&a[i..j]` rejects: ends known at compile time outside the array or
 // out of order, a step, slicing without `&`, a range value, ends that are
 // not integers, slicing through a raw pointer, a writable
-// slice through `&` or of a `[&]`, ends outside every slice, `.*` on a
+// slice through `&` or of a `&[]`, ends outside every slice, `.*` on a
 // slice, two writable slices of one array at once, a slice's array used
 // while a slice of it is, and a slice of a local or of an array parameter
 // returned.
@@ -22,7 +22,7 @@ fn bounds(x: f64, y: f64) {
     let floats = &a[x..y];
 }
 
-fn through(r: &[4]i32, s: [&]i32, p: *[4]i32) {
+fn through(r: &[4]i32, s: &[]i32, p: *[4]i32) {
     let writable = &mut r[0..2];
     let writable_slice = &mut s[0..1];
     let negative_end = &s[-1i32..];
@@ -39,7 +39,7 @@ fn both_writable() {
     left[0] = right[0];
 }
 
-fn slice_loans(s: [&mut]i32) {
+fn slice_loans(s: &mut []i32) {
     let view = &s[0..2];
     s[0] = 1;
     let read = view[0];
@@ -49,19 +49,19 @@ fn slice_loans(s: [&mut]i32) {
 }
 
 // A slice's length is read for its ends; the error names the borrow written.
-fn slice_while_element_lent(s: [&mut]i32) {
+fn slice_while_element_lent(s: &mut []i32) {
     let x = &mut s[0];
     let rest = &s[1..2];
     x.* = rest[0];
 }
 
-fn escape(view: [&]i32) -> [&]i32 {
+fn escape(view: &[]i32) -> &[]i32 {
     let a = [2]i32{1, 2};
     return &a[0..1];
 }
 
 // The parameter is the caller's copy, gone once the function returns.
-fn from_parameter(values: [3]i32, view: [&]i32) -> [&]i32 {
+fn from_parameter(values: [3]i32, view: &[]i32) -> &[]i32 {
     return &values[0..1];
 }
 
