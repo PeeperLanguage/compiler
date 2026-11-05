@@ -1,50 +1,29 @@
 # Plan
 
-Branch `fix/loans-memory-growth`, from `main` at `1fa2750`. The
-task (owner, 2026-11-01): fix the loan check's memory growth, fix the
-checker's name lookup, and review the codebase for design mistakes,
-unnecessary work, duplicate logic, overengineering and pass-through
-wrappers, going as deep as possible; keep this vault so no work is
-forgotten or invented.
+`main` is at `d18d5342` (2026-11-05), pushed: methods merged
+(`fn Point::name`, `self`, `p.name()`, hover; branch `feature/methods`,
+plan `methods.localplan.md`). No feature branch is open.
 
-## Steps
+## Next, in the planned order (`01-product.md`)
 
-1. [x] Loan check: one live set per block, not per instruction (`0c03928`).
-2. [x] Checker: names through a map (`ebbbb81`).
-3. [x] Context vault (this folder).
-4. [x] Variable state check: follow only variables that can be unset
-   (`333e327`).
-5. [x] Loan check: live sets at block ends as lists (`a318b22`).
-6. [x] Split `Loans::report` by job; inline `loan_count` (`d51cf18`).
-7. [x] LLVM debug info: one writer of a struct's debug type (`0a901b5`).
-8. [x] Parser test dump: one `names` method (`7928223`).
-9. [x] Variable state: `tracked_variables` split out (`2253c35`).
-10. [x] Compile-time calls: reached functions in a set (`184e64a`).
-11. [x] Deep expressions: `grow` in check and lower (`029622f`).
-12. [x] Deep statements and types: `grow` in `check_statement`,
-    `lower_statement`, `resolve_type` (`59dc4cc`).
-14. [x] Review fixes: one stack guard (`0b94289`), deep array types
-    (`e567d09`), a limit on printed diagnostics (`715cc88`), comments
-    (`505b592`).
-15. [x] Debug builds of lines past column 65,535 ("Keep debug columns within
-    LLVM's limit").
-16. [x] Arrays in arrays are flat: each array type keeps its base and count
-    (branch `fix/flat-arrays`).
-17. [x] Structs keep their size and alignment, and LLVM sees every value kept
-    in memory as bytes (branch `fix/struct-chain`).
-18. [x] Playground projects: the browser takes a real project with
-    `peeper.toml`, through `project::project_in` (branch
-    `feature/playground-project`).
-19. [ ] Owner: decide the open findings below. Benchmark for the fourteen commits: +1.69% instructions,
-    accepted in review.
-20. [x] Index checks have one owner, lowering; the backends only find
-    addresses (branch `feature/place-addresses`).
-21. [x] Division up to 64 bits uses the machine's (same branch, its own change).
-23. [x] A borrow of a whole slice reads the slice; the walks never read a length.
-22. [ ] Owner: decide how a compile-time run counts steps; checks now use up
-    its limit sooner (worklog, Index checks in lowering).
+1. [ ] Allocator: what strings, growing lists and freeing memory need.
+2. [ ] Lifetimes of references held in structs.
+3. [ ] Enums and `match` with `?T` (put off by the owner 2026-10-30).
+4. [ ] Strings, interfaces, generics. Methods are done; interfaces reuse
+   their (owner, name) table.
 
-## Open findings (not changed; each needs an owner decision or is small)
+Left for later from methods (`methods.localplan.md`): `Self` written as a
+type, functions of types other than structs, and the rule that an
+interface's function takes `self` first (when interfaces are checked).
+
+## Waiting for the owner
+
+- How a compile-time run counts steps: it counts each MIR instruction, so
+  index checks use up its 1,000,000 steps sooner (a constant of 48,000
+  passes over `a[i]` no longer fits; worklog, "Index checks in lowering").
+- The open findings below: each is left as it is until the owner decides.
+
+## Open findings (from `fix/loans-memory-growth`, 2026-11-01; not rechecked since)
 
 | # | Where | Finding | Cost now | Proposed fix and its cost |
 | --- | --- | --- | --- | --- |
@@ -60,7 +39,7 @@ forgotten or invented.
 | F13 | `flow/src/loans.rs` `live_at_ends` | Lists at block ends cost more than sets where many holders stay live across many blocks. | 3,000 references across 3,000 branches: 154 MB, 1.9 s; 124 MB, 1.0 s with sets (1.3 s at the base) | Accepted for the gain when few are live (217 MB to 53 MB). |
 | F10 | `flow::variable_state` | A function that moves many variables still keeps a set of them at every block. | blocks × moved variables | Liveness of moved variables, as the loan check does; only if a real program needs it. |
 
-## Rules check for this branch
+## Rules check for `fix/loans-memory-growth`
 
 - Wrappers: none added. `source::grow_stack` is the one stack guard, used by the
   parser, `project`, `check`, `lower` and `model`.
