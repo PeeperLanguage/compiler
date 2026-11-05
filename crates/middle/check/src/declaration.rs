@@ -340,13 +340,16 @@ impl Checker<'_> {
         }
         let span = self.module().ast.types.span(ty);
         match self.types[resolved] {
-            // shortcut: structs, arrays, ranges and slices pass as LLVM
-            // values, which the C ABI does not match; allow structs and arrays
-            // when its aggregate rules are written (a range or slice has no C
-            // type).
-            Type::Struct { .. } | Type::Array { .. } | Type::Range { .. } | Type::Slice { .. } => {
-                let what =
-                    "struct, array, range and slice parameters and results of `extern` functions";
+            // shortcut: structs, arrays, ranges, slices and `str` pass as
+            // LLVM values, which the C ABI does not match; allow structs and
+            // arrays when its aggregate rules are written (a range, slice or
+            // `str` has no C type).
+            Type::Struct { .. }
+            | Type::Array { .. }
+            | Type::Range { .. }
+            | Type::Slice { .. }
+            | Type::Str => {
+                let what = "struct, array, range, slice and `str` parameters and results of `extern` functions";
                 self.not_supported(span, what)
             }
             // C could keep what the struct holds, which no loan would follow.
@@ -682,7 +685,7 @@ mod tests {
     #[test]
     fn errors_are_located() {
         let (found, found_reported) = declared_types(
-            "fn a(x: Missing) {}\nfn b(m: utils) {}\nfn c(r: &i32) -> &i32 in q {}\nfn d<T>(x: T) {}\nfn e(x: i32 = 1) {}\nstruct P { x: i32 }\n#[extern(\"f\")]\nfn f(p: P);\nfn ok(p: P) -> P { return p; }\nfn g(x: a) {}\nfn h(s: str) {}\nfn i(&self) {}\nfn P::j(a: i32, mut self) {}\n",
+            "fn a(x: Missing) {}\nfn b(m: utils) {}\nfn c(r: &i32) -> &i32 in q {}\nfn d<T>(x: T) {}\nfn e(x: i32 = 1) {}\nstruct P { x: i32 }\n#[extern(\"f\")]\nfn f(p: P);\nfn ok(p: P) -> P { return p; }\nfn g(x: a) {}\nfn h(s: string) {}\nfn i(&self) {}\nfn P::j(a: i32, mut self) {}\n",
         );
         let expected = reported(&[
             ("T0002", "unknown type `Missing`", "Missing"),
@@ -692,11 +695,11 @@ mod tests {
             ("T0043", "default parameters are not supported yet", "1"),
             (
                 "T0043",
-                "struct, array, range and slice parameters and results of `extern` functions are not supported yet",
+                "struct, array, range, slice and `str` parameters and results of `extern` functions are not supported yet",
                 "P",
             ),
             ("T0021", "`a` is a value, not a type", "a"),
-            ("T0043", "string types are not supported yet", "str"),
+            ("T0043", "string types are not supported yet", "string"),
             (
                 "P0005",
                 "only a type's function takes `self`: `fn Point::name(&self)`",
@@ -775,7 +778,7 @@ mod tests {
             ("P0005", shape, "#[extern(\"d\")]"),
             (
                 "T0043",
-                "struct, array, range and slice parameters and results of `extern` functions are not supported yet",
+                "struct, array, range, slice and `str` parameters and results of `extern` functions are not supported yet",
                 "P",
             ),
         ]);

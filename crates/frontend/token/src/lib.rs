@@ -133,12 +133,13 @@ tokens! {
         /// let big = 1_000;     // 1000
         /// ```
         Number = "number",
-        /// A string literal: text in double quotes.
+        /// A string literal: text in double quotes, a `str`.
         ///
-        /// For now only `print`, `println` and `panic` take one, as a `cstr`; other string literals are not supported yet. Its escapes are a c string's.
+        /// Its bytes are kept in the program; the `str` views them, and `.len` is how many there are. Its escapes are a c string's.
         ///
         /// ```peeper
-        /// println("hello");
+        /// let name = "Ada";
+        /// println("hello", name, name.len);
         /// panic "stop";
         /// ```
         String = "string",

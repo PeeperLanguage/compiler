@@ -23,12 +23,13 @@ use crate::builder::ThirBuilder;
 use crate::expression::unsuffixed_literal;
 
 impl ThirBuilder<'_, '_> {
-    /// The string literal at `span` as a `cstr`: its bytes.
-    pub(crate) fn c_string(&mut self, span: Span) -> Expr {
-        self.checker.record(span, FactKind::Literal(TypeId::CSTR));
+    /// The string literal at `span`, a `str` or with its `c` a `cstr` (`ty`):
+    /// its bytes.
+    pub(crate) fn string_literal(&mut self, span: Span, ty: TypeId) -> Expr {
+        self.checker.record(span, FactKind::Literal(ty));
         let bytes = literal::value(self.checker.module().ast.file.slice(span));
         Expr {
-            ty: TypeId::CSTR,
+            ty,
             kind: ExprKind::Constant(Value::Bytes(bytes.into())),
         }
     }

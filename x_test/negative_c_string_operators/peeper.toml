@@ -4,4 +4,4 @@ build = "program"
 [test]
 mode = "check"
 outcome = "failure"
-stderr_contains = ["operator `==` cannot be applied to `cstr`", "operator `-` cannot be applied to `cstr`", "mismatched types: expected `i32`, found `cstr`", "string literals are not supported yet"]
+stderr_contains = ["operator `==` cannot be applied to `cstr`", "operator `-` cannot be applied to `cstr`", "mismatched types: expected `i32`, found `cstr`", "mismatched types: expected `cstr`, found `str`"]

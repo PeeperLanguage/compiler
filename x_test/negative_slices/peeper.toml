@@ -9,7 +9,7 @@ stderr_contains = [
     "slices of references are not supported yet",
     "references to slices are not supported yet",
     "arrays of slices are not supported yet",
-    "struct, array, range and slice parameters and results of `extern` functions",
+    "struct, array, range, slice and `str` parameters and results of `extern` functions",
     "cannot assign to `view[0]` through shared slice `view`",
     "make `view` a `[&mut]` slice",
     "cannot mutably borrow immutable `fixed`",

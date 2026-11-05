@@ -53,12 +53,13 @@ pub fn integer_text(limbs: &Limbs) -> String {
 /// through its type's sign, when 128 bits hold it, else every limb in hex
 /// (`integer_text`); a float as the shortest text that reads back as it, in
 /// its own precision when it holds an `f32` exactly (a value that does not
-/// shows in full); a string as a `c"..."` literal; `none` for the null
+/// shows in full); a `str` as a `"..."` literal, a `cstr` as `c"..."`; `none` for the null
 /// address.
 pub fn value_text<'v>(value: &'v Value, ty: &'v Type) -> impl Display + 'v {
     fmt::from_fn(move |out| match (value, ty) {
         (Value::Bool(value), _) => write!(out, "{value}"),
         (Value::Null, _) => out.write_str("none"),
+        (Value::Bytes(bytes), Type::Str) => write!(out, "\"{}\"", bytes.escape_ascii()),
         (Value::Bytes(bytes), _) => write!(out, "c\"{}\"", bytes.escape_ascii()),
         (Value::Float(bits), Type::Float(Float::F32))
             if f64::from(f64::from_bits(*bits) as f32) == f64::from_bits(*bits) =>

@@ -44,6 +44,8 @@ use model::layout::layout;
 
 /// The runtime functions `print` calls, with their LLVM parameters.
 const PRINT_TEXT: (&str, &str) = ("peeper_rt_v1_print_text", "ptr");
+/// Its length parameter is a `usize`, as wide as the target's pointers.
+const PRINT_BYTES: &str = "peeper_rt_v1_print_bytes";
 const PRINT_INT: (&str, &str) = ("peeper_rt_v2_print_int", "i32, i32, ptr");
 const PRINT_FLOAT: (&str, &str) = ("peeper_rt_v1_print_float", "double, i32");
 const PRINT_POINTER: (&str, &str) = ("peeper_rt_v1_print_pointer", "ptr");
@@ -59,11 +61,16 @@ impl Module<'_> {
         let (subprogram, scope_metadata) = self
             .add_debug_info(definition, &symbol, body, types)
             .unzip();
-        // Each string constant's global.
+        // Each string constant as an operand: a `cstr`'s global, a `str`'s
+        // global and length.
         let strings = body
             .constants
             .iter()
             .map(|constant| match &constant.value {
+                Value::Bytes(bytes) if constant.ty == TypeId::STR => {
+                    let (global, bits) = (self.add_string(bytes), self.target.pointer_bits);
+                    Some(format!("{{ ptr {global}, i{bits} {} }}", bytes.len()))
+                }
                 Value::Bytes(bytes) => Some(self.add_string(bytes)),
                 _ => None,
             })
@@ -234,7 +241,7 @@ pub(crate) fn global(symbol: &str) -> String {
 /// given.
 struct Function<'m, 'p, 'b> {
     module: &'m mut Module<'p>,
-    strings: Vec<Option<String>>, // by constant: the global of each string
+    strings: Vec<Option<String>>, // by constant: each string as an operand
     body: &'b mir::Body,
     types: &'b Types,
     debug: DebugNodes,
@@ -669,12 +676,12 @@ impl Function<'_, '_, '_> {
                 }
                 return;
             }
-            // A slice's length is in its value. Another field is in the memory
+            // A slice's or `str`'s length is in its value. Another field is in the memory
             // of the value it is part of, which no one changes: its address
             // when it is kept in memory, else loaded from there.
             InstructionKind::Field { value, ref fields } => {
                 let value_type = self.body.operand_type(value);
-                if let Type::Slice { .. } = types[value_type] {
+                if let Type::Slice { .. } | Type::Str = types[value_type] {
                     let value = self.operand(value);
                     write!(out, "  {name} = extractvalue %slice {value}, {}", fields[0])
                 } else {

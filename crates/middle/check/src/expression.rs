@@ -167,7 +167,8 @@ impl ThirBuilder<'_, '_> {
                     ty: TypeId::BOOL,
                     kind: ExprKind::Constant(Value::Bool(value)),
                 },
-                ast::Expr::String { c_string: true } => self.c_string(span),
+                ast::Expr::String { c_string: true } => self.string_literal(span, TypeId::CSTR),
+                ast::Expr::String { c_string: false } => self.string_literal(span, TypeId::STR),
                 ast::Expr::Parentheses(inner) => self.check_expr(inner, expected),
                 ast::Expr::Unary { op, value } => self.check_unary(op, value, span, expected),
                 ast::Expr::Binary { op, left, right } => {
@@ -206,9 +207,6 @@ impl ThirBuilder<'_, '_> {
                     self.check_address(place, span)
                 }
                 ast::Expr::Print { newline, values } => self.check_print(newline, values),
-                ast::Expr::String { c_string: false } => {
-                    self.unsupported_expr(span, "string literals")
-                }
                 ast::Expr::Char { .. } => self.unsupported_expr(span, "character literals"),
                 ast::Expr::Free(_) => self.unsupported_expr(span, "`free` calls"),
                 ast::Expr::VariantLiteral { .. } => self.unsupported_expr(span, "variant literals"),

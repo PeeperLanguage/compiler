@@ -1,0 +1,20 @@
+name = "run_i686_text"
+build = "program"
+
+[test]
+mode = "run"
+target = "i686-linux"
+outcome = "exit_code"
+exit_code = 0
+stdout_contains = [
+    "hello Ada\n",
+    "field: Rex 4\n",
+    "Pet { name: Rex, legs: 4 }\n",
+    "lengths: 3 3 5 6 0\n",
+    "returned: one two\n",
+    "array: yz 0\n",
+    "[x, yz, ]\n",
+    "through: bcd\n",
+    "zero: a\u0000b 3\n",
+    "no newline\n",
+]

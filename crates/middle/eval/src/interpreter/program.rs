@@ -218,6 +218,10 @@ impl<'f> Interpreter<'_, 'f> {
                 self.check_output((text.len() + length) as u64, span)?;
                 text.extend(self.memory.c_text(address).unwrap_or_default());
             }
+            (Type::Str, &Register::Slice { address, length }) => {
+                self.check_output(text.len() as u64 + length, span)?;
+                text.extend(self.read_bytes(address, length, span)?);
+            }
             (Type::RawPointer { .. }, &Register::Address(address)) => {
                 let mut push = |piece: &[u8]| text.extend_from_slice(piece);
                 number_text::write_pointer(address, &mut push);

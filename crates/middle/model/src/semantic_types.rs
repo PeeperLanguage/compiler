@@ -142,6 +142,9 @@ pub enum Type {
     Float(Float),
     /// `cstr`: a pointer to a C string, as C functions take it.
     CString,
+    /// `str`: text, a view of bytes held elsewhere (a literal's in the
+    /// program's data), with their count; laid out as a `[&]u8` slice.
+    Str,
     /// `origins`: the positions of the parameters a returned reference may
     /// point into, in order; empty when the result holds no reference.
     /// `variadic`: the last parameter, a slice, takes all the arguments past
@@ -342,6 +345,9 @@ fixed_types! {
     /// A pointer to a C string, bytes ending in a zero byte, as C functions
     /// take it.
     CSTR "cstr" => Type::CString,
+    /// Text: a view of bytes and how many there are, such as a string
+    /// literal's. It copies; `.len` is its length in bytes.
+    STR "str" => Type::Str,
     // No name: `rawptr` is a keyword, not a type name.
     RAWPTR => Type::RawPointer { target: None },
 }
@@ -703,6 +709,7 @@ impl Types {
             | Type::Integer(_)
             | Type::Float(_)
             | Type::CString
+            | Type::Str
             | Type::RawPointer { .. }
             | Type::Range { .. } => true,
             Type::Reference { mutable, .. } | Type::Slice { mutable, .. } => !mutable,
@@ -751,7 +758,7 @@ impl Types {
         match &self[id] {
             Type::Invalid => "{invalid}".to_string(),
             Type::Void => "void".to_string(),
-            Type::Bool | Type::Float(_) | Type::CString => {
+            Type::Bool | Type::Float(_) | Type::CString | Type::Str => {
                 let (text, _) = NAMED
                     .iter()
                     .find(|&&(_, named)| named == id)

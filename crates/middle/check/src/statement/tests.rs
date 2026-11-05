@@ -279,7 +279,6 @@ fn errors_are_located() {
                 const D: i32 = p;
                 let n;
                 if 1 {}
-                let s = \"a\";
                 break;
                 let q = 5f16;
                 let r: f64 = 0xff;
@@ -340,7 +339,6 @@ fn errors_are_located() {
             "mismatched types: expected `bool`, found `i32`",
             "1",
         ),
-        ("T0043", "string literals are not supported yet", "\"a\""),
         ("P0004", "`break` outside a loop", "break;"),
         ("S0007", "unsupported numeric literal suffix `f16`", "5f16"),
         (

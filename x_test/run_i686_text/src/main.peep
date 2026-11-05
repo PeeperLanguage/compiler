@@ -1,0 +1,30 @@
+// Text as a value: a `str` views a literal's bytes, with their count.
+const GREETING: str = "hello";
+
+struct Pet { name: str, legs: i32 }
+
+fn greet(name: str) { println(GREETING, name); }
+
+fn pick(first: bool) -> str {
+    if first { return "one"; }
+    return "two";
+}
+
+fn main() {
+    greet("Ada");
+    let pet = Pet.{ name = "Rex", legs = 4 };
+    println("field:", pet.name, pet.legs);
+    println(pet);
+    let mut word = "a";
+    word = "bcd";
+    let seen = &word;
+    println("lengths:", word.len, seen.len, GREETING.len, "héllo".len, "".len);
+    println("returned:", pick(true), pick(false));
+    let names = [3]str{"x", "yz", ""};
+    println("array:", names[1], names[2].len);
+    println(names);
+    println("through:", seen);
+    println("zero:", "a\0b", "a\0b".len);
+    print("no newline");
+    println("");
+}

@@ -35,10 +35,7 @@ impl ThirBuilder<'_, '_> {
         let mut checked: Vec<NonZeroU32> = Vec::with_capacity(values.len());
         for value in tree.children.lists.items(values) {
             let span = tree.exprs.span(value);
-            let expr = match tree.exprs[value] {
-                ast::Expr::String { c_string: false } => self.c_string(span),
-                _ => self.check_expr(value, None),
-            };
+            let expr = self.check_expr(value, None);
             let ty = expr.ty;
             let types = &self.checker.types;
             // On an error the others are still checked, for their own.
@@ -343,7 +340,7 @@ fn printable(types: &Types, ty: TypeId) -> bool {
     let (mut reached, mut pending) = (FxHashSet::default(), vec![ty]);
     while let Some(ty) = pending.pop() {
         match types[ty] {
-            Type::Integer(_) | Type::Float(_) | Type::Bool | Type::CString => {}
+            Type::Integer(_) | Type::Float(_) | Type::Bool | Type::CString | Type::Str => {}
             Type::RawPointer { .. } => {}
             Type::Reference { target, .. } => pending.push(target),
             Type::Struct { ref fields, .. } => {

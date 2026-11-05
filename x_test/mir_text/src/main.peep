@@ -1,0 +1,6 @@
+// A `str` constant shows as a plain literal, a `cstr` with its `c`.
+fn main() {
+    let text = "hi\t";
+    let c_text = c"bye";
+    println(text, c_text, text.len);
+}

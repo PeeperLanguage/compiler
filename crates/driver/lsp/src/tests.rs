@@ -484,7 +484,7 @@ fn answers_definition_and_hover() {
     starts(24, 20, &number("f32"));
     assert_eq!(hover(25, 18), doc("-", UnaryOp::Negate.doc()));
     starts(25, 20, &number("i8"));
-    starts(26, 13, "```peeper\ncstr\n```\n\n---\n\n A string literal");
+    starts(26, 13, "```peeper\nstr\n```\n\n---\n\n A string literal");
     starts(26, 19, "```peeper\ncstr\n```\n\n---\n\n A c string literal");
     starts(27, 18, &number("u8"));
     starts(28, 15, &number("u8"));
@@ -623,6 +623,7 @@ fn main(count: i64) {
 }
 const BIG = utils::Twice(21);
 struct Holder { place: utils::Spot }
+const NAME: str = \"Ada\";
 ";
     let (main_file, utils_file) = (folder.join("src/main.peep"), folder.join("src/utils.peep"));
     std::fs::write(&main_file, main).unwrap();
@@ -761,6 +762,11 @@ struct Holder { place: utils::Spot }
     assert_eq!(
         hover(&server, "Ratio", 0),
         json!("```peeper\nconst Ratio: f32 = 0.1\n```\n\n---\n\n*in* `app:utils` *· line 6*\n")
+    );
+    // A `str` as a plain literal, a `cstr` would show its `c`.
+    assert_eq!(
+        hover(&server, "NAME", 0),
+        json!("```peeper\nconst NAME: str = \"Ada\"\n```\n\n---\n\n*in* `app:main` *· line 14*\n")
     );
     assert_eq!(
         hover(&server, "Broken", 0),

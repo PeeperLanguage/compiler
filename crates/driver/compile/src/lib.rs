@@ -500,7 +500,7 @@ fn hash_type(checker: &Checker, id: TypeId, hasher: &mut DefaultHasher) {
                 source::grow_stack(|| hash_type(checker, *target, hasher));
             }
         }
-        Type::Invalid | Type::Void | Type::Bool | Type::CString => {}
+        Type::Invalid | Type::Void | Type::Bool | Type::CString | Type::Str => {}
         Type::Alias { .. } => unreachable!("indexing looks through aliases"),
     }
 }

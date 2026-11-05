@@ -37,7 +37,7 @@ pub fn layout(types: &Types, ty: TypeId, target: &Machine) -> (u64, u64) {
             let bytes = u64::from(target.pointer_bits / 8);
             (bytes, bytes)
         }
-        Type::Slice { .. } => {
+        Type::Slice { .. } | Type::Str => {
             let bytes = u64::from(target.pointer_bits / 8);
             (2 * bytes, bytes)
         }
