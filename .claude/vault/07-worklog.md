@@ -688,3 +688,34 @@ ran `check.sh` fully green.
   `run_type_functions`, `run_i686_type_functions` (all four forms and
   `in self`; LLVM and the interpreter agree), `negative_type_functions`.
   `bash scripts/check.sh` passed.
+
+## 2026-11-05 Methods step 3: calls with a dot
+
+- `p.sum()` calls the function `sum` of `p`'s struct and gives `p` as its
+  `self`. Taken as recommended when the owner said "continue": `Point::sum(p)`
+  does not borrow `p` by itself (as in Rust); a function may share a field's
+  name (`c.value` and `c.value()`); the call stays
+  `Call { callee: Selector }`, with no new node.
+- How: `check_call`'s dot branch (`ThirBuilder::method`) checks `p`, goes
+  through a reference (`through_pointer`), and looks the name up with the
+  struct's `DefId` as owner through `Checker::member`, taken out of
+  `resolve_path` so a path and a dot share one lookup, suggestion and
+  export rule. `takes_self` refuses a function without `self` ("call it as
+  `Point::new(...)`"); `is_self` is shared with `check_function`. `&self`
+  and `&mut self` borrow the place with `check_borrow`; `self` takes the
+  place itself, so moves and loans come from the existing flow checks.
+  Nothing below check changed: the MIR of `line.Sum()` is the MIR of
+  `Line::Sum(&line)`.
+- Differs from the plan's table: `&mut self` on a temporary
+  (`P::New(1).Bump()`) is accepted, the same as writing `&mut P::New(1)`.
+- Speed (5 runs each, against `2aff6689`): 3,777.3 M (3,769.1 - 3,788.1)
+  against 3,778.4 M (3,775.9 - 3,781.9), noise. The benchmark program has
+  no dot calls. Log: `target/bench-dot-calls.log`.
+- Tests: fixtures `run_type_functions`, `run_i686_type_functions` (through
+  `&`, `&mut`, a temporary, a by-value chain; LLVM and the interpreter
+  agree), `negative_type_functions` (no `self`, unknown and unexported
+  names, wrong count, `&mut` of an immutable place),
+  `negative_method_moves` (moving out of a reference, use after a move),
+  `mir_type_functions`. The `.` hover doc now names dot calls.
+  `bash scripts/check.sh` passed.
+- Not done: LSP hover and rename on a dot call are not checked.

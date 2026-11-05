@@ -1,0 +1,25 @@
+// A dot call that takes `self` moves the value, as any call by value does.
+struct Counter { value: i32 }
+
+fn Counter::New() -> Counter {
+    return .{ value = 0 };
+}
+
+fn Counter::get(&self) -> i32 {
+    return self.value;
+}
+
+fn Counter::into(self) -> i32 {
+    return self.value;
+}
+
+// The value behind a reference cannot be taken.
+fn shared(c: &Counter) -> i32 {
+    return c.into();
+}
+
+fn main() {
+    let d = Counter::New();
+    let taken = d.into();
+    let again = d.get();
+}

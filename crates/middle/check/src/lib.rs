@@ -458,38 +458,56 @@ impl<'p> Checker<'p> {
                 }
             };
             let member_span = tree.types.span(member);
-            let member_name = tree.file.slice(member_span);
-            let elsewhere = module != self.current_module();
-            let members = &self.module_checks[module.index()].scope;
-            let Some(found) = members.get(owner, member_name) else {
-                let declared = members.symbols(owner).map(|(declared, _)| declared);
-                let meant = scope::nearest(
-                    member_name,
-                    std::iter::empty(),
-                    declared.filter(|declared| !elsewhere || scope::is_exported(declared)),
-                );
-                let message = format!("unknown name `{member_name}` in {place} `{head}`");
-                self.report_unknown(diagnostics::UNDEFINED_NAME, member_span, message, meant);
-                return None;
-            };
-            self.record(member_span, FactKind::Name(found));
-            if elsewhere && !scope::is_exported(member_name) {
-                let file = &tree.file;
-                self.report(
-                    Diagnostic::new(
-                        diagnostics::NOT_EXPORTED,
-                        format!("`{member_name}` is not exported from `{head}`"),
-                    )
-                    .label(file, member_span, "")
-                    .note(
-                        "names that start with an upper case letter are exported; others are private",
-                    ),
-                );
-                return None;
-            }
-            (symbol, head, head_span) = (found, member_name, member_span);
+            let found = self.member(module, owner, place, head, member_span)?;
+            (symbol, head, head_span) = (found, tree.file.slice(member_span), member_span);
         }
         Some(symbol)
+    }
+
+    /// What the name written at `span` stands for among the names of `owner`
+    /// in `module`: the module's own names when `owner` is `None`, else the
+    /// functions of the type `owner`. `place` and `head` name where, for
+    /// messages: "module `utils`", "type `Point`". An unknown name is
+    /// reported with the nearest one; another module's name is reachable
+    /// only if it starts with an upper case letter.
+    pub(crate) fn member(
+        &mut self,
+        module: ModuleId,
+        owner: Option<DefId>,
+        place: &str,
+        head: &str,
+        span: Span,
+    ) -> Option<Symbol> {
+        let file = &self.module().ast.file;
+        let name = file.slice(span);
+        let elsewhere = module != self.current_module();
+        let members = &self.module_checks[module.index()].scope;
+        let Some(found) = members.get(owner, name) else {
+            let declared = members.symbols(owner).map(|(declared, _)| declared);
+            let meant = scope::nearest(
+                name,
+                std::iter::empty(),
+                declared.filter(|declared| !elsewhere || scope::is_exported(declared)),
+            );
+            let message = format!("unknown name `{name}` in {place} `{head}`");
+            self.report_unknown(diagnostics::UNDEFINED_NAME, span, message, meant);
+            return None;
+        };
+        self.record(span, FactKind::Name(found));
+        if elsewhere && !scope::is_exported(name) {
+            self.report(
+                Diagnostic::new(
+                    diagnostics::NOT_EXPORTED,
+                    format!("`{name}` is not exported from `{head}`"),
+                )
+                .label(file, span, "")
+                .note(
+                    "names that start with an upper case letter are exported; others are private",
+                ),
+            );
+            return None;
+        }
+        Some(found)
     }
 
     /// Reports `name`, written at `span`, which nothing in scope declares,

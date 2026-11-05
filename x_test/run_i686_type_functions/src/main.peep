@@ -15,4 +15,10 @@ fn main() {
     println(g::Point::X(&p).*, g::Point::Into(g::Point::Swapped(q)));
     let line = g::Line::New(p, P::New(5, 6));
     println(g::Line::Sum(&line));
+    // With a dot the value is `self`: lent to `&self` and `&mut self`, given
+    // to `self`, and reached through a reference.
+    let mut r = P::New(1, 1);
+    r.Shift(2);
+    let view = &r;
+    println(r.Sum(), view.X().*, line.Sum(), P::New(7, 8).Swapped().Into());
 }

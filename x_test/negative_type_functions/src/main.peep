@@ -22,6 +22,9 @@ fn Missing::get(&self) -> i32 {
 fn Local::get(&self) -> i32 {
     return self.x;
 }
+fn Local::set(&mut self, x: i32) {
+    self.x = x;
+}
 
 fn main() {
     let a = g::Point::Nw(1, 2);
@@ -34,4 +37,11 @@ fn main() {
     // `&self` takes a reference; the call does not borrow by itself.
     let local = Local.{ x = 1 };
     let g = Local::get(local);
+    // A dot calls a function of the value's type that takes `self`.
+    let h = local.f();
+    let i = g::Point::New(1, 2).make(1, 2);
+    let five = 5;
+    let j = five.get();
+    let k = local.get(1);
+    local.set(2);
 }

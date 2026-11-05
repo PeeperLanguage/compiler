@@ -1,16 +1,16 @@
 fn Point::Sum:
   bb0:
-    store p.0, arg0
-    %1 = load p.0.*[0]: i32
-    %2 = load p.0.*[1]: i32
+    store self.0, arg0
+    %1 = load self.0.*[0]: i32
+    %2 = load self.0.*[1]: i32
     %3 = Add %1, %2: i32
     return %3
 fn Line::Sum:
   bb0:
-    store line.0, arg0
-    %1 = borrow line.0.*[0]: &Point
+    store self.0, arg0
+    %1 = borrow self.0.*[0]: &Point
     %2 = call Point::Sum(%1): i32
-    %3 = borrow line.0.*[1]: &Point
+    %3 = borrow self.0.*[1]: &Point
     %4 = call Point::Sum(%3): i32
     %5 = Add %2, %4: i32
     return %5
@@ -32,4 +32,7 @@ fn main:
     %5 = call Line::Sum(%4): i32
     %6 = call Sum(%5, 1): i32
     store total.1, %6
+    %8 = borrow line.0: &Line
+    %9 = call Line::Sum(%8): i32
+    store again.2, %9
     fall off at `}`

@@ -154,13 +154,7 @@ impl Checker<'_> {
                 let message = "a `...` parameter must be the last one";
                 return self.error(diagnostics::INVALID_DECLARATION, message, span);
             }
-            // `self`, `&self` or `&mut self`: of the type the function
-            // belongs to.
-            let taken = match tree.types[parameter.ty] {
-                ast::Type::Reference { target, .. } => target,
-                _ => parameter.ty,
-            };
-            if matches!(tree.types[taken], ast::Type::Owner) {
+            if is_self(tree, parameter) {
                 let message = match (position, owner) {
                     (0, Some(_)) => None,
                     (0, None) => {
@@ -616,6 +610,16 @@ impl Checker<'_> {
             self.not_supported(span, what)
         })
     }
+}
+
+/// Whether `parameter` of a function in `tree` is `self`, `&self` or
+/// `&mut self`: of the type the function belongs to.
+pub(crate) fn is_self(tree: &ast::Tree, parameter: ast::Param) -> bool {
+    let taken = match tree.types[parameter.ty] {
+        ast::Type::Reference { target, .. } => target,
+        _ => parameter.ty,
+    };
+    matches!(tree.types[taken], ast::Type::Owner)
 }
 
 #[cfg(test)]

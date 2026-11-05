@@ -1,14 +1,15 @@
 // A type's function is named with its type, `Point::Sum`, so it reads apart
-// from the module's own `Sum` and from `Line::Sum`.
+// from the module's own `Sum` and from `Line::Sum`. A dot call is the same
+// call with the value lent as `self`: `line.Sum()` is `Line::Sum(&line)`.
 struct Point { x: i32, y: i32 }
 struct Line { start: Point, end: Point }
 
-fn Point::Sum(p: &Point) -> i32 {
-    return p.x + p.y;
+fn Point::Sum(&self) -> i32 {
+    return self.x + self.y;
 }
 
-fn Line::Sum(line: &Line) -> i32 {
-    return Point::Sum(&line.start) + Point::Sum(&line.end);
+fn Line::Sum(&self) -> i32 {
+    return self.start.Sum() + Point::Sum(&self.end);
 }
 
 fn Sum(a: i32, b: i32) -> i32 {
@@ -18,4 +19,5 @@ fn Sum(a: i32, b: i32) -> i32 {
 fn main() {
     let line = Line.{ start = .{ x = 1, y = 2 }, end = .{ x = 3, y = 4 } };
     let total = Sum(Line::Sum(&line), 1);
+    let again = line.Sum();
 }

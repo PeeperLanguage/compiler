@@ -5,4 +5,4 @@ build = "program"
 mode = "run"
 target = "i686-linux"
 outcome = "success"
-stdout_contains = ["3 7 12 2\n11 403\n24\n"]
+stdout_contains = ["3 7 12 2\n11 403\n24\n4 3 24 807\n"]

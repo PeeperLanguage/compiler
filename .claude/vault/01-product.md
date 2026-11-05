@@ -57,7 +57,7 @@ as few walks per body as possible; one owner per fact.
 - **Partly done:** arrays, structs, references, slices, raw pointers,
   ownership (no drops), strings (`cstr` and literals in `print`/`panic`),
   printing, `panic`, compile-time calls, C functions, paths, methods
-  (`fn Point::name(&self)`, called `Point::name(&p)`; no `p.name()` yet).
+  (`fn Point::name(&self)`, called `Point::name(&p)` or `p.name()`).
 - **Not done (parser reads, check reports T0043):** enums, optionals,
   allocator, interfaces, generics, function values, default
   parameters, destructuring, block expressions, pipes, dependencies.
