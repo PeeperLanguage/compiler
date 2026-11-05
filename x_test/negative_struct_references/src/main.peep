@@ -2,9 +2,9 @@
 // behind a reference would outlive what it borrows unseen, so it is refused
 // for now, however it is written.
 struct Pair { first: &i32, second: &i32 }
-struct Text { input: [&]u8 }
+struct Text { input: &[]u8 }
 struct Counter { value: &mut i32 }
-struct Grid { cells: [&mut]i32 }
+struct Grid { cells: &mut []i32 }
 struct Wrap { inner: &Pair }
 struct Link { next: &Link }
 
@@ -34,8 +34,8 @@ fn lend_through_shared(c: &Counter) {
     r.* = 1;
 }
 
-// A `[&mut]` field gives nothing writable through a shared reference.
-fn fill(cells: [&mut]i32) {}
+// A `&mut []` field gives nothing writable through a shared reference.
+fn fill(cells: &mut []i32) {}
 
 fn lend_slice_through_shared(g: &Grid) {
     fill(g.cells);
@@ -52,8 +52,8 @@ fn slice_through_shared(g: &Grid) {
     part[0] = 1;
 }
 
-// `[&]Pair`, `[2]Pair` and `*Pair` do not say which reference is which.
-fn elements(pairs: [&]Pair) {}
+// `&[]Pair`, `[2]Pair` and `*Pair` do not say which reference is which.
+fn elements(pairs: &[]Pair) {}
 
 fn array(pairs: [2]Pair) {}
 

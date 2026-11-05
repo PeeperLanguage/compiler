@@ -131,7 +131,7 @@ impl ThirBuilder<'_, '_> {
     /// of the element, which must copy, or `&items.*[index]` or
     /// `&mut items.*[index]` when `items` is a `&` or `&mut` reference
     /// (`&items[index]` or `&mut items[index]` for a slice), which keeps the
-    /// elements borrowed for the whole loop. A `[&mut]` variable is lent
+    /// elements borrowed for the whole loop. A `&mut []` variable is lent
     /// again, so it is usable after the loop. Without `index`, the counter
     /// is unnamed.
     pub(super) fn check_for_array(

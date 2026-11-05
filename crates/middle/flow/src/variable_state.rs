@@ -323,7 +323,7 @@ fn moved_use(
 /// The error for a value of the type `moved`, which moves, read by value at
 /// `span` from `place`, a part of its variable: a value cannot be moved out
 /// of its struct or array, nor out of what a reference or raw pointer points
-/// to. A `&mut` or `[&mut]` there can be lent again instead.
+/// to. A `&mut` or `&mut []` there can be lent again instead.
 fn partial_move(
     file: &Arc<SourceFile>,
     span: Span,

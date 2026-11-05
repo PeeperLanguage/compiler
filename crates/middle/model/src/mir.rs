@@ -165,7 +165,7 @@ pub struct Subslice {
 #[derive(Clone, Debug)]
 pub enum InstructionKind {
     /// The value at the place, whose type copies (`Types::is_copy`), or a
-    /// slice read only for its length by `.len`, which leaves a `[&mut]`
+    /// slice read only for its length by `.len`, which leaves a `&mut []`
     /// usable.
     Load(Place),
     /// The length of the slice at the place, a `usize`, for a check of an

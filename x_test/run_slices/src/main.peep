@@ -1,9 +1,9 @@
-// A slice views an array's elements: `&a` turns into `[&]T` where one is
-// expected, and `&mut a` into `[&mut]T`. It is read and written by index,
+// A slice views an array's elements: `&a` turns into `&[]T` where one is
+// expected, and `&mut a` into `&mut []T`. It is read and written by index,
 // knows its length when the program runs, and is passed and returned. A
-// `[&mut]` passed to a call is lent again, so it can be passed twice; a
-// `[&mut]` used as a `[&]` is lent again as a `[&]`.
-fn sum(view: [&]i32) -> i32 {
+// `&mut []` passed to a call is lent again, so it can be passed twice; a
+// `&mut []` used as a `&[]` is lent again as a `&[]`.
+fn sum(view: &[]i32) -> i32 {
     let mut total = 0;
     for at in 0..view.len {
         total = total + view[at];
@@ -11,21 +11,21 @@ fn sum(view: [&]i32) -> i32 {
     return total;
 }
 
-fn double(edit: [&mut]i32) {
+fn double(edit: &mut []i32) {
     for at in 0..edit.len {
         edit[at] = edit[at] * 2;
     }
 }
 
-fn same(view: [&]i32) -> [&]i32 in view {
+fn same(view: &[]i32) -> &[]i32 in view {
     return view;
 }
 
-fn first(view: [&]i32) -> &i32 {
+fn first(view: &[]i32) -> &i32 {
     return &view[0];
 }
 
-fn wide(view: [&]i32) -> i32 {
+fn wide(view: &[]i32) -> i32 {
     return view[1u128] + view[1i128];
 }
 
@@ -36,7 +36,7 @@ fn through(values: &mut [4]i32) -> i32 {
 
 fn main() -> i32 {
     let mut values = [3]i32{1, 2, 3};
-    let edit: [&mut]i32 = &mut values;
+    let edit: &mut []i32 = &mut values;
     double(edit);
     double(edit); // `edit` was lent, not moved
     let viewed = sum(edit); // 4 + 8 + 12
@@ -46,7 +46,7 @@ fn main() -> i32 {
     let front = first(kept);
     println(element.*, front.*, wide(kept)); // 8 4 16
     let mut pair = [2]i32{5, 6};
-    let both: [&mut]i32 = &mut pair;
+    let both: &mut []i32 = &mut pair;
     let second = &mut both[1];
     second.* = 7;
     println(pair[1]);

@@ -1,6 +1,6 @@
 // A slice's length is known only when the program runs, so even a constant
 // index is checked then.
-fn last(view: [&]i32, at: usize) -> i32 {
+fn last(view: &[]i32, at: usize) -> i32 {
     println(view[at]);
     return view[3];
 }

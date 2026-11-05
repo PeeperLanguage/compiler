@@ -151,8 +151,8 @@ fn strings_and_extern_calls() {
 fn slice_bounds_are_target_sized() {
     let text = ll(
         "fn f(a: [4]i32, wide: i64, narrow: i8) {\n\
-             let from: [&]i32 = &a[wide..];\n\
-             let to: [&]i32 = &a[..narrow];\n}",
+             let from: &[]i32 = &a[wide..];\n\
+             let to: &[]i32 = &a[..narrow];\n}",
         "i686-linux",
     );
     for line in [
@@ -176,7 +176,7 @@ fn slice_bounds_are_target_sized() {
 #[test]
 fn slice_spreads_are_target_sized() {
     let text = ll(
-        "fn f(view: [&]i64) -> [2]i64 {\n\
+        "fn f(view: &[]i64) -> [2]i64 {\n\
              return [2]i64{view...};\n}",
         "i686-linux",
     );

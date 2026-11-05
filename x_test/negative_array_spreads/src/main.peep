@@ -12,13 +12,13 @@ fn count(n: i32) -> i32 {
     return n;
 }
 
-fn slices(s: [&]i32, f: [&]f64) {
+fn slices(s: &[]i32, f: &[]f64) {
     let inferred = [_]i32{s...};
     let floats = [2]i32{f...};
     let past = [2]i32{1, 2, 3, s...};
 }
 
-fn kept(m: [&mut]i32) {
+fn kept(m: &mut []i32) {
     let element = &mut m[0];
     let read = [2]i32{m...};
     element.* = 1;

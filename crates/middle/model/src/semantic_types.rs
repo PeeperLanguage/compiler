@@ -202,7 +202,7 @@ pub enum Type {
         mutable: bool,
         target: TypeId,
     },
-    /// `[&]T`, or `[&mut]T` when `mutable`: a view of some `element`
+    /// `&[]T`, or `&mut []T` when `mutable`: a view of some `element`
     /// values held elsewhere, one after another, with how many there are
     /// known only when the program runs. The loan rules hold for it as for
     /// a reference (`Type::borrows`).
@@ -266,7 +266,7 @@ pub enum Conversion {
     /// to a wider signed integer, and from `f32` to `f64`.
     Implicit,
     /// A `&mut T` used as a `&T`, a reference to an array used as a slice
-    /// of it, or a `[&mut]T` used as a `[&]T`: lent again, so the reference
+    /// of it, or a `&mut []T` used as a `&[]T`: lent again, so the reference
     /// or slice itself is not moved.
     Reborrow,
     /// Converts only when written with `as`: between integers that lose
@@ -804,9 +804,9 @@ impl Types {
             Type::Slice { mutable, element } => {
                 let element = self.real_text(*element, name_of);
                 if *mutable {
-                    format!("[&mut]{element}")
+                    format!("&mut []{element}")
                 } else {
-                    format!("[&]{element}")
+                    format!("&[]{element}")
                 }
             }
             Type::RawPointer { target: None } => "rawptr".to_string(),

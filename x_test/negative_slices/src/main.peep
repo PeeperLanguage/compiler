@@ -1,16 +1,16 @@
 // What slices cannot do yet, or ever: be held in an array, a reference or
-// another slice, cross to C, be written through `[&]`, become writable from
-// `[&]`, change element type.
+// another slice, cross to C, be written through `&[]`, become writable from
+// `&[]`, change element type.
 
 #[extern("takes")]
-fn takes(values: [&]i32);
+fn takes(values: &[]i32);
 
-fn nested(values: [&][&]i32) {}
-fn of_references(values: [&]&i32) {}
-fn to_slice(values: &[&]i32) {}
-fn in_array(values: [2][&]i32) {}
+fn nested(values: &[]&[]i32) {}
+fn of_references(values: &[]&i32) {}
+fn to_slice(values: &&[]i32) {}
+fn in_array(values: [2]&[]i32) {}
 
-fn first(view: [&]i32) -> i32 {
+fn first(view: &[]i32) -> i32 {
     view[0] = 1;
     view = view;
     view.len = 2;
@@ -21,12 +21,12 @@ fn first(view: [&]i32) -> i32 {
     return view.length;
 }
 
-fn edit(values: [&mut]i32) {}
-fn wide(values: [&]i64) {}
+fn edit(values: &mut []i32) {}
+fn wide(values: &[]i64) {}
 
 fn main() {
     let fixed = [3]i32{1, 2, 3};
-    let view: [&]i32 = &fixed;
+    let view: &[]i32 = &fixed;
     edit(view);
     edit(&mut fixed);
     wide(&fixed);

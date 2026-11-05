@@ -35,7 +35,7 @@ impl ThirBuilder<'_, '_> {
     }
 
     /// Makes the checked place `place` one that can be lent as `ty`, a
-    /// reference or slice (`make_place`). A `&mut` or `[&mut]` needs a place
+    /// reference or slice (`make_place`). A `&mut` or `&mut []` needs a place
     /// that can be written, else that is reported but the place is still
     /// lent, so checking goes on; a slice place is lent again, so its own
     /// type decides, never the variable holding it, unless it is behind a
@@ -176,7 +176,7 @@ impl ThirBuilder<'_, '_> {
     }
 
     /// Whether the `decider` of a place (`place_root`) lets it be written: a
-    /// `&mut`, a `[&mut]` or a raw pointer.
+    /// `&mut`, a `&mut []` or a raw pointer.
     pub(crate) fn writes_through(&self, decider: Id<Expr>) -> bool {
         let types = &self.checker.types;
         let ty = self.body.exprs[decider].ty;
@@ -186,7 +186,7 @@ impl ThirBuilder<'_, '_> {
     /// Reports `action` (`"assign to"`, `"mutably borrow"`) on the place
     /// `place`, which starts from `variable`, where it cannot write the
     /// place: through `decider` (`place_root`) only when that is a `&mut`,
-    /// a `[&mut]` or a raw pointer, else in the variable's own storage only
+    /// a `&mut []` or a raw pointer, else in the variable's own storage only
     /// when it is `mut`.
     pub(crate) fn report_unwritable(
         &mut self,
@@ -206,7 +206,7 @@ impl ThirBuilder<'_, '_> {
             let types = &self.checker.types;
             let holder = file.slice(self.body.exprs.span(decider));
             let (kind, writable) = match types[ty] {
-                Type::Slice { .. } => ("slice", "`[&mut]` slice"),
+                Type::Slice { .. } => ("slice", "`&mut []` slice"),
                 _ => ("reference", "`&mut` reference"),
             };
             // Only a slice lends itself again.
@@ -249,7 +249,7 @@ impl ThirBuilder<'_, '_> {
         self.checker.report(error.help(help, Vec::new()));
     }
 
-    /// Makes `expr`, when it is a `&mut` or `[&mut]` in a variable or a
+    /// Makes `expr`, when it is a `&mut` or `&mut []` in a variable or a
     /// field, lend it again, so it is not moved: it stays usable after the
     /// call or loop that takes `expr`.
     pub(crate) fn reborrow_in_place(&mut self, expr: Id<Expr>) {
@@ -267,7 +267,7 @@ impl ThirBuilder<'_, '_> {
 
     /// `reference`, a reference or slice checked at `span`, lent again as
     /// `to` (`Conversion::Reborrow`, or its own type), so a `&mut` or
-    /// `[&mut]` itself is not moved. A written `&place` or `&a[i..j]`,
+    /// `&mut []` itself is not moved. A written `&place` or `&a[i..j]`,
     /// already checked, borrows its place itself as `to`; a slice lends its
     /// own elements.
     pub(super) fn reborrow(&mut self, reference: Expr, span: Span, to: TypeId) -> Expr {

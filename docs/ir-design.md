@@ -516,8 +516,8 @@ has no storage and the write would not change it; Rust only warns
 temporaries; Rust's promotion of `&LIMIT` to a value that lasts forever is not
 done, so such a reference cannot outlive its statement unless a `let` keeps it.
 
-A slice (`[&]T`, `[&mut]T`) is its own type, not a reference to some
-unsized `[T]`: the address of some elements and their count, known only when
+A slice (`&[]T`, `&mut []T`) is its own type, not a reference to some
+unsized `[]T`: the address of some elements and their count, known only when
 the program runs. The loan rules hold for it as for a reference: both answer
 `Type::borrows`, which the write checks ask, so no rule is
 copied. A slice is never an array element or directly behind a reference or
@@ -526,8 +526,8 @@ raw pointer, but it may be in a struct field. THIR writes
 `SliceElements` step before the index, so a write through a slice is behind a
 reference for every check, as `r.*[i]` is. `&a` where a slice is expected is
 a `Borrow` of `a` with the slice type (`Conversion::Reborrow`); a borrow of a
-slice place (a `[&mut]` lent again, or used as a `[&]`) is a `Borrow` of its
-elements, `s.*`. `s.len` loads the slice, never moving a `[&mut]`, and takes
+slice place (a `&mut []` lent again, or used as a `&[]`) is a `Borrow` of its
+elements, `s.*`. `s.len` loads the slice, never moving a `&mut []`, and takes
 its field 1: a read of the slice, as `s.len()` borrows it in Rust.
 
 `&a[i..j]` (or `&mut`, or `..=`) is THIR's `Slice` of the array place `a`,
@@ -550,16 +550,16 @@ same `Borrow`, of `s.*[from i, count n]`: its elements, behind it. The
 length is the slice's, read once before (`length`), so every end but a
 start of 0 is checked when the program runs, even a constant one; the
 checker rejects only constant ends that no slice can hold (negative, past
-the target's `usize`) or that are out of order. `&mut` needs a `[&mut]`
+the target's `usize`) or that are out of order. `&mut` needs a `&mut []`
 source, as writing through a slice does.
 
 `for v in s` over a slice is THIR's array loop: the slice is held in a
-hidden variable (a `[&mut]` lent again, so `s` is usable after), the range
+hidden variable (a `&mut []` lent again, so `s` is usable after), the range
 ends at its `len`, read once before the first pass, and each pass sets `v`
 to `&items[i]` or `&mut items[i]`, as for a loop over a reference. The loop
 lends the slice for all its passes, so its body cannot use `s`.
 `[N]T{s...}` is one part of an `ArrayParts`, its elements copied; they must
-copy, and a `[&mut]` variable is lent as a `[&]`, so it is usable after. Its
+copy, and a `&mut []` variable is lent as a `&[]`, so it is usable after. Its
 count is known only when the program runs, so `[_]T{s...}` is rejected.
 
 A use (`load`, `length`, `move`, `borrow`, `address`, or a read or write of a place) not set on

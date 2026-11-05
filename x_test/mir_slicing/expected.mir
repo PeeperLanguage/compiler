@@ -9,7 +9,7 @@ fn middle:
     %6 = GreaterThan %3, 3: bool
     check %6, "slice starts after it ends"
     %8 = Subtract 3, %3: u64
-    %9 = borrow values.0[from %3, count %8]: [&]i32
+    %9 = borrow values.0[from %3, count %8]: &[]i32
     store view.2, %9
     %11 = length view.2: u64
     %12 = GreaterOrEqual 0, %11: bool
@@ -26,7 +26,7 @@ fn tail:
     %2 = GreaterThan 1, %1: bool
     check %2, "slice out of bounds"
     %4 = Subtract %1, 1: u64
-    %5 = borrow view.0.*[from 1, count %4]: [&]i32
+    %5 = borrow view.0.*[from 1, count %4]: &[]i32
     store rest.1, %5
     %7 = length rest.1: u64
     %8 = GreaterOrEqual 0, %7: bool

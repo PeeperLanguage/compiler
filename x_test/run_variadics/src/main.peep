@@ -35,12 +35,12 @@ fn rows(points: ...Point) -> i32 {
     return total;
 }
 
-// `values` is a plain `[&]i32` inside, so it passes on as one.
+// `values` is a plain `&[]i32` inside, so it passes on as one.
 fn forward(values: ...i32) -> i32 {
     return sum(values...) + plain(values);
 }
 
-fn plain(values: [&]i32) -> i32 {
+fn plain(values: &[]i32) -> i32 {
     return values.len as i32;
 }
 
@@ -75,7 +75,7 @@ fn pairs(values: ...[2]i32) -> i32 {
     return values[0][1] + values.len as i32;
 }
 
-fn same(values: ...i32) -> [&]i32 in values {
+fn same(values: ...i32) -> &[]i32 in values {
     return values;
 }
 
@@ -109,7 +109,7 @@ fn main() {
     println("6. a slice writes through:");
     let view = &mut b[1..];
     bump(view...);
-    bump(view...); // a `[&mut]` in a variable is lent, not moved
+    bump(view...); // a `&mut []` in a variable is lent, not moved
     println(view[0]);
     println("7. listed variables are copied:");
     let x = 5;
@@ -168,7 +168,7 @@ fn main() {
     for value in same(c...) {
         println(value.*);
     }
-    println("22. a `[&mut]` read by `...T` is usable after:");
+    println("22. a `&mut []` read by `...T` is usable after:");
     let writable = &mut c[0..];
     println(sum(writable...));
     writable[0] = 9;

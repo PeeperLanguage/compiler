@@ -25,7 +25,7 @@ fn id(r: &i32) -> &i32 in r {
     return r;
 }
 
-fn view(a: &[3]i32) -> [&]i32 in a {
+fn view(a: &[3]i32) -> &[]i32 in a {
     return a;
 }
 

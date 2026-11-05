@@ -15,7 +15,7 @@ fn numbers() -> [2]i32 {
     return [2]i32{1, 2};
 }
 
-fn sure(a: [2]i32, s: [&]i32, w: [&mut]i32) {
+fn sure(a: [2]i32, s: &[]i32, w: &mut []i32) {
     let mut held = [2]i32{1, 2};
     bump(held);
     bump(w);
@@ -27,14 +27,14 @@ fn sure(a: [2]i32, s: [&]i32, w: [&mut]i32) {
     let by_reference = sum(&a);
 }
 
-fn guessed(a: [2]i32, s: [&]i32, points: [1]Point) {
+fn guessed(a: [2]i32, s: &[]i32, points: [1]Point) {
     bump(a);
     rows(points);
     let beside = sum(1, s);
     let in_literal = [_]i32{a};
 }
 
-fn no_fix(a: [2]i32, s: [&]i32) {
+fn no_fix(a: [2]i32, s: &[]i32) {
     bump(s);
     bump(&a);
     let beside = sum(1, &a);

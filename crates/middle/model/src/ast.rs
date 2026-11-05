@@ -240,7 +240,7 @@ pub struct Param {
     pub mutable: bool,
     pub name: Option<Ident>,
     pub ty: Id<Type>,
-    /// `name: ...T` or `name: ...mut T`: `ty` is the slice `[&]T` or `[&mut]T`
+    /// `name: ...T` or `name: ...mut T`: `ty` is the slice `&[]T` or `&mut []T`
     /// that holds the call's last arguments.
     pub variadic: bool,
     pub default: Option<Id<Expr>>,
@@ -282,7 +282,7 @@ pub enum Type {
     RawPointer,
     /// `[4]T`, or `[_]T` in an array literal
     FixedArray { length: Length, element: Id<Type> },
-    /// `[&]T`, or `[&mut]T` when `mutable`
+    /// `&[]T`, or `&mut []T` when `mutable`
     Slice { mutable: bool, element: Id<Type> },
     /// `fn(T) -> R in a`
     Function(Signature),
