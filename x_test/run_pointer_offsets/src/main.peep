@@ -3,7 +3,8 @@
 import "core:allocator";
 
 fn main() {
-    let block = allocator::Allocate(64);
+    let mut heap = allocator::Heap.{};
+    let block = heap.Allocate(64, 4);
     let count: usize = 3;
     let mut at = block;
     for i in 0..count {
@@ -14,5 +15,5 @@ fn main() {
     let first = block as *i32;
     let third = (block + 8) as *i32;
     println(first.*, third.*, block + 0 == block, block + 4 == block);
-    allocator::Free(block);
+    heap.Free(block);
 }

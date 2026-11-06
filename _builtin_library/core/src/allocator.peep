@@ -1,5 +1,177 @@
 #[extern("peeper_rt_v1_alloc")]
-fn Allocate(size: usize) -> rawptr;
+fn allocate(size: usize) -> rawptr;
 
 #[extern("peeper_rt_v1_free")]
-fn Free(ptr: rawptr);
+fn free(ptr: rawptr);
+
+// Gives memory and takes it back. Code that needs memory takes a
+// `&mut Allocator`, so its caller picks where the memory comes from.
+//
+// `align` is where a piece may start: at an address that is a multiple of
+// it, a power of two up to 16. Every allocator here gives `none` for
+// another `align`, or when it has no room.
+iface Allocator {
+    fn Allocate(&mut self, size: usize, align: usize) -> rawptr,
+    fn Free(&mut self, memory: rawptr)
+}
+
+// Whether every allocator here can start a piece at a multiple of `align`:
+// the heap's blocks start at a multiple of 16.
+fn aligns(align: usize) -> bool {
+    return align != 0 && align <= 16 && (align & (align - 1)) == 0;
+}
+
+// `offset` moved up to the next multiple of `align`.
+fn aligned(offset: usize, align: usize) -> usize {
+    return (offset + align - 1) / align * align;
+}
+
+// The program's heap.
+struct Heap {}
+fn Heap::Allocate(&mut self, size: usize, align: usize) -> rawptr {
+    if !aligns(align) {
+        return none;
+    }
+    return allocate(size);
+}
+fn Heap::Free(&mut self, memory: rawptr) { free(memory); }
+
+// Hands out pieces of one block, one after another. Freeing one piece gives
+// nothing back, which keeps it fast: `Reset` takes every piece back at once,
+// and `Release` gives the block back to the heap.
+struct Arena { heap: Heap, block: rawptr, size: usize, used: usize }
+
+// An arena of `size` bytes; one that got no block has no room.
+fn Arena::New(size: usize) -> Arena {
+    let mut arena = Arena.{ heap = Heap.{}, block = none, size = 0, used = 0 };
+    arena.block = arena.heap.Allocate(size, 16);
+    if arena.block != none {
+        arena.size = size;
+    }
+    return arena;
+}
+fn Arena::Allocate(&mut self, size: usize, align: usize) -> rawptr {
+    if !aligns(align) {
+        return none;
+    }
+    let start = aligned(self.used, align);
+    if start > self.size || size > self.size - start {
+        return none;
+    }
+    self.used = start + size;
+    return self.block + start;
+}
+// A piece is given back only with all the others, by `Reset`.
+fn Arena::Free(&mut self, memory: rawptr) {}
+fn Arena::Reset(&mut self) { self.used = 0; }
+fn Arena::Release(&mut self) {
+    self.heap.Free(self.block);
+    self.block = none;
+    self.size = 0;
+    self.used = 0;
+}
+
+// Hands out chunks of one size from one block. Each chunk is given back on
+// its own and handed out again.
+struct Pool { heap: Heap, block: rawptr, chunk: usize, align: usize, free: rawptr }
+
+// A pool of `count` chunks of `chunk` bytes, each starting at a multiple of
+// `align`; one with a wrong `align`, or that got no block, has no chunks.
+fn Pool::New(chunk: usize, align: usize, count: usize) -> Pool {
+    let mut pool = Pool.{ heap = Heap.{}, block = none, chunk = 0, align = 0, free = none };
+    if !aligns(align) || count == 0 {
+        return pool;
+    }
+    // A free chunk holds the address of the next free one.
+    let mut step = chunk;
+    if step < 8 {
+        step = 8;
+    }
+    let mut boundary = align;
+    if boundary < 8 {
+        boundary = 8;
+    }
+    step = aligned(step, boundary);
+    // A size near the top of `usize` wraps when rounded up.
+    if step < chunk || step * count / count != step {
+        return pool;
+    }
+    pool.block = pool.heap.Allocate(step * count, 16);
+    if pool.block == none {
+        return pool;
+    }
+    pool.chunk = step;
+    pool.align = boundary;
+    for i in 0..count {
+        pool.Free(pool.block + (count - 1 - i) * step);
+    }
+    return pool;
+}
+fn Pool::Allocate(&mut self, size: usize, align: usize) -> rawptr {
+    if size > self.chunk || !aligns(align) || align > self.align || self.free == none {
+        return none;
+    }
+    let chunk = self.free;
+    self.free = (chunk as *rawptr).*;
+    return chunk;
+}
+fn Pool::Free(&mut self, memory: rawptr) {
+    if memory == none {
+        return;
+    }
+    let next = memory as *rawptr;
+    next.* = self.free;
+    self.free = memory;
+}
+fn Pool::Release(&mut self) {
+    self.heap.Free(self.block);
+    self.block = none;
+    self.chunk = 0;
+    self.free = none;
+}
+
+// Hands out pieces of one block like an arena, but `Free` gives back the
+// newest piece, so pieces are given back newest first.
+struct Stack { arena: Arena, top: rawptr, last: rawptr }
+
+// What a `Stack` keeps before each piece: itself as it was before it.
+struct mark { used: usize, top: rawptr, last: rawptr }
+
+// A stack of `size` bytes; one that got no block has no room.
+fn Stack::New(size: usize) -> Stack {
+    return Stack.{ arena = Arena::New(size), top = none, last = none };
+}
+fn Stack::Allocate(&mut self, size: usize, align: usize) -> rawptr {
+    let used = self.arena.used;
+    // A `mark` is three words of at most 8 bytes.
+    let at = self.arena.Allocate(24, 8);
+    let piece = self.arena.Allocate(size, align);
+    if at == none || piece == none {
+        self.arena.used = used;
+        return none;
+    }
+    let before = at as *mark;
+    before.used = used;
+    before.top = self.top;
+    before.last = self.last;
+    self.top = piece;
+    self.last = at;
+    return piece;
+}
+fn Stack::Free(&mut self, memory: rawptr) {
+    if memory == none {
+        return;
+    }
+    if memory != self.top {
+        panic "a stack's pieces are freed newest first";
+    }
+    let before = self.last as *mark;
+    self.arena.used = before.used;
+    self.top = before.top;
+    self.last = before.last;
+}
+fn Stack::Release(&mut self) {
+    self.arena.Release();
+    self.top = none;
+    self.last = none;
+}

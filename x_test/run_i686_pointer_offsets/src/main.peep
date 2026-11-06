@@ -2,7 +2,8 @@
 import "core:allocator";
 
 fn main() {
-    let block = allocator::Allocate(64);
+    let mut heap = allocator::Heap.{};
+    let block = heap.Allocate(64, 4);
     let count: usize = 3;
     let mut at = block;
     for i in 0..count {
@@ -15,5 +16,5 @@ fn main() {
     println(first.*, third.*, block + 0 == block, block + 4 == block);
     // An offset wraps at the pointer's 32 bits, back to `block`.
     println(block + 4294967295 + 1 == block);
-    allocator::Free(block);
+    heap.Free(block);
 }

@@ -897,3 +897,47 @@ ran `check.sh` fully green.
   through).
 - Not done: messages name `usize` as `u64` (`u32` on i686): the type
   table holds one type for both, as before.
+
+## Allocator interface (2026-11-06, `feature/allocator-interface`)
+
+- Owner: the allocator comes before `String`; `String` will take a
+  `&mut Allocator` on each call that allocates or frees, since a struct
+  cannot hold a reference yet.
+- `core:allocator` gains `iface Allocator { Allocate(&mut self, size) ->
+  rawptr, Free(&mut self, memory) }` and `struct Heap {}`, whose methods
+  call the raw `Allocate`/`Free`. No compiler change: borrowed interfaces
+  already do it.
+- Left out until a program needs it: alignment, the size on free, resize.
+  An arena cannot be written yet (no pointer offsets).
+- Fixtures `run_allocator_interface` and `run_i686_allocator_interface`:
+  the heap and a counting allocator through one `&mut Allocator`
+  function; the interpreter matches. A struct missing `Free` gets T0001
+  "`Half` does not implement `Allocator`: it has no method `Free`".
+- Owner: the raw functions are private (`allocate`, `free`); every caller
+  goes through `Heap` (fixtures `run_allocator`, `run_struct_pointers`,
+  `run_i686_struct_pointers`, `run_outside_sizes`, `examples/modules`).
+- Website: not touched until the allocator work is complete (owner);
+  `modules.mdx` still calls `allocator::Allocate`/`Free` and must move to
+  `Heap` then.
+
+## Allocators in `core:allocator` (2026-11-06, `feature/allocator-interface`)
+
+- Owner: keep `align`. `Allocate(&mut self, size, align)`; `align` must be a
+  power of two up to 16, else `none`: without `rawptr as usize` an
+  allocator can only round offsets, which is right up to the 16 its heap
+  block starts at.
+- `Heap`; `Arena` (pieces one after another, `Free` gives nothing back,
+  `Reset`, `Release`); `Pool` (chunks of one size, a free list kept in the
+  free chunks, overflow of `chunk * count` checked); `Stack` (a private
+  `mark` of the stack before each piece; `Free` of any piece but the
+  newest panics; it is an `Arena` plus the newest piece and its mark).
+  Each gets its block from a `Heap` and gives it back with `Release` (no
+  destructors).
+- Review fixes: a chunk size near the top of `usize` wrapped to 0 when
+  rounded, so a pool handed one address to every caller; now it has no
+  chunks (`run_allocators` fails without the fix). The i686 offsets test
+  checks that an offset wraps at 32 bits.
+- Fixtures: `run_allocators` (+ i686): each allocator through one
+  `&mut Allocator` function, alignment, reuse, room, wrong `align`, and the
+  out-of-order panic; every caller passes an alignment now.
+- Website: still to do when the allocator work is complete.

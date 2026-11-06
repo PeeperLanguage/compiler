@@ -10,10 +10,15 @@ slices (`&[]T`) merged. Open branch: `feature/interfaces`. Order of work
    hand with `Allocate` is freed by hand with `Free`; memory the compiler
    takes itself, the compiler frees. `defer` or destructors come later, if
    a real program needs them. What was kept: the `free` keyword removed,
-   `Malloc` renamed `Allocate` (`feature/free-hook`, uncommitted).
-3. [ ] `String` in the core library (pointer offsets or a copy function,
-   `&str` from an address and a count, private fields).
-4. [ ] Owned `Shape`: explicit allocation, or moving in an existing one.
+   `Malloc` renamed `Allocate` (9bb5d681).
+3. [~] An `Allocator` interface in `core:allocator`, with `Heap`, `Arena`,
+   `Pool` and `Stack` (owner, 2026-11-06: before `String`, which takes its
+   memory from one), and `rawptr + usize` for them (d91d5b0f), on
+   `feature/allocator-interface`. The Website follows once the work is
+   complete.
+4. [ ] `String`: takes a `&mut Allocator` on each call that allocates or
+   frees (owner, 2026-11-06), since structs cannot hold references yet.
+5. [ ] Owned `Shape`: explicit allocation, or moving in an existing one.
 
 Later: lifetimes of references held in structs; enums and `match` with
 `?T` (put off by the owner 2026-10-30); generics.

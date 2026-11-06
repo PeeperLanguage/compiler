@@ -1,0 +1,37 @@
+// Code that needs memory takes a `&mut allocator::Allocator`; the caller
+// passes the heap or its own allocator, here one counting what it gives.
+import "core:allocator";
+
+struct Counting { heap: allocator::Heap, taken: i32, given: i32 }
+fn Counting::Allocate(&mut self, size: usize, align: usize) -> rawptr {
+    self.taken = self.taken + 1;
+    return self.heap.Allocate(size, align);
+}
+fn Counting::Free(&mut self, memory: rawptr) {
+    self.given = self.given + 1;
+    self.heap.Free(memory);
+}
+
+struct Node { value: i32, next: *Node }
+
+fn node(memory: &mut allocator::Allocator, value: i32) -> *Node {
+    let made = memory.Allocate(16, 8) as *Node;
+    made.value = value;
+    return made;
+}
+
+fn sum_of_two(memory: &mut allocator::Allocator) -> i32 {
+    let first = node(memory, 3);
+    let second = node(memory, 4);
+    let sum = first.value + second.value;
+    memory.Free(first as rawptr);
+    memory.Free(second as rawptr);
+    return sum;
+}
+
+fn main() {
+    let mut heap = allocator::Heap.{};
+    println(sum_of_two(&mut heap));
+    let mut counting = Counting.{ heap = allocator::Heap.{}, taken = 0, given = 0 };
+    println(sum_of_two(&mut counting), counting.taken, counting.given);
+}

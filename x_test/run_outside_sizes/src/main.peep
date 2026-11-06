@@ -9,6 +9,7 @@ fn main() {
     println(Write(Stdout, c"x", negative), Read(Stdin, @buffer[0], negative));
     println(Read(negative, @buffer[0], 1));
     let huge: usize = 1;
-    println(allocator::Allocate(huge << 62) == none);
+    let mut heap = allocator::Heap.{};
+    println(heap.Allocate(huge << 62, 16) == none);
     println("went on");
 }
