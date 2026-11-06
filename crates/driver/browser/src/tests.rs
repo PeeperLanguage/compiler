@@ -435,7 +435,8 @@ fn a_size_past_any_block_gives_null_and_a_negative_length_fails() {
          println(allocate(negative) == none, cleared(negative, 1) == none);\n    \
          println(allocate(huge << 62) == none);\n    \
          let length: i32 = -1;\n    \
-         println(Write(Stdout, c\"x\", length), Read(Stdin, c\"abc\", length));\n}\n",
+         let mut buffer = [3]u8{0, 0, 0};\n    \
+         println(Write(Stdout, c\"x\", length), Read(Stdin, @buffer[0], length));\n}\n",
     );
     assert_eq!(run.exit_code, 0);
     assert_eq!(written(&run, Stream::Stdout), b"true true\ntrue\n-1 -1\n");

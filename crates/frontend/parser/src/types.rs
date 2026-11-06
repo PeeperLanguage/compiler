@@ -197,12 +197,17 @@ impl Parser {
         if t.kind == TokenKind::RightBracket {
             self.next();
             let element = self.type_expr();
+            let ty = self.add(open.span.start, Type::Invalid);
+            // An element reported already, as `[]i32` in `[][]i32`, is the
+            // one mistake: its fix fixes the whole.
+            if let Type::Invalid = self.tree.types[element] {
+                return ty;
+            }
             let element = self.tree.file.slice(self.tree.types.span(element));
             let message =
                 format!("`[]{element}` is any number of `{element}`s, so it has no fixed size");
             let label =
                 format!("use `[N]{element}` for a fixed array or `&[]{element}` for a slice");
-            let ty = self.add(open.span.start, Type::Invalid);
             let span = self.tree.types.span(ty);
             self.repair(Diagnostic::new(diagnostics::INVALID_TYPE, message).label(
                 &self.tree.file,

@@ -157,6 +157,18 @@ fn Use(callback: fn(value: &Box, i32) -> &Box in value, view: &[]u8, edit: &mut 
     assert_eq!(dump_of(text), want);
 }
 
+/// A plain `[]T` is read whole, so the parser stays in step and reports
+/// the next one too.
+#[test]
+fn plain_slice_types_are_each_reported() {
+    let text = "fn f(a: []i32, b: []u8) {}";
+    let want = [
+        "`[]i32` is any number of `i32`s, so it has no fixed size",
+        "`[]u8` is any number of `u8`s, so it has no fixed size",
+    ];
+    assert_eq!(messages(text), want);
+}
+
 #[test]
 fn signature_errors() {
     for (text, message, fixed) in [
@@ -178,6 +190,11 @@ fn signature_errors() {
         ("fn f(a: [n]i32) {}", "expected array length", None),
         (
             "fn f(a: []i32) {}",
+            "`[]i32` is any number of `i32`s, so it has no fixed size",
+            None,
+        ),
+        (
+            "fn f(a: [][]i32) {}",
             "`[]i32` is any number of `i32`s, so it has no fixed size",
             None,
         ),
