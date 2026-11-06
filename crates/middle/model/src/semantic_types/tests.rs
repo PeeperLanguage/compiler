@@ -244,7 +244,7 @@ fn type_text() {
     };
     assert_eq!(text(u24), "u24");
     assert_eq!(text(TypeId::F32), "f32");
-    assert_eq!(text(TypeId::CSTR), "cstr");
+    assert_eq!(text(TypeId::CSTR), "&cstr");
     assert_eq!(text(function), "fn(i32, u24) -> bool");
     assert_eq!(text(procedure), "fn()");
     assert_eq!(text(point), "Point");

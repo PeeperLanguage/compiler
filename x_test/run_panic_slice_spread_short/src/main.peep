@@ -1,6 +1,6 @@
 // A slice shorter than the literal stops the program: no element is left
 // unwritten.
-fn make(s: [&]i32) -> [3]i32 {
+fn make(s: &[]i32) -> [3]i32 {
     return [3]i32{s...};
 }
 

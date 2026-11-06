@@ -4,7 +4,7 @@ struct Pair { first: &i32, second: &i32 }
 struct Outer { pair: Pair, count: i32 }
 struct Mark { label: &i32, count: i32 }
 struct Counter { value: &mut i32 }
-struct Grid { cells: [&mut]i32 }
+struct Grid { cells: &mut []i32 }
 struct Wrap { inner: &Pair }
 
 fn pair_of(a: &i32, b: &i32) -> Pair {

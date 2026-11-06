@@ -95,7 +95,7 @@ the playground runs programs through the MIR interpreter (`main` = `1fd7ede7`).
 
 The next steps of the other work in progress:
 
-- **Slices:** step 1 (`[&]T`, `[&mut]T`, slicing, loops, spreads) is done.
+- **Slices:** step 1 (`&[]T`, `&mut []T`, slicing, loops, spreads) is done.
   Step 2, variadic `...T` parameters, waits on the owner's decision about
   `...mut T`.
 - **Features:** the allocator, enums and `match` (with `Option` as `?T`), strings,

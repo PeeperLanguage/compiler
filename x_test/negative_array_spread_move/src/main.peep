@@ -7,6 +7,6 @@ fn main() {
     let twice = [_]Point{points..., points...};
 }
 
-fn viewed(view: [&]Point) {
+fn viewed(view: &[]Point) {
     let copied = [1]Point{view...};
 }

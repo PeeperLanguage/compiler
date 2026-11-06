@@ -1,0 +1,14 @@
+// Text has no fixed size: only its view, `&str` or `&cstr`, is a value, and
+// a view never changes the text.
+struct Pet { name: str }
+type Label = cstr;
+
+fn shout(text: &mut str) {}
+fn names(all: [2]str) {}
+
+fn main() {
+    let c_text: cstr = c"x";
+    // `&&str` is a reference to a view, which works.
+    let view: &str = "ok";
+    let held: &&str = &view;
+}

@@ -301,7 +301,7 @@ impl<'a, 'p> ThirBuilder<'a, 'p> {
                         }
                         return None;
                     }
-                    let message = self.c_string(span);
+                    let message = self.string_literal(span, TypeId::STR);
                     Stmt::Panic(self.body.add(message, span))
                 }
                 ast::Stmt::Expression(value) => Stmt::Expression(self.add_expr(value, None)),

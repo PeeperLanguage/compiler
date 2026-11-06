@@ -415,7 +415,7 @@ ran `check.sh` fully green.
 - **Fix:** `Place::slice_of_elements` gives the slice such a borrow is all of,
   and both backends read it whole. Neither walk touches the length now, and
   `Located` lost its `length`.
-- **After:** 3,000 functions passing two `[&mut]` slices four times: LLVM text
+- **After:** 3,000 functions passing two `&mut []` slices four times: LLVM text
   12.85 to 8.94 MB, `check -dump ll` 727 to 608 M instructions, `build` 6,812 to
   5,916 M. A loop of `s[i]` under `run -interpret`: 3,186 to 3,148 M. Output the
   same on mixed programs in debug, release, interpreter and `i686-linux`.
@@ -745,3 +745,39 @@ ran `check.sh` fully green.
   hover and definition by dot and by path, a struct with a private
   function); `names_across_modules` (another module's struct hides its
   private function). Each fails without its change.
+
+## Slices written `&[]T` (2026-11-05, branch `feature/slice-syntax`, uncommitted)
+
+- Owner decision: a slice is `&[]T` / `&mut []T`, so it reads like a
+  reference to an array (`&[4]T`) without the length, and every view shows
+  its `&` in front (text `&str` and interfaces `&Shape` to follow). `[&]T` is
+  gone with no old-syntax path; bare `[]T` keeps P0011, whose label now
+  names `&[]T`.
+- Parser only: `reference_type` reads `&`/`&mut` and then `[]T` as the same
+  `Type::Slice` node; `&&` in a type is two references (the lexer reads one
+  token), so `&&[]T` reaches check's "references to slices are not
+  supported yet". Messages and `real_text` print `&[]T` / `&mut []T`.
+- All `.peep`, fixture, doc and comment spellings rewritten; test
+  `parses_two_references_written_as_one_token`. `scripts/check.sh` green.
+- Side repos: tree-sitter-peeper already reads `&[]T` (its old `[]T` rule);
+  VSCodeExt `tm-test.mjs` case updated (73 pass); Website
+  `content/docs/language/arrays.mdx` on its own `feature/slice-syntax`.
+- Step 2 of text (owned `string`) is in `git stash` on `feature/text`.
+
+## Text written `&str` and `&cstr` (2026-11-06, `feature/text`)
+
+- Owner decisions (by questions, 2026-11-05/06): text alone has no fixed
+  size, so `str` and `cstr` are refused and only `&str` / `&cstr` are
+  values; text views are read only (no `&mut str`); no UTF-8 promise;
+  `&cstr` is one address; a `c"..."` literal may not hold a zero byte.
+- Check: `&str` / `&cstr` resolve to `Type::Str` / `Type::CString`, which
+  print as `&str` / `&cstr`; a plain one is P0011 "`str` is text of any
+  length, so it has no fixed size"; `&mut str` is P0011 too. Lexer: L0001
+  "C text cannot hold a zero byte". Parser: a plain `[]T` is read whole and
+  named in P0011, and parsing goes on.
+- Not done: text is not a loan holder (`Type::borrows`, `shortcut:`);
+  making it one refused a literal returned from a function with no
+  parameters and arrays of text (tried, undone).
+- Fixture `negative_text_views`; lexer test
+  `a_c_literal_holds_no_zero_byte`; `mir_comptime_calls` keeps its zero
+  byte in a `&str`. `scripts/check.sh` green.

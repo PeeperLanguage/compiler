@@ -29,7 +29,7 @@ fn read(r: &i32) -> i32 {
     return r.*;
 }
 
-fn view_mut(a: &mut [3]i32) -> [&mut]i32 in a {
+fn view_mut(a: &mut [3]i32) -> &mut []i32 in a {
     return a;
 }
 
@@ -46,7 +46,7 @@ fn small(r: &mut u8) -> u8 {
     return r.*;
 }
 
-fn view(a: &[3]i32) -> [&]i32 in a {
+fn view(a: &[3]i32) -> &[]i32 in a {
     return &a[0..3];
 }
 
@@ -60,7 +60,7 @@ fn first() -> i32 {
     return 1;
 }
 
-fn sum(values: [&]i32) -> i32 {
+fn sum(values: &[]i32) -> i32 {
     let mut total = 0;
     for v in values {
         total = total + v.*;
@@ -68,7 +68,7 @@ fn sum(values: [&]i32) -> i32 {
     return total;
 }
 
-fn bump(values: [&mut]i32) -> i32 {
+fn bump(values: &mut []i32) -> i32 {
     values[0] = values[0] + 100;
     return values[0];
 }

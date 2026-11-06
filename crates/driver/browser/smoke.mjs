@@ -56,7 +56,7 @@ assert.equal(recursion.related[0].message, "this went 100000 calls deep");
 // An address past 32 bits must not wrap round to memory the run owns.
 const wrapped = await execute({
     "main.peep":
-        'fn text() -> cstr {\n    return c"abcd";\n}\nfn main() {\n    let held = text();\n    let mut far: u64 = 5368709120;\n    let p = @far as **i32;\n    println(p.*.*);\n}\n',
+        'fn text() -> &cstr {\n    return c"abcd";\n}\nfn main() {\n    let held = text();\n    let mut far: u64 = 5368709120;\n    let p = @far as **i32;\n    println(p.*.*);\n}\n',
 });
 assert.equal(wrapped.run.exit_code, 101);
 assert.match(wrapped.run.output[0].text, /^panic: this reads or writes memory the program does not own\n/);

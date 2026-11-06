@@ -55,8 +55,8 @@ impl<'b> Interpreter<'b, '_> {
         let frame = self.frame();
         match *operand {
             Operand::Constant(constant) => {
-                let body = frame.body;
-                self.register_of(&body.constants[constant.index()].value)
+                let constant = &frame.body.constants[constant.index()];
+                self.register_of(&constant.value, constant.ty)
             }
             Operand::Argument(index) => self.registers[frame.first_register + index as usize]
                 .clone()
@@ -68,9 +68,14 @@ impl<'b> Interpreter<'b, '_> {
         }
     }
 
-    /// The register of a constant.
-    pub(super) fn register_of(&mut self, value: &Value) -> Register {
+    /// The register of a constant `value` of the type `ty`: a string's bytes
+    /// are in the run's data, a `&str` with their count.
+    pub(super) fn register_of(&mut self, value: &Value, ty: TypeId) -> Register {
         match value {
+            Value::Bytes(text) if ty == TypeId::STR => Register::Slice {
+                address: self.memory.string_address(text),
+                length: text.len() as u64,
+            },
             Value::Bytes(text) => Register::Address(self.memory.string_address(text)),
             Value::Null => Register::Address(0),
             value => Register::Scalar(value.clone()),
@@ -91,6 +96,9 @@ impl<'b> Interpreter<'b, '_> {
                 Some(text) => Ok(Value::Bytes(text)),
                 None => Err(self.fail(INVALID_ACCESS, span)),
             },
+            (&Register::Slice { address, length }, Type::Str) => {
+                Ok(Value::Bytes(self.read_bytes(address, length, span)?.into()))
+            }
             _ => Err(self.fail(constant_refusal(&self.types[ty]), span)),
         }
     }
@@ -140,7 +148,7 @@ impl<'b> Interpreter<'b, '_> {
             Type::CString | Type::Reference { .. } | Type::RawPointer { .. } => {
                 return Ok(Register::Address(self.read_word(address, span)?));
             }
-            Type::Slice { .. } => {
+            Type::Slice { .. } | Type::Str => {
                 return Ok(Register::Slice {
                     address: self.read_word(address, span)?,
                     length: self.read_word(address + self.pointer_bytes(), span)?,

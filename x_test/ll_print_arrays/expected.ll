@@ -34,7 +34,7 @@ bb0:
   call void @llvm.memcpy.p0.p0.i64(ptr %i2.1, ptr %i1, i64 12, i1 false), !dbg !13
   call void @llvm.memcpy.p0.p0.i64(ptr %i4, ptr %v0, i64 24, i1 false), !dbg !15
   call void @print.0(ptr %i4), !dbg !16
-  call void (ptr) @"peeper_rt_v1_print_text"(ptr @.str.3), !dbg !16
+  call void (ptr, i64) @"peeper_rt_v1_print_bytes"(ptr @.str.3, i64 1), !dbg !16
   call void () @"peeper_rt_v1_flush"(), !dbg !16
   ret void, !dbg !17
 }
@@ -86,6 +86,8 @@ done:
 declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)
 
 declare void @"peeper_rt_v1_flush"()
+
+declare void @"peeper_rt_v1_print_bytes"(ptr, i64)
 
 declare void @"peeper_rt_v1_print_text"(ptr)
 

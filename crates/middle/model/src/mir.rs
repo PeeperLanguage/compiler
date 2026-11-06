@@ -165,7 +165,7 @@ pub struct Subslice {
 #[derive(Clone, Debug)]
 pub enum InstructionKind {
     /// The value at the place, whose type copies (`Types::is_copy`), or a
-    /// slice read only for its length by `.len`, which leaves a `[&mut]`
+    /// slice read only for its length by `.len`, which leaves a `&mut []`
     /// usable.
     Load(Place),
     /// The length of the slice at the place, a `usize`, for a check of an
@@ -336,11 +336,15 @@ impl Body {
     }
 
     /// The text `print` writes for `operand`, when that is a constant string:
-    /// up to its first zero byte, as C reads it.
+    /// all of a `&str`, a `&cstr` up to its first zero byte, as C reads it.
     pub fn constant_text(&self, operand: Operand) -> Option<&[u8]> {
-        let Value::Bytes(bytes) = &self.constant(operand)?.value else {
+        let constant = self.constant(operand)?;
+        let Value::Bytes(bytes) = &constant.value else {
             return None;
         };
+        if constant.ty == TypeId::STR {
+            return Some(bytes);
+        }
         bytes.split(|&byte| byte == 0).next()
     }
 
@@ -596,13 +600,19 @@ impl Printer<'_> {
 
     fn write_operand(&mut self, operand: &Operand) {
         _ = match *operand {
-            Operand::Constant(constant) => match &self.body.constants[constant.index()].value {
-                Value::Bool(value) => write!(self.out, "{value}"),
-                Value::Integer(limbs) => write!(self.out, "{}", integer_text(limbs)),
-                Value::Float(bits) => write!(self.out, "{}", f64::from_bits(*bits)),
-                Value::Bytes(bytes) => write!(self.out, "c\"{}\"", bytes.escape_ascii()),
-                Value::Null => write!(self.out, "none"),
-            },
+            Operand::Constant(constant) => {
+                let Constant { value, ty } = &self.body.constants[constant.index()];
+                match (value, *ty) {
+                    (Value::Bool(value), _) => write!(self.out, "{value}"),
+                    (Value::Integer(limbs), _) => write!(self.out, "{}", integer_text(limbs)),
+                    (Value::Float(bits), _) => write!(self.out, "{}", f64::from_bits(*bits)),
+                    (Value::Bytes(bytes), TypeId::STR) => {
+                        write!(self.out, "\"{}\"", bytes.escape_ascii())
+                    }
+                    (Value::Bytes(bytes), _) => write!(self.out, "c\"{}\"", bytes.escape_ascii()),
+                    (Value::Null, _) => write!(self.out, "none"),
+                }
+            }
             Operand::Argument(index) => write!(self.out, "arg{index}"),
             Operand::Value(value) => write!(self.out, "%{}", value.index()),
         };

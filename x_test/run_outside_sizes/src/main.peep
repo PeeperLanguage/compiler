@@ -5,8 +5,9 @@ import "core:allocator";
 
 fn main() {
     let negative: i32 = -1;
-    println(Write(Stdout, c"x", negative), Read(Stdin, c"abc", negative));
-    println(Read(negative, c"abc", 1));
+    let mut buffer = [3]u8{0, 0, 0};
+    println(Write(Stdout, c"x", negative), Read(Stdin, @buffer[0], negative));
+    println(Read(negative, @buffer[0], 1));
     let huge: usize = 1;
     println(allocator::Malloc(huge << 62) == none);
     println("went on");

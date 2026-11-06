@@ -25,7 +25,7 @@ use crate::declaration::is_self;
 
 impl ThirBuilder<'_, '_> {
     /// `print(values)`, or `println(values)` when `newline`: each value of a
-    /// type `printable` takes. A plain string literal is printed as a `cstr`,
+    /// type `printable` takes. A plain string literal is printed as a `&cstr`,
     /// though it is not one anywhere else.
     // shortcut: a built-in until a library function takes any number of
     // values of any printable type; then delete it with THIR's and MIR's
@@ -35,10 +35,7 @@ impl ThirBuilder<'_, '_> {
         let mut checked: Vec<NonZeroU32> = Vec::with_capacity(values.len());
         for value in tree.children.lists.items(values) {
             let span = tree.exprs.span(value);
-            let expr = match tree.exprs[value] {
-                ast::Expr::String { c_string: false } => self.c_string(span),
-                _ => self.check_expr(value, None),
-            };
+            let expr = self.check_expr(value, None);
             let ty = expr.ty;
             let types = &self.checker.types;
             // On an error the others are still checked, for their own.
@@ -332,7 +329,7 @@ fn constant_expr(constant: Option<Constant>) -> Expr {
 }
 
 /// Whether `print` writes a value of the type `ty`: a number, `bool`,
-/// `cstr` or raw pointer, a struct or array of such values, or a reference
+/// `&cstr` or raw pointer, a struct or array of such values, or a reference
 /// to one.
 // shortcut: structs and arrays print built in until a trait or interface
 // lets each type say how it prints; then this rule and the backend's struct
@@ -343,7 +340,7 @@ fn printable(types: &Types, ty: TypeId) -> bool {
     let (mut reached, mut pending) = (FxHashSet::default(), vec![ty]);
     while let Some(ty) = pending.pop() {
         match types[ty] {
-            Type::Integer(_) | Type::Float(_) | Type::Bool | Type::CString => {}
+            Type::Integer(_) | Type::Float(_) | Type::Bool | Type::CString | Type::Str => {}
             Type::RawPointer { .. } => {}
             Type::Reference { target, .. } => pending.push(target),
             Type::Struct { ref fields, .. } => {

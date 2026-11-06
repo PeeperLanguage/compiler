@@ -163,6 +163,29 @@ fn escape_errors_point_at_the_escape() {
     assert_eq!(tokens.len(), 6); // five literals and the end of file
 }
 
+/// C reads text up to its first zero byte, so a C literal may not hold one,
+/// written as an escape or not; a plain literal may.
+#[test]
+fn a_c_literal_holds_no_zero_byte() {
+    let text = "c\"a\\0b\\x00c\0\" \"a\\0b\" c\"ab\"";
+    let file = Arc::new(SourceFile::new("t.peep", text));
+    let (tokens, errors) = scan(&file);
+    let got: Vec<String> = errors
+        .iter()
+        .map(|e| format!("{}: {}", file.slice(e.labels[0].span), e.message))
+        .collect();
+    let zero = "C text cannot hold a zero byte";
+    assert_eq!(
+        got,
+        [
+            format!("\\0: {zero}"),
+            format!("\\x00: {zero}"),
+            format!("\0: {zero}")
+        ]
+    );
+    assert_eq!(tokens.len(), 4); // three literals and the end of file
+}
+
 #[test]
 fn number_digits() {
     for (text, message) in [

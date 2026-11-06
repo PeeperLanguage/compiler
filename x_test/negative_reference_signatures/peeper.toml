@@ -6,7 +6,7 @@ mode = "check"
 outcome = "failure"
 stderr_contains = [
     "a reference or slice result needs a reference or slice parameter to borrow from",
-    "a `&mut` or `[&mut]` result needs a `&mut` or `[&mut]` parameter to borrow from",
+    "a `&mut` reference or slice result needs a `&mut` reference or slice parameter to borrow from",
     "`in` needs a reference or slice result",
     "`c` is not a parameter",
     "`n` is not a reference or a slice, so a result cannot borrow from it",

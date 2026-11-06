@@ -5,7 +5,7 @@
 /// it is one the checker does not handle yet.
 pub(crate) fn unsupported_type(name: &str) -> Option<&'static str> {
     match name {
-        "str" | "string" => Some("string types"),
+        "string" => Some("string types"),
         "byte" | "char" => Some("byte and char types"),
         "Allocator" => Some("allocator types"),
         _ => None,

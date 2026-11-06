@@ -68,9 +68,9 @@ fn sum_slice:
   bb0:
     store values.0, arg0
     store total.1, 0
-    %2 = load values.0: [&]i32
+    %2 = load values.0: &[]i32
     store _.2, %2
-    %4 = load _.2: [&]i32
+    %4 = load _.2: &[]i32
     %5 = field %4[1]: u64
     %6 = LessOrEqual 0, %5: bool
     branch %6 (values) bb1 bb2

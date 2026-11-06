@@ -1,5 +1,5 @@
 // `for` over arrays and slices: an element that moves cannot be taken by
-// value, the array or slice stays borrowed for the whole loop (a `[&mut]`
+// value, the array or slice stays borrowed for the whole loop (a `&mut []`
 // one cannot be used in the body, as in Rust), and only ranges, arrays and
 // slices loop. After an error in the header, the body is still checked.
 struct Point { x: i32, y: i32 }
@@ -40,11 +40,11 @@ fn ReadOnlyElement() {
     }
 }
 
-fn First(s: [&]i32) -> i32 {
+fn First(s: &[]i32) -> i32 {
     return s[0];
 }
 
-fn SliceUsedInLoop(s: [&mut]i32) {
+fn SliceUsedInLoop(s: &mut []i32) {
     for v in s {
         v.* = s[0];
     }
@@ -57,7 +57,7 @@ fn SliceUsedInLoop(s: [&mut]i32) {
 }
 
 // `keep` borrows `s` itself, so the loop cannot lend it again.
-fn SliceElementKept(s: [&mut]i32) {
+fn SliceElementKept(s: &mut []i32) {
     let mut keep = &mut s[0];
     for v in s {
         keep = v;
@@ -66,7 +66,7 @@ fn SliceElementKept(s: [&mut]i32) {
 }
 
 // `keep` holds an element of `s` after the loop, so `s` cannot change.
-fn SliceElementOutlivesLoop(s: [&mut]i32) {
+fn SliceElementOutlivesLoop(s: &mut []i32) {
     let mut other = [1]i32{0};
     let mut keep = &mut other[0];
     for v in s {
@@ -76,7 +76,7 @@ fn SliceElementOutlivesLoop(s: [&mut]i32) {
     keep.* = 3;
 }
 
-fn ReadOnlySliceElement(s: [&]i32) {
+fn ReadOnlySliceElement(s: &[]i32) {
     for v in s {
         v.* = 1;
     }

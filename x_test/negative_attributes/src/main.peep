@@ -5,7 +5,7 @@
 fn Numbered(code: i32) -> i32;
 
 #[extern("puts", 1)]
-fn Extra(text: cstr) -> i32;
+fn Extra(text: &cstr) -> i32;
 
 #[extern("limit")]
 const Limit: i32 = 1;

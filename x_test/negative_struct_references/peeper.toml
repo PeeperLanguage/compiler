@@ -33,7 +33,7 @@ stderr_contains = [
     "main.peep:61:16\n",
     "references to structs holding references in `extern` functions are not supported yet",
     "main.peep:65:13\n",
-    "struct, array, range and slice parameters and results of `extern` functions are not supported yet",
+    "struct, array, range, slice and `&str` parameters and results of `extern` functions are not supported yet",
     "main.peep:68:13\n",
     "a `&mut` result cannot borrow from `p`, which holds only shared references",
     "main.peep:71:40\n",

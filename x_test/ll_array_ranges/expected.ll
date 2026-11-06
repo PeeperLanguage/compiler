@@ -68,7 +68,7 @@ entry:
 bb0:
   call void @"ll_array_ranges:main.known"(ptr %i0), !dbg !19
   call void @print.0(ptr %i0), !dbg !20
-  call void (ptr) @"peeper_rt_v1_print_text"(ptr @.str.3), !dbg !20
+  call void (ptr, i64) @"peeper_rt_v1_print_bytes"(ptr @.str.3, i64 1), !dbg !20
   call void () @"peeper_rt_v1_flush"(), !dbg !20
   ret void, !dbg !21
 }
@@ -117,6 +117,8 @@ done:
 declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)
 
 declare void @"peeper_rt_v1_flush"()
+
+declare void @"peeper_rt_v1_print_bytes"(ptr, i64)
 
 declare void @"peeper_rt_v1_print_text"(ptr)
 

@@ -35,7 +35,7 @@ pub(crate) fn type_text(types: &Types, ty: TypeId) -> impl Display {
         Type::Float(Float::F32) => out.write_str("float"),
         Type::Float(Float::F64) => out.write_str("double"),
         Type::CString | Type::Reference { .. } | Type::RawPointer { .. } => out.write_str("ptr"),
-        Type::Slice { .. } => out.write_str("%slice"),
+        Type::Slice { .. } | Type::Str => out.write_str("%slice"),
         Type::Struct { .. } | Type::Range { .. } | Type::Array { .. } => {
             unreachable!("a value kept in memory is bytes to LLVM (`memory_text`)")
         }

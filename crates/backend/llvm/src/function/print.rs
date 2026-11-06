@@ -14,6 +14,7 @@ use model::semantic_types::TypeId;
 
 use crate::function::FLUSH;
 use crate::function::Function;
+use crate::function::PRINT_BYTES;
 use crate::function::PRINT_FLOAT;
 use crate::function::PRINT_INT;
 use crate::function::PRINT_POINTER;
@@ -28,7 +29,7 @@ use model::layout::in_memory;
 impl Function<'_, '_, '_> {
     /// Writes the runtime calls that print `values` for the `print` `id`,
     /// a space between each, then a newline when `newline`, then a flush.
-    /// Text known at compile time (spaces, a constant string up to its NUL)
+    /// Text known at compile time (spaces, a `&str`, a `&cstr` up to its NUL)
     /// is gathered into one string between values.
     pub(super) fn write_print(
         &mut self,
@@ -112,6 +113,13 @@ impl Function<'_, '_, '_> {
                 self.write_print_text(out, text, location);
                 self.write_runtime_call(out, PRINT_TEXT, &format!("ptr {value}"), location);
             }
+            Type::Str => {
+                _ = writeln!(out, "  {path}.p = extractvalue %slice {value}, 0{location}");
+                _ = writeln!(out, "  {path}.n = extractvalue %slice {value}, 1{location}");
+                self.write_print_text(out, text, location);
+                let (bytes, length) = (format!("{path}.p"), format!("{path}.n"));
+                self.write_print_bytes(out, &bytes, &length, location);
+            }
             Type::RawPointer { .. } => {
                 self.write_print_text(out, text, location);
                 self.write_runtime_call(out, PRINT_POINTER, &format!("ptr {value}"), location);
@@ -140,7 +148,7 @@ impl Function<'_, '_, '_> {
                 _ = writeln!(out, "  call void {printer}(ptr {value}){location}");
             }
             _ => unreachable!(
-                "check prints only numbers, `bool`, `cstr`, pointers, structs and arrays"
+                "check prints only numbers, `bool`, `&cstr`, `&str`, pointers, structs and arrays"
             ),
         }
     }
@@ -268,7 +276,8 @@ impl Function<'_, '_, '_> {
         body
     }
 
-    /// Writes the call that prints `text`, if any, and empties it.
+    /// Writes the call that prints `text`, if any, and empties it: by its
+    /// count, as a `&str` it holds may hold a zero byte.
     pub(super) fn write_print_text(
         &mut self,
         out: &mut String,
@@ -278,9 +287,23 @@ impl Function<'_, '_, '_> {
         if text.is_empty() {
             return;
         }
-        let string = self.module.add_string(text);
+        let (string, length) = (self.module.add_string(text), text.len());
         text.clear();
-        self.write_runtime_call(out, PRINT_TEXT, &format!("ptr {string}"), location);
+        self.write_print_bytes(out, &string, &length.to_string(), location);
+    }
+
+    /// Writes the call that prints the `length` bytes at `bytes`, both operands.
+    fn write_print_bytes(
+        &mut self,
+        out: &mut String,
+        bytes: &str,
+        length: &str,
+        location: &DebugLocation,
+    ) {
+        let usize = format!("i{}", self.module.target.pointer_bits);
+        let arguments = format!("ptr {bytes}, {usize} {length}");
+        let callee = (PRINT_BYTES, &*format!("ptr, {usize}"));
+        self.write_runtime_call(out, callee, &arguments, location);
     }
 
     /// Writes the call of the runtime function `(symbol, parameters)` with

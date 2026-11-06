@@ -133,16 +133,17 @@ tokens! {
         /// let big = 1_000;     // 1000
         /// ```
         Number = "number",
-        /// A string literal: text in double quotes.
+        /// A string literal: text in double quotes, a `&str`.
         ///
-        /// For now only `print`, `println` and `panic` take one, as a `cstr`; other string literals are not supported yet. Its escapes are a c string's.
+        /// Its bytes are kept in the program; the `&str` views them, and `.len` is how many there are. Its escapes are a c string's.
         ///
         /// ```peeper
-        /// println("hello");
+        /// let name = "Ada";
+        /// println("hello", name, name.len);
         /// panic "stop";
         /// ```
         String = "string",
-        /// A c string literal: its bytes and a zero byte after them, as a `cstr`.
+        /// A c string literal: its bytes and a zero byte after them, as a `&cstr`.
         ///
         /// Each escape is one byte: `\n`, `\r`, `\t`, `\0`, `\\`, `\"`, or `\xHH` for the byte with the hex value `HH`.
         ///
@@ -245,7 +246,7 @@ tokens! {
         ///
         /// `a...` gives each element of the array `a`, which must hold the literal's element type, and `(0..3)...` each value of the range, as a `for` loop counts it; the parentheses may be left out. Under `[_]`, a spread range's ends and step must be known at compile time; under `[N]T`, a range known only at run time is counted then, and the program stops unless the entries give exactly `N` values.
         ///
-        /// A last parameter `values: ...T` is a `[&]T`, and `values: ...mut T` a `[&mut]T`. A call `f(1, 2, a...)` passes a slice of a new array of those values, as `f(&[_]T{1, 2, a...})` would, so each value moves or copies into it, and a write through `...mut T` reaches that array only. `f(s...)` with a slice passes the slice itself, so writes through it reach what it views, and `f(&mut a...)` lends the array, so writes reach `a`; a slice or a reference spread must then be the only argument for the parameter. `f()` passes an empty slice.
+        /// A last parameter `values: ...T` is a `&[]T`, and `values: ...mut T` a `&mut []T`. A call `f(1, 2, a...)` passes a slice of a new array of those values, as `f(&[_]T{1, 2, a...})` would, so each value moves or copies into it, and a write through `...mut T` reaches that array only. `f(s...)` with a slice passes the slice itself, so writes through it reach what it views, and `f(&mut a...)` lends the array, so writes reach `a`; a slice or a reference spread must then be the only argument for the parameter. `f()` passes an empty slice.
         ///
         /// ```peeper
         /// let a = [_]i32{1, 2};

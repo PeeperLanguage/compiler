@@ -8,7 +8,7 @@ fn check:
     %5 = GreaterThan %4, 10: bool
     branch %5 (doubled > 10) bb1 bb2
   bb1:
-    panic c"too big"
+    panic "too big"
   bb2:
     %6 = load doubled.1: i32
     return %6
@@ -26,7 +26,7 @@ fn each:
     %5 = GreaterThan %2, 1: bool
     %6 = Add %1, 1: i32
     %7 = Subtract %2, 1: u32
-    panic c"in a loop"
+    panic "in a loop"
   bb3:
     fall off at `}`
 fn main:

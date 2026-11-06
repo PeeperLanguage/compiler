@@ -25,6 +25,28 @@ fn parses_variadic_parameters() {
     assert_eq!(dump_of(text), want);
 }
 
+/// The lexer reads `&&` as one token; in a type it is two references.
+#[test]
+fn parses_two_references_written_as_one_token() {
+    let text = "fn f(a: &&i32, b: &&mut []u8);\n";
+    let want = "module
+  function declaration
+    declared name f
+    parameter
+      declared name a
+      reference type
+        reference type
+          type name i32
+    parameter
+      declared name b
+      reference type
+        slice type mut
+          type name u8
+";
+    assert!(messages(text).is_empty());
+    assert_eq!(dump_of(text), want);
+}
+
 #[test]
 fn parses_signatures() {
     let text = "fn Counter::Add<T, U>(&mut self, mut delta: i32, scale: f64 = 1, &Counter) -> &T in (self, delta) {}
@@ -32,7 +54,7 @@ fn Counter::Get(&self) {}
 fn Counter::Into(self) {}
 fn Counter::Doubled(mut self) {}
 fn exit(code: i32);
-fn Use(callback: fn(value: &Box, i32) -> &Box in value, view: [&]u8, edit: [&mut]u8, grid: [4]rawptr, cell: **u8, untyped: *rawptr) -> ?a::Box<Box<T>>;
+fn Use(callback: fn(value: &Box, i32) -> &Box in value, view: &[]u8, edit: &mut []u8, grid: [4]rawptr, cell: **u8, untyped: *rawptr) -> ?a::Box<Box<T>>;
 ";
     let want = "module
   function declaration
@@ -135,6 +157,18 @@ fn Use(callback: fn(value: &Box, i32) -> &Box in value, view: [&]u8, edit: [&mut
     assert_eq!(dump_of(text), want);
 }
 
+/// A plain `[]T` is read whole, so the parser stays in step and reports
+/// the next one too.
+#[test]
+fn plain_slice_types_are_each_reported() {
+    let text = "fn f(a: []i32, b: []u8) {}";
+    let want = [
+        "`[]i32` is any number of `i32`s, so it has no fixed size",
+        "`[]u8` is any number of `u8`s, so it has no fixed size",
+    ];
+    assert_eq!(messages(text), want);
+}
+
 #[test]
 fn signature_errors() {
     for (text, message, fixed) in [
@@ -156,7 +190,12 @@ fn signature_errors() {
         ("fn f(a: [n]i32) {}", "expected array length", None),
         (
             "fn f(a: []i32) {}",
-            "incomplete type `[]`: add a size or a reference",
+            "`[]i32` is any number of `i32`s, so it has no fixed size",
+            None,
+        ),
+        (
+            "fn f(a: [][]i32) {}",
+            "`[]i32` is any number of `i32`s, so it has no fixed size",
             None,
         ),
         ("fn f(a: ) {}", "expected type, found `)`", None),

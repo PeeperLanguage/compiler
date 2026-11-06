@@ -218,10 +218,10 @@ const REFERENCE_WORDS: BorrowWords = BorrowWords {
 
 const SLICE_WORDS: BorrowWords = BorrowWords {
     noun: "slice",
-    writable: "`[&mut]`",
+    writable: "`&mut []`",
     to: "of",
     into: "of",
-    mutably_borrowed: "borrowed as `[&mut]`",
+    mutably_borrowed: "borrowed as `&mut []`",
 };
 
 /// What an instruction does to a place, as the loan rules see it.

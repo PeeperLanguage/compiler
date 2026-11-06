@@ -30,9 +30,9 @@ fn not_last(values: ...i32, last: i32) {}
 fn twice(first: ...i32, second: ...i32) {}
 
 #[extern("printf")]
-fn printf(format: cstr, values: ...i32);
+fn printf(format: &cstr, values: ...i32);
 
-fn spreads(a: [2]i32, s: [&]i32, r: range[i32]) {
+fn spreads(a: [2]i32, s: &[]i32, r: range[i32]) {
     two(a...);
     let unknown = missing(a...);
     let first = sum(s..., 2);
@@ -42,7 +42,7 @@ fn spreads(a: [2]i32, s: [&]i32, r: range[i32]) {
     let wrong = sum(true...);
 }
 
-fn without_spread(a: [2]i32, s: [&]i32) {
+fn without_spread(a: [2]i32, s: &[]i32) {
     let by_array = sum(a);
     let by_slice = sum(s);
     let few = most();
@@ -60,7 +60,7 @@ fn array_moved() -> i32 {
     return points[0].row;
 }
 
-fn slice_of_moved(points: [&]Point) {
+fn slice_of_moved(points: &[]Point) {
     rows(1, points...);
 }
 

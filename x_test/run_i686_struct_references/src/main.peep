@@ -3,10 +3,10 @@
 // It prints what run_struct_references prints on 64 bits.
 struct Pair { first: &i32, second: &i32 }
 struct Outer { pair: Pair, count: i32 }
-struct Text { bytes: [&]u8 }
-struct Cursor { input: [&]u8, position: usize }
+struct Text { bytes: &[]u8 }
+struct Cursor { input: &[]u8, position: usize }
 struct Counter { value: &mut i32, steps: i32 }
-struct Grid { cells: [&mut]i32 }
+struct Grid { cells: &mut []i32 }
 struct Point { x: i32, y: i32 }
 struct Marked { point: &Point }
 struct Mixed { shared: &i32, unique: &mut i32 }
@@ -78,15 +78,15 @@ fn counter_of(value: &mut i32) -> Counter {
     return Counter.{ value = value, steps = 0 };
 }
 
-fn view(text: Text) -> [&]u8 {
+fn view(text: Text) -> &[]u8 {
     return text.bytes;
 }
 
-fn fill(cells: [&mut]i32) {
+fn fill(cells: &mut []i32) {
     cells[0] = 9;
 }
 
-fn total_of(cells: [&]i32) -> i32 {
+fn total_of(cells: &[]i32) -> i32 {
     let mut total = 0;
     for cell in cells {
         total = total + cell.*;
@@ -94,7 +94,7 @@ fn total_of(cells: [&]i32) -> i32 {
     return total;
 }
 
-// A `[&mut]` field lent again, or read as `[&]`, through a reference.
+// A `&mut []` field lent again, or read as `&[]`, through a reference.
 fn fill_through(grid: &mut Grid) {
     fill(grid.cells);
     fill(&mut grid.cells[0..]);
@@ -187,7 +187,7 @@ fn main() {
     let mut cursor = Cursor.{ input = &bytes, position = 1 };
     println(next(&mut cursor), next(&mut cursor), cursor.position);
 
-    // `&mut` fields and `[&mut]` fields.
+    // `&mut` fields and `&mut []` fields.
     let mut number = 10;
     let mut counter = Counter.{ value = &mut number, steps = 0 };
     step(&mut counter);

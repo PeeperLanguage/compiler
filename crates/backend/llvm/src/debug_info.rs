@@ -148,7 +148,11 @@ impl Metadata {
                     "!DIDerivedType(tag: DW_TAG_pointer_type, baseType: {base}, size: {pointer_bits})"
                 )
             }
-            Type::Slice { element, .. } => {
+            Type::Slice { .. } | Type::Str => {
+                // A `&str` views bytes.
+                let element = types[ty]
+                    .elements()
+                    .map_or(TypeId::U8, |(element, _)| element);
                 let base = self.debug_type(program, types, types.real(element), target);
                 let base = base.expect("an element has a value's type");
                 let name = project::type_text(&program.modules, types, ty);

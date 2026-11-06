@@ -27,5 +27,5 @@ stdout_contains = [
     "19. a `&mut` to an array in a variable:\n3\n7\n",
     "20. in a condition:\ngreater\n",
     "21. a `for` keeps the array of its call to the loop's end:\n30\n40\n3\n4\n",
-    "22. a `[&mut]` read by `...T` is usable after:\n7\n9\n",
+    "22. a `&mut []` read by `...T` is usable after:\n7\n9\n",
 ]

@@ -25,6 +25,7 @@ pub(crate) fn starts_type(kind: TokenKind) -> bool {
         kind,
         TokenKind::Ident
             | TokenKind::Ampersand
+            | TokenKind::AndAnd
             | TokenKind::Question
             | TokenKind::QuestionQuestion
             | TokenKind::Asterisk
@@ -53,11 +54,13 @@ impl Parser {
                 TokenKind::Ident => self.named_type(),
                 TokenKind::Ampersand => {
                     self.next();
-                    let mutable = self.at(TokenKind::Mut);
-                    if mutable {
-                        self.next();
-                    }
-                    let target = self.type_expr();
+                    self.reference_type(t.span.start)
+                }
+                // `&&T` is two references, though the lexer reads one token.
+                TokenKind::AndAnd => {
+                    self.next();
+                    let target = self.reference_type(t.span.start + 1);
+                    let mutable = false;
                     self.add(t.span.start, Type::Reference { mutable, target })
                 }
                 TokenKind::Question | TokenKind::QuestionQuestion => self.optional_type(),
@@ -100,6 +103,24 @@ impl Parser {
                 }
             }
         })
+    }
+
+    /// Reads what follows a `&` that starts at `start`: `mut`, if written,
+    /// then the target type, or `[]T` for a slice, its own type, not a
+    /// reference to a `[]T`.
+    fn reference_type(&mut self, start: u32) -> Id<Type> {
+        let mutable = self.at(TokenKind::Mut);
+        if mutable {
+            self.next();
+        }
+        if self.at(TokenKind::LeftBracket) && self.ahead(1).kind == TokenKind::RightBracket {
+            self.next();
+            self.next();
+            let element = self.type_expr();
+            return self.add(start, Type::Slice { mutable, element });
+        }
+        let target = self.type_expr();
+        self.add(start, Type::Reference { mutable, target })
     }
 
     /// Reads a type name with its type arguments, if any (`Box<T>`), or a path
@@ -168,43 +189,49 @@ impl Parser {
         inner
     }
 
-    /// Reads `[N]T`, `[&]T` or `[&mut]T`.
+    /// Reads `[N]T`; a `[]T` alone is reported, as it has no fixed size.
     pub(crate) fn array_type(&mut self) -> Id<Type> {
         let open = self.next();
         let t = self.tok();
-        match t.kind {
-            TokenKind::Ampersand => {
-                self.next();
-                let mutable = self.at(TokenKind::Mut);
-                if mutable {
-                    self.next();
-                }
-                self.close(TokenKind::RightBracket, open);
-                let element = self.type_expr();
-                self.add(open.span.start, Type::Slice { mutable, element })
+        // `[]T` alone, read whole so the message names it and parsing goes on.
+        if t.kind == TokenKind::RightBracket {
+            self.next();
+            let element = self.type_expr();
+            let ty = self.add(open.span.start, Type::Invalid);
+            // An element reported already, as `[]i32` in `[][]i32`, is the
+            // one mistake: its fix fixes the whole.
+            if let Type::Invalid = self.tree.types[element] {
+                return ty;
             }
-            TokenKind::Number => {
-                self.next();
-                self.check_number(t);
-                self.close(TokenKind::RightBracket, open);
-                let element = self.type_expr();
-                let length = Length::Number(t.span);
-                self.add(open.span.start, Type::FixedArray { length, element })
-            }
-            _ => {
-                let message = if t.kind == TokenKind::RightBracket {
-                    "incomplete type `[]`: add a size or a reference"
-                } else {
-                    "expected array length"
-                };
-                self.fail(Diagnostic::new(diagnostics::INVALID_TYPE, message).label(
+            let element = self.tree.file.slice(self.tree.types.span(element));
+            let message =
+                format!("`[]{element}` is any number of `{element}`s, so it has no fixed size");
+            let label =
+                format!("use `[N]{element}` for a fixed array or `&[]{element}` for a slice");
+            let span = self.tree.types.span(ty);
+            self.repair(Diagnostic::new(diagnostics::INVALID_TYPE, message).label(
+                &self.tree.file,
+                span,
+                label,
+            ));
+            return ty;
+        }
+        if t.kind != TokenKind::Number {
+            self.fail(
+                Diagnostic::new(diagnostics::INVALID_TYPE, "expected array length").label(
                     &self.tree.file,
                     t.span,
-                    "use `[N]T` for fixed arrays or `[&]T` for slices",
-                ));
-                self.add(open.span.start, Type::Invalid)
-            }
+                    "use `[N]T` for fixed arrays or `&[]T` for slices",
+                ),
+            );
+            return self.add(open.span.start, Type::Invalid);
         }
+        self.next();
+        self.check_number(t);
+        self.close(TokenKind::RightBracket, open);
+        let element = self.type_expr();
+        let length = Length::Number(t.span);
+        self.add(open.span.start, Type::FixedArray { length, element })
     }
 
     /// Reads `fn(name: T, U) -> R in name`; parameter names are optional.

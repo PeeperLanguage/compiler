@@ -79,7 +79,7 @@ fn outside(at: usize) -> i32 {
 const OUTSIDE = outside(5);
 fn outside_slice(at: usize) -> i32 {
     let values = [3]i32{1, 2, 3};
-    let view: [&]i32 = &values;
+    let view: &[]i32 = &values;
     return view[at];
 }
 const OUTSIDE_SLICE = outside_slice(5);

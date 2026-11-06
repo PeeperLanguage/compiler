@@ -106,14 +106,15 @@ pub fn run_function<'b>(
     mir_of: &dyn Fn(DefId) -> Option<&'b mir::Body>,
 ) -> Result<Option<Value>, Failure> {
     let mut machine = Interpreter::new(types, target, mir_of, STEP_LIMIT, None);
-    for argument in arguments {
-        let register = machine.register_of(argument);
+    for (index, argument) in arguments.iter().enumerate() {
+        let ty = body.operand_type(mir::Operand::Argument(index as u32));
+        let register = machine.register_of(argument, ty);
         machine.registers.push(Some(register));
     }
     machine.run_from(function, body)
 }
 
-/// A value being used. A pointer, a reference and a `cstr` are addresses; a
+/// A value being used. A pointer, a reference and a `&cstr` are addresses; a
 /// value `in_memory` is the address it is kept at.
 #[derive(Clone, Debug)]
 enum Register {

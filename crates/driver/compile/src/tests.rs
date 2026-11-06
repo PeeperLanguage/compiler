@@ -358,7 +358,7 @@ fn structs_hold_a_limited_number_of_references() {
 fn slice_ends_fit_the_target_usize() {
     let program = load(&[(
         "app:main",
-        "fn f(s: [&]i32) {
+        "fn f(s: &[]i32) {
                 let fits = &s[4294967295u64..];
                 let past = &s[4294967296u64..];
             }
@@ -377,7 +377,7 @@ fn slice_ends_fit_the_target_usize() {
         .collect();
     assert_eq!(
         messages,
-        ["slice `4294967296u64..` is outside every `[&]i32`"]
+        ["slice `4294967296u64..` is outside every `&[]i32`"]
     );
 }
 

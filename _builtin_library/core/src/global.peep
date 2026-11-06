@@ -3,10 +3,10 @@ const Stdout: i32 = 1;
 const Stderr: i32 = 2;
 
 #[extern("peeper_rt_v1_write")]
-fn Write(fd: i32, buf: cstr, n: i32) -> i32;
+fn Write(fd: i32, buf: &cstr, n: i32) -> i32;
 
 #[extern("peeper_rt_v1_read")]
-fn Read(fd: i32,  buf: cstr, n: i32) -> i32;
+fn Read(fd: i32, buf: *u8, n: i32) -> i32;
 
 #[extern("peeper_rt_v1_exit")]
 fn Exit(code: i32);

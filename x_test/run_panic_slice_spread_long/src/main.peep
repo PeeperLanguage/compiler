@@ -1,6 +1,6 @@
 // A slice longer than the literal stops the program before any element is
 // copied, so no copy goes past the array.
-fn make(s: [&]i32) -> [3]i32 {
+fn make(s: &[]i32) -> [3]i32 {
     return [3]i32{s...};
 }
 

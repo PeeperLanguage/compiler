@@ -362,7 +362,7 @@ fn answers_definition_and_hover() {
     let uri = Url::from_file_path(&file).unwrap();
     let (connection, _client) = Connection::memory();
     let mut server = Server::new(&connection, Path::new(""), true);
-    let text = "type Meters = i64;\nfn main() {\n    let total: Meters = 1;\n    let more = total;\n}\n// let me\nstruct Run {\n    length: Meters,\n}\nfn ops(a: i32, x: f64) -> f64 {\n    let q = a/2;\n    const C = -(7 / 2);\n    return x - -1.0;\n}\nfn refs(m: i32) -> i32 {\n    let r = &m;\n    let both = m & 3;\n    let mut x = 1;\n    let p = @x;\n    let s = [2]i32{1, 2};\n    return r.* + s[0];\n}\nconst SMALL: u8 = 200;\nfn literals(n: u8) -> u8 {\n    let wide: f32 = 2;\n    let low: i8 = -128;\n    println(\"hi\", c\"x\");\n    let big: u8 = 300;\n    return n * 3;\n}\nfn walks(r: range[i32]) {}\n#[extern(\"cap\")]\nfn cap() -> u8;\nfn many(values: ...i32) -> [&]i32 in values {\n    return values;\n}\n";
+    let text = "type Meters = i64;\nfn main() {\n    let total: Meters = 1;\n    let more = total;\n}\n// let me\nstruct Run {\n    length: Meters,\n}\nfn ops(a: i32, x: f64) -> f64 {\n    let q = a/2;\n    const C = -(7 / 2);\n    return x - -1.0;\n}\nfn refs(m: i32) -> i32 {\n    let r = &m;\n    let both = m & 3;\n    let mut x = 1;\n    let p = @x;\n    let s = [2]i32{1, 2};\n    return r.* + s[0];\n}\nconst SMALL: u8 = 200;\nfn literals(n: u8) -> u8 {\n    let wide: f32 = 2;\n    let low: i8 = -128;\n    println(\"hi\", c\"x\");\n    let big: u8 = 300;\n    return n * 3;\n}\nfn walks(r: range[i32]) {}\n#[extern(\"cap\")]\nfn cap() -> u8;\nfn many(values: ...i32) -> &[]i32 in values {\n    return values;\n}\n";
     let document = json!({ "uri": uri, "languageId": "peeper", "version": 1, "text": text });
     let open = Notification::new(
         "textDocument/didOpen".to_string(),
@@ -400,12 +400,12 @@ fn answers_definition_and_hover() {
     // A `...` parameter is a plain slice inside; its function, as written.
     assert_eq!(
         ask("textDocument/hover", 34, 11)["contents"]["value"],
-        json!("```peeper\nvalues: [&]i32\n```\n\n---\n\n*in* `main` *· line 34*\n")
+        json!("```peeper\nvalues: &[]i32\n```\n\n---\n\n*in* `main` *· line 34*\n")
     );
     assert_eq!(
         ask("textDocument/hover", 33, 3)["contents"]["value"],
         json!(
-            "```peeper\nfn many(values: ...i32) -> [&]i32 in values\n```\n\n---\n\n*in* `main` *· line 34*\n"
+            "```peeper\nfn many(values: ...i32) -> &[]i32 in values\n```\n\n---\n\n*in* `main` *· line 34*\n"
         )
     );
     // A type's name: a declared one answers as its declaration does; a
@@ -484,8 +484,12 @@ fn answers_definition_and_hover() {
     starts(24, 20, &number("f32"));
     assert_eq!(hover(25, 18), doc("-", UnaryOp::Negate.doc()));
     starts(25, 20, &number("i8"));
-    starts(26, 13, "```peeper\ncstr\n```\n\n---\n\n A string literal");
-    starts(26, 19, "```peeper\ncstr\n```\n\n---\n\n A c string literal");
+    starts(26, 13, "```peeper\n&str\n```\n\n---\n\n A string literal");
+    starts(
+        26,
+        19,
+        "```peeper\n&cstr\n```\n\n---\n\n A c string literal",
+    );
     starts(27, 18, &number("u8"));
     starts(28, 15, &number("u8"));
     starts(19, 13, &number("number"));
@@ -623,6 +627,7 @@ fn main(count: i64) {
 }
 const BIG = utils::Twice(21);
 struct Holder { place: utils::Spot }
+const NAME: &str = \"Ada\";
 ";
     let (main_file, utils_file) = (folder.join("src/main.peep"), folder.join("src/utils.peep"));
     std::fs::write(&main_file, main).unwrap();
@@ -761,6 +766,11 @@ struct Holder { place: utils::Spot }
     assert_eq!(
         hover(&server, "Ratio", 0),
         json!("```peeper\nconst Ratio: f32 = 0.1\n```\n\n---\n\n*in* `app:utils` *· line 6*\n")
+    );
+    // A `&str` as a plain literal, a `&cstr` would show its `c`.
+    assert_eq!(
+        hover(&server, "NAME", 0),
+        json!("```peeper\nconst NAME: &str = \"Ada\"\n```\n\n---\n\n*in* `app:main` *· line 14*\n")
     );
     assert_eq!(
         hover(&server, "Broken", 0),

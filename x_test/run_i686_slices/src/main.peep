@@ -5,7 +5,7 @@
 // program.
 struct Pair { tag: u8, value: i64 }
 
-fn total(values: [&]i64) -> i64 {
+fn total(values: &[]i64) -> i64 {
     let mut sum: i64 = 0;
     for value in values {
         sum = sum + value.*;
@@ -13,7 +13,7 @@ fn total(values: [&]i64) -> i64 {
     return sum;
 }
 
-fn tail(values: [&]i64, from: u64) -> i64 {
+fn tail(values: &[]i64, from: u64) -> i64 {
     return total(&values[from..]);
 }
 
@@ -23,7 +23,7 @@ fn value_of(pair: Pair) -> i64 {
 
 fn main() {
     let mut numbers = [5]i64{1, 2, 3, 4, 5000000000};
-    let all: [&mut]i64 = &mut numbers;
+    let all: &mut []i64 = &mut numbers;
     for i, v in all {
         v.* = v.* + i as i64;
     }
@@ -33,7 +33,7 @@ fn main() {
     // Copied whole, at the size LLVM gives `Pair` here: 12 bytes, not 16.
     let pairs = [2]Pair{Pair.{ tag = 1, value = 10 }, Pair.{ tag = 2, value = 20 }};
     let moved = pairs;
-    let view: [&]Pair = &moved;
+    let view: &[]Pair = &moved;
     println("pairs:", view[1].tag, view[1].value, moved);
     println("passed:", value_of(Pair.{ tag = 3, value = 6000000000 }));
     println("wide:", 340282366920938463463374607431768211455u128, -9223372036854775807i64);
