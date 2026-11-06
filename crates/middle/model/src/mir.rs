@@ -336,7 +336,7 @@ impl Body {
     }
 
     /// The text `print` writes for `operand`, when that is a constant string:
-    /// all of a `str`, a `cstr` up to its first zero byte, as C reads it.
+    /// all of a `&str`, a `&cstr` up to its first zero byte, as C reads it.
     pub fn constant_text(&self, operand: Operand) -> Option<&[u8]> {
         let constant = self.constant(operand)?;
         let Value::Bytes(bytes) = &constant.value else {

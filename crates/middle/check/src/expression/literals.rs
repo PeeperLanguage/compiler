@@ -23,7 +23,7 @@ use crate::builder::ThirBuilder;
 use crate::expression::unsuffixed_literal;
 
 impl ThirBuilder<'_, '_> {
-    /// The string literal at `span`, a `str` or with its `c` a `cstr` (`ty`):
+    /// The string literal at `span`, a `&str` or with its `c` a `&cstr` (`ty`):
     /// its bytes.
     pub(crate) fn string_literal(&mut self, span: Span, ty: TypeId) -> Expr {
         self.checker.record(span, FactKind::Literal(ty));

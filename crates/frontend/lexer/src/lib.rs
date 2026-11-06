@@ -272,7 +272,7 @@ impl Scanner<'_> {
             let (byte, width) = if c == b'\\' {
                 let (byte, width) = escape(self.bytes, i, quote_char);
                 match byte {
-                    Ok(byte) => (byte, width),
+                    Ok(byte) => (Some(byte), width),
                     Err(message) => {
                         self.report(
                             Span::new(i, i + width),
@@ -281,12 +281,22 @@ impl Scanner<'_> {
                             "fix this escape sequence",
                         );
                         bad_escape = true;
-                        (0, width)
+                        (None, width)
                     }
                 }
             } else {
-                (c, 1)
+                (Some(c), 1)
             };
+            // C reads text up to its first zero byte, so one inside would cut it.
+            if byte == Some(0) && kind == TokenKind::CString {
+                self.report(
+                    Span::new(i, i + width),
+                    diagnostics::UNEXPECTED_CHARACTER,
+                    "C text cannot hold a zero byte",
+                    "C would stop reading here",
+                );
+            }
+            let byte = byte.unwrap_or(0);
             if length < value.len() {
                 value[length] = byte;
             }

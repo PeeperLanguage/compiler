@@ -25,7 +25,7 @@ use crate::declaration::is_self;
 
 impl ThirBuilder<'_, '_> {
     /// `print(values)`, or `println(values)` when `newline`: each value of a
-    /// type `printable` takes. A plain string literal is printed as a `cstr`,
+    /// type `printable` takes. A plain string literal is printed as a `&cstr`,
     /// though it is not one anywhere else.
     // shortcut: a built-in until a library function takes any number of
     // values of any printable type; then delete it with THIR's and MIR's
@@ -329,7 +329,7 @@ fn constant_expr(constant: Option<Constant>) -> Expr {
 }
 
 /// Whether `print` writes a value of the type `ty`: a number, `bool`,
-/// `cstr` or raw pointer, a struct or array of such values, or a reference
+/// `&cstr` or raw pointer, a struct or array of such values, or a reference
 /// to one.
 // shortcut: structs and arrays print built in until a trait or interface
 // lets each type say how it prints; then this rule and the backend's struct

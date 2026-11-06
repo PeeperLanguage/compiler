@@ -149,7 +149,7 @@ impl Metadata {
                 )
             }
             Type::Slice { .. } | Type::Str => {
-                // A `str` views bytes.
+                // A `&str` views bytes.
                 let element = types[ty]
                     .elements()
                     .map_or(TypeId::U8, |(element, _)| element);

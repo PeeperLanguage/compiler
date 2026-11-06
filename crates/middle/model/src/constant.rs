@@ -19,7 +19,7 @@ pub enum Value {
     /// The value's bits as an `f64`; an `f32` value widened, which is exact.
     /// Bits, not an `f64`, so that every value equals itself, NaN included.
     Float(u64),
-    /// The bytes of a string, such as a `c"..."` literal's (a `cstr`), without
+    /// The bytes of a string, such as a `c"..."` literal's (a `&cstr`), without
     /// the zero byte that ends a C string.
     Bytes(Box<[u8]>),
     /// The null address: `none` as a raw pointer.
@@ -53,7 +53,7 @@ pub fn integer_text(limbs: &Limbs) -> String {
 /// through its type's sign, when 128 bits hold it, else every limb in hex
 /// (`integer_text`); a float as the shortest text that reads back as it, in
 /// its own precision when it holds an `f32` exactly (a value that does not
-/// shows in full); a `str` as a `"..."` literal, a `cstr` as `c"..."`; `none` for the null
+/// shows in full); a `&str` as a `"..."` literal, a `&cstr` as `c"..."`; `none` for the null
 /// address.
 pub fn value_text<'v>(value: &'v Value, ty: &'v Type) -> impl Display + 'v {
     fmt::from_fn(move |out| match (value, ty) {

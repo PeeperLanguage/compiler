@@ -1,5 +1,5 @@
 // `print` writes its values with a space between each; `println` adds a
-// newline. It takes numbers of any width, `bool`, `cstr`, raw pointers,
+// newline. It takes numbers of any width, `bool`, `&cstr`, raw pointers,
 // structs, references to them, and plain string literals. Floats print as
 // the fewest digits that read back as the same number.
 type Meters = f64;

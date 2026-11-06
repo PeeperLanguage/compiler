@@ -763,3 +763,21 @@ ran `check.sh` fully green.
   VSCodeExt `tm-test.mjs` case updated (73 pass); Website
   `content/docs/language/arrays.mdx` on its own `feature/slice-syntax`.
 - Step 2 of text (owned `string`) is in `git stash` on `feature/text`.
+
+## Text written `&str` and `&cstr` (2026-11-06, `feature/text`)
+
+- Owner decisions (by questions, 2026-11-05/06): text alone has no fixed
+  size, so `str` and `cstr` are refused and only `&str` / `&cstr` are
+  values; text views are read only (no `&mut str`); no UTF-8 promise;
+  `&cstr` is one address; a `c"..."` literal may not hold a zero byte.
+- Check: `&str` / `&cstr` resolve to `Type::Str` / `Type::CString`, which
+  print as `&str` / `&cstr`; a plain one is P0011 "`str` is text of any
+  length, so it has no fixed size"; `&mut str` is P0011 too. Lexer: L0001
+  "C text cannot hold a zero byte". Parser: a plain `[]T` is read whole and
+  named in P0011, and parsing goes on.
+- Not done: text is not a loan holder (`Type::borrows`, `shortcut:`);
+  making it one refused a literal returned from a function with no
+  parameters and arrays of text (tried, undone).
+- Fixture `negative_text_views`; lexer test
+  `a_c_literal_holds_no_zero_byte`; `mir_comptime_calls` keeps its zero
+  byte in a `&str`. `scripts/check.sh` green.

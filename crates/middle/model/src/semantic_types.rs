@@ -140,10 +140,14 @@ pub enum Type {
     Bool,
     Integer(Integer),
     Float(Float),
-    /// `cstr`: a pointer to a C string, as C functions take it.
+    /// `&cstr`, a reference to C text: the address of bytes that end in a
+    /// zero byte, as C functions take it. C text alone has no fixed size, so
+    /// no value of it exists and this type stands for the reference.
     CString,
-    /// `str`: text, a view of bytes held elsewhere (a literal's in the
-    /// program's data), with their count; laid out as a `&[]u8` slice.
+    /// `&str`, a reference to text held elsewhere (a literal's in the
+    /// program's data): its bytes' address and count, laid out as a `&[]u8`
+    /// slice. Text alone has no fixed size, so no value of it exists and
+    /// this type stands for the reference.
     Str,
     /// `origins`: the positions of the parameters a returned reference may
     /// point into, in order; empty when the result holds no reference.
@@ -231,6 +235,11 @@ impl Type {
     /// `Some(mutable)` for a type whose values borrow what they view, a
     /// reference or a slice: the loan rules hold for both.
     pub fn borrows(&self) -> Option<bool> {
+        // shortcut: `&str` and `&cstr` hold no loan, as each is a literal's
+        // (which borrows nothing) or C's (which Peeper cannot see); make them
+        // loan holders when one can view memory that ends, with a way for a
+        // literal's to be returned and kept in arrays, which a loan holder's
+        // cannot today.
         match *self {
             Type::Reference { mutable, .. } | Type::Slice { mutable, .. } => Some(mutable),
             _ => None,
@@ -342,11 +351,14 @@ fixed_types! {
     F32 "f32" => Type::Float(Float::F32),
     /// A 64-bit floating-point number (IEEE 754 double precision).
     F64 "f64" => Type::Float(Float::F64),
-    /// A pointer to a C string, bytes ending in a zero byte, as C functions
-    /// take it.
+    /// C text: bytes ending in a zero byte, with none before it. It has any
+    /// length, so no fixed size, and is used only through a reference,
+    /// `&cstr`: the bytes' address, as C functions take it.
     CSTR "cstr" => Type::CString,
-    /// Text: a view of bytes and how many there are, such as a string
-    /// literal's. It copies; `.len` is its length in bytes.
+    /// Text: bytes of any length, such as a string literal's. It has no
+    /// fixed size, so it is used only through a reference, `&str`: the
+    /// bytes' address and how many there are. A `&str` copies; `.len` is
+    /// its length in bytes.
     STR "str" => Type::Str,
     // No name: `rawptr` is a keyword, not a type name.
     RAWPTR => Type::RawPointer { target: None },
@@ -700,7 +712,7 @@ impl Types {
     }
 
     /// Whether a value of the type `id` copies when used by value: numbers,
-    /// `bool`, `cstr`, shared references and slices, raw pointers, ranges, and arrays of values
+    /// `bool`, `&cstr`, shared references and slices, raw pointers, ranges, and arrays of values
     /// that copy. Any other value moves, and the variable it moved from is
     /// unusable until set again.
     pub fn is_copy(&self, id: TypeId) -> bool {
@@ -763,7 +775,11 @@ impl Types {
                     .iter()
                     .find(|&&(_, named)| named == id)
                     .expect("in `NAMED`");
-                text.to_string()
+                // A text type is the view, written behind `&`.
+                match self[id] {
+                    Type::CString | Type::Str => format!("&{text}"),
+                    _ => text.to_string(),
+                }
             }
             Type::Integer(integer) => integer.to_string(),
             Type::Function {

@@ -238,7 +238,7 @@ pub enum ExprKind {
         inclusive: bool,
     },
     /// `print(values)`, or `println(values)` when `newline`: each value a
-    /// number, `bool`, `cstr`, raw pointer, a struct or array of such values,
+    /// number, `bool`, `&cstr`, raw pointer, a struct or array of such values,
     /// or a reference to one; a value that moves, in a place, is lent as `&`.
     Print {
         newline: bool,

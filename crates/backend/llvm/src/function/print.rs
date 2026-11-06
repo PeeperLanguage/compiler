@@ -29,7 +29,7 @@ use model::layout::in_memory;
 impl Function<'_, '_, '_> {
     /// Writes the runtime calls that print `values` for the `print` `id`,
     /// a space between each, then a newline when `newline`, then a flush.
-    /// Text known at compile time (spaces, a `str`, a `cstr` up to its NUL)
+    /// Text known at compile time (spaces, a `&str`, a `&cstr` up to its NUL)
     /// is gathered into one string between values.
     pub(super) fn write_print(
         &mut self,
@@ -148,7 +148,7 @@ impl Function<'_, '_, '_> {
                 _ = writeln!(out, "  call void {printer}(ptr {value}){location}");
             }
             _ => unreachable!(
-                "check prints only numbers, `bool`, `cstr`, `str`, pointers, structs and arrays"
+                "check prints only numbers, `bool`, `&cstr`, `&str`, pointers, structs and arrays"
             ),
         }
     }
@@ -277,7 +277,7 @@ impl Function<'_, '_, '_> {
     }
 
     /// Writes the call that prints `text`, if any, and empties it: by its
-    /// count, as a `str` it holds may hold a zero byte.
+    /// count, as a `&str` it holds may hold a zero byte.
     pub(super) fn write_print_text(
         &mut self,
         out: &mut String,

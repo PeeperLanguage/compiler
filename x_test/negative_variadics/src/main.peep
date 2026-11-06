@@ -30,7 +30,7 @@ fn not_last(values: ...i32, last: i32) {}
 fn twice(first: ...i32, second: ...i32) {}
 
 #[extern("printf")]
-fn printf(format: cstr, values: ...i32);
+fn printf(format: &cstr, values: ...i32);
 
 fn spreads(a: [2]i32, s: &[]i32, r: range[i32]) {
     two(a...);

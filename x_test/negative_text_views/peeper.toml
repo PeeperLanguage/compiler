@@ -1,0 +1,20 @@
+name = "negative_text_views"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "`str` is text of any length, so it has no fixed size",
+    "main.peep:3:20\n",
+    "use `&str` for text",
+    "`cstr` is C text of any length, so it has no fixed size",
+    "main.peep:4:14\n",
+    "use `&cstr` for C text",
+    "`&mut str` is not a type: text views are read only",
+    "main.peep:6:16\n",
+    "use `&str`",
+    "main.peep:7:18\n",
+    "main.peep:10:17\n",
+    "Compilation failed with 5 error(s)",
+]

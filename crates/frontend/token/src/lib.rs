@@ -133,9 +133,9 @@ tokens! {
         /// let big = 1_000;     // 1000
         /// ```
         Number = "number",
-        /// A string literal: text in double quotes, a `str`.
+        /// A string literal: text in double quotes, a `&str`.
         ///
-        /// Its bytes are kept in the program; the `str` views them, and `.len` is how many there are. Its escapes are a c string's.
+        /// Its bytes are kept in the program; the `&str` views them, and `.len` is how many there are. Its escapes are a c string's.
         ///
         /// ```peeper
         /// let name = "Ada";
@@ -143,7 +143,7 @@ tokens! {
         /// panic "stop";
         /// ```
         String = "string",
-        /// A c string literal: its bytes and a zero byte after them, as a `cstr`.
+        /// A c string literal: its bytes and a zero byte after them, as a `&cstr`.
         ///
         /// Each escape is one byte: `\n`, `\r`, `\t`, `\0`, `\\`, `\"`, or `\xHH` for the byte with the hex value `HH`.
         ///

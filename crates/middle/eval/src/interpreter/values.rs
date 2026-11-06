@@ -69,7 +69,7 @@ impl<'b> Interpreter<'b, '_> {
     }
 
     /// The register of a constant `value` of the type `ty`: a string's bytes
-    /// are in the run's data, a `str` with their count.
+    /// are in the run's data, a `&str` with their count.
     pub(super) fn register_of(&mut self, value: &Value, ty: TypeId) -> Register {
         match value {
             Value::Bytes(text) if ty == TypeId::STR => Register::Slice {

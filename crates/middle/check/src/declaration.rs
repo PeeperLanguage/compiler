@@ -3,6 +3,7 @@
 //! value.
 
 use arena::Id;
+use diagnostics::Diagnostic;
 use model::DefId;
 use model::ast;
 use model::constant::Constant;
@@ -340,16 +341,16 @@ impl Checker<'_> {
         }
         let span = self.module().ast.types.span(ty);
         match self.types[resolved] {
-            // shortcut: structs, arrays, ranges, slices and `str` pass as
+            // shortcut: structs, arrays, ranges, slices and `&str` pass as
             // LLVM values, which the C ABI does not match; allow structs and
             // arrays when its aggregate rules are written (a range, slice or
-            // `str` has no C type).
+            // `&str` has no C type).
             Type::Struct { .. }
             | Type::Array { .. }
             | Type::Range { .. }
             | Type::Slice { .. }
             | Type::Str => {
-                let what = "struct, array, range, slice and `str` parameters and results of `extern` functions";
+                let what = "struct, array, range, slice and `&str` parameters and results of `extern` functions";
                 self.not_supported(span, what)
             }
             // C could keep what the struct holds, which no loan would follow.
@@ -519,6 +520,24 @@ impl Checker<'_> {
                         self.record(span, FactKind::Name(symbol));
                     }
                     match symbol {
+                        // Text alone has no fixed size: only a reference to it
+                        // is a value (the `Reference` arm).
+                        Some(Symbol::Builtin(text))
+                            if matches!(self.types[text], Type::Str | Type::CString) =>
+                        {
+                            let (what, view) = match self.types[text] {
+                                Type::Str => ("text", "&str"),
+                                _ => ("C text", "&cstr"),
+                            };
+                            let message = format!(
+                                "`{name}` is {what} of any length, so it has no fixed size"
+                            );
+                            let label = format!("use `{view}` for {what}");
+                            let diagnostic = Diagnostic::new(diagnostics::INVALID_TYPE, message)
+                                .label(&tree.file, span, label);
+                            self.report(diagnostic);
+                            return TypeId::INVALID;
+                        }
                         Some(symbol) => return self.type_named_by(symbol, span),
                         None if name == semantic_types::RANGE => {
                             let message =
@@ -559,6 +578,29 @@ impl Checker<'_> {
                     return range;
                 }
                 ast::Type::Reference { mutable, target } => {
+                    // `&str` and `&cstr`: a reference to text is its own type
+                    // (`Type::Str`, `Type::CString`), as it holds a count or
+                    // reads up to a zero byte.
+                    let target_span = tree.types.span(target);
+                    let name = tree.file.slice(target_span);
+                    if let ast::Type::Name = tree.types[target]
+                        && let Some(Symbol::Builtin(text)) = self.resolve_global(name)
+                        && matches!(self.types[text], Type::Str | Type::CString)
+                    {
+                        self.record(target_span, FactKind::Name(Symbol::Builtin(text)));
+                        if !mutable {
+                            return text;
+                        }
+                        let message =
+                            format!("`&mut {name}` is not a type: text views are read only");
+                        let diagnostic = Diagnostic::new(diagnostics::INVALID_TYPE, message).label(
+                            &tree.file,
+                            span,
+                            format!("use `&{name}`"),
+                        );
+                        self.report(diagnostic);
+                        return TypeId::INVALID;
+                    }
                     let target = self.resolve_value_type(target);
                     return self.reference_type(mutable, target, span);
                 }
@@ -672,7 +714,7 @@ mod tests {
     #[test]
     fn functions_and_constants() {
         let (found, reported) = declared_types(
-            "fn add(a: i32, b: i32) -> i32 { return a; }\nfn main() {}\nfn take(s: cstr) {}\n",
+            "fn add(a: i32, b: i32) -> i32 { return a; }\nfn main() {}\nfn take(s: &cstr) {}\n",
         );
         assert!(reported.is_empty(), "{reported:?}");
         let i32 = format!("{:?}", TypeId::I32);
@@ -695,7 +737,7 @@ mod tests {
             ("T0043", "default parameters are not supported yet", "1"),
             (
                 "T0043",
-                "struct, array, range, slice and `str` parameters and results of `extern` functions are not supported yet",
+                "struct, array, range, slice and `&str` parameters and results of `extern` functions are not supported yet",
                 "P",
             ),
             ("T0021", "`a` is a value, not a type", "a"),
@@ -778,7 +820,7 @@ mod tests {
             ("P0005", shape, "#[extern(\"d\")]"),
             (
                 "T0043",
-                "struct, array, range, slice and `str` parameters and results of `extern` functions are not supported yet",
+                "struct, array, range, slice and `&str` parameters and results of `extern` functions are not supported yet",
                 "P",
             ),
         ]);

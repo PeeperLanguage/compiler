@@ -6,8 +6,8 @@ fn cube(n: i64) -> i64 {
 const BIG = cube(1000) + 1;
 
 // A zero byte does not end the text a constant holds.
-fn text() -> cstr {
-    return c"ab\0cd";
+fn text() -> &str {
+    return "ab\0cd";
 }
 
 const TEXT = text();

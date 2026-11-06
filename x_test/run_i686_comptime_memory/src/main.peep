@@ -128,7 +128,7 @@ fn spacing() -> u8 {
     return bytes.*[8];
 }
 
-fn text() -> cstr {
+fn text() -> &cstr {
     return c"hello";
 }
 

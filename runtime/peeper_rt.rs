@@ -146,7 +146,7 @@ unsafe extern "C" fn peeper_rt_v1_print_text(text: *const u8) {
     buffer_output(text.to_bytes());
 }
 
-/// Writes the `length` bytes at `text`: a `str`.
+/// Writes the `length` bytes at `text`: a `&str`.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn peeper_rt_v1_print_bytes(text: *const u8, length: usize) {
     buffer_output(unsafe { core::slice::from_raw_parts(text, length) });

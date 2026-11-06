@@ -9,8 +9,8 @@ fn cube:
     return %5
 fn text:
   bb0:
-    return c"ab\x00cd"
+    return "ab\x00cd"
 fn main:
   bb0:
-    println(1000000001, c"ab\x00cd")
+    println(1000000001, "ab\x00cd")
     fall off at `}`

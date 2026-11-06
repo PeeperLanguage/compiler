@@ -114,7 +114,7 @@ pub fn run_function<'b>(
     machine.run_from(function, body)
 }
 
-/// A value being used. A pointer, a reference and a `cstr` are addresses; a
+/// A value being used. A pointer, a reference and a `&cstr` are addresses; a
 /// value `in_memory` is the address it is kept at.
 #[derive(Clone, Debug)]
 enum Register {

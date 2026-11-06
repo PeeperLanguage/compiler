@@ -61,7 +61,7 @@ impl Module<'_> {
         let (subprogram, scope_metadata) = self
             .add_debug_info(definition, &symbol, body, types)
             .unzip();
-        // Each string constant as an operand: a `cstr`'s global, a `str`'s
+        // Each string constant as an operand: a `&cstr`'s global, a `&str`'s
         // global and length.
         let strings = body
             .constants
@@ -676,7 +676,7 @@ impl Function<'_, '_, '_> {
                 }
                 return;
             }
-            // A slice's or `str`'s length is in its value. Another field is in the memory
+            // A slice's or `&str`'s length is in its value. Another field is in the memory
             // of the value it is part of, which no one changes: its address
             // when it is kept in memory, else loaded from there.
             InstructionKind::Field { value, ref fields } => {

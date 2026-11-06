@@ -39,11 +39,11 @@ toolchain and release work.
 | Slices | `&[]T`, `&mut []T`, `&a[i..j]`, `&s[i..j]`, `for v in s`, `[N]T{s...}`, variadic `...T` and `...mut T` parameters, bounds checks. | Slices of slices or of references. |
 | Pointers | Raw pointers `*T`, `rawptr`, `@x`, `.*`, `none`. | The allocator. `*T` stays a raw pointer: there is no owning pointer type. |
 | Ownership | Moves and loans (see Done). | Drop insertion, for containers, which own their heap buffers. |
-| Strings | `c"..."` as `cstr`; `"..."` as `str`, a view of the literal's bytes: a value in variables, fields, arrays, parameters and constants, with `.len` (beta). | Comparing, indexing or slicing a `str`; owned `string`, `byte`/`char`, character literals, run-time strings. |
-| Printing | `print` and `println` for numbers, `bool`, `cstr`, `str`, raw pointers, arrays, structs and references to them. | Temporary: arrays and structs will print through a trait or interface later. |
+| Strings | `c"..."` as `&cstr`; `"..."` as `&str`, a view of the literal's bytes: a value in variables, fields, arrays, parameters and constants, with `.len` (beta). | Comparing, indexing or slicing a `&str`; owned `string`, `byte`/`char`, character literals, run-time strings. |
+| Printing | `print` and `println` for numbers, `bool`, `&cstr`, `&str`, raw pointers, arrays, structs and references to them. | Temporary: arrays and structs will print through a trait or interface later. |
 | `panic` | `panic "message"`, exit code 101; run-time check failures panic too. | Messages other than a string literal. |
 | Compile-time calls | Functions with numbers, `bool`, variables, loops, branches, calls and panics. | Structs, arrays, references and printing at compile time. |
-| C functions | `#[extern("name")]` with numbers, `bool`, `cstr` and pointers. | Structs, arrays, ranges and slices in extern signatures (the C ABI rules); one calling convention. |
+| C functions | `#[extern("name")]` with numbers, `bool`, `&cstr` and pointers. | Structs, arrays, ranges and slices in extern signatures (the C ABI rules); one calling convention. |
 | Paths | `module::Name` for another module's constants, functions and types (`geometry::Area(...)`, `geometry::Point`). `.` is only for fields, `.len`, `.*` and, later, methods. | Paths of more than two names (`a::b::c`); paths into types (`Color::Red`). |
 
 ## Not done

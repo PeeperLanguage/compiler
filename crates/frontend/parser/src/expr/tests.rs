@@ -301,7 +301,7 @@ fn expression_errors() {
         ("[x]i32{};", "expected array length"),
         (
             "[]i32{};",
-            "incomplete type `[]`: add a size or a reference",
+            "`[]i32` is any number of `i32`s, so it has no fixed size",
         ),
         ("a.;", "expected `identifier`, found `;`"),
     ] {

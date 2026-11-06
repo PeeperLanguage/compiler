@@ -2,7 +2,7 @@
 // while an element is lent (any two elements may be one), and setting an
 // element of an array that is not set yet; a returned reference to one
 // element holds the whole array.
-struct Name { text: cstr }
+struct Name { text: &cstr }
 struct Holder { tokens: [2]i32 }
 
 fn slot(holder: &mut Holder) -> &mut i32 in holder {

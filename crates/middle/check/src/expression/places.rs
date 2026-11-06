@@ -19,14 +19,14 @@ use crate::builder::ThirBuilder;
 impl ThirBuilder<'_, '_> {
     /// `value.field`: the field of a struct value, or of the struct a
     /// reference or typed raw pointer points to; or `len`, an array's, a
-    /// slice's or a `str`'s only field. An array's type gives it, so the
+    /// slice's or a `&str`'s only field. An array's type gives it, so the
     /// array is not read.
     pub(super) fn check_field(&mut self, value: Id<ast::Expr>, field: Ident) -> Expr {
         let mut value = self.add_expr(value, None);
         let ty = self.body.exprs[value].ty;
         let pointee = self.checker.types[ty].pointee();
         let viewed = pointee.unwrap_or(ty);
-        // `Some(length)` for an array, `Some(None)` for a slice or a `str`,
+        // `Some(length)` for an array, `Some(None)` for a slice or a `&str`,
         // whose length is known only when the program runs: it is read from
         // the value, so through the reference to it.
         let length = match self.checker.types[viewed] {

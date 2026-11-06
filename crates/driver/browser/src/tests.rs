@@ -340,7 +340,7 @@ fn a_program_that_prints_forever_stops_with_what_it_printed() {
 #[test]
 fn a_function_outside_peeper_stops_the_run_by_its_name() {
     let run = interpreted(
-        "#[extern(\"puts\")]\nfn puts(text: cstr) -> i32;\nfn main() {\n    println(1);\n    puts(c\"a\");\n}\n",
+        "#[extern(\"puts\")]\nfn puts(text: &cstr) -> i32;\nfn main() {\n    println(1);\n    puts(c\"a\");\n}\n",
     );
     assert_eq!(
         (run.exit_code, &written(&run, Stream::Stdout)[..]),

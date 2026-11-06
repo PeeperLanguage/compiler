@@ -178,7 +178,7 @@ fn signature_errors() {
         ("fn f(a: [n]i32) {}", "expected array length", None),
         (
             "fn f(a: []i32) {}",
-            "incomplete type `[]`: add a size or a reference",
+            "`[]i32` is any number of `i32`s, so it has no fixed size",
             None,
         ),
         ("fn f(a: ) {}", "expected type, found `)`", None),

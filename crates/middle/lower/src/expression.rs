@@ -68,7 +68,7 @@ impl Lowering<'_> {
                         _ = self.place_or_field(value)?;
                         let array = self.types[value_type].pointee().unwrap_or(value_type);
                         let Type::Array { length, .. } = self.types[array] else {
-                            unreachable!("`.len` is the length of an array, slice or `str`")
+                            unreachable!("`.len` is the length of an array, slice or `&str`")
                         };
                         return Some(self.integer_constant(ty, length));
                     }

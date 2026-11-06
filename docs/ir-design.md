@@ -160,7 +160,7 @@ what the other cannot do:
   variables and values in memory (structs, arrays, ranges) in bytes laid out
   for the target, so references, slices and raw pointers are real addresses,
   checked at each access; a constant's own value is still a number, a bool or
-  a `cstr`. `print` and `extern` functions are errors at compile time (T0044),
+  a `&cstr`. `print` and `extern` functions are errors at compile time (T0044),
   as are a `panic`, a failed check, a bad address, running out of stack,
   100,000 calls at once and more than 1,000,000 steps (owner, 2026-10-26: a
   fixed limit, no setting until a program needs one), where each 256 bytes
@@ -454,7 +454,7 @@ with three bits per variable at each block's start: set on every path to it
 since ("or"). A `store` to a whole variable sets the first two and clears
 the third; a `move` of one clears the first and sets the third.
 
-Lowering decides what copies (`Type::is_copy`: numbers, `bool`, `cstr`,
+Lowering decides what copies (`Type::is_copy`: numbers, `bool`, `&cstr`,
 `&T`): a whole variable whose type copies is a `load`, else a `move`; any
 other place whose type copies is a `load` of the place, else a `move` of it.
 So the check never looks at types to tell a copy from a move.
@@ -721,7 +721,7 @@ one walk per function (`peeper -dump ll` shows it):
   that array is built in its own memory, never at the place it is stored to
   or `%result`, which the slice may view.
 - `print` and `println` call the runtime's print functions, one per number,
-  `bool`, `cstr` or pointer, with the text known at compile time (spaces,
+  `bool`, `&cstr` or pointer, with the text known at compile time (spaces,
   struct names, brackets) gathered into one string between them. A struct or
   array prints through a private function per type, which calls those of the
   structs and arrays in it, and an array's loops over its elements, so the
@@ -822,7 +822,7 @@ yet: managed toolchains and sysroots for cross builds, linker response files,
 - **decided** A module's name is reachable from another module (`m::Name`)
   only when it starts with an upper case letter; otherwise M0004. Names of the
   prelude (`core:global`) are in every module's scope without that rule.
-- **decided** `cstr` (a pointer to a C string) is a built-in type, so the
+- **decided** `&cstr` (a pointer to a C string) is a built-in type, so the
   prelude's `write` and `read` check.
 
 ## Open decisions

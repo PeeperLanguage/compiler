@@ -273,7 +273,7 @@ impl<'f> Interpreter<'_, 'f> {
                 text.push(b']');
             }
             _ => unreachable!(
-                "check prints only numbers, `bool`, `cstr`, pointers, structs and arrays"
+                "check prints only numbers, `bool`, `&cstr`, pointers, structs and arrays"
             ),
         }
         Ok(())

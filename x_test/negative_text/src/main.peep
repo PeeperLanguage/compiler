@@ -1,7 +1,7 @@
-// What a `str` cannot do yet: compare, index, add, pass to C, or stand in
-// for a `cstr` or a `&[]u8`; and owned `string` text does not exist yet.
+// What a `&str` cannot do yet: compare, index, add, pass to C, or stand in
+// for a `&cstr` or a `&[]u8`; and owned `string` text does not exist yet.
 #[extern("puts")]
-fn puts(text: str) -> i32;
+fn puts(text: &str) -> i32;
 
 fn main() {
     let s = "ab";
@@ -9,8 +9,8 @@ fn main() {
     let first = s[0];
     let joined = s + s;
     let size = s.size;
-    let c_text: cstr = "x";
-    let viewed: str = c"x";
+    let c_text: &cstr = "x";
+    let viewed: &str = c"x";
     let bytes: &[]u8 = s;
     let owned: string = "x";
 }

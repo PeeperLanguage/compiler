@@ -189,21 +189,36 @@ impl Parser {
         inner
     }
 
-    /// Reads `[N]T`.
+    /// Reads `[N]T`; a `[]T` alone is reported, as it has no fixed size.
     pub(crate) fn array_type(&mut self) -> Id<Type> {
         let open = self.next();
         let t = self.tok();
-        if t.kind != TokenKind::Number {
-            let message = if t.kind == TokenKind::RightBracket {
-                "incomplete type `[]`: add a size or a reference"
-            } else {
-                "expected array length"
-            };
-            self.fail(Diagnostic::new(diagnostics::INVALID_TYPE, message).label(
+        // `[]T` alone, read whole so the message names it and parsing goes on.
+        if t.kind == TokenKind::RightBracket {
+            self.next();
+            let element = self.type_expr();
+            let element = self.tree.file.slice(self.tree.types.span(element));
+            let message =
+                format!("`[]{element}` is any number of `{element}`s, so it has no fixed size");
+            let label =
+                format!("use `[N]{element}` for a fixed array or `&[]{element}` for a slice");
+            let ty = self.add(open.span.start, Type::Invalid);
+            let span = self.tree.types.span(ty);
+            self.repair(Diagnostic::new(diagnostics::INVALID_TYPE, message).label(
                 &self.tree.file,
-                t.span,
-                "use `[N]T` for fixed arrays or `&[]T` for slices",
+                span,
+                label,
             ));
+            return ty;
+        }
+        if t.kind != TokenKind::Number {
+            self.fail(
+                Diagnostic::new(diagnostics::INVALID_TYPE, "expected array length").label(
+                    &self.tree.file,
+                    t.span,
+                    "use `[N]T` for fixed arrays or `&[]T` for slices",
+                ),
+            );
             return self.add(open.span.start, Type::Invalid);
         }
         self.next();

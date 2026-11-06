@@ -2,9 +2,9 @@ fn main:
   bb0:
     store text.0, "hi\t"
     store c_text.1, c"bye"
-    %2 = load text.0: str
-    %3 = load c_text.1: cstr
-    %4 = load text.0: str
+    %2 = load text.0: &str
+    %3 = load c_text.1: &cstr
+    %4 = load text.0: &str
     %5 = field %4[1]: u64
     println(%2, %3, %5)
     fall off at `}`
