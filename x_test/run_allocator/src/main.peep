@@ -1,0 +1,14 @@
+// `core:allocator` gives memory with `Allocate` and takes it back with
+// `Free`. `free` is an ordinary name.
+import "core:allocator";
+
+fn free(count: i32) -> i32 { return count + 1; }
+
+fn main() {
+    let memory = allocator::Allocate(8);
+    let numbers = memory as *i32;
+    numbers.* = 7;
+    println(numbers.*, 9);
+    allocator::Free(memory);
+    println("free", free(2));
+}

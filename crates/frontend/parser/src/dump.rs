@@ -483,11 +483,6 @@ impl<'t> Dumper<'t> {
                 ("reference expression", mutable(m), one(value))
             }
             Expr::RawAddress(value) => ("raw address expression", None, one(value)),
-            Expr::Free(value) => (
-                "free expression",
-                None,
-                value.map(Item::Expr).into_iter().collect(),
-            ),
             Expr::Print { newline, values } => (
                 "print expression",
                 Some(if newline {

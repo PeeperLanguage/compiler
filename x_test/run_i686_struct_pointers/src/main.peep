@@ -13,7 +13,7 @@ fn Length(list: *Node) -> i32 {
 }
 
 fn Push(list: *Node, value: i32) -> *Node {
-    let node = allocator::Malloc(16) as *Node;
+    let node = allocator::Allocate(16) as *Node;
     node.*.value = value;
     node.*.next = list;
     return node;

@@ -4,10 +4,13 @@
 slices (`&[]T`) merged. Open branch: `feature/interfaces`. Order of work
 (owner, 2026-11-06, `allocator.localplan.md` ORDER OF WORK):
 
-1. [~] Borrowed interfaces: `&Shape`, `&mut Shape`, method tables. Built,
-   not committed; waiting for the owner's review (worklog, "Borrowed
-   interfaces").
-2. [ ] A free-hook interface: the compiler calls it where a value ends.
+1. [x] Borrowed interfaces: `&Shape`, `&mut Shape`, method tables
+   (60a3dbed, then b435b7ff for the `ref` style).
+2. [-] A free hook: dropped for now (owner, 2026-11-06). Memory taken by
+   hand with `Allocate` is freed by hand with `Free`; memory the compiler
+   takes itself, the compiler frees. `defer` or destructors come later, if
+   a real program needs them. What was kept: the `free` keyword removed,
+   `Malloc` renamed `Allocate` (`feature/free-hook`, uncommitted).
 3. [ ] `String` in the core library (pointer offsets or a copy function,
    `&str` from an address and a count, private fields).
 4. [ ] Owned `Shape`: explicit allocation, or moving in an existing one.

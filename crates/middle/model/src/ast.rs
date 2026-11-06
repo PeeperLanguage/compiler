@@ -433,8 +433,6 @@ pub enum Expr {
     Reference { mutable: bool, value: Id<Expr> },
     /// `@x`
     RawAddress(Id<Expr>),
-    /// `free(x)`; the value is missing when the `(` is
-    Free(Option<Id<Expr>>),
     /// `print(values)`, or `println(values)` when `newline`
     Print { newline: bool, values: List<Expr> },
     /// `f(arguments)`
@@ -508,7 +506,6 @@ impl Expr {
             | Expr::Char { .. }
             | Expr::Bool(_)
             | Expr::None
-            | Expr::Free(_)
             | Expr::Print { .. }
             | Expr::Call { .. }
             | Expr::Selector { .. }

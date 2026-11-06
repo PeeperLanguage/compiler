@@ -242,7 +242,6 @@ impl ThirBuilder<'_, '_> {
                 }
                 ast::Expr::Print { newline, values } => self.check_print(newline, values),
                 ast::Expr::Char { .. } => self.unsupported_expr(span, "character literals"),
-                ast::Expr::Free(_) => self.unsupported_expr(span, "`free` calls"),
                 ast::Expr::VariantLiteral { .. } => self.unsupported_expr(span, "variant literals"),
                 ast::Expr::Is { .. } => self.unsupported_expr(span, "`is` tests"),
                 ast::Expr::OrElse { .. } => self.unsupported_expr(span, "`orelse` fallbacks"),

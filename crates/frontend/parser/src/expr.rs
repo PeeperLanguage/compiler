@@ -82,9 +82,8 @@ static RULES: Rules = {
     rules.prefix(TokenKind::Tilde, unary);
     rules.prefix(TokenKind::Ampersand, reference);
     rules.prefix(TokenKind::At, raw_address);
-    rules.prefix(TokenKind::Free, builtin);
-    rules.prefix(TokenKind::Print, builtin);
-    rules.prefix(TokenKind::Println, builtin);
+    rules.prefix(TokenKind::Print, print);
+    rules.prefix(TokenKind::Println, print);
 
     // ranges, fallback and pipe
     rules.prefix(TokenKind::DotDot, open_range);
@@ -399,26 +398,19 @@ fn raw_address(p: &mut Parser) -> Id<Expr> {
     p.add(start, Expr::RawAddress(value))
 }
 
-/// Reads `free(x)`, or `print(values)` or `println(values)`, which take any
-/// number of values.
-fn builtin(p: &mut Parser) -> Id<Expr> {
+/// Reads `print(values)` or `println(values)`, which take any number of
+/// values.
+fn print(p: &mut Parser) -> Id<Expr> {
     let keyword = p.next();
-    let node = match keyword.kind {
-        TokenKind::Free => Expr::Free(p.expect(TokenKind::LeftParen).map(|open| {
-            let value = p.expr(Precedence::Lowest);
-            p.close(TokenKind::RightParen, open);
-            value
-        })),
-        _ => Expr::Print {
-            newline: keyword.kind == TokenKind::Println,
-            values: p.delimited(
-                TokenKind::LeftParen,
-                TokenKind::RightParen,
-                false,
-                starts_expression,
-                |p| p.expr(Precedence::Lowest),
-            ),
-        },
+    let node = Expr::Print {
+        newline: keyword.kind == TokenKind::Println,
+        values: p.delimited(
+            TokenKind::LeftParen,
+            TokenKind::RightParen,
+            false,
+            starts_expression,
+            |p| p.expr(Precedence::Lowest),
+        ),
     };
     p.add(keyword.span.start, node)
 }

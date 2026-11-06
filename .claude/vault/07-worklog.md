@@ -848,3 +848,21 @@ ran `check.sh` fully green.
 - `clippy::ref_patterns` is on in the workspace lints, and `rust-style.md`
   states the rule.
 - `scripts/check.sh` all ok; no fixture or dump changed.
+
+## Manual freeing stays; free hook dropped (2026-11-06, `feature/free-hook`)
+
+- Owner: memory taken by hand is freed by hand; memory the compiler takes
+  itself, the compiler frees. No free hook now; `defer` or destructors
+  later, if a real program needs them.
+- Why: a probe of a `#[free]` method on real programs (a file handle, a
+  byte buffer, a list of buffers, a consuming method) found the hook needs
+  more language first: moving a value out of raw memory, pointer offsets,
+  and ending a value without its hook (else `File::Finish(self)` closes
+  twice). None of that is needed while freeing stays manual.
+- Kept: `core:allocator`'s `Malloc` is `Allocate` now, and `Free` keeps
+  its name (owner; runtime symbols unchanged). The `free` keyword is gone (token, parser rule,
+  `ast::Expr::Free`, the checker's refusal): it existed only for freeing
+  by hand. The parser's `builtin` reads only print now and is named
+  `print`.
+- `x_test/run_allocator`: `Allocate`/`Free`, and `free` as a function
+  name (fails with `P0002` when the keyword is put back).

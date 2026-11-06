@@ -191,7 +191,6 @@ fn parses_expressions() {
     Shape::Line with .{ end = Box<i32>::new(1) };
     [_]u8{ 1, 2, 4..=8:2..., (0..3)..., a... };
     sum(1, a..., &mut b...);
-    free(p);
     println(items[1..=n]);
 }
 "#;
@@ -272,9 +271,6 @@ fn parses_expressions() {
           spread
             reference expression mut
               name reference b
-      expression statement
-        free expression
-          name reference p
       expression statement
         print expression println
           index expression
