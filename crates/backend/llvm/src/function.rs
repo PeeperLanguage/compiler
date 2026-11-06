@@ -527,15 +527,24 @@ impl Function<'_, '_, '_> {
                 return;
             }
             InstructionKind::Borrow { ref place, .. } | InstructionKind::Address(ref place) => {
+                // A slice or interface reference lent again whole: its own
+                // two words, read again. A slice of an array behind a
+                // reference also ends at `Dereference`, so the type picks
+                // the step.
+                if let (Type::Slice { .. }, Some((own, mir::Projection::SliceElements)))
+                | (
+                    Type::InterfaceReference { .. },
+                    Some((own, mir::Projection::Dereference)),
+                ) = (&types[ty], place.split_last())
+                {
+                    let address = self.write_address(out, &own, &location, id);
+                    let text = type_text(types, ty);
+                    _ = writeln!(out, "  {name} = load {text}, ptr {address}{location}");
+                    return;
+                }
                 if !matches!(types[ty], Type::Slice { .. }) {
                     self.write_place_address(out, &name, place, &location);
                     return; // the address is the value
-                }
-                // All of a slice's elements are the slice's own two parts.
-                if let Some(slice) = place.slice_of_elements() {
-                    let address = self.write_address(out, &slice, &location, id);
-                    _ = writeln!(out, "  {name} = load %slice, ptr {address}{location}");
-                    return;
                 }
                 // A slice: the elements' address, then their count.
                 let address = format!("{name}.p");
@@ -634,12 +643,27 @@ impl Function<'_, '_, '_> {
                 }
             }
             InstructionKind::Call {
-                function,
+                callee,
                 ref arguments,
                 ..
             } => {
-                self.write_call(out, id, function, arguments, rest, &location);
+                self.write_call(out, id, callee, arguments, rest, &location);
                 Ok(())
+            }
+            InstructionKind::ToInterface {
+                reference,
+                implementation,
+            } => {
+                let table = self.method_table(implementation, ty);
+                let reference = self.operand(reference);
+                _ = writeln!(
+                    out,
+                    "  {name}.a = insertvalue {{ ptr, ptr }} poison, ptr {reference}, 0{location}"
+                );
+                write!(
+                    out,
+                    "  {name} = insertvalue {{ ptr, ptr }} {name}.a, ptr {table}, 1"
+                )
             }
             InstructionKind::Print {
                 newline,

@@ -4,6 +4,7 @@
 use std::rc::Rc;
 
 use arena::Id;
+use model::Callee;
 use model::DefId;
 use model::constant::Value;
 use model::layout::in_memory;
@@ -12,6 +13,7 @@ use model::mir;
 use model::mir::InstructionKind;
 use model::mir::Operand;
 use model::mir::Terminator;
+use model::semantic_types::ImplementationId;
 use model::semantic_types::TypeId;
 use source::Span;
 
@@ -116,13 +118,13 @@ impl<'b> Interpreter<'b, '_> {
                 self.step(body.instructions.span(id))?;
                 let instruction = &body.instructions[id];
                 if let InstructionKind::Call {
-                    function,
+                    callee,
                     ref arguments,
                     ..
                 } = instruction.kind
                 {
                     self.frames.last_mut().expect("a run has a frame").next = index + 1;
-                    self.call(id, function, arguments)?;
+                    self.call(id, callee, arguments)?;
                     continue 'frames;
                 }
                 let value = self.run_instruction(id)?;
@@ -200,13 +202,26 @@ impl<'b> Interpreter<'b, '_> {
         Ok(())
     }
 
-    /// Calls `function` for the instruction `id`, after the frame now running.
+    /// Calls `callee` for the instruction `id`, after the frame now running.
+    /// A method is the one at its place in the table of the interface
+    /// reference first in `arguments`, and gets only its address.
     fn call(
         &mut self,
         id: Id<mir::Instruction>,
-        function: DefId,
+        callee: Callee,
         arguments: &[Operand],
     ) -> Result<(), Failure> {
+        let (function, receiver) = match callee {
+            Callee::Function(function) => (function, None),
+            Callee::Method(slot) => {
+                let Register::Interface { address, table } = self.operand(&arguments[0]) else {
+                    unreachable!("a method is called on an interface reference")
+                };
+                let implementation = ImplementationId::from_index(table as usize);
+                let function = self.types.implementation(implementation)[slot as usize];
+                (function, Some(Register::Address(address)))
+            }
+        };
         let frame = self.frame();
         let span = frame.body.instructions.span(id);
         let Some(body) = (self.mir_of)(function) else {
@@ -221,7 +236,12 @@ impl<'b> Interpreter<'b, '_> {
         };
         let end = frame.start + frame.slots.size;
         let first_register = self.registers.len();
-        for argument in arguments {
+        let mut rest = arguments;
+        if let Some(receiver) = receiver {
+            self.registers.push(Some(receiver));
+            rest = &arguments[1..];
+        }
+        for argument in rest {
             let register = self.operand(argument);
             self.registers.push(Some(register));
         }

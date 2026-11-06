@@ -25,12 +25,14 @@ use model::ModuleId;
 use model::ast;
 use model::constant::Constant;
 use model::machine::Machine;
+use model::semantic_types::ImplementationId;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use model::thir::Fact;
 use model::thir::FactKind;
 use model::thir::Symbol;
+use rustc_hash::FxHashMap;
 use scope::Scope;
 use source::Span;
 
@@ -43,6 +45,9 @@ pub struct Checker<'p> {
     /// What checking each module found so far, by `ModuleId`.
     pub module_checks: Vec<ModuleChecks<'p>>,
     pub types: Types, // the program's types, built-in and declared
+    /// Each struct and interface pair found to implement (`implementation`),
+    /// so its methods are looked up once.
+    implementations: FxHashMap<(TypeId, TypeId), ImplementationId>,
     /// The machine the program is for: the width of `isize` and `usize` is
     /// its `pointer_bits`, and a value may take its `largest_object` bytes.
     pub target: &'static Machine,
@@ -135,6 +140,7 @@ impl<'p> Checker<'p> {
             modules,
             module_checks,
             types: Types::new(target.pointer_bits),
+            implementations: FxHashMap::default(),
             target,
             record_facts,
             checking: Vec::new(),

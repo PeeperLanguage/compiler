@@ -154,6 +154,12 @@ impl<'b> Interpreter<'b, '_> {
                     length: self.read_word(address + self.pointer_bytes(), span)?,
                 });
             }
+            Type::InterfaceReference { .. } => {
+                return Ok(Register::Interface {
+                    address: self.read_word(address, span)?,
+                    table: self.read_word(address + self.pointer_bytes(), span)?,
+                });
+            }
             Type::Struct { .. } | Type::Array { .. } | Type::Range { .. } => {
                 return Ok(Register::Address(address));
             }
@@ -212,12 +218,16 @@ impl<'b> Interpreter<'b, '_> {
                 self.write_bytes(address, &value.to_le_bytes()[..pointer], span)
             }
             Register::Slice {
-                address: elements,
-                length,
+                address: first,
+                length: second,
+            }
+            | Register::Interface {
+                address: first,
+                table: second,
             } => {
-                self.write_bytes(address, &elements.to_le_bytes()[..pointer], span)?;
-                let second = address + pointer as u64;
-                self.write_bytes(second, &length.to_le_bytes()[..pointer], span)
+                self.write_bytes(address, &first.to_le_bytes()[..pointer], span)?;
+                let after = address + pointer as u64;
+                self.write_bytes(after, &second.to_le_bytes()[..pointer], span)
             }
         }
     }

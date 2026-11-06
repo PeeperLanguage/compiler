@@ -5,6 +5,7 @@ use std::num::NonZeroU32;
 
 use arena::Id;
 use arena::List;
+use model::Callee;
 use model::DefId;
 use model::ast;
 use model::ast::Ident;
@@ -22,6 +23,7 @@ use source::Span;
 
 use crate::builder::ThirBuilder;
 use crate::declaration::is_self;
+use crate::scope;
 
 impl ThirBuilder<'_, '_> {
     /// `print(values)`, or `println(values)` when `newline`: each value of a
@@ -107,9 +109,10 @@ impl ThirBuilder<'_, '_> {
     }
 
     /// `callee(arguments)`, written at `span`. Only a module's function, by
-    /// its name or its path, can be called, or a type's function with a dot,
-    /// `x.name(arguments)`, which gives `x` as its `self`. A `...` parameter
-    /// takes all the arguments past the others (`check_variadic`).
+    /// its name or its path, can be called, or with a dot, `x.name(arguments)`,
+    /// a type's function or an interface reference's method, which gets `x`
+    /// as its `self`. A `...` parameter takes all the arguments past the
+    /// others (`check_variadic`).
     pub(super) fn check_call(
         &mut self,
         callee: Id<ast::Expr>,
@@ -120,26 +123,34 @@ impl ThirBuilder<'_, '_> {
         let callee_span = tree.exprs.span(callee);
         let text = tree.file.slice(callee_span);
         let mut receiver = None;
-        let symbol = match tree.exprs[callee] {
-            ast::Expr::Name => match self.resolve(callee_span) {
-                // Their errors were reported.
-                Some(Symbol::Local(Local::Constant(constant)))
-                    if self.body.constants[constant].is_none() =>
-                {
-                    None
-                }
-                Some(Symbol::Local(Local::Variable(variable)))
-                    if self.body.variables[variable].ty == TypeId::INVALID =>
-                {
-                    None
-                }
-                symbol => symbol,
-            },
-            ast::Expr::Path(path) => self.checker.resolve_path(path),
+        let found = match tree.exprs[callee] {
+            ast::Expr::Name => {
+                let symbol = match self.resolve(callee_span) {
+                    // Their errors were reported.
+                    Some(Symbol::Local(Local::Constant(constant)))
+                        if self.body.constants[constant].is_none() =>
+                    {
+                        None
+                    }
+                    Some(Symbol::Local(Local::Variable(variable)))
+                        if self.body.variables[variable].ty == TypeId::INVALID =>
+                    {
+                        None
+                    }
+                    symbol => symbol,
+                };
+                self.function_called(symbol, callee_span)
+            }
+            ast::Expr::Path(path) => {
+                let symbol = self.checker.resolve_path(path);
+                self.function_called(symbol, callee_span)
+            }
             ast::Expr::Selector { value, field } => {
-                let method = self.method(value, field);
-                receiver = method.map(|(place, _)| place);
-                method.map(|(_, symbol)| symbol)
+                self.method(value, field, callee_span)
+                    .map(|(place, callee, signature)| {
+                        receiver = Some(place);
+                        (callee, signature)
+                    })
             }
             _ => {
                 self.checker
@@ -147,24 +158,9 @@ impl ThirBuilder<'_, '_> {
                 None
             }
         };
-        let function = match symbol {
-            Some(Symbol::Function(function)) => Some(function),
-            Some(_) => {
-                let message = format!("`{text}` is not a function");
-                self.checker
-                    .error(diagnostics::NOT_CALLABLE, message, callee_span);
-                None
-            }
-            None => None,
-        };
-        let signature = function.map(|function| {
-            let ty = self.checker.function_type(function, callee_span);
-            (function, ty, self.checker.types[ty].clone())
-        });
-        let signature = signature
-            .filter(|&(function, ..)| receiver.is_none() || self.takes_self(function, callee_span));
+        let signature = found.map(|(callee, ty)| (callee, ty, self.checker.types[ty].clone()));
         let Some((
-            function,
+            callee,
             signature,
             Type::Function {
                 parameters,
@@ -206,7 +202,7 @@ impl ThirBuilder<'_, '_> {
         if let Some(place) = receiver {
             // `self` takes the value itself; `&self` and `&mut self` borrow it.
             let argument = match self.checker.types[parameters[0]] {
-                Type::Reference { mutable, .. } => {
+                Type::Reference { mutable, .. } | Type::InterfaceReference { mutable, .. } => {
                     let span = self.body.exprs.span(place);
                     let borrowed = self.check_borrow(mutable, place, span);
                     self.body.add(borrowed, span)
@@ -245,7 +241,8 @@ impl ThirBuilder<'_, '_> {
             });
             values.collect::<Option<Vec<Value>>>()
         };
-        if self.in_constant
+        if let Callee::Function(function) = callee
+            && self.in_constant
             && result != TypeId::VOID
             && let Some(values) = constant_arguments()
         {
@@ -260,17 +257,49 @@ impl ThirBuilder<'_, '_> {
         Expr {
             ty: result,
             kind: ExprKind::Call {
-                function,
+                callee,
                 signature,
                 arguments,
             },
         }
     }
 
-    /// The function `name` of the struct `value` is or points to, called with
-    /// a dot, and the place of that struct, which the call gives as `self`.
-    fn method(&mut self, value: Id<ast::Expr>, name: Ident) -> Option<(Id<Expr>, Symbol)> {
+    /// What the function `symbol`, called at `span`, is: its callee and
+    /// type. `None` when it is not a function, reported, or when finding it
+    /// reported an error.
+    fn function_called(&mut self, symbol: Option<Symbol>, span: Span) -> Option<(Callee, TypeId)> {
+        match symbol {
+            Some(Symbol::Function(function)) => {
+                let ty = self.checker.function_type(function, span);
+                Some((Callee::Function(function), ty))
+            }
+            Some(_) => {
+                let text = self.checker.module().ast.file.slice(span);
+                let message = format!("`{text}` is not a function");
+                self.checker.error(diagnostics::NOT_CALLABLE, message, span);
+                None
+            }
+            None => None,
+        }
+    }
+
+    /// The function `name` of the struct `value` is or points to, or the
+    /// method `name` of the interface reference `value` is, called with a
+    /// dot written at `span`: the place of the struct, or of what the
+    /// interface reference views, which the call gives as `self`, the
+    /// callee, and its type.
+    fn method(
+        &mut self,
+        value: Id<ast::Expr>,
+        name: Ident,
+        span: Span,
+    ) -> Option<(Id<Expr>, Callee, TypeId)> {
         let value = self.add_expr(value, None);
+        if let Type::InterfaceReference { interface, .. } =
+            self.checker.types[self.body.exprs[value].ty]
+        {
+            return self.interface_method(value, interface, name);
+        }
         let place = self.through_pointer(value, self.body.exprs.span(value));
         let ty = self.body.exprs[place].ty;
         let Type::Struct { definition, .. } = self.checker.types[ty] else {
@@ -289,7 +318,68 @@ impl ThirBuilder<'_, '_> {
             &head,
             name.span,
         )?;
-        Some((place, symbol))
+        let (callee, signature) = self.function_called(Some(symbol), span)?;
+        let Callee::Function(function) = callee else {
+            unreachable!("a type's member is a function")
+        };
+        self.takes_self(function, span)
+            .then_some((place, callee, signature))
+    }
+
+    /// The method `name` of the interface reference `reference`, to
+    /// `interface`, as `method` gives it: its place in the interface's
+    /// table. A method taking `self` whole is not called through a
+    /// reference.
+    fn interface_method(
+        &mut self,
+        reference: Id<Expr>,
+        interface: TypeId,
+        name: Ident,
+    ) -> Option<(Id<Expr>, Callee, TypeId)> {
+        let (Type::Named(definition) | Type::Interface { definition, .. }) =
+            self.checker.types[interface]
+        else {
+            unreachable!("an interface reference refers to an interface")
+        };
+        // Checked first, so the place's type is the interface, not its name.
+        if self.checker.declared_type(definition, name.span) == TypeId::INVALID {
+            return None;
+        }
+        let modules = self.checker.modules;
+        let file = &modules[definition.module.index()].ast.file;
+        let text = name.text(&self.checker.module().ast.file);
+        let names = || {
+            project::interface_methods(modules, definition)
+                .expect("an interface declaration has methods")
+                .map(|method| method.name.text(file))
+        };
+        let head = self.checker.type_text(interface);
+        let Some(slot) = names().position(|method| method == text) else {
+            let meant = scope::nearest(text, std::iter::empty(), names());
+            let message = format!("unknown name `{text}` in interface `{head}`");
+            self.checker
+                .report_unknown(diagnostics::UNDEFINED_NAME, name.span, message, meant);
+            return None;
+        };
+        let Type::Interface { ref methods, .. } = self.checker.types[interface] else {
+            unreachable!("a checked interface is `Type::Interface`")
+        };
+        let signature = methods[slot];
+        let Type::Function { ref parameters, .. } = self.checker.types[signature] else {
+            unreachable!("a method's type is a function type")
+        };
+        if !matches!(
+            self.checker.types[parameters[0]],
+            Type::InterfaceReference { .. }
+        ) {
+            let message =
+                format!("`{text}` takes `self` whole, so it cannot be called through `&{head}`");
+            self.checker
+                .error(diagnostics::INVALID_OPERATION, message, name.span);
+            return None;
+        }
+        let place = self.through_pointer(reference, self.body.exprs.span(reference));
+        Some((place, Callee::Method(slot as u32), signature))
     }
 
     /// Whether the function `function`, called with a dot at `span`, takes

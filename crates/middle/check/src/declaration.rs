@@ -10,6 +10,7 @@ use model::constant::Constant;
 use model::layout::layout;
 use model::layout::struct_layout;
 use model::semantic_types;
+use model::semantic_types::ImplementationId;
 use model::semantic_types::Integer;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
@@ -33,8 +34,9 @@ const MOST_HOLDERS: usize = 4_096;
 
 impl Checker<'_> {
     /// The type the module's type declaration or alias `definition` declares:
-    /// a struct's type (`Type::Struct`), or the type an alias names. Enums,
-    /// interfaces and type parameters are not supported yet.
+    /// a struct's type (`Type::Struct`), an interface's (`Type::Interface`),
+    /// or the type an alias names. Enums and type parameters are not
+    /// supported yet.
     pub(crate) fn check_type_declaration(&mut self, definition: DefId) -> TypeId {
         let tree = &self.module().ast;
         let (written, is_alias) = match tree.decls[tree.declaration(definition.index)] {
@@ -88,8 +90,8 @@ impl Checker<'_> {
                 }
                 return ty;
             }
+            ast::Type::Interface(_) => return self.check_interface(definition),
             ast::Type::Enum(_) => "enum declarations",
-            ast::Type::Interface(_) => "interface declarations",
             _ => unreachable!("the parser gives a type declaration only these types"),
         };
         self.not_supported(written.name.span, what)
@@ -128,9 +130,6 @@ impl Checker<'_> {
         else {
             unreachable!("`{definition:?}` is a function declaration")
         };
-        if let Some(parameter) = tree.children.lists.items(signature.type_parameters).next() {
-            return self.not_supported(tree.children.names.span(parameter), "generic functions");
-        }
         let symbol = project::extern_symbol(self.modules, definition);
         if let Err(span) = symbol {
             let message = "write `#[extern(\"name\")]` once, with the C function's name";
@@ -139,6 +138,40 @@ impl Checker<'_> {
         // A malformed `extern` is still read as one, so its signature gets
         // the C rules.
         let external = symbol != Ok(None);
+        let ty = self.signature_type(signature, owner.is_some(), external);
+        if ty == TypeId::INVALID {
+            return ty;
+        }
+        if external == body.is_some() {
+            let message = if external {
+                "an `extern` function is defined in C, so it has no body"
+            } else {
+                "a function needs a body, or `#[extern(\"name\")]` when C defines it"
+            };
+            return self.error(diagnostics::INVALID_DECLARATION, message, name.span);
+        }
+        // Reported above; invalid, so no call of it is lowered.
+        if symbol.is_err() {
+            return TypeId::INVALID;
+        }
+        ty
+    }
+
+    /// The function type `signature` of the module's tree declares, of a
+    /// type's function or an interface's method when `has_owner` (only these
+    /// take `self`), of a C function when `external`. Invalid when the
+    /// signature is reported; a parameter or result whose type is reported
+    /// is invalid inside it.
+    fn signature_type(
+        &mut self,
+        signature: ast::Signature,
+        has_owner: bool,
+        external: bool,
+    ) -> TypeId {
+        let tree = &self.module().ast;
+        if let Some(parameter) = tree.children.lists.items(signature.type_parameters).next() {
+            return self.not_supported(tree.children.names.span(parameter), "generic functions");
+        }
         let mut parameters = Vec::with_capacity(signature.parameters.len());
         let mut variadic = false;
         for (position, parameter) in tree.children.lists.items(signature.parameters).enumerate() {
@@ -156,9 +189,9 @@ impl Checker<'_> {
                 return self.error(diagnostics::INVALID_DECLARATION, message, span);
             }
             if is_self(tree, parameter) {
-                let message = match (position, owner) {
-                    (0, Some(_)) => None,
-                    (0, None) => {
+                let message = match (position, has_owner) {
+                    (0, true) => None,
+                    (0, false) => {
                         Some("only a type's function takes `self`: `fn Point::name(&self)`")
                     }
                     _ => Some("`self` must be the first parameter"),
@@ -176,19 +209,173 @@ impl Checker<'_> {
         let Some(origins) = self.result_origins(&signature, &parameters, result) else {
             return TypeId::INVALID;
         };
-        if external == body.is_some() {
-            let message = if external {
-                "an `extern` function is defined in C, so it has no body"
-            } else {
-                "a function needs a body, or `#[extern(\"name\")]` when C defines it"
-            };
-            return self.error(diagnostics::INVALID_DECLARATION, message, name.span);
+        let parameters = parameters.into();
+        self.types.intern(Type::Function {
+            parameters,
+            result,
+            origins,
+            variadic,
+        })
+    }
+
+    /// The type the module's interface declaration `definition` declares:
+    /// each method's function type, whose `self` is a reference to the
+    /// interface (`Type::InterfaceReference`), or the interface taken whole.
+    /// Invalid when a method has an error or is declared twice, as a struct
+    /// is when a field has an error.
+    fn check_interface(&mut self, definition: DefId) -> TypeId {
+        let modules = self.modules;
+        let tree = &modules[definition.module.index()].ast;
+        let declared: Vec<&ast::Function> = project::interface_methods(modules, definition)
+            .expect("an interface declaration has methods")
+            .collect();
+        let mut methods = Vec::with_capacity(declared.len());
+        for (index, method) in declared.iter().enumerate() {
+            let text = method.name.text(&tree.file);
+            // An interface has few methods, so the ones before are searched.
+            if let Some(first) = declared[..index]
+                .iter()
+                .find(|first| first.name.text(&tree.file) == text)
+            {
+                let diagnostic = report_redeclared(
+                    &tree.file,
+                    text,
+                    "interface",
+                    method.name.span,
+                    first.name.span,
+                );
+                self.report(diagnostic);
+                methods.push(TypeId::INVALID);
+                continue;
+            }
+            let first = tree
+                .children
+                .lists
+                .items(method.signature.parameters)
+                .next();
+            if !first.is_some_and(|first| is_self(tree, tree.children.params[first])) {
+                let message = format!("an interface method takes `self` first: `fn {text}(&self)`");
+                self.error(diagnostics::INVALID_DECLARATION, message, method.name.span);
+                methods.push(TypeId::INVALID);
+                continue;
+            }
+            methods.push(self.signature_type(method.signature, true, false));
         }
-        // Reported above; invalid, so no call of it is lowered.
-        if symbol.is_err() {
+        let invalid = |ty: TypeId| match self.types[ty] {
+            Type::Function {
+                ref parameters,
+                result,
+                ..
+            } => parameters.contains(&TypeId::INVALID) || result == TypeId::INVALID,
+            _ => true,
+        };
+        if methods.iter().any(|&method| invalid(method)) {
             return TypeId::INVALID;
         }
-        let parameters = parameters.into();
+        let named = self.types.intern(Type::Named(definition));
+        self.types.define_interface(named, methods.into());
+        named
+    }
+
+    /// The functions of the struct `structure` that are the methods of the
+    /// interface `interface`, for a reference to the struct used as a
+    /// reference to the interface at `span`: for each method, the struct's
+    /// function of its name and type, `self` being the struct; looked up
+    /// once for the pair. `None` after reporting the first method the struct
+    /// lacks or has with another type, or when the interface's error was
+    /// reported; such a pair is reported at each conversion.
+    pub(crate) fn implementation(
+        &mut self,
+        structure: TypeId,
+        interface: TypeId,
+        span: Span,
+    ) -> Option<ImplementationId> {
+        if let Some(&found) = self.implementations.get(&(structure, interface)) {
+            return Some(found);
+        }
+        let modules = self.modules;
+        let Type::Struct {
+            definition: owner, ..
+        } = self.types[structure]
+        else {
+            unreachable!("only a struct's reference converts to an interface reference")
+        };
+        let (Type::Named(definition) | Type::Interface { definition, .. }) = self.types[interface]
+        else {
+            unreachable!("an interface reference refers to an interface")
+        };
+        if self.declared_type(definition, span) == TypeId::INVALID {
+            return None;
+        }
+        let Type::Interface { ref methods, .. } = self.types[interface] else {
+            unreachable!("a checked interface is `Type::Interface`")
+        };
+        let signatures = methods.clone();
+        let declared = project::interface_methods(modules, definition)
+            .expect("an interface declaration has methods");
+        let file = &modules[definition.module.index()].ast.file;
+        let mut found = Vec::with_capacity(signatures.len());
+        for (method, &signature) in declared.zip(&signatures) {
+            let name = method.name.text(file);
+            let function = match self.module_checks[owner.module.index()]
+                .scope
+                .get(Some(owner), name)
+            {
+                Some(Symbol::Function(function)) => Some(function),
+                _ => None,
+            };
+            let expected = self.method_type(signature, structure);
+            let ty = function.map(|function| (function, self.function_type(function, span)));
+            let message = match ty {
+                Some((_, TypeId::INVALID)) => return None, // reported
+                Some((function, ty)) if ty == expected => {
+                    if project::extern_symbol(modules, function) != Ok(None) {
+                        self.not_supported(span, "C functions as interface methods");
+                        return None;
+                    }
+                    found.push(function);
+                    continue;
+                }
+                Some((_, ty)) => format!(
+                    "its `{name}` is `{}`, but `{}` needs `{}`",
+                    self.type_text(ty),
+                    self.type_text(interface),
+                    self.type_text(expected)
+                ),
+                None => format!("it has no method `{name}`"),
+            };
+            let (structure, interface) = self.type_texts(structure, interface);
+            let message = format!("`{structure}` does not implement `{interface}`: {message}");
+            self.error(diagnostics::TYPE_MISMATCH, message, span);
+            return None;
+        }
+        let id = self.types.add_implementation(found.into());
+        self.implementations.insert((structure, interface), id);
+        Some(id)
+    }
+
+    /// The type a function of the struct `structure` has when it is the
+    /// interface method of the type `signature`: the same, with `self` the
+    /// struct.
+    fn method_type(&mut self, signature: TypeId, structure: TypeId) -> TypeId {
+        let Type::Function {
+            ref parameters,
+            result,
+            ref origins,
+            variadic,
+        } = self.types[signature]
+        else {
+            unreachable!("a method's type is a function type")
+        };
+        let mut parameters = parameters.clone();
+        let origins = origins.clone();
+        parameters[0] = match self.types[parameters[0]] {
+            Type::InterfaceReference { mutable, .. } => self.types.intern(Type::Reference {
+                mutable,
+                target: structure,
+            }),
+            _ => structure, // `self` taken whole
+        };
         self.types.intern(Type::Function {
             parameters,
             result,
@@ -323,12 +510,35 @@ impl Checker<'_> {
     /// alias names a complete type already).
     pub(crate) fn resolve_value_type(&mut self, ty: Id<ast::Type>) -> TypeId {
         let resolved = self.resolve_type(ty);
-        match self.types[resolved] {
-            Type::Named(definition) => {
-                let span = self.module().ast.types.span(ty);
-                self.declared_type(definition, span)
+        self.value_type(resolved, ty)
+    }
+
+    /// `resolve_value_type` of `resolved`, the type written `ty`. An
+    /// interface is used through a reference; only an interface method's
+    /// `self` taken whole has its type.
+    fn value_type(&mut self, resolved: TypeId, ty: Id<ast::Type>) -> TypeId {
+        let tree = &self.module().ast;
+        let span = tree.types.span(ty);
+        if self.is_interface(resolved) {
+            if let ast::Type::Owner = tree.types[ty] {
+                return resolved;
             }
+            return self.not_supported(span, "owned interface values");
+        }
+        match self.types[resolved] {
+            Type::Named(definition) => self.declared_type(definition, span),
             _ => resolved,
+        }
+    }
+
+    /// Whether `ty` is an interface, checked or only named.
+    pub(crate) fn is_interface(&self, ty: TypeId) -> bool {
+        match self.types[ty] {
+            Type::Interface { .. } => true,
+            Type::Named(definition) => {
+                project::interface_methods(self.modules, definition).is_some()
+            }
+            _ => false,
         }
     }
 
@@ -352,6 +562,9 @@ impl Checker<'_> {
             | Type::Str => {
                 let what = "struct, array, range, slice and `&str` parameters and results of `extern` functions";
                 self.not_supported(span, what)
+            }
+            Type::InterfaceReference { .. } => {
+                self.not_supported(span, "interface references in `extern` functions")
             }
             // C could keep what the struct holds, which no loan would follow.
             Type::Reference { target, .. } if self.types.holds_loans(target).is_some() => {
@@ -381,6 +594,8 @@ impl Checker<'_> {
             // each when lifetimes are checked (ownership step 4).
             Type::Reference { .. } => "references",
             Type::Slice { .. } => "slices",
+            Type::InterfaceReference { .. } => "interface references",
+            _ if self.is_interface(held) => "interfaces",
             _ => return Some(self.types.real(held)),
         };
         self.not_supported(span, &format!("{holder} {what}"));
@@ -405,8 +620,14 @@ impl Checker<'_> {
     }
 
     /// `&target`, or `&mut target` when `mutable`, written or borrowed at
-    /// `span` (`held_type`).
+    /// `span` (`held_type`); an interface reference to an interface.
     pub(crate) fn reference_type(&mut self, mutable: bool, target: TypeId, span: Span) -> TypeId {
+        if self.is_interface(target) {
+            return self.types.intern(Type::InterfaceReference {
+                mutable,
+                interface: target,
+            });
+        }
         match self.held_type(target, "references to", span) {
             Some(target) => self.types.intern(Type::Reference { mutable, target }),
             None => TypeId::INVALID,
@@ -500,13 +721,20 @@ impl Checker<'_> {
                 // has one (`check_function`). An owner that is not a struct
                 // was reported by `scope::collect`.
                 ast::Type::Owner => {
-                    let checking = self.checking.last().expect("a function is being checked");
+                    let checking = self
+                        .checking
+                        .last()
+                        .expect("a declaration is being checked");
                     let declaration = project::declaration(self.modules, checking.definition);
-                    let ast::Decl::Function(ast::Function {
-                        owner: Some(owner), ..
-                    }) = declaration
-                    else {
-                        unreachable!("only a type's function resolves `self`'s type")
+                    let owner = match declaration {
+                        ast::Decl::Function(ast::Function {
+                            owner: Some(owner), ..
+                        }) => owner,
+                        // An interface's method: `self` is the interface.
+                        ast::Decl::Type(_) => {
+                            return self.types.intern(Type::Named(checking.definition));
+                        }
+                        _ => unreachable!("only a type's function and an interface name `self`"),
                     };
                     let owner = self
                         .scope()
@@ -601,7 +829,12 @@ impl Checker<'_> {
                         self.report(diagnostic);
                         return TypeId::INVALID;
                     }
-                    let target = self.resolve_value_type(target);
+                    let resolved = self.resolve_type(target);
+                    let target = if self.is_interface(resolved) {
+                        resolved
+                    } else {
+                        self.value_type(resolved, target)
+                    };
                     return self.reference_type(mutable, target, span);
                 }
                 ast::Type::Optional(_) => "optional types",

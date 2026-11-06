@@ -171,6 +171,22 @@ impl Metadata {
                 self.debug_types.insert(ty, composite);
                 return Some(composite);
             }
+            // Its address and its methods' table, neither of a known type.
+            Type::InterfaceReference { .. } => {
+                let name = project::type_text(&program.modules, types, ty);
+                let composite = self.reserve();
+                let pointer = self.add(format_args!(
+                    "!DIDerivedType(tag: DW_TAG_pointer_type, baseType: null, size: {pointer_bits})"
+                ));
+                let pointer_bits = u64::from(pointer_bits);
+                let members = [
+                    self.add_member(composite, "ptr", pointer, 0),
+                    self.add_member(composite, "table", pointer, pointer_bits),
+                ];
+                self.define_struct(composite, &name, 2 * pointer_bits, &members);
+                self.debug_types.insert(ty, composite);
+                return Some(composite);
+            }
             // One node with a range per level, as C's debug info has.
             Type::Array { internals, .. } => {
                 let base = self.debug_type(program, types, internals.base, target);
@@ -189,7 +205,7 @@ impl Metadata {
                     comma_separated(ranges)
                 )
             }
-            Type::Invalid | Type::Void | Type::Function { .. } => {
+            Type::Invalid | Type::Void | Type::Function { .. } | Type::Interface { .. } => {
                 unreachable!("MIR holds no value of this type")
             }
             Type::Struct {

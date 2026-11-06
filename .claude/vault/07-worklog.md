@@ -781,3 +781,59 @@ ran `check.sh` fully green.
 - Fixture `negative_text_views`; lexer test
   `a_c_literal_holds_no_zero_byte`; `mir_comptime_calls` keeps its zero
   byte in a `&str`. `scripts/check.sh` green.
+
+## Borrowed interfaces (2026-11-06, `feature/interfaces`, not committed)
+
+- Owner decisions (by questions, 2026-11-06): a struct implements an
+  interface when it has every method by name and exact type (`self` the
+  struct); nothing is declared. `&T` becomes `&Shape` by itself where a
+  `&Shape` is expected (`&mut T` also to `&mut Shape`, `&mut Shape` to
+  `&Shape`). `&Shape` calls `&self` methods, `&mut Shape` also `&mut self`
+  ones (T0007 otherwise); a `self` method may be declared, not called
+  through a reference. Generic methods: the existing "generic functions"
+  refusal.
+- Model: `Type::Interface { definition, methods }` (method function types,
+  `self` an `InterfaceReference`) made by `Types::define_interface` over
+  the `Named` id; `Type::InterfaceReference { mutable, interface }`, two
+  words, a loan holder like a reference; `Conversion::ToInterface`;
+  `Callee { Function, Method(slot) }` in THIR's and MIR's `Call`;
+  `ToInterface { reference, methods }` in both; `Place::split_last`
+  (replaces `slice_of_elements`; one borrow branch per backend reads a
+  slice or interface reference lent again whole).
+- Check: `check_interface`, `signature_type` (split from `check_function`,
+  shared), `implementation` (lookup by `Scope::get`, compare with
+  `method_type`), `value_type` refuses a bare interface ("owned interface
+  values"), `held_type` refuses interfaces and interface references held
+  in arrays, pointers and references; calls through `interface_method`.
+- Flow: `ToInterface` copies the reference's loans; a method call's result
+  borrows by the interface's origins.
+- Interpreter: `Register::Interface { address, table }`, the table being
+  the `ImplementationId`'s index. LLVM: `{ ptr, ptr }` inline (no header
+  change, so no other dump moved), `@.table.N` private constants per
+  module, call loads the slot. Compile-time runs reach table methods.
+- Module interface hash covers interface methods.
+- Fixtures: `run_interfaces`, `run_i686_interfaces` (two modules),
+  `negative_interfaces`, `negative_interface_loans`, `ll_interfaces`; test
+  `interface_references`. `scripts/check.sh`: tests and fixtures green;
+  clippy fixed after.
+- Review fixes: a `&mut T` made `&I` is lent as `&T`, so `f(r, r)` with two
+  `&I` parameters passes (it was T0037); an interface with a method
+  declared twice is invalid, so conversions to it add no second error;
+  `interface_method` lists method names only for the "did you mean" hint.
+  `run_interfaces` prints `both`, `negative_interfaces` has 15 errors.
+  `scripts/check.sh` all ok.
+- Implementations numbered: the checker finds a struct and interface
+  pair's methods once (`Checker::implementations`, successes only, so a
+  failing pair is still reported at each conversion) and stores them in
+  `Types` by `ImplementationId`. THIR and MIR `ToInterface` carry the id;
+  the interpreter's `tables`/`table_ids` are gone (the id is the table
+  word); LLVM writes `@.table.<id>`, the same number in every module, and
+  `Written::tables` is a set of ids. Reuse: MIR is never kept between
+  compiles (`compile::run` makes a new `Checker` and `Types` each time;
+  only the LSP passes `previous`, and keeps diagnostics), so ids need not
+  survive. `negative_interfaces` checks a failing pair twice (16 errors).
+  `scripts/check.sh` all ok; `ll_interfaces` unchanged.
+- Not done: export rules for methods matched from another module (a
+  private method can satisfy an interface); `&Alias` of an interface is
+  refused as an owned value; `s.*` read as a value says "cannot move out
+  of a reference" rather than naming owned interfaces.

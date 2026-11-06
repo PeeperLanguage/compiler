@@ -375,6 +375,10 @@ impl Loans<'_> {
             mir::InstructionKind::Unary { ref value, .. }
             | mir::InstructionKind::Convert(ref value)
             | mir::InstructionKind::Field { ref value, .. }
+            | mir::InstructionKind::ToInterface {
+                reference: ref value,
+                ..
+            }
             | mir::InstructionKind::Check {
                 failed: ref value, ..
             } => (None, std::slice::from_ref(value)),
@@ -535,6 +539,10 @@ impl Loans<'_> {
                     (source, ty) = self.field_holders(source, ty, field);
                 }
                 copy(held, target, source);
+            }
+            // The interface reference holds what the reference did.
+            mir::InstructionKind::ToInterface { ref reference, .. } => {
+                copy(held, target, self.operand_holders(reference));
             }
             _ => unreachable!("a value holding a loan has its step"),
         }

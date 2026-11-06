@@ -106,7 +106,7 @@ impl Lowering<'_> {
                     mir::InstructionKind::Convert(self.lower_expr(value)?)
                 }
                 thir::ExprKind::Call {
-                    function,
+                    callee,
                     signature,
                     arguments,
                 } => {
@@ -118,11 +118,18 @@ impl Lowering<'_> {
                         .map(|argument| self.lower_expr(argument))
                         .collect::<Option<_>>()?;
                     mir::InstructionKind::Call {
-                        function,
+                        callee,
                         signature,
                         arguments,
                     }
                 }
+                thir::ExprKind::ToInterface {
+                    reference,
+                    implementation,
+                } => mir::InstructionKind::ToInterface {
+                    reference: self.lower_expr(reference)?,
+                    implementation,
+                },
                 thir::ExprKind::Print { newline, values } => mir::InstructionKind::Print {
                     newline,
                     values: self

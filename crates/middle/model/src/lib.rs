@@ -40,3 +40,12 @@ pub struct DefId {
     pub module: ModuleId,
     pub index: u32,
 }
+
+/// What a call runs: a declared function, or the method at this position
+/// in the table of the interface reference that is the call's first
+/// argument, which the call gives as its `self` (THIR's and MIR's `Call`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Callee {
+    Function(DefId),
+    Method(u32),
+}

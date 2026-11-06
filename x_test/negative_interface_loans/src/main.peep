@@ -1,0 +1,18 @@
+// An interface reference holds the loan of the reference it was made from.
+iface Shape { fn area(&self) -> f64 }
+
+struct Square { side: f64 }
+fn Square::area(&self) -> f64 { return self.side * self.side; }
+
+fn keep(s: &Shape) -> &Shape { return s; }
+
+fn main() {
+    let mut square = Square.{ side = 2.0 };
+    let shape: &Shape = &square;
+    square.side = 3.0;
+    println(shape.area());
+    let kept = keep(&square);
+    square.side = 4.0;
+    println(kept.area());
+    let viewed = shape.*;
+}

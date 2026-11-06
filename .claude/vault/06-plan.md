@@ -1,20 +1,22 @@
 # Plan
 
-`main` is at `d18d5342` (2026-11-05), pushed: methods merged
-(`fn Point::name`, `self`, `p.name()`, hover; branch `feature/methods`,
-plan `methods.localplan.md`). No feature branch is open.
+`main` is at `2c498440` (2026-11-06): text views (`&str`, `&cstr`) and
+slices (`&[]T`) merged. Open branch: `feature/interfaces`. Order of work
+(owner, 2026-11-06, `allocator.localplan.md` ORDER OF WORK):
 
-## Next, in the planned order (`01-product.md`)
+1. [~] Borrowed interfaces: `&Shape`, `&mut Shape`, method tables. Built,
+   not committed; waiting for the owner's review (worklog, "Borrowed
+   interfaces").
+2. [ ] A free-hook interface: the compiler calls it where a value ends.
+3. [ ] `String` in the core library (pointer offsets or a copy function,
+   `&str` from an address and a count, private fields).
+4. [ ] Owned `Shape`: explicit allocation, or moving in an existing one.
 
-1. [ ] Allocator: what strings, growing lists and freeing memory need.
-2. [ ] Lifetimes of references held in structs.
-3. [ ] Enums and `match` with `?T` (put off by the owner 2026-10-30).
-4. [ ] Strings, interfaces, generics. Methods are done; interfaces reuse
-   their (owner, name) table.
+Later: lifetimes of references held in structs; enums and `match` with
+`?T` (put off by the owner 2026-10-30); generics.
 
 Left for later from methods (`methods.localplan.md`): `Self` written as a
-type, functions of types other than structs, and the rule that an
-interface's function takes `self` first (when interfaces are checked).
+type, functions of types other than structs.
 
 ## Waiting for the owner
 

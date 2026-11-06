@@ -1,0 +1,12 @@
+// An interface of another module: any struct with these methods has it.
+iface Shape {
+    fn Area(&self) -> f64,
+    fn Name(&self) -> &str,
+    fn Grow(&mut self, by: f64),
+    fn Side(&mut self) -> &mut f64,
+    fn Parts(self) -> f64
+}
+
+fn Show(shape: &Shape) {
+    println(shape.Name(), shape.Area());
+}

@@ -1,0 +1,20 @@
+// An interface reference is the address and a private table of the struct's
+// methods; a method call loads its function from the table.
+iface Shape {
+    fn area(&self) -> i32,
+    fn grow(&mut self, by: i32)
+}
+
+struct Square { side: i32 }
+fn Square::area(&self) -> i32 { return self.side * self.side; }
+fn Square::grow(&mut self, by: i32) { self.side = self.side + by; }
+
+fn grown(shape: &mut Shape) -> i32 {
+    shape.grow(1);
+    return shape.area();
+}
+
+fn main() {
+    let mut square = Square.{ side = 2 };
+    println(grown(&mut square));
+}

@@ -470,7 +470,9 @@ fn hash_type(checker: &Checker, id: TypeId, hasher: &mut DefaultHasher) {
             origins.hash(hasher);
             variadic.hash(hasher);
         }
-        Type::Named(definition) | Type::Struct { definition, .. } => {
+        Type::Named(definition)
+        | Type::Struct { definition, .. }
+        | Type::Interface { definition, .. } => {
             checker.modules[definition.module.index()].path.hash(hasher);
             let (name, file) = project::declared_name(checker.modules, *definition);
             name.text(file).hash(hasher);
@@ -489,6 +491,10 @@ fn hash_type(checker: &Checker, id: TypeId, hasher: &mut DefaultHasher) {
         | Type::Slice {
             mutable,
             element: target,
+        }
+        | Type::InterfaceReference {
+            mutable,
+            interface: target,
         } => {
             mutable.hash(hasher);
             hash_type(checker, *target, hasher);
@@ -539,18 +545,35 @@ fn interface(checker: &Checker, module: ModuleId, done: &[ModuleResults]) -> u64
         // `NotStarted`.
         if let State::Done(ty) = declared_types[index] {
             hash_type(checker, ty, &mut hasher);
-            // `hash_type` stops at the name, so a struct's fields are hashed here.
-            if let (
-                ast::Decl::Type(_),
-                Type::Struct {
-                    definition, fields, ..
-                },
-            ) = (decl, &checker.types[ty])
-            {
-                for (name, &field) in project::field_names(modules, *definition).zip(fields) {
-                    name.hash(&mut hasher);
-                    hash_type(checker, field, &mut hasher);
+            // `hash_type` stops at the name, so a struct's fields and an
+            // interface's methods are hashed here.
+            match (decl, &checker.types[ty]) {
+                (
+                    ast::Decl::Type(_),
+                    Type::Struct {
+                        definition, fields, ..
+                    },
+                ) => {
+                    for (name, &field) in project::field_names(modules, *definition).zip(fields) {
+                        name.hash(&mut hasher);
+                        hash_type(checker, field, &mut hasher);
+                    }
                 }
+                (
+                    ast::Decl::Type(_),
+                    Type::Interface {
+                        definition,
+                        methods,
+                    },
+                ) => {
+                    let declared = project::interface_methods(modules, *definition)
+                        .expect("an interface is declared with its methods");
+                    for (method, &signature) in declared.zip(methods) {
+                        method.name.text(&tree.file).hash(&mut hasher);
+                        hash_type(checker, signature, &mut hasher);
+                    }
+                }
+                _ => {}
             }
         }
         if let State::Done(Some(Constant { ty, value })) = &constants[index] {

@@ -3,6 +3,7 @@
 
 use diagnostics::Diagnostic;
 use eval::interpreter::Failure;
+use model::Callee;
 use model::DefId;
 use model::ast;
 use model::constant::Value;
@@ -131,11 +132,20 @@ impl Checker<'_> {
             let Built::Kept(Some(ref mir)) = self.module_checks[module].bodies[index] else {
                 continue;
             };
-            let calls = mir.instructions.ids().map(|id| &mir.instructions[id].kind);
-            pending.extend(calls.filter_map(|kind| match *kind {
-                mir::InstructionKind::Call { function, .. } => Some(function),
-                _ => None,
-            }));
+            // A method is called through a table, so each function in one
+            // may run.
+            for id in mir.instructions.ids() {
+                match mir.instructions[id].kind {
+                    mir::InstructionKind::Call {
+                        callee: Callee::Function(function),
+                        ..
+                    } => pending.push(function),
+                    mir::InstructionKind::ToInterface { implementation, .. } => {
+                        pending.extend_from_slice(self.types.implementation(implementation));
+                    }
+                    _ => {}
+                }
+            }
         }
         let module = self.current_module().index();
         let ran = &mut self.module_checks[module].ran_modules;

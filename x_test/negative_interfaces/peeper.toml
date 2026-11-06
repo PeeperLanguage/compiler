@@ -1,0 +1,35 @@
+name = "negative_interfaces"
+build = "program"
+
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "an interface method takes `self` first: `fn plain(&self)`",
+    "main.peep:9:8\n",
+    "`twice` is already declared in this interface",
+    "main.peep:11:8\n",
+    "generic functions are not supported yet",
+    "main.peep:12:16\n",
+    "cannot mutably borrow `s` through shared reference `s`",
+    "main.peep:29:5\n",
+    "unknown name `aera` in interface `Shape`",
+    "main.peep:30:15\n",
+    "`parts` takes `self` whole, so it cannot be called through `&Shape`",
+    "main.peep:31:7\n",
+    "owned interface values are not supported yet",
+    "main.peep:34:13\n",
+    "raw pointers to interfaces are not supported yet",
+    "arrays of interface references are not supported yet",
+    "references to interface references are not supported yet",
+    "`NoGrow` does not implement `Shape`: it has no method `grow`",
+    "main.peep:41:10\n",
+    "`WrongArea` does not implement `Shape`: its `area` is `fn(&WrongArea) -> i32`, but `Shape` needs `fn(&WrongArea) -> f64`",
+    "main.peep:42:10\n",
+    "mismatched types: expected `&mut Shape`, found `&Square`",
+    "mismatched types: expected `&Shape`, found `&i32`",
+    "`area` is already declared in this interface",
+    "main.peep:50:8\n",
+    "main.peep:56:37\n",
+    "Compilation failed with 16 error(s)",
+]

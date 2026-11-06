@@ -132,6 +132,40 @@ impl ThirBuilder<'_, '_> {
                 _ => ExprKind::Convert(self.body.add(expr, span)),
             },
             Conversion::Reborrow => return Some(self.reborrow(expr, span, to)),
+            Conversion::ToInterface => {
+                let types = &self.checker.types;
+                let (
+                    &Type::Reference {
+                        mutable: from_mutable,
+                        target,
+                    },
+                    &Type::InterfaceReference { mutable, interface },
+                ) = (&types[expr.ty], &types[to])
+                else {
+                    unreachable!("a reference converts to an interface reference")
+                };
+                let Some(implementation) = self.checker.implementation(target, interface, span)
+                else {
+                    return Some(Expr::INVALID); // reported
+                };
+                // A `&mut T` made a `&I` is lent as `&T`, so it can be lent twice.
+                let reference = if from_mutable && !mutable {
+                    let shared = self.checker.types.intern(Type::Reference {
+                        mutable: false,
+                        target,
+                    });
+                    let expr = self.reborrow(expr, span, shared);
+                    self.body.add(expr, span)
+                } else {
+                    let reference = self.body.add(expr, span);
+                    self.reborrow_in_place(reference);
+                    reference
+                };
+                ExprKind::ToInterface {
+                    reference,
+                    implementation,
+                }
+            }
             Conversion::Never => return None,
         };
         Some(Expr { ty: to, kind })

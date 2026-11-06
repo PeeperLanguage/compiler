@@ -120,6 +120,16 @@ impl<'b> Interpreter<'b, '_> {
             InstructionKind::Borrow { ref place, .. } | InstructionKind::Address(ref place) => {
                 Some(self.borrow(id, place)?)
             }
+            InstructionKind::ToInterface {
+                ref reference,
+                implementation,
+            } => {
+                let Register::Address(address) = self.operand(reference) else {
+                    unreachable!("a reference's register is an address")
+                };
+                let table = implementation.index() as u64;
+                Some(Register::Interface { address, table })
+            }
             InstructionKind::Aggregate(ref parts) => Some(self.aggregate(id, parts, span)?),
             InstructionKind::ArrayParts(ref parts) => Some(self.array_parts(id, parts, span)?),
             InstructionKind::Field {

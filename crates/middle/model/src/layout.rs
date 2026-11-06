@@ -37,7 +37,7 @@ pub fn layout(types: &Types, ty: TypeId, target: &Machine) -> (u64, u64) {
             let bytes = u64::from(target.pointer_bits / 8);
             (bytes, bytes)
         }
-        Type::Slice { .. } | Type::Str => {
+        Type::Slice { .. } | Type::Str | Type::InterfaceReference { .. } => {
             let bytes = u64::from(target.pointer_bits / 8);
             (2 * bytes, bytes)
         }
@@ -51,7 +51,11 @@ pub fn layout(types: &Types, ty: TypeId, target: &Machine) -> (u64, u64) {
             let (size, align) = layout(types, internals.base, target);
             (size.saturating_mul(internals.count), align)
         }
-        Type::Invalid | Type::Void | Type::Function { .. } | Type::Named(_) => {
+        Type::Invalid
+        | Type::Void
+        | Type::Function { .. }
+        | Type::Named(_)
+        | Type::Interface { .. } => {
             unreachable!("no value is laid out with this type")
         }
         Type::Alias { .. } => unreachable!("indexing looks through aliases"),

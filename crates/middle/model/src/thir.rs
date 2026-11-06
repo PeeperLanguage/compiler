@@ -6,6 +6,7 @@
 use std::fmt::Display;
 use std::fmt::Write;
 
+use crate::Callee;
 use crate::DefId;
 use crate::ModuleId;
 use crate::constant::Constant;
@@ -13,6 +14,7 @@ use crate::constant::Value;
 use crate::constant::value_text;
 use crate::operators::BinaryOp;
 use crate::operators::UnaryOp;
+use crate::semantic_types::ImplementationId;
 use crate::semantic_types::Type;
 use crate::semantic_types::TypeId;
 use crate::semantic_types::Types;
@@ -154,10 +156,11 @@ pub enum ExprKind {
         op: UnaryOp,
         value: Id<Expr>,
     },
-    /// A call of a module's function; calls are never folded.
+    /// A call of a module's function, or of an interface reference's
+    /// method; calls are never folded.
     Call {
-        function: DefId,
-        signature: TypeId, // the type of `function`
+        callee: Callee,
+        signature: TypeId, // the callee's type; a method's as the interface declares it
         arguments: List<Expr>,
     },
     /// The number or `bool` converted to the type `ty`, without `as` or with
@@ -204,6 +207,12 @@ pub enum ExprKind {
     /// `@place`: the place's address as a raw pointer, which no loan
     /// follows; the place is as a `Borrow`'s.
     Address(Id<Expr>),
+    /// The reference to a struct as the interface reference `ty`, with the
+    /// struct's functions that are the interface's methods.
+    ToInterface {
+        reference: Id<Expr>,
+        implementation: ImplementationId,
+    },
     /// `value`, stored into the hidden `variable` where it is computed, so
     /// a place starts there: a value not in a variable (a call's result, a
     /// literal) that is lent, indexed or gone through. The variable ends
@@ -381,6 +390,9 @@ impl Body {
             | ExprKind::Dereference(value)
             | ExprKind::Borrow(value)
             | ExprKind::Address(value)
+            | ExprKind::ToInterface {
+                reference: value, ..
+            }
             | ExprKind::Temporary { value, .. } => test(value),
             ExprKind::Range {
                 start, end, step, ..
@@ -584,11 +596,14 @@ impl<N: Display, F: Fn(DefId) -> N + Copy> Printer<'_, F> {
                 _ = write!(self.out, "):{}", self.types.text(ty, self.name_of));
             }
             ExprKind::Call {
-                function,
-                arguments,
-                ..
+                callee, arguments, ..
             } => {
-                _ = write!(self.out, "call {}(", (self.name_of)(function));
+                match callee {
+                    Callee::Function(function) => {
+                        _ = write!(self.out, "call {}(", (self.name_of)(function));
+                    }
+                    Callee::Method(slot) => _ = write!(self.out, "call method {slot}("),
+                }
                 self.write_exprs(arguments);
                 _ = write!(self.out, "):{}", self.types.text(ty, self.name_of));
             }
@@ -645,6 +660,17 @@ impl<N: Display, F: Fn(DefId) -> N + Copy> Printer<'_, F> {
             ExprKind::Address(place) => {
                 self.out.push('@');
                 self.write_expr(place);
+            }
+            ExprKind::ToInterface {
+                reference,
+                implementation,
+            } => {
+                self.out.push_str("interface(");
+                self.write_expr(reference);
+                for &method in self.types.implementation(implementation) {
+                    _ = write!(self.out, ", {}", (self.name_of)(method));
+                }
+                _ = write!(self.out, "):{}", self.types.text(ty, self.name_of));
             }
             ExprKind::Temporary {
                 variable,

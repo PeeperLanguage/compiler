@@ -115,12 +115,14 @@ pub fn run_function<'b>(
 }
 
 /// A value being used. A pointer, a reference and a `&cstr` are addresses; a
-/// value `in_memory` is the address it is kept at.
+/// value `in_memory` is the address it is kept at. An interface reference's
+/// `table` is its `ImplementationId`'s index.
 #[derive(Clone, Debug)]
 enum Register {
     Scalar(Value),
     Address(u64),
     Slice { address: u64, length: u64 },
+    Interface { address: u64, table: u64 },
 }
 
 /// Where one body keeps its values, from the start of its frame.

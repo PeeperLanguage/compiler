@@ -165,6 +165,69 @@ fn conversions() {
     }
 }
 
+/// An interface keeps the id it was named by, so a `&Shape` written before
+/// it was checked is the one of after; a reference to a struct converts to
+/// a reference to it as a `&` converts to a `&`, the checker looking at the
+/// methods.
+#[test]
+fn interface_references() {
+    let mut types = Types::new(64);
+    let declaration = |index| DefId {
+        module: ModuleId::from_index(0),
+        index,
+    };
+    let shape = types.intern(Type::Named(declaration(0)));
+    let view = types.intern(Type::InterfaceReference {
+        mutable: false,
+        interface: shape,
+    });
+    let edit = types.intern(Type::InterfaceReference {
+        mutable: true,
+        interface: shape,
+    });
+    let area = types.intern(Type::Function {
+        parameters: [view].into(),
+        result: TypeId::F64,
+        origins: [].into(),
+        variadic: false,
+    });
+    types.define_interface(shape, [area].into());
+    assert!(matches!(types[shape], Type::Interface { .. }));
+    assert_eq!(types.intern(Type::Named(declaration(0))), shape);
+    let square = types.intern(Type::Named(declaration(1)));
+    types.define_struct(square, [TypeId::F64].into(), (vec![0], 8, 8));
+    let reference =
+        |types: &mut Types, mutable, target| types.intern(Type::Reference { mutable, target });
+    let to_square = reference(&mut types, false, square);
+    let to_mutable_square = reference(&mut types, true, square);
+    let to_number = reference(&mut types, false, TypeId::F64);
+    let cases = [
+        (to_square, view, Conversion::ToInterface),
+        (to_mutable_square, view, Conversion::ToInterface),
+        (to_mutable_square, edit, Conversion::ToInterface),
+        (to_square, edit, Conversion::Never),
+        (to_number, view, Conversion::Never), // only a struct has methods
+        (edit, view, Conversion::Reborrow),
+        (view, edit, Conversion::Never),
+        (view, to_square, Conversion::Never),
+    ];
+    for (from, to, conversion) in cases {
+        assert_eq!(types.conversion(from, to), conversion, "{from:?} to {to:?}");
+    }
+    let text = |ty| {
+        types.text(ty, |definition| {
+            ["Shape", "Square"][definition.index as usize]
+        })
+    };
+    assert_eq!(text(view), "&Shape");
+    assert_eq!(text(edit), "&mut Shape");
+    assert_eq!(text(area), "fn(&Shape) -> f64");
+    assert_eq!(types[view].borrows(), Some(false));
+    assert_eq!(types[edit].borrows(), Some(true));
+    assert!(types.is_copy(view) && !types.is_copy(edit) && !types.is_copy(shape));
+    assert_eq!(types[edit].pointee(), Some(shape));
+}
+
 #[test]
 fn builtin_names() {
     let mut types = Types::new(64);

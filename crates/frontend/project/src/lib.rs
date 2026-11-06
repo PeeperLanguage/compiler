@@ -154,6 +154,30 @@ pub fn field_names(modules: &[Module], definition: DefId) -> impl Iterator<Item 
     names.map(move |field| tree.children.fields[field].name.text(&tree.file))
 }
 
+/// The method declarations of the interface `definition`, in order; `None`
+/// when it declares something else. The parser puts only functions in one.
+pub fn interface_methods(
+    modules: &[Module],
+    definition: DefId,
+) -> Option<impl ExactSizeIterator<Item = &ast::Function>> {
+    let tree = &modules[definition.module.index()].ast;
+    let &ast::Decl::Type(written) = declaration(modules, definition) else {
+        return None;
+    };
+    let ast::Type::Interface(methods) = tree.types[written.ty] else {
+        return None;
+    };
+    Some(
+        tree.children
+            .lists
+            .items(methods)
+            .map(|method| match tree.decls[method] {
+                ast::Decl::Function(ref function) => function,
+                _ => unreachable!("an interface holds functions"),
+            }),
+    )
+}
+
 /// One resolved import of a module.
 pub struct Import {
     pub kind: ImportKind,
