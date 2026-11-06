@@ -261,12 +261,10 @@ impl Checker<'_> {
             }
             methods.push(self.signature_type(method.signature, true, false));
         }
-        let invalid = |ty: TypeId| match self.types[ty] {
+        let invalid = |ty: TypeId| match &self.types[ty] {
             Type::Function {
-                ref parameters,
-                result,
-                ..
-            } => parameters.contains(&TypeId::INVALID) || result == TypeId::INVALID,
+                parameters, result, ..
+            } => parameters.contains(&TypeId::INVALID) || *result == TypeId::INVALID,
             _ => true,
         };
         if methods.iter().any(|&method| invalid(method)) {
@@ -307,7 +305,7 @@ impl Checker<'_> {
         if self.declared_type(definition, span) == TypeId::INVALID {
             return None;
         }
-        let Type::Interface { ref methods, .. } = self.types[interface] else {
+        let Type::Interface { methods, .. } = &self.types[interface] else {
             unreachable!("a checked interface is `Type::Interface`")
         };
         let signatures = methods.clone();
@@ -359,16 +357,14 @@ impl Checker<'_> {
     /// struct.
     fn method_type(&mut self, signature: TypeId, structure: TypeId) -> TypeId {
         let Type::Function {
-            ref parameters,
+            mut parameters,
             result,
-            ref origins,
+            origins,
             variadic,
-        } = self.types[signature]
+        } = self.types[signature].clone()
         else {
             unreachable!("a method's type is a function type")
         };
-        let mut parameters = parameters.clone();
-        let origins = origins.clone();
         parameters[0] = match self.types[parameters[0]] {
             Type::InterfaceReference { mutable, .. } => self.types.intern(Type::Reference {
                 mutable,

@@ -70,15 +70,15 @@ impl Checker<'_> {
         let modules = self.modules;
         let module = definition.module.index();
         let Type::Function {
-            ref parameters,
+            parameters,
             result,
-            ref origins,
+            origins,
             ..
-        } = self.types[ty]
+        } = &self.types[ty]
         else {
             unreachable!("a checked body has a function type")
         };
-        let mir = lower::lower(thir, parameters.len(), result, &self.types)?;
+        let mir = lower::lower(thir, parameters.len(), *result, &self.types)?;
         let file = &modules[module].ast.file;
         let diagnostics = &mut self.module_checks[module].diagnostics;
         let types = &self.types;
@@ -90,7 +90,7 @@ impl Checker<'_> {
             &mir,
             file,
             types,
-            result,
+            *result,
             |definition| project::declared_text(modules, definition),
             diagnostics,
         );
@@ -129,7 +129,7 @@ impl Checker<'_> {
                 let mir = self.build_function(next, span, &mut thir, true).flatten();
                 self.module_checks[module].bodies[index] = Built::Kept(mir.map(Box::new));
             }
-            let Built::Kept(Some(ref mir)) = self.module_checks[module].bodies[index] else {
+            let Built::Kept(Some(mir)) = &self.module_checks[module].bodies[index] else {
                 continue;
             };
             // A method is called through a table, so each function in one
@@ -154,10 +154,10 @@ impl Checker<'_> {
                 ran.push(definition.module);
             }
         }
-        let mir_of = |definition: DefId| match self.module_checks[definition.module.index()].bodies
+        let mir_of = |definition: DefId| match &self.module_checks[definition.module.index()].bodies
             [definition.index as usize]
         {
-            Built::Kept(ref mir) => mir.as_deref(),
+            Built::Kept(mir) => mir.as_deref(),
             Built::NotYet | Built::Reported => None,
         };
         // Where the run stopped (`None`: at this call), and why.

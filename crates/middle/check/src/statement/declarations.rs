@@ -106,7 +106,7 @@ impl ThirBuilder<'_, '_> {
             return;
         };
         let (start, _) = self.place_root(place);
-        if let ExprKind::Temporary { ref mut kept, .. } = self.body.exprs[start].kind {
+        if let ExprKind::Temporary { kept, .. } = &mut self.body.exprs[start].kind {
             *kept = true;
         }
     }

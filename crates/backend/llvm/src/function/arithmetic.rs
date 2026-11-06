@@ -41,7 +41,7 @@ impl Function<'_, '_, '_> {
         let checks = traps(self.body, self.types, id);
         // The value the right operand was converted to, if it was.
         let mut converted: Option<String> = None;
-        let instruction = match self.types[left_type] {
+        let instruction = match &self.types[left_type] {
             Type::Float(_) => match op {
                 BinaryOp::Add => "fadd",
                 BinaryOp::Subtract => "fsub",
@@ -56,7 +56,7 @@ impl Function<'_, '_, '_> {
                 BinaryOp::GreaterOrEqual => "fcmp oge",
                 _ => unreachable!("check accepts no {op:?} of floats"),
             },
-            ref integer => {
+            integer => {
                 let signed = matches!(integer, Type::Integer(integer) if integer.signed);
                 match op {
                     BinaryOp::Divide | BinaryOp::Remainder => {

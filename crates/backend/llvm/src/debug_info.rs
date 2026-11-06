@@ -102,7 +102,7 @@ impl Metadata {
                 quoted(name.as_bytes())
             )
         };
-        let text = match types[ty] {
+        let text = match &types[ty] {
             Type::Bool => basic("bool", 8, "DW_ATE_boolean"),
             Type::Integer(integer) => {
                 let encoding = if integer.signed {
@@ -209,22 +209,20 @@ impl Metadata {
                 unreachable!("MIR holds no value of this type")
             }
             Type::Struct {
-                definition,
-                ref fields,
-                ..
+                definition, fields, ..
             } => {
-                let (name, file) = project::declared_name(&program.modules, definition);
-                let names = project::field_names(&program.modules, definition);
+                let (name, file) = project::declared_name(&program.modules, *definition);
+                let names = project::field_names(&program.modules, *definition);
                 let parts = (names.zip(fields.iter().copied())).collect::<Vec<_>>();
                 let shape = (ty, name.text(file), &parts[..]);
                 return Some(self.debug_struct(program, types, shape, target));
             }
             Type::Range { element, step } => {
-                let Type::Integer(integer) = types[element] else {
+                let Type::Integer(integer) = types[*element] else {
                     unreachable!("a range is of integers")
                 };
                 let name = format!("{RANGE}[{integer}]");
-                let parts = range_fields(element, step);
+                let parts = range_fields(*element, *step);
                 let shape = (ty, name.as_str(), &parts[..]);
                 return Some(self.debug_struct(program, types, shape, target));
             }

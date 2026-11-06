@@ -116,9 +116,9 @@ impl Function<'_, '_, '_> {
             unreachable!("a table is made for an interface reference")
         };
         let Type::Interface {
-            methods: ref signatures,
+            methods: signatures,
             ..
-        } = types[interface]
+        } = &types[interface]
         else {
             unreachable!("an interface reference's interface is checked")
         };
@@ -128,17 +128,15 @@ impl Function<'_, '_, '_> {
             let symbol = symbol(self.module.program, method);
             let callee = global(&symbol);
             let Type::Function {
-                ref parameters,
-                result,
-                ..
-            } = types[signature]
+                parameters, result, ..
+            } = &types[signature]
             else {
                 unreachable!("a method's signature is a function type")
             };
             let receiver = std::iter::once(TypeId::RAWPTR);
             let parameters = receiver.chain(parameters[1..].iter().copied());
             self.module
-                .declare(&symbol, || declaration(types, &callee, result, parameters));
+                .declare(&symbol, || declaration(types, &callee, *result, parameters));
             entries.push(format!("ptr {callee}"));
         }
         _ = writeln!(

@@ -90,7 +90,7 @@ fn remove_unreachable_blocks(body: &mut mir::Body) {
         let instructions = kept.instructions;
         blocks.push(kept, body.blocks.span(block));
         for id in body.lists.items(instructions) {
-            let InstructionKind::Phi(ref mut incoming) = body.instructions[id].kind else {
+            let InstructionKind::Phi(incoming) = &mut body.instructions[id].kind else {
                 break; // `Phi`s come first
             };
             let live = incoming

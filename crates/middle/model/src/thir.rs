@@ -569,47 +569,47 @@ impl<N: Display, F: Fn(DefId) -> N + Copy> Printer<'_, F> {
     }
 
     fn write_expr(&mut self, expr: Id<Expr>) {
-        let Expr { ty, ref kind } = self.body.exprs[expr];
-        match *kind {
-            ExprKind::Constant(ref value) => {
-                _ = write!(self.out, "{}", value_text(value, &self.types[ty]));
+        let Expr { ty, kind } = &self.body.exprs[expr];
+        match kind {
+            ExprKind::Constant(value) => {
+                _ = write!(self.out, "{}", value_text(value, &self.types[*ty]));
                 if !matches!(value, Value::Bool(_) | Value::Bytes(_)) {
-                    _ = write!(self.out, ":{}", self.types.text(ty, self.name_of));
+                    _ = write!(self.out, ":{}", self.types.text(*ty, self.name_of));
                 }
             }
-            ExprKind::Variable(variable) => self.write_variable(variable),
+            ExprKind::Variable(variable) => self.write_variable(*variable),
             ExprKind::Binary { op, left, right } => {
                 self.out.push('(');
-                self.write_expr(left);
+                self.write_expr(*left);
                 _ = write!(self.out, " {op:?} ");
-                self.write_expr(right);
+                self.write_expr(*right);
                 self.out.push(')');
             }
             ExprKind::Unary { op, value } => {
                 _ = write!(self.out, "({op:?} ");
-                self.write_expr(value);
+                self.write_expr(*value);
                 self.out.push(')');
             }
             ExprKind::Convert(value) => {
                 self.out.push_str("convert(");
-                self.write_expr(value);
-                _ = write!(self.out, "):{}", self.types.text(ty, self.name_of));
+                self.write_expr(*value);
+                _ = write!(self.out, "):{}", self.types.text(*ty, self.name_of));
             }
             ExprKind::Call {
                 callee, arguments, ..
             } => {
                 match callee {
                     Callee::Function(function) => {
-                        _ = write!(self.out, "call {}(", (self.name_of)(function));
+                        _ = write!(self.out, "call {}(", (self.name_of)(*function));
                     }
                     Callee::Method(slot) => _ = write!(self.out, "call method {slot}("),
                 }
-                self.write_exprs(arguments);
-                _ = write!(self.out, "):{}", self.types.text(ty, self.name_of));
+                self.write_exprs(*arguments);
+                _ = write!(self.out, "):{}", self.types.text(*ty, self.name_of));
             }
             ExprKind::StructLiteral(fields) => {
-                _ = write!(self.out, "{}.{{", self.types.text(ty, self.name_of));
-                for (position, field) in self.body.children.lists.items(fields).enumerate() {
+                _ = write!(self.out, "{}.{{", self.types.text(*ty, self.name_of));
+                for (position, field) in self.body.children.lists.items(*fields).enumerate() {
                     let FieldValue { index, value } = self.body.children.field_values[field];
                     let separator = if position > 0 { ", " } else { " " };
                     _ = write!(self.out, "{separator}[{index}] = ");
@@ -618,11 +618,11 @@ impl<N: Display, F: Fn(DefId) -> N + Copy> Printer<'_, F> {
                 self.out.push_str(" }");
             }
             ExprKind::ArrayLiteral(parts) => {
-                _ = write!(self.out, "{}{{", self.types.text(ty, self.name_of));
-                let Type::Array { element, .. } = self.types[ty] else {
+                _ = write!(self.out, "{}{{", self.types.text(*ty, self.name_of));
+                let Type::Array { element, .. } = self.types[*ty] else {
                     unreachable!("an array literal makes an array")
                 };
-                for (index, part) in self.body.children.lists.items(parts).enumerate() {
+                for (index, part) in self.body.children.lists.items(*parts).enumerate() {
                     self.out.push_str(if index > 0 { ", " } else { " " });
                     if self.types.same(self.body.exprs[part].ty, element) {
                         self.write_expr(part);
@@ -635,52 +635,52 @@ impl<N: Display, F: Fn(DefId) -> N + Copy> Printer<'_, F> {
                 self.out.push_str(" }");
             }
             ExprKind::Field { value, index } => {
-                self.write_expr(value);
+                self.write_expr(*value);
                 _ = write!(self.out, "[{index}]");
             }
             ExprKind::Length(array) => {
-                self.write_expr(array);
+                self.write_expr(*array);
                 self.out.push_str(".len");
             }
             ExprKind::Index { array, index } => {
-                self.write_expr(array);
+                self.write_expr(*array);
                 self.out.push_str("[at ");
-                self.write_expr(index);
+                self.write_expr(*index);
                 self.out.push(']');
             }
             ExprKind::Dereference(reference) => {
-                self.write_expr(reference);
+                self.write_expr(*reference);
                 self.out.push_str(".*");
             }
             ExprKind::Borrow(place) => {
-                let mutable = self.types[ty].borrows() == Some(true);
+                let mutable = self.types[*ty].borrows() == Some(true);
                 self.out.push_str(if mutable { "&mut " } else { "&" });
-                self.write_expr(place);
+                self.write_expr(*place);
             }
             ExprKind::Address(place) => {
                 self.out.push('@');
-                self.write_expr(place);
+                self.write_expr(*place);
             }
             ExprKind::ToInterface {
                 reference,
                 implementation,
             } => {
                 self.out.push_str("interface(");
-                self.write_expr(reference);
-                for &method in self.types.implementation(implementation) {
+                self.write_expr(*reference);
+                for &method in self.types.implementation(*implementation) {
                     _ = write!(self.out, ", {}", (self.name_of)(method));
                 }
-                _ = write!(self.out, "):{}", self.types.text(ty, self.name_of));
+                _ = write!(self.out, "):{}", self.types.text(*ty, self.name_of));
             }
             ExprKind::Temporary {
                 variable,
                 value,
                 kept,
             } => {
-                self.out.push_str(if kept { "(kept " } else { "(" });
-                self.write_variable(variable);
+                self.out.push_str(if *kept { "(kept " } else { "(" });
+                self.write_variable(*variable);
                 self.out.push_str(" = ");
-                self.write_expr(value);
+                self.write_expr(*value);
                 self.out.push(')');
             }
             ExprKind::Slice {
@@ -689,16 +689,16 @@ impl<N: Display, F: Fn(DefId) -> N + Copy> Printer<'_, F> {
                 end,
                 inclusive,
             } => {
-                let mutable = self.types[ty].borrows() == Some(true);
+                let mutable = self.types[*ty].borrows() == Some(true);
                 self.out.push_str(if mutable { "&mut " } else { "&" });
-                self.write_expr(array);
+                self.write_expr(*array);
                 self.out.push('[');
                 if let Some(start) = start {
-                    self.write_expr(start);
+                    self.write_expr(*start);
                 }
-                self.out.push_str(if inclusive { "..=" } else { ".." });
+                self.out.push_str(if *inclusive { "..=" } else { ".." });
                 if let Some(end) = end {
-                    self.write_expr(end);
+                    self.write_expr(*end);
                 }
                 self.out.push(']');
             }
@@ -708,16 +708,16 @@ impl<N: Display, F: Fn(DefId) -> N + Copy> Printer<'_, F> {
                 step,
                 inclusive,
             } => {
-                self.write_expr(start);
-                self.out.push_str(if inclusive { "..=" } else { ".." });
-                self.write_expr(end);
+                self.write_expr(*start);
+                self.out.push_str(if *inclusive { "..=" } else { ".." });
+                self.write_expr(*end);
                 self.out.push_str(" by ");
-                self.write_expr(step);
+                self.write_expr(*step);
             }
             ExprKind::Print { newline, values } => {
                 self.out
-                    .push_str(if newline { "println(" } else { "print(" });
-                self.write_exprs(values);
+                    .push_str(if *newline { "println(" } else { "print(" });
+                self.write_exprs(*values);
                 self.out.push(')');
             }
             ExprKind::Invalid => self.out.push_str("invalid"),

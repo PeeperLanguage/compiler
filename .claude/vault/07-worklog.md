@@ -837,3 +837,14 @@ ran `check.sh` fully green.
   private method can satisfy an interface); `&Alias` of an interface is
   refused as an owned value; `s.*` read as a value says "cannot move out
   of a reference" rather than naming owned interfaces.
+
+## Match borrowed values instead of `ref` (2026-11-06)
+
+- Every `ref`/`ref mut` binding (155, 31 files) is gone: the matched value
+  is borrowed (`match &x`, `let P = &x else`), or its `*` dropped when it
+  was already a reference; uses of Copy fields read `*field`.
+- `method_type` clones the matched `Type::Function` whole (the same
+  allocations as cloning its parameters and origins).
+- `clippy::ref_patterns` is on in the workspace lints, and `rust-style.md`
+  states the rule.
+- `scripts/check.sh` all ok; no fixture or dump changed.

@@ -234,8 +234,8 @@ impl ThirBuilder<'_, '_> {
         // In a constant's value, a call on constants runs now.
         let constant_arguments = || {
             let values = self.body.children.lists.items(arguments).map(|argument| {
-                match self.body.exprs[argument].kind {
-                    ExprKind::Constant(ref value) => Some(value.clone()),
+                match &self.body.exprs[argument].kind {
+                    ExprKind::Constant(value) => Some(value.clone()),
                     _ => None,
                 }
             });
@@ -361,11 +361,11 @@ impl ThirBuilder<'_, '_> {
                 .report_unknown(diagnostics::UNDEFINED_NAME, name.span, message, meant);
             return None;
         };
-        let Type::Interface { ref methods, .. } = self.checker.types[interface] else {
+        let Type::Interface { methods, .. } = &self.checker.types[interface] else {
             unreachable!("a checked interface is `Type::Interface`")
         };
         let signature = methods[slot];
-        let Type::Function { ref parameters, .. } = self.checker.types[signature] else {
+        let Type::Function { parameters, .. } = &self.checker.types[signature] else {
             unreachable!("a method's type is a function type")
         };
         if !matches!(
@@ -429,11 +429,11 @@ fn printable(types: &Types, ty: TypeId) -> bool {
     // structs as deep as the declarations nest, and can hold one many times.
     let (mut reached, mut pending) = (FxHashSet::default(), vec![ty]);
     while let Some(ty) = pending.pop() {
-        match types[ty] {
+        match &types[ty] {
             Type::Integer(_) | Type::Float(_) | Type::Bool | Type::CString | Type::Str => {}
             Type::RawPointer { .. } => {}
-            Type::Reference { target, .. } => pending.push(target),
-            Type::Struct { ref fields, .. } => {
+            Type::Reference { target, .. } => pending.push(*target),
+            Type::Struct { fields, .. } => {
                 if reached.insert(ty) {
                     pending.extend(fields);
                 }

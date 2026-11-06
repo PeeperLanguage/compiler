@@ -171,8 +171,8 @@ pub fn interface_methods(
         tree.children
             .lists
             .items(methods)
-            .map(|method| match tree.decls[method] {
-                ast::Decl::Function(ref function) => function,
+            .map(|method| match &tree.decls[method] {
+                ast::Decl::Function(function) => function,
                 _ => unreachable!("an interface holds functions"),
             }),
     )

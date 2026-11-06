@@ -235,16 +235,14 @@ impl<'f> Interpreter<'_, 'f> {
                 self.write_printed(text, &referred, target, span)?;
             }
             (
-                &Type::Struct {
-                    definition,
-                    ref fields,
-                    ..
+                Type::Struct {
+                    definition, fields, ..
                 },
                 &Register::Address(address),
             ) => {
                 let facts = self.host().facts;
-                text.extend_from_slice((facts.struct_name)(definition).as_bytes());
-                let names = (facts.field_names)(definition);
+                text.extend_from_slice((facts.struct_name)(*definition).as_bytes());
+                let names = (facts.field_names)(*definition);
                 for (index, name) in names.iter().enumerate() {
                     text.extend_from_slice(if index == 0 { b" { " } else { b", " });
                     text.extend_from_slice(name.as_bytes());

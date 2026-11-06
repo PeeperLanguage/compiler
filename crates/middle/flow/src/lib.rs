@@ -154,9 +154,9 @@ fn missing_return_causes(
             }
             let mir::Block {
                 instructions,
-                ref terminator,
+                terminator,
                 ..
-            } = body.blocks[predecessor];
+            } = &body.blocks[predecessor];
             if let mir::Terminator::Branch {
                 condition,
                 span,
@@ -189,7 +189,7 @@ fn missing_return_causes(
                     Some(_) => {}
                 }
             } else if !std::mem::replace(&mut visited[predecessor.index()], true) {
-                let code = body.lists.items(instructions);
+                let code = body.lists.items(*instructions);
                 match code.filter(|&id| body.instructions[id].kind.runs()).last() {
                     Some(last) => causes.push((
                         body.instructions.span(last),
@@ -343,16 +343,16 @@ pub fn warn_unreachable_code(
         .filter_map(|block| {
             let mir::Block {
                 instructions,
-                ref terminator,
+                terminator,
                 ..
-            } = body.blocks[block];
+            } = &body.blocks[block];
             let terminator = match *terminator {
                 mir::Terminator::Return { span, .. }
                 | mir::Terminator::Panic { span, .. }
                 | mir::Terminator::Branch { span, .. } => Some(span),
                 mir::Terminator::Goto(_) | mir::Terminator::FallOff(_) => None,
             };
-            let spans = body.lists.items(instructions);
+            let spans = body.lists.items(*instructions);
             let spans = spans
                 .filter(|&instruction| body.instructions[instruction].kind.runs())
                 .map(|instruction| body.instructions.span(instruction));

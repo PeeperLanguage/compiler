@@ -29,9 +29,9 @@ impl ThirBuilder<'_, '_> {
         // `Some(length)` for an array, `Some(None)` for a slice or a `&str`,
         // whose length is known only when the program runs: it is read from
         // the value, so through the reference to it.
-        let length = match self.checker.types[viewed] {
+        let length = match &self.checker.types[viewed] {
             Type::Str => Some(None),
-            ref other => other.elements().map(|(_, length)| length),
+            other => other.elements().map(|(_, length)| length),
         };
         if length == Some(None) {
             value = self.through_pointer(value, self.body.exprs.span(value));
@@ -63,7 +63,7 @@ impl ThirBuilder<'_, '_> {
         }
         let value = self.through_pointer(value, self.body.exprs.span(value));
         let ty = self.body.exprs[value].ty;
-        let Type::Struct { ref fields, .. } = self.checker.types[ty] else {
+        let Type::Struct { fields, .. } = &self.checker.types[ty] else {
             if ty != TypeId::INVALID {
                 let message = format!("`{}` has no fields", self.checker.type_text(ty));
                 self.checker
@@ -130,7 +130,7 @@ impl ThirBuilder<'_, '_> {
             return Expr::INVALID;
         };
         // A negative constant, or one past `u64`, is outside every slice.
-        if let ExprKind::Constant(Value::Integer(ref value)) = self.body.exprs[index].kind
+        if let ExprKind::Constant(Value::Integer(value)) = &self.body.exprs[index].kind
             && bigint::to_u64(integer.bits, integer.signed, value)
                 .is_none_or(|at| length.is_some_and(|length| at >= length))
         {
@@ -279,7 +279,7 @@ impl ThirBuilder<'_, '_> {
                 continue;
             };
             let integer = self.integer_index(end)?;
-            let ExprKind::Constant(Value::Integer(ref value)) = self.body.exprs[end].kind else {
+            let ExprKind::Constant(Value::Integer(value)) = &self.body.exprs[end].kind else {
                 *before = None;
                 continue;
             };
@@ -317,12 +317,10 @@ impl ThirBuilder<'_, '_> {
     pub(super) fn check_dereference(&mut self, reference: Id<ast::Expr>, span: Span) -> Expr {
         let reference = self.add_expr(reference, None);
         let ty = self.body.exprs[reference].ty;
-        match self.checker.types[ty] {
-            ref pointer if let Some(target) = pointer.pointee() => {
-                self.dereference(reference, target)
-            }
+        match &self.checker.types[ty] {
+            pointer if let Some(target) = pointer.pointee() => self.dereference(reference, target),
             Type::Invalid => Expr::INVALID,
-            ref found => {
+            found => {
                 let message = format!(
                     "`.*` needs a reference or a typed raw pointer, found `{}`",
                     self.checker.type_text(ty)

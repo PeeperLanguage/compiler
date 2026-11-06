@@ -289,7 +289,7 @@ impl ThirBuilder<'_, '_> {
             self.checker.report(diagnostic);
             return Expr::INVALID;
         }
-        if let ExprKind::Constant(ref value) = right.kind
+        if let ExprKind::Constant(value) = &right.kind
             && let Some(message) = eval::operators::known_trap(op, &left_type, &right_type, value)
         {
             self.checker

@@ -118,13 +118,11 @@ impl<'b> Interpreter<'b, '_> {
                 self.step(body.instructions.span(id))?;
                 let instruction = &body.instructions[id];
                 if let InstructionKind::Call {
-                    callee,
-                    ref arguments,
-                    ..
-                } = instruction.kind
+                    callee, arguments, ..
+                } = &instruction.kind
                 {
                     self.frames.last_mut().expect("a run has a frame").next = index + 1;
-                    self.call(id, callee, arguments)?;
+                    self.call(id, *callee, arguments)?;
                     continue 'frames;
                 }
                 let value = self.run_instruction(id)?;
@@ -138,10 +136,10 @@ impl<'b> Interpreter<'b, '_> {
                 Terminator::Goto(_) => body.blocks.span(self.frame().block),
             };
             self.step(span)?;
-            let next = match block.terminator {
+            let next = match &block.terminator {
                 Terminator::Goto(target) => target,
                 Terminator::Branch {
-                    ref condition,
+                    condition,
                     then,
                     otherwise,
                     ..
@@ -149,7 +147,7 @@ impl<'b> Interpreter<'b, '_> {
                     Register::Scalar(Value::Bool(true)) => then,
                     _ => otherwise,
                 },
-                Terminator::Return { ref value, .. } => {
+                Terminator::Return { value, .. } => {
                     let value = value.as_ref().map(|value| self.operand(value));
                     if let Some(result) = self.finish_call(value, span)? {
                         return Ok(result);
@@ -157,10 +155,10 @@ impl<'b> Interpreter<'b, '_> {
                     continue;
                 }
                 Terminator::Panic { message, span } => {
-                    let Value::Bytes(ref text) = body.constants[message.index()].value else {
+                    let Value::Bytes(text) = &body.constants[message.index()].value else {
                         unreachable!("a panic's message is bytes")
                     };
-                    return Err(self.fail(String::from_utf8_lossy(text), span));
+                    return Err(self.fail(String::from_utf8_lossy(text), *span));
                 }
                 Terminator::FallOff(_) => {
                     if let Some(result) = self.finish_call(None, span)? {
@@ -171,7 +169,7 @@ impl<'b> Interpreter<'b, '_> {
             };
             let frame = self.frames.last_mut().expect("a run has a frame");
             frame.previous = Some(frame.block);
-            frame.block = next;
+            frame.block = *next;
             frame.next = 0;
         }
     }
@@ -185,7 +183,7 @@ impl<'b> Interpreter<'b, '_> {
         let mut values = Vec::new();
         for id in phis {
             self.step(body.instructions.span(id))?;
-            let InstructionKind::Phi(ref incoming) = body.instructions[id].kind else {
+            let InstructionKind::Phi(incoming) = &body.instructions[id].kind else {
                 unreachable!("only phis are taken")
             };
             let previous = self.frame().previous;

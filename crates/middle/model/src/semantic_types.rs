@@ -576,8 +576,8 @@ impl Types {
     /// The parameters a reference returned by a function of type `signature`
     /// may point into.
     pub fn origins(&self, signature: TypeId) -> &[u32] {
-        match self[signature] {
-            Type::Function { ref origins, .. } => origins,
+        match &self[signature] {
+            Type::Function { origins, .. } => origins,
             // No origins would let a returned reference dangle unseen.
             _ => unreachable!("a call to a function with a signature error is not lowered"),
         }
@@ -789,11 +789,11 @@ impl Types {
     /// `Some(whether one is mutable)` for a type whose values hold loans: a
     /// reference, a slice, or a struct with one in a field, however deep.
     pub fn holds_loans(&self, id: TypeId) -> Option<bool> {
-        match self[id] {
-            Type::Struct { ref internals, .. } => {
+        match &self[id] {
+            Type::Struct { internals, .. } => {
                 (internals.holders > 0).then_some(internals.mutable_holder)
             }
-            ref other => other.borrows(),
+            other => other.borrows(),
         }
     }
 
@@ -801,9 +801,9 @@ impl Types {
     /// type `id` is: one for each, its fields' for a struct, as no other type
     /// holds one.
     pub fn holders_in(&self, id: TypeId) -> usize {
-        match self[id] {
-            Type::Struct { ref internals, .. } => internals.holders,
-            ref other => usize::from(other.borrows().is_some()),
+        match &self[id] {
+            Type::Struct { internals, .. } => internals.holders,
+            other => usize::from(other.borrows().is_some()),
         }
     }
 
