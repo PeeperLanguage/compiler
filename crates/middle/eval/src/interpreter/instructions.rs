@@ -2,6 +2,7 @@
 //! runs next (`calls`).
 
 use arena::Id;
+use bigint::Limbs;
 use model::constant::Value;
 use model::mir;
 use model::mir::InstructionKind;
@@ -54,6 +55,20 @@ impl<'b> Interpreter<'b, '_> {
                             .map_err(|message| self.fail(message, span))?;
                         Some(Register::Scalar(value))
                     }
+                    // `rawptr + usize`; a wrong address stops the run where it
+                    // is used.
+                    (Register::Address(address), Register::Scalar(Value::Integer(offset))) => {
+                        if self.host.is_none() {
+                            let message = "a pointer offset cannot run at compile time, \
+                                as it could read an address";
+                            return Err(self.fail(message, span));
+                        }
+                        let bits = self.target.pointer_bits;
+                        let sum = bigint::add(bits, &Limbs::new(bits, &[address]), &offset);
+                        let sum = bigint::to_u64(bits, false, &sum)
+                            .expect("a sum wrapped to a pointer's bits fits 64 bits");
+                        Some(Register::Address(sum))
+                    }
                     (Register::Address(left), Register::Address(right)) => {
                         if self.host.is_none() && left != 0 && right != 0 {
                             return Err(self.fail(ADDRESS_NOT_KNOWN, span));
@@ -62,7 +77,9 @@ impl<'b> Interpreter<'b, '_> {
                         let value = equal == (*op == BinaryOp::EqualTo);
                         Some(Register::Scalar(Value::Bool(value)))
                     }
-                    _ => unreachable!("check gives `{op:?}` two numbers or two pointers"),
+                    _ => unreachable!(
+                        "check gives `{op:?}` two numbers, two pointers, or a pointer and an offset"
+                    ),
                 }
             }
             InstructionKind::Unary { op, value } => {

@@ -880,3 +880,20 @@ ran `check.sh` fully green.
   supported Node needs it. It covers `check.sh` and `release.yml`. The
   Website runs the wasm with its own WASI functions in the browser, so it
   is not affected.
+
+## Pointer offsets: `rawptr + usize` (2026-11-06, `feature/allocator-interface`)
+
+- Owner: real allocators need an address some bytes on; only `rawptr +
+  usize`, giving a `rawptr`. `*T + n`, `n + p`, `p - n`, `p + p` and
+  `p + i32` stay refused.
+- Check (`check_binary`): the right operand is checked as `usize`; an
+  offset is never folded. A raw-pointer constant that is not `none` is
+  refused as "an address is known only when the program runs".
+- LLVM: `getelementptr i8, ptr, iN` (not `inbounds`). Interpreter: the
+  address plus the offset, wrapped at the pointer's bits; refused in a
+  constant's run ("a pointer offset cannot run at compile time, ...").
+- Fixtures: `run_pointer_offsets` (+ i686), `ll_pointer_offsets`,
+  `negative_pointer_offsets` (proven to fail when `*T + n` is let
+  through).
+- Not done: messages name `usize` as `u64` (`u32` on i686): the type
+  table holds one type for both, as before.

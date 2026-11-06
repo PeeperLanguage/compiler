@@ -8,6 +8,7 @@ use model::ast;
 use model::ast::Ident;
 use model::constant::Constant;
 use model::layout::in_memory;
+use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::thir::Expr;
 use model::thir::ExprKind;
@@ -148,7 +149,9 @@ impl ThirBuilder<'_, '_> {
                 let types = &self.checker.types;
                 let message = if unknown.is_some() {
                     "the value of a constant must be known at compile time"
-                } else if in_memory(types, checked.ty) || types[checked.ty].borrows() == Some(true)
+                } else if in_memory(types, checked.ty)
+                    || types[checked.ty].borrows() == Some(true)
+                    || matches!(types[checked.ty], Type::RawPointer { .. })
                 {
                     constant_refusal(&types[checked.ty])
                 } else {

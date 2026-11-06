@@ -60,10 +60,12 @@ operators! {
         /// Adds.
         ///
         /// Integers wrap to the type's width; floats round to their own precision (IEEE 754).
+        /// `rawptr + usize` is the address that many bytes further on.
         ///
         /// ```peeper
         /// let sum = 2 + 3;           // 5
         /// let wrapped = 127i8 + 1i8; // -128
+        /// let next = block + 8;      // 8 bytes after `block`, a rawptr
         /// ```
         Add = "+",
         /// Subtracts.

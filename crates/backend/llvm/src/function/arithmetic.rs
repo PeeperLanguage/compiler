@@ -56,6 +56,16 @@ impl Function<'_, '_, '_> {
                 BinaryOp::GreaterOrEqual => "fcmp oge",
                 _ => unreachable!("check accepts no {op:?} of floats"),
             },
+            // Not `inbounds`: a raw pointer may point anywhere.
+            Type::RawPointer { .. } if op == BinaryOp::Add => {
+                let bits = self.module.target.pointer_bits;
+                let (address, offset) = (self.operand(left), self.operand(right));
+                _ = write!(
+                    out,
+                    "  {name} = getelementptr i8, ptr {address}, i{bits} {offset}"
+                );
+                return;
+            }
             integer => {
                 let signed = matches!(integer, Type::Integer(integer) if integer.signed);
                 match op {
