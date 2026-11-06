@@ -12,7 +12,7 @@ stderr_contains = [
     "`str` has no field `size`",
     "mismatched types: expected `cstr`, found `str`",
     "mismatched types: expected `str`, found `cstr`",
-    "mismatched types: expected `[&]u8`, found `str`",
+    "mismatched types: expected `&[]u8`, found `str`",
     "string types are not supported yet",
     "Compilation failed with 9 error(s)",
 ]

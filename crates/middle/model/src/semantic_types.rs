@@ -143,7 +143,7 @@ pub enum Type {
     /// `cstr`: a pointer to a C string, as C functions take it.
     CString,
     /// `str`: text, a view of bytes held elsewhere (a literal's in the
-    /// program's data), with their count; laid out as a `[&]u8` slice.
+    /// program's data), with their count; laid out as a `&[]u8` slice.
     Str,
     /// `origins`: the positions of the parameters a returned reference may
     /// point into, in order; empty when the result holds no reference.
