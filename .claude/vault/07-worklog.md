@@ -866,3 +866,17 @@ ran `check.sh` fully green.
   `print`.
 - `x_test/run_allocator`: `Allocate`/`Free`, and `free` as a function
   name (fails with `P0002` when the keyword is put back).
+
+## Browser smoke: Node's WASI fast-call crash (2026-11-06, `feature/allocator-interface`)
+
+- `smoke.mjs` segfaulted Node 22.23.1 after the deep-recursion request once
+  `allocator.peep` grew: gdb shows a full GC inside `uvwasi_fd_read`, called
+  as a V8 fast API call, failing in `IterateTurbofanOptimizedFrame`. Same
+  crash with the committed compiler and the new library; a Node bug
+  (nodejs/node#46777, #53087, both closed stale and unfixed; reports say
+  Node 24 stops crashing without fixing it).
+- `smoke.mjs` turns fast API calls off (`setFlagsFromString`) before
+  compiling the module, with a `shortcut:` comment to drop it once no
+  supported Node needs it. It covers `check.sh` and `release.yml`. The
+  Website runs the wasm with its own WASI functions in the browser, so it
+  is not affected.
