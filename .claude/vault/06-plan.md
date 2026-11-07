@@ -25,12 +25,20 @@ slices (`&[]T`) merged. Open branch: `feature/interfaces`. Order of work
    type gets its own copy of the function; a plain `T: type` is refused for
    now; `<T>` generics stay. Any type works as a type argument.
    - [x] Step 1: `size_of(T)` and `align_of(T)`, `usize` constants, on
-     `feature/size-of` (stacked on `feature/allocator-interface`).
-   - [x] Step 2: `const` parameters and their copies: a type
+     `feature/size-of` (stacked on `feature/allocator-interface`)
+     (8560886a).
+   - [x] Step 2: `core:allocator` renamed `core:memory`, with `Realloc`
+     (5f548a56).
+   - [x] Step 3: `const` parameters and their copies: a type
      (`const T: type`) or a value known when compiling (`const n: i64`,
-     owner 2026-11-07), one copy per type or value. Waiting for review.
-   - [x] Step 3: `core:allocator` renamed `core:memory`, with `Realloc`,
-     `New` and `Replace`. Waiting for review.
+     owner 2026-11-07), one copy per type or value; `New` and `Replace`
+     in `core:memory` (ee867ac0). A `const T: type` argument is always
+     written at the call; working it out from the arguments waits for
+     `<T>` generics (owner, 2026-11-07).
+   - [x] Step 4: bundled libraries are projects, `build = "lib"` in
+     `peeper.toml` (6f56683d; built on `feature/library-manifest`).
+   - [ ] The Website (`peeper.toml`'s `build`, `core:memory`, `size_of`,
+     `const` parameters, a new wasm build), once the feature is complete.
 
 Later: lifetimes of references held in structs; enums and `match` with
 `?T` (put off by the owner 2026-10-30); generics.
@@ -44,6 +52,14 @@ type, functions of types other than structs.
   index checks use up its 1,000,000 steps sooner (a constant of 48,000
   passes over `a[i]` no longer fits; worklog, "Index checks in lowering").
 - The open findings below: each is left as it is until the owner decides.
+- Type parameters: whether `size_of` keeps its name, and whether a
+  function with `const` parameters gets its body checked when nothing
+  calls it (today only copies are checked, so a library's `New` or
+  `Replace` is checked only once a program calls it).
+- The `feature/library-manifest` worktree: its work is in 6f56683d; remove
+  it only when the owner says so.
+- Compile time: the `const` parameter step is about 0.8% slower on the
+  benchmark, spread over many small places (worklog).
 
 ## Open findings (from `fix/loans-memory-growth`, 2026-11-01; not rechecked since)
 

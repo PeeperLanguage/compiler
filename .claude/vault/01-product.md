@@ -61,6 +61,11 @@ as few walks per body as possible; one owner per fact.
 - **Not done (parser reads, check reports T0043):** enums, optionals,
   allocator, interfaces, generics, function values, default
   parameters, destructuring, block expressions, pipes, dependencies.
+- **Since then (worklog, 2026-11-07):** borrowed interfaces (`&Shape`),
+  `core:memory` (`Allocator` with `Heap`, `Arena`, `Pool`, `Stack`,
+  `Realloc`, `New`, `Replace`), `rawptr + usize`, `size_of`/`align_of`,
+  `const` parameters (a type or a value, one copy per set of arguments),
+  and libraries as projects (`build = "lib"`); `core` is one.
 - **Planned order:** allocator; lifetimes of references in structs; enums and
   `match` with `?T`; strings, methods, interfaces, generics; port the Go
   fixtures.

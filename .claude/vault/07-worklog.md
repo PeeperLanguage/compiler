@@ -985,7 +985,7 @@ ran `check.sh` fully green.
   in the repo parses as before or better (3 more parse).
 - `scripts/check.sh` passed.
 
-## `const` parameters, `core:memory` (2026-11-07, `feature/size-of`, uncommitted)
+## `const` parameters, `core:memory` (2026-11-07, `feature/size-of`)
 
 - Owner: allocators move to `core:memory`, which gains `Realloc` (a method
   of `Allocator`), `Replace` and `New`; `const` parameters take types and,
@@ -1044,7 +1044,7 @@ ran `check.sh` fully green.
   `ll_size_of/expected.ll` (marked `git add -N`); committed `ll` fixtures
   end the same way.
 
-### Review fixes for `const` parameters (2026-11-07, uncommitted)
+### Review fixes for `const` parameters (2026-11-07)
 
 - A copy no longer checks code its constants rule out: an `if` on a
   constant `bool` keeps only the way it takes, and when that way always
@@ -1080,7 +1080,7 @@ ran `check.sh` fully green.
 - `scripts/check.sh`: all pass but `whitespace` (the `ll_size_of` blank
   last line, as above).
 
-### Libraries as projects (`feature/library-manifest`, 2026-11-07, uncommitted)
+### Libraries as projects (`feature/library-manifest`, 2026-11-07)
 
 Branched from `9920cf40` in its own worktree, to merge into
 `feature/size-of` later.
@@ -1130,7 +1130,7 @@ Branched from `9920cf40` in its own worktree, to merge into
 - Not done: the website (its docs on `peeper.toml`), once the feature is
   complete.
 
-### Review of the `size_of` step and the merged tree (2026-11-07, uncommitted)
+### Review of the `size_of` step and the merged tree (2026-11-07)
 
 - A `const` type parameter given `&str` or `&cstr` was taken for bare
   text: `Replace(&str, ...)` and `v: T` were refused ("`T` is text of any
@@ -1149,3 +1149,24 @@ Branched from `9920cf40` in its own worktree, to merge into
 - Decided: a `const T: type` argument is always written at the call, even
   where a later argument fixes it (`Replace(i64, &mut n, 9)`); working it
   out from the arguments is left to `<T>` generics.
+
+### Committed (2026-11-07, `feature/size-of`)
+
+The work was split into four signed commits, each passing
+`scripts/check.sh` on its own tree:
+
+- 8560886a `size_of` and `align_of`. It includes the refusal of a function
+  named `size_of`. `core:allocator`'s `Stack` uses `size_of(mark)`, and
+  the allocator fixtures use `size_of(Node)`.
+- 5f548a56 `core:memory` and `Realloc`. It also takes the browser's core
+  file list in name order and the `REALLOC` import in order, which the
+  next step had fixed: without them this commit failed its tests and
+  format.
+- ee867ac0 `const` parameters, `New` and `Replace`, with the `&str` type
+  argument fix.
+- 6f56683d Libraries as projects. This log's entries written after the
+  merge are in this commit.
+
+Each commit's tree was built in a separate index file, and the working
+files were not touched. Checking was done in a temporary worktree, removed
+after. Backups: `playground/backup-commit-2026-11-07/`.
