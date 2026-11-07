@@ -86,6 +86,7 @@ fn checks_a_project() {
                 b"import \"myapp:util\";\nimport \"myapp:gone\";\nfn main() {}",
             ),
             ("app/src/util.peep", b"fn Util() {}"),
+            ("libs/core/peeper.toml", b"name = \"core\"\nbuild = \"lib\""),
             ("libs/core/src/global.peep", b""),
         ],
     );

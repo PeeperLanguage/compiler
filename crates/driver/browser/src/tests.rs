@@ -14,7 +14,8 @@ const MANIFEST: &str = manifest::FILE_NAME;
 
 /// What `files` load to, when their peeper.toml gives a project.
 fn loaded(files: HashMap<String, String>) -> project::Program {
-    load(files).expect("the files are a project").1
+    let project = project_of(&files).expect("the files are a project");
+    load(&project, files)
 }
 
 #[test]

@@ -153,6 +153,15 @@ impl Server<'_> {
         let program = project::load(&project, &self.open_files);
         let key = checked_key(&project);
         let mut checked = self.checked.remove(&key).unwrap_or_default();
+        // After `build` changed, the last check is kept by the other key;
+        // the files it showed diagnostics in are cleared like any other.
+        let other_key = match project.entry {
+            Some(_) => project.root.clone(),
+            None => project::entry(&project.packages[&project.name]),
+        };
+        if let Some(stale) = self.checked.remove(&other_key) {
+            checked.published.extend(stale.published);
+        }
         let mut all: Vec<&diagnostics::Diagnostic> = program.diagnostics.iter().collect();
         // A program that cannot be checked keeps the last compile for the next.
         if program.checkable {

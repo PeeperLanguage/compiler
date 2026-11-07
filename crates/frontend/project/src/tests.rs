@@ -195,6 +195,39 @@ fn a_library_loads_each_of_its_files() {
     assert_eq!(program.entry, None);
 }
 
+/// A library with no files to load is an error, not a clean check: its
+/// src folder missing or empty. Its files open in an editor or on a page
+/// need no disk.
+#[test]
+fn a_library_without_files_is_an_error() {
+    let root = write(
+        "library_without_files",
+        &[("peeper.toml", "name = \"tools\"\nbuild = \"lib\"\n")],
+    )
+    .root;
+    let project = find(&root, &root.join("libs")).unwrap();
+    let none = HashMap::<PathBuf, String>::new();
+    let missing = load(&project, &none);
+    let got = messages(&missing);
+    assert!(
+        got.len() == 1 && got[0].starts_with("program: M0001 read library: "),
+        "{got:?}"
+    );
+    assert!(!missing.checkable);
+    std::fs::create_dir(root.join("src")).unwrap();
+    let source = path_text(&root.join("src"));
+    let empty = load(&project, &none);
+    assert_eq!(
+        messages(&empty),
+        [format!("program: M0001 no source files in {source}")]
+    );
+    std::fs::remove_dir(root.join("src")).unwrap();
+    let open = HashMap::from([(root.join("src/a.peep"), "fn A() {}".to_string())]);
+    let program = load(&project, &open);
+    assert_eq!(messages(&program), Vec::<String>::new());
+    assert_eq!(order(&program), ["tools:a"]);
+}
+
 /// A bundled library is a folder whose peeper.toml says `build = "lib"`,
 /// named by that file, not by its folder. A library project of the same
 /// name takes its place, as it is that library being worked on; a program
@@ -207,8 +240,7 @@ fn a_bundled_library_is_named_by_its_manifest() {
         &[
             ("libs/folder/peeper.toml", library),
             ("libs/folder/src/x.peep", ""),
-            ("libs/program/peeper.toml", "name = \"program\"\n"),
-            ("libs/plain/src/y.peep", ""),
+            ("libs/README.md", "a file beside the libraries\n"),
             ("app/peeper.toml", "name = \"app\"\n"),
             ("work/peeper.toml", library),
             ("named/peeper.toml", "name = \"basics\"\n"),
@@ -230,6 +262,40 @@ fn a_bundled_library_is_named_by_its_manifest() {
         error.ends_with("project name `basics` is taken by a bundled library"),
         "{error}"
     );
+}
+
+/// A folder among the bundled libraries that is no library, or a second
+/// library of a name, is an error, not left out: every program could miss
+/// it.
+#[test]
+fn a_bad_bundled_library_is_an_error() {
+    let library = "name = \"basics\"\nbuild = \"lib\"\n";
+    let root = write(
+        "bad_bundled",
+        &[
+            ("program/one/peeper.toml", "name = \"program\"\n"),
+            ("plain/one/src/y.peep", ""),
+            ("twice/one/peeper.toml", library),
+            ("twice/two/peeper.toml", library),
+            ("app/peeper.toml", "name = \"app\"\n"),
+        ],
+    )
+    .root;
+    let error = |libraries: &str| {
+        let Err(error) = find(&root.join("app"), &root.join(libraries)) else {
+            panic!("the libraries in {libraries} were taken");
+        };
+        error
+    };
+    let program = error("program");
+    assert!(
+        program.ends_with("a bundled library needs `build = \"lib\"`"),
+        "{program}"
+    );
+    let plain = error("plain");
+    assert!(plain.ends_with("no peeper.toml in this folder"), "{plain}");
+    let twice = error("twice");
+    assert!(twice.ends_with("is a library of this name too"), "{twice}");
 }
 
 #[test]

@@ -1,6 +1,6 @@
-//! Lists every file of the bundled libraries for `main.rs` to embed: a web
-//! page has no disk to find them on, and a file added to a library is then
-//! embedded with no other change.
+//! Lists the files of the bundled libraries for `main.rs` to embed, each
+//! peeper.toml and source file: a web page has no disk to find them on, and a
+//! file added to a library is then embedded with no other change.
 
 use std::fmt::Write;
 use std::path::Path;
@@ -35,7 +35,9 @@ fn main() {
     std::fs::write(out.join("library_files.rs"), text).expect("the list is written");
 }
 
-/// Adds each file in `folder` and the folders in it to `files`.
+/// Adds each peeper.toml and source file in `folder` and the folders in it to
+/// `files`. Any other file, such as an editor's swap file, is left out: it
+/// may not be text, which `include_str!` needs.
 fn add_files(folder: &Path, files: &mut Vec<PathBuf>) {
     let entries =
         std::fs::read_dir(folder).unwrap_or_else(|error| panic!("{}: {error}", folder.display()));
@@ -45,7 +47,11 @@ fn add_files(folder: &Path, files: &mut Vec<PathBuf>) {
         let path = entry.path();
         if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
             add_files(&path, files);
-        } else {
+        } else if path.file_name().is_some_and(|name| name == "peeper.toml")
+            || path
+                .extension()
+                .is_some_and(|extension| extension == "peep")
+        {
             files.push(path);
         }
     }

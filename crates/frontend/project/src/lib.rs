@@ -321,7 +321,7 @@ pub fn find(path: &Path, libraries: &Path) -> Result<Project, String> {
     let is_dir = std::fs::metadata(&path)
         .map_err(|error| format!("{}: {error}", path.display()))?
         .is_dir();
-    let packages = bundled_libraries(libraries);
+    let packages = bundled_libraries(libraries)?;
     if !is_dir {
         let root = path.parent().unwrap_or(Path::new("")).to_path_buf();
         let name = path
@@ -370,7 +370,7 @@ pub fn project_in(
 }
 
 /// The entry file of the package whose source folder is `source`.
-fn entry(source: &Path) -> PathBuf {
+pub fn entry(source: &Path) -> PathBuf {
     source.join(format!("main{SOURCE_EXTENSION}"))
 }
 
@@ -388,7 +388,7 @@ pub fn create(dir: &Path, name: &str, libraries: &Path) -> Result<bool, String> 
     if !manifest::is_valid_name(name) {
         return Err(format!("`{name}`: {}", manifest::NAME_RULE));
     }
-    if bundled_libraries(libraries).contains_key(name) {
+    if bundled_libraries(libraries)?.contains_key(name) {
         return Err(format!(
             "project name `{name}` is taken by a bundled library"
         ));
@@ -410,25 +410,42 @@ pub fn create(dir: &Path, name: &str, libraries: &Path) -> Result<bool, String> 
     }
 }
 
-/// Maps the name of each library in `libraries`, a folder whose peeper.toml
-/// has `build = "lib"`, to its src folder. No libraries folder means no
-/// bundled libraries.
-fn bundled_libraries(libraries: &Path) -> HashMap<String, PathBuf> {
+/// Maps the name of each library in `libraries` to its src folder: each
+/// folder in it is a library, whose peeper.toml has `build = "lib"`. No
+/// libraries folder means no bundled libraries. The error is a full message:
+/// a folder that is no library, or two libraries of one name, would quietly
+/// leave out a library that every program may need, such as core.
+fn bundled_libraries(libraries: &Path) -> Result<HashMap<String, PathBuf>, String> {
     let Ok(libraries) = canonical_path(libraries) else {
-        return HashMap::new(); // an empty path names no folder
+        return Ok(HashMap::new()); // an empty path names no folder
     };
-    let Ok(entries) = std::fs::read_dir(&libraries) else {
-        return HashMap::new();
+    let entries = match std::fs::read_dir(&libraries) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(HashMap::new()),
+        Err(error) => return Err(format!("{}: {error}", libraries.display())),
     };
-    entries
-        .flatten()
-        .filter_map(|entry| {
-            let folder = entry.path();
-            let manifest = manifest::read(&folder).ok()?;
-            (manifest.build == manifest::Build::Library)
-                .then(|| (manifest.name, folder.join(SOURCE_FOLDER)))
-        })
-        .collect()
+    let mut found = HashMap::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("{}: {error}", libraries.display()))?;
+        if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            continue; // a file beside the libraries, such as a README
+        }
+        let folder = entry.path();
+        let manifest = manifest::read(&folder)?;
+        let file = folder.join(manifest::FILE_NAME);
+        if manifest.build != manifest::Build::Library {
+            let message = "a bundled library needs `build = \"lib\"`";
+            return Err(format!("{}: {message}", file.display()));
+        }
+        if let Some(other) = found.insert(manifest.name, folder.join(SOURCE_FOLDER)) {
+            let other = other.parent().unwrap_or(&other).display();
+            return Err(format!(
+                "{}: {other} is a library of this name too",
+                file.display()
+            ));
+        }
+    }
+    Ok(found)
 }
 
 /// A module being loaded: its imports are known by path until every module
@@ -469,10 +486,27 @@ pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + S
     };
 
     let mut starts = Vec::new();
-    match &project.entry {
-        Some(entry) => starts.push(entry.clone()),
-        None => add_source_files(&project.packages[&project.name], &mut starts),
-    }
+    // Why a library has no files to load.
+    let unlisted_library = if let Some(entry) = &project.entry {
+        starts.push(entry.clone());
+        None
+    } else {
+        let source = &project.packages[&project.name];
+        let listed = add_source_files(source, &mut starts);
+        // A page's or an editor's files need no disk.
+        let open = (open_files.keys()).any(|file| {
+            file.starts_with(source) && file.to_string_lossy().ends_with(SOURCE_EXTENSION)
+        });
+        let message = match listed {
+            _ if open => None,
+            Err(error) => Some(format!("read library: {error}")),
+            Ok(()) if starts.is_empty() => {
+                Some(format!("no source files in {}", path_text(source)))
+            }
+            Ok(()) => None,
+        };
+        message.map(|message| Diagnostic::new(diagnostics::MODULE_NOT_FOUND, message))
+    };
     let entry_path =
         (project.entry.as_ref()).map(|entry| import_path_of(&project.packages, entry).0);
     let mut modules = HashMap::new();
@@ -558,6 +592,7 @@ pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + S
         .map(|(index, path)| (path, ModuleId::from_index(index)))
         .collect();
     let mut diagnostics = cycles;
+    diagnostics.extend(unlisted_library);
     let mut checkable = !diagnostics.iter().any(Diagnostic::is_error);
     let modules = order
         .iter()
@@ -577,22 +612,22 @@ pub fn load(project: &Project, open_files: &HashMap<PathBuf, impl AsRef<str> + S
     }
 }
 
-/// Adds each source file in `folder` and the folders in it to `files`. A
-/// folder that cannot be read adds nothing: a page's files are not on disk.
-fn add_source_files(folder: &Path, files: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(folder) else {
-        return;
-    };
+/// Adds each source file in `folder` and the folders in it to `files`. The
+/// error names the folder that could not be read.
+fn add_source_files(folder: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+    let unread = |error: std::io::Error| format!("{}: {error}", path_text(folder));
     // A link to a folder is not followed: one back up would load the same
     // files again on each way round.
-    for entry in entries.flatten() {
+    for entry in std::fs::read_dir(folder).map_err(unread)? {
+        let entry = entry.map_err(unread)?;
         let path = entry.path();
         if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
-            add_source_files(&path, files);
+            add_source_files(&path, files)?;
         } else if path.to_string_lossy().ends_with(SOURCE_EXTENSION) {
             files.push(path);
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]

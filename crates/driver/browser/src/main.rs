@@ -57,10 +57,10 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// The project `files` make up and its program: `files` maps each file's
-/// path in the project to its text. The error is why peeper.toml gives no
-/// project, as a full message.
-fn load(files: HashMap<String, String>) -> Result<(project::Project, project::Program), String> {
+/// The project `files` make up: `files` maps each file's path in the project
+/// to its text. The error is why peeper.toml gives no project, as a full
+/// message.
+fn project_of(files: &HashMap<String, String>) -> Result<project::Project, String> {
     let Some(text) = files.get(manifest::FILE_NAME) else {
         return Err(format!("no {} in this project", manifest::FILE_NAME));
     };
@@ -77,22 +77,26 @@ fn load(files: HashMap<String, String>) -> Result<(project::Project, project::Pr
             (library.build == manifest::Build::Library).then(|| (library.name, folder.join("src")))
         })
         .collect();
-    let project = project::project_in(PathBuf::new(), manifest, libraries)?;
+    project::project_in(PathBuf::new(), manifest, libraries)
+}
+
+/// The program of `project`, whose files are `files` and the bundled
+/// libraries'.
+fn load(project: &project::Project, files: HashMap<String, String>) -> project::Program {
     let page_files = files
         .into_iter()
         .map(|(name, text)| (PathBuf::from(name), text));
     let library_files =
         (LIBRARY_FILES.iter()).map(|&(path, text)| (Path::new("/").join(path), text.to_string()));
     let open_files: HashMap<PathBuf, String> = page_files.chain(library_files).collect();
-    let program = project::load(&project, &open_files);
-    Ok((project, program))
+    project::load(project, &open_files)
 }
 
 /// The diagnostics of the program `files` make up, as `peeper check` finds
 /// them (`diagnostics_json`). `files` maps each file's path in the project to its text.
 fn check(files: HashMap<String, String>) -> Value {
-    let program = match load(files) {
-        Ok((_, program)) => program,
+    let program = match project_of(&files) {
+        Ok(project) => load(&project, files),
         Err(message) => return json!([manifest_entry(&message)]),
     };
     // As in `peeper check`, errors in loading would only be repeated.
@@ -118,14 +122,15 @@ fn check(files: HashMap<String, String>) -> Value {
 /// panic's text last), each piece a `text` and its `stream`, and its
 /// `exit_code`.
 fn run(files: HashMap<String, String>) -> Value {
-    let (project, program) = match load(files) {
-        Ok(loaded) => loaded,
+    let project = match project_of(&files) {
+        Ok(project) => project,
         Err(message) => return json!({ "diagnostics": message, "run": null }),
     };
     if project.entry.is_none() {
         let message = format!("`{}` {}", project.name, manifest::LIBRARY_HAS_NO_MAIN);
         return json!({ "diagnostics": message, "run": null });
     }
+    let program = load(&project, files);
     let target = Machine::named(TARGET).expect("the target is a machine");
     let (results, ran) = compile::interpret(&program, target);
     let ran = ran.map(|ran| {

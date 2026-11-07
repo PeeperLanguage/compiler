@@ -905,6 +905,25 @@ fn checks_a_library_by_its_folder() {
         published.diagnostics
     );
     assert_eq!(server.checked.keys().collect::<Vec<_>>(), [&folder]);
+    // Made a program, it is kept by its entry, and wrong.peep, which it no
+    // longer loads, has its diagnostic cleared.
+    std::fs::write(folder.join("peeper.toml"), "name = \"tools\"\n").unwrap();
+    let main = folder.join("src/main.peep");
+    std::fs::write(&main, "fn main() {}\n").unwrap();
+    let save = Notification::new(
+        "textDocument/didSave".to_string(),
+        json!({ "textDocument": { "uri": uri } }),
+    );
+    server.apply_notification(save).unwrap();
+    let cleared = client.receiver.try_iter().any(|message| {
+        let Message::Notification(published) = message else {
+            return false;
+        };
+        let published: PublishDiagnosticsParams = serde_json::from_value(published.params).unwrap();
+        published.uri == Url::from_file_path(&wrong).unwrap() && published.diagnostics.is_empty()
+    });
+    assert!(cleared, "wrong.peep keeps its diagnostic");
+    assert_eq!(server.checked.keys().collect::<Vec<_>>(), [&main]);
 }
 
 /// A request answers only from a check of the text the editor has now:
