@@ -1,0 +1,15 @@
+// `size_of` and `align_of` are constants: the call is gone, only the number
+// is left.
+
+struct Node {
+    value: i32,
+    next: *Node,
+}
+
+fn Bytes(count: usize) -> usize {
+    return count * size_of(Node) + align_of(Node);
+}
+
+fn main() {
+    println(Bytes(3));
+}

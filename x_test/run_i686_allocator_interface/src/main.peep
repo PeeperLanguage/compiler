@@ -15,7 +15,7 @@ fn Counting::Free(&mut self, memory: rawptr) {
 struct Node { value: i32, next: *Node }
 
 fn node(memory: &mut allocator::Allocator, value: i32) -> *Node {
-    let made = memory.Allocate(16, 8) as *Node;
+    let made = memory.Allocate(size_of(Node), align_of(Node)) as *Node;
     made.value = value;
     return made;
 }

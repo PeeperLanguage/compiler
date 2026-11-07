@@ -8,7 +8,7 @@ struct Node { value: i32, next: *Node }
 fn List(memory: &mut allocator::Allocator, count: i32) -> *Node {
     let mut list: *Node = none;
     for i in 0..count {
-        let node = memory.Allocate(16, 8) as *Node;
+        let node = memory.Allocate(size_of(Node), align_of(Node)) as *Node;
         if node == none {
             return list;
         }

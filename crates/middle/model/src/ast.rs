@@ -478,6 +478,10 @@ pub enum Expr {
     Pipe { value: Id<Expr>, call: Id<Expr> },
     /// `( expression )`
     Parentheses(Id<Expr>),
+    /// a type where a value could go, written so it can only be a type
+    /// (`*T`, `rawptr`, `[N]T` with no `{` after it, `&[]T`): only an
+    /// argument that takes a type accepts it
+    Type(Id<Type>),
     /// an expression that could not be parsed
     Invalid,
 }
@@ -516,6 +520,7 @@ impl Expr {
             | Expr::Spread(_)
             | Expr::Block(_)
             | Expr::Parentheses(_)
+            | Expr::Type(_)
             | Expr::Invalid => Precedence::Call,
         }
     }

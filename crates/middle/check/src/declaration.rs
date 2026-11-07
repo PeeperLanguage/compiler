@@ -514,11 +514,19 @@ impl Checker<'_> {
     /// `self` taken whole has its type.
     fn value_type(&mut self, resolved: TypeId, ty: Id<ast::Type>) -> TypeId {
         let tree = &self.module().ast;
+        if let ast::Type::Owner = tree.types[ty]
+            && self.is_interface(resolved)
+        {
+            return resolved;
+        }
         let span = tree.types.span(ty);
+        self.value_type_at(resolved, span)
+    }
+
+    /// `resolved`, written at `span`, as a value's type: an interface is
+    /// used only through a reference, and a named type is checked.
+    fn value_type_at(&mut self, resolved: TypeId, span: Span) -> TypeId {
         if self.is_interface(resolved) {
-            if let ast::Type::Owner = tree.types[ty] {
-                return resolved;
-            }
             return self.not_supported(span, "owned interface values");
         }
         match self.types[resolved] {
@@ -690,7 +698,7 @@ impl Checker<'_> {
     /// The type `symbol`, written at `span`, stands for, however it was
     /// reached: every kind of type declaration is `Symbol::Type`, in this
     /// module or another. An error when it is not a type.
-    fn type_named_by(&mut self, symbol: Symbol, span: Span) -> TypeId {
+    pub(crate) fn type_named_by(&mut self, symbol: Symbol, span: Span) -> TypeId {
         let what = match symbol {
             Symbol::Builtin(builtin) => return builtin,
             Symbol::Type(definition) => return self.named_type(definition, span),
@@ -700,6 +708,145 @@ impl Checker<'_> {
         let name = self.module().ast.file.slice(span);
         let message = format!("`{name}` is {what}, not a type");
         self.error(diagnostics::NOT_A_TYPE, message, span)
+    }
+
+    /// The type the name written at `span` stands for, its name recorded: a
+    /// built-in type or a top-level declaration (`resolve_type`).
+    fn named_type_at(&mut self, span: Span) -> TypeId {
+        let tree = &self.module().ast;
+        let name = tree.file.slice(span);
+        let symbol = self.resolve_global(name);
+        if let Some(symbol) = symbol {
+            self.record(span, FactKind::Name(symbol));
+        }
+        match symbol {
+            // Text alone has no fixed size: only a reference to it is a
+            // value (`text_view`).
+            Some(Symbol::Builtin(text))
+                if matches!(self.types[text], Type::Str | Type::CString) =>
+            {
+                let (what, view) = match self.types[text] {
+                    Type::Str => ("text", "&str"),
+                    _ => ("C text", "&cstr"),
+                };
+                let message = format!("`{name}` is {what} of any length, so it has no fixed size");
+                let label = format!("use `{view}` for {what}");
+                let diagnostic = Diagnostic::new(diagnostics::INVALID_TYPE, message)
+                    .label(&tree.file, span, label);
+                self.report(diagnostic);
+                TypeId::INVALID
+            }
+            Some(symbol) => self.type_named_by(symbol, span),
+            None if name == semantic_types::RANGE => {
+                let message = format!("`{name}` needs the type of its values: `{name}[T]`");
+                self.error(diagnostics::INVALID_TYPE, message, span)
+            }
+            None if let Some(what) = unsupported_type(name) => self.not_supported(span, what),
+            None => {
+                let symbols = self.visible_symbols();
+                let types = symbols.filter(|&(_, symbol)| matches!(symbol, Symbol::Type(_)));
+                let builtin = semantic_types::builtin_names();
+                let meant = scope::nearest(name, builtin, types.map(|(declared, _)| declared));
+                let message = format!("unknown type `{name}`");
+                self.report_unknown(diagnostics::UNDEFINED_NAME, span, message, meant);
+                TypeId::INVALID
+            }
+        }
+    }
+
+    /// `&text` or `&mut text`, written at `span`, when `target` names `str`
+    /// or `cstr`: a reference to text is its own type (`Type::Str`,
+    /// `Type::CString`), as it holds a count or reads up to a zero byte, and
+    /// is read only. `None` when `target` names other than text.
+    fn text_view(&mut self, mutable: bool, target: Span, span: Span) -> Option<TypeId> {
+        let tree = &self.module().ast;
+        let name = tree.file.slice(target);
+        let Some(Symbol::Builtin(text)) = self.resolve_global(name) else {
+            return None;
+        };
+        if !matches!(self.types[text], Type::Str | Type::CString) {
+            return None;
+        }
+        self.record(target, FactKind::Name(Symbol::Builtin(text)));
+        if !mutable {
+            return Some(text);
+        }
+        let message = format!("`&mut {name}` is not a type: text views are read only");
+        let diagnostic = Diagnostic::new(diagnostics::INVALID_TYPE, message).label(
+            &tree.file,
+            span,
+            format!("use `&{name}`"),
+        );
+        self.report(diagnostic);
+        Some(TypeId::INVALID)
+    }
+
+    /// `&target` or `&mut target`, written at `span`, of `target` resolved
+    /// and written at `target_span`: an interface is referred to as it is,
+    /// any other type as a value's type.
+    fn reference_to(
+        &mut self,
+        mutable: bool,
+        target: TypeId,
+        target_span: Span,
+        span: Span,
+    ) -> TypeId {
+        let target = if self.is_interface(target) {
+            target
+        } else {
+            self.value_type_at(target, target_span)
+        };
+        self.reference_type(mutable, target, span)
+    }
+
+    /// The value type the argument `argument` is read as where a parameter
+    /// takes a type: a type the parser read (`ast::Expr::Type`), or a value
+    /// spelled like a type, a name, a path, `&x`, `&mut x` or `range[x]`.
+    /// Anything else is reported as not a type.
+    pub(crate) fn resolve_type_argument(&mut self, argument: Id<ast::Expr>) -> TypeId {
+        let resolved = self.expression_type(argument);
+        let span = self.module().ast.exprs.span(argument);
+        self.value_type_at(resolved, span)
+    }
+
+    /// `resolve_type_argument` before it is made a value's type, as
+    /// `resolve_type` is.
+    fn expression_type(&mut self, expression: Id<ast::Expr>) -> TypeId {
+        source::grow_stack(|| {
+            let tree = &self.module().ast;
+            let span = tree.exprs.span(expression);
+            match tree.exprs[expression] {
+                ast::Expr::Type(ty) | ast::Expr::Path(ty) => self.resolve_type(ty),
+                ast::Expr::Name => self.named_type_at(span),
+                ast::Expr::Parentheses(inner) => self.expression_type(inner),
+                ast::Expr::Reference { mutable, value } => {
+                    let target = tree.exprs.span(value);
+                    if let ast::Expr::Name = tree.exprs[value]
+                        && let Some(view) = self.text_view(mutable, target, span)
+                    {
+                        return view;
+                    }
+                    let resolved = self.expression_type(value);
+                    self.reference_to(mutable, resolved, target, span)
+                }
+                ast::Expr::Index { value, index }
+                    if let ast::Expr::Name = tree.exprs[value]
+                        && tree.file.slice(tree.exprs.span(value)) == semantic_types::RANGE =>
+                {
+                    let element = self.resolve_type_argument(index);
+                    let range = self.range_type(element, span);
+                    let name = tree.exprs.span(value);
+                    self.record(name, FactKind::Name(Symbol::Builtin(range)));
+                    range
+                }
+                ast::Expr::Invalid => TypeId::INVALID, // the parser reported it
+                _ => {
+                    let text = tree.file.slice(span);
+                    let message = format!("`{text}` is a value, not a type");
+                    self.error(diagnostics::NOT_A_TYPE, message, span)
+                }
+            }
+        })
     }
 
     /// The type a type expression of the module's tree stands for, its names
@@ -737,51 +884,7 @@ impl Checker<'_> {
                         .struct_named(self.modules, owner.text(&tree.file));
                     return owner.map_or(TypeId::INVALID, |owner| self.named_type(owner, span));
                 }
-                ast::Type::Name => {
-                    let name = tree.file.slice(span);
-                    let symbol = self.resolve_global(name);
-                    if let Some(symbol) = symbol {
-                        self.record(span, FactKind::Name(symbol));
-                    }
-                    match symbol {
-                        // Text alone has no fixed size: only a reference to it
-                        // is a value (the `Reference` arm).
-                        Some(Symbol::Builtin(text))
-                            if matches!(self.types[text], Type::Str | Type::CString) =>
-                        {
-                            let (what, view) = match self.types[text] {
-                                Type::Str => ("text", "&str"),
-                                _ => ("C text", "&cstr"),
-                            };
-                            let message = format!(
-                                "`{name}` is {what} of any length, so it has no fixed size"
-                            );
-                            let label = format!("use `{view}` for {what}");
-                            let diagnostic = Diagnostic::new(diagnostics::INVALID_TYPE, message)
-                                .label(&tree.file, span, label);
-                            self.report(diagnostic);
-                            return TypeId::INVALID;
-                        }
-                        Some(symbol) => return self.type_named_by(symbol, span),
-                        None if name == semantic_types::RANGE => {
-                            let message =
-                                format!("`{name}` needs the type of its values: `{name}[T]`");
-                            return self.error(diagnostics::INVALID_TYPE, message, span);
-                        }
-                        None if let Some(what) = unsupported_type(name) => what,
-                        None => {
-                            let symbols = self.visible_symbols();
-                            let types =
-                                symbols.filter(|&(_, symbol)| matches!(symbol, Symbol::Type(_)));
-                            let builtin = semantic_types::builtin_names();
-                            let meant =
-                                scope::nearest(name, builtin, types.map(|(declared, _)| declared));
-                            let message = format!("unknown type `{name}`");
-                            self.report_unknown(diagnostics::UNDEFINED_NAME, span, message, meant);
-                            return TypeId::INVALID;
-                        }
-                    }
-                }
+                ast::Type::Name => return self.named_type_at(span),
                 ast::Type::Invalid => return TypeId::INVALID, // the parser reported it
                 ast::Type::Path(_) => {
                     return match self.resolve_path(ty) {
@@ -802,36 +905,13 @@ impl Checker<'_> {
                     return range;
                 }
                 ast::Type::Reference { mutable, target } => {
-                    // `&str` and `&cstr`: a reference to text is its own type
-                    // (`Type::Str`, `Type::CString`), as it holds a count or
-                    // reads up to a zero byte.
-                    let target_span = tree.types.span(target);
-                    let name = tree.file.slice(target_span);
                     if let ast::Type::Name = tree.types[target]
-                        && let Some(Symbol::Builtin(text)) = self.resolve_global(name)
-                        && matches!(self.types[text], Type::Str | Type::CString)
+                        && let Some(view) = self.text_view(mutable, tree.types.span(target), span)
                     {
-                        self.record(target_span, FactKind::Name(Symbol::Builtin(text)));
-                        if !mutable {
-                            return text;
-                        }
-                        let message =
-                            format!("`&mut {name}` is not a type: text views are read only");
-                        let diagnostic = Diagnostic::new(diagnostics::INVALID_TYPE, message).label(
-                            &tree.file,
-                            span,
-                            format!("use `&{name}`"),
-                        );
-                        self.report(diagnostic);
-                        return TypeId::INVALID;
+                        return view;
                     }
                     let resolved = self.resolve_type(target);
-                    let target = if self.is_interface(resolved) {
-                        resolved
-                    } else {
-                        self.value_type(resolved, target)
-                    };
-                    return self.reference_type(mutable, target, span);
+                    return self.reference_to(mutable, resolved, tree.types.span(target), span);
                 }
                 ast::Type::Optional(_) => "optional types",
                 ast::Type::RawPointer => return TypeId::RAWPTR,

@@ -941,3 +941,46 @@ ran `check.sh` fully green.
   `&mut Allocator` function, alignment, reuse, room, wrong `align`, and the
   out-of-order panic; every caller passes an alignment now.
 - Website: still to do when the allocator work is complete.
+
+## `size_of` and `align_of` (2026-11-06, `feature/size-of`)
+
+- Owner: a type can be an argument (step 1 of type parameters); any type
+  works. `size_of(T)` and `align_of(T)` give a `usize` the checker works
+  out from `model::layout::layout` for the target, so they are constants
+  (`const B = size_of(Node);`). They are built-in names, which no
+  declaration hides, like the built-in types.
+- Parser: a spelling that can only be a type is read as `ast::Expr::Type`
+  where a value could go: `*T`, `rawptr`, `[N]T` with no `{` after it,
+  `&[]T`, `&mut []T`. `[_]T` still needs its values. Shared spellings (a
+  name, a path, `&T`, `range[T]`, parentheses) parse as values; the
+  checker reads them as a type where the argument takes one
+  (`Checker::expression_type`). `?T`, `fn(..)` and inline `struct` types
+  are not read there: the checker does not support them yet.
+- A type used as a value: T0004 "`*Node` is a type, not a value"; for `*p`
+  of a variable `p`, help "write `p.*` to use the value `p` points to".
+- Refused: `str`, `cstr` (no fixed size), an interface (not supported), a
+  value ("`1 + 2` is a value, not a type", and "`x` is a value, not a
+  type" for a variable no type is named as), a wrong argument count. `*p =
+  5;` gets the `p.*` help too. `&[]i32{ 1, 2 }`, which used to get "`[]i32`
+  is any number of `i32`s", now gets "`&[]i32` is a slice type, so it
+  takes no values" with a fix to `&[_]i32{ 1, 2 }`.
+- Users: `Stack::Allocate` in `core:allocator` sizes its `mark` with
+  `size_of(mark)` (was a guessed 24 bytes, 12 on i686), and the struct
+  allocations in `run_allocators`, `run_allocator_interface` and
+  `run_struct_pointers` (+ i686) use `size_of(Node)`. On i686 a node is 8
+  bytes, so more fit: `run_i686_allocators` asks for more nodes (8 in the
+  arena, 20 in the stack) so running out of room is still tested (sums
+  21, 28 after reset, 55).
+- Fixtures: `run_size_of` (+ i686: `Node` 16/8 and 8/4, references,
+  slices, `&Shape`, arrays, `range[i32]`, a later struct, a constant;
+  compiled and interpreted agree), `ll_size_of` (only the number is left:
+  `mul i64 %i1, 16`), `negative_size_of` (14 errors). Parser tests
+  `type_expressions`, `slice_type_with_values`; `[_]i32;` in
+  `expression_errors` (fails without the `[_]` guard, checked).
+- Review fix: `value_type` keeps sending a struct's `self` taken whole
+  through `declared_type`, as before; `reference_to` is the one place a
+  `&T` target becomes a value's type (`resolve_type`, `expression_type`).
+- tree-sitter-peeper (`feature/size-of`): the four type spellings are
+  expressions; an array literal wins when `{` follows. Every `.peep` file
+  in the repo parses as before or better (3 more parse).
+- `scripts/check.sh` passed.

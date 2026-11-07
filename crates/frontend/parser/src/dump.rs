@@ -548,6 +548,7 @@ impl<'t> Dumper<'t> {
             }
             Expr::Pipe { value, call } => ("pipe expression", None, two(value, Item::Expr(call))),
             Expr::Parentheses(inner) => ("parentheses", None, one(inner)),
+            Expr::Type(ty) => ("type expression", None, vec![Item::Type(ty)]),
             Expr::Invalid => ("invalid expression", None, vec![]),
             Expr::Path(_) | Expr::Block(_) => unreachable!("written as their type or block"),
         };

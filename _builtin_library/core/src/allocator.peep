@@ -143,8 +143,7 @@ fn Stack::New(size: usize) -> Stack {
 }
 fn Stack::Allocate(&mut self, size: usize, align: usize) -> rawptr {
     let used = self.arena.used;
-    // A `mark` is three words of at most 8 bytes.
-    let at = self.arena.Allocate(24, 8);
+    let at = self.arena.Allocate(size_of(mark), align_of(mark));
     let piece = self.arena.Allocate(size, align);
     if at == none || piece == none {
         self.arena.used = used;

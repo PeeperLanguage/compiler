@@ -1,0 +1,8 @@
+name = "run_i686_size_of"
+build = "program"
+
+[test]
+mode = "run"
+target = "i686-linux"
+outcome = "success"
+stdout_contains = ["8 4 4 4\n1 4 4 4 4\n16 12 4\n8 8 8 8\n4 20 4 8\n24\n"]

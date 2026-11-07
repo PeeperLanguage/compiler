@@ -300,9 +300,54 @@ fn expression_errors() {
             "`[]i32` is any number of `i32`s, so it has no fixed size",
         ),
         ("a.;", "expected `identifier`, found `;`"),
+        ("[_]i32;", "expected `{`, found `;`"),
     ] {
         one_error(&format!("fn f() {{ {text} }}"), message, None);
     }
+}
+
+/// Values after a slice type are an array's, lent: `&[_]i32{ 1, 2 }`.
+#[test]
+fn slice_type_with_values() {
+    one_error(
+        "fn f() { let s = &[]i32{ 1, 2 }; }",
+        "`&[]i32` is a slice type, so it takes no values",
+        Some("fn f() { let s = &[_]i32{ 1, 2 }; }"),
+    );
+}
+
+/// A spelling that can only be a type is read as one where a value could go,
+/// for an argument that takes a type; `[N]T` is a type when no `{` follows.
+#[test]
+fn type_expressions() {
+    let text = "fn f() { g(*Node, rawptr, [4]i32, &[]i32, &mut []u8, &x); }\n";
+    let want = r#"module
+  function declaration
+    declared name f
+    block
+      expression statement
+        call expression
+          name reference g
+          type expression
+            pointer type
+              type name Node
+          type expression
+            raw pointer type rawptr
+          type expression
+            fixed array type
+              number literal 4
+              type name i32
+          type expression
+            slice type
+              type name i32
+          type expression
+            slice type mut
+              type name u8
+          reference expression
+            name reference x
+"#;
+    assert!(messages(text).is_empty());
+    assert_eq!(dump_of(text), want);
 }
 
 /// `<` begins type arguments only when `::` or `.{` follows the matching `>`.

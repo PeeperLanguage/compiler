@@ -16,9 +16,18 @@ slices (`&[]T`) merged. Open branch: `feature/interfaces`. Order of work
    memory from one), and `rawptr + usize` for them (d91d5b0f), on
    `feature/allocator-interface`. The Website follows once the work is
    complete.
-4. [ ] `String`: takes a `&mut Allocator` on each call that allocates or
-   frees (owner, 2026-11-06), since structs cannot hold references yet.
+4. [-] `String`: skipped (owner, 2026-11-06). When it comes back: it
+   takes a `&mut Allocator` on each call that allocates or frees, since
+   structs cannot hold references yet.
 5. [ ] Owned `Shape`: explicit allocation, or moving in an existing one.
+6. [~] Type parameters (owner, 2026-11-06, `type-parameters.localplan.md`):
+   a `const T: type` parameter takes a type known when compiling, and each
+   type gets its own copy of the function; a plain `T: type` is refused for
+   now; `<T>` generics stay. Any type works as a type argument.
+   - [~] Step 1: `size_of(T)` and `align_of(T)`, `usize` constants, on
+     `feature/size-of` (stacked on `feature/allocator-interface`).
+   - [ ] Step 2: `const T: type` parameters and their copies.
+   - [ ] Step 3: `core:allocator` uses them (`New`).
 
 Later: lifetimes of references held in structs; enums and `match` with
 `?T` (put off by the owner 2026-10-30); generics.

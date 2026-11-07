@@ -209,6 +209,24 @@ impl ThirBuilder<'_, '_> {
                     self.check_binary(op, left, right, span, expected)
                 }
                 ast::Expr::Invalid => Expr::INVALID, // the parser reported it
+                // Only an argument that takes a type reads one.
+                ast::Expr::Type(ty) => {
+                    let message = format!("`{}` is a type, not a value", tree.file.slice(span));
+                    let mut diagnostic = Diagnostic::new(diagnostics::INVALID_OPERATION, message)
+                        .label(&tree.file, span, "");
+                    // `*p` of a variable `p` reads as C's dereference, which
+                    // is written `p.*`.
+                    if let ast::Type::Pointer(target) = tree.types[ty]
+                        && let ast::Type::Name = tree.types[target]
+                        && let name = tree.file.slice(tree.types.span(target))
+                        && self.innermost.contains_key(name)
+                    {
+                        let help = format!("write `{name}.*` to use the value `{name}` points to");
+                        diagnostic = diagnostic.help(help, Vec::new());
+                    }
+                    self.checker.report(diagnostic);
+                    Expr::INVALID
+                }
                 ast::Expr::Path(path) => {
                     let symbol = self.checker.resolve_path(path);
                     self.check_symbol_value(symbol, span)

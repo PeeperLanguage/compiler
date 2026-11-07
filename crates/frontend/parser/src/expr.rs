@@ -12,6 +12,7 @@ use model::ast::Type;
 use model::operators::BinaryOp;
 use model::operators::Precedence;
 use model::operators::UnaryOp;
+use source::Span;
 use token::TokenKind;
 
 use crate::Parser;
@@ -82,6 +83,9 @@ static RULES: Rules = {
     rules.prefix(TokenKind::Tilde, unary);
     rules.prefix(TokenKind::Ampersand, reference);
     rules.prefix(TokenKind::At, raw_address);
+    // types that cannot be values
+    rules.prefix(TokenKind::Asterisk, type_value);
+    rules.prefix(TokenKind::Rawptr, type_value);
     rules.prefix(TokenKind::Print, print);
     rules.prefix(TokenKind::Println, print);
 
@@ -383,12 +387,43 @@ fn unary(p: &mut Parser) -> Id<Expr> {
 /// Reads `&x` or `&mut x`.
 fn reference(p: &mut Parser) -> Id<Expr> {
     let start = p.next().span.start;
+    // `&[]T` and `&mut []T` are slice types; nothing after `&` reads `[]`.
+    let after_mut = usize::from(p.at(TokenKind::Mut));
+    let open = p.ahead(after_mut);
+    if open.kind == TokenKind::LeftBracket && p.ahead(after_mut + 1).kind == TokenKind::RightBracket
+    {
+        let ty = p.reference_type(start);
+        if p.at(TokenKind::LeftBrace) {
+            let written = p.tree.file.slice(p.tree.types.span(ty));
+            let fix = p.fix(Span::at(open.span.end as usize), "_");
+            p.fail(
+                Diagnostic::new(
+                    diagnostics::INVALID_EXPRESSION,
+                    format!("`{written}` is a slice type, so it takes no values"),
+                )
+                .label(&p.tree.file, p.tree.types.span(ty), "")
+                .help(
+                    "write `[_]` to lend an array's values as a slice",
+                    vec![fix],
+                ),
+            );
+        }
+        return p.add(start, Expr::Type(ty));
+    }
     let mutable = p.at(TokenKind::Mut);
     if mutable {
         p.next();
     }
     let value = p.expr(Precedence::Prefix);
     p.add(start, Expr::Reference { mutable, value })
+}
+
+/// Reads a type that cannot be a value (`*T`, `rawptr`) where a value could
+/// go.
+fn type_value(p: &mut Parser) -> Id<Expr> {
+    let start = p.tok().span.start;
+    let ty = p.type_expr();
+    p.add(start, Expr::Type(ty))
 }
 
 /// Reads `@x`.

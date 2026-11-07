@@ -5,12 +5,14 @@ use std::num::NonZeroU32;
 
 use arena::Id;
 use arena::List;
+use bigint::Limbs;
 use model::Callee;
 use model::DefId;
 use model::ast;
 use model::ast::Ident;
 use model::constant::Constant;
 use model::constant::Value;
+use model::layout::layout;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
@@ -22,6 +24,8 @@ use rustc_hash::FxHashSet;
 use source::Span;
 
 use crate::builder::ThirBuilder;
+use crate::builtin::LayoutFact;
+use crate::builtin::layout_function;
 use crate::declaration::is_self;
 use crate::scope;
 
@@ -108,6 +112,52 @@ impl ThirBuilder<'_, '_> {
         Expr::INVALID
     }
 
+    /// `size_of(T)` or `align_of(T)`, written at `span`, which gives `fact` of
+    /// the type `T`: a `usize` constant, for the target being built.
+    fn check_layout_function(
+        &mut self,
+        fact: LayoutFact,
+        text: &str,
+        arguments: List<ast::Expr>,
+        span: Span,
+    ) -> Expr {
+        let tree = &self.checker.module().ast;
+        let mut given = tree.children.lists.items(arguments);
+        let (Some(argument), None) = (given.next(), given.next()) else {
+            let message = argument_count_message(text, 1, false, arguments.len());
+            self.checker
+                .error(diagnostics::WRONG_ARGUMENT_COUNT, message, span);
+            return Expr::INVALID;
+        };
+        // A variable is a value; a type of its name is still the type.
+        let written = tree.exprs.span(argument);
+        if let ast::Expr::Name = tree.exprs[argument]
+            && let name = tree.file.slice(written)
+            && let Some(&position) = self.innermost.get(name)
+            && self.checker.resolve_global(name).is_none()
+        {
+            let local = Symbol::Local(self.names[position].local);
+            self.checker.type_named_by(local, written);
+            return Expr::INVALID;
+        }
+        let ty = self.checker.resolve_type_argument(argument);
+        if ty == TypeId::INVALID {
+            return Expr::INVALID;
+        }
+        let (size, align) = layout(&self.checker.types, ty, self.checker.target);
+        let bits = self.checker.target.pointer_bits;
+        let value = match fact {
+            LayoutFact::Size => size,
+            LayoutFact::Align => align,
+        };
+        Expr {
+            ty: (self.checker.types)
+                .builtin("usize", bits)
+                .expect("`usize` is a built-in type"),
+            kind: ExprKind::Constant(Value::Integer(Limbs::new(bits, &[value]))),
+        }
+    }
+
     /// `callee(arguments)`, written at `span`. Only a module's function, by
     /// its name or its path, can be called, or with a dot, `x.name(arguments)`,
     /// a type's function or an interface reference's method, which gets `x`
@@ -124,6 +174,10 @@ impl ThirBuilder<'_, '_> {
         let text = tree.file.slice(callee_span);
         let mut receiver = None;
         let found = match tree.exprs[callee] {
+            // A built-in function, which no declaration hides.
+            ast::Expr::Name if let Some(fact) = layout_function(text) => {
+                return self.check_layout_function(fact, text, arguments, span);
+            }
             ast::Expr::Name => {
                 let symbol = match self.resolve(callee_span) {
                     // Their errors were reported.
@@ -188,13 +242,7 @@ impl ThirBuilder<'_, '_> {
             arguments.len() == fixed
         };
         if !arity_matches {
-            let message = format!(
-                "`{text}` takes {}{fixed} argument{}, but {} {} given",
-                if variadic { "at least " } else { "" },
-                if fixed == 1 { "" } else { "s" },
-                arguments.len(),
-                if arguments.len() == 1 { "was" } else { "were" },
-            );
+            let message = argument_count_message(text, fixed, variadic, arguments.len());
             self.checker
                 .error(diagnostics::WRONG_ARGUMENT_COUNT, message, span);
         }
@@ -443,4 +491,15 @@ fn printable(types: &Types, ty: TypeId) -> bool {
         }
     }
     true
+}
+
+/// Why a call of `callee` with `given` arguments is wrong, when it takes
+/// `fixed` of them, or at least that many when `variadic`.
+fn argument_count_message(callee: &str, fixed: usize, variadic: bool, given: usize) -> String {
+    format!(
+        "`{callee}` takes {}{fixed} argument{}, but {given} {} given",
+        if variadic { "at least " } else { "" },
+        if fixed == 1 { "" } else { "s" },
+        if given == 1 { "was" } else { "were" },
+    )
 }

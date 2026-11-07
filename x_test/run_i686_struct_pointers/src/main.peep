@@ -14,7 +14,7 @@ fn Length(list: *Node) -> i32 {
 
 fn Push(list: *Node, value: i32) -> *Node {
     let mut heap = allocator::Heap.{};
-    let node = heap.Allocate(16, 8) as *Node;
+    let node = heap.Allocate(size_of(Node), align_of(Node)) as *Node;
     node.*.value = value;
     node.*.next = list;
     return node;
