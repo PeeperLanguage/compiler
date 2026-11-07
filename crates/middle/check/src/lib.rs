@@ -20,6 +20,7 @@ use diagnostics::Code;
 use diagnostics::Diagnostic;
 use diagnostics::fix::Fix;
 use function::Built;
+use function::function_declaration;
 use model::DefId;
 use model::FunctionCopy;
 use model::ModuleId;
@@ -44,7 +45,7 @@ use source::Span;
 /// kept in the table of its category: types, functions or constants. A body's
 /// own names (`Symbol::Local`) are checked in place with the body.
 pub struct Checker<'p> {
-    pub modules: &'p [project::Module], // in the program's order
+    pub modules: &'p [model::program::Module], // in the program's order
     /// What checking each module found so far, by `ModuleId`.
     pub module_checks: Vec<ModuleChecks<'p>>,
     pub types: Types, // the program's types, built-in and declared
@@ -106,12 +107,25 @@ struct Checking {
     /// Where its asker wrote its name (its own name, when checked for its
     /// own sake).
     used_at: Span,
-    /// Whether it is a function's body built only to run at compile time
-    /// (`evaluate_call`). Its facts are not recorded (`Checker::record`): the
-    /// compile builds the body again and records them with the THIR that
-    /// explains its locals. A declaration it checks is checked once, in an
-    /// entry of its own, which records its facts.
-    to_run: bool,
+    /// Whether its facts are recorded (`Checker::record`). Not those of a
+    /// function's body built only to run at compile time
+    /// (`evaluate_call`): the compile builds the body again and records them
+    /// with the THIR that explains its locals; nor a `const` value
+    /// parameter's type read again for a call (`const_value_type`), whose
+    /// facts are the signature's. A declaration it checks is checked once,
+    /// in an entry of its own, which records its facts.
+    records_facts: bool,
+}
+
+impl Checking {
+    /// The function, or copy of one, it is; a declaration of another kind
+    /// with no arguments.
+    fn copy(&self) -> FunctionCopy {
+        FunctionCopy {
+            definition: self.definition,
+            arguments: self.arguments,
+        }
+    }
 }
 
 /// What checking one module found so far (`Checker::module_checks`). A
@@ -153,7 +167,7 @@ impl<'p> Checker<'p> {
     /// each module's first diagnostics, for `target`.
     /// Facts are recorded when `record_facts`, as for an editor.
     pub fn new(
-        modules: &'p [project::Module],
+        modules: &'p [model::program::Module],
         target: &'static Machine,
         record_facts: bool,
     ) -> Checker<'p> {
@@ -205,7 +219,7 @@ impl<'p> Checker<'p> {
     /// (`Type::Named`, a struct's once checked), so naming it checks nothing;
     /// an alias names its declared type (`Type::Alias`).
     pub fn named_type(&mut self, definition: DefId, used_at: Span) -> TypeId {
-        if let ast::Decl::Type(_) = project::declaration(self.modules, definition) {
+        if let ast::Decl::Type(_) = model::program::declaration(self.modules, definition) {
             return self.types.intern(Type::Named(definition));
         }
         let target = self.declared_type(definition, used_at);
@@ -263,32 +277,54 @@ impl<'p> Checker<'p> {
             self.report_cycle(start, used_at);
             return on_cycle;
         }
-        self.checking.push(Checking {
+        let checking = Checking {
             definition,
             arguments: ConstArguments::NONE,
             used_at,
-            to_run: false,
-        });
+            records_facts: true,
+        };
         // A long chain of declarations, each asking for the next, is a deep
         // recursion here.
         let result = source::grow_stack(|| {
-            self.check_attributes(definition);
-            check(self, definition)
+            self.checking_in(checking, |checker| {
+                checker.check_attributes(definition);
+                check(checker, definition)
+            })
         });
-        self.checking.pop();
         table(&mut self.module_checks[module])[index] = State::Done(result.clone());
         result
     }
 
+    /// What `check` finds with `checking` the innermost declaration being
+    /// checked (`Checker::checking`).
+    fn checking_in<T>(&mut self, checking: Checking, check: impl FnOnce(&mut Self) -> T) -> T {
+        self.checking.push(checking);
+        let result = check(self);
+        self.checking.pop();
+        result
+    }
+
+    /// Whether the declaration being checked is a copy of a function with
+    /// `const T: type` parameters (`copy_type`). A function's own signature,
+    /// checked with invalid types (`own_arguments`), is none; its own body is
+    /// never built.
+    pub(crate) fn in_copy(&self) -> bool {
+        let checking = self
+            .checking
+            .last()
+            .expect("a declaration is being checked");
+        self.copies.contains_key(&checking.copy())
+    }
+
     /// The type `ty` as a message names it (`Types::text`).
     pub(crate) fn type_text(&self, ty: TypeId) -> String {
-        project::type_text(self.modules, &self.types, ty)
+        model::program::type_text(self.modules, &self.types, ty)
     }
 
     /// Both types as a message names them, with each one's module when two
     /// different declarations in them read the same: `a::Point`, `[1]b::Point`.
     pub(crate) fn type_texts(&self, first: TypeId, second: TypeId) -> (String, String) {
-        let name = |definition: DefId| project::declared_text(self.modules, definition);
+        let name = |definition: DefId| model::program::declared_text(self.modules, definition);
         // `Types::text` needs a closure it can copy, so this one cannot own the list.
         let written = RefCell::new(Vec::new());
         let plain = |definition: DefId| {
@@ -324,19 +360,19 @@ impl<'p> Checker<'p> {
         let modules = self.modules;
         let cycle = &self.checking[start..];
         let first = cycle[0].definition;
-        let (first_name, first_file) = project::declared_name(modules, first);
+        let (first_name, first_file) = model::program::declared_name(modules, first);
         let only_aliases = (cycle.iter()).all(|asker| {
             matches!(
-                project::declaration(modules, asker.definition),
+                model::program::declaration(modules, asker.definition),
                 ast::Decl::Alias(_)
             )
         });
-        let what = match project::declaration(modules, first) {
+        let what = match model::program::declaration(modules, first) {
             ast::Decl::Alias(_) if only_aliases => "is an alias of itself",
             ast::Decl::Type(_) | ast::Decl::Alias(_) => "holds itself",
             ast::Decl::Const { .. } | ast::Decl::Function(_) => "depends on itself",
         };
-        let first_text = project::declared_path(modules, first);
+        let first_text = model::program::declared_path(modules, first);
         let mut diagnostic = Diagnostic::new(
             diagnostics::CIRCULAR_DEPENDENCY,
             format!("`{first_text}` {what}"),
@@ -353,14 +389,14 @@ impl<'p> Checker<'p> {
             .chain([(first, closing)]);
         for (step, (asker, (asked, span))) in cycle.iter().zip(asked).enumerate() {
             let asker = asker.definition;
-            let verb = match project::declaration(modules, asker) {
+            let verb = match model::program::declaration(modules, asker) {
                 ast::Decl::Type(_) => "holds",
                 ast::Decl::Alias(_) => "is an alias of",
                 ast::Decl::Const { .. } | ast::Decl::Function(_) => "uses",
             };
             let file = &modules[asker.module.index()].ast.file;
-            let asker_text = project::declared_path(modules, asker);
-            let asked_text = project::declared_path(modules, asked);
+            let asker_text = model::program::declared_path(modules, asker);
+            let asked_text = model::program::declared_path(modules, asked);
             let closes = if step + 1 == cycle.len() {
                 ", closing the cycle"
             } else {
@@ -393,7 +429,7 @@ impl<'p> Checker<'p> {
     }
 
     /// The module being checked.
-    pub(crate) fn module(&self) -> &'p project::Module {
+    pub(crate) fn module(&self) -> &'p model::program::Module {
         &self.modules[self.current_module().index()]
     }
 
@@ -417,19 +453,14 @@ impl<'p> Checker<'p> {
     }
 
     /// Records the fact `kind` about the text at `span` in the module being
-    /// checked, when facts are recorded (`new`), unless it is in a body
-    /// built only to run (`Checking::to_run`) or in a copy, whose facts are
-    /// of what it is given only. The function's own signature, checked with
-    /// invalid types (`own_arguments`), is no copy.
+    /// checked, when facts are recorded (`new`), unless its declaration's
+    /// are not (`Checking::records_facts`) or it is a copy (`in_copy`),
+    /// whose facts are of what it is given only.
     pub(crate) fn record(&mut self, span: Span, kind: FactKind) {
         let Some(checking) = self.checking.last().filter(|_| self.record_facts) else {
             return;
         };
-        let copy = FunctionCopy {
-            definition: checking.definition,
-            arguments: checking.arguments,
-        };
-        if !checking.to_run && !self.copies.contains_key(&copy) {
+        if checking.records_facts && !self.in_copy() {
             let module = checking.definition.module.index();
             self.module_checks[module].facts.push(Fact { span, kind });
         }
@@ -447,11 +478,8 @@ impl<'p> Checker<'p> {
             .last()
             .expect("a declaration is being checked");
         if checking.arguments != ConstArguments::NONE {
-            let ast::Decl::Function(function) =
-                project::declaration(self.modules, checking.definition)
-            else {
-                unreachable!("only a function is given `const` arguments")
-            };
+            // Only a function is given `const` arguments.
+            let function = function_declaration(self.modules, checking.definition);
             let tree = &self.module().ast;
             let const_parameters = (tree.children.lists.items(function.signature.parameters))
                 .map(|parameter| tree.children.params[parameter])
@@ -464,17 +492,17 @@ impl<'p> Checker<'p> {
                         .name
                         .is_some_and(|written| written.text(&tree.file) == name)
                 {
-                    return Some(Symbol::Builtin(ty));
+                    return Some(Symbol::TypeArgument(ty));
                 }
             }
         }
-        if let Some(builtin) = self.types.builtin(name, self.target.pointer_bits) {
+        if let Some(builtin) = self.types.builtin(name) {
             return Some(Symbol::Builtin(builtin));
         }
         let in_prelude = || {
             self.prelude()?
                 .get(None, name)
-                .filter(|_| project::is_exported(name))
+                .filter(|_| model::program::is_exported(name))
         };
         self.scope().get(None, name).or_else(in_prelude)
     }
@@ -529,7 +557,7 @@ impl<'p> Checker<'p> {
             let (place, module) = match (symbol, owner) {
                 (Symbol::Module(imported), _) => ("module", imported),
                 (_, Some(owner)) => ("type", owner.module),
-                (Symbol::Type(_) | Symbol::Builtin(_), None) => {
+                (Symbol::Type(_) | Symbol::Builtin(_) | Symbol::TypeArgument(_), None) => {
                     let message = format!("`{head}` has no functions");
                     self.error(diagnostics::INVALID_OPERATION, message, head_span);
                     return None;
@@ -570,14 +598,14 @@ impl<'p> Checker<'p> {
             let meant = scope::nearest(
                 name,
                 std::iter::empty(),
-                declared.filter(|declared| !elsewhere || project::is_exported(declared)),
+                declared.filter(|declared| !elsewhere || model::program::is_exported(declared)),
             );
             let message = format!("unknown name `{name}` in {place} `{head}`");
             self.report_unknown(diagnostics::UNDEFINED_NAME, span, message, meant);
             return None;
         };
         self.record(span, FactKind::Name(found));
-        if elsewhere && !project::is_exported(name) {
+        if elsewhere && !model::program::is_exported(name) {
             self.report(
                 Diagnostic::new(
                     diagnostics::NOT_EXPORTED,
@@ -614,7 +642,7 @@ impl<'p> Checker<'p> {
             .prelude()
             .into_iter()
             .flat_map(|scope| scope.symbols(None));
-        let exported = prelude.filter(|&(name, _)| project::is_exported(name));
+        let exported = prelude.filter(|&(name, _)| model::program::is_exported(name));
         self.scope().symbols(None).chain(exported)
     }
 

@@ -50,11 +50,12 @@ impl Function<'_, '_, '_> {
         let name = value_name(id);
         let (callee, receiver, arguments) = match callee {
             Callee::Function(function) => {
-                let symbol = copy_symbol(self.module.program, types, function);
-                let definition = function.definition;
-                if project::extern_symbol(&self.module.program.modules, definition) != Ok(None) {
+                let modules = &self.module.program.modules;
+                // A C function takes no `const` arguments, so it has one copy.
+                if let Some(symbol) = model::program::c_symbol(modules, function.definition) {
                     return self.write_c_call(out, id, &symbol, arguments, location);
                 }
+                let symbol = copy_symbol(self.module.program, types, function);
                 let callee = global(&symbol);
                 let parameters = arguments
                     .iter()

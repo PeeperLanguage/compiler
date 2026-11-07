@@ -75,7 +75,7 @@ impl FunctionQueue {
 /// `compile` runs on this thread and puts each function it checks in the
 /// queue; up to one worker per core writes the modules meanwhile.
 pub fn write_modules<'p, T>(
-    program: &'p project::Program,
+    program: &'p model::program::Program,
     target: &'static Machine,
     mode: BuildMode,
     compile: impl FnOnce(&mut FunctionQueue) -> T,

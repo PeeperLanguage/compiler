@@ -1,4 +1,4 @@
-//! Reads peeper.toml, the file that makes a folder a project.
+//! Reads and writes peeper.toml, the file that makes a folder a project.
 
 use std::io::ErrorKind;
 use std::path::Path;
@@ -6,9 +6,31 @@ use std::path::Path;
 pub const FILE_NAME: &str = "peeper.toml";
 /// What `is_valid_name` asks of a package name, for messages.
 pub const NAME_RULE: &str = "name must start with a letter and hold only letters, digits and `_`";
-/// Why a library cannot be built or run, after its name in backquotes.
-pub const LIBRARY_HAS_NO_MAIN: &str =
-    "is a library (`build = \"lib\"`), so it has no `main` to build or run";
+/// The line that makes a project a library.
+const LIBRARY_LINE: &str = "build = \"lib\"";
+
+/// Why the library `name` cannot be built or run.
+pub fn library_has_no_main(name: &str) -> String {
+    format!("`{name}` is a library (`{LIBRARY_LINE}`), so it has no `main` to build or run")
+}
+
+/// Why the folder `dir`, given as a project or a bundled library, is none.
+pub fn not_found(dir: &Path) -> String {
+    format!("{}: no {FILE_NAME} in this folder", dir.display())
+}
+
+/// Why the library at `file`, a bundled library's peeper.toml, is none.
+pub fn bundled_not_library(file: &Path) -> String {
+    format!(
+        "{}: a bundled library needs `{LIBRARY_LINE}`",
+        file.display()
+    )
+}
+
+/// The peeper.toml of a new program named `name`.
+pub fn new_program(name: &str) -> String {
+    format!("name = \"{name}\"\n")
+}
 
 /// What a project file says.
 #[derive(Debug, PartialEq)]
@@ -43,7 +65,7 @@ pub fn read(dir: &Path) -> Result<Manifest, String> {
     let text = match std::fs::read_to_string(&file) {
         Ok(text) => text,
         Err(error) if error.kind() == ErrorKind::NotFound => {
-            return Err(format!("{}: no {FILE_NAME} in this folder", dir.display()));
+            return Err(not_found(dir));
         }
         Err(error) => return Err(format!("{}: {error}", file.display())),
     };

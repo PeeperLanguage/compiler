@@ -10,7 +10,7 @@ use super::struct_layout;
 #[test]
 fn struct_layout_matches_llvm() {
     let mut types = Types::new(64);
-    let mut integer = |name: &str| types.builtin(name, 64).unwrap();
+    let mut integer = |name: &str| types.builtin(name).unwrap();
     let (i8, i24, i40, i128, i200) = (
         integer("i8"),
         integer("i24"),

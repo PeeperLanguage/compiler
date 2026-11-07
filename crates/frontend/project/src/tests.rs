@@ -1,5 +1,8 @@
 use std::fmt::Write;
 
+use model::program::Import;
+use model::program::Module;
+
 use super::*;
 use crate::packages::resolve;
 
@@ -126,7 +129,7 @@ fn canonical_windows_paths() {
 /// `load` gives its files' paths.
 #[test]
 fn a_single_file_has_an_absolute_root() {
-    let project = find(Path::new("src/lib.rs"), Path::new("")).unwrap();
+    let project = find(Path::new("src/lib.rs"), Path::new("no-libraries")).unwrap();
     let here = std::env::current_dir().unwrap();
     assert_eq!(project.root, here.join("src"));
     assert_eq!(project.entry, Some(here.join("src/lib.rs")));
@@ -296,6 +299,30 @@ fn a_bad_bundled_library_is_an_error() {
     assert!(plain.ends_with("no peeper.toml in this folder"), "{plain}");
     let twice = error("twice");
     assert!(twice.ends_with("is a library of this name too"), "{twice}");
+}
+
+/// A libraries folder may hold a link to a library's folder, as an
+/// installation that links its libraries in does.
+#[cfg(unix)]
+#[test]
+fn a_linked_bundled_library_is_found() {
+    let library = "name = \"basics\"\nbuild = \"lib\"\n";
+    let root = write(
+        "linked_bundled",
+        &[
+            ("real/basics/peeper.toml", library),
+            ("app/peeper.toml", "name = \"app\"\n"),
+        ],
+    )
+    .root;
+    std::fs::create_dir_all(root.join("libs")).unwrap();
+    std::os::unix::fs::symlink(root.join("real/basics"), root.join("libs/basics")).unwrap();
+    let project = find(&root.join("app"), &root.join("libs")).unwrap();
+    assert!(
+        project.packages.contains_key("basics"),
+        "{:?}",
+        project.packages
+    );
 }
 
 #[test]

@@ -1,6 +1,8 @@
 //! Writing operators and the checks they need: binary operators, the
 //! traps of division and shifts, and the panic a failed check jumps to.
 
+use std::fmt;
+use std::fmt::Display;
 use std::fmt::Write;
 
 use arena::Id;
@@ -8,21 +10,133 @@ use model::constant::Value;
 use model::mir;
 use model::mir::Operand;
 use model::operators::BinaryOp;
+use model::operators::UnaryOp;
+use model::semantic_types::Float;
+use model::semantic_types::Integer;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use runtime_abi::abi::PANIC_EXIT_CODE;
 use runtime_abi::abi::STDERR;
 use runtime_abi::messages::DIVISION_BY_ZERO;
+use runtime_abi::messages::panic_text;
 use runtime_abi::messages::shift_count_message;
-use runtime_abi::symbols::EXIT;
-use runtime_abi::symbols::WRITE;
+use runtime_abi::symbols::PANIC_EXIT;
+use runtime_abi::symbols::PANIC_WRITE;
 use source::Span;
 
 use crate::function::Function;
-use crate::function::global;
 use crate::function::traps;
 use crate::function::value_name;
 use crate::text::type_text;
+
+/// The LLVM instruction of `op` on two operands of the type `operands`: a
+/// float, an integer, or a `bool`, an `i1`. The interpreter must give what
+/// each gives (eval's `llvm_parity` test runs both).
+pub fn binary_instruction(op: BinaryOp, operands: &Type) -> &'static str {
+    let signed = matches!(operands, Type::Integer(integer) if integer.signed);
+    if let Type::Float(_) = operands {
+        return match op {
+            BinaryOp::Add => "fadd",
+            BinaryOp::Subtract => "fsub",
+            BinaryOp::Multiply => "fmul",
+            BinaryOp::Divide => "fdiv",
+            BinaryOp::Remainder => "frem",
+            BinaryOp::EqualTo => "fcmp oeq",
+            BinaryOp::NotEqualTo => "fcmp une",
+            BinaryOp::LessThan => "fcmp olt",
+            BinaryOp::LessOrEqual => "fcmp ole",
+            BinaryOp::GreaterThan => "fcmp ogt",
+            BinaryOp::GreaterOrEqual => "fcmp oge",
+            _ => unreachable!("check accepts no {op:?} of floats"),
+        };
+    }
+    match op {
+        BinaryOp::Divide if signed => "sdiv",
+        BinaryOp::Divide => "udiv",
+        BinaryOp::Remainder if signed => "srem",
+        BinaryOp::Remainder => "urem",
+        BinaryOp::ShiftLeft => "shl",
+        BinaryOp::ShiftRight if signed => "ashr",
+        BinaryOp::ShiftRight => "lshr",
+        BinaryOp::Add => "add",
+        BinaryOp::Subtract => "sub",
+        BinaryOp::Multiply => "mul",
+        BinaryOp::BitAnd | BinaryOp::LogicalAnd => "and",
+        BinaryOp::BitOr | BinaryOp::LogicalOr => "or",
+        BinaryOp::BitXor => "xor",
+        BinaryOp::EqualTo => "icmp eq",
+        BinaryOp::NotEqualTo => "icmp ne",
+        BinaryOp::LessThan if signed => "icmp slt",
+        BinaryOp::LessThan => "icmp ult",
+        BinaryOp::LessOrEqual if signed => "icmp sle",
+        BinaryOp::LessOrEqual => "icmp ule",
+        BinaryOp::GreaterThan if signed => "icmp sgt",
+        BinaryOp::GreaterThan => "icmp ugt",
+        BinaryOp::GreaterOrEqual if signed => "icmp sge",
+        BinaryOp::GreaterOrEqual => "icmp uge",
+    }
+}
+
+/// Writes the LLVM instruction of `op` on `value`, of the type `operand`
+/// written `text`, after its `{name} = `. The interpreter must give what it
+/// gives (eval's `llvm_parity` test runs both).
+pub fn write_unary(
+    out: &mut impl Write,
+    op: UnaryOp,
+    operand: &Type,
+    text: impl Display,
+    value: impl Display,
+) -> fmt::Result {
+    match (op, operand) {
+        (UnaryOp::Negate, Type::Float(_)) => write!(out, "fneg {text} {value}"),
+        (UnaryOp::Negate, _) => write!(out, "sub {text} 0, {value}"),
+        (UnaryOp::LogicalNot, _) => write!(out, "xor {text} {value}, true"),
+        (UnaryOp::BitNot, _) => write!(out, "xor {text} {value}, -1"),
+    }
+}
+
+/// The LLVM cast from a value of the type `from` to the type `to`: numbers,
+/// `bool` (an `i1`, a 1-bit unsigned integer) and raw pointers. A float
+/// becomes an integer through `saturating_conversion` instead. The
+/// interpreter must give what it gives (eval's `llvm_parity` test runs both).
+pub fn cast_instruction(from: &Type, to: &Type) -> &'static str {
+    let integer = |ty: &Type| match *ty {
+        Type::Integer(integer) => Some(integer),
+        Type::Bool => Some(Integer {
+            signed: false,
+            bits: 1,
+        }),
+        _ => None,
+    };
+    match (integer(from), integer(to), from) {
+        (Some(from), Some(to), _) if to.bits > from.bits && from.signed => "sext",
+        (Some(from), Some(to), _) if to.bits > from.bits => "zext",
+        (Some(from), Some(to), _) if to.bits < from.bits => "trunc",
+        // The same bits, read with the other sign.
+        (Some(_), Some(_), _) => "bitcast",
+        (Some(from), None, _) if from.signed => "sitofp",
+        (Some(_), None, _) => "uitofp",
+        // A pointer cast keeps the address.
+        (None, None, Type::RawPointer { .. }) => "bitcast",
+        (None, None, Type::Float(Float::F32)) => "fpext",
+        (None, None, _) => "fptrunc",
+        (None, Some(_), _) => {
+            unreachable!("a float becomes an integer by `saturating_conversion`")
+        }
+    }
+}
+
+/// The LLVM intrinsic that turns a `from` float into an integer, `signed`
+/// or not, of the LLVM type `to_text`, saturating as check folds it: cut
+/// toward zero, the nearest end of the integer's range outside it, 0 for NaN.
+pub fn saturating_conversion(from: Float, signed: bool, to_text: impl Display) -> String {
+    let sign = if signed { 's' } else { 'u' };
+    let suffix = match from {
+        Float::F32 => "f32",
+        Float::F64 => "f64",
+    };
+    format!("llvm.fpto{sign}i.sat.{to_text}.{suffix}")
+}
 
 impl Function<'_, '_, '_> {
     /// Writes the line computing the binary operation `id`, after the checks
@@ -41,21 +155,9 @@ impl Function<'_, '_, '_> {
         let checks = traps(self.body, self.types, id);
         // The value the right operand was converted to, if it was.
         let mut converted: Option<String> = None;
-        let instruction = match &self.types[left_type] {
-            Type::Float(_) => match op {
-                BinaryOp::Add => "fadd",
-                BinaryOp::Subtract => "fsub",
-                BinaryOp::Multiply => "fmul",
-                BinaryOp::Divide => "fdiv",
-                BinaryOp::Remainder => "frem",
-                BinaryOp::EqualTo => "fcmp oeq",
-                BinaryOp::NotEqualTo => "fcmp une",
-                BinaryOp::LessThan => "fcmp olt",
-                BinaryOp::LessOrEqual => "fcmp ole",
-                BinaryOp::GreaterThan => "fcmp ogt",
-                BinaryOp::GreaterOrEqual => "fcmp oge",
-                _ => unreachable!("check accepts no {op:?} of floats"),
-            },
+        let operands = &self.types[left_type];
+        let instruction = match operands {
+            Type::Float(_) => binary_instruction(op, operands),
             // Not `inbounds`: a raw pointer may point anywhere.
             Type::RawPointer { .. } if op == BinaryOp::Add => {
                 let bits = self.module.target.pointer_bits;
@@ -99,38 +201,13 @@ impl Function<'_, '_, '_> {
                             }
                             converted = Some(divisor);
                         }
-                        match (op, signed) {
-                            (BinaryOp::Divide, true) => "sdiv",
-                            (BinaryOp::Divide, false) => "udiv",
-                            (_, true) => "srem",
-                            (_, false) => "urem",
-                        }
                     }
                     BinaryOp::ShiftLeft | BinaryOp::ShiftRight => {
                         converted = self.shift_count(out, id, right, left_type, checks);
-                        match (op, signed) {
-                            (BinaryOp::ShiftLeft, _) => "shl",
-                            (_, true) => "ashr",
-                            (_, false) => "lshr",
-                        }
                     }
-                    BinaryOp::Add => "add",
-                    BinaryOp::Subtract => "sub",
-                    BinaryOp::Multiply => "mul",
-                    BinaryOp::BitAnd | BinaryOp::LogicalAnd => "and",
-                    BinaryOp::BitOr | BinaryOp::LogicalOr => "or",
-                    BinaryOp::BitXor => "xor",
-                    BinaryOp::EqualTo => "icmp eq",
-                    BinaryOp::NotEqualTo => "icmp ne",
-                    BinaryOp::LessThan if signed => "icmp slt",
-                    BinaryOp::LessThan => "icmp ult",
-                    BinaryOp::LessOrEqual if signed => "icmp sle",
-                    BinaryOp::LessOrEqual => "icmp ule",
-                    BinaryOp::GreaterThan if signed => "icmp sgt",
-                    BinaryOp::GreaterThan => "icmp ugt",
-                    BinaryOp::GreaterOrEqual if signed => "icmp sge",
-                    BinaryOp::GreaterOrEqual => "icmp uge",
+                    _ => {}
                 }
+                binary_instruction(op, integer)
             }
         };
         _ = write!(
@@ -250,21 +327,15 @@ impl Function<'_, '_, '_> {
     ) {
         let location = self.location(span, debug_scope);
         let file = self.file;
-        let text = project::panic_text(&self.module.program.root, file, message, span);
+        let text = panic_text(&self.module.program.root, file, message, span);
         let string = self.module.add_string(&text);
-        self.module.declare(WRITE, || {
-            format!("declare i32 {}(i32, ptr, i32)\n\n", global(WRITE))
-        });
-        self.module
-            .declare(EXIT, || format!("declare void {}(i32)\n\n", global(EXIT)));
-        _ = write!(
-            out,
-            "  call i32 {}(i32 {STDERR}, ptr {string}, i32 {}){location}\n  \
-             call void {}(i32 {}){location}\n  unreachable",
-            global(WRITE),
-            text.len(),
-            global(EXIT),
-            PANIC_EXIT_CODE,
+        let (stderr, length, code) = (
+            STDERR.to_string(),
+            text.len().to_string(),
+            PANIC_EXIT_CODE.to_string(),
         );
+        self.write_runtime_call(out, &PANIC_WRITE, &[&stderr, &string, &length], &location);
+        self.write_runtime_call(out, &PANIC_EXIT, &[&code], &location);
+        out.push_str("  unreachable");
     }
 }

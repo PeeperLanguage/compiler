@@ -132,7 +132,7 @@ impl ThirBuilder<'_, '_> {
             let index = index as u32;
             checked.push(self.body.add(FieldValue { index, value }, name.span).into());
         }
-        let missing: Vec<String> = project::field_names(self.checker.modules, definition)
+        let missing: Vec<String> = model::program::field_names(self.checker.modules, definition)
             .zip(&set)
             .filter(|(_, set)| set.is_none())
             .map(|(name, _)| format!("`{name}`"))

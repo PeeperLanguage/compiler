@@ -12,8 +12,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use source::SourceFile;
-use token::Token;
-use token::TokenKind;
+use source::Span;
 use unicode_general_category::GeneralCategory;
 use unicode_general_category::get_general_category;
 
@@ -48,19 +47,29 @@ const TAB_WIDTH: usize = 4;
 /// errors on one line of 500 KB would take 25 GB.
 const MOST_WRITTEN: usize = 200;
 
-/// Returns the tokens of a file, to highlight its lines.
-pub type TokensOf<'a> = &'a dyn Fn(&Arc<SourceFile>) -> Vec<Token>;
+/// How a piece of source is highlighted: `None` is plain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Highlight {
+    Text,
+    Number,
+    Comment,
+    Keyword,
+}
+
+/// Returns each piece of a file, in order, with its highlight, to color its
+/// lines. Text between the pieces that is not white space is a comment.
+pub type HighlightsOf<'a> = &'a dyn Fn(&Arc<SourceFile>) -> Vec<(Span, Option<Highlight>)>;
 
 /// Writes `diagnostics`, ordered by the file and position of their primary
 /// place (those without a place first), at most `MOST_WRITTEN` of them, then a
 /// summary line that counts them all. With `colored`, output has terminal
-/// colors and source lines are highlighted from the tokens it returns for a
-/// file (the lexer's, read once per file). A span outside its file's text is
+/// colors and source lines are highlighted from the pieces it returns for a
+/// file (read once per file). A span outside its file's text is
 /// clamped, so printing never fails on a bad span.
 pub fn print(
     out: &mut impl Write,
     diagnostics: &[Diagnostic],
-    colored: Option<TokensOf>,
+    colored: Option<HighlightsOf>,
 ) -> io::Result<()> {
     let mut ordered: Vec<&Diagnostic> = diagnostics.iter().collect();
     ordered.sort_by(|a, b| match (a.labels.first(), b.labels.first()) {
@@ -71,7 +80,7 @@ pub fn print(
         out: String::new(),
         colored,
         width: 0,
-        tokens: HashMap::new(),
+        pieces: HashMap::new(),
     };
     let (mut errors, mut warnings) = (0, 0);
     for (index, d) in ordered.iter().enumerate() {
@@ -108,9 +117,9 @@ pub fn print(
 
 struct Printer<'a> {
     out: String,
-    colored: Option<TokensOf<'a>>,
+    colored: Option<HighlightsOf<'a>>,
     width: usize, // digits of the largest line number shown
-    tokens: HashMap<*const SourceFile, Vec<Token>>, // each shown file's tokens, read once, in color only
+    pieces: HashMap<*const SourceFile, Vec<(Span, Option<Highlight>)>>, // each shown file's, read once, in color only
 }
 
 /// The part of one source line a label covers, in 1-based character columns;
@@ -324,13 +333,13 @@ impl Printer<'_> {
             self.write_cells(file.slice(line), 0, None);
             return;
         };
-        let tokens = self
-            .tokens
+        let highlighted = self
+            .pieces
             .entry(Arc::as_ptr(file))
             .or_insert_with(|| scan(file));
-        // The line in pieces with their highlight color. Text between tokens
-        // that is not white space is a comment (or a character the lexer
-        // rejected, which a mark shows anyway).
+        // The line in pieces with their color. Text between highlighted
+        // pieces that is not white space is a comment (or a character the
+        // lexer rejected, which a mark shows anyway).
         let line = line.range();
         let mut pieces = Vec::new();
         let push_gap = |pieces: &mut Vec<_>, gap: Range<usize>| {
@@ -348,22 +357,21 @@ impl Printer<'_> {
             }
         };
         let mut position = line.start;
-        let first = tokens.partition_point(|t| (t.span.end as usize) <= line.start);
-        for t in &tokens[first..] {
-            let span = t.span.range();
-            if span.start >= line.end || t.kind == TokenKind::Eof {
+        let first = highlighted.partition_point(|(span, _)| (span.end as usize) <= line.start);
+        for &(span, highlight) in &highlighted[first..] {
+            let span = span.range();
+            if span.start >= line.end {
                 break;
             }
             let piece = span.start.max(line.start)..span.end.min(line.end);
             push_gap(&mut pieces, position..piece.start);
             position = piece.end;
-            let color = match t.kind {
-                TokenKind::String | TokenKind::CString => Some(LIGHT_GREEN),
-                TokenKind::Number | TokenKind::Char | TokenKind::ByteChar => Some(LIGHT_ORANGE),
-                TokenKind::DocComment => Some(GREY),
-                kind if token::KEYWORDS.contains(&kind) => Some(PURPLE),
-                _ => None,
-            };
+            let color = highlight.map(|highlight| match highlight {
+                Highlight::Text => LIGHT_GREEN,
+                Highlight::Number => LIGHT_ORANGE,
+                Highlight::Comment => GREY,
+                Highlight::Keyword => PURPLE,
+            });
             pieces.push((piece, color));
         }
         push_gap(&mut pieces, position..line.end);

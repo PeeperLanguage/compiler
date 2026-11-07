@@ -51,11 +51,7 @@ fn fixed_ids_are_the_interned_ids() {
     assert_eq!(types[TypeId::F64], Type::Float(Float::F64));
     assert_eq!(types[TypeId::CSTR], Type::CString);
     assert_eq!(types[TypeId::RAWPTR], Type::RawPointer { target: None });
-    assert_eq!(
-        types.builtin("rawptr", 64),
-        None,
-        "a keyword, not a type name"
-    );
+    assert_eq!(types.builtin("rawptr"), None, "a keyword, not a type name");
 }
 
 #[test]
@@ -231,7 +227,7 @@ fn interface_references() {
 #[test]
 fn builtin_names() {
     let mut types = Types::new(64);
-    let mut lookup = |name| types.builtin(name, 64);
+    let mut lookup = |name| types.builtin(name);
     assert_eq!(lookup("bool"), Some(TypeId::BOOL));
     assert_eq!(lookup("i32"), Some(TypeId::I32));
     assert_eq!(lookup("u128"), Some(TypeId::U128));
@@ -252,9 +248,8 @@ fn builtin_names() {
         assert_eq!(lookup(name), None, "{name}");
     }
     assert_eq!(types[u24], integer(false, 24));
-    let mut types = Types::new(64);
     assert_eq!(
-        types.builtin("usize", 32),
+        Types::new(32).builtin("usize"),
         Some(TypeId::U32),
         "a pointer is 32 bits there"
     );

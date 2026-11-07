@@ -15,6 +15,7 @@ use crate::constant::integer_text;
 use crate::operators::BinaryOp;
 use crate::operators::UnaryOp;
 use crate::semantic_types::ImplementationId;
+use crate::semantic_types::Type;
 use crate::semantic_types::TypeId;
 use crate::semantic_types::Types;
 use arena::Arena;
@@ -137,15 +138,22 @@ impl Place {
         self.projections.is_empty().then_some(self.variable)
     }
 
-    /// The place before this one's last step, and that step; `None` for a
-    /// whole variable.
-    pub fn split_last(&self) -> Option<(Place, Projection)> {
+    /// The slice or interface reference that a borrow of this place, giving
+    /// `borrowed`, lends again whole, as lowering writes it: a slice's
+    /// elements (`SliceElements`) or what an interface reference points at
+    /// (`Dereference`). Its own two words are the borrow's value. A slice of
+    /// an array behind a reference also ends at `Dereference`, so the type
+    /// picks the step.
+    pub fn lent_again(&self, borrowed: &Type) -> Option<Place> {
         let (&last, before) = self.projections.split_last()?;
-        let place = Place {
-            variable: self.variable,
-            projections: before.into(),
-        };
-        Some((place, last))
+        match (borrowed, last) {
+            (Type::Slice { .. }, Projection::SliceElements)
+            | (Type::InterfaceReference { .. }, Projection::Dereference) => Some(Place {
+                variable: self.variable,
+                projections: before.into(),
+            }),
+            _ => None,
+        }
     }
 
     /// Whether the place goes through a reference, so it is not in its

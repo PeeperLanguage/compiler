@@ -11,14 +11,18 @@ use model::semantic_types::Float;
 use model::semantic_types::Integer;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
+use model::semantic_types::slice_field;
 
-use crate::function::FLUSH;
+use runtime_abi::symbols::Carrier;
+use runtime_abi::symbols::FLUSH;
+use runtime_abi::symbols::PRINT_BYTES;
+use runtime_abi::symbols::PRINT_FLOAT;
+use runtime_abi::symbols::PRINT_INT;
+use runtime_abi::symbols::PRINT_POINTER;
+use runtime_abi::symbols::PRINT_TEXT;
+use runtime_abi::symbols::Signature;
+
 use crate::function::Function;
-use crate::function::PRINT_BYTES;
-use crate::function::PRINT_FLOAT;
-use crate::function::PRINT_INT;
-use crate::function::PRINT_POINTER;
-use crate::function::PRINT_TEXT;
 use crate::function::debug_info::DebugLocation;
 use crate::function::global;
 use crate::function::value_name;
@@ -57,7 +61,7 @@ impl Function<'_, '_, '_> {
             text.push(b'\n');
         }
         self.write_print_text(out, &mut text, location);
-        self.write_runtime_call(out, FLUSH, "", location);
+        self.write_runtime_call(out, &FLUSH, &[], location);
     }
 
     /// Writes what prints `value`, of the type `ty`, after `text`; `path`
@@ -82,9 +86,9 @@ impl Function<'_, '_, '_> {
                 let limbs = format!("{path}.m");
                 _ = writeln!(self.memory, "  {limbs} = alloca i{width}");
                 _ = writeln!(out, "  store i{width} {wide}, ptr {limbs}{location}");
-                let arguments = format!("i32 {signed}, i32 {count}, ptr {limbs}");
+                let arguments = [&*signed.to_string(), &count.to_string(), &limbs];
                 self.write_print_text(out, text, location);
-                self.write_runtime_call(out, PRINT_INT, &arguments, location);
+                self.write_runtime_call(out, &PRINT_INT, &arguments, location);
             }
             Type::Float(float) => {
                 let (value, bits) = match float {
@@ -95,8 +99,8 @@ impl Function<'_, '_, '_> {
                     Float::F64 => (value.to_string(), 64),
                 };
                 self.write_print_text(out, text, location);
-                let arguments = format!("double {value}, i32 {bits}");
-                self.write_runtime_call(out, PRINT_FLOAT, &arguments, location);
+                let arguments = [&*value, &bits.to_string()];
+                self.write_runtime_call(out, &PRINT_FLOAT, &arguments, location);
             }
             Type::Bool => {
                 let yes = self.module.add_string(b"true");
@@ -106,23 +110,30 @@ impl Function<'_, '_, '_> {
                     "  {path}.b = select i1 {value}, ptr {yes}, ptr {no}{location}"
                 );
                 self.write_print_text(out, text, location);
-                let arguments = format!("ptr {path}.b");
-                self.write_runtime_call(out, PRINT_TEXT, &arguments, location);
+                let chosen = format!("{path}.b");
+                self.write_runtime_call(out, &PRINT_TEXT, &[&chosen], location);
             }
             Type::CString => {
                 self.write_print_text(out, text, location);
-                self.write_runtime_call(out, PRINT_TEXT, &format!("ptr {value}"), location);
+                self.write_runtime_call(out, &PRINT_TEXT, &[value], location);
             }
             Type::Str => {
-                _ = writeln!(out, "  {path}.p = extractvalue %slice {value}, 0{location}");
-                _ = writeln!(out, "  {path}.n = extractvalue %slice {value}, 1{location}");
+                let (address, length) = (slice_field::ADDRESS, slice_field::LENGTH);
+                _ = writeln!(
+                    out,
+                    "  {path}.p = extractvalue %slice {value}, {address}{location}"
+                );
+                _ = writeln!(
+                    out,
+                    "  {path}.n = extractvalue %slice {value}, {length}{location}"
+                );
                 self.write_print_text(out, text, location);
                 let (bytes, length) = (format!("{path}.p"), format!("{path}.n"));
                 self.write_print_bytes(out, &bytes, &length, location);
             }
             Type::RawPointer { .. } => {
                 self.write_print_text(out, text, location);
-                self.write_runtime_call(out, PRINT_POINTER, &format!("ptr {value}"), location);
+                self.write_runtime_call(out, &PRINT_POINTER, &[value], location);
             }
             // A value kept in memory is its address, which the reference is.
             Type::Reference { target, .. } if in_memory(types, target) => {
@@ -211,7 +222,7 @@ impl Function<'_, '_, '_> {
     /// The lines of a printer that print a struct's name and each field.
     fn struct_printer_body(&mut self, ty: TypeId, definition: DefId) -> String {
         let (types, program) = (self.types, self.module.program);
-        let mut text = project::declared_text(&program.modules, definition)
+        let mut text = model::program::declared_text(&program.modules, definition)
             .as_bytes()
             .to_vec();
         let Type::Struct {
@@ -220,7 +231,7 @@ impl Function<'_, '_, '_> {
         else {
             unreachable!("only a struct type has a struct printer")
         };
-        let names = project::field_names(&program.modules, definition);
+        let names = model::program::field_names(&program.modules, definition);
         let placed = fields.iter().zip(&internals.offsets);
         let mut body = String::new();
         for (index, (field_name, (&field, &offset))) in names.zip(placed).enumerate() {
@@ -255,7 +266,7 @@ impl Function<'_, '_, '_> {
              %first = icmp eq i64 %index, 0\n  \
              %separator = select i1 %first, ptr {open}, ptr {between}"
         );
-        self.write_runtime_call(&mut body, PRINT_TEXT, "ptr %separator", &none);
+        self.write_runtime_call(&mut body, &PRINT_TEXT, &["%separator"], &none);
         _ = writeln!(
             body,
             "  %element = getelementptr inbounds {}, ptr %value, i64 %index",
@@ -270,7 +281,7 @@ impl Function<'_, '_, '_> {
              %more = icmp ult i64 %next, {length}\n  \
              br i1 %more, label %loop, label %done\ndone:"
         );
-        self.write_runtime_call(&mut body, PRINT_TEXT, &format!("ptr {close}"), &none);
+        self.write_runtime_call(&mut body, &PRINT_TEXT, &[&close], &none);
         body
     }
 
@@ -298,28 +309,44 @@ impl Function<'_, '_, '_> {
         length: &str,
         location: &DebugLocation,
     ) {
-        let usize = format!("i{}", self.module.target.pointer_bits);
-        let arguments = format!("ptr {bytes}, {usize} {length}");
-        let callee = (PRINT_BYTES, &*format!("ptr, {usize}"));
-        self.write_runtime_call(out, callee, &arguments, location);
+        self.write_runtime_call(out, &PRINT_BYTES, &[bytes, length], location);
     }
 
-    /// Writes the call of the runtime function `(symbol, parameters)` with
-    /// `arguments`, after noting the declaration the module needs for it.
+    /// Writes the call of the runtime function `signature` with the
+    /// operands `arguments`, one per parameter, after noting the declaration
+    /// the module needs for it.
     pub(super) fn write_runtime_call(
         &mut self,
         out: &mut String,
-        (symbol, parameters): (&str, &str),
-        arguments: &str,
+        signature: &Signature,
+        arguments: &[&str],
         location: &DebugLocation,
     ) {
-        let callee = global(symbol);
-        self.module.declare(symbol, || {
-            format!("declare void {callee}({parameters})\n\n")
+        assert_eq!(arguments.len(), signature.parameters.len(), "{signature:?}");
+        let pointer_bits = self.module.target.pointer_bits;
+        let carrier_type = |carrier| match carrier {
+            Carrier::I32 => "i32".to_string(),
+            Carrier::Usize => format!("i{pointer_bits}"),
+            Carrier::F64 => "double".to_string(),
+            Carrier::Pointer => "ptr".to_string(),
+        };
+        let callee = global(signature.symbol);
+        let result = signature.result.map_or("void".to_string(), carrier_type);
+        let parameters: Vec<String> = signature
+            .parameters
+            .iter()
+            .map(|&c| carrier_type(c))
+            .collect();
+        self.module.declare(signature.symbol, || {
+            format!("declare {result} {callee}({})\n\n", parameters.join(", "))
         });
+        let arguments: Vec<String> = (parameters.iter().zip(arguments))
+            .map(|(ty, value)| format!("{ty} {value}"))
+            .collect();
         _ = writeln!(
             out,
-            "  call void ({parameters}) {callee}({arguments}){location}"
+            "  call {result} {callee}({}){location}",
+            arguments.join(", ")
         );
     }
 }

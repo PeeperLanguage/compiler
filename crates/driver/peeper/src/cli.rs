@@ -20,13 +20,25 @@ pub fn run() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let installation = driver::installation_dir();
+    let installation = match driver::installation_dir() {
+        Ok(installation) => installation,
+        Err(error) => {
+            eprintln!("peeper: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
     let stderr = std::io::stderr();
     let colored = stderr.is_terminal();
     let (path, goal, target) = match args {
         Args::Program { path, goal, target } => (path, goal, target),
         Args::Init { name } => {
-            let folder = std::env::current_dir().unwrap_or_default();
+            let folder = match std::env::current_dir() {
+                Ok(folder) => folder,
+                Err(error) => {
+                    eprintln!("peeper: cannot read the current folder: {error}");
+                    return ExitCode::FAILURE;
+                }
+            };
             let name = name.unwrap_or_else(|| {
                 let default = folder.file_name().unwrap_or_default().to_string_lossy();
                 print!("Project name ({default}): ");
@@ -40,7 +52,11 @@ pub fn run() -> ExitCode {
             });
             // A package name holds no space or `-`: they become `_`.
             let name = name.to_lowercase().replace([' ', '-'], "_");
-            return match project::create(&folder, &name, &installation.join("libs")) {
+            return match project::create(
+                &folder,
+                &name,
+                &installation.join(project::LIBRARIES_FOLDER),
+            ) {
                 Ok(wrote_main) => {
                     if wrote_main {
                         println!("Created src/main.peep");
@@ -55,7 +71,7 @@ pub fn run() -> ExitCode {
             };
         }
         Args::Lsp => {
-            return match lsp::serve(&installation.join("libs")) {
+            return match lsp::serve(&installation.join(project::LIBRARIES_FOLDER)) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
                     eprintln!("peeper lsp: {error}");

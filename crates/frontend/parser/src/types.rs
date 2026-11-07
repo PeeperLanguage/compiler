@@ -19,7 +19,8 @@ use token::TokenKind;
 use crate::Parser;
 use crate::is_name;
 
-/// Whether a type can begin with `kind`.
+/// Whether a type can begin with `kind`: the tokens `Parser::type_expr` has
+/// an arm for, so a new arm there is added here too.
 pub(crate) fn starts_type(kind: TokenKind) -> bool {
     matches!(
         kind,

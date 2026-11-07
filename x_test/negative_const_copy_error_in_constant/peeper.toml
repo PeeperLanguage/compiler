@@ -1,0 +1,13 @@
+name = "negative_const_copy_error_in_constant"
+build = "program"
+
+# `g(i32, 0)` runs `g(u8, 1)` for a constant; that copy has an error. It is
+# another copy, so `g` does not depend on itself.
+[test]
+mode = "check"
+outcome = "failure"
+stderr_contains = [
+    "L0003",
+    "literal `300` does not fit `u8`",
+    "Compilation failed with 1 error(s)",
+]

@@ -27,7 +27,7 @@ pub(crate) struct Checked {
     /// The program as last compiled, and the facts of each of its modules'
     /// text and the names of its constants, by file: what definition and
     /// hover read.
-    pub(crate) program: Option<project::Program>,
+    pub(crate) program: Option<model::program::Program>,
     pub(crate) facts: HashMap<PathBuf, Vec<CachedFact>>,
     pub(crate) fix_all: HashMap<PathBuf, CodeAction>, // each file's sure fixes, as of the last check
 }
@@ -36,7 +36,7 @@ impl Checked {
     /// keeps the facts of each module's text and the names of its
     /// constants: a module the compile reused gave no facts, and the facts
     /// found before still fit it; a module checked again gets its new facts.
-    pub(crate) fn recompile(&mut self, program: &project::Program) {
+    pub(crate) fn recompile(&mut self, program: &model::program::Program) {
         let mut found: HashMap<ModuleId, Vec<CachedFact>> = HashMap::new();
         let previous = std::mem::take(&mut self.results);
         let cache_facts = |output: compile::Output| match output {
@@ -57,7 +57,9 @@ impl Checked {
                 constant,
                 types,
             } => {
-                let declared = project::declared_name(&program.modules, definition).0.span;
+                let declared = model::program::declared_name(&program.modules, definition)
+                    .0
+                    .span;
                 let text = constant.map(|constant| ConstantText::new(program, constant, types));
                 let kind = CachedKind::Constant { text };
                 let name = CachedFact {
@@ -80,7 +82,7 @@ impl Checked {
         // shortcut: the editor checks for the host, so a `usize` constant that
         // fits it but not a `-target i686-linux` build is reported only by that
         // build; check for a project's target when a project can name one.
-        self.results = compile::run(program, host(), previous, None, true, cache_facts);
+        self.results = compile::run(program, host(), previous, false, true, cache_facts);
         let reused: HashSet<&Path> = self
             .results
             .reused()
@@ -130,7 +132,7 @@ impl CachedFact {
     /// `fact`, about the text of a module of `program`, whose types are of
     /// `types`; a local's name comes with the `body` it belongs to.
     pub(crate) fn new(
-        program: &project::Program,
+        program: &model::program::Program,
         fact: &thir::Fact,
         body: Option<&thir::Body>,
         types: &Types,
@@ -138,7 +140,7 @@ impl CachedFact {
         let file = |module: ModuleId| PathBuf::from(&program.modules[module.index()].ast.file.path);
         let kind = match fact.kind {
             FactKind::Literal(ty) => CachedKind::Literal {
-                ty: project::type_text(&program.modules, types, ty),
+                ty: model::program::type_text(&program.modules, types, ty),
             },
             FactKind::Name(Symbol::Local(local)) => {
                 let body = body
@@ -150,7 +152,7 @@ impl CachedFact {
                         let variable = body.variables[variable];
                         CachedKind::Variable {
                             mutable: variable.mutable,
-                            ty: project::type_text(&program.modules, types, variable.ty),
+                            ty: model::program::type_text(&program.modules, types, variable.ty),
                         }
                     }
                     Local::Constant(constant) => CachedKind::Constant {
@@ -168,7 +170,7 @@ impl CachedFact {
                 file: file(definition.module),
                 position: definition.index,
             },
-            FactKind::Name(Symbol::Builtin(_)) => CachedKind::Builtin,
+            FactKind::Name(Symbol::Builtin(_) | Symbol::TypeArgument(_)) => CachedKind::Builtin,
         };
         CachedFact {
             span: fact.span,
@@ -186,12 +188,12 @@ pub(crate) struct ConstantText {
 impl ConstantText {
     /// `constant`, of `program`, whose type is in `types`.
     pub(crate) fn new(
-        program: &project::Program,
+        program: &model::program::Program,
         constant: &Constant,
         types: &Types,
     ) -> ConstantText {
         ConstantText {
-            ty: project::type_text(&program.modules, types, constant.ty),
+            ty: model::program::type_text(&program.modules, types, constant.ty),
             value: value_text(&constant.value, &types[constant.ty]).to_string(),
         }
     }

@@ -22,7 +22,9 @@ check() {
 
 check "format" cargo fmt --check
 check "clippy" cargo clippy --workspace --all-targets -- -D warnings
-# The runtime is no workspace crate, so the two above do not see it.
+# The runtime is no workspace crate, so the two above do not see it. Its
+# root file, edition and panic flag copy `source` and `flags` in
+# runtime/runtime.toml; change them together.
 check "runtime format" rustfmt --edition 2024 --check runtime/peeper_rt.rs
 check "runtime clippy" clippy-driver --edition=2024 -Cpanic=abort --crate-type=staticlib \
     --emit=metadata --out-dir target/runtime-clippy -D warnings runtime/peeper_rt.rs
@@ -31,6 +33,9 @@ check "bundle" bash scripts/build.sh
 check "fixtures on the bundle" env PEEPER="$PWD/build/bin/peeper" \
     cargo test -p peeper --test fixtures
 if [ "$(uname -s)" = Linux ]; then
+    # shortcut: run on Linux only, where its `lli` (calling printf from the
+    # JIT) was tried; move it out of this block once CI shows it on the others.
+    check "llvm parity" cargo test -p eval --test llvm_parity -- --ignored
     check "browser build" cargo build -p browser --profile wasm --target wasm32-wasip1
     check "browser smoke" node crates/driver/browser/smoke.mjs \
         target/wasm32-wasip1/wasm/browser.wasm

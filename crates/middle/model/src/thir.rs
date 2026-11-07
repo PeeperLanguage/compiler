@@ -81,6 +81,10 @@ pub enum Symbol {
     Local(Local),
     /// A built-in type, such as `i32`, which no declaration hides.
     Builtin(TypeId),
+    /// A `const T: type` parameter of the function being checked: the type
+    /// its copy is given, invalid in the function's own signature. It hides
+    /// a built-in type of its name.
+    TypeArgument(TypeId),
 }
 
 /// A name declared in a body, by its kind: checked in place with the
@@ -270,6 +274,10 @@ pub enum Stmt {
     Let {
         variable: Id<Variable>,
         value: Option<Id<Expr>>,
+        /// Whether the temporaries of its value last until its block ends,
+        /// not its statement: those of a `for` loop's array, which the loop
+        /// goes through.
+        keeps_temporaries: bool,
     },
     /// `target = value`; the target is a place: a `Variable`, a
     /// `Dereference`, or a `Field` or `Index` of a place.
@@ -466,7 +474,9 @@ impl<N: Display, F: Fn(DefId) -> N + Copy> Printer<'_, F> {
     /// `depth + 1` levels in.
     fn write_statement(&mut self, statement: Id<Stmt>, depth: usize) {
         match self.body.stmts[statement] {
-            Stmt::Let { variable, value } => {
+            Stmt::Let {
+                variable, value, ..
+            } => {
                 let mutable = self.body.variables[variable].mutable;
                 self.out.push_str(if mutable { "let mut " } else { "let " });
                 self.write_variable(variable);

@@ -4,7 +4,7 @@
 //! and `Exit`.
 
 mod debug_info;
-mod function;
+pub mod function;
 pub mod link;
 pub mod runtime;
 mod text;
@@ -43,7 +43,7 @@ fn clang_flag(target: &Machine) -> Option<String> {
 
 /// The LLVM text of one module, built a function at a time.
 pub struct Module<'p> {
-    program: &'p project::Program,
+    program: &'p model::program::Program,
     module: ModuleId,
     functions: String, // each `define`
     strings: String,   // each string and method table constant's global
@@ -72,7 +72,7 @@ impl<'p> Module<'p> {
     /// The module `module` of `program`, with no functions yet, built in
     /// `mode`, for `target`.
     fn new(
-        program: &'p project::Program,
+        program: &'p model::program::Program,
         module: ModuleId,
         target: &'static Machine,
         mode: BuildMode,

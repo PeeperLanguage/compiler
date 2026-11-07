@@ -219,3 +219,26 @@ fn number_digits() {
         );
     }
 }
+
+/// A diagnostic's source line colors keywords and the named values `true`,
+/// `false` and `self` alike, strings as text and numbers as numbers.
+#[test]
+fn highlights_keywords_names_and_literals() {
+    let file = Arc::new(SourceFile::new("a.peep", "let t = true; self; \"s\" 1 x"));
+    let got: Vec<Option<Highlight>> = highlights(&file).into_iter().map(|(_, h)| h).collect();
+    assert_eq!(
+        got,
+        [
+            Some(Highlight::Keyword),
+            None,
+            None,
+            Some(Highlight::Keyword),
+            None,
+            Some(Highlight::Keyword),
+            None,
+            Some(Highlight::Text),
+            Some(Highlight::Number),
+            None,
+        ]
+    );
+}

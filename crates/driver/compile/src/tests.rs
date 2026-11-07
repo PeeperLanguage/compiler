@@ -7,7 +7,6 @@ use super::Output;
 use super::Results;
 use super::run;
 use diagnostics::Diagnostic;
-use model::ModuleId;
 use model::machine::Machine;
 
 /// The machine the tests check for, but where they test another.
@@ -18,7 +17,7 @@ fn x86_64() -> &'static Machine {
 /// The program of `modules`, each an import path and its text, loaded as
 /// `peeper check` loads it from `app:main`, with every file given as open
 /// editor text so nothing is read from disk. Loading must find no error.
-fn load(modules: &[(&str, &str)]) -> project::Program {
+fn load(modules: &[(&str, &str)]) -> model::program::Program {
     let folder = |package: &str| match package {
         "core" => PathBuf::from("/peeper-build-test/libs/core/src"),
         _ => PathBuf::from("/peeper-build-test/src"),
@@ -60,7 +59,7 @@ fn diagnostics(modules: &[(&str, &str)]) -> Vec<(&'static str, String, String)> 
         &load(modules),
         x86_64(),
         Results::default(),
-        None,
+        false,
         false,
         |_| {},
     );
@@ -370,7 +369,7 @@ fn slice_ends_fit_the_target_usize() {
         &program,
         Machine::named("i686-linux").unwrap(),
         Results::default(),
-        None,
+        false,
         false,
         |_| {},
     );
@@ -383,19 +382,14 @@ fn slice_ends_fit_the_target_usize() {
     );
 }
 
-/// With an entry module, a program with no other error needs there a
+/// Asked for `main`, a program with no other error needs in its entry file a
 /// `fn main()` or `fn main() -> i32` with a body, and says whether it gives
 /// the exit code; an error elsewhere is reported alone.
 #[test]
 fn the_entry_module_needs_a_main_to_start() {
     let entry_point = |text: &str| {
         let program = load(&[("app:main", text)]);
-        let entry = program
-            .modules
-            .iter()
-            .position(|module| module.ast.file.path.ends_with("main.peep"))
-            .map(ModuleId::from_index);
-        let found = run(&program, x86_64(), Results::default(), entry, false, |_| {});
+        let found = run(&program, x86_64(), Results::default(), true, false, |_| {});
         let codes: Vec<&str> = found.diagnostics().map(|d| d.code.id).collect();
         (found.entry_point().map(|(_, exit_code)| exit_code), codes)
     };
@@ -415,6 +409,17 @@ fn the_entry_module_needs_a_main_to_start() {
     }
     let (found, codes) = entry_point("fn helper() { let x: i32 = true; }");
     assert!(found.is_none() && !codes.is_empty() && !codes.contains(&"M0006"));
+}
+
+/// A syntax error the parser read past is the loader's, not the checker's,
+/// and still leaves the program with no entry point.
+#[test]
+fn a_loading_error_leaves_no_entry_point() {
+    let program = load(&[("app:main", "fn main() {\n    let x: i32 = 1\n}")]);
+    assert!(program.diagnostics.iter().any(Diagnostic::is_error));
+    let found = run(&program, x86_64(), Results::default(), true, false, |_| {});
+    assert_eq!(found.diagnostics().count(), 0, "the checker found nothing");
+    assert!(found.entry_point().is_none());
 }
 
 /// The MIR `run` gives is what the path checks read, with the `scope end`s a
@@ -448,7 +453,7 @@ fn each_way_out_of_a_block_ends_its_variables_newest_first() {
         &program,
         x86_64(),
         Results::default(),
-        None,
+        false,
         false,
         |output| {
             if let Output::Function(CheckedFunction {
@@ -499,7 +504,7 @@ fn a_cycle_is_reported_once_with_its_path() {
             fn Point::E() -> i32 { return E; }
             fn main() { let x = A + B + E; }",
     )]);
-    let found = run(&program, x86_64(), Results::default(), None, false, |_| {});
+    let found = run(&program, x86_64(), Results::default(), false, false, |_| {});
     let errors: Vec<(String, Vec<(String, String)>)> = found
         .diagnostics()
         .map(|diagnostic| {
@@ -572,7 +577,7 @@ fn module_constants_cannot_be_assigned() {
         &load(&modules),
         x86_64(),
         Results::default(),
-        None,
+        false,
         false,
         |_| {},
     );
@@ -673,7 +678,7 @@ fn an_invalid_declaration_lowers_nothing_using_it() {
         &program,
         x86_64(),
         Results::default(),
-        None,
+        false,
         false,
         |output| {
             if let Output::Function(CheckedFunction { mir: Some(_), .. }) = output {
@@ -692,7 +697,7 @@ fn an_invalid_declaration_lowers_nothing_using_it() {
 fn recompile(modules: &[(&str, &str)], previous: Results) -> (Results, Vec<String>) {
     let loaded = load(modules);
     let mut checked: Vec<String> = Vec::new();
-    let results = run(&loaded, x86_64(), previous, None, false, |output| {
+    let results = run(&loaded, x86_64(), previous, false, false, |output| {
         let Output::Function(CheckedFunction { module, .. }) = output else {
             return;
         };
@@ -961,7 +966,7 @@ fn a_function_run_at_compile_time_records_its_facts_once() {
         &program,
         x86_64(),
         Results::default(),
-        None,
+        false,
         true,
         |output| {
             let (owner, facts) = match output {
@@ -1015,7 +1020,7 @@ fn array_lengths_fit_the_target_usize() {
             &program,
             target,
             Results::default(),
-            None,
+            false,
             false,
             |_| {},
         ))
@@ -1042,7 +1047,7 @@ fn values_fit_the_target() {
             &program,
             target,
             Results::default(),
-            None,
+            false,
             false,
             |_| {},
         ))
@@ -1071,7 +1076,7 @@ fn extern_integers_are_ones_c_has() {
             &program,
             target,
             Results::default(),
-            None,
+            false,
             false,
             |_| {},
         ))
@@ -1141,7 +1146,7 @@ fn copies_report_once_to_the_calling_module() {
             fn main() { list::Twice(i32, 1); list::Twice(bool, true); list::Twice(i64, 2); }",
         ),
     ]);
-    let results = run(&program, x86_64(), Results::default(), None, false, |_| {});
+    let results = run(&program, x86_64(), Results::default(), false, false, |_| {});
     let found = |module: &ModuleResults| -> Vec<(String, Vec<String>)> {
         let labels = |diagnostic: &Diagnostic| {
             let label = |label: &diagnostics::Label| {
@@ -1213,7 +1218,7 @@ fn a_function_with_const_parameters_records_its_signature_once() {
         &program,
         x86_64(),
         Results::default(),
-        None,
+        false,
         true,
         |output| {
             let facts = match output {

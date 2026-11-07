@@ -3,7 +3,7 @@
 //! and continues in a new block (`bb3.1`), so a `phi` names the block where
 //! its incoming MIR block ends.
 
-mod arithmetic;
+pub mod arithmetic;
 mod arrays;
 mod calls;
 mod debug_info;
@@ -22,17 +22,18 @@ use model::mir;
 use model::mir::InstructionKind;
 use model::mir::Operand;
 use model::mir::Terminator;
-use model::operators::UnaryOp;
-use model::semantic_types::Float;
-use model::semantic_types::Integer;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
 use model::semantic_types::Types;
 use model::semantic_types::range_field;
+use model::semantic_types::slice_field;
 use rustc_hash::FxHashMap;
 use source::SourceFile;
 
 use crate::Module;
+use crate::function::arithmetic::cast_instruction;
+use crate::function::arithmetic::saturating_conversion;
+use crate::function::arithmetic::write_unary;
 use crate::function::debug_info::DebugLocation;
 use crate::text::alloca_text;
 use crate::text::constant_text;
@@ -43,14 +44,6 @@ use model::layout::field_placed;
 use model::layout::in_memory;
 use model::layout::layout;
 
-/// The runtime functions `print` calls, with their LLVM parameters.
-const PRINT_TEXT: (&str, &str) = ("peeper_rt_v1_print_text", "ptr");
-/// Its length parameter is a `usize`, as wide as the target's pointers.
-const PRINT_BYTES: &str = "peeper_rt_v1_print_bytes";
-const PRINT_INT: (&str, &str) = ("peeper_rt_v2_print_int", "i32, i32, ptr");
-const PRINT_FLOAT: (&str, &str) = ("peeper_rt_v1_print_float", "double, i32");
-const PRINT_POINTER: (&str, &str) = ("peeper_rt_v1_print_pointer", "ptr");
-const FLUSH: (&str, &str) = ("peeper_rt_v1_flush", "");
 /// The intrinsic that copies a value kept in memory (`in_memory`).
 const MEMCPY: &str = "llvm.memcpy.p0.p0.i64";
 
@@ -186,7 +179,23 @@ fn traps(body: &mir::Body, types: &Types, id: Id<mir::Instruction>) -> bool {
                 }
             })
         }
-        _ => false,
+        // Listed one by one: a phi names the block a check ends in by this
+        // count (`end_label`), so a new kind decides here whether it checks.
+        InstructionKind::Load(_)
+        | InstructionKind::Length(_)
+        | InstructionKind::Move(_)
+        | InstructionKind::Store { .. }
+        | InstructionKind::Borrow { .. }
+        | InstructionKind::Address(_)
+        | InstructionKind::Unary { .. }
+        | InstructionKind::Convert(_)
+        | InstructionKind::Call { .. }
+        | InstructionKind::ToInterface { .. }
+        | InstructionKind::Aggregate(_)
+        | InstructionKind::Print { .. }
+        | InstructionKind::Field { .. }
+        | InstructionKind::Phi(_)
+        | InstructionKind::ScopeEnd(_) => false,
     }
 }
 
@@ -510,7 +519,8 @@ impl Function<'_, '_, '_> {
             InstructionKind::Length(place) => {
                 let address = self.write_address(out, place, &location, id);
                 _ = writeln!(out, "  {name}.s = load %slice, ptr {address}{location}");
-                write!(out, "  {name} = extractvalue %slice {name}.s, 1")
+                let length = slice_field::LENGTH;
+                write!(out, "  {name} = extractvalue %slice {name}.s, {length}")
             }
             InstructionKind::Store { place, value }
                 if !in_memory(types, self.body.operand_type(*value))
@@ -534,16 +544,7 @@ impl Function<'_, '_, '_> {
                 return;
             }
             InstructionKind::Borrow { place, .. } | InstructionKind::Address(place) => {
-                // A slice or interface reference lent again whole: its own
-                // two words, read again. A slice of an array behind a
-                // reference also ends at `Dereference`, so the type picks
-                // the step.
-                if let (Type::Slice { .. }, Some((own, mir::Projection::SliceElements)))
-                | (
-                    Type::InterfaceReference { .. },
-                    Some((own, mir::Projection::Dereference)),
-                ) = (&types[*ty], place.split_last())
-                {
+                if let Some(own) = place.lent_again(&types[*ty]) {
                     let address = self.write_address(out, &own, &location, id);
                     let text = type_text(types, *ty);
                     _ = writeln!(out, "  {name} = load {text}, ptr {address}{location}");
@@ -580,38 +581,16 @@ impl Function<'_, '_, '_> {
             }
             InstructionKind::Unary { op, value } => {
                 let text = type_text(types, *ty);
-                let value = self.operand(*value);
-                match (op, &types[*ty]) {
-                    (UnaryOp::Negate, Type::Float(_)) => {
-                        write!(out, "  {name} = fneg {text} {value}")
-                    }
-                    (UnaryOp::Negate, _) => write!(out, "  {name} = sub {text} 0, {value}"),
-                    (UnaryOp::LogicalNot, _) => write!(out, "  {name} = xor {text} {value}, true"),
-                    (UnaryOp::BitNot, _) => write!(out, "  {name} = xor {text} {value}, -1"),
-                }
+                write!(out, "  {name} = ")
+                    .and_then(|()| write_unary(out, *op, &types[*ty], text, self.operand(*value)))
             }
             InstructionKind::Convert(value) => {
                 let from = self.body.operand_type(*value);
-                // `bool` is LLVM's `i1`: a 1-bit unsigned integer.
-                let integer = |ty: TypeId| match types[ty] {
-                    Type::Integer(integer) => Some(integer),
-                    Type::Bool => Some(Integer {
-                        signed: false,
-                        bits: 1,
-                    }),
-                    _ => None,
-                };
                 let to_text = type_text(types, *ty);
-                match (integer(from), integer(*ty), &types[from]) {
-                    (None, Some(to), &Type::Float(float)) => {
-                        // Saturating, as check folds it: cut toward zero, the
-                        // nearest end of the integer's range outside it, 0 for NaN.
-                        let sign = if to.signed { 's' } else { 'u' };
-                        let suffix = match float {
-                            Float::F32 => "f32",
-                            Float::F64 => "f64",
-                        };
-                        let intrinsic = format!("llvm.fpto{sign}i.sat.{to_text}.{suffix}");
+                match (&types[from], &types[*ty]) {
+                    (&Type::Float(float), to @ (Type::Integer(_) | Type::Bool)) => {
+                        let signed = matches!(to, Type::Integer(integer) if integer.signed);
+                        let intrinsic = saturating_conversion(float, signed, &to_text);
                         let from_text = type_text(types, from);
                         self.module.declare(&intrinsic, || {
                             format!("declare {to_text} @{intrinsic}({from_text})\n\n")
@@ -622,31 +601,12 @@ impl Function<'_, '_, '_> {
                             self.typed(*value)
                         )
                     }
-                    pair => {
-                        let conversion = match pair {
-                            (Some(from), Some(to), _) if to.bits > from.bits && from.signed => {
-                                "sext"
-                            }
-                            (Some(from), Some(to), _) if to.bits > from.bits => "zext",
-                            (Some(from), Some(to), _) if to.bits < from.bits => "trunc",
-                            // The same bits, read with the other sign.
-                            (Some(_), Some(_), _) => "bitcast",
-                            (Some(from), None, _) if from.signed => "sitofp",
-                            (Some(_), None, _) => "uitofp",
-                            // A pointer cast keeps the address.
-                            (None, None, Type::RawPointer { .. }) => "bitcast",
-                            (None, None, Type::Float(Float::F32)) => "fpext",
-                            (None, None, _) => "fptrunc",
-                            (None, Some(_), _) => {
-                                unreachable!("check converts only numbers, `bool` and pointers")
-                            }
-                        };
-                        write!(
-                            out,
-                            "  {name} = {conversion} {} to {to_text}",
-                            self.typed(*value)
-                        )
-                    }
+                    (from, to) => write!(
+                        out,
+                        "  {name} = {} {} to {to_text}",
+                        cast_instruction(from, to),
+                        self.typed(*value)
+                    ),
                 }
             }
             InstructionKind::Call {
@@ -707,7 +667,7 @@ impl Function<'_, '_, '_> {
             // when it is kept in memory, else loaded from there.
             InstructionKind::Field { value, fields } => {
                 let value_type = self.body.operand_type(*value);
-                if let Type::Slice { .. } | Type::Str = types[value_type] {
+                if types[value_type].is_slice_shaped() {
                     let value = self.operand(*value);
                     write!(out, "  {name} = extractvalue %slice {value}, {}", fields[0])
                 } else {

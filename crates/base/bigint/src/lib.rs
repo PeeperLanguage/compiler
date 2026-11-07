@@ -10,7 +10,11 @@ use std::cmp::Ordering;
 /// same bits are 255 read as unsigned 8 bits and -1 read as signed. Up to 128
 /// bits are held inline.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Limbs {
+pub struct Limbs(Storage);
+
+/// Where a value's limbs are: the caller sees only `Limbs::as_slice`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum Storage {
     Inline([u64; 2]),
     Heap(Box<[u64]>),
 }
@@ -48,16 +52,16 @@ impl Limbs {
 
     /// The limbs; an inline value always shows two.
     pub fn as_slice(&self) -> &[u64] {
-        match self {
-            Limbs::Inline(limbs) => limbs,
-            Limbs::Heap(limbs) => limbs,
+        match &self.0 {
+            Storage::Inline(limbs) => limbs,
+            Storage::Heap(limbs) => limbs,
         }
     }
 
     fn as_mut_slice(&mut self) -> &mut [u64] {
-        match self {
-            Limbs::Inline(limbs) => limbs,
-            Limbs::Heap(limbs) => limbs,
+        match &mut self.0 {
+            Storage::Inline(limbs) => limbs,
+            Storage::Heap(limbs) => limbs,
         }
     }
 }
@@ -261,8 +265,8 @@ fn used_limbs(bits: u32, value: &Limbs) -> &[u64] {
 fn wrapped_result(bits: u32, operation: impl FnOnce(&mut [u64])) -> Limbs {
     let n = limb_count(bits);
     let mut out = match n {
-        0..=2 => Limbs::Inline([0; 2]),
-        _ => Limbs::Heap(vec![0; n].into()),
+        0..=2 => Limbs(Storage::Inline([0; 2])),
+        _ => Limbs(Storage::Heap(vec![0; n].into())),
     };
     let limbs = out.as_mut_slice();
     operation(&mut limbs[..n]);
@@ -395,6 +399,7 @@ mod tests {
     use std::cmp::Ordering;
 
     use super::Limbs;
+    use super::Storage;
 
     /// `value` in `bits` bits, sign-extended to every limb before wrapping.
     fn limbs(bits: u32, value: i128) -> Limbs {
@@ -591,7 +596,7 @@ mod tests {
 
     #[test]
     fn storage() {
-        let Limbs::Heap(wide) = limbs(200, -1) else {
+        let Limbs(Storage::Heap(wide)) = limbs(200, -1) else {
             panic!("200 bits are on the heap")
         };
         assert_eq!(wide[3], 0xff, "bits above the width are zero");

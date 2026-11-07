@@ -1,0 +1,8 @@
+fn Read(const str: type, x: &str) -> str {
+    return x.*;
+}
+
+fn main() -> i32 {
+    let n: i32 = 7;
+    return Read(i32, &n);
+}

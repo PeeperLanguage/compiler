@@ -13,5 +13,8 @@ model.workspace = true
 runtime_abi.workspace = true
 source.workspace = true
 
+[dev-dependencies]
+llvm.workspace = true
+
 [lints]
 workspace = true

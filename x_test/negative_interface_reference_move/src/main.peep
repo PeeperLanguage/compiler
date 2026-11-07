@@ -1,0 +1,30 @@
+// A `&mut` interface reference in a field moves; lent again through `.*`,
+// it stays.
+iface Shape {
+    fn area(&self) -> i32
+}
+
+struct Square { side: i32 }
+fn Square::area(&self) -> i32 { return self.side * self.side; }
+
+struct Holder { shape: &mut Shape }
+
+fn area_of(shape: &mut Shape) -> i32 {
+    return shape.area();
+}
+
+fn moved(h: &mut Holder) -> i32 {
+    let s: &mut Shape = h.shape;
+    return area_of(s);
+}
+
+fn lent(h: &mut Holder) -> i32 {
+    let s: &mut Shape = &mut h.shape.*;
+    return area_of(s);
+}
+
+fn main() {
+    let mut square = Square.{ side = 3 };
+    let mut h = Holder.{ shape = &mut square };
+    println(lent(&mut h));
+}

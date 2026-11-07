@@ -36,14 +36,14 @@ impl Dump {
 /// written once it has no errors. The LLVM text comes from the program's
 /// `llvm::Module`s, which the driver builds once for dumps and linking.
 pub struct Dumps<'p> {
-    program: &'p project::Program,
+    program: &'p model::program::Program,
     kinds: &'p [Dump],
     texts: Vec<Vec<String>>, // by module, then by kind; empty for `Ll`
 }
 
 impl<'p> Dumps<'p> {
     /// No text yet for any of the `kinds` of `program`'s modules.
-    pub fn new(program: &'p project::Program, kinds: &'p [Dump]) -> Dumps<'p> {
+    pub fn new(program: &'p model::program::Program, kinds: &'p [Dump]) -> Dumps<'p> {
         Dumps {
             program,
             kinds,
@@ -66,7 +66,7 @@ impl<'p> Dumps<'p> {
         types: &Types,
     ) {
         let program = self.program;
-        let name = |definition: DefId| project::declared_path(&program.modules, definition);
+        let name = |definition: DefId| model::program::declared_path(&program.modules, definition);
         let module = function.definition.module.index();
         let file = &program.modules[module].ast.file;
         let texts = &mut self.texts[module];
@@ -77,7 +77,7 @@ impl<'p> Dumps<'p> {
                 Dump::Ll => continue,
             };
             text.push_str("fn ");
-            let declared = |definition| project::declared_text(&program.modules, definition);
+            let declared = |definition| model::program::declared_text(&program.modules, definition);
             text.push_str(&types.copy_text(
                 name(function.definition),
                 function.arguments,

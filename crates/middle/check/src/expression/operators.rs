@@ -67,7 +67,6 @@ impl ThirBuilder<'_, '_> {
     ) -> Expr {
         let tree = &self.checker.module().ast;
         let literal = literal::numeric::split(tree.file.slice(number));
-        let pointer_bits = self.checker.target.pointer_bits;
         let types = &mut self.checker.types;
         let ty = if literal.suffix.is_empty() {
             match expected {
@@ -75,7 +74,7 @@ impl ThirBuilder<'_, '_> {
                 _ if literal.is_float() => TypeId::F64,
                 _ => TypeId::I32,
             }
-        } else if let Some(ty) = types.builtin(literal.suffix, pointer_bits) {
+        } else if let Some(ty) = types.builtin(literal.suffix) {
             ty
         } else {
             let message = format!("unsupported numeric literal suffix `{}`", literal.suffix);
@@ -247,9 +246,7 @@ impl ThirBuilder<'_, '_> {
             self.check_expr(right_operand, None)
         } else {
             let right_type = if pointer_offset {
-                (self.checker.types)
-                    .builtin("usize", self.checker.target.pointer_bits)
-                    .expect("`usize` is a built-in type")
+                self.checker.types.usize
             } else {
                 left.ty
             };

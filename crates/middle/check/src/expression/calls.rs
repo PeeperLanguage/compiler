@@ -107,7 +107,7 @@ impl ThirBuilder<'_, '_> {
                 self.checker.not_supported(span, "functions as values");
                 return Expr::INVALID;
             }
-            Some(Symbol::Type(_) | Symbol::Builtin(_)) => "a type",
+            Some(Symbol::Type(_) | Symbol::Builtin(_) | Symbol::TypeArgument(_)) => "a type",
             Some(Symbol::Module(_)) => "a module",
         };
         let text = self.checker.module().ast.file.slice(span);
@@ -156,9 +156,7 @@ impl ThirBuilder<'_, '_> {
             LayoutFact::Align => align,
         };
         Expr {
-            ty: (self.checker.types)
-                .builtin("usize", bits)
-                .expect("`usize` is a built-in type"),
+            ty: self.checker.types.usize,
             kind: ExprKind::Constant(Value::Integer(Limbs::new(bits, &[value]))),
         }
     }
@@ -500,7 +498,7 @@ impl ThirBuilder<'_, '_> {
         let file = &modules[definition.module.index()].ast.file;
         let text = name.text(&self.checker.module().ast.file);
         let names = || {
-            project::interface_methods(modules, definition)
+            model::program::interface_methods(modules, definition)
                 .expect("an interface declaration has methods")
                 .map(|method| method.name.text(file))
         };
@@ -538,9 +536,7 @@ impl ThirBuilder<'_, '_> {
     fn takes_self(&mut self, function: DefId, span: Span) -> bool {
         let modules = self.checker.modules;
         let tree = &modules[function.module.index()].ast;
-        let ast::Decl::Function(declared) = project::declaration(modules, function) else {
-            unreachable!("`{function:?}` is a function declaration")
-        };
+        let declared = function_declaration(modules, function);
         let first = tree
             .children
             .lists
@@ -549,7 +545,7 @@ impl ThirBuilder<'_, '_> {
         if first.is_some_and(|first| is_self(tree, tree.children.params[first])) {
             return true;
         }
-        let path = project::declared_path(modules, function);
+        let path = model::program::declared_path(modules, function);
         let name = declared.name.text(&tree.file);
         let message = format!("`{name}` takes no `self`: call it as `{path}(...)`");
         self.checker

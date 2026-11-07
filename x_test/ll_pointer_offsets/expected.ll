@@ -27,9 +27,9 @@ bb0:
   %i0 = call ptr @"ll_pointer_offsets:main.Next"(ptr null, i64 8)
   %i1 = icmp eq ptr %i0, null
   %i2.0.b = select i1 %i1, ptr @.str.0, ptr @.str.1
-  call void (ptr) @"peeper_rt_v1_print_text"(ptr %i2.0.b)
-  call void (ptr, i64) @"peeper_rt_v1_print_bytes"(ptr @.str.2, i64 1)
-  call void () @"peeper_rt_v1_flush"()
+  call void @"peeper_rt_v1_print_text"(ptr %i2.0.b)
+  call void @"peeper_rt_v1_print_bytes"(ptr @.str.2, i64 1)
+  call void @"peeper_rt_v1_flush"()
   ret void
 }
 

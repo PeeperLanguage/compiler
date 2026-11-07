@@ -28,7 +28,7 @@ pub fn write_pointer(address: u64, push: &mut impl FnMut(&[u8])) {
 }
 
 /// How many nine-digit chunks of decimal text `limbs` 64-bit limbs can need.
-pub fn max_chunks(limbs: usize) -> usize {
+pub const fn max_chunks(limbs: usize) -> usize {
     limbs * 3 + 1
 }
 

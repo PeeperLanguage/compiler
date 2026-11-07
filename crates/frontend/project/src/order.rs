@@ -4,9 +4,9 @@
 use std::collections::HashMap;
 
 use diagnostics::Diagnostic;
+use model::program::ImportKind;
 
-use crate::ImportKind;
-use crate::Loaded;
+use crate::loading::Loaded;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Visit {
@@ -61,7 +61,7 @@ impl<'a> Sorter<'a> {
                 Some(Visit::Started) => {
                     let start = (self.stack.iter())
                         .position(|&(visiting, _)| visiting == imported)
-                        .unwrap_or(0);
+                        .expect("a started module is on the stack");
                     self.report_cycle(start, *kind);
                 }
                 Some(Visit::Finished) => {}

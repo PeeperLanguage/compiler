@@ -9,6 +9,7 @@ use model::mir;
 use model::operators::BinaryOp;
 use model::semantic_types::Type;
 use model::semantic_types::TypeId;
+use model::semantic_types::slice_field;
 use model::thir;
 use source::Span;
 
@@ -64,7 +65,7 @@ impl Lowering<'_> {
                 // moved, so a `&mut []` stays usable.
                 thir::ExprKind::Length(value) => {
                     let value_type = self.thir.exprs[*value].ty;
-                    if !matches!(self.types[value_type], Type::Slice { .. } | Type::Str) {
+                    if !self.types[value_type].is_slice_shaped() {
                         _ = self.place_or_field(*value)?;
                         let array = self.types[value_type].pointee().unwrap_or(value_type);
                         let Type::Array { length, .. } = self.types[array] else {
@@ -84,7 +85,7 @@ impl Lowering<'_> {
                     };
                     let length = mir::InstructionKind::Field {
                         value: slice,
-                        fields: Box::new([1]), // after its elements' address
+                        fields: Box::new([slice_field::LENGTH]),
                     };
                     return Some(self.emit(length, self.types.usize, span));
                 }

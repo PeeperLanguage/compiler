@@ -25,6 +25,7 @@ use super::INVALID_ACCESS;
 use super::Interpreter;
 use super::Register;
 use runtime_abi::abi::STDERR;
+use runtime_abi::abi::STDIN;
 use runtime_abi::abi::STDOUT;
 use runtime_abi::number_text;
 use runtime_abi::symbols::ALLOC;
@@ -33,9 +34,6 @@ use runtime_abi::symbols::FREE;
 use runtime_abi::symbols::READ;
 use runtime_abi::symbols::REALLOC;
 use runtime_abi::symbols::WRITE;
-
-/// The descriptor of a program's input, as in `core`.
-const STDIN: i32 = 0;
 
 /// How many steps a program may run: more than any page should wait for, so a
 /// page's own time limit usually ends a program first.
@@ -215,10 +213,11 @@ impl<'f> Interpreter<'_, 'f> {
             }
             (Type::CString, &Register::Address(0)) => text.extend_from_slice(b"null"),
             (Type::CString, &Register::Address(address)) => {
-                let length = self.memory.c_text(address).map(<[u8]>::len);
-                let length = length.ok_or_else(|| self.fail(INVALID_ACCESS, span))?;
-                self.check_output((text.len() + length) as u64, span)?;
-                text.extend(self.memory.c_text(address).unwrap_or_default());
+                let Some(bytes) = self.memory.c_text(address).map(<[u8]>::to_vec) else {
+                    return Err(self.fail(INVALID_ACCESS, span));
+                };
+                self.check_output((text.len() + bytes.len()) as u64, span)?;
+                text.extend(bytes);
             }
             (Type::Str, &Register::Slice { address, length }) => {
                 self.check_output(text.len() as u64 + length, span)?;
@@ -318,14 +317,14 @@ impl<'f> Interpreter<'_, 'f> {
     pub(super) fn call_outside(
         &mut self,
         id: Id<mir::Instruction>,
-        function: DefId,
+        callee: FunctionCopy,
         arguments: &[Operand],
     ) -> Result<(), Failure> {
         let body = self.frame().body;
         let span = body.instructions.span(id);
-        let Some(symbol) = (self.host().facts.extern_symbol)(function) else {
+        let Some(symbol) = (self.host().facts.extern_symbol)(callee.definition) else {
             return Err(Failure::NoMir {
-                callee: function,
+                callee,
                 function: self.frame().function,
                 span,
             });

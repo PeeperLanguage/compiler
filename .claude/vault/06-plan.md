@@ -40,6 +40,8 @@ interface, allocator and type parameter work below, in PR #182. Order of work
      `peeper.toml` (6f56683d; built on `feature/library-manifest`).
    - [x] Fixes from the two reviews of the branch and its Windows CI run
      (95c9e838, eb1b80ad; worklog, "Review fixes after the PR").
+   - [x] Untangling pass on `refactor/untangle` (0e1edf53; worklog,
+     "Untangling the codebase").
    - [ ] The Website (`peeper.toml`'s `build`, `core:memory`, `size_of`,
      `const` parameters, a new wasm build), once the feature is complete.
 

@@ -21,6 +21,7 @@ use std::path::Path;
 use std::process::Command;
 use std::process::Output;
 
+use llvm::link::TOOLCHAIN_FOLDER;
 use model::machine::Machine;
 use project::canonical_path;
 use project::path_text;
@@ -37,16 +38,20 @@ fn bundle() -> String {
     std::fs::copy(env!("CARGO_BIN_EXE_peeper"), &compiler).expect("the compiler is copied");
     link_folder(
         &checkout.join("_builtin_library").canonicalize().unwrap(),
-        &root.join("libs"),
+        &root.join(project::LIBRARIES_FOLDER),
     )
     .expect("the libraries are linked");
-    let toolchain = checkout.join("build/toolchains/native");
-    std::fs::create_dir_all(root.join("toolchains")).expect("the toolchains folder is made");
+    let toolchain = checkout.join("build").join(TOOLCHAIN_FOLDER);
+    let linked = root.join(TOOLCHAIN_FOLDER);
+    let parent = linked
+        .parent()
+        .expect("the toolchain folder is inside the root");
+    std::fs::create_dir_all(parent).expect("the toolchains folder is made");
     link_folder(
         &toolchain
             .canonicalize()
             .expect("scripts/setup.sh fills build/toolchains/native"),
-        &root.join("toolchains/native"),
+        &linked,
     )
     .expect("the toolchain is linked");
     let host = Machine::host().expect("this machine is a target");

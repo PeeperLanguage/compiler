@@ -170,7 +170,8 @@ impl ThirBuilder<'_, '_> {
                 (&tree.file, self.body.constants.span(constant))
             }
             Symbol::Constant(definition) => {
-                let (declared, file) = project::declared_name(self.checker.modules, definition);
+                let (declared, file) =
+                    model::program::declared_name(self.checker.modules, definition);
                 (file, declared.span)
             }
             _ => {

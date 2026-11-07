@@ -67,7 +67,7 @@ pub fn constant_refusal(ty: &Type) -> &'static str {
         Type::Struct { .. } => "a constant cannot hold a struct yet",
         Type::Array { .. } => "a constant cannot hold an array yet",
         Type::Range { .. } => "a constant cannot hold a range yet",
-        Type::Reference { mutable: true, .. } | Type::Slice { mutable: true, .. } => {
+        _ if ty.borrows() == Some(true) => {
             "a constant cannot hold a mutable reference, as all its uses would share one value"
         }
         _ => ADDRESS_NOT_KNOWN,
@@ -84,10 +84,10 @@ pub enum Failure {
         function: DefId,
         span: Span,
     },
-    /// It called `callee`, for which `mir_of` gave no MIR: the caller of
-    /// `run` knows why.
+    /// It called `callee`, a function or one of its copies, for which
+    /// `mir_of` gave no MIR: the caller of `run` knows why.
     NoMir {
-        callee: DefId,
+        callee: FunctionCopy,
         function: DefId,
         span: Span,
     },

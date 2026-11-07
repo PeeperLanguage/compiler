@@ -38,6 +38,8 @@ fn main() {
 /// Adds each peeper.toml and source file in `folder` and the folders in it to
 /// `files`. Any other file, such as an editor's swap file, is left out: it
 /// may not be text, which `include_str!` needs.
+/// A build script cannot use `project`, so the two names are written here as
+/// `project::manifest::FILE_NAME` and the source extension spell them.
 fn add_files(folder: &Path, files: &mut Vec<PathBuf>) {
     let entries =
         std::fs::read_dir(folder).unwrap_or_else(|error| panic!("{}: {error}", folder.display()));
