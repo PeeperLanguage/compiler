@@ -26,8 +26,10 @@ fn Heap() {
     let mut heap = memory::Heap.{};
     let piece = Filled(&mut heap, 4);
     let grown = heap.Realloc(piece, 4, 4096, 8);
+    // Read before shrinking: a shrink may move the piece and free `grown`.
+    let grown_sum = Sum(grown, 4);
     let shrunk = heap.Realloc(grown, 4096, 2, 8);
-    println("heap:", Sum(grown, 4), Sum(shrunk, 2), heap.Realloc(shrunk, 2, 8, 3) == none);
+    println("heap:", grown_sum, Sum(shrunk, 2), heap.Realloc(shrunk, 2, 8, 3) == none);
     // Shrunk to nothing, it is still a piece to free.
     let empty = heap.Realloc(shrunk, 2, 0, 8);
     println("heap to nothing:", empty != none);
